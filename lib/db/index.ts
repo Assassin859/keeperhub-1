@@ -1,73 +1,9 @@
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+// biome-ignore lint/performance/noNamespaceImport: drizzle requires all schema tables/relations as a single object
+import * as schema from "./combined-schema";
 import { getDatabaseUrl } from "./connection-utils";
-import {
-  accounts,
-  addressBookEntry,
-  addressBookEntryRelations,
-  apiKeys,
-  chains,
-  chainsRelations,
-  executionDebt,
-  explorerConfigs,
-  explorerConfigsRelations,
-  integrations,
-  organizationApiKeys,
-  organizationSubscriptions,
-  overageBillingRecords,
-  pendingTransactions,
-  publicTags,
-  sessions,
-  tags,
-  tagsRelations,
-  userRpcPreferences,
-  userRpcPreferencesRelations,
-  users,
-  verifications,
-  walletLocks,
-  workflowExecutionLogs,
-  workflowExecutions,
-  workflowExecutionsRelations,
-  workflowPublicTags,
-  workflowSchedules,
-  workflowSchedulesRelations,
-  workflows,
-} from "./schema";
-
-// Construct schema object for drizzle
-const schema = {
-  users,
-  sessions,
-  accounts,
-  verifications,
-  workflows,
-  workflowExecutions,
-  workflowExecutionLogs,
-  workflowExecutionsRelations,
-  workflowSchedules,
-  workflowSchedulesRelations,
-  apiKeys,
-  executionDebt,
-  organizationApiKeys,
-  organizationSubscriptions,
-  overageBillingRecords,
-  pendingTransactions,
-  publicTags,
-  walletLocks,
-  workflowPublicTags,
-  addressBookEntry,
-  addressBookEntryRelations,
-  tags,
-  tagsRelations,
-  integrations,
-  chains,
-  chainsRelations,
-  explorerConfigs,
-  explorerConfigsRelations,
-  userRpcPreferences,
-  userRpcPreferencesRelations,
-};
 
 const connectionString = getDatabaseUrl();
 

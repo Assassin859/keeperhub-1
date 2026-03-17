@@ -178,6 +178,7 @@ export async function getIntegrations(
 
   return results.map((integration) => ({
     ...integration,
+    type: integration.type as IntegrationType,
     config: decryptConfig(integration.config as string) as IntegrationConfig,
   }));
 }
@@ -210,6 +211,7 @@ export async function getIntegration(
 
   return {
     ...result[0],
+    type: result[0].type as IntegrationType,
     config: decryptConfig(result[0].config as string) as IntegrationConfig,
   };
 }
@@ -232,6 +234,7 @@ export async function getIntegrationById(
 
   return {
     ...result[0],
+    type: result[0].type as IntegrationType,
     config: decryptConfig(result[0].config as string) as IntegrationConfig,
   };
 }
@@ -267,6 +270,7 @@ export async function createIntegration(
 
   return {
     ...result,
+    type: result.type as IntegrationType,
     config,
   };
 }
@@ -322,6 +326,7 @@ export async function updateIntegration(
 
   return {
     ...result,
+    type: result.type as IntegrationType,
     config: decryptConfig(result.config as string) as IntegrationConfig,
   };
 }

@@ -5,7 +5,7 @@ import { getDatabaseUrl } from "./lib/db/connection-utils";
 config();
 
 export default {
-  schema: "./lib/db/schema.ts",
+  schema: "./lib/db/combined-schema.ts",
   out: "./drizzle",
   dialect: "postgresql",
   dbCredentials: {
