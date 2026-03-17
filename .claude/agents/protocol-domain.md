@@ -321,6 +321,12 @@ Action type:
 - The workflow executor in `lib/workflow-executor.workflow.ts` checks `actionType === "code/run-code"` in the action dispatch logic
 - Using `"Code"` causes the node to be treated as an unknown action, breaking the workflow silently
 
+Node label restrictions:
+- Node labels MUST NOT contain colons (`:`) -- the template syntax `{{@nodeId:Label.field}}` uses `:` as the separator between nodeId and Label. A label like `"Lido: Get stETH"` breaks the parser because it sees `Lido` as the label and `Get stETH.result` as the field.
+- CORRECT: `"Get wstETH Rate"`, `"Read ETH Price"`, `"Format Dashboard"`
+- WRONG: `"Lido: Get stETH per wstETH"`, `"Chronicle: Read Oracle Value"`, `"Compound: USDC Supply Rate"`
+- This applies to ALL nodes whose outputs are referenced by downstream template variables, not just Code nodes
+
 Template quoting:
 - `formatCodeValue()` in `lib/workflow-executor.workflow.ts` already wraps string values via `JSON.stringify()` before injecting them into the Code node sandbox
 - CORRECT: `const x = {{@nodeId:Label.result}};` -- no manual quotes needed, becomes `const x = "value";`
@@ -654,6 +660,7 @@ Workflow rules:
 - All Webhook nodes MUST use `webhookUrl`, `webhookMethod`, `webhookHeaders`, `webhookPayload` (not `url`, `method`, `headers`, `body`)
 - Only use action types that exist in the codebase: `discord/send-message`, `sendgrid/send-email`, `webhook/send-webhook`, `code/run-code`, `Condition`, `{protocol-slug}/{action-slug}`
 - Do NOT use non-existent action types like `telegram/send-message`, `slack/send-message`, etc.
+- Node labels MUST NOT contain colons -- see `<code_node_patterns>` for details. Use `"Read ETH Price"` not `"Chronicle: Read ETH Price"`.
 - Node layout: trigger at x=100, subsequent nodes at x+250 increments, y=250 baseline. For parallel reads, stagger y positions (150, 300, 450).
 - Edge naming: sequential e1, e2, etc.
 - Generate unique IDs for workflow rows (use a descriptive kebab-case prefix, e.g., `rp-ex-rate-monitor-01`)
