@@ -4,7 +4,7 @@ import { withWorkflow } from "workflow/next";
 
 const nextConfig = {
   output: "standalone",
-  transpilePackages: ["@keeperhub/db"],
+  transpilePackages: ["@techops-services/keeperhub-db"],
   // The SDK loads @workflow/world-postgres via dynamic
   // require(process.env.WORKFLOW_TARGET_WORLD) which the standalone output
   // tracer cannot follow. serverExternalPackages keeps it out of the bundle

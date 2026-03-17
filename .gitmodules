@@ -6,3 +6,6 @@
 	path = keeperhub-events
 	url = https://github.com/techops-services/keeperhub-events.git
 	branch = staging
+[submodule "keeperhub-db"]
+	path = keeperhub-db
+	url = https://github.com/techops-services/keeperhub-db.git

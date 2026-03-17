@@ -1,1 +1,1 @@
-export * from "@keeperhub/db/connection-utils";
+export * from "@techops-services/keeperhub-db/connection-utils";

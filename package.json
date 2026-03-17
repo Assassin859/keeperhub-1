@@ -47,7 +47,7 @@
     "profile:report": "tsx scripts/runtime/workflow_runtime_analysis/generate-report.ts"
   },
   "dependencies": {
-    "@keeperhub/db": "file:../../../keeperhub-db",
+    "@techops-services/keeperhub-db": "file:./keeperhub-db",
     "@ai-sdk/anthropic": "^2.0.54",
     "@ai-sdk/openai": "^2.0.80",
     "@ai-sdk/provider": "^2.0.0",

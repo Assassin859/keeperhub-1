@@ -1,1 +1,1 @@
-export { generateId } from "@keeperhub/db/id";
+export { generateId } from "@techops-services/keeperhub-db/id";
