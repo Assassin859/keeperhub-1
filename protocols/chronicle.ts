@@ -6,6 +6,7 @@ export default defineProtocol({
   description:
     "Chronicle Protocol -- decentralized, verifiable oracle price feeds with Schnorr signature verification",
   website: "https://chroniclelabs.org",
+  icon: "/protocols/chronicle.png",
 
   contracts: {
     oracle: {
