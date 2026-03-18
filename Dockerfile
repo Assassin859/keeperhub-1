@@ -11,6 +11,9 @@ RUN npm install -g pnpm@9
 # Copy package files
 COPY package.json pnpm-lock.yaml* ./
 COPY .npmrc* ./
+# Copy keeperhub-db submodule (file: dependency)
+COPY keeperhub-db/package.json keeperhub-db/
+COPY keeperhub-db/src/ keeperhub-db/src/
 
 # Install dependencies with cache mount for faster rebuilds
 RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
