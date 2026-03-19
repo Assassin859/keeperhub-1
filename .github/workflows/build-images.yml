@@ -42,6 +42,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
+          submodules: true
 
       - name: Check commit message for skip flags
         id: skip

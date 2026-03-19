@@ -27,6 +27,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
+          submodules: true
 
       - name: Check commit message for skip flags
         id: skip
@@ -140,6 +141,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
+          submodules: true
 
       - name: Setup Node.js, pnpm, and Playwright
         uses: ./.github/actions/setup-node-pnpm
