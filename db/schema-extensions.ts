@@ -13,8 +13,6 @@
  * - organizationSpendCaps: Per-organization daily spending limits for direct execution API
  */
 
-import { generateId } from "../keeperhub-db/src/id";
-import { organization, users, workflows } from "../keeperhub-db/src/schema";
 import {
   boolean,
   index,
@@ -27,6 +25,8 @@ import {
   timestamp,
   unique,
 } from "drizzle-orm/pg-core";
+import { generateId } from "../keeperhub-db/src/id";
+import { organization, users, workflows } from "../keeperhub-db/src/schema";
 
 /**
  * Para Wallets table
