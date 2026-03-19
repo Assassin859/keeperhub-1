@@ -171,8 +171,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-        with:
-          submodules: true
+
+      - name: Init keeperhub-db submodule
+        run: git submodule update --init keeperhub-db
 
       - name: Check COPY/ADD sources exist
         run: |

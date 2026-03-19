@@ -42,7 +42,9 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
-          submodules: true
+
+      - name: Init keeperhub-db submodule
+        run: git submodule update --init keeperhub-db
 
       - name: Check commit message for skip flags
         id: skip

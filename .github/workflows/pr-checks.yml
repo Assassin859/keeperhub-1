@@ -10,8 +10,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          submodules: true
+
+      - name: Init keeperhub-db submodule
+        run: git submodule update --init keeperhub-db
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -62,8 +63,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          submodules: true
+
+      - name: Init keeperhub-db submodule
+        run: git submodule update --init keeperhub-db
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
