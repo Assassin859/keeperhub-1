@@ -141,6 +141,10 @@ env:
     type: parameterStore
     name: better-auth-secret
     parameter_name: /eks/techops-staging/keeperhub/better-auth-secret
+  OAUTH_JWT_SECRET:
+    type: parameterStore
+    name: oauth-jwt-secret
+    parameter_name: /eks/techops-staging/keeperhub/oauth-jwt-secret
   # Auth and social providers (GitHub, Google)
   NEXT_PUBLIC_AUTH_PROVIDERS:
     type: kv

@@ -1,40 +1,26 @@
 import { and, asc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { authenticateApiKey } from "@/lib/api-key-auth";
-import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { getOrgContext } from "@/lib/middleware/org-context";
-import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
+import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 
-export async function GET(request: Request) {
+export async function GET(request: Request): Promise<NextResponse> {
   try {
-    // Try API key authentication first
-    const apiKeyAuth = await authenticateApiKey(request);
-    let organizationId: string | null;
-    let userId: string | null = null;
-
-    if (apiKeyAuth.authenticated) {
-      // API key authentication successful
-      organizationId = apiKeyAuth.organizationId || null;
-    } else {
-      // Fall back to session authentication
-      const session = await auth.api.getSession({
-        headers: request.headers,
-      });
-
-      if (!session?.user) {
-        return NextResponse.json([], { status: 200 });
-      }
-
-      userId = session.user.id;
-
-      // Get organization context from session
-      const context = await getOrgContext();
-      organizationId = context.organization?.id || null;
+    const authContext = await getDualAuthContext(request, { required: false });
+    if ("error" in authContext) {
+      return NextResponse.json(
+        { error: authContext.error },
+        { status: authContext.status }
+      );
     }
 
-    // Optional projectId filter
+    const { organizationId, userId } = authContext;
+
+    if (!organizationId && !userId) {
+      return NextResponse.json([], { status: 200 });
+    }
+
     const { searchParams } = new URL(request.url);
     const projectIdFilter = searchParams.get("projectId");
     const tagIdFilter = searchParams.get("tagId");

@@ -144,6 +144,10 @@ env:
     type: parameterStore
     name: better-auth-secret
     parameter_name: /eks/maker-prod/keeperhub/better-auth-secret
+  OAUTH_JWT_SECRET:
+    type: parameterStore
+    name: oauth-jwt-secret
+    parameter_name: /eks/maker-prod/keeperhub/oauth-jwt-secret
   # Auth and social providers (GitHub, Google)
   NEXT_PUBLIC_AUTH_PROVIDERS:
     type: kv

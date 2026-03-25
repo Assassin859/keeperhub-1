@@ -2,6 +2,12 @@
 
 Start a server
 
+**Deprecated:** Use the remote MCP endpoint instead:
+
+```
+claude mcp add --transport http keeperhub https://app.keeperhub.com/mcp
+```
+
 ### Synopsis
 
 Start a KeeperHub server process.
@@ -44,4 +50,3 @@ kh serve [flags]
 ### SEE ALSO
 
 * [kh](kh.md)	 - KeeperHub CLI
-

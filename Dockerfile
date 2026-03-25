@@ -55,7 +55,6 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=source /app/drizzle ./drizzle
 COPY --from=source /app/drizzle.config.ts ./drizzle.config.ts
 COPY --from=source /app/lib ./lib
-COPY --from=source /app/db ./db
 COPY --from=source /app/plugins ./plugins
 COPY --from=source /app/scripts ./scripts
 COPY --from=source /app/package.json ./package.json
@@ -77,37 +76,46 @@ WORKDIR /app
 # Install pnpm
 RUN npm install -g pnpm@9
 
-# Use main project package.json (scheduler/package.json was removed)
-COPY package.json pnpm-lock.yaml ./
+# Use scheduler's own package.json for its specific dependencies
+COPY keeperhub-scheduler/package.json keeperhub-scheduler/pnpm-lock.yaml ./
 
 # Install only production dependencies with cache mount
 RUN --mount=type=cache,id=pnpm-scheduler,target=/root/.local/share/pnpm/store \
     pnpm install --prod --frozen-lockfile
 
-# Stage 2.7b: Scheduler stage (for schedule dispatcher and job spawner)
-FROM node:24-alpine AS scheduler
+# Stage 2.7b: Scheduler base (shared deps for all scheduler services)
+FROM node:24-alpine AS scheduler-base
+RUN addgroup -g 1001 -S scheduler && \
+    adduser -S scheduler -u 1001
 WORKDIR /app
 RUN npm install -g tsx@4
 COPY --from=deps /etc/ssl/certs/rds-combined-ca-bundle.pem /etc/ssl/certs/rds-combined-ca-bundle.pem
-
-# Copy ONLY scheduler dependencies (not full node_modules - saves ~1.7GB)
 COPY --from=scheduler-deps /app/node_modules ./node_modules
-COPY --from=source /app/scripts ./scripts
-COPY --from=source /app/lib ./lib
-COPY --from=source /app/db ./db
-COPY --from=source /app/plugins ./plugins
-COPY --from=source /app/package.json ./package.json
-COPY --from=source /app/tsconfig.json ./tsconfig.json
-
 ENV NODE_ENV=production
 
-# This stage is used for:
-# - Schedule dispatcher (CronJob): sends messages to SQS
-# - Job spawner (Deployment): polls SQS, creates K8s Jobs
-#
-# Build with: docker build --target scheduler -t keeperhub-scheduler .
-# Run dispatcher: docker run keeperhub-scheduler tsx scripts/scheduler/schedule-dispatcher.ts
-# Run job spawner: docker run keeperhub-scheduler tsx scripts/scheduler/job-spawner.ts
+# Stage 2.7c: Schedule Dispatcher
+FROM scheduler-base AS schedule-dispatcher
+COPY --from=source /app/keeperhub-scheduler/schedule-dispatcher/ ./schedule-dispatcher/
+COPY --from=source /app/keeperhub-scheduler/lib/ ./lib/
+COPY --from=source /app/keeperhub-scheduler/package.json ./keeperhub-scheduler/package.json
+COPY --from=source /app/keeperhub-scheduler/tsconfig.json ./keeperhub-scheduler/tsconfig.json
+COPY --from=source /app/keeperhub-scheduler/package.json ./package.json
+COPY --from=source /app/keeperhub-scheduler/tsconfig.json ./tsconfig.json
+RUN chown -R scheduler:scheduler /app
+USER scheduler
+EXPOSE 3000
+CMD ["tsx", "schedule-dispatcher/index.ts"]
+
+# Stage 2.7d: Block Dispatcher
+FROM scheduler-base AS block-dispatcher
+COPY --from=source /app/keeperhub-scheduler/block-dispatcher/ ./block-dispatcher/
+COPY --from=source /app/keeperhub-scheduler/lib/ ./lib/
+COPY --from=source /app/keeperhub-scheduler/package.json ./package.json
+COPY --from=source /app/keeperhub-scheduler/tsconfig.json ./tsconfig.json
+RUN chown -R scheduler:scheduler /app
+USER scheduler
+EXPOSE 3000
+CMD ["tsx", "block-dispatcher/index.ts"]
 
 # Stage 2.8: Workflow Runner stage (for executing workflows in K8s Jobs)
 FROM node:24-alpine AS workflow-runner
@@ -117,9 +125,8 @@ COPY --from=deps /etc/ssl/certs/rds-combined-ca-bundle.pem /etc/ssl/certs/rds-co
 
 # Copy dependencies and workflow execution files
 COPY --from=deps /app/node_modules ./node_modules
-COPY --from=source /app/scripts/runtime/workflow-runner.ts ./scripts/runtime/workflow-runner.ts
+COPY --from=source /app/keeperhub-executor ./keeperhub-executor
 COPY --from=source /app/lib ./lib
-COPY --from=source /app/db ./db
 COPY --from=source /app/plugins ./plugins
 COPY --from=source /app/protocols ./protocols
 COPY --from=source /app/package.json ./package.json
@@ -142,11 +149,43 @@ RUN find /app/node_modules -path "*server-only*/index.js" | while read -r f; do 
 ENV NODE_ENV=production
 
 # This stage runs inside K8s Jobs to execute individual workflows
-# Environment variables are passed by the job-spawner:
+# Environment variables are passed by the executor:
 #   WORKFLOW_ID, EXECUTION_ID, SCHEDULE_ID, WORKFLOW_INPUT, DATABASE_URL
 #
 # Build with: docker build --target workflow-runner -t keeperhub-runner .
-CMD ["tsx", "scripts/runtime/workflow-runner.ts"]
+CMD ["tsx", "keeperhub-executor/workflow-runner.ts"]
+
+# Stage 2.9: Unified Executor (polls SQS, dispatches to K8s Jobs or in-process)
+FROM node:24-alpine AS executor
+WORKDIR /app
+RUN npm install -g pnpm@9 tsx@4
+COPY --from=deps /etc/ssl/certs/rds-combined-ca-bundle.pem /etc/ssl/certs/rds-combined-ca-bundle.pem
+
+# Full deps needed for in-process workflow execution + @kubernetes/client-node
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=source /app/keeperhub-executor ./keeperhub-executor
+COPY --from=source /app/lib ./lib
+COPY --from=source /app/plugins ./plugins
+COPY --from=source /app/protocols ./protocols
+COPY --from=source /app/package.json ./package.json
+COPY --from=source /app/tsconfig.json ./tsconfig.json
+
+# Copy auto-generated files from builder stage
+COPY --from=builder /app/lib/step-registry.ts ./lib/step-registry.ts
+COPY --from=builder /app/lib/codegen-registry.ts ./lib/codegen-registry.ts
+COPY --from=builder /app/lib/output-display-configs.ts ./lib/output-display-configs.ts
+COPY --from=builder /app/lib/types/integration.ts ./lib/types/integration.ts
+COPY --from=builder /app/plugins/index.ts ./plugins/index.ts
+COPY --from=builder /app/protocols/index.ts ./protocols/index.ts
+
+# Shim server-only (runs outside Next.js)
+SHELL ["/bin/ash", "-o", "pipefail", "-c"]
+RUN find /app/node_modules -path "*server-only*/index.js" | while read -r f; do echo 'module.exports = {};' > "$f"; done
+
+ENV NODE_ENV=production
+
+# Build with: docker build --target executor -t keeperhub-executor .
+CMD ["tsx", "keeperhub-executor/index.ts"]
 
 # Stage 3: Runner (main Next.js app)
 FROM node:24-alpine AS runner

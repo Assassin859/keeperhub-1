@@ -1,0 +1,149 @@
+# Type: standalone | Builds and deploys scheduler services (dispatcher, block-dispatcher).
+# Runs independently from ci-pipeline.yml because the scheduler has its own
+# Dockerfile, ECR repos, and Helm releases separate from the main app.
+on:
+  push:
+    branches:
+      - staging
+      - prod
+    paths:
+      - "keeperhub-scheduler/**"
+      - "deploy/scheduler/**"
+      - ".github/workflows/deploy-scheduler.yaml"
+  workflow_dispatch:
+
+name: deploy-scheduler
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-scheduler-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    environment: ${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
+    runs-on: ubuntu-latest
+    env:
+      REGION: ${{ vars.TO_REGION }}
+      CLUSTER_NAME: ${{ vars.TO_CLUSTER_NAME }}
+      ENVIRONMENT_TAG: ${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
+      NAMESPACE: keeperhub
+      SCHEDULER_ECR_NAME: keeperhub-scheduler-${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
+      DISPATCHER_HELM_FILE: deploy/scheduler/${{ github.ref_name == 'prod' && 'prod' || 'staging' }}/dispatcher-values.yaml
+      BLOCK_DISPATCHER_HELM_FILE: deploy/scheduler/${{ github.ref_name == 'prod' && 'prod' || 'staging' }}/block-dispatcher-values.yaml
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Check commit message for skip flags
+        id: skip
+        run: |
+          MSG=$(git log -1 --format=%B)
+          echo "skip_build=$([[ "$MSG" == *"[skip build]"* ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "skip_deploy=$([[ "$MSG" == *"[skip deploy]"* ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.TO_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.TO_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.REGION }}
+
+      - name: Login to AWS ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        if: steps.skip.outputs.skip_build != 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract commit hash
+        id: vars
+        run: |
+          echo "sha_short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Check if scheduler images already exist
+        if: steps.skip.outputs.skip_build == 'true'
+        run: |
+          IMAGE_TAG="${{ steps.vars.outputs.sha_short }}"
+          for prefix in schedule block; do
+            if ! aws ecr describe-images \
+              --repository-name "$SCHEDULER_ECR_NAME" \
+              --image-ids "imageTag=${prefix}-${IMAGE_TAG}" \
+              --region "${{ env.REGION }}" >/dev/null 2>&1; then
+              echo "::error::Cannot skip build: ${prefix}-${IMAGE_TAG} not found in ${SCHEDULER_ECR_NAME}. Remove [skip build] or push a build first."
+              exit 1
+            fi
+            echo "${prefix}-${IMAGE_TAG} exists in ${SCHEDULER_ECR_NAME}"
+          done
+
+      - name: Build and push scheduler images
+        if: steps.skip.outputs.skip_build != 'true'
+        uses: docker/bake-action@v6
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          SCHEDULER_ECR_REPO: ${{ env.SCHEDULER_ECR_NAME }}
+          IMAGE_TAG: ${{ steps.vars.outputs.sha_short }}
+          ENVIRONMENT_TAG: ${{ env.ENVIRONMENT_TAG }}
+        with:
+          files: docker-bake.hcl
+          targets: scheduler
+          push: true
+
+      - name: Replace variables in Helm values files
+        if: steps.skip.outputs.skip_deploy != 'true'
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.vars.outputs.sha_short }}
+          AWS_ACCOUNT_ID: ${{ vars.TO_AWS_ACCOUNT_ID }}
+        run: |
+          for f in "$DISPATCHER_HELM_FILE" "$BLOCK_DISPATCHER_HELM_FILE"; do
+            sed -i "s|\${ECR_REGISTRY}|${ECR_REGISTRY}|g" "$f"
+            sed -i "s|\${IMAGE_TAG}|${IMAGE_TAG}|g" "$f"
+            sed -i "s|\${AWS_ACCOUNT_ID}|${AWS_ACCOUNT_ID}|g" "$f"
+          done
+
+      - name: Configure kubectl
+        if: steps.skip.outputs.skip_deploy != 'true'
+        run: |
+          aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region ${{ env.REGION }}
+
+      - name: Ensure namespace exists
+        if: steps.skip.outputs.skip_deploy != 'true'
+        run: |
+          kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy scheduler-dispatcher
+        if: steps.skip.outputs.skip_deploy != 'true'
+        uses: bitovi/github-actions-deploy-eks-helm@v1.2.12
+        with:
+          cluster-name: ${{ env.CLUSTER_NAME }}
+          config-files: ${{ env.DISPATCHER_HELM_FILE }}
+          chart-path: techops-services/common
+          namespace: ${{ env.NAMESPACE }}
+          timeout: 5m0s
+          name: keeperhub-schedule
+          chart-repository: https://techops-services.github.io/helm-charts
+          version: 0.2.1
+          atomic: true
+
+      - name: Deploy block-dispatcher
+        if: steps.skip.outputs.skip_deploy != 'true'
+        uses: bitovi/github-actions-deploy-eks-helm@v1.2.12
+        with:
+          cluster-name: ${{ env.CLUSTER_NAME }}
+          config-files: ${{ env.BLOCK_DISPATCHER_HELM_FILE }}
+          chart-path: techops-services/common
+          namespace: ${{ env.NAMESPACE }}
+          timeout: 5m0s
+          name: keeperhub-block
+          chart-repository: https://techops-services.github.io/helm-charts
+          version: 0.2.1
+          atomic: true

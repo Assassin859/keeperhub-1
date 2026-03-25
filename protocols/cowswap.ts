@@ -236,5 +236,27 @@ export default defineProtocol({
         },
       ],
     },
+    {
+      slug: "create-conditional-order",
+      label: "Create Conditional Order",
+      description:
+        "Create a programmatic conditional order (TWAP, stop-loss) on ComposableCoW that will be automatically executed when conditions are met",
+      type: "write",
+      contract: "composableCow",
+      function: "create",
+      inputs: [
+        {
+          name: "params",
+          type: "bytes",
+          label:
+            "Conditional Order Params (ABI-encoded ConditionalOrderParams struct)",
+        },
+        {
+          name: "dispatch",
+          type: "bool",
+          label: "Dispatch (true to emit event for watchtower to pick up)",
+        },
+      ],
+    },
   ],
 });

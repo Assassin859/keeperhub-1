@@ -26,7 +26,8 @@ export type ApiKeyAuthResult = {
   authenticated: boolean;
   organizationId?: string;
   apiKeyId?: string;
-  userId?: string; // User who created the API key (for ownership tracking)
+  userId?: string;
+  scope?: string;
   error?: string;
   statusCode?: number;
 };

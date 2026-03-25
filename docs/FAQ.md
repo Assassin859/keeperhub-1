@@ -157,53 +157,33 @@ The KeeperHub [MCP server](/ai-tools/mcp-server) lets AI agents (Claude, custom 
 
 ### How do I set up the MCP server?
 
-You need an organization-scoped API key (prefix `kh_`). Create one in Settings > API Keys > Organisation tab.
+The fastest way is to connect directly to KeeperHub's hosted MCP server:
 
-Then pick a transport mode:
-
-**Docker (recommended):**
 ```bash
-docker build -t keeperhub-mcp .
-docker run -i --rm -e KEEPERHUB_API_KEY=kh_your_key keeperhub-mcp
+claude mcp add --transport http keeperhub https://app.keeperhub.com/mcp
 ```
 
-**Node.js:**
-```bash
-pnpm install && pnpm build
-KEEPERHUB_API_KEY=kh_your_key pnpm start
-```
-
-**Via Claude Code Plugin** -- if you install the [Claude Code plugin](/ai-tools/claude-code-plugin), the MCP server is set up automatically. No manual config needed.
-
-Source code and full docs: [github.com/KeeperHub/keeperhub-mcp](https://github.com/KeeperHub/keeperhub-mcp)
+Then run `/mcp` inside Claude Code and authorize via browser. No CLI or plugin installation needed.
 
 ### How do I connect Claude Code to KeeperHub?
 
-Add this to your MCP client config (e.g. `~/.claude.json`):
+**Option A (remote, no install):**
 
-```json
-{
-  "mcpServers": {
-    "keeperhub": {
-      "command": "docker",
-      "args": ["run", "-i", "--rm", "-e", "KEEPERHUB_API_KEY", "keeperhub-mcp"],
-      "env": {
-        "KEEPERHUB_API_KEY": "kh_your_key_here"
-      }
-    }
-  }
-}
+```bash
+claude mcp add --transport http keeperhub https://app.keeperhub.com/mcp
 ```
 
-Or skip the manual config entirely -- install the Claude Code plugin and run `/keeperhub:login`:
+Run `/mcp` in Claude Code to authorize via browser.
+
+**Option B (plugin with local CLI):**
 
 ```bash
 /plugin marketplace add KeeperHub/claude-plugins
-/plugin install keeperhub@techops-plugins
+/plugin install keeperhub@keeperhub-plugins
 /keeperhub:login
 ```
 
-Restart Claude Code after setup. You can verify with `/keeperhub:status`.
+Restart Claude Code after setup. Verify with `/keeperhub:status`.
 
 ### What's the difference between `kh_` and `wfb_` API keys?
 

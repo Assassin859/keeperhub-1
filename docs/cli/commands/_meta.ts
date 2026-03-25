@@ -51,6 +51,7 @@ export default {
   kh_wallet_balance: "kh wallet balance",
   kh_wallet_tokens: "kh wallet tokens",
   kh_workflow: "kh workflow",
+  kh_workflow_delete: "kh workflow delete",
   kh_workflow_get: "kh workflow get",
   "kh_workflow_go-live": "kh workflow go-live",
   kh_workflow_list: "kh workflow list",

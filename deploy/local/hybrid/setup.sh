@@ -114,8 +114,8 @@ start_minikube() {
     log_info "Minikube is ready"
 }
 
-deploy_scheduler() {
-    log_info "Building images and deploying scheduler to Minikube..."
+deploy_executor() {
+    log_info "Building images and deploying executor to Minikube..."
     "$SCRIPT_DIR/deploy.sh" --build
 }
 
@@ -129,11 +129,9 @@ show_status() {
     echo "  - redis (caching + event sync)"
     echo "  - app-dev (KeeperHub Next.js)"
     echo "  - dispatcher (schedule polling)"
-    echo "  - sc-event-worker (blockchain event dispatch)"
-    echo "  - sc-event-tracker (blockchain event monitoring)"
+    echo "  - event-tracker (blockchain event monitoring)"
     echo ""
     echo "Services running in Minikube:"
-    echo "  - schedule-executor (polls SQS, executes via API)"
     echo ""
     echo "Access points:"
     echo "  App:  http://localhost:3000"
@@ -155,7 +153,7 @@ main() {
     start_docker_compose
     run_migrations
     start_minikube
-    deploy_scheduler
+    deploy_executor
     show_status
 }
 

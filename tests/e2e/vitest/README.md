@@ -25,7 +25,7 @@ pnpm dev
 watch -n 60 'DATABASE_URL="postgresql://postgres:postgres@localhost:5432/workflow_builder" npx tsx scripts/scheduler/schedule-dispatcher.ts'
 
 # Terminal 2 - Executor (long-running)
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/workflow_builder" npx tsx scripts/scheduler/schedule-executor.ts
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/workflow_builder" npx tsx scripts/scheduler/.ts
 ```
 
 ### Option 2: Minikube (K8s Local)
@@ -44,7 +44,7 @@ kubectl apply -f k8s/keeperhub.yaml
 kubectl apply -f k8s/schedule-dispatcher-cronjob.yaml
 
 # Deploy the executor Deployment
-kubectl apply -f k8s/schedule-executor-deployment.yaml
+kubectl apply -f k8s/-deployment.yaml
 ```
 
 ## Running E2E Tests

@@ -10,7 +10,6 @@ if [[ -z "$PR_NUMBER" ]]; then
   echo "[ERROR] Usage: $0 <PR_NUMBER> [component] [--lines N] [--errors]" >&2
   echo "" >&2
   echo "Components: app (default), db, db-migration, scheduler-dispatcher," >&2
-  echo "            scheduler-executor, event-tracker, event-worker, localstack, redis, all" >&2
   echo "" >&2
   echo "Options:" >&2
   echo "  --lines N   Number of log lines (default: 100)" >&2
@@ -85,9 +84,6 @@ get_selector() {
     event-tracker)
       echo "app.kubernetes.io/instance=events-tracker-pr-${PR_NUMBER}"
       ;;
-    event-worker)
-      echo "app.kubernetes.io/instance=events-worker-pr-${PR_NUMBER}"
-      ;;
     localstack)
       echo "app=localstack,pr=pr-${PR_NUMBER}"
       ;;
@@ -112,7 +108,6 @@ fetch_component_logs() {
 
   if [[ -z "$selector" ]]; then
     echo "[ERROR] Unknown component: ${comp}" >&2
-    echo "Valid components: app, db, db-migration, scheduler-dispatcher, scheduler-executor, event-tracker, event-worker, localstack, redis, all" >&2
     return 1
   fi
 
@@ -154,7 +149,6 @@ fetch_component_logs() {
   done
 }
 
-ALL_COMPONENTS=(app db db-migration scheduler-dispatcher scheduler-executor event-tracker event-worker localstack redis)
 
 if [[ "$COMPONENT" == "all" ]]; then
   echo "Fetching summary logs for all components in ${NAMESPACE}..."

@@ -1,12 +1,12 @@
-# Scheduler Dispatcher for PR environments
-# Uses pre-built staging image (from keeperhub-scheduler submodule)
+# Schedule Dispatcher for PR environments
+# Uses pre-built staging image
 # Variables to be replaced: ${PR_NUMBER}, ${ECR_REGISTRY}
 
 replicaCount: 1
 
 service:
   enabled: true
-  name: scheduler-dispatcher-pr-${PR_NUMBER}
+  name: schedule-pr-${PR_NUMBER}
   type: ClusterIP
   port: 3000
   containerPort: 3000
@@ -18,7 +18,7 @@ ingress:
 
 image:
   repository: ${ECR_REGISTRY}/keeperhub-scheduler-staging
-  tag: dispatcher-latest
+  tag: schedule-latest
   pullPolicy: Always
 
 deployment:

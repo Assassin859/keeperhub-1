@@ -1,0 +1,26 @@
+{
+  "name": "@techops/events-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write ."
+  },
+  "dependencies": {
+    "@aws-sdk/client-sqs": "^3.1005.0",
+    "axios": "^1.11.0",
+    "deep-diff": "^1.0.2",
+    "ethers": "^6.13.4",
+    "ioredis": "^5.4.2",
+    "tsx": "^4.0.0",
+    "uuid": "^11.0.4"
+  },
+  "devDependencies": {
+    "@types/deep-diff": "^1.0.5",
+    "@types/uuid": "^10.0.0"
+  }
+}

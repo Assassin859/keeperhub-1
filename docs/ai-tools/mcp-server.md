@@ -5,79 +5,42 @@ description: "Model Context Protocol server for AI agents to build and manage Ke
 
 # MCP Server
 
-[GitHub](https://github.com/KeeperHub/keeperhub-mcp)
+The KeeperHub MCP server exposes tools over the Model Context Protocol, enabling AI agents to create, execute, and monitor blockchain automation workflows.
 
-The KeeperHub MCP server exposes 19 tools over the Model Context Protocol, enabling AI agents to create, execute, and monitor blockchain automation workflows.
+## Connect to KeeperHub MCP
 
-## Installation
+### Remote (recommended)
 
-### Docker (recommended)
+Connect directly to KeeperHub's hosted MCP server. No local process or CLI installation needed.
 
 ```bash
-docker build -t keeperhub-mcp .
-docker run -i --rm -e KEEPERHUB_API_KEY=kh_your_key keeperhub-mcp
+claude mcp add --transport http keeperhub https://app.keeperhub.com/mcp
 ```
 
-### Node.js
+Then run `/mcp` inside Claude Code to complete the OAuth authorization via browser. KeeperHub will ask you to approve access, and the token is stored automatically.
+
+For headless or CI environments where browser auth is not available, pass an API key:
 
 ```bash
-pnpm install
-pnpm build
-KEEPERHUB_API_KEY=kh_your_key pnpm start
+claude mcp add --transport http keeperhub https://app.keeperhub.com/mcp \
+  --header "Authorization: Bearer kh_your_key_here"
 ```
 
 ### Via Claude Code Plugin
 
-If you installed the [Claude Code Plugin](/ai-tools/claude-code-plugin), the MCP server is auto-installed at `~/.claude/keeperhub/mcp-server`. No manual setup needed.
+Install the [Claude Code Plugin](/ai-tools/claude-code-plugin) for additional skills and slash commands on top of the MCP tools. The plugin connects to the same remote endpoint.
 
-## Configuration
+### Local via kh CLI (deprecated)
 
-### Environment Variables
+The [`kh` CLI](https://github.com/KeeperHub/cli) can run a local MCP server over stdio via `kh serve --mcp`. This is deprecated in favor of the remote endpoint above and will be removed in a future release.
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `KEEPERHUB_API_KEY` | Yes | -- | Organization API key (prefix `kh_`) |
-| `KEEPERHUB_API_URL` | No | `https://app.keeperhub.com` | API base URL |
-| `PORT` | No | -- | Set to enable HTTP/SSE mode (leave unset for stdio) |
-| `MCP_API_KEY` | No | -- | Required if PORT is set; authenticates MCP requests |
+## Authentication
 
-### Transport Modes
+The MCP endpoint supports two authentication methods:
 
-**Stdio (default)** -- For local MCP clients like Claude Code. Uses stdin/stdout.
+**OAuth 2.1 (browser-based):** When you add the remote MCP server, Claude Code discovers the OAuth metadata at `/.well-known/oauth-authorization-server` and opens a browser for authorization. Tokens are managed automatically (1-hour access tokens, 30-day refresh tokens).
 
-**HTTP/SSE** -- For remote AI agents. Set `PORT` and `MCP_API_KEY`. All requests require `Authorization: Bearer <MCP_API_KEY>`.
-
-### MCP Client Configuration
-
-**Claude Code (stdio):**
-```json
-{
-  "mcpServers": {
-    "keeperhub": {
-      "command": "docker",
-      "args": ["run", "-i", "--rm", "-e", "KEEPERHUB_API_KEY", "keeperhub-mcp"],
-      "env": {
-        "KEEPERHUB_API_KEY": "kh_your_key_here"
-      }
-    }
-  }
-}
-```
-
-**Claude Code (local development):**
-```json
-{
-  "mcpServers": {
-    "keeperhub": {
-      "command": "node",
-      "args": ["/path/to/keeperhub-mcp/dist/index.js"],
-      "env": {
-        "KEEPERHUB_API_KEY": "kh_your_key_here"
-      }
-    }
-  }
-}
-```
+**API keys (headless):** Pass an organization API key (`kh_` prefix) as a Bearer token. Create one at [app.keeperhub.com](https://app.keeperhub.com) under Settings > API Keys > Organisation tab.
 
 ## Tools Reference
 
@@ -239,16 +202,6 @@ Conditions reference previous node outputs using template syntax: `{{@nodeId:Lab
 Get the `walletId` by calling `get_wallet_integration`.
 
 The `network` field accepts chain IDs as strings: `"1"` (Ethereum mainnet), `"11155111"` (Sepolia), `"8453"` (Base), `"42161"` (Arbitrum), `"137"` (Polygon).
-
-## HTTP Endpoints
-
-When running in HTTP/SSE mode (PORT is set):
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/health` | Optional | Health check |
-| GET | `/sse` | Required | Establish SSE connection |
-| POST | `/message?sessionId=...` | Required | Send MCP message |
 
 ## Error Handling
 

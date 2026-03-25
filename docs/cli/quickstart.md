@@ -63,19 +63,23 @@ kh protocol list
 
 ## MCP Server Mode
 
-The CLI can act as an [MCP](https://modelcontextprotocol.io) server, exposing KeeperHub actions as tools to AI assistants.
+KeeperHub exposes its actions as tools to AI assistants via the [Model Context Protocol](https://modelcontextprotocol.io).
 
-**Start the MCP server:**
+**Recommended: remote HTTP endpoint (no local server required):**
 ```
-kh serve --mcp
+claude mcp add --transport http keeperhub https://app.keeperhub.com/mcp
 ```
 
 **Add to Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 ```json
-{ "mcpServers": { "keeperhub": { "command": "kh", "args": ["serve", "--mcp"] } } }
+{ "mcpServers": { "keeperhub": { "type": "http", "url": "https://app.keeperhub.com/mcp" } } }
 ```
 
 Restart Claude Desktop. KeeperHub tools will appear in the tool list.
+
+**Legacy: local stdio server (deprecated):**
+
+`kh serve --mcp` starts a local MCP stdio server. This mode is deprecated. Prefer the remote HTTP endpoint above.
 
 ## Next Steps
 

@@ -1,0 +1,17 @@
+{
+  "name": "@techops/events",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "typecheck": "pnpm -r typecheck",
+    "format": "biome format --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/node": "^22.15.17",
+    "tsx": "^4.19.2",
+    "typescript": "^5.8.3"
+  }
+}

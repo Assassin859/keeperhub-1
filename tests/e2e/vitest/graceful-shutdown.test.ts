@@ -179,7 +179,7 @@ function spawnWorkflowRunner(
 
   const scriptPath = path.join(
     PROJECT_ROOT,
-    "scripts/runtime/workflow-runner-bootstrap.ts"
+    "keeperhub-executor/workflow-runner-bootstrap.ts"
   );
 
   return spawn("npx", ["tsx", scriptPath], {

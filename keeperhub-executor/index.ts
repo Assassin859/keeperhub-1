@@ -1,0 +1,362 @@
+/**
+ * Unified Workflow Executor
+ *
+ * Polls a single SQS queue for all trigger types (schedule, block, event)
+ * and executes workflows either in isolated K8s Jobs or in-process,
+ * depending on whether the workflow contains web3 write actions.
+ *
+ * Usage:
+ *   tsx keeperhub-executor/index.ts
+ *
+ * Environment variables:
+ *   DATABASE_URL - PostgreSQL connection string
+ *   SQS_QUEUE_URL - SQS queue URL (single queue for all trigger types)
+ *   AWS_REGION - AWS region (default: us-east-1)
+ *   AWS_ENDPOINT_URL - LocalStack endpoint (local dev only)
+ *   RUNNER_IMAGE - Docker image for K8s Job workflow runner
+ *   K8S_NAMESPACE - Kubernetes namespace for Jobs
+ *   INTEGRATION_ENCRYPTION_KEY - Key for decrypting credentials
+ *   HEALTH_PORT - Health check server port (default: 3080)
+ *   JOB_TTL_SECONDS - Time to keep completed K8s Jobs (default: 3600)
+ *   JOB_ACTIVE_DEADLINE - Max Job execution time in seconds (default: 300)
+ */
+
+import { createServer } from "node:http";
+import {
+  DeleteMessageCommand,
+  type Message,
+  ReceiveMessageCommand,
+  SQSClient,
+} from "@aws-sdk/client-sqs";
+import { eq } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
+import {
+  workflowExecutions,
+  workflowSchedules,
+  workflows,
+} from "../lib/db/schema";
+import { generateId } from "../lib/utils/id";
+import type { WorkflowNode } from "../lib/workflow-store";
+import { executeViaApi } from "./api-execute";
+import { CONFIG } from "./config";
+import { resolveDispatchTarget } from "./execution-mode";
+import { executeInProcess } from "./in-process";
+import { createWorkflowJob } from "./k8s-job";
+import { toJsonSafe } from "./lib/serialize";
+import type { ExecutorMessage, ScheduleMessage } from "./types";
+
+// Database
+const queryClient = postgres(CONFIG.databaseUrl, {
+  connect_timeout: 10,
+  idle_timeout: 30,
+  max_lifetime: 60 * 5,
+  connection: { statement_timeout: 30_000 },
+});
+const db = drizzle(queryClient, {
+  schema: { workflows, workflowExecutions, workflowSchedules },
+});
+
+// SQS
+const sqsConfig: ConstructorParameters<typeof SQSClient>[0] = {
+  region: CONFIG.awsRegion,
+};
+
+if (CONFIG.awsEndpoint) {
+  sqsConfig.endpoint = CONFIG.awsEndpoint;
+  sqsConfig.credentials = {
+    accessKeyId: CONFIG.awsAccessKeyId,
+    secretAccessKey: CONFIG.awsSecretAccessKey,
+  };
+}
+
+const sqs = new SQSClient(sqsConfig);
+
+function buildInput(message: ExecutorMessage): Record<string, unknown> {
+  switch (message.triggerType) {
+    case "schedule":
+      return {
+        triggerType: "schedule",
+        scheduleId: message.scheduleId,
+        triggerTime: message.triggerTime,
+      };
+    case "block":
+      return {
+        triggerType: "block",
+        ...message.triggerData,
+      };
+    case "event":
+      return {
+        triggerType: "event",
+        ...message.triggerData,
+      };
+    default: {
+      const _exhaustive: never = message;
+      throw new Error(
+        `Unknown trigger type: ${(_exhaustive as ExecutorMessage).triggerType}`
+      );
+    }
+  }
+}
+
+async function validateSchedule(scheduleId: string): Promise<boolean> {
+  const schedule = await db.query.workflowSchedules.findFirst({
+    where: eq(workflowSchedules.id, scheduleId),
+  });
+
+  if (!schedule) {
+    console.error(`[Executor] Schedule not found: ${scheduleId}`);
+    return false;
+  }
+
+  if (!schedule.enabled) {
+    console.log(`[Executor] Schedule disabled, skipping: ${scheduleId}`);
+    return false;
+  }
+
+  return true;
+}
+
+function getScheduleId(message: ExecutorMessage): string | undefined {
+  return message.triggerType === "schedule" ? message.scheduleId : undefined;
+}
+
+async function dispatchExecution(params: {
+  target: string;
+  workflowId: string;
+  executionId: string;
+  input: Record<string, unknown>;
+  triggerType: string;
+  scheduleId?: string;
+}): Promise<void> {
+  const { target, workflowId, executionId, input, triggerType, scheduleId } =
+    params;
+
+  switch (target) {
+    case "k8s-job": {
+      try {
+        const job = await createWorkflowJob({
+          workflowId,
+          executionId,
+          input,
+          triggerType,
+          scheduleId,
+        });
+
+        console.log(
+          `[Executor] Created K8s Job: ${job.metadata?.name} for execution ${executionId}`
+        );
+      } catch (error) {
+        console.error("[Executor] Failed to create K8s Job:", error);
+
+        await db
+          .update(workflowExecutions)
+          .set({
+            status: "error",
+            error:
+              error instanceof Error
+                ? `Failed to create job: ${error.message}`
+                : "Failed to create job",
+            completedAt: new Date(),
+          })
+          .where(eq(workflowExecutions.id, executionId));
+
+        throw error;
+      }
+      break;
+    }
+    case "api": {
+      await executeViaApi({ workflowId, executionId, input });
+      break;
+    }
+    case "in-process": {
+      await executeInProcess({
+        workflowId,
+        executionId,
+        input,
+        scheduleId,
+        db,
+      });
+      break;
+    }
+    default:
+      throw new Error(`Unknown dispatch target: ${target}`);
+  }
+}
+
+async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
+  const { workflowId, triggerType } = message;
+
+  console.log(
+    `[Executor] Processing ${triggerType} trigger for workflow ${workflowId}`
+  );
+
+  const workflow = await db.query.workflows.findFirst({
+    where: eq(workflows.id, workflowId),
+  });
+
+  if (!workflow) {
+    console.error(`[Executor] Workflow not found: ${workflowId}`);
+    return;
+  }
+
+  if (!workflow.enabled) {
+    console.log(`[Executor] Workflow disabled, skipping: ${workflowId}`);
+    return;
+  }
+
+  if (triggerType === "schedule") {
+    const valid = await validateSchedule(
+      (message as ScheduleMessage).scheduleId
+    );
+    if (!valid) {
+      return;
+    }
+  }
+
+  const executionId = generateId();
+  const input = buildInput(message);
+  const userId = "userId" in message ? message.userId : workflow.userId;
+
+  await db.insert(workflowExecutions).values({
+    id: executionId,
+    workflowId,
+    userId,
+    status: "pending",
+    input: toJsonSafe(input) as Record<string, unknown>,
+  });
+
+  console.log(`[Executor] Created execution record: ${executionId}`);
+
+  const nodes = workflow.nodes as WorkflowNode[];
+  const target = resolveDispatchTarget(nodes);
+  console.log(
+    `[Executor] Dispatch target: ${target} (mode: ${CONFIG.executionMode})`
+  );
+
+  await dispatchExecution({
+    target,
+    workflowId,
+    executionId,
+    input,
+    triggerType,
+    scheduleId: getScheduleId(message),
+  });
+}
+
+async function processMessage(message: Message): Promise<void> {
+  if (!(message.Body && message.ReceiptHandle)) {
+    console.error("[Executor] Invalid message:", message);
+    return;
+  }
+
+  let body: ExecutorMessage;
+  try {
+    body = JSON.parse(message.Body);
+  } catch {
+    console.error("[Executor] Malformed message body, deleting:", message.Body);
+    await sqs.send(
+      new DeleteMessageCommand({
+        QueueUrl: CONFIG.sqsQueueUrl,
+        ReceiptHandle: message.ReceiptHandle,
+      })
+    );
+    return;
+  }
+
+  try {
+    await processExecutorMessage(body);
+
+    await sqs.send(
+      new DeleteMessageCommand({
+        QueueUrl: CONFIG.sqsQueueUrl,
+        ReceiptHandle: message.ReceiptHandle,
+      })
+    );
+
+    console.log(`[Executor] Message deleted for workflow ${body.workflowId}`);
+  } catch (error) {
+    console.error(
+      `[Executor] Failed to process workflow ${body.workflowId}:`,
+      error
+    );
+  }
+}
+
+async function listen(): Promise<void> {
+  console.log("[Executor] Starting unified workflow executor...");
+  console.log(`[Executor] Execution mode: ${CONFIG.executionMode}`);
+  console.log(`[Executor] Queue URL: ${CONFIG.sqsQueueUrl}`);
+  console.log(`[Executor] Runner image: ${CONFIG.runnerImage}`);
+  console.log(`[Executor] K8s namespace: ${CONFIG.namespace}`);
+
+  // Health check server
+  const healthServer = createServer((req, res) => {
+    if (req.url === "/health" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          status: "ok",
+          service: "keeperhub-executor",
+          timestamp: new Date().toISOString(),
+        })
+      );
+    } else {
+      res.writeHead(404);
+      res.end();
+    }
+  });
+
+  healthServer.listen(CONFIG.healthPort, () => {
+    console.log(
+      `[Executor] Health check server listening on port ${CONFIG.healthPort}`
+    );
+  });
+
+  const shutdown = async (): Promise<void> => {
+    console.log("\n[Executor] Shutting down...");
+    healthServer.close();
+    await queryClient.end();
+    console.log("[Executor] Shutdown complete");
+    process.exit(0);
+  };
+
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+
+  // SQS polling loop
+  while (true) {
+    try {
+      const response = await sqs.send(
+        new ReceiveMessageCommand({
+          QueueUrl: CONFIG.sqsQueueUrl,
+          MaxNumberOfMessages: CONFIG.maxMessages,
+          WaitTimeSeconds: CONFIG.waitTimeSeconds,
+          VisibilityTimeout: CONFIG.visibilityTimeout,
+          MessageAttributeNames: ["All"],
+        })
+      );
+
+      const messages = response.Messages || [];
+
+      if (messages.length > 0) {
+        console.log(`[Executor] Received ${messages.length} messages`);
+
+        const results = await Promise.allSettled(
+          messages.map((msg) => processMessage(msg))
+        );
+
+        for (const [idx, result] of results.entries()) {
+          if (result.status === "rejected") {
+            console.error(`[Executor] Message ${idx} failed:`, result.reason);
+          }
+        }
+      }
+    } catch (error) {
+      console.error("[Executor] Error receiving messages:", error);
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+  }
+}
+
+listen();

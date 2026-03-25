@@ -1,16 +1,16 @@
 import "server-only";
 
 import { and, count, desc, eq, gte, lt, sql } from "drizzle-orm";
-import {
-  directExecutions,
-  organizationSpendCaps,
-} from "@/db/schema-extensions";
 import { db } from "@/lib/db";
 import {
   workflowExecutionLogs,
   workflowExecutions,
   workflows,
 } from "@/lib/db/schema";
+import {
+  directExecutions,
+  organizationSpendCaps,
+} from "@/lib/db/schema-extensions";
 import {
   getBucketInterval,
   getPreviousPeriodStart,

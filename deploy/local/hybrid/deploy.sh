@@ -2,7 +2,7 @@
 # =============================================================================
 # Hybrid Mode Deployment Script
 #
-# Deploys only the scheduler components (dispatcher, job-spawner) to Minikube,
+# Deploys only the scheduler components (executor) to Minikube,
 # connecting to Docker Compose services running on the host.
 #
 # Prerequisites:
@@ -56,6 +56,13 @@ check_prerequisites() {
         fi
     fi
 
+    # Check /etc/hosts entry (required for minikube to reach Docker Compose services)
+    if ! grep -q "host.minikube.internal" /etc/hosts 2>/dev/null; then
+        log_error "host.minikube.internal not found in /etc/hosts"
+        log_error "Run: echo '127.0.0.1 host.minikube.internal' | sudo tee -a /etc/hosts"
+        exit 1
+    fi
+
     # Check kubectl context
     CURRENT_CONTEXT=$(kubectl config current-context 2>/dev/null || echo "none")
     if [[ "$CURRENT_CONTEXT" != "minikube" ]]; then
@@ -74,50 +81,43 @@ create_namespace() {
 }
 
 build_and_load_images() {
-    log_info "Building images directly in Minikube's Docker daemon..."
+    log_info "Building images on host Docker and loading into minikube..."
 
     cd "$PROJECT_ROOT"
 
-    # Use minikube's Docker daemon to build directly (faster than build + load)
-    eval "$(minikube docker-env)"
+    log_info "Building keeperhub-executor:latest..."
+    docker build --target executor -t keeperhub-executor:latest .
 
-    # Build executor image from submodule (schedule-executor: polls SQS, calls API)
-    log_info "Building keeperhub-executor:latest in minikube..."
-    docker build --target executor -t keeperhub-executor:latest ./keeperhub-scheduler
+    log_info "Building keeperhub-runner:latest..."
+    docker build --target workflow-runner -t keeperhub-runner:latest .
 
-    # Reset to host Docker daemon
-    eval "$(minikube docker-env -u)"
+    log_info "Loading images into minikube..."
+    minikube image load keeperhub-executor:latest
+    minikube image load keeperhub-runner:latest
 
-    log_info "Images built directly in minikube (no load needed)"
+    log_info "Images built and loaded into minikube"
 }
 
 generate_manifest() {
-    # Generate or use existing encryption key
-    # For local development, we use a deterministic key; in production, this would be securely managed
     local ENCRYPTION_KEY="${INTEGRATION_ENCRYPTION_KEY:-$(openssl rand -hex 32 2>/dev/null || echo '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef')}"
     local ENCRYPTION_KEY_BASE64
     ENCRYPTION_KEY_BASE64=$(echo -n "$ENCRYPTION_KEY" | base64 -w0)
 
-    # Source .env for consistency with docker-compose (picks up POSTGRES_DB, etc.)
     if [ -f "$PROJECT_ROOT/.env" ]; then
         set -a
         . "$PROJECT_ROOT/.env"
         set +a
     fi
 
-    # Support custom database name for worktrees (default: keeperhub)
     local DB_NAME="${POSTGRES_DB:-keeperhub}"
 
     log_info "Using encryption key (first 8 chars): ${ENCRYPTION_KEY:0:8}..."
     log_info "Using database: $DB_NAME"
 
-    # Generate the schedule-trigger.yaml with hybrid settings
-    # First part with variable expansion for the secret
     cat > "$SCRIPT_DIR/schedule-trigger-hybrid.yaml" << EOF
-# Schedule Trigger Components for KeeperHub (Hybrid Mode)
+# Executor Components for KeeperHub (Hybrid Mode)
 # Connects to Docker Compose services via host.minikube.internal
 ---
-# Secret for workflow runner (integration credential decryption)
 apiVersion: v1
 kind: Secret
 metadata:
@@ -128,124 +128,131 @@ data:
   integration-encryption-key: $ENCRYPTION_KEY_BASE64
 EOF
 
-    # Append the rest of the manifest (no variable expansion needed)
     cat >> "$SCRIPT_DIR/schedule-trigger-hybrid.yaml" << 'EOF'
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: scheduler-env
+  name: executor-env
   namespace: local
 data:
-  # AWS/LocalStack - connects to Docker Compose
   AWS_ENDPOINT_URL: "http://host.minikube.internal:4566"
   AWS_REGION: "us-east-1"
   AWS_ACCESS_KEY_ID: "test"
   AWS_SECRET_ACCESS_KEY: "test"
   SQS_QUEUE_URL: "http://host.minikube.internal:4566/000000000000/keeperhub-workflow-queue"
-  # Database - connects to Docker Compose PostgreSQL (port 5433 exposed on host)
   DATABASE_URL: "postgresql://postgres:postgres@host.minikube.internal:5433/__DB_NAME__"
-  # KeeperHub API - connects to Docker Compose app (port 3000 exposed on host)
   KEEPERHUB_API_URL: "http://host.minikube.internal:3000"
   KEEPERHUB_API_KEY: "local-scheduler-key-for-dev"
+  RUNNER_IMAGE: "keeperhub-runner:latest"
+  IMAGE_PULL_POLICY: "Never"
+  K8S_NAMESPACE: "local"
+  HEALTH_PORT: "3080"
 ---
-# ServiceAccount for job-spawner to create K8s Jobs
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: job-spawner
+  name: executor
   namespace: local
 ---
-# Role for schedule-executor service account
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: job-spawner-role
+  name: executor-role
   namespace: local
 rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
 ---
-# Bind role to service account
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: job-spawner-binding
+  name: executor-binding
   namespace: local
 subjects:
   - kind: ServiceAccount
-    name: job-spawner
+    name: executor
     namespace: local
 roleRef:
   kind: Role
-  name: job-spawner-role
+  name: executor-role
   apiGroup: rbac.authorization.k8s.io
 ---
-# Schedule Executor Deployment
-# Long-running process that polls SQS and executes workflows via KeeperHub API
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: job-spawner
+  name: executor
   namespace: local
   labels:
-    app: job-spawner
-    component: scheduler
+    app: executor
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: job-spawner
+      app: executor
   template:
     metadata:
       labels:
-        app: job-spawner
+        app: executor
     spec:
-      serviceAccountName: job-spawner
+      serviceAccountName: executor
       containers:
-        - name: spawner
+        - name: executor
           image: keeperhub-executor:latest
           imagePullPolicy: Never
           envFrom:
             - configMapRef:
-                name: scheduler-env
+                name: executor-env
+          env:
+            - name: INTEGRATION_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: keeperhub-secrets
+                  key: integration-encryption-key
+          ports:
+            - containerPort: 3080
           resources:
             requests:
-              memory: "128Mi"
-              cpu: "50m"
-            limits:
               memory: "256Mi"
-              cpu: "200m"
+              cpu: "100m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
           livenessProbe:
-            exec:
-              command:
-                - /bin/sh
-                - -c
-                - "pgrep -f 'schedule-executor' || exit 1"
+            httpGet:
+              path: /health
+              port: 3080
             initialDelaySeconds: 30
             periodSeconds: 30
             failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3080
+            initialDelaySeconds: 10
+            periodSeconds: 10
 EOF
 
-    # Replace placeholder with actual database name
     sed -i "s/__DB_NAME__/$DB_NAME/g" "$SCRIPT_DIR/schedule-trigger-hybrid.yaml"
 
     log_info "Generated hybrid manifest: $SCRIPT_DIR/schedule-trigger-hybrid.yaml"
 }
 
-deploy_scheduler() {
-    log_info "Deploying scheduler components to Minikube..."
+deploy_executor() {
+    log_info "Deploying executor to Minikube..."
 
     generate_manifest
     kubectl apply -f "$SCRIPT_DIR/schedule-trigger-hybrid.yaml"
 
-    log_info "Scheduler components deployed successfully"
+    log_info "Executor deployed successfully"
 
-    # Wait for job-spawner to be ready
-    log_info "Waiting for job-spawner to be ready..."
-    kubectl rollout status deployment/job-spawner -n "$NAMESPACE" --timeout=120s || {
-        log_warn "Job-spawner may not be fully ready yet. Check logs with: kubectl logs -n local -l app=job-spawner"
+    log_info "Waiting for executor to be ready..."
+    kubectl rollout status deployment/executor -n "$NAMESPACE" --timeout=120s || {
+        log_warn "Executor may not be fully ready yet. Check logs with: kubectl logs -n local -l app=executor"
     }
 }
 
@@ -258,12 +265,12 @@ teardown() {
         log_info "Scheduler components removed"
     else
         # Try to delete by name
-        kubectl delete deployment -n "$NAMESPACE" -l component=scheduler --ignore-not-found=true
-        kubectl delete configmap -n "$NAMESPACE" scheduler-env --ignore-not-found=true
+        kubectl delete deployment -n "$NAMESPACE" executor --ignore-not-found=true
+        kubectl delete configmap -n "$NAMESPACE" executor-env --ignore-not-found=true
         kubectl delete secret -n "$NAMESPACE" keeperhub-secrets --ignore-not-found=true
-        kubectl delete serviceaccount -n "$NAMESPACE" job-spawner --ignore-not-found=true
-        kubectl delete role -n "$NAMESPACE" job-spawner-role --ignore-not-found=true
-        kubectl delete rolebinding -n "$NAMESPACE" job-spawner-binding --ignore-not-found=true
+        kubectl delete serviceaccount -n "$NAMESPACE" executor --ignore-not-found=true
+        kubectl delete role -n "$NAMESPACE" executor-role --ignore-not-found=true
+        kubectl delete rolebinding -n "$NAMESPACE" executor-binding --ignore-not-found=true
         log_info "Executor components removed (by name)"
     fi
 }
@@ -281,8 +288,11 @@ show_status() {
     docker compose --profile minikube ps 2>/dev/null || echo "  Not running"
     echo ""
 
-    echo "Schedule Executor (Deployment):"
-    kubectl get pods -n "$NAMESPACE" -l app=job-spawner 2>/dev/null || echo "  Not found"
+    echo "Executor (Deployment):"
+    kubectl get pods -n "$NAMESPACE" -l app=executor 2>/dev/null || echo "  Not found"
+    echo ""
+    echo "Workflow Runner Jobs:"
+    kubectl get jobs -n "$NAMESPACE" -l app=workflow-runner --sort-by=.metadata.creationTimestamp 2>/dev/null | tail -5 || echo "  No jobs"
     echo ""
 }
 
@@ -298,7 +308,7 @@ case "${1:-}" in
         check_prerequisites
         create_namespace
         build_and_load_images
-        deploy_scheduler
+        deploy_executor
         show_status
         ;;
     --teardown)
@@ -310,7 +320,7 @@ case "${1:-}" in
     *)
         check_prerequisites
         create_namespace
-        deploy_scheduler
+        deploy_executor
         show_status
         ;;
 esac
@@ -320,9 +330,11 @@ log_info "=== Hybrid Mode Usage ==="
 echo ""
 echo "  App:          http://localhost:3000"
 echo ""
-echo "  Dispatcher (Docker Compose) polls for due schedules and sends to SQS."
-echo "  Executor (Minikube) polls SQS and executes workflows via KeeperHub API."
+echo "  Dispatchers (Docker Compose) send triggers to SQS."
+echo "  Executor (Minikube) polls SQS and runs workflows (in-process or K8s Job)."
 echo ""
 echo "  View executor logs:"
-echo "    kubectl logs -n $NAMESPACE -l app=job-spawner -f"
+echo "    kubectl logs -n $NAMESPACE -l app=executor -f"
+echo "  View workflow runner job logs:"
+echo "    kubectl logs -n $NAMESPACE -l app=workflow-runner --tail=50"
 echo ""

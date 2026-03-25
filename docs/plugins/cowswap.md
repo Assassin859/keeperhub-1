@@ -22,6 +22,13 @@ CoW Protocol is a decentralized exchange protocol that uses batch auctions to pr
 | Check Conditional Order | Read | None | Whether a conditional order is registered |
 | Get Cabinet Value | Read | None | Read conditional order handler state |
 | Remove Conditional Order | Write | Wallet | Remove a conditional order |
+| Create Conditional Order | Write | Wallet | Create a TWAP or stop-loss conditional order on ComposableCoW |
+| Get Quote | API | None | Get a price quote from the CoW Swap orderbook |
+| Get Order Status | API | None | Check the status of an order by UID |
+| Create Order | API | None | Submit a pre-built signed order to the orderbook |
+| Cancel Order | API | None | Cancel a pending order before it is filled |
+| Get Account Orders | API | None | List all orders for a wallet address |
+| Get Trades | API | None | Get executed trades for a wallet address |
 
 ## Get Domain Separator
 

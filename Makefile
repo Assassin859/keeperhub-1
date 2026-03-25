@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install dev build type-check lint fix deploy-to-local-kubernetes setup-local-kubernetes check-local-kubernetes status logs restart teardown db-create db-migrate db-studio build-scheduler-images deploy-scheduler scheduler-status scheduler-logs runner-logs teardown-scheduler test test-unit test-integration test-e2e test-e2e-hybrid test-playwright test-playwright-report hybrid-setup hybrid-up hybrid-deploy hybrid-deploy-only hybrid-status hybrid-down hybrid-reset hybrid-logs hybrid-executor-logs dev-setup dev-up dev-down dev-logs dev-migrate
+.PHONY: help install dev build type-check lint fix deploy-to-local-kubernetes setup-local-kubernetes check-local-kubernetes status logs restart teardown db-create db-migrate db-studio build-images deploy-executor executor-status executor-logs runner-logs teardown-executor test test-unit test-integration test-e2e test-e2e-hybrid test-playwright test-playwright-report hybrid-setup hybrid-up hybrid-deploy hybrid-deploy-only hybrid-status hybrid-down hybrid-reset hybrid-logs dev-setup dev-up dev-down dev-logs dev-migrate
 
 # Development
 install:
@@ -76,53 +76,43 @@ db-studio:
 	@echo "Starting Drizzle Studio..."
 	pnpm db:studio
 
-# Schedule Trigger Deployment
-build-scheduler-images:
-	@echo "Building dispatcher image from submodule..."
-	docker build --target dispatcher -t keeperhub-dispatcher:latest ./keeperhub-scheduler
-	@echo "Building executor image from submodule..."
-	docker build --target executor -t keeperhub-executor:latest ./keeperhub-scheduler
+# Executor Images (for K8s deployment)
+build-images:
+	@echo "Building executor image..."
+	docker build --target executor -t keeperhub-executor:latest .
+	@echo "Building workflow runner image..."
+	docker build --target workflow-runner -t keeperhub-runner:latest .
 	@echo "Loading images into minikube..."
-	minikube image load keeperhub-dispatcher:latest
 	minikube image load keeperhub-executor:latest
+	minikube image load keeperhub-runner:latest
 	@echo "Images ready!"
 
-deploy-scheduler: check-local-kubernetes
-	@echo "Deploying schedule trigger components..."
+deploy-executor: check-local-kubernetes
+	@echo "Deploying executor to Minikube..."
 	kubectl apply -f ./deploy/local/schedule-trigger.yaml
 	@echo ""
-	@echo "Schedule trigger components deployed:"
-	@echo "  - ConfigMap: scheduler-env"
-	@echo "  - RBAC: ServiceAccount, Role, RoleBinding for job-spawner"
-	@echo "  - CronJob: schedule-dispatcher (runs every minute)"
-	@echo "  - Deployment: job-spawner (polls SQS, creates K8s Jobs)"
+	@echo "Executor deployed:"
+	@echo "  - ConfigMap: executor-env"
+	@echo "  - Secret: keeperhub-secrets"
+	@echo "  - RBAC: ServiceAccount, Role, RoleBinding for executor"
+	@echo "  - Deployment: executor (polls SQS, executes workflows)"
 
-scheduler-status:
-	@echo "=== Schedule Dispatcher Jobs ==="
-	@kubectl get cronjobs -n local -l component=scheduler
-	@kubectl get jobs -n local -l app=schedule-dispatcher --sort-by=.metadata.creationTimestamp | tail -5
-	@echo ""
-	@echo "=== Job Spawner ==="
-	@kubectl get pods -n local -l app=job-spawner
+executor-status:
+	@echo "=== Executor ==="
+	@kubectl get pods -n local -l app=executor
 	@echo ""
 	@echo "=== Workflow Runner Jobs ==="
 	@kubectl get jobs -n local -l app=workflow-runner --sort-by=.metadata.creationTimestamp | tail -10 || echo "No workflow jobs"
-	@echo ""
-	@echo "=== LocalStack (SQS) ==="
-	@kubectl get pods -n local -l app=localstack
 
-scheduler-logs:
-	@echo "=== Recent Dispatcher Job Logs ==="
-	@kubectl logs -n local -l app=schedule-dispatcher --tail=50 2>/dev/null || echo "No dispatcher logs available"
-	@echo ""
-	@echo "=== Job Spawner Logs ==="
-	@kubectl logs -n local -l app=job-spawner --tail=100 -f
+executor-logs:
+	@echo "=== Executor Logs ==="
+	@kubectl logs -n local -l app=executor --tail=100 -f
 
 runner-logs:
 	@echo "=== Recent Workflow Runner Job Logs ==="
 	@kubectl logs -n local -l app=workflow-runner --tail=100 2>/dev/null || echo "No runner logs available"
 
-teardown-scheduler:
+teardown-executor:
 	kubectl delete -f ./deploy/local/schedule-trigger.yaml --ignore-not-found=true
 
 # Testing
@@ -208,10 +198,9 @@ dev-up:
 	@echo "  - redis (caching + event sync)"
 	@echo "  - app-dev (KeeperHub)"
 	@echo "  - dispatcher (schedule polling)"
-	@echo "  - sc-event-worker (blockchain event dispatch)"
-	@echo "  - sc-event-tracker (blockchain event monitoring)"
-	@echo ""
-	@echo "Note: Scheduled workflow execution requires hybrid mode (make hybrid-deploy)"
+	@echo "  - executor (unified SQS consumer)"
+	@echo "  - block-dispatcher (blockchain block monitoring)"
+	@echo "  - event-tracker (blockchain event monitoring)"
 	@echo ""
 	@echo "App: http://localhost:3000"
 
@@ -238,7 +227,7 @@ dev-setup:
 	@echo "For subsequent starts, use: make dev-up"
 
 # =============================================================================
-# Hybrid Mode (Docker Compose + Minikube for schedule execution)
+# Hybrid Mode (Docker Compose + Minikube for isolated workflow execution)
 # =============================================================================
 
 hybrid-setup:
@@ -247,7 +236,7 @@ hybrid-setup:
 	./deploy/local/hybrid/setup.sh
 
 hybrid-up:
-	# Start Docker Compose services (everything except executor)
+	# Start Docker Compose services (executor runs in Minikube)
 	docker compose --profile minikube up -d
 	@echo "Docker Compose services started. Now deploy executor to Minikube:"
 	@echo "  make hybrid-deploy"
@@ -274,7 +263,7 @@ hybrid-deploy:
 	@echo "Setting up database schema and seeding chains..."
 	@DATABASE_URL="postgresql://postgres:postgres@localhost:5433/$${POSTGRES_DB:-keeperhub}" pnpm db:push || echo "Schema push completed (or already up to date)"
 	@DATABASE_URL="postgresql://postgres:postgres@localhost:5433/$${POSTGRES_DB:-keeperhub}" npx tsx scripts/seed/seed-chains.ts || echo "Chains seeded (or already exist)"
-	# Deploy executor to Minikube (builds images if needed)
+	# Deploy executor to Minikube (builds images on host, loads into minikube)
 	chmod +x ./deploy/local/hybrid/deploy.sh
 	./deploy/local/hybrid/deploy.sh --build
 
@@ -285,10 +274,12 @@ hybrid-deploy-only:
 
 hybrid-status:
 	# Show status of hybrid deployment
+	chmod +x ./deploy/local/hybrid/deploy.sh
 	./deploy/local/hybrid/deploy.sh --status
 
 hybrid-down:
 	# Teardown hybrid deployment
+	chmod +x ./deploy/local/hybrid/deploy.sh
 	./deploy/local/hybrid/deploy.sh --teardown
 	docker compose --profile minikube down
 
@@ -302,20 +293,16 @@ hybrid-reset:
 	@echo "Waiting for services to be ready..."
 	@sleep 10
 	@echo "Running database migrations..."
-	docker compose run --rm migrator || true
-	@echo "Deploying scheduler to Minikube..."
+	@DATABASE_URL="postgresql://postgres:postgres@localhost:5433/$${POSTGRES_DB:-keeperhub}" pnpm db:push || true
+	@echo "Deploying executor to Minikube..."
 	./deploy/local/hybrid/deploy.sh --build
 	@echo ""
 	@echo "Hybrid reset complete!"
 	@echo "  App: http://localhost:3000"
 
 hybrid-logs:
-	# Follow job-spawner logs
-	kubectl logs -n local -l app=job-spawner -f
-
-hybrid-executor-logs:
-	# Show schedule executor logs (same as hybrid-logs)
-	kubectl logs -n local -l app=job-spawner --tail=100 2>/dev/null || echo "No executor logs available"
+	# Follow executor logs in Minikube
+	kubectl logs -n local -l app=executor -f
 
 # Help
 help:
@@ -341,15 +328,14 @@ help:
 	@echo "    dev-migrate                - Run database migrations manually"
 	@echo ""
 	@echo "  Hybrid Mode (Docker Compose + Minikube, ~4-5GB RAM):"
-	@echo "    hybrid-setup               - Full setup (compose, minikube, scheduler)"
+	@echo "    hybrid-setup               - Full setup (compose, minikube, executor)"
 	@echo "    hybrid-up                  - Start Docker Compose services"
-	@echo "    hybrid-deploy              - Build and deploy scheduler to Minikube"
-	@echo "    hybrid-deploy-only         - Deploy scheduler (skip build)"
+	@echo "    hybrid-deploy              - Build and deploy executor to Minikube"
+	@echo "    hybrid-deploy-only         - Deploy executor (skip build)"
 	@echo "    hybrid-status              - Show hybrid deployment status"
 	@echo "    hybrid-down                - Teardown hybrid deployment"
 	@echo "    hybrid-reset               - Full reset and restart"
-	@echo "    hybrid-logs                - Follow executor logs"
-	@echo "    hybrid-executor-logs       - Show recent executor logs"
+	@echo "    hybrid-logs                - Follow executor logs in Minikube"
 	@echo ""
 	@echo "  Full Kubernetes (all in Minikube, ~8GB RAM):"
 	@echo "    setup-local-kubernetes     - Setup minikube with all infrastructure"
@@ -366,13 +352,13 @@ help:
 	@echo "    db-migrate                 - Run database migrations on local kubernetes"
 	@echo "    db-studio                  - Open Drizzle Studio"
 	@echo ""
-	@echo "  Schedule Trigger (Full K8s mode):"
-	@echo "    build-scheduler-images     - Build and load scheduler + runner images"
-	@echo "    deploy-scheduler           - Deploy dispatcher, job-spawner, RBAC"
-	@echo "    scheduler-status           - Show scheduler pods and workflow jobs"
-	@echo "    scheduler-logs             - Follow job-spawner logs"
+	@echo "  Executor (Full K8s mode):"
+	@echo "    build-images               - Build and load executor + runner images"
+	@echo "    deploy-executor            - Deploy executor with RBAC"
+	@echo "    executor-status            - Show executor pods and workflow jobs"
+	@echo "    executor-logs              - Follow executor logs"
 	@echo "    runner-logs                - Show workflow runner job logs"
-	@echo "    teardown-scheduler         - Remove scheduler components"
+	@echo "    teardown-executor          - Remove executor components"
 	@echo ""
 	@echo "  Testing:"
 	@echo "    test                       - Run all tests"
@@ -385,5 +371,5 @@ help:
 	@echo ""
 	@echo "Recommended workflow:"
 	@echo "  1. For UI/API dev (no workflow testing): make dev-up"
-	@echo "  2. For scheduled workflow testing:        make hybrid-setup"
+	@echo "  2. For workflow testing with isolation:   make hybrid-setup"
 	@echo "  3. For production-like testing:          make setup-local-kubernetes"

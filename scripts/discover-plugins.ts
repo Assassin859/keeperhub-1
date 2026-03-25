@@ -45,7 +45,7 @@ const CODEGEN_REGISTRY_FILE = join(process.cwd(), "lib", "codegen-registry.ts");
 const README_FILE = join(process.cwd(), "README.md");
 const PLUGIN_ALLOWLIST_FILE = join(
   process.cwd(),
-  "config",
+  "plugins",
   "plugin-allowlist.json"
 );
 const PLUGINS_MARKER_REGEX =

@@ -12,7 +12,7 @@ Minikube
   - cert-manager (SSL via mkcert CA)
   - Ingress (nginx)
   - schedule-dispatcher (CronJob - polls DB, sends to SQS)
-  - schedule-executor (Deployment - polls SQS, executes via API)
+  -  (Deployment - polls SQS, executes via API)
 ```
 
 ## Prerequisites

@@ -1,0 +1,96 @@
+# Unified Workflow Executor - Staging
+# Polls SQS for all trigger types (schedule, block, event) and executes
+# workflows either in isolated K8s Jobs or in-process.
+
+replicaCount: 1
+
+service:
+  enabled: true
+  name: keeperhub-executor-staging
+  type: ClusterIP
+  port: 3080
+  containerPort: 3080
+  tls:
+    enabled: false
+
+ingress:
+  enabled: false
+
+image:
+  repository: ${ECR_REGISTRY}/keeperhub-executor-staging
+  tag: executor-${IMAGE_TAG}
+  pullPolicy: Always
+
+deployment:
+  enabled: true
+
+serviceAccount:
+  create: false
+  name: keeperhub-staging
+
+podAnnotations:
+  reloader.stakater.com/auto: "true"
+
+resources:
+  limits:
+    memory: 1Gi
+    cpu: 500m
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+command: ["/bin/sh"]
+args:
+  - "-c"
+  - |
+    echo "$(date) - [Executor] Starting..."
+    tsx keeperhub-executor/index.ts
+
+env:
+  DATABASE_URL:
+    type: parameterStore
+    name: db-url
+    parameter_name: /eks/techops-staging/keeperhub/db-url
+  INTEGRATION_ENCRYPTION_KEY:
+    type: parameterStore
+    name: integration-encryption-key
+    parameter_name: /eks/techops-staging/keeperhub/integration-encryption-key
+  AWS_REGION:
+    type: kv
+    value: "us-east-1"
+  SQS_QUEUE_URL:
+    type: kv
+    value: "https://sqs.us-east-1.amazonaws.com/${AWS_ACCOUNT_ID}/keeperhub-workflow-queue-staging"
+  RUNNER_IMAGE:
+    type: kv
+    value: "${ECR_REGISTRY}/keeperhub-staging:workflow-runner-${IMAGE_TAG}"
+  IMAGE_PULL_POLICY:
+    type: kv
+    value: "Always"
+  K8S_NAMESPACE:
+    type: kv
+    value: "keeperhub"
+  HEALTH_PORT:
+    type: kv
+    value: "3080"
+  JOB_ACTIVE_DEADLINE:
+    type: kv
+    value: "300"
+
+externalSecrets:
+  clusterSecretStoreName: techops-staging
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 3080
+  initialDelaySeconds: 30
+  periodSeconds: 30
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 3080
+  initialDelaySeconds: 10
+  periodSeconds: 10

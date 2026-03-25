@@ -21,9 +21,9 @@
 import { and, eq, sql } from "drizzle-orm";
 import type { ethers } from "ethers";
 import postgres from "postgres";
-import { pendingTransactions, walletLocks } from "@/db/schema-extensions";
 import { db } from "@/lib/db";
 import { getDatabaseUrl } from "@/lib/db/connection-utils";
+import { pendingTransactions, walletLocks } from "@/lib/db/schema-extensions";
 
 export type NonceSession = {
   walletAddress: string;

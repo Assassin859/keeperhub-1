@@ -1,0 +1,383 @@
+import { createHash } from "node:crypto";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const VALID_API_KEY = "wfb_test-key-abc123";
+const VALID_KEY_HASH = createHash("sha256").update(VALID_API_KEY).digest("hex");
+const OWNER_USER_ID = "user-owner-123";
+const OTHER_USER_ID = "user-other-456";
+const WORKFLOW_ID = "wf-abc-123";
+
+const webhookWorkflow = {
+  id: WORKFLOW_ID,
+  userId: OWNER_USER_ID,
+  organizationId: "org-123",
+  nodes: [
+    {
+      id: "trigger-1",
+      type: "trigger",
+      position: { x: 0, y: 0 },
+      data: {
+        label: "Webhook Trigger",
+        type: "trigger",
+        config: { triggerType: "Webhook" },
+        status: "idle",
+      },
+    },
+  ],
+  edges: [],
+};
+
+const manualWorkflow = {
+  ...webhookWorkflow,
+  nodes: [
+    {
+      id: "trigger-1",
+      type: "trigger",
+      position: { x: 0, y: 0 },
+      data: {
+        label: "Manual Trigger",
+        type: "trigger",
+        config: { triggerType: "Manual" },
+        status: "idle",
+      },
+    },
+  ],
+};
+
+const {
+  mockWorkflowsFindFirst,
+  mockApiKeysFindFirst,
+  mockInsertReturning,
+  mockValidateIntegrations,
+  mockEnforceExecutionLimit,
+  mockCheckConcurrency,
+} = vi.hoisted(() => ({
+  mockWorkflowsFindFirst: vi.fn(),
+  mockApiKeysFindFirst: vi.fn(),
+  mockInsertReturning: vi.fn(),
+  mockValidateIntegrations: vi.fn(),
+  mockEnforceExecutionLimit: vi.fn(),
+  mockCheckConcurrency: vi.fn(),
+}));
+
+vi.mock("@/lib/db", () => ({
+  db: {
+    query: {
+      workflows: { findFirst: mockWorkflowsFindFirst },
+      apiKeys: { findFirst: mockApiKeysFindFirst },
+    },
+    insert: vi.fn(() => ({
+      values: vi.fn(() => ({
+        returning: mockInsertReturning,
+      })),
+    })),
+    update: vi.fn(() => ({
+      set: vi.fn(() => ({
+        where: vi.fn(() => ({
+          catch: vi.fn(),
+        })),
+      })),
+    })),
+  },
+}));
+
+vi.mock("@/lib/db/schema", () => ({
+  apiKeys: { keyHash: "key_hash", id: "id", lastUsedAt: "last_used_at" },
+  workflows: { id: "id" },
+  workflowExecutions: { id: "id" },
+}));
+
+vi.mock("@/lib/db/integrations", () => ({
+  validateWorkflowIntegrations: mockValidateIntegrations,
+}));
+
+vi.mock("@/lib/billing/execution-guard", () => ({
+  EXECUTION_LIMIT_ERROR: "Execution limit reached",
+  enforceExecutionLimit: mockEnforceExecutionLimit,
+}));
+
+vi.mock("@/app/api/execute/_lib/concurrency-limit", () => ({
+  checkConcurrencyLimit: mockCheckConcurrency,
+}));
+
+vi.mock("@/lib/metrics", () => ({
+  createTimer: () => () => 0,
+  getMetricsCollector: () => ({ incrementCounter: vi.fn() }),
+}));
+
+vi.mock("@/lib/metrics/types", () => ({
+  LabelKeys: { TRIGGER_TYPE: "trigger_type", WORKFLOW_ID: "workflow_id" },
+  MetricNames: { WORKFLOW_EXECUTIONS_TOTAL: "workflow_executions_total" },
+}));
+
+vi.mock("@/lib/metrics/instrumentation/api", () => ({
+  recordWebhookMetrics: vi.fn(),
+}));
+
+vi.mock("@/lib/logging", () => ({
+  ErrorCategory: { WORKFLOW_ENGINE: "WORKFLOW_ENGINE" },
+  logSystemError: vi.fn(),
+}));
+
+vi.mock("workflow/api", () => ({
+  start: vi.fn().mockResolvedValue({ runId: "run-123" }),
+}));
+
+vi.mock("@/lib/workflow-executor.workflow", () => ({
+  executeWorkflow: vi.fn(),
+}));
+
+import { OPTIONS, POST } from "@/app/api/workflows/[workflowId]/webhook/route";
+
+function createWebhookRequest(
+  apiKey?: string,
+  body?: Record<string, unknown>
+): Request {
+  const url = `http://localhost:3000/api/workflows/${WORKFLOW_ID}/webhook`;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+  return new Request(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body ?? {}),
+  });
+}
+
+function createContext(workflowId: string): {
+  params: Promise<{ workflowId: string }>;
+} {
+  return { params: Promise.resolve({ workflowId }) };
+}
+
+function setupHappyPath(): void {
+  mockWorkflowsFindFirst.mockResolvedValue(webhookWorkflow);
+  mockApiKeysFindFirst.mockResolvedValue({
+    id: "key-1",
+    userId: OWNER_USER_ID,
+    keyHash: VALID_KEY_HASH,
+  });
+  mockValidateIntegrations.mockResolvedValue({ valid: true });
+  mockEnforceExecutionLimit.mockResolvedValue({ blocked: false });
+  mockCheckConcurrency.mockResolvedValue({ allowed: true });
+  mockInsertReturning.mockResolvedValue([
+    { id: "exec-001", status: "running" },
+  ]);
+}
+
+describe("POST /api/workflows/:workflowId/webhook", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe("workflow lookup", () => {
+    it("should return 404 when workflow not found", async () => {
+      mockWorkflowsFindFirst.mockResolvedValue(null);
+
+      const response = await POST(
+        createWebhookRequest(VALID_API_KEY),
+        createContext(WORKFLOW_ID)
+      );
+      expect(response.status).toBe(404);
+      const data = await response.json();
+      expect(data.error).toBe("Workflow not found");
+    });
+  });
+
+  describe("API key validation", () => {
+    it("should return 401 when no authorization header", async () => {
+      mockWorkflowsFindFirst.mockResolvedValue(webhookWorkflow);
+
+      const response = await POST(
+        createWebhookRequest(),
+        createContext(WORKFLOW_ID)
+      );
+      expect(response.status).toBe(401);
+      const data = await response.json();
+      expect(data.error).toBe("Missing Authorization header");
+    });
+
+    it("should return 401 for non-wfb key format", async () => {
+      mockWorkflowsFindFirst.mockResolvedValue(webhookWorkflow);
+
+      const response = await POST(
+        createWebhookRequest("kh_wrong_prefix"),
+        createContext(WORKFLOW_ID)
+      );
+      expect(response.status).toBe(401);
+      const data = await response.json();
+      expect(data.error).toBe("Invalid API key format");
+    });
+
+    it("should return 401 when key not found in database", async () => {
+      mockWorkflowsFindFirst.mockResolvedValue(webhookWorkflow);
+      mockApiKeysFindFirst.mockResolvedValue(null);
+
+      const response = await POST(
+        createWebhookRequest(VALID_API_KEY),
+        createContext(WORKFLOW_ID)
+      );
+      expect(response.status).toBe(401);
+      const data = await response.json();
+      expect(data.error).toBe("Invalid API key");
+    });
+
+    it("should return 403 when key belongs to different user", async () => {
+      mockWorkflowsFindFirst.mockResolvedValue(webhookWorkflow);
+      mockApiKeysFindFirst.mockResolvedValue({
+        id: "key-other",
+        userId: OTHER_USER_ID,
+        keyHash: VALID_KEY_HASH,
+      });
+
+      const response = await POST(
+        createWebhookRequest(VALID_API_KEY),
+        createContext(WORKFLOW_ID)
+      );
+      expect(response.status).toBe(403);
+      const data = await response.json();
+      expect(data.error).toBe(
+        "You do not have permission to run this workflow"
+      );
+    });
+  });
+
+  describe("webhook trigger validation", () => {
+    it("should return 400 when workflow is not webhook-triggered", async () => {
+      mockWorkflowsFindFirst.mockResolvedValue(manualWorkflow);
+      mockApiKeysFindFirst.mockResolvedValue({
+        id: "key-1",
+        userId: OWNER_USER_ID,
+        keyHash: VALID_KEY_HASH,
+      });
+
+      const response = await POST(
+        createWebhookRequest(VALID_API_KEY),
+        createContext(WORKFLOW_ID)
+      );
+      expect(response.status).toBe(400);
+      const data = await response.json();
+      expect(data.error).toBe(
+        "This workflow is not configured for webhook triggers"
+      );
+    });
+  });
+
+  describe("integration validation", () => {
+    it("should return 403 when workflow has invalid integrations", async () => {
+      mockWorkflowsFindFirst.mockResolvedValue(webhookWorkflow);
+      mockApiKeysFindFirst.mockResolvedValue({
+        id: "key-1",
+        userId: OWNER_USER_ID,
+        keyHash: VALID_KEY_HASH,
+      });
+      mockValidateIntegrations.mockResolvedValue({
+        valid: false,
+        invalidIds: ["int-999"],
+      });
+
+      const response = await POST(
+        createWebhookRequest(VALID_API_KEY),
+        createContext(WORKFLOW_ID)
+      );
+      expect(response.status).toBe(403);
+      const data = await response.json();
+      expect(data.error).toBe(
+        "Workflow contains invalid integration references"
+      );
+    });
+  });
+
+  describe("rate limiting", () => {
+    it("should return 429 when execution limit reached", async () => {
+      mockWorkflowsFindFirst.mockResolvedValue(webhookWorkflow);
+      mockApiKeysFindFirst.mockResolvedValue({
+        id: "key-1",
+        userId: OWNER_USER_ID,
+        keyHash: VALID_KEY_HASH,
+      });
+      mockValidateIntegrations.mockResolvedValue({ valid: true });
+      mockEnforceExecutionLimit.mockResolvedValue({
+        blocked: true,
+        response: new Response(
+          JSON.stringify({ error: "Execution limit reached" }),
+          { status: 429 }
+        ),
+      });
+
+      const response = await POST(
+        createWebhookRequest(VALID_API_KEY),
+        createContext(WORKFLOW_ID)
+      );
+      expect(response.status).toBe(429);
+    });
+
+    it("should return 429 when concurrency limit reached", async () => {
+      mockWorkflowsFindFirst.mockResolvedValue(webhookWorkflow);
+      mockApiKeysFindFirst.mockResolvedValue({
+        id: "key-1",
+        userId: OWNER_USER_ID,
+        keyHash: VALID_KEY_HASH,
+      });
+      mockValidateIntegrations.mockResolvedValue({ valid: true });
+      mockEnforceExecutionLimit.mockResolvedValue({ blocked: false });
+      mockCheckConcurrency.mockResolvedValue({
+        allowed: false,
+        running: 10,
+        limit: 10,
+      });
+
+      const response = await POST(
+        createWebhookRequest(VALID_API_KEY),
+        createContext(WORKFLOW_ID)
+      );
+      expect(response.status).toBe(429);
+      const data = await response.json();
+      expect(data.error).toBe("Too many concurrent workflow executions");
+      expect(data.running).toBe(10);
+      expect(data.limit).toBe(10);
+    });
+  });
+
+  describe("successful execution", () => {
+    it("should return 200 with execution ID", async () => {
+      setupHappyPath();
+
+      const response = await POST(
+        createWebhookRequest(VALID_API_KEY, { event: "test" }),
+        createContext(WORKFLOW_ID)
+      );
+      expect(response.status).toBe(200);
+      const data = await response.json();
+      expect(data.executionId).toBe("exec-001");
+      expect(data.status).toBe("running");
+    });
+
+    it("should include CORS headers", async () => {
+      setupHappyPath();
+
+      const response = await POST(
+        createWebhookRequest(VALID_API_KEY),
+        createContext(WORKFLOW_ID)
+      );
+      expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+      expect(response.headers.get("Access-Control-Allow-Methods")).toContain(
+        "POST"
+      );
+    });
+  });
+
+  describe("OPTIONS preflight", () => {
+    it("should return CORS headers", () => {
+      const response = OPTIONS();
+      expect(response.status).toBe(200);
+      expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+      expect(response.headers.get("Access-Control-Allow-Headers")).toContain(
+        "Authorization"
+      );
+    });
+  });
+});

@@ -1,0 +1,25 @@
+{
+  "name": "keeperhub-scheduler",
+  "version": "1.0.0",
+  "private": true,
+  "description": "KeeperHub scheduler components - schedule dispatcher and block dispatcher",
+  "type": "module",
+  "scripts": {
+    "dispatcher": "tsx schedule-dispatcher/index.ts",
+    "block-dispatcher": "tsx block-dispatcher/index.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@aws-sdk/client-sqs": "^3.948.0",
+    "cron-parser": "^5.4.0",
+    "ethers": "^6.16.0",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^24.10.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

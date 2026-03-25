@@ -4,34 +4,29 @@ A Web3 workflow automation platform (forked from vercel-labs/workflow-builder-te
 
 ## Core Value
 
-Users and Agents can build and deploy Web3 automation workflows through a visual builder or with [KeeperHub MCP](https://github.com/KeeperHub/keeperhub-mcp) without writing code.
+Users and Agents can build and deploy Web3 automation workflows through a visual builder or via the [MCP server](https://docs.keeperhub.com/ai-tools/mcp-server) without writing code.
 
 ## Add KeeperHub to your Agent
 
-**1. Install the plugin**
+**Quick setup (no install needed):**
 
+```bash
+claude mcp add --transport http keeperhub https://app.keeperhub.com/mcp
 ```
+
+Then run `/mcp` inside Claude Code to authorize via browser. That's it.
+
+Try asking Claude to "create a workflow that monitors a wallet".
+
+**Alternative: install the Claude Code plugin** for skills and slash commands:
+
+```bash
 /plugin marketplace add KeeperHub/claude-plugins
-/plugin install keeperhub@techops-plugins
-```
-
-You can view the plugin source code here https://github.com/KeeperHub/claude-plugins/tree/main/plugins/keeperhub
-
-**2. Run setup**
-
-```
+/plugin install keeperhub@keeperhub-plugins
 /keeperhub:login
 ```
 
-This walks you through:
-
-- Creating an organization API key (`kh_` prefix) at app.keeperhub.com
-- Auto-installing the keeperhub-mcp server
-- Saving config to `~/.claude/keeperhub/config.json`
-
-**3. Restart Claude Code** for the MCP tools to become available.
-
-That's it. Try asking Claude to "create a workflow that monitors a wallet" or run `/keeperhub:status` to verify.
+Restart Claude Code after setup. [Plugin source code](https://github.com/KeeperHub/claude-plugins/tree/main/plugins/keeperhub).
 
 ## What KeeperHub Does
 
@@ -130,7 +125,7 @@ make dev-logs     # View logs
 make dev-down     # Stop services
 ```
 
-Services: PostgreSQL (5433), LocalStack SQS (4566), KeeperHub App (3000), Schedule Dispatcher, Schedule Executor
+Services: PostgreSQL (5433), LocalStack SQS (4566), Redis (6379), KeeperHub App (3000), Scheduler, Block Dispatcher, Event Tracker, Executor
 
 ### Hybrid Mode with K8s Jobs
 
@@ -168,11 +163,18 @@ pnpm test:e2e         # E2E tests
 
 ## Architecture
 
-### Core Services
+### Services
 
-- **KeeperHub App**: Next.js application with workflow builder UI and API
-- **Schedule Dispatcher**: Evaluates cron schedules, queues workflows to SQS
-- **Schedule Executor**: Polls SQS, executes workflows via API
+| Service | Description | Source |
+|---------|-------------|--------|
+| **App** | Next.js application with workflow builder UI and API | `app/`, `keeperhub/` |
+| **Scheduler** | Evaluates cron schedules every minute, dispatches matching workflows to SQS | `keeperhub-scheduler/schedule-dispatcher/` |
+| **Block** | Monitors blockchain blocks via WebSocket, dispatches matching workflows to SQS | `keeperhub-scheduler/block-dispatcher/` |
+| **Event** | Monitors blockchain events and routes to SQS | `keeperhub-events/event-tracker/` |
+| **Executor** | Polls SQS for all trigger types, executes workflows in-process or as K8s Jobs | `keeperhub-executor/` |
+| **Workflow Runner** | Isolated container for executing web3 write workflows in K8s Jobs | `keeperhub-executor/workflow-runner.ts` |
+
+All trigger services (scheduler, block, event) send messages to a shared SQS queue. The executor consumes from this queue and runs workflows in isolated K8s Job containers using the workflow-runner image. The execution mode is configurable via `EXECUTION_MODE`: `isolated` (default, all workflows in K8s Jobs), `complex` (K8s Jobs for web3 writes, in-process for everything else), or `process` (all in-process, no K8s).
 
 ### Tech Stack
 

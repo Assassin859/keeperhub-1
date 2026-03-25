@@ -79,7 +79,7 @@ jobs:
         run: |
           IMAGE_TAG="${{ steps.vars.outputs.sha_short }}"
           ALL_EXIST=true
-          for prefix in app migrator; do
+          for prefix in app migrator workflow-runner; do
             if aws ecr describe-images \
               --repository-name "${{ env.AWS_ECR_NAME }}" \
               --image-ids "imageTag=${prefix}-${IMAGE_TAG}" \
@@ -98,22 +98,6 @@ jobs:
           echo "::error::Cannot skip build: one or more images for ${{ steps.vars.outputs.sha_short }} do not exist in ECR. Remove [skip build] from the commit message or push a build first."
           exit 1
 
-      - name: Verify submodule token access
-        if: steps.skip.outputs.skip_build != 'true' && steps.check-image.outputs.exists != 'true'
-        env:
-          TOKEN: ${{ secrets.KEEPERHUB_SUBMODULE_TOKEN }}
-        run: |
-          for repo in keeperhub-events keeperhub-scheduler; do
-            status=$(curl -sf -o /dev/null -w "%{http_code}" \
-              -H "Authorization: Bearer $TOKEN" \
-              "https://api.github.com/repos/KeeperHub/$repo")
-            if [ "$status" != "200" ]; then
-              echo "::error::KEEPERHUB_SUBMODULE_TOKEN cannot access KeeperHub/$repo (HTTP $status). Token may be expired or revoked."
-              exit 1
-            fi
-            echo "Verified access to KeeperHub/$repo"
-          done
-
       - name: Set up Docker Buildx
         if: steps.skip.outputs.skip_build != 'true' && steps.check-image.outputs.exists != 'true'
         uses: docker/setup-buildx-action@v4
@@ -129,7 +113,6 @@ jobs:
           NEXT_PUBLIC_GITHUB_CLIENT_ID: ${{ env.NEXT_PUBLIC_GITHUB_CLIENT_ID }}
           NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${{ env.NEXT_PUBLIC_GOOGLE_CLIENT_ID }}
           NEXT_PUBLIC_BILLING_ENABLED: ${{ env.NEXT_PUBLIC_BILLING_ENABLED }}
-          BUILDX_BAKE_GIT_AUTH_TOKEN: ${{ secrets.KEEPERHUB_SUBMODULE_TOKEN }}
           ENVIRONMENT_TAG: ${{ env.ENVIRONMENT_TAG }}
         with:
           files: docker-bake.hcl
@@ -157,7 +140,7 @@ jobs:
           ECR_REPO: ${{ env.AWS_ECR_NAME }}
           IMAGE_TAG: ${{ steps.vars.outputs.sha_short }}
         run: |
-          for prefix in app migrator; do
+          for prefix in app migrator workflow-runner; do
             echo "Copying ${prefix}-${IMAGE_TAG} to TechOps ECR..."
             docker buildx imagetools create \
               --tag "${DST_REGISTRY}/${ECR_REPO}:${prefix}-${IMAGE_TAG}" \

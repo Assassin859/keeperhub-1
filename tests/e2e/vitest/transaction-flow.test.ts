@@ -31,7 +31,7 @@ import {
 vi.unmock("@/lib/db");
 vi.mock("server-only", () => ({}));
 
-import { pendingTransactions, walletLocks } from "@/db/schema-extensions";
+import { pendingTransactions, walletLocks } from "@/lib/db/schema-extensions";
 import { AdaptiveGasStrategy, resetGasStrategy } from "@/lib/web3/gas-strategy";
 import { NonceManager, resetNonceManager } from "@/lib/web3/nonce-manager";
 

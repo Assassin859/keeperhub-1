@@ -78,8 +78,8 @@ describe("CoW Swap Protocol Definition", () => {
     }
   });
 
-  it("has exactly 9 actions", () => {
-    expect(cowswapDef.actions).toHaveLength(9);
+  it("has exactly 10 actions", () => {
+    expect(cowswapDef.actions).toHaveLength(10);
   });
 
   it("registers in the protocol registry and is retrievable", () => {
@@ -90,11 +90,11 @@ describe("CoW Swap Protocol Definition", () => {
     expect(retrieved?.name).toBe("CoW Swap");
   });
 
-  it("has 6 read actions and 3 write actions", () => {
+  it("has 6 read actions and 4 write actions", () => {
     const readActions = cowswapDef.actions.filter((a) => a.type === "read");
     const writeActions = cowswapDef.actions.filter((a) => a.type === "write");
     expect(readActions).toHaveLength(6);
-    expect(writeActions).toHaveLength(3);
+    expect(writeActions).toHaveLength(4);
   });
 
   it("has 2 contracts", () => {

@@ -30,7 +30,7 @@ import {
 vi.unmock("@/lib/db");
 vi.unmock("server-only");
 
-import { pendingTransactions, walletLocks } from "@/db/schema-extensions";
+import { pendingTransactions, walletLocks } from "@/lib/db/schema-extensions";
 import { NonceManager, resetNonceManager } from "@/lib/web3/nonce-manager";
 
 // Skip if DATABASE_URL not set or SKIP_INFRA_TESTS is true

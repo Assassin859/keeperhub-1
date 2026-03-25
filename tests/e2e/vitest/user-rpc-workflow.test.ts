@@ -165,7 +165,7 @@ describe.skipIf(SKIP_INFRA_TESTS)(
 
         const scriptPath = join(
           import.meta.dirname,
-          "../../../scripts/runtime/workflow-runner-bootstrap.ts"
+          "../../../keeperhub-executor/workflow-runner-bootstrap.ts"
         );
         const child = spawn("npx", ["tsx", scriptPath], {
           env,

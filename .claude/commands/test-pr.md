@@ -342,7 +342,6 @@ Pull logs from the PR environment and analyze:
 bash scripts/pr-test/pr-logs.sh $PR_NUMBER db-migration
 bash scripts/pr-test/pr-logs.sh $PR_NUMBER app --errors --lines 200
 bash scripts/pr-test/pr-logs.sh $PR_NUMBER scheduler-dispatcher --errors
-bash scripts/pr-test/pr-logs.sh $PR_NUMBER event-worker --errors
 ```
 
 Categorize any errors found:
