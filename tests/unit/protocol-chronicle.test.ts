@@ -5,6 +5,15 @@ import chronicleDef from "@/protocols/chronicle";
 const KEBAB_CASE_REGEX = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 const ETH_ADDRESS_REGEX = /^0x[0-9a-fA-F]{40}$/;
 
+const NAMED_FEEDS = [
+  "ethUsd",
+  "btcUsd",
+  "daiUsd",
+  "usdcUsd",
+  "usdtUsd",
+  "linkUsd",
+] as const;
+
 describe("Chronicle Protocol Definition", () => {
   it("imports without throwing", () => {
     expect(chronicleDef).toBeDefined();
@@ -74,27 +83,61 @@ describe("Chronicle Protocol Definition", () => {
     }
   });
 
-  it("has exactly 5 actions", () => {
-    expect(chronicleDef.actions).toHaveLength(5);
+  // Structure: 6 named feeds x 2 actions + 4 custom + 1 selfKiss = 17
+  it("has 17 actions total", () => {
+    expect(chronicleDef.actions).toHaveLength(17);
   });
 
-  it("has 4 read actions and 1 write action", () => {
+  it("has 16 read actions and 1 write action", () => {
     const readActions = chronicleDef.actions.filter((a) => a.type === "read");
     const writeActions = chronicleDef.actions.filter((a) => a.type === "write");
-    expect(readActions).toHaveLength(4);
+    expect(readActions).toHaveLength(16);
     expect(writeActions).toHaveLength(1);
   });
 
-  it("has 2 contracts", () => {
-    expect(Object.keys(chronicleDef.contracts)).toHaveLength(2);
+  // 6 named feeds + customOracle + selfKisser = 8 contracts
+  it("has 8 contracts", () => {
+    expect(Object.keys(chronicleDef.contracts)).toHaveLength(8);
   });
 
-  it("oracle contract has userSpecifiedAddress enabled", () => {
-    expect(chronicleDef.contracts.oracle.userSpecifiedAddress).toBe(true);
+  it("customOracle contract has userSpecifiedAddress enabled", () => {
+    expect(chronicleDef.contracts.customOracle.userSpecifiedAddress).toBe(true);
   });
 
-  it("oracle contract is available on Ethereum Mainnet and Sepolia", () => {
-    const chains = Object.keys(chronicleDef.contracts.oracle.addresses);
+  it("named feed contracts do not have userSpecifiedAddress", () => {
+    for (const key of NAMED_FEEDS) {
+      expect(
+        chronicleDef.contracts[key].userSpecifiedAddress,
+        `named feed "${key}" should not have userSpecifiedAddress`
+      ).toBeUndefined();
+    }
+  });
+
+  it("all named feeds have Sepolia addresses", () => {
+    for (const key of NAMED_FEEDS) {
+      expect(
+        chronicleDef.contracts[key].addresses["11155111"],
+        `named feed "${key}" missing Sepolia address`
+      ).toBeDefined();
+    }
+  });
+
+  it("ETH/USD feed has both mainnet and Sepolia addresses", () => {
+    const chains = Object.keys(chronicleDef.contracts.ethUsd.addresses);
+    expect(chains).toContain("1");
+    expect(chains).toContain("11155111");
+  });
+
+  it("BTC/USD, USDC/USD, and USDT/USD feeds have both mainnet and Sepolia addresses", () => {
+    for (const key of ["btcUsd", "usdcUsd", "usdtUsd"] as const) {
+      const chains = Object.keys(chronicleDef.contracts[key].addresses);
+      expect(chains, `${key} missing mainnet`).toContain("1");
+      expect(chains, `${key} missing Sepolia`).toContain("11155111");
+    }
+  });
+
+  it("customOracle contract is available on Ethereum Mainnet and Sepolia", () => {
+    const chains = Object.keys(chronicleDef.contracts.customOracle.addresses);
     expect(chains).toContain("1");
     expect(chains).toContain("11155111");
   });
@@ -108,7 +151,53 @@ describe("Chronicle Protocol Definition", () => {
     expect(chains).toContain("100");
   });
 
-  it("read action has 1 output: value with 18 decimals", () => {
+  it("each named feed has read and read-with-age actions", () => {
+    const feedSlugs = [
+      "eth-usd",
+      "btc-usd",
+      "dai-usd",
+      "usdc-usd",
+      "usdt-usd",
+      "link-usd",
+    ];
+    for (const slug of feedSlugs) {
+      const readAction = chronicleDef.actions.find(
+        (a) => a.slug === `${slug}-read`
+      );
+      const readWithAgeAction = chronicleDef.actions.find(
+        (a) => a.slug === `${slug}-read-with-age`
+      );
+      expect(readAction, `missing ${slug}-read action`).toBeDefined();
+      expect(
+        readWithAgeAction,
+        `missing ${slug}-read-with-age action`
+      ).toBeDefined();
+    }
+  });
+
+  it("named feed read actions have 1 output with 18 decimals", () => {
+    const feedReadActions = chronicleDef.actions.filter(
+      (a) => a.slug.endsWith("-read") && !a.slug.includes("try")
+    );
+    for (const action of feedReadActions) {
+      expect(action.outputs).toHaveLength(1);
+      expect(action.outputs?.[0]?.decimals).toBe(18);
+    }
+  });
+
+  it("named feed read-with-age actions have 2 outputs: value and age", () => {
+    const feedAgeActions = chronicleDef.actions.filter(
+      (a) => a.slug.endsWith("-read-with-age") && !a.slug.includes("try")
+    );
+    for (const action of feedAgeActions) {
+      expect(action.outputs).toHaveLength(2);
+      const names = action.outputs?.map((o) => o.name);
+      expect(names).toContain("value");
+      expect(names).toContain("age");
+    }
+  });
+
+  it("custom read action has 1 output: value with 18 decimals", () => {
     const action = chronicleDef.actions.find((a) => a.slug === "read");
     expect(action).toBeDefined();
     expect(action?.outputs).toHaveLength(1);
@@ -117,7 +206,7 @@ describe("Chronicle Protocol Definition", () => {
     expect(output?.decimals).toBe(18);
   });
 
-  it("try-read action has 2 outputs: ok and value", () => {
+  it("custom try-read action has 2 outputs: ok and value", () => {
     const action = chronicleDef.actions.find((a) => a.slug === "try-read");
     expect(action).toBeDefined();
     expect(action?.outputs).toHaveLength(2);
@@ -126,7 +215,7 @@ describe("Chronicle Protocol Definition", () => {
     expect(outputNames).toContain("value");
   });
 
-  it("read-with-age action has 2 outputs: value and age", () => {
+  it("custom read-with-age action has 2 outputs: value and age", () => {
     const action = chronicleDef.actions.find((a) => a.slug === "read-with-age");
     expect(action).toBeDefined();
     expect(action?.outputs).toHaveLength(2);
@@ -135,14 +224,14 @@ describe("Chronicle Protocol Definition", () => {
     expect(outputNames).toContain("age");
   });
 
-  it("read-with-age age output has no decimals (raw Unix timestamp)", () => {
+  it("custom read-with-age age output has no decimals (raw Unix timestamp)", () => {
     const action = chronicleDef.actions.find((a) => a.slug === "read-with-age");
     const ageOutput = action?.outputs?.find((o) => o.name === "age");
     expect(ageOutput).toBeDefined();
     expect(ageOutput?.decimals).toBeUndefined();
   });
 
-  it("try-read-with-age action has 3 outputs: ok, value, and age", () => {
+  it("custom try-read-with-age action has 3 outputs: ok, value, and age", () => {
     const action = chronicleDef.actions.find(
       (a) => a.slug === "try-read-with-age"
     );
@@ -169,13 +258,14 @@ describe("Chronicle Protocol Definition", () => {
     expect(action?.inputs[0].type).toBe("address");
   });
 
-  it("both contracts provide inline ABI", () => {
-    expect(chronicleDef.contracts.oracle.abi).toBeDefined();
-    expect(chronicleDef.contracts.selfKisser.abi).toBeDefined();
+  it("all contracts provide inline ABI", () => {
+    for (const [key, contract] of Object.entries(chronicleDef.contracts)) {
+      expect(contract.abi, `contract "${key}" missing ABI`).toBeDefined();
+    }
   });
 
   it("oracle ABI is valid JSON with 4 functions", () => {
-    const abi = JSON.parse(chronicleDef.contracts.oracle.abi ?? "[]");
+    const abi = JSON.parse(chronicleDef.contracts.ethUsd.abi ?? "[]");
     expect(Array.isArray(abi)).toBe(true);
     expect(abi).toHaveLength(4);
     const names = abi.map((entry: { name: string }) => entry.name);
