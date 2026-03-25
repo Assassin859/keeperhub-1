@@ -133,6 +133,8 @@ tailwindcss-*.log
 .claude/worktrees/
 
 # Playwright MCP screenshots
+.playwright/
+.playwright-cli/
 .playwright-mcp/
 
 # Local reports

@@ -1,4 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { flattenConfigFields, getAllIntegrations } from "@/plugins/registry";
 import { withToolLogging } from "./logging";
@@ -108,6 +109,7 @@ export function registerTools(
           "Optional organization ID to override the API key's default org. The API key creator must be a member of the target org."
         ),
     },
+    { title: "List Workflows", readOnlyHint: true, destructiveHint: false },
     withScopeCheck("list_workflows", scope, async (args) =>
       withToolLogging("list_workflows", args.organizationId, async () => {
         const params = new URLSearchParams();
@@ -146,6 +148,7 @@ export function registerTools(
           "Optional organization ID to override the API key's default org."
         ),
     },
+    { title: "Get Workflow", readOnlyHint: true, destructiveHint: false },
     withScopeCheck("get_workflow", scope, async (args) =>
       withToolLogging("get_workflow", args.organizationId, async () => {
         const data = await callApi(
@@ -193,6 +196,7 @@ export function registerTools(
           "Optional organization ID to override the API key's default org."
         ),
     },
+    { title: "Create Workflow", readOnlyHint: false, destructiveHint: false },
     withScopeCheck("create_workflow", scope, async (args) =>
       withToolLogging("create_workflow", args.organizationId, async () => {
         const data = await callApi(
@@ -249,6 +253,7 @@ export function registerTools(
           "Optional organization ID to override the API key's default org."
         ),
     },
+    { title: "Update Workflow", readOnlyHint: false, destructiveHint: false },
     withScopeCheck("update_workflow", scope, async (args) =>
       withToolLogging("update_workflow", args.organizationId, async () => {
         const { workflowId, organizationId, ...body } = args;
@@ -279,6 +284,7 @@ export function registerTools(
           "Optional organization ID to override the API key's default org."
         ),
     },
+    { title: "Delete Workflow", readOnlyHint: false, destructiveHint: true },
     withScopeCheck("delete_workflow", scope, async (args) =>
       withToolLogging("delete_workflow", args.organizationId, async () => {
         const data = await callApi(
@@ -316,6 +322,7 @@ export function registerTools(
           "Optional organization ID to override the API key's default org. Use this to execute workflows under a different org's context (wallet, settings)."
         ),
     },
+    { title: "Execute Workflow", readOnlyHint: false, destructiveHint: false },
     withScopeCheck("execute_workflow", scope, async (args) =>
       withToolLogging("execute_workflow", args.organizationId, async () => {
         const data = await callApi(
@@ -341,6 +348,11 @@ export function registerTools(
         .string()
         .describe("The execution ID returned by execute_workflow"),
     },
+    {
+      title: "Get Execution Status",
+      readOnlyHint: true,
+      destructiveHint: false,
+    },
     withScopeCheck("get_execution_status", scope, async (args) =>
       withToolLogging("get_execution_status", undefined, async () => {
         const data = await callApi(
@@ -362,6 +374,7 @@ export function registerTools(
     {
       executionId: z.string().describe("The execution ID to fetch logs for"),
     },
+    { title: "Get Execution Logs", readOnlyHint: true, destructiveHint: false },
     withScopeCheck("get_execution_logs", scope, async (args) =>
       withToolLogging("get_execution_logs", undefined, async () => {
         const data = await callApi(
@@ -394,6 +407,11 @@ export function registerTools(
         .string()
         .optional()
         .describe("Additional context or constraints for the AI generator"),
+    },
+    {
+      title: "AI Generate Workflow",
+      readOnlyHint: true,
+      destructiveHint: false,
     },
     withScopeCheck("ai_generate_workflow", scope, async (args) =>
       withToolLogging("ai_generate_workflow", undefined, async () => {
@@ -432,6 +450,11 @@ export function registerTools(
           "Whether to include supported blockchain networks (default: true)"
         ),
     },
+    {
+      title: "List Action Schemas",
+      readOnlyHint: true,
+      destructiveHint: false,
+    },
     withScopeCheck("list_action_schemas", scope, async (args) =>
       withToolLogging("list_action_schemas", undefined, async () => {
         const params = new URLSearchParams();
@@ -461,6 +484,7 @@ export function registerTools(
           "Category to filter by (e.g., 'web3', 'discord', 'sendgrid', 'system', 'triggers')"
         ),
     },
+    { title: "Search Plugins", readOnlyHint: true, destructiveHint: false },
     withScopeCheck("search_plugins", scope, async (args) =>
       withToolLogging("search_plugins", undefined, async () => {
         const params = new URLSearchParams({ category: args.category });
@@ -487,6 +511,7 @@ export function registerTools(
           "Plugin type identifier (e.g., 'web3', 'discord', 'sendgrid')"
         ),
     },
+    { title: "Get Plugin", readOnlyHint: true, destructiveHint: false },
     withScopeCheck("get_plugin", scope, async (args) =>
       withToolLogging("get_plugin", undefined, async () => {
         const params = new URLSearchParams({ category: args.pluginType });
@@ -514,6 +539,7 @@ export function registerTools(
           "Optional organization ID to override the API key's default org."
         ),
     },
+    { title: "List Integrations", readOnlyHint: true, destructiveHint: false },
     withScopeCheck("list_integrations", scope, async (args) =>
       withToolLogging("list_integrations", args.organizationId, async () => {
         const data = await callApi(
@@ -542,6 +568,11 @@ export function registerTools(
         .describe(
           "Optional organization ID to override the API key's default org."
         ),
+    },
+    {
+      title: "Get Wallet Integration",
+      readOnlyHint: true,
+      destructiveHint: false,
     },
     withScopeCheck("get_wallet_integration", scope, async (args) =>
       withToolLogging(
@@ -578,6 +609,7 @@ export function registerTools(
         .describe("Search query to find relevant templates"),
       category: z.string().optional().describe("Filter templates by category"),
     },
+    { title: "Search Templates", readOnlyHint: true, destructiveHint: false },
     withScopeCheck("search_templates", scope, async (args) =>
       withToolLogging("search_templates", undefined, async () => {
         const params = new URLSearchParams();
@@ -603,6 +635,7 @@ export function registerTools(
     {
       templateId: z.string().describe("The template workflow ID"),
     },
+    { title: "Get Template", readOnlyHint: true, destructiveHint: false },
     withScopeCheck("get_template", scope, async (args) =>
       withToolLogging("get_template", undefined, async () => {
         const data = await callApi(
@@ -628,6 +661,7 @@ export function registerTools(
         .optional()
         .describe("Optional name for the cloned workflow"),
     },
+    { title: "Deploy Template", readOnlyHint: false, destructiveHint: false },
     withScopeCheck("deploy_template", scope, async (args) =>
       withToolLogging("deploy_template", undefined, async () => {
         const data = await callApi(
@@ -652,6 +686,11 @@ export function registerTools(
     "tools_documentation",
     "Get documentation on how to use the KeeperHub MCP tools, including examples and best practices for workflow creation.",
     {},
+    {
+      title: "Tools Documentation",
+      readOnlyHint: true,
+      destructiveHint: false,
+    },
     withScopeCheck("tools_documentation", scope, (_args) =>
       withToolLogging("tools_documentation", undefined, () => {
         const text = [
@@ -702,6 +741,62 @@ export function registerTools(
 // Dynamic tool registration from plugin registry
 // =============================================================================
 
+const READ_ONLY_PATTERNS = [
+  "read",
+  "get",
+  "list",
+  "check",
+  "query",
+  "balance",
+  "events",
+  "monitor",
+  "fetch",
+  "decode",
+  "assess",
+  "status",
+  "pending",
+] as const;
+
+const DESTRUCTIVE_PATTERNS = [
+  "delete",
+  "remove",
+  "revoke",
+  "transfer",
+  "write",
+  "approve",
+  "send",
+  "execute",
+  "swap",
+  "cancel",
+  "publish",
+  "create",
+  "run",
+  "generate",
+  "update",
+] as const;
+
+function deriveAnnotations(slug: string): ToolAnnotations {
+  const normalized = slug.toLowerCase();
+
+  const isReadOnly = READ_ONLY_PATTERNS.some((p) => normalized.includes(p));
+  if (isReadOnly) {
+    return { readOnlyHint: true, destructiveHint: false };
+  }
+
+  const isDestructive = DESTRUCTIVE_PATTERNS.some((p) =>
+    normalized.includes(p)
+  );
+  if (isDestructive) {
+    return { readOnlyHint: false, destructiveHint: true };
+  }
+
+  return { readOnlyHint: false, destructiveHint: false };
+}
+
+function slugToTitle(slug: string): string {
+  return slug.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 function slugToToolName(integration: string, slug: string): string {
   const combined = `${integration}_${slug}`;
   return combined.replace(/[\s/-]/g, "_");
@@ -739,11 +834,16 @@ export function registerDynamicTools(
       const integration = plugin.type;
       const slug = action.slug;
       const description = action.description;
+      const annotations: ToolAnnotations = {
+        title: slugToTitle(slug),
+        ...deriveAnnotations(slug),
+      };
 
       server.tool(
         toolName,
         description,
         inputSchema,
+        annotations,
         withScopeCheck(toolName, scope, async (args) => {
           const { organizationId, ...fieldArgs } = args as Record<
             string,
