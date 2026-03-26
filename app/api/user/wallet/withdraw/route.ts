@@ -10,7 +10,7 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
 import {
   getOrganizationWalletAddress,
-  initializeParaSigner,
+  initializeWalletSigner,
 } from "@/lib/para/wallet-helpers";
 import { getGasStrategy } from "@/lib/web3/gas-strategy";
 import { getNonceManager } from "@/lib/web3/nonce-manager";
@@ -219,7 +219,7 @@ export async function POST(request: Request) {
         console.log(
           `[Withdraw] Initializing signer for org ${organizationId} on chain ${chain.name}`
         );
-        const signer = await initializeParaSigner(organizationId, rpcUrl);
+        const signer = await initializeWalletSigner(organizationId, rpcUrl);
         const provider = signer.provider;
 
         if (!provider) {

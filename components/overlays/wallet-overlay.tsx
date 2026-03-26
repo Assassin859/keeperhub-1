@@ -2,12 +2,24 @@
 
 import {
   Copy,
+  Eye,
+  EyeOff,
   ExternalLink,
+  KeyRound,
   Plus,
   RefreshCw,
   SendHorizontal,
+  Shield,
+  ShieldCheck,
   Trash2,
 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import Image from "next/image";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -502,6 +514,8 @@ function AddTokenForm({
   );
 }
 
+type WalletProviderOption = "para" | "turnkey";
+
 function CreateWalletForm({
   initialEmail,
   onCancel,
@@ -509,19 +523,20 @@ function CreateWalletForm({
 }: {
   initialEmail: string;
   onCancel: () => void;
-  onSubmit: (email: string) => Promise<void>;
+  onSubmit: (email: string, provider: WalletProviderOption) => Promise<void>;
 }) {
   const [email, setEmail] = useState(initialEmail);
+  const [provider, setProvider] = useState<WalletProviderOption>("turnkey");
   const [creating, setCreating] = useState(false);
 
-  const handleCreate = async () => {
+  const handleCreate = async (): Promise<void> => {
     if (!email) {
       toast.error("Email is required");
       return;
     }
     setCreating(true);
     try {
-      await onSubmit(email);
+      await onSubmit(email, provider);
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to create wallet"
@@ -543,6 +558,49 @@ function CreateWalletForm({
             admins and owners can manage it.
           </p>
         </div>
+
+        <div className="space-y-2">
+          <Label>Wallet Provider</Label>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              className={`flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors ${
+                provider === "turnkey"
+                  ? "border-primary bg-primary/5"
+                  : "border-border hover:border-border/80"
+              }`}
+              disabled={creating}
+              onClick={() => setProvider("turnkey")}
+              type="button"
+            >
+              <div className="flex items-center gap-1.5">
+                <ShieldCheck className="h-3.5 w-3.5 text-primary" />
+                <span className="font-medium text-xs">Turnkey</span>
+              </div>
+              <span className="text-muted-foreground text-[10px] leading-tight">
+                Secure enclave. Supports private key export.
+              </span>
+            </button>
+            <button
+              className={`flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors ${
+                provider === "para"
+                  ? "border-primary bg-primary/5"
+                  : "border-border hover:border-border/80"
+              }`}
+              disabled={creating}
+              onClick={() => setProvider("para")}
+              type="button"
+            >
+              <div className="flex items-center gap-1.5">
+                <Shield className="h-3.5 w-3.5 text-muted-foreground" />
+                <span className="font-medium text-xs">Para</span>
+              </div>
+              <span className="text-muted-foreground text-[10px] leading-tight">
+                MPC-based signing. No key export.
+              </span>
+            </button>
+          </div>
+        </div>
+
         <div className="space-y-2">
           <Label htmlFor="wallet-email">Email Address</Label>
           <Input
@@ -716,7 +774,7 @@ function NoWalletSection({
 }: {
   isAdmin: boolean;
   initialEmail: string;
-  onCreateWallet: (email: string) => Promise<void>;
+  onCreateWallet: (email: string, provider: WalletProviderOption) => Promise<void>;
 }) {
   const [showCreateForm, setShowCreateForm] = useState(false);
 
@@ -760,16 +818,227 @@ function NoWalletSection({
 // Main Component
 // ============================================================================
 
-// Component for account details section (email + wallet address)
+type ExportStep = "idle" | "requesting" | "otp" | "verifying" | "done";
+
+function ExportPrivateKeyButton(): React.ReactElement {
+  const [open, setOpen] = useState(false);
+  const [step, setStep] = useState<ExportStep>("idle");
+  const [otpCode, setOtpCode] = useState("");
+  const [privateKey, setPrivateKey] = useState<string | null>(null);
+  const [revealed, setRevealed] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleOpen = async (): Promise<void> => {
+    setOpen(true);
+    setStep("requesting");
+    setError(null);
+    setOtpCode("");
+    setPrivateKey(null);
+    setRevealed(false);
+    try {
+      const res = await fetch("/api/user/wallet/export-key/request", {
+        method: "POST",
+      });
+      const data: { error?: string } = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error ?? "Failed to send verification code");
+      }
+
+      setStep("otp");
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to send code"
+      );
+      setOpen(false);
+      setStep("idle");
+    }
+  };
+
+  const handleVerify = async (): Promise<void> => {
+    if (otpCode.length !== 6) {
+      setError("Enter the 6-digit code from your email");
+      return;
+    }
+
+    setStep("verifying");
+    setError(null);
+    try {
+      const res = await fetch("/api/user/wallet/export-key/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: otpCode }),
+      });
+      const data: { privateKey?: string; error?: string } = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error ?? "Verification failed");
+      }
+
+      if (!data.privateKey) {
+        throw new Error("No private key returned");
+      }
+
+      setPrivateKey(data.privateKey);
+      setRevealed(false);
+      setStep("done");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Verification failed");
+      setStep("otp");
+    }
+  };
+
+  const handleCopy = (): void => {
+    if (!privateKey) {
+      return;
+    }
+    navigator.clipboard.writeText(privateKey);
+    toast.success("Private key copied to clipboard");
+  };
+
+  const handleClose = (): void => {
+    setOpen(false);
+    setStep("idle");
+    setOtpCode("");
+    setPrivateKey(null);
+    setRevealed(false);
+    setError(null);
+  };
+
+  return (
+    <>
+      <Button
+        className="w-full"
+        onClick={handleOpen}
+        size="sm"
+        variant="outline"
+      >
+        <KeyRound className="mr-2 h-3 w-3" />
+        Export Private Key
+      </Button>
+
+      <Dialog onOpenChange={(v) => { if (!v) { handleClose(); } }} open={open}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Export Private Key</DialogTitle>
+            <DialogDescription>
+              {step === "done"
+                ? "Your private key is shown below. Copy it and store it securely."
+                : "A verification code has been sent to your email."}
+            </DialogDescription>
+          </DialogHeader>
+
+          {step === "requesting" && (
+            <div className="flex items-center justify-center py-8">
+              <Spinner className="h-6 w-6" />
+            </div>
+          )}
+
+          {(step === "otp" || step === "verifying") && (
+            <div className="space-y-4 py-2">
+              <div className="space-y-2">
+                <Label htmlFor="export-otp">Verification Code</Label>
+                <Input
+                  className="font-mono text-center text-lg tracking-[0.3em]"
+                  id="export-otp"
+                  maxLength={6}
+                  onChange={(e) =>
+                    setOtpCode(e.target.value.replace(/\D/g, ""))
+                  }
+                  placeholder="000000"
+                  value={otpCode}
+                />
+                {error && (
+                  <p className="text-destructive text-sm">{error}</p>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  className="flex-1"
+                  disabled={step === "verifying"}
+                  onClick={handleClose}
+                  variant="outline"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  className="flex-1"
+                  disabled={step === "verifying" || otpCode.length !== 6}
+                  onClick={handleVerify}
+                >
+                  {step === "verifying" ? (
+                    <>
+                      <Spinner className="mr-2 h-4 w-4" />
+                      Verifying...
+                    </>
+                  ) : (
+                    "Verify & Export"
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {step === "done" && privateKey && (
+            <div className="space-y-4 py-2">
+              <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="font-medium text-destructive text-sm">
+                    Private Key
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      aria-label={
+                        revealed ? "Hide private key" : "Reveal private key"
+                      }
+                      className="text-muted-foreground hover:text-foreground"
+                      onClick={() => setRevealed(!revealed)}
+                      type="button"
+                    >
+                      {revealed ? (
+                        <EyeOff className="h-4 w-4" />
+                      ) : (
+                        <Eye className="h-4 w-4" />
+                      )}
+                    </button>
+                    <button
+                      aria-label="Copy private key"
+                      className="text-muted-foreground hover:text-foreground"
+                      onClick={handleCopy}
+                      type="button"
+                    >
+                      <Copy className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+                <code className="block break-all font-mono text-sm">
+                  {revealed
+                    ? privateKey
+                    : privateKey.replace(/./g, "\u2022")}
+                </code>
+              </div>
+              <Button className="w-full" onClick={handleClose}>
+                Done
+              </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 function AccountDetailsSection({
   email,
   walletAddress,
   isAdmin,
+  canExportKey,
   onEmailUpdated,
 }: {
   email: string;
   walletAddress: string;
   isAdmin: boolean;
+  canExportKey: boolean;
   onEmailUpdated: () => void;
 }) {
   const [isEditingEmail, setIsEditingEmail] = useState(false);
@@ -893,6 +1162,12 @@ function AccountDetailsSection({
               <Copy className="h-3 w-3" />
             </button>
           </div>
+        </div>
+      )}
+
+      {isAdmin && canExportKey && (
+        <div className="mt-3">
+          <ExportPrivateKeyButton />
         </div>
       )}
     </div>
@@ -1093,16 +1368,19 @@ export function WalletOverlay({ overlayId }: WalletOverlayProps) {
     }
   };
 
-  const handleCreateWallet = async (email: string) => {
+  const handleCreateWallet = async (
+    email: string,
+    provider: WalletProviderOption
+  ): Promise<void> => {
     const response = await fetch("/api/user/wallet", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({ email, provider }),
     });
 
-    const data = await response.json();
+    const data: { error?: string } = await response.json();
     if (!response.ok) {
-      throw new Error(data.error || "Failed to create wallet");
+      throw new Error(data.error ?? "Failed to create wallet");
     }
 
     toast.success("Wallet created successfully!");
@@ -1233,6 +1511,7 @@ export function WalletOverlay({ overlayId }: WalletOverlayProps) {
         <div className="space-y-4">
           {walletData.email && walletData.walletAddress && (
             <AccountDetailsSection
+              canExportKey={!!walletData.canExportKey}
               email={walletData.email}
               isAdmin={isAdmin}
               onEmailUpdated={loadWallet}
@@ -1259,7 +1538,7 @@ export function WalletOverlay({ overlayId }: WalletOverlayProps) {
 
       {!(walletLoading || walletData?.hasWallet) && (
         <NoWalletSection
-          initialEmail={session?.user?.email || ""}
+          initialEmail={session?.user?.email ?? ""}
           isAdmin={isAdmin}
           onCreateWallet={handleCreateWallet}
         />

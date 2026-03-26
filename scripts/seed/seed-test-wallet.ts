@@ -207,8 +207,9 @@ async function ensureParaWallet(
     id: generateId(),
     userId,
     organizationId: orgId,
+    provider: "para",
     email: TEST_USER_EMAIL,
-    walletId: TEST_WALLET_ID,
+    paraWalletId: TEST_WALLET_ID,
     walletAddress: TEST_WALLET_ADDRESS,
     userShare: encryptedShare,
   });

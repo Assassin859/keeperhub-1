@@ -5,7 +5,7 @@
  * These are extensions to the base workflow-builder schema.
  *
  * Tables defined here:
- * - paraWallets: Stores Para wallet information for Web3 operations
+ * - organizationWallets: Stores wallet information for Web3 operations (aliased as paraWallets)
  * - organizationApiKeys: Stores organization-scoped API keys for MCP server authentication
  * - organizationTokens: Tracks ERC20 tokens per organization/chain for balance display
  * - supportedTokens: System-wide default tokens (stablecoins) available on each chain
@@ -29,36 +29,75 @@ import { organization, users, workflows } from "@/lib/db/schema";
 import { generateId } from "@/lib/utils/id";
 
 /**
- * Para Wallets table
+ * Organization Wallets table
  *
- * Stores organization wallet information for Para (Web3) integration.
- * Each organization can have one wallet (enforced by unique constraint on organizationId).
- * The userShare is encrypted before storage for security.
+ * Stores wallet information for Web3 integration. Supports multiple providers
+ * (Para MPC, Turnkey secure enclaves). Each organization can have one wallet
+ * (enforced by unique constraint on organizationId).
+ *
+ * Provider-specific columns are nullable since each row only uses one provider's fields.
+ * The `provider` column determines which fields are relevant.
  *
  * NOTE: userId tracks who created the wallet, but the wallet belongs to the organization.
  * Only organization admins and owners can create/manage wallets.
  */
-export const paraWallets = pgTable("para_wallets", {
+export const organizationWallets = pgTable(
+  "para_wallets",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id").references(() => organization.id, {
+      onDelete: "cascade",
+    }),
+    provider: text("provider").notNull().$type<"para" | "turnkey">(),
+    email: text("email").notNull(),
+    walletAddress: text("wallet_address").notNull(),
+    // Para-specific fields
+    paraWalletId: text("para_wallet_id"),
+    userShare: text("user_share"), // Encrypted MPC keyshare (Para only)
+    // Turnkey-specific fields
+    turnkeySubOrgId: text("turnkey_sub_org_id"),
+    turnkeyWalletId: text("turnkey_wallet_id"),
+    turnkeyPrivateKeyId: text("turnkey_private_key_id"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    unique("para_wallets_organization_id_unique").on(table.organizationId),
+  ]
+);
+
+// Backward compatibility alias
+export const paraWallets = organizationWallets;
+
+// Type exports
+export type OrganizationWallet = typeof organizationWallets.$inferSelect;
+export type NewOrganizationWallet = typeof organizationWallets.$inferInsert;
+export type ParaWallet = OrganizationWallet;
+export type NewParaWallet = NewOrganizationWallet;
+
+/**
+ * Key Export Verification Codes table
+ *
+ * Single-use OTP codes for private key export.
+ * Admin must verify via email before viewing a private key.
+ * Codes expire after 5 minutes and are deleted after use.
+ */
+export const keyExportCodes = pgTable("key_export_codes", {
   id: text("id")
     .primaryKey()
     .$defaultFn(() => generateId()),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  // TODO: Make this NOT NULL after migrating existing user wallets to organizations
   organizationId: text("organization_id")
-    .unique() // One wallet per organization
+    .notNull()
     .references(() => organization.id, { onDelete: "cascade" }),
-  email: text("email").notNull(),
-  walletId: text("wallet_id").notNull(), // Para wallet ID
-  walletAddress: text("wallet_address").notNull(), // EVM address (0x...)
-  userShare: text("user_share").notNull(), // Encrypted keyshare for signing
+  codeHash: text("code_hash").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  attempts: integer("attempts").notNull().default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
-
-// Type exports for the Para Wallets table
-export type ParaWallet = typeof paraWallets.$inferSelect;
-export type NewParaWallet = typeof paraWallets.$inferInsert;
 
 /**
  * Organization API Keys table

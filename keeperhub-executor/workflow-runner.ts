@@ -205,7 +205,8 @@ async function main(): Promise<void> {
     const edges = workflow.edges as WorkflowEdge[];
     const validation = await validateWorkflowIntegrations(
       nodes,
-      workflow.userId
+      workflow.userId,
+      workflow.organizationId
     );
 
     if (!validation.valid) {

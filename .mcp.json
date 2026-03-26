@@ -1,16 +1,8 @@
 {
   "mcpServers": {
-    "keeperhub-dev": {
-      "command": "kh",
-      "args": ["serve", "--mcp", "--host", "http://localhost:3000"]
-    },
-    "keeperhub-staging": {
-      "command": "kh",
-      "args": ["serve", "--mcp", "--host", "https://app-staging.keeperhub.com"]
-    },
     "keeperhub": {
-      "command": "kh",
-      "args": ["serve", "--mcp"]
+      "type": "http",
+      "url": "https://app.keeperhub.com/mcp"
     },
     "playwright": {
       "command": "npx",
@@ -21,22 +13,6 @@
       "args": ["-y", "@modelcontextprotocol/server-memory"],
       "env": {
         "MEMORY_FILE_PATH": ".claude/memory.jsonl"
-      }
-    },
-    "postgres": {
-      "command": "docker",
-      "args": [
-        "run",
-        "-i",
-        "--rm",
-        "--network=host",
-        "-e",
-        "DATABASE_URI",
-        "crystaldba/postgres-mcp",
-        "--access-mode=unrestricted"
-      ],
-      "env": {
-        "DATABASE_URI": "postgresql://postgres:postgres@localhost:5433/keeperhub"
       }
     }
   }

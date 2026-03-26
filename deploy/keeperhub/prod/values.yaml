@@ -187,6 +187,18 @@ env:
     type: parameterStore
     name: para-api-key
     parameter_name: /eks/maker-prod/keeperhub/para-api-key
+  TURNKEY_API_PUBLIC_KEY:
+    type: parameterStore
+    name: turnkey-api-public-key
+    parameter_name: /eks/maker-prod/keeperhub/turnkey-api-public-key
+  TURNKEY_API_PRIVATE_KEY:
+    type: parameterStore
+    name: turnkey-api-private-key
+    parameter_name: /eks/maker-prod/keeperhub/turnkey-api-private-key
+  TURNKEY_ORGANIZATION_ID:
+    type: parameterStore
+    name: turnkey-organization-id
+    parameter_name: /eks/maker-prod/keeperhub/turnkey-organization-id
   WALLET_ENCRYPTION_KEY:
     type: parameterStore
     name: wallet-encryption-key

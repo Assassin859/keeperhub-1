@@ -96,7 +96,7 @@ const mockInitializeSigner = vi.fn();
 vi.mock("@/lib/para/wallet-helpers", () => ({
   getOrganizationWalletAddress: (...args: unknown[]) =>
     mockGetWalletAddress(...args),
-  initializeParaSigner: (...args: unknown[]) => mockInitializeSigner(...args),
+  initializeWalletSigner: (...args: unknown[]) => mockInitializeSigner(...args),
 }));
 
 // Mock gas helpers

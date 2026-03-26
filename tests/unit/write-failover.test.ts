@@ -39,7 +39,7 @@ vi.mock("@/lib/logging", () => ({
 }));
 
 vi.mock("@/lib/para/wallet-helpers", () => ({
-  initializeParaSigner: vi.fn(),
+  initializeWalletSigner: vi.fn(),
 }));
 
 vi.mock("@/lib/rpc/provider-factory", () => ({

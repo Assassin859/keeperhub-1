@@ -22,7 +22,7 @@ import { db } from "@/lib/db";
 import { explorerConfigs } from "@/lib/db/schema";
 import { getTransactionUrl } from "@/lib/explorer";
 import { ErrorCategory, logUserError } from "@/lib/logging";
-import { initializeParaSigner } from "@/lib/para/wallet-helpers";
+import { initializeWalletSigner } from "@/lib/para/wallet-helpers";
 import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc-provider";
 import { isNonRetryableError } from "@/lib/rpc-provider/error-classification";
@@ -78,7 +78,7 @@ export type SubmitAndConfirmResult = {
  * 4. After successful send: record -> wait -> confirm -> explorer link.
  */
 export async function submitAndConfirm(
-  signer: ReturnType<typeof initializeParaSigner> extends Promise<infer T>
+  signer: ReturnType<typeof initializeWalletSigner> extends Promise<infer T>
     ? T
     : never,
   txRequest: ethers.TransactionRequest,
@@ -141,7 +141,7 @@ export async function submitContractCallAndConfirm(
   method: string,
   args: unknown[],
   overrides: Record<string, unknown>,
-  signer: ReturnType<typeof initializeParaSigner> extends Promise<infer T>
+  signer: ReturnType<typeof initializeWalletSigner> extends Promise<infer T>
     ? T
     : never,
   options: SubmitAndConfirmOptions
@@ -263,7 +263,7 @@ export async function executeTransaction(
   try {
     const baseTx = buildTx(nonce);
 
-    const signer = await initializeParaSigner(
+    const signer = await initializeWalletSigner(
       context.organizationId,
       context.rpcUrl
     );

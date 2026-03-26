@@ -15,7 +15,7 @@ import { workflowExecutions } from "@/lib/db/schema";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import {
   getOrganizationWalletAddress,
-  initializeParaSigner,
+  initializeWalletSigner,
 } from "@/lib/para/wallet-helpers";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
@@ -240,9 +240,9 @@ export async function writeContractCore(
   // Execute transaction with nonce management
   return withNonceSession(txContext, walletAddress, async (session) => {
     // Initialize Para signer
-    let signer: Awaited<ReturnType<typeof initializeParaSigner>>;
+    let signer: Awaited<ReturnType<typeof initializeWalletSigner>>;
     try {
-      signer = await initializeParaSigner(organizationId, rpcUrl);
+      signer = await initializeWalletSigner(organizationId, rpcUrl);
     } catch (error) {
       return {
         success: false,

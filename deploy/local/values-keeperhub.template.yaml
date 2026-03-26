@@ -94,6 +94,16 @@ env:
   NEXT_PUBLIC_PARA_ENVIRONMENT:
     type: kv
     value: "beta"
+  # Turnkey Wallet Configuration
+  TURNKEY_API_PUBLIC_KEY:
+    type: kv
+    value: ""
+  TURNKEY_API_PRIVATE_KEY:
+    type: kv
+    value: ""
+  TURNKEY_ORGANIZATION_ID:
+    type: kv
+    value: ""
   # Encryption keys - set via environment variables before deploy
   WALLET_ENCRYPTION_KEY:
     type: kv

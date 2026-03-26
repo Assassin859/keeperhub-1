@@ -701,15 +701,14 @@ describe.skipIf(skipRealTx)("Real Transaction Tests (Sepolia)", () => {
       process.env.PARA_API_KEY ?? ""
     );
 
+    if (!paraWallet.userShare) {
+      throw new Error("Test wallet missing userShare");
+    }
     const decryptedShare = decryptUserShare(paraWallet.userShare);
     await paraClient.setUserShare(decryptedShare);
 
     sepoliaProvider = new ethers.JsonRpcProvider(SEPOLIA_RPC);
-    wallet = new ParaEthersSigner(
-      // biome-ignore lint/suspicious/noExplicitAny: Para server-sdk type incompatibility with core-sdk ParaCore
-      paraClient as any,
-      sepoliaProvider
-    );
+    wallet = new ParaEthersSigner(paraClient as any, sepoliaProvider);
 
     console.log(`Test wallet (Para): ${walletAddress}`);
 

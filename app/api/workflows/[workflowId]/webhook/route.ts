@@ -196,7 +196,8 @@ export async function POST(
     // Validate that all integrationIds in workflow nodes belong to the workflow owner
     const validation = await validateWorkflowIntegrations(
       workflow.nodes as WorkflowNode[],
-      workflow.userId
+      workflow.userId,
+      workflow.organizationId
     );
     if (!validation.valid) {
       logSystemError(ErrorCategory.WORKFLOW_ENGINE, "[Webhook] Invalid integration references", new Error(String(validation.invalidIds)), { endpoint: "/api/workflows/[workflowId]/webhook", operation: "validateIntegrations" });
