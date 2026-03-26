@@ -193,12 +193,13 @@ export default async function AuthorizePage({
 
   const scopeDescriptions: Record<string, string> = {
     "mcp:read": "Read your workflows, executions, and plugin schemas",
-    "mcp:write": "Create, update, and execute workflows on your behalf",
+    "mcp:write":
+      "Read and write access to your workflows, executions, and integrations",
     "mcp:admin": "Full access to your KeeperHub organization",
   };
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-background">
+    <main className="pointer-events-auto flex min-h-screen items-center justify-center overflow-y-auto bg-background">
       <div className="w-full max-w-md rounded-lg border border-border bg-card p-8 shadow-sm">
         <h1 className="mb-1 text-xl font-semibold text-foreground">
           Authorize Access

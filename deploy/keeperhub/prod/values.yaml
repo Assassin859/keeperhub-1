@@ -218,6 +218,11 @@ env:
   FROM_ADDRESS:
     type: kv
     value: "noreply@keeperhub.com"
+  # Discord
+  DISCORD_WEBHOOK_SIGNUPS:
+    type: parameterStore
+    name: discord-webhook-signups
+    parameter_name: /eks/maker-prod/keeperhub/discord-webhook-signups
   # Sentry
   SENTRY_DSN:
     type: parameterStore

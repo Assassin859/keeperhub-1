@@ -5,7 +5,7 @@ import { createContext, type ReactNode, useContext } from "react";
 const GitHubStarsContext = createContext<number | null>(null);
 
 type GitHubStarsProviderProps = {
-  children: ReactNode;
+  children?: ReactNode;
   stars: number | null;
 };
 

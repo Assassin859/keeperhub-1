@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { users, sessions, workflowExecutions, workflowExecutionLogs, integrations, organization, organizationApiKeys, accounts, workflows, workflowSchedules, paraWallets, organizationTokens, apiKeys, tags, invitation, member, addressBookEntry, projects, categories, protocols, chains, explorerConfigs, userRpcPreferences } from "./schema";
+import { users, sessions, workflowExecutions, workflowExecutionLogs, integrations, organization, organizationApiKeys, accounts, workflows, workflowSchedules, paraWallets, organizationTokens, apiKeys, tags, invitation, member, addressBookEntry, projects, chains, explorerConfigs, userRpcPreferences } from "./schema";
 
 export const sessionsRelations = relations(sessions, ({one}) => ({
 	user: one(users, {
@@ -21,9 +21,7 @@ export const usersRelations = relations(users, ({many}) => ({
 	members: many(member),
 	addressBookEntries: many(addressBookEntry),
 	workflows: many(workflows),
-	protocols: many(protocols),
 	projects: many(projects),
-	categories: many(categories),
 	userRpcPreferences: many(userRpcPreferences),
 }));
 
@@ -67,9 +65,7 @@ export const organizationRelations = relations(organization, ({many}) => ({
 	members: many(member),
 	addressBookEntries: many(addressBookEntry),
 	workflows: many(workflows),
-	protocols: many(protocols),
 	projects: many(projects),
-	categories: many(categories),
 }));
 
 export const organizationApiKeysRelations = relations(organizationApiKeys, ({one}) => ({
@@ -108,14 +104,6 @@ export const workflowsRelations = relations(workflows, ({one, many}) => ({
 	tag: one(tags, {
 		fields: [workflows.tagId],
 		references: [tags.id]
-	}),
-	category: one(categories, {
-		fields: [workflows.categoryId],
-		references: [categories.id]
-	}),
-	protocol: one(protocols, {
-		fields: [workflows.protocolId],
-		references: [protocols.id]
 	}),
 }));
 
@@ -208,29 +196,6 @@ export const projectsRelations = relations(projects, ({one, many}) => ({
 	}),
 }));
 
-export const categoriesRelations = relations(categories, ({one, many}) => ({
-	workflows: many(workflows),
-	organization: one(organization, {
-		fields: [categories.organizationId],
-		references: [organization.id]
-	}),
-	user: one(users, {
-		fields: [categories.userId],
-		references: [users.id]
-	}),
-}));
-
-export const protocolsRelations = relations(protocols, ({one, many}) => ({
-	workflows: many(workflows),
-	organization: one(organization, {
-		fields: [protocols.organizationId],
-		references: [organization.id]
-	}),
-	user: one(users, {
-		fields: [protocols.userId],
-		references: [users.id]
-	}),
-}));
 
 export const explorerConfigsRelations = relations(explorerConfigs, ({one}) => ({
 	chain: one(chains, {

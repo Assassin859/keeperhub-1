@@ -51,12 +51,23 @@ jobs:
       image_tag: ${{ needs.build-images.outputs.image_tag }}
     secrets: inherit
 
+  # Executor deploy runs after build-images and e2e-tests (same as deploy).
+  # The executor's RUNNER_IMAGE references the workflow-runner image built by
+  # build-images, so it must wait for that job to complete.
+  deploy-executor:
+    needs: [build-images, e2e-tests]
+    if: ${{ github.event_name != 'pull_request' && !failure() && !cancelled() }}
+    uses: ./.github/workflows/deploy-executor.yaml
+    with:
+      image_tag: ${{ needs.build-images.outputs.image_tag }}
+    secrets: inherit
+
   # Release and docs-sync only run on prod pushes, after successful deploy.
   # Previously a separate workflow — moved here so e2e/deploy failures block release.
   # Note: if ENABLE_E2E_EPHEMERAL_TESTS is false, e2e jobs are skipped (not failed),
   # so deploy and release proceed unconditionally — the variable is the kill switch.
   release:
-    needs: [deploy]
+    needs: [deploy, deploy-executor]
     if: ${{ github.ref_name == 'prod' && !failure() && !cancelled() }}
     uses: ./.github/workflows/release.yml
     secrets: inherit

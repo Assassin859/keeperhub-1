@@ -73,17 +73,10 @@ const RootLayout = ({ children }: RootLayoutProps) => (
         <Provider>
           <AuthProvider>
             <OverlayProvider>
-              <Suspense
-                fallback={
-                  <GitHubStarsProvider stars={null}>
-                    <LayoutContent>{children}</LayoutContent>
-                  </GitHubStarsProvider>
-                }
-              >
-                <GitHubStarsLoader>
-                  <LayoutContent>{children}</LayoutContent>
-                </GitHubStarsLoader>
+              <Suspense fallback={<GitHubStarsProvider stars={null} />}>
+                <GitHubStarsLoader />
               </Suspense>
+              <LayoutContent>{children}</LayoutContent>
               <Toaster />
               <GlobalModals />
               <MobileWarningDialog />

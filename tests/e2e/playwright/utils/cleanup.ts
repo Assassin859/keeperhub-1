@@ -125,16 +125,18 @@ export async function cleanupTestUsers(): Promise<number> {
 
     // 2. Para wallets - delete from API first, then DB
     const paraWallets = await sql`
-      SELECT wallet_id FROM para_wallets WHERE user_id IN ${sql(userIds)}
+      SELECT para_wallet_id FROM para_wallets WHERE user_id IN ${sql(userIds)}
     `;
 
     if (paraWallets.length > 0) {
       const paraConfig = getParaPortalConfig();
       if (paraConfig) {
         const results = await Promise.allSettled(
-          paraWallets.map((w) =>
-            deleteParaPregenWallet(paraConfig, w.wallet_id as string)
-          )
+          paraWallets
+            .filter((w) => w.para_wallet_id != null)
+            .map((w) =>
+              deleteParaPregenWallet(paraConfig, w.para_wallet_id as string)
+            )
         );
         const failed = results.filter(
           (r) =>

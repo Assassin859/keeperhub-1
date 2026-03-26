@@ -280,11 +280,6 @@ function ExpandableRunRow({ run }: ExpandableRunRowProps): ReactNode {
               </button>
             ) : null}
           </div>
-          {run.totalSteps !== null ? (
-            <span className="text-xs text-muted-foreground">
-              {run.completedSteps ?? 0}/{run.totalSteps} steps
-            </span>
-          ) : null}
         </td>
         <td className="py-3 pr-3">
           <StatusBadge status={run.status} />

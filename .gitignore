@@ -139,3 +139,5 @@ tailwindcss-*.log
 
 # Local reports
 reports/
+
+.mcp.json
