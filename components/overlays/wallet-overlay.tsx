@@ -518,11 +518,9 @@ type WalletProviderOption = "para" | "turnkey";
 
 function CreateWalletForm({
   initialEmail,
-  onCancel,
   onSubmit,
 }: {
   initialEmail: string;
-  onCancel: () => void;
   onSubmit: (email: string, provider: WalletProviderOption) => Promise<void>;
 }) {
   const [email, setEmail] = useState(initialEmail);
@@ -618,14 +616,6 @@ function CreateWalletForm({
         </div>
       </div>
       <div className="flex gap-2">
-        <Button
-          className="flex-1"
-          disabled={creating}
-          onClick={onCancel}
-          variant="outline"
-        >
-          Cancel
-        </Button>
         <Button
           className="flex-1"
           disabled={creating || !email}
@@ -776,8 +766,6 @@ function NoWalletSection({
   initialEmail: string;
   onCreateWallet: (email: string, provider: WalletProviderOption) => Promise<void>;
 }) {
-  const [showCreateForm, setShowCreateForm] = useState(false);
-
   if (!isAdmin) {
     return (
       <div className="rounded-lg border bg-muted/50 p-4">
@@ -789,28 +777,11 @@ function NoWalletSection({
     );
   }
 
-  if (showCreateForm) {
-    return (
-      <CreateWalletForm
-        initialEmail={initialEmail}
-        onCancel={() => setShowCreateForm(false)}
-        onSubmit={onCreateWallet}
-      />
-    );
-  }
-
   return (
-    <div className="space-y-4">
-      <div className="rounded-lg border bg-muted/50 p-4">
-        <p className="text-muted-foreground text-sm">
-          No wallet found for this organization. Create a wallet to use Web3
-          features in your workflows.
-        </p>
-      </div>
-      <Button className="w-full" onClick={() => setShowCreateForm(true)}>
-        Create Organization Wallet
-      </Button>
-    </div>
+    <CreateWalletForm
+      initialEmail={initialEmail}
+      onSubmit={onCreateWallet}
+    />
   );
 }
 

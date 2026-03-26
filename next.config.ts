@@ -234,7 +234,7 @@ const nextConfig = {
   },
 } satisfies NextConfig & { eslint?: { ignoreDuringBuilds?: boolean } };
 
-const { SENTRY_ORG, SENTRY_PROJECT } = process.env;
+const { SENTRY_ORG, SENTRY_PROJECT, SENTRY_RELEASE } = process.env;
 
 export default withSentryConfig(withWorkflow(nextConfig), {
   // For all available options, see:
@@ -242,6 +242,7 @@ export default withSentryConfig(withWorkflow(nextConfig), {
 
   org: SENTRY_ORG,
   project: SENTRY_PROJECT,
+  release: SENTRY_RELEASE ? { name: SENTRY_RELEASE } : undefined,
 
   // Only print logs for uploading source maps in CI
   silent: !process.env.CI,
@@ -251,6 +252,11 @@ export default withSentryConfig(withWorkflow(nextConfig), {
 
   // Upload a larger set of source maps for prettier stack traces (increases build time)
   widenClientFileUpload: true,
+
+  // Delete source maps after uploading to Sentry so they don't ship in the bundle
+  sourcemaps: {
+    deleteSourcemapsAfterUpload: true,
+  },
 
   // Route browser requests to Sentry through a Next.js rewrite to circumvent ad-blockers.
   // This can increase your server load as well as your hosting bill.

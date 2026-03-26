@@ -14,6 +14,11 @@ variable "NEXT_PUBLIC_GITHUB_CLIENT_ID" { default = "" }
 variable "NEXT_PUBLIC_GOOGLE_CLIENT_ID" { default = "" }
 variable "NEXT_PUBLIC_BILLING_ENABLED" { default = "" }
 variable "ENVIRONMENT_TAG" { default = "" }
+variable "NEXT_PUBLIC_SENTRY_DSN" { default = "" }
+variable "SENTRY_ORG" { default = "" }
+variable "SENTRY_PROJECT" { default = "" }
+variable "SENTRY_AUTH_TOKEN" { default = "" }
+variable "SENTRY_RELEASE" { default = "" }
 variable "EVENTS_ECR_TRACKER_REPO" { default = "" }
 variable "SCHEDULER_ECR_REPO" { default = "" }
 variable "EXECUTOR_ECR_REPO" { default = "" }
@@ -43,6 +48,11 @@ target "app" {
     NEXT_PUBLIC_GITHUB_CLIENT_ID = NEXT_PUBLIC_GITHUB_CLIENT_ID
     NEXT_PUBLIC_GOOGLE_CLIENT_ID = NEXT_PUBLIC_GOOGLE_CLIENT_ID
     NEXT_PUBLIC_BILLING_ENABLED  = NEXT_PUBLIC_BILLING_ENABLED
+    NEXT_PUBLIC_SENTRY_DSN       = NEXT_PUBLIC_SENTRY_DSN
+    SENTRY_ORG                   = SENTRY_ORG
+    SENTRY_PROJECT               = SENTRY_PROJECT
+    SENTRY_AUTH_TOKEN            = SENTRY_AUTH_TOKEN
+    SENTRY_RELEASE               = SENTRY_RELEASE
   }
   tags = compact([
     "${ECR_REGISTRY}/${ECR_REPO}:app-${IMAGE_TAG}",
