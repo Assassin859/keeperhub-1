@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, lt } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { mcpOauthClients, mcpOauthRefreshTokens } from "@/lib/db/schema";
+import {
+  mcpOauthAuthCodes,
+  mcpOauthClients,
+  mcpOauthRefreshTokens,
+} from "@/lib/db/schema";
 
 const AUTH_CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -38,36 +42,60 @@ export type OAuthClient = {
   createdAt: number;
 };
 
-// Auth codes stay in-memory (10min TTL, no need to persist across restarts)
-const authCodes = new Map<string, AuthorizationCode>();
-
-export function storeAuthCode(entry: AuthorizationCode): void {
-  authCodes.set(entry.code, entry);
+export async function storeAuthCode(entry: AuthorizationCode): Promise<void> {
+  await db.insert(mcpOauthAuthCodes).values({
+    code: entry.code,
+    clientId: entry.clientId,
+    redirectUri: entry.redirectUri,
+    scope: entry.scope,
+    userId: entry.userId,
+    organizationId: entry.organizationId,
+    codeChallenge: entry.codeChallenge,
+    codeChallengeMethod: entry.codeChallengeMethod,
+    expiresAt: new Date(entry.expiresAt),
+  });
 }
 
-export function getAuthCode(code: string): AuthorizationCode | undefined {
-  const entry = authCodes.get(code);
-  if (!entry) {
+export async function getAuthCode(
+  code: string
+): Promise<AuthorizationCode | undefined> {
+  const rows = await db
+    .select()
+    .from(mcpOauthAuthCodes)
+    .where(eq(mcpOauthAuthCodes.code, code))
+    .limit(1);
+
+  const row = rows[0];
+  if (!row) {
     return undefined;
   }
-  if (Date.now() > entry.expiresAt) {
-    authCodes.delete(code);
+
+  if (Date.now() > row.expiresAt.getTime()) {
+    await db.delete(mcpOauthAuthCodes).where(eq(mcpOauthAuthCodes.code, code));
     return undefined;
   }
-  return entry;
+
+  return {
+    code: row.code,
+    clientId: row.clientId,
+    redirectUri: row.redirectUri,
+    scope: row.scope,
+    userId: row.userId,
+    organizationId: row.organizationId,
+    codeChallenge: row.codeChallenge,
+    codeChallengeMethod: row.codeChallengeMethod,
+    expiresAt: row.expiresAt.getTime(),
+  };
 }
 
-export function deleteAuthCode(code: string): void {
-  authCodes.delete(code);
+export async function deleteAuthCode(code: string): Promise<void> {
+  await db.delete(mcpOauthAuthCodes).where(eq(mcpOauthAuthCodes.code, code));
 }
 
-export function cleanupExpiredAuthCodes(): void {
-  const now = Date.now();
-  for (const [code, entry] of authCodes) {
-    if (now > entry.expiresAt) {
-      authCodes.delete(code);
-    }
-  }
+export async function cleanupExpiredAuthCodes(): Promise<void> {
+  await db
+    .delete(mcpOauthAuthCodes)
+    .where(lt(mcpOauthAuthCodes.expiresAt, new Date()));
 }
 
 function hashToken(token: string): string {

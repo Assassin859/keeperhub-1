@@ -148,7 +148,6 @@ env:
     type: parameterStore
     name: oauth-jwt-secret
     parameter_name: /eks/maker-prod/keeperhub/oauth-jwt-secret
-  # Auth and social providers (GitHub, Google)
   NEXT_PUBLIC_AUTH_PROVIDERS:
     type: kv
     value: "email,github,google"
@@ -218,12 +217,10 @@ env:
   FROM_ADDRESS:
     type: kv
     value: "noreply@keeperhub.com"
-  # Discord
   DISCORD_WEBHOOK_SIGNUPS:
     type: parameterStore
     name: discord-webhook-signups
     parameter_name: /eks/maker-prod/keeperhub/discord-webhook-signups
-  # Sentry
   SENTRY_DSN:
     type: parameterStore
     name: sentry-dsn
@@ -244,7 +241,6 @@ env:
     type: parameterStore
     name: sentry-auth-token
     parameter_name: /eks/maker-prod/keeperhub/sentry-auth-token
-  # Billing (Stripe)
   NEXT_PUBLIC_BILLING_ENABLED:
     type: kv
     value: "false"
@@ -312,7 +308,6 @@ env:
     type: parameterStore
     name: stripe-price-enterprise-yearly
     parameter_name: /eks/maker-prod/keeperhub/stripe-price-enterprise-yearly
-  # Internal service API keys for service-to-service auth
   MCP_SERVICE_API_KEY:
     type: parameterStore
     name: mcp-service-api-key

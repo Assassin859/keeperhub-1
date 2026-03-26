@@ -358,10 +358,13 @@ export {
 } from "./schema-extensions";
 
 export {
+  type McpOauthAuthCode,
   type McpOauthClient,
   type McpOauthRefreshToken,
+  mcpOauthAuthCodes,
   mcpOauthClients,
   mcpOauthRefreshTokens,
+  type NewMcpOauthAuthCode,
   type NewMcpOauthClient,
   type NewMcpOauthRefreshToken,
 } from "./schema-oauth";

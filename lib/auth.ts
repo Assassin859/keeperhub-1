@@ -351,9 +351,17 @@ async function notifyDiscordSignup(user: {
         },
       ],
     }),
-  }).catch(() => {
-    // Intentionally swallowed -- webhook failure must not break signup
-  });
+  })
+    .then((res) => {
+      if (!res.ok) {
+        console.error(
+          `[Discord] Webhook failed: ${res.status} ${res.statusText}`
+        );
+      }
+    })
+    .catch((err: unknown) => {
+      console.error("[Discord] Webhook request error:", err);
+    });
 }
 
 export const auth = betterAuth({
@@ -411,6 +419,9 @@ export const auth = betterAuth({
 
           // Notify Discord for OAuth signups (already verified at creation)
           if (user.emailVerified && process.env.DISCORD_WEBHOOK_SIGNUPS) {
+            console.log("[Auth] Notifying Discord for OAuth signup", {
+              email: user.email,
+            });
             await notifyDiscordSignup(user);
           }
         },
@@ -467,6 +478,7 @@ export const auth = betterAuth({
   },
   emailVerification: {
     afterEmailVerification: async (user) => {
+      console.log("[Auth] afterEmailVerification fired", { email: user.email });
       if (process.env.DISCORD_WEBHOOK_SIGNUPS) {
         await notifyDiscordSignup(user);
       }

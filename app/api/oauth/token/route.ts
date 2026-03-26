@@ -42,7 +42,7 @@ async function handleAuthorizationCode(
     );
   }
 
-  const authCode = getAuthCode(code);
+  const authCode = await getAuthCode(code);
   if (!authCode) {
     return jsonError("Invalid or expired authorization code", 400);
   }
@@ -64,7 +64,7 @@ async function handleAuthorizationCode(
   }
 
   // Consume the code immediately (single use)
-  deleteAuthCode(code);
+  await deleteAuthCode(code);
 
   const accessToken = createAccessToken({
     sub: authCode.userId,

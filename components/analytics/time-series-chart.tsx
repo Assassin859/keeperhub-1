@@ -22,10 +22,10 @@ import {
 
 const CHART_COLORS = {
   success: "var(--color-keeperhub-green)",
-  error: "var(--chart-1)",
-  cancelled: "var(--color-orange-500, #f97316)",
+  error: "var(--color-orange-500, #f97316)",
+  cancelled: "var(--chart-1)",
   running: "var(--chart-2)",
-  pending: "var(--chart-3)",
+  pending: "var(--chart-4)",
 } as const;
 
 function formatTimestamp(value: string, range: TimeRange): string {
@@ -80,21 +80,23 @@ function ChartTooltip({
       <p className="mb-1 text-xs text-muted-foreground">
         {formatTooltipTimestamp(label)}
       </p>
-      {payload.map((entry) => (
-        <div
-          className="flex items-center justify-between gap-4 text-sm"
-          key={entry.name}
-        >
-          <div className="flex items-center gap-1.5">
-            <span
-              className="inline-block size-2 rounded-full"
-              style={{ backgroundColor: entry.color }}
-            />
-            <span className="capitalize">{entry.name}</span>
+      {payload
+        .filter((entry) => entry.value > 0)
+        .map((entry) => (
+          <div
+            className="flex items-center justify-between gap-4 text-sm"
+            key={entry.name}
+          >
+            <div className="flex items-center gap-1.5">
+              <span
+                className="inline-block size-2 rounded-full"
+                style={{ backgroundColor: entry.color }}
+              />
+              <span className="capitalize">{entry.name}</span>
+            </div>
+            <span className="font-medium">{entry.value}</span>
           </div>
-          <span className="font-medium">{entry.value}</span>
-        </div>
-      ))}
+        ))}
     </div>
   );
 }
@@ -124,6 +126,17 @@ function TimeSeriesContent({
   loading: boolean;
 }): ReactNode {
   const isEmpty = chartData.length === 0;
+
+  const activeKeys = useMemo(() => {
+    const keys = [
+      "success",
+      "error",
+      "cancelled",
+      "running",
+      "pending",
+    ] as const;
+    return keys.filter((key) => chartData.some((d) => d[key] > 0));
+  }, [chartData]);
 
   if (loading && isEmpty) {
     return <ChartSkeleton />;
@@ -161,46 +174,16 @@ function TimeSeriesContent({
           content={<ChartTooltip />}
           cursor={{ stroke: "hsl(var(--muted-foreground) / 0.3)" }}
         />
-        <Area
-          dataKey="success"
-          fill={CHART_COLORS.success}
-          fillOpacity={0.4}
-          stackId="executions"
-          stroke={CHART_COLORS.success}
-          type="monotone"
-        />
-        <Area
-          dataKey="error"
-          fill={CHART_COLORS.error}
-          fillOpacity={0.4}
-          stackId="executions"
-          stroke={CHART_COLORS.error}
-          type="monotone"
-        />
-        <Area
-          dataKey="cancelled"
-          fill={CHART_COLORS.cancelled}
-          fillOpacity={0.4}
-          stackId="executions"
-          stroke={CHART_COLORS.cancelled}
-          type="monotone"
-        />
-        <Area
-          dataKey="running"
-          fill={CHART_COLORS.running}
-          fillOpacity={0.4}
-          stackId="executions"
-          stroke={CHART_COLORS.running}
-          type="monotone"
-        />
-        <Area
-          dataKey="pending"
-          fill={CHART_COLORS.pending}
-          fillOpacity={0.4}
-          stackId="executions"
-          stroke={CHART_COLORS.pending}
-          type="monotone"
-        />
+        {activeKeys.map((key) => (
+          <Area
+            dataKey={key}
+            fill={CHART_COLORS[key]}
+            fillOpacity={0.4}
+            key={key}
+            stroke="none"
+            type="monotone"
+          />
+        ))}
       </AreaChart>
     </ResponsiveContainer>
   );

@@ -1,6 +1,25 @@
 import { index, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 import { generateId } from "../utils/id";
 
+export const mcpOauthAuthCodes = pgTable("mcp_oauth_auth_codes", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => generateId()),
+  code: text("code").notNull().unique(),
+  clientId: text("client_id").notNull(),
+  redirectUri: text("redirect_uri").notNull(),
+  scope: text("scope").notNull(),
+  userId: text("user_id").notNull(),
+  organizationId: text("organization_id").notNull(),
+  codeChallenge: text("code_challenge").notNull(),
+  codeChallengeMethod: text("code_challenge_method").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type McpOauthAuthCode = typeof mcpOauthAuthCodes.$inferSelect;
+export type NewMcpOauthAuthCode = typeof mcpOauthAuthCodes.$inferInsert;
+
 export const mcpOauthClients = pgTable("mcp_oauth_clients", {
   id: text("id")
     .primaryKey()
