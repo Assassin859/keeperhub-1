@@ -10,13 +10,12 @@ import type { ConditionInput, ConditionResult } from "../_lib/condition";
 import { evaluateCondition } from "../_lib/condition";
 import {
   completeExecution,
-  createExecution,
   failExecution,
   markRunning,
   redactInput,
 } from "../_lib/execution-service";
 import { checkRateLimit } from "../_lib/rate-limit";
-import { checkSpendingCap } from "../_lib/spending-cap";
+import { checkAndReserveExecution } from "../_lib/spending-cap";
 import { validateCheckAndExecuteInput } from "../_lib/validate";
 import { requireWallet } from "../_lib/wallet-check";
 
@@ -61,19 +60,18 @@ async function executeConditionalWrite(
     return walletError;
   }
 
-  const spendCap = await checkSpendingCap(organizationId);
-  if (!spendCap.allowed) {
-    return NextResponse.json({ error: spendCap.reason }, { status: 403 });
-  }
-
   const redactedInput = redactInput(fullBody);
-  const { executionId } = await createExecution({
+  const reserve = await checkAndReserveExecution({
     organizationId,
     apiKeyId,
     type: "check-and-execute",
     network,
     input: redactedInput,
   });
+  if (!reserve.allowed) {
+    return NextResponse.json({ error: reserve.reason }, { status: 403 });
+  }
+  const { executionId } = reserve;
 
   await markRunning(executionId);
 
@@ -92,6 +90,7 @@ async function executeConditionalWrite(
       transactionHash: result.transactionHash,
       transactionLink: result.transactionLink,
       gasUsedWei: result.gasUsed,
+      gasPriceWei: result.effectiveGasPrice,
       output: result as unknown as Record<string, unknown>,
     });
   } else {

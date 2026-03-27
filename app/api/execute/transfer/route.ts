@@ -6,13 +6,12 @@ import { transferTokenCore } from "@/plugins/web3/steps/transfer-token-core";
 import { validateApiKey } from "../_lib/auth";
 import {
   completeExecution,
-  createExecution,
   failExecution,
   markRunning,
   redactInput,
 } from "../_lib/execution-service";
 import { checkRateLimit } from "../_lib/rate-limit";
-import { checkSpendingCap } from "../_lib/spending-cap";
+import { checkAndReserveExecution } from "../_lib/spending-cap";
 import { validateTokenFields, validateTransferInput } from "../_lib/validate";
 import { requireWallet } from "../_lib/wallet-check";
 
@@ -65,21 +64,19 @@ export async function POST(request: Request): Promise<NextResponse> {
     return walletError;
   }
 
-  // 6. Spending cap
-  const spendCap = await checkSpendingCap(apiKeyCtx.organizationId);
-  if (!spendCap.allowed) {
-    return NextResponse.json({ error: spendCap.reason }, { status: 403 });
-  }
-
-  // 6. Create execution record
+  // 6. Spending cap + create execution atomically
   const redactedInput = redactInput(body);
-  const { executionId } = await createExecution({
+  const reserve = await checkAndReserveExecution({
     organizationId: apiKeyCtx.organizationId,
     apiKeyId: apiKeyCtx.apiKeyId,
     type: "transfer",
     network,
     input: redactedInput,
   });
+  if (!reserve.allowed) {
+    return NextResponse.json({ error: reserve.reason }, { status: 403 });
+  }
+  const { executionId } = reserve;
 
   // 7. Mark running
   await markRunning(executionId);
@@ -111,6 +108,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       transactionHash: result.transactionHash,
       transactionLink: result.transactionLink,
       gasUsedWei: result.gasUsed,
+      gasPriceWei: result.effectiveGasPrice,
       output: result as unknown as Record<string, unknown>,
     });
   } else {

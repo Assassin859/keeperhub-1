@@ -4,20 +4,21 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { directExecutions } from "@/lib/db/schema";
 import { generateId } from "@/lib/utils/id";
-import type { ExecutionType } from "./types";
 
 type CreateExecutionParams = {
   organizationId: string;
   apiKeyId: string;
-  type: ExecutionType;
-  network: string;
+  type: string;
+  network?: string;
   input: Record<string, unknown>;
 };
 
 type CompleteParams = {
-  transactionHash: string;
-  transactionLink: string;
-  gasUsedWei: string;
+  transactionHash?: string;
+  transactionLink?: string;
+  gasUsedWei?: string;
+  gasPriceWei?: string;
+  estimatedCostUsd?: string;
   output?: Record<string, unknown>;
 };
 
@@ -31,7 +32,7 @@ export async function createExecution(
     organizationId: params.organizationId,
     apiKeyId: params.apiKeyId,
     type: params.type,
-    network: params.network,
+    network: params.network ?? null,
     // biome-ignore lint/suspicious/noExplicitAny: jsonb column accepts arbitrary serializable data
     input: params.input as any,
     status: "pending",
@@ -55,8 +56,10 @@ export async function completeExecution(
     .update(directExecutions)
     .set({
       status: "completed",
-      transactionHash: result.transactionHash,
-      gasUsedWei: result.gasUsedWei,
+      transactionHash: result.transactionHash ?? null,
+      gasUsedWei: result.gasUsedWei ?? null,
+      gasPriceWei: result.gasPriceWei ?? null,
+      estimatedCostUsd: result.estimatedCostUsd ?? null,
       // biome-ignore lint/suspicious/noExplicitAny: jsonb column accepts arbitrary serializable data
       output: (result.output ?? {}) as any,
       completedAt: new Date(),
@@ -75,6 +78,16 @@ export async function failExecution(
       error,
       completedAt: new Date(),
     })
+    .where(eq(directExecutions.id, executionId));
+}
+
+export async function setRetryCount(
+  executionId: string,
+  count: number
+): Promise<void> {
+  await db
+    .update(directExecutions)
+    .set({ retryCount: count })
     .where(eq(directExecutions.id, executionId));
 }
 

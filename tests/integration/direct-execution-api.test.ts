@@ -7,8 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   validateApiKey: vi.fn(),
   checkRateLimit: vi.fn(),
-  checkSpendingCap: vi.fn(),
-  createExecution: vi.fn(),
+  checkAndReserveExecution: vi.fn(),
   markRunning: vi.fn(),
   completeExecution: vi.fn(),
   failExecution: vi.fn(),
@@ -32,11 +31,10 @@ vi.mock("@/app/api/execute/_lib/rate-limit", () => ({
 }));
 
 vi.mock("@/app/api/execute/_lib/spending-cap", () => ({
-  checkSpendingCap: mocks.checkSpendingCap,
+  checkAndReserveExecution: mocks.checkAndReserveExecution,
 }));
 
 vi.mock("@/app/api/execute/_lib/execution-service", () => ({
-  createExecution: mocks.createExecution,
   markRunning: mocks.markRunning,
   completeExecution: mocks.completeExecution,
   failExecution: mocks.failExecution,
@@ -161,11 +159,13 @@ function getRequest(path: string): Request {
 function setupPassingGuards(): void {
   mocks.validateApiKey.mockResolvedValue(AUTH_CONTEXT);
   mocks.checkRateLimit.mockReturnValue({ allowed: true });
-  mocks.checkSpendingCap.mockResolvedValue({ allowed: true });
+  mocks.checkAndReserveExecution.mockResolvedValue({
+    allowed: true,
+    executionId: "exec_1",
+  });
   mocks.redactInput.mockImplementation(
     (input: Record<string, unknown>) => input
   );
-  mocks.createExecution.mockResolvedValue({ executionId: "exec_1" });
   mocks.markRunning.mockResolvedValue(undefined);
   mocks.completeExecution.mockResolvedValue(undefined);
   mocks.failExecution.mockResolvedValue(undefined);
@@ -249,7 +249,7 @@ describe("Direct Execution API", () => {
 
     it("returns 403 when spending cap exceeded", async () => {
       setupPassingGuards();
-      mocks.checkSpendingCap.mockResolvedValue({
+      mocks.checkAndReserveExecution.mockResolvedValue({
         allowed: false,
         reason: "Daily spending cap exceeded",
       });
@@ -447,7 +447,7 @@ describe("Direct Execution API", () => {
       expect(response.status).toBe(200);
       const data = await response.json();
       expect(data.result).toBe("1000000");
-      expect(mocks.createExecution).not.toHaveBeenCalled();
+      expect(mocks.checkAndReserveExecution).not.toHaveBeenCalled();
     });
 
     it("returns 202 for write call with execution record", async () => {
@@ -466,12 +466,12 @@ describe("Direct Execution API", () => {
       const data = await response.json();
       expect(data.executionId).toBe("exec_1");
       expect(data.status).toBe("completed");
-      expect(mocks.createExecution).toHaveBeenCalledOnce();
+      expect(mocks.checkAndReserveExecution).toHaveBeenCalledOnce();
     });
 
     it("returns 403 when spending cap exceeded for write call", async () => {
       setupPassingGuards();
-      mocks.checkSpendingCap.mockResolvedValue({
+      mocks.checkAndReserveExecution.mockResolvedValue({
         allowed: false,
         reason: "Daily spending cap exceeded",
       });
@@ -608,7 +608,7 @@ describe("Direct Execution API", () => {
         success: true,
         result: "1500",
       });
-      mocks.checkSpendingCap.mockResolvedValue({
+      mocks.checkAndReserveExecution.mockResolvedValue({
         allowed: false,
         reason: "Daily spending cap exceeded",
       });
@@ -663,6 +663,9 @@ describe("Direct Execution API", () => {
           status: "completed",
           transactionHash: "0xabc",
           gasUsedWei: "441000000000000",
+          gasPriceWei: "500000221",
+          estimatedCostUsd: null,
+          retryCount: 0,
           input: {},
           output: { transactionLink: "https://etherscan.io/tx/0xabc" },
           error: null,

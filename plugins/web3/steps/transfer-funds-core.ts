@@ -46,6 +46,8 @@ export type TransferFundsResult =
       transactionHash: string;
       transactionLink: string;
       gasUsed: string;
+      gasUsedUnits: string;
+      effectiveGasPrice: string;
     }
   | { success: false; error: string };
 
@@ -186,6 +188,8 @@ export async function transferFundsCore(
         workflowId,
       });
 
+      const gasUsedUnits = receipt.gasUsed.toString();
+      const effectiveGasPrice = receipt.effectiveGasPrice.toString();
       const gasCostWei = (receipt.gasUsed * receipt.effectiveGasPrice).toString();
       const transactionLink = await adapter.getTransactionUrl(receipt.hash);
 
@@ -194,6 +198,8 @@ export async function transferFundsCore(
         transactionHash: receipt.hash,
         transactionLink,
         gasUsed: gasCostWei,
+        gasUsedUnits,
+        effectiveGasPrice,
       };
     } catch (error) {
       logUserError(

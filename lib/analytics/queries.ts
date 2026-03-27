@@ -582,8 +582,9 @@ export async function getNetworkBreakdown(
   const networkMap = new Map<string, NetworkBreakdown>();
 
   for (const row of directResult) {
-    networkMap.set(row.network, {
-      network: row.network,
+    const networkKey = row.network ?? "unknown";
+    networkMap.set(networkKey, {
+      network: networkKey,
       totalGasWei: row.totalGasWei,
       executionCount: Number(row.executionCount),
       successCount: Number(row.successCount),

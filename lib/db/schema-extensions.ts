@@ -327,12 +327,12 @@ export type NewWorkflowPublicTag = typeof workflowPublicTags.$inferInsert;
 /**
  * Direct Executions table
  *
- * Audit log for direct API execution requests (transfer, contract-call, check-and-execute).
- * Every execution endpoint creates a record here before starting work.
+ * Audit log for direct API execution requests. Supports both specialized web3 endpoints
+ * (transfer, contract-call, check-and-execute) and generic node execution (any action type).
  * Used by spending-cap enforcement (SUM of gasUsedWei per org per day).
  *
  * NOTE: apiKeyId has no FK -- the key may be revoked/deleted later but the audit record must persist.
- * gasUsedWei is stored as text to avoid PostgreSQL bigint overflow on wei amounts.
+ * Wei amounts stored as text to avoid PostgreSQL bigint overflow.
  */
 export const directExecutions = pgTable(
   "direct_executions",
@@ -344,16 +344,20 @@ export const directExecutions = pgTable(
       .notNull()
       .references(() => organization.id),
     apiKeyId: text("api_key_id").notNull(),
-    type: text("type").notNull(), // "transfer" | "contract-call" | "check-and-execute"
+    type: text("type").notNull(),
     // biome-ignore lint/suspicious/noExplicitAny: JSONB type - redacted copy of request input, structure varies by execution type
     input: jsonb("input").$type<any>(),
     // biome-ignore lint/suspicious/noExplicitAny: JSONB type - execution result structure varies by execution type
     output: jsonb("output").$type<any>(),
     status: text("status").notNull().default("pending"), // pending | running | completed | failed
     transactionHash: text("transaction_hash"),
-    network: text("network").notNull(),
+    network: text("network"),
     error: text("error"),
     gasUsedWei: text("gas_used_wei"),
+    gasPriceWei: text("gas_price_wei"),
+    // Populated by a future price-oracle integration; null until then
+    estimatedCostUsd: text("estimated_cost_usd"),
+    retryCount: integer("retry_count").notNull().default(0),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     completedAt: timestamp("completed_at"),
   },

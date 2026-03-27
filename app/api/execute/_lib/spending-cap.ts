@@ -1,55 +1,107 @@
 import "server-only";
 
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, eq, gte, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { directExecutions, organizationSpendCaps } from "@/lib/db/schema";
+import { generateId } from "@/lib/utils/id";
 
 export type SpendCapResult =
   | { allowed: true }
   | { allowed: false; reason: string };
 
-// MVP: simple read-then-compare. Race window acceptable at low concurrency.
-// Upgrade to SELECT FOR UPDATE in HARD-03 if needed.
+type ReserveExecutionParams = {
+  organizationId: string;
+  apiKeyId: string;
+  type: string;
+  network?: string;
+  // biome-ignore lint/suspicious/noExplicitAny: jsonb column accepts arbitrary serializable data
+  input: any;
+};
 
-export async function checkSpendingCap(
-  organizationId: string
-): Promise<SpendCapResult> {
-  const caps = await db
-    .select({ dailyCapWei: organizationSpendCaps.dailyCapWei })
-    .from(organizationSpendCaps)
-    .where(eq(organizationSpendCaps.organizationId, organizationId))
-    .limit(1);
+type ReserveResult =
+  | { allowed: true; executionId: string }
+  | { allowed: false; reason: string };
 
-  const cap = caps[0];
+/**
+ * Atomically check the spending cap and create the execution record.
+ *
+ * Uses SELECT FOR UPDATE on the cap row to serialize concurrent requests
+ * for the same organization. The execution record is inserted inside the
+ * same transaction so no gap exists between the cap check and the record
+ * that represents in-flight spend.
+ *
+ * The SUM includes all non-failed executions (pending, running, completed)
+ * so that serialized-but-not-yet-completed requests are visible to
+ * subsequent callers once their gas totals are recorded.
+ *
+ * Residual race window: pending/running records have null gasUsedWei so
+ * they contribute 0 to the SUM. Two sequential requests can both pass the
+ * cap check while the first is still executing. Full elimination would
+ * require estimating gas at reservation time (not available pre-execution)
+ * or holding the lock through execution (unacceptable for long-running txs).
+ * At typical org concurrency this is acceptable.
+ */
+export async function checkAndReserveExecution(
+  params: ReserveExecutionParams
+): Promise<ReserveResult> {
+  return await db.transaction(async (tx) => {
+    const caps = await tx
+      .select({ dailyCapWei: organizationSpendCaps.dailyCapWei })
+      .from(organizationSpendCaps)
+      .where(eq(organizationSpendCaps.organizationId, params.organizationId))
+      .for("update")
+      .limit(1);
 
-  if (!cap) {
-    return { allowed: true };
-  }
+    const cap = caps[0];
+    const id = generateId();
 
-  // Calculate today's UTC boundary
-  const todayStart = new Date();
-  todayStart.setUTCHours(0, 0, 0, 0);
+    if (!cap) {
+      await tx.insert(directExecutions).values({
+        id,
+        organizationId: params.organizationId,
+        apiKeyId: params.apiKeyId,
+        type: params.type,
+        network: params.network ?? null,
+        input: params.input,
+        status: "pending",
+      });
+      return { allowed: true, executionId: id } as const;
+    }
 
-  const result = await db
-    .select({
-      totalWei: sql<string>`COALESCE(SUM(CAST(${directExecutions.gasUsedWei} AS NUMERIC)), 0)::text`,
-    })
-    .from(directExecutions)
-    .where(
-      and(
-        eq(directExecutions.organizationId, organizationId),
-        eq(directExecutions.status, "completed"),
-        gte(directExecutions.createdAt, todayStart)
+    const todayStart = new Date();
+    todayStart.setUTCHours(0, 0, 0, 0);
+
+    const result = await tx
+      .select({
+        totalWei: sql<string>`COALESCE(SUM(CAST(${directExecutions.gasUsedWei} AS NUMERIC)), 0)::text`,
+      })
+      .from(directExecutions)
+      .where(
+        and(
+          eq(directExecutions.organizationId, params.organizationId),
+          ne(directExecutions.status, "failed"),
+          gte(directExecutions.createdAt, todayStart)
+        )
       )
-    )
-    .then((rows) => rows[0]);
+      .then((rows) => rows[0]);
 
-  const totalWei = BigInt(result?.totalWei ?? "0");
-  const dailyCap = BigInt(cap.dailyCapWei);
+    const totalWei = BigInt(result?.totalWei ?? "0");
+    const dailyCap = BigInt(cap.dailyCapWei);
 
-  if (totalWei >= dailyCap) {
-    return { allowed: false, reason: "Daily spending cap exceeded" };
-  }
+    if (totalWei >= dailyCap) {
+      return { allowed: false, reason: "Daily spending cap exceeded" } as const;
+    }
 
-  return { allowed: true };
+    await tx.insert(directExecutions).values({
+      id,
+      organizationId: params.organizationId,
+      apiKeyId: params.apiKeyId,
+      type: params.type,
+      network: params.network ?? null,
+      input: params.input,
+      status: "pending",
+    });
+
+    return { allowed: true, executionId: id } as const;
+  });
 }

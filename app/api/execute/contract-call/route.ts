@@ -8,13 +8,12 @@ import { writeContractCore } from "@/plugins/web3/steps/write-contract-core";
 import { validateApiKey } from "../_lib/auth";
 import {
   completeExecution,
-  createExecution,
   failExecution,
   markRunning,
   redactInput,
 } from "../_lib/execution-service";
 import { checkRateLimit } from "../_lib/rate-limit";
-import { checkSpendingCap } from "../_lib/spending-cap";
+import { checkAndReserveExecution } from "../_lib/spending-cap";
 import { validateContractCallInput } from "../_lib/validate";
 import { requireWallet } from "../_lib/wallet-check";
 
@@ -102,19 +101,18 @@ async function handleWriteCall(
     return walletError;
   }
 
-  const spendCap = await checkSpendingCap(organizationId);
-  if (!spendCap.allowed) {
-    return NextResponse.json({ error: spendCap.reason }, { status: 403 });
-  }
-
   const redactedInput = redactInput(body);
-  const { executionId } = await createExecution({
+  const reserve = await checkAndReserveExecution({
     organizationId,
     apiKeyId,
     type: "contract-call",
     network: body.network as string,
     input: redactedInput,
   });
+  if (!reserve.allowed) {
+    return NextResponse.json({ error: reserve.reason }, { status: 403 });
+  }
+  const { executionId } = reserve;
 
   await markRunning(executionId);
 
@@ -133,6 +131,7 @@ async function handleWriteCall(
       transactionHash: result.transactionHash,
       transactionLink: result.transactionLink,
       gasUsedWei: result.gasUsed,
+      gasPriceWei: result.effectiveGasPrice,
       output: result as unknown as Record<string, unknown>,
     });
   } else {

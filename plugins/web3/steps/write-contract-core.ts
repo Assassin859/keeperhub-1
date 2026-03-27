@@ -51,6 +51,8 @@ export type WriteContractResult =
       transactionHash: string;
       transactionLink: string;
       gasUsed: string;
+      gasUsedUnits: string;
+      effectiveGasPrice: string;
       result?: unknown;
     }
   | { success: false; error: string };
@@ -271,6 +273,8 @@ export async function writeContractCore(
         workflowId,
       });
 
+      const gasUsedUnits = receipt.gasUsed.toString();
+      const effectiveGasPrice = receipt.effectiveGasPrice.toString();
       const gasCostWei = (receipt.gasUsed * receipt.effectiveGasPrice).toString();
       const transactionLink = await adapter.getTransactionUrl(receipt.hash);
 
@@ -279,6 +283,8 @@ export async function writeContractCore(
         transactionHash: receipt.hash,
         transactionLink,
         gasUsed: gasCostWei,
+        gasUsedUnits,
+        effectiveGasPrice,
         result: undefined,
       };
     } catch (error) {

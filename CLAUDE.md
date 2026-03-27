@@ -169,8 +169,11 @@ pnpm build                  # Production build
 pnpm type-check             # TypeScript check
 pnpm check / pnpm fix       # Lint
 
-pnpm db:push                # Push schema changes
+pnpm db:push                # Push schema changes (local dev only)
+pnpm db:migrate             # Run file-based migrations
 pnpm db:studio              # Open Drizzle Studio
+
+pnpm drizzle-kit generate   # Generate migration file after schema changes
 
 pnpm discover-plugins       # Scan and register plugins
 pnpm create-plugin          # Create new plugin
@@ -178,6 +181,16 @@ pnpm create-plugin          # Create new plugin
 pnpm test                   # All tests
 pnpm test:e2e               # E2E tests
 ```
+
+## Database Migrations
+
+The build script (`scripts/migrate-prod.ts`) runs `pnpm db:migrate` (file-based migrations), **not** `db:push`. When adding or modifying database tables:
+
+1. Update the Drizzle schema (e.g., `lib/db/schema-oauth.ts`)
+2. Run `pnpm drizzle-kit generate` to create a migration file in `drizzle/`
+3. Commit the migration file, snapshot, and journal together with the schema change
+
+Without the migration file, the table will not be created on deploy and you will get `relation does not exist` errors in staging/production.
 
 ## Branch Strategy
 

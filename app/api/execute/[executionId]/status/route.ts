@@ -49,11 +49,16 @@ export async function GET(
   const response: ExecutionStatusResponse = {
     executionId: execution.id,
     status: execution.status as ExecutionStatusResponse["status"],
-    type: execution.type as ExecutionStatusResponse["type"],
+    type: execution.type,
     transactionHash: execution.transactionHash,
     transactionLink: (output?.transactionLink as string) ?? null,
     result: output ?? null,
     error: execution.error,
+    gasUsedWei: execution.gasUsedWei,
+    gasPriceWei: execution.gasPriceWei,
+    estimatedCostUsd: execution.estimatedCostUsd,
+    retryCount: execution.retryCount,
+    network: execution.network,
     createdAt: execution.createdAt.toISOString(),
     completedAt: execution.completedAt?.toISOString() ?? null,
   };

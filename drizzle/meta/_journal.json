@@ -267,6 +267,20 @@
       "when": 1774900000000,
       "tag": "0037_key-export-attempts",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1774565267976,
+      "tag": "0038_hot_songbird",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1774580851069,
+      "tag": "0039_burly_sinister_six",
+      "breakpoints": true
     }
   ]
 }
