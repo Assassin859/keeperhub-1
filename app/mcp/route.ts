@@ -35,6 +35,40 @@ startCleanupInterval();
 
 const TRAILING_SLASH = /\/$/;
 
+/**
+ * Ensure the request carries the Accept header the MCP SDK requires.
+ * Some MCP clients (e.g. Claude Code) omit `text/event-stream` from Accept,
+ * which causes the SDK to return 406 even when `enableJsonResponse` is true.
+ * We patch the header here so the transport's strict check passes.
+ */
+function ensureMcpAcceptHeader(request: Request): Request {
+  const accept = request.headers.get("accept") ?? "";
+  const hasJson = accept.includes("application/json");
+  const hasSse = accept.includes("text/event-stream");
+
+  if (hasJson && hasSse) {
+    return request;
+  }
+
+  const parts = accept ? [accept] : [];
+  if (!hasJson) {
+    parts.push("application/json");
+  }
+  if (!hasSse) {
+    parts.push("text/event-stream");
+  }
+
+  const headers = new Headers(request.headers);
+  headers.set("accept", parts.join(", "));
+  return new Request(request.url, {
+    method: request.method,
+    headers,
+    body: request.body,
+    // @ts-expect-error -- duplex is required for streaming bodies in Node
+    duplex: "half",
+  });
+}
+
 function getBaseUrl(request: Request): string {
   const envUrl = process.env.NEXT_PUBLIC_APP_URL ?? process.env.BETTER_AUTH_URL;
   if (envUrl) {
@@ -224,7 +258,7 @@ export async function POST(request: Request): Promise<Response> {
         headers: { "Content-Type": "application/json", ...CORS_HEADERS },
       });
     }
-    return existingTransport.handleRequest(request);
+    return existingTransport.handleRequest(ensureMcpAcceptHeader(request));
   }
 
   // No session ID: must be an initialize request.
@@ -287,7 +321,9 @@ export async function POST(request: Request): Promise<Response> {
 
   await entry.server.connect(transport);
 
-  return transport.handleRequest(request, { parsedBody: body });
+  return transport.handleRequest(ensureMcpAcceptHeader(request), {
+    parsedBody: body,
+  });
 }
 
 export async function GET(request: Request): Promise<Response> {
@@ -323,7 +359,7 @@ export async function GET(request: Request): Promise<Response> {
     });
   }
 
-  return transport.handleRequest(request);
+  return transport.handleRequest(ensureMcpAcceptHeader(request));
 }
 
 export async function DELETE(request: Request): Promise<Response> {
