@@ -1,4 +1,4 @@
-# RBAC for Job Spawner in Prod
+# RBAC for Job Spawner on TechOps Prod
 # Grants the keeperhub-prod service account permission to create K8s Jobs
 # for scheduled workflow execution
 ---
