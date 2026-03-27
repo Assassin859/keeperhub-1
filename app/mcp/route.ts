@@ -217,6 +217,18 @@ async function resolveSession(
 
   await entry.server.connect(transport);
 
+  // The SDK's transport tracks an `_initialized` flag that is only set when it
+  // processes an actual `initialize` JSON-RPC message.  Reconstructed sessions
+  // skip that step, so the flag stays false and every subsequent request is
+  // rejected with "Server not initialized".  The valid JWT proves the client
+  // already completed initialization, so we mark both fields directly.
+  const reconstructed = transport as unknown as {
+    _initialized: boolean;
+    sessionId: string;
+  };
+  reconstructed._initialized = true;
+  reconstructed.sessionId = sessionId;
+
   // Cache locally for subsequent same-pod requests.
   setSession(sessionId, entry);
 
