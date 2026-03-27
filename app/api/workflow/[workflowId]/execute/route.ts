@@ -21,7 +21,8 @@ async function executeWorkflowBackground(
   workflowId: string,
   nodes: WorkflowNode[],
   edges: WorkflowEdge[],
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
+  organizationId?: string | null
 ) {
   try {
     console.log("[Workflow Execute] Starting execution:", executionId);
@@ -44,6 +45,7 @@ async function executeWorkflowBackground(
         triggerInput: input,
         executionId,
         workflowId,
+        organizationId: organizationId ?? undefined,
       },
     ]);
 
@@ -260,7 +262,8 @@ export async function POST(
       workflowId,
       workflow.nodes as WorkflowNode[],
       workflow.edges as WorkflowEdge[],
-      input
+      input,
+      workflow.organizationId
     );
 
     // Return immediately with the execution ID
