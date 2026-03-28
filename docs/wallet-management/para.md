@@ -1,59 +1,54 @@
 ---
 title: "Para Wallet Integration"
-description: "How KeeperHub integrates with Para for secure, simplified wallet management without handling private keys."
+description: "How KeeperHub integrates with Para for MPC-based wallet management."
 ---
 
 # Para Integration
 
-KeeperHub uses Para for secure wallet management, eliminating the need for users to handle private keys or complex wallet security procedures.
+Para is one of the wallet providers available in KeeperHub. It uses multi-party computation (MPC) for signing, so private keys are never exposed to any single party.
 
-## Automatic Wallet Creation
+## Creating a Para Wallet
 
-When you create a new KeeperHub account, a Para wallet is automatically generated and associated with your account. The public address is displayed in the KeeperHub interface for reference.
+In the Organization Wallet dialog, select **Para** as your provider and enter the email address for wallet creation. The wallet will be shared across your organization.
+
+## How It Works
+
+Para uses MPC-based signing to execute transactions without exposing private keys. This provides:
+
+- **No private key management** -- cryptographic operations happen securely across multiple parties
+- **Simplified experience** -- no need for seed phrases or hardware wallets
+- **Integrated operations** -- seamless signing for workflow transactions
 
 ## Wallet Funding
 
-Topping up your Para wallet with ETH is only required for specific keeper operations:
+Topping up your Para wallet with ETH is only required for workflow operations that execute on-chain transactions.
 
 **When funding is needed**:
-- Write function calls from Poker keepers (require gas fees)
-- Filler keeper operations that transfer ETH to other wallets
-- Any keeper operations that execute blockchain transactions
+
+- Write function calls (require gas fees)
+- Token or ETH transfer operations
+- Any workflow steps that execute blockchain transactions
 
 **When funding is not needed**:
-- Watcher keepers (read-only monitoring)
-- Multisig keepers (monitoring multisig changes)
-- Read function calls from Poker keepers
 
-Balance updates are reflected in the KeeperHub interface and displayed per network (Mainnet/Sepolia).
+- Read-only monitoring workflows
+- Multisig monitoring workflows
+- Read function calls
+
+Balance updates are reflected in the KeeperHub interface and displayed per network.
 
 ## Wallet Management
 
-**Deposit**: Transfer ETH to your Para wallet address to fund keeper operations.
+**Deposit**: Transfer ETH to your Para wallet address to fund workflow operations.
 
 **Withdraw**: Use the Withdraw function in the UI to transfer wallet balance out of KeeperHub.
 
-## Security Benefits
-
-**No Private Key Management**: Para handles all cryptographic operations securely without exposing private keys to users.
-
-**Simplified Experience**: Users don't need prior knowledge of Ethereum wallet management or security best practices.
-
-**Integrated Operations**: Seamless integration with keeper functions for automated transactions.
-
-## Supported Operations
-
-Para wallets can execute:
-- ETH transfers for Filler keeper operations
-- Smart contract function calls for Poker keeper operations
-- Gas fee payments for all transaction-based keepers
-
 ## Network Support
 
-Currently supports:
 - Ethereum Mainnet
 - Sepolia Testnet
 
 ## Limitations
 
-Token transfers are not yet supported but are planned for future releases.
+- Private key export is not supported (use [Turnkey](/wallet-management/turnkey) if key export is required)
+- Token transfers are not yet supported but are planned for future releases

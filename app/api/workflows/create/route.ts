@@ -1,10 +1,8 @@
 import { and, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { NextResponse } from "next/server";
-import { authenticateApiKey } from "@/lib/api-key-auth";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { getOrgContext } from "@/lib/middleware/org-context";
-import { auth } from "@/lib/auth";
+import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { projects, tags, workflows } from "@/lib/db/schema";
@@ -51,41 +49,6 @@ function createDefaultNodes() {
   return { nodes: [triggerNode, actionNode], edges: [edge] };
 }
 
-// Helper to authenticate and get user context
-async function getUserContext(request: Request) {
-  // Try API key authentication first
-  const apiKeyAuth = await authenticateApiKey(request);
-
-  if (apiKeyAuth.authenticated) {
-    // Use the userId from the API key (the user who created the key)
-    if (!apiKeyAuth.userId) {
-      return {
-        error: "API key has no associated user. Please recreate the API key.",
-      };
-    }
-
-    return {
-      userId: apiKeyAuth.userId,
-      organizationId: apiKeyAuth.organizationId || null,
-    };
-  }
-
-  // Fall back to session authentication
-  const session = await auth.api.getSession({
-    headers: request.headers,
-  });
-
-  if (!session?.user) {
-    return { error: "Unauthorized" };
-  }
-
-  const context = await getOrgContext();
-  return {
-    userId: session.user.id,
-    organizationId: context.organization?.id || null,
-  };
-}
-
 // Helper to generate workflow name
 async function generateWorkflowName(
   name: string,
@@ -117,13 +80,18 @@ async function generateWorkflowName(
 
 export async function POST(request: Request) {
   try {
-    const userContext = await getUserContext(request);
-    if ("error" in userContext) {
-      const status = userContext.error === "Unauthorized" ? 401 : 400;
-      return NextResponse.json({ error: userContext.error }, { status });
+    const authContext = await getDualAuthContext(request);
+    if ("error" in authContext) {
+      return NextResponse.json(
+        { error: authContext.error },
+        { status: authContext.status }
+      );
     }
 
-    const { userId, organizationId } = userContext;
+    const { userId, organizationId } = authContext;
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
     const body = await request.json();
 

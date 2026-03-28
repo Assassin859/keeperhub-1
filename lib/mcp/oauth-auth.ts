@@ -136,6 +136,14 @@ export function authenticateOAuthToken(request: Request): OAuthAuthResult {
     };
   }
 
+  if (!payload.org) {
+    return {
+      authenticated: false,
+      error: "OAuth token missing organization claim",
+      statusCode: 401,
+    };
+  }
+
   return {
     authenticated: true,
     userId: payload.sub,

@@ -23,6 +23,8 @@ const READ_TOOLS = new Set<string>([
   "search_templates",
   "get_template",
   "tools_documentation",
+  "search_protocol_actions",
+  "get_direct_execution_status",
 ]);
 
 const WRITE_TOOLS = new Set<string>([
@@ -33,6 +35,10 @@ const WRITE_TOOLS = new Set<string>([
   "execute_workflow",
   "deploy_template",
   "ai_generate_workflow",
+  "execute_protocol_action",
+  "execute_transfer",
+  "execute_contract_call",
+  "execute_check_and_execute",
 ]);
 
 export function isScopeValid(scope: string): boolean {
@@ -53,29 +59,12 @@ export function isToolAllowed(toolName: string, scopeString: string): boolean {
     return true;
   }
 
-  if (scopes.includes(SCOPE_MCP_WRITE)) {
-    if (WRITE_TOOLS.has(toolName)) {
-      return true;
-    }
-    // Web3 tools are allowed under mcp:write
-    if (toolName.startsWith("web3_") || toolName.startsWith("chronicle_")) {
-      return true;
-    }
+  if (scopes.includes(SCOPE_MCP_WRITE) && WRITE_TOOLS.has(toolName)) {
+    return true;
   }
 
-  if (scopes.includes(SCOPE_MCP_READ)) {
-    if (READ_TOOLS.has(toolName)) {
-      return true;
-    }
-    // Read-only web3 tools allowed under mcp:read
-    if (
-      toolName.startsWith("chronicle_") ||
-      toolName === "web3_get_balance" ||
-      toolName === "web3_get_token_balance" ||
-      toolName === "web3_get_transaction"
-    ) {
-      return true;
-    }
+  if (scopes.includes(SCOPE_MCP_READ) && READ_TOOLS.has(toolName)) {
+    return true;
   }
 
   return false;

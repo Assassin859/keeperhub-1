@@ -124,7 +124,7 @@ Exits with code 1 if errors are found. Errors are hardcoded colors in CSS and ar
 
 ### Exempt Files
 
-- `keeperhub/api/og/generate-og.tsx` -- server-rendered OG images, not interactive UI
+- `app/api/og/generate-og.tsx` -- server-rendered OG images, not interactive UI
 - `lib/monaco-theme.ts` -- editor syntax highlighting, uses Monaco's theming API
 - `lib/next-boilerplate/` -- upstream template code
 - `docs-site/` -- separate documentation site
@@ -145,20 +145,14 @@ Exits with code 1 if errors are found. Errors are hardcoded colors in CSS and ar
 ## Project Structure
 
 ```
-app/              - Next.js app directory
+app/              - Next.js app directory (API routes, pages)
 components/       - UI components
-lib/              - Core utilities
-plugins/          - Core plugins
+lib/              - Core utilities, DB schemas, middleware
+plugins/          - Workflow plugins (web3, discord, sendgrid, etc.)
 scripts/          - Build/migration scripts
 tests/            - Test files
-
-keeperhub/        - 🚨 ALL CUSTOM CODE GOES HERE
-  ├── api/        - Custom API routes
-  ├── app/        - Custom pages
-  ├── components/ - Custom components
-  ├── db/         - Custom schemas
-  ├── lib/        - Custom utilities
-  └── plugins/    - Custom plugins
+specs/            - Internal specs and design system
+docs/             - Public-facing docs (published to docs.keeperhub.com)
 ```
 
 ## Common Commands
@@ -202,13 +196,13 @@ Without the migration file, the table will not be created on deploy and you will
 
 ## Plugin Development
 
-**Context**: Building Web3 integrations for the workflow system. Plugins go in `keeperhub/plugins/`.
+**Context**: Building Web3 integrations for the workflow system. Plugins go in `plugins/`.
 
 **Current Plugins**: `web3`, `webhook`, `discord`, `sendgrid`
 
 **When creating new plugins**:
 
-1. Check existing plugins: `ls keeperhub/plugins/`
+1. Check existing plugins: `ls plugins/`
 2. Pick a recent, similar plugin as reference
 3. Copy its exact structure and pattern
 4. Keep it **absolutely minimal** - no extra features, no over-engineering
@@ -221,8 +215,7 @@ Without the migration file, the table will not be created on deploy and you will
 
 **Files**:
 
-- `keeperhub/api/mcp/schemas/route.ts` - Implementation
-- `app/api/mcp/schemas/route.ts` - Thin wrapper (re-exports from keeperhub)
+- `app/api/mcp/schemas/route.ts`
 
 This endpoint serves workflow schemas to the KeeperHub MCP server. It's the source of truth for what actions, triggers, and capabilities are available.
 
@@ -247,7 +240,7 @@ These are defined directly in the file because they rarely change and aren't in 
 
 1. **New System Action**: Add entry to `SYSTEM_ACTIONS` object, implement step in `lib/steps/`
 2. **New Trigger**: Add entry to `TRIGGERS` object, implement UI in `components/workflow/config/trigger-config.tsx`
-3. **New Plugin**: Just create the plugin normally in `keeperhub/plugins/` - it's picked up automatically
+3. **New Plugin**: Just create the plugin normally in `plugins/` - it's picked up automatically
 
 ### Testing the Endpoint
 

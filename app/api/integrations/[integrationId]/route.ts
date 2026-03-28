@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
 import {
   deleteIntegration,
   getIntegration,
@@ -7,7 +6,7 @@ import {
   updateIntegration,
 } from "@/lib/db/integrations";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { getOrgContext } from "@/lib/middleware/org-context";
+import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import type { IntegrationConfig } from "@/lib/types/integration";
 
 export type GetIntegrationResponse = {
@@ -34,20 +33,23 @@ export async function GET(
 ) {
   try {
     const { integrationId } = await context.params;
-    const session = await auth.api.getSession({
-      headers: request.headers,
-    });
+    const authContext = await getDualAuthContext(request);
+    if ("error" in authContext) {
+      return NextResponse.json(
+        { error: authContext.error },
+        { status: authContext.status }
+      );
+    }
 
-    if (!session?.user) {
+    const { userId, organizationId } = authContext;
+
+    if (!(userId || organizationId)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const orgContext = await getOrgContext();
-    const organizationId = orgContext.organization?.id || null;
-
     const integration = await getIntegration(
       integrationId,
-      session.user.id,
+      userId ?? "",
       organizationId
     );
 
@@ -93,16 +95,19 @@ export async function PUT(
 ) {
   try {
     const { integrationId } = await context.params;
-    const session = await auth.api.getSession({
-      headers: request.headers,
-    });
-
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const authContext = await getDualAuthContext(request);
+    if ("error" in authContext) {
+      return NextResponse.json(
+        { error: authContext.error },
+        { status: authContext.status }
+      );
     }
 
-    const orgContext = await getOrgContext();
-    const organizationId = orgContext.organization?.id || null;
+    const { userId, organizationId } = authContext;
+
+    if (!(userId || organizationId)) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
     const body: UpdateIntegrationRequest = await request.json();
 
@@ -110,7 +115,7 @@ export async function PUT(
     // secrets without an extra DB round-trip.
     const existing =
       body.config !== undefined
-        ? await getIntegration(integrationId, session.user.id, organizationId)
+        ? await getIntegration(integrationId, userId ?? "", organizationId)
         : null;
 
     if (body.config !== undefined && !existing) {
@@ -122,7 +127,7 @@ export async function PUT(
 
     const integration = await updateIntegration(
       integrationId,
-      session.user.id,
+      userId ?? "",
       body,
       organizationId,
       existing
@@ -177,20 +182,23 @@ export async function DELETE(
 ) {
   try {
     const { integrationId } = await context.params;
-    const session = await auth.api.getSession({
-      headers: request.headers,
-    });
+    const authContext = await getDualAuthContext(request);
+    if ("error" in authContext) {
+      return NextResponse.json(
+        { error: authContext.error },
+        { status: authContext.status }
+      );
+    }
 
-    if (!session?.user) {
+    const { userId, organizationId } = authContext;
+
+    if (!(userId || organizationId)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const orgContext = await getOrgContext();
-    const organizationId = orgContext.organization?.id || null;
-
     const success = await deleteIntegration(
       integrationId,
-      session.user.id,
+      userId ?? "",
       organizationId
     );
 

@@ -2,7 +2,7 @@ import {
   McpServer,
   ResourceTemplate,
 } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { registerDynamicTools, registerTools } from "./tools";
+import { registerMetaTools, registerTools } from "./tools";
 
 async function fetchJson(
   baseUrl: string,
@@ -84,7 +84,7 @@ export function createMcpServer(
   });
 
   registerTools(server, baseUrl, authHeader, scope);
-  registerDynamicTools(server, baseUrl, authHeader, scope);
+  registerMetaTools(server, baseUrl, authHeader, scope);
   registerResources(server, baseUrl, authHeader);
 
   return server;

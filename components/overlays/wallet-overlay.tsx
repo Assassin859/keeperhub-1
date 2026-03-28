@@ -5,6 +5,7 @@ import {
   Eye,
   EyeOff,
   ExternalLink,
+  Info,
   KeyRound,
   Plus,
   RefreshCw,
@@ -36,6 +37,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { toChecksumAddress, truncateAddress } from "@/lib/address-utils";
 import { useSession } from "@/lib/auth-client";
 import { useActiveMember } from "@/lib/hooks/use-organization";
@@ -573,6 +580,35 @@ function CreateWalletForm({
               <div className="flex items-center gap-1.5">
                 <ShieldCheck className="h-3.5 w-3.5 text-primary" />
                 <span className="font-medium text-xs">Turnkey</span>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger
+                      asChild
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Info className="size-3 text-muted-foreground" />
+                    </TooltipTrigger>
+                    <TooltipContent className="text-xs" side="top">
+                      <a
+                        className="underline"
+                        href="https://www.turnkey.com"
+                        rel="noopener noreferrer"
+                        target="_blank"
+                      >
+                        Website
+                      </a>
+                      {" · "}
+                      <a
+                        className="underline"
+                        href="https://docs.keeperhub.com/wallet-management/turnkey"
+                        rel="noopener noreferrer"
+                        target="_blank"
+                      >
+                        Docs
+                      </a>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               </div>
               <span className="text-muted-foreground text-[10px] leading-tight">
                 Secure enclave. Supports private key export.
@@ -591,6 +627,35 @@ function CreateWalletForm({
               <div className="flex items-center gap-1.5">
                 <Shield className="h-3.5 w-3.5 text-muted-foreground" />
                 <span className="font-medium text-xs">Para</span>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger
+                      asChild
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Info className="size-3 text-muted-foreground" />
+                    </TooltipTrigger>
+                    <TooltipContent className="text-xs" side="top">
+                      <a
+                        className="underline"
+                        href="https://www.getpara.com"
+                        rel="noopener noreferrer"
+                        target="_blank"
+                      >
+                        Website
+                      </a>
+                      {" · "}
+                      <a
+                        className="underline"
+                        href="https://docs.keeperhub.com/wallet-management/para"
+                        rel="noopener noreferrer"
+                        target="_blank"
+                      >
+                        Docs
+                      </a>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               </div>
               <span className="text-muted-foreground text-[10px] leading-tight">
                 MPC-based signing. No key export.

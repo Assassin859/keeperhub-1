@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
 import { createIntegration, getIntegrations } from "@/lib/db/integrations";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { getOrgContext } from "@/lib/middleware/org-context";
+import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import type {
   IntegrationConfig,
   IntegrationType,
@@ -38,23 +37,26 @@ export type CreateIntegrationResponse = {
  */
 export async function GET(request: Request) {
   try {
-    const session = await auth.api.getSession({
-      headers: request.headers,
-    });
-
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const authContext = await getDualAuthContext(request);
+    if ("error" in authContext) {
+      return NextResponse.json(
+        { error: authContext.error },
+        { status: authContext.status }
+      );
     }
 
-    const context = await getOrgContext();
-    const organizationId = context.organization?.id || null;
+    const { userId, organizationId } = authContext;
+
+    if (!(userId || organizationId)) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
     // Get optional type filter from query params
     const { searchParams } = new URL(request.url);
     const typeFilter = searchParams.get("type") as IntegrationType | null;
 
     const integrations = await getIntegrations(
-      session.user.id,
+      userId ?? "",
       typeFilter || undefined,
       organizationId
     );
@@ -98,16 +100,19 @@ export async function GET(request: Request) {
  */
 export async function POST(request: Request) {
   try {
-    const session = await auth.api.getSession({
-      headers: request.headers,
-    });
+    const authContext = await getDualAuthContext(request);
+    if ("error" in authContext) {
+      return NextResponse.json(
+        { error: authContext.error },
+        { status: authContext.status }
+      );
+    }
 
-    if (!session?.user) {
+    if (!authContext.userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const context = await getOrgContext();
-    const organizationId = context.organization?.id || null;
+    const { userId, organizationId } = authContext;
 
     const body: CreateIntegrationRequest = await request.json();
 
@@ -119,7 +124,7 @@ export async function POST(request: Request) {
     }
 
     const integration = await createIntegration({
-      userId: session.user.id,
+      userId,
       name: body.name || "",
       type: body.type,
       config: body.config,

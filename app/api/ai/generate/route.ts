@@ -3,11 +3,10 @@ import { createOpenAI } from "@ai-sdk/openai";
 import type { LanguageModelV2 } from "@ai-sdk/provider";
 import { streamText } from "ai";
 import { NextResponse } from "next/server";
-import { authenticateApiKey } from "@/lib/api-key-auth";
-import { auth } from "@/lib/auth";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { createTimer, getMetricsCollector } from "@/lib/metrics";
 import { MetricNames } from "@/lib/metrics/types";
+import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { generateAIActionPrompts } from "@/plugins/registry";
 
 // Simple type for operations
@@ -319,21 +318,15 @@ export async function POST(request: Request) {
   const metrics = getMetricsCollector();
 
   try {
-    // Try API key authentication first
-    const apiKeyAuth = await authenticateApiKey(request);
-
-    if (!apiKeyAuth.authenticated) {
-      // Fall back to session authentication
-      const session = await auth.api.getSession({
-        headers: request.headers,
+    const authContext = await getDualAuthContext(request);
+    if ("error" in authContext) {
+      metrics.recordLatency(MetricNames.AI_GENERATION_DURATION, timer(), {
+        status: "failure",
       });
-
-      if (!session?.user) {
-        metrics.recordLatency(MetricNames.AI_GENERATION_DURATION, timer(), {
-          status: "failure",
-        });
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      }
+      return NextResponse.json(
+        { error: authContext.error },
+        { status: authContext.status }
+      );
     }
 
     const body = await request.json();

@@ -1,11 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockAuthenticateApiKey, mockGetSession, mockGetOrgContext } =
-  vi.hoisted(() => ({
-    mockAuthenticateApiKey: vi.fn(),
-    mockGetSession: vi.fn(),
-    mockGetOrgContext: vi.fn(),
-  }));
+const {
+  mockAuthenticateApiKey,
+  mockAuthenticateOAuthToken,
+  mockGetSession,
+  mockGetOrgContext,
+} = vi.hoisted(() => ({
+  mockAuthenticateApiKey: vi.fn(),
+  mockAuthenticateOAuthToken: vi.fn(),
+  mockGetSession: vi.fn(),
+  mockGetOrgContext: vi.fn(),
+}));
 
 vi.mock("@/lib/api-key-auth", () => ({
   authenticateApiKey: mockAuthenticateApiKey,
@@ -23,6 +28,10 @@ vi.mock("@/lib/middleware/org-context", () => ({
   getOrgContext: mockGetOrgContext,
 }));
 
+vi.mock("@/lib/mcp/oauth-auth", () => ({
+  authenticateOAuthToken: mockAuthenticateOAuthToken,
+}));
+
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 
 function makeRequest(headers: Record<string, string> = {}): Request {
@@ -34,6 +43,27 @@ function makeRequest(headers: Record<string, string> = {}): Request {
 describe("getDualAuthContext", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockAuthenticateOAuthToken.mockReturnValue({ authenticated: false });
+  });
+
+  describe("OAuth authentication", () => {
+    it("returns userId and organizationId from OAuth token", async () => {
+      mockAuthenticateOAuthToken.mockReturnValue({
+        authenticated: true,
+        userId: "user_oauth",
+        organizationId: "org_oauth",
+      });
+
+      const result = await getDualAuthContext(makeRequest());
+
+      expect(result).toEqual({
+        userId: "user_oauth",
+        organizationId: "org_oauth",
+        authMethod: "oauth",
+      });
+      expect(mockAuthenticateApiKey).not.toHaveBeenCalled();
+      expect(mockGetSession).not.toHaveBeenCalled();
+    });
   });
 
   describe("API key authentication", () => {
@@ -51,6 +81,7 @@ describe("getDualAuthContext", () => {
       expect(result).toEqual({
         userId: "user_creator",
         organizationId: "org_123",
+        authMethod: "api-key",
       });
       expect(mockGetSession).not.toHaveBeenCalled();
     });
@@ -66,6 +97,28 @@ describe("getDualAuthContext", () => {
       expect(result).toEqual({
         userId: null,
         organizationId: "org_123",
+        authMethod: "api-key",
+      });
+    });
+
+    it("ignores X-Organization-Id header (hard org-scoping)", async () => {
+      mockAuthenticateApiKey.mockResolvedValue({
+        authenticated: true,
+        organizationId: "org_native",
+        userId: "user_creator",
+      });
+
+      const result = await getDualAuthContext(
+        makeRequest({
+          Authorization: "Bearer kh_test",
+          "X-Organization-Id": "org_other",
+        })
+      );
+
+      expect(result).toEqual({
+        userId: "user_creator",
+        organizationId: "org_native",
+        authMethod: "api-key",
       });
     });
   });
@@ -88,6 +141,7 @@ describe("getDualAuthContext", () => {
       expect(result).toEqual({
         userId: "user_session",
         organizationId: "org_session",
+        authMethod: "session",
       });
     });
 
@@ -102,6 +156,7 @@ describe("getDualAuthContext", () => {
       expect(result).toEqual({
         userId: "user_no_org",
         organizationId: null,
+        authMethod: "session",
       });
     });
   });
@@ -126,11 +181,34 @@ describe("getDualAuthContext", () => {
       expect(result).toEqual({
         userId: null,
         organizationId: null,
+        authMethod: "session",
       });
     });
   });
 
   describe("auth priority", () => {
+    it("prefers OAuth over API key and session", async () => {
+      mockAuthenticateOAuthToken.mockReturnValue({
+        authenticated: true,
+        userId: "user_oauth",
+        organizationId: "org_oauth",
+      });
+      mockAuthenticateApiKey.mockResolvedValue({
+        authenticated: true,
+        organizationId: "org_apikey",
+        userId: "user_apikey",
+      });
+
+      const result = await getDualAuthContext(makeRequest());
+
+      expect(result).toEqual({
+        userId: "user_oauth",
+        organizationId: "org_oauth",
+        authMethod: "oauth",
+      });
+      expect(mockAuthenticateApiKey).not.toHaveBeenCalled();
+    });
+
     it("prefers API key over session when both present", async () => {
       mockAuthenticateApiKey.mockResolvedValue({
         authenticated: true,
@@ -146,6 +224,7 @@ describe("getDualAuthContext", () => {
       expect(result).toEqual({
         userId: "user_apikey",
         organizationId: "org_apikey",
+        authMethod: "api-key",
       });
       expect(mockGetSession).not.toHaveBeenCalled();
     });

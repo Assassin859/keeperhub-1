@@ -1,15 +1,13 @@
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { start } from "workflow/api";
-import { authenticateApiKey } from "@/lib/api-key-auth";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
 import { getMetricsCollector } from "@/lib/metrics";
 import { LabelKeys, MetricNames } from "@/lib/metrics/types";
-import { getOrgContext } from "@/lib/middleware/org-context";
+import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit";
-import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { workflowExecutions, workflows } from "@/lib/db/schema";
@@ -104,73 +102,36 @@ export async function POST(
 
       userId = workflow.userId;
     } else {
-      // Try API key authentication first
-      const apiKeyAuth = await authenticateApiKey(request);
-      let organizationId: string | null = null;
-
-      if (apiKeyAuth.authenticated) {
-        // API key authentication successful
-        organizationId = apiKeyAuth.organizationId || null;
-
-        // Get workflow and verify organization access
-        workflow = await db.query.workflows.findFirst({
-          where: eq(workflows.id, workflowId),
-        });
-
-        if (!workflow) {
-          return NextResponse.json(
-            { error: "Workflow not found" },
-            { status: 404 }
-          );
-        }
-
-        // Check that workflow belongs to the API key's organization
-        const isSameOrg =
-          !workflow.isAnonymous &&
-          workflow.organizationId &&
-          organizationId === workflow.organizationId;
-
-        if (!isSameOrg) {
-          return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-        }
-
-        userId = workflow.userId;
-      } else {
-        // Fall back to session authentication
-        const session = await auth.api.getSession({
-          headers: request.headers,
-        });
-
-        if (!session) {
-          return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
-
-        // Get workflow and verify ownership
-        workflow = await db.query.workflows.findFirst({
-          where: eq(workflows.id, workflowId),
-        });
-
-        if (!workflow) {
-          return NextResponse.json(
-            { error: "Workflow not found" },
-            { status: 404 }
-          );
-        }
-
-        // Check access: owner or org member
-        const isOwner = workflow.userId === session.user.id;
-        const orgContext = await getOrgContext();
-        const isSameOrg =
-          !workflow.isAnonymous &&
-          workflow.organizationId &&
-          orgContext.organization?.id === workflow.organizationId;
-
-        if (!(isOwner || isSameOrg)) {
-          return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-        }
-
-        userId = session.user.id;
+      const authContext = await getDualAuthContext(request);
+      if ("error" in authContext) {
+        return NextResponse.json(
+          { error: authContext.error },
+          { status: authContext.status }
+        );
       }
+
+      workflow = await db.query.workflows.findFirst({
+        where: eq(workflows.id, workflowId),
+      });
+
+      if (!workflow) {
+        return NextResponse.json(
+          { error: "Workflow not found" },
+          { status: 404 }
+        );
+      }
+
+      const isOwner = authContext.authMethod === "session" && workflow.userId === authContext.userId;
+      const isSameOrg =
+        !workflow.isAnonymous &&
+        workflow.organizationId &&
+        authContext.organizationId === workflow.organizationId;
+
+      if (!(isOwner || isSameOrg)) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+
+      userId = authContext.userId ?? workflow.userId;
     }
 
     // Validate that all integrationIds in workflow nodes belong to the user or org

@@ -229,16 +229,16 @@ export function GettingStartedChecklist({
               <Info className="size-3.5 text-muted-foreground" />
             </TooltipTrigger>
             <TooltipContent className="max-w-64 text-xs" side="top">
-              Non-custodial wallet powered by{" "}
+              Non-custodial wallet for signing blockchain transactions. Choose
+              from multiple providers.{" "}
               <a
                 className="underline"
-                href="https://www.getpara.com/"
+                href="https://docs.keeperhub.com/wallet-management"
                 rel="noopener noreferrer"
                 target="_blank"
               >
-                Para
+                Learn more
               </a>
-              . Works across multiple networks.
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>

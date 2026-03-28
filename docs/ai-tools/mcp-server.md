@@ -42,6 +42,53 @@ The MCP endpoint supports two authentication methods:
 
 **API keys (headless):** Pass an organization API key (`kh_` prefix) as a Bearer token. Create one at [app.keeperhub.com](https://app.keeperhub.com) under Settings > API Keys > Organisation tab.
 
+## Organization Scoping
+
+Each MCP connection is scoped to a single organization. The org is determined by your authentication method:
+
+- **OAuth:** The org active in your browser session when you approve the authorization request.
+- **API key:** The org the key was created in (visible on the API Keys page).
+
+All tools operate within this org -- listing workflows, creating workflows, executing, and viewing integrations. There is no way to access another org's resources from the same connection.
+
+### Switching Organizations
+
+To work with a different org, re-authenticate:
+
+**OAuth (Claude Code):** Switch your active org at [app.keeperhub.com](https://app.keeperhub.com) using the org switcher, then reconnect the MCP server. In Claude Code, remove and re-add the server:
+
+```bash
+claude mcp remove keeperhub
+claude mcp add --transport http keeperhub https://app.keeperhub.com/mcp
+```
+
+Complete the OAuth flow again -- the new active org will be captured.
+
+**API key:** Create a separate API key in the target org and update the MCP server configuration with the new key.
+
+### Working with Multiple Organizations
+
+If you regularly work across multiple orgs, add a separate MCP server entry for each:
+
+```json
+{
+  "mcpServers": {
+    "keeperhub-acme": {
+      "type": "http",
+      "url": "https://app.keeperhub.com/mcp",
+      "headers": { "Authorization": "Bearer kh_acme_key" }
+    },
+    "keeperhub-personal": {
+      "type": "http",
+      "url": "https://app.keeperhub.com/mcp",
+      "headers": { "Authorization": "Bearer kh_personal_key" }
+    }
+  }
+}
+```
+
+Each server entry has its own tool namespace, so the AI agent can distinguish which org to target based on the server name.
+
 ## Tools Reference
 
 ### Workflow Management

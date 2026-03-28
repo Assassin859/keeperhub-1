@@ -1,6 +1,7 @@
 import "server-only";
 
 import { authenticateApiKey } from "@/lib/api-key-auth";
+import { authenticateOAuthToken } from "@/lib/mcp/oauth-auth";
 
 export type ApiKeyContext = {
   organizationId: string;
@@ -8,12 +9,21 @@ export type ApiKeyContext = {
 };
 
 /**
- * Thin wrapper around authenticateApiKey for the direct execution API.
- * Returns the org context if the key is valid, null otherwise.
+ * Validates a request for the direct execution API.
+ * Accepts MCP OAuth tokens or API keys (kh_).
+ * Returns the org context if valid, null otherwise.
  */
 export async function validateApiKey(
   request: Request
 ): Promise<ApiKeyContext | null> {
+  const oauthResult = authenticateOAuthToken(request);
+  if (oauthResult.authenticated && oauthResult.organizationId) {
+    return {
+      organizationId: oauthResult.organizationId,
+      apiKeyId: `oauth:${oauthResult.userId ?? "unknown"}`,
+    };
+  }
+
   const result = await authenticateApiKey(request);
 
   if (!result.authenticated) {
