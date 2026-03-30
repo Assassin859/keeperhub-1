@@ -91,6 +91,21 @@ env:
     type: parameterStore
     name: chain-rpc-config
     parameter_name: /eks/techops-staging/keeperhub/chain-rpc-config
+  ETHERSCAN_API_KEY:
+    type: parameterStore
+    name: etherscan-api-key
+    parameter_name: /eks/techops-staging/keeperhub/etherscan-api-key
+  OPENAI_API_KEY:
+    type: parameterStore
+    name: openai-api-key
+    parameter_name: /eks/techops-staging/keeperhub/openai-api-key
+  SENDGRID_API_KEY:
+    type: parameterStore
+    name: sendgrid-api-key
+    parameter_name: /eks/techops-staging/keeperhub/sendgrid-api-key
+  FROM_ADDRESS:
+    type: kv
+    value: "noreply@keeperhub.com"
 
 externalSecrets:
   clusterSecretStoreName: techops-staging
