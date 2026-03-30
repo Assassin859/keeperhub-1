@@ -132,6 +132,7 @@ export default defineProtocol({
       label: "DAI/USD Oracle",
       abi: ORACLE_ABI,
       addresses: {
+        "1": "0xCCd47B363b81E94321518D0393ACcb0846f4D4C6",
         "11155111": "0xaf900d10f197762794C41dac395C5b8112eD13E1",
       },
     },
