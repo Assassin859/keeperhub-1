@@ -528,6 +528,85 @@ describe("NonceManager", () => {
     });
   });
 
+  describe("DB-aware nonce selection", () => {
+    it("should advance starting nonce past DB pending transactions", async () => {
+      // Arrange: DB has a pending tx at nonce 7, chain says nonce is 5
+      // The new max-nonce query returns [{ maxNonce: 7 }] on first call
+      let selectCallCount = 0;
+      mockSelect.mockImplementation(() => {
+        selectCallCount += 1;
+        if (selectCallCount === 1) {
+          // First call: the Step 2.5 max-nonce query
+          return {
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockResolvedValue([{ maxNonce: 7 }]),
+            }),
+          };
+        }
+        // Subsequent calls: validateAndReconcile queries (return empty)
+        return {
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({
+              orderBy: vi.fn().mockResolvedValue([]),
+              limit: vi.fn().mockResolvedValue([]),
+            }),
+          }),
+        };
+      });
+
+      const manager = new NonceManager();
+      const provider = createMockProvider({ transactionCount: 5 });
+
+      const { session } = await manager.startSession(
+        "0x1234567890123456789012345678901234567890",
+        1,
+        "exec_db_aware",
+        provider as unknown as import("ethers").Provider
+      );
+
+      // max(5, 7+1) = 8
+      expect(session.currentNonce).toBe(8);
+    });
+
+    it("should use chain nonce when no DB pending rows exist", async () => {
+      // Arrange: DB has no pending transactions (default mock returns empty)
+      let selectCallCount = 0;
+      mockSelect.mockImplementation(() => {
+        selectCallCount += 1;
+        if (selectCallCount === 1) {
+          // First call: the Step 2.5 max-nonce query — returns empty (no pending)
+          return {
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockResolvedValue([{ maxNonce: null }]),
+            }),
+          };
+        }
+        // Subsequent calls: validateAndReconcile queries
+        return {
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({
+              orderBy: vi.fn().mockResolvedValue([]),
+              limit: vi.fn().mockResolvedValue([]),
+            }),
+          }),
+        };
+      });
+
+      const manager = new NonceManager();
+      const provider = createMockProvider({ transactionCount: 10 });
+
+      const { session } = await manager.startSession(
+        "0x1234567890123456789012345678901234567890",
+        1,
+        "exec_no_pending",
+        provider as unknown as import("ethers").Provider
+      );
+
+      // No pending transactions — use chain nonce directly
+      expect(session.currentNonce).toBe(10);
+    });
+  });
+
   describe("singleton pattern", () => {
     it("should return same instance from getNonceManager", () => {
       const manager1 = getNonceManager();

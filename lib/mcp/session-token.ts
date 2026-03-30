@@ -6,9 +6,12 @@ export type SessionPayload = {
   scope?: string;
   iat: number;
   exp: number;
+  original_iat?: number;
 };
 
-const SESSION_TTL_SECONDS = 30 * 60; // 30 minutes
+export const SESSION_TTL_SECONDS = 24 * 60 * 60; // 24 hours
+export const MAX_RENEWAL_GRACE_SECONDS = 48 * 60 * 60; // 48 hours
+export const MAX_SESSION_LIFETIME_SECONDS = 30 * 24 * 60 * 60; // 30 days
 
 function getSessionSecret(): string {
   const secret =
@@ -60,6 +63,7 @@ export function createSessionToken(
     scope: payload.scope,
     iat: now,
     exp: now + SESSION_TTL_SECONDS,
+    original_iat: payload.original_iat ?? now,
   };
   const body = base64UrlEncode(JSON.stringify(claims));
   const signingInput = `${header}.${body}`;
@@ -67,29 +71,69 @@ export function createSessionToken(
   return `${signingInput}.${signature}`;
 }
 
-export function verifySessionToken(token: string): SessionPayload | null {
+export type VerifyOptions = {
+  allowExpired?: boolean;
+};
+
+export type VerifyResult =
+  | { payload: SessionPayload; expired: false }
+  | { payload: SessionPayload; expired: true }
+  | {
+      payload: null;
+      expired: false;
+      reason:
+        | "invalid_signature"
+        | "malformed"
+        | "too_old"
+        | "max_lifetime_exceeded";
+    };
+
+export function verifySessionToken(
+  token: string,
+  options?: VerifyOptions
+): SessionPayload | null {
+  const result = verifySessionTokenDetailed(token);
+  if (!result.payload) {
+    return null;
+  }
+  if (result.expired && !options?.allowExpired) {
+    return null;
+  }
+  return result.payload;
+}
+
+export function verifySessionTokenDetailed(token: string): VerifyResult {
   try {
     const secret = getSessionSecret();
     const parts = token.split(".");
     if (parts.length !== 3) {
-      return null;
+      return { payload: null, expired: false, reason: "malformed" };
     }
     const [header, body, signature] = parts;
     const signingInput = `${header}.${body}`;
     const expectedSignature = hmacSign(secret, signingInput);
 
     if (signature !== expectedSignature) {
-      return null;
+      return { payload: null, expired: false, reason: "invalid_signature" };
     }
 
     const payload = JSON.parse(base64UrlDecode(body)) as SessionPayload;
     const now = Math.floor(Date.now() / 1000);
-    if (payload.exp < now) {
-      return null;
+
+    const sessionOrigin = payload.original_iat ?? payload.iat;
+    if (now - sessionOrigin > MAX_SESSION_LIFETIME_SECONDS) {
+      return { payload: null, expired: false, reason: "max_lifetime_exceeded" };
     }
 
-    return payload;
+    if (payload.exp < now) {
+      if (now - payload.exp > MAX_RENEWAL_GRACE_SECONDS) {
+        return { payload: null, expired: false, reason: "too_old" };
+      }
+      return { payload, expired: true };
+    }
+
+    return { payload, expired: false };
   } catch {
-    return null;
+    return { payload: null, expired: false, reason: "malformed" };
   }
 }

@@ -1,10 +1,14 @@
+import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { toChecksumAddress } from "@/lib/address-utils";
+import { db } from "@/lib/db";
 import {
   deleteIntegration,
   getIntegration,
   stripDatabaseSecrets,
   updateIntegration,
 } from "@/lib/db/integrations";
+import { organizationWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import type { IntegrationConfig } from "@/lib/types/integration";
@@ -16,6 +20,7 @@ export type GetIntegrationResponse = {
   config: IntegrationConfig;
   createdAt: string;
   updatedAt: string;
+  walletAddress?: string;
 };
 
 export type UpdateIntegrationRequest = {
@@ -68,6 +73,18 @@ export async function GET(
       createdAt: integration.createdAt.toISOString(),
       updatedAt: integration.updatedAt.toISOString(),
     };
+
+    if (integration.type === "web3" && organizationId) {
+      const walletRow = await db
+        .select({ walletAddress: organizationWallets.walletAddress })
+        .from(organizationWallets)
+        .where(eq(organizationWallets.organizationId, organizationId))
+        .limit(1);
+
+      if (walletRow.length > 0) {
+        response.walletAddress = toChecksumAddress(walletRow[0].walletAddress);
+      }
+    }
 
     return NextResponse.json(response);
   } catch (error) {

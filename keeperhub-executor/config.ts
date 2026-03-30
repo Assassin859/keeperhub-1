@@ -30,6 +30,7 @@ export const CONFIG = {
   paraEnvironment: process.env.PARA_ENVIRONMENT || "beta",
   walletEncryptionKey: process.env.WALLET_ENCRYPTION_KEY || "",
   chainRpcConfig: process.env.CHAIN_RPC_CONFIG || "",
+  etherscanApiKey: process.env.ETHERSCAN_API_KEY || "",
 
   visibilityTimeout: 300,
   waitTimeSeconds: 20,

@@ -98,6 +98,23 @@ export class NonceManager {
         "pending"
       );
 
+      // Step 2.5: Check DB pending transactions and advance past any in-flight nonces
+      const maxDbPending = await db
+        .select({ maxNonce: sql<number>`max(${pendingTransactions.nonce})` })
+        .from(pendingTransactions)
+        .where(
+          and(
+            eq(pendingTransactions.walletAddress, normalizedAddress),
+            eq(pendingTransactions.chainId, chainId),
+            eq(pendingTransactions.status, "pending")
+          )
+        );
+      const maxPendingNonce: number | null = maxDbPending[0]?.maxNonce ?? null;
+      const safeNonce =
+        maxPendingNonce !== null
+          ? Math.max(chainNonce, maxPendingNonce + 1)
+          : chainNonce;
+
       // Step 3: Validate and reconcile pending transactions
       const validation = await this.validateAndReconcile(
         normalizedAddress,
@@ -111,14 +128,14 @@ export class NonceManager {
         walletAddress: normalizedAddress,
         chainId,
         executionId,
-        currentNonce: chainNonce,
+        currentNonce: safeNonce,
         startedAt: new Date(),
         _lockConnection: lockConnection,
       };
 
       console.log(
         `[NonceManager] Session started for ${normalizedAddress}:${chainId}, ` +
-          `nonce=${chainNonce}, execution=${executionId}`
+          `nonce=${safeNonce}, chainNonce=${chainNonce}, execution=${executionId}`
       );
 
       if (validation.warnings.length > 0) {

@@ -2,8 +2,9 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { McpEventStore } from "@/lib/mcp/event-store";
 import { logMcpEvent } from "@/lib/mcp/logging";
+import { SESSION_TTL_SECONDS } from "@/lib/mcp/session-token";
 
-const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+export const SESSION_TTL_MS = SESSION_TTL_SECONDS * 1000;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
 export type SessionEntry = {

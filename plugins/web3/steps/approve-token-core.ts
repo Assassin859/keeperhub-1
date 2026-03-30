@@ -20,6 +20,7 @@ import {
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import { getErrorMessage } from "@/lib/utils";
+import { generateId } from "@/lib/utils/id";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import { formatContractError } from "@/lib/web3/decode-revert-error";
 import { resolveGasLimitOverrides } from "@/lib/web3/gas-defaults";
@@ -183,7 +184,7 @@ export async function approveTokenCore(
   // Build transaction context
   const txContext: TransactionContext = {
     organizationId,
-    executionId: _context.executionId ?? "direct-execution",
+    executionId: _context.executionId ?? `direct-${generateId()}`,
     workflowId,
     chainId,
     rpcUrl,

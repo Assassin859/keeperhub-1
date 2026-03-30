@@ -46,6 +46,32 @@ async function resolveAbiFromField(
   }
 }
 
+async function executeConditionalRead(
+  action: ActionBody,
+  network: string,
+  resolvedWriteAbi: string,
+  organizationId: string,
+  conditionResult: ConditionResult
+): Promise<NextResponse> {
+  const readResult = await readContractCore({
+    contractAddress: action.contractAddress,
+    network,
+    abi: resolvedWriteAbi,
+    abiFunction: action.functionName,
+    functionArgs: action.functionArgs,
+    _context: { organizationId },
+  });
+
+  if (!readResult.success) {
+    return NextResponse.json({ error: readResult.error }, { status: 400 });
+  }
+
+  return NextResponse.json(
+    { executed: true, conditionResult, result: readResult.result },
+    { status: 200 }
+  );
+}
+
 async function executeConditionalWrite(
   action: ActionBody,
   network: string,
@@ -181,6 +207,36 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json(
       { error: writeAbiResult.error, field: "action.abi" },
       { status: 400 }
+    );
+  }
+
+  const actionAbiParsed = JSON.parse(writeAbiResult.abi) as Array<{
+    type?: string;
+    name?: string;
+    stateMutability?: string;
+  }>;
+  const actionFn = actionAbiParsed.find((f) => f.name === action.functionName);
+
+  if (!actionFn) {
+    return NextResponse.json(
+      {
+        error: `Function "${action.functionName}" not found in action ABI`,
+        field: "action.functionName",
+      },
+      { status: 400 }
+    );
+  }
+
+  const isReadOnly =
+    actionFn.stateMutability === "view" || actionFn.stateMutability === "pure";
+
+  if (isReadOnly) {
+    return executeConditionalRead(
+      action,
+      network,
+      writeAbiResult.abi,
+      apiKeyCtx.organizationId,
+      conditionResult
     );
   }
 

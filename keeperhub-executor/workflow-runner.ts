@@ -20,6 +20,7 @@
  * Environment variables (optional):
  *   WORKFLOW_INPUT - JSON string of trigger input (default: {})
  *   SCHEDULE_ID - ID of the schedule (for scheduled executions)
+ *   + system credentials from runner-env.ts (ETHERSCAN_API_KEY, etc.)
  */
 
 import { eq } from "drizzle-orm";

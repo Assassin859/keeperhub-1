@@ -538,7 +538,8 @@ describe.skipIf(shouldSkip)("Transaction Flow E2E", () => {
         mockProvider as any
       );
 
-      expect(session2.currentNonce).toBe(40);
+      // DB-aware nonce selection: max(chainNonce=40, maxPendingDbNonce=40 + 1) = 41
+      expect(session2.currentNonce).toBe(41);
 
       await manager2.endSession(session2);
     }, 15_000);
@@ -571,6 +572,8 @@ describe.skipIf(shouldSkip)("Transaction Flow with Real RPC", () => {
     await client.end();
   });
 
+  const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
   beforeEach(async () => {
     resetNonceManager();
     resetGasStrategy();
@@ -582,17 +585,17 @@ describe.skipIf(shouldSkip)("Transaction Flow with Real RPC", () => {
     await db
       .delete(walletLocks)
       .where(eq(walletLocks.walletAddress, TEST_WALLET_NORMALIZED));
+    await db
+      .delete(walletLocks)
+      .where(eq(walletLocks.walletAddress, ZERO_ADDRESS));
   });
 
   it("should get real chain nonce and gas prices", async () => {
     const nonceManager = new NonceManager();
     const gasStrategy = new AdaptiveGasStrategy();
 
-    // Use a real address with known nonce (zero address has nonce 0)
-    const zeroAddress = "0x0000000000000000000000000000000000000000";
-
     const { session, validation } = await nonceManager.startSession(
-      zeroAddress,
+      ZERO_ADDRESS,
       TEST_CHAIN_ID,
       testExecutionId,
       sepoliaProvider as any
@@ -622,7 +625,7 @@ describe.skipIf(shouldSkip)("Transaction Flow with Real RPC", () => {
     // Cleanup
     await db
       .delete(walletLocks)
-      .where(eq(walletLocks.walletAddress, zeroAddress));
+      .where(eq(walletLocks.walletAddress, ZERO_ADDRESS));
   }, 30_000);
 });
 
