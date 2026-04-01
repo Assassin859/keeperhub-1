@@ -16,6 +16,9 @@ export type RpcMetricsCollector = {
   recordFallbackAttempt(chainName: string): void;
   recordFallbackFailure(chainName: string): void;
   recordFailoverEvent(chainName: string): void;
+  recordRecoveryEvent(chainName: string): void;
+  recordBothFailed(chainName: string): void;
+  recordSuccess(chainName: string, provider: "primary" | "fallback"): void;
 };
 
 /**
@@ -46,6 +49,15 @@ export const noopMetricsCollector: RpcMetricsCollector = {
   recordFailoverEvent: () => {
     /* noop */
   },
+  recordRecoveryEvent: () => {
+    /* noop */
+  },
+  recordBothFailed: () => {
+    /* noop */
+  },
+  recordSuccess: () => {
+    /* noop */
+  },
 };
 
 /**
@@ -62,6 +74,12 @@ export const consoleMetricsCollector: RpcMetricsCollector = {
     console.debug(`[RPC Metrics] Fallback failure: ${chain}`),
   recordFailoverEvent: (chain) =>
     console.debug(`[RPC Metrics] Failover event: ${chain}`),
+  recordRecoveryEvent: (chain) =>
+    console.debug(`[RPC Metrics] Recovery event: ${chain}`),
+  recordBothFailed: (chain) =>
+    console.debug(`[RPC Metrics] Both endpoints failed: ${chain}`),
+  recordSuccess: (chain, provider) =>
+    console.debug(`[RPC Metrics] Success on ${provider}: ${chain}`),
 };
 
 export type RpcProviderConfig = {
@@ -188,6 +206,10 @@ export class RpcProviderManager {
         );
 
         if (fallbackResult.success) {
+          this.metricsCollector.recordSuccess(
+            this.config.chainName,
+            "fallback"
+          );
           return fallbackResult.result as T;
         }
 
@@ -223,6 +245,7 @@ export class RpcProviderManager {
             })
           );
           this.isUsingFallback = false;
+          this.metricsCollector.recordRecoveryEvent(this.config.chainName);
           this.onFailoverStateChange?.(
             this.config.chainName,
             false,
@@ -232,6 +255,7 @@ export class RpcProviderManager {
         }
 
         // Both failed -- throw without redundant retry
+        this.metricsCollector.recordBothFailed(this.config.chainName);
         console.error(
           JSON.stringify({
             level: "error",
@@ -259,6 +283,7 @@ export class RpcProviderManager {
     );
 
     if (primaryResult.success) {
+      this.metricsCollector.recordSuccess(this.config.chainName, "primary");
       return primaryResult.result as T;
     }
 
@@ -292,6 +317,7 @@ export class RpcProviderManager {
         return fallbackResult.result as T;
       }
 
+      this.metricsCollector.recordBothFailed(this.config.chainName);
       console.error(
         JSON.stringify({
           level: "error",

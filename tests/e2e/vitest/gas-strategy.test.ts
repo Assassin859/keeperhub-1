@@ -26,14 +26,15 @@ import {
 vi.unmock("@/lib/db");
 vi.unmock("server-only");
 
+import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 import { AdaptiveGasStrategy, resetGasStrategy } from "@/lib/web3/gas-strategy";
 
 // Skip if SKIP_INFRA_TESTS is true (no network access)
 const shouldSkip = process.env.SKIP_INFRA_TESTS === "true";
 
-// Real RPC endpoints
-const SEPOLIA_RPC = "https://chain.techops.services/eth-sepolia";
-const BASE_SEPOLIA_RPC = "https://sepolia.base.org";
+// Real RPC endpoints - resolved from CHAIN_RPC_CONFIG with public fallbacks
+const SEPOLIA_RPC = getRpcUrlByChainId(11_155_111, "primary");
+const BASE_SEPOLIA_RPC = getRpcUrlByChainId(84_532, "primary");
 
 describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
   let sepoliaProvider: ethers.JsonRpcProvider;

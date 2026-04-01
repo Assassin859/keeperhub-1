@@ -16,6 +16,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type Chain, chains, userRpcPreferences, users } from "@/lib/db/schema";
+import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 import {
   clearRpcProviderManagerCache,
   RpcProviderManager,
@@ -71,8 +72,8 @@ describe.skipIf(shouldSkip)("RPC Failover E2E", () => {
         name: "Sepolia Testnet",
         symbol: "ETH",
         chainType: "evm",
-        defaultPrimaryRpc: "https://chain.techops.services/eth-sepolia",
-        defaultFallbackRpc: "https://ethereum-sepolia-rpc.publicnode.com",
+        defaultPrimaryRpc: getRpcUrlByChainId(11_155_111, "primary"),
+        defaultFallbackRpc: getRpcUrlByChainId(11_155_111, "fallback"),
         isTestnet: true,
         isEnabled: true,
       });
@@ -363,8 +364,7 @@ describe.skipIf(shouldSkip)("RPC Failover E2E", () => {
   });
 
   describe("RPC Provider Failover (Real Endpoints)", () => {
-    // TechOps RPC endpoint (primary, more reliable)
-    const TECHOPS_SEPOLIA_RPC = "https://chain.techops.services/eth-sepolia";
+    const TECHOPS_SEPOLIA_RPC = getRpcUrlByChainId(11_155_111, "primary");
     const INVALID_RPC = "https://invalid-rpc-endpoint.example.com";
 
     beforeEach(() => {

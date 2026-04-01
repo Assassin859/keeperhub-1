@@ -178,6 +178,126 @@ const DEFAULT_CHAINS: NewChain[] = [
     isTestnet: getChainConfigValue("tempo-mainnet", "isTestnet", false),
     isEnabled: getChainConfigValue("tempo-mainnet", "isEnabled", true),
   },
+  {
+    chainId: getChainConfigValue("bsc-mainnet", "chainId", 56),
+    name: "BNB Chain",
+    symbol: getChainConfigValue("bsc-mainnet", "symbol", "BNB"),
+    chainType: "evm",
+    defaultPrimaryRpc: getRpcUrlByChainId(56, "primary"),
+    defaultFallbackRpc: getRpcUrlByChainId(56, "fallback"),
+    defaultPrimaryWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[56].jsonKey,
+      type: "primary",
+    }),
+    defaultFallbackWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[56].jsonKey,
+      type: "fallback",
+    }),
+    isTestnet: getChainConfigValue("bsc-mainnet", "isTestnet", false),
+    isEnabled: getChainConfigValue("bsc-mainnet", "isEnabled", true),
+  },
+  {
+    chainId: getChainConfigValue("bsc-testnet", "chainId", 97),
+    name: "BNB Chain Testnet",
+    symbol: getChainConfigValue("bsc-testnet", "symbol", "BNB"),
+    chainType: "evm",
+    defaultPrimaryRpc: getRpcUrlByChainId(97, "primary"),
+    defaultFallbackRpc: getRpcUrlByChainId(97, "fallback"),
+    defaultPrimaryWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[97].jsonKey,
+      type: "primary",
+    }),
+    defaultFallbackWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[97].jsonKey,
+      type: "fallback",
+    }),
+    isTestnet: getChainConfigValue("bsc-testnet", "isTestnet", true),
+    isEnabled: getChainConfigValue("bsc-testnet", "isEnabled", true),
+  },
+  {
+    chainId: getChainConfigValue("polygon-mainnet", "chainId", 137),
+    name: "Polygon",
+    symbol: getChainConfigValue("polygon-mainnet", "symbol", "MATIC"),
+    chainType: "evm",
+    defaultPrimaryRpc: getRpcUrlByChainId(137, "primary"),
+    defaultFallbackRpc: getRpcUrlByChainId(137, "fallback"),
+    defaultPrimaryWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[137].jsonKey,
+      type: "primary",
+    }),
+    defaultFallbackWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[137].jsonKey,
+      type: "fallback",
+    }),
+    isTestnet: getChainConfigValue("polygon-mainnet", "isTestnet", false),
+    isEnabled: getChainConfigValue("polygon-mainnet", "isEnabled", true),
+  },
+  {
+    chainId: getChainConfigValue("arbitrum-mainnet", "chainId", 42_161),
+    name: "Arbitrum One",
+    symbol: getChainConfigValue("arbitrum-mainnet", "symbol", "ETH"),
+    chainType: "evm",
+    defaultPrimaryRpc: getRpcUrlByChainId(42_161, "primary"),
+    defaultFallbackRpc: getRpcUrlByChainId(42_161, "fallback"),
+    defaultPrimaryWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[42_161].jsonKey,
+      type: "primary",
+    }),
+    defaultFallbackWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[42_161].jsonKey,
+      type: "fallback",
+    }),
+    isTestnet: getChainConfigValue("arbitrum-mainnet", "isTestnet", false),
+    isEnabled: getChainConfigValue("arbitrum-mainnet", "isEnabled", true),
+  },
+  {
+    chainId: getChainConfigValue("polygon-amoy", "chainId", 80_002),
+    name: "Polygon Amoy",
+    symbol: getChainConfigValue("polygon-amoy", "symbol", "MATIC"),
+    chainType: "evm",
+    defaultPrimaryRpc: getRpcUrlByChainId(80_002, "primary"),
+    defaultFallbackRpc: getRpcUrlByChainId(80_002, "fallback"),
+    defaultPrimaryWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[80_002].jsonKey,
+      type: "primary",
+    }),
+    defaultFallbackWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[80_002].jsonKey,
+      type: "fallback",
+    }),
+    isTestnet: getChainConfigValue("polygon-amoy", "isTestnet", true),
+    isEnabled: getChainConfigValue("polygon-amoy", "isEnabled", true),
+  },
+  {
+    chainId: getChainConfigValue("arbitrum-sepolia", "chainId", 421_614),
+    name: "Arbitrum Sepolia",
+    symbol: getChainConfigValue("arbitrum-sepolia", "symbol", "ETH"),
+    chainType: "evm",
+    defaultPrimaryRpc: getRpcUrlByChainId(421_614, "primary"),
+    defaultFallbackRpc: getRpcUrlByChainId(421_614, "fallback"),
+    defaultPrimaryWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[421_614].jsonKey,
+      type: "primary",
+    }),
+    defaultFallbackWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[421_614].jsonKey,
+      type: "fallback",
+    }),
+    isTestnet: getChainConfigValue("arbitrum-sepolia", "isTestnet", true),
+    isEnabled: getChainConfigValue("arbitrum-sepolia", "isEnabled", true),
+  },
   // Solana chains (non-EVM - uses SolanaProviderManager)
   {
     chainId: getChainConfigValue("solana-mainnet", "chainId", 101),
@@ -222,12 +342,14 @@ const DEFAULT_CHAINS: NewChain[] = [
 ];
 
 // Explorer configuration template for each chain (KEEP-1154)
+// All Etherscan-family chains use the unified V2 API (api.etherscan.io/v2/api)
+// with chainid param - one API key covers all chains.
 // Note: chainIds are resolved dynamically from DEFAULT_CHAINS to ensure consistency
 const EXPLORER_CONFIG_TEMPLATES: Record<
   number,
   Omit<NewExplorerConfig, "chainId">
 > = {
-  // Ethereum Mainnet - Etherscan
+  // Ethereum Mainnet - Etherscan V2
   1: {
     chainType: "evm",
     explorerUrl: "https://etherscan.io",
@@ -237,7 +359,7 @@ const EXPLORER_CONFIG_TEMPLATES: Record<
     explorerAddressPath: "/address/{address}",
     explorerContractPath: "/address/{address}#code",
   },
-  // Sepolia Testnet - Etherscan (uses unified V2 API with chainid param)
+  // Sepolia Testnet - Etherscan V2
   11155111: {
     chainType: "evm",
     explorerUrl: "https://sepolia.etherscan.io",
@@ -247,22 +369,22 @@ const EXPLORER_CONFIG_TEMPLATES: Record<
     explorerAddressPath: "/address/{address}",
     explorerContractPath: "/address/{address}#code",
   },
-  // Base - Etherscan (Basescan)
+  // Base Mainnet - Etherscan V2 (Basescan)
   8453: {
     chainType: "evm",
     explorerUrl: "https://basescan.org",
     explorerApiType: "etherscan",
-    explorerApiUrl: "https://api.basescan.org/api",
+    explorerApiUrl: "https://api.etherscan.io/v2/api",
     explorerTxPath: "/tx/{hash}",
     explorerAddressPath: "/address/{address}",
     explorerContractPath: "/address/{address}#code",
   },
-  // Base Sepolia - Etherscan
+  // Base Sepolia - Etherscan V2 (Basescan)
   84532: {
     chainType: "evm",
     explorerUrl: "https://sepolia.basescan.org",
     explorerApiType: "etherscan",
-    explorerApiUrl: "https://api-sepolia.basescan.org/api",
+    explorerApiUrl: "https://api.etherscan.io/v2/api",
     explorerTxPath: "/tx/{hash}",
     explorerAddressPath: "/address/{address}",
     explorerContractPath: "/address/{address}#code",
@@ -286,6 +408,66 @@ const EXPLORER_CONFIG_TEMPLATES: Record<
     explorerTxPath: "/tx/{hash}",
     explorerAddressPath: "/address/{address}",
     explorerContractPath: "/address/{address}?tab=contract",
+  },
+  // BNB Chain Mainnet - Etherscan V2 (BscScan)
+  56: {
+    chainType: "evm",
+    explorerUrl: "https://bscscan.com",
+    explorerApiType: "etherscan",
+    explorerApiUrl: "https://api.etherscan.io/v2/api",
+    explorerTxPath: "/tx/{hash}",
+    explorerAddressPath: "/address/{address}",
+    explorerContractPath: "/address/{address}#code",
+  },
+  // BNB Chain Testnet - Etherscan V2 (BscScan)
+  97: {
+    chainType: "evm",
+    explorerUrl: "https://testnet.bscscan.com",
+    explorerApiType: "etherscan",
+    explorerApiUrl: "https://api.etherscan.io/v2/api",
+    explorerTxPath: "/tx/{hash}",
+    explorerAddressPath: "/address/{address}",
+    explorerContractPath: "/address/{address}#code",
+  },
+  // Polygon Mainnet - Etherscan V2 (Polygonscan)
+  137: {
+    chainType: "evm",
+    explorerUrl: "https://polygonscan.com",
+    explorerApiType: "etherscan",
+    explorerApiUrl: "https://api.etherscan.io/v2/api",
+    explorerTxPath: "/tx/{hash}",
+    explorerAddressPath: "/address/{address}",
+    explorerContractPath: "/address/{address}#code",
+  },
+  // Arbitrum One - Etherscan V2 (Arbiscan)
+  42161: {
+    chainType: "evm",
+    explorerUrl: "https://arbiscan.io",
+    explorerApiType: "etherscan",
+    explorerApiUrl: "https://api.etherscan.io/v2/api",
+    explorerTxPath: "/tx/{hash}",
+    explorerAddressPath: "/address/{address}",
+    explorerContractPath: "/address/{address}#code",
+  },
+  // Polygon Amoy - Etherscan V2 (Polygonscan)
+  80002: {
+    chainType: "evm",
+    explorerUrl: "https://amoy.polygonscan.com",
+    explorerApiType: "etherscan",
+    explorerApiUrl: "https://api.etherscan.io/v2/api",
+    explorerTxPath: "/tx/{hash}",
+    explorerAddressPath: "/address/{address}",
+    explorerContractPath: "/address/{address}#code",
+  },
+  // Arbitrum Sepolia - Etherscan V2 (Arbiscan)
+  421614: {
+    chainType: "evm",
+    explorerUrl: "https://sepolia.arbiscan.io",
+    explorerApiType: "etherscan",
+    explorerApiUrl: "https://api.etherscan.io/v2/api",
+    explorerTxPath: "/tx/{hash}",
+    explorerAddressPath: "/address/{address}",
+    explorerContractPath: "/address/{address}#code",
   },
   // Solana Mainnet - Solscan
   101: {
@@ -363,6 +545,12 @@ async function seedChains() {
     "Base Sepolia": 84_532,
     "Tempo Testnet": 42_429,
     Tempo: 4217,
+    "BNB Chain": 56,
+    "BNB Chain Testnet": 97,
+    Polygon: 137,
+    "Arbitrum One": 42_161,
+    "Polygon Amoy": 80_002,
+    "Arbitrum Sepolia": 421_614,
     Solana: 101,
     "Solana Devnet": 103,
   };

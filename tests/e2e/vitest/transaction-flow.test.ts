@@ -32,6 +32,7 @@ vi.unmock("@/lib/db");
 vi.mock("server-only", () => ({}));
 
 import { pendingTransactions, walletLocks } from "@/lib/db/schema-extensions";
+import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 import { AdaptiveGasStrategy, resetGasStrategy } from "@/lib/web3/gas-strategy";
 import { NonceManager, resetNonceManager } from "@/lib/web3/nonce-manager";
 
@@ -43,7 +44,7 @@ const shouldSkip =
 const TEST_WALLET = "0xTestWallet1234567890123456789012345678";
 const TEST_WALLET_NORMALIZED = TEST_WALLET.toLowerCase();
 const TEST_CHAIN_ID = 11_155_111; // Sepolia
-const SEPOLIA_RPC = "https://chain.techops.services/eth-sepolia";
+const SEPOLIA_RPC = getRpcUrlByChainId(11_155_111, "primary");
 
 describe.skipIf(shouldSkip)("Transaction Flow E2E", () => {
   let client: ReturnType<typeof postgres>;

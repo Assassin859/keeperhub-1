@@ -6,18 +6,83 @@
  */
 
 import {
-  consoleMetricsCollector,
   createRpcProviderManager,
   type FailoverStateChangeCallback,
+  type RpcMetricsCollector,
   type RpcProviderManager,
 } from "@/lib/rpc-provider";
 import {
-  consoleSolanaMetricsCollector,
   createSolanaProviderManager,
   type SolanaFailoverStateChangeCallback,
   type SolanaProviderManager,
+  type SolanaRpcMetricsCollector,
 } from "@/lib/rpc-provider/solana";
 import { resolveRpcConfig } from "./config-service";
+
+/**
+ * Resolve the appropriate RPC metrics collector based on environment.
+ * Uses Prometheus when available (server-side), falls back to console.
+ */
+let cachedEvmCollector: RpcMetricsCollector | undefined;
+let cachedSolanaCollector: SolanaRpcMetricsCollector | undefined;
+let cachedFailoverCallback: FailoverStateChangeCallback | undefined;
+
+async function getEvmMetricsCollector(): Promise<RpcMetricsCollector> {
+  if (cachedEvmCollector) {
+    return cachedEvmCollector;
+  }
+
+  if (process.env.METRICS_COLLECTOR === "prometheus") {
+    const { prometheusRpcMetricsCollector } = await import(
+      "@/lib/metrics/rpc-metrics"
+    );
+    cachedEvmCollector = prometheusRpcMetricsCollector;
+  } else {
+    const { consoleMetricsCollector } = await import("@/lib/rpc-provider");
+    cachedEvmCollector = consoleMetricsCollector;
+  }
+
+  return cachedEvmCollector;
+}
+
+async function getSolanaMetricsCollector(): Promise<SolanaRpcMetricsCollector> {
+  if (cachedSolanaCollector) {
+    return cachedSolanaCollector;
+  }
+
+  if (process.env.METRICS_COLLECTOR === "prometheus") {
+    const { prometheusSolanaRpcMetricsCollector } = await import(
+      "@/lib/metrics/rpc-metrics"
+    );
+    cachedSolanaCollector = prometheusSolanaRpcMetricsCollector;
+  } else {
+    const { consoleSolanaMetricsCollector } = await import(
+      "@/lib/rpc-provider/solana"
+    );
+    cachedSolanaCollector = consoleSolanaMetricsCollector;
+  }
+
+  return cachedSolanaCollector;
+}
+
+async function getFailoverCallback(): Promise<FailoverStateChangeCallback> {
+  if (cachedFailoverCallback) {
+    return cachedFailoverCallback;
+  }
+
+  if (process.env.METRICS_COLLECTOR === "prometheus") {
+    const { onRpcFailoverStateChange } = await import(
+      "@/lib/metrics/rpc-metrics"
+    );
+    cachedFailoverCallback = onRpcFailoverStateChange;
+  } else {
+    cachedFailoverCallback = () => {
+      /* noop when prometheus is not enabled */
+    };
+  }
+
+  return cachedFailoverCallback;
+}
 
 // Solana chain IDs (non-EVM)
 const SOLANA_CHAIN_IDS = new Set([101, 103]);
@@ -60,7 +125,11 @@ export async function getRpcProvider(
     );
   }
 
-  const config = await resolveRpcConfig(chainId, userId);
+  const [config, metricsCollector, failoverCallback] = await Promise.all([
+    resolveRpcConfig(chainId, userId),
+    getEvmMetricsCollector(),
+    getFailoverCallback(),
+  ]);
 
   if (!config) {
     throw new Error(`Chain ${chainId} not found or not enabled`);
@@ -70,8 +139,15 @@ export async function getRpcProvider(
     primaryRpcUrl: config.primaryRpcUrl,
     fallbackRpcUrl: config.fallbackRpcUrl,
     chainName: config.chainName,
-    metricsCollector: consoleMetricsCollector,
-    onFailoverStateChange,
+    metricsCollector,
+    onFailoverStateChange: (chain, isUsingFallback, reason) => {
+      try {
+        failoverCallback(chain, isUsingFallback, reason);
+      } catch (error) {
+        console.error("Metrics failover callback error:", error);
+      }
+      onFailoverStateChange?.(chain, isUsingFallback, reason);
+    },
   });
 }
 
@@ -94,7 +170,11 @@ export async function getSolanaProvider(
     );
   }
 
-  const config = await resolveRpcConfig(chainId, userId);
+  const [config, metricsCollector, failoverCallback] = await Promise.all([
+    resolveRpcConfig(chainId, userId),
+    getSolanaMetricsCollector(),
+    getFailoverCallback(),
+  ]);
 
   if (!config) {
     throw new Error(`Solana chain ${chainId} not found or not enabled`);
@@ -104,39 +184,60 @@ export async function getSolanaProvider(
     primaryRpcUrl: config.primaryRpcUrl,
     fallbackRpcUrl: config.fallbackRpcUrl,
     chainName: config.chainName,
-    metricsCollector: consoleSolanaMetricsCollector,
-    onFailoverStateChange,
+    metricsCollector,
+    onFailoverStateChange: (chain, isUsingFallback, reason) => {
+      try {
+        failoverCallback(chain, isUsingFallback, reason);
+      } catch (error) {
+        console.error("Metrics failover callback error:", error);
+      }
+      onFailoverStateChange?.(chain, isUsingFallback, reason);
+    },
   });
 }
 
 /**
- * Get an RPC provider from explicit URLs (for testing or override scenarios)
+ * Get an RPC provider from explicit URLs (for testing or override scenarios).
+ * Async to resolve the metrics collector dynamically.
  */
-export function getRpcProviderFromUrls(
+export async function getRpcProviderFromUrls(
   primaryRpcUrl: string,
   fallbackRpcUrl?: string,
   chainName = "unknown"
-): RpcProviderManager {
+): Promise<RpcProviderManager> {
+  const [metricsCollector, failoverCallback] = await Promise.all([
+    getEvmMetricsCollector(),
+    getFailoverCallback(),
+  ]);
+
   return createRpcProviderManager({
     primaryRpcUrl,
     fallbackRpcUrl,
     chainName,
-    metricsCollector: consoleMetricsCollector,
+    metricsCollector,
+    onFailoverStateChange: failoverCallback,
   });
 }
 
 /**
- * Get a Solana provider from explicit URLs (for testing or override scenarios)
+ * Get a Solana provider from explicit URLs (for testing or override scenarios).
+ * Async to resolve the metrics collector dynamically.
  */
-export function getSolanaProviderFromUrls(
+export async function getSolanaProviderFromUrls(
   primaryRpcUrl: string,
   fallbackRpcUrl?: string,
   chainName = "solana"
-): SolanaProviderManager {
+): Promise<SolanaProviderManager> {
+  const [metricsCollector, failoverCallback] = await Promise.all([
+    getSolanaMetricsCollector(),
+    getFailoverCallback(),
+  ]);
+
   return createSolanaProviderManager({
     primaryRpcUrl,
     fallbackRpcUrl,
     chainName,
-    metricsCollector: consoleSolanaMetricsCollector,
+    metricsCollector,
+    onFailoverStateChange: failoverCallback,
   });
 }

@@ -382,6 +382,72 @@ const sessionActive = getOrCreateGauge(
   []
 );
 
+// RPC failover metrics → apiRegistry (per-pod in-memory, scrape all pods)
+const RPC_LABELS = ["chain"];
+
+const rpcPrimaryAttempts = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_rpc_primary_attempts_total",
+  "Total RPC requests attempted against primary endpoint",
+  RPC_LABELS
+);
+
+const rpcPrimaryFailures = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_rpc_primary_failures_total",
+  "Total RPC request failures on primary endpoint",
+  RPC_LABELS
+);
+
+const rpcFallbackAttempts = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_rpc_fallback_attempts_total",
+  "Total RPC requests attempted against fallback endpoint",
+  RPC_LABELS
+);
+
+const rpcFallbackFailures = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_rpc_fallback_failures_total",
+  "Total RPC request failures on fallback endpoint",
+  RPC_LABELS
+);
+
+const rpcFailoverEvents = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_rpc_failover_events_total",
+  "Total times primary failed and traffic switched to fallback",
+  RPC_LABELS
+);
+
+const rpcRecoveryEvents = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_rpc_recovery_events_total",
+  "Total times primary recovered and traffic switched back from fallback",
+  RPC_LABELS
+);
+
+const rpcBothFailedEvents = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_rpc_both_failed_total",
+  "Total times both primary and fallback endpoints failed",
+  RPC_LABELS
+);
+
+const rpcCurrentProvider = getOrCreateGauge(
+  apiRegistry,
+  "keeperhub_rpc_using_fallback",
+  "Whether the chain is currently using the fallback RPC (1=fallback, 0=primary)",
+  RPC_LABELS
+);
+
+const rpcHealthState = getOrCreateGauge(
+  apiRegistry,
+  "keeperhub_rpc_health_state",
+  "RPC health state per chain (0=primary/healthy, 1=fallback/degraded, 2=both_failed/down)",
+  RPC_LABELS
+);
+
 // API-process metrics → apiRegistry (per-pod in-memory, scrape all pods)
 const webhookLatency = getOrCreateHistogram(
   apiRegistry,
@@ -946,3 +1012,18 @@ export async function getApiProcessMetrics(): Promise<string> {
 export function getPrometheusContentType(): string {
   return dbRegistry.contentType;
 }
+
+/**
+ * RPC failover metric accessors for the RPC metrics bridge
+ */
+export const rpcMetrics = {
+  primaryAttempts: rpcPrimaryAttempts,
+  primaryFailures: rpcPrimaryFailures,
+  fallbackAttempts: rpcFallbackAttempts,
+  fallbackFailures: rpcFallbackFailures,
+  failoverEvents: rpcFailoverEvents,
+  recoveryEvents: rpcRecoveryEvents,
+  bothFailedEvents: rpcBothFailedEvents,
+  currentProvider: rpcCurrentProvider,
+  healthState: rpcHealthState,
+};

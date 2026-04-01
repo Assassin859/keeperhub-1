@@ -419,7 +419,7 @@ export async function withNonceSession<T>(
 ): Promise<T> {
   const nonceManager = getNonceManager();
   const rpcManager =
-    context.rpcManager ?? getRpcProviderFromUrls(context.rpcUrl);
+    context.rpcManager ?? (await getRpcProviderFromUrls(context.rpcUrl));
   const provider = rpcManager.getProvider();
 
   const { session, validation } = await nonceManager.startSession(
@@ -451,7 +451,7 @@ export async function getCurrentNonce(
   walletAddress: string,
   rpcUrl: string
 ): Promise<number> {
-  const rpcManager = getRpcProviderFromUrls(rpcUrl);
+  const rpcManager = await getRpcProviderFromUrls(rpcUrl);
   return await rpcManager.executeWithFailover((provider) =>
     provider.getTransactionCount(walletAddress, "pending")
   );

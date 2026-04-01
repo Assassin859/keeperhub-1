@@ -58,7 +58,7 @@ export async function initializeWalletSigner(
   rpcUrl: string
 ): Promise<ethers.Signer> {
   const wallet = await getOrganizationWallet(organizationId);
-  const rpcManager = getRpcProviderFromUrls(rpcUrl);
+  const rpcManager = await getRpcProviderFromUrls(rpcUrl);
   const provider = rpcManager.getProvider();
 
   if (wallet.provider === "turnkey") {

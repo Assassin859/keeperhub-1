@@ -33,6 +33,18 @@ export const PUBLIC_RPCS = {
   BASE_SEPOLIA: "https://sepolia.base.org",
   TEMPO_TESTNET: "https://rpc.testnet.tempo.xyz",
   TEMPO_MAINNET: "https://rpc.tempo.xyz",
+  BSC_MAINNET: "https://bsc-dataseed.binance.org",
+  BSC_MAINNET_FALLBACK: "https://rpc.ankr.com/bsc",
+  BSC_TESTNET: "https://bsc-testnet-rpc.publicnode.com",
+  BSC_TESTNET_FALLBACK: "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+  POLYGON_MAINNET: "https://polygon-bor-rpc.publicnode.com",
+  POLYGON_MAINNET_FALLBACK: "https://rpc.ankr.com/polygon",
+  POLYGON_AMOY: "https://rpc-amoy.polygon.technology",
+  POLYGON_AMOY_FALLBACK: "https://polygon-amoy-bor-rpc.publicnode.com",
+  ARBITRUM_MAINNET: "https://arb1.arbitrum.io/rpc",
+  ARBITRUM_MAINNET_FALLBACK: "https://rpc.ankr.com/arbitrum",
+  ARBITRUM_SEPOLIA: "https://sepolia-rollup.arbitrum.io/rpc",
+  ARBITRUM_SEPOLIA_FALLBACK: "https://arbitrum-sepolia-rpc.publicnode.com",
   SOLANA_MAINNET: "https://api.mainnet-beta.solana.com",
   SOLANA_DEVNET: "https://api.devnet.solana.com",
 } as const;
@@ -97,6 +109,54 @@ export const CHAIN_CONFIG: Record<number, ChainConfigEntry> = {
     envKey: "CHAIN_TEMPO_MAINNET_PRIMARY_RPC",
     fallbackEnvKey: "CHAIN_TEMPO_MAINNET_FALLBACK_RPC",
     publicDefault: PUBLIC_RPCS.TEMPO_MAINNET,
+  },
+  // BNB Chain (BSC) Mainnet
+  56: {
+    jsonKey: "bsc-mainnet",
+    envKey: "CHAIN_BSC_MAINNET_PRIMARY_RPC",
+    fallbackEnvKey: "CHAIN_BSC_MAINNET_FALLBACK_RPC",
+    publicDefault: PUBLIC_RPCS.BSC_MAINNET,
+    publicFallback: PUBLIC_RPCS.BSC_MAINNET_FALLBACK,
+  },
+  // BNB Chain (BSC) Testnet
+  97: {
+    jsonKey: "bsc-testnet",
+    envKey: "CHAIN_BSC_TESTNET_PRIMARY_RPC",
+    fallbackEnvKey: "CHAIN_BSC_TESTNET_FALLBACK_RPC",
+    publicDefault: PUBLIC_RPCS.BSC_TESTNET,
+    publicFallback: PUBLIC_RPCS.BSC_TESTNET_FALLBACK,
+  },
+  // Polygon Mainnet
+  137: {
+    jsonKey: "polygon-mainnet",
+    envKey: "CHAIN_POLYGON_MAINNET_PRIMARY_RPC",
+    fallbackEnvKey: "CHAIN_POLYGON_MAINNET_FALLBACK_RPC",
+    publicDefault: PUBLIC_RPCS.POLYGON_MAINNET,
+    publicFallback: PUBLIC_RPCS.POLYGON_MAINNET_FALLBACK,
+  },
+  // Polygon Amoy Testnet
+  80002: {
+    jsonKey: "polygon-amoy",
+    envKey: "CHAIN_POLYGON_AMOY_PRIMARY_RPC",
+    fallbackEnvKey: "CHAIN_POLYGON_AMOY_FALLBACK_RPC",
+    publicDefault: PUBLIC_RPCS.POLYGON_AMOY,
+    publicFallback: PUBLIC_RPCS.POLYGON_AMOY_FALLBACK,
+  },
+  // Arbitrum One
+  42161: {
+    jsonKey: "arbitrum-mainnet",
+    envKey: "CHAIN_ARBITRUM_MAINNET_PRIMARY_RPC",
+    fallbackEnvKey: "CHAIN_ARBITRUM_MAINNET_FALLBACK_RPC",
+    publicDefault: PUBLIC_RPCS.ARBITRUM_MAINNET,
+    publicFallback: PUBLIC_RPCS.ARBITRUM_MAINNET_FALLBACK,
+  },
+  // Arbitrum Sepolia
+  421614: {
+    jsonKey: "arbitrum-sepolia",
+    envKey: "CHAIN_ARBITRUM_SEPOLIA_PRIMARY_RPC",
+    fallbackEnvKey: "CHAIN_ARBITRUM_SEPOLIA_FALLBACK_RPC",
+    publicDefault: PUBLIC_RPCS.ARBITRUM_SEPOLIA,
+    publicFallback: PUBLIC_RPCS.ARBITRUM_SEPOLIA_FALLBACK,
   },
   // Solana Mainnet
   101: {

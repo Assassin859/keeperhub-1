@@ -155,6 +155,75 @@ const TOKEN_CONFIGS: TokenConfig[] = [
   },
 
   // ==========================================================================
+  // BNB Chain Mainnet (chainId: 56)
+  // ==========================================================================
+  {
+    chainId: 56,
+    tokenAddress: "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d", // USDC (Binance-Peg)
+    logoUrl: LOGOS.USDC,
+    isStablecoin: true,
+    sortOrder: 1,
+  },
+  {
+    chainId: 56,
+    tokenAddress: "0x55d398326f99059ff775485246999027b3197955", // USDT (Binance-Peg)
+    logoUrl: LOGOS.USDT,
+    isStablecoin: true,
+    sortOrder: 2,
+  },
+
+  // ==========================================================================
+  // Polygon Mainnet (chainId: 137)
+  // ==========================================================================
+  {
+    chainId: 137,
+    tokenAddress: "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359", // USDC (native)
+    logoUrl: LOGOS.USDC,
+    isStablecoin: true,
+    sortOrder: 1,
+  },
+
+  // ==========================================================================
+  // Polygon Amoy Testnet (chainId: 80002)
+  // ==========================================================================
+  {
+    chainId: 80_002,
+    tokenAddress: "0x41e94eb019c0762f9bfcf9fb1e58725bfb0e7582", // USDC (Circle testnet)
+    logoUrl: LOGOS.USDC,
+    isStablecoin: true,
+    sortOrder: 1,
+  },
+
+  // ==========================================================================
+  // Arbitrum One (chainId: 42161)
+  // ==========================================================================
+  {
+    chainId: 42_161,
+    tokenAddress: "0xaf88d065e77c8cc2239327c5edb3a432268e5831", // USDC (native)
+    logoUrl: LOGOS.USDC,
+    isStablecoin: true,
+    sortOrder: 1,
+  },
+  {
+    chainId: 42_161,
+    tokenAddress: "0x6491c05a82219b8d1479057361ff1654749b876b", // USDS (Sky/MakerDAO via SkyLink)
+    logoUrl: LOGOS.USDS,
+    isStablecoin: true,
+    sortOrder: 2,
+  },
+
+  // ==========================================================================
+  // Arbitrum Sepolia (chainId: 421614)
+  // ==========================================================================
+  {
+    chainId: 421_614,
+    tokenAddress: "0xf3c3351d6bd0098eeb33ca8f830faf2a141ea2e1", // USDC (Circle testnet)
+    logoUrl: LOGOS.USDC,
+    isStablecoin: true,
+    sortOrder: 1,
+  },
+
+  // ==========================================================================
   // Tempo Mainnet (chainId: 4217)
   // ==========================================================================
   {

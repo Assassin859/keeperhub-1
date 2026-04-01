@@ -28,7 +28,7 @@ async function testSolanaProvider() {
   console.log("Testing Solana Provider...\n");
 
   // Test with mainnet (JSON config → env var → public RPC)
-  const mainnetProvider = getSolanaProviderFromUrls(
+  const mainnetProvider = await getSolanaProviderFromUrls(
     getRpcUrl(
       "solana-mainnet",
       "CHAIN_SOLANA_MAINNET_PRIMARY_RPC",
@@ -45,7 +45,7 @@ async function testSolanaProvider() {
   );
 
   // Test with devnet (JSON config → env var → public RPC)
-  const devnetProvider = getSolanaProviderFromUrls(
+  const devnetProvider = await getSolanaProviderFromUrls(
     getRpcUrl(
       "solana-devnet",
       "CHAIN_SOLANA_DEVNET_PRIMARY_RPC",

@@ -121,7 +121,7 @@ const RPC_URLS = {
 describe("Check Balance E2E", () => {
   describe("EVM Chains", () => {
     it("should check balance on Ethereum Mainnet", async () => {
-      const provider = getRpcProviderFromUrls(
+      const provider = await getRpcProviderFromUrls(
         RPC_URLS.ETH_MAINNET.primary,
         RPC_URLS.ETH_MAINNET.fallback,
         "Ethereum Mainnet"
@@ -139,7 +139,7 @@ describe("Check Balance E2E", () => {
     });
 
     it("should check balance on Sepolia Testnet", async () => {
-      const provider = getRpcProviderFromUrls(
+      const provider = await getRpcProviderFromUrls(
         RPC_URLS.ETH_SEPOLIA.primary,
         RPC_URLS.ETH_SEPOLIA.fallback,
         "Sepolia Testnet"
@@ -156,7 +156,7 @@ describe("Check Balance E2E", () => {
     });
 
     it("should check balance on Base Mainnet", async () => {
-      const provider = getRpcProviderFromUrls(
+      const provider = await getRpcProviderFromUrls(
         RPC_URLS.BASE_MAINNET.primary,
         RPC_URLS.BASE_MAINNET.fallback,
         "Base Mainnet"
@@ -173,7 +173,7 @@ describe("Check Balance E2E", () => {
     });
 
     it("should handle zero address", { timeout: 30_000 }, async () => {
-      const provider = getRpcProviderFromUrls(
+      const provider = await getRpcProviderFromUrls(
         RPC_URLS.ETH_MAINNET.primary,
         RPC_URLS.ETH_MAINNET.fallback,
         "Ethereum Mainnet (Zero Address)"
@@ -194,7 +194,7 @@ describe("Check Balance E2E", () => {
 
   describe("Solana Chains", () => {
     it("should check balance on Solana Mainnet", async () => {
-      const provider = getSolanaProviderFromUrls(
+      const provider = await getSolanaProviderFromUrls(
         RPC_URLS.SOLANA_MAINNET.primary,
         RPC_URLS.SOLANA_MAINNET.fallback,
         "Solana Mainnet"
@@ -215,7 +215,7 @@ describe("Check Balance E2E", () => {
     });
 
     it("should check balance on Solana Devnet", async () => {
-      const provider = getSolanaProviderFromUrls(
+      const provider = await getSolanaProviderFromUrls(
         RPC_URLS.SOLANA_DEVNET.primary,
         RPC_URLS.SOLANA_DEVNET.fallback,
         "Solana Devnet"
@@ -235,7 +235,7 @@ describe("Check Balance E2E", () => {
     });
 
     it("should get slot number", async () => {
-      const provider = getSolanaProviderFromUrls(
+      const provider = await getSolanaProviderFromUrls(
         RPC_URLS.SOLANA_MAINNET.primary,
         RPC_URLS.SOLANA_MAINNET.fallback,
         "Solana Mainnet"
@@ -251,7 +251,7 @@ describe("Check Balance E2E", () => {
     });
 
     it("should get account info", async () => {
-      const provider = getSolanaProviderFromUrls(
+      const provider = await getSolanaProviderFromUrls(
         RPC_URLS.SOLANA_MAINNET.primary,
         RPC_URLS.SOLANA_MAINNET.fallback,
         "Solana Mainnet"
@@ -284,7 +284,7 @@ describe("Check Balance E2E", () => {
   describe("Failover Behavior", () => {
     it("should failover to fallback on EVM when primary fails", async () => {
       // Use an invalid primary URL to force failover
-      const provider = getRpcProviderFromUrls(
+      const provider = await getRpcProviderFromUrls(
         "https://invalid-rpc-url-that-does-not-exist.example.com",
         RPC_URLS.ETH_MAINNET.fallback,
         "Ethereum Mainnet (Failover Test)"
@@ -302,7 +302,7 @@ describe("Check Balance E2E", () => {
 
     it("should failover to fallback on Solana when primary fails", async () => {
       // Use an invalid primary URL to force failover
-      const provider = getSolanaProviderFromUrls(
+      const provider = await getSolanaProviderFromUrls(
         "https://invalid-rpc-url-that-does-not-exist.example.com",
         RPC_URLS.SOLANA_DEVNET.fallback,
         "Solana Devnet (Failover Test)"
@@ -321,7 +321,7 @@ describe("Check Balance E2E", () => {
 
   describe("Metrics Collection", () => {
     it("should track EVM request metrics", async () => {
-      const provider = getRpcProviderFromUrls(
+      const provider = await getRpcProviderFromUrls(
         RPC_URLS.ETH_MAINNET.primary,
         RPC_URLS.ETH_MAINNET.fallback,
         "Ethereum Mainnet"
@@ -349,7 +349,7 @@ describe("Check Balance E2E", () => {
     });
 
     it("should track Solana request metrics", async () => {
-      const provider = getSolanaProviderFromUrls(
+      const provider = await getSolanaProviderFromUrls(
         RPC_URLS.SOLANA_DEVNET.primary,
         RPC_URLS.SOLANA_DEVNET.fallback,
         "Solana Devnet"
