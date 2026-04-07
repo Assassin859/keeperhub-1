@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
 import { generateId } from "@/lib/utils/id";
 import { remapTemplateRefsInString } from "@/lib/utils/template";
+import { sanitizeWorkflowData } from "@/lib/workflow/sanitize-nodes";
 // Node type for type-safe node manipulation
 type WorkflowNodeLike = {
   id: string;
@@ -156,12 +157,20 @@ export async function POST(
     for (const n of oldNodes) {
       idMap.set(n.id, nanoid());
     }
-    const newNodes = duplicateNodes(oldNodes, idMap);
-    const newEdges = updateEdgeReferences(
+    const duplicatedNodes = duplicateNodes(oldNodes, idMap);
+    const duplicatedEdges = updateEdgeReferences(
       sourceWorkflow.edges as WorkflowEdgeLike[],
       oldNodes,
-      newNodes
+      duplicatedNodes
     );
+
+    // Sanitize nodes/edges: strip React Flow UI state and normalize formats
+    const sanitized = sanitizeWorkflowData(
+      duplicatedNodes as Record<string, unknown>[],
+      duplicatedEdges as Record<string, unknown>[]
+    );
+    const newNodes = sanitized.nodes;
+    const newEdges = sanitized.edges;
 
     // Count workflows in current context (org or anonymous) to generate unique name
     const existingWorkflows = isAnonymous

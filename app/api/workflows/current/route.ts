@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
 import { generateId } from "@/lib/utils/id";
+import { sanitizeWorkflowData } from "@/lib/workflow/sanitize-nodes";
 
 const CURRENT_WORKFLOW_NAME = "~~__CURRENT__~~";
 
@@ -76,14 +77,18 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { nodes, edges } = body;
+    const { nodes: rawNodes, edges: rawEdges } = body;
 
-    if (!(nodes && edges)) {
+    if (!(rawNodes && rawEdges)) {
       return NextResponse.json(
         { error: "Nodes and edges are required" },
         { status: 400 }
       );
     }
+
+    // Sanitize nodes/edges: strip React Flow UI state and normalize formats
+    const sanitized = sanitizeWorkflowData(rawNodes, rawEdges);
+    const { nodes, edges } = sanitized;
 
     // Check if current workflow exists
     const [existingWorkflow] = await db

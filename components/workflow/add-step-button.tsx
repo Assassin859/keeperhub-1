@@ -8,7 +8,7 @@ import {
   useNodes,
   useUpdateNodeInternals,
 } from "@xyflow/react";
-import { useSetAtom } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { Plus } from "lucide-react";
 import { nanoid } from "nanoid";
 import { useCallback, useMemo } from "react";
@@ -59,6 +59,7 @@ export function AddStepButton({
   const setNodes = useSetAtom(nodesAtom);
   const setActiveTab = useSetAtom(propertiesPanelActiveTabAtom);
   const setIsPanelAnimating = useSetAtom(isPanelAnimatingAtom);
+  const isSidebarCollapsed = useAtomValue(isSidebarCollapsedAtom);
   const setSidebarCollapsed = useSetAtom(isSidebarCollapsedAtom);
   const setHasUnsavedChanges = useSetAtom(hasUnsavedChangesAtom);
   const triggerAutosave = useSetAtom(autosaveAtom);
@@ -145,9 +146,11 @@ export function AddStepButton({
 
       addNode(newNode);
       setActiveTab("properties");
-      setIsPanelAnimating(true);
-      setSidebarCollapsed(false);
-      setTimeout(() => setIsPanelAnimating(false), 350);
+      if (isSidebarCollapsed) {
+        setIsPanelAnimating(true);
+        setSidebarCollapsed(false);
+        setTimeout(() => setIsPanelAnimating(false), 350);
+      }
 
       setTimeout(() => {
         setNodes((currentNodes) =>
@@ -187,6 +190,7 @@ export function AddStepButton({
       setEdges,
       setNodes,
       setActiveTab,
+      isSidebarCollapsed,
       setIsPanelAnimating,
       setSidebarCollapsed,
       setHasUnsavedChanges,

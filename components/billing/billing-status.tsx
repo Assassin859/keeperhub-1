@@ -409,7 +409,7 @@ function ExecutionUsageBar({
       {isOverLimit && hasOverage && (
         <p className="text-xs text-muted-foreground">
           {overageCount.toLocaleString()} overage execution
-          {overageCount !== 1 ? "s" : ""} at{" "}
+          {overageCount === 1 ? "" : "s"} at{" "}
           <span className="font-semibold">
             ${(overageRate / 1000).toFixed(4)}/execution
           </span>{" "}

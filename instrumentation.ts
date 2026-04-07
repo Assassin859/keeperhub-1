@@ -24,7 +24,7 @@ function encodePostgresPassword(url: string): string {
     const atIdx = url.lastIndexOf("@");
     const credentialRange = url.slice(schemeEnd, atIdx);
     const colonOffset = credentialRange.indexOf(":");
-    const colonIdx = colonOffset !== -1 ? schemeEnd + colonOffset : -1;
+    const colonIdx = colonOffset === -1 ? -1 : schemeEnd + colonOffset;
     if (schemeEnd > 3 && atIdx > schemeEnd && colonIdx > schemeEnd) {
       const user = url.slice(schemeEnd, colonIdx);
       const pass = url.slice(colonIdx + 1, atIdx);

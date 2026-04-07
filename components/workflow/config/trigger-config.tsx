@@ -23,6 +23,7 @@ import type {
 } from "@/lib/protocol-registry";
 import type { ActionConfigField } from "@/plugins/registry";
 import { ActionConfigRenderer } from "./action-config-renderer";
+import { CronScheduleBuilder } from "./cron-schedule-builder";
 import { SchemaBuilder, type SchemaField } from "./schema-builder";
 
 type TriggerConfigProps = {
@@ -185,18 +186,11 @@ export function TriggerConfig({
       {/* Schedule fields */}
       {config?.triggerType === "Schedule" && (
         <>
-          <div className="space-y-2">
-            <Label className="ml-1" htmlFor="scheduleCron">
-              Cron Expression
-            </Label>
-            <Input
-              disabled={disabled}
-              id="scheduleCron"
-              onChange={(e) => onUpdateConfig("scheduleCron", e.target.value)}
-              placeholder="0 9 * * * (every day at 9am)"
-              value={(config?.scheduleCron as string) || ""}
-            />
-          </div>
+          <CronScheduleBuilder
+            disabled={disabled}
+            onChange={(value) => onUpdateConfig("scheduleCron", value)}
+            value={(config?.scheduleCron as string) || ""}
+          />
           <div className="space-y-2">
             <Label className="ml-1" htmlFor="scheduleTimezone">
               Timezone

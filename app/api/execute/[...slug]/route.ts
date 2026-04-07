@@ -38,7 +38,7 @@ function buildFunctionArgs(
 
   const args = protocolAction.inputs.map((inp) => {
     const value = input[inp.name];
-    return value !== undefined ? String(value) : "";
+    return value === undefined ? "" : String(value);
   });
 
   return JSON.stringify(args);

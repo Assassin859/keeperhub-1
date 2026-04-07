@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { projects, tags, workflows } from "@/lib/db/schema";
 import { generateId } from "@/lib/utils/id";
+import { sanitizeWorkflowData } from "@/lib/workflow/sanitize-nodes";
 function createDefaultNodes() {
   const triggerId = nanoid();
   const actionId = nanoid();
@@ -29,7 +30,6 @@ function createDefaultNodes() {
     id: actionId,
     type: "action" as const,
     position: { x: 272, y: 0 },
-    selected: true,
     data: {
       label: "",
       description: "",
@@ -123,6 +123,11 @@ export async function POST(request: Request) {
       nodes = defaults.nodes;
       edges = defaults.edges;
     }
+
+    // Sanitize nodes/edges: strip React Flow UI state and normalize MCP-generated formats
+    const sanitized = sanitizeWorkflowData(nodes, edges);
+    nodes = sanitized.nodes;
+    edges = sanitized.edges;
 
     const isAnonymous = !organizationId;
     const workflowName = await generateWorkflowName(

@@ -32,7 +32,7 @@ const SYSTEM_ACTIONS = {
     },
     optionalFields: {
       conditionConfig:
-        "object - Visual condition builder config with { group: ConditionGroup }. When provided, the 'condition' field is auto-generated from this visual config.",
+        'object - Visual condition builder config. Structure: { group: { id: "nanoid", logic: "AND" | "OR", rules: [{ id: "nanoid", leftOperand: "{{@nodeId:Label.field}}", operator: "===" | "==" | "!==" | "!=" | ">" | ">=" | "<" | "<=" | "contains" | "startsWith" | "endsWith" | "isEmpty" | "isNotEmpty" | "exists" | "doesNotExist" | "matchesRegex", rightOperand: "value" }] } }. Every group and rule MUST have a unique id. Operator must be the exact symbol (e.g. "===" not "equals", "<" not "less_than"). When provided, the condition expression is auto-generated from this visual config.',
     },
     outputFields: {
       result: "boolean - Whether the condition evaluated to true",
@@ -67,7 +67,8 @@ const SYSTEM_ACTIONS = {
     category: "System",
     requiredFields: {
       integrationId: "string - ID of the database integration",
-      dbQuery: "string - SQL query to execute",
+      dbQuery:
+        "string - SQL query with inline template references for dynamic values. Use {{@nodeId:Label.field}} directly in the SQL string. Example: \"INSERT INTO logs (vault, price) VALUES ('{{@compute:Compare.bestVault}}', '{{@compute:Compare.bestPrice}}')\" or \"SELECT * FROM positions WHERE address = '{{@trigger:Trigger.data.address}}'\"",
     },
     optionalFields: {
       dbSchema: "string - JSON schema for result typing",
@@ -607,6 +608,8 @@ export async function GET(request: Request) {
       "Use tagId to label a workflow with a single tag (e.g., 'production', 'monitoring'). Each workflow supports one tag. Fetch available tags from GET /api/tags first.",
       `Use {{@${BUILTIN_NODE_ID}:${BUILTIN_NODE_LABEL}.unixTimestamp}} for current time comparisons in conditions (e.g., checking if a contract timestamp has passed)`,
       "All trigger types expose a 'triggeredAt' output field (ISO timestamp). Reference it with {{@triggerId:TriggerLabel.data.triggeredAt}} to include when the workflow fired.",
+      "Database Query: use inline {{@nodeId:Label.field}} template refs directly in the SQL string. Do NOT use parameterized $1/$2 placeholders with a separate dbParams array. The UI does not support that format.",
+      "Condition conditionConfig: every group and rule MUST have a unique 'id' field (use nanoid or UUID). Operators must be exact symbols: '===' not 'equals', '<' not 'less_than', '>' not 'greater_than'. Rule fields are 'leftOperand' and 'rightOperand', NOT 'field' and 'value'.",
     ],
   };
 
