@@ -10,6 +10,12 @@ export {
  * Interface for metrics collection - allows dependency injection
  * so both server-side (console/structured) and frontend (no-op) can use this
  */
+export type RpcErrorType =
+  | "timeout"
+  | "rate_limit"
+  | "connection"
+  | "rpc_error";
+
 export type RpcMetricsCollector = {
   recordPrimaryAttempt(chainName: string): void;
   recordPrimaryFailure(chainName: string): void;
@@ -19,6 +25,16 @@ export type RpcMetricsCollector = {
   recordRecoveryEvent(chainName: string): void;
   recordBothFailed(chainName: string): void;
   recordSuccess(chainName: string, provider: "primary" | "fallback"): void;
+  recordLatency(
+    chainName: string,
+    provider: "primary" | "fallback",
+    durationMs: number
+  ): void;
+  recordErrorType(
+    chainName: string,
+    provider: "primary" | "fallback",
+    errorType: RpcErrorType
+  ): void;
 };
 
 /**
@@ -58,6 +74,12 @@ export const noopMetricsCollector: RpcMetricsCollector = {
   recordSuccess: () => {
     /* noop */
   },
+  recordLatency: () => {
+    /* noop */
+  },
+  recordErrorType: () => {
+    /* noop */
+  },
 };
 
 /**
@@ -80,7 +102,20 @@ export const consoleMetricsCollector: RpcMetricsCollector = {
     console.debug(`[RPC Metrics] Both endpoints failed: ${chain}`),
   recordSuccess: (chain, provider) =>
     console.debug(`[RPC Metrics] Success on ${provider}: ${chain}`),
+  recordLatency: (chain, provider, durationMs) =>
+    console.debug(
+      `[RPC Metrics] Latency ${provider} ${chain}: ${durationMs}ms`
+    ),
+  recordErrorType: (chain, provider, errorType) =>
+    console.debug(`[RPC Metrics] Error ${errorType} on ${provider}: ${chain}`),
 };
+
+export const RPC_CONNECTION_ERROR_PATTERNS: ReadonlyArray<string> = [
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "ETIMEDOUT",
+  "fetch failed",
+];
 
 export type RpcProviderConfig = {
   primaryRpcUrl: string;
@@ -404,6 +439,29 @@ export class RpcProviderManager {
     return this.getRetryDelayMs(error, attempt);
   }
 
+  private classifyError(error: unknown): RpcErrorType {
+    if (error instanceof Error && error.message.startsWith("Timeout after ")) {
+      return "timeout";
+    }
+    if (isError(error, "SERVER_ERROR")) {
+      const serverErr = error as ethers.EthersError & {
+        response?: { statusCode?: number };
+      };
+      if (serverErr.response?.statusCode === 429) {
+        return "rate_limit";
+      }
+    }
+    if (
+      error instanceof Error &&
+      RPC_CONNECTION_ERROR_PATTERNS.some((pattern) =>
+        error.message.includes(pattern)
+      )
+    ) {
+      return "connection";
+    }
+    return "rpc_error";
+  }
+
   private async tryProvider<T>(
     provider: ethers.JsonRpcProvider,
     operation: (p: ethers.JsonRpcProvider) => Promise<T>,
@@ -413,6 +471,7 @@ export class RpcProviderManager {
     let lastError: Error | undefined;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
+      const startTime = performance.now();
       try {
         this.recordAttempt(providerType);
 
@@ -421,10 +480,29 @@ export class RpcProviderManager {
           this.config.timeoutMs
         );
 
+        const durationMs = performance.now() - startTime;
+        this.metricsCollector.recordLatency(
+          this.config.chainName,
+          providerType,
+          durationMs
+        );
+
         return { success: true, result };
       } catch (error: unknown) {
+        const durationMs = performance.now() - startTime;
+        this.metricsCollector.recordLatency(
+          this.config.chainName,
+          providerType,
+          durationMs
+        );
+
         lastError = error instanceof Error ? error : new Error(String(error));
         this.recordFailure(providerType);
+        this.metricsCollector.recordErrorType(
+          this.config.chainName,
+          providerType,
+          this.classifyError(error)
+        );
 
         const delayMs = this.evaluateRetryAction(
           error,

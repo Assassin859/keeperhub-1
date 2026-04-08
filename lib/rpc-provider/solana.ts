@@ -1,4 +1,5 @@
 import { type Commitment, Connection } from "@solana/web3.js";
+import { type RpcErrorType, RPC_CONNECTION_ERROR_PATTERNS } from "./index";
 
 /**
  * Solana RPC Provider Manager
@@ -16,6 +17,16 @@ export type SolanaRpcMetricsCollector = {
   recordRecoveryEvent(chainName: string): void;
   recordBothFailed(chainName: string): void;
   recordSuccess(chainName: string, provider: "primary" | "fallback"): void;
+  recordLatency(
+    chainName: string,
+    provider: "primary" | "fallback",
+    durationMs: number
+  ): void;
+  recordErrorType(
+    chainName: string,
+    provider: "primary" | "fallback",
+    errorType: RpcErrorType
+  ): void;
 };
 
 export type SolanaFailoverStateChangeCallback = (
@@ -49,6 +60,12 @@ export const noopSolanaMetricsCollector: SolanaRpcMetricsCollector = {
   recordSuccess: () => {
     /* noop */
   },
+  recordLatency: () => {
+    /* noop */
+  },
+  recordErrorType: () => {
+    /* noop */
+  },
 };
 
 export const consoleSolanaMetricsCollector: SolanaRpcMetricsCollector = {
@@ -68,6 +85,14 @@ export const consoleSolanaMetricsCollector: SolanaRpcMetricsCollector = {
     console.debug(`[Solana RPC Metrics] Both endpoints failed: ${chain}`),
   recordSuccess: (chain, provider) =>
     console.debug(`[Solana RPC Metrics] Success on ${provider}: ${chain}`),
+  recordLatency: (chain, provider, durationMs) =>
+    console.debug(
+      `[Solana RPC Metrics] Latency ${provider} ${chain}: ${durationMs}ms`
+    ),
+  recordErrorType: (chain, provider, errorType) =>
+    console.debug(
+      `[Solana RPC Metrics] Error ${errorType} on ${provider}: ${chain}`
+    ),
 };
 
 export type SolanaProviderConfig = {
@@ -291,6 +316,28 @@ export class SolanaProviderManager {
     );
   }
 
+  private classifyError(error: unknown): RpcErrorType {
+    if (error instanceof Error && error.message.startsWith("Timeout after ")) {
+      return "timeout";
+    }
+    if (
+      error instanceof Error &&
+      (error.message.includes("429") ||
+        error.message.includes("Too Many Requests"))
+    ) {
+      return "rate_limit";
+    }
+    if (
+      error instanceof Error &&
+      RPC_CONNECTION_ERROR_PATTERNS.some((pattern) =>
+        error.message.includes(pattern)
+      )
+    ) {
+      return "connection";
+    }
+    return "rpc_error";
+  }
+
   private async tryConnection<T>(
     connection: Connection,
     operation: (c: Connection) => Promise<T>,
@@ -300,6 +347,7 @@ export class SolanaProviderManager {
     let lastError: Error | undefined;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
+      const startTime = performance.now();
       try {
         if (connectionType === "primary") {
           this.metrics.primaryAttempts += 1;
@@ -314,8 +362,22 @@ export class SolanaProviderManager {
           this.config.timeoutMs
         );
 
+        const durationMs = performance.now() - startTime;
+        this.metricsCollector.recordLatency(
+          this.config.chainName,
+          connectionType,
+          durationMs
+        );
+
         return { success: true, result };
       } catch (error: unknown) {
+        const durationMs = performance.now() - startTime;
+        this.metricsCollector.recordLatency(
+          this.config.chainName,
+          connectionType,
+          durationMs
+        );
+
         lastError = error instanceof Error ? error : new Error(String(error));
 
         if (connectionType === "primary") {
@@ -325,6 +387,12 @@ export class SolanaProviderManager {
           this.metrics.fallbackFailures += 1;
           this.metricsCollector.recordFallbackFailure(this.config.chainName);
         }
+
+        this.metricsCollector.recordErrorType(
+          this.config.chainName,
+          connectionType,
+          this.classifyError(error)
+        );
 
         if (attempt === maxRetries - 1) {
           break;

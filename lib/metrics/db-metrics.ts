@@ -689,3 +689,21 @@ export async function getInfraStatsFromDb(): Promise<InfraStats> {
     };
   }
 }
+
+/**
+ * Query names of all enabled chains from the database.
+ * Used to pre-initialize RPC metrics so every chain appears in Grafana.
+ */
+export async function getEnabledChainNamesFromDb(): Promise<string[]> {
+  try {
+    const results = await db
+      .select({ name: chains.name })
+      .from(chains)
+      .where(eq(chains.isEnabled, true));
+
+    return results.map((r) => r.name);
+  } catch (error) {
+    console.error("[Metrics] Failed to query enabled chain names:", error);
+    return [];
+  }
+}

@@ -39,6 +39,8 @@ describe("SolanaProviderManager", () => {
       recordRecoveryEvent: vi.fn(),
       recordBothFailed: vi.fn(),
       recordSuccess: vi.fn(),
+      recordLatency: vi.fn(),
+      recordErrorType: vi.fn(),
     };
   });
 

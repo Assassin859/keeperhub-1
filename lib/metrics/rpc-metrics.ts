@@ -10,7 +10,7 @@
 
 import "server-only";
 
-import type { RpcMetricsCollector } from "@/lib/rpc-provider";
+import type { RpcErrorType, RpcMetricsCollector } from "@/lib/rpc-provider";
 import type { SolanaRpcMetricsCollector } from "@/lib/rpc-provider/solana";
 import { rpcMetrics } from "./collectors/prometheus";
 
@@ -43,6 +43,24 @@ const prometheusCollector: RpcMetricsCollector & SolanaRpcMetricsCollector = {
   },
   recordSuccess(chain: string, provider: "primary" | "fallback"): void {
     rpcMetrics.healthState.set({ chain }, provider === "primary" ? 0 : 1);
+  },
+  recordLatency(
+    chain: string,
+    provider: "primary" | "fallback",
+    durationMs: number
+  ): void {
+    rpcMetrics.latency.observe({ chain, provider }, durationMs);
+  },
+  recordErrorType(
+    chain: string,
+    provider: "primary" | "fallback",
+    errorType: RpcErrorType
+  ): void {
+    rpcMetrics.errorsByType.inc({
+      chain,
+      provider,
+      error_type: errorType,
+    });
   },
 };
 
