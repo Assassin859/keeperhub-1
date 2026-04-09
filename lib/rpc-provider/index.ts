@@ -16,24 +16,32 @@ export type RpcErrorType =
   | "connection"
   | "rpc_error";
 
+export type RpcOperationType = "read" | "write" | "preflight";
+
 export type RpcMetricsCollector = {
-  recordPrimaryAttempt(chainName: string): void;
-  recordPrimaryFailure(chainName: string): void;
-  recordFallbackAttempt(chainName: string): void;
-  recordFallbackFailure(chainName: string): void;
+  recordPrimaryAttempt(chainName: string, operation?: RpcOperationType): void;
+  recordPrimaryFailure(chainName: string, operation?: RpcOperationType): void;
+  recordFallbackAttempt(chainName: string, operation?: RpcOperationType): void;
+  recordFallbackFailure(chainName: string, operation?: RpcOperationType): void;
   recordFailoverEvent(chainName: string): void;
   recordRecoveryEvent(chainName: string): void;
   recordBothFailed(chainName: string): void;
-  recordSuccess(chainName: string, provider: "primary" | "fallback"): void;
+  recordSuccess(
+    chainName: string,
+    provider: "primary" | "fallback",
+    operation?: RpcOperationType
+  ): void;
   recordLatency(
     chainName: string,
     provider: "primary" | "fallback",
-    durationMs: number
+    durationMs: number,
+    operation?: RpcOperationType
   ): void;
   recordErrorType(
     chainName: string,
     provider: "primary" | "fallback",
-    errorType: RpcErrorType
+    errorType: RpcErrorType,
+    operation?: RpcOperationType
   ): void;
 };
 
@@ -50,16 +58,16 @@ export type FailoverStateChangeCallback = (
  * No-op metrics collector for environments without metrics (e.g., frontend)
  */
 export const noopMetricsCollector: RpcMetricsCollector = {
-  recordPrimaryAttempt: () => {
+  recordPrimaryAttempt: (_chain: string, _operation?: RpcOperationType) => {
     /* noop */
   },
-  recordPrimaryFailure: () => {
+  recordPrimaryFailure: (_chain: string, _operation?: RpcOperationType) => {
     /* noop */
   },
-  recordFallbackAttempt: () => {
+  recordFallbackAttempt: (_chain: string, _operation?: RpcOperationType) => {
     /* noop */
   },
-  recordFallbackFailure: () => {
+  recordFallbackFailure: (_chain: string, _operation?: RpcOperationType) => {
     /* noop */
   },
   recordFailoverEvent: () => {
@@ -71,13 +79,27 @@ export const noopMetricsCollector: RpcMetricsCollector = {
   recordBothFailed: () => {
     /* noop */
   },
-  recordSuccess: () => {
+  recordSuccess: (
+    _chain: string,
+    _provider: "primary" | "fallback",
+    _operation?: RpcOperationType
+  ) => {
     /* noop */
   },
-  recordLatency: () => {
+  recordLatency: (
+    _chain: string,
+    _provider: "primary" | "fallback",
+    _durationMs: number,
+    _operation?: RpcOperationType
+  ) => {
     /* noop */
   },
-  recordErrorType: () => {
+  recordErrorType: (
+    _chain: string,
+    _provider: "primary" | "fallback",
+    _errorType: RpcErrorType,
+    _operation?: RpcOperationType
+  ) => {
     /* noop */
   },
 };
@@ -86,28 +108,32 @@ export const noopMetricsCollector: RpcMetricsCollector = {
  * Console-based metrics collector for debugging
  */
 export const consoleMetricsCollector: RpcMetricsCollector = {
-  recordPrimaryAttempt: (chain) =>
-    console.debug(`[RPC Metrics] Primary attempt: ${chain}`),
-  recordPrimaryFailure: (chain) =>
-    console.debug(`[RPC Metrics] Primary failure: ${chain}`),
-  recordFallbackAttempt: (chain) =>
-    console.debug(`[RPC Metrics] Fallback attempt: ${chain}`),
-  recordFallbackFailure: (chain) =>
-    console.debug(`[RPC Metrics] Fallback failure: ${chain}`),
+  recordPrimaryAttempt: (chain, operation = "read") =>
+    console.debug(`[RPC Metrics] Primary attempt: ${chain} [${operation}]`),
+  recordPrimaryFailure: (chain, operation = "read") =>
+    console.debug(`[RPC Metrics] Primary failure: ${chain} [${operation}]`),
+  recordFallbackAttempt: (chain, operation = "read") =>
+    console.debug(`[RPC Metrics] Fallback attempt: ${chain} [${operation}]`),
+  recordFallbackFailure: (chain, operation = "read") =>
+    console.debug(`[RPC Metrics] Fallback failure: ${chain} [${operation}]`),
   recordFailoverEvent: (chain) =>
     console.debug(`[RPC Metrics] Failover event: ${chain}`),
   recordRecoveryEvent: (chain) =>
     console.debug(`[RPC Metrics] Recovery event: ${chain}`),
   recordBothFailed: (chain) =>
     console.debug(`[RPC Metrics] Both endpoints failed: ${chain}`),
-  recordSuccess: (chain, provider) =>
-    console.debug(`[RPC Metrics] Success on ${provider}: ${chain}`),
-  recordLatency: (chain, provider, durationMs) =>
+  recordSuccess: (chain, provider, operation = "read") =>
     console.debug(
-      `[RPC Metrics] Latency ${provider} ${chain}: ${durationMs}ms`
+      `[RPC Metrics] Success on ${provider}: ${chain} [${operation}]`
     ),
-  recordErrorType: (chain, provider, errorType) =>
-    console.debug(`[RPC Metrics] Error ${errorType} on ${provider}: ${chain}`),
+  recordLatency: (chain, provider, durationMs, operation = "read") =>
+    console.debug(
+      `[RPC Metrics] Latency ${provider} ${chain}: ${durationMs}ms [${operation}]`
+    ),
+  recordErrorType: (chain, provider, errorType, operation = "read") =>
+    console.debug(
+      `[RPC Metrics] Error ${errorType} on ${provider}: ${chain} [${operation}]`
+    ),
 };
 
 export const RPC_CONNECTION_ERROR_PATTERNS: ReadonlyArray<string> = [
@@ -116,6 +142,34 @@ export const RPC_CONNECTION_ERROR_PATTERNS: ReadonlyArray<string> = [
   "ETIMEDOUT",
   "fetch failed",
 ];
+
+/**
+ * Classify an RPC error into a category for metrics tracking.
+ * Standalone version for use outside of executeWithFailover
+ * (e.g., write transaction send paths).
+ */
+export function classifyRpcError(error: unknown): RpcErrorType {
+  if (error instanceof Error && error.message.startsWith("Timeout after ")) {
+    return "timeout";
+  }
+  if (isError(error, "SERVER_ERROR")) {
+    const serverErr = error as ethers.EthersError & {
+      response?: { statusCode?: number };
+    };
+    if (serverErr.response?.statusCode === 429) {
+      return "rate_limit";
+    }
+  }
+  if (
+    error instanceof Error &&
+    RPC_CONNECTION_ERROR_PATTERNS.some((pattern) =>
+      error.message.includes(pattern)
+    )
+  ) {
+    return "connection";
+  }
+  return "rpc_error";
+}
 
 export type RpcProviderConfig = {
   primaryRpcUrl: string;
@@ -225,7 +279,8 @@ export class RpcProviderManager {
   }
 
   async executeWithFailover<T>(
-    operation: (provider: ethers.JsonRpcProvider) => Promise<T>
+    operation: (provider: ethers.JsonRpcProvider) => Promise<T>,
+    operationType: RpcOperationType = "read"
   ): Promise<T> {
     this.metrics.totalRequests += 1;
 
@@ -237,13 +292,15 @@ export class RpcProviderManager {
           fallbackProvider,
           operation,
           "fallback",
-          this.config.maxRetries
+          this.config.maxRetries,
+          operationType
         );
 
         if (fallbackResult.success) {
           this.metricsCollector.recordSuccess(
             this.config.chainName,
-            "fallback"
+            "fallback",
+            operationType
           );
           return fallbackResult.result as T;
         }
@@ -264,7 +321,8 @@ export class RpcProviderManager {
           primaryProvider,
           operation,
           "primary",
-          this.config.maxRetries
+          this.config.maxRetries,
+          operationType
         );
 
         if (primaryResult.success) {
@@ -314,11 +372,16 @@ export class RpcProviderManager {
       primaryProvider,
       operation,
       "primary",
-      this.config.maxRetries
+      this.config.maxRetries,
+      operationType
     );
 
     if (primaryResult.success) {
-      this.metricsCollector.recordSuccess(this.config.chainName, "primary");
+      this.metricsCollector.recordSuccess(
+        this.config.chainName,
+        "primary",
+        operationType
+      );
       return primaryResult.result as T;
     }
 
@@ -331,7 +394,8 @@ export class RpcProviderManager {
         fallbackProvider,
         operation,
         "fallback",
-        this.config.maxRetries
+        this.config.maxRetries,
+        operationType
       );
 
       if (fallbackResult.success) {
@@ -372,23 +436,41 @@ export class RpcProviderManager {
     throw new Error(`RPC failed on primary endpoint: ${primaryResult.error}`);
   }
 
-  private recordAttempt(providerType: "primary" | "fallback"): void {
+  private recordAttempt(
+    providerType: "primary" | "fallback",
+    operationType: RpcOperationType = "read"
+  ): void {
     if (providerType === "primary") {
       this.metrics.primaryAttempts += 1;
-      this.metricsCollector.recordPrimaryAttempt(this.config.chainName);
+      this.metricsCollector.recordPrimaryAttempt(
+        this.config.chainName,
+        operationType
+      );
     } else {
       this.metrics.fallbackAttempts += 1;
-      this.metricsCollector.recordFallbackAttempt(this.config.chainName);
+      this.metricsCollector.recordFallbackAttempt(
+        this.config.chainName,
+        operationType
+      );
     }
   }
 
-  private recordFailure(providerType: "primary" | "fallback"): void {
+  private recordFailure(
+    providerType: "primary" | "fallback",
+    operationType: RpcOperationType = "read"
+  ): void {
     if (providerType === "primary") {
       this.metrics.primaryFailures += 1;
-      this.metricsCollector.recordPrimaryFailure(this.config.chainName);
+      this.metricsCollector.recordPrimaryFailure(
+        this.config.chainName,
+        operationType
+      );
     } else {
       this.metrics.fallbackFailures += 1;
-      this.metricsCollector.recordFallbackFailure(this.config.chainName);
+      this.metricsCollector.recordFallbackFailure(
+        this.config.chainName,
+        operationType
+      );
     }
   }
 
@@ -440,40 +522,22 @@ export class RpcProviderManager {
   }
 
   private classifyError(error: unknown): RpcErrorType {
-    if (error instanceof Error && error.message.startsWith("Timeout after ")) {
-      return "timeout";
-    }
-    if (isError(error, "SERVER_ERROR")) {
-      const serverErr = error as ethers.EthersError & {
-        response?: { statusCode?: number };
-      };
-      if (serverErr.response?.statusCode === 429) {
-        return "rate_limit";
-      }
-    }
-    if (
-      error instanceof Error &&
-      RPC_CONNECTION_ERROR_PATTERNS.some((pattern) =>
-        error.message.includes(pattern)
-      )
-    ) {
-      return "connection";
-    }
-    return "rpc_error";
+    return classifyRpcError(error);
   }
 
   private async tryProvider<T>(
     provider: ethers.JsonRpcProvider,
     operation: (p: ethers.JsonRpcProvider) => Promise<T>,
     providerType: "primary" | "fallback",
-    maxRetries: number
+    maxRetries: number,
+    operationType: RpcOperationType = "read"
   ): Promise<{ success: boolean; result?: T; error?: string }> {
     let lastError: Error | undefined;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       const startTime = performance.now();
       try {
-        this.recordAttempt(providerType);
+        this.recordAttempt(providerType, operationType);
 
         const result = await this.withTimeout(
           operation(provider),
@@ -484,7 +548,8 @@ export class RpcProviderManager {
         this.metricsCollector.recordLatency(
           this.config.chainName,
           providerType,
-          durationMs
+          durationMs,
+          operationType
         );
 
         return { success: true, result };
@@ -493,15 +558,17 @@ export class RpcProviderManager {
         this.metricsCollector.recordLatency(
           this.config.chainName,
           providerType,
-          durationMs
+          durationMs,
+          operationType
         );
 
         lastError = error instanceof Error ? error : new Error(String(error));
-        this.recordFailure(providerType);
+        this.recordFailure(providerType, operationType);
         this.metricsCollector.recordErrorType(
           this.config.chainName,
           providerType,
-          this.classifyError(error)
+          this.classifyError(error),
+          operationType
         );
 
         const delayMs = this.evaluateRetryAction(
@@ -587,6 +654,10 @@ export class RpcProviderManager {
    */
   getChainName(): string {
     return this.config.chainName;
+  }
+
+  getMetricsCollector(): RpcMetricsCollector {
+    return this.metricsCollector;
   }
 }
 

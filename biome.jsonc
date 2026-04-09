@@ -29,11 +29,18 @@
       "!lib/atoms",
       "!keeperhub-events",
       "!keeperhub-scheduler",
-      "!.history"
+      "!.history",
+      "!tests/k6"
     ]
   },
   "linter": {
     "rules": {
+      "complexity": {
+        "useMaxParams": "off",
+        "noUselessUndefined": "off",
+        // New threshold from biome bump - pre-existing complexity to be addressed separately
+        "noExcessiveCognitiveComplexity": "off"
+      },
       "performance": {
         // Barrel files are a standard pattern for module exports
         "noBarrelFile": "off"
@@ -44,10 +51,6 @@
         // New rule from biome bump - pre-existing test.skip() to be addressed separately
         "noSkippedTests": "off"
       },
-      "complexity": {
-        // New threshold from biome bump - pre-existing complexity to be addressed separately
-        "noExcessiveCognitiveComplexity": "off"
-      },
       "nursery": {
         // These are experimental rules that add friction without clear benefit
         "noIncrementDecrement": "off",
@@ -55,7 +58,6 @@
       },
       "style": {
         "useConsistentTypeDefinitions": "off",
-        // New rule from biome bump - pre-existing .substr() usage to be addressed separately
         "noSubstr": "off"
       }
     }

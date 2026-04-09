@@ -12,6 +12,19 @@ function secureCompare(a: string, b: string): boolean {
 }
 
 export function authenticateAdmin(request: Request): AdminAuthResult {
+  // Defense in depth: refuse to authenticate against prod even if a valid
+  // TEST_API_KEY is present in the environment. Bypass requires an explicit
+  // ALLOW_TEST_ENDPOINTS=true override.
+  if (
+    process.env.NODE_ENV === "production" &&
+    process.env.ALLOW_TEST_ENDPOINTS !== "true"
+  ) {
+    return {
+      authenticated: false,
+      error: "Admin test endpoints disabled in production",
+    };
+  }
+
   const adminKey = process.env.TEST_API_KEY;
   if (!adminKey) {
     return { authenticated: false, error: "Admin API not configured" };

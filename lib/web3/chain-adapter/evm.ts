@@ -55,14 +55,24 @@ export class EvmChainAdapter implements ChainAdapter {
       data: request.data,
     };
 
-    await provider.call({ ...baseTx, from: walletAddress });
+    if (options.rpcManager) {
+      await options.rpcManager.executeWithFailover(
+        (rpcProvider) => rpcProvider.call({ ...baseTx, from: walletAddress }),
+        "preflight"
+      );
+    } else {
+      await provider.call({ ...baseTx, from: walletAddress });
+    }
 
     const nonce = this.nonceManager.getNextNonce(session);
 
-    const estimatedGas = await provider.estimateGas({
-      ...baseTx,
-      from: walletAddress,
-    });
+    const estimatedGas = options.rpcManager
+      ? await options.rpcManager.executeWithFailover(
+          (rpcProvider) =>
+            rpcProvider.estimateGas({ ...baseTx, from: walletAddress }),
+          "preflight"
+        )
+      : await provider.estimateGas({ ...baseTx, from: walletAddress });
 
     const gasConfig = await this.gasStrategy.getGasConfig(
       provider,
@@ -116,17 +126,43 @@ export class EvmChainAdapter implements ChainAdapter {
 
     const valueOverride = request.value ? { value: request.value } : {};
 
-    await contract[request.functionKey].staticCall(
-      ...request.args,
-      valueOverride
-    );
+    if (options.rpcManager) {
+      await options.rpcManager.executeWithFailover((rpcProvider) => {
+        const readContract = new ethers.Contract(
+          request.contractAddress,
+          request.abi,
+          rpcProvider
+        );
+        return readContract[request.functionKey].staticCall(
+          ...request.args,
+          valueOverride
+        );
+      }, "preflight");
+    } else {
+      await contract[request.functionKey].staticCall(
+        ...request.args,
+        valueOverride
+      );
+    }
 
     const nonce = this.nonceManager.getNextNonce(session);
 
-    const estimatedGas = await contract[request.functionKey].estimateGas(
-      ...request.args,
-      valueOverride
-    );
+    const estimatedGas = options.rpcManager
+      ? await options.rpcManager.executeWithFailover((rpcProvider) => {
+          const readContract = new ethers.Contract(
+            request.contractAddress,
+            request.abi,
+            rpcProvider
+          );
+          return readContract[request.functionKey].estimateGas(
+            ...request.args,
+            valueOverride
+          );
+        }, "preflight")
+      : await contract[request.functionKey].estimateGas(
+          ...request.args,
+          valueOverride
+        );
 
     const gasConfig = await this.gasStrategy.getGasConfig(
       provider,
@@ -182,9 +218,10 @@ export class EvmChainAdapter implements ChainAdapter {
 
   async executeWithFailover<T>(
     rpcManager: RpcProviderManager,
-    operation: (provider: ethers.JsonRpcProvider) => Promise<T>
+    operation: (provider: ethers.JsonRpcProvider) => Promise<T>,
+    operationType?: "read" | "write"
   ): Promise<T> {
-    return await rpcManager.executeWithFailover(operation);
+    return await rpcManager.executeWithFailover(operation, operationType);
   }
 
   async getTransactionUrl(txHash: string): Promise<string> {

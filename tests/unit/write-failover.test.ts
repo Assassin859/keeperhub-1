@@ -111,6 +111,19 @@ function makeOptions(
     rpcManager: {
       getFallbackProvider: vi.fn().mockReturnValue(null),
       getChainName: vi.fn().mockReturnValue("ethereum"),
+      getCurrentProviderType: vi.fn().mockReturnValue("primary"),
+      getMetricsCollector: vi.fn().mockReturnValue({
+        recordPrimaryAttempt: vi.fn(),
+        recordPrimaryFailure: vi.fn(),
+        recordFallbackAttempt: vi.fn(),
+        recordFallbackFailure: vi.fn(),
+        recordFailoverEvent: vi.fn(),
+        recordRecoveryEvent: vi.fn(),
+        recordBothFailed: vi.fn(),
+        recordSuccess: vi.fn(),
+        recordLatency: vi.fn(),
+        recordErrorType: vi.fn(),
+      }),
     } as unknown as SubmitAndConfirmOptions["rpcManager"],
     session: makeSession(),
     nonce: 42,
@@ -190,6 +203,19 @@ describe("submitAndConfirm", () => {
     const rpcManager = {
       getFallbackProvider: vi.fn().mockReturnValue(fallbackProvider),
       getChainName: vi.fn().mockReturnValue("ethereum"),
+      getCurrentProviderType: vi.fn().mockReturnValue("primary"),
+      getMetricsCollector: vi.fn().mockReturnValue({
+        recordPrimaryAttempt: vi.fn(),
+        recordPrimaryFailure: vi.fn(),
+        recordFallbackAttempt: vi.fn(),
+        recordFallbackFailure: vi.fn(),
+        recordFailoverEvent: vi.fn(),
+        recordRecoveryEvent: vi.fn(),
+        recordBothFailed: vi.fn(),
+        recordSuccess: vi.fn(),
+        recordLatency: vi.fn(),
+        recordErrorType: vi.fn(),
+      }),
     };
 
     const result = await submitAndConfirm(
@@ -274,6 +300,19 @@ describe("submitContractCallAndConfirm", () => {
     const rpcManager = {
       getFallbackProvider: vi.fn().mockReturnValue(fallbackProvider),
       getChainName: vi.fn().mockReturnValue("ethereum"),
+      getCurrentProviderType: vi.fn().mockReturnValue("primary"),
+      getMetricsCollector: vi.fn().mockReturnValue({
+        recordPrimaryAttempt: vi.fn(),
+        recordPrimaryFailure: vi.fn(),
+        recordFallbackAttempt: vi.fn(),
+        recordFallbackFailure: vi.fn(),
+        recordFailoverEvent: vi.fn(),
+        recordRecoveryEvent: vi.fn(),
+        recordBothFailed: vi.fn(),
+        recordSuccess: vi.fn(),
+        recordLatency: vi.fn(),
+        recordErrorType: vi.fn(),
+      }),
     };
 
     const result = await submitContractCallAndConfirm(

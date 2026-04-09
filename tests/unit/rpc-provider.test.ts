@@ -172,7 +172,8 @@ describe("RpcProviderManager", () => {
       expect(result).toBe("success");
       expect(mockOperation).toHaveBeenCalledTimes(1);
       expect(metricsCollector.recordPrimaryAttempt).toHaveBeenCalledWith(
-        "Ethereum"
+        "Ethereum",
+        "read"
       );
       expect(manager.getMetrics().totalRequests).toBe(1);
       expect(manager.getMetrics().primaryAttempts).toBe(1);
@@ -808,12 +809,12 @@ describe("consoleMetricsCollector", () => {
 
     consoleMetricsCollector.recordPrimaryAttempt("Ethereum");
     expect(debugSpy).toHaveBeenCalledWith(
-      "[RPC Metrics] Primary attempt: Ethereum"
+      "[RPC Metrics] Primary attempt: Ethereum [read]"
     );
 
     consoleMetricsCollector.recordPrimaryFailure("Ethereum");
     expect(debugSpy).toHaveBeenCalledWith(
-      "[RPC Metrics] Primary failure: Ethereum"
+      "[RPC Metrics] Primary failure: Ethereum [read]"
     );
 
     debugSpy.mockRestore();

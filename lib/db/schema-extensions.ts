@@ -678,3 +678,35 @@ export const gasCreditAllocations = pgTable(
 
 export type GasCreditAllocation = typeof gasCreditAllocations.$inferSelect;
 export type NewGasCreditAllocation = typeof gasCreditAllocations.$inferInsert;
+
+/**
+ * Workflow Votes table
+ *
+ * Stores user upvotes/downvotes on public hub workflows.
+ * Each user can vote once per workflow (enforced by unique constraint).
+ * Used for net score display and popularity sorting.
+ */
+export const workflowRatings = pgTable(
+  "workflow_ratings",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    workflowId: text("workflow_id")
+      .notNull()
+      .references(() => workflows.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    rating: integer("rating").notNull(), // 1 = upvote, -1 = downvote
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    unique("uq_workflow_ratings_workflow_user").on(
+      table.workflowId,
+      table.userId
+    ),
+    index("idx_workflow_ratings_workflow").on(table.workflowId),
+  ]
+);

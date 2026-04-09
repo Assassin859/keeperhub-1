@@ -306,12 +306,15 @@ export async function transferTokenCore(
   // Try gas-sponsored execution first (ERC-4337 via Pimlico)
   if (isSponsorshipSupported(chainId)) {
     try {
-      const signer = await initializeWalletSigner(organizationId, rpcUrl);
-      const readContract = new ethers.Contract(tokenAddress, ERC20_ABI, signer);
-      const [decimals, symbol] = await Promise.all([
-        readContract.decimals() as Promise<bigint>,
-        readContract.symbol() as Promise<string>,
-      ]);
+      const [decimals, symbol] = await rpcManager.executeWithFailover(
+        (p) => {
+          const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, p);
+          return Promise.all([
+            tokenContract.decimals() as Promise<bigint>,
+            tokenContract.symbol() as Promise<string>,
+          ]);
+        }
+      );
       const amountRaw = ethers.parseUnits(amount, Number(decimals));
 
       const sponsoredResult = await executeSponsoredContractTransaction({
@@ -388,15 +391,20 @@ export async function transferTokenCore(
       };
     }
 
-    // Create contract instance for pre-flight checks (decimals, symbol, balance)
+    // Create contract instance for the actual write (needs signer)
     const contract = new ethers.Contract(tokenAddress, ERC20_ABI, signer);
 
     try {
-      // Get token decimals and symbol
-      const [decimals, symbol] = await Promise.all([
-        contract.decimals() as Promise<bigint>,
-        contract.symbol() as Promise<string>,
-      ]);
+      // Get token decimals, symbol, and balance via failover
+      const [decimals, symbol, balance] =
+        await rpcManager.executeWithFailover((p) => {
+          const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, p);
+          return Promise.all([
+            tokenContract.decimals() as Promise<bigint>,
+            tokenContract.symbol() as Promise<string>,
+            tokenContract.balanceOf(signerAddress) as Promise<bigint>,
+          ]);
+        });
 
       const decimalsNum = Number(decimals);
 
@@ -412,7 +420,6 @@ export async function transferTokenCore(
       }
 
       // Check balance before transfer
-      const balance = (await contract.balanceOf(signerAddress)) as bigint;
       if (balance < amountRaw) {
         const balanceFormatted = ethers.formatUnits(balance, decimalsNum);
         return {
@@ -430,6 +437,7 @@ export async function transferTokenCore(
         triggerType: txContext.triggerType ?? "manual",
         gasOverrides: { multiplierOverride, gasLimitOverride },
         workflowId,
+        rpcManager,
       });
 
       const gasUsedUnits = receipt.gasUsed.toString();

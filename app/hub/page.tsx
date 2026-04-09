@@ -30,6 +30,7 @@ function HubPageContent(): React.ReactElement {
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTagSlugs, setSelectedTagSlugs] = useState<string[]>([]);
+  const [sortBy, setSortBy] = useState<"recent" | "votes">("recent");
   const debouncedSearchQuery = useDebounce(searchQuery, 300);
 
   const [protocols, setProtocols] = useState<ProtocolDefinition[]>([]);
@@ -77,8 +78,11 @@ function HubPageContent(): React.ReactElement {
         merged.push(w);
       }
     }
+    if (sortBy === "votes") {
+      merged.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    }
     return merged;
-  }, [featuredWorkflows, communityWorkflows]);
+  }, [featuredWorkflows, communityWorkflows, sortBy]);
 
   const featuredIds = useMemo(
     () => new Set(featuredWorkflows.map((w) => w.id)),
@@ -209,6 +213,22 @@ function HubPageContent(): React.ReactElement {
                     Templates
                   </h2>
                   <div className="h-px flex-1 bg-border/30" />
+                  <div className="flex shrink-0 gap-1 rounded-lg border border-border/30 p-0.5">
+                    <button
+                      className={`rounded-md px-2.5 py-1 text-[10px] font-medium transition-colors ${sortBy === "recent" ? "bg-[var(--color-hub-icon-bg)] text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                      onClick={() => setSortBy("recent")}
+                      type="button"
+                    >
+                      Recent
+                    </button>
+                    <button
+                      className={`rounded-md px-2.5 py-1 text-[10px] font-medium transition-colors ${sortBy === "votes" ? "bg-[var(--color-hub-icon-bg)] text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                      onClick={() => setSortBy("votes")}
+                      type="button"
+                    >
+                      Top voted
+                    </button>
+                  </div>
                 </div>
 
                 <WorkflowSearchFilter

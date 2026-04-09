@@ -3,6 +3,7 @@
  * Replaces server actions with API endpoints
  */
 
+import type { VoteDirection } from "@/lib/workflow/votes";
 import type { IntegrationConfig, IntegrationType } from "./types/integration";
 import type { WorkflowEdge, WorkflowNode } from "./workflow-store";
 
@@ -44,6 +45,14 @@ export type SavedWorkflow = WorkflowData & {
   featuredProtocol?: string | null;
   featuredProtocolOrder?: number;
   publicTags?: PublicTag[];
+  score?: number;
+  userVote?: VoteDirection | null;
+  canVote?: boolean;
+};
+
+export type VoteResponse = {
+  userVote: VoteDirection | null;
+  score: number;
 };
 
 // API error class
@@ -526,6 +535,13 @@ export const workflowApi = {
     apiCall<SavedWorkflow[]>(
       `/api/workflows/public?featuredProtocol=${encodeURIComponent(slug)}`
     ),
+
+  // Vote on a workflow (upvote/downvote toggle)
+  voteWorkflow: (id: string, vote: VoteDirection) =>
+    apiCall<VoteResponse>(`/api/workflows/${id}/rate`, {
+      method: "POST",
+      body: JSON.stringify({ vote }),
+    }),
 
   // Get a specific workflow
   getById: (id: string) => apiCall<SavedWorkflow>(`/api/workflows/${id}`),

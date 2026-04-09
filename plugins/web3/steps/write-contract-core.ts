@@ -356,6 +356,7 @@ export async function writeContractCore(
         triggerType: txContext.triggerType ?? "manual",
         gasOverrides: { multiplierOverride, gasLimitOverride },
         workflowId,
+        rpcManager,
       });
 
       const gasUsedUnits = receipt.gasUsed.toString();

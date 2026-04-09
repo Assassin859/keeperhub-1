@@ -116,7 +116,8 @@ describe("SolanaProviderManager", () => {
       expect(result).toBe(12_345);
       expect(mockOperation).toHaveBeenCalledTimes(1);
       expect(metricsCollector.recordPrimaryAttempt).toHaveBeenCalledWith(
-        "Solana"
+        "Solana",
+        "read"
       );
       expect(manager.getMetrics().totalRequests).toBe(1);
       expect(manager.getMetrics().primaryAttempts).toBe(1);
@@ -458,12 +459,12 @@ describe("consoleSolanaMetricsCollector", () => {
 
     consoleSolanaMetricsCollector.recordPrimaryAttempt("Solana");
     expect(debugSpy).toHaveBeenCalledWith(
-      "[Solana RPC Metrics] Primary attempt: Solana"
+      "[Solana RPC Metrics] Primary attempt: Solana [read]"
     );
 
     consoleSolanaMetricsCollector.recordPrimaryFailure("Solana");
     expect(debugSpy).toHaveBeenCalledWith(
-      "[Solana RPC Metrics] Primary failure: Solana"
+      "[Solana RPC Metrics] Primary failure: Solana [read]"
     );
 
     debugSpy.mockRestore();

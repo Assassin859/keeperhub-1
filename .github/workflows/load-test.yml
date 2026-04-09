@@ -1,0 +1,298 @@
+name: k6 Load Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_mode:
+        description: 'Test mode'
+        required: true
+        type: choice
+        options:
+          - execution
+          - http-ramp
+        default: execution
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+          - custom
+        default: staging
+      custom_url:
+        description: 'Custom endpoint URL (only when environment=custom)'
+        required: false
+        type: string
+        default: ''
+      threshold:
+        description: 'Success rate threshold (%)'
+        required: false
+        type: string
+        default: '95'
+      # Execution mode parameters
+      target_vus:
+        description: '[execution] Number of concurrent VUs'
+        required: false
+        type: string
+        default: '20'
+      wf_per_vu:
+        description: '[execution] Workflows created per VU'
+        required: false
+        type: string
+        default: '5'
+      duration:
+        description: '[execution] Sustained load duration (e.g. 60s, 5m)'
+        required: false
+        type: string
+        default: '60s'
+      ramp_interval:
+        description: '[execution] Seconds between each new VU during ramp-up'
+        required: false
+        type: string
+        default: '5'
+      # HTTP ramp mode parameters
+      step_size:
+        description: '[http-ramp] VU increment per step'
+        required: false
+        type: string
+        default: '5'
+      step_duration:
+        description: '[http-ramp] Duration per step (e.g. 30s, 1m)'
+        required: false
+        type: string
+        default: '30s'
+      max_vus:
+        description: '[http-ramp] Maximum VUs safety cap'
+        required: false
+        type: string
+        default: '500'
+
+concurrency:
+  group: load-test-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  load-test:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment == 'production' && 'prod' || 'staging' }}
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install k6
+        run: |
+          K6_VERSION="v0.56.0"
+          curl -fsSL "https://github.com/grafana/k6/releases/download/${K6_VERSION}/k6-${K6_VERSION}-linux-amd64.tar.gz" -o /tmp/k6.tar.gz
+          tar -xzf /tmp/k6.tar.gz -C /tmp
+          sudo mv /tmp/k6-${K6_VERSION}-linux-amd64/k6 /usr/local/bin/k6
+          k6 version
+
+      - name: Resolve target URL
+        run: |
+          if [[ "${{ inputs.environment }}" == "custom" ]]; then
+            BASE_URL="${{ inputs.custom_url }}"
+            if [[ -z "$BASE_URL" ]]; then
+              echo "::error::custom_url is required when environment=custom"
+              exit 1
+            fi
+          else
+            BASE_URL="${{ vars.TO_HEALTH_URL }}"
+          fi
+          echo "BASE_URL=$BASE_URL" >> $GITHUB_ENV
+          echo "Target: $BASE_URL (mode: ${{ inputs.test_mode }})"
+
+      - name: Create results directory
+        run: mkdir -p /tmp/k6-results
+
+      - name: Wait for target to be healthy
+        run: |
+          echo "Waiting for ${BASE_URL}/api/health to return 200..."
+          CURL_ARGS=(-s -o /dev/null -w "%{http_code}")
+          if [[ -n "${CF_ACCESS_CLIENT_ID:-}" && -n "${CF_ACCESS_CLIENT_SECRET:-}" ]]; then
+            CURL_ARGS+=(-H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}")
+          fi
+          for i in {1..30}; do
+            STATUS=$(curl "${CURL_ARGS[@]}" "${BASE_URL}/api/health" || echo "000")
+            if [[ "$STATUS" == "200" ]]; then
+              echo "Target is healthy!"
+              exit 0
+            fi
+            echo "Attempt $i/30: HTTP $STATUS, waiting 10s..."
+            sleep 10
+          done
+          echo "::error::Target did not become healthy in time"
+          exit 1
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.TO_CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.TO_CF_ACCESS_CLIENT_SECRET }}
+
+      # ── Execution mode: pure k6 workflow execution load test ──
+      - name: Run execution load test
+        if: inputs.test_mode == 'execution'
+        run: |
+          k6 run tests/k6/execution-load-test.js \
+            -e BASE_URL="${BASE_URL}" \
+            -e TEST_API_KEY="${TEST_API_KEY}" \
+            -e SERVICE_KEY="${SERVICE_KEY}" \
+            -e CF_ACCESS_CLIENT_ID="${CF_ACCESS_CLIENT_ID}" \
+            -e CF_ACCESS_CLIENT_SECRET="${CF_ACCESS_CLIENT_SECRET}" \
+            -e TARGET_VUS="${{ inputs.target_vus }}" \
+            -e WF_PER_VU="${{ inputs.wf_per_vu }}" \
+            -e DURATION="${{ inputs.duration }}" \
+            -e RAMP_INTERVAL="${{ inputs.ramp_interval }}" \
+            --summary-export /tmp/k6-results/summary.json \
+            --no-usage-report
+        env:
+          TEST_API_KEY: ${{ secrets.TEST_API_KEY }}
+          SERVICE_KEY: ${{ secrets.SCHEDULER_SERVICE_API_KEY }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.TO_CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.TO_CF_ACCESS_CLIENT_SECRET }}
+
+      # ── HTTP ramp mode: VU ramp-until-breach ──
+      - name: Run HTTP ramp load test
+        if: inputs.test_mode == 'http-ramp'
+        run: |
+          chmod +x tests/k6/ramp-until-breach.sh
+          tests/k6/ramp-until-breach.sh \
+            "${{ env.BASE_URL }}" \
+            "${{ inputs.threshold }}" \
+            "${{ inputs.step_size }}" \
+            "${{ inputs.step_duration }}" \
+            "${{ inputs.max_vus }}"
+        env:
+          TEST_API_KEY: ${{ secrets.TEST_API_KEY }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.TO_CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.TO_CF_ACCESS_CLIENT_SECRET }}
+
+      - name: Cleanup test users
+        if: always()
+        run: |
+          echo "Cleaning up k6 test users from ${BASE_URL}..."
+          CURL_ARGS=(-s -X POST -H "Content-Type: application/json" -H "Authorization: Bearer ${TEST_API_KEY}")
+          if [[ -n "${CF_ACCESS_CLIENT_ID:-}" && -n "${CF_ACCESS_CLIENT_SECRET:-}" ]]; then
+            CURL_ARGS+=(-H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}")
+          fi
+          CURL_ARGS+=(-H "Origin: ${BASE_URL}" -H "Referer: ${BASE_URL}/")
+
+          RESPONSE=$(curl "${CURL_ARGS[@]}" "${BASE_URL}/api/admin/test/cleanup" || echo '{"error":"cleanup request failed"}')
+          echo "Cleanup response: $RESPONSE"
+
+          DELETED_USERS=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('deleted',{}).get('users',0))" 2>/dev/null || echo "unknown")
+          echo "DELETED_USERS=$DELETED_USERS" >> $GITHUB_ENV
+        env:
+          TEST_API_KEY: ${{ secrets.TEST_API_KEY }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.TO_CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.TO_CF_ACCESS_CLIENT_SECRET }}
+
+      - name: Generate summary
+        if: always()
+        run: |
+          python3 << 'PYSUMMARY'
+          import json, os
+
+          test_mode = "${{ inputs.test_mode }}"
+          threshold = float("${{ inputs.threshold }}")
+          env_name = "${{ inputs.environment }}"
+          base_url = os.environ.get("BASE_URL", "")
+          deleted_users = os.environ.get("DELETED_USERS", "unknown")
+          run_url = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/stdout")
+
+          lines = ["## k6 Load Test Results", ""]
+          lines.append(f"**Target:** [{base_url}]({base_url})")
+          lines.append(f"**Environment:** {env_name}")
+          lines.append(f"**Mode:** {test_mode}")
+          lines.append(f"**Threshold:** {threshold}% success rate")
+          lines.append("")
+
+          if test_mode == "execution":
+              results_file = "/tmp/k6-results/summary.json"
+              data = {}
+              try:
+                  with open(results_file) as f:
+                      data = json.load(f)
+              except:
+                  pass
+
+              metrics = data.get("metrics", {})
+              if not metrics:
+                  lines.append(f":x: **No results collected** -- check the [workflow logs]({run_url}) for errors.")
+              else:
+                  ok = int(metrics.get("trigger_ok", {}).get("count", 0))
+                  fail = int(metrics.get("trigger_fail", {}).get("count", 0))
+                  total = ok + fail
+                  rate = round(100.0 * ok / max(total, 1), 2)
+                  dur = metrics.get("trigger_duration_ms", {})
+                  p95 = round(dur.get("p(95)", 0), 1)
+                  avg = round(dur.get("avg", 0), 1)
+                  med = round(dur.get("med", 0), 1)
+                  rps = round(metrics.get("trigger_ok", {}).get("rate", 0), 2)
+
+                  icon = ":white_check_mark:" if rate >= threshold else ":warning:" if rate >= 80 else ":x:"
+
+                  lines.append(f"### {icon} Trigger Success Rate: {rate}%")
+                  lines.append("")
+                  lines.append(f"| Metric | Value |")
+                  lines.append(f"|--------|-------|")
+                  lines.append(f"| VUs | ${{ inputs.target_vus }} |")
+                  lines.append(f"| Workflows/VU | ${{ inputs.wf_per_vu }} |")
+                  lines.append(f"| Duration | ${{ inputs.duration }} |")
+                  lines.append(f"| Triggers OK | {ok} |")
+                  lines.append(f"| Triggers Failed | {fail} |")
+                  lines.append(f"| Success Rate | {rate}% |")
+                  lines.append(f"| Throughput | {rps}/sec ({round(rps*60,1)}/min) |")
+                  lines.append(f"| p95 Latency | {p95}ms |")
+                  lines.append(f"| Avg Latency | {avg}ms |")
+                  lines.append(f"| Median Latency | {med}ms |")
+
+          elif test_mode == "http-ramp":
+              results_file = "/tmp/k6-results/all-tiers.json"
+              tiers = []
+              try:
+                  with open(results_file) as f:
+                      tiers = json.load(f)
+              except:
+                  pass
+
+              if not tiers:
+                  lines.append(f":x: **No results collected** -- check the [workflow logs]({run_url}) for errors.")
+              else:
+                  breach = next((t for t in tiers if t["success_rate"] < threshold), None)
+                  if breach:
+                      lines.append(f":warning: **Threshold breached at {breach['vus']} VUs** ({breach['success_rate']}% < {threshold}%)")
+                  else:
+                      last = tiers[-1]
+                      lines.append(f":white_check_mark: **All steps passed** up to {last['vus']} VUs at {last['success_rate']}%")
+
+                  lines.append("")
+                  lines.append("| Step | VUs | Success Rate | Requests | RPS | p95 (ms) | Avg (ms) | Checks | Status |")
+                  lines.append("|------|-----|-------------|----------|-----|----------|----------|--------|--------|")
+
+                  for t in tiers:
+                      icon = ":white_check_mark:" if t["success_rate"] >= threshold else ":warning:" if t["success_rate"] >= 80 else ":x:"
+                      checks = f"{t['checks_passed']}/{t['checks_passed'] + t['checks_failed']}"
+                      lines.append(f"| {t.get('step', '-')} | {t['vus']} | {t['success_rate']}% | "
+                                   f"{t['total_requests']} | {t['rps']} | {t['p95_ms']} | "
+                                   f"{t['avg_ms']} | {checks} | {icon} |")
+
+          lines.append("")
+          lines.append("### Cleanup")
+          lines.append(f"Deleted **{deleted_users}** test users from the database.")
+          lines.append("")
+
+          with open(summary_path, "w") as f:
+              f.write("\n".join(lines))
+          PYSUMMARY
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-load-test-${{ inputs.test_mode }}-${{ inputs.environment }}-${{ github.run_number }}
+          path: |
+            /tmp/k6-exec-load/
+            /tmp/k6-results/
+          retention-days: 30

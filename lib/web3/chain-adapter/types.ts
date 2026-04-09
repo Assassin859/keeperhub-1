@@ -67,7 +67,8 @@ export interface ChainAdapter {
 
   executeWithFailover<T>(
     rpcManager: RpcProviderManager,
-    operation: (provider: ethers.JsonRpcProvider) => Promise<T>
+    operation: (provider: ethers.JsonRpcProvider) => Promise<T>,
+    operationType?: "read" | "write"
   ): Promise<T>;
 
   // ---- Explorer ----
@@ -81,4 +82,5 @@ export type TransactionOptions = {
   triggerType: TriggerType;
   gasOverrides: GasOverrides;
   workflowId?: string;
+  rpcManager?: RpcProviderManager;
 };

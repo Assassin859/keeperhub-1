@@ -27,6 +27,11 @@ import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc-provider";
 import { isNonRetryableError } from "@/lib/rpc-provider/error-classification";
 import {
+  type RpcMetricsContext,
+  rpcMetricsCtx,
+  withRpcMetrics,
+} from "@/lib/rpc-provider/with-rpc-metrics";
+import {
   type TriggerType as GasTriggerType,
   getGasStrategy,
 } from "./gas-strategy";
@@ -87,10 +92,13 @@ export async function submitAndConfirm(
   const { rpcManager, session, nonce, workflowId, chainId, maxFeePerGas } =
     options;
   const nonceManager = getNonceManager();
+  const primaryCtx = rpcMetricsCtx(rpcManager);
 
   let tx: ethers.TransactionResponse;
   try {
-    tx = await signer.sendTransaction(txRequest);
+    tx = await withRpcMetrics(primaryCtx, () =>
+      signer.sendTransaction(txRequest)
+    );
   } catch (primaryError) {
     if (isNonRetryableError(primaryError)) {
       throw primaryError;
@@ -100,6 +108,10 @@ export async function submitAndConfirm(
     if (!fallbackProvider) {
       throw primaryError;
     }
+
+    rpcManager
+      .getMetricsCollector()
+      .recordFailoverEvent(rpcManager.getChainName());
 
     console.warn(
       JSON.stringify({
@@ -115,8 +127,14 @@ export async function submitAndConfirm(
       })
     );
 
+    const fallbackCtx: RpcMetricsContext = {
+      ...primaryCtx,
+      providerType: "fallback",
+    };
     const reconnectedSigner = signer.connect(fallbackProvider) as typeof signer;
-    tx = await reconnectedSigner.sendTransaction(txRequest);
+    tx = await withRpcMetrics(fallbackCtx, () =>
+      reconnectedSigner.sendTransaction(txRequest)
+    );
   }
 
   return await confirmAndBuildResult(
@@ -149,10 +167,13 @@ export async function submitContractCallAndConfirm(
   const { rpcManager, session, nonce, workflowId, chainId, maxFeePerGas } =
     options;
   const nonceManager = getNonceManager();
+  const primaryCtx = rpcMetricsCtx(rpcManager);
 
   let tx: ethers.TransactionResponse;
   try {
-    tx = await contract[method](...args, overrides);
+    tx = await withRpcMetrics(primaryCtx, () =>
+      contract[method](...args, overrides)
+    );
   } catch (primaryError) {
     if (isNonRetryableError(primaryError)) {
       throw primaryError;
@@ -162,6 +183,10 @@ export async function submitContractCallAndConfirm(
     if (!fallbackProvider) {
       throw primaryError;
     }
+
+    rpcManager
+      .getMetricsCollector()
+      .recordFailoverEvent(rpcManager.getChainName());
 
     console.warn(
       JSON.stringify({
@@ -178,11 +203,17 @@ export async function submitContractCallAndConfirm(
       })
     );
 
+    const fallbackCtx: RpcMetricsContext = {
+      ...primaryCtx,
+      providerType: "fallback",
+    };
     const reconnectedSigner = signer.connect(fallbackProvider) as typeof signer;
     const reconnectedContract = contract.connect(
       reconnectedSigner
     ) as typeof contract;
-    tx = await reconnectedContract[method](...args, overrides);
+    tx = await withRpcMetrics(fallbackCtx, () =>
+      reconnectedContract[method](...args, overrides)
+    );
   }
 
   return await confirmAndBuildResult(
@@ -273,10 +304,13 @@ export async function executeTransaction(
       throw new Error("Signer has no provider");
     }
 
-    const estimatedGas = await provider.estimateGas({
-      ...baseTx,
-      from: walletAddress,
-    });
+    const estimatedGas = context.rpcManager
+      ? await context.rpcManager.executeWithFailover(
+          (rpcProvider) =>
+            rpcProvider.estimateGas({ ...baseTx, from: walletAddress }),
+          "preflight"
+        )
+      : await provider.estimateGas({ ...baseTx, from: walletAddress });
 
     const gasConfig = await gasStrategy.getGasConfig(
       provider,
@@ -354,7 +388,15 @@ export async function executeContractTransaction(
       throw new Error("Contract has no provider");
     }
 
-    const estimatedGas = await contract[method].estimateGas(...args);
+    const estimatedGas = context.rpcManager
+      ? await context.rpcManager.executeWithFailover(
+          (rpcProvider) =>
+            (contract.connect(rpcProvider) as typeof contract)[
+              method
+            ].estimateGas(...args),
+          "preflight"
+        )
+      : await contract[method].estimateGas(...args);
 
     const gasConfig = await gasStrategy.getGasConfig(
       provider as ethers.Provider,
@@ -452,7 +494,8 @@ export async function getCurrentNonce(
   rpcUrl: string
 ): Promise<number> {
   const rpcManager = await getRpcProviderFromUrls(rpcUrl);
-  return await rpcManager.executeWithFailover((provider) =>
-    provider.getTransactionCount(walletAddress, "pending")
+  return await rpcManager.executeWithFailover(
+    (provider) => provider.getTransactionCount(walletAddress, "pending"),
+    "write"
   );
 }

@@ -10,7 +10,11 @@
 
 import "server-only";
 
-import type { RpcErrorType, RpcMetricsCollector } from "@/lib/rpc-provider";
+import type {
+  RpcErrorType,
+  RpcMetricsCollector,
+  RpcOperationType,
+} from "@/lib/rpc-provider";
 import type { SolanaRpcMetricsCollector } from "@/lib/rpc-provider/solana";
 import { rpcMetrics } from "./collectors/prometheus";
 
@@ -19,17 +23,29 @@ import { rpcMetrics } from "./collectors/prometheus";
  * Both interfaces are structurally identical, so a single implementation serves both.
  */
 const prometheusCollector: RpcMetricsCollector & SolanaRpcMetricsCollector = {
-  recordPrimaryAttempt(chain: string): void {
-    rpcMetrics.primaryAttempts.inc({ chain });
+  recordPrimaryAttempt(
+    chain: string,
+    operation: RpcOperationType = "read"
+  ): void {
+    rpcMetrics.primaryAttempts.inc({ chain, operation });
   },
-  recordPrimaryFailure(chain: string): void {
-    rpcMetrics.primaryFailures.inc({ chain });
+  recordPrimaryFailure(
+    chain: string,
+    operation: RpcOperationType = "read"
+  ): void {
+    rpcMetrics.primaryFailures.inc({ chain, operation });
   },
-  recordFallbackAttempt(chain: string): void {
-    rpcMetrics.fallbackAttempts.inc({ chain });
+  recordFallbackAttempt(
+    chain: string,
+    operation: RpcOperationType = "read"
+  ): void {
+    rpcMetrics.fallbackAttempts.inc({ chain, operation });
   },
-  recordFallbackFailure(chain: string): void {
-    rpcMetrics.fallbackFailures.inc({ chain });
+  recordFallbackFailure(
+    chain: string,
+    operation: RpcOperationType = "read"
+  ): void {
+    rpcMetrics.fallbackFailures.inc({ chain, operation });
   },
   recordFailoverEvent(chain: string): void {
     rpcMetrics.failoverEvents.inc({ chain });
@@ -41,25 +57,32 @@ const prometheusCollector: RpcMetricsCollector & SolanaRpcMetricsCollector = {
     rpcMetrics.bothFailedEvents.inc({ chain });
     rpcMetrics.healthState.set({ chain }, 2);
   },
-  recordSuccess(chain: string, provider: "primary" | "fallback"): void {
+  recordSuccess(
+    chain: string,
+    provider: "primary" | "fallback",
+    _operation?: RpcOperationType
+  ): void {
     rpcMetrics.healthState.set({ chain }, provider === "primary" ? 0 : 1);
   },
   recordLatency(
     chain: string,
     provider: "primary" | "fallback",
-    durationMs: number
+    durationMs: number,
+    operation: RpcOperationType = "read"
   ): void {
-    rpcMetrics.latency.observe({ chain, provider }, durationMs);
+    rpcMetrics.latency.observe({ chain, provider, operation }, durationMs);
   },
   recordErrorType(
     chain: string,
     provider: "primary" | "fallback",
-    errorType: RpcErrorType
+    errorType: RpcErrorType,
+    operation: RpcOperationType = "read"
   ): void {
     rpcMetrics.errorsByType.inc({
       chain,
       provider,
       error_type: errorType,
+      operation,
     });
   },
 };

@@ -225,6 +225,10 @@ function setupMocks(): void {
   mockGetChainIdFromNetwork.mockReturnValue(1);
   mockGetRpcProvider.mockResolvedValue({
     resolveActiveRpcUrl: () => Promise.resolve("https://rpc.example.com"),
+    executeWithFailover: (fn: (p: unknown) => unknown) =>
+      fn({
+        // biome-ignore lint/suspicious/noExplicitAny: test mock for ethers Contract constructor
+      } as any),
   });
   mockResolveOrgContext.mockResolvedValue({
     success: true,

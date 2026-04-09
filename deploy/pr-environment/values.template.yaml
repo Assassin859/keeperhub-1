@@ -135,6 +135,12 @@ env:
   METRICS_COLLECTOR:
     type: kv
     value: "prometheus"
+  RPC_PROBE_INTERVAL_MS:
+    type: kv
+    value: "30000"
+  RPC_PROBE_TIMEOUT_MS:
+    type: kv
+    value: "15000"
   NODE_OPTIONS:
     type: kv
     value: "--enable-source-maps --trace-warnings --trace-uncaught --trace-exit"

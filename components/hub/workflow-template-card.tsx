@@ -1,6 +1,6 @@
 "use client";
 
-import { Copy, Eye, Star } from "lucide-react";
+import { ArrowBigDown, ArrowBigUp, Copy, Eye, Star } from "lucide-react";
 import type { MouseEvent } from "react";
 import {
   Tooltip,
@@ -8,24 +8,105 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { SavedWorkflow } from "@/lib/api-client";
+import type { VoteDirection } from "@/lib/workflow/votes";
 import { WorkflowMiniMap } from "./workflow-mini-map";
 
 type WorkflowTemplateCardProps = {
   workflow: SavedWorkflow;
   isDuplicating: boolean;
   isFeatured?: boolean;
+  score?: number;
+  userVote?: VoteDirection | null;
   className?: string;
   onDuplicate: (e: MouseEvent) => void;
   onPreview: (e: MouseEvent) => void;
+  onVote?: (direction: VoteDirection) => void;
 };
+
+function voteColorClass(userVote: VoteDirection | null): string {
+  if (userVote === "upvote") {
+    return "text-green-400";
+  }
+  if (userVote === "downvote") {
+    return "text-red-400";
+  }
+  return "text-muted-foreground";
+}
+
+function scoreColorClass(score: number): string {
+  if (score > 0) {
+    return "text-green-400/80";
+  }
+  if (score < 0) {
+    return "text-red-400/80";
+  }
+  return "text-muted-foreground";
+}
+
+function VoteButtons({
+  score,
+  userVote,
+  onVote,
+}: {
+  score: number;
+  userVote: VoteDirection | null;
+  onVote: (direction: VoteDirection) => void;
+}): React.ReactElement {
+  return (
+    <div className="flex items-center gap-0.5">
+      <button
+        aria-label="Upvote"
+        className={`rounded p-0.5 transition-colors duration-150 ${
+          userVote === "upvote"
+            ? "text-green-400"
+            : "text-muted-foreground/50 hover:text-green-400"
+        }`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onVote("upvote");
+        }}
+        type="button"
+      >
+        <ArrowBigUp
+          className={`size-4 ${userVote === "upvote" ? "fill-green-400" : ""}`}
+        />
+      </button>
+      <span
+        className={`min-w-[1rem] text-center font-medium text-[11px] tabular-nums transition-colors duration-150 ${voteColorClass(userVote)}`}
+      >
+        {score}
+      </span>
+      <button
+        aria-label="Downvote"
+        className={`rounded p-0.5 transition-colors duration-150 ${
+          userVote === "downvote"
+            ? "text-red-400"
+            : "text-muted-foreground/50 hover:text-red-400"
+        }`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onVote("downvote");
+        }}
+        type="button"
+      >
+        <ArrowBigDown
+          className={`size-4 ${userVote === "downvote" ? "fill-red-400" : ""}`}
+        />
+      </button>
+    </div>
+  );
+}
 
 export function WorkflowTemplateCard({
   workflow,
   isDuplicating,
   isFeatured = false,
+  score = 0,
+  userVote = null,
   className,
   onDuplicate,
   onPreview,
+  onVote,
 }: WorkflowTemplateCardProps): React.ReactElement {
   return (
     <article
@@ -50,6 +131,18 @@ export function WorkflowTemplateCard({
             <p className="mt-1.5 line-clamp-3 text-muted-foreground/80 text-xs leading-relaxed">
               {workflow.description}
             </p>
+          )}
+          {score !== 0 && (
+            <div className="mt-2 flex items-center gap-1">
+              <ArrowBigUp
+                className={`size-3.5 ${score > 0 ? "fill-green-400/60 text-green-400" : "text-muted-foreground/40"}`}
+              />
+              <span
+                className={`font-medium text-xs tabular-nums ${scoreColorClass(score)}`}
+              >
+                {score}
+              </span>
+            </div>
           )}
         </div>
 
@@ -92,8 +185,8 @@ export function WorkflowTemplateCard({
         )}
       </div>
 
-      <div className="pointer-events-none absolute inset-0 flex items-end bg-gradient-to-t from-[var(--color-hub-card)] via-[var(--color-hub-card)]/80 via-30% to-transparent opacity-0 transition-opacity duration-200 group-hover:pointer-events-auto group-hover:opacity-100 motion-reduce:transition-none">
-        <div className="flex w-full gap-2 p-4 pt-12">
+      <div className="pointer-events-none absolute inset-0 flex items-end bg-gradient-to-t from-[var(--color-hub-card)] via-[var(--color-hub-card)] via-60% to-transparent opacity-0 transition-opacity duration-200 group-hover:pointer-events-auto group-hover:opacity-100 motion-reduce:transition-none">
+        <div className="flex w-full items-center gap-2 p-4 pt-12">
           <button
             className="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg bg-[var(--color-text-accent)] font-medium text-[#0a0f14] text-xs transition-colors hover:bg-[var(--color-text-accent)]/90 disabled:opacity-50"
             disabled={isDuplicating}
@@ -111,6 +204,13 @@ export function WorkflowTemplateCard({
             <Eye className="size-3" />
             Preview
           </button>
+          {onVote && (
+            <VoteButtons
+              onVote={onVote}
+              score={score}
+              userVote={userVote}
+            />
+          )}
         </div>
       </div>
     </article>

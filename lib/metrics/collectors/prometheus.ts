@@ -382,89 +382,160 @@ const sessionActive = getOrCreateGauge(
   []
 );
 
+// Hub vote metrics (DB-sourced)
+const hubVotesTotal = getOrCreateGauge(
+  dbRegistry,
+  "keeperhub_hub_votes_total",
+  "Total hub workflow votes by direction",
+  ["direction"]
+);
+
+const hubWorkflowScore = getOrCreateGauge(
+  dbRegistry,
+  "keeperhub_hub_workflow_score",
+  "Top hub workflow scores",
+  ["workflow_id"]
+);
+
+const hubWorkflowClones = getOrCreateGauge(
+  dbRegistry,
+  "keeperhub_hub_workflow_clones",
+  "Top cloned hub workflows",
+  ["workflow_id"]
+);
+
+const hubUserVotesTotal = getOrCreateGauge(
+  dbRegistry,
+  "keeperhub_hub_user_votes_total",
+  "Top voters by vote count",
+  ["user_id"]
+);
+
 // RPC failover metrics → apiRegistry (per-pod in-memory, scrape all pods)
-const RPC_LABELS = ["chain"];
+// Per-request counters include "operation" label (read/write)
+const RPC_CHAIN_LABELS = ["chain"];
+const RPC_OPERATION_LABELS = ["chain", "operation"];
 
 const rpcPrimaryAttempts = getOrCreateCounter(
   apiRegistry,
   "keeperhub_rpc_primary_attempts_total",
   "Total RPC requests attempted against primary endpoint",
-  RPC_LABELS
+  RPC_OPERATION_LABELS
 );
 
 const rpcPrimaryFailures = getOrCreateCounter(
   apiRegistry,
   "keeperhub_rpc_primary_failures_total",
   "Total RPC request failures on primary endpoint",
-  RPC_LABELS
+  RPC_OPERATION_LABELS
 );
 
 const rpcFallbackAttempts = getOrCreateCounter(
   apiRegistry,
   "keeperhub_rpc_fallback_attempts_total",
   "Total RPC requests attempted against fallback endpoint",
-  RPC_LABELS
+  RPC_OPERATION_LABELS
 );
 
 const rpcFallbackFailures = getOrCreateCounter(
   apiRegistry,
   "keeperhub_rpc_fallback_failures_total",
   "Total RPC request failures on fallback endpoint",
-  RPC_LABELS
+  RPC_OPERATION_LABELS
 );
 
 const rpcFailoverEvents = getOrCreateCounter(
   apiRegistry,
   "keeperhub_rpc_failover_events_total",
   "Total times primary failed and traffic switched to fallback",
-  RPC_LABELS
+  RPC_CHAIN_LABELS
 );
 
 const rpcRecoveryEvents = getOrCreateCounter(
   apiRegistry,
   "keeperhub_rpc_recovery_events_total",
   "Total times primary recovered and traffic switched back from fallback",
-  RPC_LABELS
+  RPC_CHAIN_LABELS
 );
 
 const rpcBothFailedEvents = getOrCreateCounter(
   apiRegistry,
   "keeperhub_rpc_both_failed_total",
   "Total times both primary and fallback endpoints failed",
-  RPC_LABELS
+  RPC_CHAIN_LABELS
 );
 
 const rpcCurrentProvider = getOrCreateGauge(
   apiRegistry,
   "keeperhub_rpc_using_fallback",
   "Whether the chain is currently using the fallback RPC (1=fallback, 0=primary)",
-  RPC_LABELS
+  RPC_CHAIN_LABELS
 );
 
 const rpcHealthState = getOrCreateGauge(
   apiRegistry,
   "keeperhub_rpc_health_state",
   "RPC health state per chain (0=primary/healthy, 1=fallback/degraded, 2=both_failed/down)",
-  RPC_LABELS
+  RPC_CHAIN_LABELS
 );
 
-const RPC_PROVIDER_LABELS = ["chain", "provider"];
+const RPC_PROVIDER_OPERATION_LABELS = ["chain", "provider", "operation"];
 
 const rpcLatency = getOrCreateHistogram(
   apiRegistry,
   "keeperhub_rpc_latency_ms",
   "RPC request latency in milliseconds per chain and provider",
-  RPC_PROVIDER_LABELS,
+  RPC_PROVIDER_OPERATION_LABELS,
   [10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10_000, 30_000]
 );
 
-const RPC_ERROR_LABELS = ["chain", "provider", "error_type"];
+const RPC_ERROR_OPERATION_LABELS = [
+  "chain",
+  "provider",
+  "error_type",
+  "operation",
+];
 
 const rpcErrorsByType = getOrCreateCounter(
   apiRegistry,
   "keeperhub_rpc_errors_by_type_total",
   "RPC errors broken down by type (timeout, rate_limit, connection, rpc_error)",
-  RPC_ERROR_LABELS
+  RPC_ERROR_OPERATION_LABELS
+);
+
+// Active RPC health probe metrics → apiRegistry
+const RPC_PROBE_LABELS = ["chain", "provider"];
+const RPC_PROBE_ERROR_LABELS = ["chain", "provider", "error_type"];
+
+const RPC_PROBE_UP_LABELS = ["chain", "provider", "endpoint"];
+
+const rpcProbeUp = getOrCreateGauge(
+  apiRegistry,
+  "keeperhub_rpc_probe_up",
+  "Whether the RPC endpoint responded to the health probe (1=up, 0=down)",
+  RPC_PROBE_UP_LABELS
+);
+
+const rpcProbeLatency = getOrCreateHistogram(
+  apiRegistry,
+  "keeperhub_rpc_probe_latency_ms",
+  "Active health probe latency in milliseconds",
+  RPC_PROBE_LABELS,
+  [10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10_000, 15_000]
+);
+
+const rpcProbeErrorsTotal = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_rpc_probe_errors_total",
+  "Active health probe errors by type",
+  RPC_PROBE_ERROR_LABELS
+);
+
+const rpcProbeLastSuccess = getOrCreateGauge(
+  apiRegistry,
+  "keeperhub_rpc_probe_last_success_timestamp",
+  "Unix timestamp of last successful probe per endpoint",
+  RPC_PROBE_LABELS
 );
 
 // API-process metrics → apiRegistry (per-pod in-memory, scrape all pods)
@@ -819,6 +890,36 @@ export const prometheusMetricsCollector: MetricsCollector = {
   },
 };
 
+/**
+ * Update hub vote gauges from database stats.
+ * Extracted from updateDbMetrics to reduce cognitive complexity.
+ */
+function updateHubVoteMetrics(voteStats: {
+  totalUpvotes: number;
+  totalDownvotes: number;
+  topWorkflows: { workflowId: string; score: number }[];
+  mostClonedWorkflows: { workflowId: string; cloneCount: number }[];
+  topVoters: { userId: string; voteCount: number }[];
+}): void {
+  hubVotesTotal.set({ direction: "upvote" }, voteStats.totalUpvotes);
+  hubVotesTotal.set({ direction: "downvote" }, voteStats.totalDownvotes);
+
+  hubWorkflowScore.reset();
+  for (const wf of voteStats.topWorkflows) {
+    hubWorkflowScore.set({ workflow_id: wf.workflowId }, wf.score);
+  }
+
+  hubWorkflowClones.reset();
+  for (const wf of voteStats.mostClonedWorkflows) {
+    hubWorkflowClones.set({ workflow_id: wf.workflowId }, wf.cloneCount);
+  }
+
+  hubUserVotesTotal.reset();
+  for (const voter of voteStats.topVoters) {
+    hubUserVotesTotal.set({ user_id: voter.userId }, voter.voteCount);
+  }
+}
+
 // Duration histogram bucket boundaries in milliseconds
 const WORKFLOW_DURATION_BUCKETS = [
   100, 250, 500, 1000, 2000, 5000, 10_000, 30_000,
@@ -846,6 +947,7 @@ export async function updateDbMetrics(): Promise<void> {
       getInfraStatsFromDb,
       getUserListFromDb,
       getOrgListFromDb,
+      getVoteStatsFromDb,
     } = await import("../db-metrics");
     const [
       workflowStats,
@@ -859,6 +961,7 @@ export async function updateDbMetrics(): Promise<void> {
       infraStats,
       userList,
       orgList,
+      voteStats,
     ] = await Promise.all([
       getWorkflowStatsFromDb(),
       getStepStatsFromDb(),
@@ -871,6 +974,7 @@ export async function updateDbMetrics(): Promise<void> {
       getInfraStatsFromDb(),
       getUserListFromDb(),
       getOrgListFromDb(),
+      getVoteStatsFromDb(),
     ]);
 
     // Update workflow execution counts by status (gauges - point-in-time snapshots)
@@ -1024,6 +1128,8 @@ export async function updateDbMetrics(): Promise<void> {
     chainEnabled.set(infraStats.chainsEnabled);
     paraWalletTotal.set(infraStats.paraWalletsTotal);
     sessionActive.set(infraStats.sessionsActive);
+
+    updateHubVoteMetrics(voteStats);
   } catch (error) {
     console.error("[Prometheus] Failed to update DB metrics:", error);
     // Don't throw - allow other metrics to still be returned
@@ -1064,6 +1170,11 @@ async function initRpcMetricsForAllChains(): Promise<void> {
     for (const chain of chainNames) {
       rpcHealthState.labels({ chain }).inc(0);
       rpcCurrentProvider.labels({ chain }).inc(0);
+      // Initialize per-operation counters so both read/write appear in Grafana
+      for (const operation of ["read", "write", "preflight"]) {
+        rpcPrimaryAttempts.labels({ chain, operation }).inc(0);
+        rpcPrimaryFailures.labels({ chain, operation }).inc(0);
+      }
       initializedChains.add(chain);
     }
   } catch {
@@ -1076,6 +1187,8 @@ async function initRpcMetricsForAllChains(): Promise<void> {
  */
 export async function getApiProcessMetrics(): Promise<string> {
   await initRpcMetricsForAllChains();
+  const { startRpcHealthProbe } = await import("../rpc-health-probe");
+  startRpcHealthProbe();
   return await apiRegistry.metrics();
 }
 
@@ -1101,4 +1214,11 @@ export const rpcMetrics = {
   healthState: rpcHealthState,
   latency: rpcLatency,
   errorsByType: rpcErrorsByType,
+};
+
+export const rpcProbeMetrics = {
+  up: rpcProbeUp,
+  latency: rpcProbeLatency,
+  errorsTotal: rpcProbeErrorsTotal,
+  lastSuccess: rpcProbeLastSuccess,
 };

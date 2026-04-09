@@ -198,12 +198,15 @@ export async function approveTokenCore(
   // Try gas-sponsored execution first (ERC-4337 via Pimlico)
   if (isSponsorshipSupported(chainId)) {
     try {
-      const signer = await initializeWalletSigner(organizationId, rpcUrl);
-      const readContract = new ethers.Contract(tokenAddress, ERC20_ABI, signer);
-      const [decimals, symbol] = await Promise.all([
-        readContract.decimals() as Promise<bigint>,
-        readContract.symbol() as Promise<string>,
-      ]);
+      const [decimals, symbol] = await rpcManager.executeWithFailover(
+        (p) => {
+          const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, p);
+          return Promise.all([
+            tokenContract.decimals() as Promise<bigint>,
+            tokenContract.symbol() as Promise<string>,
+          ]);
+        }
+      );
 
       let amountRaw: bigint;
       let approvedAmountDisplay: string;
@@ -287,15 +290,20 @@ export async function approveTokenCore(
       };
     }
 
-    // Create contract instance for pre-flight checks (decimals, symbol)
+    // Keep contract instance for error formatting in catch block
     const contract = new ethers.Contract(tokenAddress, ERC20_ABI, signer);
 
     try {
-      // Get token decimals and symbol
-      const [decimals, symbol] = await Promise.all([
-        contract.decimals() as Promise<bigint>,
-        contract.symbol() as Promise<string>,
-      ]);
+      // Get token decimals and symbol via failover
+      const [decimals, symbol] = await rpcManager.executeWithFailover(
+        (p) => {
+          const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, p);
+          return Promise.all([
+            tokenContract.decimals() as Promise<bigint>,
+            tokenContract.symbol() as Promise<string>,
+          ]);
+        }
+      );
 
       const decimalsNum = Number(decimals);
 
@@ -326,6 +334,7 @@ export async function approveTokenCore(
         triggerType: txContext.triggerType ?? "manual",
         gasOverrides: { multiplierOverride, gasLimitOverride },
         workflowId,
+        rpcManager,
       });
 
       const gasUsedUnits = receipt.gasUsed.toString();

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { authenticateAdmin, validateTestEmail } from "@/lib/admin-auth";
 
 const TEST_KEY = "kha_test-secret-key-12345";
@@ -15,6 +15,12 @@ describe("authenticateAdmin", () => {
   beforeEach(() => {
     // biome-ignore lint/performance/noDelete: delete is required to remove env vars (undefined assignment coerces to string)
     delete process.env.TEST_API_KEY;
+    vi.stubEnv("NODE_ENV", "");
+    vi.stubEnv("ALLOW_TEST_ENDPOINTS", "");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("should reject when TEST_API_KEY is not configured", () => {
@@ -63,6 +69,39 @@ describe("authenticateAdmin", () => {
 
   it("should accept correct key", () => {
     process.env.TEST_API_KEY = TEST_KEY;
+    const result = authenticateAdmin(createRequest(`Bearer ${TEST_KEY}`));
+    expect(result).toEqual({ authenticated: true });
+  });
+
+  it("should refuse in production even with a valid key", () => {
+    process.env.TEST_API_KEY = TEST_KEY;
+    vi.stubEnv("NODE_ENV", "production");
+    const result = authenticateAdmin(createRequest(`Bearer ${TEST_KEY}`));
+    expect(result).toEqual({
+      authenticated: false,
+      error: "Admin test endpoints disabled in production",
+    });
+  });
+
+  it("should refuse in production when ALLOW_TEST_ENDPOINTS is set to anything other than 'true'", () => {
+    process.env.TEST_API_KEY = TEST_KEY;
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ALLOW_TEST_ENDPOINTS", "1");
+    const result = authenticateAdmin(createRequest(`Bearer ${TEST_KEY}`));
+    expect(result.authenticated).toBe(false);
+  });
+
+  it("should accept in production when ALLOW_TEST_ENDPOINTS=true override is set", () => {
+    process.env.TEST_API_KEY = TEST_KEY;
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ALLOW_TEST_ENDPOINTS", "true");
+    const result = authenticateAdmin(createRequest(`Bearer ${TEST_KEY}`));
+    expect(result).toEqual({ authenticated: true });
+  });
+
+  it("should not refuse in non-production environments", () => {
+    process.env.TEST_API_KEY = TEST_KEY;
+    vi.stubEnv("NODE_ENV", "development");
     const result = authenticateAdmin(createRequest(`Bearer ${TEST_KEY}`));
     expect(result).toEqual({ authenticated: true });
   });

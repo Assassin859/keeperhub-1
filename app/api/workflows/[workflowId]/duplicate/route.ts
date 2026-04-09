@@ -214,6 +214,7 @@ export async function POST(
         organizationId,
         isAnonymous,
         visibility: "private", // Duplicated workflows are always private
+        sourceWorkflowId: sourceWorkflow.visibility === "public" ? workflowId : null,
       })
       .returning();
 
