@@ -12,7 +12,6 @@
 import "server-only";
 
 import { Connection } from "@solana/web3.js";
-import { ethers } from "ethers";
 import { classifyRpcError } from "@/lib/rpc-provider";
 import { rpcProbeMetrics } from "./collectors/prometheus";
 import type { ProbeChainConfig } from "./db-metrics";
@@ -22,7 +21,7 @@ function noop(): void {
 }
 
 const PROBE_INTERVAL_MS = Number(process.env.RPC_PROBE_INTERVAL_MS) || 30_000;
-const PROBE_TIMEOUT_MS = Number(process.env.RPC_PROBE_TIMEOUT_MS) || 15_000;
+const PROBE_TIMEOUT_MS = Number(process.env.RPC_PROBE_TIMEOUT_MS) || 5_000;
 
 type ProbeTarget = {
   chain: string;
@@ -60,7 +59,8 @@ async function runProbeAllChains(): Promise<void> {
   try {
     const { getEnabledChainConfigsForProbe } = await import("./db-metrics");
     chainConfigs = await getEnabledChainConfigsForProbe();
-  } catch {
+  } catch (error: unknown) {
+    console.error("RPC health probe: failed to load chain configs", error);
     return;
   }
 
@@ -118,13 +118,25 @@ async function probeEndpoint(target: ProbeTarget): Promise<void> {
 }
 
 async function probeEvm(url: string): Promise<void> {
-  const provider = new ethers.JsonRpcProvider(url, ethers.Network.from(1), {
-    staticNetwork: true,
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      method: "eth_blockNumber",
+      params: [],
+      id: 1,
+    }),
+    signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
   });
-  try {
-    await withTimeout(provider.getBlockNumber(), PROBE_TIMEOUT_MS);
-  } finally {
-    provider.destroy();
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  const data: { error?: { message?: string } } = await response.json();
+  if (data.error) {
+    throw new Error(data.error.message ?? "RPC error");
   }
 }
 

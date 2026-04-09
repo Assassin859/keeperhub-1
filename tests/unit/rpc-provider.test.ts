@@ -37,6 +37,7 @@ vi.mock("ethers", () => {
     ethers: {
       JsonRpcProvider: MockJsonRpcProvider,
       FetchRequest: MockFetchRequest,
+      Network: { from: (_chainId: number) => ({}) },
     },
     isError: (error: unknown, code: string): boolean =>
       typeof error === "object" &&

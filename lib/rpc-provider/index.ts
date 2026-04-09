@@ -177,6 +177,7 @@ export type RpcProviderConfig = {
   maxRetries?: number;
   timeoutMs?: number;
   chainName?: string;
+  chainId?: number;
 };
 
 export type RpcProviderMetrics = {
@@ -225,6 +226,7 @@ export class RpcProviderManager {
       maxRetries: config.maxRetries ?? RpcProviderManager.DEFAULT_MAX_RETRIES,
       timeoutMs: config.timeoutMs ?? RpcProviderManager.DEFAULT_TIMEOUT_MS,
       chainName: config.chainName ?? "unknown",
+      chainId: config.chainId ?? 1,
     };
 
     this.metricsCollector = metricsCollector;
@@ -243,8 +245,9 @@ export class RpcProviderManager {
     const fetchRequest = new ethers.FetchRequest(url);
     fetchRequest.timeout = 5000;
 
-    const provider = new ethers.JsonRpcProvider(fetchRequest, undefined, {
+    const provider = new ethers.JsonRpcProvider(fetchRequest, ethers.Network.from(this.config.chainId), {
       cacheTimeout: -1,
+      staticNetwork: true,
       // Disable JSON-RPC batching: ethers v6 batches concurrent calls into one
       // HTTP request by default. When the RPC proxy returns an incomplete batch
       // response, ethers throws BAD_DATA "missing response for request". Sending
@@ -670,6 +673,7 @@ export type CreateRpcProviderManagerOptions = {
   maxRetries?: number;
   timeoutMs?: number;
   chainName?: string;
+  chainId?: number;
   metricsCollector?: RpcMetricsCollector;
   onFailoverStateChange?: FailoverStateChangeCallback;
 };
@@ -688,6 +692,7 @@ export function createRpcProviderManager(
         maxRetries: options.maxRetries,
         timeoutMs: options.timeoutMs,
         chainName: options.chainName,
+        chainId: options.chainId,
       },
       metricsCollector: options.metricsCollector,
       onFailoverStateChange: options.onFailoverStateChange,
