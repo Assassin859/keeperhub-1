@@ -32,6 +32,9 @@ export const CONFIG = {
   chainRpcConfig: process.env.CHAIN_RPC_CONFIG || "",
   etherscanApiKey: process.env.ETHERSCAN_API_KEY || "",
 
+  workflowRunnerCollectMonitoring:
+    process.env.WORKFLOW_RUNNER_COLLECT_MONITORING !== "false",
+
   visibilityTimeout: 300,
   waitTimeSeconds: 20,
   maxMessages: 10,

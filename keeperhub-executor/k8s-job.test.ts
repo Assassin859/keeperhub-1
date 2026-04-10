@@ -75,6 +75,46 @@ describe("createWorkflowJob", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (CONFIG as Record<string, unknown>).etherscanApiKey = "test-etherscan-key";
+    delete process.env.METRICS_COLLECTOR;
+    delete process.env.EXECUTOR_METRICS_INGEST_URL;
+    delete process.env.METRICS_INGEST_TOKEN;
+  });
+
+  it("forwards metrics ingest env vars when set", async () => {
+    process.env.METRICS_COLLECTOR = "prometheus";
+    process.env.EXECUTOR_METRICS_INGEST_URL = "http://executor:3080";
+    process.env.METRICS_INGEST_TOKEN = "secret";
+
+    await createWorkflowJob({
+      workflowId: "wf-1",
+      executionId: "exec-1234abcd",
+      input: {},
+      triggerType: "schedule",
+    });
+
+    const envVars = getJobEnvVars(getSubmittedJob());
+    expect(getEnvVar(envVars, "METRICS_COLLECTOR")).toBe("prometheus");
+    expect(getEnvVar(envVars, "EXECUTOR_METRICS_INGEST_URL")).toBe(
+      "http://executor:3080"
+    );
+    expect(getEnvVar(envVars, "METRICS_INGEST_TOKEN")).toBe("secret");
+  });
+
+  it("omits metrics ingest env vars when unset", async () => {
+    await createWorkflowJob({
+      workflowId: "wf-1",
+      executionId: "exec-1234abcd",
+      input: {},
+      triggerType: "schedule",
+    });
+
+    const envVars = getJobEnvVars(getSubmittedJob());
+    expect(
+      envVars.find((v) => v.name === "EXECUTOR_METRICS_INGEST_URL")
+    ).toBeUndefined();
+    expect(
+      envVars.find((v) => v.name === "METRICS_INGEST_TOKEN")
+    ).toBeUndefined();
   });
 
   it("includes ETHERSCAN_API_KEY when configured", async () => {

@@ -31,6 +31,15 @@ serviceAccount:
 podAnnotations:
   reloader.stakater.com/auto: "true"
 
+serviceMonitors:
+  enabled: true
+  monitors:
+    - name: executor-metrics
+      port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+
 resources:
   limits:
     memory: 1Gi
@@ -73,9 +82,28 @@ env:
   HEALTH_PORT:
     type: kv
     value: "3080"
+  JOB_TTL_SECONDS:
+    type: kv
+    value: "120"
   JOB_ACTIVE_DEADLINE:
     type: kv
     value: "300"
+  EXECUTION_MODE:
+    type: kv
+    value: "isolated"
+  METRICS_COLLECTOR:
+    type: kv
+    value: "prometheus"
+  EXECUTOR_METRICS_INGEST_URL:
+    type: kv
+    value: "http://keeperhub-executor-staging.keeperhub.svc.cluster.local:3080"
+  METRICS_INGEST_TOKEN:
+    type: parameterStore
+    name: metrics-ingest-token
+    parameter_name: /eks/techops-staging/keeperhub/metrics-ingest-token
+  WORKFLOW_RUNNER_COLLECT_MONITORING:
+    type: kv
+    value: "false"
   PARA_API_KEY:
     type: parameterStore
     name: para-api-key

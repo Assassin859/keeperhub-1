@@ -103,7 +103,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       await tx.execute(sql`
         DELETE FROM workflow_execution_logs
         WHERE execution_id IN (
-          SELECT id FROM workflow_executions WHERE user_id = ANY(${userIds})
+          SELECT id FROM workflow_executions WHERE user_id::text = ANY(${userIds}::text[])
         )
       `);
 
@@ -130,7 +130,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         }
         await tx.execute(sql`
           DELETE FROM ${sql.identifier(row.table_name)}
-          WHERE ${sql.identifier(row.column_name)} = ANY(${userIds})
+          WHERE ${sql.identifier(row.column_name)}::text = ANY(${userIds}::text[])
         `);
       }
 

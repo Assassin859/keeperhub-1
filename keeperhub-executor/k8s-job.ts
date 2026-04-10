@@ -61,6 +61,25 @@ export async function createWorkflowJob(params: {
     ...(CONFIG.etherscanApiKey
       ? [{ name: "ETHERSCAN_API_KEY", value: CONFIG.etherscanApiKey }]
       : []),
+    ...(process.env.METRICS_COLLECTOR
+      ? [{ name: "METRICS_COLLECTOR", value: process.env.METRICS_COLLECTOR }]
+      : []),
+    ...(process.env.EXECUTOR_METRICS_INGEST_URL
+      ? [
+          {
+            name: "EXECUTOR_METRICS_INGEST_URL",
+            value: process.env.EXECUTOR_METRICS_INGEST_URL,
+          },
+        ]
+      : []),
+    ...(process.env.METRICS_INGEST_TOKEN
+      ? [
+          {
+            name: "METRICS_INGEST_TOKEN",
+            value: process.env.METRICS_INGEST_TOKEN,
+          },
+        ]
+      : []),
   ];
 
   const explicitNames = new Set(envVars.map((v) => v.name));
@@ -104,6 +123,11 @@ export async function createWorkflowJob(params: {
             "workflow-id": workflowId,
             "execution-id": executionId,
           },
+          ...(!CONFIG.workflowRunnerCollectMonitoring && {
+            annotations: {
+              "keeperhub.com/monitoring.exclude": "true",
+            },
+          }),
         },
         spec: {
           restartPolicy: "Never",
