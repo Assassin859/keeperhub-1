@@ -5,6 +5,66 @@ on:
     branches: ['**']
 
 jobs:
+  migrate-check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: keeperhub_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check for migration-relevant changes
+        id: changes
+        run: |
+          BASE_SHA=${{ github.event.pull_request.base.sha }}
+          HEAD_SHA=${{ github.event.pull_request.head.sha }}
+          CHANGED=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- 'drizzle/**' 'lib/db/schema*.ts' | head -1)
+          if [ -n "$CHANGED" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: ./.github/actions/setup-node-pnpm
+        if: steps.changes.outputs.relevant == 'true'
+
+      - name: Run workflow engine migrations
+        if: steps.changes.outputs.relevant == 'true'
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/keeperhub_test
+        run: pnpm db:setup-workflow
+
+      - name: Run app migrations
+        if: steps.changes.outputs.relevant == 'true'
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/keeperhub_test
+        run: pnpm db:migrate
+
+      - name: Check for snapshot drift
+        if: steps.changes.outputs.relevant == 'true'
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/keeperhub_test
+        run: |
+          npx drizzle-kit generate 2>&1 | tee /tmp/generate-output.txt
+          if ! grep -q "nothing to migrate" /tmp/generate-output.txt; then
+            echo "::error::Schema drift detected - run 'pnpm drizzle-kit generate' locally and commit the result."
+            exit 1
+          fi
+
   lint-typecheck:
     runs-on: ubuntu-latest
     steps:
