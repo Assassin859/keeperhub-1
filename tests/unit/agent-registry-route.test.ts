@@ -76,9 +76,10 @@ describe("GET /api/agent-registry", () => {
     const response = await GET(request);
     const json = await response.json();
     expect(Array.isArray(json.services)).toBe(true);
-    expect(json.services).toHaveLength(3);
+    expect(json.services).toHaveLength(4);
     const serviceNames = json.services.map((s: { name: string }) => s.name);
     expect(serviceNames).toContain("mcp");
+    expect(serviceNames).toContain("workflows");
     expect(serviceNames).toContain("web");
     expect(serviceNames).toContain("ens");
     const mcpService = json.services.find(

@@ -33,6 +33,10 @@ export async function GET(_request: Request): Promise<NextResponse> {
       image: "https://app.keeperhub.com/keeperhub_logo.png",
       services: [
         { name: "mcp", endpoint: "https://app.keeperhub.com/mcp" },
+        {
+          name: "workflows",
+          endpoint: "https://app.keeperhub.com/api/mcp/workflows",
+        },
         { name: "web", endpoint: "https://app.keeperhub.com" },
         { name: "ens", endpoint: "keeperhub.eth" },
       ],

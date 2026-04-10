@@ -28,18 +28,18 @@ describe("workflows table: v1.7 listing schema", () => {
     expect(isListedCol?.notNull).toBe(true);
   });
 
-  it("has partial unique index idx_workflows_org_slug", () => {
+  it("has globally unique partial index idx_workflows_listed_slug", () => {
     const idx = tableConfig.indexes.find(
-      (i) => i.config.name === "idx_workflows_org_slug"
+      (i) => i.config.name === "idx_workflows_listed_slug"
     );
     expect(idx).toBeDefined();
     expect(idx?.config.unique).toBe(true);
     expect(idx?.config.where).toBeDefined();
   });
 
-  it("partial unique index covers organizationId and listedSlug columns", () => {
+  it("partial unique index covers only listedSlug column", () => {
     const idx = tableConfig.indexes.find(
-      (i) => i.config.name === "idx_workflows_org_slug"
+      (i) => i.config.name === "idx_workflows_listed_slug"
     );
     expect(idx).toBeDefined();
     const colNames = idx?.config.columns.map((c) =>
@@ -47,8 +47,8 @@ describe("workflows table: v1.7 listing schema", () => {
         ? (c as { name?: string }).name
         : undefined
     );
-    expect(colNames).toContain("organization_id");
     expect(colNames).toContain("listed_slug");
+    expect(colNames).not.toContain("organization_id");
   });
 
   it("ListedWorkflowView excludes nodes, edges, and userId at type level", () => {

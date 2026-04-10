@@ -3,17 +3,11 @@ import { and, eq } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
 import { start } from "workflow/api";
 import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit";
-import { authenticateApiKey } from "@/lib/api-key-auth";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { db } from "@/lib/db";
-import { organization, workflowExecutions, workflows } from "@/lib/db/schema";
+import { workflowExecutions, workflows } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { authenticateOAuthToken } from "@/lib/mcp/oauth-auth";
-import {
-  checkIpRateLimit,
-  checkMcpRateLimit,
-  getClientIp,
-} from "@/lib/mcp/rate-limit";
+import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
 import { executeWorkflow } from "@/lib/workflow-executor.workflow";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow-store";
 import {
@@ -173,28 +167,12 @@ async function createAndStartExecution(
 }
 
 async function lookupWorkflow(
-  slug: string,
-  orgSlug?: string
+  slug: string
 ): Promise<CallRouteWorkflow | null> {
-  const filters = [
-    eq(workflows.listedSlug, slug),
-    eq(workflows.isListed, true),
-  ];
-
-  if (orgSlug) {
-    const rows = await db
-      .select(CALL_ROUTE_COLUMNS)
-      .from(workflows)
-      .innerJoin(organization, eq(workflows.organizationId, organization.id))
-      .where(and(...filters, eq(organization.slug, orgSlug)))
-      .limit(1);
-    return rows[0] ?? null;
-  }
-
   const rows = await db
     .select(CALL_ROUTE_COLUMNS)
     .from(workflows)
-    .where(and(...filters))
+    .where(and(eq(workflows.listedSlug, slug), eq(workflows.isListed, true)))
     .limit(1);
   return rows[0] ?? null;
 }
@@ -263,64 +241,8 @@ async function handleTimeoutReconciliation(
 
 // Pre-auth IP backstop: prevents anonymous junk traffic from reaching DB lookup.
 // In-memory per-pod; effective limit is LIMIT * num_replicas. The real per-caller
-// rate limit happens post-auth via checkMcpRateLimit(orgId), which is also
-// per-pod but keys on the authenticated org rather than IP.
 const CALL_RATE_LIMIT = 30;
 const CALL_RATE_WINDOW_MS = 60_000;
-
-type AuthContext = { organizationId: string };
-
-/**
- * Free and write workflows require an API key (or MCP OAuth token). Paid
- * workflows skip this gate because the x402 PAYMENT-SIGNATURE is itself the
- * authentication: proving you paid USDC is proof of caller identity.
- *
- * Mirrors validateApiKey() from app/api/execute/_lib/auth.ts but inlined to
- * avoid a "server-only" import boundary that breaks unit tests.
- */
-async function authenticateNonPaidCall(
-  request: Request
-): Promise<{ context: AuthContext } | { error: NextResponse }> {
-  let context: AuthContext | null = null;
-
-  const oauthResult = authenticateOAuthToken(request);
-  if (oauthResult.authenticated && oauthResult.organizationId) {
-    context = { organizationId: oauthResult.organizationId };
-  } else {
-    const apiKeyResult = await authenticateApiKey(request);
-    if (apiKeyResult.authenticated && apiKeyResult.organizationId) {
-      context = { organizationId: apiKeyResult.organizationId };
-    }
-  }
-
-  if (!context) {
-    return {
-      error: NextResponse.json(
-        {
-          error:
-            "Authentication required. Provide an Authorization: Bearer kh_... header.",
-        },
-        { status: 401, headers: corsHeaders }
-      ),
-    };
-  }
-  const orgRateCheck = checkMcpRateLimit(context.organizationId);
-  if (!orgRateCheck.allowed) {
-    return {
-      error: NextResponse.json(
-        { error: "Too many requests" },
-        {
-          status: 429,
-          headers: {
-            ...corsHeaders,
-            "Retry-After": String(orgRateCheck.retryAfter),
-          },
-        }
-      ),
-    };
-  }
-  return { context };
-}
 
 function checkCallRateLimit(request: Request): NextResponse | null {
   const clientIp = getClientIp(request);
@@ -494,10 +416,6 @@ async function handleReadWorkflow(
 
   const price = Number(workflow.priceUsdcPerCall ?? "0");
   if (price <= 0) {
-    const auth = await authenticateNonPaidCall(request);
-    if ("error" in auth) {
-      return auth.error;
-    }
     return createAndStartExecution(workflow, body);
   }
 
@@ -515,9 +433,8 @@ export async function POST(
     }
 
     const { slug } = await params;
-    const orgSlug = new URL(request.url).searchParams.get("org") ?? undefined;
 
-    const workflow = await lookupWorkflow(slug, orgSlug);
+    const workflow = await lookupWorkflow(slug);
     if (!workflow) {
       return NextResponse.json(
         { error: "Workflow not found" },
@@ -526,10 +443,6 @@ export async function POST(
     }
 
     if (workflow.workflowType === "write") {
-      const auth = await authenticateNonPaidCall(request);
-      if ("error" in auth) {
-        return auth.error;
-      }
       return handleWriteWorkflow(request, workflow);
     }
 

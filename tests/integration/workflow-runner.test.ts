@@ -351,8 +351,13 @@ describe("workflow-runner graceful shutdown timing", () => {
 
       // Should exit within 25s (our timeout) + some buffer
       expect(elapsed).toBeLessThan(27_000);
-      // Exit code 1 or killed by signal
-      expect(result.exitCode === 1 || result.signal === "SIGTERM").toBe(true);
+      // Exit code 1 (forced), 143 (128+SIGTERM), or signal SIGTERM depending
+      // on OS/Node version behaviour when a SIGTERM is received.
+      expect(
+        result.exitCode === 1 ||
+          result.exitCode === 143 ||
+          result.signal === "SIGTERM"
+      ).toBe(true);
     }, 35_000); // Test timeout 35s
   });
 

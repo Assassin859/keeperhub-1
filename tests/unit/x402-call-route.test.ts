@@ -432,16 +432,17 @@ describe("POST /api/mcp/workflows/[slug]/call", () => {
     expect(body.executionId).toBe("exec-schema-ok");
   });
 
-  it("Test 13: free workflow without API key returns 401", async () => {
+  it("Test 13: free workflow without API key succeeds (publicly callable)", async () => {
     setUnauthenticated();
     setupDbSelectWorkflow(FREE_WORKFLOW);
+    setupDbInsertExecution("exec-free-noauth");
     const { POST } = await import("@/app/api/mcp/workflows/[slug]/call/route");
     const request = makeRequest("test-workflow");
     const params = Promise.resolve({ slug: "test-workflow" });
     const response = await POST(request, { params });
-    expect(response.status).toBe(401);
-    // The DB lookup happened, but no execution was created.
-    expect(mockDbInsert).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.executionId).toBe("exec-free-noauth");
   });
 
   it("Test 14: paid workflow does NOT require API key (x402 is the auth)", async () => {

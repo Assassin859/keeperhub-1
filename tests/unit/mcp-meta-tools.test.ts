@@ -246,9 +246,9 @@ describe("call_workflow tool behavior", () => {
     return tool.handler(args);
   }
 
-  it("Test 17: call_workflow with read workflow identifier forwards to POST /api/mcp/workflows/{slug}/call", async () => {
+  it("Test 17: call_workflow forwards slug to POST /api/mcp/workflows/{slug}/call", async () => {
     await invokeCallWorkflow({
-      identifier: "my-org/my-workflow",
+      slug: "my-workflow",
       inputs: { amount: "100" },
     });
     const fetchMock = vi.mocked(globalThis.fetch);
@@ -259,34 +259,21 @@ describe("call_workflow tool behavior", () => {
     expect(options.method).toBe("POST");
   });
 
-  it("Test 18: call_workflow parses 'org-slug/workflow-slug' -- uses workflow-slug for call route", async () => {
+  it("Test 18: call_workflow uses slug directly without org prefix", async () => {
     await invokeCallWorkflow({
-      identifier: "keeperhub-org/usdc-transfer",
+      slug: "usdc-transfer",
       inputs: {},
     });
     const fetchMock = vi.mocked(globalThis.fetch);
     const calledUrl = fetchMock.mock.calls[0][0] as string;
     expect(calledUrl).toContain("/api/mcp/workflows/usdc-transfer/call");
-    expect(calledUrl).not.toContain("keeperhub-org/call");
+    expect(calledUrl).not.toContain("?org=");
   });
 
-  it("Test 19: call_workflow with invalid identifier (no slash) returns error", async () => {
-    const result = (await invokeCallWorkflow({
-      identifier: "no-slash-here",
-      inputs: {},
-    })) as {
-      content: Array<{ type: string; text: string }>;
-      isError?: boolean;
-    };
-    expect(result.isError).toBe(true);
-    const parsed = JSON.parse(result.content[0].text) as { error: string };
-    expect(parsed.error).toContain("Invalid identifier");
-  });
-
-  it("Test 20: call_workflow sends inputs as POST body", async () => {
+  it("Test 19: call_workflow sends inputs as POST body", async () => {
     const inputs = { amount: "50", recipient: "0xABC" };
     await invokeCallWorkflow({
-      identifier: "org/workflow",
+      slug: "my-workflow",
       inputs,
     });
     const fetchMock = vi.mocked(globalThis.fetch);
@@ -296,9 +283,9 @@ describe("call_workflow tool behavior", () => {
     expect(body.recipient).toBe("0xABC");
   });
 
-  it("Test 21: call_workflow returns content text with JSON response", async () => {
+  it("Test 20: call_workflow returns content text with JSON response", async () => {
     const result = (await invokeCallWorkflow({
-      identifier: "org/workflow",
+      slug: "my-workflow",
       inputs: {},
     })) as { content: Array<{ type: string; text: string }> };
     expect(result.content).toHaveLength(1);
@@ -309,7 +296,7 @@ describe("call_workflow tool behavior", () => {
     expect(parsed.executionId).toBe("exec-1");
   });
 
-  it("Test 22: call_workflow for write workflow returns calldata response from call route", async () => {
+  it("Test 21: call_workflow for write workflow returns calldata response from call route", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -327,7 +314,7 @@ describe("call_workflow tool behavior", () => {
       })
     );
     const result = (await invokeCallWorkflow({
-      identifier: "org/write-workflow",
+      slug: "write-workflow",
       inputs: { recipient: "0xABC" },
     })) as { content: Array<{ type: string; text: string }> };
     const parsed = JSON.parse(result.content[0].text) as {
@@ -338,18 +325,18 @@ describe("call_workflow tool behavior", () => {
     expect(parsed.to).toBe("0xCONTRACT");
   });
 
-  it("Test 23: call_workflow with scope 'mcp:write' is allowed", async () => {
+  it("Test 22: call_workflow with scope 'mcp:write' is allowed", async () => {
     const result = (await invokeCallWorkflow(
-      { identifier: "org/workflow", inputs: {} },
+      { slug: "my-workflow", inputs: {} },
       "mcp:write"
     )) as { content: Array<{ type: string; text: string }> };
     const parsed = JSON.parse(result.content[0].text) as { error?: string };
     expect(parsed.error).not.toBe("Forbidden");
   });
 
-  it("Test 24: call_workflow with scope 'mcp:read' is denied", async () => {
+  it("Test 23: call_workflow with scope 'mcp:read' is denied", async () => {
     const result = (await invokeCallWorkflow(
-      { identifier: "org/workflow", inputs: {} },
+      { slug: "my-workflow", inputs: {} },
       "mcp:read"
     )) as {
       content: Array<{ type: string; text: string }>;
@@ -358,14 +345,14 @@ describe("call_workflow tool behavior", () => {
     expect(parsed.error).toBe("Forbidden");
   });
 
-  it("Test 25: call_workflow identifier with multiple slashes uses first slash as split point", async () => {
+  it("Test 24: call_workflow encodes slug in URL", async () => {
     await invokeCallWorkflow({
-      identifier: "my-org/my-workflow/extra",
+      slug: "my workflow+special",
       inputs: {},
     });
     const fetchMock = vi.mocked(globalThis.fetch);
     const calledUrl = fetchMock.mock.calls[0][0] as string;
-    expect(calledUrl).toContain("/api/mcp/workflows/my-workflow/extra/call");
+    expect(calledUrl).toContain("/api/mcp/workflows/my%20workflow%2Bspecial/call");
   });
 });
 

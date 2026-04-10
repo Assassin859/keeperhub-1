@@ -208,7 +208,7 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
 
     expect(response.status).toBe(400);
     const data = await response.json();
-    expect(data.error).toContain("already used by another workflow");
+    expect(data.error).toContain("already in use");
   });
 
   it("LIST-05: PATCH with priceUsdcPerCall field is accepted and returned", async () => {

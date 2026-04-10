@@ -24,7 +24,7 @@ jobs:
       AWS_ECR_NAME: keeperhub-docs-${{ github.ref == 'refs/heads/prod' && 'prod' || 'staging' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -76,7 +76,7 @@ jobs:
 
       - name: Deploying Docs to Kubernetes with Helm
         id: deploy
-        uses: bitovi/github-actions-deploy-eks-helm@v1.2.10
+        uses: bitovi/github-actions-deploy-eks-helm@v1.2.12
         with:
           cluster-name: ${{ env.CLUSTER_NAME }}
           config-files: ${{ env.HELM_FILE }}

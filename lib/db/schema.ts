@@ -241,9 +241,9 @@ export const workflows = pgTable(
     chain: text("chain"),
   },
   (table) => [
-    // INFRA-02: partial unique index - (organizationId, listedSlug) where listedSlug IS NOT NULL
-    uniqueIndex("idx_workflows_org_slug")
-      .on(table.organizationId, table.listedSlug)
+    // INFRA-02: globally unique listed slug so external callers can invoke by slug alone
+    uniqueIndex("idx_workflows_listed_slug")
+      .on(table.listedSlug)
       .where(isNotNull(table.listedSlug)),
   ]
 );

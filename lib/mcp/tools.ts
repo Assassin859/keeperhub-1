@@ -1061,14 +1061,14 @@ export function registerMetaTools(
     )
   );
 
-  // Meta-tool 4: Invoke a listed workflow by org-slug/workflow-slug identifier
+  // Meta-tool 4: Invoke a listed workflow by its globally unique slug
   server.tool(
     "call_workflow",
     "Invoke a listed KeeperHub workflow. For read workflows, executes and returns the result. For write workflows, returns unsigned calldata {to, data, value} for the caller to submit. Use search_workflows first to discover available workflows.",
     {
-      identifier: z
+      slug: z
         .string()
-        .describe("Workflow identifier in 'org-slug/workflow-slug' format"),
+        .describe("The workflow's listed slug (listedSlug from search results)"),
       inputs: z
         .record(z.string(), z.unknown())
         .describe("Input fields as declared in the workflow's inputSchema"),
@@ -1076,27 +1076,10 @@ export function registerMetaTools(
     { title: "Call Workflow", readOnlyHint: false, destructiveHint: false },
     withScopeCheck("call_workflow", scope, async (args) =>
       withToolLogging("call_workflow", undefined, async () => {
-        const slashIdx = args.identifier.indexOf("/");
-        if (slashIdx === -1) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify({
-                  error:
-                    "Invalid identifier format. Expected 'org-slug/workflow-slug'.",
-                }),
-              },
-            ],
-            isError: true,
-          };
-        }
-        const orgSlug = args.identifier.slice(0, slashIdx);
-        const workflowSlug = args.identifier.slice(slashIdx + 1);
         const data = await callApi(
           baseUrl,
           authHeader,
-          `/api/mcp/workflows/${workflowSlug}/call?org=${encodeURIComponent(orgSlug)}`,
+          `/api/mcp/workflows/${encodeURIComponent(args.slug)}/call`,
           "POST",
           args.inputs
         );

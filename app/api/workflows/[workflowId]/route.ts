@@ -372,7 +372,7 @@ export async function PATCH(
       const cause = dbError instanceof Error ? dbError.cause : undefined;
       if (cause && typeof cause === "object" && "code" in cause && cause.code === "23505") {
         return NextResponse.json(
-          { error: "This slug is already used by another workflow in your organization. Choose a different slug." },
+          { error: "This slug is already in use. Choose a different slug." },
           { status: 400 }
         );
       }
