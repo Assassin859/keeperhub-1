@@ -20,6 +20,11 @@ export type WorkflowData = {
   enabled?: boolean;
   projectId?: string | null;
   tagId?: string | null;
+  isListed?: boolean;
+  listedSlug?: string | null;
+  inputSchema?: Record<string, unknown> | null;
+  outputMapping?: Record<string, unknown> | null;
+  priceUsdcPerCall?: string | null;
 };
 
 export type PublicTag = {
@@ -45,6 +50,12 @@ export type SavedWorkflow = WorkflowData & {
   featuredProtocol?: string | null;
   featuredProtocolOrder?: number;
   publicTags?: PublicTag[];
+  isListed?: boolean;
+  listedSlug?: string | null;
+  listedAt?: string | null;
+  inputSchema?: Record<string, unknown> | null;
+  outputMapping?: Record<string, unknown> | null;
+  priceUsdcPerCall?: string | null;
   score?: number;
   userVote?: VoteDirection | null;
   canVote?: boolean;

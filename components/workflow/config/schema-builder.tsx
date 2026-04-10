@@ -2,7 +2,9 @@
 
 import { Plus, Trash2 } from "lucide-react";
 import { nanoid } from "nanoid";
+import { useRef } from "react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -20,6 +22,7 @@ export type SchemaField = {
   itemType?: "string" | "number" | "boolean" | "object";
   fields?: SchemaField[];
   description?: string;
+  required?: boolean;
 };
 
 type SchemaBuilderProps = {
@@ -35,8 +38,13 @@ export function SchemaBuilder({
   disabled,
   level = 0,
 }: SchemaBuilderProps) {
+  const addButtonRef = useRef<HTMLButtonElement>(null);
+
   const addField = () => {
     onChange([...schema, { id: nanoid(), name: "", type: "string" }]);
+    requestAnimationFrame(() => {
+      addButtonRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    });
   };
 
   const resetDependentFields = (
@@ -221,11 +229,29 @@ export function SchemaBuilder({
                 value={field.description || ""}
               />
             </div>
+
+            <div className="flex items-center gap-2">
+              <Checkbox
+                checked={field.required ?? false}
+                disabled={disabled}
+                id={`field-required-${level}-${index}`}
+                onCheckedChange={(checked) =>
+                  updateField(index, { required: checked === true })
+                }
+              />
+              <Label
+                className="text-sm font-normal"
+                htmlFor={`field-required-${level}-${index}`}
+              >
+                Required
+              </Label>
+            </div>
           </div>
         );
       })}
 
       <Button
+        ref={addButtonRef}
         className="w-full"
         disabled={disabled}
         onClick={addField}

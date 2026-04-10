@@ -178,11 +178,12 @@ pnpm test:e2e               # E2E tests
 
 ## Database Migrations
 
-The build script (`scripts/migrate-prod.ts`) runs `pnpm db:migrate` (file-based migrations), **not** `db:push`. When adding or modifying database tables:
+The build script (`scripts/migrate-prod.ts`) runs `pnpm db:migrate` (file-based migrations), **not** `db:push`. Migration state is tracked in the `drizzle.__drizzle_migrations` table (schema `drizzle`, not `public`). When adding or modifying database tables:
 
 1. Update the Drizzle schema (e.g., `lib/db/schema-oauth.ts`)
 2. Run `pnpm drizzle-kit generate` to create a migration file in `drizzle/`
-3. Commit the migration file, snapshot, and journal together with the schema change
+3. Ensure the `when` timestamp in `drizzle/meta/_journal.json` is monotonically increasing (each entry must be greater than the previous) -- out-of-order timestamps cause `db:migrate` to fail silently
+4. Commit the migration file, snapshot, and journal together with the schema change
 
 Without the migration file, the table will not be created on deploy and you will get `relation does not exist` errors in staging/production.
 

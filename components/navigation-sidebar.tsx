@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CreditCard,
+  DollarSign,
   Globe,
   Info,
   List,
@@ -485,6 +486,12 @@ const NAV_ITEMS = [
     href: "/analytics" as string | null,
   },
   {
+    id: "earnings",
+    icon: DollarSign,
+    label: "Earnings",
+    href: "/earnings" as string | null,
+  },
+  {
     id: "billing",
     icon: CreditCard,
     label: "Billing",
@@ -562,6 +569,7 @@ export function NavigationSidebar(): React.ReactNode {
     typeof params.workflowId === "string" ? params.workflowId : undefined;
   const isHubPage = pathname === "/hub";
   const isAnalyticsPage = pathname === "/analytics";
+  const isEarningsPage = pathname === "/earnings";
   const isBillingPage = pathname === "/billing";
 
   const expanded = navState.state.sidebar;
@@ -687,6 +695,9 @@ export function NavigationSidebar(): React.ReactNode {
     if (id === "analytics") {
       return isAnalyticsPage;
     }
+    if (id === "earnings") {
+      return isEarningsPage;
+    }
     if (id === "billing") {
       return isBillingPage;
     }
@@ -784,6 +795,9 @@ export function NavigationSidebar(): React.ReactNode {
 
   const navItems = NAV_ITEMS.filter((item) => {
     if (item.id === "analytics") {
+      return !isAnonymous;
+    }
+    if (item.id === "earnings") {
       return !isAnonymous;
     }
     if (item.id === "billing") {

@@ -1,11 +1,10 @@
-import axios from "axios";
 import { KEEPERHUB_API_KEY, KEEPERHUB_API_URL } from "../config/environment";
 import type { SyncData } from "../types";
 import { logger } from "./logger";
 
 export async function fetchActiveWorkflows(): Promise<SyncData | null> {
   try {
-    const { data } = await axios.get<SyncData>(
+    const response = await fetch(
       `${KEEPERHUB_API_URL}/api/workflows/events?active=true`,
       {
         headers: {
@@ -14,7 +13,10 @@ export async function fetchActiveWorkflows(): Promise<SyncData | null> {
         },
       },
     );
-    return data;
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    return (await response.json()) as SyncData;
   } catch (error: any) {
     logger.warn(`Failed to fetch active workflows: ${error.message}`);
     return null;

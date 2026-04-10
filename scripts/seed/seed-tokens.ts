@@ -250,15 +250,13 @@ const TOKEN_CONFIGS: TokenConfig[] = [
 ];
 
 /**
- * Fetch token metadata from the blockchain
- * Uses CHAIN_RPC_CONFIG for RPC URLs (same as seed-chains.ts)
+ * Fetch ERC-20 metadata via a single provider.
+ * Throws on any RPC or contract-call failure.
  */
-async function fetchTokenMetadata(
-  chainId: number,
+async function fetchWithProvider(
+  rpcUrl: string,
   tokenAddress: string
 ): Promise<{ symbol: string; name: string; decimals: number }> {
-  const rpcUrl = getRpcUrlByChainId(chainId, "primary");
-
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   const contract = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
 
@@ -268,11 +266,32 @@ async function fetchTokenMetadata(
     contract.decimals() as Promise<bigint>,
   ]);
 
-  return {
-    symbol,
-    name,
-    decimals: Number(decimals),
-  };
+  return { symbol, name, decimals: Number(decimals) };
+}
+
+/**
+ * Fetch token metadata from the blockchain.
+ * Tries primary RPC first, falls back to the fallback URL on failure.
+ */
+async function fetchTokenMetadata(
+  chainId: number,
+  tokenAddress: string
+): Promise<{ symbol: string; name: string; decimals: number }> {
+  const primaryUrl = getRpcUrlByChainId(chainId, "primary");
+
+  try {
+    return await fetchWithProvider(primaryUrl, tokenAddress);
+  } catch (primaryError) {
+    const fallbackUrl = getRpcUrlByChainId(chainId, "fallback");
+    if (fallbackUrl === primaryUrl) {
+      throw primaryError;
+    }
+
+    console.warn(
+      `  Primary RPC failed, trying fallback for chain ${chainId}...`
+    );
+    return await fetchWithProvider(fallbackUrl, tokenAddress);
+  }
 }
 
 async function seedTokens() {

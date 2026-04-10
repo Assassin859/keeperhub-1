@@ -62,7 +62,7 @@ services:
   # ===========================================================================
   db:
     image: postgres:16-alpine
-    container_name: keeperhub-db
+    # container_name removed to allow worktrees to share or run independently
     hostname: db
     restart: unless-stopped
     environment:
@@ -87,7 +87,7 @@ services:
   # ===========================================================================
   localstack:
     image: localstack/localstack:latest
-    container_name: keeperhub-localstack
+    # container_name removed to allow worktrees to share or run independently
     hostname: localstack
     ports:
       - "4566:4566"
@@ -563,14 +563,18 @@ services:
 
 # =============================================================================
 # Volumes
+# External volumes allow worktrees to share the same Docker infrastructure
 # =============================================================================
 volumes:
   keeperhub_db_data:
     name: keeperhub_db_data
+    external: true
   keeperhub_node_modules:
     name: keeperhub_node_modules
+    external: true
   keeperhub_localstack_data:
     name: keeperhub_localstack_data
+    external: true
   keeperhub_test_db_data:
     name: keeperhub_test_db_data
   keeperhub_test_localstack_data:
@@ -580,6 +584,7 @@ volumes:
 
 # =============================================================================
 # Networks
+# External network allows worktrees to share the same Docker network
 # =============================================================================
 networks:
   default:

@@ -136,7 +136,7 @@ export const consoleMetricsCollector: RpcMetricsCollector = {
     ),
 };
 
-export const RPC_CONNECTION_ERROR_PATTERNS: ReadonlyArray<string> = [
+export const RPC_CONNECTION_ERROR_PATTERNS: readonly string[] = [
   "ECONNREFUSED",
   "ENOTFOUND",
   "ETIMEDOUT",

@@ -1,5 +1,4 @@
 import { SendMessageCommand } from "@aws-sdk/client-sqs";
-import axios from "axios";
 import {
   JWT_TOKEN_PASSWORD,
   JWT_TOKEN_USERNAME,
@@ -88,15 +87,17 @@ export class AbstractChain {
     payload.append("username", JWT_TOKEN_USERNAME);
     payload.append("password", JWT_TOKEN_PASSWORD);
 
-    const { data } = await axios.post(
-      `${KEEPERHUB_API_URL}/auth/token`,
-      payload,
-      {
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
+    const response = await fetch(`${KEEPERHUB_API_URL}/auth/token`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
       },
-    );
+      body: payload.toString(),
+    });
+    if (!response.ok) {
+      throw new Error(`Auth failed: HTTP ${response.status}`);
+    }
+    const data = await response.json();
 
     return data.access_token;
   }

@@ -298,6 +298,47 @@ const DEFAULT_CHAINS: NewChain[] = [
     isTestnet: getChainConfigValue("arbitrum-sepolia", "isTestnet", true),
     isEnabled: getChainConfigValue("arbitrum-sepolia", "isEnabled", true),
   },
+  // Avalanche chains
+  {
+    chainId: getChainConfigValue("avax-mainnet", "chainId", 43_114),
+    name: "Avalanche",
+    symbol: getChainConfigValue("avax-mainnet", "symbol", "AVAX"),
+    chainType: "evm",
+    defaultPrimaryRpc: getRpcUrlByChainId(43_114, "primary"),
+    defaultFallbackRpc: getRpcUrlByChainId(43_114, "fallback"),
+    defaultPrimaryWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[43_114].jsonKey,
+      type: "primary",
+    }),
+    defaultFallbackWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[43_114].jsonKey,
+      type: "fallback",
+    }),
+    isTestnet: getChainConfigValue("avax-mainnet", "isTestnet", false),
+    isEnabled: getChainConfigValue("avax-mainnet", "isEnabled", true),
+  },
+  {
+    chainId: getChainConfigValue("avax-fuji", "chainId", 43_113),
+    name: "Avalanche Fuji",
+    symbol: getChainConfigValue("avax-fuji", "symbol", "AVAX"),
+    chainType: "evm",
+    defaultPrimaryRpc: getRpcUrlByChainId(43_113, "primary"),
+    defaultFallbackRpc: getRpcUrlByChainId(43_113, "fallback"),
+    defaultPrimaryWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[43_113].jsonKey,
+      type: "primary",
+    }),
+    defaultFallbackWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[43_113].jsonKey,
+      type: "fallback",
+    }),
+    isTestnet: getChainConfigValue("avax-fuji", "isTestnet", true),
+    isEnabled: getChainConfigValue("avax-fuji", "isEnabled", true),
+  },
   // Solana chains (non-EVM - uses SolanaProviderManager)
   {
     chainId: getChainConfigValue("solana-mainnet", "chainId", 101),
@@ -469,6 +510,26 @@ const EXPLORER_CONFIG_TEMPLATES: Record<
     explorerAddressPath: "/address/{address}",
     explorerContractPath: "/address/{address}#code",
   },
+  // Avalanche C-Chain - Etherscan V2 (Snowtrace)
+  43114: {
+    chainType: "evm",
+    explorerUrl: "https://snowtrace.io",
+    explorerApiType: "etherscan",
+    explorerApiUrl: "https://api.etherscan.io/v2/api",
+    explorerTxPath: "/tx/{hash}",
+    explorerAddressPath: "/address/{address}",
+    explorerContractPath: "/address/{address}#code",
+  },
+  // Avalanche Fuji - Etherscan V2 (Snowtrace)
+  43113: {
+    chainType: "evm",
+    explorerUrl: "https://testnet.snowtrace.io",
+    explorerApiType: "etherscan",
+    explorerApiUrl: "https://api.etherscan.io/v2/api",
+    explorerTxPath: "/tx/{hash}",
+    explorerAddressPath: "/address/{address}",
+    explorerContractPath: "/address/{address}#code",
+  },
   // Solana Mainnet - Solscan
   101: {
     chainType: "solana",
@@ -551,6 +612,8 @@ async function seedChains() {
     "Arbitrum One": 42_161,
     "Polygon Amoy": 80_002,
     "Arbitrum Sepolia": 421_614,
+    Avalanche: 43_114,
+    "Avalanche Fuji": 43_113,
     Solana: 101,
     "Solana Devnet": 103,
   };

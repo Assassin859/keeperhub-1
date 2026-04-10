@@ -15,6 +15,7 @@ import {
   Save,
   Settings2,
   Square,
+  Store,
   Trash2,
   Undo2,
 } from "lucide-react";
@@ -33,6 +34,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { OrgSwitcher } from "@/components/organization/org-switcher";
 import { GoLiveOverlay } from "@/components/overlays/go-live-overlay";
+import { ListingOverlay } from "@/components/overlays/listing-overlay";
 import { Switch } from "@/components/ui/switch";
 import { BUILTIN_NODE_ID } from "@/lib/builtin-variables";
 import { isAnonymousUser } from "@/lib/is-anonymous";
@@ -50,7 +52,13 @@ import {
   clearWorkflowAtom,
   currentExecutionIdAtom,
   currentWorkflowIdAtom,
+  currentWorkflowInputSchemaAtom,
+  currentWorkflowIsListedAtom,
+  currentWorkflowListedAtAtom,
+  currentWorkflowListedSlugAtom,
   currentWorkflowNameAtom,
+  currentWorkflowOutputMappingAtom,
+  currentWorkflowPriceUsdcAtom,
   currentWorkflowPublicTagsAtom,
   currentWorkflowVisibilityAtom,
   deleteEdgeAtom,
@@ -787,6 +795,16 @@ function useWorkflowState() {
   const [allTags, setAllTags] = useState<Tag[]>([]);
   const [isEnabled, setIsEnabled] = useAtom(isWorkflowEnabled);
 
+  // v1.7 listing state
+  const [isListed, setIsListed] = useAtom(currentWorkflowIsListedAtom);
+  const [listedSlug, setListedSlug] = useAtom(currentWorkflowListedSlugAtom);
+  const listedAt = useAtomValue(currentWorkflowListedAtAtom);
+  const [inputSchema, setInputSchema] = useAtom(currentWorkflowInputSchemaAtom);
+  const [outputMapping, setOutputMapping] = useAtom(
+    currentWorkflowOutputMappingAtom
+  );
+  const [priceUsdc, setPriceUsdc] = useAtom(currentWorkflowPriceUsdcAtom);
+
   // Load all workflows and projects on mount
   useEffect(() => {
     const loadAllWorkflows = async () => {
@@ -855,6 +873,17 @@ function useWorkflowState() {
     setCurrentExecutionId,
     isEnabled,
     setIsEnabled,
+    isListed,
+    setIsListed,
+    listedSlug,
+    setListedSlug,
+    listedAt,
+    inputSchema,
+    setInputSchema,
+    outputMapping,
+    setOutputMapping,
+    priceUsdc,
+    setPriceUsdc,
   };
 }
 
@@ -893,6 +922,17 @@ function useWorkflowActions(state: ReturnType<typeof useWorkflowState>) {
     setTriggerExecute,
     router,
     session,
+    isListed,
+    setIsListed,
+    listedSlug,
+    setListedSlug,
+    listedAt,
+    inputSchema,
+    setInputSchema,
+    outputMapping,
+    setOutputMapping,
+    priceUsdc,
+    setPriceUsdc,
   } = state;
 
   const { handleSave, handleExecute, handleCancel, validateAndProceed } =
@@ -1096,6 +1136,30 @@ function useWorkflowActions(state: ReturnType<typeof useWorkflowState>) {
     });
   };
 
+  const handleOpenListing = (): void => {
+    if (!currentWorkflowId) {
+      return;
+    }
+    openOverlay(ListingOverlay, {
+      workflowId: currentWorkflowId,
+      workflowName,
+      nodes,
+      existingIsListed: isListed,
+      existingSlug: listedSlug,
+      existingListedAt: listedAt,
+      existingInputSchema: inputSchema,
+      existingOutputMapping: outputMapping,
+      existingPrice: priceUsdc,
+      onSave: (data) => {
+        setIsListed(data.isListed);
+        setListedSlug(data.listedSlug);
+        setInputSchema(data.inputSchema);
+        setOutputMapping(data.outputMapping);
+        setPriceUsdc(data.priceUsdcPerCall);
+      },
+    });
+  };
+
   const updateWorkflowEnabled = async (enabled: boolean) => {
     if (!currentWorkflowId) {
       return;
@@ -1175,6 +1239,7 @@ function useWorkflowActions(state: ReturnType<typeof useWorkflowState>) {
     handleEditPublicSettings, // keeperhub custom field //
     handleToggleEnabled,
     handleDuplicate,
+    handleOpenListing, // keeperhub custom field //
   };
 }
 
@@ -1350,6 +1415,9 @@ function ToolbarActions({
 
       {/* Visibility Toggle */}
       <VisibilityButton actions={actions} state={state} />
+
+      {/* Listing Button */}
+      <ListingButton actions={actions} state={state} />
 
       {shouldDisplayEnableWorkflowSwitch && (
         <button
@@ -1554,6 +1622,37 @@ function VisibilityButton({
         )}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+// Listing Button Component
+function ListingButton({
+  state,
+  actions,
+}: {
+  state: ReturnType<typeof useWorkflowState>;
+  actions: ReturnType<typeof useWorkflowActions>;
+}) {
+  return (
+    <div className="relative">
+      <Button
+        className={
+          state.isListed
+            ? "border border-keeperhub-green/20 text-keeperhub-green hover:bg-keeperhub-green/10"
+            : "border hover:bg-black/5 dark:hover:bg-white/5"
+        }
+        disabled={!state.currentWorkflowId || state.isGenerating}
+        onClick={() => actions.handleOpenListing()}
+        size="icon"
+        title="List on agent marketplace"
+        variant="secondary"
+      >
+        <Store className="size-4" />
+      </Button>
+      {state.isListed && (
+        <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-[var(--ds-green-accent)]" />
+      )}
+    </div>
   );
 }
 

@@ -222,6 +222,20 @@ env:
   FROM_ADDRESS:
     type: kv
     value: "noreply@keeperhub.com"
+  # v1.7 Agent-Callable Workflows
+  BASE_RPC_URL:
+    type: kv
+    value: "https://mainnet.base.org"
+  X402_FACILITATOR_URL:
+    type: kv
+    value: "https://api.cdp.coinbase.com/platform/v2/x402"
+  PLATFORM_FEE_PERCENT:
+    type: kv
+    value: "30"
+  REGISTRATION_PRIVATE_KEY:
+    type: parameterStore
+    name: registration-private-key
+    parameter_name: /eks/techops-staging/keeperhub/registration-private-key
   # Sentry
   SENTRY_DSN:
     type: parameterStore

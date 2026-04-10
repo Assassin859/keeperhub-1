@@ -45,6 +45,10 @@ export const PUBLIC_RPCS = {
   ARBITRUM_MAINNET_FALLBACK: "https://rpc.ankr.com/arbitrum",
   ARBITRUM_SEPOLIA: "https://sepolia-rollup.arbitrum.io/rpc",
   ARBITRUM_SEPOLIA_FALLBACK: "https://arbitrum-sepolia-rpc.publicnode.com",
+  AVAX_MAINNET: "https://api.avax.network/ext/bc/C/rpc",
+  AVAX_MAINNET_FALLBACK: "https://avalanche-c-chain-rpc.publicnode.com",
+  AVAX_FUJI: "https://api.avax-test.network/ext/bc/C/rpc",
+  AVAX_FUJI_FALLBACK: "https://avalanche-fuji-c-chain-rpc.publicnode.com",
   SOLANA_MAINNET: "https://api.mainnet-beta.solana.com",
   SOLANA_DEVNET: "https://api.devnet.solana.com",
 } as const;
@@ -157,6 +161,22 @@ export const CHAIN_CONFIG: Record<number, ChainConfigEntry> = {
     fallbackEnvKey: "CHAIN_ARBITRUM_SEPOLIA_FALLBACK_RPC",
     publicDefault: PUBLIC_RPCS.ARBITRUM_SEPOLIA,
     publicFallback: PUBLIC_RPCS.ARBITRUM_SEPOLIA_FALLBACK,
+  },
+  // Avalanche C-Chain
+  43114: {
+    jsonKey: "avax-mainnet",
+    envKey: "CHAIN_AVAX_MAINNET_PRIMARY_RPC",
+    fallbackEnvKey: "CHAIN_AVAX_MAINNET_FALLBACK_RPC",
+    publicDefault: PUBLIC_RPCS.AVAX_MAINNET,
+    publicFallback: PUBLIC_RPCS.AVAX_MAINNET_FALLBACK,
+  },
+  // Avalanche Fuji Testnet
+  43113: {
+    jsonKey: "avax-fuji",
+    envKey: "CHAIN_AVAX_FUJI_PRIMARY_RPC",
+    fallbackEnvKey: "CHAIN_AVAX_FUJI_FALLBACK_RPC",
+    publicDefault: PUBLIC_RPCS.AVAX_FUJI,
+    publicFallback: PUBLIC_RPCS.AVAX_FUJI_FALLBACK,
   },
   // Solana Mainnet
   101: {

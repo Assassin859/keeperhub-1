@@ -319,42 +319,47 @@ function TableSkeleton(): ReactNode {
 
 function Pagination({
   page,
-  totalPages,
+  pageSize,
+  total,
   onPageChange,
   loading,
 }: {
   page: number;
-  totalPages: number;
+  pageSize: number;
+  total: number;
   onPageChange: (page: number) => void;
   loading: boolean;
 }): ReactNode {
-  if (totalPages <= 1) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  if (total <= pageSize) {
     return null;
   }
 
+  const rangeStart = (page - 1) * pageSize + 1;
+  const rangeEnd = Math.min(page * pageSize, total);
+
   return (
-    <nav aria-label="Pagination" className="flex items-center gap-1">
+    <nav aria-label="Pagination" className="flex items-center gap-2">
+      <span className="font-medium text-muted-foreground text-xs tabular-nums">
+        {rangeStart.toLocaleString()}&ndash;{rangeEnd.toLocaleString()} of{" "}
+        {total.toLocaleString()}
+      </span>
       <Button
-        className="h-7 gap-1 px-2 text-xs"
+        className="size-7 p-0"
         disabled={page <= 1 || loading}
         onClick={() => onPageChange(page - 1)}
         size="sm"
         variant="ghost"
       >
         <ChevronLeft className="size-3.5" />
-        Prev
       </Button>
-      <span className="min-w-16 text-center font-medium text-muted-foreground text-xs tabular-nums">
-        {page} of {totalPages}
-      </span>
       <Button
-        className="h-7 gap-1 px-2 text-xs"
+        className="size-7 p-0"
         disabled={page >= totalPages || loading}
         onClick={() => onPageChange(page + 1)}
         size="sm"
         variant="ghost"
       >
-        Next
         <ChevronRight className="size-3.5" />
       </Button>
     </nav>
@@ -422,7 +427,6 @@ export function RunsTable(): ReactNode {
 
   const currentPage = runsData?.page ?? 1;
   const pageSize = runsData?.pageSize ?? 50;
-  const totalPages = runsData ? Math.ceil(runsData.total / pageSize) : 1;
 
   const handlePageChange = useCallback(
     async (newPage: number): Promise<void> => {
@@ -526,7 +530,8 @@ export function RunsTable(): ReactNode {
                 });
               }}
               page={currentPage}
-              totalPages={totalPages}
+              pageSize={pageSize}
+              total={runsData?.total ?? 0}
             />
           </CardTitle>
         </CardHeader>

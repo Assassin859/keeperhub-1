@@ -23,7 +23,13 @@ import type { IntegrationType } from "@/lib/types/integration";
 import {
   currentWorkflowDescriptionAtom,
   currentWorkflowIdAtom,
+  currentWorkflowInputSchemaAtom,
+  currentWorkflowIsListedAtom,
+  currentWorkflowListedAtAtom,
+  currentWorkflowListedSlugAtom,
   currentWorkflowNameAtom,
+  currentWorkflowOutputMappingAtom,
+  currentWorkflowPriceUsdcAtom,
   currentWorkflowProjectIdAtom,
   currentWorkflowPublicTagsAtom,
   currentWorkflowTagIdAtom,
@@ -158,6 +164,18 @@ const WorkflowEditor = ({ params }: WorkflowPageProps) => {
   const setCurrentWorkflowPublicTags = useSetAtom(
     currentWorkflowPublicTagsAtom
   );
+  const setCurrentWorkflowIsListed = useSetAtom(currentWorkflowIsListedAtom);
+  const setCurrentWorkflowListedSlug = useSetAtom(
+    currentWorkflowListedSlugAtom
+  );
+  const setCurrentWorkflowListedAt = useSetAtom(currentWorkflowListedAtAtom);
+  const setCurrentWorkflowInputSchema = useSetAtom(
+    currentWorkflowInputSchemaAtom
+  );
+  const setCurrentWorkflowOutputMapping = useSetAtom(
+    currentWorkflowOutputMappingAtom
+  );
+  const setCurrentWorkflowPriceUsdc = useSetAtom(currentWorkflowPriceUsdcAtom);
   const setSelectedNode = useSetAtom(selectedNodeAtom);
   const setActiveTab = useSetAtom(propertiesPanelActiveTabAtom);
   const setNewlyCreatedNodeId = useSetAtom(newlyCreatedNodeIdAtom);
@@ -374,6 +392,32 @@ const WorkflowEditor = ({ params }: WorkflowPageProps) => {
     ]
   );
 
+  const hydrateListingAtoms = useCallback(
+    (workflow: {
+      isListed?: boolean;
+      listedSlug?: string | null;
+      listedAt?: string | null;
+      inputSchema?: Record<string, unknown> | null;
+      outputMapping?: Record<string, unknown> | null;
+      priceUsdcPerCall?: string | null;
+    }) => {
+      setCurrentWorkflowIsListed(workflow.isListed ?? false);
+      setCurrentWorkflowListedSlug(workflow.listedSlug ?? null);
+      setCurrentWorkflowListedAt(workflow.listedAt ?? null);
+      setCurrentWorkflowInputSchema(workflow.inputSchema ?? null);
+      setCurrentWorkflowOutputMapping(workflow.outputMapping ?? null);
+      setCurrentWorkflowPriceUsdc(workflow.priceUsdcPerCall ?? null);
+    },
+    [
+      setCurrentWorkflowIsListed,
+      setCurrentWorkflowListedSlug,
+      setCurrentWorkflowListedAt,
+      setCurrentWorkflowInputSchema,
+      setCurrentWorkflowOutputMapping,
+      setCurrentWorkflowPriceUsdc,
+    ]
+  );
+
   // Helper function to load existing workflow
   const loadExistingWorkflow = useCallback(async () => {
     try {
@@ -407,6 +451,7 @@ const WorkflowEditor = ({ params }: WorkflowPageProps) => {
       setCurrentWorkflowProjectId(workflow.projectId ?? null);
       setCurrentWorkflowTagId(workflow.tagId ?? null);
       setCurrentWorkflowPublicTags(workflow.publicTags ?? []);
+      hydrateListingAtoms(workflow);
       setHasUnsavedChanges(false);
       setWorkflowNotFound(false);
 
@@ -448,6 +493,7 @@ const WorkflowEditor = ({ params }: WorkflowPageProps) => {
     setSelectedNode,
     setActiveTab,
     setNewlyCreatedNodeId,
+    hydrateListingAtoms,
   ]);
 
   const { claimPending } = useClaimWorkflow(workflowId, loadExistingWorkflow);

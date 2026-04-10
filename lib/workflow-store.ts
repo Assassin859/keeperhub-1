@@ -55,6 +55,20 @@ export const currentWorkflowPublicTagsAtom = atom<
 export const isWorkflowOwnerAtom = atom<boolean>(true); // Whether current user owns this workflow
 export const isWorkflowEnabled = atom<boolean>(false);
 
+// v1.7 listing state atoms
+export const currentWorkflowIsListedAtom = atom<boolean>(false);
+export const currentWorkflowListedSlugAtom = atom<string | null>(null);
+export const currentWorkflowListedAtAtom = atom<string | null>(null);
+export const currentWorkflowInputSchemaAtom = atom<Record<
+  string,
+  unknown
+> | null>(null);
+export const currentWorkflowOutputMappingAtom = atom<Record<
+  string,
+  unknown
+> | null>(null);
+export const currentWorkflowPriceUsdcAtom = atom<string | null>(null);
+
 // UI state atoms
 export const propertiesPanelActiveTabAtom = atom<string>("properties");
 // Increment to trigger an immediate Runs panel refresh (e.g. after execute)

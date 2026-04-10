@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { projects, publicTags, tags, workflowExecutions, workflowPublicTags, workflows } from "@/lib/db/schema";
 import { syncWorkflowSchedule } from "@/lib/schedule-service";
+import { sanitizeDescription } from "@/lib/sanitize-description";
 import { sanitizeWorkflowData } from "@/lib/workflow/sanitize-nodes";
 async function fetchWorkflowPublicTags(
   workflowId: string
@@ -119,6 +120,11 @@ export async function GET(
       isOwner: hasFullAccess,
     };
 
+    // INFRA-05: Sanitize description for non-owner reads of listed workflows
+    if (!hasFullAccess && workflow.isListed && responseData.description) {
+      responseData.description = sanitizeDescription(responseData.description);
+    }
+
     return NextResponse.json(responseData);
   } catch (error) {
     logSystemError(ErrorCategory.DATABASE, "Failed to get workflow", error, {
@@ -151,6 +157,11 @@ function buildUpdateData(
     "enabled", // keeperhub custom field //
     "projectId", // keeperhub custom field //
     "tagId", // keeperhub custom field //
+    "isListed", // v1.7 listing fields //
+    "listedSlug", // v1.7 listing fields //
+    "inputSchema", // v1.7 listing fields //
+    "outputMapping", // v1.7 listing fields //
+    "priceUsdcPerCall", // v1.7 listing fields //
   ];
   for (const field of fields) {
     if (body[field] !== undefined) {
@@ -326,19 +337,46 @@ export async function PATCH(
       }
     }
 
+    // Slug immutability: reject changes to listedSlug when workflow is already listed
+    if (
+      body.listedSlug !== undefined &&
+      existingWorkflow.isListed === true &&
+      existingWorkflow.listedSlug !== null &&
+      body.listedSlug !== existingWorkflow.listedSlug
+    ) {
+      return NextResponse.json(
+        { error: "This slug cannot be changed after listing. Create a new workflow if you need a different slug." },
+        { status: 400 }
+      );
+    }
+
     const updateData = buildUpdateData(body);
 
-    const [updatedWorkflow] = await db
-      .update(workflows)
-      .set(updateData)
-      .where(eq(workflows.id, workflowId))
-      .returning();
+    // Set listedAt server-side on first listing (never from client, never cleared on unlist)
+    if (body.isListed === true && existingWorkflow.listedAt === null) {
+      updateData.listedAt = new Date();
+    }
 
-    if (!updatedWorkflow) {
-      return NextResponse.json(
-        { error: "Workflow not found" },
-        { status: 404 }
-      );
+    let updatedWorkflow: typeof workflows.$inferSelect;
+    try {
+      const [result] = await db
+        .update(workflows)
+        .set(updateData)
+        .where(eq(workflows.id, workflowId))
+        .returning();
+      if (!result) {
+        return NextResponse.json({ error: "Workflow not found" }, { status: 404 });
+      }
+      updatedWorkflow = result;
+    } catch (dbError) {
+      const cause = dbError instanceof Error ? dbError.cause : undefined;
+      if (cause && typeof cause === "object" && "code" in cause && cause.code === "23505") {
+        return NextResponse.json(
+          { error: "This slug is already used by another workflow in your organization. Choose a different slug." },
+          { status: 400 }
+        );
+      }
+      throw dbError;
     }
 
     await handlePostUpdateSideEffects(workflowId, body);

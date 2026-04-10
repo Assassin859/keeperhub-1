@@ -1,4 +1,4 @@
-import { relations } from "drizzle-orm";
+import { isNotNull, relations } from "drizzle-orm";
 import {
   boolean,
   index,
@@ -188,42 +188,65 @@ export const tags = pgTable(
 export type WorkflowVisibility = "private" | "public";
 
 // Workflows table with user association
-export const workflows = pgTable("workflows", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => generateId()),
-  name: text("name").notNull(),
-  description: text("description"),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id),
-  organizationId: text("organization_id").references(() => organization.id, {
-    onDelete: "cascade",
-  }),
-  isAnonymous: boolean("is_anonymous").default(false).notNull(),
-  featured: boolean("featured").default(false).notNull(),
-  featuredOrder: integer("featured_order").default(0),
-  featuredProtocol: text("featured_protocol"),
-  featuredProtocolOrder: integer("featured_protocol_order").default(0),
-  projectId: text("project_id").references(() => projects.id, {
-    onDelete: "set null",
-  }),
-  tagId: text("tag_id").references(() => tags.id, {
-    onDelete: "set null",
-  }),
-  // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
-  nodes: jsonb("nodes").notNull().$type<any[]>(),
-  // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
-  edges: jsonb("edges").notNull().$type<any[]>(),
-  visibility: text("visibility")
-    .notNull()
-    .default("private")
-    .$type<WorkflowVisibility>(),
-  enabled: boolean("enabled").default(false).notNull(), // keeperhub custom field //
-  sourceWorkflowId: text("source_workflow_id"), // tracks which public template was duplicated
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+export const workflows = pgTable(
+  "workflows",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    name: text("name").notNull(),
+    description: text("description"),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    organizationId: text("organization_id").references(() => organization.id, {
+      onDelete: "cascade",
+    }),
+    isAnonymous: boolean("is_anonymous").default(false).notNull(),
+    featured: boolean("featured").default(false).notNull(),
+    featuredOrder: integer("featured_order").default(0),
+    featuredProtocol: text("featured_protocol"),
+    featuredProtocolOrder: integer("featured_protocol_order").default(0),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "set null",
+    }),
+    tagId: text("tag_id").references(() => tags.id, {
+      onDelete: "set null",
+    }),
+    // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
+    nodes: jsonb("nodes").notNull().$type<any[]>(),
+    // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
+    edges: jsonb("edges").notNull().$type<any[]>(),
+    visibility: text("visibility")
+      .notNull()
+      .default("private")
+      .$type<WorkflowVisibility>(),
+    enabled: boolean("enabled").default(false).notNull(), // keeperhub custom field //
+    sourceWorkflowId: text("source_workflow_id"), // tracks which public template was duplicated
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    // v1.7: Workflow listing columns (INFRA-01)
+    isListed: boolean("is_listed").default(false).notNull(),
+    listedSlug: text("listed_slug"),
+    listedAt: timestamp("listed_at"),
+    inputSchema: jsonb("input_schema").$type<Record<string, unknown>>(),
+    outputMapping: jsonb("output_mapping").$type<Record<string, unknown>>(),
+    priceUsdcPerCall: numeric("price_usdc_per_call"),
+    // v1.7: MCP meta-tools columns (MCP-01, MCP-03)
+    workflowType: text("workflow_type")
+      .$type<"read" | "write">()
+      .default("read")
+      .notNull(),
+    category: text("category"),
+    chain: text("chain"),
+  },
+  (table) => [
+    // INFRA-02: partial unique index - (organizationId, listedSlug) where listedSlug IS NOT NULL
+    uniqueIndex("idx_workflows_org_slug")
+      .on(table.organizationId, table.listedSlug)
+      .where(isNotNull(table.listedSlug)),
+  ]
+);
 
 // Integrations table for storing user credentials
 export const integrations = pgTable("integrations", {
@@ -375,6 +398,12 @@ export {
   type NewMcpOauthClient,
   type NewMcpOauthRefreshToken,
 } from "./schema-oauth";
+
+export {
+  type NewWorkflowPayment,
+  type WorkflowPayment,
+  workflowPayments,
+} from "./schema-payments";
 
 // Better Auth: Device Authorization table (for CLI device flow)
 export const deviceCode = pgTable("device_code", {
@@ -646,10 +675,46 @@ export const userRpcPreferencesRelations = relations(
   })
 );
 
+// v1.7: ERC-8004 agent registration storage (REG-04)
+export const agentRegistrations = pgTable("agent_registrations", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => generateId()),
+  agentId: text("agent_id").notNull(),
+  txHash: text("tx_hash").notNull(),
+  registeredAt: timestamp("registered_at").notNull().defaultNow(),
+  chainId: integer("chain_id").notNull().default(1),
+  registryAddress: text("registry_address").notNull(),
+});
+
 export type User = typeof users.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type Workflow = typeof workflows.$inferSelect;
 export type NewWorkflow = typeof workflows.$inferInsert;
+// INFRA-03: Field projection type for public-facing listed workflow queries.
+// Excludes nodes, edges, and userId -- these must never reach external agents.
+// Uses Omit (not Pick) so new columns added to workflows are included automatically.
+// Public-facing projection for the listed-workflow catalog. Uses Pick (not Omit)
+// so adding a new column to `workflows` does NOT auto-leak it to the public API.
+// Must stay in sync with LISTED_WORKFLOW_COLUMNS in app/api/mcp/workflows/route.ts.
+export type ListedWorkflowView = Pick<
+  Workflow,
+  | "id"
+  | "name"
+  | "description"
+  | "listedSlug"
+  | "listedAt"
+  | "inputSchema"
+  | "outputMapping"
+  | "priceUsdcPerCall"
+  | "organizationId"
+  | "createdAt"
+  | "updatedAt"
+  | "isListed"
+  | "workflowType"
+  | "category"
+  | "chain"
+>;
 export type Integration = typeof integrations.$inferSelect;
 export type NewIntegration = typeof integrations.$inferInsert;
 export type WorkflowExecution = typeof workflowExecutions.$inferSelect;
@@ -681,3 +746,4 @@ export type ExplorerConfig = typeof explorerConfigs.$inferSelect;
 export type NewExplorerConfig = typeof explorerConfigs.$inferInsert;
 export type UserRpcPreference = typeof userRpcPreferences.$inferSelect;
 export type NewUserRpcPreference = typeof userRpcPreferences.$inferInsert;
+export type AgentRegistration = typeof agentRegistrations.$inferSelect;
