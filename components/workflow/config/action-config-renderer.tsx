@@ -22,7 +22,7 @@ import { SaveAddressBookmark } from "@/components/address-book/save-address-book
 import type { AbiComponent } from "@/components/workflow/config/abi-types";
 import { ArrayInputField } from "@/components/workflow/config/array-input-field";
 import { TupleInputField } from "@/components/workflow/config/tuple-input-field";
-import { computeSelector } from "@/lib/abi-utils";
+import { computeSelector, findAbiFunction } from "@/lib/abi-utils";
 import { evaluateShowWhen } from "@/lib/workflow/show-when";
 import { parseAddressBookSelection } from "@/lib/address-book-selection";
 import { toChecksumAddress } from "@/lib/address-utils";
@@ -203,7 +203,15 @@ export function AbiFunctionSelectField({
               (item.stateMutability === "view" ||
                 item.stateMutability === "pure");
 
-      return abi.filter(filterFn).map((func) => {
+      const filtered = abi.filter(filterFn);
+
+      // Count how many times each function name appears to detect overloads
+      const nameCounts = new Map<string, number>();
+      for (const func of filtered) {
+        nameCounts.set(func.name, (nameCounts.get(func.name) ?? 0) + 1);
+      }
+
+      return filtered.map((func) => {
         const inputs = func.inputs || [];
         const params = inputs
           .map(
@@ -212,9 +220,13 @@ export function AbiFunctionSelectField({
           )
           .join(", ");
         const inputTypes = inputs.map((input: { type: string }) => input.type);
-        const selector = computeSelector(func.name, inputTypes);
+        const selector = computeSelector(func.name, inputs);
+        const isOverloaded = (nameCounts.get(func.name) ?? 0) > 1;
+        const key = isOverloaded
+          ? `${func.name}(${inputTypes.join(",")})`
+          : func.name;
         return {
-          name: func.name,
+          key,
           label: `${func.name}(${params})`,
           stateMutability: func.stateMutability || "nonpayable",
           selector,
@@ -242,7 +254,7 @@ export function AbiFunctionSelectField({
       </SelectTrigger>
       <SelectContent>
         {functions.map((func) => (
-          <SelectItem key={func.label} value={func.name}>
+          <SelectItem key={func.key} value={func.key}>
             <div className="flex flex-col items-start">
               <span>
                 {func.label}{" "}
@@ -290,21 +302,17 @@ export function AbiFunctionArgsField({
         return [];
       }
 
-      const func = abi.find(
-        (item) => item.type === "function" && item.name === functionValue
-      );
+      const func = findAbiFunction(abi, functionValue);
 
       if (!func?.inputs) {
         return [];
       }
 
-      return func.inputs.map(
-        (input: { name: string; type: string; components?: AbiComponent[] }) => ({
-          name: input.name || "unnamed",
-          type: input.type,
-          components: input.components,
-        })
-      );
+      return func.inputs.map((input) => ({
+        name: input.name || "unnamed",
+        type: input.type,
+        components: input.components,
+      }));
     } catch {
       return [];
     }

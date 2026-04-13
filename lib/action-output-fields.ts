@@ -3,6 +3,7 @@
  * Defines dynamic output fields for plugin actions based on their configuration
  */
 
+import { findAbiFunction } from "@/lib/abi-utils";
 import type { OutputField } from "@/plugins/registry";
 
 /**
@@ -30,11 +31,7 @@ export function getReadContractOutputFields(
       return defaultFields;
     }
 
-    // Find the function in the ABI
-    const functionAbi = abiArray.find(
-      (item: { type: string; name?: string }) =>
-        item.type === "function" && item.name === functionName
-    );
+    const functionAbi = findAbiFunction(abiArray, functionName);
 
     if (!functionAbi?.outputs) {
       return defaultFields;
@@ -65,13 +62,13 @@ export function getReadContractOutputFields(
       // Unnamed single output: just use result directly (already added)
     } else if (outputs.length > 1) {
       // Multiple outputs: result is an object with named fields
-      outputs.forEach((output, index) => {
+      for (const [index, output] of outputs.entries()) {
         const fieldName = output.name?.trim() || `unnamedOutput${index}`;
         outputFields.push({
           field: `result.${fieldName}`,
           description: `Return value: ${output.type} (${getDeserializedType(output.type)})`,
         });
-      });
+      }
     }
 
     // Add standard fields

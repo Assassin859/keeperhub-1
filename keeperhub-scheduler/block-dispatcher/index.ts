@@ -75,6 +75,15 @@ class BlockMonitorService {
     console.log("[BlockMonitorService] Stopped");
   }
 
+  getHealth(): {
+    healthy: boolean;
+    monitors: ReturnType<ChainMonitor["getStatus"]>[];
+  } {
+    const monitors = [...this.monitors.values()].map((m) => m.getStatus());
+    const healthy = monitors.length === 0 || monitors.every((m) => m.alive);
+    return { healthy, monitors };
+  }
+
   private async reconcile(): Promise<void> {
     if (this.isShuttingDown) {
       return;
@@ -177,10 +186,13 @@ async function main(): Promise<void> {
   const HEALTH_PORT = process.env.HEALTH_PORT || 3050;
 
   healthApp.get("/health", (_req, res) => {
-    res.status(200).json({
-      status: "ok",
+    const health = service.getHealth();
+    const statusCode = health.healthy ? 200 : 503;
+    res.status(statusCode).json({
+      status: health.healthy ? "ok" : "degraded",
       service: "block-dispatcher",
       timestamp: new Date().toISOString(),
+      monitors: health.monitors,
     });
   });
 

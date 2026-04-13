@@ -16,6 +16,7 @@ import { workflowExecutions } from "@/lib/db/schema";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
+import { findAbiFunction } from "@/lib/abi-utils";
 import { getErrorMessage } from "@/lib/utils";
 import { getAbiFunctionKey } from "@/lib/web3/abi-function-key";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
@@ -107,11 +108,7 @@ export async function readContractCore(
     return { success: false, error: "ABI must be a JSON array" };
   }
 
-  // Find the selected function in the ABI to get output structure
-  const functionAbi = parsedAbi.find(
-    (item: { type: string; name: string; stateMutability?: string }) =>
-      item.type === "function" && item.name === abiFunction
-  );
+  const functionAbi = findAbiFunction(parsedAbi, abiFunction);
 
   if (!functionAbi) {
     logUserError(

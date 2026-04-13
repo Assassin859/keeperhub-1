@@ -21,6 +21,7 @@ import {
 } from "@/lib/para/wallet-helpers";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
+import { findAbiFunction } from "@/lib/abi-utils";
 import { getErrorMessage } from "@/lib/utils";
 import { getAbiFunctionKey } from "@/lib/web3/abi-function-key";
 import { generateId } from "@/lib/utils/id";
@@ -111,11 +112,7 @@ export async function writeContractCore(
     };
   }
 
-  // Find the selected function in the ABI
-  const functionAbi = parsedAbi.find(
-    (item: { type: string; name: string }) =>
-      item.type === "function" && item.name === abiFunction
-  );
+  const functionAbi = findAbiFunction(parsedAbi, abiFunction);
 
   if (!functionAbi) {
     return {

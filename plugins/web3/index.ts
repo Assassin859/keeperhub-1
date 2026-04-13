@@ -1180,17 +1180,10 @@ const web3Plugin: IntegrationPlugin = {
           required: true,
         },
         {
-          key: "functionArgs",
-          label: "Function Arguments",
-          type: "abi-function-args",
-          abiField: "abi",
-          abiFunctionField: "abiFunction",
-        },
-        {
           key: "ethValue",
           label: "Payable Value",
           type: "protocol-eth-value",
-          placeholder: "0.0",
+          placeholder: "payableAmount",
           helpTip:
             "Amount of native token (e.g. ETH, MATIC) to send with this payable function call. Specified in whole units, not wei.",
           showWhen: {
@@ -1199,6 +1192,13 @@ const web3Plugin: IntegrationPlugin = {
             functionField: "abiFunction",
             equals: "payable",
           },
+        },
+        {
+          key: "functionArgs",
+          label: "Function Arguments",
+          type: "abi-function-args",
+          abiField: "abi",
+          abiFunctionField: "abiFunction",
         },
         {
           type: "group",

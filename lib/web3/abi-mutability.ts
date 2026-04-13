@@ -8,15 +8,11 @@
  * value -- this helper is intended for UI gating and lightweight checks,
  * not as the sole authority on whether a transfer is safe.
  */
-type AbiItem = {
-  type?: unknown;
-  name?: unknown;
-  stateMutability?: unknown;
-};
+import { type AbiItem, findAbiFunction } from "@/lib/abi-utils";
 
 export function deriveStateMutability(
   abiJson: string,
-  funcName: string
+  funcKey: string
 ): string {
   let parsed: unknown;
   try {
@@ -29,13 +25,7 @@ export function deriveStateMutability(
     return "nonpayable";
   }
 
-  const func = (parsed as AbiItem[]).find(
-    (item) =>
-      item != null &&
-      typeof item === "object" &&
-      item.type === "function" &&
-      item.name === funcName
-  );
+  const func = findAbiFunction(parsed as AbiItem[], funcKey);
 
   return typeof func?.stateMutability === "string"
     ? func.stateMutability

@@ -96,7 +96,7 @@ env:
     value: "prometheus"
   EXECUTOR_METRICS_INGEST_URL:
     type: kv
-    value: "http://keeperhub-executor-staging.keeperhub.svc.cluster.local:3080"
+    value: "http://keeperhub-executor-common:3080"
   METRICS_INGEST_TOKEN:
     type: parameterStore
     name: metrics-ingest-token

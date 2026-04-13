@@ -4,11 +4,11 @@
  * Monitors a single blockchain chain via ethers.js WebSocketProvider.
  * When a block matches a workflow's interval, enqueues a trigger to SQS.
  *
- * ethers.js polls eth_blockNumber internally (~4s) in addition to receiving
- * newHeads notifications, so it detects new blocks even when the RPC provider
- * fails to push subscription events. A WebSocket-level ping/pong runs every
- * 30s to verify the connection is alive, and a no-block timeout forces
- * reconnection if the provider goes silent.
+ * ethers v6 WebSocketProvider uses eth_subscribe ("newHeads") over the
+ * WebSocket to receive block notifications (SocketBlockSubscriber, not
+ * polling). A WebSocket-level ping/pong runs every 30s to verify the
+ * connection is alive, and a no-block timeout forces reconnection if the
+ * provider goes silent.
  */
 
 import { ethers } from "ethers";
@@ -50,6 +50,8 @@ export class ChainMonitor {
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private pongTimer: ReturnType<typeof setTimeout> | null = null;
   private noBlockTimer: ReturnType<typeof setTimeout> | null = null;
+  private hasActiveSubscription = false;
+  private wsCloseHandler: (() => void) | null = null;
 
   constructor(config: ChainMonitorConfig) {
     this.chainId = config.chain.chainId;
@@ -68,7 +70,7 @@ export class ChainMonitor {
     try {
       await this.connect();
       await this.validateConnection();
-      this.subscribeToBlocks();
+      await this.subscribeToBlocks();
       this.startPingPong();
       this.resetNoBlockTimer();
     } catch (error) {
@@ -100,7 +102,31 @@ export class ChainMonitor {
   }
 
   isAlive(): boolean {
-    return this.isRunning;
+    return this.isRunning && (this.hasActiveSubscription || this.isReconnecting);
+  }
+
+  getStatus(): {
+    chainId: number;
+    chainName: string;
+    alive: boolean;
+    reconnecting: boolean;
+    hasSubscription: boolean;
+    lastBlock: number | null;
+    blocksReceived: number;
+    blocksMatched: number;
+    workflows: number;
+  } {
+    return {
+      chainId: this.chainId,
+      chainName: this.chainName,
+      alive: this.isAlive(),
+      reconnecting: this.isReconnecting,
+      hasSubscription: this.hasActiveSubscription,
+      lastBlock: this.lastProcessedBlock,
+      blocksReceived: this.blocksReceived,
+      blocksMatched: this.blocksMatched,
+      workflows: this.workflows.length,
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -108,8 +134,20 @@ export class ChainMonitor {
   // ---------------------------------------------------------------------------
 
   private async destroyProvider(): Promise<void> {
+    this.hasActiveSubscription = false;
+
     if (this.provider) {
-      this.provider.removeAllListeners();
+      // Remove the raw WebSocket close handler before destroying to prevent
+      // stale handlers from firing handleDisconnect during teardown
+      if (this.wsCloseHandler) {
+        const ws = this.provider.websocket as unknown as {
+          removeListener?: (event: string, cb: () => void) => void;
+        };
+        ws?.removeListener?.("close", this.wsCloseHandler);
+        this.wsCloseHandler = null;
+      }
+
+      await this.provider.removeAllListeners();
       try {
         await this.provider.destroy();
       } catch {
@@ -154,8 +192,8 @@ export class ChainMonitor {
       } catch (error) {
         // Destroy the provider if it was created but failed/timed out
         if (provider) {
-          provider.removeAllListeners();
-          provider.destroy().catch(() => {});
+          await provider.removeAllListeners();
+          await provider.destroy().catch(() => {});
         }
         console.warn(
           `[BlockMonitor:${this.chainName}] Failed to connect to ${label} WSS:`,
@@ -192,7 +230,7 @@ export class ChainMonitor {
   // Block subscription
   // ---------------------------------------------------------------------------
 
-  private subscribeToBlocks(): void {
+  private async subscribeToBlocks(): Promise<void> {
     if (!this.provider) {
       return;
     }
@@ -201,7 +239,10 @@ export class ChainMonitor {
       `[BlockMonitor:${this.chainName}] Subscribing to block events`
     );
 
-    this.provider.on("block", (blockNumber: number) => {
+    // ethers v6 provider.on() is async - it sends eth_subscribe over the
+    // WebSocket and waits for the subscription ID. Must be awaited or the
+    // subscription silently fails on reconnection.
+    await this.provider.on("block", (blockNumber: number) => {
       this.onBlock(blockNumber).catch((error: unknown) => {
         console.error(
           `[BlockMonitor:${this.chainName}] Error processing block ${blockNumber}:`,
@@ -210,15 +251,22 @@ export class ChainMonitor {
       });
     });
 
-    // Handle WebSocket close for reconnection
+    this.hasActiveSubscription = true;
+    console.log(
+      `[BlockMonitor:${this.chainName}] Block subscription active`
+    );
+
+    // Handle WebSocket close for reconnection - store reference for cleanup
     const ws = this.provider.websocket as unknown as {
       on?: (event: string, cb: () => void) => void;
     };
     if (ws?.on) {
-      ws.on("close", () => {
+      this.wsCloseHandler = () => {
         console.warn(`[BlockMonitor:${this.chainName}] WebSocket closed`);
+        this.hasActiveSubscription = false;
         this.handleDisconnect();
-      });
+      };
+      ws.on("close", this.wsCloseHandler);
     }
   }
 
@@ -546,9 +594,9 @@ export class ChainMonitor {
       try {
         await this.connect();
         await this.validateConnection();
+        await this.subscribeToBlocks();
         this.reconnectAttempts = 0;
         this.isReconnecting = false;
-        this.subscribeToBlocks();
         this.startPingPong();
         this.resetNoBlockTimer();
         return;
@@ -557,6 +605,8 @@ export class ChainMonitor {
           `[BlockMonitor:${this.chainName}] Reconnect attempt ${this.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS} failed:`,
           error instanceof Error ? error.message : error
         );
+        // Clean up the provider if connect succeeded but subscribe failed
+        await this.destroyProvider();
       }
     }
   }

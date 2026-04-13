@@ -2,6 +2,7 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 import { resolveAbi } from "@/lib/abi-cache";
+import { type AbiItem, findAbiFunction } from "@/lib/abi-utils";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import { getErrorMessage } from "@/lib/utils";
 import { readContractCore } from "@/plugins/web3/steps/read-contract-core";
@@ -18,16 +19,10 @@ import { checkAndReserveExecution } from "../_lib/spending-cap";
 import { validateContractCallInput } from "../_lib/validate";
 import { requireWallet } from "../_lib/wallet-check";
 
-type AbiEntry = {
-  type: string;
-  name?: string;
-  stateMutability?: string;
-};
-
 function findFunctionInAbi(
   abi: string,
   functionName: string
-): { entry: AbiEntry } | { error: string } {
+): { entry: AbiItem } | { error: string } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(abi);
@@ -39,9 +34,7 @@ function findFunctionInAbi(
     return { error: "ABI must be a JSON array" };
   }
 
-  const entry = parsed.find(
-    (item: AbiEntry) => item.type === "function" && item.name === functionName
-  ) as AbiEntry | undefined;
+  const entry = findAbiFunction(parsed, functionName);
 
   if (!entry) {
     return { error: `Function '${functionName}' not found in ABI` };
