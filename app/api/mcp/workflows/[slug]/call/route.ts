@@ -1,4 +1,3 @@
-import { withX402 } from "@x402/next";
 import { and, eq } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
 import { start } from "workflow/api";
@@ -8,21 +7,15 @@ import { db } from "@/lib/db";
 import { workflowExecutions, workflows } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
+import { hashMppCredential } from "@/lib/mpp/server";
+import { gatePayment, type PaymentMeta } from "@/lib/payments/router";
 import { executeWorkflow } from "@/lib/workflow-executor.workflow";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow-store";
 import {
-  buildPaymentConfig,
-  extractPayerAddress,
-  findExistingPayment,
   hashPaymentSignature,
   recordPayment,
   resolveCreatorWallet,
 } from "@/lib/x402/payment-gate";
-import {
-  isTimeoutError,
-  pollForPaymentConfirmation,
-} from "@/lib/x402/reconcile";
-import { server } from "@/lib/x402/server";
 import { CALL_ROUTE_COLUMNS, type CallRouteWorkflow } from "@/lib/x402/types";
 
 const corsHeaders = {
@@ -30,6 +23,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers":
     "Content-Type, Authorization, PAYMENT-SIGNATURE",
+  "Access-Control-Expose-Headers": "Payment-Receipt",
 } as const;
 
 export function OPTIONS(): NextResponse {
@@ -166,9 +160,7 @@ async function createAndStartExecution(
   );
 }
 
-async function lookupWorkflow(
-  slug: string
-): Promise<CallRouteWorkflow | null> {
+async function lookupWorkflow(slug: string): Promise<CallRouteWorkflow | null> {
   const rows = await db
     .select(CALL_ROUTE_COLUMNS)
     .from(workflows)
@@ -191,52 +183,6 @@ function validateBody(
     }
   }
   return null;
-}
-
-async function checkIdempotency(
-  paymentSig: string | null
-): Promise<NextResponse | null> {
-  if (!paymentSig) {
-    return null;
-  }
-  const hash = hashPaymentSignature(paymentSig);
-  const existing = await findExistingPayment(hash);
-  if (existing) {
-    return NextResponse.json(
-      { executionId: existing.executionId },
-      { headers: corsHeaders }
-    );
-  }
-  return null;
-}
-
-async function handleTimeoutReconciliation(
-  gateErr: unknown,
-  request: Request,
-  innerHandler: (req: NextRequest) => Promise<NextResponse>
-): Promise<NextResponse> {
-  const msg = gateErr instanceof Error ? gateErr.message : String(gateErr);
-  if (isTimeoutError(msg)) {
-    const payerAddr = request.headers.get("X-PAYER-ADDRESS");
-    const nonce = request.headers.get("X-PAYMENT-NONCE");
-    if (payerAddr && nonce) {
-      const confirmed = await pollForPaymentConfirmation({
-        payerAddress: payerAddr,
-        nonce,
-      });
-      if (confirmed) {
-        // Re-check idempotency before executing. A client retry may have
-        // already created an execution while we were polling on-chain state.
-        const paymentSig = request.headers.get("PAYMENT-SIGNATURE");
-        const idempotent = await checkIdempotency(paymentSig);
-        if (idempotent) {
-          return idempotent;
-        }
-        return innerHandler(request as NextRequest);
-      }
-    }
-  }
-  throw gateErr;
 }
 
 // IP backstop: prevents anonymous junk traffic from reaching DB lookup.
@@ -333,74 +279,63 @@ async function handlePaidWorkflow(
     );
   }
 
-  const paymentSig = request.headers.get("PAYMENT-SIGNATURE");
-  const idempotent = await checkIdempotency(paymentSig);
-  if (idempotent) {
-    return idempotent;
-  }
+  return gatePayment(
+    request,
+    workflow,
+    creatorWalletAddress,
+    (meta: PaymentMeta) => {
+      return async (_req: NextRequest): Promise<NextResponse> => {
+        const prepared = await prepareExecution(workflow, body);
+        if ("error" in prepared) {
+          return prepared.error;
+        }
+        const { executionId } = prepared;
 
-  const payerAddress = extractPayerAddress(paymentSig);
-  const paymentConfig = buildPaymentConfig(workflow, creatorWalletAddress);
+        let paymentHash: string;
+        if (meta.protocol === "x402") {
+          const sig = request.headers.get("PAYMENT-SIGNATURE");
+          paymentHash = sig ? hashPaymentSignature(sig) : executionId;
+        } else {
+          const auth = request.headers.get("authorization");
+          paymentHash = auth
+            ? hashMppCredential(auth.slice("Payment ".length))
+            : executionId;
+        }
 
-  // innerHandler closes over the already-parsed body so we never call
-  // request.json() a second time (ReadableStream is single-consume).
-  //
-  // Order of operations is deliberate: insert execution row -> record payment
-  // -> start workflow. Recording the payment BEFORE the workflow starts means
-  // a payment failure can't leave the system in a "work ran but not paid"
-  // state. The opposite ordering risks silent revenue loss if recordPayment
-  // throws after the workflow has already begun running.
-  const innerHandler = async (_req: NextRequest): Promise<NextResponse> => {
-    const prepared = await prepareExecution(workflow, body);
-    if ("error" in prepared) {
-      return prepared.error;
+        try {
+          await recordPayment({
+            workflowId: workflow.id,
+            paymentHash,
+            executionId,
+            amountUsdc: workflow.priceUsdcPerCall ?? "0",
+            payerAddress: meta.payerAddress,
+            creatorWalletAddress,
+            protocol: meta.protocol,
+            chain: meta.chain,
+          });
+        } catch (err) {
+          await db
+            .update(workflowExecutions)
+            .set({
+              status: "error",
+              error:
+                err instanceof Error
+                  ? `recordPayment failed: ${err.message}`
+                  : "recordPayment failed",
+            })
+            .where(eq(workflowExecutions.id, executionId));
+          throw err;
+        }
+
+        startExecutionInBackground(workflow, body, executionId);
+
+        return NextResponse.json(
+          { executionId, status: "running" },
+          { headers: corsHeaders }
+        );
+      };
     }
-    const { executionId } = prepared;
-
-    // If recordPayment throws, the execution row already exists with
-    // status="running" but the workflow has not been started. Mark it failed
-    // so monitoring sees a real failed run instead of a hung "running" row
-    // that nothing will ever transition. The recorded error is preserved in
-    // the execution row for reconciliation.
-    try {
-      await recordPayment({
-        workflowId: workflow.id,
-        paymentHash: paymentSig
-          ? hashPaymentSignature(paymentSig)
-          : executionId,
-        executionId,
-        amountUsdc: workflow.priceUsdcPerCall ?? "0",
-        payerAddress,
-        creatorWalletAddress,
-      });
-    } catch (err) {
-      await db
-        .update(workflowExecutions)
-        .set({
-          status: "error",
-          error:
-            err instanceof Error
-              ? `recordPayment failed: ${err.message}`
-              : "recordPayment failed",
-        })
-        .where(eq(workflowExecutions.id, executionId));
-      throw err;
-    }
-
-    startExecutionInBackground(workflow, body, executionId);
-
-    return NextResponse.json(
-      { executionId, status: "running" },
-      { headers: corsHeaders }
-    );
-  };
-
-  const gatedHandler = withX402(innerHandler, paymentConfig, server);
-  try {
-    return (await gatedHandler(request as NextRequest)) as NextResponse;
-  } catch (gateErr) {
-    return handleTimeoutReconciliation(gateErr, request, innerHandler);
-  }
+  );
 }
 
 async function handleReadWorkflow(

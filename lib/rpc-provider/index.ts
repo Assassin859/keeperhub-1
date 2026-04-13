@@ -245,17 +245,21 @@ export class RpcProviderManager {
     const fetchRequest = new ethers.FetchRequest(url);
     fetchRequest.timeout = 5000;
 
-    const provider = new ethers.JsonRpcProvider(fetchRequest, ethers.Network.from(this.config.chainId), {
-      cacheTimeout: -1,
-      staticNetwork: true,
-      // Disable JSON-RPC batching: ethers v6 batches concurrent calls into one
-      // HTTP request by default. When the RPC proxy returns an incomplete batch
-      // response, ethers throws BAD_DATA "missing response for request". Sending
-      // each call as its own HTTP request eliminates this class of errors. No
-      // performance impact -- workflow execution is sequential, and batch-reads
-      // use Multicall3 at the contract level.
-      batchMaxCount: 1,
-    });
+    const provider = new ethers.JsonRpcProvider(
+      fetchRequest,
+      ethers.Network.from(this.config.chainId),
+      {
+        cacheTimeout: -1,
+        staticNetwork: true,
+        // Disable JSON-RPC batching: ethers v6 batches concurrent calls into one
+        // HTTP request by default. When the RPC proxy returns an incomplete batch
+        // response, ethers throws BAD_DATA "missing response for request". Sending
+        // each call as its own HTTP request eliminates this class of errors. No
+        // performance impact -- workflow execution is sequential, and batch-reads
+        // use Multicall3 at the contract level.
+        batchMaxCount: 1,
+      }
+    );
 
     return provider;
   }

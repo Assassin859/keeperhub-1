@@ -329,7 +329,7 @@ async function subscribeToMailerLite(user: {
   email?: string | null;
 }): Promise<void> {
   const apiKey = process.env.MAILERLITE_API_KEY;
-  if (!apiKey || !user.email) return;
+  if (!(apiKey && user.email)) return;
 
   await fetch("https://connect.mailerlite.com/api/subscribers", {
     method: "POST",

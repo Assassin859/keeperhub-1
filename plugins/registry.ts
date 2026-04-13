@@ -39,7 +39,13 @@ export type ActionConfigFieldBase = {
     | "code-editor" // Monaco-based JavaScript code editor
     | "json-editor" // Monaco-based JSON editor
     | "call-list-builder" // Dynamic list of contract calls for batch operations
-    | "args-list-builder"; // Dynamic list of argument sets for batch uniform mode
+    | "args-list-builder" // Dynamic list of argument sets for batch uniform mode
+    | "protocol-address" // Address input with checksum validation
+    | "protocol-uint" // Unsigned integer input with range validation
+    | "protocol-int" // Signed integer input with range validation
+    | "protocol-bool" // Boolean select (true/false) with template variable support
+    | "protocol-bytes" // Hex input with 0x-prefix validation
+    | "protocol-eth-value"; // Decimal ETH value input (e.g. 0.1, 1.5)
 
   // For chain-select: filter by chain type (e.g., "evm" or "solana")
   chainTypeFilter?: string;

@@ -44,6 +44,8 @@ export function buildPaymentConfig(
   creatorWalletAddress: string
 ): RouteConfig {
   const price = Number(workflow.priceUsdcPerCall);
+  const publicHost =
+    process.env.NEXT_PUBLIC_APP_URL ?? "https://app.keeperhub.com";
   return {
     accepts: {
       scheme: "exact",
@@ -51,6 +53,7 @@ export function buildPaymentConfig(
       payTo: creatorWalletAddress,
       price: `$${price.toFixed(2)}`,
     },
+    resource: `${publicHost}/api/mcp/workflows/${workflow.listedSlug}/call`,
     description: `Pay to run workflow: ${workflow.name}`,
   };
 }

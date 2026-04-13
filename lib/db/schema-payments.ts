@@ -5,6 +5,7 @@ import {
   text,
   timestamp,
   uniqueIndex,
+  varchar,
 } from "drizzle-orm/pg-core";
 import { generateId } from "@/lib/utils/id";
 
@@ -31,6 +32,8 @@ export const workflowPayments = pgTable(
     payerAddress: text("payer_address"),
     creatorWalletAddress: text("creator_wallet_address").notNull(),
     settledAt: timestamp("settled_at").notNull().defaultNow(),
+    protocol: varchar("protocol", { length: 10 }).notNull().default("x402"),
+    chain: text("chain").notNull().default("base"),
   },
   (table) => [
     uniqueIndex("idx_workflow_payments_hash").on(table.paymentHash),

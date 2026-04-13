@@ -330,6 +330,13 @@
       "when": 1775806152381,
       "tag": "0046_first_phalanx",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1776076796607,
+      "tag": "0047_curly_synch",
+      "breakpoints": true
     }
   ]
 }

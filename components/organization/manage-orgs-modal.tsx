@@ -7,6 +7,7 @@ import {
   Mail,
   Pencil,
   Plus,
+  RotateCw,
   Settings,
   Trash2,
   X,
@@ -72,46 +73,6 @@ function getStatusBadgeClasses(status: string): string {
     default:
       return "bg-muted text-muted-foreground";
   }
-}
-
-// Helper to check invitation status before cancelling
-type InvitationCheckResult = {
-  canCancel: boolean;
-  errorMessage?: string;
-  shouldRefreshMembers?: boolean;
-};
-
-async function checkInvitationStatus(
-  invitationId: string
-): Promise<InvitationCheckResult> {
-  const response = await fetch(`/api/invitations/${invitationId}`);
-  const data = await response.json();
-
-  if (data.alreadyAccepted) {
-    return {
-      canCancel: false,
-      errorMessage:
-        "User already accepted invite. Please refresh for updated organization status.",
-      shouldRefreshMembers: true,
-    };
-  }
-
-  if (data.rejected || data.expired) {
-    return {
-      canCancel: false,
-      errorMessage: data.error || "Invitation is no longer valid",
-    };
-  }
-
-  if (!response.ok && response.status === 404) {
-    return {
-      canCancel: false,
-      errorMessage: "Invitation not found. It may have already been processed.",
-      shouldRefreshMembers: true,
-    };
-  }
-
-  return { canCancel: true };
 }
 
 // Component to render a received invitation item
@@ -206,13 +167,19 @@ type MembersListContentProps = {
     email: string;
     role?: string;
     status: string;
+    expiresAt?: Date | string;
   }[];
   canInvite: boolean;
   currentUserRole?: MemberRole;
   cancellingInvite: string | null;
-  onCancelInvitation: (invitationId: string) => void;
+  onCancelInvitation: (invitationId: string) => Promise<void>;
+  onResendInvitation: (
+    invitationId: string,
+    email: string,
+    role: string
+  ) => Promise<void>;
   removingMember: string | null;
-  onRemoveMember: (memberId: string, email: string) => void;
+  onRemoveMember: (memberId: string, email: string) => Promise<void>;
   currentUserId?: string;
   onUpdateMemberRole?: (memberId: string, role: string) => Promise<void>;
   updatingRoleMemberId?: string | null;
@@ -227,12 +194,21 @@ function MembersListContent({
   currentUserRole,
   cancellingInvite,
   onCancelInvitation,
+  onResendInvitation,
   removingMember,
   onRemoveMember,
   currentUserId,
   onUpdateMemberRole,
   updatingRoleMemberId,
 }: MembersListContentProps) {
+  const [pendingAction, setPendingAction] = useState<{
+    type: "revoke" | "remove" | "resend" | "remove-member";
+    id: string;
+    email: string;
+    role: string;
+  } | null>(null);
+  const [confirming, setConfirming] = useState(false);
+
   if (loadingMembers || loadingSentInvitations) {
     return (
       <div className="flex items-center justify-center py-8">
@@ -256,6 +232,7 @@ function MembersListContent({
       role: m.role,
       id: m.id,
       userId: m.userId,
+      expired: false,
     })),
     ...pendingInvitations.map((inv) => ({
       kind: "invite" as const,
@@ -263,6 +240,7 @@ function MembersListContent({
       role: inv.role || "member",
       id: inv.id,
       userId: undefined as string | undefined,
+      expired: inv.expiresAt ? new Date(inv.expiresAt) < new Date() : false,
     })),
   ].sort((a, b) =>
     a.email.localeCompare(b.email, undefined, { sensitivity: "base" })
@@ -288,7 +266,8 @@ function MembersListContent({
             </p>
             <p className="text-muted-foreground text-xs">
               {entry.role}
-              {entry.kind === "invite" && " - invited"}
+              {entry.kind === "invite" &&
+                (entry.expired ? " - expired" : " - invited")}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-1">
@@ -314,10 +293,53 @@ function MembersListContent({
                   </SelectContent>
                 </Select>
               )}
-            {entry.kind === "invite" && canInvite && (
+            {entry.kind === "invite" && canInvite && entry.expired && (
+              <>
+                <Button
+                  disabled={cancellingInvite === entry.id}
+                  onClick={() =>
+                    setPendingAction({
+                      type: "resend",
+                      id: entry.id,
+                      email: entry.email,
+                      role: entry.role,
+                    })
+                  }
+                  size="sm"
+                  variant="ghost"
+                >
+                  <RotateCw className="mr-1 h-4 w-4" />
+                  Resend
+                </Button>
+                <Button
+                  disabled={cancellingInvite === entry.id}
+                  onClick={() =>
+                    setPendingAction({
+                      type: "remove",
+                      id: entry.id,
+                      email: entry.email,
+                      role: entry.role,
+                    })
+                  }
+                  size="sm"
+                  variant="ghost"
+                >
+                  <X className="mr-1 h-4 w-4" />
+                  Remove
+                </Button>
+              </>
+            )}
+            {entry.kind === "invite" && canInvite && !entry.expired && (
               <Button
                 disabled={cancellingInvite === entry.id}
-                onClick={() => onCancelInvitation(entry.id)}
+                onClick={() =>
+                  setPendingAction({
+                    type: "revoke",
+                    id: entry.id,
+                    email: entry.email,
+                    role: entry.role,
+                  })
+                }
                 size="sm"
                 variant="ghost"
               >
@@ -331,7 +353,14 @@ function MembersListContent({
               (currentUserRole === "owner" || entry.role === "member") && (
                 <Button
                   disabled={removingMember === entry.id}
-                  onClick={() => onRemoveMember(entry.id, entry.email)}
+                  onClick={() =>
+                    setPendingAction({
+                      type: "remove-member",
+                      id: entry.id,
+                      email: entry.email,
+                      role: entry.role,
+                    })
+                  }
                   size="sm"
                   variant="ghost"
                 >
@@ -342,6 +371,75 @@ function MembersListContent({
           </div>
         </div>
       ))}
+
+      <AlertDialog
+        onOpenChange={(isOpen) => {
+          if (!(isOpen || confirming)) {
+            setPendingAction(null);
+          }
+        }}
+        open={pendingAction !== null}
+      >
+        {pendingAction && (
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                {
+                  {
+                    resend: "Resend Invitation",
+                    remove: "Remove Invitation",
+                    revoke: "Revoke Invitation",
+                    "remove-member": "Remove Member",
+                  }[pendingAction.type]
+                }
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                {
+                  {
+                    resend: `Cancel the expired invitation and send a new one to ${pendingAction.email}?`,
+                    remove: `Remove the expired invitation for ${pendingAction.email}?`,
+                    revoke: `Revoke the pending invitation for ${pendingAction.email}?`,
+                    "remove-member": `Remove ${pendingAction.email} from the organization?`,
+                  }[pendingAction.type]
+                }
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={confirming}>
+                Cancel
+              </AlertDialogCancel>
+              <Button
+                disabled={confirming}
+                onClick={async () => {
+                  setConfirming(true);
+                  try {
+                    if (pendingAction.type === "resend") {
+                      await onResendInvitation(
+                        pendingAction.id,
+                        pendingAction.email,
+                        pendingAction.role
+                      );
+                    } else if (pendingAction.type === "remove-member") {
+                      await onRemoveMember(
+                        pendingAction.id,
+                        pendingAction.email
+                      );
+                    } else {
+                      await onCancelInvitation(pendingAction.id);
+                    }
+                  } finally {
+                    setConfirming(false);
+                    setPendingAction(null);
+                  }
+                }}
+              >
+                {confirming && <Spinner className="mr-2 h-4 w-4" />}
+                {pendingAction.type === "resend" ? "Resend" : "Confirm"}
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        )}
+      </AlertDialog>
     </div>
   );
 }
@@ -731,18 +829,6 @@ export function ManageOrgsModal({
   const handleCancelInvitation = async (invitationId: string) => {
     setCancellingInvite(invitationId);
     try {
-      // First check if the invitation is still pending
-      const statusCheck = await checkInvitationStatus(invitationId);
-
-      if (!statusCheck.canCancel) {
-        toast.error(statusCheck.errorMessage || "Cannot revoke invitation");
-        fetchSentInvitations();
-        if (statusCheck.shouldRefreshMembers) {
-          fetchMembers();
-        }
-        return;
-      }
-
       const { error } = await authClient.organization.cancelInvitation({
         invitationId,
       });
@@ -753,10 +839,57 @@ export function ManageOrgsModal({
         return;
       }
 
-      toast.success("Invitation revoked");
+      toast.success("Invitation removed");
+      fetchSentInvitations();
+      fetchMembers();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "An error occurred");
+    } finally {
+      setCancellingInvite(null);
+    }
+  };
+
+  const handleResendInvitation = async (
+    invitationId: string,
+    email: string,
+    role: string
+  ): Promise<void> => {
+    if (!managedOrgId) {
+      return;
+    }
+
+    setCancellingInvite(invitationId);
+    try {
+      const { error: cancelError } =
+        await authClient.organization.cancelInvitation({ invitationId });
+
+      if (cancelError) {
+        toast.error(
+          cancelError.message || "Failed to cancel expired invitation"
+        );
+        fetchSentInvitations();
+        return;
+      }
+
+      const { error: inviteError } = await authClient.organization.inviteMember(
+        {
+          email,
+          role: role as "member" | "admin" | "owner",
+          organizationId: managedOrgId,
+        }
+      );
+
+      if (inviteError) {
+        toast.error(inviteError.message || "Failed to resend invitation");
+        fetchSentInvitations();
+        return;
+      }
+
+      toast.success(`Invitation resent to ${email}`);
       fetchSentInvitations();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "An error occurred");
+      fetchSentInvitations();
     } finally {
       setCancellingInvite(null);
     }
@@ -1334,6 +1467,7 @@ export function ManageOrgsModal({
                         members={members}
                         onCancelInvitation={handleCancelInvitation}
                         onRemoveMember={handleRemoveMember}
+                        onResendInvitation={handleResendInvitation}
                         onUpdateMemberRole={handleUpdateMemberRole}
                         removingMember={removingMember}
                         sentInvitations={sentInvitations}

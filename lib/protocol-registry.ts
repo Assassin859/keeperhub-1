@@ -1,3 +1,4 @@
+import { solidityTypeToFieldType } from "@/lib/solidity-type-fields";
 import type { IntegrationType } from "@/lib/types/integration";
 import {
   createProtocolIconComponent,
@@ -163,6 +164,50 @@ export function defineProtocol(def: ProtocolDefinition): ProtocolDefinition {
   return def;
 }
 
+// ABI-driven protocol definition
+import {
+  type AbiDrivenProtocolInput,
+  deriveActionsFromAbi,
+} from "@/lib/protocol-abi-derive";
+
+export type {
+  AbiDrivenContract,
+  AbiDrivenProtocolInput,
+  AbiFunctionOverride,
+  AbiInputOverride,
+  AbiOutputOverride,
+} from "@/lib/protocol-abi-derive";
+
+export function defineAbiProtocol(
+  input: AbiDrivenProtocolInput
+): ProtocolDefinition {
+  const actions: ProtocolAction[] = [];
+  const contracts: Record<string, ProtocolContract> = {};
+
+  for (const [key, contract] of Object.entries(input.contracts)) {
+    contracts[key] = {
+      label: contract.label,
+      abi: contract.abi,
+      addresses: contract.addresses,
+      ...(contract.userSpecifiedAddress ? { userSpecifiedAddress: true } : {}),
+    };
+    const derived = deriveActionsFromAbi(key, contract);
+    for (const action of derived) {
+      actions.push(action);
+    }
+  }
+
+  return defineProtocol({
+    name: input.name,
+    slug: input.slug,
+    description: input.description,
+    website: input.website,
+    icon: input.icon,
+    contracts,
+    actions,
+  });
+}
+
 // Runtime protocol registry
 const protocolRegistry = new Map<string, ProtocolDefinition>();
 
@@ -209,21 +254,25 @@ function buildConfigFieldsFromAction(
     fields.push({
       key: "ethValue",
       label: "ETH Value",
-      type: "template-input",
+      type: "protocol-eth-value",
       placeholder: "0.0",
       required: true,
     });
   }
 
   for (const input of action.inputs) {
+    const fieldType = solidityTypeToFieldType(input.type);
     fields.push({
       key: input.name,
       label: input.label,
-      type: "template-input",
+      type: fieldType,
       placeholder: input.default ?? "",
       required: true,
-      ...(input.type === "address" ? { isAddressField: true } : {}),
+      ...(fieldType === "protocol-address" || input.type === "address"
+        ? { isAddressField: true }
+        : {}),
       ...(input.helpTip ? { helpTip: input.helpTip } : {}),
+      ...(fieldType === "template-input" ? {} : { solidityType: input.type }),
     });
   }
 

@@ -226,6 +226,9 @@ const nextConfig = {
       },
     ],
   },
+  async rewrites() {
+    return [{ source: "/openapi.json", destination: "/api/openapi" }];
+  },
 } satisfies NextConfig & { eslint?: { ignoreDuringBuilds?: boolean } };
 
 const { SENTRY_ORG, SENTRY_PROJECT, SENTRY_RELEASE } = process.env;

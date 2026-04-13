@@ -205,11 +205,7 @@ export function WorkflowTemplateCard({
             Preview
           </button>
           {onVote && (
-            <VoteButtons
-              onVote={onVote}
-              score={score}
-              userVote={userVote}
-            />
+            <VoteButtons onVote={onVote} score={score} userVote={userVote} />
           )}
         </div>
       </div>

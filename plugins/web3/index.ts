@@ -1189,7 +1189,7 @@ const web3Plugin: IntegrationPlugin = {
         {
           key: "ethValue",
           label: "Payable Value",
-          type: "template-input",
+          type: "protocol-eth-value",
           placeholder: "0.0",
           helpTip:
             "Amount of native token (e.g. ETH, MATIC) to send with this payable function call. Specified in whole units, not wei.",

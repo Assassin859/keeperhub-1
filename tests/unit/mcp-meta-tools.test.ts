@@ -352,7 +352,9 @@ describe("call_workflow tool behavior", () => {
     });
     const fetchMock = vi.mocked(globalThis.fetch);
     const calledUrl = fetchMock.mock.calls[0][0] as string;
-    expect(calledUrl).toContain("/api/mcp/workflows/my%20workflow%2Bspecial/call");
+    expect(calledUrl).toContain(
+      "/api/mcp/workflows/my%20workflow%2Bspecial/call"
+    );
   });
 });
 

@@ -7,6 +7,7 @@ import { hashPassword } from "better-auth/crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+import { privateKeyToAccount } from "viem/accounts";
 import { getDatabaseUrl } from "../../lib/db/connection-utils";
 import {
   accounts,
@@ -21,7 +22,11 @@ import { generateId } from "../../lib/utils/id";
 const TEST_ORG_SLUG = "x402-test-org";
 const TEST_USER_EMAIL = "x402-test@localhost";
 const TEST_PASSWORD = "TestPassword123!";
-const TEST_WALLET_ADDRESS = "0x1234567890abcdef1234567890abcdef12345678";
+const TEST_PRIVATE_KEY =
+  process.env.MPP_TEST_PRIVATE_KEY ?? process.env.X402_TEST_PRIVATE_KEY;
+const TEST_WALLET_ADDRESS = TEST_PRIVATE_KEY
+  ? privateKeyToAccount(TEST_PRIVATE_KEY as `0x${string}`).address
+  : "0x1234567890abcdef1234567890abcdef12345678";
 const TEST_WORKFLOW_SLUG = "x402-echo-test";
 const TEST_WORKFLOW_PRICE = "0.01";
 

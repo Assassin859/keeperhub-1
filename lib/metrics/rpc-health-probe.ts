@@ -21,7 +21,7 @@ function noop(): void {
 }
 
 const PROBE_INTERVAL_MS = Number(process.env.RPC_PROBE_INTERVAL_MS) || 30_000;
-const PROBE_TIMEOUT_MS = Number(process.env.RPC_PROBE_TIMEOUT_MS) || 5_000;
+const PROBE_TIMEOUT_MS = Number(process.env.RPC_PROBE_TIMEOUT_MS) || 5000;
 
 type ProbeTarget = {
   chain: string;

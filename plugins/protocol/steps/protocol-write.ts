@@ -9,6 +9,7 @@ import {
 import { resolveAbi } from "@/lib/abi-cache";
 import { getProtocol } from "@/lib/protocol-registry";
 import { type StepInput, withStepLogging } from "@/lib/steps/step-handler";
+import { applyEncodeTransformsNamed } from "@/lib/protocol-encode-transforms";
 import {
   type ProtocolMeta,
   resolveProtocolMeta,
@@ -39,11 +40,19 @@ function buildFunctionArgs(
     return undefined;
   }
 
-  const args = protocolAction.inputs.map((inp) => {
-    const value = input[inp.name];
-    return value !== undefined ? String(value) : "";
-  });
+  const rawInputs = protocolAction.inputs.map((inp) => ({
+    name: inp.name,
+    value: input[inp.name] !== undefined ? String(input[inp.name]) : "",
+  }));
 
+  const actionSlug = protocolAction.slug;
+  const transformed = applyEncodeTransformsNamed(
+    meta.protocolSlug,
+    actionSlug,
+    rawInputs
+  );
+
+  const args = transformed.map((t) => t.value);
   return JSON.stringify(args);
 }
 

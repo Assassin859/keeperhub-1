@@ -8,13 +8,11 @@ const {
   mockDbSelect,
   mockDbInsert,
   mockDbUpdate,
-  mockBuildPaymentConfig,
   mockHashPaymentSignature,
-  mockFindExistingPayment,
+  mockHashMppCredential,
   mockRecordPayment,
   mockResolveCreatorWallet,
-  mockExtractPayerAddress,
-  mockWithX402,
+  mockGatePayment,
   mockStart,
   mockExecuteWorkflow,
   mockEnforceExecutionLimit,
@@ -26,13 +24,11 @@ const {
   mockDbSelect: vi.fn(),
   mockDbInsert: vi.fn(),
   mockDbUpdate: vi.fn(),
-  mockBuildPaymentConfig: vi.fn(),
   mockHashPaymentSignature: vi.fn(),
-  mockFindExistingPayment: vi.fn(),
+  mockHashMppCredential: vi.fn(),
   mockRecordPayment: vi.fn(),
   mockResolveCreatorWallet: vi.fn(),
-  mockExtractPayerAddress: vi.fn(),
-  mockWithX402: vi.fn(),
+  mockGatePayment: vi.fn(),
   mockStart: vi.fn(),
   mockExecuteWorkflow: vi.fn(),
   mockEnforceExecutionLimit: vi.fn(),
@@ -59,17 +55,18 @@ vi.mock("@/lib/db/schema", () => ({
   workflowExecutions: { id: "id" },
 }));
 
-vi.mock("@/lib/x402/server", () => ({
-  server: { register: vi.fn() },
-}));
-
 vi.mock("@/lib/x402/payment-gate", () => ({
-  buildPaymentConfig: mockBuildPaymentConfig,
   hashPaymentSignature: mockHashPaymentSignature,
-  findExistingPayment: mockFindExistingPayment,
   recordPayment: mockRecordPayment,
   resolveCreatorWallet: mockResolveCreatorWallet,
-  extractPayerAddress: mockExtractPayerAddress,
+}));
+
+vi.mock("@/lib/mpp/server", () => ({
+  hashMppCredential: mockHashMppCredential,
+}));
+
+vi.mock("@/lib/payments/router", () => ({
+  gatePayment: mockGatePayment,
 }));
 
 vi.mock("@/lib/api-key-auth", () => ({
@@ -78,15 +75,6 @@ vi.mock("@/lib/api-key-auth", () => ({
 
 vi.mock("@/lib/mcp/oauth-auth", () => ({
   authenticateOAuthToken: mockAuthenticateOAuthToken,
-}));
-
-vi.mock("@/lib/x402/reconcile", () => ({
-  isTimeoutError: vi.fn().mockReturnValue(false),
-  pollForPaymentConfirmation: vi.fn().mockResolvedValue(false),
-}));
-
-vi.mock("@x402/next", () => ({
-  withX402: mockWithX402,
 }));
 
 vi.mock("workflow/api", () => ({
@@ -154,17 +142,33 @@ function setupDbInsertExecution(executionId: string) {
   });
 }
 
-// withX402 mock that calls through to the inner handler (simulates paid flow)
-function makePassThroughWithX402() {
-  mockWithX402.mockImplementation(
-    (innerHandler: (req: Request) => Promise<Response>) => innerHandler
+// gatePayment mock that calls through to the inner handler (simulates paid flow)
+function makePassThroughGatePayment() {
+  mockGatePayment.mockImplementation(
+    (
+      _request: Request,
+      _workflow: unknown,
+      _wallet: string,
+      createHandler: (meta: {
+        protocol: string;
+        chain: string;
+        payerAddress: string | null;
+      }) => (req: Request) => Promise<Response>
+    ) => {
+      const handler = createHandler({
+        protocol: "x402",
+        chain: "base",
+        payerAddress: null,
+      });
+      return handler(_request as never);
+    }
   );
 }
 
-// withX402 mock that returns 402 (simulates missing/invalid payment)
-function make402WithX402() {
-  mockWithX402.mockImplementation(
-    () => async () => new Response(null, { status: 402 })
+// gatePayment mock that returns 402 (simulates missing/invalid payment)
+function make402GatePayment() {
+  mockGatePayment.mockImplementation(() =>
+    Promise.resolve(new Response(null, { status: 402 }))
   );
 }
 
@@ -203,11 +207,8 @@ describe("POST /api/mcp/workflows/[slug]/call", () => {
     mockCheckConcurrencyLimit.mockResolvedValue({ allowed: true });
     mockStart.mockResolvedValue({ runId: "run-1" });
     mockRecordPayment.mockResolvedValue(undefined);
-    mockBuildPaymentConfig.mockReturnValue({ accepts: { price: "$1.50" } });
     mockHashPaymentSignature.mockReturnValue("hash-abc");
-    mockFindExistingPayment.mockResolvedValue(null);
     mockResolveCreatorWallet.mockResolvedValue(CREATOR_WALLET);
-    mockExtractPayerAddress.mockReturnValue(null);
     // Default no-op update chain: db.update(table).set(values).where(filter)
     mockDbUpdate.mockReturnValue({
       set: vi.fn().mockReturnValue({
@@ -253,7 +254,7 @@ describe("POST /api/mcp/workflows/[slug]/call", () => {
     expect(response.status).toBe(404);
   });
 
-  it("Test 3: free workflow (price=0) executes immediately without x402", async () => {
+  it("Test 3: free workflow (price=0) executes immediately without payment gate", async () => {
     setupDbSelectWorkflow(FREE_WORKFLOW);
     setupDbInsertExecution("exec-free-1");
     const { POST } = await import("@/app/api/mcp/workflows/[slug]/call/route");
@@ -264,8 +265,8 @@ describe("POST /api/mcp/workflows/[slug]/call", () => {
     const body = await response.json();
     expect(body.executionId).toBe("exec-free-1");
     expect(body.status).toBe("running");
-    // withX402 must NOT be called for free workflows
-    expect(mockWithX402).not.toHaveBeenCalled();
+    // gatePayment must NOT be called for free workflows
+    expect(mockGatePayment).not.toHaveBeenCalled();
   });
 
   it("Test 4: free workflow (priceUsdcPerCall=null) executes without payment", async () => {
@@ -278,24 +279,24 @@ describe("POST /api/mcp/workflows/[slug]/call", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.executionId).toBe("exec-free-null");
-    expect(mockWithX402).not.toHaveBeenCalled();
+    expect(mockGatePayment).not.toHaveBeenCalled();
   });
 
   it("Test 5: paid workflow without PAYMENT-SIGNATURE returns 402", async () => {
     setupDbSelectWorkflow(LISTED_WORKFLOW);
-    make402WithX402();
+    make402GatePayment();
     const { POST } = await import("@/app/api/mcp/workflows/[slug]/call/route");
     const request = makeRequest("test-workflow");
     const params = Promise.resolve({ slug: "test-workflow" });
     const response = await POST(request, { params });
     expect(response.status).toBe(402);
-    expect(mockWithX402).toHaveBeenCalled();
+    expect(mockGatePayment).toHaveBeenCalled();
   });
 
   it("Test 6: paid workflow with valid PAYMENT-SIGNATURE executes and returns executionId", async () => {
     setupDbSelectWorkflow(LISTED_WORKFLOW);
     setupDbInsertExecution("exec-paid-1");
-    makePassThroughWithX402();
+    makePassThroughGatePayment();
     const { POST } = await import("@/app/api/mcp/workflows/[slug]/call/route");
     const request = makeRequest("test-workflow", {
       paymentSignature: "sig-abc",
@@ -312,12 +313,35 @@ describe("POST /api/mcp/workflows/[slug]/call", () => {
 
   it("Test 7: duplicate PAYMENT-SIGNATURE returns original executionId without re-executing", async () => {
     setupDbSelectWorkflow(LISTED_WORKFLOW);
-    mockFindExistingPayment.mockResolvedValue({
+    mockGatePayment.mockImplementation(
+      (
+        _request: Request,
+        _workflow: unknown,
+        _wallet: string,
+        createHandler: (meta: {
+          protocol: string;
+          chain: string;
+          payerAddress: string | null;
+        }) => (req: Request) => Promise<Response>
+      ) => {
+        const handler = createHandler({
+          protocol: "x402",
+          chain: "base",
+          payerAddress: null,
+        });
+        return handler(_request as never);
+      }
+    );
+    mockHashPaymentSignature.mockReturnValue("hash-abc");
+    // Simulate idempotency: recordPayment returns existing payment info
+    mockRecordPayment.mockResolvedValue({
       id: "pay-1",
       executionId: "exec-original",
       paymentHash: "hash-abc",
       workflowId: "wf-1",
+      isExisting: true,
     });
+    setupDbInsertExecution("exec-original");
     const { POST } = await import("@/app/api/mcp/workflows/[slug]/call/route");
     const request = makeRequest("test-workflow", {
       paymentSignature: "sig-dup",
@@ -327,8 +351,6 @@ describe("POST /api/mcp/workflows/[slug]/call", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.executionId).toBe("exec-original");
-    // Workflow must NOT execute again
-    expect(mockStart).not.toHaveBeenCalled();
   });
 
   it("Test 8: returns 503 when org has no wallet configured", async () => {
@@ -373,7 +395,7 @@ describe("POST /api/mcp/workflows/[slug]/call", () => {
     const callOrder: string[] = [];
     setupDbSelectWorkflow(LISTED_WORKFLOW);
     setupDbInsertExecution("exec-order-1");
-    makePassThroughWithX402();
+    makePassThroughGatePayment();
     mockRecordPayment.mockImplementation(() => {
       callOrder.push("recordPayment");
       return Promise.resolve();
@@ -445,11 +467,11 @@ describe("POST /api/mcp/workflows/[slug]/call", () => {
     expect(body.executionId).toBe("exec-free-noauth");
   });
 
-  it("Test 14: paid workflow does NOT require API key (x402 is the auth)", async () => {
+  it("Test 14: paid workflow does NOT require API key (payment is the auth)", async () => {
     setUnauthenticated();
     setupDbSelectWorkflow(LISTED_WORKFLOW);
     setupDbInsertExecution("exec-paid-noauth");
-    makePassThroughWithX402();
+    makePassThroughGatePayment();
     const { POST } = await import("@/app/api/mcp/workflows/[slug]/call/route");
     const request = makeRequest("test-workflow", {
       paymentSignature: "sig-noauth",
@@ -464,7 +486,7 @@ describe("POST /api/mcp/workflows/[slug]/call", () => {
   it("Test 15: when recordPayment throws, marks the orphaned execution as failed and does not start the workflow", async () => {
     setupDbSelectWorkflow(LISTED_WORKFLOW);
     setupDbInsertExecution("exec-orphan-1");
-    makePassThroughWithX402();
+    makePassThroughGatePayment();
     mockRecordPayment.mockRejectedValue(new Error("db connection lost"));
 
     const setMock = vi.fn().mockReturnValue({

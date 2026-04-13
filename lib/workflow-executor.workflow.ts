@@ -838,6 +838,39 @@ export type LoopBodyInfo = {
 };
 
 /**
+ * Determine which downstream node IDs a condition node should dispatch to
+ * within a For Each body. Mirrors the two-phase routing in executeBodyNode:
+ *
+ * 1. If the node has handle-based edges (bodyHandleMap entry), route
+ *    exclusively via the taken handle. The not-taken handle is dead.
+ * 2. Otherwise (legacy edges without sourceHandle), gate on conditionValue:
+ *    true -> all bodyEdgesBySource targets, false -> nothing.
+ *
+ * Extracted so the routing decision is testable independently of the
+ * async executeBodyNode closure.
+ */
+export function resolveBodyConditionTargets(
+  conditionValue: boolean,
+  nodeId: string,
+  bodyHandleMap: EdgesBySourceHandle | undefined,
+  bodyEdgesBySource: Map<string, string[]>
+): string[] {
+  const nodeHandles = bodyHandleMap?.get(nodeId);
+
+  if (nodeHandles) {
+    const handleId = conditionValue === true ? "true" : "false";
+    return nodeHandles.get(handleId) ?? [];
+  }
+
+  // Legacy fallback: no handle map entry, gate on condition value
+  if (conditionValue !== true) {
+    return [];
+  }
+
+  return bodyEdgesBySource.get(nodeId) ?? [];
+}
+
+/**
  * Compute the next BFS depth when traversing loop body nodes.
  * Inner For Each increments depth, inner Collect decrements it.
  */
@@ -1344,43 +1377,29 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       } else if (actionType === "Condition") {
         const conditionValue = (result.data as { condition?: boolean })
           ?.condition;
-        const nodeHandles = bodyHandleMap?.get(nodeId);
-        if (nodeHandles) {
-          const handleId = conditionValue === true ? "true" : "false";
-          const handleTargets = nodeHandles.get(handleId) ?? [];
-          if (handleTargets.length > 0) {
-            for (const next of handleTargets) {
-              await executeBodyNode(
-                next,
-                bodyVisited,
-                scopedOutputs,
-                bodyResults,
-                bodyEdgesBySource,
-                collectNodeId,
-                iterationMeta,
-                bodyHandleMap
-              );
-            }
-          }
-        } else if (conditionValue !== true) {
-          // Legacy fallback: gate behavior
-          return;
+        const conditionTargets = resolveBodyConditionTargets(
+          conditionValue === true,
+          nodeId,
+          bodyHandleMap,
+          bodyEdgesBySource
+        );
+        for (const next of conditionTargets) {
+          await executeBodyNode(
+            next,
+            bodyVisited,
+            scopedOutputs,
+            bodyResults,
+            bodyEdgesBySource,
+            collectNodeId,
+            iterationMeta,
+            bodyHandleMap
+          );
         }
+        // Condition routing is fully handled; skip the generic downstream pass
       }
 
-      // Continue to downstream body nodes.
-      // Skip only when condition routed via handles AND the chosen handle had targets.
-      const conditionRoutedViaHandles =
-        actionType === "Condition" &&
-        bodyHandleMap?.has(nodeId) &&
-        (bodyHandleMap
-          .get(nodeId)
-          ?.get(
-            (result.data as { condition?: boolean })?.condition === true
-              ? "true"
-              : "false"
-          )?.length ?? 0) > 0;
-      if (!conditionRoutedViaHandles) {
+      // Continue to downstream body nodes for non-condition actions.
+      if (actionType !== "Condition") {
         const nextNodes = bodyEdgesBySource.get(nodeId) ?? [];
         for (const next of nextNodes) {
           await executeBodyNode(

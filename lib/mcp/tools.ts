@@ -1068,7 +1068,9 @@ export function registerMetaTools(
     {
       slug: z
         .string()
-        .describe("The workflow's listed slug (listedSlug from search results)"),
+        .describe(
+          "The workflow's listed slug (listedSlug from search results)"
+        ),
       inputs: z
         .record(z.string(), z.unknown())
         .describe("Input fields as declared in the workflow's inputSchema"),
