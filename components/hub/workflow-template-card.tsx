@@ -114,12 +114,24 @@ export function WorkflowTemplateCard({
     >
       <div className="relative flex flex-1 flex-col p-4">
         <div className="shrink-0">
-          <div className="flex items-start gap-2">
+          <div className="flex items-start gap-1.5">
             <h3 className="line-clamp-2 flex-1 font-semibold text-sm leading-snug">
               {workflow.name}
             </h3>
+            {score !== 0 && (
+              <div className="flex h-[20px] shrink-0 items-center gap-0.5">
+                <ArrowBigUp
+                  className={`size-3 ${score > 0 ? "fill-green-400/60 text-green-400" : "text-muted-foreground/40"}`}
+                />
+                <span
+                  className={`font-medium text-[11px] tabular-nums ${scoreColorClass(score)}`}
+                >
+                  {score}
+                </span>
+              </div>
+            )}
             {isFeatured && (
-              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[var(--color-bg-accent)] px-2 py-0.5">
+              <span className="inline-flex h-[20px] shrink-0 items-center gap-1 rounded-full bg-[var(--color-bg-accent)] px-2">
                 <Star className="size-2.5 fill-[var(--color-text-accent)] text-[var(--color-text-accent)]" />
                 <span className="font-medium text-[var(--color-text-accent)] text-[10px]">
                   Featured
@@ -131,18 +143,6 @@ export function WorkflowTemplateCard({
             <p className="mt-1.5 line-clamp-3 text-muted-foreground/80 text-xs leading-relaxed">
               {workflow.description}
             </p>
-          )}
-          {score !== 0 && (
-            <div className="mt-2 flex items-center gap-1">
-              <ArrowBigUp
-                className={`size-3.5 ${score > 0 ? "fill-green-400/60 text-green-400" : "text-muted-foreground/40"}`}
-              />
-              <span
-                className={`font-medium text-xs tabular-nums ${scoreColorClass(score)}`}
-              >
-                {score}
-              </span>
-            </div>
           )}
         </div>
 
