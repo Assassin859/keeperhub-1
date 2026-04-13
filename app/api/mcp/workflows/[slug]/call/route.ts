@@ -239,8 +239,8 @@ async function handleTimeoutReconciliation(
   throw gateErr;
 }
 
-// Pre-auth IP backstop: prevents anonymous junk traffic from reaching DB lookup.
-// In-memory per-pod; effective limit is LIMIT * num_replicas. The real per-caller
+// IP backstop: prevents anonymous junk traffic from reaching DB lookup.
+// In-memory per-pod; effective limit is LIMIT * num_replicas.
 const CALL_RATE_LIMIT = 30;
 const CALL_RATE_WINDOW_MS = 60_000;
 
@@ -324,7 +324,11 @@ async function handlePaidWorkflow(
   );
   if (!creatorWalletAddress) {
     return NextResponse.json(
-      { error: "Workflow creator has no payment wallet configured" },
+      {
+        error: "No payment wallet found for this organization",
+        message:
+          "The workflow owner must create a wallet in Settings > Wallet before listing paid workflows.",
+      },
       { status: 503, headers: corsHeaders }
     );
   }

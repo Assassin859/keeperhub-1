@@ -5,6 +5,81 @@ on:
     branches: ['**']
 
 jobs:
+  migrate-check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: keeperhub_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Check for migration-relevant changes
+        id: changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CHANGED=$(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files \
+            --paginate --per-page 100 -q '.[].filename' | grep -E '^(drizzle/|lib/db/schema)' || true | head -1)
+          if [ -n "$CHANGED" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: ./.github/actions/setup-node-pnpm
+        if: steps.changes.outputs.relevant == 'true'
+
+      - name: Run workflow engine migrations
+        if: steps.changes.outputs.relevant == 'true'
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/keeperhub_test
+        run: pnpm db:setup-workflow 2>&1 | tee /tmp/migrate-setup-output.txt
+
+      - name: Run app migrations
+        if: steps.changes.outputs.relevant == 'true'
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/keeperhub_test
+        run: pnpm db:migrate 2>&1 | tee /tmp/migrate-output.txt
+
+      - name: Check for snapshot drift
+        if: steps.changes.outputs.relevant == 'true'
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/keeperhub_test
+        run: |
+          npx drizzle-kit generate 2>&1 | tee /tmp/drizzle-generate-output.txt
+          if ! grep -q "nothing to migrate" /tmp/drizzle-generate-output.txt; then
+            echo "::error::Schema drift detected - run 'pnpm drizzle-kit generate' locally and commit the result."
+            exit 1
+          fi
+
+      - name: Upload migration logs on failure
+        if: failure() && steps.changes.outputs.relevant == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: migrate-check-logs
+          path: /tmp/migrate*.txt
+          retention-days: 7
+
+      - name: Upload drizzle drift output on failure
+        if: failure() && steps.changes.outputs.relevant == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: drizzle-generate-output
+          path: /tmp/drizzle-generate-output.txt
+          retention-days: 7
+
   lint-typecheck:
     runs-on: ubuntu-latest
     steps:

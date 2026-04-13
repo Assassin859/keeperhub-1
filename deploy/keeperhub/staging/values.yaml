@@ -236,6 +236,14 @@ env:
     type: parameterStore
     name: registration-private-key
     parameter_name: /eks/techops-staging/keeperhub/registration-private-key
+  CDP_API_KEY_ID:
+    type: parameterStore
+    name: cdp-api-key-id
+    parameter_name: /eks/techops-staging/keeperhub/cdp-api-key-id
+  CDP_API_KEY_SECRET:
+    type: parameterStore
+    name: cdp-api-key-secret
+    parameter_name: /eks/techops-staging/keeperhub/cdp-api-key-secret
   # Sentry
   SENTRY_DSN:
     type: parameterStore

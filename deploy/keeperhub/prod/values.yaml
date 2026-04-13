@@ -158,6 +158,10 @@ env:
     type: parameterStore
     name: discord-webhook-signups
     parameter_name: /eks/techops-prod/keeperhub/discord-webhook-signups
+  MAILERLITE_API_KEY:
+    type: parameterStore
+    name: mailerlite-api-key
+    parameter_name: /eks/techops-prod/keeperhub/mailerlite-api-key
   # Auth and social providers (GitHub, Google)
   NEXT_PUBLIC_AUTH_PROVIDERS:
     type: kv
@@ -242,6 +246,14 @@ env:
     type: parameterStore
     name: registration-private-key
     parameter_name: /eks/techops-prod/keeperhub/registration-private-key
+  CDP_API_KEY_ID:
+    type: parameterStore
+    name: cdp-api-key-id
+    parameter_name: /eks/techops-prod/keeperhub/cdp-api-key-id
+  CDP_API_KEY_SECRET:
+    type: parameterStore
+    name: cdp-api-key-secret
+    parameter_name: /eks/techops-prod/keeperhub/cdp-api-key-secret
   # Sentry
   SENTRY_DSN:
     type: parameterStore
