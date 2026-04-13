@@ -254,6 +254,10 @@ env:
     type: parameterStore
     name: cdp-api-key-secret
     parameter_name: /eks/techops-prod/keeperhub/cdp-api-key-secret
+  MPP_SECRET_KEY:
+    type: parameterStore
+    name: mpp-secret-key
+    parameter_name: /eks/techops-prod/keeperhub/mpp-secret-key
   # Sentry
   SENTRY_DSN:
     type: parameterStore
