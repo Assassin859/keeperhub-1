@@ -160,7 +160,13 @@ jobs:
             -e RAMP_INTERVAL="${{ inputs.ramp_interval }}" \
             --summary-export /tmp/k6-results/summary.json \
             --no-usage-report \
-            $K6_OUT_ARGS
+            $K6_OUT_ARGS 2>&1 | tee /tmp/k6-results/k6-output.log
+
+          # Extract counts from k6 output for the summary
+          USERS_CREATED=$(grep -c "authenticated" /tmp/k6-results/k6-output.log 2>/dev/null || echo 0)
+          WF_CREATED=$(grep -oP 'created \K\d+(?= workflows)' /tmp/k6-results/k6-output.log 2>/dev/null | paste -sd+ | bc 2>/dev/null || echo 0)
+          echo "USERS_CREATED=${USERS_CREATED}" >> $GITHUB_ENV
+          echo "WF_CREATED=${WF_CREATED}" >> $GITHUB_ENV
         env:
           TEST_API_KEY: ${{ secrets.TEST_API_KEY }}
           SERVICE_KEY: ${{ secrets.SCHEDULER_SERVICE_API_KEY }}
@@ -199,8 +205,12 @@ jobs:
           RESPONSE=$(curl "${CURL_ARGS[@]}" "${BASE_URL}/api/admin/test/cleanup" || echo '{"error":"cleanup request failed"}')
           echo "Cleanup response: $RESPONSE"
 
-          DELETED_USERS=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('deleted',{}).get('users',0))" 2>/dev/null || echo "unknown")
+          DELETED_USERS=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('deleted',{}).get('users',0))" 2>/dev/null || echo "0")
+          DELETED_WF=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('deleted',{}).get('workflows',0))" 2>/dev/null || echo "0")
+          DELETED_ORGS=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('deleted',{}).get('organizations',0))" 2>/dev/null || echo "0")
           echo "DELETED_USERS=$DELETED_USERS" >> $GITHUB_ENV
+          echo "DELETED_WORKFLOWS=$DELETED_WF" >> $GITHUB_ENV
+          echo "DELETED_ORGS=$DELETED_ORGS" >> $GITHUB_ENV
         env:
           TEST_API_KEY: ${{ secrets.TEST_API_KEY }}
           CF_ACCESS_CLIENT_ID: ${{ secrets.TO_CF_ACCESS_CLIENT_ID }}
@@ -271,8 +281,18 @@ jobs:
                                    f"{t['avg_ms']} | {checks} | {icon} |")
 
           lines.append("")
+          lines.append("### Setup")
+          users_created = os.environ.get("USERS_CREATED", "0")
+          wf_created = os.environ.get("WF_CREATED", "0")
+          lines.append(f"- Users created: **{users_created}**")
+          lines.append(f"- Workflows created: **{wf_created}**")
+          lines.append("")
           lines.append("### Cleanup")
-          lines.append(f"Deleted **{deleted_users}** test users from the database.")
+          deleted_wf = os.environ.get("DELETED_WORKFLOWS", "0")
+          deleted_orgs = os.environ.get("DELETED_ORGS", "0")
+          lines.append(f"- Workflows deleted: **{deleted_wf}**")
+          lines.append(f"- Organizations deleted: **{deleted_orgs}**")
+          lines.append(f"- Users deleted: **{deleted_users}**")
           lines.append("")
 
           with open(summary_path, "w") as f:

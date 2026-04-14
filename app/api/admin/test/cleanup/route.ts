@@ -61,6 +61,9 @@ export async function POST(request: Request): Promise<NextResponse> {
       });
     }
 
+    let deletedWorkflows = 0;
+    let deletedOrgs = 0;
+
     await db.transaction(async (tx) => {
       // Discover every table with a direct FK to users.id at runtime.
       // Future migrations that add user-scoped tables are picked up
@@ -89,6 +92,14 @@ export async function POST(request: Request): Promise<NextResponse> {
         .from(member)
         .where(inArray(member.userId, userIds));
       const orgIds = [...new Set(orgRows.map((r) => r.organizationId))];
+      deletedOrgs = orgIds.length;
+
+      // Count workflows before deleting.
+      const wfRows = await tx
+        .select({ id: workflows.id })
+        .from(workflows)
+        .where(inArray(workflows.userId, userIds));
+      deletedWorkflows = wfRows.length;
 
       // Disable workflows so the scheduler stops triggering them mid-cleanup.
       await tx
@@ -96,29 +107,45 @@ export async function POST(request: Request): Promise<NextResponse> {
         .set({ enabled: false })
         .where(inArray(workflows.userId, userIds));
 
-      // Step 1: Delete transitively-dependent rows that have no direct FK to
-      // users (and so don't appear in the discovery query).
-      // workflow_execution_logs.execution_id -> workflow_executions.id
-      // (no ON DELETE CASCADE on either link).
+      // Step 1: Delete rows with transitive FK deps (not direct to users).
+      // Order matters: logs -> executions -> schedules, then the dynamic loop.
       await tx.execute(sql`
         DELETE FROM workflow_execution_logs
         WHERE execution_id IN (
-          SELECT id FROM workflow_executions WHERE user_id::text = ANY(${userIds}::text[])
+          SELECT we.id FROM workflow_executions we
+          JOIN workflows w ON we.workflow_id = w.id
+          WHERE w.user_id::text = ANY(${userIds}::text[])
+        )
+      `);
+      await tx.execute(sql`
+        DELETE FROM workflow_executions
+        WHERE workflow_id IN (
+          SELECT id FROM workflows WHERE user_id::text = ANY(${userIds}::text[])
+        )
+      `);
+      await tx.execute(sql`
+        DELETE FROM workflow_schedules
+        WHERE workflow_id IN (
+          SELECT id FROM workflows WHERE user_id::text = ANY(${userIds}::text[])
         )
       `);
 
       // Step 2: Delete from every discovered direct-FK table.
-      // workflows must come last because workflow_executions.workflow_id
-      // references it without ON DELETE CASCADE.
-      const sortedTables = [...fkRows].sort((a, b) => {
-        if (a.table_name === "workflows") {
-          return 1;
-        }
-        if (b.table_name === "workflows") {
-          return -1;
-        }
-        return 0;
-      });
+      // Skip tables we already handled above.
+      const handled = new Set([
+        "workflow_execution_logs",
+        "workflow_executions",
+        "workflow_schedules",
+      ]);
+
+      // workflows last — other tables may reference it.
+      const sortedTables = [...fkRows]
+        .filter((r) => !handled.has(r.table_name))
+        .sort((a, b) => {
+          if (a.table_name === "workflows") return 1;
+          if (b.table_name === "workflows") return -1;
+          return 0;
+        });
 
       for (const row of sortedTables) {
         if (
@@ -149,7 +176,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
 
     return NextResponse.json({
-      deleted: { users: userIds.length },
+      deleted: {
+        users: userIds.length,
+        organizations: deletedOrgs,
+        workflows: deletedWorkflows,
+      },
       emails,
       dryRun: false,
     });
