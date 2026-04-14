@@ -19,7 +19,10 @@ export type PaymentProtocol = "x402" | "mpp";
 
 const TEMPO_USDC_ADDRESS = "0x20c000000000000000000000b9537d11c60e8b50";
 const TEMPO_CHAIN_ID = 4217;
+const BASE_USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const BASE_NETWORK = "eip155:8453";
 const USDC_DECIMALS = 6;
+const PAYMENT_MAX_TIMEOUT_SECONDS = 300;
 const RE_PROTOCOL = /^https?:\/\//;
 const RE_TRAILING_SLASH = /\/$/;
 
@@ -28,34 +31,76 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers":
     "Content-Type, Authorization, PAYMENT-SIGNATURE",
-  "Access-Control-Expose-Headers": "Payment-Receipt",
+  "Access-Control-Expose-Headers":
+    "Payment-Receipt, PAYMENT-REQUIRED, X-PAYMENT-REQUIREMENTS, WWW-Authenticate",
 } as const;
 
 type Dual402Params = {
   price: string;
   creatorWalletAddress: string;
   workflowName: string;
+  resourceUrl: string;
 };
 
-export function buildDual402Response(params: Dual402Params): Response {
-  const { price, creatorWalletAddress, workflowName } = params;
-
-  const x402Requirements = {
-    accepts: {
-      scheme: "exact",
-      network: "eip155:8453",
-      payTo: creatorWalletAddress,
-      price: `$${Number(price).toFixed(2)}`,
+/**
+ * Builds the spec-compliant x402 v2 PaymentRequired payload (matches the
+ * `PaymentRequired` type from `@x402/core/types`). Discovery scanners like
+ * x402scan and the `@agentcash/discovery` prober parse this exact shape.
+ */
+function buildPaymentRequired(params: Dual402Params): {
+  x402Version: 2;
+  error: string;
+  resource: { url: string; description: string; mimeType: string };
+  accepts: Array<{
+    scheme: string;
+    network: string;
+    asset: string;
+    amount: string;
+    payTo: string;
+    maxTimeoutSeconds: number;
+    extra: Record<string, unknown>;
+  }>;
+} {
+  const { price, creatorWalletAddress, workflowName, resourceUrl } = params;
+  const amountSmallestUnit = String(
+    Math.round(Number(price) * 10 ** USDC_DECIMALS)
+  );
+  return {
+    x402Version: 2,
+    error: "Payment required",
+    resource: {
+      url: resourceUrl,
+      description: `Pay to run workflow: ${workflowName}`,
+      mimeType: "application/json",
     },
-    description: `Pay to run workflow: ${workflowName}`,
+    accepts: [
+      {
+        scheme: "exact",
+        network: BASE_NETWORK,
+        asset: BASE_USDC_ADDRESS,
+        amount: amountSmallestUnit,
+        payTo: creatorWalletAddress,
+        maxTimeoutSeconds: PAYMENT_MAX_TIMEOUT_SECONDS,
+        extra: { name: "USD Coin", version: "2" },
+      },
+    ],
   };
+}
 
-  const x402Header = Buffer.from(JSON.stringify(x402Requirements)).toString(
+export function buildDual402Response(params: Dual402Params): Response {
+  const { price, creatorWalletAddress } = params;
+  const paymentRequired = buildPaymentRequired(params);
+  const encoded = Buffer.from(JSON.stringify(paymentRequired)).toString(
     "base64"
   );
 
   const headers = new Headers(CORS_HEADERS);
-  headers.set("X-PAYMENT-REQUIREMENTS", x402Header);
+  // Canonical header name from `@x402/core/http` -- this is what
+  // `@agentcash/discovery` and x402scan probe for.
+  headers.set("PAYMENT-REQUIRED", encoded);
+  // Legacy alias kept for in-flight clients that read the old name. Same
+  // payload, safe to remove once nothing depends on it.
+  headers.set("X-PAYMENT-REQUIREMENTS", encoded);
   headers.set("Cache-Control", "no-store");
 
   const mppSecretKey = process.env.MPP_SECRET_KEY;
@@ -84,13 +129,10 @@ export function buildDual402Response(params: Dual402Params): Response {
     headers.set("WWW-Authenticate", Challenge.serialize(challenge));
   }
 
-  return new Response(
-    JSON.stringify({
-      error: "Payment Required",
-      x402: x402Requirements,
-    }),
-    { status: 402, headers }
-  );
+  return new Response(JSON.stringify(paymentRequired), {
+    status: 402,
+    headers,
+  });
 }
 
 export type PaymentMeta = {
@@ -291,6 +333,7 @@ export function gatePayment(
       price: workflow.priceUsdcPerCall ?? "0",
       creatorWalletAddress,
       workflowName: workflow.name,
+      resourceUrl: request.url,
     }) as NextResponse
   );
 }

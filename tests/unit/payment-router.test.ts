@@ -89,6 +89,7 @@ describe("buildDual402Response", () => {
       price: "0.01",
       creatorWalletAddress: "0xCreator",
       workflowName: "Test Workflow",
+      resourceUrl: "https://example.com/api/mcp/workflows/test/call",
     });
     expect(response.status).toBe(402);
   });
@@ -98,6 +99,7 @@ describe("buildDual402Response", () => {
       price: "0.01",
       creatorWalletAddress: "0xCreator",
       workflowName: "Test Workflow",
+      resourceUrl: "https://example.com/api/mcp/workflows/test/call",
     });
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
   });
@@ -109,6 +111,7 @@ describe("buildDual402Response", () => {
         price: "0.01",
         creatorWalletAddress: "0xCreator",
         workflowName: "Test Workflow",
+        resourceUrl: "https://example.com/api/mcp/workflows/test/call",
       });
       const wwwAuth = response.headers.get("WWW-Authenticate");
       expect(wwwAuth).toBeTruthy();
@@ -127,6 +130,7 @@ describe("buildDual402Response", () => {
         price: "0.01",
         creatorWalletAddress: "0xCreator",
         workflowName: "Test Workflow",
+        resourceUrl: "https://example.com/api/mcp/workflows/test/call",
       });
       expect(Expires.minutes).toHaveBeenCalledWith(5);
       expect(Challenge.from).toHaveBeenCalledWith(
@@ -146,6 +150,7 @@ describe("buildDual402Response", () => {
         price: "0.01",
         creatorWalletAddress: "0xCreator",
         workflowName: "Test Workflow",
+        resourceUrl: "https://example.com/api/mcp/workflows/test/call",
       });
       expect(Challenge.from).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -166,7 +171,56 @@ describe("buildDual402Response", () => {
       price: "0.01",
       creatorWalletAddress: "0xCreator",
       workflowName: "Test Workflow",
+      resourceUrl: "https://example.com/api/mcp/workflows/test/call",
     });
     expect(response.headers.get("WWW-Authenticate")).toBeNull();
+  });
+
+  it("emits the canonical PAYMENT-REQUIRED header with x402 v2 shape", async () => {
+    const response = buildDual402Response({
+      price: "0.01",
+      creatorWalletAddress: "0xCreator",
+      workflowName: "Test Workflow",
+      resourceUrl: "https://example.com/api/mcp/workflows/test/call",
+    });
+    const header = response.headers.get("PAYMENT-REQUIRED");
+    expect(header).toBeTruthy();
+    const decoded = JSON.parse(
+      Buffer.from(header as string, "base64").toString("utf8")
+    );
+    expect(decoded.x402Version).toBe(2);
+    expect(decoded.error).toBe("Payment required");
+    expect(decoded.resource).toEqual({
+      url: "https://example.com/api/mcp/workflows/test/call",
+      description: "Pay to run workflow: Test Workflow",
+      mimeType: "application/json",
+    });
+    expect(Array.isArray(decoded.accepts)).toBe(true);
+    expect(decoded.accepts).toHaveLength(1);
+    expect(decoded.accepts[0]).toEqual({
+      scheme: "exact",
+      network: "eip155:8453",
+      asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      amount: "10000",
+      payTo: "0xCreator",
+      maxTimeoutSeconds: 300,
+      extra: { name: "USD Coin", version: "2" },
+    });
+    // Body mirrors the header payload so probers that read the body still
+    // see the canonical shape.
+    const body = await response.json();
+    expect(body).toEqual(decoded);
+  });
+
+  it("also emits X-PAYMENT-REQUIREMENTS as a legacy alias with the same payload", () => {
+    const response = buildDual402Response({
+      price: "0.01",
+      creatorWalletAddress: "0xCreator",
+      workflowName: "Test Workflow",
+      resourceUrl: "https://example.com/api/mcp/workflows/test/call",
+    });
+    expect(response.headers.get("X-PAYMENT-REQUIREMENTS")).toBe(
+      response.headers.get("PAYMENT-REQUIRED")
+    );
   });
 });

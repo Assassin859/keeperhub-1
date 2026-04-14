@@ -20,7 +20,6 @@ import { registerExactEvmScheme } from "@x402/evm/exact/client";
 import { Mppx, tempo } from "mppx/client";
 import { privateKeyToAccount } from "viem/accounts";
 
-const BASE_USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const BASE_USDC_DECIMALS = 6;
 
 const SLUG = "mcp-test";
@@ -91,36 +90,22 @@ function fetch402(): Promise<Response> {
   });
 }
 
-type DualAccepts = { scheme: string; network: string; payTo: string; price: string };
-type Dual402Header = { accepts: DualAccepts; description: string };
-
-function parseDual402Header(headerValue: string): Dual402Header {
+/**
+ * Parses the canonical `PAYMENT-REQUIRED` header (base64-encoded JSON of a
+ * `PaymentRequired` from `@x402/core/types`). Falls back to the legacy
+ * `X-PAYMENT-REQUIREMENTS` header for transitional compatibility -- both
+ * carry the same payload after the discovery-fix release.
+ */
+function parsePaymentRequiredHeader(res: Response): PaymentRequired | null {
+  const header =
+    res.headers.get("PAYMENT-REQUIRED") ??
+    res.headers.get("X-PAYMENT-REQUIREMENTS");
+  if (!header) {
+    return null;
+  }
   return JSON.parse(
-    Buffer.from(headerValue, "base64").toString("utf-8")
-  ) as Dual402Header;
-}
-
-function priceToAtomicUnits(price: string): string {
-  const numeric = price.replace(/^\$/, "");
-  return String(Math.round(Number(numeric) * 10 ** BASE_USDC_DECIMALS));
-}
-
-function toPaymentRequired(header: Dual402Header, url: string): PaymentRequired {
-  return {
-    x402Version: 2,
-    resource: { url },
-    accepts: [
-      {
-        scheme: header.accepts.scheme,
-        network: header.accepts.network as `${string}:${string}`,
-        payTo: header.accepts.payTo,
-        amount: priceToAtomicUnits(header.accepts.price),
-        asset: BASE_USDC_ADDRESS,
-        maxTimeoutSeconds: 300,
-        extra: { name: "USD Coin", version: "2" },
-      },
-    ],
-  };
+    Buffer.from(header, "base64").toString("utf-8")
+  ) as PaymentRequired;
 }
 
 // ---------------------------------------------------------------------------
@@ -146,26 +131,26 @@ async function testDual402(): Promise<TestResult> {
     return { pass: false, detail: `expected 402, got ${res.status}` };
   }
 
-  const x402Header = res.headers.get("X-PAYMENT-REQUIREMENTS");
   const mppHeader = res.headers.get("WWW-Authenticate");
 
-  if (!x402Header) {
-    return { pass: false, detail: "missing X-PAYMENT-REQUIREMENTS header" };
-  }
-
+  let parsed: PaymentRequired | null;
   try {
-    const parsed = parseDual402Header(x402Header);
-    const hasAccepts = parsed.accepts?.scheme && parsed.accepts?.payTo;
-    return {
-      pass: Boolean(hasAccepts),
-      detail: [
-        `x402: scheme=${parsed.accepts?.scheme} payTo=${parsed.accepts?.payTo?.slice(0, 10)}...`,
-        `MPP WWW-Authenticate: ${mppHeader ? "present" : "absent"}`,
-      ].join(" | "),
-    };
+    parsed = parsePaymentRequiredHeader(res);
   } catch {
-    return { pass: false, detail: `X-PAYMENT-REQUIREMENTS not valid base64 JSON` };
+    return { pass: false, detail: "PAYMENT-REQUIRED not valid base64 JSON" };
   }
+  if (!parsed) {
+    return { pass: false, detail: "missing PAYMENT-REQUIRED header" };
+  }
+  const accept = parsed.accepts?.[0];
+  const hasAccepts = Boolean(accept?.scheme && accept?.payTo);
+  return {
+    pass: hasAccepts,
+    detail: [
+      `x402: v${parsed.x402Version} scheme=${accept?.scheme} payTo=${accept?.payTo?.slice(0, 10)}...`,
+      `MPP WWW-Authenticate: ${mppHeader ? "present" : "absent"}`,
+    ].join(" | "),
+  };
 }
 
 async function testInputValidation(): Promise<TestResult> {
@@ -209,13 +194,10 @@ async function testX402PaidCall(): Promise<TestResult> {
     return { pass: false, detail: `expected 402, got ${initialRes.status}` };
   }
 
-  const x402Header = initialRes.headers.get("X-PAYMENT-REQUIREMENTS");
-  if (!x402Header) {
-    return { pass: false, detail: "no X-PAYMENT-REQUIREMENTS header" };
+  const paymentRequired = parsePaymentRequiredHeader(initialRes);
+  if (!paymentRequired) {
+    return { pass: false, detail: "no PAYMENT-REQUIRED header" };
   }
-
-  const dual402 = parseDual402Header(x402Header);
-  const paymentRequired = toPaymentRequired(dual402, callUrl);
   const firstAccept = paymentRequired.accepts[0];
   const amountUsdc = Number(firstAccept.amount) / 10 ** BASE_USDC_DECIMALS;
   console.log(`\n    x402: $${amountUsdc.toFixed(2)} USDC on ${firstAccept.network} to ${firstAccept.payTo}`);
