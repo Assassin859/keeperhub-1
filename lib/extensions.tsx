@@ -77,10 +77,7 @@ registerFieldRenderer(
 
     return (
       <div className="space-y-2" key={field.key}>
-        <Label className="ml-1" htmlFor={field.key}>
-          {field.label}
-          {field.required && <span className="text-red-500">*</span>}
-        </Label>
+        <ProtocolFieldLabel field={field} />
         <ChainSelectField
           chainTypeFilter={field.chainTypeFilter}
           disabled={disabled}
@@ -106,10 +103,7 @@ registerFieldRenderer(
 
     return (
       <div className="space-y-2" key={field.key}>
-        <Label className="ml-1" htmlFor={field.key}>
-          {field.label}
-          {field.required && <span className="text-red-500">*</span>}
-        </Label>
+        <ProtocolFieldLabel field={field} />
         <TokenSelectField
           config={config}
           disabled={disabled}
@@ -136,10 +130,7 @@ registerFieldRenderer(
 
     return (
       <div className="space-y-2" key={field.key}>
-        <Label className="ml-1" htmlFor={field.key}>
-          {field.label}
-          {field.required && <span className="text-red-500">*</span>}
-        </Label>
+        <ProtocolFieldLabel field={field} />
         <AbiEventSelectField
           abiValue={abiValue}
           disabled={disabled}
@@ -191,10 +182,7 @@ registerFieldRenderer(
 
     return (
       <div className="space-y-2" key={field.key}>
-        <Label className="ml-1" htmlFor={field.key}>
-          {field.label}
-          {field.required && <span className="text-red-500">*</span>}
-        </Label>
+        <ProtocolFieldLabel field={field} />
         <CodeEditorField
           disabled={disabled}
           onChange={(val: unknown) => onUpdateConfig(field.key, val)}
@@ -218,10 +206,7 @@ registerFieldRenderer(
 
     return (
       <div className="space-y-2" key={field.key}>
-        <Label className="ml-1" htmlFor={field.key}>
-          {field.label}
-          {field.required && <span className="text-red-500">*</span>}
-        </Label>
+        <ProtocolFieldLabel field={field} />
         <CodeEditorField
           disabled={disabled}
           height="160px"
@@ -248,10 +233,7 @@ registerFieldRenderer(
 
     return (
       <div className="space-y-2" key={field.key}>
-        <Label className="ml-1" htmlFor={field.key}>
-          {field.label}
-          {field.required && <span className="text-red-500">*</span>}
-        </Label>
+        <ProtocolFieldLabel field={field} />
         <CallListField
           disabled={disabled}
           field={field}
@@ -297,6 +279,67 @@ registerFieldRenderer(
 );
 
 /**
+ * Shared label for protocol fields. Shows the field label, required asterisk,
+ * and an info tooltip with helpTip text and optional docs link.
+ */
+function ProtocolFieldLabel({
+  field,
+}: {
+  field: {
+    key: string;
+    label: string;
+    required?: boolean;
+    helpTip?: string;
+    docUrl?: string;
+  };
+}): React.ReactNode {
+  const { Tooltip, TooltipTrigger, TooltipContent } =
+    require("@/components/ui/tooltip") as typeof import("@/components/ui/tooltip");
+  const { Info } = require("lucide-react") as typeof import("lucide-react");
+
+  const hasDocUrl = Boolean(field.docUrl);
+
+  const infoIcon = (
+    <Info
+      className={`h-3.5 w-3.5 shrink-0 text-muted-foreground ${hasDocUrl ? "cursor-pointer hover:text-primary" : "cursor-help"}`}
+    />
+  );
+
+  const handleInfoClick = (): void => {
+    if (field.docUrl) {
+      window.open(field.docUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  return (
+    <Label className="ml-1 flex items-center gap-1.5" htmlFor={field.key}>
+      {field.label}
+      {field.required && <span className="text-red-500">*</span>}
+      {field.helpTip && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              className="inline-flex"
+              onClick={handleInfoClick}
+              type="button"
+            >
+              {infoIcon}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent
+            className={`max-w-xs whitespace-pre-line ${hasDocUrl ? "cursor-pointer" : ""}`}
+            onClick={handleInfoClick}
+            side="top"
+          >
+            {field.helpTip}
+          </TooltipContent>
+        </Tooltip>
+      )}
+    </Label>
+  );
+}
+
+/**
  * Protocol Address Field
  * Address input with checksum display, validation, and address book support
  */
@@ -310,10 +353,7 @@ registerFieldRenderer(
 
     return (
       <div className="space-y-2" key={field.key}>
-        <Label className="ml-1" htmlFor={field.key}>
-          {field.label}
-          {field.required && <span className="text-red-500">*</span>}
-        </Label>
+        <ProtocolFieldLabel field={field} />
         <ProtocolAddressField
           config={config}
           disabled={disabled}
@@ -344,10 +384,7 @@ registerFieldRenderer(
 
     return (
       <div className="space-y-2" key={field.key}>
-        <Label className="ml-1" htmlFor={field.key}>
-          {field.label}
-          {field.required && <span className="text-red-500">*</span>}
-        </Label>
+        <ProtocolFieldLabel field={field} />
         <ProtocolUintField
           disabled={disabled}
           fieldKey={field.key}
@@ -378,10 +415,7 @@ registerFieldRenderer(
 
     return (
       <div className="space-y-2" key={field.key}>
-        <Label className="ml-1" htmlFor={field.key}>
-          {field.label}
-          {field.required && <span className="text-red-500">*</span>}
-        </Label>
+        <ProtocolFieldLabel field={field} />
         <ProtocolIntField
           disabled={disabled}
           fieldKey={field.key}
@@ -409,10 +443,7 @@ registerFieldRenderer(
 
     return (
       <div className="space-y-2" key={field.key}>
-        <Label className="ml-1" htmlFor={field.key}>
-          {field.label}
-          {field.required && <span className="text-red-500">*</span>}
-        </Label>
+        <ProtocolFieldLabel field={field} />
         <ProtocolEthValueField
           disabled={disabled}
           fieldKey={field.key}
@@ -439,10 +470,7 @@ registerFieldRenderer(
 
     return (
       <div className="space-y-2" key={field.key}>
-        <Label className="ml-1" htmlFor={field.key}>
-          {field.label}
-          {field.required && <span className="text-red-500">*</span>}
-        </Label>
+        <ProtocolFieldLabel field={field} />
         <ProtocolBoolField
           disabled={disabled}
           fieldKey={field.key}
@@ -471,16 +499,58 @@ registerFieldRenderer(
 
     return (
       <div className="space-y-2" key={field.key}>
-        <Label className="ml-1" htmlFor={field.key}>
-          {field.label}
-          {field.required && <span className="text-red-500">*</span>}
-        </Label>
+        <ProtocolFieldLabel field={field} />
         <ProtocolBytesField
           disabled={disabled}
           fieldKey={field.key}
           onChange={(val: unknown) => onUpdateConfig(field.key, val)}
           placeholder={field.placeholder}
           solidityType={solidityType}
+          value={value}
+        />
+      </div>
+    );
+  }
+);
+
+/**
+ * Protocol Tuple Array Field
+ * Structured array builder for tuple[] inputs (e.g. CCIP tokenAmounts).
+ * Delegates to ArrayInputField + TupleInputField for add/remove items with
+ * per-component typed fields instead of raw JSON text input.
+ */
+registerFieldRenderer(
+  "protocol-tuple-array",
+  ({ field, config, onUpdateConfig, disabled }) => {
+    const { ArrayInputField } =
+      require("@/components/workflow/config/array-input-field") as typeof import("@/components/workflow/config/array-input-field");
+
+    const rawValue = config[field.key];
+    let value: unknown = rawValue;
+    if (typeof rawValue === "string" && rawValue.trim() !== "") {
+      try {
+        value = JSON.parse(rawValue);
+      } catch {
+        value = rawValue;
+      }
+    }
+
+    const components = field.tupleComponents ?? [];
+    const itemType = field.solidityType?.endsWith("[]")
+      ? field.solidityType.slice(0, -2)
+      : "tuple";
+
+    return (
+      <div className="space-y-2" key={field.key}>
+        <ProtocolFieldLabel field={field} />
+        <ArrayInputField
+          components={components}
+          disabled={disabled}
+          fieldKey={field.key}
+          itemType={itemType}
+          onChange={(val: unknown[]) =>
+            onUpdateConfig(field.key, JSON.stringify(val))
+          }
           value={value}
         />
       </div>

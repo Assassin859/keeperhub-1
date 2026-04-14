@@ -150,6 +150,10 @@ vi.mock("@/lib/web3/transaction-manager", () => ({
   ),
 }));
 
+// Import mocks for assertion
+import { initializeWalletSigner } from "@/lib/para/wallet-helpers";
+import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
+
 // Import SUT after all mocks
 import { writeContractCore } from "@/plugins/web3/steps/write-contract-core";
 
@@ -199,5 +203,48 @@ describe("writeContractCore unique execution ID", () => {
 
     expect(capturedTxContext).not.toBeNull();
     expect(capturedTxContext?.executionId).toBe("wf-exec-123");
+  });
+});
+
+describe("writeContractCore signer chain ID", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedTxContext = null;
+  });
+
+  it("should pass resolved chainId to initializeWalletSigner", async () => {
+    vi.mocked(getChainIdFromNetwork).mockReturnValue(11155111);
+
+    await writeContractCore({
+      contractAddress: "0x1234567890123456789012345678901234567890",
+      network: "11155111",
+      abi: VALID_ABI,
+      abiFunction: "transfer",
+      _context: { organizationId: "org-1" },
+    });
+
+    expect(initializeWalletSigner).toHaveBeenCalledWith(
+      "org-1",
+      "https://rpc.example.com",
+      11155111
+    );
+  });
+
+  it("should pass mainnet chainId when network is mainnet", async () => {
+    vi.mocked(getChainIdFromNetwork).mockReturnValue(1);
+
+    await writeContractCore({
+      contractAddress: "0x1234567890123456789012345678901234567890",
+      network: "1",
+      abi: VALID_ABI,
+      abiFunction: "transfer",
+      _context: { organizationId: "org-1" },
+    });
+
+    expect(initializeWalletSigner).toHaveBeenCalledWith(
+      "org-1",
+      "https://rpc.example.com",
+      1
+    );
   });
 });

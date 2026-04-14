@@ -18,6 +18,7 @@ import {
 type ProtocolWriteInput = StepInput & {
   network: string;
   contractAddress?: string;
+  gasLimitMultiplier?: string;
   _protocolMeta?: string;
   _actionType?: string;
   [key: string]: unknown;
@@ -40,10 +41,14 @@ function buildFunctionArgs(
     return undefined;
   }
 
-  const rawInputs = protocolAction.inputs.map((inp) => ({
-    name: inp.name,
-    value: input[inp.name] !== undefined ? String(input[inp.name]) : "",
-  }));
+  const rawInputs = protocolAction.inputs.map((inp) => {
+    const raw = input[inp.name];
+    if (raw === undefined) {
+      return { name: inp.name, value: "" };
+    }
+    const value = typeof raw === "object" ? JSON.stringify(raw) : String(raw);
+    return { name: inp.name, value };
+  });
 
   const actionSlug = protocolAction.slug;
   const transformed = applyEncodeTransformsNamed(
@@ -134,6 +139,7 @@ export async function protocolWriteStep(
       abiFunction: meta.functionName,
       functionArgs,
       ethValue,
+      gasLimitMultiplier: input.gasLimitMultiplier,
       _context: input._context
         ? {
             executionId: input._context.executionId,

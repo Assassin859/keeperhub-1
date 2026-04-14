@@ -40,10 +40,14 @@ function buildFunctionArgs(
     return undefined;
   }
 
-  const rawInputs = protocolAction.inputs.map((inp) => ({
-    name: inp.name,
-    value: input[inp.name] !== undefined ? String(input[inp.name]) : "",
-  }));
+  const rawInputs = protocolAction.inputs.map((inp) => {
+    const raw = input[inp.name];
+    if (raw === undefined) {
+      return { name: inp.name, value: "" };
+    }
+    const value = typeof raw === "object" ? JSON.stringify(raw) : String(raw);
+    return { name: inp.name, value };
+  });
 
   const actionSlug = protocolAction.slug;
   const transformed = applyEncodeTransformsNamed(

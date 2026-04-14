@@ -63,3 +63,31 @@ export function applyEncodeTransformsNamed(
 export function clearEncodeTransforms(): void {
   transforms.clear();
 }
+
+// -- Built-in transforms ------------------------------------------------------
+// Registered eagerly here (not in protocol definition files) because the
+// workflow bundler tree-shakes side-effect imports from "use step" files.
+// Protocol definition modules are imported via `import "@/protocols"` which
+// may not survive bundling, so transforms declared there would be missing
+// at runtime.
+
+function padAddressToBytes(value: string): string {
+  if (value.startsWith("{{")) {
+    return value;
+  }
+  const hex = value.startsWith("0x") ? value.slice(2) : value;
+  return `0x${hex.padStart(64, "0")}`;
+}
+
+registerEncodeTransform(
+  "chainlink",
+  "ccip-get-fee",
+  "receiver",
+  padAddressToBytes
+);
+registerEncodeTransform(
+  "chainlink",
+  "ccip-send",
+  "receiver",
+  padAddressToBytes
+);

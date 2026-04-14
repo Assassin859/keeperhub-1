@@ -124,7 +124,11 @@ export class EvmChainAdapter implements ChainAdapter {
       );
     }
 
-    const valueOverride = request.value ? { value: request.value } : {};
+    const signerAddress = await signer.getAddress();
+    const callOverrides = {
+      ...(request.value ? { value: request.value } : {}),
+      from: signerAddress,
+    };
 
     if (options.rpcManager) {
       await options.rpcManager.executeWithFailover((rpcProvider) => {
@@ -135,13 +139,13 @@ export class EvmChainAdapter implements ChainAdapter {
         );
         return readContract[request.functionKey].staticCall(
           ...request.args,
-          valueOverride
+          callOverrides
         );
       }, "preflight");
     } else {
       await contract[request.functionKey].staticCall(
         ...request.args,
-        valueOverride
+        callOverrides
       );
     }
 
@@ -156,12 +160,12 @@ export class EvmChainAdapter implements ChainAdapter {
           );
           return readContract[request.functionKey].estimateGas(
             ...request.args,
-            valueOverride
+            callOverrides
           );
         }, "preflight")
       : await contract[request.functionKey].estimateGas(
           ...request.args,
-          valueOverride
+          callOverrides
         );
 
     const gasConfig = await this.gasStrategy.getGasConfig(
@@ -178,7 +182,7 @@ export class EvmChainAdapter implements ChainAdapter {
       gasLimit: gasConfig.gasLimit,
       maxFeePerGas: gasConfig.maxFeePerGas,
       maxPriorityFeePerGas: gasConfig.maxPriorityFeePerGas,
-      ...valueOverride,
+      ...(request.value ? { value: request.value } : {}),
     });
 
     return this.confirmTransaction(tx, session, nonce, gasConfig, options);

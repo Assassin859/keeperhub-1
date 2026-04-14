@@ -74,19 +74,19 @@ describe("Chainlink Protocol Definition", () => {
     }
   });
 
-  it("has 22 actions (8 named feeds x 2 + 6 custom feed)", () => {
-    expect(chainlinkDef.actions).toHaveLength(22);
+  it("has 31 actions (8 named feeds x 2 + 6 custom feed + 9 CCIP)", () => {
+    expect(chainlinkDef.actions).toHaveLength(31);
   });
 
-  it("has 22 read actions and 0 write actions", () => {
+  it("has 27 read actions and 4 write actions", () => {
     const readActions = chainlinkDef.actions.filter((a) => a.type === "read");
     const writeActions = chainlinkDef.actions.filter((a) => a.type === "write");
-    expect(readActions).toHaveLength(22);
-    expect(writeActions).toHaveLength(0);
+    expect(readActions).toHaveLength(27);
+    expect(writeActions).toHaveLength(4);
   });
 
-  it("has 9 contracts (8 named feeds + 1 custom)", () => {
-    expect(Object.keys(chainlinkDef.contracts)).toHaveLength(9);
+  it("has 13 contracts (8 named feeds + 1 custom + 4 CCIP)", () => {
+    expect(Object.keys(chainlinkDef.contracts)).toHaveLength(13);
   });
 
   it("customFeed contract has userSpecifiedAddress enabled", () => {
@@ -173,6 +173,118 @@ describe("Chainlink Protocol Definition", () => {
     expect(action).toBeDefined();
     expect(action?.inputs).toHaveLength(1);
     expect(action?.outputs).toHaveLength(5);
+  });
+
+  it("CCIP router contract is available on all enabled CCIP chains", () => {
+    const chains = Object.keys(chainlinkDef.contracts.ccipRouter.addresses);
+    const expectedMainnets = ["1", "8453", "42161", "56", "137", "43114"];
+    const expectedTestnets = [
+      "11155111",
+      "84532",
+      "97",
+      "80002",
+      "421614",
+      "43113",
+    ];
+    const expected = [...expectedMainnets, ...expectedTestnets];
+    expect(chains).toHaveLength(expected.length);
+    for (const id of expected) {
+      expect(chains, `missing chain ${id}`).toContain(id);
+    }
+  });
+
+  it("CCIP-BnM contract is testnet-only (Sepolia + Base Sepolia)", () => {
+    const chains = Object.keys(chainlinkDef.contracts.ccipBnM.addresses);
+    expect(chains).toHaveLength(2);
+    expect(chains).toContain("11155111");
+    expect(chains).toContain("84532");
+  });
+
+  it("ccip-get-fee action exists and is a read with 6 inputs", () => {
+    const action = chainlinkDef.actions.find((a) => a.slug === "ccip-get-fee");
+    expect(action).toBeDefined();
+    expect(action?.type).toBe("read");
+    expect(action?.contract).toBe("ccipRouter");
+    expect(action?.inputs).toHaveLength(6);
+    expect(action?.outputs).toHaveLength(1);
+  });
+
+  it("ccip-send action exists and is a write with 6 inputs", () => {
+    const action = chainlinkDef.actions.find((a) => a.slug === "ccip-send");
+    expect(action).toBeDefined();
+    expect(action?.type).toBe("write");
+    expect(action?.contract).toBe("ccipRouter");
+    expect(action?.inputs).toHaveLength(6);
+    expect(action?.outputs).toHaveLength(1);
+  });
+
+  it("ccipBridgeToken and ccipFeeToken contracts have userSpecifiedAddress enabled", () => {
+    expect(chainlinkDef.contracts.ccipBridgeToken.userSpecifiedAddress).toBe(
+      true
+    );
+    expect(chainlinkDef.contracts.ccipFeeToken.userSpecifiedAddress).toBe(true);
+  });
+
+  it("ccip-approve-bridge-token action exists and is a write with 2 inputs", () => {
+    const action = chainlinkDef.actions.find(
+      (a) => a.slug === "ccip-approve-bridge-token"
+    );
+    expect(action).toBeDefined();
+    expect(action?.type).toBe("write");
+    expect(action?.contract).toBe("ccipBridgeToken");
+    expect(action?.function).toBe("approve");
+    expect(action?.inputs).toHaveLength(2);
+  });
+
+  it("ccip-approve-fee-token action exists and is a write with 2 inputs", () => {
+    const action = chainlinkDef.actions.find(
+      (a) => a.slug === "ccip-approve-fee-token"
+    );
+    expect(action).toBeDefined();
+    expect(action?.type).toBe("write");
+    expect(action?.contract).toBe("ccipFeeToken");
+    expect(action?.function).toBe("approve");
+    expect(action?.inputs).toHaveLength(2);
+  });
+
+  it("ccip-check-bridge-balance and ccip-check-fee-balance actions exist", () => {
+    const cases: Array<{ slug: string; contract: string }> = [
+      { slug: "ccip-check-bridge-balance", contract: "ccipBridgeToken" },
+      { slug: "ccip-check-fee-balance", contract: "ccipFeeToken" },
+    ];
+    for (const { slug, contract } of cases) {
+      const action = chainlinkDef.actions.find((a) => a.slug === slug);
+      expect(action, `${slug} should exist`).toBeDefined();
+      expect(action?.type).toBe("read");
+      expect(action?.contract).toBe(contract);
+      expect(action?.function).toBe("balanceOf");
+      expect(action?.inputs).toHaveLength(1);
+      expect(action?.outputs).toHaveLength(1);
+    }
+  });
+
+  it("ccip-check-bridge-allowance and ccip-check-fee-allowance actions exist", () => {
+    const cases: Array<{ slug: string; contract: string }> = [
+      { slug: "ccip-check-bridge-allowance", contract: "ccipBridgeToken" },
+      { slug: "ccip-check-fee-allowance", contract: "ccipFeeToken" },
+    ];
+    for (const { slug, contract } of cases) {
+      const action = chainlinkDef.actions.find((a) => a.slug === slug);
+      expect(action, `${slug} should exist`).toBeDefined();
+      expect(action?.type).toBe("read");
+      expect(action?.contract).toBe(contract);
+      expect(action?.function).toBe("allowance");
+      expect(action?.inputs).toHaveLength(2);
+      expect(action?.outputs).toHaveLength(1);
+    }
+  });
+
+  it("ccip-bnm-drip action exists and is a write targeting ccipBnM", () => {
+    const action = chainlinkDef.actions.find((a) => a.slug === "ccip-bnm-drip");
+    expect(action).toBeDefined();
+    expect(action?.type).toBe("write");
+    expect(action?.contract).toBe("ccipBnM");
+    expect(action?.inputs).toHaveLength(1);
   });
 
   it("registers in the protocol registry and is retrievable", () => {

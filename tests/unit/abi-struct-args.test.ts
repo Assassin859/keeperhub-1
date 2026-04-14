@@ -109,4 +109,93 @@ describe("reshapeArgsForAbi", () => {
     });
     expect(result).toBe(args);
   });
+
+  it("JSON-parses string values for tuple[] components inside a tuple", () => {
+    const tokenAmountsJson =
+      '[{"token":"0xFd57b4ddBf88a4e07fF4e34C487b99af2Fe82a05","amount":"100000000000000000"}]';
+    const args = [
+      "10344971235874465080",
+      "0x000000000000000000000000ABC",
+      "0x",
+      tokenAmountsJson,
+      "0xLINK",
+      "0x97a657c9",
+    ];
+
+    const result = reshapeArgsForAbi(args, {
+      inputs: [
+        { name: "destinationChainSelector", type: "uint64" },
+        {
+          name: "message",
+          type: "tuple",
+          components: [
+            { name: "receiver", type: "bytes" },
+            { name: "data", type: "bytes" },
+            { name: "tokenAmounts", type: "tuple[]" },
+            { name: "feeToken", type: "address" },
+            { name: "extraArgs", type: "bytes" },
+          ],
+        },
+      ],
+    });
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toBe("10344971235874465080");
+    const message = result[1] as Record<string, unknown>;
+    expect(message.receiver).toBe("0x000000000000000000000000ABC");
+    expect(message.data).toBe("0x");
+    expect(message.tokenAmounts).toEqual([
+      {
+        token: "0xFd57b4ddBf88a4e07fF4e34C487b99af2Fe82a05",
+        amount: "100000000000000000",
+      },
+    ]);
+    expect(message.feeToken).toBe("0xLINK");
+    expect(message.extraArgs).toBe("0x97a657c9");
+  });
+
+  it("leaves non-JSON string values for array components unchanged", () => {
+    const args = ["not-json", "0xAddr"];
+
+    const result = reshapeArgsForAbi(args, {
+      inputs: [
+        {
+          name: "params",
+          type: "tuple",
+          components: [
+            { name: "items", type: "tuple[]" },
+            { name: "target", type: "address" },
+          ],
+        },
+      ],
+    });
+
+    expect(result).toHaveLength(1);
+    const obj = result[0] as Record<string, unknown>;
+    expect(obj.items).toBe("not-json");
+    expect(obj.target).toBe("0xAddr");
+  });
+
+  it("leaves already-parsed array values for array components unchanged", () => {
+    const items = [{ token: "0xA", amount: "100" }];
+    const args = [items, "0xAddr"];
+
+    const result = reshapeArgsForAbi(args, {
+      inputs: [
+        {
+          name: "params",
+          type: "tuple",
+          components: [
+            { name: "items", type: "tuple[]" },
+            { name: "target", type: "address" },
+          ],
+        },
+      ],
+    });
+
+    expect(result).toHaveLength(1);
+    const obj = result[0] as Record<string, unknown>;
+    expect(obj.items).toBe(items);
+    expect(obj.target).toBe("0xAddr");
+  });
 });

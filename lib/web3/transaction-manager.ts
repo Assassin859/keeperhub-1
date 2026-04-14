@@ -296,7 +296,8 @@ export async function executeTransaction(
 
     const signer = await initializeWalletSigner(
       context.organizationId,
-      context.rpcUrl
+      context.rpcUrl,
+      context.chainId
     );
     const provider = signer.provider;
 

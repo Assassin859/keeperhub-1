@@ -227,7 +227,7 @@ export async function transferFundsCore(
   return withNonceSession(txContext, walletAddress, async (session) => {
     let signer: Awaited<ReturnType<typeof initializeWalletSigner>>;
     try {
-      signer = await initializeWalletSigner(organizationId, rpcUrl);
+      signer = await initializeWalletSigner(organizationId, rpcUrl, chainId);
     } catch (error) {
       return {
         success: false,

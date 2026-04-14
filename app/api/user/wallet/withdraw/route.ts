@@ -219,7 +219,7 @@ export async function POST(request: Request) {
         console.log(
           `[Withdraw] Initializing signer for org ${organizationId} on chain ${chain.name}`
         );
-        const signer = await initializeWalletSigner(organizationId, rpcUrl);
+        const signer = await initializeWalletSigner(organizationId, rpcUrl, Number(chainId));
         const provider = signer.provider;
 
         if (!provider) {

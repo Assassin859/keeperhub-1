@@ -34,6 +34,21 @@ function isPreStructuredObject(arg: unknown): boolean {
   return arg !== null && typeof arg === "object" && !Array.isArray(arg);
 }
 
+function parseArrayComponentValue(value: unknown): unknown {
+  if (typeof value !== "string") {
+    return value;
+  }
+  const trimmed = value.trim();
+  if (trimmed.startsWith("[")) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return value;
+    }
+  }
+  return value;
+}
+
 function buildTupleArg(
   components: AbiComponent[],
   args: unknown[],
@@ -42,7 +57,11 @@ function buildTupleArg(
   const obj: Record<string, unknown> = {};
   let pos = cursor;
   for (const component of components) {
-    obj[component.name] = pos < args.length ? args[pos] : undefined;
+    let val = pos < args.length ? args[pos] : undefined;
+    if (component.type.endsWith("[]")) {
+      val = parseArrayComponentValue(val);
+    }
+    obj[component.name] = val;
     pos++;
   }
   return { value: obj, nextCursor: pos };

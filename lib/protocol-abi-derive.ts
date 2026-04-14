@@ -9,6 +9,7 @@
 import type {
   ProtocolAction,
   ProtocolActionInput,
+  ProtocolActionInputComponent,
   ProtocolActionOutput,
 } from "@/lib/protocol-registry";
 
@@ -18,9 +19,13 @@ export type AbiInputOverride = {
   name?: string;
   label?: string;
   helpTip?: string;
+  docUrl?: string;
   default?: string;
   hidden?: boolean;
+  required?: boolean;
+  advanced?: boolean;
   decimals?: boolean | number;
+  fieldType?: string;
 };
 
 export type AbiOutputOverride = {
@@ -89,6 +94,27 @@ function defaultOutputName(index: number, total: number): string {
 
 // -- Derivation --------------------------------------------------------------
 
+function toInputComponents(
+  params: AbiParam[] | undefined
+): ProtocolActionInputComponent[] | undefined {
+  if (!params || params.length === 0) {
+    return undefined;
+  }
+  return params.map((p) => ({
+    name: p.name,
+    type: p.type,
+    ...(p.components ? { components: toInputComponents(p.components) } : {}),
+  }));
+}
+
+function isFlattenableTuple(param: AbiParam): boolean {
+  return (
+    param.type === "tuple" &&
+    param.components !== undefined &&
+    param.components.length > 0
+  );
+}
+
 function deriveInput(
   param: AbiParam,
   index: number,
@@ -104,12 +130,21 @@ function deriveInput(
 
   const input: ProtocolActionInput = {
     name,
-    type: param.type,
+    type: override?.fieldType ?? param.type,
     label,
   };
 
   if (override?.default !== undefined) {
     input.default = override.default;
+  }
+  if (override?.required !== undefined) {
+    input.required = override.required;
+  }
+  if (override?.advanced) {
+    input.advanced = true;
+  }
+  if (override?.docUrl !== undefined) {
+    input.docUrl = override.docUrl;
   }
   if (override?.helpTip !== undefined) {
     input.helpTip = override.helpTip;
@@ -118,7 +153,29 @@ function deriveInput(
     input.decimals = override.decimals;
   }
 
+  const components = toInputComponents(param.components);
+  if (components) {
+    input.components = components;
+  }
+
   return input;
+}
+
+function deriveTupleInputs(
+  param: AbiParam,
+  overrides: Record<string, AbiInputOverride> | undefined
+): ProtocolActionInput[] {
+  const inputs: ProtocolActionInput[] = [];
+  const components = param.components ?? [];
+  for (let i = 0; i < components.length; i++) {
+    const comp = components[i];
+    const compOverride = overrides?.[comp.name || defaultInputName(i)];
+    const derived = deriveInput(comp, i, compOverride);
+    if (derived) {
+      inputs.push(derived);
+    }
+  }
+  return inputs;
 }
 
 function deriveOutput(
@@ -160,15 +217,23 @@ function deriveAction(
   for (let i = 0; i < fn.inputs.length; i++) {
     const param = fn.inputs[i];
     const paramKey = param.name || defaultInputName(i);
-    const inputOverride = override?.inputs?.[paramKey];
-    const derived = deriveInput(param, i, inputOverride);
-    if (derived) {
-      inputs.push(derived);
+
+    if (isFlattenableTuple(param)) {
+      const tupleInputs = deriveTupleInputs(param, override?.inputs);
+      for (const inp of tupleInputs) {
+        inputs.push(inp);
+      }
+    } else {
+      const inputOverride = override?.inputs?.[paramKey];
+      const derived = deriveInput(param, i, inputOverride);
+      if (derived) {
+        inputs.push(derived);
+      }
     }
   }
 
   const outputs: ProtocolActionOutput[] = [];
-  if (isReadOnly(fn.stateMutability) && fn.outputs.length > 0) {
+  if (fn.outputs.length > 0) {
     for (let i = 0; i < fn.outputs.length; i++) {
       const param = fn.outputs[i];
       const paramKey = param.name || defaultOutputName(i, fn.outputs.length);

@@ -5,6 +5,7 @@ import {
   ProtocolIcon,
 } from "@/plugins/protocol/icon";
 import type {
+  ActionConfigField,
   ActionConfigFieldBase,
   IntegrationPlugin,
   PluginAction,
@@ -20,13 +21,23 @@ export type ProtocolContract = {
   userSpecifiedAddress?: boolean;
 };
 
+export type ProtocolActionInputComponent = {
+  name: string;
+  type: string;
+  components?: ProtocolActionInputComponent[];
+};
+
 export type ProtocolActionInput = {
   name: string;
   type: string;
   label: string;
   default?: string;
+  required?: boolean;
+  advanced?: boolean;
   decimals?: boolean | number;
   helpTip?: string;
+  docUrl?: string;
+  components?: ProtocolActionInputComponent[];
 };
 
 export type ProtocolActionOutput = {
@@ -224,12 +235,53 @@ export function getRegisteredProtocols(): ProtocolDefinition[] {
   return Array.from(protocolRegistry.values());
 }
 
+function buildInputField(input: ProtocolActionInput): ActionConfigFieldBase {
+  const labelWithType = `${input.label} (${input.type})`;
+  const hasDefault = input.default !== undefined;
+  const isRequired = input.required ?? !hasDefault;
+  const hasTupleArrayComponents =
+    input.type.endsWith("[]") &&
+    input.components !== undefined &&
+    input.components.length > 0;
+
+  const tipFields = {
+    ...(input.helpTip ? { helpTip: input.helpTip } : {}),
+    ...(input.docUrl ? { docUrl: input.docUrl } : {}),
+  };
+
+  if (hasTupleArrayComponents) {
+    return {
+      key: input.name,
+      label: labelWithType,
+      type: "protocol-tuple-array",
+      required: isRequired,
+      solidityType: input.type,
+      tupleComponents: input.components,
+      ...tipFields,
+    };
+  }
+
+  const fieldType = solidityTypeToFieldType(input.type);
+  return {
+    key: input.name,
+    label: labelWithType,
+    type: fieldType,
+    required: isRequired,
+    ...(hasDefault ? { defaultValue: input.default } : {}),
+    ...(fieldType === "protocol-address" || input.type === "address"
+      ? { isAddressField: true }
+      : {}),
+    ...tipFields,
+    ...(fieldType === "template-input" ? {} : { solidityType: input.type }),
+  };
+}
+
 function buildConfigFieldsFromAction(
   def: ProtocolDefinition,
   action: ProtocolAction
-): ActionConfigFieldBase[] {
+): ActionConfigField[] {
   const contract = def.contracts[action.contract];
-  const fields: ActionConfigFieldBase[] = [
+  const fields: ActionConfigField[] = [
     {
       key: "network",
       label: "Network",
@@ -260,19 +312,33 @@ function buildConfigFieldsFromAction(
     });
   }
 
+  const advancedFields: ActionConfigFieldBase[] = [];
+
   for (const input of action.inputs) {
-    const fieldType = solidityTypeToFieldType(input.type);
+    const field = buildInputField(input);
+    if (input.advanced) {
+      advancedFields.push(field);
+    } else {
+      fields.push(field);
+    }
+  }
+
+  if (action.type === "write") {
+    advancedFields.push({
+      key: "gasLimitMultiplier",
+      label: "Gas Limit",
+      type: "gas-limit-multiplier",
+      networkField: "network",
+      actionSlug: action.slug,
+    });
+  }
+
+  if (advancedFields.length > 0) {
     fields.push({
-      key: input.name,
-      label: input.label,
-      type: fieldType,
-      placeholder: input.default ?? "",
-      required: true,
-      ...(fieldType === "protocol-address" || input.type === "address"
-        ? { isAddressField: true }
-        : {}),
-      ...(input.helpTip ? { helpTip: input.helpTip } : {}),
-      ...(fieldType === "template-input" ? {} : { solidityType: input.type }),
+      type: "group",
+      label: "Advanced",
+      defaultExpanded: false,
+      fields: advancedFields,
     });
   }
 

@@ -45,7 +45,8 @@ export type ActionConfigFieldBase = {
     | "protocol-int" // Signed integer input with range validation
     | "protocol-bool" // Boolean select (true/false) with template variable support
     | "protocol-bytes" // Hex input with 0x-prefix validation
-    | "protocol-eth-value"; // Decimal ETH value input (e.g. 0.1, 1.5)
+    | "protocol-eth-value" // Decimal ETH value input (e.g. 0.1, 1.5)
+    | "protocol-tuple-array"; // Structured array of tuple items (e.g. tokenAmounts)
 
   // For chain-select: filter by chain type (e.g., "evm" or "solana")
   chainTypeFilter?: string;
@@ -114,6 +115,17 @@ export type ActionConfigFieldBase = {
 
   // Whether this field represents an Ethereum address (enables address book support)
   isAddressField?: boolean;
+
+  // External documentation URL shown as "Docs" link in the field tooltip
+  docUrl?: string;
+
+  // For protocol-tuple-array: ABI component definitions for the tuple items.
+  // Supports 2 levels of nesting (tuple containing tuple) which covers all
+  // current protocols. Extend to recursive type if deeper nesting is needed.
+  tupleComponents?: Array<{ name: string; type: string; components?: Array<{ name: string; type: string }> }>;
+
+  // For protocol field types: the underlying Solidity type (e.g. "uint256", "tuple[]")
+  solidityType?: string;
 };
 
 /**

@@ -1,7 +1,7 @@
 "use client";
 
 import { Plus, Trash2 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { TemplateBadgeInput } from "@/components/ui/template-badge-input";
 import type { AbiComponent } from "@/components/workflow/config/abi-types";
@@ -81,6 +81,13 @@ export function ArrayInputField({
   const [items, setItems] = useState<ArrayItem[]>(() =>
     parseArrayValue(value, nextId)
   );
+
+  useEffect(() => {
+    const incoming = parseArrayValue(value, nextId);
+    if (incoming.length > 0 && items.length === 0) {
+      setItems(incoming);
+    }
+  }, [value]);
 
   function updateItems(updated: ArrayItem[]): void {
     setItems(updated);
@@ -187,7 +194,7 @@ export function ArrayInputField({
         variant="outline"
       >
         <Plus className="mr-1.5 h-3.5 w-3.5" />
-        Add Item
+        {isTuple ? "Add Object" : "Add Item"}
       </Button>
     </div>
   );

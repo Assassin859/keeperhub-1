@@ -576,9 +576,27 @@ function renderField(
         {field.helpTip && (
           <Tooltip>
             <TooltipTrigger asChild>
-              <Info className="h-3.5 w-3.5 shrink-0 cursor-help text-muted-foreground" />
+              <button
+                className="inline-flex"
+                onClick={() => {
+                  if (field.docUrl) {
+                    window.open(field.docUrl, "_blank", "noopener,noreferrer");
+                  }
+                }}
+                type="button"
+              >
+                <Info className={`h-3.5 w-3.5 shrink-0 text-muted-foreground ${field.docUrl ? "cursor-pointer hover:text-primary" : "cursor-help"}`} />
+              </button>
             </TooltipTrigger>
-            <TooltipContent className="max-w-xs whitespace-pre-line" side="top">
+            <TooltipContent
+              className={`max-w-xs whitespace-pre-line ${field.docUrl ? "cursor-pointer" : ""}`}
+              onClick={() => {
+                if (field.docUrl) {
+                  window.open(field.docUrl, "_blank", "noopener,noreferrer");
+                }
+              }}
+              side="top"
+            >
               {field.helpTip}
             </TooltipContent>
           </Tooltip>

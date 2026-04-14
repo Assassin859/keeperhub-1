@@ -124,6 +124,7 @@ describe("Check Balance E2E", () => {
       const provider = await getRpcProviderFromUrls(
         RPC_URLS.ETH_MAINNET.primary,
         RPC_URLS.ETH_MAINNET.fallback,
+        1,
         "Ethereum Mainnet"
       );
 
@@ -142,6 +143,7 @@ describe("Check Balance E2E", () => {
       const provider = await getRpcProviderFromUrls(
         RPC_URLS.ETH_SEPOLIA.primary,
         RPC_URLS.ETH_SEPOLIA.fallback,
+        11155111,
         "Sepolia Testnet"
       );
 
@@ -159,6 +161,7 @@ describe("Check Balance E2E", () => {
       const provider = await getRpcProviderFromUrls(
         RPC_URLS.BASE_MAINNET.primary,
         RPC_URLS.BASE_MAINNET.fallback,
+        8453,
         "Base Mainnet"
       );
 
@@ -176,6 +179,7 @@ describe("Check Balance E2E", () => {
       const provider = await getRpcProviderFromUrls(
         RPC_URLS.ETH_MAINNET.primary,
         RPC_URLS.ETH_MAINNET.fallback,
+        1,
         "Ethereum Mainnet (Zero Address)"
       );
 
@@ -287,6 +291,7 @@ describe("Check Balance E2E", () => {
       const provider = await getRpcProviderFromUrls(
         "https://invalid-rpc-url-that-does-not-exist.example.com",
         RPC_URLS.ETH_MAINNET.fallback,
+        1,
         "Ethereum Mainnet (Failover Test)"
       );
 
@@ -324,6 +329,7 @@ describe("Check Balance E2E", () => {
       const provider = await getRpcProviderFromUrls(
         RPC_URLS.ETH_MAINNET.primary,
         RPC_URLS.ETH_MAINNET.fallback,
+        1,
         "Ethereum Mainnet"
       );
 

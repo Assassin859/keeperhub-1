@@ -3,6 +3,8 @@
 import { TemplateBadgeInput } from "@/components/ui/template-badge-input";
 import { ArrayInputField } from "@/components/workflow/config/array-input-field";
 import type { AbiComponent } from "@/components/workflow/config/abi-types";
+import { ProtocolAddressField } from "@/components/workflow/config/protocol-fields/protocol-address-field";
+import { ProtocolUintField } from "@/components/workflow/config/protocol-fields/protocol-uint-field";
 
 type TupleInputFieldProps = {
   components: AbiComponent[];
@@ -89,6 +91,24 @@ export function TupleInputField({
                 fieldKey={`${fieldKey}-${comp.name}`}
                 onChange={(val) => handleFieldChange(comp.name, val)}
                 value={obj[comp.name]}
+              />
+            ) : comp.type === "address" ? (
+              <ProtocolAddressField
+                config={{}}
+                disabled={disabled}
+                fieldKey={`${fieldKey}-${comp.name}`}
+                onChange={(val) => handleFieldChange(comp.name, String(val))}
+                placeholder="0x..."
+                value={(obj[comp.name] as string) ?? ""}
+              />
+            ) : comp.type.startsWith("uint") ? (
+              <ProtocolUintField
+                disabled={disabled}
+                fieldKey={`${fieldKey}-${comp.name}`}
+                onChange={(val) => handleFieldChange(comp.name, String(val))}
+                placeholder=""
+                solidityType={comp.type}
+                value={(obj[comp.name] as string) ?? ""}
               />
             ) : (
               <TemplateBadgeInput

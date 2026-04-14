@@ -382,7 +382,7 @@ export async function transferTokenCore(
     let signer: Awaited<ReturnType<typeof initializeWalletSigner>>;
     let signerAddress: string;
     try {
-      signer = await initializeWalletSigner(organizationId, rpcUrl);
+      signer = await initializeWalletSigner(organizationId, rpcUrl, chainId);
       signerAddress = await signer.getAddress();
     } catch (error) {
       return {

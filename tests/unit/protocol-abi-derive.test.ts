@@ -337,7 +337,7 @@ describe("deriveActionsFromAbi", () => {
     expect(actions[0].inputs[0].name).toBe("to");
   });
 
-  it("does not generate outputs for write functions", () => {
+  it("generates outputs for write functions when ABI declares them", () => {
     const contract = makeContract([
       {
         type: "function",
@@ -351,7 +351,7 @@ describe("deriveActionsFromAbi", () => {
       },
     ]);
     const actions = deriveActionsFromAbi("test", contract);
-    expect(actions[0].outputs).toBeUndefined();
+    expect(actions[0].outputs).toHaveLength(1);
   });
 
   it("sets contract key on all derived actions", () => {
