@@ -109,25 +109,25 @@ export async function POST(request: Request): Promise<NextResponse> {
 
       // Step 1: Delete rows with transitive FK deps (not direct to users).
       // Order matters: logs -> executions -> schedules, then the dynamic loop.
+      // Use subqueries with email pattern instead of array params (avoids
+      // Postgres array serialization issues with Drizzle's sql template).
+      const userSubquery = sql`SELECT id FROM users WHERE email LIKE ${K6_EMAIL_PATTERN}`;
+      const wfSubquery = sql`SELECT id FROM workflows WHERE user_id IN (${userSubquery})`;
+
       await tx.execute(sql`
         DELETE FROM workflow_execution_logs
         WHERE execution_id IN (
           SELECT we.id FROM workflow_executions we
-          JOIN workflows w ON we.workflow_id = w.id
-          WHERE w.user_id::text = ANY(${userIds}::text[])
+          WHERE we.workflow_id IN (${wfSubquery})
         )
       `);
       await tx.execute(sql`
         DELETE FROM workflow_executions
-        WHERE workflow_id IN (
-          SELECT id FROM workflows WHERE user_id::text = ANY(${userIds}::text[])
-        )
+        WHERE workflow_id IN (${wfSubquery})
       `);
       await tx.execute(sql`
         DELETE FROM workflow_schedules
-        WHERE workflow_id IN (
-          SELECT id FROM workflows WHERE user_id::text = ANY(${userIds}::text[])
-        )
+        WHERE workflow_id IN (${wfSubquery})
       `);
 
       // Step 2: Delete from every discovered direct-FK table.
@@ -157,7 +157,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         }
         await tx.execute(sql`
           DELETE FROM ${sql.identifier(row.table_name)}
-          WHERE ${sql.identifier(row.column_name)}::text = ANY(${userIds}::text[])
+          WHERE ${sql.identifier(row.column_name)} IN (${userSubquery})
         `);
       }
 
