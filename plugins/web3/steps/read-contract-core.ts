@@ -9,7 +9,7 @@ import "server-only";
 
 import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
-import { reshapeArgsForAbi } from "@/lib/abi-struct-args";
+import { coerceArgsForAbi, reshapeArgsForAbi } from "@/lib/abi-struct-args";
 import { validateArgsForAbi } from "@/lib/abi-validate-args";
 import { db } from "@/lib/db";
 import { workflowExecutions } from "@/lib/db/schema";
@@ -149,6 +149,7 @@ export async function readContractCore(
         return parsedArgs.slice(index + 1).some((a) => a !== "");
       });
       args = reshapeArgsForAbi(args, functionAbi);
+      args = coerceArgsForAbi(args, functionAbi);
       const validation = validateArgsForAbi(args, functionAbi);
       if (!validation.ok) {
         return {

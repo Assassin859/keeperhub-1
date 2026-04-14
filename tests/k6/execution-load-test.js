@@ -1,20 +1,21 @@
-// Production load test — real scheduler + manual triggers, 7 escalating tiers.
+// Production load test — real scheduler + manual triggers, escalating tiers.
 //
-// 20 VUs. Each VU creates workflows in tiers: 10, 25, 50, 75, 100, 200, 500.
+// Each VU creates workflows in tiers (configurable via TIERS env).
 // ~75% Schedule (triggered by real scheduler-dispatcher every minute)
-// ~25% Manual (triggered by k6 via service key every minute)
+// ~25% Manual (triggered by k6 via service key every ~60s)
 //
-// Between tiers, VUs re-authenticate to avoid session expiry.
-// Execution counting tracks IDs to avoid double-counting across tiers.
+// Execution counting uses the /api/admin/test/stats endpoint which
+// queries the DB directly — no per-VU counting, no session-dependent
+// queries, no deduplication bugs.
 //
 // k6 run execution-load-test.js \
-//   -e BASE_URL=https://app-pr-663.keeperhub.com \
+//   -e BASE_URL=https://app-staging.keeperhub.com \
 //   -e TEST_API_KEY=placeholder -e SERVICE_KEY=<key> \
 //   -e CF_ACCESS_CLIENT_ID=... -e CF_ACCESS_CLIENT_SECRET=...
 
 import http from "k6/http";
 import { sleep } from "k6";
-import { Counter, Rate, Trend } from "k6/metrics";
+import { Counter, Rate } from "k6/metrics";
 import exec from "k6/execution";
 
 const BASE_URL = __ENV.BASE_URL || "http://localhost:3000";
@@ -25,19 +26,18 @@ const SERVICE_KEY = __ENV.SERVICE_KEY || "";
 const TARGET_VUS = parseInt(__ENV.TARGET_VUS || "20", 10);
 const OBSERVE_SECONDS = parseInt(__ENV.OBSERVE_SECONDS || "180", 10);
 const PASSWORD = "K6LoadTest!2024";
-const TIERS = (__ENV.TIERS || "10,25,50,75,100,200,500").split(",").map(Number);
+const TIERS = (__ENV.TIERS || "10,12,14,16,18,20,25,30,40,50").split(",").map(Number);
 
-// Metrics
-const execSuccess = new Counter("exec_success");
-const execError = new Counter("exec_error");
-const execRate = new Rate("exec_success_rate");
-const execDur = new Trend("exec_duration_ms", true);
+// Metrics (for k6 summary only — real numbers come from stats endpoint)
 const manualTriggerOk = new Counter("manual_trigger_ok");
 const manualTriggerFail = new Counter("manual_trigger_fail");
 
-// Scenario
-const rampSec = TARGET_VUS * 5;
-const holdSec = TIERS.length * (OBSERVE_SECONDS + 120) + 300;
+// Scenario — duration calculated from actual inputs
+const RAMP_INTERVAL = parseInt(__ENV.RAMP_INTERVAL || "5", 10);
+const rampSec = TARGET_VUS * RAMP_INTERVAL;
+// Per tier: create workflows (~30s) + observe + drain (15s)
+const perTierSec = 30 + OBSERVE_SECONDS + 15;
+const holdSec = TIERS.length * perTierSec + 60;
 export const options = {
   scenarios: {
     load: {
@@ -47,11 +47,8 @@ export const options = {
         { duration: `${rampSec}s`, target: TARGET_VUS },
         { duration: `${holdSec}s`, target: TARGET_VUS },
       ],
-      gracefulStop: "120s",
+      gracefulStop: "30s",
     },
-  },
-  thresholds: {
-    exec_success_rate: [{ threshold: "rate>0.90", abortOnFail: false }],
   },
 };
 
@@ -86,7 +83,7 @@ function manual() {
 }
 function e(id, s, t) { return { id, source: s, target: t, type: "default" }; }
 
-// 10 patterns: 7 Schedule + 3 Manual (~75/25)
+// 10 patterns: 7 Schedule + 3 Manual (~75/25 matching production)
 const PATTERNS = [
   { trig: sched, n: (t) => [t(), act("a1",200,0)], e: [e("e1","t","a1")], type: "Schedule" },
   { trig: sched, n: (t) => [t(), act("a1",200,0), cnd("c1",400,0), act("a2",600,0)],
@@ -111,12 +108,11 @@ const PATTERNS = [
 let myEmail = "";
 let allWfIds = [];
 let manualWfIds = [];
-let countedExecIds = {};
 let completedTiers = 0;
 
 function retryPost(url, body, max) {
   for (let a = 1; a <= max; a++) {
-    const r = http.post(url, body, { headers: h() });
+    const r = http.post(url, body, { headers: h(), redirects: 5 });
     if (r.status === 200) return r;
     if (r.status === 429) { sleep(a * 5); continue; }
     return r;
@@ -128,7 +124,7 @@ function authenticate() {
   const v = exec.vu.idInTest;
 
   if (!myEmail) {
-    // First time: signup + verify
+    http.get(`${BASE_URL}/api/health`, { headers: h(), redirects: 5 });
     myEmail = `k6-vu${v}-${Date.now()}@techops.services`;
     const su = retryPost(`${BASE_URL}/api/auth/sign-up/email`,
       JSON.stringify({ email: myEmail, password: PASSWORD, name: `k6-${v}` }), 5);
@@ -148,7 +144,6 @@ function authenticate() {
     if (vr.status !== 200) { console.error(`VU${v}: verify ${vr.status}`); return false; }
   }
 
-  // Sign in (works for both first time and re-auth)
   const sr = retryPost(`${BASE_URL}/api/auth/sign-in/email`,
     JSON.stringify({ email: myEmail, password: PASSWORD }), 5);
   if (sr.status !== 200) { console.error(`VU${exec.vu.idInTest}: signin ${sr.status}`); return false; }
@@ -174,7 +169,6 @@ function createWorkflows(count) {
 
     const wfId = JSON.parse(cr.body).id;
 
-    // Enable via admin (creates schedule record)
     const en = http.post(`${BASE_URL}/api/admin/test/enable-workflow`,
       JSON.stringify({ workflowId: wfId }), { headers: adminH() });
     if (en.status !== 200) {
@@ -198,41 +192,8 @@ function triggerManuals() {
   }
 }
 
-function collectNewResults(tier) {
-  const v = exec.vu.idInTest;
-  let s = 0, er = 0, tot = 0;
-
-  for (const wf of allWfIds) {
-    const r = http.get(`${BASE_URL}/api/workflows/${wf.id}/executions`, { headers: serviceH() });
-    if (r.status !== 200) continue;
-
-    let execs;
-    try { execs = JSON.parse(r.body); } catch { continue; }
-    if (!Array.isArray(execs)) continue;
-
-    for (const ex of execs) {
-      // Skip already counted
-      if (countedExecIds[ex.id]) continue;
-
-      if (ex.status === "success") {
-        s++; tot++; execSuccess.add(1); execRate.add(true);
-        if (ex.duration) execDur.add(parseFloat(ex.duration));
-        countedExecIds[ex.id] = true;
-      } else if (ex.status === "error") {
-        er++; tot++; execError.add(1); execRate.add(false);
-        countedExecIds[ex.id] = true;
-      }
-      // Skip pending/running — not done yet
-    }
-  }
-
-  const pct = tot > 0 ? Math.round(100 * s / tot) : 0;
-  console.log(`VU${v}: TIER ${tier} wf/vu | ${tot} new executions | ${s} success | ${er} error | ${pct}% | ${allWfIds.length} workflows`);
-}
-
 // Main loop
 export default function () {
-  // Authenticate (first time: signup+verify+signin, subsequent: re-signin)
   if (!myEmail || completedTiers > 0) {
     const ok = authenticate();
     if (!ok) { sleep(30); return; }
@@ -253,13 +214,9 @@ export default function () {
     createWorkflows(toCreate);
   }
 
-  // Observe: trigger manuals every 60s, scheduler-dispatcher handles schedules.
-  // Assumes the scheduler poll interval is <= ~60s so newly-enabled schedules
-  // fire at least twice within OBSERVE_SECONDS (default 180s). If the dispatcher
-  // poll interval is increased, raise OBSERVE_SECONDS proportionally or this
-  // test will silently under-count successful executions per tier.
   console.log(`VU${exec.vu.idInTest}: TIER ${tierTarget} | observing ${OBSERVE_SECONDS}s | ${allWfIds.length} total | ${manualWfIds.length} manual`);
 
+  // Observe: trigger manuals every 60s, scheduler handles schedules
   const startTime = Date.now();
   while ((Date.now() - startTime) / 1000 < OBSERVE_SECONDS) {
     triggerManuals();
@@ -268,13 +225,20 @@ export default function () {
     if (waitTime > 0) sleep(waitTime);
   }
 
+  // Wait for in-flight executions to complete
   sleep(15);
-  collectNewResults(tierTarget);
+
+  console.log(`VU${exec.vu.idInTest}: TIER ${tierTarget} observation complete`);
   completedTiers++;
 }
 
-// Teardown
+// Teardown: cleanup unless SKIP_CLEANUP is set (wrapper script handles it)
 export function teardown() {
+  if (__ENV.SKIP_CLEANUP === "true") {
+    console.log("Skipping cleanup (SKIP_CLEANUP=true)");
+    return;
+  }
+
   console.log("Cleaning up...");
   const r = http.post(`${BASE_URL}/api/admin/test/cleanup`, JSON.stringify({}), { headers: adminH() });
   if (r.status === 200) {

@@ -7,9 +7,13 @@
  * ethers.js expects a single object argument -- this utility rebuilds it.
  */
 
+const TEMPLATE_VARIABLE_RE = /^\{\{.+\}\}$/;
+const ARRAY_SUFFIX_RE = /\[\d*\]$/;
+
 type AbiComponent = {
   name: string;
   type: string;
+  components?: AbiComponent[];
 };
 
 type AbiInput = {
@@ -106,4 +110,109 @@ export function reshapeArgsForAbi(
   }
 
   return reshaped;
+}
+
+/**
+ * Coerce stringly-typed args to their ABI-native types where a string would
+ * silently corrupt encoding.
+ *
+ * Scoped to `bool` on purpose: ethers v6 encodes booleans via JS truthiness
+ * (`value ? 1 : 0`), so any non-empty string -- including the literal
+ * `"false"` -- becomes `true` without warning. Every other ABI leaf type
+ * fails loudly on a malformed string: numerics go through `BigInt()` and
+ * throw on non-numeric input or out-of-range values, `address` runs EIP-55
+ * checksum validation, and `bytes`/`bytesN` reject wrong lengths or missing
+ * `0x` prefixes. Extending coercion beyond `bool` would hide those errors
+ * instead of fixing them. Template variables (`{{...}}`) pass through and
+ * are resolved later in the pipeline.
+ */
+export function coerceArgsForAbi(
+  args: unknown[],
+  functionAbi: FunctionAbiEntry
+): unknown[] {
+  const inputs = functionAbi.inputs ?? [];
+  return args.map((arg, i) => {
+    const input = inputs[i];
+    if (!input) {
+      return arg;
+    }
+    return coerceValue(arg, input.type, input.components);
+  });
+}
+
+function coerceValue(
+  value: unknown,
+  type: string,
+  components: AbiComponent[] | undefined
+): unknown {
+  if (isTemplateVariable(value)) {
+    return value;
+  }
+  if (isArrayType(type)) {
+    return coerceArray(value, type, components);
+  }
+  if (type === "tuple") {
+    return coerceTuple(value, components);
+  }
+  if (type === "bool") {
+    return coerceBool(value);
+  }
+  return value;
+}
+
+function coerceArray(
+  value: unknown,
+  arrayType: string,
+  components: AbiComponent[] | undefined
+): unknown {
+  if (!Array.isArray(value)) {
+    return value;
+  }
+  const elementType = stripArraySuffix(arrayType);
+  return value.map((item) => coerceValue(item, elementType, components));
+}
+
+function coerceTuple(
+  value: unknown,
+  components: AbiComponent[] | undefined
+): unknown {
+  if (!isPreStructuredObject(value)) {
+    return value;
+  }
+  // Start from a shallow copy so keys the user set outside the ABI are
+  // preserved. Then overwrite known components with their coerced values.
+  // The validator downstream flags typos; silently dropping them here
+  // would mask that signal.
+  const obj = value as Record<string, unknown>;
+  const out: Record<string, unknown> = { ...obj };
+  for (const comp of components ?? []) {
+    out[comp.name] = coerceValue(obj[comp.name], comp.type, comp.components);
+  }
+  return out;
+}
+
+function coerceBool(value: unknown): unknown {
+  if (typeof value !== "string") {
+    return value;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true") {
+    return true;
+  }
+  if (normalized === "false") {
+    return false;
+  }
+  return value;
+}
+
+function isArrayType(type: string): boolean {
+  return type.endsWith("]");
+}
+
+function stripArraySuffix(type: string): string {
+  return type.replace(ARRAY_SUFFIX_RE, "");
+}
+
+function isTemplateVariable(value: unknown): boolean {
+  return typeof value === "string" && TEMPLATE_VARIABLE_RE.test(value.trim());
 }

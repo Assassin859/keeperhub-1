@@ -355,6 +355,9 @@ env:
     type: parameterStore
     name: test-api-key
     parameter_name: /eks/techops-staging/keeperhub/test-api-key
+  ALLOW_TEST_ENDPOINTS:
+    type: kv
+    value: "true"
   # Gas credit caps per plan (cents, server-only)
   GAS_CREDITS_FREE_CENTS:
     type: kv
