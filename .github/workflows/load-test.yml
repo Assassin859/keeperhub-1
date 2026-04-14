@@ -151,6 +151,7 @@ jobs:
             -e BASE_URL="${BASE_URL}" \
             -e TEST_API_KEY="${TEST_API_KEY}" \
             -e SERVICE_KEY="${SERVICE_KEY}" \
+            -e SKIP_CLEANUP=true \
             -e CF_ACCESS_CLIENT_ID="${CF_ACCESS_CLIENT_ID}" \
             -e CF_ACCESS_CLIENT_SECRET="${CF_ACCESS_CLIENT_SECRET}" \
             -e TARGET_VUS="${{ inputs.target_vus }}" \
