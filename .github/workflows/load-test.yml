@@ -51,6 +51,16 @@ on:
         required: false
         type: string
         default: '5'
+      observe_seconds:
+        description: '[execution] Observation window per tier in seconds'
+        required: false
+        type: string
+        default: '180'
+      tiers:
+        description: '[execution] Comma-separated workflow-per-VU tiers (e.g. 10,20,30)'
+        required: false
+        type: string
+        default: '10'
       # HTTP ramp mode parameters
       step_size:
         description: '[http-ramp] VU increment per step'
@@ -145,7 +155,8 @@ jobs:
             -e CF_ACCESS_CLIENT_SECRET="${CF_ACCESS_CLIENT_SECRET}" \
             -e TARGET_VUS="${{ inputs.target_vus }}" \
             -e WF_PER_VU="${{ inputs.wf_per_vu }}" \
-            -e DURATION="${{ inputs.duration }}" \
+            -e OBSERVE_SECONDS="${{ inputs.observe_seconds }}" \
+            -e TIERS="${{ inputs.tiers }}" \
             -e RAMP_INTERVAL="${{ inputs.ramp_interval }}" \
             --summary-export /tmp/k6-results/summary.json \
             --no-usage-report \
