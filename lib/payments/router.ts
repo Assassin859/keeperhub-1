@@ -40,14 +40,10 @@ type Dual402Params = {
   creatorWalletAddress: string;
   workflowName: string;
   resourceUrl: string;
+  inputSchema?: Record<string, unknown> | null;
 };
 
-/**
- * Builds the spec-compliant x402 v2 PaymentRequired payload (matches the
- * `PaymentRequired` type from `@x402/core/types`). Discovery scanners like
- * x402scan and the `@agentcash/discovery` prober parse this exact shape.
- */
-function buildPaymentRequired(params: Dual402Params): {
+type PaymentRequiredV2 = {
   x402Version: 2;
   error: string;
   resource: { url: string; description: string; mimeType: string };
@@ -60,12 +56,36 @@ function buildPaymentRequired(params: Dual402Params): {
     maxTimeoutSeconds: number;
     extra: Record<string, unknown>;
   }>;
-} {
-  const { price, creatorWalletAddress, workflowName, resourceUrl } = params;
+  extensions?: Record<string, unknown>;
+};
+
+// Agentcash discovery's `extractSchemas2` drills the PaymentRequired body
+// at `extensions.bazaar.schema.properties.input.properties.body` for the
+// input JSON schema and at `.output.properties.example` for an output
+// sample. Emitting both lets x402scan / mppscan surface full request and
+// response metadata for the resource.
+const WORKFLOW_OUTPUT_EXAMPLE = {
+  executionId: "exec_abc123",
+  status: "running",
+} as const;
+
+/**
+ * Builds the spec-compliant x402 v2 PaymentRequired payload (matches the
+ * `PaymentRequired` type from `@x402/core/types`). Discovery scanners like
+ * x402scan and the `@agentcash/discovery` prober parse this exact shape.
+ */
+function buildPaymentRequired(params: Dual402Params): PaymentRequiredV2 {
+  const {
+    price,
+    creatorWalletAddress,
+    workflowName,
+    resourceUrl,
+    inputSchema,
+  } = params;
   const amountSmallestUnit = String(
     Math.round(Number(price) * 10 ** USDC_DECIMALS)
   );
-  return {
+  const payload: PaymentRequiredV2 = {
     x402Version: 2,
     error: "Payment required",
     resource: {
@@ -85,6 +105,21 @@ function buildPaymentRequired(params: Dual402Params): {
       },
     ],
   };
+
+  if (inputSchema) {
+    payload.extensions = {
+      bazaar: {
+        schema: {
+          properties: {
+            input: { properties: { body: inputSchema } },
+            output: { properties: { example: WORKFLOW_OUTPUT_EXAMPLE } },
+          },
+        },
+      },
+    };
+  }
+
+  return payload;
 }
 
 export function buildDual402Response(params: Dual402Params): Response {
@@ -334,6 +369,7 @@ export function gatePayment(
       creatorWalletAddress,
       workflowName: workflow.name,
       resourceUrl: request.url,
+      inputSchema: workflow.inputSchema,
     }) as NextResponse
   );
 }

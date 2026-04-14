@@ -223,4 +223,43 @@ describe("buildDual402Response", () => {
       response.headers.get("PAYMENT-REQUIRED")
     );
   });
+
+  it("embeds extensions.bazaar.schema at the path agentcash probes when inputSchema is present", async () => {
+    const inputSchema = {
+      type: "object",
+      required: ["address"],
+      properties: {
+        address: { type: "string", description: "eth address" },
+      },
+    };
+    const response = buildDual402Response({
+      price: "0.01",
+      creatorWalletAddress: "0xCreator",
+      workflowName: "Test Workflow",
+      resourceUrl: "https://example.com/api/mcp/workflows/test/call",
+      inputSchema,
+    });
+    const body = await response.json();
+    // Agentcash's extractSchemas2 drills
+    // extensions.bazaar.schema.properties.input.properties.body and
+    // extensions.bazaar.schema.properties.output.properties.example -- see
+    // @agentcash/discovery dist/index.js extractSchemas2.
+    expect(body.extensions.bazaar.schema.properties.input.properties.body).toEqual(
+      inputSchema
+    );
+    expect(
+      body.extensions.bazaar.schema.properties.output.properties.example
+    ).toEqual({ executionId: "exec_abc123", status: "running" });
+  });
+
+  it("omits extensions block when inputSchema is absent", async () => {
+    const response = buildDual402Response({
+      price: "0.01",
+      creatorWalletAddress: "0xCreator",
+      workflowName: "Test Workflow",
+      resourceUrl: "https://example.com/api/mcp/workflows/test/call",
+    });
+    const body = await response.json();
+    expect(body.extensions).toBeUndefined();
+  });
 });
