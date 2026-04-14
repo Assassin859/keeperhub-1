@@ -5,12 +5,10 @@ import {
   Eye,
   EyeOff,
   ExternalLink,
-  Info,
   KeyRound,
   Plus,
   RefreshCw,
   SendHorizontal,
-  Shield,
   ShieldCheck,
   Trash2,
 } from "lucide-react";
@@ -37,12 +35,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { toChecksumAddress, truncateAddress } from "@/lib/address-utils";
 import { useSession } from "@/lib/auth-client";
 import { useActiveMember } from "@/lib/hooks/use-organization";
@@ -521,17 +513,14 @@ function AddTokenForm({
   );
 }
 
-type WalletProviderOption = "para" | "turnkey";
-
 function CreateWalletForm({
   initialEmail,
   onSubmit,
 }: {
   initialEmail: string;
-  onSubmit: (email: string, provider: WalletProviderOption) => Promise<void>;
+  onSubmit: (email: string) => Promise<void>;
 }) {
   const [email, setEmail] = useState(initialEmail);
-  const [provider, setProvider] = useState<WalletProviderOption>("turnkey");
   const [creating, setCreating] = useState(false);
 
   const handleCreate = async (): Promise<void> => {
@@ -541,7 +530,7 @@ function CreateWalletForm({
     }
     setCreating(true);
     try {
-      await onSubmit(email, provider);
+      await onSubmit(email);
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to create wallet"
@@ -553,139 +542,33 @@ function CreateWalletForm({
 
   return (
     <div className="space-y-4">
-      <div className="space-y-4 rounded-lg border bg-muted/50 p-4">
-        <div>
-          <h3 className="mb-2 font-medium text-sm">
-            Create Organization Wallet
-          </h3>
-          <p className="mb-4 text-muted-foreground text-xs">
-            This wallet will be shared by all members of your organization. Only
-            admins and owners can manage it.
-          </p>
-        </div>
+      <p className="text-muted-foreground text-xs">
+        This wallet will be shared by all members of your organization.
+        Only admins and owners can manage it.
+      </p>
 
-        <div className="space-y-2">
-          <Label>Wallet Provider</Label>
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              className={`flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors ${
-                provider === "turnkey"
-                  ? "border-primary bg-primary/5"
-                  : "border-border hover:border-border/80"
-              }`}
-              disabled={creating}
-              onClick={() => setProvider("turnkey")}
-              type="button"
-            >
-              <div className="flex items-center gap-1.5">
-                <ShieldCheck className="h-3.5 w-3.5 text-primary" />
-                <span className="font-medium text-xs">Turnkey</span>
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger
-                      asChild
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <Info className="size-3 text-muted-foreground" />
-                    </TooltipTrigger>
-                    <TooltipContent className="text-xs" side="top">
-                      <a
-                        className="underline"
-                        href="https://www.turnkey.com"
-                        rel="noopener noreferrer"
-                        target="_blank"
-                      >
-                        Website
-                      </a>
-                      {" · "}
-                      <a
-                        className="underline"
-                        href="https://docs.keeperhub.com/wallet-management/turnkey"
-                        rel="noopener noreferrer"
-                        target="_blank"
-                      >
-                        Docs
-                      </a>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              </div>
-              <span className="text-muted-foreground text-[10px] leading-tight">
-                Secure enclave. Supports private key export.
-              </span>
-            </button>
-            <button
-              className={`flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors ${
-                provider === "para"
-                  ? "border-primary bg-primary/5"
-                  : "border-border hover:border-border/80"
-              }`}
-              disabled={creating}
-              onClick={() => setProvider("para")}
-              type="button"
-            >
-              <div className="flex items-center gap-1.5">
-                <Shield className="h-3.5 w-3.5 text-muted-foreground" />
-                <span className="font-medium text-xs">Para</span>
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger
-                      asChild
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <Info className="size-3 text-muted-foreground" />
-                    </TooltipTrigger>
-                    <TooltipContent className="text-xs" side="top">
-                      <a
-                        className="underline"
-                        href="https://www.getpara.com"
-                        rel="noopener noreferrer"
-                        target="_blank"
-                      >
-                        Website
-                      </a>
-                      {" · "}
-                      <a
-                        className="underline"
-                        href="https://docs.keeperhub.com/wallet-management/para"
-                        rel="noopener noreferrer"
-                        target="_blank"
-                      >
-                        Docs
-                      </a>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              </div>
-              <span className="text-muted-foreground text-[10px] leading-tight">
-                MPC-based signing. No key export.
-              </span>
-            </button>
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="wallet-email">Email Address</Label>
-          <Input
-            disabled={creating}
-            id="wallet-email"
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@example.com"
-            type="email"
-            value={email}
-          />
-          <p className="text-muted-foreground text-xs">
-            This email will be associated with the organization's wallet for
-            identification purposes.
-          </p>
-        </div>
+      <div className="space-y-2">
+        <Label htmlFor="wallet-email">Email Address</Label>
+        <Input
+          disabled={creating}
+          id="wallet-email"
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="you@example.com"
+          type="email"
+          value={email}
+        />
+        <p className="text-muted-foreground text-xs">
+          This email will be associated with the wallet for identification
+          purposes.
+        </p>
       </div>
-      <div className="flex gap-2">
-        <Button
-          className="flex-1"
-          disabled={creating || !email}
-          onClick={handleCreate}
-        >
+
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1.5 text-muted-foreground text-xs">
+          <ShieldCheck className="h-3.5 w-3.5" />
+          <span>Secured by Turnkey</span>
+        </div>
+        <Button disabled={creating || !email} onClick={handleCreate}>
           {creating ? (
             <>
               <Spinner className="mr-2 h-4 w-4" />
@@ -829,7 +712,7 @@ function NoWalletSection({
 }: {
   isAdmin: boolean;
   initialEmail: string;
-  onCreateWallet: (email: string, provider: WalletProviderOption) => Promise<void>;
+  onCreateWallet: (email: string) => Promise<void>;
 }) {
   if (!isAdmin) {
     return (
@@ -1404,14 +1287,11 @@ export function WalletOverlay({ overlayId }: WalletOverlayProps) {
     }
   };
 
-  const handleCreateWallet = async (
-    email: string,
-    provider: WalletProviderOption
-  ): Promise<void> => {
+  const handleCreateWallet = async (email: string): Promise<void> => {
     const response = await fetch("/api/user/wallet", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, provider }),
+      body: JSON.stringify({ email }),
     });
 
     const data: { error?: string } = await response.json();

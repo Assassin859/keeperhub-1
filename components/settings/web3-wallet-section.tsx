@@ -157,9 +157,9 @@ export function Web3WalletSection({
   return (
     <div className="space-y-4">
       <div>
-        <h3 className="font-medium text-sm">Para Wallet</h3>
+        <h3 className="font-medium text-sm">Organization Wallet</h3>
         <p className="text-muted-foreground text-sm">
-          Use your email address to pre-generate a wallet for Web3 automations.
+          Create a secure wallet for Web3 automations.
         </p>
       </div>
 
