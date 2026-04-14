@@ -8,7 +8,11 @@ import { workflowExecutions, workflows } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
 import { hashMppCredential } from "@/lib/mpp/server";
-import { gatePayment, type PaymentMeta } from "@/lib/payments/router";
+import {
+  detectProtocol,
+  gatePayment,
+  type PaymentMeta,
+} from "@/lib/payments/router";
 import { executeWorkflow } from "@/lib/workflow-executor.workflow";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow-store";
 import {
@@ -342,6 +346,17 @@ async function handleReadWorkflow(
   request: Request,
   workflow: CallRouteWorkflow
 ): Promise<NextResponse> {
+  const price = Number(workflow.priceUsdcPerCall ?? "0");
+  const isPaid = price > 0;
+
+  // Scanner discoverability: on a paid workflow, emit 402 before parsing or
+  // validating the body. Scanners probe paid endpoints with empty/invalid
+  // bodies and rely on the 402 response (with X-PAYMENT-REQUIREMENTS and
+  // WWW-Authenticate: Payment headers) to catalog the resource.
+  if (isPaid && detectProtocol(request) === null) {
+    return handlePaidWorkflow(request, workflow, {});
+  }
+
   const parsed = await parseJsonBody(request);
   if ("error" in parsed) {
     return parsed.error;
@@ -353,12 +368,10 @@ async function handleReadWorkflow(
     return bodyError;
   }
 
-  const price = Number(workflow.priceUsdcPerCall ?? "0");
-  if (price <= 0) {
-    return createAndStartExecution(workflow, body);
+  if (isPaid) {
+    return handlePaidWorkflow(request, workflow, body);
   }
-
-  return handlePaidWorkflow(request, workflow, body);
+  return createAndStartExecution(workflow, body);
 }
 
 export async function POST(

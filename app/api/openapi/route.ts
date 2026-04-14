@@ -63,7 +63,7 @@ function buildPathEntry(workflow: DiscoveryWorkflow): Record<string, unknown> {
       price: {
         mode: "fixed",
         amount: workflow.priceUsdcPerCall,
-        currency: "USDC",
+        currency: "USD",
       },
       protocols: [
         { x402: { network: "eip155:8453" } },

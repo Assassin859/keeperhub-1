@@ -13,6 +13,7 @@ const {
   mockRecordPayment,
   mockResolveCreatorWallet,
   mockGatePayment,
+  mockDetectProtocol,
   mockStart,
   mockExecuteWorkflow,
   mockEnforceExecutionLimit,
@@ -29,6 +30,7 @@ const {
   mockRecordPayment: vi.fn(),
   mockResolveCreatorWallet: vi.fn(),
   mockGatePayment: vi.fn(),
+  mockDetectProtocol: vi.fn(),
   mockStart: vi.fn(),
   mockExecuteWorkflow: vi.fn(),
   mockEnforceExecutionLimit: vi.fn(),
@@ -67,6 +69,7 @@ vi.mock("@/lib/mpp/server", () => ({
 
 vi.mock("@/lib/payments/router", () => ({
   gatePayment: mockGatePayment,
+  detectProtocol: mockDetectProtocol,
 }));
 
 vi.mock("@/lib/api-key-auth", () => ({
@@ -226,6 +229,22 @@ describe("POST /api/mcp/workflows/[slug]/call", () => {
       authenticated: true,
       organizationId: "caller-org-1",
       apiKeyId: "key-1",
+    });
+    // Mirror the real detectProtocol: inspect the request for payment headers
+    // so individual tests don't need to stub this manually.
+    mockDetectProtocol.mockImplementation((req: Request) => {
+      const hasAuth = req.headers.get("authorization")?.startsWith("Payment ");
+      const hasSig = Boolean(req.headers.get("PAYMENT-SIGNATURE"));
+      if (hasAuth && hasSig) {
+        return "error";
+      }
+      if (hasAuth) {
+        return "mpp";
+      }
+      if (hasSig) {
+        return "x402";
+      }
+      return null;
     });
   });
 
@@ -513,5 +532,27 @@ describe("POST /api/mcp/workflows/[slug]/call", () => {
     );
     // The workflow itself was never started.
     expect(mockStart).not.toHaveBeenCalled();
+  });
+
+  it("Test 16: paid workflow probe with empty body returns 402 before body validation", async () => {
+    const workflowWithRequiredField = {
+      ...LISTED_WORKFLOW,
+      inputSchema: {
+        type: "object",
+        required: ["address"],
+        properties: { address: { type: "string" } },
+      },
+    };
+    setupDbSelectWorkflow(workflowWithRequiredField);
+    make402GatePayment();
+    const { POST } = await import("@/app/api/mcp/workflows/[slug]/call/route");
+    // Empty body: under the old flow this would return 400 (missing required
+    // field). The 402-first ordering ensures scanners probing paid endpoints
+    // without a valid body still see the payment challenge.
+    const request = makeRequest("test-workflow", { body: {} });
+    const params = Promise.resolve({ slug: "test-workflow" });
+    const response = await POST(request, { params });
+    expect(response.status).toBe(402);
+    expect(mockGatePayment).toHaveBeenCalled();
   });
 });
