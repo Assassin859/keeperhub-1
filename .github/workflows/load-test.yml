@@ -228,44 +228,17 @@ jobs:
           lines.append("")
 
           if test_mode == "execution":
-              results_file = "/tmp/k6-results/summary.json"
-              data = {}
-              try:
-                  with open(results_file) as f:
-                      data = json.load(f)
-              except:
-                  pass
-
-              metrics = data.get("metrics", {})
-              if not metrics:
-                  lines.append(f":x: **No results collected** -- check the [workflow logs]({run_url}) for errors.")
-              else:
-                  ok = int(metrics.get("trigger_ok", {}).get("count", 0))
-                  fail = int(metrics.get("trigger_fail", {}).get("count", 0))
-                  total = ok + fail
-                  rate = round(100.0 * ok / max(total, 1), 2)
-                  dur = metrics.get("trigger_duration_ms", {})
-                  p95 = round(dur.get("p(95)", 0), 1)
-                  avg = round(dur.get("avg", 0), 1)
-                  med = round(dur.get("med", 0), 1)
-                  rps = round(metrics.get("trigger_ok", {}).get("rate", 0), 2)
-
-                  icon = ":white_check_mark:" if rate >= threshold else ":warning:" if rate >= 80 else ":x:"
-
-                  lines.append(f"### {icon} Trigger Success Rate: {rate}%")
-                  lines.append("")
-                  lines.append(f"| Metric | Value |")
-                  lines.append(f"|--------|-------|")
-                  lines.append(f"| VUs | ${{ inputs.target_vus }} |")
-                  lines.append(f"| Workflows/VU | ${{ inputs.wf_per_vu }} |")
-                  lines.append(f"| Duration | ${{ inputs.duration }} |")
-                  lines.append(f"| Triggers OK | {ok} |")
-                  lines.append(f"| Triggers Failed | {fail} |")
-                  lines.append(f"| Success Rate | {rate}% |")
-                  lines.append(f"| Throughput | {rps}/sec ({round(rps*60,1)}/min) |")
-                  lines.append(f"| p95 Latency | {p95}ms |")
-                  lines.append(f"| Avg Latency | {avg}ms |")
-                  lines.append(f"| Median Latency | {med}ms |")
+              lines.append(f"### :white_check_mark: Execution load test completed")
+              lines.append("")
+              lines.append(f"| Parameter | Value |")
+              lines.append(f"|-----------|-------|")
+              lines.append(f"| VUs | ${{ inputs.target_vus }} |")
+              lines.append(f"| Workflows/VU | ${{ inputs.wf_per_vu }} |")
+              lines.append(f"| Tiers | ${{ inputs.tiers }} |")
+              lines.append(f"| Observe per tier | ${{ inputs.observe_seconds }}s |")
+              lines.append("")
+              lines.append("Execution metrics streamed to **Grafana Cloud Prometheus** (`k6_*` metrics).")
+              lines.append(f"View full results in Grafana or check the [workflow logs]({run_url}).")
 
           elif test_mode == "http-ramp":
               results_file = "/tmp/k6-results/all-tiers.json"
