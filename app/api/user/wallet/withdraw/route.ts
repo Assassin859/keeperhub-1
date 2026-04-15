@@ -152,11 +152,19 @@ export async function POST(request: Request) {
 
     // 2. Parse request body
     const body = await request.json();
-    const { chainId, tokenAddress, amount, recipient } = body;
+    const { chainId: rawChainId, tokenAddress, amount, recipient } = body;
 
-    if (!(chainId && amount && recipient)) {
+    if (!(rawChainId && amount && recipient)) {
       return NextResponse.json(
         { error: "Missing required fields: chainId, amount, recipient" },
+        { status: 400 }
+      );
+    }
+
+    const chainId = Number.parseInt(String(rawChainId), 10);
+    if (Number.isNaN(chainId)) {
+      return NextResponse.json(
+        { error: "Invalid chainId" },
         { status: 400 }
       );
     }
@@ -219,7 +227,7 @@ export async function POST(request: Request) {
         console.log(
           `[Withdraw] Initializing signer for org ${organizationId} on chain ${chain.name}`
         );
-        const signer = await initializeWalletSigner(organizationId, rpcUrl, Number(chainId));
+        const signer = await initializeWalletSigner(organizationId, rpcUrl, chainId);
         const provider = signer.provider;
 
         if (!provider) {

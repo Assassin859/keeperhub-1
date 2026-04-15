@@ -685,7 +685,7 @@ export type CreateRpcProviderManagerOptions = {
 export function createRpcProviderManager(
   options: CreateRpcProviderManagerOptions
 ): RpcProviderManager {
-  const cacheKey = `${options.primaryRpcUrl}|${options.fallbackRpcUrl || ""}`;
+  const cacheKey = `${options.primaryRpcUrl}|${options.fallbackRpcUrl || ""}|${options.chainId ?? ""}`;
 
   let manager = managerCache.get(cacheKey);
   if (!manager) {

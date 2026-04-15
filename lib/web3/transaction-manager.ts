@@ -372,7 +372,7 @@ export async function executeTransaction(
  */
 export async function executeContractTransaction(
   context: TransactionContext,
-  _walletAddress: string,
+  walletAddress: string,
   contract: ethers.Contract,
   method: string,
   args: unknown[],
@@ -394,7 +394,7 @@ export async function executeContractTransaction(
           (rpcProvider) =>
             (contract.connect(rpcProvider) as typeof contract)[
               method
-            ].estimateGas(...args),
+            ].estimateGas(...args, { from: walletAddress }),
           "preflight"
         )
       : await contract[method].estimateGas(...args);
@@ -462,7 +462,12 @@ export async function withNonceSession<T>(
 ): Promise<T> {
   const nonceManager = getNonceManager();
   const rpcManager =
-    context.rpcManager ?? (await getRpcProviderFromUrls(context.rpcUrl));
+    context.rpcManager ??
+    (await getRpcProviderFromUrls(
+      context.rpcUrl,
+      undefined,
+      context.chainId
+    ));
   const provider = rpcManager.getProvider();
 
   const { session, validation } = await nonceManager.startSession(
@@ -492,9 +497,10 @@ export async function withNonceSession<T>(
  */
 export async function getCurrentNonce(
   walletAddress: string,
-  rpcUrl: string
+  rpcUrl: string,
+  chainId: number
 ): Promise<number> {
-  const rpcManager = await getRpcProviderFromUrls(rpcUrl);
+  const rpcManager = await getRpcProviderFromUrls(rpcUrl, undefined, chainId);
   return await rpcManager.executeWithFailover(
     (provider) => provider.getTransactionCount(walletAddress, "pending"),
     "write"

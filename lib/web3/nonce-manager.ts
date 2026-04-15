@@ -49,10 +49,13 @@ export type NonceManagerOptions = {
   lockRetryDelayMs?: number;
 };
 
+// Retry budget must outwait one full RPC failover round (up to ~90s per
+// provider including 30s timeouts + exponential backoff) since preflight
+// failover runs while the nonce lock is held.
 const DEFAULT_OPTIONS: Required<NonceManagerOptions> = {
   lockTimeoutMs: 60_000,
-  maxLockRetries: 50,
-  lockRetryDelayMs: 100,
+  maxLockRetries: 600,
+  lockRetryDelayMs: 200,
 };
 
 const getConnectionString = () => getDatabaseUrl();
