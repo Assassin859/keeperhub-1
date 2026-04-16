@@ -28,12 +28,12 @@ Retrieve the hub service API key from AWS SSM:
 ```bash
 # Production
 aws ssm get-parameter \
-  --name "/eks/maker-prod/keeperhub-hub/keeperhub-api-key" \
+  --name "/eks/techops-prod/keeperhub-hub/keeperhub-api-key" \
   --with-decryption --query "Parameter.Value" --output text
 
 # Staging
 aws ssm get-parameter \
-  --name "/eks/maker-staging/keeperhub-hub/keeperhub-api-key" \
+  --name "/eks/techops-staging/keeperhub-hub/keeperhub-api-key" \
   --with-decryption --query "Parameter.Value" --output text
 ```
 

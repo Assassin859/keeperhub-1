@@ -23,7 +23,7 @@ for cmd in aws-vault kubectl; do
   fi
 done
 
-export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/maker-staging}"
+export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/techops-staging}"
 
 NAMESPACE="pr-${PR_NUMBER}"
 

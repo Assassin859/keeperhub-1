@@ -181,4 +181,11 @@ jobs:
         run: pnpm test:unit
 
       - name: Run integration tests
+        env:
+          # Shared staging RPC config (AWS Parameter Store -> Helm -> this secret).
+          # Integration tests use the same 3-tier resolution
+          # (CHAIN_RPC_CONFIG -> individual env vars -> public RPC defaults)
+          # as deployed services. Absent secrets fall back to public RPCs
+          # via PUBLIC_RPCS defaults in lib/rpc/rpc-config.ts.
+          CHAIN_RPC_CONFIG: ${{ secrets.CHAIN_RPC_CONFIG }}
         run: pnpm test:integration

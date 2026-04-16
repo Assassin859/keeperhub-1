@@ -6,10 +6,10 @@ Keys are stored in AWS SSM Parameter Store. Retrieve with:
 
 ```
 # Prod
-"/eks/maker-prod/keeperhub-hub/keeperhub-api-key"
+"/eks/techops-prod/keeperhub-hub/keeperhub-api-key"
 
 # Staging
-"/eks/maker-staging/keeperhub-hub/keeperhub-api-key"
+"/eks/techops-staging/keeperhub-hub/keeperhub-api-key"
 ```
 
 ## Endpoint

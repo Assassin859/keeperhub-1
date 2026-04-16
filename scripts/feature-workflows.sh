@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Get API key from SSM:
-# Prod: aws ssm get-parameter --name "/eks/maker-prod/keeperhub-hub/keeperhub-api-key" --with-decryption --query "Parameter.Value" --output text
-# Staging: aws ssm get-parameter --name "/eks/maker-staging/keeperhub-hub/keeperhub-api-key" --with-decryption --query "Parameter.Value" --output text
+# Prod: aws ssm get-parameter --name "/eks/techops-prod/keeperhub-hub/keeperhub-api-key" --with-decryption --query "Parameter.Value" --output text
+# Staging: aws ssm get-parameter --name "/eks/techops-staging/keeperhub-hub/keeperhub-api-key" --with-decryption --query "Parameter.Value" --output text
 
 if [[ -z "$HUB_SERVICE_API_KEY" ]]; then
   echo "Error: HUB_SERVICE_API_KEY env var not found"

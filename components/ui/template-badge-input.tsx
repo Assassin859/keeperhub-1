@@ -7,6 +7,14 @@ import { cn } from "@/lib/utils";
 import { nodesAtom, selectedNodeAtom } from "@/lib/workflow-store";
 import { TemplateAutocomplete } from "./template-autocomplete";
 
+// Guards `selection.getRangeAt(0)`, which throws IndexSizeError when
+// rangeCount is 0 (e.g. focus moved off the editable before keydown fired).
+export function hasUsableSelection(
+  selection: Selection | null
+): selection is Selection {
+  return selection !== null && selection.rangeCount > 0;
+}
+
 export interface TemplateBadgeInputProps {
   value?: string;
   onChange?: (value: string) => void;
@@ -576,7 +584,7 @@ export function TemplateBadgeInput({
     // Handle Backspace/Delete for badge removal
     if (e.key === "Backspace" || e.key === "Delete") {
       const selection = window.getSelection();
-      if (!selection || !contentRef.current) return;
+      if (!hasUsableSelection(selection) || !contentRef.current) return;
 
       // Case 1: Range selection containing a badge
       if (!selection.isCollapsed) {

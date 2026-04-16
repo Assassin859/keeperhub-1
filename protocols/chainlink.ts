@@ -75,9 +75,10 @@ const EXTRA_ARGS_V1_GAS_LIMIT_ZERO =
 
 // Shared CCIP message overrides for the flattened EVM2AnyMessage tuple.
 // Used by both getFee and ccipSend since they share the same message struct.
-const CCIP_DOCS = "https://docs.chain.link/ccip";
+// Exported so tests can import and validate docUrls directly.
+export const CCIP_DOCS = "https://docs.chain.link/ccip";
 
-const CCIP_MESSAGE_INPUT_OVERRIDES = {
+export const CCIP_MESSAGE_INPUT_OVERRIDES = {
   destinationChainSelector: {
     label: "Destination Chain Selector",
     helpTip:

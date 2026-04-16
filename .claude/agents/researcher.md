@@ -41,11 +41,20 @@ Your job is to produce actionable research reports with exact file paths, line n
 <research_strategies>
 **Find existing pattern:**
 Use Grep to find similar implementations, then Read the best example:
-- Protocols: `Grep for "defineProtocol" in protocols/`
+- Protocols: `Grep for "defineAbiProtocol|defineProtocol" in protocols/` (new protocols use `defineAbiProtocol`; legacy ones still on `defineProtocol`)
+- Reduced ABIs: `ls protocols/abis/` for ABI-driven protocol references
+- On-chain integration tests: `ls tests/integration/protocol-*-onchain.test.ts`
 - Plugin steps: `Grep for "use step" in plugins/`
 - Plugin definitions: `Grep for "definePlugin" in plugins/`
 - API routes: `Grep for "export async function" in app/api/ or app/api/`
 - Test patterns: `Grep for "describe(" in tests/`
+
+**Protocol-specific research (for new protocols):**
+Before writing a research report for a protocol addition, resolve these unknowns:
+1. Deployment chains: list every chain where the protocol is currently deployed with its contract address. Cross-reference with KeeperHub's supported chain set (`1`, `8453`, `42161`, `10`, `11155111`). Report the intersection. The user MUST confirm this set before the Builder proceeds.
+2. Testnet availability: does a Sepolia deployment exist? If yes, integration tests use `INTEGRATION_TEST_RPC_URL`; if no, they use `INTEGRATION_TEST_MAINNET_RPC_URL` against mainnet.
+3. Canonical docs URLs: for each input that will have a `helpTip`, identify the most specific official docs page. These populate `docUrl` overrides so users can click through from the field tooltip.
+4. ABI semantics: identify unnamed params (need `arg0`/`arg1` override keys), struct returns (require dotted-path template access), and any non-obvious decimal/unit conventions.
 
 **Discover types:**
 Read type definition files and extract relevant interfaces:

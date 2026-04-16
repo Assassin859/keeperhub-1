@@ -55,7 +55,14 @@ You create and modify files, run checks, and report results. You do NOT make arc
 - Security-critical steps: set `stepFunction.maxRetries = 0`
 
 **Protocol definitions:**
-- `export default defineProtocol({...})` in `protocols/`
+- `export default defineAbiProtocol({...})` in `protocols/` -- PREFERRED for all new protocols. Pair with a reduced ABI JSON at `protocols/abis/{slug}.json`.
+- `export default defineProtocol({...})` -- FALLBACK only when no ABI is obtainable (unverified contract + no published ABI source). Also used by ERC-4626 vaults via `erc4626VaultActions()` until an ABI-driven helper exists.
+- See `.claude/agents/protocol-domain.md` for full shape, overrides conventions, and the `arg0`/`arg1` rule for unnamed ABI params.
+
+**Protocol required artifacts (enforce all three for every new protocol):**
+1. **On-chain integration test** at `tests/integration/protocol-{slug}-onchain.test.ts`. Gate on `INTEGRATION_TEST_RPC_URL` for Sepolia-available protocols, `INTEGRATION_TEST_MAINNET_RPC_URL` for mainnet-only. Never share the env var across Sepolia and mainnet tests. Reference `protocol-weth-onchain.test.ts` (Sepolia) or `protocol-aave-v4-onchain.test.ts` (mainnet). See `<test_structure>`.
+2. **Tooltip doc links.** Every input override with a `helpTip` SHOULD also set `docUrl` to the canonical protocol documentation page for that field. `ProtocolFieldLabel` in `lib/extensions.tsx` automatically switches the info-icon cursor to pointer and opens the URL on click. See `<field_tooltips>`.
+3. **Chain scope is the UX contract.** Only list chains in `contract.addresses` that are both (a) where the protocol is actually deployed AND (b) in KeeperHub's supported set (`1`, `8453`, `42161`, `10`, `11155111`). The chain selector auto-restricts to `Object.keys(contract.addresses)`. The Researcher must have surfaced and user-confirmed this intersection before you generate the file. See `<supported_chains>`.
 
 **Biome/Ultracite lint rules:**
 - Use block statements: `if (x) { return y; }` not `if (x) return y;`

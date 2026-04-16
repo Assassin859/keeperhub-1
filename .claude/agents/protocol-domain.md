@@ -2,7 +2,11 @@
 Protocol plugins are "meta-plugins" that define DeFi protocol interactions declaratively.
 
 - Protocols go in `protocols/` as `{slug}.ts` files
-- Each file uses `defineProtocol()` from `@/lib/protocol-registry`
+- Two definition functions are exported from `@/lib/protocol-registry`:
+  - `defineAbiProtocol()` -- PREFERRED. Derives actions from a reduced ABI JSON file + editorial overrides. Use this for all new protocols.
+  - `defineProtocol()` -- FALLBACK. Accepts a hand-written actions array. Use only when the contract is unverified on all block explorers AND you cannot obtain an ABI at all.
+- `defineAbiProtocol()` internally calls `defineProtocol()`, so both produce the same `ProtocolDefinition` shape downstream. Validation rules, output fields, registration, and step handler behavior are identical.
+- Reduced ABI fragments live in `protocols/abis/{slug}.json` -- one file per protocol, containing only the functions we expose.
 - `pnpm discover-plugins` generates the barrel (`protocols/index.ts`) and registers to `lib/types/integration.ts`
 - The generic protocol-read/protocol-write step handlers route to the correct contract/function via `_protocolMeta` JSON injected into action config
 - If any protocol definition fails validation, the entire import chain fails and the server won't start
@@ -10,52 +14,239 @@ Protocol plugins are "meta-plugins" that define DeFi protocol interactions decla
 </overview>
 
 <api_shape>
-Complete `defineProtocol()` TypeScript shape:
+PREFERRED: `defineAbiProtocol()` TypeScript shape:
+
+```typescript
+import { defineAbiProtocol } from "@/lib/protocol-registry";
+import protocolAbi from "./abis/{slug}.json";
+
+export default defineAbiProtocol({
+  name: string,           // Display name (e.g., "Sky Protocol")
+  slug: string,           // kebab-case (e.g., "sky") -- matches filename without .ts
+  description: string,    // One-line description of the protocol
+  website?: string,       // Protocol website URL (optional)
+  icon?: string,          // Path like "/protocols/sky.png" -- optional
+
+  contracts: Record<string, {
+    label: string,
+    abi: string,                        // MUST be JSON.stringify(<reduced-abi-json>) -- NOT the object itself
+    addresses: Record<string, string>,  // chainId string -> 0x-prefixed hex address (exactly 42 chars)
+    userSpecifiedAddress?: boolean,     // When true, runtime address comes from user input (see user_specified_address)
+
+    overrides?: Record<string, {
+      // Keyed by the exact ABI function name (e.g., "deposit", "balanceOf").
+      // All fields optional -- provide only what you want to override.
+      slug?: string,         // kebab-case action slug (default: kebab-case of function name)
+      label?: string,        // User-facing label (default: Title Case of function name)
+      description?: string,  // Action description (default: "<function-name> on <contract-label>")
+
+      inputs?: Record<string, {
+        // Keyed by the ABI parameter name. For unnamed ABI params (empty "name"),
+        // use positional keys "arg0", "arg1", etc. This is a strict convention --
+        // see <overrides_conventions>.
+        name?: string,                     // Rename the param (e.g., unnamed "" -> "account")
+        label?: string,                    // User-facing label
+        default?: string,                  // Default value
+        decimals?: boolean | number,       // true = 18, number = specific
+        helpTip?: string,                  // Inline help text shown in tooltip
+        docUrl?: string,                   // If set, clicking the info icon/tooltip opens this URL in a new tab
+      }>,
+
+      outputs?: Record<string, {
+        // For single-return functions, key is "result". For named outputs, use the
+        // ABI output name. For unnamed outputs on multi-return functions, use "arg0", "arg1".
+        name?: string,            // Rename the output
+        label?: string,           // User-facing label
+        decimals?: number,        // Decimal places for display
+      }>,
+    }>,
+  }>,
+})
+```
+
+What the ABI drives (do NOT override these unless you have a concrete reason):
+- Action slug: kebab-case of function name
+- Action type: `stateMutability` -> `view`/`pure` = `read`, others = `write`
+- Payable flag: `stateMutability === "payable"` -> UI shows ETH value field
+- Input types: taken from ABI, drive type-aware field rendering (see `<type_aware_fields>`)
+- Output shape: single return -> `result`; multi-return -> named or positional
+
+---
+
+FALLBACK: `defineProtocol()` TypeScript shape. Use ONLY when `defineAbiProtocol()` is not viable (contract is unverified on all explorers AND no reliable ABI source exists). Prefer obtaining a reduced ABI and using `defineAbiProtocol()` in all other cases.
 
 ```typescript
 import { defineProtocol } from "@/lib/protocol-registry";
 
 export default defineProtocol({
-  name: string,           // Display name (e.g., "Sky Protocol")
-  slug: string,           // kebab-case (e.g., "sky") -- matches filename without .ts
-  description: string,    // One-line description of the protocol
-  website?: string,       // Protocol website URL (optional)
-  icon?: string,          // Path like "/protocols/sky.png" -- optional, default icon shown if omitted
+  name: string,
+  slug: string,
+  description: string,
+  website?: string,
+  icon?: string,
 
   contracts: Record<string, {
     label: string,
-    addresses: Record<string, string>,  // chainId string -> 0x-prefixed hex address (exactly 42 chars)
-    abi?: string,                       // OMIT for auto-fetch (recommended -- see abi_handling)
-    userSpecifiedAddress?: boolean,     // When true, runtime address comes from user input (see user_specified_address)
+    addresses: Record<string, string>,
+    abi?: string,                       // OMIT for auto-fetch, or provide inline when unverified
+    userSpecifiedAddress?: boolean,
   }>,
 
   actions: Array<{
-    slug: string,           // kebab-case (e.g., "deposit-ssr", "get-balance")
-    label: string,          // User-facing label (e.g., "Deposit USDS to Savings")
-    description: string,    // What the action does (one sentence)
-    type: "read" | "write", // read = view/pure functions, write = state-changing transactions
-    contract: string,       // MUST exactly match a key in the contracts object above
-    function: string,       // Exact Solidity function name (e.g., "deposit", "balanceOf")
+    slug: string,                       // kebab-case
+    label: string,
+    description: string,
+    type: "read" | "write",
+    contract: string,                   // MUST match a key in contracts
+    function: string,                   // Exact Solidity function name
     inputs: Array<{
-      name: string,         // Exact Solidity parameter name
-      type: string,         // MUST be a valid Solidity type: address, uint256, int256, bytes32, bool, string, bytes, uint8, etc.
-      label: string,        // User-facing label shown in workflow builder
-      default?: string,     // Default value as string (optional)
-      decimals?: boolean | number,  // true = 18 decimals, number = specific decimals
+      name: string,
+      type: string,                     // Solidity type: address, uint256, bytes32, bool, string, etc.
+      label: string,
+      default?: string,
+      decimals?: boolean | number,
     }>,
-    outputs?: Array<{       // REQUIRED for read actions that return values. Omit for write actions.
-      name: string,         // Output field name (used as {{NodeId.fieldName}} in templates)
-      type: string,         // Solidity return type
-      label: string,        // User-facing label
-      decimals?: number,    // Decimal places for display
+    outputs?: Array<{                   // REQUIRED for read actions with return values
+      name: string,
+      type: string,
+      label: string,
+      decimals?: number,
     }>,
+    payable?: boolean,                  // Set true for payable write actions (adds ETH value field)
   }>,
 })
 ```
 </api_shape>
 
+<overrides_conventions>
+Critical conventions for `defineAbiProtocol()` that agents miss regularly:
+
+1. `abi` MUST be a string, not an object:
+   ```typescript
+   import wethAbi from "./abis/weth.json";
+   // CORRECT
+   abi: JSON.stringify(wethAbi),
+   // WRONG -- TypeScript will flag but the runtime error is also clear
+   abi: wethAbi,
+   ```
+
+2. `inputs` and `outputs` are keyed by ABI name. For UNNAMED ABI params (empty `"name": ""` in the ABI fragment), use positional keys `arg0`, `arg1`, etc.:
+   ```json
+   // ABI: balanceOf(address)
+   {
+     "name": "balanceOf",
+     "inputs": [{ "name": "", "type": "address" }],
+     "outputs": [{ "name": "", "type": "uint256" }]
+   }
+   ```
+   ```typescript
+   // Override: rename arg0 -> account, and give the single return a name
+   balanceOf: {
+     inputs: {
+       arg0: { name: "account", label: "Wallet Address" },
+     },
+     outputs: {
+       result: { name: "balance", label: "WETH Balance (wei)", decimals: 18 },
+     },
+   }
+   ```
+   The `result` key (singular) is ONLY valid for single-return functions. Multi-return functions use named output keys if present, otherwise `arg0`, `arg1`.
+
+3. Overrides are purely editorial -- they do NOT change function routing. `stepFunction`, `stepImportPath`, and `_protocolMeta.functionName` always come from the ABI.
+
+4. Provide overrides ONLY for functions you want to expose. Any function in the ABI becomes an action; to hide a function, remove it from `protocols/abis/{slug}.json`.
+</overrides_conventions>
+
+<reduced_abi_file>
+Location: `protocols/abis/{slug}.json`
+
+Shape: a JSON array of ABI function fragments. Include ONLY the functions the protocol exposes as actions. Each fragment:
+
+```json
+{
+  "type": "function",
+  "name": "deposit",
+  "stateMutability": "payable",    // "view" | "pure" | "nonpayable" | "payable"
+  "inputs":  [{ "name": "amount", "type": "uint256" }],
+  "outputs": []
+}
+```
+
+Rules:
+- `type` MUST be `"function"` -- constructors, events, errors, fallbacks are filtered by `deriveActionsFromAbi()` anyway, but including them adds noise.
+- `stateMutability` is required and drives read vs write classification.
+- `name` fields on inputs/outputs can be empty strings -- derivation will auto-key them as `arg0`, `arg1`, etc. for overrides.
+- Keep the file minimal. The whole point of the reduced ABI is that it IS the curated set of actions -- do not paste the full Etherscan ABI.
+
+Reference: `protocols/abis/weth.json` (3 functions: deposit, withdraw, balanceOf).
+</reduced_abi_file>
+
+<type_aware_fields>
+`defineAbiProtocol()` auto-selects the UI field component for each input based on Solidity type, via `solidityTypeToFieldType()` in `lib/solidity-type-fields.ts`. Agents do NOT wire these up manually -- the registry does it during `protocolActionToPluginAction()`.
+
+| Solidity type pattern | Field component            | Validation                         |
+|-----------------------|----------------------------|------------------------------------|
+| `address`             | `protocol-address`         | Checksum + 42-char hex (advisory)  |
+| `uint*`               | `protocol-uint`            | Non-negative, numeric (advisory)   |
+| `int*`                | `protocol-int`             | Numeric (advisory)                 |
+| `bool`                | `protocol-bool`            | Dropdown true/false                |
+| `bytes`, `bytes*`     | `protocol-bytes`           | Hex format (advisory)              |
+| anything else         | `template-input`           | None beyond template syntax        |
+
+Notes:
+- All validation is ADVISORY -- shows warnings, does not block saving. Template variables always pass through.
+- Payable functions (`stateMutability: "payable"`) automatically get an extra `protocol-eth-value` field (key `ethValue`) above the user-defined inputs.
+- Field components live in `components/workflow/config/protocol-fields/`.
+</type_aware_fields>
+
+<field_tooltips>
+Input fields can expose contextual help via `helpTip` and optional `docUrl` on the override. Both are rendered by `ProtocolFieldLabel` in `lib/extensions.tsx`:
+
+- `helpTip` alone: info icon with `cursor-help`, hovering shows the tooltip text
+- `helpTip` + `docUrl`: info icon with `cursor-pointer`, tooltip content is also `cursor-pointer`, clicking either opens `docUrl` in a new tab (`target="_blank"`, `rel="noopener noreferrer"`)
+
+When to add each:
+- Add `helpTip` when the input meaning is non-obvious from the label alone (opaque identifiers, semantic quirks, required pre-steps, units)
+- Add `docUrl` whenever a canonical protocol documentation page exists. Link to the most specific page: e.g., Aave V4's supply doc rather than its overview. Prefer stable URLs (official docs) over blog posts or external aggregators.
+
+Example (from `protocols/aave-v4.ts`):
+```typescript
+reserveId: {
+  label: "Reserve ID",
+  helpTip: "Opaque uint256 identifier for a reserve within this Spoke. Use the Get Reserve ID action to resolve from (hub, assetId).",
+  docUrl: "https://aave.com/docs/aave-v4/liquidity/spokes",
+},
+```
+
+Coverage rule of thumb: every input that has a `helpTip` should also have a `docUrl` unless the protocol genuinely has no public documentation. Inputs with self-explanatory labels (e.g. `amount: { label: "Amount (wei)" }`) need neither.
+</field_tooltips>
+
+<supported_chains>
+The chain selector on every protocol action is restricted to chains the protocol defines an address for. `buildConfigFieldsFromAction()` in `lib/protocol-registry.ts` computes `allowedChainIds` from `Object.keys(contract.addresses)` and passes it to `ChainSelectField`, which filters the dropdown accordingly.
+
+Implications for new protocols:
+
+1. **Only include chains KeeperHub supports.** The canonical list is `1`, `8453`, `42161`, `10`, `11155111` for EVM protocols (Ethereum mainnet, Base, Arbitrum One, Optimism, Sepolia). See `<explorer_chain_availability>` for the full list.
+
+2. **Only include chains where the protocol is actually deployed.** Do not speculatively add an address for a chain where the protocol does not exist. Users selecting the chain would get runtime failures.
+
+3. **Confirm scope with the user before generating.** The researcher must explicitly list the proposed chain set and get user confirmation. The KeeperHub-supported chains do not necessarily equal where the protocol is deployed; pick the intersection, then ask.
+
+4. **The `addresses` map IS the UX contract.** Adding a chain later requires only appending to the map; removing a chain retroactively (e.g. after a protocol governance action) requires coordination with existing workflows that reference it.
+
+For `userSpecifiedAddress: true` contracts (e.g. Safe multisig), the `addresses` map still serves as the chain-availability metadata. Use reference/singleton addresses so the selector correctly shows the user which chains the protocol is available on, even though runtime dispatch pulls the contract address from user input.
+</supported_chains>
+
+<encode_transforms>
+`lib/protocol-encode-transforms.ts` provides a registry of pre-ABI-encoding transforms applied to input values before they are passed to the contract call. Wired into both `plugins/protocol/steps/protocol-read.ts` and `protocol-write.ts`.
+
+Default: no transforms registered -> zero behavior change for existing protocols. Only register a transform when a protocol requires value manipulation that cannot be expressed via `decimals` on the input (e.g., packing multiple fields into a single bytes32, computing a hash, encoding a sub-struct).
+
+When adding a new protocol, do NOT touch this file unless the protocol genuinely needs a transform. Default behavior covers all standard Solidity types.
+</encode_transforms>
+
 <validation_rules>
-Rules enforced by `defineProtocol()` at import time (violations throw at startup):
+Rules enforced at import time by both `defineAbiProtocol()` and `defineProtocol()` (violations throw at startup; `defineAbiProtocol` delegates to `defineProtocol` after deriving actions, so all rules apply uniformly):
 
 - Protocol slug must match `/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/` (kebab-case, start with letter)
 - Action slugs must match the same pattern
@@ -77,14 +268,26 @@ Supported chains with their numeric string keys:
 </chain_ids>
 
 <abi_handling>
-- OMIT the `abi` field from all contract definitions (recommended)
-- `resolveAbi()` auto-fetches from block explorers (Etherscan, BaseScan, Arbiscan) with 24h cache
-- Proxy detection is automatic: EIP-1967, EIP-1822, EIP-2535 (Diamond) -- ABI follows the implementation
-- Only provide inline `abi` if: contract is unverified on all explorers AND you have the ABI string
-- Add a comment noting proxy status: `// Proxy -- ABI auto-resolved via abi-cache`
+Handling differs by definition function.
+
+### `defineAbiProtocol()` (preferred, new protocols)
+
+- The reduced ABI is BUNDLED with the protocol definition via `abi: JSON.stringify(abiJson)`.
+- `resolveAbi()` auto-fetch is NOT used at runtime for these protocols -- the bundled ABI is the source of truth.
+- This is deliberate: the `protocols/abis/{slug}.json` file is the curated, intentional surface area. Explorer fetches would expand that surface to whatever is deployed.
+- Proxy contracts still work -- point `addresses` at the proxy, but put the implementation's ABI in `protocols/abis/{slug}.json`. Nothing magical: the proxy forwards calldata that was encoded against the implementation ABI.
+
+### `defineProtocol()` (fallback, legacy protocols)
+
+- OMIT the `abi` field from contracts when possible -- `resolveAbi()` auto-fetches from block explorers (Etherscan, BaseScan, Arbiscan) with 24h cache.
+- Proxy detection is automatic: EIP-1967, EIP-1822, EIP-2535 (Diamond) -- ABI follows the implementation.
+- Provide inline `abi` only if the contract is unverified on all explorers AND you have the ABI string.
+- When providing an inline ABI, add a comment noting proxy status: `// Proxy -- ABI auto-resolved via abi-cache`.
 </abi_handling>
 
 <erc4626_vault_standard>
+NOTE: `erc4626VaultActions()` currently produces a hand-written actions array for `defineProtocol()`. There is no ABI-driven equivalent yet. For ERC-4626 vaults, keep using the old `defineProtocol()` pattern OR split the protocol into two contracts (vault actions via `defineProtocol()` + protocol-specific functions via `defineAbiProtocol()`). Migrating the ERC-4626 helper to the ABI-driven pattern is tracked separately.
+
 ERC-4626 is the tokenized vault standard. Many DeFi protocols implement ERC-4626 for savings/staking vaults (e.g., sUSDS, sDAI). A shared module at `lib/standards/erc4626.ts` provides standardized vault actions.
 
 How to detect ERC-4626 compliance:
@@ -170,76 +373,101 @@ NEVER manually edit `protocols/index.ts` or `lib/types/integration.ts` -- these 
 </registration>
 
 <weth_reference>
-Canonical WETH example -- 5 chains, 3 actions (wrap, unwrap, balance-of):
+Canonical WETH example -- ABI-driven, 5 chains, 3 actions (wrap, unwrap, balance-of).
+
+`protocols/abis/weth.json` (the reduced ABI -- exactly what we expose, nothing more):
+
+```json
+[
+  {
+    "type": "function",
+    "name": "deposit",
+    "stateMutability": "payable",
+    "inputs": [],
+    "outputs": []
+  },
+  {
+    "type": "function",
+    "name": "withdraw",
+    "stateMutability": "nonpayable",
+    "inputs": [{ "name": "wad", "type": "uint256" }],
+    "outputs": []
+  },
+  {
+    "type": "function",
+    "name": "balanceOf",
+    "stateMutability": "view",
+    "inputs": [{ "name": "", "type": "address" }],
+    "outputs": [{ "name": "", "type": "uint256" }]
+  }
+]
+```
+
+`protocols/weth.ts`:
 
 ```typescript
-import { defineProtocol } from "@/lib/protocol-registry";
+import { defineAbiProtocol } from "@/lib/protocol-registry";
+import wethAbi from "./abis/weth.json";
 
-export default defineProtocol({
+export default defineAbiProtocol({
   name: "WETH",
   slug: "weth",
-  description: "Wrapped Ether -- wrap ETH to WETH (ERC-20) and unwrap back to ETH",
+  description:
+    "Wrapped Ether - wrap ETH to WETH (ERC-20) and unwrap back to ETH",
   website: "https://weth.io",
   icon: "/protocols/weth.png",
 
   contracts: {
     weth: {
       label: "WETH Contract",
+      abi: JSON.stringify(wethAbi),
       addresses: {
-        // Ethereum Mainnet
         "1": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-        // Base
         "8453": "0x4200000000000000000000000000000000000006",
-        // Arbitrum One
         "42161": "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
-        // Optimism
         "10": "0x4200000000000000000000000000000000000006",
-        // Sepolia Testnet
         "11155111": "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14",
       },
-      // ABI omitted -- resolved automatically via abi-cache
+      overrides: {
+        deposit: {
+          slug: "wrap",
+          label: "Wrap ETH",
+          description:
+            "Wrap native ETH into WETH (ERC-20). Send ETH value with the transaction.",
+        },
+        withdraw: {
+          slug: "unwrap",
+          label: "Unwrap WETH",
+          description: "Unwrap WETH back to native ETH",
+          inputs: {
+            wad: { label: "Amount (wei)" },
+          },
+        },
+        balanceOf: {
+          slug: "balance-of",
+          label: "Get Balance",
+          description: "Check WETH balance of an address",
+          inputs: {
+            arg0: { name: "account", label: "Wallet Address" },
+          },
+          outputs: {
+            result: {
+              name: "balance",
+              label: "WETH Balance (wei)",
+              decimals: 18,
+            },
+          },
+        },
+      },
     },
   },
-
-  actions: [
-    {
-      slug: "wrap",
-      label: "Wrap ETH",
-      description: "Wrap native ETH into WETH (ERC-20). Send ETH value with the transaction.",
-      type: "write",
-      contract: "weth",
-      function: "deposit",
-      inputs: [],
-    },
-    {
-      slug: "unwrap",
-      label: "Unwrap WETH",
-      description: "Unwrap WETH back to native ETH",
-      type: "write",
-      contract: "weth",
-      function: "withdraw",
-      inputs: [{ name: "wad", type: "uint256", label: "Amount (wei)" }],
-    },
-    {
-      slug: "balance-of",
-      label: "Get Balance",
-      description: "Check WETH balance of an address",
-      type: "read",
-      contract: "weth",
-      function: "balanceOf",
-      inputs: [{ name: "account", type: "address", label: "Wallet Address" }],
-      outputs: [
-        {
-          name: "balance",
-          type: "uint256",
-          label: "WETH Balance (wei)",
-          decimals: 18,
-        },
-      ],
-    },
-  ],
 });
 ```
+
+Observations:
+- `deposit` has no overrides beyond the metadata (slug, label, description). Payable flag is inferred from `stateMutability: "payable"` in the ABI -- the UI will auto-add the ETH value field.
+- `withdraw` overrides only the input label (`wad -> "Amount (wei)"`). The slug and action type come from the ABI.
+- `balanceOf` renames the unnamed first input (`arg0 -> "account"`) and the unnamed single return (`result -> "balance"`). This is the common shape for ERC-20-style reads.
 </weth_reference>
 
 <known_issues>
@@ -276,7 +504,11 @@ Also update:
 </documentation_structure>
 
 <test_structure>
-Format for `tests/unit/protocol-{slug}.test.ts` using Vitest. Tests to include:
+Two test files per protocol -- unit tests always, on-chain integration tests for ABI-driven protocols.
+
+### Unit tests: `tests/unit/protocol-{slug}.test.ts` (Vitest, always required)
+
+Cover the shape of the protocol definition. These run in every `pnpm test` execution:
 
 - Definition validity (import does not throw)
 - Slug format (protocol + all action slugs match pattern)
@@ -286,6 +518,90 @@ Format for `tests/unit/protocol-{slug}.test.ts` using Vitest. Tests to include:
 - Read action outputs (every read action with return values has outputs defined)
 - Action count matches expected
 - Registration check (use `getProtocol("{slug}")`)
+- For ABI-driven protocols: ABI parses, each override's function name exists in the ABI, each `inputs`/`outputs` override key resolves to a real ABI param (or `arg0`/`arg1` positional key)
+
+Reference: `tests/unit/protocol-weth.test.ts` (15 tests covering the full ABI-driven shape).
+
+### On-chain integration tests: `tests/integration/protocol-{slug}-onchain.test.ts` (REQUIRED for ABI-driven protocols)
+
+Verify that the derived actions produce calldata that the REAL deployed contract accepts. Runs against Sepolia (chain `11155111`) by default.
+
+Gated on the `INTEGRATION_TEST_RPC_URL` env var -- skipped in CI when unset, so safe to commit:
+
+Choose the right env var based on where the protocol is deployed:
+
+| Protocol deployment | Env var | Chain ID | Notes |
+|---|---|---|---|
+| Sepolia available (PREFERRED) | `INTEGRATION_TEST_RPC_URL` | `11155111` | Free public RPCs, no real funds at risk. Most protocols should target Sepolia. |
+| Mainnet-only | `INTEGRATION_TEST_MAINNET_RPC_URL` | `1` | Separate env var so mainnet-only tests don't collide with Sepolia-targeting ones. Read-only tests safe; writes do `estimateGas` only, never send. |
+
+Sepolia:
+```typescript
+const RPC_URL = process.env.INTEGRATION_TEST_RPC_URL;
+const CHAIN_ID = "11155111";
+const TEST_ADDRESS = "0x0000000000000000000000000000000000000001";
+
+describe.skipIf(!RPC_URL)("{Slug} on-chain integration", () => {
+  // ...
+});
+```
+
+Mainnet-only (e.g. for freshly-launched protocols that have no Sepolia deployment):
+```typescript
+const RPC_URL = process.env.INTEGRATION_TEST_MAINNET_RPC_URL;
+const CHAIN_ID = "1";
+const TEST_ADDRESS = "0x0000000000000000000000000000000000000001";
+
+describe.skipIf(!RPC_URL)("{Slug} on-chain integration", () => {
+  // ...
+});
+```
+
+Tests to include per action type:
+
+| Action type                    | Test pattern                                                                             |
+|--------------------------------|------------------------------------------------------------------------------------------|
+| Read (e.g., `balanceOf`)       | `provider.call({ to, data })`, then decode the return and assert type (e.g., bigint).    |
+| Payable write (e.g., `deposit`)| `provider.estimateGas({ to, data, value, from })` succeeds (gas > 0).                    |
+| Non-payable write              | `provider.estimateGas(...)` may revert for business reasons, but the error MUST NOT contain `"INVALID_ARGUMENT"`, `"could not decode"`, or `"invalid function"` -- those are calldata-level failures. |
+
+Calldata construction pattern (use the helper from `reshapeArgsForAbi`):
+
+```typescript
+import { reshapeArgsForAbi } from "@/lib/abi-struct-args";
+import { ethers } from "ethers";
+
+const action = protocol.actions.find((a) => a.slug === "{action-slug}");
+const contract = protocol.contracts[action.contract];
+const abi = JSON.parse(contract.abi!);
+const functionAbi = abi.find((f: { name: string; type: string }) =>
+  f.type === "function" && f.name === action.function
+);
+const rawArgs = action.inputs.map((inp) => sampleInputs[inp.name] ?? inp.default ?? "");
+const args = reshapeArgsForAbi(rawArgs, functionAbi);
+const data = new ethers.Interface(abi).encodeFunctionData(action.function, args);
+```
+
+Rules:
+- Set per-test timeout to `15_000` -- public RPC can be slow.
+- Use `TEST_ADDRESS = "0x0000000000000000000000000000000000000001"` for writes (never a real key).
+- Default to Sepolia with `INTEGRATION_TEST_RPC_URL`. If the protocol has no Sepolia deployment (freshly-launched protocols, L2-specific protocols), use `INTEGRATION_TEST_MAINNET_RPC_URL` against mainnet. Never use the same env var for both Sepolia and mainnet tests - they would collide when a contributor sets one globally.
+- Tests gated on `INTEGRATION_TEST_MAINNET_RPC_URL` are still safe to commit: they skip in CI without the env var, identically to the Sepolia tests.
+- Do NOT attempt to send real transactions -- only `call` and `estimateGas`.
+- Import the protocol definition directly (`import wethDef from "@/protocols/weth"`) -- do not go through the registry.
+
+References:
+- `tests/integration/protocol-weth-onchain.test.ts` (3 tests, Sepolia, one per action type)
+- `tests/integration/protocol-aave-v4-onchain.test.ts` (6 tests, mainnet, includes tuple-return struct decode)
+
+To run locally:
+```bash
+# Sepolia-gated protocols
+INTEGRATION_TEST_RPC_URL="https://sepolia.example/..." pnpm test protocol-{slug}-onchain
+
+# Mainnet-gated protocols
+INTEGRATION_TEST_MAINNET_RPC_URL="https://mainnet.example/..." pnpm test protocol-{slug}-onchain
+```
 </test_structure>
 
 <explorer_chain_availability>

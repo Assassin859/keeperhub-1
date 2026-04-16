@@ -149,7 +149,7 @@ jobs:
       - name: Fetch TEST_API_KEY from Parameter Store
         run: |
           TEST_API_KEY=$(aws ssm get-parameter \
-            --name "/eks/maker-staging/keeperhub/test-api-key" \
+            --name "/eks/techops-staging/keeperhub/test-api-key" \
             --with-decryption --query "Parameter.Value" --output text \
             --region us-east-2)
           echo "::add-mask::$TEST_API_KEY"

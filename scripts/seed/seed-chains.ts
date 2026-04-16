@@ -339,6 +339,47 @@ const DEFAULT_CHAINS: NewChain[] = [
     isTestnet: getChainConfigValue("avax-fuji", "isTestnet", true),
     isEnabled: getChainConfigValue("avax-fuji", "isEnabled", true),
   },
+  // Plasma chains
+  {
+    chainId: getChainConfigValue("plasma-mainnet", "chainId", 9745),
+    name: "Plasma",
+    symbol: getChainConfigValue("plasma-mainnet", "symbol", "XPL"),
+    chainType: "evm",
+    defaultPrimaryRpc: getRpcUrlByChainId(9745, "primary"),
+    defaultFallbackRpc: getRpcUrlByChainId(9745, "fallback"),
+    defaultPrimaryWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[9745].jsonKey,
+      type: "primary",
+    }),
+    defaultFallbackWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[9745].jsonKey,
+      type: "fallback",
+    }),
+    isTestnet: getChainConfigValue("plasma-mainnet", "isTestnet", false),
+    isEnabled: getChainConfigValue("plasma-mainnet", "isEnabled", true),
+  },
+  {
+    chainId: getChainConfigValue("plasma-testnet", "chainId", 9746),
+    name: "Plasma Testnet",
+    symbol: getChainConfigValue("plasma-testnet", "symbol", "XPL"),
+    chainType: "evm",
+    defaultPrimaryRpc: getRpcUrlByChainId(9746, "primary"),
+    defaultFallbackRpc: getRpcUrlByChainId(9746, "fallback"),
+    defaultPrimaryWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[9746].jsonKey,
+      type: "primary",
+    }),
+    defaultFallbackWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[9746].jsonKey,
+      type: "fallback",
+    }),
+    isTestnet: getChainConfigValue("plasma-testnet", "isTestnet", true),
+    isEnabled: getChainConfigValue("plasma-testnet", "isEnabled", true),
+  },
   // Solana chains (non-EVM - uses SolanaProviderManager)
   {
     chainId: getChainConfigValue("solana-mainnet", "chainId", 101),
@@ -530,6 +571,26 @@ const EXPLORER_CONFIG_TEMPLATES: Record<
     explorerAddressPath: "/address/{address}",
     explorerContractPath: "/address/{address}#code",
   },
+  // Plasma Mainnet - Etherscan V2 (Plasmascan)
+  9745: {
+    chainType: "evm",
+    explorerUrl: "https://plasmascan.to",
+    explorerApiType: "etherscan",
+    explorerApiUrl: "https://api.etherscan.io/v2/api",
+    explorerTxPath: "/tx/{hash}",
+    explorerAddressPath: "/address/{address}",
+    explorerContractPath: "/address/{address}#code",
+  },
+  // Plasma Testnet - Etherscan V2 (Plasmascan)
+  9746: {
+    chainType: "evm",
+    explorerUrl: "https://testnet.plasmascan.to",
+    explorerApiType: "etherscan",
+    explorerApiUrl: "https://api.etherscan.io/v2/api",
+    explorerTxPath: "/tx/{hash}",
+    explorerAddressPath: "/address/{address}",
+    explorerContractPath: "/address/{address}#code",
+  },
   // Solana Mainnet - Solscan
   101: {
     chainType: "solana",
@@ -614,6 +675,8 @@ async function seedChains() {
     "Arbitrum Sepolia": 421_614,
     Avalanche: 43_114,
     "Avalanche Fuji": 43_113,
+    Plasma: 9745,
+    "Plasma Testnet": 9746,
     Solana: 101,
     "Solana Devnet": 103,
   };

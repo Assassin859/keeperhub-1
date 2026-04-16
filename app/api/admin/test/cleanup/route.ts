@@ -144,19 +144,80 @@ export async function POST(request: Request): Promise<NextResponse> {
     const emails = testUsers.map((u) => u.email).filter(Boolean) as string[];
 
     if (body.dryRun === true) {
+      const wfStats = await db.execute<{
+        total: string;
+        enabled: string;
+      }>(sql`
+        SELECT
+          count(*)::text as total,
+          count(*) FILTER (WHERE enabled = true)::text as enabled
+        FROM workflows
+        WHERE user_id IN (SELECT id FROM users WHERE email LIKE ${K6_EMAIL_PATTERN})
+      `);
+      const execStats = await db.execute<{
+        total: string;
+        success: string;
+        error: string;
+        running: string;
+      }>(sql`
+        SELECT
+          count(*)::text as total,
+          count(*) FILTER (WHERE status = 'success')::text as success,
+          count(*) FILTER (WHERE status = 'error')::text as error,
+          count(*) FILTER (WHERE status = 'running')::text as running
+        FROM workflow_executions
+        WHERE workflow_id IN (
+          SELECT id FROM workflows
+          WHERE user_id IN (SELECT id FROM users WHERE email LIKE ${K6_EMAIL_PATTERN})
+        )
+      `);
+      const et = Number(execStats[0]?.total ?? 0);
+      const es = Number(execStats[0]?.success ?? 0);
+      const ee = Number(execStats[0]?.error ?? 0);
+      const er = Number(execStats[0]?.running ?? 0);
+
       return NextResponse.json({
-        deleted: { users: userCount, organizations: 0, workflows: 0 },
-        emails,
+        users: userCount,
+        workflows: {
+          total: Number(wfStats[0]?.total ?? 0),
+          enabled: Number(wfStats[0]?.enabled ?? 0),
+        },
+        executions: {
+          total: et,
+          success: es,
+          error: ee,
+          running: er,
+          successRate: es + ee > 0 ? Math.round((10000 * es) / (es + ee)) / 100 : 100,
+        },
         dryRun: true,
       });
     }
 
-    // Count workflows before deleting.
+    // Count workflows and executions before deleting.
     const wfCount = await db.execute<{ count: string }>(sql`
       SELECT count(*)::text as count FROM workflows
       WHERE user_id IN (SELECT id FROM users WHERE email LIKE ${K6_EMAIL_PATTERN})
     `);
     const deletedWorkflows = Number(wfCount[0]?.count ?? 0);
+
+    const execCount = await db.execute<{
+      total: string;
+      success: string;
+      error: string;
+    }>(sql`
+      SELECT
+        count(*)::text as total,
+        count(*) FILTER (WHERE status = 'success')::text as success,
+        count(*) FILTER (WHERE status = 'error')::text as error
+      FROM workflow_executions
+      WHERE workflow_id IN (
+        SELECT id FROM workflows
+        WHERE user_id IN (SELECT id FROM users WHERE email LIKE ${K6_EMAIL_PATTERN})
+      )
+    `);
+    const execTotal = Number(execCount[0]?.total ?? 0);
+    const execSuccess = Number(execCount[0]?.success ?? 0);
+    const execError = Number(execCount[0]?.error ?? 0);
 
     // Run cleanup in a loop — each pass deletes what it can.
     // Locked rows (from in-flight executions) are skipped and caught next pass.
@@ -180,6 +241,15 @@ export async function POST(request: Request): Promise<NextResponse> {
         users: deletedUsers,
         organizations: deletedUsers,
         workflows: deletedWorkflows,
+      },
+      executions: {
+        total: execTotal,
+        success: execSuccess,
+        error: execError,
+        successRate:
+          execSuccess + execError > 0
+            ? Math.round((10000 * execSuccess) / (execSuccess + execError)) / 100
+            : 100,
       },
       emails,
       dryRun: false,
