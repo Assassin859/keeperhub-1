@@ -31,7 +31,7 @@ export function getChainIdFromNetwork(network: string | number): number {
     "eth-mainnet": SUPPORTED_CHAIN_IDS.MAINNET,
     "ethereum-mainnet": SUPPORTED_CHAIN_IDS.MAINNET,
     ethereum: SUPPORTED_CHAIN_IDS.MAINNET,
-    // Sepolia Testnet
+    // Ethereum Sepolia
     sepolia: SUPPORTED_CHAIN_IDS.SEPOLIA,
     "eth-sepolia": SUPPORTED_CHAIN_IDS.SEPOLIA,
     "sepolia-testnet": SUPPORTED_CHAIN_IDS.SEPOLIA,
@@ -69,7 +69,7 @@ export function getChainIdFromNetwork(network: string | number): number {
 export function getNetworkName(chainId: number): string {
   const chainNames: Record<number, string> = {
     [SUPPORTED_CHAIN_IDS.MAINNET]: "Ethereum Mainnet",
-    [SUPPORTED_CHAIN_IDS.SEPOLIA]: "Sepolia Testnet",
+    [SUPPORTED_CHAIN_IDS.SEPOLIA]: "Ethereum Sepolia",
     [SUPPORTED_CHAIN_IDS.BASE]: "Base",
     [SUPPORTED_CHAIN_IDS.BASE_SEPOLIA]: "Base Sepolia",
     [SUPPORTED_CHAIN_IDS.TEMPO_TESTNET]: "Tempo Testnet",

@@ -49,10 +49,6 @@ target "app" {
     NEXT_PUBLIC_GOOGLE_CLIENT_ID = NEXT_PUBLIC_GOOGLE_CLIENT_ID
     NEXT_PUBLIC_BILLING_ENABLED  = NEXT_PUBLIC_BILLING_ENABLED
     NEXT_PUBLIC_SENTRY_DSN       = NEXT_PUBLIC_SENTRY_DSN
-    SENTRY_ORG                   = SENTRY_ORG
-    SENTRY_PROJECT               = SENTRY_PROJECT
-    SENTRY_AUTH_TOKEN            = SENTRY_AUTH_TOKEN
-    SENTRY_RELEASE               = SENTRY_RELEASE
   }
   tags = compact([
     "${ECR_REGISTRY}/${ECR_REPO}:app-${IMAGE_TAG}",
@@ -61,6 +57,27 @@ target "app" {
   ])
   cache-from = ["type=registry,ref=${ECR_REGISTRY}/${ECR_REPO}:cache-app"]
   cache-to   = ["type=registry,ref=${ECR_REGISTRY}/${ECR_REPO}:cache-app,mode=max"]
+}
+
+target "sentry-upload" {
+  context    = "."
+  dockerfile = "Dockerfile"
+  target     = "sentry-upload"
+  args = {
+    # NEXT_PUBLIC_* args must match the app target so BuildKit reuses
+    # the cached builder layer instead of rebuilding with empty defaults
+    NEXT_PUBLIC_AUTH_PROVIDERS    = NEXT_PUBLIC_AUTH_PROVIDERS
+    NEXT_PUBLIC_GITHUB_CLIENT_ID = NEXT_PUBLIC_GITHUB_CLIENT_ID
+    NEXT_PUBLIC_GOOGLE_CLIENT_ID = NEXT_PUBLIC_GOOGLE_CLIENT_ID
+    NEXT_PUBLIC_BILLING_ENABLED  = NEXT_PUBLIC_BILLING_ENABLED
+    NEXT_PUBLIC_SENTRY_DSN       = NEXT_PUBLIC_SENTRY_DSN
+    SENTRY_ORG                   = SENTRY_ORG
+    SENTRY_PROJECT               = SENTRY_PROJECT
+    SENTRY_AUTH_TOKEN            = SENTRY_AUTH_TOKEN
+    SENTRY_RELEASE               = SENTRY_RELEASE
+  }
+  tags       = []
+  cache-from = ["type=registry,ref=${ECR_REGISTRY}/${ECR_REPO}:cache-app"]
 }
 
 target "migrator" {

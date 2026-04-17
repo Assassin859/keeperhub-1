@@ -63,6 +63,10 @@ describe("config-service", () => {
         chainName: "Ethereum Mainnet",
         primaryRpcUrl: "https://default-eth.example.com",
         fallbackRpcUrl: "https://default-eth-backup.example.com",
+        primaryWssUrl: undefined,
+        fallbackWssUrl: undefined,
+        usePrivateMempoolRpc: false,
+        privateRpcUrl: undefined,
         source: "default",
       });
     });
@@ -101,6 +105,10 @@ describe("config-service", () => {
         chainName: "Ethereum Mainnet",
         primaryRpcUrl: "https://user-eth.example.com",
         fallbackRpcUrl: "https://user-eth-backup.example.com",
+        primaryWssUrl: undefined,
+        fallbackWssUrl: undefined,
+        usePrivateMempoolRpc: false,
+        privateRpcUrl: undefined,
         source: "user",
       });
     });

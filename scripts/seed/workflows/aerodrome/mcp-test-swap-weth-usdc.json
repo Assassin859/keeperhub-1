@@ -25,7 +25,7 @@
         "label": "Wrap ETH to WETH",
         "type": "action",
         "config": {
-          "actionType": "weth/wrap",
+          "actionType": "wrapped/wrap",
           "network": "8453",
           "ethValue": "0.001"
         },

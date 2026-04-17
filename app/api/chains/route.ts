@@ -18,6 +18,8 @@ export type ChainResponse = {
   explorerApiType: string | null;
   isTestnet: boolean;
   isEnabled: boolean;
+  // KEEP-137: whether the chain supports private mempool routing (Flashbots Protect)
+  usePrivateMempoolRpc: boolean;
 };
 
 export type GetChainsResponse = ChainResponse[];
@@ -61,6 +63,7 @@ export async function GET(request: Request) {
       explorerApiType: explorer?.explorerApiType ?? null,
       isTestnet: chain.isTestnet ?? false,
       isEnabled: chain.isEnabled ?? true,
+      usePrivateMempoolRpc: chain.usePrivateMempoolRpc ?? false,
     }));
 
     return NextResponse.json(response);

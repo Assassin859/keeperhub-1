@@ -32,6 +32,13 @@ export type ResolvedRpcConfig = {
   fallbackRpcUrl?: string;
   primaryWssUrl?: string;
   fallbackWssUrl?: string;
+  // KEEP-137: whether the chain supports private mempool routing (Flashbots Protect).
+  // Set from chains.usePrivateMempoolRpc; UI uses this to gate the Private Mempool toggle.
+  usePrivateMempoolRpc?: boolean;
+  // The private mempool RPC URL (from chains.defaultPrivateRpcUrl) when supported.
+  // Populated even when usePrivateMempool was NOT requested, so callers can surface
+  // capabilities to the UI without a second lookup.
+  privateRpcUrl?: string;
   source: "user" | "default";
 };
 

@@ -27,6 +27,21 @@ Dockerfile
 docker-compose.yml
 docker-compose.*.yml
 
+# Directories not needed by any Docker stage
+tests/
+docs/
+docs-site/
+specs/
+analysis/
+.claude/
+.cursor/
+.probes/
+
+# Dev-only config files
+playwright.config.ts
+vitest.config.mts
+biome.jsonc
+
 # IDE files
 .vscode
 .idea

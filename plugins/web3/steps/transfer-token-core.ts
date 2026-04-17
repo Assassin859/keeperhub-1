@@ -44,6 +44,12 @@ export type TransferTokenCoreInput = {
   amount: string;
   gasLimitMultiplier?: string;
   tokenAddress?: string;
+  // KEEP-137: Route through private mempool (Flashbots Protect). Skips
+  // ERC-4337 sponsorship -- mutually exclusive.
+  usePrivateMempool?: boolean;
+  // Strict mode: when true and usePrivateMempool is true, failing to reach the
+  // private RPC does NOT fall back to the public mempool. Ignored otherwise.
+  strict?: boolean;
   _context?: {
     executionId?: string;
     triggerType?: string;
@@ -181,8 +187,15 @@ export async function parseTokenAddress(
 export async function transferTokenCore(
   input: TransferTokenCoreInput
 ): Promise<TransferTokenResult> {
-  const { network, recipientAddress, amount, gasLimitMultiplier, _context } =
-    input;
+  const {
+    network,
+    recipientAddress,
+    amount,
+    gasLimitMultiplier,
+    usePrivateMempool,
+    strict,
+    _context,
+  } = input;
 
   const { multiplierOverride, gasLimitOverride } =
     resolveGasLimitOverrides(gasLimitMultiplier);
@@ -250,7 +263,12 @@ export async function transferTokenCore(
   let rpcUrl: string;
   let rpcManager: Awaited<ReturnType<typeof getRpcProvider>>;
   try {
-    rpcManager = await getRpcProvider({ chainId, userId });
+    rpcManager = await getRpcProvider({
+      chainId,
+      userId,
+      usePrivateMempool,
+      strict,
+    });
     rpcUrl = await rpcManager.resolveActiveRpcUrl();
   } catch (error) {
     logUserError(
@@ -303,8 +321,10 @@ export async function transferTokenCore(
     rpcManager,
   };
 
-  // Try gas-sponsored execution first (ERC-4337 via Pimlico)
-  if (isSponsorshipSupported(chainId)) {
+  // Try gas-sponsored execution first (ERC-4337 via Pimlico).
+  // KEEP-137: skip sponsorship when routing through a private mempool --
+  // ERC-4337 bundlers use their own RPC (Pimlico), which bypasses Flashbots Protect.
+  if (isSponsorshipSupported(chainId) && !usePrivateMempool) {
     try {
       const [decimals, symbol] = await rpcManager.executeWithFailover(
         (p) => {

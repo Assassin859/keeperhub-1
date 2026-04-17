@@ -36,6 +36,12 @@ export type TransferFundsCoreInput = {
   amount: string;
   recipientAddress: string;
   gasLimitMultiplier?: string;
+  // KEEP-137: Route through private mempool (Flashbots Protect). Skips
+  // ERC-4337 sponsorship -- mutually exclusive.
+  usePrivateMempool?: boolean;
+  // Strict mode: when true and usePrivateMempool is true, failing to reach the
+  // private RPC does NOT fall back to the public mempool. Ignored otherwise.
+  strict?: boolean;
   _context?: {
     executionId?: string;
     triggerType?: string;
@@ -64,7 +70,9 @@ export type TransferFundsResult =
 export async function transferFundsCore(
   input: TransferFundsCoreInput
 ): Promise<TransferFundsResult> {
-  const { network, amount, recipientAddress, gasLimitMultiplier, _context } =
+  const { network, amount, recipientAddress, gasLimitMultiplier, usePrivateMempool,
+    strict,
+    _context } =
     input;
 
   const { multiplierOverride, gasLimitOverride } =
@@ -119,7 +127,12 @@ export async function transferFundsCore(
   try {
     chainId = getChainIdFromNetwork(network);
 
-    rpcManager = await getRpcProvider({ chainId, userId });
+    rpcManager = await getRpcProvider({
+      chainId,
+      userId,
+      usePrivateMempool,
+      strict,
+    });
     rpcUrl = await rpcManager.resolveActiveRpcUrl();
   } catch (error) {
     logUserError(
@@ -168,57 +181,61 @@ export async function transferFundsCore(
     rpcManager,
   };
 
-  // Try gas-sponsored execution first (ERC-4337 via Pimlico)
-  try {
-    const sponsoredResult = await executeSponsoredTransaction({
-      organizationId,
-      executionId: _context.executionId ?? "direct-execution",
-      chainId,
-      rpcUrl,
-      walletAddress,
-      to: recipientAddress,
-      value: amountInWei,
-    });
-
-    if (sponsoredResult !== null) {
-      const explorerConfig = await db.query.explorerConfigs.findFirst({
-        where: eq(explorerConfigs.chainId, chainId),
+  // KEEP-137: skip sponsorship when routing through a private mempool --
+  // ERC-4337 bundlers use their own RPC (Pimlico), which bypasses Flashbots Protect.
+  if (!usePrivateMempool) {
+    // Try gas-sponsored execution first (ERC-4337 via Pimlico)
+    try {
+      const sponsoredResult = await executeSponsoredTransaction({
+        organizationId,
+        executionId: _context.executionId ?? "direct-execution",
+        chainId,
+        rpcUrl,
+        walletAddress,
+        to: recipientAddress,
+        value: amountInWei,
       });
-      const transactionLink = explorerConfig
-        ? getTransactionUrl(explorerConfig, sponsoredResult.transactionHash)
-        : "";
 
-      return {
-        success: true,
-        transactionHash: sponsoredResult.transactionHash,
-        transactionLink,
-        gasUsed: sponsoredResult.gasUsed,
-        gasUsedUnits: sponsoredResult.gasUsedUnits,
-        effectiveGasPrice: sponsoredResult.effectiveGasPrice,
-      };
+      if (sponsoredResult !== null) {
+        const explorerConfig = await db.query.explorerConfigs.findFirst({
+          where: eq(explorerConfigs.chainId, chainId),
+        });
+        const transactionLink = explorerConfig
+          ? getTransactionUrl(explorerConfig, sponsoredResult.transactionHash)
+          : "";
+
+        return {
+          success: true,
+          transactionHash: sponsoredResult.transactionHash,
+          transactionLink,
+          gasUsed: sponsoredResult.gasUsed,
+          gasUsedUnits: sponsoredResult.gasUsedUnits,
+          effectiveGasPrice: sponsoredResult.effectiveGasPrice,
+        };
+      }
+
+      logUserError(
+        ErrorCategory.TRANSACTION,
+        "[Transfer Funds] Sponsorship skipped (credits exhausted, chain unsupported, or client creation failed), falling back to direct signing",
+        undefined,
+        {
+          plugin_name: "web3",
+          action_name: "transfer-funds",
+          chain_id: String(chainId),
+        }
+      );
+    } catch (error) {
+      logUserError(
+        ErrorCategory.TRANSACTION,
+        "[Transfer Funds] Sponsorship attempted but failed, falling back to direct signing",
+        error,
+        {
+          plugin_name: "web3",
+          action_name: "transfer-funds",
+          chain_id: String(chainId),
+        }
+      );
     }
-
-    logUserError(
-      ErrorCategory.TRANSACTION,
-      "[Transfer Funds] Sponsorship skipped (credits exhausted, chain unsupported, or client creation failed), falling back to direct signing",
-      undefined,
-      {
-        plugin_name: "web3",
-        action_name: "transfer-funds",
-        chain_id: String(chainId),
-      }
-    );
-  } catch (error) {
-    logUserError(
-      ErrorCategory.TRANSACTION,
-      "[Transfer Funds] Sponsorship attempted but failed, falling back to direct signing",
-      error,
-      {
-        plugin_name: "web3",
-        action_name: "transfer-funds",
-        chain_id: String(chainId),
-      }
-    );
   }
 
   // Fall back to direct signing with nonce management and RPC failover

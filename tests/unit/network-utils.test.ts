@@ -88,7 +88,7 @@ describe("getChainIdFromNetwork", () => {
 describe("getNetworkName", () => {
   it("should return name for known chain IDs", () => {
     expect(getNetworkName(1)).toBe("Ethereum Mainnet");
-    expect(getNetworkName(11_155_111)).toBe("Sepolia Testnet");
+    expect(getNetworkName(11_155_111)).toBe("Ethereum Sepolia");
     expect(getNetworkName(8453)).toBe("Base");
     expect(getNetworkName(84_532)).toBe("Base Sepolia");
     expect(getNetworkName(42_429)).toBe("Tempo Testnet");

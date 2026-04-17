@@ -75,6 +75,8 @@ describe("RPC Preferences API Routes", () => {
     defaultFallbackRpc: "https://eth-backup.example.com",
     defaultPrimaryWss: null,
     defaultFallbackWss: null,
+    usePrivateMempoolRpc: false,
+    defaultPrivateRpcUrl: null,
     isEnabled: true,
     createdAt: new Date("2026-01-01"),
     updatedAt: new Date("2026-01-01"),

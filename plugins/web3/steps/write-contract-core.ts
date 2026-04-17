@@ -43,6 +43,12 @@ export type WriteContractCoreInput = {
   functionArgs?: string;
   ethValue?: string;
   gasLimitMultiplier?: string;
+  // KEEP-137: Route the write transaction through the chain's private mempool
+  // RPC (e.g. Flashbots Protect). Skips ERC-4337 sponsorship -- mutually exclusive.
+  usePrivateMempool?: boolean;
+  // When true and usePrivateMempool is true, failing to reach the private RPC
+  // does NOT fall back to the public mempool. Ignored when usePrivateMempool is false.
+  strict?: boolean;
   _context?: {
     executionId?: string;
     triggerType?: string;
@@ -79,6 +85,8 @@ export async function writeContractCore(
     functionArgs,
     ethValue,
     gasLimitMultiplier,
+    usePrivateMempool,
+    strict,
     _context,
   } = input;
 
@@ -178,7 +186,12 @@ export async function writeContractCore(
   try {
     chainId = getChainIdFromNetwork(network);
 
-    rpcManager = await getRpcProvider({ chainId, userId });
+    rpcManager = await getRpcProvider({
+      chainId,
+      userId,
+      usePrivateMempool,
+      strict,
+    });
     rpcUrl = await rpcManager.resolveActiveRpcUrl();
   } catch (error) {
     logUserError(
@@ -263,61 +276,65 @@ export async function writeContractCore(
     rpcManager,
   };
 
-  // Try gas-sponsored execution first (ERC-4337 via Pimlico)
-  try {
-    const sponsoredResult = await executeSponsoredContractTransaction({
-      organizationId,
-      executionId: _context?.executionId ?? "direct-execution",
-      chainId,
-      rpcUrl,
-      walletAddress,
-      to: contractAddress,
-      // biome-ignore lint/suspicious/noExplicitAny: ABI parsed from user-provided JSON string, type is unknown[]
-      abi: parsedAbi as any,
-      functionName: abiFunction,
-      args,
-      value: parsedEthValue,
-    });
-
-    if (sponsoredResult !== null) {
-      const explorerConfig = await db.query.explorerConfigs.findFirst({
-        where: eq(explorerConfigs.chainId, chainId),
+  // Try gas-sponsored execution first (ERC-4337 via Pimlico).
+  // KEEP-137: skip sponsorship when routing through a private mempool --
+  // ERC-4337 bundlers use their own RPC (Pimlico), which bypasses Flashbots Protect.
+  if (!usePrivateMempool) {
+    try {
+      const sponsoredResult = await executeSponsoredContractTransaction({
+        organizationId,
+        executionId: _context?.executionId ?? "direct-execution",
+        chainId,
+        rpcUrl,
+        walletAddress,
+        to: contractAddress,
+        // biome-ignore lint/suspicious/noExplicitAny: ABI parsed from user-provided JSON string, type is unknown[]
+        abi: parsedAbi as any,
+        functionName: abiFunction,
+        args,
+        value: parsedEthValue,
       });
-      const transactionLink = explorerConfig
-        ? getTransactionUrl(explorerConfig, sponsoredResult.transactionHash)
-        : "";
 
-      return {
-        success: true,
-        transactionHash: sponsoredResult.transactionHash,
-        transactionLink,
-        gasUsed: sponsoredResult.gasUsed,
-        gasUsedUnits: sponsoredResult.gasUsedUnits,
-        effectiveGasPrice: sponsoredResult.effectiveGasPrice,
-      };
+      if (sponsoredResult !== null) {
+        const explorerConfig = await db.query.explorerConfigs.findFirst({
+          where: eq(explorerConfigs.chainId, chainId),
+        });
+        const transactionLink = explorerConfig
+          ? getTransactionUrl(explorerConfig, sponsoredResult.transactionHash)
+          : "";
+
+        return {
+          success: true,
+          transactionHash: sponsoredResult.transactionHash,
+          transactionLink,
+          gasUsed: sponsoredResult.gasUsed,
+          gasUsedUnits: sponsoredResult.gasUsedUnits,
+          effectiveGasPrice: sponsoredResult.effectiveGasPrice,
+        };
+      }
+
+      logUserError(
+        ErrorCategory.TRANSACTION,
+        "[Write Contract] Sponsorship skipped (credits exhausted, chain unsupported, or client creation failed), falling back to direct signing",
+        undefined,
+        {
+          plugin_name: "web3",
+          action_name: "write-contract",
+          chain_id: String(chainId),
+        }
+      );
+    } catch (error) {
+      logUserError(
+        ErrorCategory.TRANSACTION,
+        "[Write Contract] Sponsorship attempted but failed, falling back to direct signing",
+        error,
+        {
+          plugin_name: "web3",
+          action_name: "write-contract",
+          chain_id: String(chainId),
+        }
+      );
     }
-
-    logUserError(
-      ErrorCategory.TRANSACTION,
-      "[Write Contract] Sponsorship skipped (credits exhausted, chain unsupported, or client creation failed), falling back to direct signing",
-      undefined,
-      {
-        plugin_name: "web3",
-        action_name: "write-contract",
-        chain_id: String(chainId),
-      }
-    );
-  } catch (error) {
-    logUserError(
-      ErrorCategory.TRANSACTION,
-      "[Write Contract] Sponsorship attempted but failed, falling back to direct signing",
-      error,
-      {
-        plugin_name: "web3",
-        action_name: "write-contract",
-        chain_id: String(chainId),
-      }
-    );
   }
 
   // Fall back to direct signing with nonce management and RPC failover

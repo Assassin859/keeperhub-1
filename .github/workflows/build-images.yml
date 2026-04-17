@@ -127,6 +127,25 @@ jobs:
           files: docker-bake.hcl
           push: true
 
+      - name: Upload Sentry source maps
+        if: steps.skip.outputs.skip_build != 'true' && steps.check-image.outputs.exists != 'true'
+        uses: docker/bake-action@v7
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPO: ${{ env.AWS_ECR_NAME }}
+          NEXT_PUBLIC_AUTH_PROVIDERS: ${{ env.NEXT_PUBLIC_AUTH_PROVIDERS }}
+          NEXT_PUBLIC_GITHUB_CLIENT_ID: ${{ env.NEXT_PUBLIC_GITHUB_CLIENT_ID }}
+          NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${{ env.NEXT_PUBLIC_GOOGLE_CLIENT_ID }}
+          NEXT_PUBLIC_BILLING_ENABLED: ${{ env.NEXT_PUBLIC_BILLING_ENABLED }}
+          NEXT_PUBLIC_SENTRY_DSN: ${{ env.NEXT_PUBLIC_SENTRY_DSN }}
+          SENTRY_ORG: ${{ env.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ env.SENTRY_PROJECT }}
+          SENTRY_AUTH_TOKEN: ${{ env.SENTRY_AUTH_TOKEN }}
+          SENTRY_RELEASE: ${{ steps.vars.outputs.sha_short }}
+        with:
+          files: docker-bake.hcl
+          targets: sentry-upload
+
       # ── Copy images to TechOps ECR ──
       - name: Configure TechOps AWS credentials
         if: steps.skip.outputs.skip_build != 'true' && steps.check-image.outputs.exists != 'true'

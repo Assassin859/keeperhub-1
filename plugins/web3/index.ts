@@ -183,6 +183,7 @@ const web3Plugin: IntegrationPlugin = {
           label: "Network",
           type: "chain-select",
           chainTypeFilter: "evm",
+          showPrivateVariants: true,
           placeholder: "Select network",
           required: true,
         },
@@ -216,6 +217,7 @@ const web3Plugin: IntegrationPlugin = {
             },
           ],
         },
+
       ],
     },
     {
@@ -262,6 +264,7 @@ const web3Plugin: IntegrationPlugin = {
           label: "Network",
           type: "chain-select",
           chainTypeFilter: "evm",
+          showPrivateVariants: true,
           placeholder: "Select network",
           required: true,
         },
@@ -302,6 +305,7 @@ const web3Plugin: IntegrationPlugin = {
             },
           ],
         },
+
       ],
     },
     {
@@ -1011,6 +1015,7 @@ const web3Plugin: IntegrationPlugin = {
           label: "Network",
           type: "chain-select",
           chainTypeFilter: "evm",
+          showPrivateVariants: true,
           placeholder: "Select network",
           required: true,
         },
@@ -1051,6 +1056,7 @@ const web3Plugin: IntegrationPlugin = {
             },
           ],
         },
+
       ],
     },
     {
@@ -1149,6 +1155,7 @@ const web3Plugin: IntegrationPlugin = {
           label: "Network",
           type: "chain-select",
           chainTypeFilter: "evm",
+          showPrivateVariants: true,
           placeholder: "Select network",
           required: true,
         },
@@ -1214,6 +1221,7 @@ const web3Plugin: IntegrationPlugin = {
             },
           ],
         },
+
       ],
     },
   ],

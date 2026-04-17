@@ -23,7 +23,9 @@ import {
 import {
   CHAIN_CONFIG,
   getConfigValue,
+  getPrivateRpcUrl,
   getRpcUrlByChainId,
+  getUsePrivateMempoolRpc,
   getWssUrl,
   parseRpcConfigWithDetails,
 } from "../../lib/rpc/rpc-config";
@@ -77,10 +79,12 @@ const DEFAULT_CHAINS: NewChain[] = [
     }),
     isTestnet: getChainConfigValue("eth-mainnet", "isTestnet", false),
     isEnabled: getChainConfigValue("eth-mainnet", "isEnabled", true),
+    usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "eth-mainnet" }),
+    defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "eth-mainnet" }),
   },
   {
     chainId: getChainConfigValue("eth-sepolia", "chainId", 11_155_111),
-    name: "Sepolia Testnet",
+    name: "Ethereum Sepolia",
     symbol: getChainConfigValue("eth-sepolia", "symbol", "ETH"),
     chainType: "evm",
     defaultPrimaryRpc: getRpcUrlByChainId(11_155_111, "primary"),
@@ -97,6 +101,8 @@ const DEFAULT_CHAINS: NewChain[] = [
     }),
     isTestnet: getChainConfigValue("eth-sepolia", "isTestnet", true),
     isEnabled: getChainConfigValue("eth-sepolia", "isEnabled", true),
+    usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "eth-sepolia" }),
+    defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "eth-sepolia" }),
   },
   {
     chainId: getChainConfigValue("base-mainnet", "chainId", 8453),
@@ -117,6 +123,8 @@ const DEFAULT_CHAINS: NewChain[] = [
     }),
     isTestnet: getChainConfigValue("base-mainnet", "isTestnet", false),
     isEnabled: getChainConfigValue("base-mainnet", "isEnabled", true),
+    usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "base-mainnet" }),
+    defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "base-mainnet" }),
   },
   {
     chainId: getChainConfigValue("base-testnet", "chainId", 84_532),
@@ -137,6 +145,8 @@ const DEFAULT_CHAINS: NewChain[] = [
     }),
     isTestnet: getChainConfigValue("base-testnet", "isTestnet", true),
     isEnabled: getChainConfigValue("base-testnet", "isEnabled", true),
+    usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "base-testnet" }),
+    defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "base-testnet" }),
   },
   {
     chainId: getChainConfigValue("tempo-testnet", "chainId", 42_429),
@@ -157,6 +167,8 @@ const DEFAULT_CHAINS: NewChain[] = [
     }),
     isTestnet: getChainConfigValue("tempo-testnet", "isTestnet", true),
     isEnabled: getChainConfigValue("tempo-testnet", "isEnabled", true),
+    usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "tempo-testnet" }),
+    defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "tempo-testnet" }),
   },
   {
     chainId: getChainConfigValue("tempo-mainnet", "chainId", 4217),
@@ -177,6 +189,8 @@ const DEFAULT_CHAINS: NewChain[] = [
     }),
     isTestnet: getChainConfigValue("tempo-mainnet", "isTestnet", false),
     isEnabled: getChainConfigValue("tempo-mainnet", "isEnabled", true),
+    usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "tempo-mainnet" }),
+    defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "tempo-mainnet" }),
   },
   {
     chainId: getChainConfigValue("bsc-mainnet", "chainId", 56),
@@ -197,6 +211,8 @@ const DEFAULT_CHAINS: NewChain[] = [
     }),
     isTestnet: getChainConfigValue("bsc-mainnet", "isTestnet", false),
     isEnabled: getChainConfigValue("bsc-mainnet", "isEnabled", true),
+    usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "bsc-mainnet" }),
+    defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "bsc-mainnet" }),
   },
   {
     chainId: getChainConfigValue("bsc-testnet", "chainId", 97),
@@ -217,6 +233,8 @@ const DEFAULT_CHAINS: NewChain[] = [
     }),
     isTestnet: getChainConfigValue("bsc-testnet", "isTestnet", true),
     isEnabled: getChainConfigValue("bsc-testnet", "isEnabled", true),
+    usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "bsc-testnet" }),
+    defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "bsc-testnet" }),
   },
   {
     chainId: getChainConfigValue("polygon-mainnet", "chainId", 137),
@@ -237,6 +255,8 @@ const DEFAULT_CHAINS: NewChain[] = [
     }),
     isTestnet: getChainConfigValue("polygon-mainnet", "isTestnet", false),
     isEnabled: getChainConfigValue("polygon-mainnet", "isEnabled", true),
+    usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "polygon-mainnet" }),
+    defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "polygon-mainnet" }),
   },
   {
     chainId: getChainConfigValue("arbitrum-mainnet", "chainId", 42_161),
@@ -257,6 +277,8 @@ const DEFAULT_CHAINS: NewChain[] = [
     }),
     isTestnet: getChainConfigValue("arbitrum-mainnet", "isTestnet", false),
     isEnabled: getChainConfigValue("arbitrum-mainnet", "isEnabled", true),
+    usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "arbitrum-mainnet" }),
+    defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "arbitrum-mainnet" }),
   },
   {
     chainId: getChainConfigValue("polygon-amoy", "chainId", 80_002),
@@ -277,6 +299,8 @@ const DEFAULT_CHAINS: NewChain[] = [
     }),
     isTestnet: getChainConfigValue("polygon-amoy", "isTestnet", true),
     isEnabled: getChainConfigValue("polygon-amoy", "isEnabled", true),
+    usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "polygon-amoy" }),
+    defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "polygon-amoy" }),
   },
   {
     chainId: getChainConfigValue("arbitrum-sepolia", "chainId", 421_614),
@@ -297,6 +321,8 @@ const DEFAULT_CHAINS: NewChain[] = [
     }),
     isTestnet: getChainConfigValue("arbitrum-sepolia", "isTestnet", true),
     isEnabled: getChainConfigValue("arbitrum-sepolia", "isEnabled", true),
+    usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "arbitrum-sepolia" }),
+    defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "arbitrum-sepolia" }),
   },
   // Avalanche chains
   {
@@ -318,6 +344,8 @@ const DEFAULT_CHAINS: NewChain[] = [
     }),
     isTestnet: getChainConfigValue("avax-mainnet", "isTestnet", false),
     isEnabled: getChainConfigValue("avax-mainnet", "isEnabled", true),
+    usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "avax-mainnet" }),
+    defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "avax-mainnet" }),
   },
   {
     chainId: getChainConfigValue("avax-fuji", "chainId", 43_113),
@@ -338,6 +366,8 @@ const DEFAULT_CHAINS: NewChain[] = [
     }),
     isTestnet: getChainConfigValue("avax-fuji", "isTestnet", true),
     isEnabled: getChainConfigValue("avax-fuji", "isEnabled", true),
+    usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "avax-fuji" }),
+    defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "avax-fuji" }),
   },
   // Plasma chains
   {
@@ -359,6 +389,8 @@ const DEFAULT_CHAINS: NewChain[] = [
     }),
     isTestnet: getChainConfigValue("plasma-mainnet", "isTestnet", false),
     isEnabled: getChainConfigValue("plasma-mainnet", "isEnabled", true),
+    usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "plasma-mainnet" }),
+    defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "plasma-mainnet" }),
   },
   {
     chainId: getChainConfigValue("plasma-testnet", "chainId", 9746),
@@ -379,6 +411,8 @@ const DEFAULT_CHAINS: NewChain[] = [
     }),
     isTestnet: getChainConfigValue("plasma-testnet", "isTestnet", true),
     isEnabled: getChainConfigValue("plasma-testnet", "isEnabled", true),
+    usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "plasma-testnet" }),
+    defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "plasma-testnet" }),
   },
   // Solana chains (non-EVM - uses SolanaProviderManager)
   {
@@ -400,6 +434,8 @@ const DEFAULT_CHAINS: NewChain[] = [
     }),
     isTestnet: getChainConfigValue("solana-mainnet", "isTestnet", false),
     isEnabled: getChainConfigValue("solana-mainnet", "isEnabled", true),
+    usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "solana-mainnet" }),
+    defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "solana-mainnet" }),
   },
   {
     chainId: getChainConfigValue("solana-testnet", "chainId", 103),
@@ -420,6 +456,8 @@ const DEFAULT_CHAINS: NewChain[] = [
     }),
     isTestnet: getChainConfigValue("solana-testnet", "isTestnet", true),
     isEnabled: getChainConfigValue("solana-testnet", "isEnabled", true),
+    usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "solana-testnet" }),
+    defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "solana-testnet" }),
   },
 ];
 
@@ -441,7 +479,7 @@ const EXPLORER_CONFIG_TEMPLATES: Record<
     explorerAddressPath: "/address/{address}",
     explorerContractPath: "/address/{address}#code",
   },
-  // Sepolia Testnet - Etherscan V2
+  // Ethereum Sepolia - Etherscan V2
   11155111: {
     chainType: "evm",
     explorerUrl: "https://sepolia.etherscan.io",
@@ -644,6 +682,8 @@ async function seedChains() {
           defaultFallbackRpc: chain.defaultFallbackRpc ?? null,
           defaultPrimaryWss: chain.defaultPrimaryWss ?? null,
           defaultFallbackWss: chain.defaultFallbackWss ?? null,
+          usePrivateMempoolRpc: chain.usePrivateMempoolRpc ?? false,
+          defaultPrivateRpcUrl: chain.defaultPrivateRpcUrl ?? null,
           isTestnet: chain.isTestnet,
           isEnabled: chain.isEnabled,
           updatedAt: new Date(),
@@ -662,7 +702,7 @@ async function seedChains() {
   // We map each chain to its explorer config using the CHAIN_CONFIG to find the default chainId
   const chainToDefaultIdMap: Record<string, number> = {
     "Ethereum Mainnet": 1,
-    "Sepolia Testnet": 11_155_111,
+    "Ethereum Sepolia": 11_155_111,
     Base: 8453,
     "Base Sepolia": 84_532,
     "Tempo Testnet": 42_429,

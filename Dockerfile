@@ -1,8 +1,9 @@
 # Multi-stage Dockerfile for Next.js application
 # Stage 1: Dependencies
 FROM node:24-alpine AS deps
-RUN apk add --no-cache libc6-compat
-RUN wget -O /etc/ssl/certs/rds-combined-ca-bundle.pem https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+RUN apk add --no-cache libc6-compat && \
+    wget -q -O /etc/ssl/certs/rds-combined-ca-bundle.pem \
+      https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
 WORKDIR /app
 
 # Install pnpm
@@ -22,8 +23,28 @@ WORKDIR /app
 RUN npm install -g pnpm@9
 
 # Copy dependencies from deps stage
-COPY --from=deps /app/node_modules ./node_modules
-COPY . .
+COPY --link --from=deps /app/node_modules ./node_modules
+
+# Source files split into granular COPYs so BuildKit caches each
+# directory independently. A PR touching only plugins/ invalidates
+# only that layer; unchanged directories stay cached.
+COPY app/ ./app/
+COPY components/ ./components/
+COPY deploy/scripts/ ./deploy/scripts/
+COPY drizzle/ ./drizzle/
+COPY hooks/ ./hooks/
+COPY keeperhub-events/ ./keeperhub-events/
+COPY keeperhub-executor/ ./keeperhub-executor/
+COPY keeperhub-scheduler/ ./keeperhub-scheduler/
+COPY lib/ ./lib/
+COPY plugins/ ./plugins/
+COPY protocols/ ./protocols/
+COPY public/ ./public/
+COPY scripts/ ./scripts/
+COPY next.config.ts tsconfig.json package.json drizzle.config.ts ./
+COPY instrumentation.ts instrumentation-client.ts ./
+COPY sentry.server.config.ts sentry.edge.config.ts ./
+COPY postcss.config.mjs components.json ./
 
 # Stage 2.5: Builder (runs Next.js build, only needed for runner stage)
 FROM source AS builder
@@ -41,40 +62,51 @@ ENV NEXT_PUBLIC_GITHUB_CLIENT_ID=$NEXT_PUBLIC_GITHUB_CLIENT_ID
 ENV NEXT_PUBLIC_GOOGLE_CLIENT_ID=$NEXT_PUBLIC_GOOGLE_CLIENT_ID
 ENV NEXT_PUBLIC_BILLING_ENABLED=$NEXT_PUBLIC_BILLING_ENABLED
 
-# Sentry (DSN baked into client bundle, rest for source map upload)
+# Sentry DSN baked into client bundle for error reporting.
+# SENTRY_ORG/PROJECT/AUTH_TOKEN/RELEASE are intentionally NOT set here
+# so this stage is cache-deterministic across commits (see sentry-upload stage).
 ARG NEXT_PUBLIC_SENTRY_DSN
+ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN
+ENV CI=true
+
+# Build the application with Turbopack (source maps generated but not uploaded).
+# Cache mount persists .next/cache across builds on the same BuildKit instance,
+# enabling Turbopack's incremental compilation.
+RUN --mount=type=cache,target=/app/.next/cache pnpm build
+
+# Stage 2.5b: Sentry source map upload (side-effect only, not consumed by other stages)
+FROM builder AS sentry-upload
 ARG SENTRY_ORG
 ARG SENTRY_PROJECT
 ARG SENTRY_AUTH_TOKEN
 ARG SENTRY_RELEASE
-ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN
-ENV SENTRY_ORG=$SENTRY_ORG
-ENV SENTRY_PROJECT=$SENTRY_PROJECT
-ENV SENTRY_AUTH_TOKEN=$SENTRY_AUTH_TOKEN
-ENV SENTRY_RELEASE=$SENTRY_RELEASE
-ENV CI=true
-
-# Build the application
-RUN pnpm build
-
-# Remove source maps after upload (they should not ship in the final image)
-RUN find .next -name '*.map' -delete
+RUN if [ -n "$SENTRY_AUTH_TOKEN" ]; then \
+      ./node_modules/.bin/sentry-cli releases new "$SENTRY_RELEASE" \
+        --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" && \
+      ./node_modules/.bin/sentry-cli sourcemaps upload \
+        --org "$SENTRY_ORG" \
+        --project "$SENTRY_PROJECT" \
+        --release "$SENTRY_RELEASE" \
+        .next && \
+      ./node_modules/.bin/sentry-cli releases finalize "$SENTRY_RELEASE" \
+        --org "$SENTRY_ORG" --project "$SENTRY_PROJECT"; \
+    fi
 
 # Stage 2.6: Migration stage (for running migrations and seeding)
 FROM node:24-alpine AS migrator
 WORKDIR /app
 RUN npm install -g pnpm@9 tsx@4
-COPY --from=deps /etc/ssl/certs/rds-combined-ca-bundle.pem /etc/ssl/certs/rds-combined-ca-bundle.pem
+COPY --link --from=deps /etc/ssl/certs/rds-combined-ca-bundle.pem /etc/ssl/certs/rds-combined-ca-bundle.pem
 
 # Copy dependencies, migration files, and seed scripts
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=source /app/drizzle ./drizzle
-COPY --from=source /app/drizzle.config.ts ./drizzle.config.ts
-COPY --from=source /app/lib ./lib
-COPY --from=source /app/plugins ./plugins
-COPY --from=source /app/scripts ./scripts
-COPY --from=source /app/package.json ./package.json
-COPY --from=source /app/tsconfig.json ./tsconfig.json
+COPY --link --from=deps /app/node_modules ./node_modules
+COPY --link --from=source /app/drizzle ./drizzle
+COPY --link --from=source /app/drizzle.config.ts ./drizzle.config.ts
+COPY --link --from=source /app/lib ./lib
+COPY --link --from=source /app/plugins ./plugins
+COPY --link --from=source /app/scripts ./scripts
+COPY --link --from=source /app/package.json ./package.json
+COPY --link --from=source /app/tsconfig.json ./tsconfig.json
 
 # This stage runs migrations and seeds default data
 # Build with: docker build --target migrator -t keeperhub-migrator .
@@ -105,18 +137,18 @@ RUN addgroup -g 1001 -S scheduler && \
     adduser -S scheduler -u 1001
 WORKDIR /app
 RUN npm install -g tsx@4
-COPY --from=deps /etc/ssl/certs/rds-combined-ca-bundle.pem /etc/ssl/certs/rds-combined-ca-bundle.pem
-COPY --from=scheduler-deps /app/node_modules ./node_modules
+COPY --link --from=deps /etc/ssl/certs/rds-combined-ca-bundle.pem /etc/ssl/certs/rds-combined-ca-bundle.pem
+COPY --link --from=scheduler-deps /app/node_modules ./node_modules
 ENV NODE_ENV=production
 
 # Stage 2.7c: Schedule Dispatcher
 FROM scheduler-base AS schedule-dispatcher
-COPY --from=source /app/keeperhub-scheduler/schedule-dispatcher/ ./schedule-dispatcher/
-COPY --from=source /app/keeperhub-scheduler/lib/ ./lib/
-COPY --from=source /app/keeperhub-scheduler/package.json ./keeperhub-scheduler/package.json
-COPY --from=source /app/keeperhub-scheduler/tsconfig.json ./keeperhub-scheduler/tsconfig.json
-COPY --from=source /app/keeperhub-scheduler/package.json ./package.json
-COPY --from=source /app/keeperhub-scheduler/tsconfig.json ./tsconfig.json
+COPY --link --from=source /app/keeperhub-scheduler/schedule-dispatcher/ ./schedule-dispatcher/
+COPY --link --from=source /app/keeperhub-scheduler/lib/ ./lib/
+COPY --link --from=source /app/keeperhub-scheduler/package.json ./keeperhub-scheduler/package.json
+COPY --link --from=source /app/keeperhub-scheduler/tsconfig.json ./keeperhub-scheduler/tsconfig.json
+COPY --link --from=source /app/keeperhub-scheduler/package.json ./package.json
+COPY --link --from=source /app/keeperhub-scheduler/tsconfig.json ./tsconfig.json
 RUN chown -R scheduler:scheduler /app
 USER scheduler
 EXPOSE 3000
@@ -124,10 +156,10 @@ CMD ["tsx", "schedule-dispatcher/index.ts"]
 
 # Stage 2.7d: Block Dispatcher
 FROM scheduler-base AS block-dispatcher
-COPY --from=source /app/keeperhub-scheduler/block-dispatcher/ ./block-dispatcher/
-COPY --from=source /app/keeperhub-scheduler/lib/ ./lib/
-COPY --from=source /app/keeperhub-scheduler/package.json ./package.json
-COPY --from=source /app/keeperhub-scheduler/tsconfig.json ./tsconfig.json
+COPY --link --from=source /app/keeperhub-scheduler/block-dispatcher/ ./block-dispatcher/
+COPY --link --from=source /app/keeperhub-scheduler/lib/ ./lib/
+COPY --link --from=source /app/keeperhub-scheduler/package.json ./package.json
+COPY --link --from=source /app/keeperhub-scheduler/tsconfig.json ./tsconfig.json
 RUN chown -R scheduler:scheduler /app
 USER scheduler
 EXPOSE 3000
@@ -137,24 +169,24 @@ CMD ["tsx", "block-dispatcher/index.ts"]
 FROM node:24-alpine AS workflow-runner
 WORKDIR /app
 RUN npm install -g pnpm@9 tsx@4
-COPY --from=deps /etc/ssl/certs/rds-combined-ca-bundle.pem /etc/ssl/certs/rds-combined-ca-bundle.pem
+COPY --link --from=deps /etc/ssl/certs/rds-combined-ca-bundle.pem /etc/ssl/certs/rds-combined-ca-bundle.pem
 
 # Copy dependencies and workflow execution files
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=source /app/keeperhub-executor ./keeperhub-executor
-COPY --from=source /app/lib ./lib
-COPY --from=source /app/plugins ./plugins
-COPY --from=source /app/protocols ./protocols
-COPY --from=source /app/package.json ./package.json
-COPY --from=source /app/tsconfig.json ./tsconfig.json
+COPY --link --from=deps /app/node_modules ./node_modules
+COPY --link --from=source /app/keeperhub-executor ./keeperhub-executor
+COPY --link --from=source /app/lib ./lib
+COPY --link --from=source /app/plugins ./plugins
+COPY --link --from=source /app/protocols ./protocols
+COPY --link --from=source /app/package.json ./package.json
+COPY --link --from=source /app/tsconfig.json ./tsconfig.json
 
 # Copy auto-generated files from builder stage (step-registry.ts, etc. are in .gitignore)
-COPY --from=builder /app/lib/step-registry.ts ./lib/step-registry.ts
-COPY --from=builder /app/lib/codegen-registry.ts ./lib/codegen-registry.ts
-COPY --from=builder /app/lib/output-display-configs.ts ./lib/output-display-configs.ts
-COPY --from=builder /app/lib/types/integration.ts ./lib/types/integration.ts
-COPY --from=builder /app/plugins/index.ts ./plugins/index.ts
-COPY --from=builder /app/protocols/index.ts ./protocols/index.ts
+COPY --link --from=builder /app/lib/step-registry.ts ./lib/step-registry.ts
+COPY --link --from=builder /app/lib/codegen-registry.ts ./lib/codegen-registry.ts
+COPY --link --from=builder /app/lib/output-display-configs.ts ./lib/output-display-configs.ts
+COPY --link --from=builder /app/lib/types/integration.ts ./lib/types/integration.ts
+COPY --link --from=builder /app/plugins/index.ts ./plugins/index.ts
+COPY --link --from=builder /app/protocols/index.ts ./protocols/index.ts
 
 # Create a shim for 'server-only' package - the runner runs outside Next.js
 # so we replace the package with an empty module that doesn't throw
@@ -175,24 +207,24 @@ CMD ["tsx", "keeperhub-executor/workflow-runner.ts"]
 FROM node:24-alpine AS executor
 WORKDIR /app
 RUN npm install -g pnpm@9 tsx@4
-COPY --from=deps /etc/ssl/certs/rds-combined-ca-bundle.pem /etc/ssl/certs/rds-combined-ca-bundle.pem
+COPY --link --from=deps /etc/ssl/certs/rds-combined-ca-bundle.pem /etc/ssl/certs/rds-combined-ca-bundle.pem
 
 # Full deps needed for in-process workflow execution + @kubernetes/client-node
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=source /app/keeperhub-executor ./keeperhub-executor
-COPY --from=source /app/lib ./lib
-COPY --from=source /app/plugins ./plugins
-COPY --from=source /app/protocols ./protocols
-COPY --from=source /app/package.json ./package.json
-COPY --from=source /app/tsconfig.json ./tsconfig.json
+COPY --link --from=deps /app/node_modules ./node_modules
+COPY --link --from=source /app/keeperhub-executor ./keeperhub-executor
+COPY --link --from=source /app/lib ./lib
+COPY --link --from=source /app/plugins ./plugins
+COPY --link --from=source /app/protocols ./protocols
+COPY --link --from=source /app/package.json ./package.json
+COPY --link --from=source /app/tsconfig.json ./tsconfig.json
 
 # Copy auto-generated files from builder stage
-COPY --from=builder /app/lib/step-registry.ts ./lib/step-registry.ts
-COPY --from=builder /app/lib/codegen-registry.ts ./lib/codegen-registry.ts
-COPY --from=builder /app/lib/output-display-configs.ts ./lib/output-display-configs.ts
-COPY --from=builder /app/lib/types/integration.ts ./lib/types/integration.ts
-COPY --from=builder /app/plugins/index.ts ./plugins/index.ts
-COPY --from=builder /app/protocols/index.ts ./protocols/index.ts
+COPY --link --from=builder /app/lib/step-registry.ts ./lib/step-registry.ts
+COPY --link --from=builder /app/lib/codegen-registry.ts ./lib/codegen-registry.ts
+COPY --link --from=builder /app/lib/output-display-configs.ts ./lib/output-display-configs.ts
+COPY --link --from=builder /app/lib/types/integration.ts ./lib/types/integration.ts
+COPY --link --from=builder /app/plugins/index.ts ./plugins/index.ts
+COPY --link --from=builder /app/protocols/index.ts ./protocols/index.ts
 
 # Shim server-only (runs outside Next.js)
 SHELL ["/bin/ash", "-o", "pipefail", "-c"]
@@ -210,23 +242,24 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-COPY --from=deps /etc/ssl/certs/rds-combined-ca-bundle.pem /etc/ssl/certs/rds-combined-ca-bundle.pem
+COPY --link --from=deps /etc/ssl/certs/rds-combined-ca-bundle.pem /etc/ssl/certs/rds-combined-ca-bundle.pem
 
 # Create non-root user and install curl (used by healthcheck and cronjob scripts)
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs && \
     apk add --no-cache curl
 
-# Copy built application
-COPY --from=builder /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# Copy built application (source maps removed - uploaded by sentry-upload stage)
+COPY --link --from=builder /app/public ./public
+COPY --link --from=builder --chown=1001:1001 /app/.next/standalone ./
+COPY --link --from=builder --chown=1001:1001 /app/.next/static ./.next/static
+RUN find .next -name '*.map' -delete 2>/dev/null || true
 
 # Copy OG image fonts for server-side image generation
-COPY --from=source --chown=nextjs:nodejs /app/app/api/og/fonts ./app/api/og/fonts
+COPY --link --from=source --chown=1001:1001 /app/app/api/og/fonts ./app/api/og/fonts
 
 # Copy deploy scripts (used by cronjobs)
-COPY --from=source /app/deploy/scripts ./deploy/scripts
+COPY --link --from=source /app/deploy/scripts ./deploy/scripts
 
 # Switch to non-root user
 USER nextjs

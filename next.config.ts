@@ -250,7 +250,8 @@ export default withSentryConfig(withWorkflow(nextConfig), {
   // Upload a larger set of source maps for prettier stack traces (increases build time)
   widenClientFileUpload: true,
 
-  // Delete source maps after uploading to Sentry so they don't ship in the bundle
+  // No-op: source map upload moved to sentry-upload Docker stage (KEEP-280).
+  // Kept for safety in case SENTRY_AUTH_TOKEN is ever set during build.
   sourcemaps: {
     deleteSourcemapsAfterUpload: true,
   },

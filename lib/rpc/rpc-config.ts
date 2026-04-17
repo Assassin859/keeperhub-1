@@ -292,6 +292,8 @@ export type RpcConfigEntry = {
   fallbackRpcUrl?: string;
   primaryWssUrl?: string;
   fallbackWssUrl?: string;
+  isPrivateMempoolRpcEnabled?: boolean;
+  privateMempoolRpcUrl?: string;
   isEnabled?: boolean;
   isTestnet?: boolean;
 };
@@ -411,6 +413,39 @@ export function getWssUrl(options: GetWssUrlOptions): string | undefined {
     return entry.primaryWssUrl;
   }
   return entry.fallbackWssUrl;
+}
+
+/**
+ * Options for getPrivateRpcUrl / getUsePrivateMempoolRpc
+ */
+export type GetPrivateMempoolOptions = {
+  rpcConfig: RpcConfig;
+  jsonKey: string;
+};
+
+/**
+ * Get the private mempool RPC URL from chain-config JSON.
+ *
+ * No env-var fallback: private mempool endpoints are only configured via
+ * chain-config JSON (flows in through CHAIN_RPC_CONFIG at deploy time).
+ *
+ * @returns The private RPC URL, or undefined if not configured
+ */
+export function getPrivateRpcUrl(
+  options: GetPrivateMempoolOptions
+): string | undefined {
+  return options.rpcConfig[options.jsonKey]?.privateMempoolRpcUrl;
+}
+
+/**
+ * Get whether the chain has private mempool routing enabled.
+ *
+ * Defaults to false when not set in chain-config JSON.
+ */
+export function getUsePrivateMempoolRpc(
+  options: GetPrivateMempoolOptions
+): boolean {
+  return options.rpcConfig[options.jsonKey]?.isPrivateMempoolRpcEnabled ?? false;
 }
 
 /**

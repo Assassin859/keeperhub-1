@@ -15,13 +15,29 @@ import {
 import type { ResolvedRpcConfig } from "./types";
 
 /**
- * Resolve the RPC configuration for a specific chain and user
+ * Options for resolveRpcConfig.
  *
- * Returns user's custom config if set, otherwise chain defaults
+ * KEEP-137: Per-node Private Mempool toggle. When `usePrivateMempool=true` and
+ * the chain supports private mempool routing (`chains.usePrivateMempoolRpc=true`
+ * with a populated `defaultPrivateRpcUrl`), the primary URL is swapped to the
+ * private endpoint. If `strict=true` (the default), the fallback URL is cleared so a failing
+ * private endpoint does NOT silently fall back to the public mempool.
+ */
+export type ResolveRpcConfigOptions = {
+  usePrivateMempool?: boolean;
+  strict?: boolean;
+};
+
+/**
+ * Resolve the RPC configuration for a specific chain and user.
+ *
+ * Priority: user preferences > chain defaults. When the private-mempool option
+ * is set and supported, the resulting primary URL is the chain's private RPC.
  */
 export async function resolveRpcConfig(
   chainId: number,
-  userId?: string
+  userId?: string,
+  options: ResolveRpcConfigOptions = {}
 ): Promise<ResolvedRpcConfig | null> {
   // Get chain defaults first
   const chainResults = await db
@@ -34,6 +50,13 @@ export async function resolveRpcConfig(
   if (!chain) {
     return null; // Chain not found or disabled
   }
+
+  const chainCapabilities = {
+    usePrivateMempoolRpc: chain.usePrivateMempoolRpc ?? false,
+    privateRpcUrl: chain.defaultPrivateRpcUrl || undefined,
+  };
+
+  let baseConfig: ResolvedRpcConfig;
 
   // Check for user preferences if userId provided
   if (userId) {
@@ -50,7 +73,7 @@ export async function resolveRpcConfig(
 
     const userPref = prefResults[0];
     if (userPref) {
-      return {
+      baseConfig = {
         chainId: chain.chainId,
         chainName: chain.name,
         primaryRpcUrl: userPref.primaryRpcUrl,
@@ -59,12 +82,29 @@ export async function resolveRpcConfig(
           userPref.primaryWssUrl || chain.defaultPrimaryWss || undefined,
         fallbackWssUrl:
           userPref.fallbackWssUrl || chain.defaultFallbackWss || undefined,
+        ...chainCapabilities,
         source: "user",
       };
+    } else {
+      baseConfig = buildDefaultConfig(chain, chainCapabilities);
     }
+  } else {
+    baseConfig = buildDefaultConfig(chain, chainCapabilities);
   }
 
-  // Return chain defaults
+  return applyPrivateMempoolSwap(baseConfig, options);
+}
+
+type ChainRow = typeof chains.$inferSelect;
+type ChainCapabilities = {
+  usePrivateMempoolRpc: boolean;
+  privateRpcUrl?: string;
+};
+
+function buildDefaultConfig(
+  chain: ChainRow,
+  capabilities: ChainCapabilities
+): ResolvedRpcConfig {
   return {
     chainId: chain.chainId,
     chainName: chain.name,
@@ -72,7 +112,44 @@ export async function resolveRpcConfig(
     fallbackRpcUrl: chain.defaultFallbackRpc || undefined,
     primaryWssUrl: chain.defaultPrimaryWss || undefined,
     fallbackWssUrl: chain.defaultFallbackWss || undefined,
+    ...capabilities,
     source: "default",
+  };
+}
+
+/**
+ * Apply the private-mempool URL swap when requested and supported.
+ *
+ * When the chain does not support private mempool but the flag is set, we log
+ * a warning and proceed with the public mempool URL. This is a defense-in-depth
+ * path: the UI is expected to hide the toggle on unsupported chains, so reaching
+ * this branch usually indicates config drift (e.g. the flag was disabled on the
+ * chain row after a workflow was saved).
+ */
+function applyPrivateMempoolSwap(
+  baseConfig: ResolvedRpcConfig,
+  options: ResolveRpcConfigOptions
+): ResolvedRpcConfig {
+  if (!options.usePrivateMempool) {
+    return baseConfig;
+  }
+
+  if (!(baseConfig.usePrivateMempoolRpc && baseConfig.privateRpcUrl)) {
+    console.warn(
+      `[rpc-config] Private mempool requested for chain ${baseConfig.chainId} ` +
+        "but chain does not support it; proceeding with public mempool"
+    );
+    return baseConfig;
+  }
+
+  // Strict (default): clear the fallback entirely so a failing private RPC
+  // does NOT silently fall back to the public mempool, preserving MEV protection.
+  // Non-strict: keep the public primary as fallback (user accepts MEV risk on failure).
+  const strict = options.strict ?? true;
+  return {
+    ...baseConfig,
+    primaryRpcUrl: baseConfig.privateRpcUrl,
+    fallbackRpcUrl: strict ? undefined : baseConfig.primaryRpcUrl,
   };
 }
 
@@ -102,6 +179,10 @@ export async function resolveAllRpcConfigs(
   // Resolve configs for all chains
   return enabledChains.map((chain) => {
     const userPref = prefsByChain.get(chain.chainId);
+    const capabilities = {
+      usePrivateMempoolRpc: chain.usePrivateMempoolRpc ?? false,
+      privateRpcUrl: chain.defaultPrivateRpcUrl || undefined,
+    };
 
     if (userPref) {
       return {
@@ -113,6 +194,7 @@ export async function resolveAllRpcConfigs(
           userPref.primaryWssUrl || chain.defaultPrimaryWss || undefined,
         fallbackWssUrl:
           userPref.fallbackWssUrl || chain.defaultFallbackWss || undefined,
+        ...capabilities,
         source: "user" as const,
       };
     }
@@ -124,6 +206,7 @@ export async function resolveAllRpcConfigs(
       fallbackRpcUrl: chain.defaultFallbackRpc || undefined,
       primaryWssUrl: chain.defaultPrimaryWss || undefined,
       fallbackWssUrl: chain.defaultFallbackWss || undefined,
+      ...capabilities,
       source: "default" as const,
     };
   });

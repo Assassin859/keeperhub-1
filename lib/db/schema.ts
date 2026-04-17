@@ -492,6 +492,11 @@ export const chains = pgTable(
     defaultFallbackRpc: text("default_fallback_rpc"),
     defaultPrimaryWss: text("default_primary_wss"), // WebSocket URL
     defaultFallbackWss: text("default_fallback_wss"),
+    // KEEP-137: Private mempool routing (Flashbots Protect). When enabled,
+    // write transactions for this chain can be routed through defaultPrivateRpcUrl
+    // instead of the public mempool.
+    usePrivateMempoolRpc: boolean("use_private_mempool_rpc").default(false),
+    defaultPrivateRpcUrl: text("default_private_rpc_url"),
     isTestnet: boolean("is_testnet").default(false),
     isEnabled: boolean("is_enabled").default(true), // Can disable chains
     // KEEP-1240: Chain-specific gas configuration

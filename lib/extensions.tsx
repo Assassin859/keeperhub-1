@@ -16,7 +16,10 @@ import { AbiEventSelectField } from "@/components/workflow/config/abi-event-sele
 import { AbiWithAutoFetchField } from "@/components/workflow/config/abi-with-auto-fetch-field";
 import { ArgsListField } from "@/components/workflow/config/args-list-field";
 import { CallListField } from "@/components/workflow/config/call-list-field";
-import { ChainSelectField } from "@/components/workflow/config/chain-select-field";
+import {
+  ChainSelectField,
+  resolveSelectValue,
+} from "@/components/workflow/config/chain-select-field";
 import { CodeEditorField } from "@/components/workflow/config/code-editor-field";
 import { GasLimitMultiplierField } from "@/components/workflow/config/gas-limit-multiplier-field";
 import { TokenSelectField } from "@/components/workflow/config/token-select-field";
@@ -72,8 +75,14 @@ registerFieldRenderer(
 registerFieldRenderer(
   "chain-select",
   ({ field, config, onUpdateConfig, disabled }) => {
-    const value =
+    const rawValue =
       (config[field.key] as string | undefined) || field.defaultValue || "";
+
+    // KEEP-137: when showPrivateVariants is active, resolve the display value
+    // to include the :private suffix so the select trigger matches the right label.
+    const value = field.showPrivateVariants
+      ? resolveSelectValue(rawValue, config, true)
+      : rawValue;
 
     return (
       <div className="space-y-2" key={field.key}>
@@ -83,6 +92,10 @@ registerFieldRenderer(
           disabled={disabled}
           field={field}
           onChange={(val: unknown) => onUpdateConfig(field.key, val)}
+          onUpdateConfig={
+            field.showPrivateVariants ? onUpdateConfig : undefined
+          }
+          showPrivateVariants={field.showPrivateVariants}
           value={value}
         />
       </div>

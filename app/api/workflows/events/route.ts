@@ -135,6 +135,8 @@ export async function GET(request: Request) {
         defaultFallbackRpc: chains.defaultFallbackRpc,
         defaultPrimaryWss: chains.defaultPrimaryWss,
         defaultFallbackWss: chains.defaultFallbackWss,
+        usePrivateMempoolRpc: chains.usePrivateMempoolRpc,
+        defaultPrivateRpcUrl: chains.defaultPrivateRpcUrl,
         isTestnet: chains.isTestnet,
         isEnabled: chains.isEnabled,
         createdAt: chains.createdAt,

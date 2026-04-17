@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import {
   Select,
   SelectContent,
@@ -19,7 +19,14 @@ type Chain = {
   chainType: string;
   isTestnet: boolean;
   isEnabled: boolean;
+  usePrivateMempoolRpc: boolean;
 };
+
+// KEEP-137: Suffix appended to chainId for the private mempool variant.
+// The select stores compound values like "1:private" internally, but we
+// split them back into config.network (the clean chainId) and
+// config.usePrivateMempool (boolean) via onSelectChain.
+const PRIVATE_SUFFIX = ":private";
 
 type ChainSelectFieldProps = {
   field: ActionConfigFieldBase;
@@ -31,7 +38,34 @@ type ChainSelectFieldProps = {
    * If not specified, all chain types are shown
    */
   chainTypeFilter?: string;
+  /**
+   * KEEP-137: When true, chains with usePrivateMempoolRpc render a second
+   * "ChainName (Flashbots)" entry. On selection, both config.network and
+   * config.usePrivateMempool are set via onUpdateConfig.
+   */
+  showPrivateVariants?: boolean;
+  /**
+   * Required when showPrivateVariants is true. Writes arbitrary config
+   * keys (used to set usePrivateMempool alongside network).
+   */
+  onUpdateConfig?: (key: string, value: unknown) => void;
 };
+
+/**
+ * Compute the display value for the select trigger. When a private variant is
+ * active (config.usePrivateMempool is truthy), the select's stored value
+ * includes the :private suffix so the trigger shows the right label.
+ */
+function resolveSelectValue(
+  networkValue: string,
+  config: Record<string, unknown>,
+  showPrivateVariants: boolean
+): string {
+  if (showPrivateVariants && config.usePrivateMempool) {
+    return `${networkValue}${PRIVATE_SUFFIX}`;
+  }
+  return networkValue;
+}
 
 export function ChainSelectField({
   field,
@@ -39,6 +73,8 @@ export function ChainSelectField({
   onChange,
   disabled,
   chainTypeFilter,
+  showPrivateVariants,
+  onUpdateConfig,
 }: ChainSelectFieldProps) {
   const [chains, setChains] = useState<Chain[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -104,8 +140,48 @@ export function ChainSelectField({
   const mainnets = chains.filter((chain) => !chain.isTestnet);
   const testnets = chains.filter((chain) => chain.isTestnet);
 
+  function onSelectChain(selectValue: string): void {
+    const isPrivateVariant = selectValue.endsWith(PRIVATE_SUFFIX);
+    const chainId = isPrivateVariant
+      ? selectValue.slice(0, -PRIVATE_SUFFIX.length)
+      : selectValue;
+
+    // Always write the clean chainId to config.network
+    onChange(chainId);
+
+    // When showing private variants, also manage config.usePrivateMempool
+    if (showPrivateVariants && onUpdateConfig) {
+      onUpdateConfig("usePrivateMempool", isPrivateVariant);
+    }
+  }
+
+  function renderChainItem(chain: Chain): React.ReactNode {
+    return (
+      <SelectItem key={chain.chainId} value={String(chain.chainId)}>
+        <div className="flex items-center gap-2">
+          <span>{chain.name}</span>
+          <span className="text-muted-foreground text-xs">({chain.symbol})</span>
+        </div>
+      </SelectItem>
+    );
+  }
+
+  function renderPrivateVariant(chain: Chain): React.ReactNode {
+    return (
+      <SelectItem
+        key={`${chain.chainId}-private`}
+        value={`${chain.chainId}${PRIVATE_SUFFIX}`}
+      >
+        <div className="flex items-center gap-2">
+          <span>{chain.name} (Flashbots)</span>
+          <span className="text-muted-foreground text-xs">({chain.symbol})</span>
+        </div>
+      </SelectItem>
+    );
+  }
+
   return (
-    <Select disabled={disabled} onValueChange={onChange} value={value}>
+    <Select disabled={disabled} onValueChange={onSelectChain} value={value}>
       <SelectTrigger className="w-full" id={field.key}>
         <SelectValue placeholder={field.placeholder || "Select a chain"} />
       </SelectTrigger>
@@ -116,14 +192,12 @@ export function ChainSelectField({
               Mainnets
             </div>
             {mainnets.map((chain) => (
-              <SelectItem key={chain.chainId} value={String(chain.chainId)}>
-                <div className="flex items-center gap-2">
-                  <span>{chain.name}</span>
-                  <span className="text-muted-foreground text-xs">
-                    ({chain.symbol})
-                  </span>
-                </div>
-              </SelectItem>
+              <Fragment key={chain.chainId}>
+                {renderChainItem(chain)}
+                {showPrivateVariants &&
+                  chain.usePrivateMempoolRpc &&
+                  renderPrivateVariant(chain)}
+              </Fragment>
             ))}
           </>
         )}
@@ -133,14 +207,12 @@ export function ChainSelectField({
               Testnets
             </div>
             {testnets.map((chain) => (
-              <SelectItem key={chain.chainId} value={String(chain.chainId)}>
-                <div className="flex items-center gap-2">
-                  <span>{chain.name}</span>
-                  <span className="text-muted-foreground text-xs">
-                    ({chain.symbol})
-                  </span>
-                </div>
-              </SelectItem>
+              <Fragment key={chain.chainId}>
+                {renderChainItem(chain)}
+                {showPrivateVariants &&
+                  chain.usePrivateMempoolRpc &&
+                  renderPrivateVariant(chain)}
+              </Fragment>
             ))}
           </>
         )}
@@ -148,3 +220,5 @@ export function ChainSelectField({
     </Select>
   );
 }
+
+export { resolveSelectValue };

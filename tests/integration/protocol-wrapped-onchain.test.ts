@@ -1,7 +1,7 @@
 /**
- * WETH On-Chain Integration Tests
+ * Wrapped On-Chain Integration Tests
  *
- * Verifies that the ABI-driven WETH protocol definition produces valid
+ * Verifies that the ABI-driven Wrapped protocol definition produces valid
  * calldata that real contracts accept. Runs against a live RPC endpoint.
  *
  * Gated on INTEGRATION_TEST_RPC_URL env var - skipped in CI without it.
@@ -15,7 +15,7 @@ import type {
   ProtocolContract,
   ProtocolDefinition,
 } from "@/lib/protocol-registry";
-import wethDef from "@/protocols/weth";
+import wrappedDef from "@/protocols/wrapped";
 
 const RPC_URL = process.env.INTEGRATION_TEST_RPC_URL;
 const CHAIN_ID = "11155111";
@@ -63,12 +63,12 @@ function buildCalldata(
   return { to: contractAddress, data, action, contract };
 }
 
-describe.skipIf(!RPC_URL)("WETH on-chain integration", () => {
+describe.skipIf(!RPC_URL)("Wrapped on-chain integration", () => {
   const getProvider = (): ethers.JsonRpcProvider =>
     new ethers.JsonRpcProvider(RPC_URL);
 
   it("balanceOf: eth_call returns a decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata(wethDef, "balance-of", {
+    const { to, data, contract } = buildCalldata(wrappedDef, "balance-of", {
       account: TEST_ADDRESS,
     });
 
@@ -83,7 +83,7 @@ describe.skipIf(!RPC_URL)("WETH on-chain integration", () => {
   }, 15_000);
 
   it("deposit: estimateGas succeeds with ETH value", async () => {
-    const { to, data } = buildCalldata(wethDef, "wrap", {});
+    const { to, data } = buildCalldata(wrappedDef, "wrap", {});
 
     const provider = getProvider();
     const gas = await provider.estimateGas({
@@ -97,7 +97,7 @@ describe.skipIf(!RPC_URL)("WETH on-chain integration", () => {
   }, 15_000);
 
   it("withdraw: calldata encodes correctly (business revert expected)", async () => {
-    const { to, data } = buildCalldata(wethDef, "unwrap", {
+    const { to, data } = buildCalldata(wrappedDef, "unwrap", {
       wad: "1000000000000000000",
     });
 

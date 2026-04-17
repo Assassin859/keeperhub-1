@@ -178,16 +178,12 @@ jobs:
           AWS_DEFAULT_REGION: us-east-1
 
       - name: Setup database
-        run: |
-          pnpm db:setup-workflow
-          pnpm db:migrate
-          pnpm db:seed
-          pnpm db:seed-test-wallet
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/keeperhub_test
-          TEST_PARA_USER_SHARE: ${{ secrets.TEST_PARA_USER_SHARE }}
-          WALLET_ENCRYPTION_KEY: ${{ secrets.TEST_WALLET_ENCRYPTION_KEY }}
-          CHAIN_RPC_CONFIG: ${{ secrets.CHAIN_RPC_CONFIG }}
+        uses: ./.github/actions/setup-e2e-db
+        with:
+          database_url: postgresql://postgres:postgres@localhost:5432/keeperhub_test
+          test_para_user_share: ${{ secrets.TEST_PARA_USER_SHARE }}
+          wallet_encryption_key: ${{ secrets.TEST_WALLET_ENCRYPTION_KEY }}
+          chain_rpc_config: ${{ secrets.CHAIN_RPC_CONFIG }}
 
       - name: Start application
         uses: ./.github/actions/start-app
@@ -274,16 +270,12 @@ jobs:
           discover-plugins: "true"
 
       - name: Setup database
-        run: |
-          pnpm db:setup-workflow
-          pnpm db:migrate
-          pnpm db:seed
-          pnpm db:seed-test-wallet
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/keeperhub_test
-          TEST_PARA_USER_SHARE: ${{ secrets.TEST_PARA_USER_SHARE }}
-          WALLET_ENCRYPTION_KEY: ${{ secrets.TEST_WALLET_ENCRYPTION_KEY }}
-          CHAIN_RPC_CONFIG: ${{ secrets.CHAIN_RPC_CONFIG }}
+        uses: ./.github/actions/setup-e2e-db
+        with:
+          database_url: postgresql://postgres:postgres@localhost:5432/keeperhub_test
+          test_para_user_share: ${{ secrets.TEST_PARA_USER_SHARE }}
+          wallet_encryption_key: ${{ secrets.TEST_WALLET_ENCRYPTION_KEY }}
+          chain_rpc_config: ${{ secrets.CHAIN_RPC_CONFIG }}
 
       - name: Start application
         uses: ./.github/actions/start-app

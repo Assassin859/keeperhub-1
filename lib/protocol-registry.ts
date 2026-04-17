@@ -1,5 +1,6 @@
 import { solidityTypeToFieldType } from "@/lib/solidity-type-fields";
 import type { IntegrationType } from "@/lib/types/integration";
+
 import {
   createProtocolIconComponent,
   ProtocolIcon,
@@ -287,6 +288,8 @@ function buildConfigFieldsFromAction(
       label: "Network",
       type: "chain-select",
       chainTypeFilter: "evm",
+      // KEEP-137: write actions show private mempool variants (e.g., Flashbots)
+      ...(action.type === "write" ? { showPrivateVariants: true } : {}),
       required: true,
     },
   ];
