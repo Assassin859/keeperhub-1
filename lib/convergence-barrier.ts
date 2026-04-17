@@ -169,6 +169,10 @@ export function propagateConvergenceSkips(
         }
         continue;
       }
+      // Convergence node not fully resolved: stop BFS here. It is still
+      // awaiting arrivals from the real execution path and should not
+      // propagate skip signals to its downstream.
+      continue;
     }
 
     const downstream = edgesBySource.get(currentId) ?? [];

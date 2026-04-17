@@ -1979,6 +1979,18 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
             // nodes downstream receive arrival signals from skipped sources
             const skippedTargets = handleMap.get(notTakenHandle) ?? [];
             if (skippedTargets.length > 0) {
+              // Register the condition's skip-arrival at direct skipped targets
+              // that are themselves convergence nodes. Without this, a pattern
+              // like `Cond -> (skipped) -> nodeB` and `Cond -> (taken) -> X -> nodeB`
+              // stalls nodeB: the condition's not-taken edge never signals
+              // arrival, so nodeB only ever sees X's arrival (1/2).
+              const preSeedUnblocked = signalConvergenceArrival(
+                nodeId,
+                skippedTargets,
+                edgesByTarget,
+                convergenceArrivals,
+                visited
+              );
               const unblockedIds = propagateConvergenceSkips(
                 skippedTargets,
                 edgesBySource,
@@ -1986,11 +1998,14 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
                 convergenceArrivals,
                 visited
               );
-              if (unblockedIds.length > 0) {
+              const allUnblocked = [
+                ...new Set([...preSeedUnblocked, ...unblockedIds]),
+              ];
+              if (allUnblocked.length > 0) {
                 const settled = await Promise.allSettled(
-                  unblockedIds.map((id) => executeNode(id, visited))
+                  allUnblocked.map((id) => executeNode(id, visited))
                 );
-                processSettledResults(settled, unblockedIds);
+                processSettledResults(settled, allUnblocked);
               }
             }
           } else {
