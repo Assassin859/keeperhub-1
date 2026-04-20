@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { RouteConfig } from "@x402/core/server";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   type NewWorkflowPayment,
@@ -111,7 +111,12 @@ export async function resolveCreatorWallet(
   const rows = await db
     .select({ walletAddress: organizationWallets.walletAddress })
     .from(organizationWallets)
-    .where(eq(organizationWallets.organizationId, organizationId))
+    .where(
+      and(
+        eq(organizationWallets.organizationId, organizationId),
+        eq(organizationWallets.isActive, true)
+      )
+    )
     .limit(1);
   return rows[0]?.walletAddress ?? null;
 }

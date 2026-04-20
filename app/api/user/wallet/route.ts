@@ -83,7 +83,8 @@ async function validateUserAndOrganization(request: Request) {
   return { user, organizationId: activeOrgId, member: activeMember };
 }
 
-// Helper: Check if a wallet already exists for this organization (one wallet per org)
+// Helper: Check if a wallet already exists for this organization (one wallet per org at creation time;
+// Para → Turnkey dual state is only reached via the provisioning script, not via this endpoint).
 async function checkExistingWallet(
   organizationId: string
 ): Promise<{ error: string; status: number } | { valid: true }> {
@@ -157,7 +158,6 @@ function getErrorResponse(error: unknown): NextResponse {
   return NextResponse.json({ error: errorMessage }, { status: statusCode });
 }
 
-// Helper: Store Turnkey wallet in database and create integration
 async function storeTurnkeyWalletAndIntegration(options: {
   userId: string;
   organizationId: string;
@@ -226,18 +226,25 @@ export async function GET(request: Request) {
       });
     }
 
-    const wallets = allWallets.map((w) => ({
-      provider: w.provider,
-      canExportKey: w.provider === "turnkey",
-      walletAddress: w.walletAddress,
-      walletId: w.paraWalletId ?? w.turnkeyWalletId,
-      email: w.email,
-      createdAt: w.createdAt,
-      organizationId: w.organizationId,
-    }));
+    const PROVIDER_ORDER: Record<"para" | "turnkey", number> = {
+      para: 0,
+      turnkey: 1,
+    } as const;
+    const wallets = allWallets
+      .map((w) => ({
+        id: w.id,
+        provider: w.provider,
+        canExportKey: w.provider === "turnkey",
+        walletAddress: w.walletAddress,
+        walletId: w.paraWalletId ?? w.turnkeyWalletId,
+        email: w.email,
+        createdAt: w.createdAt,
+        organizationId: w.organizationId,
+        isActive: w.isActive,
+      }))
+      .sort((a, b) => PROVIDER_ORDER[a.provider] - PROVIDER_ORDER[b.provider]);
 
-    // Primary wallet (first one) for backward compatibility
-    const primary = wallets[0];
+    const primary = wallets.find((w) => w.isActive) ?? wallets[0];
 
     return NextResponse.json({
       hasWallet: true,
@@ -261,7 +268,6 @@ export async function POST(request: Request) {
     }
     const { user, organizationId } = validation;
 
-    // 3. Parse request body
     const body: { email?: string } = await request.json();
     const walletEmail = body.email;
 
@@ -279,7 +285,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // 4. Check if a wallet already exists for this organization
     const existingCheck = await checkExistingWallet(organizationId);
     if ("error" in existingCheck) {
       return NextResponse.json(
@@ -288,7 +293,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // 5. Create wallet via Turnkey
     const orgName = `org-${organizationId.slice(0, 8)}`;
     const turnkeyResult = await createTurnkeyWallet(walletEmail, orgName);
 
@@ -349,11 +353,17 @@ export async function PATCH(request: Request) {
       );
     }
 
-    // 3. Get existing wallet from database
+    // 3. Get the org's active wallet (PATCH only targets the active wallet;
+    // the deactivated Para wallet during migration is not user-editable).
     const existingWallet = await db
       .select()
       .from(organizationWallets)
-      .where(eq(organizationWallets.organizationId, organizationId))
+      .where(
+        and(
+          eq(organizationWallets.organizationId, organizationId),
+          eq(organizationWallets.isActive, true)
+        )
+      )
       .limit(1);
 
     if (existingWallet.length === 0) {
@@ -385,11 +395,16 @@ export async function PATCH(request: Request) {
       });
     }
 
-    // 6. Update email in local database
+    // 6. Update email in local database (only the active wallet row)
     await db
       .update(organizationWallets)
       .set({ email: newEmail })
-      .where(eq(organizationWallets.organizationId, organizationId));
+      .where(
+        and(
+          eq(organizationWallets.organizationId, organizationId),
+          eq(organizationWallets.isActive, true)
+        )
+      );
 
     return NextResponse.json({
       success: true,
@@ -424,10 +439,17 @@ export async function DELETE(request: Request) {
     }
     const { organizationId } = validation;
 
-    // 2. Delete wallet data for this organization
+    // 2. Delete only the active wallet for this organization.
+    // During Para → Turnkey migration both wallets may coexist; the inactive
+    // Para row must be removed via a dedicated admin flow (follow-up ticket).
     const deletedWallet = await db
       .delete(organizationWallets)
-      .where(eq(organizationWallets.organizationId, organizationId))
+      .where(
+        and(
+          eq(organizationWallets.organizationId, organizationId),
+          eq(organizationWallets.isActive, true)
+        )
+      )
       .returning();
 
     if (deletedWallet.length === 0) {
@@ -437,15 +459,23 @@ export async function DELETE(request: Request) {
       );
     }
 
-    // 3. Delete associated Web3 integration record
-    await db
-      .delete(integrations)
-      .where(
-        and(
-          eq(integrations.organizationId, organizationId),
-          eq(integrations.type, "web3")
-        )
-      );
+    // 3. Delete associated Web3 integration record only if no wallet remains
+    const remaining = await db
+      .select({ id: organizationWallets.id })
+      .from(organizationWallets)
+      .where(eq(organizationWallets.organizationId, organizationId))
+      .limit(1);
+
+    if (remaining.length === 0) {
+      await db
+        .delete(integrations)
+        .where(
+          and(
+            eq(integrations.organizationId, organizationId),
+            eq(integrations.type, "web3")
+          )
+        );
+    }
 
     return NextResponse.json({
       success: true,

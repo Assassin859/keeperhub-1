@@ -8,8 +8,11 @@ import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 // Mainnet chain ID - used as the "master list" of supported tokens
 const MAINNET_CHAIN_ID = 1;
 
-// TEMPO chain IDs - excluded from master list logic (have their own tokens)
-const TEMPO_CHAIN_IDS = [42_429, 4217];
+// Chains with their own stablecoin lineup that doesn't mirror Ethereum mainnet
+// (TEMPO mainnet/testnet, Plasma mainnet). These bypass the master-list overlay
+// and return only their own supported_tokens rows, avoiding misleading
+// "Not available" entries for assets that don't exist on the chain.
+const INDEPENDENT_TOKEN_LIST_CHAIN_IDS = [42_429, 4217, 9745];
 
 /**
  * Build explorer URL for a token address
@@ -120,8 +123,9 @@ export async function GET(request: Request) {
       ),
     });
 
-    // For TEMPO chains, just return their own tokens (no master list logic)
-    if (TEMPO_CHAIN_IDS.includes(chainId)) {
+    // For chains with independent stablecoin lineups (TEMPO, Plasma), return
+    // only their own tokens; no master-list overlay.
+    if (INDEPENDENT_TOKEN_LIST_CHAIN_IDS.includes(chainId)) {
       const tokens = await db
         .select()
         .from(supportedTokens)

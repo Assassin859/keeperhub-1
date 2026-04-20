@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { toChecksumAddress } from "@/lib/address-utils";
 import { db } from "@/lib/db";
@@ -78,7 +78,12 @@ export async function GET(
       const walletRow = await db
         .select({ walletAddress: organizationWallets.walletAddress })
         .from(organizationWallets)
-        .where(eq(organizationWallets.organizationId, organizationId))
+        .where(
+          and(
+            eq(organizationWallets.organizationId, organizationId),
+            eq(organizationWallets.isActive, true)
+          )
+        )
         .limit(1);
 
       if (walletRow.length > 0) {

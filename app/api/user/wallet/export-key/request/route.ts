@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
@@ -55,11 +55,17 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    // Verify a Turnkey wallet exists
+    // Verify a Turnkey wallet exists (only Turnkey wallets are exportable;
+    // Para wallets during migration are inactive and not exportable here)
     const turnkeyWallets = await db
       .select({ id: organizationWallets.id })
       .from(organizationWallets)
-      .where(eq(organizationWallets.organizationId, activeOrgId))
+      .where(
+        and(
+          eq(organizationWallets.organizationId, activeOrgId),
+          eq(organizationWallets.provider, "turnkey")
+        )
+      )
       .limit(1);
 
     if (turnkeyWallets.length === 0) {

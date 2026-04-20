@@ -247,6 +247,49 @@ const TOKEN_CONFIGS: TokenConfig[] = [
     isStablecoin: true,
     sortOrder: 3,
   },
+
+  // ==========================================================================
+  // Avalanche C-Chain (chainId: 43114)
+  // ==========================================================================
+  {
+    chainId: 43_114,
+    tokenAddress: "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e", // USDC (Circle native)
+    logoUrl: LOGOS.USDC,
+    isStablecoin: true,
+    sortOrder: 1,
+  },
+  {
+    chainId: 43_114,
+    tokenAddress: "0x9702230a8ea53601f5cd2dc00fdbc13d4df4a8c7", // USDt (Tether native, symbol is lowercase 't')
+    logoUrl: LOGOS.USDT,
+    isStablecoin: true,
+    sortOrder: 2,
+  },
+
+  // ==========================================================================
+  // Avalanche Fuji Testnet (chainId: 43113)
+  // ==========================================================================
+  {
+    chainId: 43_113,
+    tokenAddress: "0x5425890298aed601595a70ab815c96711a31bc65", // USDC (Circle testnet)
+    logoUrl: LOGOS.USDC,
+    isStablecoin: true,
+    sortOrder: 1,
+  },
+
+  // ==========================================================================
+  // Plasma Mainnet (chainId: 9745)
+  // ==========================================================================
+  // Only USDT0 is tracked: Circle has not deployed native USDC on Plasma, and
+  // Sky's USDS has not been deployed on Plasma. Add new stablecoins here once
+  // issuers deploy natively.
+  {
+    chainId: 9745,
+    tokenAddress: "0xb8ce59fc3717ada4c02eadf9682a9e934f625ebb", // USDT0 (Tether omnichain via LayerZero)
+    logoUrl: LOGOS.USDT,
+    isStablecoin: true,
+    sortOrder: 1,
+  },
 ];
 
 /**

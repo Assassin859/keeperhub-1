@@ -15,6 +15,7 @@
  * - gasCreditUsage: Gas cost records for sponsored transactions (credit metering)
  */
 
+import { sql } from "drizzle-orm";
 import {
   boolean,
   index,
@@ -25,6 +26,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 // Note: Using relative paths instead of @/ aliases for drizzle-kit compatibility
 import { organization, users, workflows } from "@/lib/db/schema";
@@ -65,10 +67,13 @@ export const organizationWallets = pgTable(
     turnkeySubOrgId: text("turnkey_sub_org_id"),
     turnkeyWalletId: text("turnkey_wallet_id"),
     turnkeyPrivateKeyId: text("turnkey_private_key_id"),
+    isActive: boolean("is_active").notNull().default(true),
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
   (table) => [
-    unique("para_wallets_organization_id_unique").on(table.organizationId),
+    uniqueIndex("para_wallets_org_active_unique")
+      .on(table.organizationId)
+      .where(sql`${table.isActive} = true`),
   ]
 );
 

@@ -665,7 +665,10 @@ export async function getInfraStatsFromDb(): Promise<InfraStats> {
         .select({ count: count() })
         .from(chains)
         .where(eq(chains.isEnabled, true)),
-      db.select({ count: count() }).from(paraWallets),
+      db
+        .select({ count: count() })
+        .from(paraWallets)
+        .where(eq(paraWallets.isActive, true)),
       db
         .select({ count: count() })
         .from(sessions)

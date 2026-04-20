@@ -47,6 +47,7 @@ import type {
   TokenBalance,
   TokenData,
   WalletData,
+  WalletInfo,
 } from "@/lib/wallet/types";
 import { useWalletBalances } from "@/lib/wallet/use-wallet-balances";
 import { type WithdrawableAsset, WithdrawModal } from "./withdraw-modal";
@@ -58,6 +59,16 @@ type WalletOverlayProps = {
 // TEMPO uses stablecoins for gas, so we display stablecoins only (no native token)
 const TEMPO_CHAIN_IDS = new Set([42_429, 4217]);
 const isTempoChain = (chainId: number): boolean => TEMPO_CHAIN_IDS.has(chainId);
+
+// Chains whose token lineup doesn't mirror Ethereum mainnet's stablecoin set
+// (e.g. Plasma ships USDT0, no Circle USDC, no Sky USDS). For these chains we
+// render the chain's own supported_tokens rows directly instead of overlaying
+// them on the mainnet master list, which would otherwise produce misleading
+// "Not available" entries for assets that simply don't exist on the chain.
+const INDEPENDENT_TOKEN_LIST_CHAIN_IDS = new Set([42_429, 4217, 9745]);
+const hasIndependentTokenList = (chainId: number): boolean =>
+  INDEPENDENT_TOKEN_LIST_CHAIN_IDS.has(chainId);
+
 const MAINNET_CHAIN_ID = 1;
 
 // ============================================================================
@@ -249,11 +260,13 @@ function ChainBalanceItem({
 
   const isTempo = isTempoChain(balance.chainId);
   const isMainnet = balance.chainId === MAINNET_CHAIN_ID;
+  const isIndependentTokenList = hasIndependentTokenList(balance.chainId);
 
-  // For TEMPO chains, just show their own tokens
-  // For other chains, use mainnet tokens as the master list
+  // For chains with their own stablecoin lineup (TEMPO, Plasma, etc.), render
+  // their tokens directly. For other chains, use mainnet tokens as the master
+  // list and overlay availability per-chain.
   const chainSupportedTokens = (() => {
-    if (isTempo) {
+    if (isIndependentTokenList) {
       return supportedTokenBalances.filter(
         (t) => t.chainId === balance.chainId
       );
@@ -1093,6 +1106,72 @@ function AccountDetailsSection({
   );
 }
 
+const PROVIDER_DISPLAY_ORDER: Record<"para" | "turnkey", number> = {
+  para: 0,
+  turnkey: 1,
+} as const;
+
+function WalletSwitcher({
+  wallets,
+  isAdmin,
+  switching,
+  onSelect,
+}: {
+  wallets: WalletInfo[];
+  isAdmin: boolean;
+  switching: boolean;
+  onSelect: (walletId: string) => void;
+}): React.ReactElement {
+  const ordered = [...wallets].sort(
+    (a, b) =>
+      PROVIDER_DISPLAY_ORDER[a.provider] - PROVIDER_DISPLAY_ORDER[b.provider]
+  );
+  const hasPara = ordered.some((w) => w.provider === "para");
+  return (
+    <div className="rounded-lg border bg-muted/50 p-3">
+      <div className="mb-2 text-muted-foreground text-xs">
+        Active wallet for signing
+      </div>
+      {hasPara && (
+        <div className="mb-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-amber-700 text-xs dark:text-amber-400">
+          Para will be deprecated soon. Switch the active wallet to Turnkey and
+          move your assets from the Para wallet before the cutover.
+        </div>
+      )}
+      <div className="flex gap-2">
+        {ordered.map((wallet) => {
+          const label = wallet.provider === "para" ? "Para" : "Turnkey";
+          return (
+            <button
+              className={`flex-1 rounded-md border px-3 py-2 text-left text-sm transition ${
+                wallet.isActive
+                  ? "border-primary bg-primary/10"
+                  : "border-border hover:bg-background"
+              } ${!isAdmin || switching ? "cursor-not-allowed opacity-60" : ""}`}
+              disabled={!isAdmin || switching || wallet.isActive}
+              key={wallet.id}
+              onClick={() => onSelect(wallet.id)}
+              type="button"
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-medium">{label}</span>
+                {wallet.isActive && (
+                  <span className="rounded bg-primary/20 px-1.5 py-0.5 text-[10px] text-primary">
+                    Active
+                  </span>
+                )}
+              </div>
+              <code className="font-mono text-muted-foreground text-xs">
+                {truncateAddress(wallet.walletAddress)}
+              </code>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function WalletOverlay({ overlayId }: WalletOverlayProps) {
   const { closeAll, push } = useOverlay();
   const { data: session } = useSession();
@@ -1108,6 +1187,7 @@ export function WalletOverlay({ overlayId }: WalletOverlayProps) {
   >([]);
   const [refreshing, setRefreshing] = useState(false);
   const [showAddToken, setShowAddToken] = useState(false);
+  const [switchingWallet, setSwitchingWallet] = useState(false);
 
   const { balances, tokenBalances, fetchBalances } = useWalletBalances();
 
@@ -1303,6 +1383,32 @@ export function WalletOverlay({ overlayId }: WalletOverlayProps) {
     await loadWallet();
   };
 
+  const handleSelectActiveWallet = useCallback(
+    async (walletId: string): Promise<void> => {
+      setSwitchingWallet(true);
+      try {
+        const response = await fetch("/api/user/wallet/active", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ walletId }),
+        });
+        const data: { error?: string } = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error ?? "Failed to switch active wallet");
+        }
+        toast.success("Active wallet updated");
+        await loadWallet();
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Failed to switch wallet"
+        );
+      } finally {
+        setSwitchingWallet(false);
+      }
+    },
+    [loadWallet]
+  );
+
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Logic is straightforward, two loops with validation
   const buildWithdrawableAssets = useCallback((): WithdrawableAsset[] => {
     const assets: WithdrawableAsset[] = [];
@@ -1425,6 +1531,14 @@ export function WalletOverlay({ overlayId }: WalletOverlayProps) {
 
       {!walletLoading && walletData?.hasWallet && (
         <div className="space-y-4">
+          {walletData.wallets && walletData.wallets.length > 1 && (
+            <WalletSwitcher
+              isAdmin={isAdmin}
+              onSelect={handleSelectActiveWallet}
+              switching={switchingWallet}
+              wallets={walletData.wallets}
+            />
+          )}
           {walletData.email && walletData.walletAddress && (
             <AccountDetailsSection
               canExportKey={!!walletData.canExportKey}

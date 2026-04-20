@@ -2,7 +2,7 @@ import "server-only";
 import { ParaEthersSigner } from "@getpara/ethers-v6-integration";
 import { Environment, Para as ParaServer } from "@getpara/server-sdk";
 import { TurnkeySigner } from "@turnkey/ethers";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { ethers } from "ethers";
 import { toChecksumAddress } from "@/lib/address-utils";
 import { db } from "@/lib/db";
@@ -13,8 +13,9 @@ import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import { getTurnkeySignerConfig } from "@/lib/turnkey/turnkey-client";
 
 /**
- * Get organization's wallet from database
- * @throws Error if wallet not found
+ * Get organization's active wallet from database.
+ * During Para → Turnkey migration an org may temporarily hold both wallets;
+ * only the one flagged `isActive = true` is used by workflows and integrations.
  */
 export async function getOrganizationWallet(
   organizationId: string
@@ -22,7 +23,12 @@ export async function getOrganizationWallet(
   const wallet = await db
     .select()
     .from(organizationWallets)
-    .where(eq(organizationWallets.organizationId, organizationId))
+    .where(
+      and(
+        eq(organizationWallets.organizationId, organizationId),
+        eq(organizationWallets.isActive, true)
+      )
+    )
     .limit(1);
 
   if (wallet.length === 0) {
@@ -39,7 +45,12 @@ export async function getUserWallet(userId: string) {
   const wallet = await db
     .select()
     .from(organizationWallets)
-    .where(eq(organizationWallets.userId, userId))
+    .where(
+      and(
+        eq(organizationWallets.userId, userId),
+        eq(organizationWallets.isActive, true)
+      )
+    )
     .limit(1);
 
   if (wallet.length === 0) {
@@ -50,7 +61,7 @@ export async function getUserWallet(userId: string) {
 }
 
 /**
- * Initialize an ethers-compatible signer for the organization's wallet.
+ * Initialize an ethers-compatible signer for the organization's active wallet.
  * Dispatches to the correct provider (Para MPC or Turnkey secure enclave).
  */
 export async function initializeWalletSigner(
@@ -65,7 +76,6 @@ export async function initializeWalletSigner(
   if (wallet.provider === "turnkey") {
     return initializeTurnkeySigner(wallet, provider);
   }
-
   return initializeParaMpcSigner(wallet, provider);
 }
 
@@ -148,7 +158,12 @@ export async function organizationHasWallet(
   const wallet = await db
     .select()
     .from(organizationWallets)
-    .where(eq(organizationWallets.organizationId, organizationId))
+    .where(
+      and(
+        eq(organizationWallets.organizationId, organizationId),
+        eq(organizationWallets.isActive, true)
+      )
+    )
     .limit(1);
 
   return wallet.length > 0;
@@ -169,7 +184,12 @@ export async function userHasWallet(userId: string): Promise<boolean> {
   const wallet = await db
     .select()
     .from(organizationWallets)
-    .where(eq(organizationWallets.userId, userId))
+    .where(
+      and(
+        eq(organizationWallets.userId, userId),
+        eq(organizationWallets.isActive, true)
+      )
+    )
     .limit(1);
 
   return wallet.length > 0;

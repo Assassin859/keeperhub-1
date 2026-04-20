@@ -14,6 +14,18 @@ shared_env: &shared_env
     type: parameterStore
     name: chain-rpc-config
     parameter_name: /eks/techops-staging/keeperhub/chain-rpc-config
+  TURNKEY_API_PUBLIC_KEY:
+    type: parameterStore
+    name: turnkey-api-public-key
+    parameter_name: /eks/techops-staging/keeperhub/turnkey-api-public-key
+  TURNKEY_API_PRIVATE_KEY:
+    type: parameterStore
+    name: turnkey-api-private-key
+    parameter_name: /eks/techops-staging/keeperhub/turnkey-api-private-key
+  TURNKEY_ORGANIZATION_ID:
+    type: parameterStore
+    name: turnkey-organization-id
+    parameter_name: /eks/techops-staging/keeperhub/turnkey-organization-id
 
 replicaCount: 1
 
@@ -65,6 +77,8 @@ deployment:
           pnpm db:migrate
           echo "Seeding chains..."
           pnpm db:seed
+          echo "Provisioning Turnkey wallets for Para-only orgs..."
+          pnpm tsx scripts/provision-turnkey-for-para-orgs.ts
           echo "Migrations and seeding completed successfully"
       env: *shared_env
 
