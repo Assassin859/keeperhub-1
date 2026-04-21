@@ -54,13 +54,13 @@ const CHAIN_OVERRIDES: Record<number, Partial<SafeContractAddresses>> = {};
  * Module are deployed at the canonical addresses.
  *
  * Intentionally excluded:
- * - Optimism: no entry in KeeperHub's chain seed today
  * - Tempo / Plasma: no canonical Safe deployment at this address
  * - Solana: non-EVM, Safe doesn't run there
  */
 export const SUPPORTED_SAFE_CHAIN_IDS = [
   // mainnets
   1, // Ethereum
+  10, // Optimism
   8453, // Base
   42_161, // Arbitrum One
   56, // BNB Smart Chain
@@ -68,6 +68,7 @@ export const SUPPORTED_SAFE_CHAIN_IDS = [
   43_114, // Avalanche C-Chain
   // testnets
   11_155_111, // Sepolia
+  11_155_420, // Optimism Sepolia
   84_532, // Base Sepolia
   421_614, // Arbitrum Sepolia
   97, // BSC testnet
