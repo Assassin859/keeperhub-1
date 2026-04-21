@@ -38,15 +38,12 @@ export async function DELETE(
     if (!result.success) {
       logSystemError(
         ErrorCategory.TRANSACTION,
-        "[Safe] Revoke allowance endpoint failed",
+        `[Safe] Revoke allowance endpoint failed for org=${admin.organizationId} safe=${safe.id} token=${tokenAddress}`,
         new Error(result.error),
         {
           endpoint: "/api/user/safe/[safeId]/allowances/[tokenAddress]",
-          operation: "delete",
-          organizationId: admin.organizationId,
+          component: "safe-allowances-api",
           chain_id: safe.chainId.toString(),
-          safe_id: safe.id,
-          token: tokenAddress,
         }
       );
       return NextResponse.json({ error: result.error }, { status: 500 });

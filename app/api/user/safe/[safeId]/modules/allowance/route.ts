@@ -37,14 +37,12 @@ export async function POST(
     if (!result.success) {
       logSystemError(
         ErrorCategory.TRANSACTION,
-        "[Safe] Install module endpoint failed",
+        `[Safe] Install module endpoint failed for org=${admin.organizationId} safe=${safe.id}`,
         new Error(result.error),
         {
           endpoint: "/api/user/safe/[safeId]/modules/allowance",
-          operation: "post",
-          organizationId: admin.organizationId,
+          component: "safe-modules-api",
           chain_id: safe.chainId.toString(),
-          safe_id: safe.id,
         }
       );
       return NextResponse.json({ error: result.error }, { status: 500 });

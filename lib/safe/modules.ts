@@ -254,11 +254,10 @@ export async function installAllowanceModule(options: {
   } catch (error) {
     logSystemError(
       ErrorCategory.TRANSACTION,
-      "[Safe] Install Allowance Module failed",
+      `[Safe] Install Allowance Module failed for org=${organizationId}`,
       error,
       {
         component: "safe-modules",
-        organizationId,
         chain_id: chainId.toString(),
       }
     );
@@ -393,13 +392,11 @@ export async function setTokenAllowance(
   } catch (error) {
     logSystemError(
       ErrorCategory.TRANSACTION,
-      "[Safe] setTokenAllowance failed",
+      `[Safe] setTokenAllowance failed for org=${organizationId} token=${normalizedToken}`,
       error,
       {
         component: "safe-modules",
-        organizationId,
         chain_id: chainId.toString(),
-        token: normalizedToken,
       }
     );
     return {
@@ -488,13 +485,11 @@ export async function revokeTokenAllowance(
   } catch (error) {
     logSystemError(
       ErrorCategory.TRANSACTION,
-      "[Safe] revokeTokenAllowance failed",
+      `[Safe] revokeTokenAllowance failed for org=${organizationId} token=${normalizedToken}`,
       error,
       {
         component: "safe-modules",
-        organizationId,
         chain_id: chainId.toString(),
-        token: normalizedToken,
       }
     );
     return {

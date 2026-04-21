@@ -139,15 +139,12 @@ export async function POST(
     if (!result.success) {
       logSystemError(
         ErrorCategory.TRANSACTION,
-        "[Safe] Set allowance endpoint failed",
+        `[Safe] Set allowance endpoint failed for org=${admin.organizationId} safe=${safe.id} token=${tokenAddress}`,
         new Error(result.error),
         {
           endpoint: "/api/user/safe/[safeId]/allowances",
-          operation: "post",
-          organizationId: admin.organizationId,
+          component: "safe-allowances-api",
           chain_id: safe.chainId.toString(),
-          safe_id: safe.id,
-          token: tokenAddress,
         }
       );
       return NextResponse.json({ error: result.error }, { status: 500 });

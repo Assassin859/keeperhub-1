@@ -126,12 +126,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (!result.success) {
       logSystemError(
         ErrorCategory.TRANSACTION,
-        "[Safe] Deploy endpoint failed",
+        `[Safe] Deploy endpoint failed for org=${admin.organizationId}`,
         new Error(result.error),
         {
           endpoint: "/api/user/safe",
-          operation: "post",
-          organizationId: admin.organizationId,
+          component: "safe-deploy-api",
           chain_id: chainId.toString(),
         }
       );

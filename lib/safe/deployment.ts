@@ -206,11 +206,10 @@ export async function deployOrgSafe(
   } catch (error) {
     logSystemError(
       ErrorCategory.TRANSACTION,
-      "[Safe] Deployment failed",
+      `[Safe] Deployment failed for org=${organizationId}`,
       error,
       {
         component: "safe-deployment",
-        organizationId,
         chain_id: chainId.toString(),
       }
     );
