@@ -68,6 +68,28 @@ const COMMON_TOKENS: Record<number, CommonToken[]> = {
       symbol: "DAI",
       decimals: 18,
     },
+    {
+      address: "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
+      symbol: "USDS",
+      decimals: 18,
+    },
+  ],
+  10: [
+    {
+      address: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
+      symbol: "USDC",
+      decimals: 6,
+    },
+    {
+      address: "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58",
+      symbol: "USDT",
+      decimals: 6,
+    },
+    {
+      address: "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1",
+      symbol: "DAI",
+      decimals: 18,
+    },
   ],
   8453: [
     {
@@ -78,6 +100,11 @@ const COMMON_TOKENS: Record<number, CommonToken[]> = {
     {
       address: "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb",
       symbol: "DAI",
+      decimals: 18,
+    },
+    {
+      address: "0x820C137fa70C8691f0e44Dc420a5e53c168921Dc",
+      symbol: "USDS",
       decimals: 18,
     },
   ],
@@ -136,6 +163,13 @@ const COMMON_TOKENS: Record<number, CommonToken[]> = {
       decimals: 6,
     },
   ],
+  11155420: [
+    {
+      address: "0x5fd84259d66Cd46123540766Be93DFE6D43130D7",
+      symbol: "USDC",
+      decimals: 6,
+    },
+  ],
   84532: [
     {
       address: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
@@ -160,6 +194,9 @@ const PERIOD_PRESETS = [
   { label: "Weekly", minutes: 10_080 },
   { label: "Monthly", minutes: 43_200 },
 ] as const;
+
+const CUSTOM_TOKEN_SENTINEL = "__custom__" as const;
+const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 
 const TRAILING_ZEROS_RE = /0+$/;
 const LEADING_ZEROS_RE = /^0+(?=\d)/;
@@ -238,6 +275,9 @@ export function SpendingLimitsCard({
   const [selectedTokenAddress, setSelectedTokenAddress] = useState<string>("");
   const [amountInput, setAmountInput] = useState<string>("");
   const [periodMinutes, setPeriodMinutes] = useState<number>(1440);
+  const [customAddress, setCustomAddress] = useState<string>("");
+  const [customSymbol, setCustomSymbol] = useState<string>("");
+  const [customDecimals, setCustomDecimals] = useState<string>("18");
 
   const loadLimits = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -294,15 +334,30 @@ export function SpendingLimitsCard({
   };
 
   const tokenCatalog = COMMON_TOKENS[chainId] ?? [];
-  const selectedToken = tokenCatalog.find(
-    (t) => t.address === selectedTokenAddress
+  const isCustomMode = selectedTokenAddress === CUSTOM_TOKEN_SENTINEL;
+  const customDecimalsParsed = Number.parseInt(customDecimals, 10);
+  const customToken: CommonToken | undefined = isCustomMode
+    ? {
+        address: customAddress,
+        symbol: customSymbol || "CUSTOM",
+        decimals: Number.isFinite(customDecimalsParsed)
+          ? customDecimalsParsed
+          : 18,
+      }
+    : undefined;
+  const catalogToken = tokenCatalog.find(
+    (t) => t.address.toLowerCase() === selectedTokenAddress.toLowerCase()
   );
+  const selectedToken = customToken ?? catalogToken;
 
   const resetDialog = (): void => {
     setSelectedTokenAddress("");
     setAmountInput("");
     setPeriodMinutes(1440);
     setDialogMode("create");
+    setCustomAddress("");
+    setCustomSymbol("");
+    setCustomDecimals("18");
   };
 
   const openCreateDialog = (): void => {
@@ -312,7 +367,13 @@ export function SpendingLimitsCard({
 
   const openEditDialog = (limit: LimitSummary): void => {
     setDialogMode("edit");
-    setSelectedTokenAddress(limit.tokenAddress);
+    // Match case against the catalog so the <Select /> renders the right
+    // item; DB stores lowercase addresses while the catalog uses EIP-55
+    // checksummed ones.
+    const catalogMatch = tokenCatalog.find(
+      (t) => t.address.toLowerCase() === limit.tokenAddress.toLowerCase()
+    );
+    setSelectedTokenAddress(catalogMatch?.address ?? limit.tokenAddress);
     const whole = BigInt(limit.amountWei);
     const divisor = BigInt(10) ** BigInt(limit.tokenDecimals);
     const w = whole / divisor;
@@ -331,6 +392,24 @@ export function SpendingLimitsCard({
     if (!selectedToken) {
       toast.error("Select a token");
       return;
+    }
+    if (isCustomMode) {
+      if (!ADDRESS_RE.test(customAddress)) {
+        toast.error("Enter a valid 0x token address");
+        return;
+      }
+      if (!customSymbol.trim()) {
+        toast.error("Enter a symbol for the custom token");
+        return;
+      }
+      if (
+        !Number.isFinite(customDecimalsParsed) ||
+        customDecimalsParsed < 0 ||
+        customDecimalsParsed > 36
+      ) {
+        toast.error("Decimals must be between 0 and 36");
+        return;
+      }
     }
     const trimmed = amountInput.trim();
     if (!trimmed || Number.parseFloat(trimmed) <= 0) {
@@ -354,6 +433,11 @@ export function SpendingLimitsCard({
           tokenAddress: selectedToken.address,
           amountWei: amountWei.toString(),
           periodMinutes,
+          // Only forwarded for custom tokens; server ignores for known ones
+          ...(isCustomMode && {
+            tokenSymbol: selectedToken.symbol,
+            tokenDecimals: selectedToken.decimals,
+          }),
         }),
       });
       const data = (await res.json()) as {
@@ -560,9 +644,63 @@ export function SpendingLimitsCard({
                       {token.symbol} - {truncateAddress(token.address)}
                     </SelectItem>
                   ))}
+                  {dialogMode === "create" && (
+                    <SelectItem value={CUSTOM_TOKEN_SENTINEL}>
+                      Custom token...
+                    </SelectItem>
+                  )}
                 </SelectContent>
               </Select>
             </div>
+            {isCustomMode && (
+              <div className="space-y-2 rounded-md border bg-muted/20 p-2">
+                <div className="space-y-1">
+                  <Label className="text-xs" htmlFor="safe-limit-custom-addr">
+                    Token address
+                  </Label>
+                  <Input
+                    disabled={submitting}
+                    id="safe-limit-custom-addr"
+                    onChange={(e) => setCustomAddress(e.target.value.trim())}
+                    placeholder="0x..."
+                    value={customAddress}
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <div className="flex-1 space-y-1">
+                    <Label
+                      className="text-xs"
+                      htmlFor="safe-limit-custom-symbol"
+                    >
+                      Symbol
+                    </Label>
+                    <Input
+                      disabled={submitting}
+                      id="safe-limit-custom-symbol"
+                      onChange={(e) => setCustomSymbol(e.target.value)}
+                      placeholder="TKN"
+                      value={customSymbol}
+                    />
+                  </div>
+                  <div className="w-24 space-y-1">
+                    <Label
+                      className="text-xs"
+                      htmlFor="safe-limit-custom-decimals"
+                    >
+                      Decimals
+                    </Label>
+                    <Input
+                      disabled={submitting}
+                      id="safe-limit-custom-decimals"
+                      inputMode="numeric"
+                      onChange={(e) => setCustomDecimals(e.target.value)}
+                      placeholder="18"
+                      value={customDecimals}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="space-y-1">
               <Label className="text-xs" htmlFor="safe-limit-amount">
                 Amount{selectedToken ? ` (${selectedToken.symbol})` : ""}

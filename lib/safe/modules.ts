@@ -56,6 +56,14 @@ export type SetTokenAllowanceInput = {
   tokenAddress: string;
   amountWei: string;
   periodMinutes: number;
+  /**
+   * Optional client-supplied token metadata used when the token is NOT in
+   * the server-side registry. Lets admins set limits against custom tokens
+   * (any valid ERC20 address) without forcing the server to lookup decimals
+   * on-chain. Known tokens always take their registry values.
+   */
+  tokenSymbol?: string;
+  tokenDecimals?: number;
 };
 
 export type SetTokenAllowanceResult =
@@ -270,11 +278,15 @@ export async function installAllowanceModule(options: {
 
 function resolveTokenMetadata(
   chainId: number,
-  tokenAddress: string
+  tokenAddress: string,
+  override?: { symbol?: string; decimals?: number }
 ): { symbol: string; decimals: number } {
   const info = getTokenInfo(chainId, tokenAddress);
   if (info) {
     return { symbol: info.symbol, decimals: info.decimals };
+  }
+  if (override?.symbol && typeof override.decimals === "number") {
+    return { symbol: override.symbol, decimals: override.decimals };
   }
   return { symbol: "UNKNOWN", decimals: 18 };
 }
@@ -282,8 +294,15 @@ function resolveTokenMetadata(
 export async function setTokenAllowance(
   input: SetTokenAllowanceInput
 ): Promise<SetTokenAllowanceResult> {
-  const { organizationId, chainId, tokenAddress, amountWei, periodMinutes } =
-    input;
+  const {
+    organizationId,
+    chainId,
+    tokenAddress,
+    amountWei,
+    periodMinutes,
+    tokenSymbol: tokenSymbolOverride,
+    tokenDecimals: tokenDecimalsOverride,
+  } = input;
 
   if (!ethers.isAddress(tokenAddress)) {
     return { success: false, error: `Invalid token address: ${tokenAddress}` };
@@ -314,7 +333,10 @@ export async function setTokenAllowance(
   const ownerAddress = normalizeAddressForStorage(ownerWallet.walletAddress);
   const moduleAddress = getAllowanceModuleAddress(chainId);
   const normalizedToken = normalizeAddressForStorage(tokenAddress);
-  const { symbol, decimals } = resolveTokenMetadata(chainId, normalizedToken);
+  const { symbol, decimals } = resolveTokenMetadata(chainId, normalizedToken, {
+    symbol: tokenSymbolOverride,
+    decimals: tokenDecimalsOverride,
+  });
 
   const { context, rpcUrl } = buildTxContext({
     organizationId,

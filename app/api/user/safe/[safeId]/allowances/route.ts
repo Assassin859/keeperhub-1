@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
+import { getTokenInfo } from "@/lib/contracts/tokens";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getSafeForOrg, validateSafeAdmin } from "@/lib/safe/auth";
 import {
@@ -12,6 +13,13 @@ type SetAllowanceBody = {
   tokenAddress?: string;
   amountWei?: string;
   periodMinutes?: number;
+  /**
+   * Optional token metadata. Used only when the token is not in the server
+   * registry (e.g., a custom ERC20 address from the admin UI); for known
+   * tokens the server resolves these itself.
+   */
+  tokenSymbol?: string;
+  tokenDecimals?: number;
 };
 
 export async function GET(
@@ -51,21 +59,30 @@ export async function GET(
     return NextResponse.json({
       moduleInstalled: installation?.status === "enabled",
       moduleAddress: installation?.moduleAddress ?? null,
-      limits: enriched.map(({ row, onChain }) => ({
-        id: row.id,
-        delegateAddress: row.delegateAddress,
-        tokenAddress: row.tokenAddress,
-        tokenSymbol: row.tokenSymbol,
-        tokenDecimals: row.tokenDecimals,
-        // on-chain truth takes precedence over DB cache
-        amountWei: onChain.amountWei,
-        spentWei: onChain.spentWei,
-        periodMinutes: onChain.resetTimeMinutes || row.periodMinutes,
-        resetAt: onChain.resetAt,
-        lastTxHash: row.lastTxHash,
-        lastUpdatedAt: row.lastUpdatedAt,
-        createdAt: row.createdAt,
-      })),
+      limits: enriched.map(({ row, onChain }) => {
+        // Token metadata in the DB row may be stale from an earlier write
+        // when the token wasn't in the server-side registry (fallback:
+        // UNKNOWN / decimals=18). Prefer fresh metadata when available so
+        // the UI renders correct amounts for pre-existing rows.
+        const fresh = getTokenInfo(safe.chainId, row.tokenAddress);
+        const tokenSymbol = fresh?.symbol ?? row.tokenSymbol;
+        const tokenDecimals = fresh?.decimals ?? row.tokenDecimals;
+        return {
+          id: row.id,
+          delegateAddress: row.delegateAddress,
+          tokenAddress: row.tokenAddress,
+          tokenSymbol,
+          tokenDecimals,
+          // on-chain truth takes precedence over DB cache
+          amountWei: onChain.amountWei,
+          spentWei: onChain.spentWei,
+          periodMinutes: onChain.resetTimeMinutes || row.periodMinutes,
+          resetAt: onChain.resetAt,
+          lastTxHash: row.lastTxHash,
+          lastUpdatedAt: row.lastUpdatedAt,
+          createdAt: row.createdAt,
+        };
+      }),
     });
   } catch (error) {
     return apiError(error, "Failed to list Safe spending limits");
@@ -134,6 +151,8 @@ export async function POST(
       tokenAddress,
       amountWei,
       periodMinutes,
+      tokenSymbol: body.tokenSymbol,
+      tokenDecimals: body.tokenDecimals,
     });
 
     if (!result.success) {
