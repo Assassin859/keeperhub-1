@@ -335,6 +335,21 @@ export function SpendingLimitsCard({
   };
 
   const tokenCatalog = COMMON_TOKENS[chainId] ?? [];
+  // In "create" mode, a token that already has a limit should NOT appear
+  // in the picker -- the Allowance Module stores one row per (delegate,
+  // token), so selecting an already-limited token silently replaces the
+  // existing limit. Users who want to change an existing limit use the
+  // Edit (pencil) icon instead. Edit mode still shows the row's token so
+  // the Select renders the current selection.
+  const limitedAddresses = new Set(
+    limits.map((l) => l.tokenAddress.toLowerCase())
+  );
+  const availableTokens =
+    dialogMode === "edit"
+      ? tokenCatalog
+      : tokenCatalog.filter(
+          (t) => !limitedAddresses.has(t.address.toLowerCase())
+        );
   const isCustomMode = selectedTokenAddress === CUSTOM_TOKEN_SENTINEL;
   const customDecimalsParsed = Number.parseInt(customDecimals, 10);
   const customToken: CommonToken | undefined = isCustomMode
@@ -511,7 +526,7 @@ export function SpendingLimitsCard({
     return (
       <div className="mt-3 rounded-md border bg-muted/20 p-3">
         <p className="mb-2 text-muted-foreground text-xs">
-          Enable Safe's Allowance Module to set per-token spending limits.
+          Install Safe's Allowance Module to set per-token spending caps.
           Limits appear natively on app.safe.global.
         </p>
         <Button
@@ -672,8 +687,8 @@ export function SpendingLimitsCard({
                 <SelectTrigger id="safe-limit-token">
                   <SelectValue placeholder="Select a token" />
                 </SelectTrigger>
-                <SelectContent>
-                  {tokenCatalog.map((token) => (
+                <SelectContent align="start">
+                  {availableTokens.map((token) => (
                     <SelectItem key={token.address} value={token.address}>
                       {token.symbol} - {truncateAddress(token.address)}
                     </SelectItem>
@@ -760,7 +775,7 @@ export function SpendingLimitsCard({
                 <SelectTrigger id="safe-limit-period">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent align="start">
                   {PERIOD_PRESETS.map((preset) => (
                     <SelectItem
                       key={preset.minutes}
