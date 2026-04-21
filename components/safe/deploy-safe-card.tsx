@@ -150,7 +150,13 @@ function DeployedSafeRow({
             {safe.threshold}/{safe.owners.length} owners - v{safe.safeVersion}
           </div>
         </div>
-        <span className="shrink-0 rounded-full bg-muted/50 px-2 py-0.5 text-muted-foreground text-xs capitalize">
+        <span
+          className={`shrink-0 rounded-full px-2 py-0.5 text-xs capitalize ${
+            safe.status === "deployed"
+              ? "bg-keeperhub-green/10 text-keeperhub-green/80"
+              : "bg-muted/50 text-muted-foreground"
+          }`}
+        >
           {safe.status}
         </span>
       </div>
