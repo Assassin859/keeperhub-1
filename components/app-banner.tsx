@@ -3,10 +3,18 @@
 import { Info, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { isBillingEnabled } from "@/lib/billing/feature-flag";
 
 const STORAGE_KEY = "kh-billing-announce-v1";
 
 export function AppBanner(): React.ReactElement | null {
+  if (!isBillingEnabled()) {
+    return null;
+  }
+  return <BillingBanner />;
+}
+
+function BillingBanner(): React.ReactElement | null {
   const [mounted, setMounted] = useState(false);
   const [dismissed, setDismissed] = useState(true);
 
