@@ -142,10 +142,10 @@ export function ProjectsAndTagsOverlay({
               <div className="space-y-1">
                 {projects.map((project) => (
                   <div
-                    className="flex items-center justify-between rounded-md border px-4 py-3"
+                    className="flex items-center justify-between gap-3 rounded-md border px-4 py-3"
                     key={project.id}
                   >
-                    <div className="flex items-center gap-3">
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
                       <span
                         className="inline-block size-3 shrink-0 rounded-full"
                         style={{
@@ -153,17 +153,19 @@ export function ProjectsAndTagsOverlay({
                             project.color ?? "var(--color-text-muted)",
                         }}
                       />
-                      <div>
-                        <p className="font-medium text-sm">{project.name}</p>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-medium text-sm">
+                          {project.name}
+                        </p>
                         {project.description && (
-                          <p className="text-muted-foreground text-xs">
+                          <p className="break-words text-muted-foreground text-xs">
                             {project.description}
                           </p>
                         )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-muted-foreground text-xs">
+                    <div className="flex shrink-0 items-center gap-3">
+                      <span className="whitespace-nowrap text-muted-foreground text-xs">
                         {project.workflowCount}{" "}
                         {project.workflowCount === 1
                           ? "workflow"
@@ -212,18 +214,18 @@ export function ProjectsAndTagsOverlay({
               <div className="space-y-1">
                 {tags.map((tag) => (
                   <div
-                    className="flex items-center justify-between rounded-md border px-4 py-3"
+                    className="flex items-center justify-between gap-3 rounded-md border px-4 py-3"
                     key={tag.id}
                   >
-                    <div className="flex items-center gap-3">
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
                       <span
                         className="inline-block size-3 shrink-0 rounded-full"
                         style={{ backgroundColor: tag.color }}
                       />
-                      <p className="font-medium text-sm">{tag.name}</p>
+                      <p className="truncate font-medium text-sm">{tag.name}</p>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-muted-foreground text-xs">
+                    <div className="flex shrink-0 items-center gap-3">
+                      <span className="whitespace-nowrap text-muted-foreground text-xs">
                         {tag.workflowCount}{" "}
                         {tag.workflowCount === 1 ? "workflow" : "workflows"}
                       </span>
