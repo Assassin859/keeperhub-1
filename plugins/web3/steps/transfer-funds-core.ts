@@ -21,6 +21,8 @@ import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import { getErrorMessage } from "@/lib/utils";
 import { generateId } from "@/lib/utils/id";
+import { executeNativeTransferAsSafe } from "@/lib/safe/execute-as-safe";
+import { resolveSignerMode } from "@/lib/safe/signer-resolver";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import { formatContractError } from "@/lib/web3/decode-revert-error";
 import { resolveGasLimitOverrides } from "@/lib/web3/gas-defaults";
@@ -155,6 +157,9 @@ export async function transferFundsCore(
     };
   }
 
+  // Decide whether to route this write through the org's Safe on this chain.
+  const signerMode = await resolveSignerMode(organizationId, chainId);
+
   // Get workflow ID for transaction tracking (only for workflow executions)
   let workflowId: string | undefined;
   if (_context.executionId && !_context.organizationId) {
@@ -183,7 +188,9 @@ export async function transferFundsCore(
 
   // KEEP-137: skip sponsorship when routing through a private mempool --
   // ERC-4337 bundlers use their own RPC (Pimlico), which bypasses Flashbots Protect.
-  if (!usePrivateMempool) {
+  // KEEP-177: skip sponsorship in Safe mode -- the 4337 bundler sends from
+  // its own smart account, which would change msg.sender away from the Safe.
+  if (!usePrivateMempool && signerMode.kind === "eoa") {
     // Try gas-sponsored execution first (ERC-4337 via Pimlico)
     try {
       const sponsoredResult = await executeSponsoredTransaction({
@@ -253,15 +260,38 @@ export async function transferFundsCore(
     }
 
     try {
-      const receipt = await adapter.sendTransaction(signer, {
-        to: recipientAddress,
-        value: amountInWei,
-      }, session, {
-        triggerType: txContext.triggerType ?? "manual",
-        gasOverrides: { multiplierOverride, gasLimitOverride },
-        workflowId,
-        rpcManager,
-      });
+      const receipt =
+        signerMode.kind === "safe"
+          ? await executeNativeTransferAsSafe(
+              signer,
+              {
+                safeAddress: signerMode.safeAddress,
+                ownerAddress: signerMode.ownerAddress,
+                to: recipientAddress,
+                amount: amountInWei,
+              },
+              session,
+              {
+                chainId,
+                triggerType: txContext.triggerType ?? "manual",
+                workflowId,
+                rpcManager,
+              }
+            )
+          : await adapter.sendTransaction(
+              signer,
+              {
+                to: recipientAddress,
+                value: amountInWei,
+              },
+              session,
+              {
+                triggerType: txContext.triggerType ?? "manual",
+                gasOverrides: { multiplierOverride, gasLimitOverride },
+                workflowId,
+                rpcManager,
+              }
+            );
 
       const gasUsedUnits = receipt.gasUsed.toString();
       const effectiveGasPrice = receipt.effectiveGasPrice.toString();
