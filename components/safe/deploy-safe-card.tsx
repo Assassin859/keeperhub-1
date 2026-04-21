@@ -3,6 +3,7 @@
 import { ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { SpendingLimitsCard } from "@/components/safe/spending-limits-card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
@@ -167,6 +168,13 @@ export function DeploySafeCard({
                   {safe.status}
                 </span>
               </div>
+              {safe.status === "deployed" && (
+                <SpendingLimitsCard
+                  chainId={safe.chainId}
+                  isAdmin={isAdmin}
+                  safeId={safe.id}
+                />
+              )}
             </li>
           ))}
         </ul>
