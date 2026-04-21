@@ -87,6 +87,145 @@ export type ParaWallet = OrganizationWallet;
 export type NewParaWallet = NewOrganizationWallet;
 
 /**
+ * Safe Wallets table
+ *
+ * One row per (organization, chain). A Safe is a smart-contract wallet
+ * deployed on a specific chain and owned by the organization's active EOA
+ * (Turnkey or Para row in organizationWallets). The Safe itself holds funds;
+ * the EOA signs transactions on its behalf.
+ *
+ * Addresses are deterministic: same (org, chain) always resolves to the
+ * same Safe address via CREATE2 (salt = keccak256(orgId, chainId)).
+ *
+ * Status lifecycle: pending -> deployed | failed
+ */
+export const safeWallets = pgTable(
+  "safe_wallets",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    chainId: integer("chain_id").notNull(),
+    safeAddress: text("safe_address").notNull(),
+    ownerWalletId: text("owner_wallet_id").references(
+      () => organizationWallets.id,
+      { onDelete: "set null" }
+    ),
+    owners: jsonb("owners").notNull().$type<string[]>(),
+    threshold: integer("threshold").notNull(),
+    saltNonce: text("salt_nonce").notNull(),
+    safeVersion: text("safe_version").notNull().default("1.4.1"),
+    singletonAddress: text("singleton_address").notNull(),
+    factoryAddress: text("factory_address").notNull(),
+    deploymentTxHash: text("deployment_tx_hash"),
+    deploymentBlock: integer("deployment_block"),
+    status: text("status").notNull().default("pending"),
+    deployedAt: timestamp("deployed_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("safe_wallets_org_chain_unique").on(
+      table.organizationId,
+      table.chainId
+    ),
+    index("idx_safe_wallets_org").on(table.organizationId),
+  ]
+);
+
+export type SafeWallet = typeof safeWallets.$inferSelect;
+export type NewSafeWallet = typeof safeWallets.$inferInsert;
+
+/**
+ * Safe Module Installations table
+ *
+ * One row per (safe, module_type). Tracks which Safe modules have been
+ * enabled on a given Safe. For the MVP, `module_type` is always "allowance"
+ * (Safe's canonical Allowance Module for per-token spending limits). The
+ * schema supports multiple module types coexisting so we can add Zodiac
+ * Roles, Guards, etc. without breaking changes.
+ *
+ * Status lifecycle: enabled -> disabled
+ */
+export const safeModuleInstallations = pgTable(
+  "safe_module_installations",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    safeWalletId: text("safe_wallet_id")
+      .notNull()
+      .references(() => safeWallets.id, { onDelete: "cascade" }),
+    moduleType: text("module_type").notNull(),
+    moduleAddress: text("module_address").notNull(),
+    installedTxHash: text("installed_tx_hash"),
+    installedAt: timestamp("installed_at"),
+    status: text("status").notNull().default("enabled"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("safe_module_inst_safe_type_unique").on(
+      table.safeWalletId,
+      table.moduleType
+    ),
+    index("idx_safe_module_inst_safe").on(table.safeWalletId),
+  ]
+);
+
+export type SafeModuleInstallation =
+  typeof safeModuleInstallations.$inferSelect;
+export type NewSafeModuleInstallation =
+  typeof safeModuleInstallations.$inferInsert;
+
+/**
+ * Safe Token Limits table
+ *
+ * Per-token on-chain spending caps enforced by the Safe Allowance Module.
+ * One row per (safe, delegate, token). For the MVP the delegate address
+ * matches the Safe's owner (Turnkey EOA). `amount_wei` is stored as text
+ * for uint256 overflow safety; `period_minutes` matches the module's
+ * `resetTimeMin` argument (uint16 range). `reset_at` is cached for display
+ * but authoritative state comes from reading the module on-chain.
+ */
+export const safeTokenLimits = pgTable(
+  "safe_token_limits",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    safeWalletId: text("safe_wallet_id")
+      .notNull()
+      .references(() => safeWallets.id, { onDelete: "cascade" }),
+    moduleType: text("module_type").notNull().default("allowance"),
+    delegateAddress: text("delegate_address").notNull(),
+    tokenAddress: text("token_address").notNull(),
+    tokenSymbol: text("token_symbol").notNull(),
+    tokenDecimals: integer("token_decimals").notNull(),
+    amountWei: text("amount_wei").notNull(),
+    periodMinutes: integer("period_minutes").notNull(),
+    resetAt: timestamp("reset_at"),
+    lastTxHash: text("last_tx_hash"),
+    lastUpdatedAt: timestamp("last_updated_at").notNull().defaultNow(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("safe_token_limits_safe_delegate_token_unique").on(
+      table.safeWalletId,
+      table.delegateAddress,
+      table.tokenAddress
+    ),
+    index("idx_safe_token_limits_safe").on(table.safeWalletId),
+  ]
+);
+
+export type SafeTokenLimit = typeof safeTokenLimits.$inferSelect;
+export type NewSafeTokenLimit = typeof safeTokenLimits.$inferInsert;
+
+/**
  * Key Export Verification Codes table
  *
  * Single-use OTP codes for private key export.
