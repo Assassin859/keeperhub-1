@@ -1084,7 +1084,13 @@ export const PanelInner = () => {
             !selectedNode.data.config?.actionType &&
             isOwner
           ) && (
-            <div className="flex-1 space-y-4 overflow-y-auto p-4">
+            // key forces this subtree to remount when the selected node
+            // changes, resetting local useState in leaf field components so
+            // the previous node's inputs don't leak into the new node's panel.
+            <div
+              className="flex-1 space-y-4 overflow-y-auto p-4"
+              key={selectedNode.id}
+            >
               {selectedNode.data.type === "trigger" && (
                 <TriggerConfig
                   config={selectedNode.data.config || {}}
@@ -1178,15 +1184,17 @@ export const PanelInner = () => {
                         )}
                       </Button>
                     )}
-                    <Button
-                      className="text-muted-foreground"
-                      onClick={() => setShowDeleteNodeAlert(true)}
-                      size="sm"
-                      variant="ghost"
-                    >
-                      <Trash2 className="mr-2 size-4" />
-                      Delete
-                    </Button>
+                    {selectedNode.data.type !== "trigger" && (
+                      <Button
+                        className="text-muted-foreground"
+                        onClick={() => setShowDeleteNodeAlert(true)}
+                        size="sm"
+                        variant="ghost"
+                      >
+                        <Trash2 className="mr-2 size-4" />
+                        Delete
+                      </Button>
+                    )}
                   </div>
                 </div>
               )}

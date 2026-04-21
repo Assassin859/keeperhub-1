@@ -567,7 +567,7 @@ export function ConfirmPlanChangeDialog({
                 )}
                 <span className="text-muted-foreground">
                   {" "}
-                  -- changes take effect immediately with prorated billing.
+                  Changes take effect immediately with prorated billing.
                 </span>
               </p>
 

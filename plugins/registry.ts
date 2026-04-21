@@ -51,6 +51,9 @@ export type ActionConfigFieldBase = {
   // For chain-select: filter by chain type (e.g., "evm" or "solana")
   chainTypeFilter?: string;
 
+  // For chain-select: restrict to specific chain IDs (e.g., ["1", "8453"])
+  allowedChainIds?: string[];
+
   // Placeholder text
   placeholder?: string;
 

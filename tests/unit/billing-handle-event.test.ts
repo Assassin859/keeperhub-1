@@ -66,6 +66,9 @@ function createMockProvider(
     createCustomer: vi.fn(),
     createCheckoutSession: vi.fn(),
     createPortalSession: vi.fn(),
+    getBillingDetails: vi
+      .fn()
+      .mockResolvedValue({ paymentMethod: null, billingEmail: null }),
     verifyWebhook: vi.fn(),
     getSubscriptionDetails: vi.fn().mockResolvedValue({
       priceId: process.env.STRIPE_PRICE_PRO_25K_MONTHLY,

@@ -2,7 +2,7 @@ import { defineProtocol } from "@/lib/protocol-registry";
 
 export default defineProtocol({
   name: "Aave V3",
-  slug: "aave",
+  slug: "aave-v3",
   description:
     "Aave V3 lending and borrowing protocol -- supply, borrow, repay, and monitor account health",
   website: "https://aave.com",

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import {
+  buildPerChainEarnings,
   computeRevenueSplit,
   deriveSettlementStatus,
   formatUsdc,
@@ -138,5 +139,55 @@ describe("groupTopCallers", () => {
   it("returns empty map for empty input", () => {
     const result = groupTopCallers([]);
     expect(result.size).toBe(0);
+  });
+});
+
+describe("buildPerChainEarnings", () => {
+  it("returns zeros for both chains when no rows are present", () => {
+    const result = buildPerChainEarnings([]);
+    expect(result.base).toEqual({
+      grossRevenue: "$0.00 USDC",
+      invocationCount: 0,
+    });
+    expect(result.tempo).toEqual({
+      grossRevenue: "$0.00 USDC",
+      invocationCount: 0,
+    });
+  });
+
+  it("maps base and tempo chain rows into the fixed shape", () => {
+    const result = buildPerChainEarnings([
+      { chain: "base", grossRevenue: "1.50", invocationCount: 15 },
+      { chain: "tempo", grossRevenue: "0.75", invocationCount: 9 },
+    ]);
+    expect(result.base.grossRevenue).toBe("$1.50 USDC");
+    expect(result.base.invocationCount).toBe(15);
+    expect(result.tempo.grossRevenue).toBe("$0.75 USDC");
+    expect(result.tempo.invocationCount).toBe(9);
+  });
+
+  it("leaves the missing chain at zero when only one chain has activity", () => {
+    const result = buildPerChainEarnings([
+      { chain: "base", grossRevenue: "2.00", invocationCount: 20 },
+    ]);
+    expect(result.base.grossRevenue).toBe("$2.00 USDC");
+    expect(result.tempo.grossRevenue).toBe("$0.00 USDC");
+    expect(result.tempo.invocationCount).toBe(0);
+  });
+
+  it("ignores unknown chain values without throwing", () => {
+    const result = buildPerChainEarnings([
+      { chain: "solana", grossRevenue: "99.00", invocationCount: 1 },
+    ]);
+    expect(result.base.grossRevenue).toBe("$0.00 USDC");
+    expect(result.tempo.grossRevenue).toBe("$0.00 USDC");
+  });
+
+  it("treats null grossRevenue as zero", () => {
+    const result = buildPerChainEarnings([
+      { chain: "base", grossRevenue: null, invocationCount: 0 },
+    ]);
+    expect(result.base.grossRevenue).toBe("$0.00 USDC");
+    expect(result.base.invocationCount).toBe(0);
   });
 });

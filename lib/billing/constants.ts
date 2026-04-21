@@ -6,6 +6,7 @@ export const BILLING_API = {
   CHECKOUT: "/api/billing/checkout",
   CANCEL: "/api/billing/cancel",
   USAGE_SUGGESTION: "/api/billing/usage-suggestion",
+  BILLING_DETAILS: "/api/billing/billing-details",
 } as const;
 
 export const BILLING_ALERTS = {

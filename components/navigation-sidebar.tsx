@@ -2,11 +2,12 @@
 
 import {
   BarChart3,
+  Bookmark,
   Check,
   ChevronLeft,
   ChevronRight,
-  CreditCard,
   DollarSign,
+  Github,
   Globe,
   Info,
   List,
@@ -17,6 +18,9 @@ import {
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DiscordIcon } from "@/components/icons/discord-icon";
+import { AddressBookOverlay } from "@/components/overlays/address-book-overlay";
+import { FeedbackOverlay } from "@/components/overlays/feedback-overlay";
+import { useOverlay } from "@/components/overlays/overlay-provider";
 import {
   Tooltip,
   TooltipContent,
@@ -26,8 +30,6 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import type { Project, SavedWorkflow, Tag } from "@/lib/api-client";
 import { api } from "@/lib/api-client";
 import { authClient, useSession } from "@/lib/auth-client";
-import { isBillingEnabled } from "@/lib/billing/feature-flag";
-import { useActiveMember } from "@/lib/hooks/use-organization";
 import type { NavPanelStates } from "@/lib/hooks/use-persisted-nav-state";
 import { usePersistedNavState } from "@/lib/hooks/use-persisted-nav-state";
 import { isAnonymousUser } from "@/lib/is-anonymous";
@@ -404,6 +406,11 @@ function SidebarHeader({
   );
 }
 
+const ACTION_ITEM_IDS: ReadonlySet<string> = new Set([
+  "workflows",
+  "address-book",
+]);
+
 function NavItem({
   item,
   active,
@@ -415,7 +422,7 @@ function NavItem({
   showLabels: boolean;
   onClick: () => void;
 }): React.ReactNode {
-  const disabled = item.href === null && item.id !== "workflows";
+  const disabled = item.href === null && !ACTION_ITEM_IDS.has(item.id);
   const layoutClass = showLabels ? "gap-3 px-2" : "justify-center";
 
   if (disabled) {
@@ -492,18 +499,17 @@ const NAV_ITEMS = [
     href: "/earnings" as string | null,
   },
   {
-    id: "billing",
-    icon: CreditCard,
-    label: "Billing",
-    href: "/billing" as string | null,
+    id: "address-book",
+    icon: Bookmark,
+    label: "Address Book",
+    href: null as string | null,
   },
 ];
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: large component with many panel interactions, further extraction would hurt readability
 export function NavigationSidebar(): React.ReactNode {
   const isMobile = useIsMobile();
   const { data: session } = useSession();
-  const { isOwner } = useActiveMember();
+  const { open: openOverlay } = useOverlay();
   const router = useRouter();
   const pathname = usePathname();
   const params = useParams();
@@ -570,7 +576,6 @@ export function NavigationSidebar(): React.ReactNode {
   const isHubPage = pathname === "/hub";
   const isAnalyticsPage = pathname === "/analytics";
   const isEarningsPage = pathname === "/earnings";
-  const isBillingPage = pathname === "/billing";
 
   const expanded = navState.state.sidebar;
   const setExpanded = navState.setSidebar;
@@ -698,9 +703,6 @@ export function NavigationSidebar(): React.ReactNode {
     if (id === "earnings") {
       return isEarningsPage;
     }
-    if (id === "billing") {
-      return isBillingPage;
-    }
     return false;
   }
 
@@ -755,6 +757,11 @@ export function NavigationSidebar(): React.ReactNode {
       }
       return;
     }
+    if (id === "address-book") {
+      navState.closeAll();
+      openOverlay(AddressBookOverlay);
+      return;
+    }
     navState.closeAll();
     if (href) {
       router.push(href);
@@ -800,8 +807,8 @@ export function NavigationSidebar(): React.ReactNode {
     if (item.id === "earnings") {
       return !isAnonymous;
     }
-    if (item.id === "billing") {
-      return isOwner && isBillingEnabled();
+    if (item.id === "address-book") {
+      return !isAnonymous;
     }
     return true;
   });
@@ -810,7 +817,7 @@ export function NavigationSidebar(): React.ReactNode {
     <>
       <div
         className={cn(
-          "pointer-events-auto fixed top-[60px] bottom-0 left-0 z-40 flex flex-col bg-background",
+          "pointer-events-auto fixed top-[calc(60px+var(--app-banner-height,0px))] bottom-0 left-0 z-40 flex flex-col bg-background",
           dragWidth === null && "transition-[width] duration-200 ease-out"
         )}
         ref={sidebarRef}
@@ -886,6 +893,36 @@ export function NavigationSidebar(): React.ReactNode {
               </Tooltip>
             );
           })}
+          {(() => {
+            const reportButton = (
+              <button
+                aria-label="Report an issue"
+                className={cn(
+                  "flex h-9 w-full items-center rounded-md transition-colors hover:bg-muted",
+                  showLabels ? "gap-3 px-2" : "justify-center"
+                )}
+                data-testid="nav-report-issue"
+                onClick={() => openOverlay(FeedbackOverlay)}
+                type="button"
+              >
+                <Github className="size-4 shrink-0" />
+                {showLabels && (
+                  <span className="truncate text-sm">Report an issue</span>
+                )}
+              </button>
+            );
+
+            if (showLabels) {
+              return reportButton;
+            }
+
+            return (
+              <Tooltip>
+                <TooltipTrigger asChild>{reportButton}</TooltipTrigger>
+                <TooltipContent side="right">Report an issue</TooltipContent>
+              </Tooltip>
+            );
+          })()}
         </div>
 
         {/* Resize handle */}

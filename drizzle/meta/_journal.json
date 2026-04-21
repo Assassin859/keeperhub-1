@@ -358,6 +358,13 @@
       "when": 1776441892552,
       "tag": "0050_curly_gorilla_man",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1776750254755,
+      "tag": "0051_rename_aave_slug_to_v3",
+      "breakpoints": true
     }
   ]
 }

@@ -1803,7 +1803,7 @@ export const WorkflowToolbar = ({
 
   // If persistent mode, use fixed positioning
   const containerClassName = persistent
-    ? "pointer-events-auto fixed top-0 right-0 left-0 z-50 flex items-center justify-between border-b bg-background px-4 py-3"
+    ? "pointer-events-auto fixed top-[var(--app-banner-height,0px)] right-0 left-0 z-50 flex items-center justify-between border-b bg-background px-4 py-3"
     : "";
 
   const leftSectionClassName = persistent

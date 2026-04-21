@@ -52,12 +52,9 @@ export function getButtonLabel(
     return hasSubscription ? "Downgrade to Free" : "Free";
   }
   if (planName === "enterprise") {
-    return "Contact Sales";
+    return "Talk to us";
   }
-  if (hasSubscription) {
-    return "Change Plan";
-  }
-  return "Subscribe";
+  return "Change plan";
 }
 
 export function getExecutionsDisplay(

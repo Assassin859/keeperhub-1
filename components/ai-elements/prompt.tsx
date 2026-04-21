@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api-client";
+import { dedupeEdges } from "@/lib/workflow/edge-helpers";
 import {
   currentWorkflowIdAtom,
   currentWorkflowNameAtom,
@@ -135,9 +136,10 @@ export function AIPrompt({ workflowId, onWorkflowCreated }: AIPromptProps) {
               );
             }
 
-            // Update the canvas incrementally
+            // Update the canvas incrementally. Dedupe in case the AI emitted
+            // duplicate edges (same source/sourceHandle -> target/targetHandle).
             setNodes(partialData.nodes || []);
-            setEdges(validEdges);
+            setEdges(dedupeEdges(validEdges));
             if (partialData.name) {
               setCurrentWorkflowName(partialData.name);
             }
@@ -153,11 +155,14 @@ export function AIPrompt({ workflowId, onWorkflowCreated }: AIPromptProps) {
         console.log("[AI Prompt] Nodes:", workflowData.nodes?.length || 0);
         console.log("[AI Prompt] Edges:", workflowData.edges?.length || 0);
 
-        // Use edges from workflow data with animated type
-        const finalEdges = (workflowData.edges || []).map((edge) => ({
-          ...edge,
-          type: "animated",
-        }));
+        // Use edges from workflow data with animated type; dedupe before
+        // persisting so AI hallucinations don't leak duplicates into the DB.
+        const finalEdges = dedupeEdges(
+          (workflowData.edges || []).map((edge) => ({
+            ...edge,
+            type: "animated",
+          }))
+        );
 
         // Validate: check for blank/incomplete nodes
         console.log("[AI Prompt] Validating nodes:", workflowData.nodes);

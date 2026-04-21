@@ -1,8 +1,12 @@
 "use client";
 
+import { CreditCard, LogIn } from "lucide-react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { useSession } from "@/lib/auth-client";
 import { BILLING_API } from "@/lib/billing/constants";
 import {
   type BillingInterval,
@@ -12,6 +16,7 @@ import {
   type TierKey,
 } from "@/lib/billing/plans";
 import { useOrganization } from "@/lib/hooks/use-organization";
+import { BillingDetails } from "./billing-details";
 import { BillingHistory } from "./billing-history";
 import { BillingStatus } from "./billing-status";
 import { PricingTable } from "./pricing-table";
@@ -26,8 +31,54 @@ type SubscriptionResponse = {
   gasCreditCaps?: GasCreditCapsMap;
 };
 
+function AuthGate({
+  error,
+}: {
+  error: "AUTH_REQUIRED" | "ORG_REQUIRED";
+}): React.ReactElement {
+  const isAuthRequired = error === "AUTH_REQUIRED";
+
+  return (
+    <div
+      className="pointer-events-auto fixed inset-0 overflow-y-auto bg-sidebar"
+      data-page-state="ready"
+      data-testid="billing-page-auth-gate"
+    >
+      <div className="transition-[margin-left] duration-200 ease-out md:ml-[var(--nav-sidebar-width,60px)]">
+        <div className="flex min-h-[80vh] flex-col items-center justify-center gap-6 p-6 text-center">
+          <div className="flex size-20 items-center justify-center rounded-2xl bg-muted">
+            {isAuthRequired ? (
+              <LogIn className="size-10 text-muted-foreground" />
+            ) : (
+              <CreditCard className="size-10 text-muted-foreground" />
+            )}
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-xl font-semibold tracking-tight">
+              {isAuthRequired
+                ? "Sign in to view billing"
+                : "Organization required"}
+            </h2>
+            <p className="max-w-sm text-sm text-muted-foreground">
+              {isAuthRequired
+                ? "Sign in to your account to manage your subscription and view billing history."
+                : "Create or join an organization to manage billing."}
+            </p>
+          </div>
+          {!isAuthRequired && (
+            <Button asChild>
+              <Link href="/">Get Started</Link>
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function BillingPage(): React.ReactElement {
   const searchParams = useSearchParams();
+  const { data: session, isPending: sessionPending } = useSession();
   const { organization } = useOrganization();
   const orgId = organization?.id;
   const [currentPlan, setCurrentPlan] = useState<PlanName>("free");
@@ -39,13 +90,23 @@ export function BillingPage(): React.ReactElement {
   >(undefined);
   const [refreshKey, setRefreshKey] = useState(0);
   const [planLoaded, setPlanLoaded] = useState(false);
+  const isAnonymous = !session?.user || session.user.isAnonymous;
 
   useEffect(() => {
     const checkout = searchParams.get("checkout");
     if (checkout === "success") {
       toast.success("Subscription activated successfully!");
       window.history.replaceState({}, "", window.location.pathname);
-    } else if (checkout === "canceled") {
+      // Heuristic delay: Stripe needs a moment after Checkout to attach the
+      // payment method where getBillingDetails can read it back via the API
+      // cascade. 2s works in practice but is a race, not a guarantee. The
+      // robust fix is to persist payment method details in our DB on the
+      // checkout.session.completed webhook and read from DB instead of
+      // hitting Stripe here.
+      const timer = setTimeout(() => setRefreshKey((k) => k + 1), 2000);
+      return () => clearTimeout(timer);
+    }
+    if (checkout === "canceled") {
       toast.info("Checkout was canceled.");
       window.history.replaceState({}, "", window.location.pathname);
     }
@@ -88,6 +149,20 @@ export function BillingPage(): React.ReactElement {
     setRefreshKey((k) => k + 1);
   }
 
+  if (sessionPending) {
+    return (
+      <div
+        className="pointer-events-auto fixed inset-0 overflow-y-auto bg-sidebar"
+        data-page-state="loading"
+        data-testid="billing-page"
+      />
+    );
+  }
+
+  if (isAnonymous) {
+    return <AuthGate error="AUTH_REQUIRED" />;
+  }
+
   // data-page-state tracks subscription plan fetch only.
   // BillingStatus and BillingHistory have independent async loads.
   return (
@@ -97,7 +172,7 @@ export function BillingPage(): React.ReactElement {
       data-testid="billing-page"
     >
       <div className="transition-[margin-left] duration-200 ease-out md:ml-[var(--nav-sidebar-width,60px)]">
-        <div className="container mx-auto max-w-7xl space-y-8 px-4 py-8 pt-20">
+        <div className="container mx-auto max-w-7xl space-y-8 px-4 py-8 pt-[calc(5rem+var(--app-banner-height,0px))]">
           <div>
             <h1 className="text-2xl font-bold">Billing</h1>
             <p className="text-muted-foreground mt-1">
@@ -107,7 +182,10 @@ export function BillingPage(): React.ReactElement {
 
           <BillingStatus key={`status-${String(refreshKey)}`} />
 
-          <BillingHistory key={`history-${String(refreshKey)}`} />
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-[2fr_1fr]">
+            <BillingHistory key={`history-${String(refreshKey)}`} />
+            <BillingDetails key={`details-${String(refreshKey)}`} />
+          </div>
 
           <div className="border-t border-border/50 pt-8" id="plans-section">
             <h2 className="text-xl font-semibold mb-4">Plans</h2>
@@ -119,6 +197,17 @@ export function BillingPage(): React.ReactElement {
               key={`${currentPlan}-${currentTier ?? "none"}-${currentInterval ?? "none"}-${String(refreshKey)}`}
               onPlanUpdated={handlePlanUpdated}
             />
+          </div>
+
+          <div className="flex justify-center border-t border-border/50 pt-8">
+            <a
+              className="text-muted-foreground text-sm underline-offset-4 hover:text-foreground hover:underline"
+              href="https://keeperhub.com/pricing"
+              rel="noopener"
+              target="_blank"
+            >
+              Pricing FAQ and comparison -&gt;
+            </a>
           </div>
         </div>
       </div>

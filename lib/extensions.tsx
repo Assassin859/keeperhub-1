@@ -88,6 +88,7 @@ registerFieldRenderer(
       <div className="space-y-2" key={field.key}>
         <ProtocolFieldLabel field={field} />
         <ChainSelectField
+          allowedChainIds={field.allowedChainIds}
           chainTypeFilter={field.chainTypeFilter}
           disabled={disabled}
           field={field}

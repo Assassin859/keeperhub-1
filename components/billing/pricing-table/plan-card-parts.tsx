@@ -1,152 +1,180 @@
+"use client";
+
+import { ChevronDown } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CardFooter } from "@/components/ui/card";
-import { SUPPORT_LABELS } from "@/lib/billing/constants";
 import type { BillingInterval, PLANS, PlanName } from "@/lib/billing/plans";
 import { cn } from "@/lib/utils";
 import type { PlanTierItem } from "./types";
-import { formatPrice, getButtonLabel, getExecutionsDisplay } from "./utils";
-
-export function FeatureRow({
-  label,
-  value,
-  highlight = false,
-}: {
-  label: string;
-  value: string;
-  highlight?: boolean;
-}): React.ReactElement {
-  return (
-    <div className="flex items-center justify-between py-1.5 text-sm">
-      <span className="text-muted-foreground">{label}</span>
-      <span
-        className={cn(highlight && "text-keeperhub-green-dark font-medium")}
-      >
-        {value}
-      </span>
-    </div>
-  );
-}
+import { formatPrice, getButtonLabel, getTierPrice } from "./utils";
 
 export function PlanCardBadge({
   isActive,
-  isPopular,
 }: {
   isActive: boolean;
-  isPopular: boolean;
 }): React.ReactElement | null {
-  if (isActive) {
-    return (
-      <div className="absolute top-6 right-3">
-        <Badge className="bg-keeperhub-green-dark text-white border-0 text-xs px-3">
-          ACTIVE
-        </Badge>
-      </div>
-    );
-  }
-  if (!isPopular) {
+  if (!isActive) {
     return null;
   }
   return (
-    <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-      <Badge className="bg-keeperhub-green-dark text-white border-0 text-xs px-3">
-        POPULAR
+    <div className="absolute top-4 right-4">
+      <Badge className="border-0 bg-keeperhub-green-dark text-white text-xs px-2.5">
+        CURRENT
       </Badge>
     </div>
   );
 }
 
-export function PlanCardFeatures({
-  plan,
-  planName,
-  activeTier,
-  gasCreditCentsCap,
+export function PlanHeader({
+  name,
+  price,
+  isEnterprise,
 }: {
-  plan: (typeof PLANS)[PlanName];
-  planName: PlanName;
-  activeTier: PlanTierItem | undefined;
-  gasCreditCentsCap?: number;
+  name: string;
+  price: number | null;
+  isEnterprise: boolean;
 }): React.ReactElement {
-  const isEnterprise = planName === "enterprise";
-  const executionsDisplay = getExecutionsDisplay(planName, activeTier);
-
-  const capCents = gasCreditCentsCap ?? plan.features.gasCreditsCents;
-  const gasCredits = isEnterprise
-    ? `$${(capCents / 100).toFixed(0)}+/mo`
-    : `$${(capCents / 100).toFixed(0)}/mo`;
-
-  const logRetention =
-    plan.features.logRetentionDays >= 365
-      ? "1 year"
-      : `${plan.features.logRetentionDays} days`;
-
   return (
-    <div className="space-y-0.5 border-t border-border/50 pt-3">
-      {executionsDisplay && (
-        <FeatureRow
-          highlight
-          label="Executions"
-          value={`${executionsDisplay}/mo`}
-        />
-      )}
-      <FeatureRow highlight label="Gas credits" value={gasCredits} />
-
-      <div className="border-t border-border/30 my-2" />
-
-      <FeatureRow label="Workflows" value="Unlimited" />
-      <FeatureRow
-        label="Chains"
-        value={isEnterprise ? "All + Custom" : "All"}
-      />
-      <FeatureRow
-        label="Triggers"
-        value={isEnterprise ? "All + Custom" : "All"}
-      />
-      <FeatureRow
-        label="API"
-        value={plan.features.apiAccess === "full" ? "Full" : "Rate-limited"}
-      />
-      <FeatureRow label="Logs" value={logRetention} />
-      <FeatureRow
-        label="Support"
-        value={SUPPORT_LABELS[plan.features.supportLevel] ?? "Community"}
-      />
-      {plan.features.sla && (
-        <FeatureRow label="SLA" value={plan.features.sla} />
-      )}
+    <div className="text-center">
+      <h3 className="mb-3 font-bold text-2xl tracking-tight">{name}</h3>
+      <div>
+        {isEnterprise || price === null ? (
+          <span className="font-bold text-5xl text-keeperhub-green-dark">
+            Custom
+          </span>
+        ) : (
+          <>
+            <span className="font-bold text-5xl text-keeperhub-green-dark">
+              {formatPrice(price)}
+            </span>
+            <span className="text-muted-foreground text-xl ml-1">/mo</span>
+          </>
+        )}
+      </div>
     </div>
   );
 }
 
-export function PriceDisplay({
-  price,
-  annualTotal,
+export function HeroMetrics({
+  executions,
+  gas,
+}: {
+  executions: string;
+  gas: string;
+}): React.ReactElement {
+  return (
+    <div className="mt-3 mb-3 grid grid-cols-2 gap-2 rounded-xl bg-background/60 px-5 py-4">
+      <div className="text-center">
+        <p className="mb-1.5 whitespace-nowrap text-muted-foreground text-xs">
+          Executions /mo
+        </p>
+        <p className="font-bold text-2xl leading-tight">{executions}</p>
+      </div>
+      <div className="text-center">
+        <p className="mb-1.5 whitespace-nowrap text-muted-foreground text-xs">
+          Gas credits /mo
+        </p>
+        <p className="font-bold text-2xl leading-tight">{gas}</p>
+      </div>
+    </div>
+  );
+}
+
+export function TierSelect({
+  options,
+  value,
+  onChange,
   interval,
 }: {
-  price: number | null;
-  annualTotal: number | null;
+  options: PlanTierItem[];
+  value: string;
+  onChange: (key: string) => void;
   interval: BillingInterval;
 }): React.ReactElement {
-  if (price === null) {
-    return (
-      <div>
-        <span className="text-3xl font-bold text-keeperhub-green-dark">
-          {interval === "yearly" ? "$1,999+" : "$2,499+"}
-        </span>
-        <span className="text-muted-foreground text-sm">/mo</span>
-      </div>
-    );
-  }
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    function handleClickOutside(event: MouseEvent): void {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(event.target as Node)
+      ) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return (): void =>
+      document.removeEventListener("mousedown", handleClickOutside);
+  }, [isOpen]);
+
+  const selected = options.find((opt) => opt.key === value) ?? options[0];
+
   return (
-    <div>
-      <span className="text-3xl font-bold text-keeperhub-green-dark">
-        {formatPrice(price)}
-      </span>
-      <span className="text-muted-foreground text-sm">/mo</span>
-      {annualTotal !== null && (
-        <p className="text-muted-foreground text-xs mt-1">
-          {formatPrice(annualTotal)}/year billed annually
-        </p>
+    <div className="relative mb-4" ref={containerRef}>
+      <button
+        aria-expanded={isOpen}
+        aria-haspopup="listbox"
+        className="flex w-full cursor-pointer items-center justify-between rounded-lg border border-border/60 bg-background/60 px-4 py-2.5 text-sm transition-colors hover:border-keeperhub-green-dark/60"
+        onClick={() => setIsOpen((prev) => !prev)}
+        type="button"
+      >
+        <span className="font-medium">
+          {selected.executions.toLocaleString()} executions
+        </span>
+        <ChevronDown
+          className={cn(
+            "size-4 text-muted-foreground transition-transform duration-200",
+            isOpen && "rotate-180"
+          )}
+        />
+      </button>
+
+      {isOpen && (
+        <div
+          className="absolute top-full right-0 left-0 z-20 mt-1 overflow-hidden rounded-lg border border-border/60 bg-popover shadow-xl shadow-black/10"
+          role="listbox"
+        >
+          {options.map((opt) => {
+            const isSelected = opt.key === value;
+            return (
+              <button
+                aria-selected={isSelected}
+                className={cn(
+                  "flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-sm transition-colors",
+                  isSelected
+                    ? "bg-keeperhub-green-dark/10 text-keeperhub-green-dark"
+                    : "text-foreground hover:bg-muted"
+                )}
+                key={opt.key}
+                onClick={() => {
+                  onChange(opt.key);
+                  setIsOpen(false);
+                }}
+                role="option"
+                type="button"
+              >
+                <span className={isSelected ? "font-medium" : ""}>
+                  {opt.executions.toLocaleString()} executions
+                </span>
+                <span
+                  className={
+                    isSelected
+                      ? "text-keeperhub-green-dark"
+                      : "text-muted-foreground"
+                  }
+                >
+                  {formatPrice(getTierPrice(opt, interval))}/mo
+                </span>
+              </button>
+            );
+          })}
+        </div>
       )}
     </div>
   );
@@ -157,7 +185,6 @@ export function PlanCardFooter({
   plan,
   isCurrent,
   loading,
-  isPopular,
   currentPlan,
   hasSubscription,
   onSubscribe,
@@ -166,7 +193,6 @@ export function PlanCardFooter({
   plan: (typeof PLANS)[PlanName];
   isCurrent: boolean;
   loading: boolean;
-  isPopular: boolean;
   currentPlan?: PlanName;
   hasSubscription: boolean;
   onSubscribe: () => void;
@@ -174,33 +200,30 @@ export function PlanCardFooter({
   const isFree = planName === "free";
   const isEnterprise = planName === "enterprise";
 
+  let overageLabel: string | null = null;
+  if (plan.overage.enabled) {
+    overageLabel = `$${plan.overage.ratePerThousand}/1K additional executions`;
+  } else if (isFree) {
+    overageLabel = "No overage. Hard cap at limit.";
+  } else if (isEnterprise) {
+    overageLabel = "Custom overage terms";
+  }
+
   return (
-    <CardFooter className="flex-col gap-3">
-      <div className="w-full text-center">
-        {isFree && (
-          <span className="text-xs text-muted-foreground">No overage</span>
-        )}
-        {plan.overage.enabled && (
-          <Badge className="text-xs" variant="outline">
-            ${plan.overage.ratePerThousand}/1K additional executions
-          </Badge>
-        )}
-        {isEnterprise && (
-          <span className="text-xs text-muted-foreground">Custom pricing</span>
-        )}
-      </div>
+    <CardFooter className="mt-auto flex-col gap-3">
       <Button
-        className={cn(
-          "w-full",
-          isPopular &&
-            "bg-keeperhub-green-dark hover:bg-keeperhub-green-dark/90 text-white"
-        )}
+        className="w-full rounded-full"
         disabled={isCurrent || (isFree && currentPlan === "free") || loading}
         onClick={onSubscribe}
-        variant={isPopular ? "default" : "outline"}
+        variant="outline"
       >
         {getButtonLabel(planName, isCurrent, loading, hasSubscription)}
       </Button>
+      {overageLabel && (
+        <span className="rounded-full border border-border/50 bg-muted/40 px-3 py-1 text-muted-foreground text-xs">
+          {overageLabel}
+        </span>
+      )}
     </CardFooter>
   );
 }

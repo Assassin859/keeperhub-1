@@ -50,13 +50,13 @@ target "app" {
     NEXT_PUBLIC_BILLING_ENABLED  = NEXT_PUBLIC_BILLING_ENABLED
     NEXT_PUBLIC_SENTRY_DSN       = NEXT_PUBLIC_SENTRY_DSN
   }
-  tags = compact([
+  tags = ECR_REGISTRY != "" ? compact([
     "${ECR_REGISTRY}/${ECR_REPO}:app-${IMAGE_TAG}",
     "${ECR_REGISTRY}/${ECR_REPO}:app-latest",
     ENVIRONMENT_TAG != "" ? "${ECR_REGISTRY}/${ECR_REPO}:${ENVIRONMENT_TAG}" : "",
-  ])
-  cache-from = ["type=registry,ref=${ECR_REGISTRY}/${ECR_REPO}:cache-app"]
-  cache-to   = ["type=registry,ref=${ECR_REGISTRY}/${ECR_REPO}:cache-app,mode=max"]
+  ]) : []
+  cache-from = ECR_REGISTRY != "" ? ["type=registry,ref=${ECR_REGISTRY}/${ECR_REPO}:cache-app"] : []
+  cache-to   = ECR_REGISTRY != "" ? ["type=registry,ref=${ECR_REGISTRY}/${ECR_REPO}:cache-app,mode=max"] : []
 }
 
 target "sentry-upload" {

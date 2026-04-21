@@ -4,6 +4,7 @@ import { Analytics } from "@vercel/analytics/react";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import { Provider } from "jotai";
 import { type ReactNode, Suspense } from "react";
+import { AppBanner } from "@/components/app-banner";
 import { AuthProvider } from "@/components/auth/provider";
 import { KeeperHubExtensionLoader } from "@/components/extension-loader";
 import { GitHubStarsLoader } from "@/components/github-stars-loader";
@@ -76,6 +77,7 @@ const RootLayout = ({ children }: RootLayoutProps) => (
               <Suspense fallback={<GitHubStarsProvider stars={null} />}>
                 <GitHubStarsLoader />
               </Suspense>
+              <AppBanner />
               <LayoutContent>{children}</LayoutContent>
               <Toaster />
               <GlobalModals />

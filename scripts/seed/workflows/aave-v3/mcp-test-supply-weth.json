@@ -1,5 +1,5 @@
 {
-  "protocol": "aave",
+  "protocol": "aave-v3",
   "network": "1",
   "networkName": "mainnet",
   "type": "write",
@@ -42,7 +42,7 @@
         "label": "Supply WETH to Aave",
         "type": "action",
         "config": {
-          "actionType": "aave/supply",
+          "actionType": "aave-v3/supply",
           "network": "1",
           "asset": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
           "amount": "3000000000000000",

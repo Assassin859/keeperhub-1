@@ -265,7 +265,7 @@ Returns distinct categories and protocols from all public workflows. Useful for 
 ```json
 {
   "categories": ["defi", "nft"],
-  "protocols": ["uniswap", "aave"]
+  "protocols": ["uniswap", "aave-v3"]
 }
 ```
 

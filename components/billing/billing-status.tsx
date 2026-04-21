@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BILLING_ALERTS, BILLING_API } from "@/lib/billing/constants";
-import { PLANS, type PlanName, type TierKey } from "@/lib/billing/plans";
+import { PLANS, type PlanName } from "@/lib/billing/plans";
 
 type OverageCharge = {
   periodStart: string;
@@ -371,13 +371,13 @@ function ExecutionUsageBar({
   const overageRate = PLANS[plan].overage.ratePerThousand;
 
   function resolveBarColor(): string {
-    if (isOverLimit) {
-      return hasOverage ? "bg-muted-foreground" : "bg-destructive";
+    if (isOverLimit && !hasOverage) {
+      return "bg-destructive";
     }
-    if (isNearLimit) {
+    if (isNearLimit && !isOverLimit) {
       return "bg-yellow-500";
     }
-    return "bg-keeperhub-green";
+    return "bg-keeperhub-green-dark";
   }
   const barColor = resolveBarColor();
 
@@ -393,7 +393,7 @@ function ExecutionUsageBar({
         </span>
       </div>
       {!(isUnlimited || isOverLimit) && (
-        <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+        <div className="h-2 w-full overflow-hidden rounded-full bg-keeperhub-green-dark/15">
           <div
             className={`h-full rounded-full transition-all ${barColor}`}
             style={{ width: `${percent}%` }}
@@ -402,14 +402,14 @@ function ExecutionUsageBar({
       )}
       {!isUnlimited && isOverLimit && (
         <div className="flex h-2 w-full gap-0.5">
-          <div className="h-full flex-1 overflow-hidden rounded-l-full bg-muted">
-            <div className="h-full w-full rounded-l-full bg-muted-foreground" />
+          <div className="h-full flex-1 overflow-hidden rounded-l-full bg-keeperhub-green-dark/15">
+            <div className="h-full w-full rounded-l-full bg-keeperhub-green-dark" />
           </div>
           <div
-            className="h-full overflow-hidden rounded-r-full bg-muted"
+            className="h-full overflow-hidden rounded-r-full bg-keeperhub-green-dark/15"
             style={{ width: `${Math.min((overageCount / limit) * 100, 50)}%` }}
           >
-            <div className="h-full w-full rounded-r-full bg-destructive/50 transition-all" />
+            <div className="h-full w-full rounded-r-full bg-yellow-500 transition-all" />
           </div>
         </div>
       )}
@@ -456,7 +456,7 @@ function GasCreditsBar({
     if (isNearLimit) {
       return "bg-yellow-500";
     }
-    return "bg-keeperhub-green";
+    return "bg-keeperhub-green-dark";
   }
   const barColor = resolveBarColor();
 
@@ -469,7 +469,7 @@ function GasCreditsBar({
           {(gasCredits.totalCents / 100).toFixed(2)}
         </span>
       </div>
-      <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+      <div className="h-2 w-full overflow-hidden rounded-full bg-keeperhub-green-dark/15">
         <div
           className={`h-full rounded-full transition-all ${barColor}`}
           style={{ width: `${percent}%` }}
@@ -582,8 +582,6 @@ function BillingStatusContent({
 }): React.ReactElement {
   const plan = (sub?.plan ?? "free") as PlanName;
   const planDef = PLANS[plan];
-  const tier = sub?.tier as TierKey | null;
-  const activeTier = tier ? planDef.tiers.find((t) => t.key === tier) : null;
   const statusVariant = STATUS_VARIANT[sub?.status ?? "active"] ?? "outline";
 
   const renewalMessage = getRenewalMessage(
@@ -607,14 +605,14 @@ function BillingStatusContent({
         <UpgradeSuggestionBanner suggestion={suggestion} />
       )}
 
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <span className="text-2xl font-bold">{planDef.name}</span>
-        {activeTier && (
-          <Badge variant="outline">
-            {activeTier.executions.toLocaleString()} executions
-          </Badge>
-        )}
         <Badge variant={statusVariant}>{sub?.status ?? "active"}</Badge>
+        {renewalMessage && (
+          <p className={`text-sm ${renewalMessage.className}`}>
+            {renewalMessage.text}
+          </p>
+        )}
       </div>
 
       {usage && (
@@ -628,12 +626,6 @@ function BillingStatusContent({
       {gasCredits && <GasCreditsBar gasCredits={gasCredits} />}
 
       <OverageChargesSection charges={overageCharges} />
-
-      {renewalMessage && (
-        <p className={`text-sm ${renewalMessage.className}`}>
-          {renewalMessage.text}
-        </p>
-      )}
     </CardContent>
   );
 }

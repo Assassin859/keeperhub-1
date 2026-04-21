@@ -1,31 +1,27 @@
 "use client";
 
 import {
-  Bookmark,
-  FolderOpen,
-  Github,
+  CreditCard,
+  FolderTree,
   Key,
   LogOut,
   Plug,
   Settings,
-  Tag,
   Users,
   Wallet,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import {
   AuthDialog,
   isSingleProviderSignInInitiated,
 } from "@/components/auth/dialog";
 import { ManageOrgsModal } from "@/components/organization/manage-orgs-modal";
-import { AddressBookOverlay } from "@/components/overlays/address-book-overlay";
 import { ApiKeysOverlay } from "@/components/overlays/api-keys-overlay";
-import { FeedbackOverlay } from "@/components/overlays/feedback-overlay";
 import { IntegrationsOverlay } from "@/components/overlays/integrations-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
-import { ProjectsOverlay } from "@/components/overlays/projects-overlay";
+import { ProjectsAndTagsOverlay } from "@/components/overlays/projects-and-tags-overlay";
 import { SettingsOverlay } from "@/components/overlays/settings-overlay";
-import { TagsOverlay } from "@/components/overlays/tags-overlay";
 import { WalletOverlay } from "@/components/overlays/wallet-overlay";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -38,13 +34,17 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { signOut, useSession } from "@/lib/auth-client";
-import { useOrganization } from "@/lib/hooks/use-organization";
+import { isBillingEnabled } from "@/lib/billing/feature-flag";
+import { useActiveMember, useOrganization } from "@/lib/hooks/use-organization";
 
-export const UserMenu = () => {
+export const UserMenu = (): React.ReactElement => {
   const { data: session, isPending } = useSession();
   const { open: openOverlay } = useOverlay();
   const [orgModalOpen, setOrgModalOpen] = useState(false);
   const { organization } = useOrganization();
+  const { isOwner } = useActiveMember();
+  const router = useRouter();
+  const showBilling = isOwner && isBillingEnabled();
 
   const handleLogout = async () => {
     await signOut();
@@ -144,9 +144,9 @@ export const UserMenu = () => {
             </DropdownMenuItem>
             <DropdownMenuSeparator />
           </div>
-          <DropdownMenuItem onClick={() => openOverlay(FeedbackOverlay)}>
-            <Github className="size-4" />
-            <span>Report an issue</span>
+          <DropdownMenuItem onClick={() => openOverlay(WalletOverlay)}>
+            <Wallet className="size-4" />
+            <span>Wallet</span>
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => openOverlay(SettingsOverlay)}>
             <Settings className="size-4" />
@@ -160,21 +160,15 @@ export const UserMenu = () => {
             <Key className="size-4" />
             <span>API Keys</span>
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => openOverlay(WalletOverlay)}>
-            <Wallet className="size-4" />
-            <span>Wallet</span>
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => openOverlay(AddressBookOverlay)}>
-            <Bookmark className="size-4" />
-            <span>Address Book</span>
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => openOverlay(ProjectsOverlay)}>
-            <FolderOpen className="size-4" />
-            <span>Projects</span>
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => openOverlay(TagsOverlay)}>
-            <Tag className="size-4" />
-            <span>Tags</span>
+          {showBilling && (
+            <DropdownMenuItem onClick={() => router.push("/billing")}>
+              <CreditCard className="size-4" />
+              <span>Billing</span>
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem onClick={() => openOverlay(ProjectsAndTagsOverlay)}>
+            <FolderTree className="size-4" />
+            <span>Projects and Tags</span>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={handleLogout}>

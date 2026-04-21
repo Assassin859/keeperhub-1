@@ -614,7 +614,7 @@ EVM chains with Etherscan-compatible explorer configs (safe for seed workflows):
 - "11155111" -- Sepolia Testnet (Etherscan Sepolia)
 
 Non-EVM / Blockscout chains with explorer configs (NOT safe for protocol seed workflows -- different API format):
-- "42420" -- Tempo (Blockscout)
+- "4217" -- Tempo (Blockscout)
 - "42429" -- Tempo Testnet (Blockscout)
 - "101" -- Solana (Solscan)
 - "103" -- Solana Devnet (Solscan)

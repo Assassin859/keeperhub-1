@@ -1,5 +1,5 @@
 {
-  "protocol": "aave",
+  "protocol": "aave-v3",
   "network": "1",
   "networkName": "mainnet",
   "type": "read",
@@ -26,7 +26,7 @@
         "description": "Get overall account health for a known Aave user",
         "type": "action",
         "config": {
-          "actionType": "aave/get-user-account-data",
+          "actionType": "aave-v3/get-user-account-data",
           "network": "1",
           "user": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
         },
@@ -42,7 +42,7 @@
         "description": "Get per-asset position data for DAI",
         "type": "action",
         "config": {
-          "actionType": "aave/get-user-reserve-data",
+          "actionType": "aave-v3/get-user-reserve-data",
           "network": "1",
           "asset": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
           "user": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"

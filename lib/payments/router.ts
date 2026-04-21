@@ -41,6 +41,8 @@ type Dual402Params = {
   workflowName: string;
   resourceUrl: string;
   inputSchema?: Record<string, unknown> | null;
+  category?: string | null;
+  tagName?: string | null;
 };
 
 type PaymentRequiredV2 = {
@@ -81,6 +83,8 @@ function buildPaymentRequired(params: Dual402Params): PaymentRequiredV2 {
     workflowName,
     resourceUrl,
     inputSchema,
+    category,
+    tagName,
   } = params;
   const amountSmallestUnit = String(
     Math.round(Number(price) * 10 ** USDC_DECIMALS)
@@ -106,18 +110,24 @@ function buildPaymentRequired(params: Dual402Params): PaymentRequiredV2 {
     ],
   };
 
+  // CDP Bazaar discovery: `discoverable: true` opts the resource into the
+  // marketplace index. The schema subtree feeds agentcash / x402scan probers.
+  const bazaar: Record<string, unknown> = { discoverable: true };
+  if (category) {
+    bazaar.category = category;
+  }
+  if (tagName) {
+    bazaar.tags = [tagName];
+  }
   if (inputSchema) {
-    payload.extensions = {
-      bazaar: {
-        schema: {
-          properties: {
-            input: { properties: { body: inputSchema } },
-            output: { properties: { example: WORKFLOW_OUTPUT_EXAMPLE } },
-          },
-        },
+    bazaar.schema = {
+      properties: {
+        input: { properties: { body: inputSchema } },
+        output: { properties: { example: WORKFLOW_OUTPUT_EXAMPLE } },
       },
     };
   }
+  payload.extensions = { bazaar };
 
   return payload;
 }
@@ -362,14 +372,24 @@ export function gatePayment(
     return handleMpp(request, workflow, creatorWalletAddress, createHandler);
   }
 
-  // No payment header -- return dual 402 challenge
+  // No payment header -- return dual 402 challenge.
+  // Resource URL must use the public hostname (not request.url, which can be
+  // the internal pod bind `0.0.0.0:3000` inside K8s) or the CDP Bazaar
+  // crawler and any other caller will fail to resolve the endpoint.
+  const publicHost =
+    process.env.NEXT_PUBLIC_APP_URL ?? "https://app.keeperhub.com";
+  const resourceUrl = workflow.listedSlug
+    ? `${publicHost}/api/mcp/workflows/${workflow.listedSlug}/call`
+    : request.url;
   return Promise.resolve(
     buildDual402Response({
       price: workflow.priceUsdcPerCall ?? "0",
       creatorWalletAddress,
       workflowName: workflow.name,
-      resourceUrl: request.url,
+      resourceUrl,
       inputSchema: workflow.inputSchema,
+      category: workflow.category,
+      tagName: workflow.tagName,
     }) as NextResponse
   );
 }

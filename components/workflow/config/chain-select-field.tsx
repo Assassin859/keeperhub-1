@@ -49,6 +49,11 @@ type ChainSelectFieldProps = {
    * keys (used to set usePrivateMempool alongside network).
    */
   onUpdateConfig?: (key: string, value: unknown) => void;
+  /**
+   * Restrict to specific chain IDs (e.g., ["1", "8453"]).
+   * Used by protocol actions to show only chains where the contract is deployed.
+   */
+  allowedChainIds?: string[];
 };
 
 /**
@@ -75,6 +80,7 @@ export function ChainSelectField({
   chainTypeFilter,
   showPrivateVariants,
   onUpdateConfig,
+  allowedChainIds,
 }: ChainSelectFieldProps) {
   const [chains, setChains] = useState<Chain[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -93,10 +99,16 @@ export function ChainSelectField({
 
         const data = (await response.json()) as Chain[];
 
-        // Filter by chain type if specified
-        const filteredChains = chainTypeFilter
+        let filteredChains = chainTypeFilter
           ? data.filter((chain) => chain.chainType === chainTypeFilter)
           : data;
+
+        if (allowedChainIds && allowedChainIds.length > 0) {
+          const allowed = new Set(allowedChainIds);
+          filteredChains = filteredChains.filter((chain) =>
+            allowed.has(String(chain.chainId))
+          );
+        }
 
         setChains(filteredChains);
       } catch (err) {
@@ -107,7 +119,7 @@ export function ChainSelectField({
     }
 
     fetchChains();
-  }, [chainTypeFilter]);
+  }, [chainTypeFilter, allowedChainIds]);
 
   if (isLoading) {
     return (

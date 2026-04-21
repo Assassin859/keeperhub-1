@@ -70,7 +70,7 @@ The API also supports protocol-level featuring (e.g. featured workflows on a pro
 ```json
 {
   "workflowId": "<id>",
-  "featuredProtocol": "aave",
+  "featuredProtocol": "aave-v3",
   "featuredProtocolOrder": 1
 }
 ```

@@ -144,12 +144,6 @@ export function WorkflowContextMenu({
     return null;
   }
 
-  // Check if the node is a trigger (can't be deleted)
-  const isTriggerNode = Boolean(
-    menuState.nodeId &&
-      nodes.find((n) => n.id === menuState.nodeId)?.data.type === "trigger"
-  );
-
   const getNodeLabel = () => {
     if (!menuState.nodeId) {
       return "Step";
@@ -169,7 +163,6 @@ export function WorkflowContextMenu({
     >
       {menuState.type === "node" && (
         <MenuItem
-          disabled={isTriggerNode}
           icon={<Trash2 className="size-4" />}
           label={`Delete ${getNodeLabel()}`}
           onClick={handleDeleteNode}
@@ -239,6 +232,10 @@ export function useContextMenuHandlers(
   const onNodeContextMenu = useCallback(
     (event: React.MouseEvent, node: Node) => {
       event.preventDefault();
+      const data = node.data as WorkflowNode["data"] | undefined;
+      if (data?.type === "trigger") {
+        return;
+      }
       setMenuState({
         type: "node",
         position: { x: event.clientX, y: event.clientY },

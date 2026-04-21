@@ -2,14 +2,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/stripe", () => ({
   stripe: {
-    customers: { create: vi.fn() },
+    customers: { create: vi.fn(), retrieve: vi.fn() },
     checkout: { sessions: { create: vi.fn() } },
     billingPortal: { sessions: { create: vi.fn() } },
     webhooks: { constructEvent: vi.fn() },
     invoiceItems: { create: vi.fn() },
     invoices: { list: vi.fn(), createPreview: vi.fn() },
-    subscriptions: { retrieve: vi.fn(), update: vi.fn() },
+    subscriptions: { retrieve: vi.fn(), update: vi.fn(), list: vi.fn() },
     prices: { retrieve: vi.fn() },
+    paymentMethods: { list: vi.fn() },
   },
 }));
 
@@ -774,6 +775,145 @@ describe("StripeBillingProvider", () => {
       const callArgs = vi.mocked(s.invoiceItems.create).mock
         .calls[0][0] as Record<string, unknown>;
       expect(callArgs.metadata).toBeUndefined();
+    });
+  });
+
+  describe("getBillingDetails", () => {
+    const customerBase = {
+      id: "cus_1",
+      deleted: false,
+      email: "user@test.com",
+      invoice_settings: { default_payment_method: null },
+    };
+
+    function makeCard(last4: string): Record<string, unknown> {
+      return {
+        id: `pm_${last4}`,
+        type: "card",
+        card: {
+          brand: "visa",
+          last4,
+          exp_month: 12,
+          exp_year: 2030,
+        },
+      };
+    }
+
+    type CustomerResponse = Awaited<ReturnType<typeof s.customers.retrieve>>;
+    type SubsListResponse = Awaited<ReturnType<typeof s.subscriptions.list>>;
+    type PMListResponse = Awaited<ReturnType<typeof s.paymentMethods.list>>;
+
+    it("tier 1: returns the customer's default payment method", async () => {
+      vi.mocked(s.customers.retrieve).mockResolvedValue({
+        ...customerBase,
+        invoice_settings: { default_payment_method: makeCard("1111") },
+      } as unknown as CustomerResponse);
+
+      const result = await provider.getBillingDetails("cus_1");
+
+      expect(result).toEqual({
+        paymentMethod: {
+          brand: "visa",
+          last4: "1111",
+          expMonth: 12,
+          expYear: 2030,
+        },
+        billingEmail: "user@test.com",
+      });
+      expect(s.subscriptions.list).not.toHaveBeenCalled();
+      expect(s.paymentMethods.list).not.toHaveBeenCalled();
+    });
+
+    it("tier 2: returns the active subscription's default PM when customer has none", async () => {
+      vi.mocked(s.customers.retrieve).mockResolvedValue(
+        customerBase as unknown as CustomerResponse
+      );
+      vi.mocked(s.subscriptions.list).mockResolvedValueOnce({
+        data: [{ default_payment_method: makeCard("2222") }],
+      } as unknown as SubsListResponse);
+
+      const result = await provider.getBillingDetails("cus_1");
+
+      expect(result.paymentMethod?.last4).toBe("2222");
+      expect(s.subscriptions.list).toHaveBeenCalledTimes(1);
+      expect(s.subscriptions.list).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "active" })
+      );
+      expect(s.paymentMethods.list).not.toHaveBeenCalled();
+    });
+
+    it("tier 2 fallback: queries status=all only when the active list is empty", async () => {
+      vi.mocked(s.customers.retrieve).mockResolvedValue(
+        customerBase as unknown as CustomerResponse
+      );
+      vi.mocked(s.subscriptions.list)
+        .mockResolvedValueOnce({ data: [] } as unknown as SubsListResponse)
+        .mockResolvedValueOnce({
+          data: [{ default_payment_method: makeCard("3333") }],
+        } as unknown as SubsListResponse);
+
+      const result = await provider.getBillingDetails("cus_1");
+
+      expect(result.paymentMethod?.last4).toBe("3333");
+      expect(s.subscriptions.list).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(s.subscriptions.list).mock.calls[0][0]).toMatchObject({
+        status: "active",
+      });
+      expect(vi.mocked(s.subscriptions.list).mock.calls[1][0]).toMatchObject({
+        status: "all",
+      });
+      expect(s.paymentMethods.list).not.toHaveBeenCalled();
+    });
+
+    it("tier 3: falls back to paymentMethods.list when no subscription has a PM", async () => {
+      vi.mocked(s.customers.retrieve).mockResolvedValue(
+        customerBase as unknown as CustomerResponse
+      );
+      vi.mocked(s.subscriptions.list).mockResolvedValue({
+        data: [],
+      } as unknown as SubsListResponse);
+      vi.mocked(s.paymentMethods.list).mockResolvedValue({
+        data: [makeCard("4444")],
+      } as unknown as PMListResponse);
+
+      const result = await provider.getBillingDetails("cus_1");
+
+      expect(result.paymentMethod?.last4).toBe("4444");
+      expect(s.paymentMethods.list).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "card", limit: 1 })
+      );
+    });
+
+    it("returns null paymentMethod when no card is found anywhere", async () => {
+      vi.mocked(s.customers.retrieve).mockResolvedValue(
+        customerBase as unknown as CustomerResponse
+      );
+      vi.mocked(s.subscriptions.list).mockResolvedValue({
+        data: [],
+      } as unknown as SubsListResponse);
+      vi.mocked(s.paymentMethods.list).mockResolvedValue({
+        data: [],
+      } as unknown as PMListResponse);
+
+      const result = await provider.getBillingDetails("cus_1");
+
+      expect(result).toEqual({
+        paymentMethod: null,
+        billingEmail: "user@test.com",
+      });
+    });
+
+    it("returns both nulls for a deleted customer and skips the cascade", async () => {
+      vi.mocked(s.customers.retrieve).mockResolvedValue({
+        id: "cus_1",
+        deleted: true,
+      } as unknown as CustomerResponse);
+
+      const result = await provider.getBillingDetails("cus_1");
+
+      expect(result).toEqual({ paymentMethod: null, billingEmail: null });
+      expect(s.subscriptions.list).not.toHaveBeenCalled();
+      expect(s.paymentMethods.list).not.toHaveBeenCalled();
     });
   });
 });

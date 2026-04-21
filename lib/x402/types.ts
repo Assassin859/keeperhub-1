@@ -4,6 +4,7 @@ import { workflows } from "@/lib/db/schema";
  * Exact columns the call route needs from the workflows table.
  * priceUsdcPerCall returns string | null from Drizzle (numeric column).
  * nodes and edges are needed for execution; userId for creating the execution record.
+ * category/tagId feed the x402 Bazaar extensions for marketplace discovery.
  */
 export type CallRouteWorkflow = {
   id: string;
@@ -19,6 +20,8 @@ export type CallRouteWorkflow = {
   nodes: unknown[];
   edges: unknown[];
   userId: string;
+  category: string | null;
+  tagName: string | null;
 };
 
 /**
@@ -40,4 +43,5 @@ export const CALL_ROUTE_COLUMNS = {
   nodes: workflows.nodes,
   edges: workflows.edges,
   userId: workflows.userId,
+  category: workflows.category,
 } as const;

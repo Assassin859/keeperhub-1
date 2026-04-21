@@ -36,7 +36,7 @@ Read the protocol definition file:
 protocols/$ARGUMENTS.ts
 ```
 
-If it does not exist, check alternate names (e.g., `aave-v3.ts` for `aave`, `compound-v3.ts` for `compound`, `uniswap-v3.ts` for `uniswap`, `yearn-v3.ts` for `yearn`).
+If it does not exist, check alternate names (e.g., `compound-v3.ts` for `compound`, `uniswap-v3.ts` for `uniswap`, `yearn-v3.ts` for `yearn`). Aave versions use explicit slugs: `aave-v3.ts` has slug `aave-v3`, `aave-v4.ts` has slug `aave-v4`.
 
 Extract:
 - Protocol name, slug, and description
@@ -132,7 +132,7 @@ Save tested workflow configurations to `scripts/seed/workflows/$ARGUMENTS/` for 
 
 After write tests, create and execute withdrawal workflows to recover deposited funds:
 - `vault-withdraw` / `vault-redeem` for ERC-4626 vaults
-- Protocol-specific withdraw actions (e.g., `aave/withdraw`, `compound/withdraw`)
+- Protocol-specific withdraw actions (e.g., `aave-v3/withdraw`, `compound/withdraw`)
 - Run withdrawals **sequentially** (same nonce contention concern)
 
 Verify final balances match expectations.

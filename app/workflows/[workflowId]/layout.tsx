@@ -74,5 +74,13 @@ export async function generateMetadata({
 }
 
 export default function WorkflowLayout({ children }: WorkflowLayoutProps) {
-  return children;
+  // Opt out of in-browser auto-translation (Google Translate, Edge, etc.) on
+  // the editor. Translators replace text nodes with <font> wrappers, which
+  // breaks React's reconciler and throws NotFoundError on insertBefore /
+  // removeChild. Marketing / hub pages remain translatable.
+  return (
+    <div className="contents" translate="no">
+      {children}
+    </div>
+  );
 }

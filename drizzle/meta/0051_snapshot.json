@@ -1,6 +1,6 @@
 {
-  "id": "ef803367-2686-4d5a-9ecb-fa6f7ba3cfb2",
-  "prevId": "a9b21ef3-5400-418a-a731-71b47718eb14",
+  "id": "d0f93421-e64d-4982-9b9f-61c75c83e53e",
+  "prevId": "4d96b65e-dc8d-4755-856d-f8cf15412118",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2559,6 +2559,13 @@
           "primaryKey": false,
           "notNull": false
         },
+        "is_active": {
+          "name": "is_active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp",
@@ -2567,7 +2574,24 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "para_wallets_org_active_unique": {
+          "name": "para_wallets_org_active_unique",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"para_wallets\".\"is_active\" = true",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "para_wallets_user_id_users_id_fk": {
           "name": "para_wallets_user_id_users_id_fk",
@@ -2597,15 +2621,7 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "para_wallets_organization_id_unique": {
-          "name": "para_wallets_organization_id_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "organization_id"
-          ]
-        }
-      },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false

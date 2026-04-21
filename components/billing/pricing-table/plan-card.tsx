@@ -2,15 +2,7 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { CONTACT_EMAIL } from "@/lib/billing/constants";
+import { Card, CardContent } from "@/components/ui/card";
 import type {
   BillingInterval,
   PLANS,
@@ -20,17 +12,16 @@ import type {
 import { cn } from "@/lib/utils";
 import { ConfirmPlanChangeDialog } from "../confirm-plan-change-dialog";
 import {
+  HeroMetrics,
   PlanCardBadge,
-  PlanCardFeatures,
   PlanCardFooter,
-  PriceDisplay,
+  PlanHeader,
+  TierSelect,
 } from "./plan-card-parts";
 import type { GasCreditCapsMap } from "./types";
 import {
   cancelSubscription,
   computeDisplayPrice,
-  formatPrice,
-  getTierPrice,
   isCurrentPlan,
   resolveExecutions,
   startCheckout,
@@ -44,7 +35,6 @@ export function PlanCard({
   currentTier,
   currentInterval,
   gasCreditCaps,
-  isPopular = false,
   onPlanUpdated,
 }: {
   plan: (typeof PLANS)[PlanName];
@@ -54,7 +44,6 @@ export function PlanCard({
   currentTier?: TierKey | null;
   currentInterval?: BillingInterval | null;
   gasCreditCaps?: GasCreditCapsMap;
-  isPopular?: boolean;
   onPlanUpdated?: () => Promise<void>;
 }): React.ReactElement {
   const [selectedTier, setSelectedTier] = useState<TierKey | null>(
@@ -64,9 +53,10 @@ export function PlanCard({
   );
   const [loading, setLoading] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [selectOpen, setSelectOpen] = useState(false);
 
   const hasSubscription = currentPlan !== undefined && currentPlan !== "free";
+  const isEnterprise = planName === "enterprise";
+  const isFree = planName === "free";
 
   const isCurrent = isCurrentPlan(
     planName,
@@ -80,15 +70,28 @@ export function PlanCard({
   const activeTier = plan.tiers.find((t) => t.key === selectedTier);
   const price = computeDisplayPrice(planName, activeTier, interval);
 
-  const annualTotal =
-    activeTier && interval === "yearly"
-      ? activeTier.monthlyPriceAnnual * 12
-      : null;
+  const capCents = gasCreditCaps?.[planName] ?? plan.features.gasCreditsCents;
+  const gasDisplay = isEnterprise
+    ? "Custom"
+    : `$${(capCents / 100).toFixed(0)}`;
+
+  const executionsDisplay = (() => {
+    if (isEnterprise) {
+      return "Custom";
+    }
+    if (isFree) {
+      return plan.features.maxExecutionsPerMonth.toLocaleString();
+    }
+    if (activeTier) {
+      return activeTier.executions.toLocaleString();
+    }
+    return "-";
+  })();
 
   async function executeCheckout(): Promise<void> {
     setLoading(true);
     try {
-      if (planName === "free") {
+      if (isFree) {
         const result = await cancelSubscription();
         if (!result.success) {
           return;
@@ -122,35 +125,30 @@ export function PlanCard({
   }
 
   function handleSubscribe(): void {
-    if (planName === "enterprise") {
+    if (isEnterprise) {
       window.open(
-        `mailto:${CONTACT_EMAIL}?subject=Enterprise%20Plan`,
+        "mailto:human@keeperhub.com?subject=Enterprise%20Plan",
         "_blank",
         "noopener"
       );
       return;
     }
-
     if (isCurrent) {
       return;
     }
-
-    if (planName === "free" && hasSubscription) {
+    if (isFree && hasSubscription) {
       setConfirmOpen(true);
       return;
     }
-
-    if (planName === "free") {
+    if (isFree) {
       return;
     }
-
     if (hasSubscription) {
       setConfirmOpen(true);
       return;
     }
-
     executeCheckout().catch(() => {
-      // error handled inside executeCheckout
+      // handled inside executeCheckout
     });
   }
 
@@ -180,63 +178,35 @@ export function PlanCard({
       />
       <Card
         className={cn(
-          "group relative flex flex-col bg-sidebar border-border/50 transition-transform duration-200 hover:-translate-y-2.5",
-          selectOpen && "-translate-y-2.5",
-          isPopular &&
-            "border-keeperhub-green-dark/50 shadow-keeperhub-green-dark/10 shadow-lg"
+          "group relative flex flex-col border border-border/50 bg-sidebar p-2 transition-all duration-200 hover:-translate-y-1 hover:shadow-[0_0_24px_rgba(0,255,100,0.08)]",
+          currentPlan === planName && "border-keeperhub-green-dark/60"
         )}
       >
-        <PlanCardBadge
-          isActive={currentPlan === planName}
-          isPopular={isPopular}
-        />
+        <PlanCardBadge isActive={currentPlan === planName} />
 
-        <CardHeader className="pb-2">
-          <CardTitle className="text-lg">{plan.name}</CardTitle>
-          <p className="text-muted-foreground text-sm">{plan.description}</p>
-        </CardHeader>
-
-        <CardContent className="flex-1 space-y-4">
-          <PriceDisplay
-            annualTotal={annualTotal}
-            interval={interval}
+        <CardContent className="flex flex-1 flex-col gap-0 pt-6">
+          <PlanHeader
+            isEnterprise={isEnterprise}
+            name={plan.name}
             price={price}
           />
 
-          {plan.tiers.length > 0 && (
-            <Select
-              onOpenChange={setSelectOpen}
-              onValueChange={(val) => setSelectedTier(val as TierKey)}
-              open={selectOpen}
-              value={selectedTier ?? undefined}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Select executions" />
-              </SelectTrigger>
-              <SelectContent>
-                {plan.tiers.map((tier) => (
-                  <SelectItem key={tier.key} value={tier.key}>
-                    {tier.executions.toLocaleString()} executions -{" "}
-                    {formatPrice(getTierPrice(tier, interval))}/mo
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
+          <HeroMetrics executions={executionsDisplay} gas={gasDisplay} />
 
-          <PlanCardFeatures
-            activeTier={activeTier}
-            gasCreditCentsCap={gasCreditCaps?.[planName]}
-            plan={plan}
-            planName={planName}
-          />
+          {plan.tiers.length > 0 && (
+            <TierSelect
+              interval={interval}
+              onChange={(key) => setSelectedTier(key as TierKey)}
+              options={plan.tiers}
+              value={selectedTier ?? plan.tiers[0].key}
+            />
+          )}
         </CardContent>
 
         <PlanCardFooter
           currentPlan={currentPlan}
           hasSubscription={hasSubscription}
           isCurrent={isCurrent}
-          isPopular={isPopular}
           loading={loading}
           onSubscribe={handleSubscribe}
           plan={plan}

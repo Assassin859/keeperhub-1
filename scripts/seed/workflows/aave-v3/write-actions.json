@@ -1,5 +1,5 @@
 {
-  "protocol": "aave",
+  "protocol": "aave-v3",
   "network": "11155111",
   "networkName": "sepolia",
   "type": "write",
@@ -26,7 +26,7 @@
         "description": "Supply DAI to Aave V3 on Sepolia",
         "type": "action",
         "config": {
-          "actionType": "aave/supply",
+          "actionType": "aave-v3/supply",
           "network": "11155111",
           "asset": "0xFF34B3d4Aee8ddCd6F9AFFFB6Fe49bD371b8a357",
           "amount": "1000000000000000000",
@@ -45,7 +45,7 @@
         "description": "Withdraw DAI from Aave V3 on Sepolia",
         "type": "action",
         "config": {
-          "actionType": "aave/withdraw",
+          "actionType": "aave-v3/withdraw",
           "network": "11155111",
           "asset": "0xFF34B3d4Aee8ddCd6F9AFFFB6Fe49bD371b8a357",
           "amount": "1000000000000000000",
@@ -63,7 +63,7 @@
         "description": "Borrow DAI from Aave V3 on Sepolia",
         "type": "action",
         "config": {
-          "actionType": "aave/borrow",
+          "actionType": "aave-v3/borrow",
           "network": "11155111",
           "asset": "0xFF34B3d4Aee8ddCd6F9AFFFB6Fe49bD371b8a357",
           "amount": "1000000000000000000",
@@ -83,7 +83,7 @@
         "description": "Repay DAI to Aave V3 on Sepolia",
         "type": "action",
         "config": {
-          "actionType": "aave/repay",
+          "actionType": "aave-v3/repay",
           "network": "11155111",
           "asset": "0xFF34B3d4Aee8ddCd6F9AFFFB6Fe49bD371b8a357",
           "amount": "1000000000000000000",
@@ -102,7 +102,7 @@
         "description": "Enable DAI as collateral on Aave V3 Sepolia",
         "type": "action",
         "config": {
-          "actionType": "aave/set-collateral",
+          "actionType": "aave-v3/set-collateral",
           "network": "11155111",
           "asset": "0xFF34B3d4Aee8ddCd6F9AFFFB6Fe49bD371b8a357",
           "useAsCollateral": "true"

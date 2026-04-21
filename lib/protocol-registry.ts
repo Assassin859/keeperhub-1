@@ -282,6 +282,7 @@ function buildConfigFieldsFromAction(
   action: ProtocolAction
 ): ActionConfigField[] {
   const contract = def.contracts[action.contract];
+  const allowedChainIds = Object.keys(contract.addresses);
   const fields: ActionConfigField[] = [
     {
       key: "network",
@@ -291,6 +292,7 @@ function buildConfigFieldsFromAction(
       // KEEP-137: write actions show private mempool variants (e.g., Flashbots)
       ...(action.type === "write" ? { showPrivateVariants: true } : {}),
       required: true,
+      ...(allowedChainIds.length > 0 ? { allowedChainIds } : {}),
     },
   ];
 
@@ -367,7 +369,11 @@ function buildOutputFieldsFromAction(
 ): Array<{ field: string; description: string }> {
   const outputs: Array<{ field: string; description: string }> = [];
 
-  if (action.outputs) {
+  // KEEP-296: only reads surface action.outputs as UI template suggestions.
+  // Write actions still have ABI-derived outputs at the model layer, but
+  // writeContractCore returns result: undefined, so surfacing them would
+  // create template suggestions that resolve to undefined at runtime.
+  if (action.type === "read" && action.outputs) {
     for (const output of action.outputs) {
       outputs.push({ field: output.name, description: output.label });
     }

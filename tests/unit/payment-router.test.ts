@@ -252,7 +252,7 @@ describe("buildDual402Response", () => {
     ).toEqual({ executionId: "exec_abc123", status: "running" });
   });
 
-  it("omits extensions block when inputSchema is absent", async () => {
+  it("always emits extensions.bazaar.discoverable:true so CDP Bazaar indexes the resource", async () => {
     const response = buildDual402Response({
       price: "0.01",
       creatorWalletAddress: "0xCreator",
@@ -260,6 +260,25 @@ describe("buildDual402Response", () => {
       resourceUrl: "https://example.com/api/mcp/workflows/test/call",
     });
     const body = await response.json();
-    expect(body.extensions).toBeUndefined();
+    expect(body.extensions.bazaar.discoverable).toBe(true);
+    // schema subtree is only populated when inputSchema is provided
+    expect(body.extensions.bazaar.schema).toBeUndefined();
+    expect(body.extensions.bazaar.category).toBeUndefined();
+    expect(body.extensions.bazaar.tags).toBeUndefined();
+  });
+
+  it("emits extensions.bazaar.category and tags when provided", async () => {
+    const response = buildDual402Response({
+      price: "0.01",
+      creatorWalletAddress: "0xCreator",
+      workflowName: "Test Workflow",
+      resourceUrl: "https://example.com/api/mcp/workflows/test/call",
+      category: "web3",
+      tagName: "defi",
+    });
+    const body = await response.json();
+    expect(body.extensions.bazaar.discoverable).toBe(true);
+    expect(body.extensions.bazaar.category).toBe("web3");
+    expect(body.extensions.bazaar.tags).toEqual(["defi"]);
   });
 });

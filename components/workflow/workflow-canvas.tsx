@@ -2,6 +2,7 @@
 
 import {
   ConnectionMode,
+  type FinalConnectionState,
   MiniMap,
   type Node,
   type NodeMouseHandler,
@@ -48,6 +49,7 @@ import {
   type WorkflowNode,
   type WorkflowNodeType,
 } from "@/lib/workflow-store";
+import { hasDuplicateEdge } from "@/lib/workflow/edge-helpers";
 import { Edge } from "../ai-elements/edge";
 import { Panel } from "../ai-elements/panel";
 import { ActionNode } from "./nodes/action-node";
@@ -454,9 +456,25 @@ export function WorkflowCanvas() {
         return false;
       }
 
+      // Reject a duplicate of an existing edge (same source/target and handles).
+      // Different handles between the same node pair are still allowed.
+      if (
+        hasDuplicateEdge(edges, {
+          source: connection.source,
+          target: connection.target,
+          sourceHandle,
+          targetHandle:
+            "targetHandle" in connection
+              ? (connection.targetHandle as string | null | undefined)
+              : undefined,
+        })
+      ) {
+        return false;
+      }
+
       return true;
     },
-    [nodes]
+    [edges, nodes]
   );
 
   const onConnect: OnConnect = useCallback(
@@ -491,6 +509,17 @@ export function WorkflowCanvas() {
             }
             sourceHandle = hasTrueEdge ? "false" : "true";
           }
+        }
+
+        if (
+          hasDuplicateEdge(currentEdges, {
+            source: connection.source,
+            target: connection.target,
+            sourceHandle,
+            targetHandle: connection.targetHandle,
+          })
+        ) {
+          return currentEdges;
         }
 
         const newEdge = {
@@ -562,30 +591,16 @@ export function WorkflowCanvas() {
   );
 
   const onConnectEnd = useCallback(
-    (event: MouseEvent | TouchEvent) => {
+    (event: MouseEvent | TouchEvent, connectionState: FinalConnectionState) => {
       if (!connectingNodeId.current) {
         return;
       }
 
-      // Get client position first
-      const { clientX, clientY } = getClientPosition(event);
-
-      // For touch events, use elementFromPoint to get the actual element at the touch position
-      // For mouse events, use event.target as before
-      const target =
-        "changedTouches" in event
-          ? document.elementFromPoint(clientX, clientY)
-          : (event.target as Element);
-
-      if (!target) {
-        connectingNodeId.current = null;
-        return;
-      }
-
-      const isNode = target.closest(".react-flow__node");
-      const isHandle = target.closest(".react-flow__handle");
-
-      if (!(isNode || isHandle)) {
+      // isValid === null: pointer never entered a handle's connection radius (pane drop).
+      // true: valid connection -- onConnect already created the edge.
+      // false: over a handle that rejected the drop -- do nothing.
+      if (connectionState.isValid === null) {
+        const { clientX, clientY } = getClientPosition(event);
         const { adjustedX, adjustedY } = calculateMenuPosition(
           event,
           clientX,
@@ -755,7 +770,10 @@ export function WorkflowCanvas() {
         onNodeContextMenu={isGenerating ? undefined : onNodeContextMenu}
         onNodesChange={isGenerating ? undefined : onNodesChange}
         onPaneClick={onPaneClick}
-        onPaneContextMenu={isGenerating ? undefined : onPaneContextMenu}
+        onPaneContextMenu={
+          // Add Step is the pane menu's only action; gate by route since the canvas is shared with /
+          isGenerating || !isWorkflowRoute ? undefined : onPaneContextMenu
+        }
         onSelectionChange={isGenerating ? undefined : onSelectionChange}
       >
         {isWorkflowRoute && (

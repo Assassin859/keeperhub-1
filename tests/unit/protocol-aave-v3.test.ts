@@ -9,7 +9,7 @@ describe("Aave V3 Protocol Definition", () => {
   it("imports without throwing", () => {
     expect(aaveV3Def).toBeDefined();
     expect(aaveV3Def.name).toBe("Aave V3");
-    expect(aaveV3Def.slug).toBe("aave");
+    expect(aaveV3Def.slug).toBe("aave-v3");
   });
 
   it("protocol slug is valid kebab-case", () => {
@@ -131,9 +131,9 @@ describe("Aave V3 Protocol Definition", () => {
 
   it("registers in the protocol registry and is retrievable", () => {
     registerProtocol(aaveV3Def);
-    const retrieved = getProtocol("aave");
+    const retrieved = getProtocol("aave-v3");
     expect(retrieved).toBeDefined();
-    expect(retrieved?.slug).toBe("aave");
+    expect(retrieved?.slug).toBe("aave-v3");
     expect(retrieved?.name).toBe("Aave V3");
   });
 });

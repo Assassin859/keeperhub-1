@@ -93,6 +93,16 @@ export type ProrationPreview = {
   }[];
 };
 
+export type BillingDetails = {
+  paymentMethod: {
+    brand: string;
+    last4: string;
+    expMonth: number;
+    expYear: number;
+  } | null;
+  billingEmail: string | null;
+};
+
 export interface BillingProvider {
   readonly name: string;
 
@@ -104,6 +114,8 @@ export interface BillingProvider {
     customerId: string,
     returnUrl: string
   ): Promise<{ url: string }>;
+
+  getBillingDetails(customerId: string): Promise<BillingDetails>;
 
   verifyWebhook(body: string, signature: string): Promise<BillingWebhookEvent>;
 

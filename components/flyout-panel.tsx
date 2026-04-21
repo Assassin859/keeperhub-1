@@ -46,7 +46,7 @@ export function FlyoutPanel({
       <Tooltip>
         <TooltipTrigger asChild>
           <button
-            className="pointer-events-auto fixed top-[60px] bottom-0 z-30 flex items-start justify-center border-r bg-background pt-3 transition-[left] duration-200 ease-out hover:bg-muted/50"
+            className="pointer-events-auto fixed top-[calc(60px+var(--app-banner-height,0px))] bottom-0 z-30 flex items-start justify-center border-r bg-background pt-3 transition-[left] duration-200 ease-out hover:bg-muted/50"
             data-flyout
             onClick={onExpand}
             style={{ left: leftOffset, width: STRIP_WIDTH }}
@@ -91,7 +91,7 @@ export function FlyoutPanel({
   return (
     <div
       className={cn(
-        "pointer-events-auto fixed top-[60px] bottom-0 z-30 border-r bg-background shadow-lg transition-[left] duration-200 ease-out",
+        "pointer-events-auto fixed top-[calc(60px+var(--app-banner-height,0px))] bottom-0 z-30 border-r bg-background shadow-lg transition-[left] duration-200 ease-out",
         "animate-[flyout-in_150ms_ease-out_forwards]"
       )}
       data-flyout

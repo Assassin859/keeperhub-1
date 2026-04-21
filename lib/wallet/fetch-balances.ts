@@ -3,6 +3,11 @@
  */
 
 import { ErrorCategory, logUserError } from "@/lib/logging";
+import {
+  encodeBalanceOfCallData,
+  hexWeiToBigInt,
+  rpcCallWithFailover,
+} from "./rpc";
 import type {
   ChainBalance,
   ChainData,
@@ -88,6 +93,16 @@ function buildExplorerAddressUrl(
 }
 
 /**
+ * Collect the ordered list of RPC URLs to attempt for a chain: primary
+ * first, fallback second when configured.
+ */
+function getChainRpcUrls(chain: ChainData): string[] {
+  return chain.defaultFallbackRpc
+    ? [chain.defaultPrimaryRpc, chain.defaultFallbackRpc]
+    : [chain.defaultPrimaryRpc];
+}
+
+/**
  * Fetch native token balance for a single chain
  */
 export async function fetchNativeBalance(
@@ -95,23 +110,14 @@ export async function fetchNativeBalance(
   chain: ChainData
 ): Promise<ChainBalance> {
   try {
-    const response = await fetch(chain.defaultPrimaryRpc, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        method: "eth_getBalance",
-        params: [address, "latest"],
-        id: 1,
-      }),
+    const resultHex = await rpcCallWithFailover(getChainRpcUrls(chain), {
+      jsonrpc: "2.0",
+      method: "eth_getBalance",
+      params: [address, "latest"],
+      id: 1,
     });
 
-    const result = await response.json();
-    if (result.error) {
-      throw new Error(result.error.message);
-    }
-
-    const balanceWei = BigInt(result.result);
+    const balanceWei = hexWeiToBigInt(resultHex);
 
     return {
       chainId: chain.chainId,
@@ -154,49 +160,17 @@ export async function fetchTokenBalance(
   chain: ChainData
 ): Promise<TokenBalance> {
   try {
-    // ERC20 balanceOf function signature
-    const balanceOfSelector = "0x70a08231";
-
-    // Encode the balanceOf call data
-    const addressWithoutPrefix = address.startsWith("0x")
-      ? address.slice(2)
-      : address;
-    const paddedAddress = addressWithoutPrefix.toLowerCase().padStart(64, "0");
-    const callData = `${balanceOfSelector}${paddedAddress}`;
-
-    const response = await fetch(chain.defaultPrimaryRpc, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        method: "eth_call",
-        params: [{ to: token.tokenAddress, data: callData }, "latest"],
-        id: 1,
-      }),
+    const resultHex = await rpcCallWithFailover(getChainRpcUrls(chain), {
+      jsonrpc: "2.0",
+      method: "eth_call",
+      params: [
+        { to: token.tokenAddress, data: encodeBalanceOfCallData(address) },
+        "latest",
+      ],
+      id: 1,
     });
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    const result = await response.json();
-    if (result.error) {
-      throw new Error(result.error.message || "RPC error");
-    }
-
-    if (!result.result || result.result === "0x") {
-      return {
-        tokenId: token.id,
-        chainId: token.chainId,
-        tokenAddress: token.tokenAddress,
-        symbol: token.symbol,
-        name: token.name,
-        balance: "0.000000",
-        loading: false,
-      };
-    }
-
-    const balanceWei = BigInt(result.result);
+    const balanceWei = hexWeiToBigInt(resultHex);
 
     return {
       tokenId: token.id,
@@ -272,123 +246,57 @@ export function fetchAllTokenBalances(
 /**
  * Fetch balance for a single supported token with retry logic
  */
-export function fetchSupportedTokenBalance(
+export async function fetchSupportedTokenBalance(
   address: string,
   token: SupportedToken,
-  chain: ChainData,
-  retries = 3
+  chain: ChainData
 ): Promise<SupportedTokenBalance> {
-  const makeRequest = async (
-    attempt: number
-    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Retry logic with exponential backoff requires this complexity
-  ): Promise<SupportedTokenBalance> => {
-    try {
-      // ERC20 balanceOf function signature
-      const balanceOfSelector = "0x70a08231";
+  try {
+    const resultHex = await rpcCallWithFailover(getChainRpcUrls(chain), {
+      jsonrpc: "2.0",
+      method: "eth_call",
+      params: [
+        { to: token.tokenAddress, data: encodeBalanceOfCallData(address) },
+        "latest",
+      ],
+      id: 1,
+    });
 
-      // Encode the balanceOf call data
-      const addressWithoutPrefix = address.startsWith("0x")
-        ? address.slice(2)
-        : address;
-      const paddedAddress = addressWithoutPrefix
-        .toLowerCase()
-        .padStart(64, "0");
-      const callData = `${balanceOfSelector}${paddedAddress}`;
+    const balanceWei = hexWeiToBigInt(resultHex);
 
-      const response = await fetch(chain.defaultPrimaryRpc, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          method: "eth_call",
-          params: [{ to: token.tokenAddress, data: callData }, "latest"],
-          id: 1,
-        }),
-      });
-
-      // Handle rate limiting with retry
-      if (response.status === 429 && attempt < retries) {
-        const backoffMs = Math.min(1000 * 2 ** attempt, 5000);
-        await new Promise((resolve) => setTimeout(resolve, backoffMs));
-        return makeRequest(attempt + 1);
+    return {
+      chainId: token.chainId,
+      tokenAddress: token.tokenAddress,
+      symbol: token.symbol,
+      name: token.name,
+      logoUrl: token.logoUrl,
+      balance: formatWeiToBalance(balanceWei, token.decimals),
+      loading: false,
+      explorerUrl: buildExplorerAddressUrl(chain, token.tokenAddress),
+    };
+  } catch (error) {
+    logUserError(
+      ErrorCategory.NETWORK_RPC,
+      `Failed to fetch balance for ${token.symbol}:`,
+      error,
+      {
+        chain_id: token.chainId.toString(),
+        token_symbol: token.symbol,
+        token_address: token.tokenAddress,
       }
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const result = await response.json();
-      if (result.error) {
-        throw new Error(result.error.message || "RPC error");
-      }
-
-      const tokenExplorerUrl = buildExplorerAddressUrl(
-        chain,
-        token.tokenAddress
-      );
-
-      if (!result.result || result.result === "0x") {
-        return {
-          chainId: token.chainId,
-          tokenAddress: token.tokenAddress,
-          symbol: token.symbol,
-          name: token.name,
-          logoUrl: token.logoUrl,
-          balance: "0.000000",
-          loading: false,
-          explorerUrl: tokenExplorerUrl,
-        };
-      }
-
-      const balanceWei = BigInt(result.result);
-
-      return {
-        chainId: token.chainId,
-        tokenAddress: token.tokenAddress,
-        symbol: token.symbol,
-        name: token.name,
-        logoUrl: token.logoUrl,
-        balance: formatWeiToBalance(balanceWei, token.decimals),
-        loading: false,
-        explorerUrl: tokenExplorerUrl,
-      };
-    } catch (error) {
-      // Retry on network errors
-      if (
-        attempt < retries &&
-        error instanceof Error &&
-        !error.message.includes("HTTP 4")
-      ) {
-        const backoffMs = Math.min(500 * 2 ** attempt, 3000);
-        await new Promise((resolve) => setTimeout(resolve, backoffMs));
-        return makeRequest(attempt + 1);
-      }
-
-      logUserError(
-        ErrorCategory.NETWORK_RPC,
-        `Failed to fetch balance for ${token.symbol}:`,
-        error,
-        {
-          chain_id: token.chainId.toString(),
-          token_symbol: token.symbol,
-          token_address: token.tokenAddress,
-        }
-      );
-      return {
-        chainId: token.chainId,
-        tokenAddress: token.tokenAddress,
-        symbol: token.symbol,
-        name: token.name,
-        logoUrl: token.logoUrl,
-        balance: "0",
-        loading: false,
-        error: error instanceof Error ? error.message : "Failed to fetch",
-        explorerUrl: buildExplorerAddressUrl(chain, token.tokenAddress),
-      };
-    }
-  };
-
-  return makeRequest(0);
+    );
+    return {
+      chainId: token.chainId,
+      tokenAddress: token.tokenAddress,
+      symbol: token.symbol,
+      name: token.name,
+      logoUrl: token.logoUrl,
+      balance: "0",
+      loading: false,
+      error: error instanceof Error ? error.message : "Failed to fetch",
+      explorerUrl: buildExplorerAddressUrl(chain, token.tokenAddress),
+    };
+  }
 }
 
 /**

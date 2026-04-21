@@ -216,7 +216,7 @@ export function BillingHistory(): React.ReactElement {
                 <TableCell className="space-x-2">
                   {invoice.invoiceUrl && (
                     <a
-                      className="text-sm text-blue-500 underline underline-offset-2 hover:text-blue-600"
+                      className="text-sm text-keeperhub-green-dark underline underline-offset-2 hover:text-keeperhub-green"
                       href={invoice.invoiceUrl}
                       rel="noopener"
                       target="_blank"
@@ -226,7 +226,7 @@ export function BillingHistory(): React.ReactElement {
                   )}
                   {invoice.pdfUrl && (
                     <a
-                      className="text-sm text-blue-500 underline underline-offset-2 hover:text-blue-600"
+                      className="text-sm text-keeperhub-green-dark underline underline-offset-2 hover:text-keeperhub-green"
                       href={invoice.pdfUrl}
                       rel="noopener"
                       target="_blank"

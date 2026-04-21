@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
 import { workflowPayments } from "@/lib/db/schema-payments";
 import type {
+  ChainEarnings,
   EarningsSummary,
   SettlementStatus,
   WorkflowEarningsRow,
@@ -138,6 +139,10 @@ export async function getEarningsSummary(
       totalInvocations: 0,
       platformFeePercent,
       creatorSharePercent,
+      perChain: {
+        base: { grossRevenue: formatUsdc(0), invocationCount: 0 },
+        tempo: { grossRevenue: formatUsdc(0), invocationCount: 0 },
+      },
       workflows: [],
       total: 0,
       page,
@@ -180,6 +185,20 @@ export async function getEarningsSummary(
 
   const totalGross = Number(orgTotals?.grossRevenue ?? "0");
   const totalInvocations = orgTotals?.invocationCount ?? 0;
+
+  // Per-chain breakdown so creators see Base (x402/USDC) vs Tempo (MPP/USDC.e)
+  // split instead of just an aggregate. See docs/workflows/paid-workflows.md.
+  const perChainRows = await db
+    .select({
+      chain: workflowPayments.chain,
+      grossRevenue: sum(workflowPayments.amountUsdc),
+      invocationCount: count(workflowPayments.id),
+    })
+    .from(workflowPayments)
+    .where(inArray(workflowPayments.workflowId, orgWorkflowIds))
+    .groupBy(workflowPayments.chain);
+
+  const perChain = buildPerChainEarnings(perChainRows);
 
   // Per-workflow revenue for the current page only
   const revenueRows = await db
@@ -259,10 +278,51 @@ export async function getEarningsSummary(
     totalInvocations,
     platformFeePercent,
     creatorSharePercent,
+    perChain,
     workflows: paginatedRows,
     total,
     page,
     pageSize,
     hasListedWorkflows: true,
   };
+}
+
+type PerChainRow = {
+  chain: string;
+  grossRevenue: string | null;
+  invocationCount: number;
+};
+
+/**
+ * Reshapes the chain-grouped SQL result into the fixed { base, tempo } shape
+ * expected by the UI. Missing chains default to zero so the UI never has to
+ * null-check.
+ */
+export function buildPerChainEarnings(rows: PerChainRow[]): {
+  base: ChainEarnings;
+  tempo: ChainEarnings;
+} {
+  const base: ChainEarnings = {
+    grossRevenue: formatUsdc(0),
+    invocationCount: 0,
+  };
+  const tempo: ChainEarnings = {
+    grossRevenue: formatUsdc(0),
+    invocationCount: 0,
+  };
+  for (const row of rows) {
+    const gross = Number(row.grossRevenue ?? "0");
+    const entry: ChainEarnings = {
+      grossRevenue: formatUsdc(gross),
+      invocationCount: row.invocationCount,
+    };
+    if (row.chain === "base") {
+      base.grossRevenue = entry.grossRevenue;
+      base.invocationCount = entry.invocationCount;
+    } else if (row.chain === "tempo") {
+      tempo.grossRevenue = entry.grossRevenue;
+      tempo.invocationCount = entry.invocationCount;
+    }
+  }
+  return { base, tempo };
 }

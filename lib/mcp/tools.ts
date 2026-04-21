@@ -891,7 +891,7 @@ export function registerMetaTools(
         .string()
         .optional()
         .describe(
-          "Filter by protocol name (e.g., 'chronicle', 'aave', 'morpho', 'uniswap', 'compound', 'lido', 'chainlink')"
+          "Filter by protocol name (e.g., 'chronicle', 'aave-v3', 'morpho', 'uniswap', 'compound', 'lido', 'chainlink')"
         ),
     },
     {
@@ -968,12 +968,12 @@ export function registerMetaTools(
   // Meta-tool 2: Execute any protocol action by actionType
   server.tool(
     "execute_protocol_action",
-    "Execute a DeFi protocol action directly. Use search_protocol_actions first to discover available actions and their required parameters. The actionType follows the format 'protocol/action-slug' (e.g., 'chronicle/eth-usd-read', 'aave/supply', 'morpho/get-position'). Pass all required parameters in the params object.",
+    "Execute a DeFi protocol action directly. Use search_protocol_actions first to discover available actions and their required parameters. The actionType follows the format 'protocol/action-slug' (e.g., 'chronicle/eth-usd-read', 'aave-v3/supply', 'morpho/get-position'). Pass all required parameters in the params object.",
     {
       actionType: z
         .string()
         .describe(
-          "The action identifier in 'protocol/action-slug' format (e.g., 'chronicle/eth-usd-read', 'aave/get-user-account-data')"
+          "The action identifier in 'protocol/action-slug' format (e.g., 'chronicle/eth-usd-read', 'aave-v3/get-user-account-data')"
         ),
       params: z
         .record(z.string(), z.unknown())

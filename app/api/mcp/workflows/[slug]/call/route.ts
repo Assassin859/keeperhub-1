@@ -4,7 +4,7 @@ import { start } from "workflow/api";
 import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { db } from "@/lib/db";
-import { workflowExecutions, workflows } from "@/lib/db/schema";
+import { tags, workflowExecutions, workflows } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
 import { hashMppCredential } from "@/lib/mpp/server";
@@ -15,6 +15,7 @@ import {
 } from "@/lib/payments/router";
 import { executeWorkflow } from "@/lib/workflow-executor.workflow";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow-store";
+import { buildCallCompletionResponse } from "@/lib/x402/execution-wait";
 import {
   hashPaymentSignature,
   recordPayment,
@@ -146,8 +147,9 @@ function startExecutionInBackground(
 }
 
 /**
- * Free-path helper: prepares the execution and starts it. Used by the
- * non-paid call path where there is no payment to record between the two.
+ * Free-path helper: prepares the execution, starts it, and awaits completion
+ * up to the read-wait timeout. Returns the mapped output inline on success or
+ * falls back to `{executionId, status: "running"}` on timeout.
  */
 async function createAndStartExecution(
   workflow: CallRouteWorkflow,
@@ -158,16 +160,18 @@ async function createAndStartExecution(
     return prepared.error;
   }
   startExecutionInBackground(workflow, body, prepared.executionId);
-  return NextResponse.json(
-    { executionId: prepared.executionId, status: "running" },
-    { headers: corsHeaders }
+  const responseBody = await buildCallCompletionResponse(
+    prepared.executionId,
+    workflow.outputMapping
   );
+  return NextResponse.json(responseBody, { headers: corsHeaders });
 }
 
 async function lookupWorkflow(slug: string): Promise<CallRouteWorkflow | null> {
   const rows = await db
-    .select(CALL_ROUTE_COLUMNS)
+    .select({ ...CALL_ROUTE_COLUMNS, tagName: tags.name })
     .from(workflows)
+    .leftJoin(tags, eq(workflows.tagId, tags.id))
     .where(and(eq(workflows.listedSlug, slug), eq(workflows.isListed, true)))
     .limit(1);
   return rows[0] ?? null;
@@ -333,10 +337,11 @@ async function handlePaidWorkflow(
 
         startExecutionInBackground(workflow, body, executionId);
 
-        return NextResponse.json(
-          { executionId, status: "running" },
-          { headers: corsHeaders }
+        const responseBody = await buildCallCompletionResponse(
+          executionId,
+          workflow.outputMapping
         );
+        return NextResponse.json(responseBody, { headers: corsHeaders });
       };
     }
   );
