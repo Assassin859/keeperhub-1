@@ -1,8 +1,9 @@
 "use client";
 
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Copy, ExternalLink, Pencil, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { getExplorerAddressUrl } from "@/components/safe/chain-prefixes";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -204,7 +205,7 @@ const LEADING_ZEROS_RE = /^0+(?=\d)/;
 function minutesToLabel(minutes: number): string {
   const preset = PERIOD_PRESETS.find((p) => p.minutes === minutes);
   if (preset) {
-    return preset.label.toLowerCase();
+    return preset.label;
   }
   return `${minutes} min`;
 }
@@ -554,52 +555,85 @@ export function SpendingLimitsCard({
 
       {limits.length > 0 && (
         <ul className="space-y-1">
-          {limits.map((limit) => (
-            <li
-              className="flex items-center justify-between rounded-sm bg-background px-2 py-1.5 text-xs"
-              key={limit.id}
-            >
-              <div className="flex flex-col">
-                <span className="font-medium">
-                  {formatAmount(limit.spentWei, limit.tokenDecimals)} /{" "}
-                  {formatAmount(limit.amountWei, limit.tokenDecimals)}{" "}
-                  {limit.tokenSymbol}
-                </span>
-                <span className="text-muted-foreground">
-                  {minutesToLabel(limit.periodMinutes)} -{" "}
-                  {formatResetAt(limit.resetAt)} -{" "}
-                  {truncateAddress(limit.tokenAddress)}
-                </span>
-              </div>
-              {isAdmin && (
-                <div className="flex items-center gap-1">
-                  <Button
-                    onClick={() => openEditDialog(limit)}
-                    size="icon"
-                    title="Edit limit"
-                    type="button"
-                    variant="ghost"
-                  >
-                    <Pencil className="h-3 w-3" />
-                  </Button>
-                  <Button
-                    disabled={revokingToken === limit.tokenAddress}
-                    onClick={() => handleRevoke(limit.tokenAddress)}
-                    size="icon"
-                    title="Revoke limit"
-                    type="button"
-                    variant="ghost"
-                  >
-                    {revokingToken === limit.tokenAddress ? (
-                      <Spinner className="h-3 w-3" />
-                    ) : (
-                      <Trash2 className="h-3 w-3" />
+          {limits.map((limit) => {
+            const explorerUrl = getExplorerAddressUrl(
+              chainId,
+              limit.tokenAddress
+            );
+            const handleCopy = (): void => {
+              navigator.clipboard.writeText(limit.tokenAddress);
+              toast.success("Token address copied");
+            };
+            return (
+              <li
+                className="flex items-start justify-between gap-3 rounded-md bg-background px-3 py-2 text-xs"
+                key={limit.id}
+              >
+                <div className="flex min-w-0 flex-1 flex-col gap-1">
+                  <span className="font-medium text-sm">
+                    {formatAmount(limit.spentWei, limit.tokenDecimals)} /{" "}
+                    {formatAmount(limit.amountWei, limit.tokenDecimals)}{" "}
+                    {limit.tokenSymbol}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {minutesToLabel(limit.periodMinutes)} -{" "}
+                    {formatResetAt(limit.resetAt)}
+                  </span>
+                  <div className="flex items-center gap-1 text-muted-foreground">
+                    <code className="font-mono">
+                      {truncateAddress(limit.tokenAddress)}
+                    </code>
+                    <button
+                      aria-label="Copy token address"
+                      className="hover:text-foreground"
+                      onClick={handleCopy}
+                      type="button"
+                    >
+                      <Copy className="h-3 w-3" />
+                    </button>
+                    {explorerUrl && (
+                      <a
+                        aria-label="View token on explorer"
+                        className="hover:text-foreground"
+                        href={explorerUrl}
+                        rel="noopener noreferrer"
+                        target="_blank"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
                     )}
-                  </Button>
+                  </div>
                 </div>
-              )}
-            </li>
-          ))}
+                {isAdmin && (
+                  <div className="flex shrink-0 items-center gap-1">
+                    <Button
+                      onClick={() => openEditDialog(limit)}
+                      size="icon"
+                      title="Edit limit"
+                      type="button"
+                      variant="ghost"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      disabled={revokingToken === limit.tokenAddress}
+                      onClick={() => handleRevoke(limit.tokenAddress)}
+                      size="icon"
+                      title="Revoke limit"
+                      type="button"
+                      variant="ghost"
+                    >
+                      {revokingToken === limit.tokenAddress ? (
+                        <Spinner className="h-3 w-3" />
+                      ) : (
+                        <Trash2 className="h-3 w-3" />
+                      )}
+                    </Button>
+                  </div>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
 

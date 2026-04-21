@@ -165,6 +165,18 @@ vi.mock("@/lib/web3/pimlico-config", () => ({
   isSponsorshipSupported: () => false,
 }));
 
+vi.mock("@/lib/safe/signer-resolver", () => ({
+  resolveSignerMode: vi.fn().mockResolvedValue({
+    kind: "eoa",
+    ownerAddress: "0xwalletaddress",
+  }),
+}));
+
+vi.mock("@/lib/safe/execute-as-safe", () => ({
+  executeContractCallAsSafe: vi.fn(),
+  executeNativeTransferAsSafe: vi.fn(),
+}));
+
 vi.mock("@/lib/web3/sponsored-transaction-manager", () => ({
   executeSponsoredContractTransaction: vi.fn().mockResolvedValue(null),
 }));
