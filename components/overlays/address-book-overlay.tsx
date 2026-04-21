@@ -483,51 +483,50 @@ export function AddressBookOverlay({ overlayId }: AddressBookOverlayProps) {
             <p>No addresses saved yet</p>
           </div>
         )}
-        {!(loading || isTemporalAccount) &&
-          entries.length > 0 &&
-          filteredEntries.length === 0 && (
-            <div className="py-8 text-center text-muted-foreground text-sm">
-              <Bookmark className="mx-auto mb-2 h-8 w-8 opacity-50" />
-              <p>No addresses found matching "{debouncedSearchQuery}"</p>
-            </div>
-          )}
-        {!(loading || isTemporalAccount) &&
-          entries.length > 0 &&
-          filteredEntries.length > 0 && (
-            <>
-              <AddressBookSearchAndControls
-                itemsPerPage={itemsPerPage}
-                onItemsPerPageChange={setItemsPerPage}
-                onSearchChange={setSearchQuery}
-                searchQuery={searchQuery}
-                shouldRenderItemsPerPageSelector={
-                  shouldRenderItemsPerPageSelector
-                }
-              />
+        {!(loading || isTemporalAccount) && entries.length > 0 && (
+          <>
+            <AddressBookSearchAndControls
+              itemsPerPage={itemsPerPage}
+              onItemsPerPageChange={setItemsPerPage}
+              onSearchChange={setSearchQuery}
+              searchQuery={searchQuery}
+              shouldRenderItemsPerPageSelector={
+                shouldRenderItemsPerPageSelector
+              }
+            />
 
-              <AddressBookTable
-                deleting={deleting}
-                entries={paginatedEntries}
-                onDelete={handleDelete}
-                onEdit={handleOpenEditForm}
-                onUpdate={loadEntries}
-              />
+            {filteredEntries.length === 0 ? (
+              <div className="py-8 text-center text-muted-foreground text-sm">
+                <Bookmark className="mx-auto mb-2 h-8 w-8 opacity-50" />
+                <p>No addresses found matching "{debouncedSearchQuery}"</p>
+              </div>
+            ) : (
+              <>
+                <AddressBookTable
+                  deleting={deleting}
+                  entries={paginatedEntries}
+                  onDelete={handleDelete}
+                  onEdit={handleOpenEditForm}
+                  onUpdate={loadEntries}
+                />
 
-              <AddressBookPagination
-                canGoNext={canGoNext}
-                canGoPrevious={canGoPrevious}
-                currentPage={currentPage}
-                itemsPerPage={itemsPerPage}
-                onGoToPage={goToPage}
-                onNextPage={goToNextPage}
-                onPreviousPage={goToPreviousPage}
-                pageNumbers={pageNumbers}
-                showingFrom={showingFrom}
-                showingTo={showingTo}
-                totalItems={totalItems}
-              />
-            </>
-          )}
+                <AddressBookPagination
+                  canGoNext={canGoNext}
+                  canGoPrevious={canGoPrevious}
+                  currentPage={currentPage}
+                  itemsPerPage={itemsPerPage}
+                  onGoToPage={goToPage}
+                  onNextPage={goToNextPage}
+                  onPreviousPage={goToPreviousPage}
+                  pageNumbers={pageNumbers}
+                  showingFrom={showingFrom}
+                  showingTo={showingTo}
+                  totalItems={totalItems}
+                />
+              </>
+            )}
+          </>
+        )}
       </div>
     </Overlay>
   );

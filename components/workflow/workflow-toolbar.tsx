@@ -36,6 +36,7 @@ import { OrgSwitcher } from "@/components/organization/org-switcher";
 import { GoLiveOverlay } from "@/components/overlays/go-live-overlay";
 import { ListingOverlay } from "@/components/overlays/listing-overlay";
 import { Switch } from "@/components/ui/switch";
+import { WalletToolbarButton } from "@/components/workflow/wallet-toolbar-button";
 import { BUILTIN_NODE_ID } from "@/lib/builtin-variables";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import { api, ApiError, type Project, type Tag } from "@/lib/api-client";
@@ -1855,6 +1856,7 @@ export const WorkflowToolbar = ({
               />
             )}
             <div className="flex items-center gap-2">
+              <WalletToolbarButton />
               {isWorkflowRoute && effectiveWorkflowId && !state.isOwner && (
                 <DuplicateButton
                   isDuplicating={state.isDuplicating}

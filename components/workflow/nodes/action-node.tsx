@@ -18,11 +18,10 @@ import Image from "next/image";
 import { memo, useState } from "react";
 import {
   Node,
-  NodeDescription,
-  NodeTitle,
   type SourceHandleConfig,
 } from "@/components/ai-elements/node";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { NodeLabel } from "@/components/workflow/nodes/node-label";
 import {
   integrationIdsAtom,
   integrationsLoadedAtom,
@@ -308,16 +307,12 @@ export const ActionNode = memo(({ data, selected, id }: ActionNodeProps) => {
             <EyeOff className="size-3.5 text-white" />
           </div>
         )}
-        <div className="flex flex-col items-center justify-center gap-3 p-6">
+        <div className="flex w-full min-w-0 flex-col items-center justify-center gap-3 p-6">
           <Zap className="size-12 text-muted-foreground" strokeWidth={1.5} />
-          <div className="flex flex-col items-center gap-1 text-center">
-            <NodeTitle className="text-base">
-              {data.label || "Action"}
-            </NodeTitle>
-            <NodeDescription className="text-xs">
-              Select an action
-            </NodeDescription>
-          </div>
+          <NodeLabel
+            description="Select an action"
+            title={data.label || "Action"}
+          />
         </div>
       </Node>
     );
@@ -399,7 +394,7 @@ export const ActionNode = memo(({ data, selected, id }: ActionNodeProps) => {
       {/* Status indicator badge in top right */}
       <StatusBadge status={status} />
 
-      <div className="flex flex-col items-center justify-center gap-3 p-6">
+      <div className="flex w-full min-w-0 flex-col items-center justify-center gap-3 p-6">
         {hasGeneratedImage ? (
           <GeneratedImageThumbnail
             base64={(nodeLog.output as { base64: string }).base64}
@@ -407,16 +402,11 @@ export const ActionNode = memo(({ data, selected, id }: ActionNodeProps) => {
         ) : (
           getProviderLogo(actionType)
         )}
-        <div className="flex flex-col items-center gap-1 text-center">
-          <NodeTitle className="text-base">{displayTitle}</NodeTitle>
-          {displayDescription && (
-            <NodeDescription className="line-clamp-2 text-xs">
-              {displayDescription}
-            </NodeDescription>
-          )}
-          {/* Model badge for AI nodes */}
-          {aiModel && <ModelBadge model={aiModel} />}
-        </div>
+        <NodeLabel
+          description={displayDescription || undefined}
+          title={displayTitle}
+        />
+        {aiModel && <ModelBadge model={aiModel} />}
       </div>
     </Node>
   );

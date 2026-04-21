@@ -4,11 +4,8 @@ import type { NodeProps } from "@xyflow/react";
 import { Box, Boxes, Check, Clock, Play, Webhook, XCircle } from "lucide-react";
 import Image from "next/image";
 import { type ElementType, memo } from "react";
-import {
-  Node,
-  NodeDescription,
-  NodeTitle,
-} from "@/components/ai-elements/node";
+import { Node } from "@/components/ai-elements/node";
+import { NodeLabel } from "@/components/workflow/nodes/node-label";
 import { cn } from "@/lib/utils";
 import type {
   WorkflowNodeData,
@@ -75,7 +72,7 @@ export const TriggerNode = memo(({ data, selected, id }: TriggerNodeProps) => {
         </div>
       )}
 
-      <div className="flex flex-col items-center justify-center gap-3 p-6">
+      <div className="flex w-full min-w-0 flex-col items-center justify-center gap-3 p-6">
         {hasProtocolIcon ? (
           <Image
             alt="Protocol"
@@ -87,14 +84,7 @@ export const TriggerNode = memo(({ data, selected, id }: TriggerNodeProps) => {
         ) : (
           <TriggerIcon className="size-12 text-blue-500" strokeWidth={1.5} />
         )}
-        <div className="flex flex-col items-center gap-1 text-center">
-          <NodeTitle className="text-base">{displayTitle}</NodeTitle>
-          {displayDescription && (
-            <NodeDescription className="line-clamp-2 text-xs">
-              {displayDescription}
-            </NodeDescription>
-          )}
-        </div>
+        <NodeLabel description={displayDescription} title={displayTitle} />
       </div>
     </Node>
   );

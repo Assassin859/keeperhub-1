@@ -8,7 +8,6 @@ import {
   Plug,
   Settings,
   Users,
-  Wallet,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -22,7 +21,6 @@ import { IntegrationsOverlay } from "@/components/overlays/integrations-overlay"
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { ProjectsAndTagsOverlay } from "@/components/overlays/projects-and-tags-overlay";
 import { SettingsOverlay } from "@/components/overlays/settings-overlay";
-import { WalletOverlay } from "@/components/overlays/wallet-overlay";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -144,10 +142,6 @@ export const UserMenu = (): React.ReactElement => {
             </DropdownMenuItem>
             <DropdownMenuSeparator />
           </div>
-          <DropdownMenuItem onClick={() => openOverlay(WalletOverlay)}>
-            <Wallet className="size-4" />
-            <span>Wallet</span>
-          </DropdownMenuItem>
           <DropdownMenuItem onClick={() => openOverlay(SettingsOverlay)}>
             <Settings className="size-4" />
             <span>Settings</span>

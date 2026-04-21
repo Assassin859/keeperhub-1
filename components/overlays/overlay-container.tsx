@@ -177,6 +177,26 @@ function DesktopOverlayContainer() {
     }
   }, [stack, isOpen]);
 
+  // Track content size so the modal can shrink when the active view gets
+  // shorter (e.g. switching tabs). Without this the minHeight latched on the
+  // first measurement and content-light views showed a large empty area.
+  useLayoutEffect(() => {
+    if (!(isOpen && contentRef.current)) {
+      return;
+    }
+    const node = contentRef.current;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const h = entry.contentRect.height;
+        if (h > 0) {
+          setMinHeight(h);
+        }
+      }
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [isOpen]);
+
   // Use live stack for options checks (only when open)
   const currentItem = stack.at(-1);
   const springTransition = shouldReduceMotion ? { duration: 0.01 } : iosSpring;
@@ -337,6 +357,25 @@ function MobileOverlayContainer() {
       }
     }
   }, [stack, isOpen]);
+
+  // Track content size so the drawer can shrink when the active view gets
+  // shorter (e.g. switching tabs).
+  useLayoutEffect(() => {
+    if (!(isOpen && contentRef.current)) {
+      return;
+    }
+    const node = contentRef.current;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const h = entry.contentRect.height;
+        if (h > 0) {
+          setMinHeight(h);
+        }
+      }
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [isOpen]);
 
   // Use live stack for options checks (only when open)
   const currentItem = stack.at(-1);
