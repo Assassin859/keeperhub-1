@@ -41,16 +41,39 @@ const CANONICAL_ADDRESSES: SafeContractAddresses = {
 
 /**
  * Per-chain overrides for chains that do not use the canonical deployment.
- * Populated empty for now; all supported chains at launch (1, 10, 8453, 42161)
- * use the canonical addresses.
+ * Populated empty for now; every chain in SUPPORTED_SAFE_CHAIN_IDS has the
+ * canonical Safe v1.4.1 + Allowance Module deployments.
  */
 const CHAIN_OVERRIDES: Record<number, Partial<SafeContractAddresses>> = {};
 
 /**
- * Chains we support for Safe deployment at launch.
- * Must align with Safe's official v1.4.1 deployment coverage.
+ * Chains we support for Safe deployment.
+ *
+ * Covers every mainnet + testnet pair where (a) KeeperHub has RPC and
+ * chain metadata seeded and (b) Safe's v1.4.1 contracts + Allowance
+ * Module are deployed at the canonical addresses.
+ *
+ * Intentionally excluded:
+ * - Optimism: no entry in KeeperHub's chain seed today
+ * - Tempo / Plasma: no canonical Safe deployment at this address
+ * - Solana: non-EVM, Safe doesn't run there
  */
-export const SUPPORTED_SAFE_CHAIN_IDS = [1, 10, 8453, 42_161] as const;
+export const SUPPORTED_SAFE_CHAIN_IDS = [
+  // mainnets
+  1, // Ethereum
+  8453, // Base
+  42_161, // Arbitrum One
+  56, // BNB Smart Chain
+  137, // Polygon
+  43_114, // Avalanche C-Chain
+  // testnets
+  11_155_111, // Sepolia
+  84_532, // Base Sepolia
+  421_614, // Arbitrum Sepolia
+  97, // BSC testnet
+  80_002, // Polygon Amoy
+  43_113, // Avalanche Fuji
+] as const;
 
 export type SupportedSafeChainId = (typeof SUPPORTED_SAFE_CHAIN_IDS)[number];
 

@@ -69,18 +69,6 @@ const COMMON_TOKENS: Record<number, CommonToken[]> = {
       decimals: 18,
     },
   ],
-  10: [
-    {
-      address: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
-      symbol: "USDC",
-      decimals: 6,
-    },
-    {
-      address: "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58",
-      symbol: "USDT",
-      decimals: 6,
-    },
-  ],
   8453: [
     {
       address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
@@ -105,6 +93,66 @@ const COMMON_TOKENS: Record<number, CommonToken[]> = {
       decimals: 6,
     },
   ],
+  56: [
+    {
+      address: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d",
+      symbol: "USDC",
+      decimals: 18,
+    },
+    {
+      address: "0x55d398326f99059fF775485246999027B3197955",
+      symbol: "USDT",
+      decimals: 18,
+    },
+  ],
+  137: [
+    {
+      address: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+      symbol: "USDC",
+      decimals: 6,
+    },
+    {
+      address: "0xc2132D05D31c914a87C6611C10748AEb04B58e8F",
+      symbol: "USDT",
+      decimals: 6,
+    },
+  ],
+  43114: [
+    {
+      address: "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E",
+      symbol: "USDC",
+      decimals: 6,
+    },
+    {
+      address: "0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7",
+      symbol: "USDT",
+      decimals: 6,
+    },
+  ],
+  11155111: [
+    {
+      address: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+      symbol: "USDC",
+      decimals: 6,
+    },
+  ],
+  84532: [
+    {
+      address: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      symbol: "USDC",
+      decimals: 6,
+    },
+  ],
+  421614: [
+    {
+      address: "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
+      symbol: "USDC",
+      decimals: 6,
+    },
+  ],
+  97: [],
+  80002: [],
+  43113: [],
 };
 
 const PERIOD_PRESETS = [

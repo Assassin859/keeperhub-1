@@ -42,10 +42,20 @@ type DeployResponse = {
 };
 
 const CHAIN_LABELS: Record<number, string> = {
-  1: "Ethereum Mainnet",
-  10: "Optimism",
+  // mainnets
+  1: "Ethereum",
   8453: "Base",
   42161: "Arbitrum One",
+  56: "BNB Smart Chain",
+  137: "Polygon",
+  43114: "Avalanche",
+  // testnets
+  11155111: "Ethereum Sepolia",
+  84532: "Base Sepolia",
+  421614: "Arbitrum Sepolia",
+  97: "BSC Testnet",
+  80002: "Polygon Amoy",
+  43113: "Avalanche Fuji",
 };
 
 function chainLabel(chainId: number): string {
