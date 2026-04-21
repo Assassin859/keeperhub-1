@@ -124,6 +124,7 @@ export const safeWallets = pgTable(
     deploymentBlock: integer("deployment_block"),
     status: text("status").notNull().default("pending"),
     deployedAt: timestamp("deployed_at"),
+    isSigningActive: boolean("is_signing_active").notNull().default(false),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },

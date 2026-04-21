@@ -76,6 +76,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       deploymentBlock: row.deploymentBlock,
       status: row.status,
       deployedAt: row.deployedAt,
+      isSigningActive: row.isSigningActive,
       createdAt: row.createdAt,
     }));
 
@@ -151,6 +152,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         deploymentBlock: result.safe.deploymentBlock,
         status: result.safe.status,
         deployedAt: result.safe.deployedAt,
+        isSigningActive: result.safe.isSigningActive,
       },
     });
   } catch (error) {

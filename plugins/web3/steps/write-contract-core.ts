@@ -25,6 +25,8 @@ import { findAbiFunction } from "@/lib/abi-utils";
 import { getErrorMessage } from "@/lib/utils";
 import { getAbiFunctionKey } from "@/lib/web3/abi-function-key";
 import { generateId } from "@/lib/utils/id";
+import { executeContractCallAsSafe } from "@/lib/safe/execute-as-safe";
+import { resolveSignerMode } from "@/lib/safe/signer-resolver";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import { formatContractError } from "@/lib/web3/decode-revert-error";
 import { resolveGasLimitOverrides } from "@/lib/web3/gas-defaults";
@@ -220,6 +222,11 @@ export async function writeContractCore(
     };
   }
 
+  // Decide whether to route this write through the org's Safe on this chain.
+  // In "safe" mode msg.sender at the target contract becomes the Safe address;
+  // the Turnkey EOA still signs the outer tx and pays gas.
+  const signerMode = await resolveSignerMode(organizationId, chainId);
+
   // Get workflow ID for transaction tracking (only for workflow executions)
   let workflowId: string | undefined;
   if (_context?.executionId && !_context?.organizationId) {
@@ -279,7 +286,9 @@ export async function writeContractCore(
   // Try gas-sponsored execution first (ERC-4337 via Pimlico).
   // KEEP-137: skip sponsorship when routing through a private mempool --
   // ERC-4337 bundlers use their own RPC (Pimlico), which bypasses Flashbots Protect.
-  if (!usePrivateMempool) {
+  // KEEP-177: skip sponsorship in Safe mode -- the 4337 bundler sends from
+  // its own smart account, which would change msg.sender away from the Safe.
+  if (!usePrivateMempool && signerMode.kind === "eoa") {
     try {
       const sponsoredResult = await executeSponsoredContractTransaction({
         organizationId,
@@ -361,18 +370,44 @@ export async function writeContractCore(
     }
 
     try {
-      const receipt = await adapter.executeContractCall(signer, {
-        contractAddress,
-        abi: parsedAbi as ethers.InterfaceAbi,
-        functionKey: abiFunctionKey,
-        args,
-        value: parsedEthValue,
-      }, session, {
-        triggerType: txContext.triggerType ?? "manual",
-        gasOverrides: { multiplierOverride, gasLimitOverride },
-        workflowId,
-        rpcManager,
-      });
+      const receipt =
+        signerMode.kind === "safe"
+          ? await executeContractCallAsSafe(
+              signer,
+              {
+                safeAddress: signerMode.safeAddress,
+                ownerAddress: signerMode.ownerAddress,
+                contractAddress,
+                abi: parsedAbi as ethers.InterfaceAbi,
+                functionKey: abiFunctionKey,
+                args,
+                value: parsedEthValue,
+              },
+              session,
+              {
+                chainId,
+                triggerType: txContext.triggerType ?? "manual",
+                workflowId,
+                rpcManager,
+              }
+            )
+          : await adapter.executeContractCall(
+              signer,
+              {
+                contractAddress,
+                abi: parsedAbi as ethers.InterfaceAbi,
+                functionKey: abiFunctionKey,
+                args,
+                value: parsedEthValue,
+              },
+              session,
+              {
+                triggerType: txContext.triggerType ?? "manual",
+                gasOverrides: { multiplierOverride, gasLimitOverride },
+                workflowId,
+                rpcManager,
+              }
+            );
 
       const gasUsedUnits = receipt.gasUsed.toString();
       const effectiveGasPrice = receipt.effectiveGasPrice.toString();

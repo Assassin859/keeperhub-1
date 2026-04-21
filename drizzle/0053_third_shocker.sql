@@ -1,0 +1,1 @@
+ALTER TABLE "safe_wallets" ADD COLUMN "is_signing_active" boolean DEFAULT false NOT NULL;
