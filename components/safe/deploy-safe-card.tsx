@@ -41,9 +41,13 @@ type DeployResponse = {
   error?: string;
 };
 
+// Label map covers every chain we might ever render, not just the
+// currently deploy-supported set, so stale or legacy rows render with a
+// real name instead of the "Chain <id>" fallback.
 const CHAIN_LABELS: Record<number, string> = {
   // mainnets
   1: "Ethereum",
+  10: "Optimism",
   8453: "Base",
   42161: "Arbitrum One",
   56: "BNB Smart Chain",
@@ -51,6 +55,7 @@ const CHAIN_LABELS: Record<number, string> = {
   43114: "Avalanche",
   // testnets
   11155111: "Ethereum Sepolia",
+  11155420: "Optimism Sepolia",
   84532: "Base Sepolia",
   421614: "Arbitrum Sepolia",
   97: "BSC Testnet",
