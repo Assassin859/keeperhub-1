@@ -351,11 +351,10 @@ export async function executeTransaction(
   } catch (error) {
     logUserError(
       ErrorCategory.TRANSACTION,
-      "[TransactionManager] Transaction failed:",
+      `[TransactionManager] Transaction failed at nonce=${nonce}`,
       error,
       {
         chain_id: context.chainId.toString(),
-        nonce: nonce.toString(),
       }
     );
 
@@ -434,12 +433,10 @@ export async function executeContractTransaction(
   } catch (error) {
     logUserError(
       ErrorCategory.TRANSACTION,
-      "[TransactionManager] Contract transaction failed:",
+      `[TransactionManager] Contract transaction failed: method=${method} nonce=${nonce}`,
       error,
       {
         chain_id: context.chainId.toString(),
-        nonce: nonce.toString(),
-        method,
       }
     );
 
@@ -463,11 +460,7 @@ export async function withNonceSession<T>(
   const nonceManager = getNonceManager();
   const rpcManager =
     context.rpcManager ??
-    (await getRpcProviderFromUrls(
-      context.rpcUrl,
-      undefined,
-      context.chainId
-    ));
+    (await getRpcProviderFromUrls(context.rpcUrl, undefined, context.chainId));
   const provider = rpcManager.getProvider();
 
   const { session, validation } = await nonceManager.startSession(
