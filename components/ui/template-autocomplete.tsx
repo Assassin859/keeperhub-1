@@ -1,8 +1,8 @@
 "use client";
 
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { Check } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Check, Search } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { BUILTIN_NODE_ID, BUILTIN_NODE_LABEL, BUILTIN_VARIABLE_FIELDS } from "@/lib/builtin-variables";
 import { api } from "@/lib/api-client";
@@ -41,8 +41,25 @@ type TemplateAutocompleteProps = {
   onSelect: (template: string) => void;
   onClose: () => void;
   currentNodeId?: string;
-  filter?: string;
 };
+
+// Subsequence match: true if every char of `needle` appears in `haystack`
+// in order (not necessarily contiguously). Both inputs must be pre-lowercased.
+function matchesSubsequence(needle: string, haystack: string): boolean {
+  if (!needle) {
+    return true;
+  }
+  let cursor = 0;
+  for (const char of haystack) {
+    if (char === needle[cursor]) {
+      cursor += 1;
+      if (cursor === needle.length) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
 // Get common fields based on node action type
 const getCommonFields = (node: WorkflowNode) => {
   const actionType = node.data.config?.actionType as string | undefined;
@@ -187,7 +204,6 @@ export function TemplateAutocomplete({
   onSelect,
   onClose,
   currentNodeId,
-  filter = "",
 }: TemplateAutocompleteProps) {
   const [nodes] = useAtom(nodesAtom);
   const [edges] = useAtom(edgesAtom);
@@ -199,9 +215,24 @@ export function TemplateAutocomplete({
   const lastFetchWorkflowIdRef = useRef<string | null>(null);
   currentWorkflowIdRef.current = currentWorkflowId;
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [searchQuery, setSearchQuery] = useState("");
   const menuRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [mounted, setMounted] = useState(false);
+
+  // Reset search + selection whenever the dropdown opens, and focus the search input
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    setSearchQuery("");
+    setSelectedIndex(0);
+    const frame = requestAnimationFrame(() => {
+      searchInputRef.current?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [isOpen]);
 
   // Ensure we're mounted before trying to use portal
   useEffect(() => {
@@ -465,52 +496,59 @@ export function TemplateAutocomplete({
     });
   }
 
-  // Filter options based on search term
-  const filteredOptions = filter
-    ? options.filter(
-        (opt) =>
-          opt.nodeName.toLowerCase().includes(filter.toLowerCase()) ||
-          (opt.field && opt.field.toLowerCase().includes(filter.toLowerCase()))
-      )
-    : options;
+  // Case-insensitive, per-token subsequence search across node name, field,
+  // and description. "MG" matches "amG", "myGreat", etc. Each whitespace-
+  // separated token must match independently as a subsequence.
+  const filteredOptions = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) {
+      return options;
+    }
+    const tokens = query.split(/\s+/);
+    return options.filter((opt) => {
+      const haystack =
+        `${opt.nodeName} ${opt.field ?? ""} ${opt.description ?? ""}`.toLowerCase();
+      return tokens.every((token) => matchesSubsequence(token, haystack));
+    });
+  }, [options, searchQuery]);
 
-  // Reset selection when filter changes
+  // Reset selection when the result set shrinks below the current index
   useEffect(() => {
-    setSelectedIndex(0);
-  }, [filter]);
+    setSelectedIndex((prev) =>
+      prev >= filteredOptions.length ? 0 : prev
+    );
+  }, [filteredOptions.length]);
 
-  // Handle keyboard navigation
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (!isOpen) return;
-
-      switch (e.key) {
-        case "ArrowDown":
-          e.preventDefault();
-          setSelectedIndex((prev) =>
-            prev < filteredOptions.length - 1 ? prev + 1 : prev
-          );
-          break;
-        case "ArrowUp":
-          e.preventDefault();
-          setSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev));
-          break;
-        case "Enter":
-          e.preventDefault();
-          if (filteredOptions[selectedIndex]) {
-            onSelect(filteredOptions[selectedIndex].template);
-          }
-          break;
-        case "Escape":
-          e.preventDefault();
-          onClose();
-          break;
+  const handleSearchKeyDown = (
+    e: React.KeyboardEvent<HTMLInputElement>
+  ): void => {
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        setSelectedIndex((prev) =>
+          prev < filteredOptions.length - 1 ? prev + 1 : prev
+        );
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        setSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev));
+        break;
+      case "Enter": {
+        e.preventDefault();
+        const option = filteredOptions[selectedIndex];
+        if (option) {
+          onSelect(option.template);
+        }
+        break;
       }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, filteredOptions, selectedIndex, onSelect, onClose]);
+      case "Escape":
+        e.preventDefault();
+        onClose();
+        break;
+      default:
+        break;
+    }
+  };
 
   // Scroll selected item into view (options live inside the scrollable list, not menuRef)
   useEffect(() => {
@@ -524,7 +562,7 @@ export function TemplateAutocomplete({
     }
   }, [selectedIndex]);
 
-  if (!isOpen || filteredOptions.length === 0 || !mounted) {
+  if (!(isOpen && mounted)) {
     return null;
   }
 
@@ -536,49 +574,72 @@ export function TemplateAutocomplete({
 
   const menuContent = (
     <div
-      className="fixed z-9999 w-80 rounded-lg border bg-popover p-1 text-popover-foreground shadow-md"
+      className="fixed z-9999 flex w-80 flex-col overflow-hidden rounded-lg border bg-popover text-popover-foreground shadow-md"
+      data-template-autocomplete=""
       ref={menuRef}
       style={{
         top: `${adjustedPosition.top}px`,
         left: `${adjustedPosition.left}px`,
       }}
     >
-      <div ref={listRef} className="max-h-60 overflow-y-auto">
-        {filteredOptions.map((option, index) => (
-          <div
-            className={cn(
-              "flex cursor-pointer items-center justify-between rounded px-2 py-1.5 text-sm transition-colors",
-              index === selectedIndex
-                ? "bg-accent text-accent-foreground"
-                : "hover:bg-accent/50"
-            )}
-            key={`${option.nodeId}-${option.field || "root"}`}
-            onClick={() => onSelect(option.template)}
-            onMouseEnter={() => setSelectedIndex(index)}
-          >
-            <div className="flex-1">
-              <div className="font-medium">
-                {option.type === "node" ? (
-                  option.nodeName
-                ) : (
-                  <>
-                    <span className="text-muted-foreground">
-                      {option.nodeName}.
-                    </span>
-                    {option.field}
-                  </>
+      <div className="flex items-center gap-2 border-b px-2 py-1.5">
+        <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <input
+          aria-label="Search variables"
+          autoComplete="off"
+          className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+          onChange={(e) => setSearchQuery(e.target.value)}
+          onKeyDown={handleSearchKeyDown}
+          placeholder="Search variables..."
+          ref={searchInputRef}
+          type="text"
+          value={searchQuery}
+        />
+      </div>
+      {filteredOptions.length === 0 ? (
+        <div className="px-3 py-6 text-center text-muted-foreground text-sm">
+          No variables found
+        </div>
+      ) : (
+        <div className="max-h-60 overflow-y-auto p-1" ref={listRef}>
+          {filteredOptions.map((option, index) => (
+            <button
+              className={cn(
+                "flex w-full cursor-pointer items-center justify-between rounded px-2 py-1.5 text-left text-sm transition-colors",
+                index === selectedIndex
+                  ? "bg-accent text-accent-foreground"
+                  : "hover:bg-accent/50"
+              )}
+              key={`${option.nodeId}-${option.field ?? "root"}`}
+              onClick={() => onSelect(option.template)}
+              onMouseDown={(e) => e.preventDefault()}
+              onMouseEnter={() => setSelectedIndex(index)}
+              type="button"
+            >
+              <div className="flex-1">
+                <div className="font-medium">
+                  {option.type === "node" ? (
+                    option.nodeName
+                  ) : (
+                    <>
+                      <span className="text-muted-foreground">
+                        {option.nodeName}.
+                      </span>
+                      {option.field}
+                    </>
+                  )}
+                </div>
+                {option.description && (
+                  <div className="text-muted-foreground text-xs">
+                    {option.description}
+                  </div>
                 )}
               </div>
-              {option.description && (
-                <div className="text-muted-foreground text-xs">
-                  {option.description}
-                </div>
-              )}
-            </div>
-            {index === selectedIndex && <Check className="h-4 w-4" />}
-          </div>
-        ))}
-      </div>
+              {index === selectedIndex && <Check className="h-4 w-4" />}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 
