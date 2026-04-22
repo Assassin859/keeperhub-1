@@ -51,7 +51,7 @@ vi.mock("drizzle-orm", () => ({
   eq: (a: unknown, b: unknown) => ({ a, b }),
 }));
 
-import { POST } from "@/app/api/admin/test/enable-workflow/route";
+import { POST } from "@/app/api/admin/test/enable-workflow/route.staging";
 
 function makeRequest(body: unknown): Request {
   return new Request("http://localhost/api/admin/test/enable-workflow", {

@@ -32,6 +32,8 @@ jobs:
       REGION: ${{ vars.TO_REGION }}
       AWS_ECR_NAME: ${{ vars.TO_ECR_NAME }}
       ENVIRONMENT_TAG: ${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
+      # INCLUDE_TEST_ENDPOINTS is derived from ENVIRONMENT_TAG in the
+      # "Derive build flags" step below (KEEP-237).
       NEXT_PUBLIC_AUTH_PROVIDERS: ${{ vars.NEXT_PUBLIC_AUTH_PROVIDERS }}
       NEXT_PUBLIC_GITHUB_CLIENT_ID: ${{ vars.NEXT_PUBLIC_GITHUB_CLIENT_ID }}
       NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${{ vars.NEXT_PUBLIC_GOOGLE_CLIENT_ID }}
@@ -46,6 +48,12 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
+
+      - name: Derive build flags
+        run: |
+          if [[ "$ENVIRONMENT_TAG" != "prod" ]]; then
+            echo "INCLUDE_TEST_ENDPOINTS=true" >> "$GITHUB_ENV"
+          fi
 
       - name: Check commit message for skip flags
         id: skip
@@ -118,6 +126,7 @@ jobs:
           NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${{ env.NEXT_PUBLIC_GOOGLE_CLIENT_ID }}
           NEXT_PUBLIC_BILLING_ENABLED: ${{ env.NEXT_PUBLIC_BILLING_ENABLED }}
           ENVIRONMENT_TAG: ${{ env.ENVIRONMENT_TAG }}
+          INCLUDE_TEST_ENDPOINTS: ${{ env.INCLUDE_TEST_ENDPOINTS }}
           NEXT_PUBLIC_SENTRY_DSN: ${{ env.NEXT_PUBLIC_SENTRY_DSN }}
           SENTRY_ORG: ${{ env.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ env.SENTRY_PROJECT }}
@@ -138,6 +147,7 @@ jobs:
           NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${{ env.NEXT_PUBLIC_GOOGLE_CLIENT_ID }}
           NEXT_PUBLIC_BILLING_ENABLED: ${{ env.NEXT_PUBLIC_BILLING_ENABLED }}
           NEXT_PUBLIC_SENTRY_DSN: ${{ env.NEXT_PUBLIC_SENTRY_DSN }}
+          INCLUDE_TEST_ENDPOINTS: ${{ env.INCLUDE_TEST_ENDPOINTS }}
           SENTRY_ORG: ${{ env.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ env.SENTRY_PROJECT }}
           SENTRY_AUTH_TOKEN: ${{ env.SENTRY_AUTH_TOKEN }}

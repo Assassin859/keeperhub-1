@@ -19,6 +19,7 @@ variable "SENTRY_ORG" { default = "" }
 variable "SENTRY_PROJECT" { default = "" }
 variable "SENTRY_AUTH_TOKEN" { default = "" }
 variable "SENTRY_RELEASE" { default = "" }
+variable "INCLUDE_TEST_ENDPOINTS" { default = "" }
 variable "EVENTS_ECR_TRACKER_REPO" { default = "" }
 variable "SCHEDULER_ECR_REPO" { default = "" }
 variable "EXECUTOR_ECR_REPO" { default = "" }
@@ -49,6 +50,7 @@ target "app" {
     NEXT_PUBLIC_GOOGLE_CLIENT_ID = NEXT_PUBLIC_GOOGLE_CLIENT_ID
     NEXT_PUBLIC_BILLING_ENABLED  = NEXT_PUBLIC_BILLING_ENABLED
     NEXT_PUBLIC_SENTRY_DSN       = NEXT_PUBLIC_SENTRY_DSN
+    INCLUDE_TEST_ENDPOINTS       = INCLUDE_TEST_ENDPOINTS
   }
   tags = ECR_REGISTRY != "" ? compact([
     "${ECR_REGISTRY}/${ECR_REPO}:app-${IMAGE_TAG}",
@@ -71,6 +73,7 @@ target "sentry-upload" {
     NEXT_PUBLIC_GOOGLE_CLIENT_ID = NEXT_PUBLIC_GOOGLE_CLIENT_ID
     NEXT_PUBLIC_BILLING_ENABLED  = NEXT_PUBLIC_BILLING_ENABLED
     NEXT_PUBLIC_SENTRY_DSN       = NEXT_PUBLIC_SENTRY_DSN
+    INCLUDE_TEST_ENDPOINTS       = INCLUDE_TEST_ENDPOINTS
     SENTRY_ORG                   = SENTRY_ORG
     SENTRY_PROJECT               = SENTRY_PROJECT
     SENTRY_AUTH_TOKEN            = SENTRY_AUTH_TOKEN

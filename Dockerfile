@@ -69,6 +69,12 @@ ARG NEXT_PUBLIC_SENTRY_DSN
 ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN
 ENV CI=true
 
+# KEEP-237: Gate admin test routes at build time. Set to "true" for
+# staging/PR builds to compile route.staging.ts files; leave unset for prod
+# so those routes are excluded from the bundle entirely.
+ARG INCLUDE_TEST_ENDPOINTS
+ENV INCLUDE_TEST_ENDPOINTS=$INCLUDE_TEST_ENDPOINTS
+
 # Build the application with Turbopack (source maps generated but not uploaded).
 # Cache mount persists .next/cache across builds on the same BuildKit instance,
 # enabling Turbopack's incremental compilation.

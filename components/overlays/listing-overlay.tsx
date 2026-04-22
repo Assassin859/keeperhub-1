@@ -129,6 +129,73 @@ function parseOutputMapping(
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Input-schema reference check
+// ---------------------------------------------------------------------------
+
+function collectConfigStrings(value: unknown, out: string[]): void {
+  if (typeof value === "string") {
+    out.push(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectConfigStrings(item, out);
+    }
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const v of Object.values(value)) {
+      collectConfigStrings(v, out);
+    }
+  }
+}
+
+function escapeForRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Matches the template patterns resolved by the executor (see
+// lib/workflow-executor.workflow.ts processTemplates): both stored
+// {{@nodeId:Label.field}} and display {{Label.field}} forms.
+function fieldIsReferencedInConfigs(
+  fieldName: string,
+  nodes: WorkflowNode[]
+): boolean {
+  const pattern = new RegExp(
+    `\\{\\{[^}]*\\b${escapeForRegex(fieldName)}\\b[^}]*\\}\\}`
+  );
+  const strings: string[] = [];
+  for (const node of nodes) {
+    if (node.data.config) {
+      collectConfigStrings(node.data.config, strings);
+    }
+  }
+  return strings.some((s) => pattern.test(s));
+}
+
+function findUnreferencedRequiredInputs(
+  fields: SchemaField[],
+  nodes: WorkflowNode[]
+): string[] {
+  return fields
+    .filter((f) => f.required && f.name)
+    .map((f) => f.name)
+    .filter((name) => !fieldIsReferencedInConfigs(name, nodes));
+}
+
+function getTriggerLabel(nodes: WorkflowNode[]): string {
+  const trigger = nodes.find((n) => n.data.type === "trigger");
+  if (!trigger) {
+    return "Manual";
+  }
+  if (trigger.data.label) {
+    return trigger.data.label;
+  }
+  const configured = trigger.data.config?.triggerType;
+  return typeof configured === "string" ? configured : "Manual";
+}
+
 function hasChanges(
   local: {
     isListed: boolean;
@@ -290,8 +357,28 @@ export function ListingOverlay({
   const performSave = async (overrides?: {
     isListed?: boolean;
   }): Promise<void> => {
-    setIsSaving(true);
     const effectiveIsListed = overrides?.isListed ?? localIsListed;
+
+    if (effectiveIsListed && localInputSchema.length > 0) {
+      const unreferenced = findUnreferencedRequiredInputs(
+        localInputSchema,
+        nodes
+      );
+      if (unreferenced.length > 0) {
+        const triggerLabel = getTriggerLabel(nodes);
+        const [firstField] = unreferenced;
+        const suffix =
+          unreferenced.length > 1
+            ? ` (and ${unreferenced.length - 1} more)`
+            : "";
+        toast.error(
+          `Input "${firstField}"${suffix} is declared but not referenced by any node. In a node field, type @ and select ${triggerLabel}.data.${firstField}.`
+        );
+        return;
+      }
+    }
+
+    setIsSaving(true);
     try {
       const schema =
         localInputSchema.length > 0
@@ -497,6 +584,16 @@ export function ListingOverlay({
             onChange={setLocalInputSchema}
             schema={localInputSchema}
           />
+          {localInputSchema.length > 0 && (
+            <p className="px-1 text-muted-foreground text-xs">
+              Reference each input in a node field: type{" "}
+              <code className="rounded bg-muted px-1">@</code> and select{" "}
+              <code className="rounded bg-muted px-1">
+                {getTriggerLabel(nodes)}.data.{"<fieldName>"}
+              </code>
+              .
+            </p>
+          )}
         </TabsContent>
 
         {/* Output Mapping Tab */}

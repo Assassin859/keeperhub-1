@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { authenticateAdmin, validateTestEmail } from "@/lib/admin-auth";
+import {
+  authenticateAdmin,
+  rateLimitBypassRule,
+  validateTestEmail,
+} from "@/lib/admin-auth";
 
 const TEST_KEY = "kha_test-secret-key-12345";
 
@@ -17,10 +21,30 @@ describe("authenticateAdmin", () => {
     delete process.env.TEST_API_KEY;
     vi.stubEnv("NODE_ENV", "");
     vi.stubEnv("ALLOW_TEST_ENDPOINTS", "");
+    // Assume routes are compiled in unless a specific test overrides.
+    // Without this, every test below would trip the build-time gate.
+    vi.stubEnv("INCLUDE_TEST_ENDPOINTS", "true");
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
+  });
+
+  it("should refuse when INCLUDE_TEST_ENDPOINTS is not baked in (build-time gate)", () => {
+    process.env.TEST_API_KEY = TEST_KEY;
+    vi.stubEnv("INCLUDE_TEST_ENDPOINTS", "");
+    const result = authenticateAdmin(createRequest(`Bearer ${TEST_KEY}`));
+    expect(result).toEqual({
+      authenticated: false,
+      error: "Admin test endpoints disabled in production",
+    });
+  });
+
+  it("should refuse when INCLUDE_TEST_ENDPOINTS is any value other than 'true'", () => {
+    process.env.TEST_API_KEY = TEST_KEY;
+    vi.stubEnv("INCLUDE_TEST_ENDPOINTS", "1");
+    const result = authenticateAdmin(createRequest(`Bearer ${TEST_KEY}`));
+    expect(result.authenticated).toBe(false);
   });
 
   it("should reject when TEST_API_KEY is not configured", () => {
@@ -104,6 +128,96 @@ describe("authenticateAdmin", () => {
     vi.stubEnv("NODE_ENV", "development");
     const result = authenticateAdmin(createRequest(`Bearer ${TEST_KEY}`));
     expect(result).toEqual({ authenticated: true });
+  });
+});
+
+describe("rateLimitBypassRule", () => {
+  const DEFAULT_RULE = { window: 60, max: 10 };
+
+  function createRequestWithHeader(header?: string): Request {
+    const headers: Record<string, string> = {};
+    if (header !== undefined) {
+      headers["X-Test-API-Key"] = header;
+    }
+    return new Request("http://localhost:3000/api/auth/sign-in", { headers });
+  }
+
+  beforeEach(() => {
+    // biome-ignore lint/performance/noDelete: delete is required to remove env vars (undefined assignment coerces to string)
+    delete process.env.TEST_API_KEY;
+    vi.stubEnv("NODE_ENV", "");
+    vi.stubEnv("ALLOW_TEST_ENDPOINTS", "");
+    vi.stubEnv("INCLUDE_TEST_ENDPOINTS", "true");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("should return default rule when build-time gate refuses", () => {
+    process.env.TEST_API_KEY = TEST_KEY;
+    vi.stubEnv("INCLUDE_TEST_ENDPOINTS", "");
+    const result = rateLimitBypassRule(
+      createRequestWithHeader(TEST_KEY),
+      DEFAULT_RULE
+    );
+    expect(result).toBe(DEFAULT_RULE);
+  });
+
+  it("should return default rule in production without ALLOW_TEST_ENDPOINTS", () => {
+    process.env.TEST_API_KEY = TEST_KEY;
+    vi.stubEnv("NODE_ENV", "production");
+    const result = rateLimitBypassRule(
+      createRequestWithHeader(TEST_KEY),
+      DEFAULT_RULE
+    );
+    expect(result).toBe(DEFAULT_RULE);
+  });
+
+  it("should return default rule when TEST_API_KEY is not set", () => {
+    const result = rateLimitBypassRule(
+      createRequestWithHeader(TEST_KEY),
+      DEFAULT_RULE
+    );
+    expect(result).toBe(DEFAULT_RULE);
+  });
+
+  it("should return default rule when X-Test-API-Key header is missing", () => {
+    process.env.TEST_API_KEY = TEST_KEY;
+    const result = rateLimitBypassRule(
+      createRequestWithHeader(),
+      DEFAULT_RULE
+    );
+    expect(result).toBe(DEFAULT_RULE);
+  });
+
+  it("should return default rule when X-Test-API-Key header is wrong", () => {
+    process.env.TEST_API_KEY = TEST_KEY;
+    const result = rateLimitBypassRule(
+      createRequestWithHeader("wrong-key"),
+      DEFAULT_RULE
+    );
+    expect(result).toBe(DEFAULT_RULE);
+  });
+
+  it("should return false (bypass) when all gates pass and header matches", () => {
+    process.env.TEST_API_KEY = TEST_KEY;
+    const result = rateLimitBypassRule(
+      createRequestWithHeader(TEST_KEY),
+      DEFAULT_RULE
+    );
+    expect(result).toBe(false);
+  });
+
+  it("should bypass in production when ALLOW_TEST_ENDPOINTS=true and header matches", () => {
+    process.env.TEST_API_KEY = TEST_KEY;
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ALLOW_TEST_ENDPOINTS", "true");
+    const result = rateLimitBypassRule(
+      createRequestWithHeader(TEST_KEY),
+      DEFAULT_RULE
+    );
+    expect(result).toBe(false);
   });
 });
 
