@@ -368,11 +368,22 @@ const chainEnabled = getOrCreateGauge(
   []
 );
 
+/**
+ * @deprecated Counts all active org wallets (Para + Turnkey) and is retained
+ * for backward compatibility. Use `keeperhub_wallet_total{provider}` instead.
+ */
 const paraWalletTotal = getOrCreateGauge(
   dbRegistry,
   "keeperhub_para_wallet_total",
-  "Total Para wallets",
+  "[Deprecated] Total active org wallets (all providers). Use keeperhub_wallet_total{provider} instead.",
   []
+);
+
+const walletTotalByProvider = getOrCreateGauge(
+  dbRegistry,
+  "keeperhub_wallet_total",
+  "Total active org wallets by provider",
+  ["provider"]
 );
 
 const sessionActive = getOrCreateGauge(
@@ -1127,6 +1138,14 @@ export async function updateDbMetrics(): Promise<void> {
     chainTotal.set(infraStats.chainsTotal);
     chainEnabled.set(infraStats.chainsEnabled);
     paraWalletTotal.set(infraStats.paraWalletsTotal);
+    walletTotalByProvider.set(
+      { provider: "para" },
+      infraStats.walletsByProvider.para
+    );
+    walletTotalByProvider.set(
+      { provider: "turnkey" },
+      infraStats.walletsByProvider.turnkey
+    );
     sessionActive.set(infraStats.sessionsActive);
 
     updateHubVoteMetrics(voteStats);
