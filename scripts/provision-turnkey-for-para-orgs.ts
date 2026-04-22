@@ -126,6 +126,16 @@ async function main(): Promise<void> {
     console.log(
       `[provision-turnkey] Done. provisioned=${summary.provisioned} skipped=${summary.skipped} failed=${summary.failed}`
     );
+
+    if (summary.provisioned > 0) {
+      console.warn(
+        "[provision-turnkey] New Turnkey wallets are inactive by default. " +
+          "When an admin flips a wallet to Turnkey, workflow writes run through " +
+          "the executor -> runner path, which must have TURNKEY_API_PUBLIC_KEY and " +
+          "TURNKEY_API_PRIVATE_KEY set. Verify deploy/executor/<env>/values.yaml " +
+          "mirrors the keeperhub chart's Turnkey env before flipping any wallet."
+      );
+    }
   } finally {
     await db.execute(sql`select pg_advisory_unlock(${ADVISORY_LOCK_KEY})`);
     await client.end();

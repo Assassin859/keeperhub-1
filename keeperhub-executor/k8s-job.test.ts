@@ -175,6 +175,24 @@ describe("createWorkflowJob", () => {
     expect(dbUrls[0].value).toBe("postgres://localhost/test");
   });
 
+  it("forwards Turnkey API env vars from runner-env into the Job spec", async () => {
+    (getRunnerSystemEnvVars as Mock).mockReturnValue([
+      { name: "TURNKEY_API_PUBLIC_KEY", value: "pub-test" },
+      { name: "TURNKEY_API_PRIVATE_KEY", value: "priv-test" },
+    ]);
+
+    await createWorkflowJob({
+      workflowId: "wf-1",
+      executionId: "exec-1234abcd",
+      input: {},
+      triggerType: "schedule",
+    });
+
+    const envVars = getJobEnvVars(getSubmittedJob());
+    expect(getEnvVar(envVars, "TURNKEY_API_PUBLIC_KEY")).toBe("pub-test");
+    expect(getEnvVar(envVars, "TURNKEY_API_PRIVATE_KEY")).toBe("priv-test");
+  });
+
   it("includes SCHEDULE_ID for scheduled triggers", async () => {
     await createWorkflowJob({
       workflowId: "wf-1",

@@ -45,6 +45,7 @@ import { executeInProcess } from "./in-process";
 import { createWorkflowJob } from "./k8s-job";
 import { applyCounterDeltas, isIngestPayload } from "./lib/metrics-shipping";
 import { toJsonSafe } from "./lib/serialize";
+import { assertTurnkeyEnvForActiveWallets } from "./startup-checks";
 import type { ExecutorMessage, ScheduleMessage } from "./types";
 
 const INGEST_MAX_BODY_BYTES = 256 * 1024;
@@ -311,6 +312,8 @@ async function listen(): Promise<void> {
   console.log(`[Executor] Runner image: ${CONFIG.runnerImage}`);
   console.log(`[Executor] K8s namespace: ${CONFIG.namespace}`);
 
+  await assertTurnkeyEnvForActiveWallets(db);
+
   // Health check + metrics server
   const healthServer = createServer((req, res) => {
     if (req.url === "/health" && req.method === "GET") {
@@ -443,4 +446,7 @@ async function listen(): Promise<void> {
   }
 }
 
-listen();
+listen().catch((error: unknown) => {
+  console.error("[Executor] Fatal startup error:", error);
+  process.exit(1);
+});
