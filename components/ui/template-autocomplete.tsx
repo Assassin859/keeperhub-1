@@ -33,33 +33,29 @@ import {
   sanitizeNodeId,
   schemaToFields,
 } from "@/lib/template-helpers";
+import {
+  type IndexedAutocompleteOption,
+  buildHaystack,
+  filterOptionsByQuery,
+} from "@/lib/template-autocomplete-filter";
 import { getTriggerOutputFields } from "@/lib/trigger-output-fields";
+
+/**
+ * - "escape": user pressed Escape while in the search input -- return focus
+ *   to the editor so they can keep typing.
+ * - "outside": user clicked/tapped somewhere outside the dropdown -- let
+ *   focus flow wherever the click landed and don't refocus the editor.
+ */
+export type TemplateAutocompleteCloseReason = "escape" | "outside";
 
 type TemplateAutocompleteProps = {
   isOpen: boolean;
   position: { top: number; left: number };
   onSelect: (template: string) => void;
-  onClose: () => void;
+  onClose: (reason: TemplateAutocompleteCloseReason) => void;
   currentNodeId?: string;
 };
 
-// Subsequence match: true if every char of `needle` appears in `haystack`
-// in order (not necessarily contiguously). Both inputs must be pre-lowercased.
-function matchesSubsequence(needle: string, haystack: string): boolean {
-  if (!needle) {
-    return true;
-  }
-  let cursor = 0;
-  for (const char of haystack) {
-    if (char === needle[cursor]) {
-      cursor += 1;
-      if (cursor === needle.length) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
 // Get common fields based on node action type
 const getCommonFields = (node: WorkflowNode) => {
   const actionType = node.data.config?.actionType as string | undefined;
@@ -308,7 +304,7 @@ export function TemplateAutocomplete({
   ]);
 
   // Find all nodes that come before the current node
-  const getUpstreamNodes = () => {
+  const upstreamNodes = useMemo(() => {
     if (!currentNodeId) {
       return [];
     }
@@ -316,7 +312,7 @@ export function TemplateAutocomplete({
     const visited = new Set<string>();
     const upstream: string[] = [];
 
-    const traverse = (nodeId: string) => {
+    const traverse = (nodeId: string): void => {
       if (visited.has(nodeId)) {
         return;
       }
@@ -332,60 +328,114 @@ export function TemplateAutocomplete({
     traverse(currentNodeId);
 
     return nodes.filter((node) => upstream.includes(node.id));
-  };
+  }, [nodes, edges, currentNodeId]);
 
-  const upstreamNodes = getUpstreamNodes();
-
-  // Build list of all available options (nodes + their fields)
-  const options: Array<{
-    type: "node" | "field";
-    nodeId: string;
-    nodeName: string;
-    field?: string;
-    description?: string;
-    template: string;
-  }> = [];
-
-  for (const node of upstreamNodes) {
-    const nodeName = getNodeDisplayName(node);
-    // 1) Prefer current execution in runtime; 2) else last execution output; 3) else getCommonFields
-    const runtimeOutput = executionLogs[node.id]?.output;
-    const hasRuntimeOutput =
-      runtimeOutput !== undefined && runtimeOutput !== null;
+  // Build list of all available options (nodes + their fields). Memoized so
+  // typing in the search input doesn't re-traverse the DAG, re-resolve For
+  // Each synthetic outputs, or re-compute execution-log-derived field maps.
+  // Each option carries a precomputed lowercase `haystack` so filtering is a
+  // cheap substring/subsequence scan per keystroke.
+  const options = useMemo<IndexedAutocompleteOption[]>(() => {
+    const result: IndexedAutocompleteOption[] = [];
     const lastLogsForWorkflow =
       lastExecutionLogs.workflowId === currentWorkflowId
         ? lastExecutionLogs.logs
-        : {};
-    const lastRunOutput = lastLogsForWorkflow[node.id]?.output;
-    const hasLastRunOutput =
-      lastRunOutput !== undefined && lastRunOutput !== null;
+        : ({} as ExecutionLogsByNodeId);
 
-    const outputToUse = hasRuntimeOutput
-      ? runtimeOutput
-      : hasLastRunOutput
-        ? lastRunOutput
-        : null;
+    const pushOption = (
+      opt: Omit<IndexedAutocompleteOption, "haystack">
+    ): void => {
+      result.push({ ...opt, haystack: buildHaystack(opt) });
+    };
 
-    // For Each nodes: override with synthetic output so autocomplete shows
-    // the actual currentItem shape (nested fields) instead of the step's
-    // generic metadata. Resolves the arraySource from upstream execution data.
-    const actionType = node.data.config?.actionType as string | undefined;
-    if (actionType === "For Each") {
-      const syntheticOutput = resolveForEachSyntheticOutput(
-        node,
-        executionLogs,
-        lastLogsForWorkflow,
-        upstreamNodes
-      );
+    for (const node of upstreamNodes) {
+      const nodeName = getNodeDisplayName(node);
+      const runtimeOutput = executionLogs[node.id]?.output;
+      const hasRuntimeOutput =
+        runtimeOutput !== undefined && runtimeOutput !== null;
+      const lastRunOutput = lastLogsForWorkflow[node.id]?.output;
+      const hasLastRunOutput =
+        lastRunOutput !== undefined && lastRunOutput !== null;
 
-      if (syntheticOutput) {
+      const outputToUse = hasRuntimeOutput
+        ? runtimeOutput
+        : hasLastRunOutput
+          ? lastRunOutput
+          : null;
+
+      // For Each nodes: override with synthetic output so autocomplete shows
+      // the actual currentItem shape (nested fields) instead of the step's
+      // generic metadata. Resolves the arraySource from upstream execution data.
+      const actionType = node.data.config?.actionType as string | undefined;
+      if (actionType === "For Each") {
+        const syntheticOutput = resolveForEachSyntheticOutput(
+          node,
+          executionLogs,
+          lastLogsForWorkflow,
+          upstreamNodes
+        );
+
+        if (syntheticOutput) {
+          const sanitizedId = sanitizeNodeId(node.id);
+          const nodeOutputs: NodeOutputs = {
+            [sanitizedId]: { label: nodeName, data: syntheticOutput },
+          };
+          const runtimeFields = getAvailableFields(nodeOutputs);
+
+          pushOption({
+            type: "node",
+            nodeId: node.id,
+            nodeName,
+            template: `{{@${node.id}:${nodeName}}}`,
+          });
+
+          for (const entry of runtimeFields) {
+            if (entry.fieldPath === "" && entry.field === "") {
+              continue;
+            }
+            const fieldPath = entry.fieldPath || entry.field;
+            pushOption({
+              type: "field",
+              nodeId: node.id,
+              nodeName,
+              field: fieldPath,
+              description: undefined,
+              template: `{{@${node.id}:${nodeName}.${fieldPath}}}`,
+            });
+          }
+        } else {
+          const fields = getCommonFields(node);
+          pushOption({
+            type: "node",
+            nodeId: node.id,
+            nodeName,
+            template: `{{@${node.id}:${nodeName}}}`,
+          });
+          for (const field of fields) {
+            pushOption({
+              type: "field",
+              nodeId: node.id,
+              nodeName,
+              field: field.field,
+              description: field.description,
+              template: `{{@${node.id}:${nodeName}.${field.field}}}`,
+            });
+          }
+        }
+        continue;
+      }
+
+      if (outputToUse !== null) {
         const sanitizedId = sanitizeNodeId(node.id);
         const nodeOutputs: NodeOutputs = {
-          [sanitizedId]: { label: nodeName, data: syntheticOutput },
+          [sanitizedId]: {
+            label: nodeName,
+            data: outputToUse,
+          },
         };
         const runtimeFields = getAvailableFields(nodeOutputs);
 
-        options.push({
+        pushOption({
           type: "node",
           nodeId: node.id,
           nodeName,
@@ -397,7 +447,7 @@ export function TemplateAutocomplete({
             continue;
           }
           const fieldPath = entry.fieldPath || entry.field;
-          options.push({
+          pushOption({
             type: "field",
             nodeId: node.id,
             nodeName,
@@ -408,14 +458,16 @@ export function TemplateAutocomplete({
         }
       } else {
         const fields = getCommonFields(node);
-        options.push({
+
+        pushOption({
           type: "node",
           nodeId: node.id,
           nodeName,
           template: `{{@${node.id}:${nodeName}}}`,
         });
+
         for (const field of fields) {
-          options.push({
+          pushOption({
             type: "field",
             nodeId: node.id,
             nodeName,
@@ -425,92 +477,31 @@ export function TemplateAutocomplete({
           });
         }
       }
-      continue;
     }
 
-    if (outputToUse !== null) {
-      const sanitizedId = sanitizeNodeId(node.id);
-      const nodeOutputs: NodeOutputs = {
-        [sanitizedId]: {
-          label: nodeName,
-          data: outputToUse,
-        },
-      };
-      const runtimeFields = getAvailableFields(nodeOutputs);
-
-      options.push({
-        type: "node",
-        nodeId: node.id,
-        nodeName,
-        template: `{{@${node.id}:${nodeName}}}`,
+    // Built-in system variables (available to all nodes, evaluated at execution time)
+    for (const field of BUILTIN_VARIABLE_FIELDS) {
+      pushOption({
+        type: "field",
+        nodeId: BUILTIN_NODE_ID,
+        nodeName: BUILTIN_NODE_LABEL,
+        field: field.field,
+        description: field.description,
+        template: `{{@${BUILTIN_NODE_ID}:${BUILTIN_NODE_LABEL}.${field.field}}}`,
       });
-
-      for (const entry of runtimeFields) {
-        if (entry.fieldPath === "" && entry.field === "") {
-          continue;
-        }
-        const fieldPath = entry.fieldPath || entry.field;
-        options.push({
-          type: "field",
-          nodeId: node.id,
-          nodeName,
-          field: fieldPath,
-          description: undefined,
-          template: `{{@${node.id}:${nodeName}.${fieldPath}}}`,
-        });
-      }
-    } else {
-      const fields = getCommonFields(node);
-
-      // Add node itself
-      options.push({
-        type: "node",
-        nodeId: node.id,
-        nodeName,
-        template: `{{@${node.id}:${nodeName}}}`,
-      });
-
-      // Add fields
-      for (const field of fields) {
-        options.push({
-          type: "field",
-          nodeId: node.id,
-          nodeName,
-          field: field.field,
-          description: field.description,
-          template: `{{@${node.id}:${nodeName}.${field.field}}}`,
-        });
-      }
     }
-  }
 
-  // Built-in system variables (available to all nodes, evaluated at execution time)
-  for (const field of BUILTIN_VARIABLE_FIELDS) {
-    options.push({
-      type: "field",
-      nodeId: BUILTIN_NODE_ID,
-      nodeName: BUILTIN_NODE_LABEL,
-      field: field.field,
-      description: field.description,
-      template: `{{@${BUILTIN_NODE_ID}:${BUILTIN_NODE_LABEL}.${field.field}}}`,
-    });
-  }
+    return result;
+  }, [upstreamNodes, executionLogs, lastExecutionLogs, currentWorkflowId]);
 
-  // Case-insensitive, per-token subsequence search across node name, field,
-  // and description. "MG" matches "amG", "myGreat", etc. Each whitespace-
-  // separated token must match independently as a subsequence.
-  const filteredOptions = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    if (!query) {
-      return options;
-    }
-    const tokens = query.split(/\s+/);
-    return options.filter((opt) => {
-      const haystack =
-        `${opt.nodeName} ${opt.field ?? ""} ${opt.description ?? ""}`.toLowerCase();
-      return tokens.every((token) => matchesSubsequence(token, haystack));
-    });
-  }, [options, searchQuery]);
+  // Case-insensitive substring search: each whitespace-separated token must
+  // appear as a contiguous substring somewhere in the precomputed haystack.
+  // Substring (not subsequence) avoids noisy matches where chars appear in
+  // order but spread across unrelated parts of the name/field.
+  const filteredOptions = useMemo(
+    () => filterOptionsByQuery(options, searchQuery),
+    [options, searchQuery]
+  );
 
   // Reset selection when the result set shrinks below the current index
   useEffect(() => {
@@ -518,6 +509,30 @@ export function TemplateAutocomplete({
       prev >= filteredOptions.length ? 0 : prev
     );
   }, [filteredOptions.length]);
+
+  // Close the dropdown on any pointerdown outside of it. The parent editor's
+  // blur timeout only triggers when focus actually moves, so clicks on
+  // non-focusable elements (text, panels, etc.) would otherwise leave the
+  // dropdown open. We ignore clicks inside the menu itself so option clicks
+  // still register.
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    const handlePointerDown = (e: PointerEvent): void => {
+      const target = e.target;
+      if (
+        target instanceof Element &&
+        target.closest("[data-template-autocomplete]")
+      ) {
+        return;
+      }
+      onClose("outside");
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () =>
+      document.removeEventListener("pointerdown", handlePointerDown);
+  }, [isOpen, onClose]);
 
   const handleSearchKeyDown = (
     e: React.KeyboardEvent<HTMLInputElement>
@@ -543,7 +558,7 @@ export function TemplateAutocomplete({
       }
       case "Escape":
         e.preventDefault();
-        onClose();
+        onClose("escape");
         break;
       default:
         break;

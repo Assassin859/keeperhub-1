@@ -5,7 +5,10 @@ import { useEffect, useRef, useState } from "react";
 import { doesNodeExist, getDisplayTextForTemplate } from "@/lib/template-utils";
 import { cn } from "@/lib/utils";
 import { nodesAtom, selectedNodeAtom } from "@/lib/workflow-store";
-import { TemplateAutocomplete } from "./template-autocomplete";
+import {
+  TemplateAutocomplete,
+  type TemplateAutocompleteCloseReason,
+} from "./template-autocomplete";
 
 // Guards `selection.getRangeAt(0)`, which throws IndexSizeError when
 // rangeCount is 0 (e.g. focus moved off the editable before keydown fired).
@@ -131,10 +134,21 @@ export function TemplateBadgeInput({
     setShowAutocomplete(true);
   };
 
-  const closeAutocomplete = (): void => {
+  const closeAutocomplete = (reason: TemplateAutocompleteCloseReason): void => {
     setShowAutocomplete(false);
     setAtSignPosition(null);
-    contentRef.current?.focus();
+    if (reason === "escape") {
+      // Return focus to the editor so the user can keep typing.
+      contentRef.current?.focus();
+      return;
+    }
+    // "outside": user clicked somewhere else. Don't refocus; also sync
+    // isFocused so the "@" chip hides if focus no longer lives in the editor.
+    setTimeout(() => {
+      if (document.activeElement !== contentRef.current) {
+        setIsFocused(false);
+      }
+    }, 0);
   };
 
   // Update internal value when prop changes from outside
@@ -609,17 +623,39 @@ export function TemplateBadgeInput({
     }
   }, [internalValue, isFocused]);
 
+  // Hint 2: clicking the "@" chip focuses the editor, inserts an "@" at the
+  // cursor (or at the end if none), and lets handleInput open the dropdown.
+  const handleAtButtonClick = (): void => {
+    if (!contentRef.current || disabled) {
+      return;
+    }
+    contentRef.current.focus();
+    const selection = window.getSelection();
+    const hasCursorInEditor =
+      selection !== null &&
+      selection.rangeCount > 0 &&
+      contentRef.current.contains(selection.anchorNode);
+    if (!hasCursorInEditor) {
+      const range = document.createRange();
+      range.selectNodeContents(contentRef.current);
+      range.collapse(false);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    }
+    document.execCommand("insertText", false, "@");
+  };
+
   return (
     <>
       <div
         className={cn(
-          "flex min-h-9 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors focus-within:outline-none focus-within:ring-1 focus-within:ring-ring",
+          "flex min-h-9 w-full items-center gap-1 overflow-hidden rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors focus-within:outline-none focus-within:ring-1 focus-within:ring-ring",
           disabled && "cursor-not-allowed opacity-50",
           className
         )}
       >
         <div
-          className="w-full outline-none"
+          className="min-w-0 flex-1 overflow-hidden whitespace-nowrap outline-none"
           contentEditable={!disabled}
           id={id}
           onBlur={handleBlur}
@@ -631,8 +667,21 @@ export function TemplateBadgeInput({
           role="textbox"
           suppressContentEditableWarning
         />
+        {(isFocused || showAutocomplete) && !disabled && (
+          <button
+            aria-label="Insert workflow variable"
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground text-xs transition-colors hover:bg-accent hover:text-foreground"
+            onClick={handleAtButtonClick}
+            onMouseDown={(e) => e.preventDefault()}
+            tabIndex={-1}
+            title="Insert a workflow variable"
+            type="button"
+          >
+            @
+          </button>
+        )}
       </div>
-      
+
       <TemplateAutocomplete
         currentNodeId={selectedNodeId ?? undefined}
         isOpen={showAutocomplete}
