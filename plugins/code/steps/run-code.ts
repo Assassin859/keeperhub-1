@@ -29,6 +29,14 @@ const MAX_LOG_ENTRIES = 200;
 const VM_LINE_REGEX = /user-code\.js:(\d+)/;
 const UNRESOLVED_TEMPLATE_REGEX = /\{\{@?[^}]+\}\}/g;
 
+// Security kill switch for KEEP-331. node:vm is not a security boundary:
+// user code can escape via Error.constructor("return process")() and read
+// the executor pod's environment. Disabled until a proper sandbox lands.
+// Widened to boolean so downstream code is not flagged as unreachable.
+const CODE_STEP_DISABLED: boolean = true;
+const CODE_STEP_DISABLED_ERROR =
+  "Code step is disabled pending security review. Contact your administrator.";
+
 /**
  * Strip JS string literals (single, double, backtick) so that {{...}}
  * patterns inside strings are not mistaken for unresolved templates.
@@ -98,6 +106,10 @@ function createCapturedConsole(logs: LogEntry[]): {
  */
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: single cohesive handler with sandbox setup, timeout, and error handling
 async function stepHandler(input: RunCodeCoreInput): Promise<RunCodeResult> {
+  if (CODE_STEP_DISABLED) {
+    return { success: false, error: CODE_STEP_DISABLED_ERROR, logs: [] };
+  }
+
   const { code } = input;
 
   if (!code || code.trim() === "") {

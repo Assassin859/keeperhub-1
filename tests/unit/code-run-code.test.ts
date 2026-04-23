@@ -73,7 +73,7 @@ async function expectFailure(
 
 // --- Basic Execution ---------------------------------------------------------
 
-describe("code/run-code - basic execution", () => {
+describe.skip("code/run-code - basic execution", () => {
   it("returns the result of a simple expression", async () => {
     const result = await expectSuccess({ code: "return 1 + 2" });
     expect(result.result).toBe(3);
@@ -118,7 +118,7 @@ describe("code/run-code - basic execution", () => {
 
 // --- BigInt Support -----------------------------------------------------------
 
-describe("code/run-code - BigInt support", () => {
+describe.skip("code/run-code - BigInt support", () => {
   it("creates and returns BigInt values", async () => {
     const result = await expectSuccess({
       code: "return BigInt('9007199254740993')",
@@ -178,7 +178,7 @@ describe("code/run-code - BigInt support", () => {
 
 // --- Console Capture ---------------------------------------------------------
 
-describe("code/run-code - console capture", () => {
+describe.skip("code/run-code - console capture", () => {
   it("captures console.log", async () => {
     const result = await expectSuccess({
       code: 'console.log("hello"); return true;',
@@ -209,7 +209,7 @@ describe("code/run-code - console capture", () => {
 
 // --- Sandbox Globals ---------------------------------------------------------
 
-describe("code/run-code - sandbox globals", () => {
+describe.skip("code/run-code - sandbox globals", () => {
   it("has access to JSON", async () => {
     const result = await expectSuccess({
       code: "return JSON.parse('{\"a\":1}');",
@@ -401,7 +401,7 @@ describe("code/run-code - sandbox globals", () => {
 
 // --- Error Handling ----------------------------------------------------------
 
-describe("code/run-code - error handling", () => {
+describe.skip("code/run-code - error handling", () => {
   it("fails with empty code", async () => {
     const result = await expectFailure({ code: "" });
     expect(result.error).toBe("No code provided");
@@ -499,7 +499,7 @@ describe("code/run-code - error handling", () => {
 // These mirror the example workflows from docs/plugins/code.md to ensure the
 // sandbox supports the data transformations users will actually write.
 
-describe("code/run-code - data transformation patterns", () => {
+describe.skip("code/run-code - data transformation patterns", () => {
   it("filters and aggregates event data with BigInt", async () => {
     const code = [
       "const events = [",
@@ -685,7 +685,7 @@ describe("code/run-code - data transformation patterns", () => {
   });
 });
 
-describe("code/run-code - async patterns", () => {
+describe.skip("code/run-code - async patterns", () => {
   it("uses Promise.all for parallel operations", async () => {
     const code = [
       "const results = await Promise.all([",
@@ -733,7 +733,7 @@ describe("code/run-code - async patterns", () => {
 
 // --- Timeout -----------------------------------------------------------------
 
-describe("code/run-code - timeout", () => {
+describe.skip("code/run-code - timeout", () => {
   it("uses custom timeout", async () => {
     const result = await expectSuccess({
       code: "return true;",
@@ -764,5 +764,24 @@ describe("code/run-code - timeout", () => {
       timeout: 0,
     });
     expect(result.result).toBe(true);
+  });
+});
+
+// --- Disabled Gate (KEEP-331) ------------------------------------------------
+// The describe blocks above are .skip'd while the kill switch is active.
+// See plugins/code/steps/run-code.ts (CODE_STEP_DISABLED). Re-enable both
+// the switch and the tests above together when a real sandbox lands.
+
+describe("code/run-code - gate (disabled)", () => {
+  it("returns the disabled error for valid code input", async () => {
+    const result = await expectFailure({ code: "return 1 + 2" });
+    expect(result.error).toContain("Code step is disabled");
+    expect(result.logs).toEqual([]);
+  });
+
+  it("returns the disabled error before the empty-code check", async () => {
+    const result = await expectFailure({ code: "" });
+    expect(result.error).toContain("Code step is disabled");
+    expect(result.error).not.toBe("No code provided");
   });
 });
