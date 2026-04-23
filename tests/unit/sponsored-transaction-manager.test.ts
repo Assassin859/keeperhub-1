@@ -12,8 +12,8 @@ vi.mock("@/lib/billing/gas-credits", () => ({
   getEthPriceUsd: (...args: unknown[]) => mockGetEthPriceUsd(...args),
 }));
 
-vi.mock("@/lib/billing/feature-flag", () => ({
-  isBillingEnabled: vi.fn().mockReturnValue(true),
+vi.mock("@/lib/web3/sponsorship-feature-flag", () => ({
+  isGasSponsorshipEnabled: vi.fn().mockReturnValue(true),
 }));
 
 const mockIsTestnetChain = vi.fn();
@@ -70,11 +70,11 @@ vi.mock("@/lib/metrics/types", () => ({
   },
 }));
 
-import { isBillingEnabled } from "@/lib/billing/feature-flag";
 import {
   executeSponsoredContractTransaction,
   executeSponsoredTransaction,
 } from "@/lib/web3/sponsored-transaction-manager";
+import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
 
 const baseTxParams = {
   organizationId: "org_1",
@@ -114,16 +114,18 @@ function setupSuccessfulSponsorship(): void {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(isBillingEnabled).mockReturnValue(true);
+  vi.mocked(isGasSponsorshipEnabled).mockReturnValue(true);
 });
 
 describe("executeSponsoredTransaction", () => {
-  it("returns null when billing is disabled", async () => {
-    vi.mocked(isBillingEnabled).mockReturnValue(false);
+  it("returns null when gas sponsorship is disabled", async () => {
+    vi.mocked(isGasSponsorshipEnabled).mockReturnValue(false);
 
     const result = await executeSponsoredTransaction(baseTxParams);
 
     expect(result).toBeNull();
+    expect(mockCheckGasCredits).not.toHaveBeenCalled();
+    expect(mockCreateSponsoredClient).not.toHaveBeenCalled();
   });
 
   it("returns null when chain is not supported", async () => {

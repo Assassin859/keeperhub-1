@@ -78,6 +78,12 @@ env:
   AWS_REGION:
     type: kv
     value: "us-east-1"
+  # KEEP-295 Phase 4 cutover: run listeners in-process instead of forking
+  # a child per workflow. See TechOps/docs/keeperhub/KEEP-214/KEEP-295/plan.md.
+  # Staging-only for now; promote to prod after 48-72h soak (KEEP-328).
+  ENABLE_INPROC_LISTENERS:
+    type: kv
+    value: "true"
 
 externalSecrets:
   clusterSecretStoreName: techops-staging

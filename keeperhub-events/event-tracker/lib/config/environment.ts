@@ -10,4 +10,12 @@ export const NODE_ENV: string = process.env.NODE_ENV || "development";
 
 export const SQS_QUEUE_URL: string = process.env.SQS_QUEUE_URL || "";
 export const AWS_REGION: string = process.env.AWS_REGION || "us-east-1";
-export const AWS_ENDPOINT_URL: string | undefined = process.env.AWS_ENDPOINT_URL;
+export const AWS_ENDPOINT_URL: string | undefined =
+  process.env.AWS_ENDPOINT_URL;
+
+// Feature flag for the in-process listener architecture (KEEP-295 Phase 4).
+// When true, main.ts bypasses child_process.fork and runs listeners inside
+// a single Node process via ListenerRegistry. Default false preserves the
+// fork path; flip per pod via Helm values once soak confirms correctness.
+export const ENABLE_INPROC_LISTENERS: boolean =
+  process.env.ENABLE_INPROC_LISTENERS === "true";

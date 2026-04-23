@@ -3,6 +3,7 @@
  */
 import "server-only";
 
+import { safeFetch } from "../safe-fetch";
 import { getErrorMessage } from "../utils";
 import { type StepInput, withStepLogging } from "./step-handler";
 
@@ -65,10 +66,11 @@ async function httpRequest(
   }
 
   try {
-    const response = await fetch(input.endpoint, {
+    const response = await safeFetch(input.endpoint, {
       method: input.httpMethod,
       headers: parseHeaders(input.httpHeaders),
       body: parseBody(input.httpMethod, input.httpBody),
+      plugin: "http-request",
     });
 
     if (!response.ok) {

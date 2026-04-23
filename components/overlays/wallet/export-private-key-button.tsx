@@ -17,6 +17,22 @@ import { Spinner } from "@/components/ui/spinner";
 
 type ExportStep = "idle" | "requesting" | "otp" | "verifying" | "done";
 
+function getDescription(
+  step: ExportStep,
+  recipientEmail: string | null
+): string {
+  if (step === "done") {
+    return "Your private key is shown below. Copy it and store it securely.";
+  }
+  if (step === "requesting") {
+    return "Sending a verification code to the wallet's recovery email...";
+  }
+  if (recipientEmail) {
+    return `A verification code has been sent to ${recipientEmail} (the wallet's recovery email).`;
+  }
+  return "A verification code has been sent to the wallet's recovery email.";
+}
+
 export function ExportPrivateKeyButton(): React.ReactElement {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<ExportStep>("idle");
@@ -24,6 +40,7 @@ export function ExportPrivateKeyButton(): React.ReactElement {
   const [privateKey, setPrivateKey] = useState<string | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [recipientEmail, setRecipientEmail] = useState<string | null>(null);
 
   const handleOpen = async (): Promise<void> => {
     setOpen(true);
@@ -32,16 +49,18 @@ export function ExportPrivateKeyButton(): React.ReactElement {
     setOtpCode("");
     setPrivateKey(null);
     setRevealed(false);
+    setRecipientEmail(null);
     try {
       const res = await fetch("/api/user/wallet/export-key/request", {
         method: "POST",
       });
-      const data: { error?: string } = await res.json();
+      const data: { error?: string; email?: string } = await res.json();
 
       if (!res.ok) {
         throw new Error(data.error ?? "Failed to send verification code");
       }
 
+      setRecipientEmail(data.email ?? null);
       setStep("otp");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to send code");
@@ -98,6 +117,7 @@ export function ExportPrivateKeyButton(): React.ReactElement {
     setPrivateKey(null);
     setRevealed(false);
     setError(null);
+    setRecipientEmail(null);
   };
 
   return (
@@ -123,11 +143,7 @@ export function ExportPrivateKeyButton(): React.ReactElement {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Export Private Key</DialogTitle>
-            <DialogDescription>
-              {step === "done"
-                ? "Your private key is shown below. Copy it and store it securely."
-                : "A verification code has been sent to your email."}
-            </DialogDescription>
+            <DialogDescription>{getDescription(step, recipientEmail)}</DialogDescription>
           </DialogHeader>
 
           {step === "requesting" && (

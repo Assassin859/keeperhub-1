@@ -1,4 +1,3 @@
-import { Environment, Para as ParaServer } from "@getpara/server-sdk";
 import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
@@ -12,12 +11,9 @@ import { db } from "@/lib/db";
 import { createIntegration } from "@/lib/db/integrations";
 import { integrations, organizationWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
 import { createTurnkeyWallet } from "@/lib/turnkey/turnkey-client";
 
-const PARA_API_KEY = process.env.PARA_API_KEY ?? "";
-const PARA_ENV = process.env.PARA_ENVIRONMENT ?? "beta";
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Helper: Validate user authentication, organization membership, and admin permissions
@@ -204,14 +200,20 @@ async function storeTurnkeyWalletAndIntegration(options: {
 
 export async function GET(request: Request) {
   try {
-    const authCtx = await resolveOrganizationId(request);
-    if ("error" in authCtx) {
+    const session = await auth.api.getSession({ headers: request.headers });
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const activeOrgId = getActiveOrgId(session);
+    if (!activeOrgId) {
       return NextResponse.json(
-        { error: authCtx.error },
-        { status: authCtx.status }
+        { error: "No active organization" },
+        { status: 400 }
       );
     }
-    const { organizationId: activeOrgId } = authCtx;
+
+    const userId = session.user.id;
 
     const allWallets = await db
       .select()
@@ -235,6 +237,8 @@ export async function GET(request: Request) {
         id: w.id,
         provider: w.provider,
         canExportKey: w.provider === "turnkey",
+        // Only the wallet creator may export its key, regardless of org role.
+        isOwner: w.userId === userId,
         walletAddress: w.walletAddress,
         walletId: w.paraWalletId ?? w.turnkeyWalletId,
         email: w.email,
@@ -319,111 +323,6 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     return getErrorResponse(error);
-  }
-}
-
-export async function PATCH(request: Request) {
-  try {
-    // 1. Validate user, organization, and admin permissions
-    const validation = await validateUserAndOrganization(request);
-    if ("error" in validation) {
-      return NextResponse.json(
-        { error: validation.error },
-        { status: validation.status }
-      );
-    }
-    const { organizationId } = validation;
-
-    // 2. Get new email from request body
-    const body = await request.json();
-    const newEmail = body.email;
-
-    if (!newEmail || typeof newEmail !== "string") {
-      return NextResponse.json(
-        { error: "Email is required to update wallet" },
-        { status: 400 }
-      );
-    }
-
-    // Basic email validation
-    if (!EMAIL_REGEX.test(newEmail)) {
-      return NextResponse.json(
-        { error: "Invalid email format" },
-        { status: 400 }
-      );
-    }
-
-    // 3. Get the org's active wallet (PATCH only targets the active wallet;
-    // the deactivated Para wallet during migration is not user-editable).
-    const existingWallet = await db
-      .select()
-      .from(organizationWallets)
-      .where(
-        and(
-          eq(organizationWallets.organizationId, organizationId),
-          eq(organizationWallets.isActive, true)
-        )
-      )
-      .limit(1);
-
-    if (existingWallet.length === 0) {
-      return NextResponse.json(
-        { error: "No wallet found for this organization" },
-        { status: 404 }
-      );
-    }
-
-    const wallet = existingWallet[0];
-
-    // 4. Check if email is actually different
-    if (wallet.email === newEmail) {
-      return NextResponse.json(
-        { error: "New email is the same as the current email" },
-        { status: 400 }
-      );
-    }
-
-    // 5. Update wallet identifier in provider (Para only)
-    if (wallet.provider === "para" && wallet.paraWalletId) {
-      const environment =
-        PARA_ENV === "prod" ? Environment.PROD : Environment.BETA;
-      const paraClient = new ParaServer(environment, PARA_API_KEY);
-
-      await paraClient.updatePregenWalletIdentifier({
-        walletId: wallet.paraWalletId,
-        newPregenId: { email: newEmail },
-      });
-    }
-
-    // 6. Update email in local database (only the active wallet row)
-    await db
-      .update(organizationWallets)
-      .set({ email: newEmail })
-      .where(
-        and(
-          eq(organizationWallets.organizationId, organizationId),
-          eq(organizationWallets.isActive, true)
-        )
-      );
-
-    return NextResponse.json({
-      success: true,
-      message: "Wallet email updated successfully",
-      wallet: {
-        address: wallet.walletAddress,
-        walletId: wallet.paraWalletId ?? wallet.turnkeyWalletId,
-        email: newEmail,
-        organizationId,
-      },
-    });
-  } catch (error) {
-    logSystemError(
-      ErrorCategory.EXTERNAL_SERVICE,
-      "[Para] Failed to update wallet email",
-      error,
-      { endpoint: "/api/user/wallet", operation: "patch" }
-    );
-    return apiError(error, "Failed to update wallet email");
   }
 }
 

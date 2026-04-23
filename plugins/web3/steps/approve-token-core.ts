@@ -28,6 +28,7 @@ import { resolveGasLimitOverrides } from "@/lib/web3/gas-defaults";
 import { isSponsorshipSupported } from "@/lib/web3/pimlico-config";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
 import { executeSponsoredContractTransaction } from "@/lib/web3/sponsored-transaction-manager";
+import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
 import {
   type TransactionContext,
   withNonceSession,
@@ -216,7 +217,11 @@ export async function approveTokenCore(
   // Try gas-sponsored execution first (ERC-4337 via Pimlico).
   // KEEP-137: skip sponsorship when routing through a private mempool --
   // ERC-4337 bundlers use their own RPC (Pimlico), which bypasses Flashbots Protect.
-  if (isSponsorshipSupported(chainId) && !usePrivateMempool) {
+  if (
+    isSponsorshipSupported(chainId) &&
+    !usePrivateMempool &&
+    isGasSponsorshipEnabled()
+  ) {
     try {
       const [decimals, symbol] = await rpcManager.executeWithFailover(
         (p) => {

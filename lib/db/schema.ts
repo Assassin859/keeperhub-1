@@ -333,6 +333,30 @@ export const workflowExecutionLogs = pgTable("workflow_execution_logs", {
   forEachNodeId: text("for_each_node_id"), // parent For Each node ID (null for non-loop nodes)
 });
 
+export {
+  type AgenticWalletCredit,
+  agenticWalletCredits,
+  type NewAgenticWalletCredit,
+} from "./schema-agentic-wallet-credits";
+export {
+  type AgenticWallet,
+  type AgenticWalletDailySpend,
+  type AgenticWalletHmacSecret,
+  type AgenticWalletRateLimit,
+  agenticWalletDailySpend,
+  agenticWalletHmacSecrets,
+  agenticWalletRateLimits,
+  agenticWallets,
+  approvalRiskLevel,
+  approvalStatus,
+  type NewAgenticWallet,
+  type NewAgenticWalletDailySpend,
+  type NewAgenticWalletHmacSecret,
+  type NewAgenticWalletRateLimit,
+  type NewWalletApprovalRequest,
+  type WalletApprovalRequest,
+  walletApprovalRequests,
+} from "./schema-agentic-wallets";
 // KeeperHub: Para Wallets, Organization API Keys, and Organization Tokens (imported from KeeperHub schema extensions)
 // Note: Using relative path instead of @/ alias for drizzle-kit compatibility
 export {
@@ -386,7 +410,6 @@ export {
   workflowPublicTags,
   workflowRatings,
 } from "./schema-extensions";
-
 export {
   type McpOauthAuthCode,
   type McpOauthClient,
@@ -398,7 +421,6 @@ export {
   type NewMcpOauthClient,
   type NewMcpOauthRefreshToken,
 } from "./schema-oauth";
-
 export {
   type NewWorkflowPayment,
   type WorkflowPayment,

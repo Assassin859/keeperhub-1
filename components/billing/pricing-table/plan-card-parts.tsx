@@ -62,22 +62,27 @@ export function HeroMetrics({
   gas,
 }: {
   executions: string;
-  gas: string;
+  gas: string | null;
 }): React.ReactElement {
+  const gridCols = gas === null ? "grid-cols-1" : "grid-cols-2";
   return (
-    <div className="mt-3 mb-3 grid grid-cols-2 gap-2 rounded-xl bg-background/60 px-5 py-4">
+    <div
+      className={`mt-3 mb-3 grid ${gridCols} gap-2 rounded-xl bg-background/60 px-5 py-4`}
+    >
       <div className="text-center">
         <p className="mb-1.5 whitespace-nowrap text-muted-foreground text-xs">
           Executions /mo
         </p>
         <p className="font-bold text-2xl leading-tight">{executions}</p>
       </div>
-      <div className="text-center">
-        <p className="mb-1.5 whitespace-nowrap text-muted-foreground text-xs">
-          Gas credits /mo
-        </p>
-        <p className="font-bold text-2xl leading-tight">{gas}</p>
-      </div>
+      {gas !== null && (
+        <div className="text-center">
+          <p className="mb-1.5 whitespace-nowrap text-muted-foreground text-xs">
+            Gas credits /mo
+          </p>
+          <p className="font-bold text-2xl leading-tight">{gas}</p>
+        </div>
+      )}
     </div>
   );
 }

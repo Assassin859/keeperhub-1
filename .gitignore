@@ -121,6 +121,9 @@ tailwindcss-*.log
 # Subdirectory node_modules
 */node_modules/*
 
+# pnpm workspace package build outputs
+packages/*/dist/
+
 # Worktrees (local only)
 .worktrees/
 

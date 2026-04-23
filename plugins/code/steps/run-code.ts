@@ -3,6 +3,7 @@ import "server-only";
 import { createContext, runInContext } from "node:vm";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
+import { safeFetch } from "@/lib/safe-fetch";
 import { type StepInput, withStepLogging } from "@/lib/steps/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 
@@ -143,9 +144,11 @@ async function stepHandler(input: RunCodeCoreInput): Promise<RunCodeResult> {
       });
     }
 
-    return fetch(resource, { ...init, signal: controller.signal }).finally(() =>
-      clearTimeout(timer)
-    );
+    return safeFetch(resource, {
+      ...init,
+      signal: controller.signal,
+      plugin: "code",
+    }).finally(() => clearTimeout(timer));
   }
 
   const sandbox = createContext({

@@ -10,6 +10,7 @@ import { keyExportCodes, organizationWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
 import { exportTurnkeyPrivateKey } from "@/lib/turnkey/turnkey-client";
+import { checkVerifyRateLimit } from "../_lib/rate-limit";
 
 function hashCode(code: string): string {
   return crypto.createHash("sha256").update(code).digest("hex");
@@ -44,10 +45,17 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    if (activeMember.role !== "admin" && activeMember.role !== "owner") {
+    const rateLimit = checkVerifyRateLimit(session.user.id);
+    if (!rateLimit.allowed) {
       return NextResponse.json(
-        { error: "Only admins and owners can export wallet keys" },
-        { status: 403 }
+        {
+          error: "Too many verification attempts. Please wait before retrying.",
+          retryAfter: rateLimit.retryAfter,
+        },
+        {
+          status: 429,
+          headers: { "Retry-After": String(rateLimit.retryAfter) },
+        }
       );
     }
 
@@ -87,13 +95,17 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     const MAX_ATTEMPTS = 5;
 
-    // Increment attempt counter before comparing to prevent TOCTOU races
-    await db
+    // Atomic increment-and-return: Postgres serialises per-row UPDATEs, so N
+    // concurrent attempts each get a unique post-UPDATE value. Gating on the
+    // returned counter (rather than the pre-read one) prevents concurrent
+    // callers from all passing the lockout check with stale values.
+    const [updated] = await db
       .update(keyExportCodes)
       .set({ attempts: sql`${keyExportCodes.attempts} + 1` })
-      .where(eq(keyExportCodes.id, storedCode.id));
+      .where(eq(keyExportCodes.id, storedCode.id))
+      .returning({ attempts: keyExportCodes.attempts });
 
-    if (storedCode.attempts + 1 >= MAX_ATTEMPTS) {
+    if (!updated || updated.attempts >= MAX_ATTEMPTS) {
       await db
         .delete(keyExportCodes)
         .where(eq(keyExportCodes.id, storedCode.id));
@@ -104,8 +116,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     const providedHash = hashCode(code);
+    const providedBuffer = Buffer.from(providedHash, "hex");
+    const storedBuffer = Buffer.from(storedCode.codeHash, "hex");
 
-    if (providedHash !== storedCode.codeHash) {
+    if (
+      providedBuffer.length !== storedBuffer.length ||
+      !crypto.timingSafeEqual(providedBuffer, storedBuffer)
+    ) {
       return NextResponse.json(
         { error: "Invalid verification code" },
         { status: 400 }
@@ -135,6 +152,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     const wallet = wallets[0];
+
+    // Export must be completed by the wallet creator, not just any org admin.
+    if (wallet.userId !== session.user.id) {
+      return NextResponse.json(
+        { error: "Only the wallet creator can export its private key" },
+        { status: 403 }
+      );
+    }
 
     if (!wallet.turnkeySubOrgId) {
       return NextResponse.json(

@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { jwtVerify, SignJWT } from "jose";
 
 export type OAuthTokenPayload = {
   sub: string;
@@ -17,88 +17,73 @@ export type OAuthAuthResult = {
   statusCode?: number;
 };
 
-function getJwtSecret(): string {
+let cachedJwtSecret: { raw: string; encoded: Uint8Array } | null = null;
+
+function getJwtSecret(): Uint8Array {
   const secret = process.env.OAUTH_JWT_SECRET;
   if (!secret) {
     throw new Error("OAUTH_JWT_SECRET environment variable is not set");
   }
-  return secret;
+  if (cachedJwtSecret?.raw === secret) {
+    return cachedJwtSecret.encoded;
+  }
+  const encoded = new TextEncoder().encode(secret);
+  cachedJwtSecret = { raw: secret, encoded };
+  return encoded;
 }
 
-function base64UrlEncode(data: string): string {
-  return Buffer.from(data)
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=/g, "");
-}
-
-function base64UrlDecode(data: string): string {
-  const padded = data.replace(/-/g, "+").replace(/_/g, "/");
-  const padding = 4 - (padded.length % 4);
-  const withPadding = padding < 4 ? `${padded}${"=".repeat(padding)}` : padded;
-  return Buffer.from(withPadding, "base64").toString("utf8");
-}
-
-export function createAccessToken(payload: {
+export async function createAccessToken(payload: {
   sub: string;
   org: string;
   scope: string;
-}): string {
+}): Promise<string> {
   const secret = getJwtSecret();
-  const header = base64UrlEncode(JSON.stringify({ alg: "HS256", typ: "JWT" }));
   const now = Math.floor(Date.now() / 1000);
-  const claims: OAuthTokenPayload = {
+  return await new SignJWT({
     sub: payload.sub,
     org: payload.org,
     scope: payload.scope,
-    iat: now,
-    exp: now + 3600, // 1 hour
-  };
-  const body = base64UrlEncode(JSON.stringify(claims));
-  const signingInput = `${header}.${body}`;
-  const signature = createHmac("sha256", secret)
-    .update(signingInput)
-    .digest("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=/g, "");
-  return `${signingInput}.${signature}`;
+  })
+    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+    .setIssuedAt(now)
+    .setExpirationTime(now + 3600) // 1 hour
+    .sign(secret);
 }
 
-export function verifyAccessToken(token: string): OAuthTokenPayload | null {
+function isOAuthTokenPayload(value: unknown): value is OAuthTokenPayload {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const p = value as Record<string, unknown>;
+  return (
+    typeof p.sub === "string" &&
+    typeof p.org === "string" &&
+    typeof p.scope === "string" &&
+    typeof p.iat === "number" &&
+    typeof p.exp === "number"
+  );
+}
+
+export async function verifyAccessToken(
+  token: string
+): Promise<OAuthTokenPayload | null> {
   try {
     const secret = getJwtSecret();
-    const parts = token.split(".");
-    if (parts.length !== 3) {
+    const { payload } = await jwtVerify(token, secret, {
+      algorithms: ["HS256"],
+    });
+    if (!isOAuthTokenPayload(payload)) {
       return null;
     }
-    const [header, body, signature] = parts;
-    const signingInput = `${header}.${body}`;
-    const expectedSignature = createHmac("sha256", secret)
-      .update(signingInput)
-      .digest("base64")
-      .replace(/\+/g, "-")
-      .replace(/\//g, "_")
-      .replace(/=/g, "");
-
-    if (signature !== expectedSignature) {
-      return null;
-    }
-
-    const payload = JSON.parse(base64UrlDecode(body)) as OAuthTokenPayload;
-    const now = Math.floor(Date.now() / 1000);
-    if (payload.exp < now) {
-      return null;
-    }
-
     return payload;
   } catch {
     return null;
   }
 }
 
-export function authenticateOAuthToken(request: Request): OAuthAuthResult {
+export async function authenticateOAuthToken(
+  request: Request
+): Promise<OAuthAuthResult> {
   const authHeader = request.headers.get("Authorization");
   if (!authHeader) {
     return {
@@ -127,7 +112,7 @@ export function authenticateOAuthToken(request: Request): OAuthAuthResult {
     };
   }
 
-  const payload = verifyAccessToken(token);
+  const payload = await verifyAccessToken(token);
   if (!payload) {
     return {
       authenticated: false,

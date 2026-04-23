@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { errors, jwtVerify, SignJWT } from "jose";
 
 export type SessionPayload = {
   org: string;
@@ -13,7 +13,9 @@ export const SESSION_TTL_SECONDS = 24 * 60 * 60; // 24 hours
 export const MAX_RENEWAL_GRACE_SECONDS = 48 * 60 * 60; // 48 hours
 export const MAX_SESSION_LIFETIME_SECONDS = 30 * 24 * 60 * 60; // 30 days
 
-function getSessionSecret(): string {
+let cachedSessionSecret: { raw: string; encoded: Uint8Array } | null = null;
+
+function getSessionSecret(): Uint8Array {
   const secret =
     process.env.MCP_SESSION_SECRET ??
     process.env.OAUTH_JWT_SECRET ??
@@ -23,52 +25,30 @@ function getSessionSecret(): string {
       "No session secret configured. Set MCP_SESSION_SECRET, OAUTH_JWT_SECRET, or BETTER_AUTH_SECRET."
     );
   }
-  return secret;
+  if (cachedSessionSecret?.raw === secret) {
+    return cachedSessionSecret.encoded;
+  }
+  const encoded = new TextEncoder().encode(secret);
+  cachedSessionSecret = { raw: secret, encoded };
+  return encoded;
 }
 
-function base64UrlEncode(data: string): string {
-  return Buffer.from(data)
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=/g, "");
-}
-
-function base64UrlDecode(data: string): string {
-  const padded = data.replace(/-/g, "+").replace(/_/g, "/");
-  const remainder = padded.length % 4;
-  const withPadding =
-    remainder > 0 ? `${padded}${"=".repeat(4 - remainder)}` : padded;
-  return Buffer.from(withPadding, "base64").toString("utf8");
-}
-
-function hmacSign(secret: string, signingInput: string): string {
-  return createHmac("sha256", secret)
-    .update(signingInput)
-    .digest("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=/g, "");
-}
-
-export function createSessionToken(
+export async function createSessionToken(
   payload: Omit<SessionPayload, "iat" | "exp">
-): string {
+): Promise<string> {
   const secret = getSessionSecret();
-  const header = base64UrlEncode(JSON.stringify({ alg: "HS256", typ: "JWT" }));
   const now = Math.floor(Date.now() / 1000);
-  const claims: SessionPayload = {
+  const originalIat = payload.original_iat ?? now;
+  return await new SignJWT({
     org: payload.org,
     key: payload.key,
     scope: payload.scope,
-    iat: now,
-    exp: now + SESSION_TTL_SECONDS,
-    original_iat: payload.original_iat ?? now,
-  };
-  const body = base64UrlEncode(JSON.stringify(claims));
-  const signingInput = `${header}.${body}`;
-  const signature = hmacSign(secret, signingInput);
-  return `${signingInput}.${signature}`;
+    original_iat: originalIat,
+  })
+    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+    .setIssuedAt(now)
+    .setExpirationTime(now + SESSION_TTL_SECONDS)
+    .sign(secret);
 }
 
 export type VerifyOptions = {
@@ -88,11 +68,11 @@ export type VerifyResult =
         | "max_lifetime_exceeded";
     };
 
-export function verifySessionToken(
+export async function verifySessionToken(
   token: string,
   options?: VerifyOptions
-): SessionPayload | null {
-  const result = verifySessionTokenDetailed(token);
+): Promise<SessionPayload | null> {
+  const result = await verifySessionTokenDetailed(token);
   if (!result.payload) {
     return null;
   }
@@ -102,38 +82,61 @@ export function verifySessionToken(
   return result.payload;
 }
 
-export function verifySessionTokenDetailed(token: string): VerifyResult {
+function isSessionPayload(value: unknown): value is SessionPayload {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const p = value as Record<string, unknown>;
+  return (
+    typeof p.org === "string" &&
+    typeof p.key === "string" &&
+    typeof p.iat === "number" &&
+    typeof p.exp === "number" &&
+    (p.scope === undefined || typeof p.scope === "string") &&
+    (p.original_iat === undefined || typeof p.original_iat === "number")
+  );
+}
+
+export async function verifySessionTokenDetailed(
+  token: string
+): Promise<VerifyResult> {
   try {
     const secret = getSessionSecret();
-    const parts = token.split(".");
-    if (parts.length !== 3) {
+    // clockTolerance here is intentionally the 48h renewal grace, not the
+    // usual few seconds of clock skew. Tokens past `exp` but within the
+    // grace window must still verify so the slow path in app/mcp/route.ts
+    // can reconstruct the session and mint a renewed token.
+    const { payload } = await jwtVerify(token, secret, {
+      algorithms: ["HS256"],
+      clockTolerance: MAX_RENEWAL_GRACE_SECONDS,
+    });
+
+    if (!isSessionPayload(payload)) {
       return { payload: null, expired: false, reason: "malformed" };
     }
-    const [header, body, signature] = parts;
-    const signingInput = `${header}.${body}`;
-    const expectedSignature = hmacSign(secret, signingInput);
-
-    if (signature !== expectedSignature) {
-      return { payload: null, expired: false, reason: "invalid_signature" };
-    }
-
-    const payload = JSON.parse(base64UrlDecode(body)) as SessionPayload;
+    const claims = payload;
     const now = Math.floor(Date.now() / 1000);
-
-    const sessionOrigin = payload.original_iat ?? payload.iat;
+    const sessionOrigin = claims.original_iat ?? claims.iat;
     if (now - sessionOrigin > MAX_SESSION_LIFETIME_SECONDS) {
       return { payload: null, expired: false, reason: "max_lifetime_exceeded" };
     }
 
-    if (payload.exp < now) {
-      if (now - payload.exp > MAX_RENEWAL_GRACE_SECONDS) {
-        return { payload: null, expired: false, reason: "too_old" };
-      }
-      return { payload, expired: true };
+    if (claims.exp < now) {
+      return { payload: claims, expired: true };
     }
-
-    return { payload, expired: false };
-  } catch {
+    return { payload: claims, expired: false };
+  } catch (err) {
+    // Note on reason priority: a token that is both past the 48h grace AND
+    // past the 30d absolute lifetime will surface here as too_old (jose's
+    // JWTExpired fires before our manual max_lifetime_exceeded check can
+    // run). app/mcp/route.ts treats both reasons identically via
+    // isExpiredBeyondRenewal, so there's no HTTP-level drift.
+    if (err instanceof errors.JWTExpired) {
+      return { payload: null, expired: false, reason: "too_old" };
+    }
+    if (err instanceof errors.JWSSignatureVerificationFailed) {
+      return { payload: null, expired: false, reason: "invalid_signature" };
+    }
     return { payload: null, expired: false, reason: "malformed" };
   }
 }

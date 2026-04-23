@@ -89,11 +89,7 @@ class SyncContainerManager extends SyncManager {
   async removeContainer(): Promise<void> {
     await this.removeAllContainerProcesses(this.containerId);
 
-    await this.rtStorage.lrem(
-      `containers:${NODE_ENV}`,
-      0,
-      this.containerId,
-    );
+    await this.rtStorage.lrem(`containers:${NODE_ENV}`, 0, this.containerId);
 
     this.logger.log(
       `Container ${this.containerId} removed - timestamp ${Date.now()}`,
@@ -140,11 +136,7 @@ class SyncContainerManager extends SyncManager {
   async removeContainerById(id: string): Promise<void> {
     await this.removeAllContainerProcesses(id);
 
-    await this.rtStorage.lrem(
-      `containers:${NODE_ENV}`,
-      0,
-      id,
-    );
+    await this.rtStorage.lrem(`containers:${NODE_ENV}`, 0, id);
 
     this.logger.log(`Container ${id} removed - timestamp ${Date.now()}`);
   }

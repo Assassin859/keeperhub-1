@@ -564,13 +564,12 @@ describe("POST /api/mcp/workflows/[slug]/call: write workflow returns calldata",
       }),
     });
     // Default: completion wait times out so we fall back to running response.
-    mockBuildCallCompletionResponse.mockImplementation(
-      (executionId: string) =>
-        Promise.resolve({ executionId, status: "running" })
+    mockBuildCallCompletionResponse.mockImplementation((executionId: string) =>
+      Promise.resolve({ executionId, status: "running" })
     );
     // Default: caller is authenticated. The write workflow path requires
     // an API key or MCP OAuth token, same as the free read path.
-    mockAuthenticateOAuthToken.mockReturnValue({
+    mockAuthenticateOAuthToken.mockResolvedValue({
       authenticated: true,
       organizationId: "caller-org-1",
       userId: "caller-user-1",

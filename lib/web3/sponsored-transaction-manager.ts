@@ -1,7 +1,6 @@
 import "server-only";
 import type { Address, Hex } from "viem";
 import { createPublicClient, encodeFunctionData, http } from "viem";
-import { isBillingEnabled } from "@/lib/billing/feature-flag";
 import {
   checkGasCredits,
   getEthPriceUsd,
@@ -13,6 +12,7 @@ import { MetricNames } from "@/lib/metrics/types";
 import { isTestnetChain } from "@/lib/web3/chainlink-feeds";
 import { isSponsorshipSupported } from "@/lib/web3/pimlico-config";
 import { createSponsoredClient } from "@/lib/web3/sponsored-client";
+import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
 
 type SponsoredTransactionResult = {
   success: true;
@@ -58,7 +58,7 @@ type SponsoredContractTxParams = {
 export async function executeSponsoredTransaction(
   params: SponsoredTxParams
 ): Promise<SponsoredTransactionResult> {
-  if (!isBillingEnabled()) {
+  if (!isGasSponsorshipEnabled()) {
     return null;
   }
 
@@ -118,7 +118,7 @@ export async function executeSponsoredTransaction(
 export async function executeSponsoredContractTransaction(
   params: SponsoredContractTxParams
 ): Promise<SponsoredTransactionResult> {
-  if (!isBillingEnabled()) {
+  if (!isGasSponsorshipEnabled()) {
     return null;
   }
 

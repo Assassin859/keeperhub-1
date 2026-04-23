@@ -410,7 +410,7 @@ export function WalletOverlay({
                 canExportKey={!!walletData.canExportKey}
                 email={walletData.email}
                 isAdmin={isAdmin}
-                onEmailUpdated={loadWallet}
+                isOwner={!!walletData.isOwner}
                 onSelectActiveWallet={handleSelectActiveWallet}
                 switchingWallet={switchingWallet}
                 walletAddress={walletData.walletAddress}
