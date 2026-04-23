@@ -1,0 +1,70 @@
+# Helm values for the keeperhub-sandbox release (prod cluster) via
+# techops-services/common@0.2.1. See
+# deploy/keeperhub-sandbox/staging/values.yaml for commentary.
+#
+# Prod differences:
+# - replicaCount: 2 (HA)
+# - image repository: keeperhub-sandbox-prod ECR repo
+
+replicaCount: 2
+
+service:
+  enabled: true
+  name: keeperhub-sandbox
+  port: 8787
+  type: ClusterIP
+  containerPort: 8787
+  tls:
+    enabled: false
+
+ingress:
+  enabled: false
+
+image:
+  repository: ${ECR_REGISTRY}/keeperhub-sandbox-prod
+  tag: sandbox-${IMAGE_TAG}
+  pullPolicy: Always
+
+deployment:
+  enabled: true
+
+serviceAccount:
+  create: false
+  name: keeperhub-sandbox
+
+podAnnotations:
+  reloader.stakater.com/auto: "true"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+env:
+  NODE_ENV:
+    type: kv
+    value: "production"
+  SANDBOX_PORT:
+    type: kv
+    value: "8787"
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 8787
+  initialDelaySeconds: 10
+  periodSeconds: 15
+  timeoutSeconds: 2
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: 8787
+  initialDelaySeconds: 2
+  periodSeconds: 5
+  timeoutSeconds: 2
+  failureThreshold: 3

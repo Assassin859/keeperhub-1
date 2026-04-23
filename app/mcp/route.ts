@@ -89,7 +89,7 @@ function getBaseUrl(request: Request): string {
 // parameters during its discovery validation; omitting them causes the connect
 // flow to halt at `start_error` before DCR ever runs. We match Linear, Sentry,
 // and Notion's challenge shape.
-function unauthorizedResponse(request: Request, error: string): Response {
+function unauthorizedResponse(request: Request): Response {
   const baseUrl = getBaseUrl(request);
   const resourceMetadataUrl = `${baseUrl}/.well-known/oauth-protected-resource`;
   const challenge = [
@@ -98,7 +98,14 @@ function unauthorizedResponse(request: Request, error: string): Response {
     'error="invalid_token"',
     'error_description="Missing or invalid access token"',
   ].join(", ");
-  return new Response(JSON.stringify({ error }), {
+  // RFC 6749 §5.2 error response. Match Linear/Notion/Sentry's body shape so
+  // any OAuth 2.1 parser (including Anthropic's connector validator) can read
+  // the error consistently with the WWW-Authenticate challenge.
+  const body = {
+    error: "invalid_token",
+    error_description: "Missing or invalid access token",
+  };
+  return new Response(JSON.stringify(body), {
     status: 401,
     headers: {
       "Content-Type": "application/json",
@@ -349,7 +356,7 @@ export async function POST(request: Request): Promise<Response> {
     const reason = auth.error ?? "Unauthorized";
     logMcpEvent("mcp.auth.failed", { reason });
     if ((auth.statusCode ?? 401) === 401) {
-      return unauthorizedResponse(request, reason);
+      return unauthorizedResponse(request);
     }
     return new Response(JSON.stringify({ error: reason }), {
       status: auth.statusCode,
@@ -452,7 +459,7 @@ export async function GET(request: Request): Promise<Response> {
     const reason = auth.error ?? "Unauthorized";
     logMcpEvent("mcp.auth.failed", { reason });
     if ((auth.statusCode ?? 401) === 401) {
-      return unauthorizedResponse(request, reason);
+      return unauthorizedResponse(request);
     }
     return new Response(JSON.stringify({ error: reason }), {
       status: auth.statusCode,
@@ -492,7 +499,7 @@ export async function DELETE(request: Request): Promise<Response> {
     const reason = auth.error ?? "Unauthorized";
     logMcpEvent("mcp.auth.failed", { reason });
     if ((auth.statusCode ?? 401) === 401) {
-      return unauthorizedResponse(request, reason);
+      return unauthorizedResponse(request);
     }
     return new Response(JSON.stringify({ error: reason }), {
       status: auth.statusCode,

@@ -28,18 +28,21 @@ import { privateKeyToAccount } from "viem/accounts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { extractPayerAddress } from "@/lib/x402/payment-gate";
 
-// A realistic mppx-issued Tempo charge challenge the route can deserialize.
-// The npm client forwards this (minus the `Payment ` scheme token) as
-// `paymentChallenge.serialized` on every /sign call for chain="tempo".
+// A realistic mppx-issued Tempo challenge the route can deserialize. Zero
+// amount intentionally routes to proof-mode (signMppProof) so the existing
+// assertions can continue reading EIP-712 typed-data JSON from Turnkey's
+// payload argument. Charge-intent / transaction-mode coverage lives in
+// tests/unit/agentic-wallet-sign.test.ts so it can stub Turnkey
+// independently (the transaction-mode payload is a raw hex hash, not JSON).
 const MPP_TEST_SERIALIZED = ((): string => {
   const full = Challenge.serialize(
     Challenge.from({
       secretKey: "mpp-route-test-secret",
       realm: "test.keeperhub.local",
       method: "tempo",
-      intent: "charge",
+      intent: "session",
       request: {
-        amount: "10000",
+        amount: "0",
         currency: "0x20c000000000000000000000b9537d11c60e8b50",
         recipient: "0x0000000000000000000000000000000000000001",
         methodDetails: { chainId: 4217 },

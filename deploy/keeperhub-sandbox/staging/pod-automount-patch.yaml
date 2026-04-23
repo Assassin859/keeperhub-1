@@ -1,0 +1,26 @@
+# Strategic-merge patch that sets automountServiceAccountToken: false at
+# the Pod spec level for the keeperhub-sandbox Deployment (staging cluster).
+#
+# Why this is separate from values.yaml:
+# techops-services/common chart v0.0.35 does not expose
+# automountServiceAccountToken on the Pod template. This patch layers it
+# on after `helm upgrade`.
+#
+# SA-level `automountServiceAccountToken: false` from sa.yaml is
+# sufficient for new Pods to skip the token projection, but belt-and-
+# braces: setting it at BOTH SA AND Pod level closes the "an annotation
+# on the Pod overrides the SA default" loophole and makes the regression
+# test (WORK-03) deterministic.
+#
+# Apply AFTER `helm upgrade` with:
+#   kubectl -n keeperhub patch deployment keeperhub-sandbox \
+#     --patch-file deploy/keeperhub-sandbox/staging/pod-automount-patch.yaml
+#
+# Verify with:
+#   kubectl -n keeperhub get deployment keeperhub-sandbox \
+#     -o jsonpath='{.spec.template.spec.automountServiceAccountToken}'
+#   # Expected output: false
+spec:
+  template:
+    spec:
+      automountServiceAccountToken: false

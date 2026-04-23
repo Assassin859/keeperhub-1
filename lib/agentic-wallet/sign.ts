@@ -29,10 +29,71 @@
  */
 import { serializeSignature } from "@turnkey/ethers";
 import { Challenge, Credential } from "mppx";
+import { TxEnvelopeTempo } from "ox/tempo";
+import { createPublicClient, encodeFunctionData, http, keccak256 } from "viem";
+import { tempo } from "viem/chains";
+import { Abis, Actions } from "viem/tempo";
 import { getTurnkeyClientForOrg } from "@/lib/turnkey/agentic-wallet";
+import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 import { BASE_CHAIN_ID, USDC_BASE_ADDRESS } from "./constants";
 
 const MPP_AUTH_PREFIX = "Payment ";
+
+// Sponsor policy (mirror of mppx/src/tempo/internal/fee-payer.ts::policy):
+//   maxGas 2,000,000; maxFeePerGas 100 gwei; maxPriorityFeePerGas 10 gwei;
+//   maxValidityWindowSeconds 15 * 60.
+// We pick conservative values well under the ceilings -- transferWithMemo
+// costs ~100k gas, so 500k is generous headroom for price-spike retries.
+const MPP_TX_GAS = BigInt(500_000);
+const MPP_TX_MAX_FEE_PER_GAS = BigInt(5_000_000_000); // 5 gwei
+const MPP_TX_MAX_PRIORITY_FEE_PER_GAS = BigInt(1_000_000_000); // 1 gwei
+const MPP_TX_VALIDITY_WINDOW_SECONDS = 300; // 5 minutes
+
+// MPP attribution memo layout (mirrors mppx internal Attribution.encode):
+//   bytes 0..3   : tag         "MPP\0" (3 printable + NUL)
+//   byte  4      : version     1
+//   bytes 5..14  : serverId    first 10 bytes of keccak256(serverId)
+//   bytes 15..24 : clientId    first 10 bytes of keccak256(clientId) (zero if unset)
+//   bytes 25..31 : nonce       first 7 bytes of keccak256(challengeId)
+// The mppx Attribution module isn't in the public package exports so we
+// re-implement the exact layout here rather than reaching into the internal
+// path. Binary-compatible per a regression test in agentic-wallet-sign.test.ts.
+const MPP_ATTRIBUTION_TAG = new Uint8Array([0x4d, 0x50, 0x50, 0x00]);
+const MPP_ATTRIBUTION_VERSION = 1;
+
+function attributionFingerprint(id: string): Uint8Array {
+  const hash = keccak256(new TextEncoder().encode(id));
+  const bytes = new Uint8Array(10);
+  for (let i = 0; i < 10; i++) {
+    bytes[i] = Number.parseInt(hash.slice(2 + i * 2, 4 + i * 2), 16);
+  }
+  return bytes;
+}
+
+function attributionChallengeNonce(challengeId: string): Uint8Array {
+  const hash = keccak256(new TextEncoder().encode(challengeId));
+  const bytes = new Uint8Array(7);
+  for (let i = 0; i < 7; i++) {
+    bytes[i] = Number.parseInt(hash.slice(2 + i * 2, 4 + i * 2), 16);
+  }
+  return bytes;
+}
+
+function encodeAttributionMemo(
+  challengeId: string,
+  serverId: string
+): `0x${string}` {
+  const buf = new Uint8Array(32);
+  buf.set(MPP_ATTRIBUTION_TAG, 0);
+  buf[4] = MPP_ATTRIBUTION_VERSION;
+  buf.set(attributionFingerprint(serverId), 5);
+  // clientId (bytes 15..24) is left as zero; mppx treats absence as "no client id"
+  buf.set(attributionChallengeNonce(challengeId), 25);
+  const hex = Array.from(buf)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  return `0x${hex}`;
+}
 
 export class PolicyBlockedError extends Error {
   override readonly name = "PolicyBlockedError";
@@ -119,6 +180,50 @@ type TurnkeyActivityResponse = {
     };
   };
 };
+
+/**
+ * Calls Turnkey `signRawPayload` with a precomputed hex hash. Returned
+ * signature is a raw ECDSA triple `{r, s, v}` where v is the yParity bit as
+ * a two-char hex string ("00" or "01"). Callers are responsible for
+ * assembling this into whatever wire format the downstream verifier expects
+ * (Ethereum v+27 for secp256k1 signatures, Tempo SignatureEnvelope's raw
+ * yParity, Solana raw concat, etc). See the two callers below for examples.
+ */
+async function signRawHash(
+  subOrgId: string,
+  walletAddress: string,
+  hexHash: string
+): Promise<TurnkeySignature> {
+  const client = getTurnkeyClientForOrg(subOrgId).apiClient();
+  const response = (await (
+    client as unknown as {
+      signRawPayload: (args: unknown) => Promise<TurnkeyActivityResponse>;
+    }
+  ).signRawPayload({
+    signWith: walletAddress,
+    payload: hexHash,
+    encoding: "PAYLOAD_ENCODING_HEXADECIMAL",
+    hashFunction: "HASH_FUNCTION_NO_OP",
+  })) as TurnkeyActivityResponse;
+
+  const activity = response?.activity;
+  const status = activity?.status;
+  if (status === "ACTIVITY_STATUS_CONSENSUS_NEEDED") {
+    throw new PolicyBlockedError(
+      "Turnkey policy blocked the activity (CONSENSUS_NEEDED)"
+    );
+  }
+  if (status !== "ACTIVITY_STATUS_COMPLETED") {
+    throw new TurnkeyUpstreamError(
+      `Turnkey returned status ${status ?? "unknown"}`
+    );
+  }
+  const result = activity?.result?.signRawPayloadResult;
+  if (!result) {
+    throw new TurnkeyUpstreamError("Signature missing from Turnkey response");
+  }
+  return result;
+}
 
 async function signTypedData(
   subOrgId: string,
@@ -229,4 +334,158 @@ export async function signMppProof(
   return serialized.startsWith(MPP_AUTH_PREFIX)
     ? serialized.slice(MPP_AUTH_PREFIX.length)
     : serialized;
+}
+
+/**
+ * Input shape for charge-intent MPP signing. chainId mirrors
+ * MppProofChallenge.chainId (Tempo mainnet 4217 or testnet 4218). The
+ * serialized challenge is forwarded verbatim from the npm client (the raw
+ * WWW-Authenticate parameters minus the `Payment ` scheme token).
+ */
+export type MppTransactionChallenge = {
+  chainId: number;
+  serialized: string;
+};
+
+/**
+ * Parsed shape of a Tempo `charge` request after Challenge.deserialize has
+ * base64-decoded the `request` field. The server side of mppx validates
+ * recipient, currency, amount, and methodDetails.chainId during settlement,
+ * so we thread them verbatim into the transferWithMemo call.
+ */
+type TempoChargeRequest = {
+  amount: string;
+  currency: `0x${string}`;
+  recipient: `0x${string}`;
+  methodDetails?: { chainId?: number } | undefined;
+};
+
+/**
+ * Signs a non-zero MPP charge intent by building a Tempo `transferWithMemo`
+ * transaction, signing the envelope hash via Turnkey, and returning a
+ * spec-compliant Credential envelope ready for `Authorization: Payment`
+ * on the retry.
+ *
+ * Agent side does NOT hold a fee payer -- the KeeperHub-hosted mppx
+ * facilitator sponsors gas via `FeePayer.prepareSponsoredTransaction` which
+ * wraps the 0x76 envelope we produce here into a 0x78 co-signed form before
+ * broadcast. Our job is strictly to produce a valid agent-signed 0x76 tx.
+ *
+ * The memo is `Attribution.encode({challengeId, serverId: challenge.realm})`
+ * which binds the Transfer log to this specific challenge -- required by
+ * mppx's assertChallengeBoundMemo check when the workflow doesn't set an
+ * explicit memo.
+ */
+export async function signMppTransaction(
+  subOrgId: string,
+  walletAddressTempo: string,
+  params: MppTransactionChallenge
+): Promise<string> {
+  const input = params.serialized.startsWith(MPP_AUTH_PREFIX)
+    ? params.serialized
+    : `${MPP_AUTH_PREFIX}${params.serialized}`;
+  const parsed = Challenge.deserialize(input);
+
+  if (parsed.intent !== "charge") {
+    throw new TurnkeyUpstreamError(
+      `MPP intent "${parsed.intent}" not supported by signMppTransaction (charge only)`
+    );
+  }
+
+  const request = parsed.request as unknown as TempoChargeRequest;
+  if (
+    !(request?.recipient && request.currency && request.amount) ||
+    BigInt(request.amount) <= BigInt(0)
+  ) {
+    throw new TurnkeyUpstreamError(
+      "MPP charge challenge missing recipient, currency, or non-zero amount"
+    );
+  }
+
+  const memo = encodeAttributionMemo(parsed.id, parsed.realm);
+
+  const callData = encodeFunctionData({
+    abi: Abis.tip20,
+    functionName: "transferWithMemo",
+    args: [request.recipient, BigInt(request.amount), memo],
+  });
+
+  // nonceKey is a per-wallet-per-call uint >= 1. Derive deterministically
+  // from the challenge id so repeat /sign calls for the same challenge
+  // produce the same nonceKey (idempotent), but different challenges never
+  // collide. Take 8 bytes of keccak256(id) for headroom below uint256.
+  const nonceKeyHex = keccak256(
+    new TextEncoder().encode(parsed.id)
+  ).slice(0, 18);
+  const nonceKey = BigInt(nonceKeyHex);
+
+  const rpcUrl = getRpcUrlByChainId(params.chainId);
+  const client = createPublicClient({
+    chain: tempo,
+    transport: http(rpcUrl),
+  });
+  const nonce = await Actions.nonce.getNonce(client, {
+    account: walletAddressTempo as `0x${string}`,
+    nonceKey,
+  });
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const validBefore = nowSec + MPP_TX_VALIDITY_WINDOW_SECONDS;
+
+  const envelope = TxEnvelopeTempo.from({
+    chainId: params.chainId,
+    calls: [
+      {
+        to: request.currency,
+        data: callData,
+      },
+    ],
+    nonce,
+    nonceKey,
+    gas: MPP_TX_GAS,
+    maxFeePerGas: MPP_TX_MAX_FEE_PER_GAS,
+    maxPriorityFeePerGas: MPP_TX_MAX_PRIORITY_FEE_PER_GAS,
+    validAfter: 0,
+    validBefore,
+  });
+
+  const sighash = TxEnvelopeTempo.getSignPayload(envelope);
+
+  const tkSig = await signRawHash(subOrgId, walletAddressTempo, sighash);
+
+  // Tempo's SignatureEnvelope.Secp256k1 takes the RAW yParity bit (0 | 1),
+  // not Ethereum's v+27 convention. Bumping v by 27 here would produce an
+  // envelope the facilitator recovers to a different address, so do NOT
+  // reuse @turnkey/ethers::serializeSignature on this path.
+  const yParity = Number.parseInt(tkSig.v, 16);
+  if (yParity !== 0 && yParity !== 1) {
+    throw new TurnkeyUpstreamError(
+      `Turnkey returned unexpected v-parity "${tkSig.v}" (expected 00 or 01)`
+    );
+  }
+  const signatureEnvelope = {
+    type: "secp256k1" as const,
+    signature: {
+      r: BigInt(`0x${tkSig.r}`),
+      s: BigInt(`0x${tkSig.s}`),
+      yParity: yParity as 0 | 1,
+    },
+  };
+
+  const signed = TxEnvelopeTempo.from(envelope, {
+    signature: signatureEnvelope,
+  });
+  const serializedTx = TxEnvelopeTempo.serialize(signed);
+
+  // Credential.from sets source on the credential object; facilitator's
+  // proof path requires it, transaction path uses it for attribution.
+  const credential = Credential.from({
+    challenge: parsed,
+    payload: { signature: serializedTx },
+    source: `did:pkh:eip155:${params.chainId}:${walletAddressTempo}`,
+  });
+  const out = Credential.serialize(credential);
+  return out.startsWith(MPP_AUTH_PREFIX)
+    ? out.slice(MPP_AUTH_PREFIX.length)
+    : out;
 }

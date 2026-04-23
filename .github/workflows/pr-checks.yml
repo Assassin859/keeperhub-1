@@ -203,6 +203,48 @@ jobs:
       - name: Run unit tests
         run: pnpm test:unit
 
+  test-unit-sandbox-remote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js + pnpm
+        uses: ./.github/actions/setup-node-pnpm
+        with:
+          discover-plugins: "true"
+
+      - name: Build sandbox image
+        run: docker build -f sandbox/Dockerfile -t keeperhub-sandbox:ci .
+
+      - name: Start sandbox container
+        run: |
+          docker run -d --name sandbox -p 8787:8787 keeperhub-sandbox:ci
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8787/healthz >/dev/null; then
+              echo "sandbox ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "sandbox did not become ready"
+          docker logs sandbox
+          exit 1
+
+      - name: Run unit tests against remote sandbox
+        env:
+          SANDBOX_BACKEND: remote
+          SANDBOX_URL: http://localhost:8787
+        run: pnpm test:unit tests/unit/code-run-code.test.ts
+
+      - name: Dump sandbox logs on failure
+        if: failure()
+        run: docker logs sandbox || true
+
+      - name: Stop sandbox
+        if: always()
+        run: docker stop sandbox || true
+
   test-integration:
     runs-on: ubuntu-latest
     steps:

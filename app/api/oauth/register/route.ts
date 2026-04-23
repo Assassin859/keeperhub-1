@@ -5,6 +5,17 @@ import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
 
 export const dynamic = "force-dynamic";
 
+const TRAILING_SLASH = /\/$/;
+
+function deriveBaseUrl(request: Request): string {
+  const envUrl = process.env.NEXT_PUBLIC_APP_URL ?? process.env.BETTER_AUTH_URL;
+  if (envUrl) {
+    return envUrl.replace(TRAILING_SLASH, "");
+  }
+  const url = new URL(request.url);
+  return `${url.protocol}//${url.host}`;
+}
+
 type RegistrationRequestBody = {
   client_name?: unknown;
   redirect_uris?: unknown;
@@ -136,6 +147,7 @@ export async function POST(request: Request): Promise<Response> {
   // causes strict MCP hosts (e.g. Claude Desktop's connector validator) to
   // reject the registration. Store a secret hash either way so the schema
   // stays stable, but only expose it for confidential-client registrations.
+  const baseUrl = deriveBaseUrl(request);
   const responseBase = {
     client_id: clientId,
     client_id_issued_at: Math.floor(client.createdAt / 1000),
@@ -145,6 +157,9 @@ export async function POST(request: Request): Promise<Response> {
     response_types: ["code"],
     token_endpoint_auth_method: authMethod,
     scope: resolvedScope,
+    // RFC 7591 §3.2.1 management endpoint. Linear/Notion return this; some
+    // strict validators treat its absence as an incomplete registration.
+    registration_client_uri: `${baseUrl}/api/oauth/register/${clientId}`,
   };
   const responseBody =
     authMethod === "none"

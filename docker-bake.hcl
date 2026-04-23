@@ -24,6 +24,7 @@ variable "INCLUDE_TEST_ENDPOINTS" { default = "" }
 variable "EVENTS_ECR_TRACKER_REPO" { default = "" }
 variable "SCHEDULER_ECR_REPO" { default = "" }
 variable "EXECUTOR_ECR_REPO" { default = "" }
+variable "SANDBOX_ECR_REPO" { default = "" }
 
 group "default" {
   targets = ["app", "migrator", "workflow-runner"]
@@ -37,8 +38,12 @@ group "scheduler" {
   targets = ["schedule-dispatcher", "block-dispatcher"]
 }
 
+group "sandbox" {
+  targets = ["sandbox"]
+}
+
 group "all" {
-  targets = ["app", "migrator", "workflow-runner", "event-tracker", "schedule-dispatcher", "block-dispatcher", "executor"]
+  targets = ["app", "migrator", "workflow-runner", "event-tracker", "schedule-dispatcher", "block-dispatcher", "executor", "sandbox"]
 }
 
 target "app" {
@@ -176,5 +181,22 @@ target "executor" {
   ])
   cache-from = ["type=registry,ref=${ECR_REGISTRY}/${EXECUTOR_ECR_REPO}:cache"]
   cache-to   = ["type=registry,ref=${ECR_REGISTRY}/${EXECUTOR_ECR_REPO}:cache,mode=max"]
+  attest     = []
+}
+
+# v1.9 Code Sandbox standalone HTTP service. Runs user-supplied JS in a
+# scrubbed child_process inside a dedicated Pod so main-pod secrets stay
+# unreachable even on sandbox escape. Context is repo root because the
+# Dockerfile needs pnpm-workspace.yaml and pnpm-lock.yaml from root.
+target "sandbox" {
+  context    = "."
+  dockerfile = "sandbox/Dockerfile"
+  tags = compact([
+    "${ECR_REGISTRY}/${SANDBOX_ECR_REPO}:sandbox-${IMAGE_TAG}",
+    "${ECR_REGISTRY}/${SANDBOX_ECR_REPO}:sandbox-latest",
+    ENVIRONMENT_TAG != "" ? "${ECR_REGISTRY}/${SANDBOX_ECR_REPO}:${ENVIRONMENT_TAG}" : "",
+  ])
+  cache-from = ["type=registry,ref=${ECR_REGISTRY}/${SANDBOX_ECR_REPO}:cache"]
+  cache-to   = ["type=registry,ref=${ECR_REGISTRY}/${SANDBOX_ECR_REPO}:cache,mode=max"]
   attest     = []
 }

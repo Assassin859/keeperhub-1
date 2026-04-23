@@ -26,6 +26,16 @@ shared_env: &shared_env
     type: parameterStore
     name: turnkey-organization-id
     parameter_name: /eks/techops-staging/keeperhub/turnkey-organization-id
+  # v1.9 sandbox hardening: route Code action node to the out-of-pod
+  # sandbox service (deploy/keeperhub-sandbox/staging/) instead of running
+  # user JS in this Pod. Falls back to the in-pod child_process runner
+  # (PR #953) if the value is unset or "local".
+  SANDBOX_BACKEND:
+    type: kv
+    value: "remote"
+  SANDBOX_URL:
+    type: kv
+    value: "http://keeperhub-sandbox-common.keeperhub.svc.cluster.local:8787"
 
 replicaCount: 1
 

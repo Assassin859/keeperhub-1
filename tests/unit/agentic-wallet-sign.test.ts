@@ -34,7 +34,7 @@ vi.mock("@turnkey/sdk-server", () => ({
   }),
 }));
 
-const { PolicyBlockedError, signMppProof, signX402Challenge } = await import(
+const { PolicyBlockedError, signMppProof, signMppTransaction, signX402Challenge } = await import(
   "@/lib/agentic-wallet/sign"
 );
 
@@ -249,5 +249,99 @@ describe("signMppProof", () => {
     expect(decoded.challenge.id).toBeTruthy();
     expect(decoded.payload.signature.startsWith("0x")).toBe(true);
     expect(decoded.payload.signature.length).toBe(132);
+  });
+});
+
+// Mock the Tempo nonce RPC so signMppTransaction can run without network.
+// Placed at module level so hoisting still produces deterministic behaviour.
+vi.mock("viem/tempo", async (orig) => {
+  const actual = (await orig()) as Record<string, unknown>;
+  return {
+    ...actual,
+    Actions: {
+      ...(actual.Actions as Record<string, unknown>),
+      nonce: {
+        getNonce: vi.fn(async () => BigInt(0)),
+      },
+    },
+  };
+});
+
+describe("signMppTransaction", () => {
+  beforeEach(() => {
+    process.env.TURNKEY_API_PUBLIC_KEY = "test-pub";
+    process.env.TURNKEY_API_PRIVATE_KEY = "test-priv";
+    process.env.TURNKEY_ORGANIZATION_ID = "org_test";
+    mockSignRawPayload.mockReset();
+    mockSignRawPayload.mockResolvedValue(happyPathResult("00"));
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("signs a raw hex hash (not EIP-712 JSON) for charge intent", async () => {
+    const serialized = buildTempoChallengeSerialized();
+    await signMppTransaction(SUB_ORG, WALLET, {
+      chainId: 4217,
+      serialized,
+    });
+    const args = mockSignRawPayload.mock.calls[0]?.[0] as {
+      encoding: string;
+      hashFunction: string;
+      payload: string;
+    };
+    // Different from proof-mode: we pre-compute the Tempo sighash client-side
+    // and hand it to Turnkey as a raw hex payload.
+    expect(args.encoding).toBe("PAYLOAD_ENCODING_HEXADECIMAL");
+    expect(args.hashFunction).toBe("HASH_FUNCTION_NO_OP");
+    // 32-byte hex hash -> "0x" + 64 chars.
+    expect(args.payload.startsWith("0x")).toBe(true);
+    expect(args.payload.length).toBe(66);
+  });
+
+  it("wraps the signed 0x76 Tempo tx in a Credential with the right source DID", async () => {
+    const out = await signMppTransaction(SUB_ORG, WALLET, {
+      chainId: 4217,
+      serialized: buildTempoChallengeSerialized(),
+    });
+    expect(out.startsWith("Payment ")).toBe(false);
+    expect(out.startsWith("0x")).toBe(false);
+    const decoded = JSON.parse(
+      Buffer.from(out, "base64url").toString("utf-8")
+    ) as {
+      challenge: { id: string };
+      payload: { signature: string };
+      source?: string;
+    };
+    expect(decoded.challenge.id).toBeTruthy();
+    // payload.signature is the serialized Tempo tx -- starts with 0x76
+    // (TxEnvelopeTempo.serializedType), NOT a raw 132-char ECDSA sig.
+    expect(decoded.payload.signature.startsWith("0x76")).toBe(true);
+    // source binds the credential to the wallet on Tempo mainnet.
+    expect(decoded.source).toBe(`did:pkh:eip155:4217:${WALLET}`);
+  });
+
+  it("throws on non-charge intent (proof-mode belongs in signMppProof)", async () => {
+    const zeroAmount = Challenge.serialize(
+      Challenge.from({
+        secretKey: MPP_TEST_SECRET,
+        realm: "test.keeperhub.local",
+        method: "tempo",
+        intent: "session",
+        request: {
+          amount: "0",
+          currency: "0x20c000000000000000000000b9537d11c60e8b50",
+          recipient: "0x000000000000000000000000000000000000dead",
+          methodDetails: { chainId: 4217 },
+        },
+      })
+    );
+    const serialized = zeroAmount.startsWith("Payment ")
+      ? zeroAmount.slice("Payment ".length)
+      : zeroAmount;
+    await expect(
+      signMppTransaction(SUB_ORG, WALLET, { chainId: 4217, serialized })
+    ).rejects.toThrow(/charge only/);
   });
 });

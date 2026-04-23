@@ -170,6 +170,25 @@ class BlockMonitorService {
   }
 }
 
+// Ethers v6 WebSocketProvider teardown produces a detached eth_unsubscribe
+// rejection when the socket dies mid-subscription; log and swallow so Node
+// does not exit the process on transient RPC failures.
+process.on("unhandledRejection", (reason: unknown) => {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  const stack = reason instanceof Error ? reason.stack : "";
+  console.error(`[BlockDispatcher] Unhandled rejection: ${message}`, stack);
+});
+
+// Uncaught sync exceptions indicate corrupted state; log and exit so the
+// orchestrator restarts us cleanly rather than continuing in an unknown state.
+process.on("uncaughtException", (error: Error) => {
+  console.error(
+    `[BlockDispatcher] Uncaught exception: ${error.message}`,
+    error.stack ?? ""
+  );
+  process.exit(1);
+});
+
 // Main entry point
 async function main(): Promise<void> {
   console.log("[BlockDispatcher] Starting block dispatcher...");
@@ -223,4 +242,8 @@ async function main(): Promise<void> {
   await service.start();
 }
 
-main();
+main().catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`[BlockDispatcher] Fatal startup error: ${message}`);
+  process.exit(1);
+});

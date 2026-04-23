@@ -41,6 +41,7 @@
     "tmp/**/*",
     "docs-site/**/*",
     "keeperhub-events/**/*",
-    "keeperhub-scheduler/**/*"
+    "keeperhub-scheduler/**/*",
+    "sandbox/**/*"
   ]
 }

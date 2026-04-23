@@ -1,0 +1,143 @@
+# Runs the v1.9 sandbox escape-matrix E2E suite (TEST-01..05) against a
+# deployed keeperhub env with a planted sentinel in the main app's env.
+# Operator-triggered only: plants SSM parameter, rolls main app, runs
+# tests, tears down parameter.
+
+name: sandbox-escape-matrix
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - staging
+          - prod
+        default: staging
+      skip_canary_plant:
+        description: "Skip plant+rollout (re-use existing canary)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: sandbox-escape-matrix-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  escape-matrix:
+    environment: ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    env:
+      REGION: ${{ vars.TO_REGION }}
+      CLUSTER_NAME: ${{ vars.TO_CLUSTER_NAME }}
+      NAMESPACE: keeperhub
+      KH_RELEASE_NAME: keeperhub-${{ inputs.environment }}
+      CANARY_SSM_PATH: /eks/techops-${{ inputs.environment }}/keeperhub/_sandbox_escape_canary
+      APP_URL: ${{ inputs.environment == 'prod' && vars.TO_PROD_URL || vars.TO_STAGING_URL }}
+      TARGET_ENV: ${{ inputs.environment }}
+      SKIP_PLANT: ${{ inputs.skip_canary_plant }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js + pnpm
+        uses: ./.github/actions/setup-node-pnpm
+        with:
+          discover-plugins: "false"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.TO_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.TO_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.REGION }}
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$REGION"
+
+      - name: Plant canary sentinel
+        if: ${{ inputs.skip_canary_plant != true }}
+        id: plant
+        run: |
+          CANARY="KH_ESCAPE_CANARY_$(openssl rand -hex 12)"
+          echo "::add-mask::$CANARY"
+          aws ssm put-parameter \
+            --name "$CANARY_SSM_PATH" \
+            --type SecureString \
+            --value "$CANARY" \
+            --overwrite \
+            --region "$REGION" >/dev/null
+          echo "canary=$CANARY" >> "$GITHUB_OUTPUT"
+          echo "Canary planted at $CANARY_SSM_PATH"
+
+      - name: Force ExternalSecrets refresh + rollout
+        if: ${{ inputs.skip_canary_plant != true }}
+        run: |
+          TS=$(date +%s)
+          kubectl -n "$NAMESPACE" annotate externalsecret \
+            "${KH_RELEASE_NAME}-common" \
+            "force-sync=$TS" --overwrite || true
+          sleep 30
+          kubectl -n "$NAMESPACE" rollout restart \
+            deployment/"${KH_RELEASE_NAME}-common"
+          kubectl -n "$NAMESPACE" rollout status \
+            deployment/"${KH_RELEASE_NAME}-common" --timeout=5m
+
+      - name: Fetch canary value for test assertion
+        id: fetch_canary
+        run: |
+          CANARY=$(aws ssm get-parameter \
+            --name "$CANARY_SSM_PATH" \
+            --with-decryption \
+            --region "$REGION" \
+            --query 'Parameter.Value' --output text)
+          echo "::add-mask::$CANARY"
+          echo "canary=$CANARY" >> "$GITHUB_OUTPUT"
+
+      - name: Run escape-matrix suite
+        id: matrix
+        env:
+          STAGING_URL: ${{ env.APP_URL }}
+          STAGING_API_TOKEN: ${{ secrets.TO_ESCAPE_MATRIX_API_TOKEN }}
+          EXPECTED_SENTINEL: ${{ steps.fetch_canary.outputs.canary }}
+        run: |
+          pnpm exec vitest run tests/e2e/sandbox-escape/escape-matrix.spec.ts
+
+      - name: Teardown canary (always)
+        if: always()
+        run: |
+          aws ssm delete-parameter \
+            --name "$CANARY_SSM_PATH" \
+            --region "$REGION" >/dev/null || true
+          TS=$(date +%s)
+          kubectl -n "$NAMESPACE" annotate externalsecret \
+            "${KH_RELEASE_NAME}-common" \
+            "force-sync=$TS" --overwrite || true
+          echo "Canary torn down. Operator should run main-app rollout restart if they want the old canary variable fully evicted from running Pods."
+
+      - name: Summary
+        if: always()
+        env:
+          MATRIX_RESULT: ${{ steps.matrix.outcome }}
+        run: |
+          {
+            echo "## Escape-matrix run — $TARGET_ENV"
+            echo ""
+            echo "- Canary SSM path: \`$CANARY_SSM_PATH\` (deleted)"
+            echo "- Test result: $MATRIX_RESULT"
+            echo ""
+            echo "If the test passed, all 5 TEST-XX assertions held: an escape from the Code action node could NOT read the planted canary via process.env, /proc/self/environ, /proc/1/environ, SA token file, or IRSA token file."
+            echo ""
+            echo "If the test failed, see the action logs and roll the main app back to SANDBOX_BACKEND=local in Helm values immediately."
+          } >> "$GITHUB_STEP_SUMMARY"

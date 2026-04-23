@@ -1,0 +1,85 @@
+# Helm values for the keeperhub-sandbox release (staging cluster) via
+# techops-services/common@0.2.1.
+#
+# ECR_REGISTRY and IMAGE_TAG are substituted by deploy-sandbox.yaml at
+# deploy time (sed replacement, same pattern as deploy/event-tracker/).
+#
+# apply order (deploy-sandbox.yaml handles this automatically):
+#   1. helm upgrade --install keeperhub-sandbox ... -f this-file
+#   2. kubectl apply -f deploy/keeperhub-sandbox/staging/sa.yaml
+#   3. kubectl patch deployment --patch-file pod-automount-patch.yaml
+#
+# Sandbox intentionally has:
+#   - ZERO externalSecrets (no AWS creds, no DB, no Turnkey, no Stripe)
+#   - no IRSA annotation (see sa.yaml)
+#   - automountServiceAccountToken: false at BOTH SA and Pod level
+#   - no RoleBinding targeting keeperhub-sandbox
+#
+# This is the v1.9 security boundary: an escape from user JS yields no
+# main-pod secrets (CHILD_ENV_ALLOWLIST scrub), no K8s API access (no SA
+# token projected), no AWS STS access (no IRSA role).
+
+replicaCount: 1
+
+service:
+  enabled: true
+  name: keeperhub-sandbox
+  port: 8787
+  type: ClusterIP
+  containerPort: 8787
+  tls:
+    enabled: false
+
+ingress:
+  enabled: false
+
+image:
+  repository: ${ECR_REGISTRY}/keeperhub-sandbox-staging
+  tag: sandbox-${IMAGE_TAG}
+  pullPolicy: Always
+
+deployment:
+  enabled: true
+
+# Use the pre-created SA from sa.yaml so automountServiceAccountToken:
+# false is set at the SA object level (chart doesn't expose that toggle).
+serviceAccount:
+  create: false
+  name: keeperhub-sandbox
+
+podAnnotations:
+  reloader.stakater.com/auto: "true"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+env:
+  NODE_ENV:
+    type: kv
+    value: "production"
+  SANDBOX_PORT:
+    type: kv
+    value: "8787"
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 8787
+  initialDelaySeconds: 10
+  periodSeconds: 15
+  timeoutSeconds: 2
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: 8787
+  initialDelaySeconds: 2
+  periodSeconds: 5
+  timeoutSeconds: 2
+  failureThreshold: 3
