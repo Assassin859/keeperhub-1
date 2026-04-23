@@ -397,6 +397,61 @@ describe("code/run-code - sandbox globals", () => {
     });
     expect(result.error).toContain("setTimeout is not defined");
   });
+
+  // --- Sandbox escape: env scrubbing ----------------------------------------
+  //
+  // node:vm is not a security boundary -- `Error.constructor("return process")()`
+  // reaches the host `process` via the primordial chain. The mitigation is to
+  // run user code inside a worker_threads.Worker whose env is scrubbed, so the
+  // escape returns an empty env instead of pod secrets.
+
+  it("Error.constructor escape returns a scrubbed env, not host secrets", async () => {
+    const marker = "KEEPERHUB_SCRUB_TEST_SECRET_SHOULD_NOT_LEAK";
+    const markerValue = `leaked-${Date.now().toString(36)}`;
+    process.env[marker] = markerValue;
+    try {
+      const result = await expectSuccess({
+        code: `
+          const proc = Error.constructor("return process")();
+          return {
+            hasMarker: Object.prototype.hasOwnProperty.call(proc.env, ${JSON.stringify(marker)}),
+            markerValue: proc.env[${JSON.stringify(marker)}] ?? null,
+            envKeyCount: Object.keys(proc.env).length,
+            envKeys: Object.keys(proc.env).sort(),
+          };
+        `,
+      });
+      const out = result.result as {
+        hasMarker: boolean;
+        markerValue: string | null;
+        envKeyCount: number;
+        envKeys: string[];
+      };
+      expect(out.hasMarker).toBe(false);
+      expect(out.markerValue).toBeNull();
+      // Only the narrow allowlist of Node runtime vars may appear.
+      const allowedKeys = new Set([
+        "NODE_ENV",
+        "NODE_EXTRA_CA_CERTS",
+        "PATH",
+        "TZ",
+        "LANG",
+        "LC_ALL",
+      ]);
+      for (const key of out.envKeys) {
+        expect(allowedKeys.has(key)).toBe(true);
+      }
+    } finally {
+      delete process.env[marker];
+    }
+  });
+
+  it("blocks fetch to cloud metadata endpoints", async () => {
+    const result = await expectFailure({
+      code: 'await fetch("http://169.254.169.254/latest/meta-data/")',
+    });
+    expect(result.error).toContain("metadata endpoint");
+  });
 });
 
 // --- Error Handling ----------------------------------------------------------
