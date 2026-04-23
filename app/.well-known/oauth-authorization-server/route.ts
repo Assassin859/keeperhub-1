@@ -21,7 +21,11 @@ export function GET(request: Request): Response {
     scopes_supported: ["mcp:read", "mcp:write", "mcp:admin"],
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code", "refresh_token"],
-    token_endpoint_auth_methods_supported: ["client_secret_post"],
+    token_endpoint_auth_methods_supported: [
+      "client_secret_basic",
+      "client_secret_post",
+      "none",
+    ],
     code_challenge_methods_supported: ["S256"],
   };
   return Response.json(metadata);
