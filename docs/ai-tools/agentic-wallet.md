@@ -42,7 +42,7 @@ With MCP + wallet both installed, ask your agent in plain language:
 
 > Run the KeeperHub `mcp-test` workflow for `0xC300...`.
 
-The agent discovers available workflows at runtime through the KeeperHub meta-tools (`search_workflows` + `call_workflow`) and picks the best match. When a paid workflow returns a `402`, the wallet intercepts the challenge, signs through the server-side proxy (x402 on Base USDC or MPP on Tempo USDC.e), and the call retries transparently. If both challenge types are offered it submits one MPP credential (cheaper, near-instant Tempo settlement). If the amount exceeds your `auto_approve_max_usd` the safety hook surfaces an inline permission prompt before any payment is authorised.
+The agent discovers available workflows at runtime through the KeeperHub meta-tools (`search_workflows` + `call_workflow`) and picks the best match. When a paid workflow returns a `402`, the wallet intercepts the challenge, signs through the server-side proxy, and the call retries transparently. Today charge-intent 402s settle via x402 on Base USDC; see [Known limitations](#known-limitations) for the status of MPP on Tempo. If the amount exceeds your `auto_approve_max_usd` the safety hook surfaces an inline permission prompt before any payment is authorised.
 
 ### Safety hooks
 
@@ -127,7 +127,7 @@ Full documentation and security risk ratings: https://skills.sh/coinbase/agentic
 |-------------------------|--------------------------------------------------------|-----------------------------------------------------|--------------------------------------------------------------------|
 | Key custody             | Server-side Turnkey enclave; agent holds HMAC secret   | Plaintext JSON on disk (`~/.agentcash/wallet.json`) | Coinbase Developer Platform (CDP) managed or self-custody variants |
 | Private key on disk     | Never                                                  | Yes (unencrypted)                                   | Depends on variant                                                 |
-| Payment protocols       | x402 (Base USDC) + MPP (Tempo USDC.e)                  | x402                                                | x402 (Coinbase ecosystem)                                          |
+| Payment protocols       | x402 (Base USDC) + MPP proof-mode (Tempo)              | x402                                                | x402 (Coinbase ecosystem)                                          |
 | PreToolUse safety hook  | Three-tier auto/ask/block built-in                     | Not bundled                                         | Not bundled                                                        |
 | Onboarding              | Zero-registration, under 60 seconds                    | Zero-registration                                   | Requires CDP account for the managed variant                       |
 | Install                 | `npx @keeperhub/wallet skill install`                  | `npx agentcash add https://app.keeperhub.com`       | `npx skills add coinbase/agentic-wallet-skills`                    |
@@ -155,13 +155,14 @@ The meta-tool pattern keeps the agent's tool list small regardless of how many w
 
 ## Paying for calls
 
-Paid workflows settle in USDC on Base (via x402) or USDC.e on Tempo (via MPP). Most workflows cost under `$0.05` per call. See [Paid Workflows](/workflows/paid-workflows) for the creator-side view of the same settlement.
+Paid workflows settle in USDC on Base via x402 today. Most workflows cost under `$0.05` per call. Tempo MPP settlement for charge intents is planned -- see [Known limitations](#known-limitations). See [Paid Workflows](/workflows/paid-workflows) for the creator-side view of the same settlement.
 
 ## Known limitations
 
 - Signing is supported on Base (8453), Tempo mainnet (4217), and Tempo testnet (4218) today. Solana, Arbitrum, Optimism and other chains are not yet supported.
 - Ask-tier approvals are surfaced inline via the agent's permission prompt. A browser-based review flow for larger amounts is on the roadmap.
-- Workflow discovery via the skill is scoped to KeeperHub's registry. The wallet auto-pays any x402 or MPP 402 challenge you direct it at, but discovering third-party x402 services from the agent is on the roadmap.
+- **MPP on Tempo is proof-mode only.** MPP-signed zero-amount challenges (used for identity or session gating) work end-to-end. Non-zero MPP charge intents are not yet settled by the wallet -- those require Tempo transaction-mode signing which is on the roadmap. When a paid KeeperHub workflow advertises both x402 and MPP on its 402, the wallet submits the x402 (Base USDC) credential so charge-intent calls settle through the x402 facilitator. MPP is used when a 402 offers it alone.
+- Workflow discovery via the skill is scoped to KeeperHub's registry. The wallet auto-pays any x402 or (zero-amount) MPP 402 challenge you direct it at, but discovering third-party x402 services from the agent is on the roadmap.
 
 ## FAQ
 
@@ -228,9 +229,9 @@ Not through the CLI today. If you've stopped using a wallet and want the sub-org
 No ETH, no gas out of your wallet for normal agentic wallet use.
 
 - **x402 on Base.** You sign an EIP-3009 `TransferWithAuthorization` — a pre-signed authorisation that lets the x402 facilitator move USDC on your behalf. The facilitator submits the on-chain transaction and pays the gas. Your wallet only debits the USDC amount.
-- **MPP on Tempo.** You sign a payment proof; Tempo settles the transfer through the MPP facilitator, which pays the network fees. Your wallet only debits the USDC.e amount.
+- **MPP on Tempo.** For a zero-amount challenge you sign an EIP-712 proof credential that the MPP facilitator verifies — no USDC moves, it's an identity/session gate. For a non-zero charge the facilitator expects a signed Tempo transaction; that signing path is not yet implemented (see [Known limitations](#known-limitations)), so charge-intent 402s settle via x402 today.
 
-So for a `$0.05` paid workflow, `$0.05` of USDC (or USDC.e) leaves your wallet — nothing else.
+So for a `$0.05` paid workflow, `$0.05` of USDC on Base leaves your wallet — nothing else.
 
 If in future you use the wallet to sign a direct on-chain transaction outside the agentic workflow pattern (e.g. a manual ERC-20 transfer), you'd need native gas for that chain the same way any wallet would.
 
