@@ -28,8 +28,11 @@
  * id only.
  */
 import { serializeSignature } from "@turnkey/ethers";
+import { Challenge, Credential } from "mppx";
 import { getTurnkeyClientForOrg } from "@/lib/turnkey/agentic-wallet";
 import { BASE_CHAIN_ID, USDC_BASE_ADDRESS } from "./constants";
+
+const MPP_AUTH_PREFIX = "Payment ";
 
 export class PolicyBlockedError extends Error {
   override readonly name = "PolicyBlockedError";
@@ -95,7 +98,15 @@ export type X402Challenge = {
 
 export type MppProofChallenge = {
   chainId: number;
-  challengeId: string;
+  /**
+   * The raw WWW-Authenticate value (without the `Payment ` prefix) as forwarded
+   * by the npm client. signMppProof parses this via `Challenge.deserialize`
+   * (from mppx) to derive the challenge id it signs, and then wraps the raw
+   * EIP-712 signature into a spec-compliant Credential envelope so the caller
+   * can pass the returned string straight into `Authorization: Payment <...>`
+   * without any client-side decoding or mutation.
+   */
+  serialized: string;
 };
 
 type TurnkeySignature = { r: string; s: string; v: string };
@@ -181,13 +192,41 @@ export async function signMppProof(
   walletAddress: string,
   challenge: MppProofChallenge
 ): Promise<string> {
+  // Parse the raw WWW-Authenticate parameters into a structured mppx Challenge
+  // so we (a) have the canonical challenge id to sign, and (b) can wrap the
+  // raw signature into a spec-compliant Credential envelope below. Without
+  // the wrap the facilitator rejects every retry with "Credential is
+  // malformed: Invalid base64url or JSON".
+  //
+  // The npm client strips the `Payment ` scheme token before forwarding, but
+  // Challenge.deserialize expects the full `Payment <params>` form. Re-add the
+  // prefix on input so either form works.
+  const input = challenge.serialized.startsWith(MPP_AUTH_PREFIX)
+    ? challenge.serialized
+    : `${MPP_AUTH_PREFIX}${challenge.serialized}`;
+  const parsed = Challenge.deserialize(input);
+
   // Override PROOF_DOMAIN_TEMPO.chainId if the caller supplies a different
   // chainId (e.g. Tempo testnet). Default path is 4217 from the challenge.
   const typedData = {
     domain: { ...PROOF_DOMAIN_TEMPO, chainId: challenge.chainId },
     types: PROOF_TYPES,
     primaryType: "Proof",
-    message: { challengeId: challenge.challengeId },
+    message: { challengeId: parsed.id },
   };
-  return signTypedData(subOrgId, walletAddress, typedData);
+  const rawSignature = await signTypedData(subOrgId, walletAddress, typedData);
+
+  // Wrap into an MPP Credential and base64url-encode per mppx spec so
+  // `Credential.serialize()` produces `"Payment eyJ..."`. The npm client
+  // prepends its own `Payment ` scheme token when building the Authorization
+  // header, so we strip the prefix on the way out and ship only the encoded
+  // payload. Opaque pass-through from the client's point of view.
+  const credential = Credential.from({
+    challenge: parsed,
+    payload: { signature: rawSignature },
+  });
+  const serialized = Credential.serialize(credential);
+  return serialized.startsWith(MPP_AUTH_PREFIX)
+    ? serialized.slice(MPP_AUTH_PREFIX.length)
+    : serialized;
 }

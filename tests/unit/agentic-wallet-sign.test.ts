@@ -38,9 +38,37 @@ const { PolicyBlockedError, signMppProof, signX402Challenge } = await import(
   "@/lib/agentic-wallet/sign"
 );
 
+const { Challenge } = await import("mppx");
+
 const SUB_ORG = "subOrg_sign_test";
 const WALLET = "0xabc000000000000000000000000000000000dead";
 const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+
+const MPP_TEST_SECRET = "test-secret-key-for-mpp-challenge-signing";
+
+/**
+ * Build a mppx-serialized Tempo charge challenge and return the
+ * parameters string (without the `Payment ` scheme prefix) that the npm
+ * client would forward to /sign as `paymentChallenge.serialized`. Using the
+ * real Challenge.from + Challenge.serialize path keeps the test aligned
+ * with whatever shape mppx ships.
+ */
+function buildTempoChallengeSerialized(): string {
+  const challenge = Challenge.from({
+    secretKey: MPP_TEST_SECRET,
+    realm: "test.keeperhub.local",
+    method: "tempo",
+    intent: "charge",
+    request: {
+      amount: "10000",
+      currency: "0x20c000000000000000000000b9537d11c60e8b50",
+      recipient: "0x000000000000000000000000000000000000dead",
+      methodDetails: { chainId: 4217 },
+    },
+  });
+  const full = Challenge.serialize(challenge);
+  return full.startsWith("Payment ") ? full.slice("Payment ".length) : full;
+}
 
 function happyPathResult(
   v: "00" | "01"
@@ -185,24 +213,41 @@ describe("signMppProof", () => {
   it("serialises typed data with chainId 4217 and primaryType Proof (Tempo proof-mode)", async () => {
     await signMppProof(SUB_ORG, WALLET, {
       chainId: 4217,
-      challengeId: "challenge-abc-123",
+      serialized: buildTempoChallengeSerialized(),
     });
     const args = mockSignRawPayload.mock.calls[0]?.[0];
     expect(args.encoding).toBe("PAYLOAD_ENCODING_EIP712");
     const typedData = JSON.parse(args.payload) as {
       domain: { chainId: number };
       primaryType: string;
+      message: { challengeId: string };
     };
     expect(typedData.domain.chainId).toBe(4217);
     expect(typedData.primaryType).toBe("Proof");
+    // challengeId comes from the parsed Challenge.id (HMAC-bound), not a
+    // caller-supplied field. Any non-empty string means the parse+sign path
+    // ran against real mppx-issued challenge data.
+    expect(typedData.message.challengeId).toBeTruthy();
+    expect(typeof typedData.message.challengeId).toBe("string");
   });
 
-  it("returns a 0x-prefixed 132-char signature for a Tempo proof", async () => {
-    const sig = await signMppProof(SUB_ORG, WALLET, {
+  it("returns a serialized Credential envelope, not the raw 0x signature", async () => {
+    const out = await signMppProof(SUB_ORG, WALLET, {
       chainId: 4217,
-      challengeId: "challenge-abc-123",
+      serialized: buildTempoChallengeSerialized(),
     });
-    expect(sig.startsWith("0x")).toBe(true);
-    expect(sig.length).toBe(132);
+    // Not the raw EIP-712 signature -- that would shape-fail the facilitator
+    // with "Credential is malformed". The return value is the encoded portion
+    // of what mppx's `Credential.serialize()` emits (the `Payment ` scheme
+    // token is stripped so callers can prepend it themselves).
+    expect(out.startsWith("0x")).toBe(false);
+    expect(out.startsWith("Payment ")).toBe(false);
+    // Decoding back yields a Credential with `{challenge, payload:{signature}}`.
+    const decoded = JSON.parse(
+      Buffer.from(out, "base64url").toString("utf-8")
+    ) as { challenge: { id: string }; payload: { signature: string } };
+    expect(decoded.challenge.id).toBeTruthy();
+    expect(decoded.payload.signature.startsWith("0x")).toBe(true);
+    expect(decoded.payload.signature.length).toBe(132);
   });
 });

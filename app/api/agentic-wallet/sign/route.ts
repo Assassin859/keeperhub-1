@@ -361,9 +361,20 @@ export async function POST(request: Request): Promise<Response> {
         nonce: String(challenge.nonce ?? ""),
       });
     } else {
+      const serialized =
+        typeof challenge.serialized === "string" ? challenge.serialized : "";
+      if (!serialized) {
+        return Response.json(
+          {
+            error: "paymentChallenge.serialized is required for tempo",
+            code: "MPP_CHALLENGE_MISSING",
+          },
+          { status: 400 }
+        );
+      }
       signature = await signMppProof(auth.subOrgId, walletAddress, {
         chainId: resolvedTempoChainId,
-        challengeId: String(challenge.challengeId ?? ""),
+        serialized,
       });
     }
     return Response.json({ signature }, { status: 200 });

@@ -1,36 +1,38 @@
 ---
 title: "What is KeeperHub"
-description: "KeeperHub is a no-code blockchain automation platform - Zapier for Web3. Create custom automations without coding knowledge."
+description: "KeeperHub is the execution and reliability layer for AI agents operating onchain."
 ---
 
 # What is KeeperHub
 
-KeeperHub is a "Zapier for Blockchain" platform that enables users to create and manage custom blockchain automations without coding knowledge. The platform eliminates the complexity of blockchain development while providing powerful automation capabilities for Ethereum-based operations.
+KeeperHub is the execution and reliability layer for AI agents operating onchain. It is not an agent framework and does not replace your agent. It is the infrastructure agents plug into when they need to transact onchain with guarantees: retry logic, gas optimization, private routing, transaction simulation, and SLA-backed execution.
 
 ## The Problem KeeperHub Solves
 
-Traditional blockchain automation requires significant technical expertise:
-- Complex transaction retry logic implementation
-- Gas price optimization during network congestion  
-- Reliable Ethereum node hosting with fallback systems
-- Extensive coding knowledge for custom automations
-- Infrastructure management and monitoring
+AI agents can reason, but they cannot reliably transact onchain. When an agent needs to move value, it runs into:
+
+- Failed transactions with no retry logic
+- Gas spikes that cause operations to stall or overpay
+- MEV extraction from unprotected public mempool submission
+- No audit trail for what was triggered, simulated, or executed
+- No human support when something goes wrong at 3am
 
 ## The KeeperHub Solution
 
-KeeperHub provides a no-code platform with:
-- **Smart Gas Optimization**: Automatic gas estimation with exponential backoff during congestion
-- **Reliable Infrastructure**: Managed Ethereum node connectivity with redundant endpoints
-- **Intelligent Transaction Management**: Automatic retry logic with pending transaction reuse
-- **Secure Wallet Integration**: Para-secured wallet management without technical complexity
-- **Visual Configuration**: User-friendly interface for creating complex automations
+KeeperHub provides the execution layer that sits between agent intent and onchain settlement:
+
+- **Reliable execution engine**: Smart gas estimation, intelligent retry logic, and MEV protection via private routing
+- **Transaction simulation**: Every transaction is simulated before submission to catch failures before they cost gas
+- **Full audit trail**: Every trigger, simulation, submission, gas cost, outcome, and timestamp is logged and exportable
+- **Managed DeFi**: 24/7 global engineering support with named engineers and SLA-backed uptime
+- **Wallet security**: Non-custodial key management via Turnkey. Teams connect their own wallets. KeeperHub never holds private keys.
 
 ## Key Benefits
 
-**For Non-Technical Users**: Create sophisticated blockchain automations through an intuitive interface without writing code.
+**For AI agent developers**: Give your agent reliable onchain execution without building gas management, retry logic, or MEV protection from scratch.
 
-**For Businesses**: Reduce operational overhead with automated fund management, treasury monitoring, and compliance tracking.
+**For DeFi protocols**: Automate treasury operations, vault monitoring, and keeper functions with a full audit trail and human support behind every execution.
 
-**For DeFi Users**: Automate yield farming, position monitoring, and risk management without manual intervention.
+**For enterprises and treasuries**: SLA-backed execution, named engineering support, and complete auditability for every onchain action.
 
-**For DAOs**: Streamline governance processes, treasury management, and multisig operations.
+**For agent framework teams**: Native integration via MCP server, CLI, x402, and MPP. KeeperHub plugs into your stack without replacing it.

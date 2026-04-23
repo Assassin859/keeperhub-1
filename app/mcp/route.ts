@@ -83,14 +83,26 @@ function getBaseUrl(request: Request): string {
 // so clients can discover the Protected Resource Metadata document. Without it,
 // strict MCP clients (e.g. Claude Desktop) report "Couldn't reach the MCP server"
 // because they cannot locate the authorization server.
+//
+// Per RFC 6750 §3, Bearer challenges include error + error_description when a
+// token is missing/invalid. The MCP host on claude.ai appears to require these
+// parameters during its discovery validation; omitting them causes the connect
+// flow to halt at `start_error` before DCR ever runs. We match Linear, Sentry,
+// and Notion's challenge shape.
 function unauthorizedResponse(request: Request, error: string): Response {
   const baseUrl = getBaseUrl(request);
   const resourceMetadataUrl = `${baseUrl}/.well-known/oauth-protected-resource`;
+  const challenge = [
+    'Bearer realm="OAuth"',
+    `resource_metadata="${resourceMetadataUrl}"`,
+    'error="invalid_token"',
+    'error_description="Missing or invalid access token"',
+  ].join(", ");
   return new Response(JSON.stringify({ error }), {
     status: 401,
     headers: {
       "Content-Type": "application/json",
-      "WWW-Authenticate": `Bearer realm="keeperhub-mcp", resource_metadata="${resourceMetadataUrl}"`,
+      "WWW-Authenticate": challenge,
       ...CORS_HEADERS,
     },
   });
