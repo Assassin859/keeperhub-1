@@ -10,6 +10,7 @@ import type {
   TierKey,
 } from "@/lib/billing/plans";
 import { cn } from "@/lib/utils";
+import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
 import { ConfirmPlanChangeDialog } from "../confirm-plan-change-dialog";
 import {
   HeroMetrics,
@@ -71,9 +72,15 @@ export function PlanCard({
   const price = computeDisplayPrice(planName, activeTier, interval);
 
   const capCents = gasCreditCaps?.[planName] ?? plan.features.gasCreditsCents;
-  const gasDisplay = isEnterprise
-    ? "Custom"
-    : `$${(capCents / 100).toFixed(0)}`;
+  const gasDisplay = ((): string | null => {
+    if (!isGasSponsorshipEnabled()) {
+      return null;
+    }
+    if (isEnterprise) {
+      return "Custom";
+    }
+    return `$${(capCents / 100).toFixed(0)}`;
+  })();
 
   const executionsDisplay = (() => {
     if (isEnterprise) {

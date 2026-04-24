@@ -28,7 +28,7 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
   "Access-Control-Allow-Headers":
     "Authorization, Content-Type, Mcp-Session-Id, Mcp-Protocol-Version",
-  "Access-Control-Expose-Headers": "Mcp-Session-Id",
+  "Access-Control-Expose-Headers": "Mcp-Session-Id, WWW-Authenticate",
 } as const;
 
 // Start the local-cache cleanup interval once per process lifetime.
@@ -79,6 +79,42 @@ function getBaseUrl(request: Request): string {
   return `${url.protocol}//${url.host}`;
 }
 
+// RFC 9728 / MCP 2025-06-18 require a WWW-Authenticate header on 401 responses
+// so clients can discover the Protected Resource Metadata document. Without it,
+// strict MCP clients (e.g. Claude Desktop) report "Couldn't reach the MCP server"
+// because they cannot locate the authorization server.
+//
+// Per RFC 6750 §3, Bearer challenges include error + error_description when a
+// token is missing/invalid. The MCP host on claude.ai appears to require these
+// parameters during its discovery validation; omitting them causes the connect
+// flow to halt at `start_error` before DCR ever runs. We match Linear, Sentry,
+// and Notion's challenge shape.
+function unauthorizedResponse(request: Request): Response {
+  const baseUrl = getBaseUrl(request);
+  const resourceMetadataUrl = `${baseUrl}/.well-known/oauth-protected-resource`;
+  const challenge = [
+    'Bearer realm="OAuth"',
+    `resource_metadata="${resourceMetadataUrl}"`,
+    'error="invalid_token"',
+    'error_description="Missing or invalid access token"',
+  ].join(", ");
+  // RFC 6749 §5.2 error response. Match Linear/Notion/Sentry's body shape so
+  // any OAuth 2.1 parser (including Anthropic's connector validator) can read
+  // the error consistently with the WWW-Authenticate challenge.
+  const body = {
+    error: "invalid_token",
+    error_description: "Missing or invalid access token",
+  };
+  return new Response(JSON.stringify(body), {
+    status: 401,
+    headers: {
+      "Content-Type": "application/json",
+      "WWW-Authenticate": challenge,
+      ...CORS_HEADERS,
+    },
+  });
+}
+
 async function authenticate(request: Request): Promise<ApiKeyAuthResult> {
   const authHeader = request.headers.get("Authorization") ?? "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.substring(7) : "";
@@ -87,7 +123,7 @@ async function authenticate(request: Request): Promise<ApiKeyAuthResult> {
     return await authenticateApiKey(request);
   }
 
-  const oauthResult = authenticateOAuthToken(request);
+  const oauthResult = await authenticateOAuthToken(request);
   if (oauthResult.authenticated) {
     return {
       authenticated: true,
@@ -220,7 +256,7 @@ async function resolveSession(
   // Slow path: verify JWT and reconstruct transport+server (different pod or restart).
   // Accept expired-but-valid-signature JWTs so sessions survive pod restarts
   // and idle periods within the 24h sliding window.
-  const result = verifySessionTokenDetailed(sessionId);
+  const result = await verifySessionTokenDetailed(sessionId);
 
   if (!result.payload) {
     const isExpiredBeyondRenewal =
@@ -276,7 +312,7 @@ async function resolveSession(
   // The client adopts the new session ID from the Mcp-Session-Id response header.
   let renewedSessionId: string | undefined;
   if (result.expired) {
-    renewedSessionId = createSessionToken({
+    renewedSessionId = await createSessionToken({
       org: result.payload.org,
       key: result.payload.key,
       scope: result.payload.scope,
@@ -317,14 +353,15 @@ function withRenewedSessionHeader(
 export async function POST(request: Request): Promise<Response> {
   const auth = await authenticate(request);
   if (!auth.authenticated) {
-    logMcpEvent("mcp.auth.failed", { reason: auth.error ?? "Unauthorized" });
-    return new Response(
-      JSON.stringify({ error: auth.error ?? "Unauthorized" }),
-      {
-        status: auth.statusCode ?? 401,
-        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
-      }
-    );
+    const reason = auth.error ?? "Unauthorized";
+    logMcpEvent("mcp.auth.failed", { reason });
+    if ((auth.statusCode ?? 401) === 401) {
+      return unauthorizedResponse(request);
+    }
+    return new Response(JSON.stringify({ error: reason }), {
+      status: auth.statusCode,
+      headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    });
   }
 
   const organizationId = auth.organizationId ?? "";
@@ -392,7 +429,7 @@ export async function POST(request: Request): Promise<Response> {
 
   // Mint the JWT that becomes the Mcp-Session-Id returned to the client.
   // Any pod can verify and reconstruct state from this token on future requests.
-  const newSessionId = createSessionToken({
+  const newSessionId = await createSessionToken({
     org: organizationId,
     key: apiKeyId,
     scope,
@@ -419,14 +456,15 @@ export async function POST(request: Request): Promise<Response> {
 export async function GET(request: Request): Promise<Response> {
   const auth = await authenticate(request);
   if (!auth.authenticated) {
-    logMcpEvent("mcp.auth.failed", { reason: auth.error ?? "Unauthorized" });
-    return new Response(
-      JSON.stringify({ error: auth.error ?? "Unauthorized" }),
-      {
-        status: auth.statusCode ?? 401,
-        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
-      }
-    );
+    const reason = auth.error ?? "Unauthorized";
+    logMcpEvent("mcp.auth.failed", { reason });
+    if ((auth.statusCode ?? 401) === 401) {
+      return unauthorizedResponse(request);
+    }
+    return new Response(JSON.stringify({ error: reason }), {
+      status: auth.statusCode,
+      headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    });
   }
 
   const sessionId = request.headers.get("mcp-session-id");
@@ -458,14 +496,15 @@ export async function GET(request: Request): Promise<Response> {
 export async function DELETE(request: Request): Promise<Response> {
   const auth = await authenticate(request);
   if (!auth.authenticated) {
-    logMcpEvent("mcp.auth.failed", { reason: auth.error ?? "Unauthorized" });
-    return new Response(
-      JSON.stringify({ error: auth.error ?? "Unauthorized" }),
-      {
-        status: auth.statusCode ?? 401,
-        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
-      }
-    );
+    const reason = auth.error ?? "Unauthorized";
+    logMcpEvent("mcp.auth.failed", { reason });
+    if ((auth.statusCode ?? 401) === 401) {
+      return unauthorizedResponse(request);
+    }
+    return new Response(JSON.stringify({ error: reason }), {
+      status: auth.statusCode,
+      headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    });
   }
 
   const sessionId = request.headers.get("mcp-session-id");
@@ -483,7 +522,7 @@ export async function DELETE(request: Request): Promise<Response> {
 
   // Verify ownership via JWT before touching anything in the local cache.
   // Accept expired JWTs so clients can clean up old sessions.
-  const payload = verifySessionToken(sessionId, { allowExpired: true });
+  const payload = await verifySessionToken(sessionId, { allowExpired: true });
   if (!payload || payload.org !== organizationId) {
     return new Response(sessionErrorBody("session_not_found"), {
       status: 404,

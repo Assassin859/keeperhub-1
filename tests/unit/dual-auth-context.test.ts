@@ -43,12 +43,12 @@ function makeRequest(headers: Record<string, string> = {}): Request {
 describe("getDualAuthContext", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockAuthenticateOAuthToken.mockReturnValue({ authenticated: false });
+    mockAuthenticateOAuthToken.mockResolvedValue({ authenticated: false });
   });
 
   describe("OAuth authentication", () => {
     it("returns userId and organizationId from OAuth token", async () => {
-      mockAuthenticateOAuthToken.mockReturnValue({
+      mockAuthenticateOAuthToken.mockResolvedValue({
         authenticated: true,
         userId: "user_oauth",
         organizationId: "org_oauth",
@@ -188,7 +188,7 @@ describe("getDualAuthContext", () => {
 
   describe("auth priority", () => {
     it("prefers OAuth over API key and session", async () => {
-      mockAuthenticateOAuthToken.mockReturnValue({
+      mockAuthenticateOAuthToken.mockResolvedValue({
         authenticated: true,
         userId: "user_oauth",
         organizationId: "org_oauth",

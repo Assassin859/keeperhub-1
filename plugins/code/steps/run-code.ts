@@ -1,10 +1,15 @@
 import "server-only";
 
-import { createContext, runInContext } from "node:vm";
+import { spawn } from "node:child_process";
+import { deserialize } from "node:v8";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
+import {
+  SANDBOX_CHILD_SOURCE as CHILD_SOURCE,
+  SANDBOX_RESULT_SENTINEL as RESULT_SENTINEL,
+} from "@/lib/sandbox-child-source";
+import { runRemote } from "@/lib/sandbox-client";
 import { type StepInput, withStepLogging } from "@/lib/steps/step-handler";
-import { getErrorMessage } from "@/lib/utils";
 
 type LogEntry = {
   level: "log" | "warn" | "error";
@@ -24,16 +29,18 @@ export type RunCodeInput = StepInput & RunCodeCoreInput;
 
 const DEFAULT_TIMEOUT_SECONDS = 60;
 const MAX_TIMEOUT_SECONDS = 120;
-const MAX_LOG_ENTRIES = 200;
-const VM_LINE_REGEX = /user-code\.js:(\d+)/;
 const UNRESOLVED_TEMPLATE_REGEX = /\{\{@?[^}]+\}\}/g;
+const VM_LINE_REGEX = /user-code\.js:(\d+)/;
 
 /**
- * Strip JS string literals (single, double, backtick) so that {{...}}
- * patterns inside strings are not mistaken for unresolved templates.
- * Handles escaped quotes. Does not handle nested template literal
- * expressions (${...}) but that is sufficient for this use case.
+ * Backend selector read once at module init — "local" means the in-pod
+ * child_process path (the PR #953 runner inlined below), "remote" dispatches
+ * to the standalone sandbox HTTP service via `lib/sandbox-client.ts`. Default
+ * is "local" so dev and unit tests stay on the in-pod runner without extra
+ * env wiring.
  */
+const SANDBOX_BACKEND = process.env.SANDBOX_BACKEND ?? "local";
+
 const JS_STRING_LITERAL_REGEX =
   /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`/g;
 
@@ -41,72 +48,164 @@ function stripStringLiterals(code: string): string {
   return code.replace(JS_STRING_LITERAL_REGEX, "");
 }
 
-/**
- * Extract a line number from a VM error stack trace if available.
- */
-function extractLineNumber(error: unknown): number | undefined {
-  if (!(error instanceof Error && error.stack)) {
+function extractLineNumber(stack: string | undefined): number | undefined {
+  if (!stack) {
     return undefined;
   }
-
-  const match = error.stack.match(VM_LINE_REGEX);
+  const match = stack.match(VM_LINE_REGEX);
   if (match?.[1]) {
-    // Subtract 1 to account for the async IIFE wrapper line prepended to user code
     const rawLine = Number.parseInt(match[1], 10);
     return Math.max(1, rawLine - 1);
   }
-
   return undefined;
 }
 
-/**
- * Create a captured console object that stores log entries.
- */
-function createCapturedConsole(logs: LogEntry[]): {
-  log: (...args: unknown[]) => void;
-  warn: (...args: unknown[]) => void;
-  error: (...args: unknown[]) => void;
-} {
-  function capture(level: LogEntry["level"]) {
-    return (...args: unknown[]): void => {
-      if (logs.length < MAX_LOG_ENTRIES) {
-        logs.push({ level, args });
-      }
+const CHILD_ENV_ALLOWLIST = [
+  "NODE_ENV",
+  "NODE_EXTRA_CA_CERTS",
+  "PATH",
+  "TZ",
+  "LANG",
+  "LC_ALL",
+] as const;
+
+function buildChildEnv(): NodeJS.ProcessEnv {
+  const out: Record<string, string> = {};
+  for (const key of CHILD_ENV_ALLOWLIST) {
+    const value = process.env[key];
+    if (value !== undefined) {
+      out[key] = value;
+    }
+  }
+  return out as NodeJS.ProcessEnv;
+}
+
+type ChildOutcome =
+  | { ok: true; result: unknown; logs: LogEntry[] }
+  | {
+      ok: false;
+      errorMessage: string;
+      errorStack?: string;
+      logs: LogEntry[];
+    };
+
+function parseChildOutput(stdout: string): ChildOutcome {
+  const idx = stdout.lastIndexOf(RESULT_SENTINEL);
+  if (idx === -1) {
+    return {
+      ok: false,
+      errorMessage: "Sandbox produced no result",
+      logs: [],
     };
   }
+  const newlineIdx = stdout.indexOf("\n", idx);
+  const end = newlineIdx === -1 ? stdout.length : newlineIdx;
+  const base64 = stdout.slice(idx + RESULT_SENTINEL.length, end).trim();
+  try {
+    return deserialize(Buffer.from(base64, "base64")) as ChildOutcome;
+  } catch (_err) {
+    return {
+      ok: false,
+      errorMessage: "Sandbox produced malformed result",
+      logs: [],
+    };
+  }
+}
 
-  return {
-    log: capture("log"),
-    warn: capture("warn"),
-    error: capture("error"),
-  };
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: single cohesive spawner with timeout + stream aggregation + graceful teardown
+async function runInChild(
+  code: string,
+  timeoutMs: number
+): Promise<ChildOutcome> {
+  return await new Promise<ChildOutcome>((resolve) => {
+    const child = spawn(process.execPath, ["-e", CHILD_SOURCE], {
+      env: buildChildEnv(),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+
+    function finish(outcome: ChildOutcome): void {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(killTimer);
+      if (!child.killed) {
+        try {
+          child.kill("SIGKILL");
+        } catch (_err) {
+          // ignore; child may already have exited
+        }
+      }
+      resolve(outcome);
+    }
+
+    const killTimer = setTimeout(() => {
+      finish({ ok: false, errorMessage: "WALL_CLOCK_TIMEOUT", logs: [] });
+    }, timeoutMs + 1000);
+
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+
+    child.on("error", (err: Error) => {
+      finish({
+        ok: false,
+        errorMessage: err.message || String(err),
+        errorStack: err.stack,
+        logs: [],
+      });
+    });
+
+    child.on("close", (exitCode: number | null) => {
+      const parsed = parseChildOutput(stdout);
+      if (parsed.ok || exitCode === 0) {
+        finish(parsed);
+        return;
+      }
+      finish({
+        ok: false,
+        errorMessage:
+          parsed.errorMessage !== "Sandbox produced no result"
+            ? parsed.errorMessage
+            : `Sandbox process exited with code ${String(exitCode)}${stderr ? `: ${stderr.trim().slice(0, 500)}` : ""}`,
+        logs: [],
+      });
+    });
+
+    try {
+      child.stdin.write(JSON.stringify({ code, timeoutMs }));
+      child.stdin.end();
+    } catch (err) {
+      finish({
+        ok: false,
+        errorMessage: `Failed to send code to sandbox: ${err instanceof Error ? err.message : String(err)}`,
+        logs: [],
+      });
+    }
+  });
 }
 
 /**
- * Core logic - executes user code in a sandboxed vm context.
- *
- * Template variables (e.g. {{NodeName.field}}) are resolved by the workflow
- * engine before the code reaches this handler -- the code string already
- * contains the actual values at execution time.
- *
- * Security model: node:vm prevents accidental access to Node.js internals.
- * It is NOT a security boundary against malicious code -- native constructors
- * (Error, TypeError, etc.) expose the host prototype chain, allowing sandbox
- * escape via .constructor.constructor. This is acceptable for a self-hosted
- * platform where users are authenticated team members.
+ * Pre-flight input validation shared by both backends. Returns a failure
+ * RunCodeResult if the input is unrunnable, otherwise null — callers branch
+ * on the return value.
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: single cohesive handler with sandbox setup, timeout, and error handling
-async function stepHandler(input: RunCodeCoreInput): Promise<RunCodeResult> {
+function validateInput(input: RunCodeCoreInput): RunCodeResult | null {
   const { code } = input;
-
   if (!code || code.trim() === "") {
     return { success: false, error: "No code provided", logs: [] };
   }
-
-  // Check for unresolved template variables that would cause syntax errors.
-  // Strip string literals first so {{...}} inside quotes is not flagged.
   const unresolvedTemplates = stripStringLiterals(code).match(
-    UNRESOLVED_TEMPLATE_REGEX
+    UNRESOLVED_TEMPLATE_REGEX,
   );
   if (unresolvedTemplates) {
     const unique = [...new Set(unresolvedTemplates)];
@@ -116,186 +215,110 @@ async function stepHandler(input: RunCodeCoreInput): Promise<RunCodeResult> {
       logs: [],
     };
   }
-
-  const logs: LogEntry[] = [];
-  const capturedConsole = createCapturedConsole(logs);
-
-  const rawTimeout = input.timeout ?? DEFAULT_TIMEOUT_SECONDS;
-  const timeoutSeconds = Math.min(Math.max(1, rawTimeout), MAX_TIMEOUT_SECONDS);
-  const timeoutMs = timeoutSeconds * 1000;
-
-  // Wrap fetch with an AbortController deadline so network requests respect
-  // the configured timeout and cannot hang indefinitely.
-  function sandboxedFetch(
-    resource: RequestInfo | URL,
-    init?: RequestInit
-  ): Promise<Response> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-    // If the caller already provided a signal, abort when either fires
-    const callerSignal = init?.signal;
-    if (callerSignal?.aborted) {
-      controller.abort();
-    } else {
-      callerSignal?.addEventListener("abort", () => controller.abort(), {
-        once: true,
-      });
-    }
-
-    return fetch(resource, { ...init, signal: controller.signal }).finally(() =>
-      clearTimeout(timer)
-    );
-  }
-
-  const sandbox = createContext({
-    // I/O
-    console: capturedConsole,
-    fetch: sandboxedFetch,
-
-    // Core types
-    BigInt,
-    JSON,
-    Math,
-    Date,
-    Array,
-    Object,
-    String,
-    Number,
-    Boolean,
-    RegExp,
-    Symbol,
-    Map,
-    Set,
-    WeakMap,
-    WeakSet,
-    Promise,
-
-    // Error types
-    Error,
-    TypeError,
-    RangeError,
-    SyntaxError,
-    ReferenceError,
-    URIError,
-
-    // Numeric / parsing
-    parseInt,
-    parseFloat,
-    isNaN,
-    isFinite,
-    Infinity,
-    NaN,
-
-    // URI encoding
-    encodeURIComponent,
-    decodeURIComponent,
-    encodeURI,
-    decodeURI,
-
-    // Base64
-    atob,
-    btoa,
-
-    // Text encoding
-    TextEncoder,
-    TextDecoder,
-
-    // Binary / typed arrays
-    ArrayBuffer,
-    DataView,
-    Uint8Array,
-    Uint16Array,
-    Uint32Array,
-    Int8Array,
-    Int16Array,
-    Int32Array,
-    Float32Array,
-    Float64Array,
-    BigInt64Array,
-    BigUint64Array,
-
-    // Fetch API types
-    URL,
-    URLSearchParams,
-    Headers,
-    Request,
-    Response,
-    AbortController,
-    AbortSignal,
-
-    // Utilities
-    structuredClone,
-    Intl,
-    crypto: { randomUUID: crypto.randomUUID.bind(crypto) },
-
-    // Explicitly block globals that node:vm leaks from the host context
-    SharedArrayBuffer: undefined,
-  });
-
-  // Wrap code in an async IIFE so users can use `return` and `await`
-  const wrappedCode = `(async () => {\n${code}\n})()`;
-
-  // Wall-clock timeout that covers async operations (fetch, Promise, etc.)
-  // The vm `timeout` option only covers synchronous CPU time.
-  function createWallClockTimeout(): {
-    promise: Promise<never>;
-    clear: () => void;
-  } {
-    let timer: ReturnType<typeof setTimeout>;
-    const promise = new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error("WALL_CLOCK_TIMEOUT")),
-        timeoutMs
-      );
-    });
-    return { promise, clear: () => clearTimeout(timer) };
-  }
-
-  const wallClock = createWallClockTimeout();
-
-  try {
-    const execution: Promise<unknown> = runInContext(wrappedCode, sandbox, {
-      timeout: timeoutMs,
-      filename: "user-code.js",
-    });
-
-    const result: unknown = await Promise.race([execution, wallClock.promise]);
-
-    return { success: true, result, logs };
-  } catch (error) {
-    const line = extractLineNumber(error);
-    const message = getErrorMessage(error);
-
-    // Detect timeout errors from both vm (sync) and wall-clock (async)
-    const isTimeout =
-      (error instanceof Error &&
-        error.message.includes("Script execution timed out")) ||
-      (error instanceof Error && error.message === "WALL_CLOCK_TIMEOUT");
-
-    const errorMessage = isTimeout
-      ? `Code execution timed out after ${String(timeoutSeconds)} second${timeoutSeconds === 1 ? "" : "s"}`
-      : `Code execution failed: ${message}`;
-
-    logUserError(ErrorCategory.VALIDATION, "[Code] Execution error:", error, {
-      plugin_name: "code",
-      action_name: "run-code",
-    });
-
-    return {
-      success: false,
-      error: errorMessage,
-      logs,
-      ...(line !== undefined ? { line } : {}),
-    };
-  } finally {
-    wallClock.clear();
-  }
+  return null;
 }
 
 /**
- * Entry point - wraps with logging + metrics
+ * In-pod child_process runner preserved verbatim from PR #953. When
+ * SANDBOX_BACKEND is "local" (default) or unset, the main app evaluates user
+ * code via this runner — a spawned Node process with a scrubbed env and
+ * node:vm.runInContext inside a single-use context.
  */
+async function runLocal(
+  input: RunCodeCoreInput,
+  timeoutSeconds: number,
+): Promise<RunCodeResult> {
+  const timeoutMs = timeoutSeconds * 1000;
+  const outcome = await runInChild(input.code, timeoutMs);
+
+  if (outcome.ok) {
+    return { success: true, result: outcome.result, logs: outcome.logs };
+  }
+
+  const isTimeout =
+    outcome.errorMessage.includes("Script execution timed out") ||
+    outcome.errorMessage === "WALL_CLOCK_TIMEOUT";
+
+  const errorMessage = isTimeout
+    ? `Code execution timed out after ${String(timeoutSeconds)} second${timeoutSeconds === 1 ? "" : "s"}`
+    : `Code execution failed: ${outcome.errorMessage}`;
+
+  logUserError(
+    ErrorCategory.VALIDATION,
+    "[Code] Execution error:",
+    new Error(outcome.errorMessage),
+    {
+      plugin_name: "code",
+      action_name: "run-code",
+    },
+  );
+
+  const line = extractLineNumber(outcome.errorStack);
+
+  return {
+    success: false,
+    error: errorMessage,
+    logs: outcome.logs,
+    ...(line !== undefined ? { line } : {}),
+  };
+}
+
+/**
+ * Normalize a runRemote() RunCodeResult to match the error-message shape
+ * runLocal emits. The sandbox-client translator ferries ChildOutcome
+ * error text through unchanged; the main-app contract wants "Code
+ * execution failed: ..." for general errors and "Code execution timed
+ * out after N second(s)" for timeouts so downstream consumers (UI,
+ * alerting) see identical copy across backends.
+ */
+function normalizeRemoteError(
+  outcome: RunCodeResult,
+  timeoutSeconds: number,
+): RunCodeResult {
+  if (outcome.success) {
+    return outcome;
+  }
+  const raw = outcome.error;
+  const isTimeout =
+    raw.includes("Script execution timed out") ||
+    raw === "WALL_CLOCK_TIMEOUT" ||
+    raw.includes("timed out after");
+  const rewritten = isTimeout
+    ? `Code execution timed out after ${String(timeoutSeconds)} second${timeoutSeconds === 1 ? "" : "s"}`
+    : raw.startsWith("Code execution failed:") ||
+        raw.startsWith("sandbox client error:") ||
+        raw.startsWith("No code provided") ||
+        raw.startsWith("Unresolved template variables:")
+      ? raw
+      : `Code execution failed: ${raw}`;
+  return { ...outcome, error: rewritten };
+}
+
+/**
+ * Backend dispatcher. SANDBOX_BACKEND is read once at module init; when
+ * "remote" we delegate to lib/sandbox-client.ts, otherwise runLocal handles
+ * the invocation via the in-pod child_process path.
+ */
+async function stepHandler(input: RunCodeCoreInput): Promise<RunCodeResult> {
+  const validationError = validateInput(input);
+  if (validationError) {
+    return validationError;
+  }
+  const rawTimeout = input.timeout ?? DEFAULT_TIMEOUT_SECONDS;
+  const clampedSeconds = Math.min(
+    Math.max(1, rawTimeout),
+    MAX_TIMEOUT_SECONDS,
+  );
+  if (SANDBOX_BACKEND === "remote") {
+    const outcome = await runRemote({
+      code: input.code,
+      timeoutMs: clampedSeconds * 1000,
+    });
+    return normalizeRemoteError(outcome, clampedSeconds);
+  }
+  return runLocal(input, clampedSeconds);
+}
+
 // biome-ignore lint/suspicious/useAwait: "use step" directive requires async
 export async function runCodeStep(input: RunCodeInput): Promise<RunCodeResult> {
   "use step";
@@ -306,7 +329,7 @@ export async function runCodeStep(input: RunCodeInput): Promise<RunCodeResult> {
       actionName: "run-code",
       executionId: input._context?.executionId,
     },
-    () => withStepLogging(input, () => stepHandler(input))
+    () => withStepLogging(input, () => stepHandler(input)),
   );
 }
 runCodeStep.maxRetries = 0;

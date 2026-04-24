@@ -64,7 +64,7 @@ import {
 import { ActionConfigRenderer } from "./action-config-renderer";
 import { SchemaBuilder, type SchemaField } from "./schema-builder";
 
-type ConfigValue = string | Record<string, unknown> | undefined;
+type ConfigValue = string | boolean | Record<string, unknown> | undefined;
 
 type ActionConfigProps = {
   config: Record<string, unknown>;
@@ -776,8 +776,22 @@ export function ActionConfig({
     onUpdateConfig("actionType", value);
   };
 
-  // Adapter for plugin config components that expect (key, value: unknown)
-  const handlePluginUpdateConfig = (key: string, value: unknown) => {
+  // Adapter for plugin config components that expect (key, value: unknown).
+  // KEEP-137: do NOT coerce to string -- booleans (e.g. usePrivateMempool)
+  // must remain booleans so downstream truthy checks work and the ChainSelect
+  // private-mempool variant resolves correctly. String() turns `false` into
+  // the truthy string "false", which both breaks the UI (Select stuck on the
+  // Flashbots variant) and the runtime (private-mempool routing stays on).
+  const handlePluginUpdateConfig = (key: string, value: unknown): void => {
+    if (
+      typeof value === "string" ||
+      typeof value === "boolean" ||
+      value === undefined ||
+      (typeof value === "object" && value !== null && !Array.isArray(value))
+    ) {
+      onUpdateConfig(key, value as ConfigValue);
+      return;
+    }
     onUpdateConfig(key, String(value));
   };
 

@@ -14,10 +14,12 @@ FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 
-# Copy docs-site source
+# Copy docs-site source. The in-repo `docs-site/content` symlink to `../docs`
+# is a local dev convenience. Inside the image it would resolve outside /app,
+# which Turbopack (Next.js 16) rejects. Remove it and replace with the real
+# docs tree copied in directly.
 COPY docs-site/ ./
-
-# Copy docs content and create symlink structure
+RUN rm -f ./content
 COPY docs/ ./content/
 
 # Build the application

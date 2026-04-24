@@ -2,7 +2,7 @@
 
 import { ethers } from "ethers";
 import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { ChangeEvent, ChangeEventHandler, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Overlay } from "@/components/overlays/overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
@@ -247,6 +247,14 @@ export function WithdrawModal({
     setState("confirming");
     setErrorMessage(null);
 
+    // When Max was clicked for a native transfer, delegate the balance →
+    // reservation subtraction to the server so the final value and the gas
+    // reservation come from the same snapshot. This avoids "insufficient
+    // funds" when baseFee rises between the client's fee preview and tx
+    // submission.
+    const useServerMax =
+      maxReserveApplied && selectedAsset.type === "native";
+
     try {
       const response = await fetch("/api/user/wallet/withdraw", {
         method: "POST",
@@ -254,8 +262,9 @@ export function WithdrawModal({
         body: JSON.stringify({
           chainId: selectedAsset.chainId,
           tokenAddress: selectedAsset.tokenAddress,
-          amount,
+          amount: useServerMax ? undefined : amount,
           recipient,
+          fromMax: useServerMax,
         }),
       });
 
@@ -421,7 +430,14 @@ export function WithdrawModal({
           <Label>Recipient Address</Label>
           <SaveAddressBookmark address={recipient}>
             <Input
-              onChange={(e) => setRecipient(e.target.value)}
+              onChange={
+                // SaveAddressBookmark calls child onChange with a string when a
+                // bookmark is picked; keep the DOM event path for direct typing.
+                ((e: ChangeEvent<HTMLInputElement> | string) => {
+                  const value = typeof e === "string" ? e : e.target.value;
+                  setRecipient(value);
+                }) as ChangeEventHandler<HTMLInputElement>
+              }
               placeholder="0x..."
               value={toChecksumAddress(recipient)}
             />

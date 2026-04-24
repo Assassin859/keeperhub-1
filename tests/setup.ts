@@ -14,6 +14,7 @@ process.env.SQS_QUEUE_URL ??=
   "http://sqs.us-east-1.localhost.localstack.cloud:4566/000000000000/keeperhub-workflow-queue";
 process.env.KEEPERHUB_URL ??= "http://localhost:3000";
 process.env.NEXT_PUBLIC_BILLING_ENABLED ??= "true";
+process.env.NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED ??= "true";
 process.env.STRIPE_SECRET_KEY ??= "sk_test_fake_key_for_tests";
 process.env.STRIPE_WEBHOOK_SECRET ??= "whsec_test_fake_secret";
 process.env.STRIPE_PRICE_PRO_25K_MONTHLY ??= "price_pro_25k_monthly";

@@ -66,7 +66,7 @@ async function handleAuthorizationCode(
   // Consume the code immediately (single use)
   await deleteAuthCode(code);
 
-  const accessToken = createAccessToken({
+  const accessToken = await createAccessToken({
     sub: authCode.userId,
     org: authCode.organizationId,
     scope: authCode.scope,
@@ -129,7 +129,7 @@ async function handleRefreshToken(params: URLSearchParams): Promise<Response> {
     expiresAt: Date.now() + REFRESH_TOKEN_TTL_MS,
   });
 
-  const accessToken = createAccessToken({
+  const accessToken = await createAccessToken({
     sub: entry.userId,
     org: entry.organizationId,
     scope: entry.scope,

@@ -10,7 +10,7 @@ export function ManageTab({
   canExportKey,
   email,
   isAdmin,
-  onEmailUpdated,
+  isOwner,
   onSelectActiveWallet,
   switchingWallet,
   walletAddress,
@@ -19,7 +19,7 @@ export function ManageTab({
   canExportKey: boolean;
   email: string;
   isAdmin: boolean;
-  onEmailUpdated: () => void;
+  isOwner: boolean;
   onSelectActiveWallet: (walletId: string) => void;
   switchingWallet: boolean;
   walletAddress: string;
@@ -36,12 +36,8 @@ export function ManageTab({
         />
       )}
       <WalletAddressCard walletAddress={walletAddress} />
-      <RecoveryEmailCard
-        email={email}
-        isAdmin={isAdmin}
-        onUpdated={onEmailUpdated}
-      />
-      {isAdmin && canExportKey && <SecurityCard />}
+      <RecoveryEmailCard email={email} />
+      {isOwner && canExportKey && <SecurityCard />}
     </>
   );
 }

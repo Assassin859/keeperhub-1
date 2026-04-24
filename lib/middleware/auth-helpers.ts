@@ -16,10 +16,10 @@ export type DualAuthContext =
  * These tokens are issued by the MCP OAuth flow and forwarded
  * by the MCP server when calling downstream API endpoints.
  */
-function resolveOAuthToken(
+async function resolveOAuthToken(
   request: Request
-): { userId: string | null; organizationId: string | null } | null {
-  const result = authenticateOAuthToken(request);
+): Promise<{ userId: string | null; organizationId: string | null } | null> {
+  const result = await authenticateOAuthToken(request);
   if (!result.authenticated) {
     return null;
   }
@@ -43,7 +43,7 @@ export async function getDualAuthContext(
 ): Promise<DualAuthContext> {
   const required = options?.required ?? true;
 
-  const oauthAuth = resolveOAuthToken(request);
+  const oauthAuth = await resolveOAuthToken(request);
   if (oauthAuth) {
     return {
       ...oauthAuth,
@@ -90,7 +90,7 @@ function resolveApiKeyContext(apiKeyAuth: {
 export async function resolveOrganizationId(
   request: Request
 ): Promise<{ organizationId: string } | { error: string; status: number }> {
-  const oauthAuth = resolveOAuthToken(request);
+  const oauthAuth = await resolveOAuthToken(request);
   if (oauthAuth?.organizationId) {
     return { organizationId: oauthAuth.organizationId };
   }
@@ -127,7 +127,7 @@ export async function resolveCreatorContext(
 ): Promise<
   { organizationId: string; userId: string } | { error: string; status: number }
 > {
-  const oauthAuth = resolveOAuthToken(request);
+  const oauthAuth = await resolveOAuthToken(request);
   if (oauthAuth) {
     return validateCreatorFields(oauthAuth.organizationId, oauthAuth.userId);
   }

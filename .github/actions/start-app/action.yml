@@ -125,6 +125,7 @@ runs:
         CI: true
         TEST_API_KEY: ${{ inputs.test_api_key }}
         NEXT_PUBLIC_BILLING_ENABLED: "true"
+        NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED: "true"
 
     - name: Start application
       if: inputs.image_tag == ''

@@ -5,17 +5,50 @@ import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
 
 export const dynamic = "force-dynamic";
 
+const TRAILING_SLASH = /\/$/;
+
+function deriveBaseUrl(request: Request): string {
+  const envUrl = process.env.NEXT_PUBLIC_APP_URL ?? process.env.BETTER_AUTH_URL;
+  if (envUrl) {
+    return envUrl.replace(TRAILING_SLASH, "");
+  }
+  const url = new URL(request.url);
+  return `${url.protocol}//${url.host}`;
+}
+
 type RegistrationRequestBody = {
   client_name?: unknown;
   redirect_uris?: unknown;
   scope?: unknown;
   grant_types?: unknown;
+  token_endpoint_auth_method?: unknown;
 };
+
+type TokenEndpointAuthMethod =
+  | "client_secret_basic"
+  | "client_secret_post"
+  | "none";
+
+const SUPPORTED_AUTH_METHODS: ReadonlyArray<TokenEndpointAuthMethod> = [
+  "client_secret_basic",
+  "client_secret_post",
+  "none",
+];
 
 function isStringArray(value: unknown): value is string[] {
   return (
     Array.isArray(value) && value.every((item) => typeof item === "string")
   );
+}
+
+function resolveAuthMethod(value: unknown): TokenEndpointAuthMethod {
+  if (typeof value === "string") {
+    const match = SUPPORTED_AUTH_METHODS.find((m) => m === value);
+    if (match) {
+      return match;
+    }
+  }
+  return "client_secret_post";
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -38,7 +71,14 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { client_name, redirect_uris, scope, grant_types } = body;
+  const {
+    client_name,
+    redirect_uris,
+    scope,
+    grant_types,
+    token_endpoint_auth_method,
+  } = body;
+  const authMethod = resolveAuthMethod(token_endpoint_auth_method);
 
   if (typeof client_name !== "string" || client_name.trim().length === 0) {
     return Response.json(
@@ -101,15 +141,30 @@ export async function POST(request: Request): Promise<Response> {
 
   await storeOAuthClient(client);
 
-  return Response.json(
-    {
-      client_id: clientId,
-      client_secret: clientSecretRaw,
-      client_name: client.clientName,
-      redirect_uris: client.redirectUris,
-      grant_types: client.grantTypes,
-      scope: resolvedScope,
-    },
-    { status: 201 }
-  );
+  // Public clients (RFC 8252 native apps) register with
+  // `token_endpoint_auth_method: "none"` and rely on PKCE. Returning a
+  // client_secret in that case contradicts what the client asked for and
+  // causes strict MCP hosts (e.g. Claude Desktop's connector validator) to
+  // reject the registration. Store a secret hash either way so the schema
+  // stays stable, but only expose it for confidential-client registrations.
+  const baseUrl = deriveBaseUrl(request);
+  const responseBase = {
+    client_id: clientId,
+    client_id_issued_at: Math.floor(client.createdAt / 1000),
+    client_name: client.clientName,
+    redirect_uris: client.redirectUris,
+    grant_types: client.grantTypes,
+    response_types: ["code"],
+    token_endpoint_auth_method: authMethod,
+    scope: resolvedScope,
+    // RFC 7591 §3.2.1 management endpoint. Linear/Notion return this; some
+    // strict validators treat its absence as an incomplete registration.
+    registration_client_uri: `${baseUrl}/api/oauth/register/${clientId}`,
+  };
+  const responseBody =
+    authMethod === "none"
+      ? responseBase
+      : { ...responseBase, client_secret: clientSecretRaw };
+
+  return Response.json(responseBody, { status: 201 });
 }

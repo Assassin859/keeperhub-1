@@ -131,6 +131,7 @@ export type WalletInfo = {
   email: string;
   createdAt: string;
   canExportKey: boolean;
+  isOwner: boolean;
   organizationId: string;
   isActive: boolean;
 };
@@ -143,6 +144,7 @@ export type WalletData = {
   email?: string;
   createdAt?: string;
   canExportKey?: boolean;
+  isOwner?: boolean;
   wallets?: WalletInfo[];
 };
 

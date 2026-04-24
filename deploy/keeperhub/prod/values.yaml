@@ -26,6 +26,16 @@ shared_env: &shared_env
     type: parameterStore
     name: turnkey-organization-id
     parameter_name: /eks/techops-prod/keeperhub/turnkey-organization-id
+  # v1.9 sandbox hardening: route Code action node to the out-of-pod
+  # sandbox service (deploy/keeperhub-sandbox/prod/). Falls back to the
+  # in-pod child_process runner if unset; the retirement PR under Phase
+  # 39 removes that fallback entirely after 7-day prod soak.
+  SANDBOX_BACKEND:
+    type: kv
+    value: "remote"
+  SANDBOX_URL:
+    type: kv
+    value: "http://keeperhub-sandbox-common.keeperhub.svc.cluster.local:8787"
 
 replicaCount: 2
 
@@ -227,6 +237,10 @@ env:
     type: parameterStore
     name: turnkey-organization-id
     parameter_name: /eks/techops-prod/keeperhub/turnkey-organization-id
+  AGENTIC_WALLET_HMAC_KMS_KEY:
+    type: parameterStore
+    name: agentic-wallet-hmac-kms-key
+    parameter_name: /eks/techops-prod/keeperhub/agentic-wallet-hmac-kms-key
   WALLET_ENCRYPTION_KEY:
     type: parameterStore
     name: wallet-encryption-key
@@ -295,6 +309,9 @@ env:
     parameter_name: /eks/techops-prod/keeperhub/sentry-auth-token
   # Billing (Stripe)
   NEXT_PUBLIC_BILLING_ENABLED:
+    type: kv
+    value: "false"
+  NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED:
     type: kv
     value: "false"
   STRIPE_SECRET_KEY:

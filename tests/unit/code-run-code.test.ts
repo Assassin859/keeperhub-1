@@ -397,6 +397,144 @@ describe("code/run-code - sandbox globals", () => {
     });
     expect(result.error).toContain("setTimeout is not defined");
   });
+
+  // --- Sandbox escape: env scrubbing ----------------------------------------
+  //
+  // node:vm is not a security boundary -- `Error.constructor("return process")()`
+  // reaches the host `process` via the primordial chain. The mitigation is to
+  // run user code in a separate child node process whose env is scrubbed, so
+  // the escape returns an empty env instead of pod secrets.
+
+  it("Error.constructor escape returns a scrubbed env, not host secrets", async () => {
+    const marker = "KEEPERHUB_SCRUB_TEST_SECRET_SHOULD_NOT_LEAK";
+    const markerValue = `leaked-${Date.now().toString(36)}`;
+    process.env[marker] = markerValue;
+    try {
+      const result = await expectSuccess({
+        code: `
+          const proc = Error.constructor("return process")();
+          return {
+            hasMarker: Object.prototype.hasOwnProperty.call(proc.env, ${JSON.stringify(marker)}),
+            markerValue: proc.env[${JSON.stringify(marker)}] ?? null,
+            envKeyCount: Object.keys(proc.env).length,
+            envKeys: Object.keys(proc.env).sort(),
+          };
+        `,
+      });
+      const out = result.result as {
+        hasMarker: boolean;
+        markerValue: string | null;
+        envKeyCount: number;
+        envKeys: string[];
+      };
+      expect(out.hasMarker).toBe(false);
+      expect(out.markerValue).toBeNull();
+      // Sanity: none of the known high-value secret keys may appear.
+      const mustNotLeak = new Set([
+        marker,
+        "AGENTIC_WALLET_HMAC_KMS_KEY",
+        "WALLET_ENCRYPTION_KEY",
+        "INTEGRATION_ENCRYPTION_KEY",
+        "TURNKEY_API_PRIVATE_KEY",
+        "REGISTRATION_PRIVATE_KEY",
+        "CDP_API_KEY_SECRET",
+        "MPP_SECRET_KEY",
+        "DATABASE_URL",
+        "BETTER_AUTH_SECRET",
+        "OAUTH_JWT_SECRET",
+        "STRIPE_SECRET_KEY",
+        "GITHUB_CLIENT_SECRET",
+        "GOOGLE_CLIENT_SECRET",
+      ]);
+      for (const key of out.envKeys) {
+        expect(mustNotLeak.has(key)).toBe(false);
+      }
+    } finally {
+      delete process.env[marker];
+    }
+  });
+
+  // A worker_threads.Worker shares the OS process with the parent, so
+  // /proc/self/environ still contains the parent's full env. A separate child
+  // process started via execve has an OS-level environ matching only the
+  // allowlist. This test exercises the deeper hole: fs.readFileSync on
+  // /proc/self/environ inside the escape must not leak the parent's env.
+  // Skipped on non-Linux because /proc/self/environ does not exist.
+  const maybeSkip = process.platform === "linux" ? it : it.skip;
+  maybeSkip(
+    "fs.readFileSync('/proc/self/environ') in the escape cannot see host env",
+    async () => {
+      const marker = "KEEPERHUB_PROC_ENVIRON_SENTINEL_SHOULD_NOT_LEAK";
+      const markerValue = `leaked-${Date.now().toString(36)}`;
+      process.env[marker] = markerValue;
+      try {
+        const result = await expectSuccess({
+          code: `
+            const proc = Error.constructor("return process")();
+            // mainModule.require is the canonical post-escape path to fs in
+            // script-mode node ('node -e ...'). If this ever starts returning
+            // a non-null value that contains the marker, the env scrub is
+            // broken at the OS level.
+            const mod = proc.mainModule;
+            const req = mod && typeof mod.require === "function" ? mod.require : null;
+            if (!req) {
+              return { reachedFs: false, hasMarker: false, environLen: 0 };
+            }
+            const fs = req("fs");
+            const environ = fs.readFileSync("/proc/self/environ", "utf8");
+            return {
+              reachedFs: true,
+              hasMarker: environ.indexOf(${JSON.stringify(marker)}) !== -1,
+              hasMarkerValue: environ.indexOf(${JSON.stringify(markerValue)}) !== -1,
+              environLen: environ.length,
+            };
+          `,
+        });
+        const out = result.result as {
+          reachedFs: boolean;
+          hasMarker: boolean;
+          hasMarkerValue?: boolean;
+          environLen: number;
+        };
+        // Either the escape could not reach fs (defence in depth) or the
+        // environ it read was the child's scrubbed one (our primary claim).
+        if (out.reachedFs) {
+          expect(out.hasMarker).toBe(false);
+          expect(out.hasMarkerValue).toBe(false);
+        }
+      } finally {
+        delete process.env[marker];
+      }
+    }
+  );
+
+  it("blocks fetch to cloud metadata endpoints", async () => {
+    const result = await expectFailure({
+      code: 'await fetch("http://169.254.169.254/latest/meta-data/")',
+    });
+    expect(result.error).toContain("SSRF blocked");
+  });
+
+  it("blocks fetch to RFC 1918 private IPv4 literals", async () => {
+    const result = await expectFailure({
+      code: 'await fetch("http://10.0.0.1/")',
+    });
+    expect(result.error).toContain("SSRF blocked");
+  });
+
+  it("blocks fetch to a hostname that resolves to loopback", async () => {
+    const result = await expectFailure({
+      code: 'await fetch("http://localhost/")',
+    });
+    expect(result.error).toContain("SSRF blocked");
+  });
+
+  it("rejects fetch with a non-http(s) scheme", async () => {
+    const result = await expectFailure({
+      code: 'await fetch("file:///etc/passwd")',
+    });
+    expect(result.error).toContain("scheme not allowed");
+  });
 });
 
 // --- Error Handling ----------------------------------------------------------

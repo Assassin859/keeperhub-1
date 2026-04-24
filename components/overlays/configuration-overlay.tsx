@@ -111,6 +111,7 @@ export function ConfigurationOverlay({ overlayId }: ConfigurationOverlayProps) {
   const [activeTab, setActiveTab] = useAtom(propertiesPanelActiveTabAtom);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const refreshRunsRef = useRef<(() => Promise<void>) | null>(null);
+  const pendingConfigRef = useRef<Record<string, unknown> | null>(null);
 
   const selectedNode = nodes.find((node) => node.id === selectedNodeId);
   const selectedEdge = edges.find((edge) => edge.id === selectedEdgeId);
@@ -164,15 +165,28 @@ export function ConfigurationOverlay({ overlayId }: ConfigurationOverlayProps) {
   }, [selectedNode, globalIntegrations, isOwner, updateNodeData]);
 
   const handleUpdateConfig = useCallback(
-    (key: string, value: string | Record<string, unknown> | undefined) => {
+    (
+      key: string,
+      value: string | boolean | Record<string, unknown> | undefined
+    ): void => {
       if (!selectedNode) {
         return;
       }
+      // KEEP-137: some fields (e.g., ChainSelectField with showPrivateVariants)
+      // fire two synchronous handleUpdateConfig calls. Without pendingConfigRef,
+      // both spread the same stale selectedNode.data.config snapshot and the
+      // second call wipes out the first. The ref batches back-to-back updates
+      // within a microtask so the second call sees the first's merged config.
+      const baseConfig =
+        pendingConfigRef.current ?? selectedNode.data.config ?? {};
+      const newConfig = { ...baseConfig, [key]: value };
+      pendingConfigRef.current = newConfig;
+      queueMicrotask(() => {
+        pendingConfigRef.current = null;
+      });
       updateNodeData({
         id: selectedNode.id,
-        data: {
-          config: { ...selectedNode.data.config, [key]: value },
-        },
+        data: { config: newConfig },
       });
     },
     [selectedNode, updateNodeData]

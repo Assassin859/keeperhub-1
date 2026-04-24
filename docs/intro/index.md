@@ -1,6 +1,6 @@
 ---
 title: "Introduction"
-description: "Introduction to KeeperHub - a no-code blockchain automation platform."
+description: "Introduction to KeeperHub - the execution and reliability layer for AI agents operating onchain."
 ---
 
 # Introduction

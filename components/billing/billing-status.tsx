@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BILLING_ALERTS, BILLING_API } from "@/lib/billing/constants";
 import { PLANS, type PlanName } from "@/lib/billing/plans";
+import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
 
 type OverageCharge = {
   periodStart: string;
@@ -623,7 +624,9 @@ function BillingStatusContent({
         />
       )}
 
-      {gasCredits && <GasCreditsBar gasCredits={gasCredits} />}
+      {gasCredits && isGasSponsorshipEnabled() && (
+        <GasCreditsBar gasCredits={gasCredits} />
+      )}
 
       <OverageChargesSection charges={overageCharges} />
     </CardContent>

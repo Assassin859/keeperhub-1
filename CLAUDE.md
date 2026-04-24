@@ -6,6 +6,7 @@
 - **No File Structure**: Do not include file/folder structure diagrams in README files
 - **No Random Documentation**: Do not create markdown documentation files unless explicitly requested by the user. This includes integration guides, feature documentation, or any other .md files
 - **`docs/` is public-facing**: The `docs/` directory is published to docs.keeperhub.com. Never put internal specs, notes, or working documents there. Internal documentation and specs go in `specs/`
+- **No internal references in public docs**: In `docs/` and `docs-site/content/` (anything published to docs.keeperhub.com), NEVER mention phase numbers (e.g. `Phase 33`), internal version tags (e.g. `v1.8`, `v0.1.4`), Linear ticket IDs (`KEEP-XXX`), PR numbers (`PR #917`), or internal branch names. Write about capabilities in terms of what's supported today vs not yet supported. Internal tracking belongs in `.planning/`, `specs/`, commit messages, and Linear — not on the public docs site.
 - **No co-authored with Claude in PR descriptions and git commits**
 - **Do not git push or create Github PRs without user's confirmation**
 - **Do not leave code comments with summaries of user's prompt**
@@ -186,6 +187,10 @@ The build script (`scripts/migrate-prod.ts`) runs `pnpm db:migrate` (file-based 
 4. Commit the migration file, snapshot, and journal together with the schema change
 
 Without the migration file, the table will not be created on deploy and you will get `relation does not exist` errors in staging/production.
+
+If your local dev DB was bootstrapped via `pnpm db:push` (instead of file migrations), `pnpm db:migrate` will fail on `relation already exists` because the journal table `drizzle.__drizzle_migrations` is empty. Run `pnpm tsx scripts/backfill-drizzle-migrations.ts` once to mark the existing migrations as applied without re-running their SQL — subsequent `pnpm db:migrate` calls will then cleanly apply only the new files.
+
+Note: a shell-set `DATABASE_URL` overrides the value in `.env` (drizzle.config.ts uses dotenv without `override: true`). If `pnpm db:migrate` connects to the wrong DB or port, run `unset DATABASE_URL` first or prefix the command with the right value.
 
 ## Branch Strategy
 

@@ -8,6 +8,7 @@ import { db } from "@/lib/db";
 import { keyExportCodes, organizationWallets } from "@/lib/db/schema";
 import { sendEmail } from "@/lib/email";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
+import { checkRequestRateLimit } from "../_lib/rate-limit";
 
 const CODE_EXPIRY_MINUTES = 5;
 
@@ -48,17 +49,28 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    if (activeMember.role !== "admin" && activeMember.role !== "owner") {
+    const rateLimit = checkRequestRateLimit(session.user.id);
+    if (!rateLimit.allowed) {
       return NextResponse.json(
-        { error: "Only admins and owners can export wallet keys" },
-        { status: 403 }
+        {
+          error: "Too many export requests. Please wait before trying again.",
+          retryAfter: rateLimit.retryAfter,
+        },
+        {
+          status: 429,
+          headers: { "Retry-After": String(rateLimit.retryAfter) },
+        }
       );
     }
 
     // Verify a Turnkey wallet exists (only Turnkey wallets are exportable;
     // Para wallets during migration are inactive and not exportable here)
     const turnkeyWallets = await db
-      .select({ id: organizationWallets.id })
+      .select({
+        id: organizationWallets.id,
+        userId: organizationWallets.userId,
+        email: organizationWallets.email,
+      })
       .from(organizationWallets)
       .where(
         and(
@@ -75,6 +87,18 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
+    const wallet = turnkeyWallets[0];
+
+    // Export must be initiated by the wallet creator, not just any org admin.
+    if (wallet.userId !== session.user.id) {
+      return NextResponse.json(
+        { error: "Only the wallet creator can export its private key" },
+        { status: 403 }
+      );
+    }
+
+    const walletEmail = wallet.email;
+
     // Delete any existing codes for this org
     await db
       .delete(keyExportCodes)
@@ -90,22 +114,17 @@ export async function POST(request: Request): Promise<NextResponse> {
       expiresAt,
     });
 
-    // Send to admin's email
-    const userEmail = session.user.email;
-    if (!userEmail) {
-      return NextResponse.json(
-        { error: "No email address on your account" },
-        { status: 400 }
-      );
-    }
-
+    // The requester is always the wallet creator at this point (gated above);
+    // the OTP is a second factor tied to the wallet's recovery inbox, which
+    // may differ from the creator's account email.
     await sendEmail({
-      to: userEmail,
+      to: walletEmail,
       subject: "Private Key Export Verification - KeeperHub",
-      text: `Your verification code to export the wallet private key is: ${code}\n\nThis code expires in ${CODE_EXPIRY_MINUTES} minutes.\n\nIf you did not request this, please ignore this email.`,
+      text: `A request to export the wallet's private key was made from your KeeperHub organization.\n\nYour verification code is: ${code}\n\nThis code expires in ${CODE_EXPIRY_MINUTES} minutes.\n\nIf you did not request this, please ignore this email.`,
       html: `
 <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 20px;">
   <h2 style="color: #1a1a2e;">Private Key Export Verification</h2>
+  <p>A request to export the wallet's private key was made from your KeeperHub organization.</p>
   <p>Your verification code is:</p>
   <div style="text-align: center; margin: 24px 0;">
     <div style="display: inline-block; background: #f5f5f5; padding: 16px 32px; border-radius: 8px; font-size: 28px; font-weight: bold; letter-spacing: 6px; font-family: monospace; color: #1a1a2e;">${code}</div>
@@ -114,7 +133,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 </div>`.trim(),
     });
 
-    return NextResponse.json({ sent: true });
+    return NextResponse.json({ sent: true, email: walletEmail });
   } catch (error) {
     return apiError(error, "Failed to send export verification code");
   }

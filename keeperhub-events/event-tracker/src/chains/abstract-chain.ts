@@ -1,14 +1,14 @@
-import { SendMessageCommand } from "@aws-sdk/client-sqs";
 import {
   JWT_TOKEN_PASSWORD,
   JWT_TOKEN_USERNAME,
   KEEPERHUB_API_URL,
   SQS_QUEUE_URL,
 } from "../../lib/config/environment";
-import { sqs } from "../../lib/sqs-client";
 import type { WorkflowEvent } from "../../lib/models/workflow-event";
+import { sqs } from "../../lib/sqs-client";
 import type { NetworkConfig, NetworksWrapper } from "../../lib/types";
 import { type Logger, logger } from "../../lib/utils/logger";
+import { enqueueWorkflowEventTrigger } from "../../lib/workflow-sqs";
 
 export class AbstractChain {
   executionLogs: { logs: any[] } = {
@@ -48,33 +48,12 @@ export class AbstractChain {
 
   async executeWorkflow(workflowId: string, payload: any): Promise<boolean> {
     try {
-      const message = {
+      await enqueueWorkflowEventTrigger(sqs, SQS_QUEUE_URL, {
         workflowId,
         userId: this.event.workflow.userId,
-        triggerType: "event" as const,
         triggerData: payload,
-      };
-
-      await sqs.send(
-        new SendMessageCommand({
-          QueueUrl: SQS_QUEUE_URL,
-          MessageBody: JSON.stringify(message),
-          MessageAttributes: {
-            TriggerType: {
-              DataType: "String",
-              StringValue: "event",
-            },
-            WorkflowId: {
-              DataType: "String",
-              StringValue: workflowId,
-            },
-          },
-        }),
-      );
-
-      logger.log(
-        `[SQS] Enqueued workflow ${workflowId} for event execution`,
-      );
+      });
+      logger.log(`[SQS] Enqueued workflow ${workflowId} for event execution`);
       return true;
     } catch (error: any) {
       logger.error(`Error enqueuing workflow to SQS: ${error.message}`);

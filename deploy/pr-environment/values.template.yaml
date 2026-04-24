@@ -271,6 +271,9 @@ env:
   NEXT_PUBLIC_BILLING_ENABLED:
     type: kv
     value: "true"
+  NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED:
+    type: kv
+    value: "true"
   STRIPE_SECRET_KEY:
     type: parameterStore
     name: stripe-secret-key

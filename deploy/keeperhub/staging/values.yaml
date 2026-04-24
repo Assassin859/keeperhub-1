@@ -26,6 +26,16 @@ shared_env: &shared_env
     type: parameterStore
     name: turnkey-organization-id
     parameter_name: /eks/techops-staging/keeperhub/turnkey-organization-id
+  # v1.9 sandbox hardening: route Code action node to the out-of-pod
+  # sandbox service (deploy/keeperhub-sandbox/staging/) instead of running
+  # user JS in this Pod. Falls back to the in-pod child_process runner
+  # (PR #953) if the value is unset or "local".
+  SANDBOX_BACKEND:
+    type: kv
+    value: "remote"
+  SANDBOX_URL:
+    type: kv
+    value: "http://keeperhub-sandbox-common.keeperhub.svc.cluster.local:8787"
 
 replicaCount: 1
 
@@ -217,6 +227,10 @@ env:
     type: parameterStore
     name: turnkey-organization-id
     parameter_name: /eks/techops-staging/keeperhub/turnkey-organization-id
+  AGENTIC_WALLET_HMAC_KMS_KEY:
+    type: parameterStore
+    name: agentic-wallet-hmac-kms-key
+    parameter_name: /eks/techops-staging/keeperhub/agentic-wallet-hmac-kms-key
   WALLET_ENCRYPTION_KEY:
     type: parameterStore
     name: wallet-encryption-key
@@ -293,6 +307,9 @@ env:
     parameter_name: /eks/techops-staging/keeperhub-feedback/feedback-api-key
   # Billing (Stripe)
   NEXT_PUBLIC_BILLING_ENABLED:
+    type: kv
+    value: "true"
+  NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED:
     type: kv
     value: "true"
   STRIPE_SECRET_KEY:
@@ -407,6 +424,9 @@ env:
     name: test-api-key
     parameter_name: /eks/techops-staging/keeperhub/test-api-key
   ALLOW_TEST_ENDPOINTS:
+    type: kv
+    value: "true"
+  SAFE_FETCH_ENFORCE:
     type: kv
     value: "true"
 
