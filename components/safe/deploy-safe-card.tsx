@@ -7,8 +7,12 @@ import {
   getExplorerAddressUrl,
   getSafeAppUrl,
 } from "@/components/safe/chain-prefixes";
+import {
+  type PolicyConfig,
+  PolicyWizard,
+} from "@/components/safe/policy-wizard";
+import { RolePermissionsCard } from "@/components/safe/role-permissions-card";
 import { SafeSigningToggle } from "@/components/safe/safe-signing-toggle";
-import { SpendingLimitsCard } from "@/components/safe/spending-limits-card";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -54,6 +58,8 @@ type DeployResponse = {
   safe?: SafeSummary;
   error?: string;
 };
+
+const WIZARD_DEFAULT_PROTOCOLS: readonly string[] = ["aave-v3", "cowswap"];
 
 // Label map covers every chain we might ever render, not just the
 // currently deploy-supported set, so stale or legacy rows render with a
@@ -172,7 +178,7 @@ function DeployedSafeRow({
       )}
 
       {safe.status === "deployed" && (
-        <SpendingLimitsCard
+        <RolePermissionsCard
           chainId={safe.chainId}
           isAdmin={isAdmin}
           safeId={safe.id}
@@ -182,6 +188,15 @@ function DeployedSafeRow({
   );
 }
 
+/**
+ * Two-step deploy wizard:
+ *   Step 1 -- chain + opt-in to policies
+ *   Step 2 -- (only shown if opted in) shared <PolicyWizard> for the
+ *             selected chain. Same UI as the post-deploy install dialog.
+ *
+ * Submits the Safe deploy first; if policies are enabled, the parent chains
+ * the POST to /api/user/safe/[safeId]/role with the collected config.
+ */
 function DeployDialog({
   open,
   onOpenChange,
@@ -192,77 +207,160 @@ function DeployDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   deployableChainIds: number[];
-  onDeploy: (chainId: number) => Promise<void>;
+  onDeploy: (
+    chainId: number,
+    policyConfig: PolicyConfig | null
+  ) => Promise<void>;
   deploying: boolean;
 }): React.ReactElement {
-  const [selected, setSelected] = useState<string>("");
+  const [step, setStep] = useState<"chain" | "policies">("chain");
+  const [selectedChain, setSelectedChain] = useState<string>("");
+  const [enablePolicies, setEnablePolicies] = useState<boolean>(true);
 
-  const handleConfirm = async (): Promise<void> => {
-    const chainId = Number.parseInt(selected, 10);
+  const resetWizard = (): void => {
+    setStep("chain");
+    setSelectedChain("");
+    setEnablePolicies(true);
+  };
+
+  const handleNext = async (): Promise<void> => {
+    const chainId = Number.parseInt(selectedChain, 10);
     if (!Number.isFinite(chainId)) {
       toast.error("Select a chain");
       return;
     }
-    await onDeploy(chainId);
-    setSelected("");
+    if (!enablePolicies) {
+      await onDeploy(chainId, null);
+      resetWizard();
+      return;
+    }
+    setStep("policies");
   };
+
+  const handleBack = (): void => {
+    setStep("chain");
+  };
+
+  const handleConfirmWithPolicies = async (
+    config: PolicyConfig
+  ): Promise<void> => {
+    const chainId = Number.parseInt(selectedChain, 10);
+    if (!Number.isFinite(chainId)) {
+      toast.error("Select a chain");
+      return;
+    }
+    await onDeploy(chainId, config);
+    resetWizard();
+  };
+
+  const chainIdNumber = Number.parseInt(selectedChain, 10);
+  const hasValidChain = Number.isFinite(chainIdNumber);
 
   return (
     <Dialog
       onOpenChange={(o) => {
         onOpenChange(o);
         if (!o) {
-          setSelected("");
+          resetWizard();
         }
       }}
       open={open}
     >
-      <DialogContent>
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Deploy Safe on a new chain</DialogTitle>
+          <DialogTitle>
+            {step === "chain"
+              ? "Deploy Safe on a new chain"
+              : "Configure on-chain policies"}
+          </DialogTitle>
           <DialogDescription>
-            The organization EOA becomes the sole owner at threshold 1. Gas is
-            paid from the EOA's balance on the target chain.
+            {step === "chain"
+              ? "The organization EOA becomes the sole owner at threshold 1. Gas is paid from the EOA's balance on the target chain."
+              : "Pick the protocols and per-token limits that should be enforced on this Safe. The same policies can be edited later from the Safe card."}
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-2">
-          <Label className="text-xs" htmlFor="safe-deploy-dialog-chain">
-            Chain
-          </Label>
-          <Select
-            disabled={deploying}
-            onValueChange={setSelected}
-            value={selected}
-          >
-            <SelectTrigger id="safe-deploy-dialog-chain">
-              <SelectValue placeholder="Select a chain" />
-            </SelectTrigger>
-            <SelectContent>
-              {deployableChainIds.map((id) => (
-                <SelectItem key={id} value={id.toString()}>
-                  {chainLabel(id)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <DialogFooter>
-          <Button
-            disabled={deploying}
-            onClick={() => onOpenChange(false)}
-            type="button"
-            variant="ghost"
-          >
-            Cancel
-          </Button>
-          <Button
-            disabled={deploying || !selected}
-            onClick={handleConfirm}
-            type="button"
-          >
-            {deploying ? <Spinner className="h-4 w-4" /> : "Deploy Safe"}
-          </Button>
-        </DialogFooter>
+
+        {step === "chain" && (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label className="text-xs" htmlFor="safe-deploy-dialog-chain">
+                Chain
+              </Label>
+              <Select
+                disabled={deploying}
+                onValueChange={setSelectedChain}
+                value={selectedChain}
+              >
+                <SelectTrigger id="safe-deploy-dialog-chain">
+                  <SelectValue placeholder="Select a chain" />
+                </SelectTrigger>
+                <SelectContent>
+                  {deployableChainIds.map((id) => (
+                    <SelectItem key={id} value={id.toString()}>
+                      {chainLabel(id)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <label
+              className="flex items-start gap-2 rounded-md border bg-muted/20 p-3 text-sm"
+              htmlFor="safe-deploy-policies-toggle"
+            >
+              <input
+                checked={enablePolicies}
+                disabled={deploying}
+                id="safe-deploy-policies-toggle"
+                onChange={(e) => setEnablePolicies(e.target.checked)}
+                type="checkbox"
+              />
+              <span className="flex flex-col gap-1">
+                <span className="font-medium">
+                  Install on-chain policies (Zodiac Roles)
+                </span>
+                <span className="text-muted-foreground text-xs">
+                  Scope workflow execution to a pre-audited protocol allowlist
+                  with per-token spending limits. You can skip now and enable
+                  later from the Safe's card.
+                </span>
+              </span>
+            </label>
+          </div>
+        )}
+
+        {step === "policies" && hasValidChain && (
+          <PolicyWizard
+            chainId={chainIdNumber}
+            confirmLabel={
+              deploying ? "Deploying..." : "Deploy + install policies"
+            }
+            defaultEnabledSlugs={WIZARD_DEFAULT_PROTOCOLS}
+            onCancel={handleBack}
+            onConfirm={handleConfirmWithPolicies}
+            submitting={deploying}
+          />
+        )}
+
+        {step === "chain" && (
+          <DialogFooter>
+            <Button
+              disabled={deploying}
+              onClick={() => onOpenChange(false)}
+              type="button"
+              variant="ghost"
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={deploying || !selectedChain}
+              onClick={handleNext}
+              type="button"
+            >
+              {deploying && <Spinner className="h-4 w-4" />}
+              {!deploying && (enablePolicies ? "Next" : "Deploy Safe")}
+            </Button>
+          </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -308,7 +406,10 @@ export function DeploySafeCard({
     (id) => !deployedChainIds.has(id)
   );
 
-  const handleDeploy = async (chainId: number): Promise<void> => {
+  const handleDeploy = async (
+    chainId: number,
+    policyConfig: PolicyConfig | null
+  ): Promise<void> => {
     setDeploying(true);
     try {
       const res = await fetch("/api/user/safe", {
@@ -326,6 +427,58 @@ export function DeploySafeCard({
       } else {
         toast.success(`Safe deployed on ${chainLabel(chainId)}`);
       }
+
+      // Optionally install Zodiac Roles + initial protocol allowlist + token
+      // allowances in the same flow. Deploy succeeds even if policy install
+      // fails -- the admin can retry from the Safe's card.
+      if (policyConfig && data.safe?.id) {
+        try {
+          const installRes = await fetch(
+            `/api/user/safe/${data.safe.id}/role`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(policyConfig),
+            }
+          );
+          const installData = (await installRes.json()) as {
+            success?: boolean;
+            error?: string;
+            skipped?: string[];
+            conflictedTokens?: Array<{ tokenSymbol: string }>;
+          };
+          if (installRes.ok && installData.success) {
+            if (installData.skipped && installData.skipped.length > 0) {
+              toast.warning(
+                `Skipped protocols: ${installData.skipped.join(", ")}`
+              );
+            }
+            if (
+              installData.conflictedTokens &&
+              installData.conflictedTokens.length > 0
+            ) {
+              toast.warning(
+                `Resolved conflicts on ${installData.conflictedTokens
+                  .map((c) => c.tokenSymbol)
+                  .join(", ")}`
+              );
+            }
+            toast.success("On-chain policies installed");
+          } else {
+            toast.error(
+              installData.error ??
+                "Policies install failed; retry from the Safe card"
+            );
+          }
+        } catch (err) {
+          toast.error(
+            err instanceof Error
+              ? err.message
+              : "Policies install failed; retry from the Safe card"
+          );
+        }
+      }
+
       setDeployOpen(false);
       await loadSafes();
     } catch (error) {
