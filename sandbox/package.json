@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node dist/index.js",
+    "start": "node dist/sandbox/src/index.js",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

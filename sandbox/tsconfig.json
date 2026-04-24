@@ -12,10 +12,10 @@
     "noEmit": false,
     "declaration": false,
     "outDir": "./dist",
-    "rootDir": "./src",
+    "rootDir": "..",
     "baseUrl": ".",
     "paths": { "@/*": ["./src/*"] }
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "../lib/sandbox-child-source.ts"],
   "exclude": ["node_modules", "dist"]
 }

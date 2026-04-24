@@ -555,7 +555,11 @@ export const PanelInner = () => {
   );
 
   // Widened value type to support structured config objects (e.g. conditionConfig)
-  const handleUpdateConfig = (key: string, value: string | Record<string, unknown> | undefined) => {
+  // and booleans (e.g. usePrivateMempool for Flashbots routing).
+  const handleUpdateConfig = (
+    key: string,
+    value: string | boolean | Record<string, unknown> | undefined
+  ): void => {
     if (selectedNode) {
       const baseConfig = pendingConfigRef.current ?? selectedNode.data.config;
       let newConfig = { ...baseConfig, [key]: value };

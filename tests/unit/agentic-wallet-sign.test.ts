@@ -242,11 +242,17 @@ describe("signMppProof", () => {
     // token is stripped so callers can prepend it themselves).
     expect(out.startsWith("0x")).toBe(false);
     expect(out.startsWith("Payment ")).toBe(false);
-    // Decoding back yields a Credential with `{challenge, payload:{signature}}`.
+    // Decoding back yields a Credential with `{challenge, payload:{type, signature}}`.
     const decoded = JSON.parse(
       Buffer.from(out, "base64url").toString("utf-8")
-    ) as { challenge: { id: string }; payload: { signature: string } };
+    ) as {
+      challenge: { id: string };
+      payload: { type: string; signature: string };
+    };
     expect(decoded.challenge.id).toBeTruthy();
+    // `type` is the discriminator mppx Methods.charge.schema.credential.payload
+    // expects. Proof-mode sigs are `type: "proof"`.
+    expect(decoded.payload.type).toBe("proof");
     expect(decoded.payload.signature.startsWith("0x")).toBe(true);
     expect(decoded.payload.signature.length).toBe(132);
   });
@@ -311,10 +317,13 @@ describe("signMppTransaction", () => {
       Buffer.from(out, "base64url").toString("utf-8")
     ) as {
       challenge: { id: string };
-      payload: { signature: string };
+      payload: { type: string; signature: string };
       source?: string;
     };
     expect(decoded.challenge.id).toBeTruthy();
+    // `type` is the discriminator mppx Methods.charge.schema.credential.payload
+    // expects. Tx-mode is `type: "transaction"`.
+    expect(decoded.payload.type).toBe("transaction");
     // payload.signature is the serialized Tempo tx -- starts with 0x76
     // (TxEnvelopeTempo.serializedType), NOT a raw 132-char ECDSA sig.
     expect(decoded.payload.signature.startsWith("0x76")).toBe(true);

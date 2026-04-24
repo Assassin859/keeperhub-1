@@ -63,13 +63,17 @@ Restart Claude Code after setup. [Plugin source code](https://github.com/KeeperH
 
 ### Prerequisites
 
-- Node.js 18+
-- PostgreSQL database
+- Node.js 22 (Next.js 16 requires `>=20.9.0`; Node 18 will not work)
 - pnpm package manager
+- PostgreSQL 16 (only for "Local Development" mode below; Docker and Hybrid modes start their own Postgres in a container)
+- Docker Engine with the Compose plugin (only for Docker and Hybrid modes)
+- A LocalStack auth token (only for Docker and Hybrid modes; the compose file uses the Pro image and refuses to boot without it). Free dev tokens are available at https://app.localstack.cloud.
 
 ### Environment Variables
 
-Create a `.env.local` file:
+Copy `.env.example` to `.env` and fill in the keys you need. Use `.env`, not `.env.local`: `drizzle-kit` (used by `pnpm db:push`) reads `.env` only.
+
+The minimum keys needed to boot the dev server are:
 
 ```env
 # Database
@@ -79,18 +83,11 @@ DATABASE_URL=postgresql://user:password@localhost:5432/keeperhub
 BETTER_AUTH_SECRET=your-secret-key
 BETTER_AUTH_URL=http://localhost:3000
 
-# AI (choose one)
-OPENAI_API_KEY=your-openai-api-key
-AI_MODEL=gpt-4o
-
-# Para Wallet
-PARA_API_KEY=your-para-api-key
-PARA_ENVIRONMENT=beta
-
-# Encryption
-WALLET_ENCRYPTION_KEY=your-wallet-encryption-key
-INTEGRATION_ENCRYPTION_KEY=your-integration-encryption-key
+# Required for Docker and Hybrid modes (LocalStack Pro license)
+LOCALSTACK_AUTH_TOKEN=your-localstack-token
 ```
+
+Feature-specific keys (AI, Para wallets, encryption, OAuth providers, etc.) are listed in `.env.example` and only need values when you exercise that feature.
 
 ### Installation
 
@@ -100,13 +97,13 @@ pnpm db:push
 pnpm dev
 ```
 
-Visit [http://localhost:3000](http://localhost:3000) to get started.
+Visit [http://localhost:3000](http://localhost:3000) to get started. The first request triggers a Next.js dev compile that can take 30-60 seconds; subsequent requests are fast.
 
 ## Running Modes
 
 ### Local Development (Simplest)
 
-For UI/API development without Docker:
+For UI/API development without Docker. Requires PostgreSQL running on the host.
 
 ```bash
 pnpm install
@@ -116,7 +113,18 @@ pnpm dev
 
 ### Dev Mode with Docker
 
-Full development stack with scheduled workflow execution:
+Full development stack with scheduled workflow execution.
+
+The compose file declares four resources as `external: true`. Create them once before the first `make dev-setup`:
+
+```bash
+docker network create keeperhub-network
+docker volume create keeperhub_db_data
+docker volume create keeperhub_node_modules
+docker volume create keeperhub_localstack_data
+```
+
+Then:
 
 ```bash
 make dev-setup    # First time (starts services + migrations)
@@ -125,11 +133,22 @@ make dev-logs     # View logs
 make dev-down     # Stop services
 ```
 
-Services: PostgreSQL (5433), LocalStack SQS (4566), Redis (6379), KeeperHub App (3000), Scheduler, Block Dispatcher, Event Tracker, Executor
+Services: PostgreSQL (5433), LocalStack SQS (4566), Redis (6379), KeeperHub App (3000), Scheduler, Block Dispatcher, Event Tracker, Executor.
 
 ### Hybrid Mode with K8s Jobs
 
-For testing workflow execution in isolated K8s Job containers:
+For testing workflow execution in isolated K8s Job containers. Requires Docker, `kubectl` and `minikube` on the host. Run as a regular user, **not** root - Minikube refuses the docker driver under root.
+
+Create the same four external Docker resources as for Dev mode (see above) before the first run:
+
+```bash
+docker network create keeperhub-network
+docker volume create keeperhub_db_data
+docker volume create keeperhub_node_modules
+docker volume create keeperhub_localstack_data
+```
+
+Then:
 
 ```bash
 make hybrid-setup     # Full setup

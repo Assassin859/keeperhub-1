@@ -326,9 +326,12 @@ export async function signMppProof(
   // prepends its own `Payment ` scheme token when building the Authorization
   // header, so we strip the prefix on the way out and ship only the encoded
   // payload. Opaque pass-through from the client's point of view.
+  // `type` is the discriminator in mppx Methods.charge.schema.credential.payload
+  // (tempo/Methods.ts). Without it the schema parse rejects the credential
+  // with "Credential payload is invalid" before any crypto check runs.
   const credential = Credential.from({
     challenge: parsed,
-    payload: { signature: rawSignature },
+    payload: { type: "proof", signature: rawSignature },
   });
   const serialized = Credential.serialize(credential);
   return serialized.startsWith(MPP_AUTH_PREFIX)
@@ -479,9 +482,13 @@ export async function signMppTransaction(
 
   // Credential.from sets source on the credential object; facilitator's
   // proof path requires it, transaction path uses it for attribution.
+  // `type: "transaction"` is the schema discriminator in
+  // mppx/tempo/Methods.ts::charge (payload is a z.discriminatedUnion on
+  // 'type'). Without it the credential fails schema parse before any crypto
+  // validation runs -> "Credential payload is invalid".
   const credential = Credential.from({
     challenge: parsed,
-    payload: { signature: serializedTx },
+    payload: { type: "transaction", signature: serializedTx },
     source: `did:pkh:eip155:${params.chainId}:${walletAddressTempo}`,
   });
   const out = Credential.serialize(credential);

@@ -4,7 +4,7 @@
  */
 import "server-only";
 
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflowExecutionLogs, workflowExecutions } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
@@ -112,6 +112,34 @@ export type LogWorkflowCompleteParams = {
   startTime: number;
 };
 
+const STEP_INCOMPLETE_ERROR = "Step did not record completion";
+
+/**
+ * Close any step log rows still in 'running' for the given execution.
+ * Used when the workflow reaches a terminal state to prevent orphaned
+ * 'running' rows from showing as stuck spinners in the UI.
+ */
+async function closeOrphanedRunningLogs(
+  executionId: string,
+  finalStatus: "success" | "error"
+): Promise<void> {
+  const now = new Date();
+  await db
+    .update(workflowExecutionLogs)
+    .set({
+      status: finalStatus,
+      completedAt: now,
+      // Only attach an error message when closing as error
+      error: finalStatus === "error" ? STEP_INCOMPLETE_ERROR : undefined,
+    })
+    .where(
+      and(
+        eq(workflowExecutionLogs.executionId, executionId),
+        eq(workflowExecutionLogs.status, "running")
+      )
+    );
+}
+
 /**
  * Log the completion of a workflow execution
  */
@@ -124,6 +152,12 @@ export async function logWorkflowCompleteDb(
   // The Workflow DevKit can throw "exceeded max retries" AFTER all steps
   // succeed. If we're about to write status='error', check whether any
   // node log actually failed. If none did, the error is spurious.
+  //
+  // KEEP-333: 'running' logs mean a step was started but never recorded
+  // completion (e.g. the worker was killed mid-step). That is not a
+  // spurious SDK error - the workflow really is incomplete. Keep 'error'
+  // and close the orphaned rows below so the UI doesn't show stuck
+  // spinners.
   let resolvedStatus: "success" | "error" = params.status;
   let resolvedError: string | undefined = params.error;
 
@@ -137,16 +171,18 @@ export async function logWorkflowCompleteDb(
     );
 
     try {
-      const errorLogs = await db.query.workflowExecutionLogs.findMany({
+      const unresolvedLogs = await db.query.workflowExecutionLogs.findMany({
         where: and(
           eq(workflowExecutionLogs.executionId, params.executionId),
-          eq(workflowExecutionLogs.status, "error")
+          inArray(workflowExecutionLogs.status, ["error", "running"])
         ),
-        columns: { id: true },
-        limit: 1,
+        columns: { id: true, status: true },
       });
 
-      if (errorLogs.length === 0) {
+      const hasErrorLog = unresolvedLogs.some((l) => l.status === "error");
+      const hasRunningLog = unresolvedLogs.some((l) => l.status === "running");
+
+      if (!(hasErrorLog || hasRunningLog)) {
         logSystemError(
           ErrorCategory.WORKFLOW_ENGINE,
           "[Workflow Logging] No node-level errors found, overriding spurious SDK error to success",
@@ -165,6 +201,19 @@ export async function logWorkflowCompleteDb(
         { execution_id: params.executionId }
       );
     }
+  }
+
+  // Close orphaned 'running' logs before updating the execution so that
+  // any concurrent reader sees a consistent snapshot.
+  try {
+    await closeOrphanedRunningLogs(params.executionId, resolvedStatus);
+  } catch (closeError) {
+    logSystemError(
+      ErrorCategory.WORKFLOW_ENGINE,
+      "[Workflow Logging] Failed to close orphaned running logs",
+      closeError,
+      { execution_id: params.executionId }
+    );
   }
 
   await db

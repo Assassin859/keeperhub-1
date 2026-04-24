@@ -123,11 +123,16 @@ export async function POST(request: Request) {
             from: walletAddress,
           });
         }
-        const amountWei = ethers.parseEther(amount);
+        // Native EOA-to-EOA gasUsed is value-independent (always 21000), so we
+        // probe with 1 wei. Using parseEther(amount) causes the node to reject
+        // the estimate with INSUFFICIENT_FUNDS whenever amount >= balance:
+        // displayed balances round half-up to 6 decimals, so on chains with
+        // cheap native gas (Arbitrum One) a user typing their shown balance
+        // trips `balance < value + gas*price` and the whole endpoint 500s.
         return await provider.estimateGas({
           from: walletAddress,
           to: recipient,
-          value: amountWei,
+          value: BigInt(1),
         });
       }
     );

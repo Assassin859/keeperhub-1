@@ -15,9 +15,10 @@ vi.mock("server-only", () => ({}));
 
 const RESULT_SENTINEL = "\u0001RESULT\u0002";
 
-type MockResponder = (req: {
-  body: unknown;
-}) => { status: number; body: string };
+type MockResponder = (req: { body: unknown }) => {
+  status: number;
+  body: string;
+};
 
 let port = 0;
 let server: Server;
@@ -53,7 +54,7 @@ beforeAll(async () => {
         "Content-Type": "application/octet-stream",
       });
       res.end(result.body);
-    },
+    }
   );
 
   server.on("connection", () => {
@@ -212,6 +213,106 @@ describe("lib/sandbox-client runRemote", () => {
       code: "return null;",
       timeout: 5,
     });
+  });
+
+  it("rejects immediately when the caller's AbortSignal fires mid-request", async () => {
+    const hangingSockets: IncomingMessage[] = [];
+    const hangingServer = createServer((req: IncomingMessage): void => {
+      hangingSockets.push(req);
+    });
+    await new Promise<void>((resolve, reject) => {
+      hangingServer.once("error", reject);
+      hangingServer.listen(0, "127.0.0.1", () => {
+        hangingServer.off("error", reject);
+        resolve();
+      });
+    });
+    const hangingPort = (hangingServer.address() as AddressInfo).port;
+    const savedUrl = process.env.SANDBOX_URL;
+    process.env.SANDBOX_URL = `http://127.0.0.1:${hangingPort}`;
+    try {
+      vi.resetModules();
+      const { runRemote } = await import("@/lib/sandbox-client");
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 50);
+      const start = Date.now();
+      const outcome = await runRemote({
+        code: "return 1;",
+        timeoutMs: 120_000,
+        signal: controller.signal,
+      });
+      const elapsed = Date.now() - start;
+      expect(outcome.success).toBe(false);
+      if (!outcome.success) {
+        expect(outcome.error).toContain("aborted");
+      }
+      expect(elapsed).toBeLessThan(1000);
+    } finally {
+      for (const req of hangingSockets) {
+        req.socket.destroy();
+      }
+      if (savedUrl === undefined) {
+        delete process.env.SANDBOX_URL;
+      } else {
+        process.env.SANDBOX_URL = savedUrl;
+      }
+      await new Promise<void>((resolve) => {
+        hangingServer.close(() => resolve());
+      });
+      vi.resetModules();
+    }
+  });
+
+  it("rejects with a timeout error when the sandbox never responds", async () => {
+    const hangingSockets: IncomingMessage[] = [];
+    const hangingServer = createServer((req: IncomingMessage): void => {
+      hangingSockets.push(req);
+    });
+    await new Promise<void>((resolve, reject) => {
+      hangingServer.once("error", reject);
+      hangingServer.listen(0, "127.0.0.1", () => {
+        hangingServer.off("error", reject);
+        resolve();
+      });
+    });
+    const hangingPort = (hangingServer.address() as AddressInfo).port;
+    const savedUrl = process.env.SANDBOX_URL;
+    const savedSlack = process.env.SANDBOX_HTTP_SLACK_MS;
+    process.env.SANDBOX_URL = `http://127.0.0.1:${hangingPort}`;
+    process.env.SANDBOX_HTTP_SLACK_MS = "50";
+    try {
+      vi.resetModules();
+      const { runRemote } = await import("@/lib/sandbox-client");
+      const start = Date.now();
+      const outcome = await runRemote({ code: "return 1;", timeoutMs: 50 });
+      const elapsed = Date.now() - start;
+      expect(outcome.success).toBe(false);
+      if (!outcome.success) {
+        expect(outcome.error).toContain("sandbox client error");
+        expect(outcome.error).toContain("timed out after");
+      }
+      // 50 ms code budget + 50 ms slack = 100 ms; allow wide margin for CI.
+      expect(elapsed).toBeGreaterThanOrEqual(90);
+      expect(elapsed).toBeLessThan(2000);
+    } finally {
+      for (const req of hangingSockets) {
+        req.socket.destroy();
+      }
+      if (savedUrl === undefined) {
+        delete process.env.SANDBOX_URL;
+      } else {
+        process.env.SANDBOX_URL = savedUrl;
+      }
+      if (savedSlack === undefined) {
+        delete process.env.SANDBOX_HTTP_SLACK_MS;
+      } else {
+        process.env.SANDBOX_HTTP_SLACK_MS = savedSlack;
+      }
+      await new Promise<void>((resolve) => {
+        hangingServer.close(() => resolve());
+      });
+      vi.resetModules();
+    }
   });
 
   it("returns success:false when response is missing the sentinel", async () => {

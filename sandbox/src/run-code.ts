@@ -1,5 +1,9 @@
 import { spawn } from "node:child_process";
 import { deserialize } from "node:v8";
+import {
+  SANDBOX_CHILD_SOURCE as CHILD_SOURCE,
+  SANDBOX_RESULT_SENTINEL as RESULT_SENTINEL,
+} from "../../lib/sandbox-child-source.js";
 
 type LogEntry = {
   level: "log" | "warn" | "error";
@@ -43,246 +47,6 @@ function buildChildEnv(): NodeJS.ProcessEnv {
   return out as NodeJS.ProcessEnv;
 }
 
-/**
- * Script executed by the child node process. Reads a single JSON payload
- * from stdin, runs the user code in a vm.createContext sandbox, and writes
- * the outcome to stdout as a base64-encoded v8-serialized buffer so that
- * BigInt, Date, Map, Set, and typed arrays round-trip without JSON loss.
- * Inlined here so the Next.js bundler does not have to emit and resolve a
- * separate worker module at runtime.
- */
-const CHILD_SOURCE = `
-"use strict";
-const { createContext, runInContext } = require("node:vm");
-const v8 = require("node:v8");
-
-const MAX_LOG_ENTRIES = 200;
-const BLOCKED_HOST_SUBSTRINGS = [
-  "169.254.169.254",
-  "fd00:ec2::254",
-  "169.254.170.2",
-  "metadata.google.internal",
-  "metadata.azure.com",
-];
-
-function safeCloneArg(value) {
-  try {
-    return JSON.parse(JSON.stringify(value));
-  } catch (_) {
-    try {
-      return String(value);
-    } catch (_e) {
-      return "[unserializable]";
-    }
-  }
-}
-
-function run(input) {
-  const { code, timeoutMs } = input;
-  const logs = [];
-
-  function capture(level) {
-    return function capturedLogger() {
-      if (logs.length >= MAX_LOG_ENTRIES) {
-        return;
-      }
-      const args = new Array(arguments.length);
-      for (let i = 0; i < arguments.length; i++) {
-        args[i] = safeCloneArg(arguments[i]);
-      }
-      logs.push({ level: level, args: args });
-    };
-  }
-
-  const capturedConsole = {
-    log: capture("log"),
-    warn: capture("warn"),
-    error: capture("error"),
-  };
-
-  function extractUrl(resource) {
-    if (typeof resource === "string") {
-      return resource;
-    }
-    if (resource && typeof resource.url === "string") {
-      return resource.url;
-    }
-    try {
-      return String(resource);
-    } catch (_) {
-      return "";
-    }
-  }
-
-  function sandboxedFetch(resource, init) {
-    const url = extractUrl(resource);
-    for (const blocked of BLOCKED_HOST_SUBSTRINGS) {
-      if (url.indexOf(blocked) !== -1) {
-        return Promise.reject(
-          new Error("Fetch to metadata endpoint is blocked: " + blocked)
-        );
-      }
-    }
-
-    const controller = new AbortController();
-    const timer = setTimeout(function onTimeout() {
-      controller.abort();
-    }, timeoutMs);
-
-    const callerSignal = init && init.signal ? init.signal : undefined;
-    if (callerSignal && callerSignal.aborted) {
-      controller.abort();
-    } else if (callerSignal) {
-      callerSignal.addEventListener(
-        "abort",
-        function onCallerAbort() {
-          controller.abort();
-        },
-        { once: true }
-      );
-    }
-
-    const nextInit = Object.assign({}, init, { signal: controller.signal });
-    return fetch(resource, nextInit).finally(function clearTimer() {
-      clearTimeout(timer);
-    });
-  }
-
-  const sandbox = createContext({
-    console: capturedConsole,
-    fetch: sandboxedFetch,
-
-    BigInt: BigInt, JSON: JSON, Math: Math, Date: Date, Array: Array,
-    Object: Object, String: String, Number: Number, Boolean: Boolean,
-    RegExp: RegExp, Symbol: Symbol,
-    Map: Map, Set: Set, WeakMap: WeakMap, WeakSet: WeakSet, Promise: Promise,
-
-    Error: Error, TypeError: TypeError, RangeError: RangeError,
-    SyntaxError: SyntaxError, ReferenceError: ReferenceError, URIError: URIError,
-
-    parseInt: parseInt, parseFloat: parseFloat,
-    isNaN: isNaN, isFinite: isFinite, Infinity: Infinity, NaN: NaN,
-
-    encodeURIComponent: encodeURIComponent, decodeURIComponent: decodeURIComponent,
-    encodeURI: encodeURI, decodeURI: decodeURI,
-    atob: atob, btoa: btoa,
-    TextEncoder: TextEncoder, TextDecoder: TextDecoder,
-
-    ArrayBuffer: ArrayBuffer, DataView: DataView,
-    Uint8Array: Uint8Array, Uint16Array: Uint16Array, Uint32Array: Uint32Array,
-    Int8Array: Int8Array, Int16Array: Int16Array, Int32Array: Int32Array,
-    Float32Array: Float32Array, Float64Array: Float64Array,
-    BigInt64Array: BigInt64Array, BigUint64Array: BigUint64Array,
-
-    URL: URL, URLSearchParams: URLSearchParams, Headers: Headers,
-    Request: Request, Response: Response,
-    AbortController: AbortController, AbortSignal: AbortSignal,
-
-    structuredClone: structuredClone, Intl: Intl,
-    crypto: { randomUUID: crypto.randomUUID.bind(crypto) },
-
-    SharedArrayBuffer: undefined,
-  });
-
-  const wrappedCode = "(async () => {\\n" + code + "\\n})()";
-
-  const userPromise = runInContext(wrappedCode, sandbox, {
-    timeout: timeoutMs,
-    filename: "user-code.js",
-  }).then(
-    function onResult(result) {
-      return { ok: true, result: result, logs: logs };
-    },
-    function onError(err) {
-      return {
-        ok: false,
-        errorMessage:
-          err && err.message ? String(err.message) : String(err),
-        errorStack: err && err.stack ? String(err.stack) : undefined,
-        logs: logs,
-      };
-    }
-  );
-
-  // In-child wall-clock timeout. The vm \`timeout\` option only covers sync
-  // CPU; a user promise that never settles (e.g. \`await new Promise(() => {})\`)
-  // would otherwise let the child exit cleanly with code 0 the moment stdin
-  // EOFs and no handles remain, producing a no-result outcome in the parent
-  // instead of a timeout. The timer also keeps the event loop alive until a
-  // race resolution.
-  let timeoutTimer;
-  const timeoutPromise = new Promise(function onTimeoutRace(resolveRace) {
-    timeoutTimer = setTimeout(function onTimeoutFire() {
-      resolveRace({
-        ok: false,
-        errorMessage:
-          "Script execution timed out after " + String(timeoutMs) + " ms",
-        logs: logs,
-      });
-    }, timeoutMs);
-  });
-  const settledUserPromise = userPromise.finally(function clearTimer() {
-    clearTimeout(timeoutTimer);
-  });
-  return Promise.race([settledUserPromise, timeoutPromise]);
-}
-
-function writeResult(message) {
-  let payload;
-  try {
-    payload = v8.serialize(message).toString("base64");
-  } catch (cloneErr) {
-    payload = v8
-      .serialize({
-        ok: false,
-        errorMessage:
-          "Result is not serializable: " +
-          (cloneErr && cloneErr.message
-            ? cloneErr.message
-            : String(cloneErr)),
-        errorStack: undefined,
-        logs: [],
-      })
-      .toString("base64");
-  }
-  // Prefix with sentinel so the parent can ignore stray writes from user code
-  // that reaches process.stdout via a sandbox escape.
-  process.stdout.write("\\x01RESULT\\x02" + payload + "\\n");
-}
-
-let stdinBuf = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", function onData(chunk) {
-  stdinBuf += chunk;
-});
-process.stdin.on("end", async function onEnd() {
-  let input;
-  try {
-    input = JSON.parse(stdinBuf);
-  } catch (e) {
-    writeResult({
-      ok: false,
-      errorMessage: "Bad input to sandbox: " + (e && e.message ? e.message : String(e)),
-      logs: [],
-    });
-    return;
-  }
-  try {
-    const outcome = await run(input);
-    writeResult(outcome);
-  } catch (err) {
-    writeResult({
-      ok: false,
-      errorMessage: err && err.message ? String(err.message) : String(err),
-      errorStack: err && err.stack ? String(err.stack) : undefined,
-      logs: [],
-    });
-  }
-});
-`;
-
-const RESULT_SENTINEL = "\u0001RESULT\u0002";
-
 function parseChildOutput(stdout: string): ChildOutcome {
   const idx = stdout.lastIndexOf(RESULT_SENTINEL);
   if (idx === -1) {
@@ -308,14 +72,21 @@ function parseChildOutput(stdout: string): ChildOutcome {
 
 /**
  * Spawn a child Node process with a scrubbed env, run the user code inside
- * it, and return the child's outcome. Kills the child on timeout.
+ * it, and return the child's outcome. Kills the child on timeout or when
+ * the caller's AbortSignal fires.
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: single cohesive spawner with timeout + stream aggregation + graceful teardown
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: single cohesive spawner with timeout + stream aggregation + graceful teardown + signal wiring
 async function runInChild(
   code: string,
   timeoutMs: number,
+  signal?: AbortSignal
 ): Promise<ChildOutcome> {
   return await new Promise<ChildOutcome>((resolve) => {
+    if (signal?.aborted) {
+      resolve({ ok: false, errorMessage: "ABORTED", logs: [] });
+      return;
+    }
+
     const child = spawn(process.execPath, ["-e", CHILD_SOURCE], {
       env: buildChildEnv(),
       stdio: ["pipe", "pipe", "pipe"],
@@ -325,12 +96,18 @@ async function runInChild(
     let stderr = "";
     let settled = false;
 
+    const onAbort = (): void => {
+      finish({ ok: false, errorMessage: "ABORTED", logs: [] });
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+
     function finish(outcome: ChildOutcome): void {
       if (settled) {
         return;
       }
       settled = true;
       clearTimeout(killTimer);
+      signal?.removeEventListener("abort", onAbort);
       if (!child.killed) {
         try {
           child.kill("SIGKILL");
@@ -401,6 +178,7 @@ async function runInChild(
 export async function runCode(input: {
   code: string;
   timeoutMs: number;
+  signal?: AbortSignal;
 }): Promise<ChildOutcome> {
-  return runInChild(input.code, input.timeoutMs);
+  return runInChild(input.code, input.timeoutMs, input.signal);
 }

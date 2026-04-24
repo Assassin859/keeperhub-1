@@ -34,7 +34,7 @@ describe("runCode — sandbox child_process runner", () => {
         outcome.errorMessage.toLowerCase().includes("timeout") ||
           outcome.errorMessage.toLowerCase().includes("timed out") ||
           outcome.errorMessage.toLowerCase().includes("script execution") ||
-          outcome.errorMessage === "WALL_CLOCK_TIMEOUT",
+          outcome.errorMessage === "WALL_CLOCK_TIMEOUT"
       ).toBe(true);
     }
   });
@@ -67,8 +67,8 @@ describe("runCode — sandbox child_process runner", () => {
         // variable leaked (anything matching uppercase APP/SECRET/KEY names).
         const leaked = envKeys.filter((k) =>
           /^(DATABASE|WALLET|STRIPE|GITHUB|GOOGLE|AGENTIC|INTEGRATION|BETTER_AUTH|OAUTH|TURNKEY|CDP|AWS|KUBERNETES)_/i.test(
-            k,
-          ),
+            k
+          )
         );
         expect(leaked).toEqual([]);
       }
@@ -77,14 +77,72 @@ describe("runCode — sandbox child_process runner", () => {
     }
   });
 
-  it("blocks fetch() to the AWS IMDS metadata host", async () => {
+  it("blocks fetch() to the AWS IMDS metadata IP (link-local)", async () => {
     const outcome = await runCode({
       code: `return await fetch("http://169.254.169.254/latest/meta-data/");`,
       timeoutMs: 5000,
     });
     expect(outcome.ok).toBe(false);
     if (!outcome.ok) {
-      expect(outcome.errorMessage.toLowerCase()).toContain("metadata");
+      expect(outcome.errorMessage).toContain("SSRF blocked");
+    }
+  });
+
+  it("blocks fetch() to a private IPv4 literal (RFC 1918)", async () => {
+    const outcome = await runCode({
+      code: `return await fetch("http://10.0.0.1/");`,
+      timeoutMs: 5000,
+    });
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.errorMessage).toContain("SSRF blocked");
+    }
+  });
+
+  it("blocks fetch() to loopback IPv4", async () => {
+    const outcome = await runCode({
+      code: `return await fetch("http://127.0.0.1/");`,
+      timeoutMs: 5000,
+    });
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.errorMessage).toContain("SSRF blocked");
+    }
+  });
+
+  it("blocks fetch() to an IPv4-mapped IPv6 literal pointing at private IPv4", async () => {
+    const outcome = await runCode({
+      code: `return await fetch("http://[::ffff:169.254.169.254]/");`,
+      timeoutMs: 5000,
+    });
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.errorMessage).toContain("SSRF blocked");
+    }
+  });
+
+  it("blocks fetch() to a hostname that resolves to loopback (localhost)", async () => {
+    // Deterministic on Linux/macOS: resolver always hands back 127.0.0.1 or
+    // ::1 for "localhost". Exercises the DNS-resolved path, not the IP-
+    // literal path.
+    const outcome = await runCode({
+      code: `return await fetch("http://localhost/");`,
+      timeoutMs: 5000,
+    });
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.errorMessage).toContain("SSRF blocked");
+    }
+  });
+
+  it("rejects fetch() with a non-http(s) scheme", async () => {
+    const outcome = await runCode({
+      code: `return await fetch("file:///etc/passwd");`,
+      timeoutMs: 5000,
+    });
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.errorMessage).toContain("scheme not allowed");
     }
   });
 

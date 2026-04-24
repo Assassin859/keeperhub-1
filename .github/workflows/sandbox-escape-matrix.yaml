@@ -1,7 +1,16 @@
 # Runs the v1.9 sandbox escape-matrix E2E suite (TEST-01..05) against a
 # deployed keeperhub env with a planted sentinel in the main app's env.
-# Operator-triggered only: plants SSM parameter, rolls main app, runs
-# tests, tears down parameter.
+#
+# Triggers:
+#   - workflow_dispatch: operator-initiated, choose env (staging or prod).
+#   - workflow_run (deploy-sandbox): fires automatically after a successful
+#     sandbox deploy on staging, so any change that actually lands in the
+#     cluster is regression-tested against the full TEST-01..05 matrix.
+#     Prod promotions stay manual — operators trigger via workflow_dispatch
+#     after the post-promotion soak.
+#
+# In all cases, the job plants an SSM canary, rolls the main app to pick it
+# up, runs the tests, and tears the canary down in a cleanup step.
 
 name: sandbox-escape-matrix
 
@@ -21,28 +30,44 @@ on:
         required: false
         type: boolean
         default: false
+  workflow_run:
+    workflows: ["deploy-sandbox"]
+    types:
+      - completed
+    branches:
+      - staging
 
 permissions:
   contents: read
   id-token: write
 
 concurrency:
-  group: sandbox-escape-matrix-${{ inputs.environment }}
+  group: sandbox-escape-matrix-${{ inputs.environment || 'staging' }}
   cancel-in-progress: false
 
 jobs:
   escape-matrix:
-    environment: ${{ inputs.environment }}
+    # workflow_run fires on ALL completions (success, failure, cancelled);
+    # skip unless the upstream deploy actually succeeded. For workflow_dispatch,
+    # always run. For workflow_run on prod branch (shouldn't happen per the
+    # branches filter above, but defense-in-depth), skip — prod promotions
+    # stay manual.
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+          (github.event_name == 'workflow_run' &&
+           github.event.workflow_run.conclusion == 'success' &&
+           github.event.workflow_run.head_branch == 'staging') }}
+    environment: ${{ inputs.environment || 'staging' }}
     runs-on: ubuntu-latest
     env:
       REGION: ${{ vars.TO_REGION }}
       CLUSTER_NAME: ${{ vars.TO_CLUSTER_NAME }}
       NAMESPACE: keeperhub
-      KH_RELEASE_NAME: keeperhub-${{ inputs.environment }}
-      CANARY_SSM_PATH: /eks/techops-${{ inputs.environment }}/keeperhub/_sandbox_escape_canary
-      APP_URL: ${{ inputs.environment == 'prod' && vars.TO_PROD_URL || vars.TO_STAGING_URL }}
-      TARGET_ENV: ${{ inputs.environment }}
-      SKIP_PLANT: ${{ inputs.skip_canary_plant }}
+      KH_RELEASE_NAME: keeperhub-${{ inputs.environment || 'staging' }}
+      CANARY_SSM_PATH: /eks/techops-${{ inputs.environment || 'staging' }}/keeperhub/_sandbox_escape_canary
+      APP_URL: ${{ (inputs.environment || 'staging') == 'prod' && vars.TO_PROD_URL || vars.TO_STAGING_URL }}
+      TARGET_ENV: ${{ inputs.environment || 'staging' }}
+      SKIP_PLANT: ${{ inputs.skip_canary_plant || false }}
 
     steps:
       - name: Checkout

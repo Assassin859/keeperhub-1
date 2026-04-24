@@ -1,4 +1,4 @@
-import { and, eq, gt, lt, notInArray, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, lt, notInArray, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { workflowExecutionLogs, workflowExecutions } from "@/lib/db/schema";
@@ -69,6 +69,25 @@ export async function GET(request: Request): Promise<NextResponse> {
       .returning({ id: workflowExecutions.id });
 
     const reapedIds = reaped.map((row) => row.id);
+
+    // KEEP-333: Close orphaned 'running' step logs for reaped executions so
+    // the UI doesn't show stuck spinners after the workflow has been marked
+    // as timed out.
+    if (reapedIds.length > 0) {
+      await db
+        .update(workflowExecutionLogs)
+        .set({
+          status: "error",
+          error: "Step did not record completion",
+          completedAt: new Date(),
+        })
+        .where(
+          and(
+            inArray(workflowExecutionLogs.executionId, reapedIds),
+            eq(workflowExecutionLogs.status, "running")
+          )
+        );
+    }
 
     return NextResponse.json({
       reapedCount: reapedIds.length,

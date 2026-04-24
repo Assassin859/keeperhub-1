@@ -512,7 +512,28 @@ describe("code/run-code - sandbox globals", () => {
     const result = await expectFailure({
       code: 'await fetch("http://169.254.169.254/latest/meta-data/")',
     });
-    expect(result.error).toContain("metadata endpoint");
+    expect(result.error).toContain("SSRF blocked");
+  });
+
+  it("blocks fetch to RFC 1918 private IPv4 literals", async () => {
+    const result = await expectFailure({
+      code: 'await fetch("http://10.0.0.1/")',
+    });
+    expect(result.error).toContain("SSRF blocked");
+  });
+
+  it("blocks fetch to a hostname that resolves to loopback", async () => {
+    const result = await expectFailure({
+      code: 'await fetch("http://localhost/")',
+    });
+    expect(result.error).toContain("SSRF blocked");
+  });
+
+  it("rejects fetch with a non-http(s) scheme", async () => {
+    const result = await expectFailure({
+      code: 'await fetch("file:///etc/passwd")',
+    });
+    expect(result.error).toContain("scheme not allowed");
   });
 });
 
