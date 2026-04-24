@@ -34,9 +34,12 @@ vi.mock("@turnkey/sdk-server", () => ({
   }),
 }));
 
-const { PolicyBlockedError, signMppProof, signMppTransaction, signX402Challenge } = await import(
-  "@/lib/agentic-wallet/sign"
-);
+const {
+  PolicyBlockedError,
+  signMppProof,
+  signMppTransaction,
+  signX402Challenge,
+} = await import("@/lib/agentic-wallet/sign");
 
 const { Challenge } = await import("mppx");
 
@@ -70,9 +73,7 @@ function buildTempoChallengeSerialized(): string {
   return full.startsWith("Payment ") ? full.slice("Payment ".length) : full;
 }
 
-function happyPathResult(
-  v: "00" | "01"
-): Record<string, unknown> {
+function happyPathResult(v: "00" | "01"): Record<string, unknown> {
   return {
     activity: {
       status: "ACTIVITY_STATUS_COMPLETED",
@@ -258,21 +259,6 @@ describe("signMppProof", () => {
   });
 });
 
-// Mock the Tempo nonce RPC so signMppTransaction can run without network.
-// Placed at module level so hoisting still produces deterministic behaviour.
-vi.mock("viem/tempo", async (orig) => {
-  const actual = (await orig()) as Record<string, unknown>;
-  return {
-    ...actual,
-    Actions: {
-      ...(actual.Actions as Record<string, unknown>),
-      nonce: {
-        getNonce: vi.fn(async () => BigInt(0)),
-      },
-    },
-  };
-});
-
 describe("signMppTransaction", () => {
   beforeEach(() => {
     process.env.TURNKEY_API_PUBLIC_KEY = "test-pub";
@@ -329,6 +315,27 @@ describe("signMppTransaction", () => {
     expect(decoded.payload.signature.startsWith("0x76")).toBe(true);
     // source binds the credential to the wallet on Tempo mainnet.
     expect(decoded.source).toBe(`did:pkh:eip155:4217:${WALLET}`);
+  });
+
+  it("uses the TIP-1009 expiring-nonce marker (nonceKey=uint256.max, nonce=0)", async () => {
+    // Regression guard for the second MPP hotfix. Tempo's fee-payer path
+    // only co-signs envelopes with the expiring-nonce marker; any other
+    // nonceKey causes the facilitator to throw a non-PaymentError that mppx
+    // wraps as a reason-less "Payment verification failed" 402. This mirrors
+    // what `prepareTransactionRequest({nonceKey: 'expiring'})` produces in
+    // mppx/client/Charge.js.
+    const { TxEnvelopeTempo } = await import("ox/tempo");
+    const out = await signMppTransaction(SUB_ORG, WALLET, {
+      chainId: 4217,
+      serialized: buildTempoChallengeSerialized(),
+    });
+    const decoded = JSON.parse(
+      Buffer.from(out, "base64url").toString("utf-8")
+    ) as { payload: { signature: `0x76${string}` } };
+    const envelope = TxEnvelopeTempo.deserialize(decoded.payload.signature);
+    const MAX_UINT256 = (BigInt(1) << BigInt(256)) - BigInt(1);
+    expect(envelope.nonceKey).toBe(MAX_UINT256);
+    expect(envelope.nonce).toBe(BigInt(0));
   });
 
   it("throws on non-charge intent (proof-mode belongs in signMppProof)", async () => {

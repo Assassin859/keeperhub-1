@@ -30,11 +30,9 @@
 import { serializeSignature } from "@turnkey/ethers";
 import { Challenge, Credential } from "mppx";
 import { TxEnvelopeTempo } from "ox/tempo";
-import { createPublicClient, encodeFunctionData, http, keccak256 } from "viem";
-import { tempo } from "viem/chains";
-import { Abis, Actions } from "viem/tempo";
+import { encodeFunctionData, keccak256 } from "viem";
+import { Abis } from "viem/tempo";
 import { getTurnkeyClientForOrg } from "@/lib/turnkey/agentic-wallet";
-import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 import { BASE_CHAIN_ID, USDC_BASE_ADDRESS } from "./constants";
 
 const MPP_AUTH_PREFIX = "Payment ";
@@ -48,6 +46,12 @@ const MPP_TX_GAS = BigInt(500_000);
 const MPP_TX_MAX_FEE_PER_GAS = BigInt(5_000_000_000); // 5 gwei
 const MPP_TX_MAX_PRIORITY_FEE_PER_GAS = BigInt(1_000_000_000); // 1 gwei
 const MPP_TX_VALIDITY_WINDOW_SECONDS = 300; // 5 minutes
+
+// TIP-1009 expiring-nonce marker. viem/tempo/chainConfig.js rewrites
+// `{nonceKey: 'expiring'}` to `{nonceKey: 2**256-1, nonce: 0}`; we hardcode
+// the same values because we build the envelope by hand (no viem
+// prepareTransactionRequest on the Turnkey path).
+const MAX_UINT256 = (BigInt(1) << BigInt(256)) - BigInt(1);
 
 // MPP attribution memo layout (mirrors mppx internal Attribution.encode):
 //   bytes 0..3   : tag         "MPP\0" (3 printable + NUL)
@@ -413,24 +417,16 @@ export async function signMppTransaction(
     args: [request.recipient, BigInt(request.amount), memo],
   });
 
-  // nonceKey is a per-wallet-per-call uint >= 1. Derive deterministically
-  // from the challenge id so repeat /sign calls for the same challenge
-  // produce the same nonceKey (idempotent), but different challenges never
-  // collide. Take 8 bytes of keccak256(id) for headroom below uint256.
-  const nonceKeyHex = keccak256(
-    new TextEncoder().encode(parsed.id)
-  ).slice(0, 18);
-  const nonceKey = BigInt(nonceKeyHex);
-
-  const rpcUrl = getRpcUrlByChainId(params.chainId);
-  const client = createPublicClient({
-    chain: tempo,
-    transport: http(rpcUrl),
-  });
-  const nonce = await Actions.nonce.getNonce(client, {
-    account: walletAddressTempo as `0x${string}`,
-    nonceKey,
-  });
+  // TIP-1009 expiring nonce: nonceKey MUST be uint256.max and nonce MUST be
+  // 0. Tempo's fee-payer sponsored path only co-signs transactions that use
+  // this marker; any other nonceKey is treated as a 2D-nonce (non-expiring)
+  // and the facilitator's FeePayer.prepareSponsoredTransaction / signTransaction
+  // chain throws, which mppx's server catch-all wraps as a reason-less
+  // "Payment verification failed" 402. Mirrors mppx/client/Charge.js which
+  // passes `nonceKey: 'expiring'` to prepareTransactionRequest (rewritten by
+  // viem/tempo chainConfig into this same MAX_UINT256 + nonce 0 pair).
+  const nonceKey = MAX_UINT256;
+  const nonce = BigInt(0);
 
   const nowSec = Math.floor(Date.now() / 1000);
   const validBefore = nowSec + MPP_TX_VALIDITY_WINDOW_SECONDS;
@@ -448,7 +444,6 @@ export async function signMppTransaction(
     gas: MPP_TX_GAS,
     maxFeePerGas: MPP_TX_MAX_FEE_PER_GAS,
     maxPriorityFeePerGas: MPP_TX_MAX_PRIORITY_FEE_PER_GAS,
-    validAfter: 0,
     validBefore,
   });
 
