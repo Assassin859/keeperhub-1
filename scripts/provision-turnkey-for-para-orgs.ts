@@ -1,12 +1,20 @@
 /**
- * Provision a Turnkey wallet for every organization that currently holds a
- * Para wallet but no Turnkey one, reusing the Para wallet's email.
+ * Force-migrate every Para-holding organization onto Turnkey as the active
+ * (and only) signer.
  *
- * The new Turnkey wallet is inserted with is_active = false so signing paths
- * keep using Para until an admin explicitly flips the switch in the Wallet
- * overlay.
+ * For each organization that has a Para wallet:
+ *   1. If no Turnkey wallet exists, create one via the Turnkey API, reusing
+ *      the Para wallet's email. The new row is inserted with is_active = true.
+ *   2. If a Turnkey wallet already exists (from the previous dual-wallet
+ *      migration phase), flip it to is_active = true.
+ *   3. The Para row is marked is_active = false. It is not deleted -- the
+ *      user may still hold assets there and the row stays readable until a
+ *      follow-up sweep is run.
+ *   4. The web3 integration row's display name is re-synced to the Turnkey
+ *      wallet's truncated address so workflow nodes render the new signer
+ *      without a manual refresh.
  *
- * Runs idempotently: orgs that already have a Turnkey wallet are skipped.
+ * Runs idempotently: orgs whose Turnkey wallet is already active are skipped.
  *
  * Concurrency: invoked from every pod's init container. A Postgres advisory
  * lock guarantees only one runner does the work; the others exit cleanly.
@@ -15,10 +23,13 @@
  *   npx tsx scripts/provision-turnkey-for-para-orgs.ts
  */
 
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import { normalizeAddressForStorage } from "../lib/address-utils";
+import {
+  normalizeAddressForStorage,
+  truncateAddress,
+} from "../lib/address-utils";
 import * as schema from "../lib/db/schema";
 import { createTurnkeyWallet } from "../lib/turnkey/turnkey-operations";
 
@@ -26,8 +37,8 @@ import { createTurnkeyWallet } from "../lib/turnkey/turnkey-operations";
 // keep it out of the range used by other advisory locks in the project.
 const ADVISORY_LOCK_KEY = 923_102_301 as const;
 
-type ProvisionSummary = {
-  provisioned: number;
+type MigrationSummary = {
+  migrated: number;
   skipped: number;
   failed: number;
 };
@@ -53,66 +64,123 @@ async function main(): Promise<void> {
       return;
     }
 
-    const { organizationWallets } = schema;
+    const { integrations, organizationWallets } = schema;
 
-    const paraWallets = await db
+    const paraRows = await db
       .select({
         id: organizationWallets.id,
         userId: organizationWallets.userId,
         organizationId: organizationWallets.organizationId,
         email: organizationWallets.email,
+        isActive: organizationWallets.isActive,
       })
       .from(organizationWallets)
       .where(eq(organizationWallets.provider, "para"));
 
-    const turnkeyOrgIds = new Set(
-      (
-        await db
-          .select({ organizationId: organizationWallets.organizationId })
-          .from(organizationWallets)
-          .where(eq(organizationWallets.provider, "turnkey"))
-      ).map((r) => r.organizationId)
+    const existingTurnkeyRows = await db
+      .select({
+        id: organizationWallets.id,
+        organizationId: organizationWallets.organizationId,
+        walletAddress: organizationWallets.walletAddress,
+        isActive: organizationWallets.isActive,
+      })
+      .from(organizationWallets)
+      .where(eq(organizationWallets.provider, "turnkey"));
+
+    const turnkeyByOrg = new Map(
+      existingTurnkeyRows
+        .filter((r) => r.organizationId !== null)
+        .map((r) => [r.organizationId as string, r])
     );
 
-    const paraOrgs = paraWallets.filter(
-      (w) => w.organizationId !== null && !turnkeyOrgIds.has(w.organizationId)
-    );
-
-    const summary: ProvisionSummary = {
-      provisioned: 0,
+    const summary: MigrationSummary = {
+      migrated: 0,
       skipped: 0,
       failed: 0,
     };
 
-    console.log(
-      `[provision-turnkey] ${paraOrgs.length} Para-only orgs to process`
-    );
+    console.log(`[provision-turnkey] ${paraRows.length} Para orgs to process`);
 
-    for (const row of paraOrgs) {
-      if (row.organizationId === null) {
+    for (const paraRow of paraRows) {
+      if (paraRow.organizationId === null) {
         summary.skipped += 1;
         continue;
       }
-      const orgId = row.organizationId;
+      const orgId = paraRow.organizationId;
+      const existingTurnkey = turnkeyByOrg.get(orgId);
+
+      // Already fully migrated: Turnkey active, Para inactive.
+      if (
+        existingTurnkey &&
+        existingTurnkey.isActive &&
+        !paraRow.isActive
+      ) {
+        summary.skipped += 1;
+        continue;
+      }
+
       try {
-        const orgName = `org-${orgId.slice(0, 8)}`;
-        const result = await createTurnkeyWallet(row.email, orgName);
+        let turnkeyWalletAddress: string;
 
-        await db.insert(organizationWallets).values({
-          userId: row.userId,
-          organizationId: orgId,
-          provider: "turnkey",
-          email: row.email,
-          walletAddress: normalizeAddressForStorage(result.walletAddress),
-          turnkeySubOrgId: result.subOrgId,
-          turnkeyWalletId: result.walletId,
-          turnkeyPrivateKeyId: result.privateKeyId,
-          isActive: false,
-        });
+        if (existingTurnkey) {
+          turnkeyWalletAddress = existingTurnkey.walletAddress;
+          await db.transaction(async (tx) => {
+            await tx
+              .update(organizationWallets)
+              .set({ isActive: false })
+              .where(eq(organizationWallets.id, paraRow.id));
+            await tx
+              .update(organizationWallets)
+              .set({ isActive: true })
+              .where(eq(organizationWallets.id, existingTurnkey.id));
+            await tx
+              .update(integrations)
+              .set({ name: truncateAddress(turnkeyWalletAddress) })
+              .where(
+                and(
+                  eq(integrations.organizationId, orgId),
+                  eq(integrations.type, "web3")
+                )
+              );
+          });
+        } else {
+          const orgName = `org-${orgId.slice(0, 8)}`;
+          const result = await createTurnkeyWallet(paraRow.email, orgName);
+          turnkeyWalletAddress = normalizeAddressForStorage(
+            result.walletAddress
+          );
 
-        summary.provisioned += 1;
+          await db.transaction(async (tx) => {
+            await tx
+              .update(organizationWallets)
+              .set({ isActive: false })
+              .where(eq(organizationWallets.id, paraRow.id));
+            await tx.insert(organizationWallets).values({
+              userId: paraRow.userId,
+              organizationId: orgId,
+              provider: "turnkey",
+              email: paraRow.email,
+              walletAddress: turnkeyWalletAddress,
+              turnkeySubOrgId: result.subOrgId,
+              turnkeyWalletId: result.walletId,
+              turnkeyPrivateKeyId: result.privateKeyId,
+              isActive: true,
+            });
+            await tx
+              .update(integrations)
+              .set({ name: truncateAddress(turnkeyWalletAddress) })
+              .where(
+                and(
+                  eq(integrations.organizationId, orgId),
+                  eq(integrations.type, "web3")
+                )
+              );
+          });
+        }
+
+        summary.migrated += 1;
         console.log(
-          `[provision-turnkey] org=${orgId} turnkey=${result.walletAddress}`
+          `[provision-turnkey] org=${orgId} turnkey=${turnkeyWalletAddress} active=true`
         );
       } catch (error) {
         summary.failed += 1;
@@ -124,18 +192,8 @@ async function main(): Promise<void> {
     }
 
     console.log(
-      `[provision-turnkey] Done. provisioned=${summary.provisioned} skipped=${summary.skipped} failed=${summary.failed}`
+      `[provision-turnkey] Done. migrated=${summary.migrated} skipped=${summary.skipped} failed=${summary.failed}`
     );
-
-    if (summary.provisioned > 0) {
-      console.warn(
-        "[provision-turnkey] New Turnkey wallets are inactive by default. " +
-          "When an admin flips a wallet to Turnkey, workflow writes run through " +
-          "the executor -> runner path, which must have TURNKEY_API_PUBLIC_KEY and " +
-          "TURNKEY_API_PRIVATE_KEY set. Verify deploy/executor/<env>/values.yaml " +
-          "mirrors the keeperhub chart's Turnkey env before flipping any wallet."
-      );
-    }
   } finally {
     await db.execute(sql`select pg_advisory_unlock(${ADVISORY_LOCK_KEY})`);
     await client.end();

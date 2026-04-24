@@ -51,9 +51,6 @@ export function WalletOverlay({
   const [supportedBalancesLoading, setSupportedBalancesLoading] =
     useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [switchingWallet, setSwitchingWallet] = useState(false);
-  // Controlled tab state so reload cycles (e.g. switching Para/Turnkey) don't
-  // reset the user's active tab back to "balances".
   const [activeTab, setActiveTab] = useState<WalletTab>(initialTab);
 
   const {
@@ -264,33 +261,6 @@ export function WalletOverlay({
     invalidateWalletInfo();
   };
 
-  const handleSelectActiveWallet = useCallback(
-    async (walletId: string): Promise<void> => {
-      setSwitchingWallet(true);
-      try {
-        const response = await fetch("/api/user/wallet/active", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ walletId }),
-        });
-        const data: { error?: string } = await response.json();
-        if (!response.ok) {
-          throw new Error(data.error ?? "Failed to switch active wallet");
-        }
-        toast.success("Active wallet updated");
-        await loadWallet();
-        invalidateWalletInfo();
-      } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : "Failed to switch wallet"
-        );
-      } finally {
-        setSwitchingWallet(false);
-      }
-    },
-    [loadWallet, invalidateWalletInfo]
-  );
-
   const buildAssets = useCallback(
     (): WithdrawableAsset[] =>
       buildWithdrawableAssets({
@@ -409,12 +379,8 @@ export function WalletOverlay({
               <ManageTab
                 canExportKey={!!walletData.canExportKey}
                 email={walletData.email}
-                isAdmin={isAdmin}
                 isOwner={!!walletData.isOwner}
-                onSelectActiveWallet={handleSelectActiveWallet}
-                switchingWallet={switchingWallet}
                 walletAddress={walletData.walletAddress}
-                wallets={walletData.wallets}
               />
             )}
           </TabsContent>

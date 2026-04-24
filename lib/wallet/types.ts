@@ -123,19 +123,6 @@ export type SupportedTokenBalance = {
 
 export type WalletProvider = "para" | "turnkey";
 
-export type WalletInfo = {
-  id: string;
-  provider: WalletProvider;
-  walletAddress: string;
-  walletId: string;
-  email: string;
-  createdAt: string;
-  canExportKey: boolean;
-  isOwner: boolean;
-  organizationId: string;
-  isActive: boolean;
-};
-
 export type WalletData = {
   hasWallet: boolean;
   provider?: WalletProvider;
@@ -145,7 +132,6 @@ export type WalletData = {
   createdAt?: string;
   canExportKey?: boolean;
   isOwner?: boolean;
-  wallets?: WalletInfo[];
 };
 
 // ============================================================================
