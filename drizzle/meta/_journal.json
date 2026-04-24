@@ -369,15 +369,8 @@
     {
       "idx": 52,
       "version": "7",
-      "when": 1776803499184,
-      "tag": "0052_typical_zarek",
-      "breakpoints": true
-    },
-    {
-      "idx": 53,
-      "version": "7",
-      "when": 1776811122501,
-      "tag": "0053_third_shocker",
+      "when": 1777062367044,
+      "tag": "0052_military_photon",
       "breakpoints": true
     }
   ]

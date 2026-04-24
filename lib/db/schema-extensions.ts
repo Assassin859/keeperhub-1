@@ -141,18 +141,21 @@ export type SafeWallet = typeof safeWallets.$inferSelect;
 export type NewSafeWallet = typeof safeWallets.$inferInsert;
 
 /**
- * Safe Module Installations table
+ * Safe Roles table
  *
- * One row per (safe, module_type). Tracks which Safe modules have been
- * enabled on a given Safe. For the MVP, `module_type` is always "allowance"
- * (Safe's canonical Allowance Module for per-token spending limits). The
- * schema supports multiple module types coexisting so we can add Zodiac
- * Roles, Guards, etc. without breaking changes.
+ * One row per (Safe, role_type). A Safe can have a Zodiac Roles Modifier
+ * installed that enforces per-target / per-function / per-parameter policies
+ * on everything the delegate (Turnkey EOA) executes. For MVP we create one
+ * role per Safe with role_type = "automation"; multi-role support is
+ * additive.
  *
- * Status lifecycle: enabled -> disabled
+ * This row is a cache of on-chain state. Authoritative source of truth is
+ * the Roles modifier at `roles_modifier_address`. Every mutation in the UI
+ * submits an on-chain tx, waits for confirmation, then refreshes this row
+ * from chain.
  */
-export const safeModuleInstallations = pgTable(
-  "safe_module_installations",
+export const safeRoles = pgTable(
+  "safe_roles",
   {
     id: text("id")
       .primaryKey()
@@ -160,71 +163,132 @@ export const safeModuleInstallations = pgTable(
     safeWalletId: text("safe_wallet_id")
       .notNull()
       .references(() => safeWallets.id, { onDelete: "cascade" }),
-    moduleType: text("module_type").notNull(),
-    moduleAddress: text("module_address").notNull(),
+    roleType: text("role_type").notNull().default("automation"),
+    /** bytes32 role key, hex-encoded */
+    roleKey: text("role_key").notNull(),
+    /** Per-Safe Zodiac Roles proxy (deployed via ModuleProxyFactory) */
+    rolesModifierAddress: text("roles_modifier_address").notNull(),
+    /** Delegate authorised to use the role (today = Safe owner/Turnkey EOA) */
+    delegateAddress: text("delegate_address").notNull(),
     installedTxHash: text("installed_tx_hash"),
-    installedAt: timestamp("installed_at"),
-    status: text("status").notNull().default("enabled"),
+    lastReconciledAt: timestamp("last_reconciled_at"),
+    status: text("status").notNull().default("active"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("safe_module_inst_safe_type_unique").on(
+    uniqueIndex("safe_roles_safe_type_unique").on(
       table.safeWalletId,
-      table.moduleType
+      table.roleType
     ),
-    index("idx_safe_module_inst_safe").on(table.safeWalletId),
+    index("idx_safe_roles_safe").on(table.safeWalletId),
   ]
 );
 
-export type SafeModuleInstallation =
-  typeof safeModuleInstallations.$inferSelect;
-export type NewSafeModuleInstallation =
-  typeof safeModuleInstallations.$inferInsert;
+export type SafeRole = typeof safeRoles.$inferSelect;
+export type NewSafeRole = typeof safeRoles.$inferInsert;
 
 /**
- * Safe Token Limits table
+ * Safe Role Protocols table
  *
- * Per-token on-chain spending caps enforced by the Safe Allowance Module.
- * One row per (safe, delegate, token). For the MVP the delegate address
- * matches the Safe's owner (Turnkey EOA). `amount_wei` is stored as text
- * for uint256 overflow safety; `period_minutes` matches the module's
- * `resetTimeMin` argument (uint16 range). `reset_at` is cached for display
- * but authoritative state comes from reading the module on-chain.
+ * Cache of which protocol presets are currently applied to the Role's
+ * scoped targets. Each row represents a protocol the admin has enabled
+ * (Aave V3, CoW Protocol, etc.). The actual permission trees live on-chain;
+ * this row tracks status + the selectors applied for audit purposes.
  */
-export const safeTokenLimits = pgTable(
-  "safe_token_limits",
+export const safeRoleProtocols = pgTable(
+  "safe_role_protocols",
   {
     id: text("id")
       .primaryKey()
       .$defaultFn(() => generateId()),
-    safeWalletId: text("safe_wallet_id")
+    roleId: text("role_id")
       .notNull()
-      .references(() => safeWallets.id, { onDelete: "cascade" }),
-    moduleType: text("module_type").notNull().default("allowance"),
-    delegateAddress: text("delegate_address").notNull(),
-    tokenAddress: text("token_address").notNull(),
-    tokenSymbol: text("token_symbol").notNull(),
-    tokenDecimals: integer("token_decimals").notNull(),
-    amountWei: text("amount_wei").notNull(),
-    periodMinutes: integer("period_minutes").notNull(),
-    resetAt: timestamp("reset_at"),
-    lastTxHash: text("last_tx_hash"),
+      .references(() => safeRoles.id, { onDelete: "cascade" }),
+    /** Slug matches `ProtocolSlug` in `lib/safe/protocol-registry.ts` */
+    protocolSlug: text("protocol_slug").notNull(),
+    /** defi-kit template that compiled the permissions */
+    templateSlug: text("template_slug").notNull(),
+    /** Tokens the preset was compiled with (symbol array) */
+    allowedTokenSymbols: jsonb("allowed_token_symbols")
+      .notNull()
+      .$type<string[]>(),
+    /** Target contract addresses the role scopes (for display + audit) */
+    targetAddresses: jsonb("target_addresses").notNull().$type<string[]>(),
+    /** Function selectors allowed on those targets */
+    allowedSelectors: jsonb("allowed_selectors").notNull().$type<string[]>(),
+    status: text("status").notNull().default("allowed"),
+    lastAppliedTxHash: text("last_applied_tx_hash"),
     lastUpdatedAt: timestamp("last_updated_at").notNull().defaultNow(),
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("safe_token_limits_safe_delegate_token_unique").on(
-      table.safeWalletId,
-      table.delegateAddress,
-      table.tokenAddress
+    uniqueIndex("safe_role_protocols_role_slug_unique").on(
+      table.roleId,
+      table.protocolSlug
     ),
-    index("idx_safe_token_limits_safe").on(table.safeWalletId),
+    index("idx_safe_role_protocols_role").on(table.roleId),
   ]
 );
 
-export type SafeTokenLimit = typeof safeTokenLimits.$inferSelect;
-export type NewSafeTokenLimit = typeof safeTokenLimits.$inferInsert;
+export type SafeRoleProtocol = typeof safeRoleProtocols.$inferSelect;
+export type NewSafeRoleProtocol = typeof safeRoleProtocols.$inferInsert;
+
+/**
+ * Safe Role Allowances table
+ *
+ * Cache of the per-token on-chain allowance buckets on the Roles modifier.
+ * Each row is one (role, token) allowance. `allowance_key` is the on-chain
+ * bytes32 identifier computed deterministically from (roleKey, token).
+ *
+ * The `last_chain_*` columns hold the last read from the modifier so the UI
+ * can render "used / cap + resets in N" without re-hitting chain every
+ * render. A refresh happens on card mount, on window focus, and after every
+ * mutation.
+ */
+export const safeRoleAllowances = pgTable(
+  "safe_role_allowances",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    roleId: text("role_id")
+      .notNull()
+      .references(() => safeRoles.id, { onDelete: "cascade" }),
+    /** bytes32 on-chain allowance key */
+    allowanceKey: text("allowance_key").notNull(),
+    tokenAddress: text("token_address").notNull(),
+    tokenSymbol: text("token_symbol").notNull(),
+    tokenDecimals: integer("token_decimals").notNull(),
+    /** Cap per period (uint128 as stringified wei) */
+    maxRefillWei: text("max_refill_wei").notNull(),
+    /** Refill per period */
+    refillWei: text("refill_wei").notNull(),
+    /** Period in seconds */
+    periodSeconds: integer("period_seconds").notNull(),
+    /** Cached chain state — authoritative is on-chain */
+    lastChainBalanceWei: text("last_chain_balance_wei"),
+    lastChainTimestamp: timestamp("last_chain_timestamp"),
+    lastReconciledAt: timestamp("last_reconciled_at"),
+    lastAppliedTxHash: text("last_applied_tx_hash"),
+    lastUpdatedAt: timestamp("last_updated_at").notNull().defaultNow(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("safe_role_allowances_role_key_unique").on(
+      table.roleId,
+      table.allowanceKey
+    ),
+    uniqueIndex("safe_role_allowances_role_token_unique").on(
+      table.roleId,
+      table.tokenAddress
+    ),
+    index("idx_safe_role_allowances_role").on(table.roleId),
+  ]
+);
+
+export type SafeRoleAllowance = typeof safeRoleAllowances.$inferSelect;
+export type NewSafeRoleAllowance = typeof safeRoleAllowances.$inferInsert;
 
 /**
  * Key Export Verification Codes table

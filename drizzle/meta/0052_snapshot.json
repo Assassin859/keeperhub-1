@@ -1,5 +1,5 @@
 {
-  "id": "b9850e3c-333f-48b4-a516-87dcfad93902",
+  "id": "bae00c28-e4af-4b52-aa48-ddbbed69df3f",
   "prevId": "d0f93421-e64d-4982-9b9f-61c75c83e53e",
   "version": "7",
   "dialect": "postgresql",
@@ -3060,8 +3060,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.safe_module_installations": {
-      "name": "safe_module_installations",
+    "public.safe_role_allowances": {
+      "name": "safe_role_allowances",
       "schema": "",
       "columns": {
         "id": {
@@ -3070,142 +3070,14 @@
           "primaryKey": true,
           "notNull": true
         },
-        "safe_wallet_id": {
-          "name": "safe_wallet_id",
+        "role_id": {
+          "name": "role_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "module_type": {
-          "name": "module_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "module_address": {
-          "name": "module_address",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "installed_tx_hash": {
-          "name": "installed_tx_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "installed_at": {
-          "name": "installed_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'enabled'"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "safe_module_inst_safe_type_unique": {
-          "name": "safe_module_inst_safe_type_unique",
-          "columns": [
-            {
-              "expression": "safe_wallet_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "module_type",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "idx_safe_module_inst_safe": {
-          "name": "idx_safe_module_inst_safe",
-          "columns": [
-            {
-              "expression": "safe_wallet_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "safe_module_installations_safe_wallet_id_safe_wallets_id_fk": {
-          "name": "safe_module_installations_safe_wallet_id_safe_wallets_id_fk",
-          "tableFrom": "safe_module_installations",
-          "tableTo": "safe_wallets",
-          "columnsFrom": [
-            "safe_wallet_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.safe_token_limits": {
-      "name": "safe_token_limits",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "safe_wallet_id": {
-          "name": "safe_wallet_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "module_type": {
-          "name": "module_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'allowance'"
-        },
-        "delegate_address": {
-          "name": "delegate_address",
+        "allowance_key": {
+          "name": "allowance_key",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -3228,26 +3100,44 @@
           "primaryKey": false,
           "notNull": true
         },
-        "amount_wei": {
-          "name": "amount_wei",
+        "max_refill_wei": {
+          "name": "max_refill_wei",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "period_minutes": {
-          "name": "period_minutes",
+        "refill_wei": {
+          "name": "refill_wei",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "period_seconds": {
+          "name": "period_seconds",
           "type": "integer",
           "primaryKey": false,
           "notNull": true
         },
-        "reset_at": {
-          "name": "reset_at",
+        "last_chain_balance_wei": {
+          "name": "last_chain_balance_wei",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_chain_timestamp": {
+          "name": "last_chain_timestamp",
           "type": "timestamp",
           "primaryKey": false,
           "notNull": false
         },
-        "last_tx_hash": {
-          "name": "last_tx_hash",
+        "last_reconciled_at": {
+          "name": "last_reconciled_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_applied_tx_hash": {
+          "name": "last_applied_tx_hash",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -3268,17 +3158,32 @@
         }
       },
       "indexes": {
-        "safe_token_limits_safe_delegate_token_unique": {
-          "name": "safe_token_limits_safe_delegate_token_unique",
+        "safe_role_allowances_role_key_unique": {
+          "name": "safe_role_allowances_role_key_unique",
           "columns": [
             {
-              "expression": "safe_wallet_id",
+              "expression": "role_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             },
             {
-              "expression": "delegate_address",
+              "expression": "allowance_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "safe_role_allowances_role_token_unique": {
+          "name": "safe_role_allowances_role_token_unique",
+          "columns": [
+            {
+              "expression": "role_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -3295,8 +3200,275 @@
           "method": "btree",
           "with": {}
         },
-        "idx_safe_token_limits_safe": {
-          "name": "idx_safe_token_limits_safe",
+        "idx_safe_role_allowances_role": {
+          "name": "idx_safe_role_allowances_role",
+          "columns": [
+            {
+              "expression": "role_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "safe_role_allowances_role_id_safe_roles_id_fk": {
+          "name": "safe_role_allowances_role_id_safe_roles_id_fk",
+          "tableFrom": "safe_role_allowances",
+          "tableTo": "safe_roles",
+          "columnsFrom": [
+            "role_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.safe_role_protocols": {
+      "name": "safe_role_protocols",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "role_id": {
+          "name": "role_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "protocol_slug": {
+          "name": "protocol_slug",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "template_slug": {
+          "name": "template_slug",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "allowed_token_symbols": {
+          "name": "allowed_token_symbols",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "target_addresses": {
+          "name": "target_addresses",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "allowed_selectors": {
+          "name": "allowed_selectors",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'allowed'"
+        },
+        "last_applied_tx_hash": {
+          "name": "last_applied_tx_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_updated_at": {
+          "name": "last_updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "safe_role_protocols_role_slug_unique": {
+          "name": "safe_role_protocols_role_slug_unique",
+          "columns": [
+            {
+              "expression": "role_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "protocol_slug",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_safe_role_protocols_role": {
+          "name": "idx_safe_role_protocols_role",
+          "columns": [
+            {
+              "expression": "role_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "safe_role_protocols_role_id_safe_roles_id_fk": {
+          "name": "safe_role_protocols_role_id_safe_roles_id_fk",
+          "tableFrom": "safe_role_protocols",
+          "tableTo": "safe_roles",
+          "columnsFrom": [
+            "role_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.safe_roles": {
+      "name": "safe_roles",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "safe_wallet_id": {
+          "name": "safe_wallet_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "role_type": {
+          "name": "role_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'automation'"
+        },
+        "role_key": {
+          "name": "role_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "roles_modifier_address": {
+          "name": "roles_modifier_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "delegate_address": {
+          "name": "delegate_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "installed_tx_hash": {
+          "name": "installed_tx_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_reconciled_at": {
+          "name": "last_reconciled_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "safe_roles_safe_type_unique": {
+          "name": "safe_roles_safe_type_unique",
+          "columns": [
+            {
+              "expression": "safe_wallet_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "role_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_safe_roles_safe": {
+          "name": "idx_safe_roles_safe",
           "columns": [
             {
               "expression": "safe_wallet_id",
@@ -3312,9 +3484,9 @@
         }
       },
       "foreignKeys": {
-        "safe_token_limits_safe_wallet_id_safe_wallets_id_fk": {
-          "name": "safe_token_limits_safe_wallet_id_safe_wallets_id_fk",
-          "tableFrom": "safe_token_limits",
+        "safe_roles_safe_wallet_id_safe_wallets_id_fk": {
+          "name": "safe_roles_safe_wallet_id_safe_wallets_id_fk",
+          "tableFrom": "safe_roles",
           "tableTo": "safe_wallets",
           "columnsFrom": [
             "safe_wallet_id"
@@ -3427,6 +3599,13 @@
           "type": "timestamp",
           "primaryKey": false,
           "notNull": false
+        },
+        "is_signing_active": {
+          "name": "is_signing_active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         },
         "created_at": {
           "name": "created_at",
