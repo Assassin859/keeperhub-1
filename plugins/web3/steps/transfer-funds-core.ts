@@ -21,7 +21,10 @@ import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import { getErrorMessage } from "@/lib/utils";
 import { generateId } from "@/lib/utils/id";
-import { executeNativeTransferAsSafe } from "@/lib/safe/execute-as-safe";
+import {
+  executeNativeTransferAsRole,
+  executeNativeTransferAsSafe,
+} from "@/lib/safe/execute-as-safe";
 import { resolveSignerMode } from "@/lib/safe/signer-resolver";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import { formatContractError } from "@/lib/web3/decode-revert-error";
@@ -260,38 +263,59 @@ export async function transferFundsCore(
     }
 
     try {
-      const receipt =
-        signerMode.kind === "safe"
-          ? await executeNativeTransferAsSafe(
-              signer,
-              {
-                safeAddress: signerMode.safeAddress,
-                ownerAddress: signerMode.ownerAddress,
-                to: recipientAddress,
-                amount: amountInWei,
-              },
-              session,
-              {
-                chainId,
-                triggerType: txContext.triggerType ?? "manual",
-                workflowId,
-                rpcManager,
-              }
-            )
-          : await adapter.sendTransaction(
-              signer,
-              {
-                to: recipientAddress,
-                value: amountInWei,
-              },
-              session,
-              {
-                triggerType: txContext.triggerType ?? "manual",
-                gasOverrides: { multiplierOverride, gasLimitOverride },
-                workflowId,
-                rpcManager,
-              }
-            );
+      let receipt: Awaited<ReturnType<typeof adapter.sendTransaction>>;
+      if (signerMode.kind === "safe-role") {
+        receipt = await executeNativeTransferAsRole(
+          signer,
+          {
+            safeAddress: signerMode.safeAddress,
+            delegateAddress: signerMode.delegateAddress,
+            rolesModifierAddress: signerMode.rolesModifierAddress,
+            roleKey: signerMode.roleKey,
+            to: recipientAddress,
+            amount: amountInWei,
+          },
+          session,
+          {
+            chainId,
+            triggerType: txContext.triggerType ?? "manual",
+            workflowId,
+            rpcManager,
+          }
+        );
+      } else if (signerMode.kind === "safe") {
+        receipt = await executeNativeTransferAsSafe(
+          signer,
+          {
+            safeAddress: signerMode.safeAddress,
+            ownerAddress: signerMode.ownerAddress,
+            to: recipientAddress,
+            amount: amountInWei,
+          },
+          session,
+          {
+            chainId,
+            triggerType: txContext.triggerType ?? "manual",
+            workflowId,
+            rpcManager,
+          }
+        );
+      } else {
+        receipt = await adapter.sendTransaction(
+          signer,
+          {
+            to: recipientAddress,
+            value: amountInWei,
+          },
+          session,
+          {
+            triggerType: txContext.triggerType ?? "manual",
+            gasOverrides: { multiplierOverride, gasLimitOverride },
+            workflowId,
+            rpcManager,
+          }
+        );
+      }
 
       const gasUsedUnits = receipt.gasUsed.toString();
       const effectiveGasPrice = receipt.effectiveGasPrice.toString();

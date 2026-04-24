@@ -3,6 +3,7 @@ import "server-only";
 import { ethers } from "ethers";
 import type { RpcProviderManager } from "@/lib/rpc-provider";
 import { buildExecTransactionCalldata } from "@/lib/safe/allowance-module";
+import { buildExecTransactionWithRoleCalldata } from "@/lib/safe/zodiac-roles";
 import type { TransactionReceipt } from "@/lib/web3/chain-adapter/types";
 import { getGasStrategy, type TriggerType } from "@/lib/web3/gas-strategy";
 import { getNonceManager, type NonceSession } from "@/lib/web3/nonce-manager";
@@ -112,6 +113,207 @@ export async function executeContractCallAsSafe(
     throw new Error("Safe-routed transaction sent but receipt unavailable");
   }
 
+  await nonceManager.confirmTransaction(tx.hash);
+  return {
+    hash: receipt.hash,
+    gasUsed: receipt.gasUsed,
+    effectiveGasPrice: receipt.gasPrice,
+    blockNumber: receipt.blockNumber,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Role-routed variants -- used when a Zodiac Roles Modifier is installed on
+// the Safe and the signer-resolver returns kind === "safe-role".
+//
+// The delegate (same Turnkey EOA in MVP) sends directly to the modifier
+// (NOT through the Safe). The modifier validates target + function + params
+// against the role, then calls back into the Safe via
+// `execTransactionFromModule`. msg.sender at the target still resolves to
+// the Safe address.
+// ---------------------------------------------------------------------------
+
+export type ExecuteAsRoleRequest = {
+  safeAddress: string;
+  /** Delegate EOA authorised to use the role (our Turnkey EOA) */
+  delegateAddress: string;
+  /** Proxied Roles Modifier address deployed per-Safe */
+  rolesModifierAddress: string;
+  /** bytes32 role key */
+  roleKey: string;
+  contractAddress: string;
+  abi: ethers.InterfaceAbi;
+  functionKey: string;
+  args: unknown[];
+  value?: bigint;
+};
+
+export async function executeContractCallAsRole(
+  signer: ethers.Signer,
+  request: ExecuteAsRoleRequest,
+  session: NonceSession,
+  options: ExecuteAsSafeOptions
+): Promise<TransactionReceipt> {
+  const provider = signer.provider;
+  if (!provider) {
+    throw new Error("Signer has no provider");
+  }
+
+  const contractInterface = new ethers.Interface(request.abi);
+  const innerCalldata = contractInterface.encodeFunctionData(
+    request.functionKey,
+    request.args
+  );
+
+  const outerCalldata = buildExecTransactionWithRoleCalldata({
+    to: request.contractAddress,
+    value: request.value ?? BigInt(0),
+    data: innerCalldata,
+    operation: 0,
+    roleKey: request.roleKey,
+    shouldRevert: true,
+  });
+
+  const nonceManager = getNonceManager();
+  const gasStrategy = getGasStrategy();
+
+  const estimatedGas = options.rpcManager
+    ? await options.rpcManager.executeWithFailover(
+        (rpcProvider) =>
+          rpcProvider.estimateGas({
+            to: request.rolesModifierAddress,
+            data: outerCalldata,
+            from: request.delegateAddress,
+          }),
+        "preflight"
+      )
+    : await provider.estimateGas({
+        to: request.rolesModifierAddress,
+        data: outerCalldata,
+        from: request.delegateAddress,
+      });
+
+  const gasConfig = await gasStrategy.getGasConfig(
+    provider,
+    options.triggerType,
+    estimatedGas,
+    options.chainId
+  );
+
+  const nonce = nonceManager.getNextNonce(session);
+
+  const tx = await signer.sendTransaction({
+    to: request.rolesModifierAddress,
+    data: outerCalldata,
+    value: BigInt(0),
+    nonce,
+    gasLimit: gasConfig.gasLimit,
+    maxFeePerGas: gasConfig.maxFeePerGas,
+    maxPriorityFeePerGas: gasConfig.maxPriorityFeePerGas,
+    chainId: options.chainId,
+  });
+
+  await nonceManager.recordTransaction(
+    session,
+    nonce,
+    tx.hash,
+    options.workflowId,
+    gasConfig.maxFeePerGas.toString()
+  );
+
+  const receipt = await tx.wait();
+  if (!receipt) {
+    throw new Error("Role-routed transaction sent but receipt unavailable");
+  }
+  await nonceManager.confirmTransaction(tx.hash);
+  return {
+    hash: receipt.hash,
+    gasUsed: receipt.gasUsed,
+    effectiveGasPrice: receipt.gasPrice,
+    blockNumber: receipt.blockNumber,
+  };
+}
+
+export type ExecuteNativeAsRoleRequest = {
+  safeAddress: string;
+  delegateAddress: string;
+  rolesModifierAddress: string;
+  roleKey: string;
+  to: string;
+  amount: bigint;
+};
+
+export async function executeNativeTransferAsRole(
+  signer: ethers.Signer,
+  request: ExecuteNativeAsRoleRequest,
+  session: NonceSession,
+  options: ExecuteAsSafeOptions
+): Promise<TransactionReceipt> {
+  const provider = signer.provider;
+  if (!provider) {
+    throw new Error("Signer has no provider");
+  }
+
+  const outerCalldata = buildExecTransactionWithRoleCalldata({
+    to: request.to,
+    value: request.amount,
+    data: "0x",
+    operation: 0,
+    roleKey: request.roleKey,
+    shouldRevert: true,
+  });
+
+  const nonceManager = getNonceManager();
+  const gasStrategy = getGasStrategy();
+
+  const estimatedGas = options.rpcManager
+    ? await options.rpcManager.executeWithFailover(
+        (rpcProvider) =>
+          rpcProvider.estimateGas({
+            to: request.rolesModifierAddress,
+            data: outerCalldata,
+            from: request.delegateAddress,
+          }),
+        "preflight"
+      )
+    : await provider.estimateGas({
+        to: request.rolesModifierAddress,
+        data: outerCalldata,
+        from: request.delegateAddress,
+      });
+
+  const gasConfig = await gasStrategy.getGasConfig(
+    provider,
+    options.triggerType,
+    estimatedGas,
+    options.chainId
+  );
+
+  const nonce = nonceManager.getNextNonce(session);
+
+  const tx = await signer.sendTransaction({
+    to: request.rolesModifierAddress,
+    data: outerCalldata,
+    value: BigInt(0),
+    nonce,
+    gasLimit: gasConfig.gasLimit,
+    maxFeePerGas: gasConfig.maxFeePerGas,
+    maxPriorityFeePerGas: gasConfig.maxPriorityFeePerGas,
+    chainId: options.chainId,
+  });
+
+  await nonceManager.recordTransaction(
+    session,
+    nonce,
+    tx.hash,
+    options.workflowId,
+    gasConfig.maxFeePerGas.toString()
+  );
+
+  const receipt = await tx.wait();
+  if (!receipt) {
+    throw new Error("Role-routed native transfer sent but receipt unavailable");
+  }
   await nonceManager.confirmTransaction(tx.hash);
   return {
     hash: receipt.hash,

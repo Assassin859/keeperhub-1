@@ -26,7 +26,10 @@ import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import { getErrorMessage } from "@/lib/utils";
 import { generateId } from "@/lib/utils/id";
-import { executeContractCallAsSafe } from "@/lib/safe/execute-as-safe";
+import {
+  executeContractCallAsRole,
+  executeContractCallAsSafe,
+} from "@/lib/safe/execute-as-safe";
 import { resolveSignerMode } from "@/lib/safe/signer-resolver";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import { formatContractError } from "@/lib/web3/decode-revert-error";
@@ -459,42 +462,65 @@ export async function transferTokenCore(
         };
       }
 
-      const receipt =
-        signerMode.kind === "safe"
-          ? await executeContractCallAsSafe(
-              signer,
-              {
-                safeAddress: signerMode.safeAddress,
-                ownerAddress: signerMode.ownerAddress,
-                contractAddress: tokenAddress,
-                abi: ERC20_ABI,
-                functionKey: "transfer",
-                args: [recipientAddress, amountRaw],
-              },
-              session,
-              {
-                chainId,
-                triggerType: txContext.triggerType ?? "manual",
-                workflowId,
-                rpcManager,
-              }
-            )
-          : await adapter.executeContractCall(
-              signer,
-              {
-                contractAddress: tokenAddress,
-                abi: ERC20_ABI,
-                functionKey: "transfer",
-                args: [recipientAddress, amountRaw],
-              },
-              session,
-              {
-                triggerType: txContext.triggerType ?? "manual",
-                gasOverrides: { multiplierOverride, gasLimitOverride },
-                workflowId,
-                rpcManager,
-              }
-            );
+      let receipt: Awaited<ReturnType<typeof adapter.executeContractCall>>;
+      if (signerMode.kind === "safe-role") {
+        receipt = await executeContractCallAsRole(
+          signer,
+          {
+            safeAddress: signerMode.safeAddress,
+            delegateAddress: signerMode.delegateAddress,
+            rolesModifierAddress: signerMode.rolesModifierAddress,
+            roleKey: signerMode.roleKey,
+            contractAddress: tokenAddress,
+            abi: ERC20_ABI,
+            functionKey: "transfer",
+            args: [recipientAddress, amountRaw],
+          },
+          session,
+          {
+            chainId,
+            triggerType: txContext.triggerType ?? "manual",
+            workflowId,
+            rpcManager,
+          }
+        );
+      } else if (signerMode.kind === "safe") {
+        receipt = await executeContractCallAsSafe(
+          signer,
+          {
+            safeAddress: signerMode.safeAddress,
+            ownerAddress: signerMode.ownerAddress,
+            contractAddress: tokenAddress,
+            abi: ERC20_ABI,
+            functionKey: "transfer",
+            args: [recipientAddress, amountRaw],
+          },
+          session,
+          {
+            chainId,
+            triggerType: txContext.triggerType ?? "manual",
+            workflowId,
+            rpcManager,
+          }
+        );
+      } else {
+        receipt = await adapter.executeContractCall(
+          signer,
+          {
+            contractAddress: tokenAddress,
+            abi: ERC20_ABI,
+            functionKey: "transfer",
+            args: [recipientAddress, amountRaw],
+          },
+          session,
+          {
+            triggerType: txContext.triggerType ?? "manual",
+            gasOverrides: { multiplierOverride, gasLimitOverride },
+            workflowId,
+            rpcManager,
+          }
+        );
+      }
 
       const gasUsedUnits = receipt.gasUsed.toString();
       const effectiveGasPrice = receipt.effectiveGasPrice.toString();

@@ -1,14 +1,27 @@
+import { ethers } from "ethers";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getSafeForOrg, validateSafeAdmin } from "@/lib/safe/auth";
-import { revokeTokenAllowance } from "@/lib/safe/modules";
+import { revokeRoleTokenAllowance } from "@/lib/safe/roles-orchestrator";
+
+type RouteParams = {
+  params: Promise<{ safeId: string; tokenAddress: string }>;
+};
 
 export async function DELETE(
   request: Request,
-  { params }: { params: Promise<{ safeId: string; tokenAddress: string }> }
+  { params }: RouteParams
 ): Promise<NextResponse> {
   try {
+    const { safeId, tokenAddress } = await params;
+    if (!ethers.isAddress(tokenAddress)) {
+      return NextResponse.json(
+        { error: `Invalid token address: ${tokenAddress}` },
+        { status: 400 }
+      );
+    }
+
     const admin = await validateSafeAdmin(request);
     if ("error" in admin) {
       return NextResponse.json(
@@ -17,19 +30,15 @@ export async function DELETE(
       );
     }
 
-    const { safeId, tokenAddress } = await params;
     const safe = await getSafeForOrg({
       safeId,
       organizationId: admin.organizationId,
     });
     if (!safe) {
-      return NextResponse.json(
-        { error: "Safe not found for this organization" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Safe not found" }, { status: 404 });
     }
 
-    const result = await revokeTokenAllowance({
+    const result = await revokeRoleTokenAllowance({
       organizationId: admin.organizationId,
       chainId: safe.chainId,
       tokenAddress,
@@ -38,11 +47,11 @@ export async function DELETE(
     if (!result.success) {
       logSystemError(
         ErrorCategory.TRANSACTION,
-        `[Safe] Revoke allowance endpoint failed for org=${admin.organizationId} safe=${safe.id} token=${tokenAddress}`,
+        `[Safe] Revoke role allowance failed safe=${safe.id} token=${tokenAddress}`,
         new Error(result.error),
         {
-          endpoint: "/api/user/safe/[safeId]/allowances/[tokenAddress]",
-          component: "safe-allowances-api",
+          endpoint: "/api/user/safe/[safeId]/role/allowances/[tokenAddress]",
+          component: "safe-role-allowances-api",
           chain_id: safe.chainId.toString(),
         }
       );
@@ -58,6 +67,6 @@ export async function DELETE(
       },
     });
   } catch (error) {
-    return apiError(error, "Failed to revoke Safe spending limit");
+    return apiError(error, "Failed to revoke Safe role allowance");
   }
 }

@@ -3,7 +3,7 @@ import "server-only";
 import { and, eq } from "drizzle-orm";
 import { normalizeAddressForStorage } from "@/lib/address-utils";
 import { db } from "@/lib/db";
-import { safeWallets } from "@/lib/db/schema";
+import { safeRoles, safeWallets } from "@/lib/db/schema";
 import {
   getOrganizationWallet,
   getOrganizationWalletAddress,
@@ -13,10 +13,18 @@ import {
  * Resolution result: which mode should a workflow write on this (org, chain)
  * execute in, and what addresses matter.
  *
- * In both modes the Turnkey EOA signs the outer Ethereum tx (nonce on the
+ * In every mode the Turnkey EOA signs the outer Ethereum tx (nonce on the
  * EOA, gas paid by the EOA). The difference is `msg.sender` at the target
  * contract, and therefore which address needs to hold the funds and receive
  * protocol positions.
+ *
+ * Modes:
+ *   - "eoa"       : Turnkey signs and calls the target directly.
+ *   - "safe"      : Safe mode ON but no Zodiac Role is active; writes go via
+ *                   owner-signed `safe.execTransaction` (no policy gating).
+ *   - "safe-role" : Safe mode ON and a Zodiac Role is applied; writes go via
+ *                   `rolesModifier.execTransactionWithRole` so every call is
+ *                   validated against the role's scope + allowances.
  */
 export type SignerMode =
   | {
@@ -28,6 +36,15 @@ export type SignerMode =
       ownerAddress: string;
       safeAddress: string;
       safeWalletId: string;
+    }
+  | {
+      kind: "safe-role";
+      ownerAddress: string;
+      safeAddress: string;
+      safeWalletId: string;
+      rolesModifierAddress: string;
+      roleKey: string;
+      delegateAddress: string;
     };
 
 /**
@@ -72,6 +89,39 @@ export async function resolveSignerMode(
   }
   if (safe.status !== "deployed" || !safe.isSigningActive) {
     return { kind: "eoa", ownerAddress };
+  }
+
+  // Check whether an active Zodiac Role is installed for this Safe. If so,
+  // every workflow write routes through `execTransactionWithRole` so the
+  // modifier can enforce scope + allowances. If not, fall back to plain
+  // owner-signed `execTransaction` (policy gating unavailable).
+  const roleRows = await db
+    .select({
+      rolesModifierAddress: safeRoles.rolesModifierAddress,
+      roleKey: safeRoles.roleKey,
+      delegateAddress: safeRoles.delegateAddress,
+      status: safeRoles.status,
+    })
+    .from(safeRoles)
+    .where(
+      and(
+        eq(safeRoles.safeWalletId, safe.id),
+        eq(safeRoles.roleType, "automation")
+      )
+    )
+    .limit(1);
+
+  const role = roleRows[0];
+  if (role && role.status === "active") {
+    return {
+      kind: "safe-role",
+      ownerAddress,
+      safeAddress: safe.safeAddress,
+      safeWalletId: safe.id,
+      rolesModifierAddress: role.rolesModifierAddress,
+      roleKey: role.roleKey,
+      delegateAddress: role.delegateAddress,
+    };
   }
 
   return {

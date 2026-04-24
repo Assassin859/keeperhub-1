@@ -1,0 +1,82 @@
+/**
+ * Zodiac Roles Modifier v2 contract address registry.
+ *
+ * Roles v2.0.0 uses deterministic deployment (Nick's method) so the singleton
+ * and ModuleProxyFactory addresses are identical across all supported chains.
+ * Per-chain overrides are supported via CHAIN_OVERRIDES for chains that have
+ * a non-canonical deployment.
+ *
+ * Source: https://github.com/gnosisguild/zodiac-modifier-roles/blob/main/packages/deployments
+ * and verified via Clawlett (https://github.com/Creator-Bid/Clawlett) contract
+ * constants + on-chain inspection.
+ */
+
+import { ethers } from "ethers";
+
+export const ZODIAC_ROLES_VERSION: string = "2.0.0";
+
+export type ZodiacContractAddresses = {
+  /** Roles Modifier v2 implementation singleton (master copy) */
+  rolesSingleton: string;
+  /** Zodiac ModuleProxyFactory used to deploy a per-Safe Roles proxy */
+  moduleProxyFactory: string;
+};
+
+const CANONICAL_ADDRESSES: ZodiacContractAddresses = {
+  rolesSingleton: "0x9646fDAD06d3e24444381f44362a3B0eB343D337",
+  moduleProxyFactory: "0x000000000000aDdB49795b0f9bA5BC298cDda236",
+} as const;
+
+/**
+ * Per-chain overrides for chains that do not use the canonical Zodiac
+ * deployment. Populated empty for launch; every supported Safe chain
+ * (Ethereum, Optimism, Base, Arbitrum + their Sepolia testnets) uses the
+ * canonical addresses.
+ */
+const CHAIN_OVERRIDES: Record<number, Partial<ZodiacContractAddresses>> = {};
+
+export function getZodiacContracts(chainId: number): ZodiacContractAddresses {
+  const overrides = CHAIN_OVERRIDES[chainId] ?? {};
+  return { ...CANONICAL_ADDRESSES, ...overrides };
+}
+
+export function getRolesSingletonAddress(chainId: number): string {
+  return getZodiacContracts(chainId).rolesSingleton;
+}
+
+export function getModuleProxyFactoryAddress(chainId: number): string {
+  return getZodiacContracts(chainId).moduleProxyFactory;
+}
+
+/**
+ * Role key helpers. Zodiac Roles uses `bytes32` identifiers for each role.
+ * Our convention: keccak256("kh-role:" || orgId || ":" || chainId || ":automation").
+ * Using a deterministic derivation means the role key is reproducible if we
+ * ever need to re-derive it (e.g. to query on-chain state).
+ */
+export function orgAutomationRoleKey(
+  organizationId: string,
+  chainId: number
+): string {
+  const encoded = ethers.solidityPacked(
+    ["string", "string", "string", "uint256", "string"],
+    ["kh-role:", organizationId, ":", BigInt(chainId), ":automation"]
+  );
+  return ethers.keccak256(encoded);
+}
+
+/**
+ * Allowance key helpers. Zodiac allowances are keyed by `bytes32`. We derive
+ * per-token allowance keys from the role key + token address so they're
+ * deterministic and collision-free across roles/tokens.
+ */
+export function tokenAllowanceKey(
+  roleKey: string,
+  tokenAddress: string
+): string {
+  const encoded = ethers.solidityPacked(
+    ["bytes32", "address"],
+    [roleKey, ethers.getAddress(tokenAddress)]
+  );
+  return ethers.keccak256(encoded);
+}

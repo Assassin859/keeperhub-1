@@ -1,0 +1,287 @@
+import { NextResponse } from "next/server";
+import { apiError } from "@/lib/api-error";
+import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { getSafeForOrg, validateSafeAdmin } from "@/lib/safe/auth";
+import { PROTOCOL_CATALOG } from "@/lib/safe/protocol-registry";
+import {
+  getSafeRole,
+  installRolesWithInitialConfig,
+  listRoleAllowances,
+  listRoleProtocols,
+  type ProtocolInput,
+} from "@/lib/safe/roles-orchestrator";
+
+type RouteParams = { params: Promise<{ safeId: string }> };
+
+type InstallBodyTokenEntry = {
+  tokenAddress?: string;
+  tokenSymbol?: string;
+  tokenDecimals?: number;
+  amountHuman?: string;
+  periodSeconds?: number;
+};
+
+type InstallBody = {
+  protocols?: Array<
+    | string
+    | {
+        slug?: string;
+        tokens?: InstallBodyTokenEntry[];
+      }
+  >;
+  allowedTokenSymbols?: string[];
+  allowances?: Array<{
+    tokenAddress: string;
+    maxRefillWei: string;
+    refillWei: string;
+    periodSeconds: number;
+  }>;
+};
+
+/**
+ * Accept both the new `{ protocols: ProtocolInput[] }` shape and the legacy
+ * `{ protocols: string[], allowedTokenSymbols, allowances }` shape while the
+ * wizard UI is migrating. Returns the normalised protocol list plus any
+ * slug that was dropped because it is not in the catalog.
+ */
+function normaliseInstallBody(body: InstallBody): {
+  protocols: ProtocolInput[];
+  skipped: string[];
+} {
+  const raw = body.protocols ?? [];
+  const skipped: string[] = [];
+
+  const looksLikeNewShape =
+    raw.length > 0 && typeof raw[0] === "object" && raw[0] !== null;
+
+  if (looksLikeNewShape) {
+    const protocols: ProtocolInput[] = [];
+    for (const entry of raw) {
+      if (typeof entry === "string") {
+        continue;
+      }
+      const slug = entry?.slug;
+      if (!slug) {
+        continue;
+      }
+      if (!(slug in PROTOCOL_CATALOG)) {
+        skipped.push(slug);
+        continue;
+      }
+      const tokens = (entry.tokens ?? []).flatMap((t) => {
+        if (
+          !(t.tokenAddress && t.tokenSymbol) ||
+          typeof t.tokenDecimals !== "number" ||
+          !t.amountHuman ||
+          typeof t.periodSeconds !== "number"
+        ) {
+          return [];
+        }
+        return [
+          {
+            tokenAddress: t.tokenAddress,
+            tokenSymbol: t.tokenSymbol,
+            tokenDecimals: t.tokenDecimals,
+            amountHuman: t.amountHuman,
+            periodSeconds: t.periodSeconds,
+          },
+        ];
+      });
+      protocols.push({ slug, tokens });
+    }
+    return { protocols, skipped };
+  }
+
+  const legacySlugs = raw.filter(
+    (entry): entry is string => typeof entry === "string"
+  );
+  const legacySymbols = body.allowedTokenSymbols ?? [];
+  const legacyAllowances = body.allowances ?? [];
+  const tokens = legacyAllowances.map((a) => ({
+    tokenAddress: a.tokenAddress,
+    tokenSymbol: legacySymbols[0] ?? "UNKNOWN",
+    tokenDecimals: 18,
+    amountHuman: a.maxRefillWei,
+    periodSeconds: a.periodSeconds,
+  }));
+  const protocols: ProtocolInput[] = [];
+  for (const slug of legacySlugs) {
+    if (!(slug in PROTOCOL_CATALOG)) {
+      skipped.push(slug);
+      continue;
+    }
+    protocols.push({ slug, tokens });
+  }
+  return { protocols, skipped };
+}
+
+export async function GET(
+  request: Request,
+  { params }: RouteParams
+): Promise<NextResponse> {
+  try {
+    const admin = await validateSafeAdmin(request);
+    if ("error" in admin) {
+      return NextResponse.json(
+        { error: admin.error },
+        { status: admin.status }
+      );
+    }
+
+    const { safeId } = await params;
+    const safe = await getSafeForOrg({
+      safeId,
+      organizationId: admin.organizationId,
+    });
+    if (!safe) {
+      return NextResponse.json(
+        { error: "Safe not found for this organization" },
+        { status: 404 }
+      );
+    }
+
+    const role = await getSafeRole(safe.id);
+    if (!role) {
+      return NextResponse.json({
+        installed: false,
+        role: null,
+        protocols: [],
+        allowances: [],
+      });
+    }
+
+    const [protocols, allowances] = await Promise.all([
+      listRoleProtocols(role.id),
+      listRoleAllowances(role.id),
+    ]);
+
+    return NextResponse.json({
+      installed: true,
+      role: {
+        id: role.id,
+        safeWalletId: role.safeWalletId,
+        roleKey: role.roleKey,
+        rolesModifierAddress: role.rolesModifierAddress,
+        delegateAddress: role.delegateAddress,
+        status: role.status,
+        installedTxHash: role.installedTxHash,
+        lastReconciledAt: role.lastReconciledAt,
+        createdAt: role.createdAt,
+      },
+      protocols: protocols.map((p) => ({
+        id: p.id,
+        protocolSlug: p.protocolSlug,
+        templateSlug: p.templateSlug,
+        allowedTokenSymbols: p.allowedTokenSymbols,
+        targetAddresses: p.targetAddresses,
+        allowedSelectors: p.allowedSelectors,
+        status: p.status,
+        lastUpdatedAt: p.lastUpdatedAt,
+      })),
+      allowances: allowances.map((a) => ({
+        id: a.id,
+        allowanceKey: a.allowanceKey,
+        tokenAddress: a.tokenAddress,
+        tokenSymbol: a.tokenSymbol,
+        tokenDecimals: a.tokenDecimals,
+        maxRefillWei: a.maxRefillWei,
+        refillWei: a.refillWei,
+        periodSeconds: a.periodSeconds,
+        lastChainBalanceWei: a.lastChainBalanceWei,
+        lastChainTimestamp: a.lastChainTimestamp,
+        lastReconciledAt: a.lastReconciledAt,
+        lastUpdatedAt: a.lastUpdatedAt,
+      })),
+    });
+  } catch (error) {
+    return apiError(error, "Failed to load Safe role state");
+  }
+}
+
+export async function POST(
+  request: Request,
+  { params }: RouteParams
+): Promise<NextResponse> {
+  try {
+    const admin = await validateSafeAdmin(request);
+    if ("error" in admin) {
+      return NextResponse.json(
+        { error: admin.error },
+        { status: admin.status }
+      );
+    }
+
+    const { safeId } = await params;
+    const safe = await getSafeForOrg({
+      safeId,
+      organizationId: admin.organizationId,
+    });
+    if (!safe) {
+      return NextResponse.json(
+        { error: "Safe not found for this organization" },
+        { status: 404 }
+      );
+    }
+
+    const body = (await request.json()) as InstallBody;
+    const { protocols: perProtocol, skipped } = normaliseInstallBody(body);
+
+    if (perProtocol.length === 0) {
+      return NextResponse.json(
+        { error: "At least one supported protocol must be selected" },
+        { status: 400 }
+      );
+    }
+
+    const result = await installRolesWithInitialConfig({
+      organizationId: admin.organizationId,
+      chainId: safe.chainId,
+      protocols: perProtocol,
+    });
+
+    if (!result.success) {
+      logSystemError(
+        ErrorCategory.TRANSACTION,
+        `[Safe] Roles install failed org=${admin.organizationId} safe=${safe.id}`,
+        new Error(result.error),
+        {
+          endpoint: "/api/user/safe/[safeId]/role",
+          component: "safe-role-api",
+          chain_id: safe.chainId.toString(),
+        }
+      );
+      return NextResponse.json({ error: result.error }, { status: 500 });
+    }
+
+    return NextResponse.json({
+      success: true,
+      alreadyInstalled: result.alreadyInstalled,
+      role: {
+        id: result.role.id,
+        safeWalletId: result.role.safeWalletId,
+        roleKey: result.role.roleKey,
+        rolesModifierAddress: result.role.rolesModifierAddress,
+        delegateAddress: result.role.delegateAddress,
+        status: result.role.status,
+      },
+      protocols: result.protocols.map((p) => ({
+        id: p.id,
+        protocolSlug: p.protocolSlug,
+        status: p.status,
+      })),
+      allowances: result.allowances.map((a) => ({
+        id: a.id,
+        tokenAddress: a.tokenAddress,
+        tokenSymbol: a.tokenSymbol,
+        maxRefillWei: a.maxRefillWei,
+        refillWei: a.refillWei,
+        periodSeconds: a.periodSeconds,
+      })),
+      applied: result.applied,
+      skipped: [...result.skipped, ...skipped],
+      conflictedTokens: result.conflictedTokens,
+    });
+  } catch (error) {
+    return apiError(error, "Failed to install Zodiac Roles");
+  }
+}
