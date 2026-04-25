@@ -46,8 +46,8 @@ function buildFunctionArgs(
 
   const rawInputs = protocolAction.inputs.map((inp) => {
     const raw = input[inp.name];
-    if (raw === undefined) {
-      return { name: inp.name, value: "" };
+    if (raw === undefined || raw === "") {
+      return { name: inp.name, value: inp.default ?? "" };
     }
     const value = typeof raw === "object" ? JSON.stringify(raw) : String(raw);
     return { name: inp.name, value };
