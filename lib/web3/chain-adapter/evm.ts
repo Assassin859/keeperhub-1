@@ -80,7 +80,8 @@ export class EvmChainAdapter implements ChainAdapter {
       estimatedGas,
       this.chainId,
       options.gasOverrides.multiplierOverride,
-      options.gasOverrides.gasLimitOverride
+      options.gasOverrides.gasLimitOverride,
+      options.rpcManager
     );
 
     const tx = await signer.sendTransaction({
@@ -174,7 +175,8 @@ export class EvmChainAdapter implements ChainAdapter {
       estimatedGas,
       this.chainId,
       options.gasOverrides.multiplierOverride,
-      options.gasOverrides.gasLimitOverride
+      options.gasOverrides.gasLimitOverride,
+      options.rpcManager
     );
 
     const tx = await contract[request.functionKey](...request.args, {

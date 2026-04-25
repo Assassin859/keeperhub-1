@@ -26,28 +26,53 @@ import {
 vi.unmock("@/lib/db");
 vi.unmock("server-only");
 
+import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
+import type { RpcProviderManager } from "@/lib/rpc-provider";
 import { AdaptiveGasStrategy, resetGasStrategy } from "@/lib/web3/gas-strategy";
 
 // Skip if SKIP_INFRA_TESTS is true (no network access)
 const shouldSkip = process.env.SKIP_INFRA_TESTS === "true";
 
-// Real RPC endpoints - resolved from CHAIN_RPC_CONFIG with public fallbacks
-const SEPOLIA_RPC = getRpcUrlByChainId(11_155_111, "primary");
-const BASE_SEPOLIA_RPC = getRpcUrlByChainId(84_532, "primary");
+// Real RPC endpoints — primary + fallback so the failover path is actually
+// exercised. KEEP-344 follow-up: previously these tests bypassed failover
+// entirely (raw JsonRpcProvider), so a 402 from Infura would propagate as a
+// hard failure. With both URLs wired through RpcProviderManager, the same
+// 402 now triggers failover to the secondary.
+const SEPOLIA_PRIMARY = getRpcUrlByChainId(11_155_111, "primary");
+const SEPOLIA_FALLBACK = getRpcUrlByChainId(11_155_111, "fallback");
+const BASE_SEPOLIA_PRIMARY = getRpcUrlByChainId(84_532, "primary");
+const BASE_SEPOLIA_FALLBACK = getRpcUrlByChainId(84_532, "fallback");
 
 describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
   let sepoliaProvider: ethers.JsonRpcProvider;
   let baseSepoliaProvider: ethers.JsonRpcProvider;
+  let sepoliaManager: RpcProviderManager;
+  let baseSepoliaManager: RpcProviderManager;
 
   beforeAll(async () => {
-    // Initialize providers
-    sepoliaProvider = new ethers.JsonRpcProvider(SEPOLIA_RPC);
-    baseSepoliaProvider = new ethers.JsonRpcProvider(BASE_SEPOLIA_RPC);
+    // Initialize providers (used as the raw provider arg) plus the failover
+    // manager (used to actually route RPC calls through executeWithFailover).
+    sepoliaProvider = new ethers.JsonRpcProvider(SEPOLIA_PRIMARY);
+    baseSepoliaProvider = new ethers.JsonRpcProvider(BASE_SEPOLIA_PRIMARY);
 
-    // Verify connectivity
+    sepoliaManager = await getRpcProviderFromUrls(
+      SEPOLIA_PRIMARY,
+      SEPOLIA_FALLBACK,
+      11_155_111,
+      "sepolia"
+    );
+    baseSepoliaManager = await getRpcProviderFromUrls(
+      BASE_SEPOLIA_PRIMARY,
+      BASE_SEPOLIA_FALLBACK,
+      84_532,
+      "base-sepolia"
+    );
+
+    // Verify connectivity (via the manager so a primary 402 still falls
+    // over to the secondary instead of skipping the whole suite).
     try {
-      await sepoliaProvider.getBlockNumber();
+      await sepoliaManager.executeWithFailover((p) => p.getBlockNumber());
     } catch (_error) {
       console.warn("Sepolia RPC not available, some tests may be skipped");
     }
@@ -69,7 +94,10 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
         sepoliaProvider,
         "manual",
         BigInt(21_000),
-        11_155_111 // Sepolia
+        11_155_111, // Sepolia
+        undefined,
+        undefined,
+        sepoliaManager
       );
 
       // Should return valid gas config
@@ -94,7 +122,10 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
         baseSepoliaProvider,
         "scheduled",
         BigInt(21_000),
-        84_532 // Base Sepolia
+        84_532, // Base Sepolia
+        undefined,
+        undefined,
+        baseSepoliaManager
       );
 
       expect(config.gasLimit).toBeGreaterThan(BigInt(21_000));
@@ -116,7 +147,10 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
         sepoliaProvider,
         "manual",
         estimatedGas,
-        11_155_111
+        11_155_111,
+        undefined,
+        undefined,
+        sepoliaManager
       );
 
       // Gas limit should be estimated * multiplier (default 2.0)
@@ -135,14 +169,20 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
         sepoliaProvider,
         "manual",
         BigInt(21_000),
-        11_155_111
+        11_155_111,
+        undefined,
+        undefined,
+        sepoliaManager
       );
 
       const scheduledConfig = await strategy.getGasConfig(
         sepoliaProvider,
         "scheduled",
         BigInt(21_000),
-        11_155_111
+        11_155_111,
+        undefined,
+        undefined,
+        sepoliaManager
       );
 
       // Manual triggers may use higher percentile fees for faster inclusion
@@ -163,7 +203,10 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
         sepoliaProvider,
         "webhook",
         BigInt(50_000),
-        11_155_111
+        11_155_111,
+        undefined,
+        undefined,
+        sepoliaManager
       );
 
       expect(config.gasLimit).toBeGreaterThan(BigInt(50_000));
@@ -180,7 +223,10 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
         sepoliaProvider,
         "scheduled",
         BigInt(21_000),
-        11_155_111
+        11_155_111,
+        undefined,
+        undefined,
+        sepoliaManager
       );
 
       // Config should be reasonable for Sepolia
@@ -240,7 +286,10 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
         sepoliaProvider,
         "manual",
         BigInt(21_000),
-        1 // Mainnet chain ID
+        1, // Mainnet chain ID
+        undefined,
+        undefined,
+        sepoliaManager
       );
 
       // Should apply mainnet gas limit multiplier (2.0 default)
@@ -256,7 +305,10 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
         sepoliaProvider,
         "scheduled",
         BigInt(21_000),
-        42_161 // Arbitrum
+        42_161, // Arbitrum
+        undefined,
+        undefined,
+        sepoliaManager
       );
 
       // Arbitrum has different gas model
@@ -272,7 +324,10 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
         baseSepoliaProvider,
         "manual",
         BigInt(21_000),
-        8453 // Base mainnet
+        8453, // Base mainnet
+        undefined,
+        undefined,
+        baseSepoliaManager
       );
 
       expect(config.gasLimit).toBeGreaterThan(BigInt(21_000));
@@ -288,7 +343,10 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
         sepoliaProvider,
         "manual",
         BigInt(21_000),
-        11_155_111
+        11_155_111,
+        undefined,
+        undefined,
+        sepoliaManager
       );
 
       // Default min priority fee is 0.1 gwei
@@ -309,7 +367,10 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
         sepoliaProvider,
         "manual",
         BigInt(1000),
-        11_155_111
+        11_155_111,
+        undefined,
+        undefined,
+        sepoliaManager
       );
 
       // Should still apply multiplier
@@ -324,7 +385,10 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
         sepoliaProvider,
         "manual",
         highGas,
-        11_155_111
+        11_155_111,
+        undefined,
+        undefined,
+        sepoliaManager
       );
 
       // Should apply multiplier even to high estimates
@@ -337,10 +401,16 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
     it("should handle RPC timeout gracefully", async () => {
       const strategy = new AdaptiveGasStrategy();
 
-      // Create a provider with very short timeout
-      const slowProvider = new ethers.JsonRpcProvider(SEPOLIA_RPC, undefined, {
-        staticNetwork: ethers.Network.from(11_155_111),
-      });
+      // Create a provider with very short timeout. Intentionally NOT routed
+      // through the failover manager — this test asserts graceful degradation
+      // in single-provider configurations.
+      const slowProvider = new ethers.JsonRpcProvider(
+        SEPOLIA_PRIMARY,
+        undefined,
+        {
+          staticNetwork: ethers.Network.from(11_155_111),
+        }
+      );
 
       // Should still return a config (may use fallback values)
       const config = await strategy.getGasConfig(
@@ -380,9 +450,16 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
 
 describe.skipIf(shouldSkip)("Gas Strategy Real Transaction Estimation", () => {
   let sepoliaProvider: ethers.JsonRpcProvider;
+  let sepoliaManager: RpcProviderManager;
 
-  beforeAll(() => {
-    sepoliaProvider = new ethers.JsonRpcProvider(SEPOLIA_RPC);
+  beforeAll(async () => {
+    sepoliaProvider = new ethers.JsonRpcProvider(SEPOLIA_PRIMARY);
+    sepoliaManager = await getRpcProviderFromUrls(
+      SEPOLIA_PRIMARY,
+      SEPOLIA_FALLBACK,
+      11_155_111,
+      "sepolia"
+    );
   });
 
   beforeEach(() => {
@@ -400,7 +477,10 @@ describe.skipIf(shouldSkip)("Gas Strategy Real Transaction Estimation", () => {
       sepoliaProvider,
       "manual",
       estimatedGas,
-      11_155_111
+      11_155_111,
+      undefined,
+      undefined,
+      sepoliaManager
     );
 
     // Should have buffer for ERC20 transfer
@@ -423,7 +503,10 @@ describe.skipIf(shouldSkip)("Gas Strategy Real Transaction Estimation", () => {
       sepoliaProvider,
       "webhook",
       estimatedGas,
-      11_155_111
+      11_155_111,
+      undefined,
+      undefined,
+      sepoliaManager
     );
 
     expect(config.gasLimit).toBeGreaterThan(estimatedGas);
