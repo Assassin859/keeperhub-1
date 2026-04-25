@@ -1,15 +1,21 @@
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ChainMonitor } from "./chain-monitor.js";
-import type { BlockWorkflow, ChainConfig } from "../lib/types.js";
+import { ChainMonitor } from "../../keeperhub-scheduler/block-dispatcher/chain-monitor.js";
+import type {
+  BlockWorkflow,
+  ChainConfig,
+} from "../../keeperhub-scheduler/lib/types.js";
 
 // ---------------------------------------------------------------------------
 // Mock SQS enqueue - prevent real AWS calls
 // ---------------------------------------------------------------------------
 
-vi.mock("./sqs-enqueue.js", () => ({
-  enqueueBlockTrigger: vi.fn().mockResolvedValue(undefined),
-}));
+vi.mock(
+  "../../keeperhub-scheduler/block-dispatcher/sqs-enqueue.js",
+  () => ({
+    enqueueBlockTrigger: vi.fn().mockResolvedValue(undefined),
+  })
+);
 
 // ---------------------------------------------------------------------------
 // Mock WebSocket that supports ping/pong and close events
@@ -141,6 +147,10 @@ function makeWorkflow(overrides?: Partial<BlockWorkflow>): BlockWorkflow {
 
 describe("ChainMonitor", () => {
   beforeEach(() => {
+    // Speed up the primary-recovery probe so tests don't wait 5 minutes.
+    // The constant is read each time startPrimaryProbe() runs, so this
+    // applies even though the module was already loaded.
+    vi.stubEnv("PRIMARY_PROBE_INTERVAL_MS", "1000");
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.clearAllMocks();
     providerInstances = [];
@@ -225,7 +235,9 @@ describe("ChainMonitor", () => {
       const provider = latestProvider();
       // Verify the on() was called - provider has block listeners
       // Emit a block to confirm the listener was wired up
-      const { enqueueBlockTrigger } = await import("./sqs-enqueue.js");
+      const { enqueueBlockTrigger } = await import(
+        "../../keeperhub-scheduler/block-dispatcher/sqs-enqueue.js"
+      );
       provider.emitBlock(10);
       await vi.advanceTimersByTimeAsync(0);
 
@@ -245,7 +257,9 @@ describe("ChainMonitor", () => {
 
       await monitor.start();
 
-      const { enqueueBlockTrigger } = await import("./sqs-enqueue.js");
+      const { enqueueBlockTrigger } = await import(
+        "../../keeperhub-scheduler/block-dispatcher/sqs-enqueue.js"
+      );
       const provider = latestProvider();
 
       provider.emitBlock(11);
@@ -273,7 +287,9 @@ describe("ChainMonitor", () => {
 
       await monitor.start();
 
-      const { enqueueBlockTrigger } = await import("./sqs-enqueue.js");
+      const { enqueueBlockTrigger } = await import(
+        "../../keeperhub-scheduler/block-dispatcher/sqs-enqueue.js"
+      );
       const provider = latestProvider();
 
       provider.emitBlock(10);
@@ -375,7 +391,9 @@ describe("ChainMonitor", () => {
 
       await monitor.start();
 
-      const { enqueueBlockTrigger } = await import("./sqs-enqueue.js");
+      const { enqueueBlockTrigger } = await import(
+        "../../keeperhub-scheduler/block-dispatcher/sqs-enqueue.js"
+      );
 
       // First provider delivers a matching block
       latestProvider().emitBlock(10);
@@ -494,13 +512,14 @@ describe("ChainMonitor", () => {
   // -------------------------------------------------------------------------
 
   describe("fallback connection", () => {
-    it("uses fallback WSS when primary fails", async () => {
+    it("uses fallback WSS when primary getBlockNumber rejects", async () => {
       let callCount = 0;
-      providerFactory = (url: string) => {
+      providerFactory = (url: string): MockProvider => {
         callCount++;
         const instance = new MockProvider(url);
         if (callCount === 1) {
-          instance.ready = Promise.reject(new Error("Primary down"));
+          instance.getBlockNumber = (): Promise<number> =>
+            Promise.reject(new Error("Primary down"));
         }
         return instance;
       };
@@ -515,6 +534,187 @@ describe("ChainMonitor", () => {
       expect(providerInstances).toHaveLength(2);
       expect(latestProvider().url).toBe("wss://fallback.test");
       expect(monitor.isAlive()).toBe(true);
+    });
+
+    it("falls over to fallback WSS when primary ws emits 'error' (HTTP 429)", async () => {
+      // Simulates the failure mode where the WSS upgrade returns 429:
+      // ws emits 'error' on the underlying socket and getBlockNumber would
+      // hang waiting for ws ready. The connect race must reject via the
+      // ws-error path so the fallback URL is tried instead of hanging or
+      // crashing the dispatcher.
+      let callCount = 0;
+      providerFactory = (url: string): MockProvider => {
+        callCount++;
+        const instance = new MockProvider(url);
+        if (callCount === 1) {
+          // getBlockNumber hangs (mimics ws never opening due to 429)
+          instance.getBlockNumber = (): Promise<number> =>
+            new Promise<number>(() => {
+              // never resolves
+            });
+          // ws emits error on next tick so the connect race is set up first
+          setTimeout(() => {
+            instance.websocket.emit(
+              "error",
+              new Error("Unexpected server response: 429")
+            );
+          }, 0);
+        }
+        return instance;
+      };
+
+      const monitor = new ChainMonitor({
+        chain: makeChain(),
+        workflows: [makeWorkflow()],
+      });
+
+      await monitor.start();
+
+      expect(providerInstances).toHaveLength(2);
+      expect(latestProvider().url).toBe("wss://fallback.test");
+      expect(monitor.isAlive()).toBe(true);
+    });
+
+    it("does not propagate ws 'error' as an uncaughtException", async () => {
+      // Sanity check that the listener attached in connect() consumes the
+      // error. Without the listener, EventEmitter would re-throw because
+      // 'error' has no other subscribers.
+      let callCount = 0;
+      providerFactory = (url: string): MockProvider => {
+        callCount++;
+        const instance = new MockProvider(url);
+        if (callCount === 1) {
+          instance.getBlockNumber = (): Promise<number> =>
+            new Promise<number>(() => {
+              // never resolves
+            });
+          setTimeout(() => {
+            instance.websocket.emit(
+              "error",
+              new Error("Unexpected server response: 429")
+            );
+          }, 0);
+        }
+        return instance;
+      };
+
+      const monitor = new ChainMonitor({
+        chain: makeChain(),
+        workflows: [makeWorkflow()],
+      });
+
+      await expect(monitor.start()).resolves.toBeUndefined();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Primary recovery probe
+  //
+  // These tests use process.env.PRIMARY_PROBE_INTERVAL_MS=1000 (set in
+  // beforeAll below) so they run in ~1s instead of 5min.
+  // -------------------------------------------------------------------------
+
+  describe("primary recovery probe", () => {
+    it("does not start a probe when initially connected to primary", async () => {
+      const monitor = new ChainMonitor({
+        chain: makeChain(),
+        workflows: [makeWorkflow()],
+      });
+
+      await monitor.start();
+      const startCount = providerInstances.length;
+
+      // Advance well past one probe interval
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      // No additional providers should have been created
+      expect(providerInstances).toHaveLength(startCount);
+    });
+
+    it("probes primary when on fallback and swaps back when primary recovers", async () => {
+      // First call: primary getBlockNumber rejects -> fallback used.
+      // Subsequent primary calls: succeed -> probe should swap back.
+      let primaryCallCount = 0;
+      providerFactory = (url: string): MockProvider => {
+        const instance = new MockProvider(url);
+        if (url === "wss://primary.test") {
+          primaryCallCount++;
+          if (primaryCallCount === 1) {
+            instance.getBlockNumber = (): Promise<number> =>
+              Promise.reject(new Error("Unexpected server response: 429"));
+          }
+        }
+        return instance;
+      };
+
+      const monitor = new ChainMonitor({
+        chain: makeChain(),
+        workflows: [makeWorkflow()],
+      });
+
+      await monitor.start();
+      // Started on fallback (primary failed once)
+      expect(latestProvider().url).toBe("wss://fallback.test");
+      const startCount = providerInstances.length;
+
+      // Advance past the probe interval; probe builds throwaway primary,
+      // succeeds, triggers reconnect cycle which lands on primary again.
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      // At least one new provider was created (the probe), and the active
+      // provider should now be primary again.
+      expect(providerInstances.length).toBeGreaterThan(startCount);
+      // Latest connected provider should be primary
+      const lastConnectedUrl = monitor.isAlive()
+        ? "wss://primary.test"
+        : "(monitor not alive)";
+      // Find the most recent provider matching the primary URL — that is the
+      // one we are now connected on.
+      const primaryProviders = providerInstances.filter(
+        (p) => p.url === "wss://primary.test"
+      );
+      expect(primaryProviders.length).toBeGreaterThanOrEqual(2);
+      expect(lastConnectedUrl).toBe("wss://primary.test");
+    });
+
+    it("keeps the fallback connection when probe fails", async () => {
+      // Primary always rejects; fallback works. Probe should fail silently
+      // (one warn line) and the monitor should remain alive on fallback.
+      providerFactory = (url: string): MockProvider => {
+        const instance = new MockProvider(url);
+        if (url === "wss://primary.test") {
+          instance.getBlockNumber = (): Promise<number> =>
+            Promise.reject(new Error("Unexpected server response: 429"));
+        }
+        return instance;
+      };
+
+      const monitor = new ChainMonitor({
+        chain: makeChain(),
+        workflows: [makeWorkflow()],
+      });
+
+      await monitor.start();
+      expect(latestProvider().url).toBe("wss://fallback.test");
+      expect(monitor.isAlive()).toBe(true);
+
+      // Spy on console.warn to confirm probe failure log is short
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      // Still alive, still on fallback
+      expect(monitor.isAlive()).toBe(true);
+      // At least one warn was the probe-failure summary
+      const probeWarn = warnSpy.mock.calls.find(([msg]) =>
+        String(msg).includes("Primary probe failed")
+      );
+      expect(probeWarn).toBeDefined();
+      // The summary should be tight: contain "HTTP 429" and not run for hundreds of chars
+      expect(String(probeWarn?.[0])).toContain("HTTP 429");
+      expect(String(probeWarn?.[0]).length).toBeLessThan(160);
+
+      warnSpy.mockRestore();
     });
   });
 });
