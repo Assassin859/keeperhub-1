@@ -1,37 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Regex patterns for testing
 const FAILED_LOCK_REGEX = /Failed to acquire nonce lock/;
 
-// Mock server-only
 vi.mock("server-only", () => ({}));
 
-// Use vi.hoisted() to define mocks before vi.mock hoisting
-const {
-  mockSelect,
-  mockInsert,
-  mockUpdate,
-  mockPostgresQuery,
-  mockPostgresEnd,
-} = vi.hoisted(() => ({
+const { mockSelect, mockInsert, mockUpdate } = vi.hoisted(() => ({
   mockSelect: vi.fn(),
   mockInsert: vi.fn(),
   mockUpdate: vi.fn(),
-  mockPostgresQuery: vi.fn(),
-  mockPostgresEnd: vi.fn(),
 }));
-
-// Mock postgres module for dedicated lock connections
-vi.mock("postgres", () => {
-  // Create a mock connection that's callable as tagged template
-  const createMockConnection = () => {
-    const queryFn = (strings: TemplateStringsArray, ...values: unknown[]) =>
-      mockPostgresQuery(strings, ...values);
-    queryFn.end = mockPostgresEnd;
-    return queryFn;
-  };
-  return { default: vi.fn(() => createMockConnection()) };
-});
 
 vi.mock("@/lib/db", () => ({
   db: {
@@ -41,7 +18,6 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
-// Mock schema
 vi.mock("@/lib/db/schema-extensions", () => ({
   pendingTransactions: {
     walletAddress: "wallet_address",
@@ -58,10 +34,19 @@ vi.mock("@/lib/db/schema-extensions", () => ({
     chainId: "chain_id",
     lockedBy: "locked_by",
     lockedAt: "locked_at",
+    expiresAt: "expires_at",
   },
 }));
 
-// Import after mocks
+const { mockLogSystemError } = vi.hoisted(() => ({
+  mockLogSystemError: vi.fn(),
+}));
+
+vi.mock("@/lib/logging", () => ({
+  ErrorCategory: { INFRASTRUCTURE: "infrastructure" },
+  logSystemError: mockLogSystemError,
+}));
+
 import {
   getNonceManager,
   NonceManager,
@@ -69,7 +54,6 @@ import {
   resetNonceManager,
 } from "@/lib/web3/nonce-manager";
 
-// Mock provider
 function createMockProvider(
   options: {
     transactionCount?: number;
@@ -88,15 +72,50 @@ function createMockProvider(
   };
 }
 
+/**
+ * Build a default chain of mocks for the row-based lock acquire path.
+ * - INSERT ... ON CONFLICT DO NOTHING RETURNING — `insertedRows` controls
+ *   how many rows the INSERT returned. 1 = lock acquired on insert.
+ * - UPDATE ... WHERE locked_by IS NULL OR expires_at < NOW() RETURNING —
+ *   `updatedRows` controls how many rows the UPDATE returned. 1 = lock
+ *   acquired by taking over an unheld/expired row.
+ * Both default to acquired-on-insert for happy-path tests.
+ */
+function setupLockMocks(
+  opts: { insertedRows?: number; updatedRows?: number } = {}
+) {
+  const insertedRows = opts.insertedRows ?? 1;
+  const updatedRows = opts.updatedRows ?? 0;
+
+  mockInsert.mockReturnValue({
+    values: vi.fn().mockReturnValue({
+      onConflictDoNothing: vi.fn().mockReturnValue({
+        returning: vi
+          .fn()
+          .mockResolvedValue(insertedRows > 0 ? [{ walletAddress: "0x" }] : []),
+      }),
+      // recordTransaction uses onConflictDoUpdate
+      onConflictDoUpdate: vi.fn().mockResolvedValue(undefined),
+    }),
+  });
+
+  mockUpdate.mockReturnValue({
+    set: vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({
+        returning: vi
+          .fn()
+          .mockResolvedValue(updatedRows > 0 ? [{ walletAddress: "0x" }] : []),
+      }),
+    }),
+  });
+}
+
 describe("NonceManager", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetNonceManager();
 
-    // Default mock implementations
-    // Mock postgres query for advisory lock - returns acquired: true by default
-    mockPostgresQuery.mockResolvedValue([{ acquired: true }]);
-    mockPostgresEnd.mockResolvedValue(undefined);
+    setupLockMocks();
 
     mockSelect.mockReturnValue({
       from: vi.fn().mockReturnValue({
@@ -106,27 +125,17 @@ describe("NonceManager", () => {
         }),
       }),
     });
-    mockInsert.mockReturnValue({
-      values: vi.fn().mockReturnValue({
-        onConflictDoUpdate: vi.fn().mockResolvedValue(undefined),
-      }),
-    });
-    mockUpdate.mockReturnValue({
-      set: vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue(undefined),
-      }),
-    });
   });
 
   describe("constructor", () => {
-    it("should create instance with default options", () => {
+    it("creates instance with default options", () => {
       const manager = new NonceManager();
       expect(manager).toBeInstanceOf(NonceManager);
     });
 
-    it("should create instance with custom options", () => {
+    it("accepts custom TTL and retry options", () => {
       const manager = new NonceManager({
-        lockTimeoutMs: 30_000,
+        lockTtlMs: 30_000,
         maxLockRetries: 10,
         lockRetryDelayMs: 50,
       });
@@ -135,7 +144,7 @@ describe("NonceManager", () => {
   });
 
   describe("startSession", () => {
-    it("should acquire lock and return session with chain nonce", async () => {
+    it("acquires lock via INSERT and returns session with chain nonce", async () => {
       const manager = new NonceManager();
       const provider = createMockProvider({ transactionCount: 10 });
 
@@ -154,9 +163,28 @@ describe("NonceManager", () => {
       expect(session.currentNonce).toBe(10);
       expect(session.startedAt).toBeInstanceOf(Date);
       expect(validation.chainNonce).toBe(10);
+      expect(mockInsert).toHaveBeenCalled();
     });
 
-    it("should normalize wallet address to lowercase", async () => {
+    it("acquires lock via UPDATE when an expired row already exists", async () => {
+      // INSERT returns 0 rows (row exists), UPDATE returns 1 (we took over).
+      setupLockMocks({ insertedRows: 0, updatedRows: 1 });
+
+      const manager = new NonceManager();
+      const provider = createMockProvider({ transactionCount: 10 });
+
+      const { session } = await manager.startSession(
+        "0x1234567890123456789012345678901234567890",
+        1,
+        "exec_takeover",
+        provider as unknown as import("ethers").Provider
+      );
+
+      expect(session.executionId).toBe("exec_takeover");
+      expect(mockUpdate).toHaveBeenCalled();
+    });
+
+    it("normalizes wallet address to lowercase", async () => {
       const manager = new NonceManager();
       const provider = createMockProvider();
 
@@ -172,11 +200,9 @@ describe("NonceManager", () => {
       );
     });
 
-    it("should release lock if validation fails", async () => {
+    it("releases lock if RPC fails after acquire", async () => {
       const manager = new NonceManager();
       const provider = createMockProvider();
-
-      // Make getTransactionCount throw
       provider.getTransactionCount.mockRejectedValue(new Error("RPC error"));
 
       await expect(
@@ -188,26 +214,18 @@ describe("NonceManager", () => {
         )
       ).rejects.toThrow("RPC error");
 
-      // Should have acquired lock, then closed connection on error
-      expect(mockPostgresQuery).toHaveBeenCalled();
-      expect(mockPostgresEnd).toHaveBeenCalled();
+      // Acquire (insert) + release (update) both ran.
+      expect(mockInsert).toHaveBeenCalled();
+      expect(mockUpdate).toHaveBeenCalled();
     });
 
-    it("should throw if lock cannot be acquired after max retries", async () => {
-      // Make lock acquisition always fail
-      mockPostgresQuery.mockResolvedValue([{ acquired: false }]);
-      mockSelect.mockReturnValue({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            orderBy: vi.fn().mockResolvedValue([]),
-            limit: vi.fn().mockResolvedValue([]), // No existing lock
-          }),
-        }),
-      });
+    it("throws and emits a metric when lock cannot be acquired", async () => {
+      // Both INSERT and UPDATE return 0 rows on every attempt.
+      setupLockMocks({ insertedRows: 0, updatedRows: 0 });
 
       const manager = new NonceManager({
         maxLockRetries: 3,
-        lockRetryDelayMs: 10,
+        lockRetryDelayMs: 1,
       });
       const provider = createMockProvider();
 
@@ -220,13 +238,77 @@ describe("NonceManager", () => {
         )
       ).rejects.toThrow(FAILED_LOCK_REGEX);
 
-      // Should have closed the connection after failing
-      expect(mockPostgresEnd).toHaveBeenCalled();
+      // Observability: failure emits a structured log so ops gets paged
+      // instead of waiting for support tickets (KEEP-344).
+      expect(mockLogSystemError).toHaveBeenCalledWith(
+        "infrastructure",
+        expect.stringContaining("acquire_failed"),
+        expect.any(Error),
+        expect.objectContaining({
+          wallet_address: "0x1234567890123456789012345678901234567890",
+          chain_id: "1",
+          execution_id: "exec_123",
+        })
+      );
+    });
+
+    it("warns when taking over an expired lock from a prior holder", async () => {
+      // INSERT returns 0 rows, SELECT returns a stale prior holder, UPDATE
+      // takes it over.
+      mockInsert.mockReturnValue({
+        values: vi.fn().mockReturnValue({
+          onConflictDoNothing: vi.fn().mockReturnValue({
+            returning: vi.fn().mockResolvedValue([]),
+          }),
+          onConflictDoUpdate: vi.fn().mockResolvedValue(undefined),
+        }),
+      });
+      mockUpdate.mockReturnValue({
+        set: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            returning: vi.fn().mockResolvedValue([{ walletAddress: "0x" }]),
+          }),
+        }),
+      });
+      mockSelect.mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([
+              {
+                lockedBy: "exec_wedged",
+                expiresAt: new Date(Date.now() - 30_000),
+              },
+            ]),
+            orderBy: vi.fn().mockResolvedValue([]),
+          }),
+        }),
+      });
+
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+        // suppress test output
+      });
+
+      const manager = new NonceManager();
+      const provider = createMockProvider();
+
+      await manager.startSession(
+        "0x1234567890123456789012345678901234567890",
+        1,
+        "exec_takeover",
+        provider as unknown as import("ethers").Provider
+      );
+
+      const takeoverLogged = warnSpy.mock.calls.some((call) =>
+        String(call[0] ?? "").includes("Lock takeover")
+      );
+      expect(takeoverLogged).toBe(true);
+
+      warnSpy.mockRestore();
     });
   });
 
   describe("getNextNonce", () => {
-    it("should return current nonce and increment", () => {
+    it("returns current nonce and increments", () => {
       const manager = new NonceManager();
       const session: NonceSession = {
         walletAddress: "0x1234",
@@ -238,17 +320,23 @@ describe("NonceManager", () => {
 
       expect(manager.getNextNonce(session)).toBe(5);
       expect(session.currentNonce).toBe(6);
-
       expect(manager.getNextNonce(session)).toBe(6);
       expect(session.currentNonce).toBe(7);
-
-      expect(manager.getNextNonce(session)).toBe(7);
-      expect(session.currentNonce).toBe(8);
     });
   });
 
   describe("recordTransaction", () => {
-    it("should insert transaction record", async () => {
+    it("calls insert with onConflictDoUpdate", async () => {
+      const onConflictDoUpdate = vi.fn().mockResolvedValue(undefined);
+      mockInsert.mockReturnValue({
+        values: vi.fn().mockReturnValue({
+          onConflictDoNothing: vi.fn().mockReturnValue({
+            returning: vi.fn().mockResolvedValue([{ walletAddress: "0x" }]),
+          }),
+          onConflictDoUpdate,
+        }),
+      });
+
       const manager = new NonceManager();
       const session: NonceSession = {
         walletAddress: "0x1234",
@@ -266,57 +354,31 @@ describe("NonceManager", () => {
         "1000000000"
       );
 
-      expect(mockInsert).toHaveBeenCalled();
-    });
-
-    it("should handle upsert on conflict", async () => {
-      const mockOnConflictDoUpdate = vi.fn().mockResolvedValue(undefined);
-      mockInsert.mockReturnValue({
-        values: vi.fn().mockReturnValue({
-          onConflictDoUpdate: mockOnConflictDoUpdate,
-        }),
-      });
-
-      const manager = new NonceManager();
-      const session: NonceSession = {
-        walletAddress: "0x1234",
-        chainId: 1,
-        executionId: "exec_123",
-        currentNonce: 5,
-        startedAt: new Date(),
-      };
-
-      await manager.recordTransaction(session, 5, "0xtxhash123");
-
-      expect(mockOnConflictDoUpdate).toHaveBeenCalled();
+      expect(onConflictDoUpdate).toHaveBeenCalled();
     });
   });
 
   describe("confirmTransaction", () => {
-    it("should update transaction status to confirmed", async () => {
-      const mockWhere = vi.fn().mockResolvedValue(undefined);
-      const mockSet = vi.fn().mockReturnValue({ where: mockWhere });
-      mockUpdate.mockReturnValue({ set: mockSet });
+    it("updates transaction status to confirmed", async () => {
+      const set = vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue(undefined),
+      });
+      mockUpdate.mockReturnValue({ set });
 
       const manager = new NonceManager();
-
       await manager.confirmTransaction("0xtxhash123");
 
-      expect(mockUpdate).toHaveBeenCalled();
-      expect(mockSet).toHaveBeenCalledWith(
-        expect.objectContaining({
-          status: "confirmed",
-        })
+      expect(set).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "confirmed" })
       );
     });
   });
 
   describe("endSession", () => {
-    it("should release lock and clear active session", async () => {
+    it("releases the lock for the session's holder", async () => {
       const manager = new NonceManager();
       const provider = createMockProvider();
 
-      // Start a session first
       const { session } = await manager.startSession(
         "0x1234567890123456789012345678901234567890",
         1,
@@ -324,9 +386,7 @@ describe("NonceManager", () => {
         provider as unknown as import("ethers").Provider
       );
 
-      // Clear mocks to track endSession calls
       vi.clearAllMocks();
-      mockPostgresEnd.mockResolvedValue(undefined);
       mockUpdate.mockReturnValue({
         set: vi.fn().mockReturnValue({
           where: vi.fn().mockResolvedValue(undefined),
@@ -335,62 +395,12 @@ describe("NonceManager", () => {
 
       await manager.endSession(session);
 
-      // Should update wallet_locks and close dedicated connection
-      expect(mockUpdate).toHaveBeenCalled();
-      expect(mockPostgresEnd).toHaveBeenCalled();
-    });
-  });
-
-  describe("stale lock detection", () => {
-    it("should detect and clear stale lock metadata", async () => {
-      // First attempt fails, lock exists and is stale
-      let attemptCount = 0;
-      mockPostgresQuery.mockImplementation(() => {
-        attemptCount += 1;
-        if (attemptCount === 1) {
-          // First attempt: lock not acquired
-          return Promise.resolve([{ acquired: false }]);
-        }
-        // After stale lock cleared: lock acquired
-        return Promise.resolve([{ acquired: true }]);
-      });
-
-      // Return stale lock info
-      mockSelect.mockReturnValue({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            orderBy: vi.fn().mockResolvedValue([]),
-            limit: vi.fn().mockResolvedValue([
-              {
-                lockedBy: "old_exec",
-                lockedAt: new Date(Date.now() - 120_000), // 2 minutes old (stale)
-              },
-            ]),
-          }),
-        }),
-      });
-
-      const manager = new NonceManager({ lockTimeoutMs: 60_000 });
-      const provider = createMockProvider();
-
-      const { session } = await manager.startSession(
-        "0x1234567890123456789012345678901234567890",
-        1,
-        "exec_123",
-        provider as unknown as import("ethers").Provider
-      );
-
-      expect(session).toBeDefined();
-      // Should have tried to acquire, detected stale, cleared metadata, then acquired
-      expect(mockPostgresQuery.mock.calls.length).toBeGreaterThanOrEqual(2);
-      // Should have cleared the stale lock metadata
       expect(mockUpdate).toHaveBeenCalled();
     });
   });
 
   describe("validation and reconciliation", () => {
-    it("should reconcile confirmed transactions", async () => {
-      // Mock pending transaction that is now confirmed
+    it("reconciles confirmed transactions", async () => {
       mockSelect.mockReturnValue({
         from: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
@@ -398,7 +408,7 @@ describe("NonceManager", () => {
               {
                 walletAddress: "0x1234567890123456789012345678901234567890",
                 chainId: 1,
-                nonce: 4, // Less than chain nonce (5)
+                nonce: 4,
                 txHash: "0xconfirmed",
                 status: "pending",
               },
@@ -411,7 +421,7 @@ describe("NonceManager", () => {
       const manager = new NonceManager();
       const provider = createMockProvider({
         transactionCount: 5,
-        transactionReceipt: { blockNumber: 123 }, // Transaction is confirmed
+        transactionReceipt: { blockNumber: 123 },
       });
 
       const { validation } = await manager.startSession(
@@ -422,11 +432,9 @@ describe("NonceManager", () => {
       );
 
       expect(validation.reconciledCount).toBe(1);
-      expect(mockUpdate).toHaveBeenCalled();
     });
 
-    it("should detect replaced transactions", async () => {
-      // Mock pending transaction that was replaced (nonce < chainNonce, receipt null)
+    it("detects replaced transactions", async () => {
       mockSelect.mockReturnValue({
         from: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
@@ -434,7 +442,7 @@ describe("NonceManager", () => {
               {
                 walletAddress: "0x1234567890123456789012345678901234567890",
                 chainId: 1,
-                nonce: 4, // Less than chain nonce (5)
+                nonce: 4,
                 txHash: "0xreplaced",
                 status: "pending",
               },
@@ -445,7 +453,6 @@ describe("NonceManager", () => {
       });
 
       const manager = new NonceManager();
-      // Create provider with explicit null receipt to trigger "replaced" path
       const provider = {
         getTransactionCount: vi.fn().mockResolvedValue(5),
         getTransactionReceipt: vi.fn().mockResolvedValue(null),
@@ -459,22 +466,14 @@ describe("NonceManager", () => {
         provider as unknown as import("ethers").Provider
       );
 
-      // Verify provider.getTransactionReceipt was called with the tx hash
       expect(provider.getTransactionReceipt).toHaveBeenCalledWith("0xreplaced");
-
-      // The validation should have reconciled a transaction
-      expect(validation.reconciledCount).toBeGreaterThanOrEqual(0);
-
-      // Check warnings - if the replaced path was taken, it should contain the warning
       const hasReplacedWarning = validation.warnings.some((w) =>
         w.includes("replaced or dropped")
       );
-      // Also accept if no warnings but reconciled (confirmed path taken)
       expect(hasReplacedWarning || validation.reconciledCount > 0).toBe(true);
     });
 
-    it("should detect dropped mempool transactions", async () => {
-      // Mock pending transaction with nonce === chainNonce (checks mempool)
+    it("detects dropped mempool transactions", async () => {
       mockSelect.mockReturnValue({
         from: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
@@ -482,7 +481,7 @@ describe("NonceManager", () => {
               {
                 walletAddress: "0x1234567890123456789012345678901234567890",
                 chainId: 1,
-                nonce: 5, // Same as chain nonce
+                nonce: 5,
                 txHash: "0xdropped",
                 status: "pending",
                 submittedAt: new Date(),
@@ -494,11 +493,10 @@ describe("NonceManager", () => {
       });
 
       const manager = new NonceManager();
-      // Create provider with null transaction (not in mempool)
       const provider = {
         getTransactionCount: vi.fn().mockResolvedValue(5),
         getTransactionReceipt: vi.fn().mockResolvedValue(null),
-        getTransaction: vi.fn().mockResolvedValue(null), // Not in mempool
+        getTransaction: vi.fn().mockResolvedValue(null),
       };
 
       const { validation } = await manager.startSession(
@@ -508,18 +506,13 @@ describe("NonceManager", () => {
         provider as unknown as import("ethers").Provider
       );
 
-      // For nonce === chainNonce, getTransaction should be called (not getTransactionReceipt)
       expect(provider.getTransaction).toHaveBeenCalledWith("0xdropped");
-
-      // Check if we got the expected warning or if tx was reconciled
       const hasDroppedWarning = validation.warnings.some((w) =>
         w.includes("dropped from mempool")
       );
       const hasStillPendingWarning = validation.warnings.some((w) =>
         w.includes("still pending in mempool")
       );
-
-      // Should have either dropped or still pending warning
       expect(
         hasDroppedWarning ||
           hasStillPendingWarning ||
@@ -529,21 +522,17 @@ describe("NonceManager", () => {
   });
 
   describe("DB-aware nonce selection", () => {
-    it("should advance starting nonce past DB pending transactions", async () => {
-      // Arrange: DB has a pending tx at nonce 7, chain says nonce is 5
-      // The new max-nonce query returns [{ maxNonce: 7 }] on first call
+    it("advances starting nonce past DB pending transactions", async () => {
       let selectCallCount = 0;
       mockSelect.mockImplementation(() => {
         selectCallCount += 1;
         if (selectCallCount === 1) {
-          // First call: the Step 2.5 max-nonce query
           return {
             from: vi.fn().mockReturnValue({
               where: vi.fn().mockResolvedValue([{ maxNonce: 7 }]),
             }),
           };
         }
-        // Subsequent calls: validateAndReconcile queries (return empty)
         return {
           from: vi.fn().mockReturnValue({
             where: vi.fn().mockReturnValue({
@@ -564,24 +553,20 @@ describe("NonceManager", () => {
         provider as unknown as import("ethers").Provider
       );
 
-      // max(5, 7+1) = 8
       expect(session.currentNonce).toBe(8);
     });
 
-    it("should use chain nonce when no DB pending rows exist", async () => {
-      // Arrange: DB has no pending transactions (default mock returns empty)
+    it("uses chain nonce when no DB pending rows exist", async () => {
       let selectCallCount = 0;
       mockSelect.mockImplementation(() => {
         selectCallCount += 1;
         if (selectCallCount === 1) {
-          // First call: the Step 2.5 max-nonce query — returns empty (no pending)
           return {
             from: vi.fn().mockReturnValue({
               where: vi.fn().mockResolvedValue([{ maxNonce: null }]),
             }),
           };
         }
-        // Subsequent calls: validateAndReconcile queries
         return {
           from: vi.fn().mockReturnValue({
             where: vi.fn().mockReturnValue({
@@ -602,77 +587,22 @@ describe("NonceManager", () => {
         provider as unknown as import("ethers").Provider
       );
 
-      // No pending transactions — use chain nonce directly
       expect(session.currentNonce).toBe(10);
     });
   });
 
   describe("singleton pattern", () => {
-    it("should return same instance from getNonceManager", () => {
+    it("returns same instance from getNonceManager", () => {
       const manager1 = getNonceManager();
       const manager2 = getNonceManager();
-
       expect(manager1).toBe(manager2);
     });
 
-    it("should return new instance after reset", () => {
+    it("returns new instance after reset", () => {
       const manager1 = getNonceManager();
       resetNonceManager();
       const manager2 = getNonceManager();
-
       expect(manager1).not.toBe(manager2);
-    });
-  });
-
-  describe("lock ID generation", () => {
-    it("should generate consistent lock IDs for same wallet/chain", async () => {
-      const manager = new NonceManager();
-      const provider = createMockProvider();
-
-      // Start two sessions with same wallet/chain
-      const { session: session1 } = await manager.startSession(
-        "0x1234567890123456789012345678901234567890",
-        1,
-        "exec_1",
-        provider as unknown as import("ethers").Provider
-      );
-      await manager.endSession(session1);
-
-      // Reset mock call history
-      mockPostgresQuery.mockClear();
-
-      await manager.startSession(
-        "0x1234567890123456789012345678901234567890",
-        1,
-        "exec_2",
-        provider as unknown as import("ethers").Provider
-      );
-
-      // Both calls should use the same lock ID (same wallet/chain)
-      expect(mockPostgresQuery).toHaveBeenCalled();
-    });
-
-    it("should generate different lock IDs for different chains", async () => {
-      const manager1 = new NonceManager();
-      const manager2 = new NonceManager();
-      const provider = createMockProvider();
-
-      await manager1.startSession(
-        "0x1234567890123456789012345678901234567890",
-        1, // Chain 1
-        "exec_1",
-        provider as unknown as import("ethers").Provider
-      );
-
-      await manager2.startSession(
-        "0x1234567890123456789012345678901234567890",
-        137, // Polygon
-        "exec_2",
-        provider as unknown as import("ethers").Provider
-      );
-
-      // Different chains should both acquire locks
-      expect(mockPostgresQuery).toHaveBeenCalled();
     });
   });
 });

@@ -2,6 +2,7 @@ import { and, eq, gt, inArray, lt, notInArray, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { workflowExecutionLogs, workflowExecutions } from "@/lib/db/schema";
+import { walletLocks } from "@/lib/db/schema-extensions";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 
@@ -87,6 +88,19 @@ export async function GET(request: Request): Promise<NextResponse> {
             eq(workflowExecutionLogs.status, "running")
           )
         );
+
+      // KEEP-344: Release any nonce locks still held by reaped executions.
+      // The wallet_locks TTL would clear them on its own, but releasing them
+      // here unwedges affected wallets immediately when reaper runs, instead
+      // of leaving the user blocked until expires_at.
+      await db
+        .update(walletLocks)
+        .set({
+          lockedBy: null,
+          lockedAt: null,
+          expiresAt: sql`NOW()`,
+        })
+        .where(inArray(walletLocks.lockedBy, reapedIds));
     }
 
     return NextResponse.json({

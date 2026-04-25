@@ -42,9 +42,15 @@ const MPP_AUTH_PREFIX = "Payment ";
 //   maxValidityWindowSeconds 15 * 60.
 // We pick conservative values well under the ceilings -- transferWithMemo
 // costs ~100k gas, so 500k is generous headroom for price-spike retries.
+// maxFeePerGas is the user's CEILING, not the actual fee paid -- the fee-payer
+// settles only the network base fee, not the cap, so high values are safe.
+// Tempo's observed base fee runs ~20 gwei; 50 gwei gives ~2.5x headroom while
+// staying well under the sponsor's 100 gwei policy. Setting maxFeePerGas
+// below the live base fee gets the broadcast rejected by the Tempo node, and
+// the resulting plain Error falls through mppx's catch-all as a reason-less
+// VerificationFailedError.
 const MPP_TX_GAS = BigInt(500_000);
-const MPP_TX_MAX_FEE_PER_GAS = BigInt(5_000_000_000); // 5 gwei
-const MPP_TX_MAX_PRIORITY_FEE_PER_GAS = BigInt(1_000_000_000); // 1 gwei
+const MPP_TX_MAX_FEE_PER_GAS = BigInt(50_000_000_000); // 50 gwei
 const MPP_TX_VALIDITY_WINDOW_SECONDS = 300; // 5 minutes
 
 // TIP-1009 expiring-nonce marker. viem/tempo/chainConfig.js rewrites
@@ -443,7 +449,6 @@ export async function signMppTransaction(
     nonceKey,
     gas: MPP_TX_GAS,
     maxFeePerGas: MPP_TX_MAX_FEE_PER_GAS,
-    maxPriorityFeePerGas: MPP_TX_MAX_PRIORITY_FEE_PER_GAS,
     validBefore,
   });
 

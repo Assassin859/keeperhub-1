@@ -421,6 +421,13 @@
       "when": 1776908908648,
       "tag": "0059_agentic_wallet_daily_spend",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1777112436741,
+      "tag": "0060_keep_344_wallet_lock_ttl",
+      "breakpoints": true
     }
   ]
 }

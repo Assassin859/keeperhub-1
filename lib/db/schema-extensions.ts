@@ -220,14 +220,14 @@ export type NewSupportedToken = typeof supportedTokens.$inferInsert;
 /**
  * Wallet Locks table
  *
- * Tracks which execution currently holds the lock for a wallet+chain combination.
- * PostgreSQL advisory locks don't persist lock holder info, so we track it here.
+ * Distributed lock for serializing nonce assignment across concurrent workflow
+ * executions on the same (wallet_address, chain_id). The row IS the lock:
+ * a row with locked_by != NULL AND expires_at > NOW() means the lock is held.
  *
- * Used by NonceManager to:
- * - Prevent concurrent workflows from conflicting on nonce assignment
- * - Detect and recover from stale locks (crash recovery)
- *
- * NOTE: The actual locking is done via pg_advisory_lock(), this table only tracks metadata.
+ * Acquire is an atomic conditional UPSERT (insert-on-conflict, then update-where-
+ * expired). Release clears locked_by/locked_at and sets expires_at to NOW().
+ * The expires_at TTL guarantees that a crashed holder cannot wedge the lock
+ * forever: any caller can take over once expires_at < NOW().
  */
 export const walletLocks = pgTable(
   "wallet_locks",
@@ -236,6 +236,9 @@ export const walletLocks = pgTable(
     chainId: integer("chain_id").notNull(),
     lockedBy: text("locked_by"), // execution ID that holds the lock (null = unlocked)
     lockedAt: timestamp("locked_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [primaryKey({ columns: [table.walletAddress, table.chainId] })]
 );

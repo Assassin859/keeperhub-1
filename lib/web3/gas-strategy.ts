@@ -13,6 +13,29 @@ import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
 import { db } from "@/lib/db";
 import { chains } from "@/lib/db/schema";
+import type { RpcProviderManager } from "@/lib/rpc-provider";
+
+/**
+ * Route an RPC call through the failover-aware RpcProviderManager when one
+ * is supplied; otherwise fall back to the raw provider. Centralised so every
+ * RPC call path in this file has the same behavior — without this helper, a
+ * primary-RPC failure inside fee estimation would not trigger failover even
+ * if every other call in the same workflow does.
+ *
+ * KEEP-344 follow-up: prior to this helper, gas-strategy called the raw
+ * ethers provider directly, so an Infura 402 (or similar) propagated as a
+ * hard failure even when a working fallback was configured.
+ */
+async function runRpc<T>(
+  rpcManager: RpcProviderManager | undefined,
+  provider: ethers.Provider,
+  fn: (provider: ethers.JsonRpcProvider) => Promise<T>
+): Promise<T> {
+  if (rpcManager) {
+    return await rpcManager.executeWithFailover(fn, "read");
+  }
+  return await fn(provider as ethers.JsonRpcProvider);
+}
 
 export type TriggerType = "event" | "webhook" | "scheduled" | "manual";
 
@@ -101,18 +124,18 @@ function parseGwei(gwei: string | number): bigint {
  */
 async function measureVolatility(
   provider: ethers.Provider,
-  blockCount = 40
+  blockCount = 40,
+  rpcManager?: RpcProviderManager
 ): Promise<VolatilityMetrics> {
   try {
-    // Cast to JsonRpcProvider to access send method
-    const jsonRpcProvider = provider as ethers.JsonRpcProvider;
-
     // Fetch fee history for last N blocks
-    const history = await jsonRpcProvider.send("eth_feeHistory", [
-      `0x${blockCount.toString(16)}`,
-      "latest",
-      [], // No percentiles needed, just base fees
-    ]);
+    const history = await runRpc(rpcManager, provider, (p) =>
+      p.send("eth_feeHistory", [
+        `0x${blockCount.toString(16)}`,
+        "latest",
+        [], // No percentiles needed, just base fees
+      ])
+    );
 
     const baseFees = history.baseFeePerGas
       .slice(0, -1) // Last entry is for next block (prediction)
@@ -172,17 +195,17 @@ async function measureVolatility(
 async function getPercentileFees(
   provider: ethers.Provider,
   blockCount: number,
-  percentile: number
+  percentile: number,
+  rpcManager?: RpcProviderManager
 ): Promise<{ baseFee: bigint; priorityFee: bigint }> {
   try {
-    // Cast to JsonRpcProvider to access send method
-    const jsonRpcProvider = provider as ethers.JsonRpcProvider;
-
-    const history = await jsonRpcProvider.send("eth_feeHistory", [
-      `0x${blockCount.toString(16)}`,
-      "latest",
-      [percentile],
-    ]);
+    const history = await runRpc(rpcManager, provider, (p) =>
+      p.send("eth_feeHistory", [
+        `0x${blockCount.toString(16)}`,
+        "latest",
+        [percentile],
+      ])
+    );
 
     // Get latest base fee (for next block)
     const baseFee = BigInt(history.baseFeePerGas.at(-1));
@@ -214,7 +237,7 @@ async function getPercentileFees(
   } catch (error) {
     // Fallback if fee history fails
     console.warn("[GasStrategy] Failed to get percentile fees:", error);
-    const feeData = await provider.getFeeData();
+    const feeData = await runRpc(rpcManager, provider, (p) => p.getFeeData());
     return {
       baseFee: feeData.maxFeePerGas ?? parseGwei("50"),
       priorityFee: feeData.maxPriorityFeePerGas ?? parseGwei("1.5"),
@@ -241,7 +264,8 @@ export class AdaptiveGasStrategy {
     estimatedGas: bigint,
     chainId: number,
     gasLimitMultiplierOverride?: number,
-    gasLimitOverride?: bigint
+    gasLimitOverride?: bigint,
+    rpcManager?: RpcProviderManager
   ): Promise<GasConfig> {
     // Apply chain-specific overrides (from DB with hardcoded fallback)
     const chainConfig = await this.getChainConfig(chainId);
@@ -259,7 +283,8 @@ export class AdaptiveGasStrategy {
     const feeConfig = await this.calculateFees(
       provider,
       triggerType,
-      chainConfig
+      chainConfig,
+      rpcManager
     );
 
     return {
@@ -305,35 +330,38 @@ export class AdaptiveGasStrategy {
   private async calculateFees(
     provider: ethers.Provider,
     triggerType: TriggerType,
-    chainConfig: ChainGasConfig
+    chainConfig: ChainGasConfig,
+    rpcManager?: RpcProviderManager
   ): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }> {
     // Time-sensitive triggers always use conservative strategy
     if (this.isTimeSensitive(triggerType)) {
-      return this.getConservativeFees(provider, chainConfig);
+      return this.getConservativeFees(provider, chainConfig, rpcManager);
     }
 
     // Check volatility for scheduled/manual triggers
     const volatility = await measureVolatility(
       provider,
-      this.config.volatilitySampleBlocks
+      this.config.volatilitySampleBlocks,
+      rpcManager
     );
 
     if (volatility.isVolatile) {
       console.log(
         `[GasStrategy] High volatility detected (CV=${volatility.coefficientOfVariation.toFixed(3)}), using conservative fees`
       );
-      return this.getConservativeFees(provider, chainConfig);
+      return this.getConservativeFees(provider, chainConfig, rpcManager);
     }
 
     // Low volatility - use percentile-based estimation
-    return this.getOptimizedFees(provider, chainConfig, volatility);
+    return this.getOptimizedFees(provider, chainConfig, volatility, rpcManager);
   }
 
   private async getConservativeFees(
     provider: ethers.Provider,
-    chainConfig: ChainGasConfig
+    chainConfig: ChainGasConfig,
+    rpcManager?: RpcProviderManager
   ): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }> {
-    const feeData = await provider.getFeeData();
+    const feeData = await runRpc(rpcManager, provider, (p) => p.getFeeData());
 
     if (!(feeData.maxFeePerGas && feeData.maxPriorityFeePerGas)) {
       // Fallback for non-EIP-1559 chains (legacy gas price)
@@ -358,7 +386,8 @@ export class AdaptiveGasStrategy {
   private async getOptimizedFees(
     provider: ethers.Provider,
     chainConfig: ChainGasConfig,
-    volatility: VolatilityMetrics
+    volatility: VolatilityMetrics,
+    rpcManager?: RpcProviderManager
   ): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }> {
     // Use percentile based on volatility gradient
     const percentile = this.selectPercentile(volatility.coefficientOfVariation);
@@ -366,7 +395,8 @@ export class AdaptiveGasStrategy {
     const { baseFee, priorityFee } = await getPercentileFees(
       provider,
       this.config.volatilitySampleBlocks,
-      percentile
+      percentile,
+      rpcManager
     );
 
     const maxPriorityFeePerGas = this.clampPriorityFee(

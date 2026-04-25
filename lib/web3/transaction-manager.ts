@@ -317,7 +317,10 @@ export async function executeTransaction(
       provider,
       context.triggerType ?? "manual",
       estimatedGas,
-      context.chainId
+      context.chainId,
+      undefined,
+      undefined,
+      context.rpcManager
     );
 
     const txRequest: ethers.TransactionRequest = {
@@ -403,7 +406,10 @@ export async function executeContractTransaction(
       provider as ethers.Provider,
       context.triggerType ?? "manual",
       estimatedGas,
-      context.chainId
+      context.chainId,
+      undefined,
+      undefined,
+      context.rpcManager
     );
 
     const tx = await contract[method](...args, {
@@ -463,11 +469,7 @@ export async function withNonceSession<T>(
   const nonceManager = getNonceManager();
   const rpcManager =
     context.rpcManager ??
-    (await getRpcProviderFromUrls(
-      context.rpcUrl,
-      undefined,
-      context.chainId
-    ));
+    (await getRpcProviderFromUrls(context.rpcUrl, undefined, context.chainId));
   const provider = rpcManager.getProvider();
 
   const { session, validation } = await nonceManager.startSession(

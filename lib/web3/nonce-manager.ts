@@ -1,29 +1,26 @@
 /**
  * Nonce Manager for KeeperHub Web3 Operations
  *
- * Provides distributed nonce management using PostgreSQL advisory locks
- * to prevent nonce collisions between concurrent workflow executions.
+ * Provides distributed nonce management using a row-based TTL lock to prevent
+ * nonce collisions between concurrent workflow executions on the same
+ * (wallet_address, chain_id).
  *
- * Key features:
- * - Chain as source of truth (fetches nonce from RPC at session start)
- * - PostgreSQL advisory locks for distributed coordination
- * - Dedicated connection per session (not from pool) ensures lock cleanup on crash
- * - Pending transaction tracking for validation and recovery
+ * Lock primitive: the wallet_locks row IS the lock. A row with locked_by != NULL
+ * AND expires_at > NOW() is held; everything else is takeable. Acquire is an
+ * atomic conditional UPSERT (INSERT ON CONFLICT DO NOTHING, then UPDATE WHERE
+ * expired). Release clears the holder. The expires_at TTL is the safety net:
+ * a crashed holder cannot wedge the wallet+chain forever.
  *
- * IMPORTANT: Advisory locks are session-level (tied to connection). Using the
- * connection pool would cause stale locks when processes crash. Each NonceSession
- * now uses a dedicated connection that is closed when the session ends, ensuring
- * PostgreSQL automatically releases the advisory lock.
- *
- * @see docs/keeperhub/KEEP-1240/nonce.md for full specification
+ * KEEP-344: replaces the previous pg_advisory_lock + dedicated-connection model,
+ * which leaked locks indefinitely if the holding connection survived a missed
+ * release path.
  */
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import type { ethers } from "ethers";
-import postgres from "postgres";
 import { db } from "@/lib/db";
-import { getDatabaseUrl } from "@/lib/db/connection-utils";
 import { pendingTransactions, walletLocks } from "@/lib/db/schema-extensions";
+import { ErrorCategory, logSystemError } from "@/lib/logging";
 
 export type NonceSession = {
   walletAddress: string;
@@ -31,8 +28,6 @@ export type NonceSession = {
   executionId: string;
   currentNonce: number;
   startedAt: Date;
-  /** Internal: dedicated connection for this session's advisory lock */
-  _lockConnection?: postgres.Sql;
 };
 
 export type ValidationResult = {
@@ -44,29 +39,31 @@ export type ValidationResult = {
 };
 
 export type NonceManagerOptions = {
-  lockTimeoutMs?: number;
+  lockTtlMs?: number;
   maxLockRetries?: number;
   lockRetryDelayMs?: number;
 };
 
-// Retry budget must outwait one full RPC failover round (up to ~90s per
-// provider including 30s timeouts + exponential backoff) since preflight
-// failover runs while the nonce lock is held.
 const DEFAULT_OPTIONS: Required<NonceManagerOptions> = {
-  lockTimeoutMs: 60_000,
+  // Worst-case credentialed write is ~90s (full RPC failover round). 5min
+  // gives generous headroom; a wedged lock auto-clears at expires_at.
+  lockTtlMs: 300_000,
+  // 600 * 200ms = 120s acquire budget. Must outwait one full RPC failover
+  // round (~90s per provider including timeouts and exponential backoff),
+  // since preflight failover runs while a legitimate holder still has the
+  // lock. The TTL bounds *stuck* holders; the retry budget bounds the wait
+  // for *legitimate* holders to finish.
   maxLockRetries: 600,
   lockRetryDelayMs: 200,
 };
 
-const getConnectionString = () => getDatabaseUrl();
-
 export class NonceManager {
-  private readonly lockTimeoutMs: number;
+  private readonly lockTtlMs: number;
   private readonly maxLockRetries: number;
   private readonly lockRetryDelayMs: number;
 
   constructor(options: NonceManagerOptions = {}) {
-    this.lockTimeoutMs = options.lockTimeoutMs ?? DEFAULT_OPTIONS.lockTimeoutMs;
+    this.lockTtlMs = options.lockTtlMs ?? DEFAULT_OPTIONS.lockTtlMs;
     this.maxLockRetries =
       options.maxLockRetries ?? DEFAULT_OPTIONS.maxLockRetries;
     this.lockRetryDelayMs =
@@ -75,7 +72,7 @@ export class NonceManager {
 
   /**
    * Start a nonce session for workflow execution.
-   * 1. Acquires distributed lock (with dedicated connection)
+   * 1. Acquires distributed lock (row-based, with TTL)
    * 2. Fetches nonce from chain (source of truth)
    * 3. Validates and reconciles pending transactions
    */
@@ -87,21 +84,16 @@ export class NonceManager {
   ): Promise<{ session: NonceSession; validation: ValidationResult }> {
     const normalizedAddress = walletAddress.toLowerCase();
 
-    // Step 1: Acquire lock with dedicated connection
-    const lockConnection = await this.acquireLock(
-      normalizedAddress,
-      chainId,
-      executionId
-    );
+    await this.acquireLock(normalizedAddress, chainId, executionId);
 
     try {
-      // Step 2: Fetch nonce from chain (source of truth)
+      // Fetch nonce from chain (source of truth)
       const chainNonce = await provider.getTransactionCount(
         normalizedAddress,
         "pending"
       );
 
-      // Step 2.5: Check DB pending transactions and advance past any in-flight nonces
+      // Advance past any in-flight nonces tracked in the DB
       const maxDbPending = await db
         .select({ maxNonce: sql<number>`max(${pendingTransactions.nonce})` })
         .from(pendingTransactions)
@@ -118,7 +110,6 @@ export class NonceManager {
           ? chainNonce
           : Math.max(chainNonce, maxPendingNonce + 1);
 
-      // Step 3: Validate and reconcile pending transactions
       const validation = await this.validateAndReconcile(
         normalizedAddress,
         chainId,
@@ -126,14 +117,12 @@ export class NonceManager {
         provider
       );
 
-      // Create session with dedicated connection reference
       const session: NonceSession = {
         walletAddress: normalizedAddress,
         chainId,
         executionId,
         currentNonce: safeNonce,
         startedAt: new Date(),
-        _lockConnection: lockConnection,
       };
 
       console.log(
@@ -150,13 +139,9 @@ export class NonceManager {
 
       return { session, validation };
     } catch (error) {
-      // Release lock on failure - close dedicated connection
-      await this.releaseLockConnection(
-        lockConnection,
-        normalizedAddress,
-        chainId,
-        executionId
-      );
+      // Release lock on setup failure so the wallet isn't held by a session
+      // that never actually started.
+      await this.releaseLock(normalizedAddress, chainId, executionId);
       throw error;
     }
   }
@@ -174,7 +159,6 @@ export class NonceManager {
     const warnings: string[] = [];
     let reconciledCount = 0;
 
-    // Get our pending transactions
     const pending = await db
       .select()
       .from(pendingTransactions)
@@ -187,14 +171,11 @@ export class NonceManager {
       )
       .orderBy(pendingTransactions.nonce);
 
-    // Check each pending transaction against chain
     for (const tx of pending) {
-      // If nonce is less than chain nonce, tx should be confirmed or dropped
       if (tx.nonce < chainNonce) {
         const receipt = await provider.getTransactionReceipt(tx.txHash);
 
         if (receipt) {
-          // Confirmed - update status
           await db
             .update(pendingTransactions)
             .set({ status: "confirmed", confirmedAt: new Date() })
@@ -207,7 +188,6 @@ export class NonceManager {
             );
           reconciledCount += 1;
         } else {
-          // Nonce used but our tx not confirmed - likely replaced or dropped
           await db
             .update(pendingTransactions)
             .set({ status: "replaced" })
@@ -224,17 +204,14 @@ export class NonceManager {
           reconciledCount += 1;
         }
       } else if (tx.nonce === chainNonce) {
-        // Our pending tx has the next nonce - check if still in mempool
         const mempoolTx = await provider.getTransaction(tx.txHash);
 
         if (mempoolTx) {
-          // Still pending in mempool - this could block us
           warnings.push(
             `Transaction ${tx.txHash} (nonce ${tx.nonce}) still pending in mempool ` +
               `since ${tx.submittedAt?.toISOString()}`
           );
         } else {
-          // Dropped from mempool - mark as dropped
           await db
             .update(pendingTransactions)
             .set({ status: "dropped" })
@@ -251,14 +228,12 @@ export class NonceManager {
           reconciledCount += 1;
         }
       } else {
-        // Future nonce - shouldn't happen, but log it
         warnings.push(
           `Found pending tx with future nonce: ${tx.nonce} > chain nonce ${chainNonce}`
         );
       }
     }
 
-    // Count remaining pending after reconciliation
     const remainingPending = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(pendingTransactions)
@@ -349,18 +324,13 @@ export class NonceManager {
   /**
    * End the session and release the lock.
    * Call when workflow execution completes (success or failure).
-   * Closes the dedicated connection, which automatically releases the advisory lock.
    */
   async endSession(session: NonceSession): Promise<void> {
-    if (session._lockConnection) {
-      await this.releaseLockConnection(
-        session._lockConnection,
-        session.walletAddress,
-        session.chainId,
-        session.executionId
-      );
-      session._lockConnection = undefined;
-    }
+    await this.releaseLock(
+      session.walletAddress,
+      session.chainId,
+      session.executionId
+    );
 
     console.log(
       `[NonceManager] Session ended for ${session.walletAddress}:${session.chainId}, ` +
@@ -369,61 +339,51 @@ export class NonceManager {
   }
 
   /**
-   * Acquire distributed lock using PostgreSQL advisory lock.
-   *
-   * IMPORTANT: Creates a dedicated connection (not from pool) for the advisory lock.
-   * Advisory locks are session-level - tied to the database connection. Using the
-   * connection pool would cause stale locks when processes crash, because the
-   * connection returns to the pool still holding the lock.
-   *
-   * The dedicated connection is returned and must be closed via releaseLockConnection()
-   * when the session ends. Closing the connection automatically releases the lock.
+   * Acquire the wallet+chain lock. Each attempt runs two atomic statements:
+   *   1. INSERT ... ON CONFLICT DO NOTHING — wins if no row exists for this
+   *      wallet+chain yet.
+   *   2. UPDATE ... WHERE locked_by IS NULL OR expires_at < NOW() — takes over
+   *      an unheld or expired lock. Postgres serializes concurrent UPDATEs on
+   *      the same row, so only one of N concurrent takers wins per round.
+   * On real contention (lock held, not yet expired), sleep and retry.
    */
   private async acquireLock(
     walletAddress: string,
     chainId: number,
     executionId: string
-  ): Promise<postgres.Sql> {
-    const lockId = this.generateLockId(walletAddress, chainId);
-
-    // Create dedicated connection for this lock (max: 1, not pooled)
-    const lockConnection = postgres(getConnectionString(), { max: 1 });
-
+  ): Promise<void> {
     for (let attempt = 0; attempt < this.maxLockRetries; attempt++) {
-      // Try non-blocking advisory lock on dedicated connection
-      const result =
-        await lockConnection`SELECT pg_try_advisory_lock(${lockId}) as acquired`;
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + this.lockTtlMs);
 
-      const acquired = result[0]?.acquired as boolean | undefined;
+      const inserted = await db
+        .insert(walletLocks)
+        .values({
+          walletAddress,
+          chainId,
+          lockedBy: executionId,
+          lockedAt: now,
+          expiresAt,
+        })
+        .onConflictDoNothing()
+        .returning({ walletAddress: walletLocks.walletAddress });
 
-      if (acquired) {
-        // Update lock tracking table (use pooled db for metadata)
-        await db
-          .insert(walletLocks)
-          .values({
-            walletAddress,
-            chainId,
-            lockedBy: executionId,
-            lockedAt: new Date(),
-          })
-          .onConflictDoUpdate({
-            target: [walletLocks.walletAddress, walletLocks.chainId],
-            set: {
-              lockedBy: executionId,
-              lockedAt: new Date(),
-            },
-          });
-
+      if (inserted.length > 0) {
         console.log(
           `[NonceManager] Lock acquired for ${walletAddress}:${chainId}, ` +
-            `execution=${executionId}`
+            `execution=${executionId}, expires=${expiresAt.toISOString()}`
         );
-        return lockConnection;
+        return;
       }
 
-      // Check for stale lock in metadata table
-      const existingLock = await db
-        .select()
+      // Read the prior holder before the takeover so observability can
+      // distinguish "took over from a wedged execution" from "took over a
+      // never-held row." We only log this if the takeover actually wins.
+      const priorHolderRow = await db
+        .select({
+          lockedBy: walletLocks.lockedBy,
+          expiresAt: walletLocks.expiresAt,
+        })
         .from(walletLocks)
         .where(
           and(
@@ -433,58 +393,89 @@ export class NonceManager {
         )
         .limit(1);
 
-      if (existingLock[0]?.lockedAt) {
-        const lockAge = Date.now() - existingLock[0].lockedAt.getTime();
-        if (lockAge > this.lockTimeoutMs) {
-          // Stale lock detected - the holder's connection likely died
-          // With dedicated connections, this should auto-release, but clear metadata
-          console.warn(
-            `[NonceManager] Stale lock detected for ${walletAddress}:${chainId}, ` +
-              `holder=${existingLock[0].lockedBy}, age=${lockAge}ms. ` +
-              "Clearing stale metadata and retrying."
-          );
+      const taken = await db
+        .update(walletLocks)
+        .set({
+          lockedBy: executionId,
+          lockedAt: now,
+          expiresAt,
+        })
+        .where(
+          and(
+            eq(walletLocks.walletAddress, walletAddress),
+            eq(walletLocks.chainId, chainId),
+            or(
+              isNull(walletLocks.lockedBy),
+              lt(walletLocks.expiresAt, sql`NOW()`)
+            )
+          )
+        )
+        .returning({ walletAddress: walletLocks.walletAddress });
 
-          // Clear the stale metadata - the advisory lock should be gone
-          // if the holding connection died
-          await db
-            .update(walletLocks)
-            .set({ lockedBy: null, lockedAt: null })
-            .where(
-              and(
-                eq(walletLocks.walletAddress, walletAddress),
-                eq(walletLocks.chainId, chainId)
-              )
-            );
-          continue;
+      if (taken.length > 0) {
+        const priorHolder = priorHolderRow[0]?.lockedBy ?? null;
+        const priorExpires = priorHolderRow[0]?.expiresAt;
+        if (priorHolder !== null) {
+          // Takeover from an expired holder is the operational smoke signal
+          // for KEEP-344-class incidents — log it loudly so we can correlate
+          // with whichever execution leaked the lock.
+          const expiredAgoMs = priorExpires
+            ? Date.now() - priorExpires.getTime()
+            : null;
+          console.warn(
+            `[NonceManager] Lock takeover for ${walletAddress}:${chainId}, ` +
+              `priorHolder=${priorHolder}, expiredAgoMs=${expiredAgoMs}, ` +
+              `newHolder=${executionId}`
+          );
         }
+        console.log(
+          `[NonceManager] Lock acquired for ${walletAddress}:${chainId}, ` +
+            `execution=${executionId}, expires=${expiresAt.toISOString()}, ` +
+            `attempt=${attempt + 1}`
+        );
+        return;
       }
 
       await this.sleep(this.lockRetryDelayMs);
     }
 
-    // Failed to acquire - close the dedicated connection
-    await lockConnection.end();
-
-    throw new Error(
+    // Acquire failure after the full retry budget — emit a metric so the
+    // operations team gets paged on repeated failures rather than finding
+    // out via support tickets like in KEEP-344.
+    const failure = new Error(
       `Failed to acquire nonce lock for ${walletAddress}:${chainId} ` +
         `after ${this.maxLockRetries} attempts`
     );
+    logSystemError(
+      ErrorCategory.INFRASTRUCTURE,
+      "[NonceManager] acquire_failed",
+      failure,
+      {
+        wallet_address: walletAddress,
+        chain_id: String(chainId),
+        execution_id: executionId,
+        max_retries: String(this.maxLockRetries),
+      }
+    );
+    throw failure;
   }
 
   /**
-   * Release the lock by closing the dedicated connection.
-   * PostgreSQL automatically releases advisory locks when the connection closes.
+   * Release the lock if (and only if) we still hold it. No-op if another
+   * holder has already taken over an expired lock from us.
    */
-  private async releaseLockConnection(
-    lockConnection: postgres.Sql,
+  private async releaseLock(
     walletAddress: string,
     chainId: number,
     executionId: string
   ): Promise<void> {
-    // Clear lock tracking metadata (only if we hold it)
     await db
       .update(walletLocks)
-      .set({ lockedBy: null, lockedAt: null })
+      .set({
+        lockedBy: null,
+        lockedAt: null,
+        expiresAt: sql`NOW()`,
+      })
       .where(
         and(
           eq(walletLocks.walletAddress, walletAddress),
@@ -493,26 +484,16 @@ export class NonceManager {
         )
       );
 
-    // Close the dedicated connection - this releases the advisory lock
-    await lockConnection.end();
-
     console.log(
       `[NonceManager] Lock released for ${walletAddress}:${chainId}, ` +
         `execution=${executionId}`
     );
   }
 
-  /**
-   * Generate advisory lock ID from wallet address and chain ID.
-   * Uses XOR to combine address prefix and chain ID into a 32-bit signed integer.
-   */
-  private generateLockId(walletAddress: string, chainId: number): number {
-    const addressPart = Number.parseInt(walletAddress.slice(2, 10), 16);
-    return (addressPart ^ chainId) & 0x7f_ff_ff_ff;
-  }
-
   private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+    return new Promise((resolve) => {
+      setTimeout(resolve, ms);
+    });
   }
 }
 

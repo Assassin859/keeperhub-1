@@ -36,6 +36,9 @@ const HIGH_CARDINALITY_LABELS = new Set<string>([
   "execution_id",
   "org_id",
   "owner_id",
+  // KEEP-344: wallet addresses are unbounded across users. Console and Sentry
+  // still see this label; Prometheus does not.
+  "wallet_address",
 ]);
 
 function mergeLabels(
