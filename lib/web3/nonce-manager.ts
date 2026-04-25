@@ -93,7 +93,17 @@ export class NonceManager {
         "pending"
       );
 
-      // Advance past any in-flight nonces tracked in the DB
+      // Reconcile pending rows against chain state BEFORE computing safeNonce
+      // so future-nonce phantom rows (broadcast failed / evicted from mempool)
+      // don't poison the max-nonce read below and permanently widen the gap.
+      const validation = await this.validateAndReconcile(
+        normalizedAddress,
+        chainId,
+        chainNonce,
+        provider
+      );
+
+      // Advance past any in-flight nonces still pending after reconciliation
       const maxDbPending = await db
         .select({ maxNonce: sql<number>`max(${pendingTransactions.nonce})` })
         .from(pendingTransactions)
@@ -109,13 +119,6 @@ export class NonceManager {
         maxPendingNonce === null
           ? chainNonce
           : Math.max(chainNonce, maxPendingNonce + 1);
-
-      const validation = await this.validateAndReconcile(
-        normalizedAddress,
-        chainId,
-        chainNonce,
-        provider
-      );
 
       const session: NonceSession = {
         walletAddress: normalizedAddress,
@@ -228,9 +231,33 @@ export class NonceManager {
           reconciledCount += 1;
         }
       } else {
-        warnings.push(
-          `Found pending tx with future nonce: ${tx.nonce} > chain nonce ${chainNonce}`
-        );
+        // tx.nonce > chainNonce: row claims a future nonce. If the tx is no
+        // longer in the mempool (broadcast failed / evicted), reap it so the
+        // gap with chainNonce doesn't permanently wedge nonce selection.
+        const mempoolTx = await provider.getTransaction(tx.txHash);
+
+        if (mempoolTx) {
+          warnings.push(
+            `Future-nonce tx ${tx.txHash} (nonce ${tx.nonce} > chain nonce ${chainNonce}) ` +
+              "still in mempool, queued behind predecessors"
+          );
+        } else {
+          await db
+            .update(pendingTransactions)
+            .set({ status: "dropped" })
+            .where(
+              and(
+                eq(pendingTransactions.walletAddress, tx.walletAddress),
+                eq(pendingTransactions.chainId, tx.chainId),
+                eq(pendingTransactions.nonce, tx.nonce)
+              )
+            );
+          warnings.push(
+            `Future-nonce tx ${tx.txHash} (nonce ${tx.nonce} > chain nonce ${chainNonce}) ` +
+              "not in mempool, marked dropped"
+          );
+          reconciledCount += 1;
+        }
       }
     }
 

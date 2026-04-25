@@ -473,11 +473,19 @@ describe.skipIf(shouldSkip)("Transaction Flow E2E", () => {
       // This test verifies lock tracking and sequential session management.
 
       const manager = new NonceManager();
+      const wf1TxHash = `0x${"wf1tx".repeat(12)}abc`;
 
+      // After KEEP-348, validateAndReconcile runs before max(pending) is read.
+      // The recorded tx at nonce 40 is "still pending in mempool" for the
+      // duration of this test, so getTransaction must return a truthy response
+      // for that hash. Otherwise the reconciler would correctly mark the row
+      // dropped (matching its actual chain state) and workflow2 would reuse
+      // nonce 40 instead of advancing to 41.
       const mockProvider = {
         getTransactionCount: async () => 40,
         getTransactionReceipt: async () => null,
-        getTransaction: async () => null,
+        getTransaction: async (hash: string) =>
+          hash === wf1TxHash ? { hash } : null,
       };
 
       // First workflow
@@ -506,12 +514,7 @@ describe.skipIf(shouldSkip)("Transaction Flow E2E", () => {
       expect(nonce1).toBe(40);
 
       // Record transaction
-      await manager.recordTransaction(
-        session1,
-        nonce1,
-        `0x${"wf1tx".repeat(12)}abc`,
-        "workflow1"
-      );
+      await manager.recordTransaction(session1, nonce1, wf1TxHash, "workflow1");
 
       // End first workflow
       await manager.endSession(session1);

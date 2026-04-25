@@ -519,6 +519,87 @@ describe("NonceManager", () => {
           validation.reconciledCount > 0
       ).toBe(true);
     });
+
+    it("marks future-nonce row dropped when not in mempool (KEEP-348)", async () => {
+      mockSelect.mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            orderBy: vi.fn().mockResolvedValue([
+              {
+                walletAddress: "0x1234567890123456789012345678901234567890",
+                chainId: 1,
+                nonce: 3,
+                txHash: "0xfuturedropped",
+                status: "pending",
+              },
+            ]),
+            limit: vi.fn().mockResolvedValue([]),
+          }),
+        }),
+      });
+
+      const manager = new NonceManager();
+      const provider = {
+        getTransactionCount: vi.fn().mockResolvedValue(0),
+        getTransactionReceipt: vi.fn().mockResolvedValue(null),
+        getTransaction: vi.fn().mockResolvedValue(null),
+      };
+
+      const { validation } = await manager.startSession(
+        "0x1234567890123456789012345678901234567890",
+        1,
+        "exec_future_dropped",
+        provider as unknown as import("ethers").Provider
+      );
+
+      expect(provider.getTransaction).toHaveBeenCalledWith("0xfuturedropped");
+      expect(mockUpdate).toHaveBeenCalled();
+      expect(validation.reconciledCount).toBe(1);
+      const hasDroppedWarning = validation.warnings.some((w) =>
+        w.includes("not in mempool, marked dropped")
+      );
+      expect(hasDroppedWarning).toBe(true);
+    });
+
+    it("keeps future-nonce row pending when still in mempool (KEEP-348)", async () => {
+      mockSelect.mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            orderBy: vi.fn().mockResolvedValue([
+              {
+                walletAddress: "0x1234567890123456789012345678901234567890",
+                chainId: 1,
+                nonce: 3,
+                txHash: "0xfuturequeued",
+                status: "pending",
+              },
+            ]),
+            limit: vi.fn().mockResolvedValue([]),
+          }),
+        }),
+      });
+
+      const manager = new NonceManager();
+      const provider = {
+        getTransactionCount: vi.fn().mockResolvedValue(0),
+        getTransactionReceipt: vi.fn().mockResolvedValue(null),
+        getTransaction: vi.fn().mockResolvedValue({ hash: "0xfuturequeued" }),
+      };
+
+      const { validation } = await manager.startSession(
+        "0x1234567890123456789012345678901234567890",
+        1,
+        "exec_future_queued",
+        provider as unknown as import("ethers").Provider
+      );
+
+      expect(provider.getTransaction).toHaveBeenCalledWith("0xfuturequeued");
+      expect(validation.reconciledCount).toBe(0);
+      const hasQueuedWarning = validation.warnings.some((w) =>
+        w.includes("queued behind predecessors")
+      );
+      expect(hasQueuedWarning).toBe(true);
+    });
   });
 
   describe("DB-aware nonce selection", () => {
@@ -526,7 +607,9 @@ describe("NonceManager", () => {
       let selectCallCount = 0;
       mockSelect.mockImplementation(() => {
         selectCallCount += 1;
-        if (selectCallCount === 1) {
+        // After KEEP-348 reorder: validateAndReconcile runs first (calls 1 + 2),
+        // then the maxNonce query (call 3).
+        if (selectCallCount === 3) {
           return {
             from: vi.fn().mockReturnValue({
               where: vi.fn().mockResolvedValue([{ maxNonce: 7 }]),
@@ -560,7 +643,7 @@ describe("NonceManager", () => {
       let selectCallCount = 0;
       mockSelect.mockImplementation(() => {
         selectCallCount += 1;
-        if (selectCallCount === 1) {
+        if (selectCallCount === 3) {
           return {
             from: vi.fn().mockReturnValue({
               where: vi.fn().mockResolvedValue([{ maxNonce: null }]),
@@ -588,6 +671,69 @@ describe("NonceManager", () => {
       );
 
       expect(session.currentNonce).toBe(10);
+    });
+
+    it("recovers from future-nonce phantom rows after reconcile (KEEP-348)", async () => {
+      // Reproduces issue #985: chainNonce=0, DB has phantom pending nonces 1-4.
+      // After reconcile (mempool returns null for all), max(pending) returns
+      // null and safeNonce collapses back to chainNonce=0.
+      let selectCallCount = 0;
+      mockSelect.mockImplementation(() => {
+        selectCallCount += 1;
+        if (selectCallCount === 1) {
+          // validateAndReconcile pending-rows fetch
+          return {
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockReturnValue({
+                orderBy: vi.fn().mockResolvedValue(
+                  [1, 2, 3, 4].map((n) => ({
+                    walletAddress: "0x1234567890123456789012345678901234567890",
+                    chainId: 8453,
+                    nonce: n,
+                    txHash: `0xphantom${n}`,
+                    status: "pending",
+                  }))
+                ),
+                limit: vi.fn().mockResolvedValue([]),
+              }),
+            }),
+          };
+        }
+        if (selectCallCount === 3) {
+          // maxNonce query, AFTER reconcile would have dropped all phantoms
+          return {
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockResolvedValue([{ maxNonce: null }]),
+            }),
+          };
+        }
+        return {
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({
+              orderBy: vi.fn().mockResolvedValue([]),
+              limit: vi.fn().mockResolvedValue([]),
+            }),
+          }),
+        };
+      });
+
+      const manager = new NonceManager();
+      const provider = {
+        getTransactionCount: vi.fn().mockResolvedValue(0),
+        getTransactionReceipt: vi.fn().mockResolvedValue(null),
+        getTransaction: vi.fn().mockResolvedValue(null),
+      };
+
+      const { session, validation } = await manager.startSession(
+        "0x1234567890123456789012345678901234567890",
+        8453,
+        "exec_recover",
+        provider as unknown as import("ethers").Provider
+      );
+
+      expect(session.currentNonce).toBe(0);
+      expect(validation.reconciledCount).toBe(4);
+      expect(provider.getTransaction).toHaveBeenCalledTimes(4);
     });
   });
 
