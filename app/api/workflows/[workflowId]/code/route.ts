@@ -1,27 +1,27 @@
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { getOrgContext } from "@/lib/middleware/org-context";
-import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
+import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { generateWorkflowSDKCode } from "@/lib/workflow-codegen-sdk";
 
 export async function GET(
   request: Request,
   context: { params: Promise<{ workflowId: string }> }
-) {
+): Promise<NextResponse> {
   try {
     const { workflowId } = await context.params;
-    const session = await auth.api.getSession({
-      headers: request.headers,
-    });
 
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const authContext = await getDualAuthContext(request);
+    if ("error" in authContext) {
+      return NextResponse.json(
+        { error: authContext.error },
+        { status: authContext.status }
+      );
     }
+    const { userId, organizationId } = authContext;
 
-    // Verify workflow access (owner or org member)
     const workflow = await db.query.workflows.findFirst({
       where: eq(workflows.id, workflowId),
     });
@@ -33,12 +33,11 @@ export async function GET(
       );
     }
 
-    const isOwner = session.user.id === workflow.userId;
-    const orgContext = await getOrgContext();
+    const isOwner = userId !== null && userId === workflow.userId;
     const isSameOrg =
       !workflow.isAnonymous &&
-      workflow.organizationId &&
-      orgContext.organization?.id === workflow.organizationId;
+      workflow.organizationId !== null &&
+      workflow.organizationId === organizationId;
 
     if (!(isOwner || isSameOrg)) {
       return NextResponse.json(

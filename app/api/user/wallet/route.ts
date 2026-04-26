@@ -11,6 +11,7 @@ import { db } from "@/lib/db";
 import { createIntegration } from "@/lib/db/integrations";
 import { integrations, organizationWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
 import { createTurnkeyWallet } from "@/lib/turnkey/turnkey-client";
 
@@ -198,22 +199,23 @@ async function storeTurnkeyWalletAndIntegration(options: {
   return { walletAddress: normalizedWalletAddress, walletId: turnkeyWalletId };
 }
 
-export async function GET(request: Request) {
+export async function GET(request: Request): Promise<NextResponse> {
   try {
-    const session = await auth.api.getSession({ headers: request.headers });
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const authContext = await getDualAuthContext(request);
+    if ("error" in authContext) {
+      return NextResponse.json(
+        { error: authContext.error },
+        { status: authContext.status }
+      );
     }
 
-    const activeOrgId = getActiveOrgId(session);
+    const { userId, organizationId: activeOrgId } = authContext;
     if (!activeOrgId) {
       return NextResponse.json(
         { error: "No active organization" },
         { status: 400 }
       );
     }
-
-    const userId = session.user.id;
 
     const allWallets = await db
       .select()
@@ -238,7 +240,9 @@ export async function GET(request: Request) {
         provider: w.provider,
         canExportKey: w.provider === "turnkey",
         // Only the wallet creator may export its key, regardless of org role.
-        isOwner: w.userId === userId,
+        // For API-key callers without a recorded creator (userId === null) this
+        // resolves to false, which is correct: key export is session-only.
+        isOwner: userId !== null && w.userId === userId,
         walletAddress: w.walletAddress,
         walletId: w.paraWalletId ?? w.turnkeyWalletId,
         email: w.email,

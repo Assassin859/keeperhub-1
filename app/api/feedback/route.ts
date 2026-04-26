@@ -1,11 +1,14 @@
+import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { db } from "@/lib/db";
+import { users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 
 const FEEDBACK_SERVICE_URL = process.env.FEEDBACK_SERVICE_URL || "";
 const FEEDBACK_API_KEY = process.env.FEEDBACK_API_KEY || "";
 
-export async function POST(request: Request) {
+export async function POST(request: Request): Promise<NextResponse> {
   try {
     // Validate configuration
     if (!FEEDBACK_SERVICE_URL) {
@@ -42,12 +45,23 @@ export async function POST(request: Request) {
       );
     }
 
-    // Get user session (optional - feedback can be submitted by authenticated users)
-    const session = await auth.api.getSession({
-      headers: request.headers,
-    });
+    // Auth is optional. Either a session cookie or an API key attaches user
+    // context for the support team; unauthenticated callers still go through.
+    const authContext = await getDualAuthContext(request, { required: false });
+    const callerUserId =
+      "error" in authContext ? null : (authContext.userId ?? null);
 
-    // Parse the incoming form data
+    let callerName: string | null = null;
+    let callerEmail: string | null = null;
+    if (callerUserId) {
+      const callerRow = await db.query.users.findFirst({
+        where: eq(users.id, callerUserId),
+        columns: { name: true, email: true },
+      });
+      callerName = callerRow?.name ?? null;
+      callerEmail = callerRow?.email ?? null;
+    }
+
     const formData = await request.formData();
     const message = formData.get("message") as string;
     const categories = formData.get("categories") as string;
@@ -60,7 +74,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Build form data for the feedback service
     const serviceFormData = new FormData();
     serviceFormData.append("message", message.trim());
 
@@ -72,10 +85,9 @@ export async function POST(request: Request) {
       serviceFormData.append("screenshot", screenshot);
     }
 
-    // Add user context if available
-    if (session?.user) {
-      serviceFormData.append("userEmail", session.user.email || "");
-      serviceFormData.append("userName", session.user.name || "");
+    if (callerEmail || callerName) {
+      serviceFormData.append("userEmail", callerEmail ?? "");
+      serviceFormData.append("userName", callerName ?? "");
     }
 
     // Forward to feedback service

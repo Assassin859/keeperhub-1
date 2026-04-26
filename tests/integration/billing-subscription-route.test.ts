@@ -6,13 +6,19 @@ vi.mock("next/headers", () => ({
   headers: vi.fn().mockResolvedValue(new Headers()),
 }));
 
-const { mockGetSession, mockSelectLimit, mockExecute, mockOverageLimit } =
-  vi.hoisted(() => ({
-    mockGetSession: vi.fn(),
-    mockSelectLimit: vi.fn().mockResolvedValue([]),
-    mockExecute: vi.fn().mockResolvedValue([{ count: 0 }]),
-    mockOverageLimit: vi.fn().mockResolvedValue([]),
-  }));
+const {
+  mockGetSession,
+  mockSelectLimit,
+  mockExecute,
+  mockOverageLimit,
+  mockResolveOrganizationId,
+} = vi.hoisted(() => ({
+  mockGetSession: vi.fn(),
+  mockSelectLimit: vi.fn().mockResolvedValue([]),
+  mockExecute: vi.fn().mockResolvedValue([{ count: 0 }]),
+  mockOverageLimit: vi.fn().mockResolvedValue([]),
+  mockResolveOrganizationId: vi.fn(),
+}));
 
 vi.mock("@/lib/auth", () => ({
   auth: {
@@ -20,6 +26,10 @@ vi.mock("@/lib/auth", () => ({
       getSession: (...args: unknown[]) => mockGetSession(...args),
     },
   },
+}));
+
+vi.mock("@/lib/middleware/auth-helpers", () => ({
+  resolveOrganizationId: mockResolveOrganizationId,
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -77,6 +87,11 @@ function mockSession(): void {
     user: { id: "usr_1", email: "user@test.com" },
     session: { activeOrganizationId: "org_1" },
   });
+  mockResolveOrganizationId.mockResolvedValue({ organizationId: "org_1" });
+}
+
+function buildRequest(): Request {
+  return new Request("http://localhost/api/billing/subscription");
 }
 
 beforeEach(() => {
@@ -103,7 +118,7 @@ describe("GET /api/billing/subscription", () => {
       },
     ]);
 
-    const response = await GET();
+    const response = await GET(buildRequest());
     const json = await response.json();
 
     expect(response.status).toBe(200);
@@ -119,7 +134,7 @@ describe("GET /api/billing/subscription", () => {
     mockSession();
     mockSelectLimit.mockResolvedValue([]);
 
-    const response = await GET();
+    const response = await GET(buildRequest());
     const json = await response.json();
 
     expect(response.status).toBe(200);
@@ -130,8 +145,12 @@ describe("GET /api/billing/subscription", () => {
 
   it("returns 401 without auth", async () => {
     mockGetSession.mockResolvedValue(null);
+    mockResolveOrganizationId.mockResolvedValue({
+      error: "Unauthorized",
+      status: 401,
+    });
 
-    const response = await GET();
+    const response = await GET(buildRequest());
 
     expect(response.status).toBe(401);
   });
@@ -139,7 +158,7 @@ describe("GET /api/billing/subscription", () => {
   it("returns 404 when billing is disabled", async () => {
     process.env.NEXT_PUBLIC_BILLING_ENABLED = "false";
 
-    const response = await GET();
+    const response = await GET(buildRequest());
 
     expect(response.status).toBe(404);
   });

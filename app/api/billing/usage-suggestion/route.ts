@@ -1,34 +1,25 @@
-import { headers } from "next/headers";
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
 import { isBillingEnabled } from "@/lib/billing/feature-flag";
 import { getUpgradeSuggestion } from "@/lib/billing/tier-suggestions";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { getActiveOrgId } from "@/lib/middleware/org-context";
+import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: Request): Promise<NextResponse> {
   if (!isBillingEnabled()) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
   try {
-    const session = await auth.api.getSession({
-      headers: await headers(),
-    });
-
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const activeOrgId = getActiveOrgId(session);
-    if (!activeOrgId) {
+    const authContext = await resolveOrganizationId(request);
+    if ("error" in authContext) {
       return NextResponse.json(
-        { error: "No active organization" },
-        { status: 400 }
+        { error: authContext.error },
+        { status: authContext.status }
       );
     }
+    const { organizationId } = authContext;
 
-    const suggestion = await getUpgradeSuggestion(activeOrgId);
+    const suggestion = await getUpgradeSuggestion(organizationId);
     return NextResponse.json(suggestion);
   } catch (error) {
     logSystemError(

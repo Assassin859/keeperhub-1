@@ -1,9 +1,9 @@
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { member, organization } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 
 type UpdateOrganizationNameRequest = {
   name?: string;
@@ -12,16 +12,32 @@ type UpdateOrganizationNameRequest = {
 export async function PATCH(
   request: Request,
   context: { params: Promise<{ organizationId: string }> }
-) {
+): Promise<NextResponse> {
   try {
     const { organizationId } = await context.params;
 
-    const session = await auth.api.getSession({
-      headers: request.headers,
-    });
+    const authContext = await getDualAuthContext(request);
+    if ("error" in authContext) {
+      return NextResponse.json(
+        { error: authContext.error },
+        { status: authContext.status }
+      );
+    }
 
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { userId, organizationId: callerOrgId } = authContext;
+    if (!userId) {
+      return NextResponse.json(
+        { error: "Auth context missing user. Please recreate the API key." },
+        { status: 400 }
+      );
+    }
+
+    // Hard-scope API key callers to their own org. The owner-membership query
+    // below would already 403 a cross-org call (the key creator is not a
+    // member of an unrelated org), but rejecting upfront makes the intent
+    // explicit and avoids leaking whether the URL org exists.
+    if (callerOrgId && callerOrgId !== organizationId) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     const body = (await request.json()) as UpdateOrganizationNameRequest;
@@ -48,7 +64,7 @@ export async function PATCH(
       .where(
         and(
           eq(member.organizationId, organizationId),
-          eq(member.userId, session.user.id),
+          eq(member.userId, userId),
           eq(member.role, "owner")
         )
       )
