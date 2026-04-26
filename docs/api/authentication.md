@@ -5,7 +5,7 @@ description: "KeeperHub API authentication methods - session auth and API keys."
 
 # Authentication
 
-The KeeperHub API supports two authentication methods.
+The KeeperHub API supports two authentication methods. They are not interchangeable: their accepted scopes differ. See [Endpoint scope](#endpoint-scope) for the rules.
 
 ## Session Authentication
 
@@ -42,6 +42,35 @@ KeeperHub has two types of API keys:
 - Keys are hashed with SHA256 before storage
 - Only the key prefix is stored for identification
 - Revoke keys immediately if compromised
+
+## Endpoint scope
+
+Session authentication is accepted everywhere. API keys (`kh_`) are accepted only on **organization-scoped** endpoints -- those whose action and result depend on the caller's organization, not on the individual user behind the key.
+
+### Accepted on API keys
+
+Endpoints whose semantics are organization-scoped accept `kh_` keys:
+
+- Workflow CRUD and execution: `/api/workflows`, `/api/executions`, `/api/execute`
+- Integrations: `/api/integrations`
+- Projects, tags, public tags, supported chains
+- Organization-scoped billing and analytics
+- Organization management (e.g. renaming an organization)
+- Organization API keys (`GET /api/keys`, `DELETE /api/keys/{keyId}`) -- creation requires session
+- Address book entries (organization-scoped)
+
+### Session-only
+
+Endpoints that act on a user account, hold credential material, or sit on a human approval boundary require session authentication. API keys are rejected with `401`:
+
+- **User-account operations** -- profile mutation (`PATCH /api/user`), password change, account deactivation, forgot-password
+- **Per-user preferences** -- RPC preferences
+- **Wallet write operations** -- provisioning, deletion, withdrawal, fee estimation, switching the active signing wallet, retrieving or refreshing the user share, and private-key export
+- **Authentication primitives** -- creating organization API keys (`POST /api/keys`), creating/listing/deleting personal webhook keys (`/api/api-keys/*`), AI Gateway OAuth flows
+- **Human-in-the-loop wallet approvals** -- agentic-wallet linking and approve/reject endpoints
+- **Per-user state** -- workflow drafts, workflow ratings, leaving an organization
+
+If you have a use case for session-only behavior over an API key, open an issue describing it. The boundary is deliberate: it keeps a leaked API key from escalating into account control or wallet drainage.
 
 ## Webhook Authentication
 

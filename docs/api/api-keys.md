@@ -9,50 +9,65 @@ Manage API keys for programmatic access to the KeeperHub API.
 
 ## Key Types
 
-| Prefix | Scope | Used for |
-|--------|-------|----------|
-| `kh_` | Organization | REST API, MCP server, Claude Code plugin |
-| `wfb_` | User | Webhook triggers |
+KeeperHub has two distinct key systems, managed at different endpoints. They are not interchangeable.
 
-## List API Keys
+| Prefix | Scope | Managed at | Used for |
+|--------|-------|------------|----------|
+| `kh_` | Organization | `/api/keys` | REST API, MCP server, Claude Code plugin |
+| `wfb_` | User | `/api/api-keys` | Webhook triggers |
+
+For typical programmatic API access use organization (`kh_`) keys.
+
+## Organization Keys (`kh_`)
+
+Issued per-organization. Create them from Settings > API Keys > Organisation in the dashboard, or via the endpoints below.
+
+### List Organization Keys
 
 ```http
-GET /api/api-keys
+GET /api/keys
 ```
 
-### Response
+Accepts session or API-key authentication. Returns non-revoked keys for the active organization.
+
+#### Response
+
+```json
+[
+  {
+    "id": "key_123",
+    "name": "Production Key",
+    "keyPrefix": "kh_abc",
+    "createdAt": "2024-01-01T00:00:00Z",
+    "lastUsedAt": "2024-01-15T12:00:00Z",
+    "createdByName": "Jane Doe",
+    "expiresAt": null
+  }
+]
+```
+
+The full key is never returned after creation.
+
+### Create Organization Key
+
+```http
+POST /api/keys
+```
+
+**Session authentication required.** Cannot be invoked with an API key -- otherwise a leaked key could mint additional keys for the same organization.
+
+#### Request Body
 
 ```json
 {
-  "data": [
-    {
-      "id": "key_123",
-      "name": "Production Key",
-      "keyPrefix": "kh_abc",
-      "createdAt": "2024-01-01T00:00:00Z",
-      "lastUsedAt": "2024-01-15T12:00:00Z"
-    }
-  ]
+  "name": "My API Key",
+  "expiresAt": "2025-01-01T00:00:00Z"
 }
 ```
 
-Note: The full key is never returned after creation.
+`expiresAt` is optional. Omit for a non-expiring key.
 
-## Create API Key
-
-```http
-POST /api/api-keys
-```
-
-### Request Body
-
-```json
-{
-  "name": "My API Key"
-}
-```
-
-### Response
+#### Response
 
 ```json
 {
@@ -60,21 +75,22 @@ POST /api/api-keys
   "name": "My API Key",
   "key": "kh_full_api_key_here",
   "keyPrefix": "kh_full_",
-  "createdAt": "2024-01-01T00:00:00Z"
+  "createdAt": "2024-01-01T00:00:00Z",
+  "expiresAt": null
 }
 ```
 
-Important: Copy the `key` value immediately. It will only be shown once.
+Copy the `key` value immediately. It is only shown once.
 
-## Delete API Key
+### Revoke Organization Key
 
 ```http
-DELETE /api/api-keys/{keyId}
+DELETE /api/keys/{keyId}
 ```
 
-Revokes the API key. This action cannot be undone.
+Soft-revokes the key. Subsequent requests with that key return `401`.
 
-### Response
+#### Response
 
 ```json
 {
@@ -82,10 +98,46 @@ Revokes the API key. This action cannot be undone.
 }
 ```
 
+## User Keys (`wfb_`)
+
+Issued per-user. Intended for webhook triggers, not for general REST API access.
+
+### List User Keys
+
+```http
+GET /api/api-keys
+```
+
+Session authentication required.
+
+### Create User Key
+
+```http
+POST /api/api-keys
+```
+
+Session authentication required.
+
+#### Request Body
+
+```json
+{
+  "name": "My Webhook Key"
+}
+```
+
+### Delete User Key
+
+```http
+DELETE /api/api-keys/{keyId}
+```
+
+Session authentication required. Revokes the key. This action cannot be undone.
+
 ## Security Notes
 
-- Keys are hashed with SHA256 before storage
-- Only the key prefix is stored for identification
-- Anonymous users cannot create API keys
-- Revoke keys immediately if compromised
-- Use environment variables to store keys in applications
+- Keys are hashed with SHA256 before storage; only the prefix is kept for identification.
+- Anonymous users cannot create API keys.
+- Revoke compromised keys immediately.
+- Store keys in environment variables, not in source code.
+- Key creation and personal-key deletion require session authentication, so a leaked API key cannot mint or delete other keys.
