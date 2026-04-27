@@ -12,7 +12,8 @@ const nodeDataSchema = z
   .object({
     label: z.string(),
     description: z.string().optional(),
-    type: z.enum(["trigger", "action", "add"]),
+    // "add" is a UI placeholder node and must not appear in exports.
+    type: z.enum(["trigger", "action"]),
     config: z.record(z.string(), z.unknown()).optional(),
     status: z.enum(["idle", "running", "success", "error"]).optional(),
     enabled: z.boolean().optional(),
@@ -104,7 +105,12 @@ export function buildWorkflowExportV1(workflow: {
 }): WorkflowExportV1 {
   const integrationBindings: WorkflowExportIntegrationBinding[] = [];
 
-  const exportNodes = workflow.nodes.map((node) => {
+  // "add" is a UI placeholder; never include it in the export.
+  const persistedNodes = workflow.nodes.filter(
+    (node) => node.data?.type !== "add"
+  );
+
+  const exportNodes = persistedNodes.map((node) => {
     const { config, integrationType } = stripIntegrationFromConfig(
       node.data?.config
     );
@@ -125,6 +131,13 @@ export function buildWorkflowExportV1(workflow: {
     };
   });
 
+  // Drop edges that referenced the filtered placeholder nodes.
+  const persistedNodeIds = new Set(persistedNodes.map((n) => n.id));
+  const persistedEdges = workflow.edges.filter(
+    (edge) =>
+      persistedNodeIds.has(edge.source) && persistedNodeIds.has(edge.target)
+  );
+
   return {
     version: WORKFLOW_EXPORT_VERSION,
     exportedAt: new Date().toISOString(),
@@ -133,7 +146,7 @@ export function buildWorkflowExportV1(workflow: {
       ...(workflow.description ? { description: workflow.description } : {}),
     },
     nodes: exportNodes as WorkflowExportV1["nodes"],
-    edges: workflow.edges as WorkflowExportV1["edges"],
+    edges: persistedEdges as WorkflowExportV1["edges"],
     integrationBindings,
   };
 }
