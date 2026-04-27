@@ -11,10 +11,17 @@
 -- scoped to the explicit "network":"42429" key/value pair so we cannot
 -- accidentally rewrite unrelated literal strings.
 
--- This migration deliberately contains no `--> statement-breakpoint` markers
--- so drizzle-kit runs the whole file as a single query inside its implicit
+-- This migration deliberately contains no statement breakpoint markers so
+-- drizzle-kit runs the whole file as a single query inside its implicit
 -- per-migration transaction (matches the precedent set by 0025). If any UPDATE
 -- fails the FK drop is rolled back with it.
+--
+-- IMPORTANT: do NOT write the drizzle breakpoint marker phrase verbatim
+-- anywhere in this file -- not even inside comments or quoted strings.
+-- drizzle-orm's readMigrationFiles (drizzle-orm/src/migrator.ts) does a
+-- context-free string split for that phrase across the whole file, which
+-- shreds the migration into separate statements regardless of where the
+-- phrase appears.
 
 -- Precondition: refuse to run if any 42431 rows already coexist with 42429
 -- rows in any of the affected tables. This avoids unique- or PK-collision
