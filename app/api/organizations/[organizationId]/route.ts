@@ -24,7 +24,7 @@ export async function PATCH(
       );
     }
 
-    const { userId, organizationId: callerOrgId } = authContext;
+    const { userId, organizationId: callerOrgId, authMethod } = authContext;
     if (!userId) {
       return NextResponse.json(
         { error: "Auth context missing user. Please recreate the API key." },
@@ -32,11 +32,13 @@ export async function PATCH(
       );
     }
 
-    // Hard-scope API key callers to their own org. The owner-membership query
-    // below would already 403 a cross-org call (the key creator is not a
-    // member of an unrelated org), but rejecting upfront makes the intent
-    // explicit and avoids leaking whether the URL org exists.
-    if (callerOrgId && callerOrgId !== organizationId) {
+    // Hard-scope only API-key callers to their own org. Session users may
+    // legitimately PATCH an org other than their currently-active session
+    // org (a user can own multiple orgs without switching first); the
+    // owner-membership query below gates that path on member.role = 'owner'
+    // so cross-org owners are still authorized when authenticating via
+    // session. API keys are by design org-scoped to the key's home org.
+    if (authMethod === "api-key" && callerOrgId !== organizationId) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
