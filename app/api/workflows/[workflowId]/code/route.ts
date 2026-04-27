@@ -5,7 +5,7 @@ import { getOrgContext } from "@/lib/middleware/org-context";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
-import { generateWorkflowSDKCode } from "@/lib/workflow-codegen-sdk";
+import { generateWorkflowSDKCode } from "@/lib/workflow/codegen/sdk";
 
 export async function GET(
   request: Request,

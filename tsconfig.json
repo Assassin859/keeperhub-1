@@ -36,8 +36,8 @@
   ],
   "exclude": [
     "node_modules",
-    "lib/next-boilerplate/**/*.ts",
-    "lib/next-boilerplate/**/*.tsx",
+    "lib/workflow/codegen/boilerplate/**/*.ts",
+    "lib/workflow/codegen/boilerplate/**/*.tsx",
     "tmp/**/*",
     "docs-site/**/*",
     "keeperhub-events/**/*",

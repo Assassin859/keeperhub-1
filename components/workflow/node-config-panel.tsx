@@ -34,7 +34,7 @@ import { refetchSidebar } from "@/lib/refetch-sidebar";
 import { api } from "@/lib/api-client";
 import { integrationsAtom } from "@/lib/integrations-store";
 import type { IntegrationType } from "@/lib/types/integration";
-import { generateWorkflowCode } from "@/lib/workflow-codegen";
+import { generateWorkflowCode } from "@/lib/workflow/codegen/codegen";
 import {
   clearNodeStatusesAtom,
   clearWorkflowAtom,

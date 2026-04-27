@@ -9,7 +9,7 @@ import {
   TEMPLATE_PATTERN,
   toFriendlyVarName,
   toTypeScriptLiteral,
-} from "./workflow-codegen-shared";
+} from "./shared";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 type CodeGenOptions = {

@@ -2,9 +2,9 @@ import "server-only";
 
 import { findActionById } from "@/plugins/registry";
 // System action codegen templates (not in plugin registry)
-import conditionTemplate from "./codegen-templates/condition";
-import databaseQueryTemplate from "./codegen-templates/database-query";
-import httpRequestTemplate from "./codegen-templates/http-request";
+import conditionTemplate from "./templates/condition";
+import databaseQueryTemplate from "./templates/database-query";
+import httpRequestTemplate from "./templates/http-request";
 
 // System actions that don't have plugins
 const SYSTEM_CODEGEN_TEMPLATES: Record<string, string> = {
@@ -22,7 +22,7 @@ import {
   sanitizeFunctionName,
   sanitizeStepName,
   sanitizeVarName,
-} from "./workflow-codegen-shared";
+} from "./shared";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 /**

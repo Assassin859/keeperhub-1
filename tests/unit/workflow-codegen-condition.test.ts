@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 // Mock server-only to allow importing workflow-executor in tests
 vi.mock("server-only", () => ({}));
 
-import { generateWorkflowCode } from "@/lib/workflow-codegen";
+import { generateWorkflowCode } from "@/lib/workflow/codegen/codegen";
 import { evaluateConditionExpression } from "@/lib/workflow/executor/executor.workflow";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
