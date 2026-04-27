@@ -265,7 +265,6 @@ function InstallRoleDialog({
         success?: boolean;
         error?: string;
         skipped?: string[];
-        conflictedTokens?: Array<{ tokenSymbol: string }>;
       };
       if (!(res.ok && data.success)) {
         toast.error(data.error ?? "Install failed");
@@ -274,11 +273,6 @@ function InstallRoleDialog({
       if (data.skipped && data.skipped.length > 0) {
         toast.warning(
           `Skipped protocols not available on this chain: ${data.skipped.join(", ")}`
-        );
-      }
-      if (data.conflictedTokens && data.conflictedTokens.length > 0) {
-        toast.warning(
-          `Resolved conflicts on ${data.conflictedTokens.map((c) => c.tokenSymbol).join(", ")}`
         );
       }
       toast.success(`Zodiac Roles installed on chain ${chainId}`);
@@ -298,7 +292,7 @@ function InstallRoleDialog({
           Enable on-chain policies
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="flex max-h-[85vh] max-w-2xl flex-col gap-3 overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Install Zodiac Roles</DialogTitle>
           <DialogDescription>

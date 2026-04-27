@@ -290,7 +290,7 @@ function DeployDialog({
       }}
       open={open}
     >
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="flex max-h-[85vh] max-w-2xl flex-col gap-3 overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {step === "chain"

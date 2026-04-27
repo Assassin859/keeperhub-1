@@ -5,7 +5,7 @@ import {
   ChevronRightIcon,
   ExternalLinkIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,25 +19,22 @@ import {
   type EnforcementLevel,
   type ProtocolCatalogEntry,
 } from "@/lib/safe/protocol-registry";
-import {
-  POLICY_PERIOD_OPTIONS,
-  PolicyTokenRow,
-  type TokenRowValue,
-} from "./policy-token-row";
-import { type PickedToken, TokenPicker } from "./token-picker";
+import type { TokenRowValue } from "./policy-token-row";
+import { ProtocolTokenAllowances } from "./protocol-token-allowances";
 
 /**
  * One protocol card inside the policy wizard:
- *   - Checkbox to enable + header row with enforcement-level badge
- *   - Expandable target-contract list with explorer links
- *   - Per-token rows with amount + period + remove
- *   - Add-token button backed by <TokenPicker>
+ *   - Checkbox to enable + header row with enforcement-level badge tooltip
+ *   - Chevron that collapses the entire body (target contracts + token rows).
+ *     Collapsing the chevron NEVER mutates the configured tokens; the parent
+ *     keeps them in state so re-expanding shows the same caps.
+ *   - <ProtocolTokenAllowances> renders the per-token rows + Add button when
+ *     the protocol is enabled, regardless of expansion: collapsing only
+ *     hides the UI.
  *
- * The card is controlled: the parent owns the enabled/tokens state and
+ * The card is fully controlled: the parent owns the enabled/tokens state and
  * updates it through the `onTokensChange` / `onEnabledChange` callbacks.
  */
-
-const DEFAULT_PERIOD = POLICY_PERIOD_OPTIONS[1].seconds;
 
 type TargetLink = {
   address: string;
@@ -90,31 +87,23 @@ export function PolicyProtocolCard({
   onEnabledChange,
   onTokensChange,
 }: PolicyProtocolCardProps): React.ReactElement {
-  const [expanded, setExpanded] = useState<boolean>(false);
-  const [pickerOpen, setPickerOpen] = useState<boolean>(false);
+  // Cards expand by default when the protocol starts enabled so the admin
+  // can see the seeded token caps. Collapsing/expanding never touches the
+  // parent's token state; tokens persist through any number of toggles.
+  const [expanded, setExpanded] = useState<boolean>(enabled);
 
-  const handleTokenPicked = (picked: PickedToken): void => {
-    const next: TokenRowValue = {
-      tokenAddress: picked.tokenAddress,
-      tokenSymbol: picked.tokenSymbol,
-      tokenDecimals: picked.tokenDecimals,
-      amountHuman: "",
-      periodSeconds: DEFAULT_PERIOD,
-      explorerUrl: picked.explorerUrl ?? null,
-    };
-    onTokensChange([...tokens, next]);
-  };
+  // Newly-enabling a previously-disabled protocol auto-expands it so the
+  // admin sees the rows they're about to configure. Disabling does NOT
+  // auto-collapse: the admin may want to keep the rows visible while
+  // deciding whether to keep them.
+  useEffect(() => {
+    if (enabled) {
+      setExpanded(true);
+    }
+  }, [enabled]);
 
-  const updateTokenAt = (index: number, next: TokenRowValue): void => {
-    const copy = tokens.slice();
-    copy[index] = next;
-    onTokensChange(copy);
-  };
-
-  const removeTokenAt = (index: number): void => {
-    const copy = tokens.slice();
-    copy.splice(index, 1);
-    onTokensChange(copy);
+  const handleEnabledChange = (next: boolean): void => {
+    onEnabledChange(next);
   };
 
   return (
@@ -128,7 +117,7 @@ export function PolicyProtocolCard({
           checked={enabled}
           className="mt-1"
           id={`pw-protocol-${catalog.slug}`}
-          onChange={(e) => onEnabledChange(e.target.checked)}
+          onChange={(e) => handleEnabledChange(e.target.checked)}
           type="checkbox"
         />
         <label
@@ -171,72 +160,44 @@ export function PolicyProtocolCard({
         </Button>
       </div>
 
-      {expanded && (
+      {expanded && enabled && (
+        <div className="mt-3">
+          <ProtocolTokenAllowances
+            chainId={chainId}
+            onChange={onTokensChange}
+            tokens={tokens}
+          />
+        </div>
+      )}
+
+      {expanded && targets.length > 0 && (
         <div className="mt-3 space-y-2 rounded bg-muted/20 p-2">
           <div className="text-muted-foreground text-xs">
             Contracts scoped for this protocol on chain {chainId}
-            {targets.length === 0 && ": none registered."}
           </div>
-          {targets.length > 0 && (
-            <ul className="space-y-1 text-xs">
-              {targets.map((t) => (
-                <li
-                  className="flex items-center gap-2 font-mono text-muted-foreground"
-                  key={t.address}
-                >
-                  <span>{truncateAddress(t.address)}</span>
-                  {t.explorerUrl && (
-                    <a
-                      className="inline-flex items-center gap-1 hover:text-foreground"
-                      href={t.explorerUrl}
-                      rel="noopener noreferrer"
-                      target="_blank"
-                    >
-                      <ExternalLinkIcon className="h-3 w-3" />
-                      verify
-                    </a>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
+          <ul className="space-y-1 text-xs">
+            {targets.map((t) => (
+              <li
+                className="flex items-center gap-2 font-mono text-muted-foreground"
+                key={t.address}
+              >
+                <span>{truncateAddress(t.address)}</span>
+                {t.explorerUrl && (
+                  <a
+                    className="inline-flex items-center gap-1 hover:text-foreground"
+                    href={t.explorerUrl}
+                    rel="noopener noreferrer"
+                    target="_blank"
+                  >
+                    <ExternalLinkIcon className="h-3 w-3" />
+                    verify
+                  </a>
+                )}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
-
-      {enabled && (
-        <div className="mt-3 space-y-2">
-          {tokens.length === 0 && (
-            <div className="rounded bg-muted/20 p-2 text-muted-foreground text-xs">
-              No tokens added yet. Click Add token to scope which tokens this
-              protocol can spend.
-            </div>
-          )}
-          {tokens.map((t, idx) => (
-            <PolicyTokenRow
-              key={t.tokenAddress}
-              onChange={(next) => updateTokenAt(idx, next)}
-              onRemove={() => removeTokenAt(idx)}
-              value={t}
-            />
-          ))}
-          <Button
-            onClick={() => setPickerOpen(true)}
-            size="sm"
-            type="button"
-            variant="outline"
-          >
-            + Add token
-          </Button>
-        </div>
-      )}
-
-      <TokenPicker
-        chainId={chainId}
-        excludeAddresses={tokens.map((t) => t.tokenAddress)}
-        onOpenChange={setPickerOpen}
-        onSelect={handleTokenPicked}
-        open={pickerOpen}
-      />
     </li>
   );
 }

@@ -115,13 +115,6 @@ export type SimulationPlan = {
   };
   applied?: string[];
   skipped?: string[];
-  conflictedTokens?: Array<{
-    tokenAddress: string;
-    tokenSymbol: string;
-    resolvedAmountWei: string;
-    resolvedPeriodSeconds: number;
-    sourceProtocols: string[];
-  }>;
 };
 
 type ExplorerInfo = {
@@ -391,9 +384,9 @@ export function PolicyWizard({
                 any function on the listed contracts can be called.
               </li>
               <li>
-                If you add the same token under two protocols with different
-                limits, we take the higher amount and the shorter period and
-                show a warning on the review step.
+                Each protocol owns its own bucket per token. Setting USDC on
+                Aave and on CoW gives each one an independent cap; they do
+                not share.
               </li>
               <li>
                 Anything outside the policy reverts on-chain. You can tweak or
@@ -471,26 +464,6 @@ export function PolicyWizard({
               </div>
             </div>
           )}
-
-          {simulation.conflictedTokens &&
-            simulation.conflictedTokens.length > 0 && (
-              <div className="rounded-md border border-amber-300/40 bg-amber-500/10 p-3">
-                <div className="mb-1 flex items-center gap-1 font-medium">
-                  <AlertTriangleIcon className="h-3.5 w-3.5" />
-                  Token conflicts resolved
-                </div>
-                <ul className="space-y-1 text-muted-foreground text-xs">
-                  {simulation.conflictedTokens.map((c) => (
-                    <li key={c.tokenAddress}>
-                      <span className="font-medium">{c.tokenSymbol}</span>{" "}
-                      appears under {c.sourceProtocols.join(", ")}. Using max
-                      amount {c.resolvedAmountWei} wei and shortest period of{" "}
-                      {c.resolvedPeriodSeconds}s.
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
 
           <div className="rounded-md border bg-muted/20 p-3">
             <div className="mb-2 font-medium">On-chain operations</div>
