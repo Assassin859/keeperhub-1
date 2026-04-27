@@ -8,7 +8,7 @@ import {
   collectAllSkippedTargets,
   collectSkippedTargets,
 } from "@/lib/workflow/nodes/condition/skipped-branch";
-import { evaluateConditionExpression } from "@/lib/workflow-executor.workflow";
+import { evaluateConditionExpression } from "@/lib/workflow/executor/executor.workflow";
 
 type ExecutionResult = {
   success: boolean;

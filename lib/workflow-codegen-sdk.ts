@@ -23,7 +23,7 @@ import {
   sanitizeStepName,
   sanitizeVarName,
 } from "./workflow-codegen-shared";
-import type { WorkflowEdge, WorkflowNode } from "./workflow-store";
+import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 /**
  * Load step implementation from templates

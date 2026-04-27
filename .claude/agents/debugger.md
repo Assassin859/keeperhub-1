@@ -103,7 +103,7 @@ These are the most frequent failure patterns in KeeperHub. Check these first.
 - Cause: Test file does not mock required modules
 - Fix: Add vi.mock() for common dependencies:
   - `vi.mock("server-only", () => ({}))`
-  - `vi.mock("@/lib/steps/step-handler", ...)`
+  - `vi.mock("@/lib/workflow/executor/step-handler", ...)`
   - `vi.mock("@/lib/metrics/instrumentation/plugin", ...)`
   - `vi.mock("@/lib/db", ...)`
   - `vi.mock("drizzle-orm", ...)`

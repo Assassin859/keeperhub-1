@@ -13,8 +13,8 @@ import {
   gatePayment,
   type PaymentMeta,
 } from "@/lib/payments/router";
-import { executeWorkflow } from "@/lib/workflow-executor.workflow";
-import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow-store";
+import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
+import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 import { buildCallCompletionResponse } from "@/lib/payments/x402/execution-wait";
 import {
   hashPaymentSignature,

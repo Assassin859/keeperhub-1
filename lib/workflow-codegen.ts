@@ -10,7 +10,7 @@ import {
   toFriendlyVarName,
   toTypeScriptLiteral,
 } from "./workflow-codegen-shared";
-import type { WorkflowEdge, WorkflowNode } from "./workflow-store";
+import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 type CodeGenOptions = {
   functionName?: string;

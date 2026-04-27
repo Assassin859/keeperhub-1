@@ -54,7 +54,7 @@ import {
   executionLogsAtom,
   lastExecutionLogsAtom,
   nodesAtom,
-} from "@/lib/workflow-store";
+} from "@/lib/workflow/store";
 import {
   findActionById,
   getActionsByCategory,

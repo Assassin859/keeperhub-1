@@ -17,7 +17,7 @@ import {
   isTransitioningFromHomepageAtom,
   nodesAtom,
   type WorkflowNode,
-} from "@/lib/workflow-store";
+} from "@/lib/workflow/store";
 
 function createDefaultNodes() {
   const triggerId = nanoid();

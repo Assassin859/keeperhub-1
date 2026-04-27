@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import { buildEdgesBySourceHandle } from "@/lib/edge-handle-utils";
-import { identifyLoopBody } from "@/lib/workflow-executor.workflow";
-import type { WorkflowNode } from "@/lib/workflow-store";
+import { identifyLoopBody } from "@/lib/workflow/executor/executor.workflow";
+import type { WorkflowNode } from "@/lib/workflow/store";
 
 // ---------------------------------------------------------------------------
 // Helpers

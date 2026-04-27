@@ -25,7 +25,7 @@ import {
   nodesAtom,
   selectedNodeAtom,
   type WorkflowNode,
-} from "@/lib/workflow-store";
+} from "@/lib/workflow/store";
 
 // ---------------------------------------------------------------------------
 // Component

@@ -1,5 +1,5 @@
 import { findActionById } from "@/plugins/registry";
-import type { WorkflowEdge, WorkflowNode } from "./workflow-store";
+import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 // Regex patterns at top level for performance
 export const TEMPLATE_PATTERN = /\{\{([^}]+)\}\}/g;

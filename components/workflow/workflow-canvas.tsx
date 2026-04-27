@@ -48,7 +48,7 @@ import {
   undoAtom,
   type WorkflowNode,
   type WorkflowNodeType,
-} from "@/lib/workflow-store";
+} from "@/lib/workflow/store";
 import { hasDuplicateEdge } from "@/lib/workflow/edge-helpers";
 import { Edge } from "../ai-elements/edge";
 import { Panel } from "../ai-elements/panel";

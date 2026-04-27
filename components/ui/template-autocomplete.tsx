@@ -20,7 +20,7 @@ import {
   nodesAtom,
   WorkflowTriggerEnum,
   type WorkflowNode,
-} from "@/lib/workflow-store";
+} from "@/lib/workflow/store";
 import { findActionById } from "@/plugins/registry";
 import { getReadContractOutputFields } from "@/lib/action-output-fields";
 import { resolveForEachSyntheticOutput } from "@/lib/workflow/nodes/for-each/utils";

@@ -18,8 +18,8 @@ import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { apiKeys, workflowExecutions, workflows } from "@/lib/db/schema";
 import { getOrgSlug } from "@/lib/db/org-helpers";
-import { executeWorkflow } from "@/lib/workflow-executor.workflow";
-import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow-store";
+import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
+import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 // Validate API key and return the user ID if valid
 async function validateApiKey(
   authHeader: string | null,

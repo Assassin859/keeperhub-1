@@ -20,7 +20,7 @@ import { buildEdgesBySourceHandle } from "@/lib/edge-handle-utils";
 import {
   identifyLoopBody,
   resolveBodyConditionTargets,
-} from "@/lib/workflow-executor.workflow";
+} from "@/lib/workflow/executor/executor.workflow";
 
 // Minimal WorkflowNode shape that identifyLoopBody actually reads
 type TestNode = {

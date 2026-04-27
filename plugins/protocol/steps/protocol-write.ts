@@ -8,7 +8,7 @@ import {
 } from "@/plugins/web3/steps/write-contract-core";
 import { resolveAbi } from "@/lib/abi/cache";
 import { getProtocol } from "@/lib/protocol-registry";
-import { type StepInput, withStepLogging } from "@/lib/steps/step-handler";
+import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { applyEncodeTransformsNamed } from "@/lib/protocol-encode-transforms";
 import {
   type ProtocolMeta,

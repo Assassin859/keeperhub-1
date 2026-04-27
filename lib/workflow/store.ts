@@ -3,7 +3,7 @@ import { applyEdgeChanges, applyNodeChanges } from "@xyflow/react";
 import { atom } from "jotai";
 import { computeAutoLayout } from "@/lib/auto-layout";
 import { buildExecutionLogsMap } from "@/lib/template-helpers";
-import { api } from "./api-client";
+import { api } from "@/lib/api-client";
 
 export type WorkflowNodeType = "trigger" | "action" | "add";
 

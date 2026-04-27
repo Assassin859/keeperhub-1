@@ -4,7 +4,7 @@ import { useAtom } from "jotai";
 import { useEffect, useRef, useState } from "react";
 import { doesNodeExist, getDisplayTextForTemplate } from "@/lib/template-utils";
 import { cn } from "@/lib/utils";
-import { nodesAtom, selectedNodeAtom } from "@/lib/workflow-store";
+import { nodesAtom, selectedNodeAtom } from "@/lib/workflow/store";
 import { TemplateAutocomplete } from "./template-autocomplete";
 
 // Guards `selection.getRangeAt(0)`, which throws IndexSizeError when

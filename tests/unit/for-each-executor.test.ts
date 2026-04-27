@@ -5,8 +5,8 @@ vi.mock("server-only", () => ({}));
 import {
   identifyLoopBody,
   resolveArraySource,
-} from "@/lib/workflow-executor.workflow";
-import type { WorkflowNode } from "@/lib/workflow-store";
+} from "@/lib/workflow/executor/executor.workflow";
+import type { WorkflowNode } from "@/lib/workflow/store";
 
 // ---------------------------------------------------------------------------
 // Top-level regex patterns (biome: useTopLevelRegex)

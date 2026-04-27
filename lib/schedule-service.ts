@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { workflowSchedules } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { generateId } from "@/lib/utils/id";
-import type { WorkflowNode } from "@/lib/workflow-store";
+import type { WorkflowNode } from "@/lib/workflow/store";
 
 // Top-level regex for splitting cron expression fields
 const CRON_FIELD_SPLITTER = /\s+/;

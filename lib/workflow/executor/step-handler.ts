@@ -7,19 +7,19 @@ import "server-only";
 
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { recordStepMetrics } from "@/lib/metrics/instrumentation/workflow";
-import { recordStepSuccess } from "@/lib/step-success-tracker";
+import { recordStepSuccess } from "@/lib/workflow/executor/step-success-tracker";
 import {
   runWithWorkflowErrorContext,
   type WorkflowErrorContext,
-} from "@/lib/workflow-error-context";
-import { redactSensitiveData } from "../utils/redact";
+} from "@/lib/workflow/executor/error-context";
+import { redactSensitiveData } from "@/lib/utils/redact";
 import {
   incrementCompletedSteps,
   logStepCompleteDb,
   logStepStartDb,
   logWorkflowCompleteDb,
   updateCurrentStep,
-} from "../workflow-logging";
+} from "./logging";
 
 export type StepContext = {
   executionId?: string;

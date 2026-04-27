@@ -85,7 +85,7 @@ import {
   type WorkflowNode,
   WorkflowTriggerEnum,
   type WorkflowVisibility,
-} from "@/lib/workflow-store";
+} from "@/lib/workflow/store";
 import {
   findActionById,
   flattenConfigFields,

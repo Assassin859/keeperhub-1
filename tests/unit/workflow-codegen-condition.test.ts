@@ -4,8 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import { generateWorkflowCode } from "@/lib/workflow-codegen";
-import { evaluateConditionExpression } from "@/lib/workflow-executor.workflow";
-import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow-store";
+import { evaluateConditionExpression } from "@/lib/workflow/executor/executor.workflow";
+import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 // Top-level regex patterns for test assertions
 const CONDITION_NOT_CONFIGURED_REGEX = /has no condition expression configured/;

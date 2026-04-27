@@ -4,7 +4,7 @@ const DIRECT_ID_PREFIX_REGEX = /^direct-/;
 
 vi.mock("server-only", () => ({}));
 
-vi.mock("@/lib/steps/step-handler", () => ({
+vi.mock("@/lib/workflow/executor/step-handler", () => ({
   withStepLogging: (_input: unknown, fn: () => unknown) => fn(),
 }));
 

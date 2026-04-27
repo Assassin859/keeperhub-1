@@ -123,7 +123,7 @@ Step functions follow a two-layer pattern:
 import "server-only";
 
 import { fetchCredentials } from "@/lib/credential-fetcher";
-import { type StepInput, withStepLogging } from "@/lib/steps/step-handler";
+import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import type { MyServiceCredentials } from "../credentials";
 
 // Result type - use discriminated union

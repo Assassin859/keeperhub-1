@@ -1,4 +1,4 @@
-import type { WorkflowNode } from "../lib/workflow-store";
+import type { WorkflowNode } from "../lib/workflow/store";
 
 export type ScheduleMessage = {
   workflowId: string;

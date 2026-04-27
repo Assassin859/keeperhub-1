@@ -59,7 +59,7 @@ import {
   showDeleteDialogAtom,
   updateNodeDataAtom,
   workflowNotFoundAtom,
-} from "@/lib/workflow-store";
+} from "@/lib/workflow/store";
 import { findActionById, flattenConfigFields } from "@/plugins/registry";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { ActionConfig } from "./config/action-config";

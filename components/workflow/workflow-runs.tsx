@@ -36,7 +36,7 @@ import {
   executionLogsAtom,
   runsRefreshTriggerAtom,
   selectedExecutionIdAtom,
-} from "@/lib/workflow-store";
+} from "@/lib/workflow/store";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 

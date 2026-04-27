@@ -8,7 +8,7 @@ import {
   getReadyDownstreamIds,
   propagateConvergenceSkips,
   signalConvergenceArrival,
-} from "@/lib/convergence-barrier";
+} from "@/lib/workflow/executor/convergence-barrier";
 import { buildEdgesBySourceHandle } from "@/lib/edge-handle-utils";
 
 describe("convergence barrier", () => {

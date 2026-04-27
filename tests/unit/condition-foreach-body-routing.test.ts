@@ -6,7 +6,7 @@ import { buildEdgesBySourceHandle } from "@/lib/edge-handle-utils";
 import {
   evaluateConditionExpression,
   resolveBodyConditionTargets,
-} from "@/lib/workflow-executor.workflow";
+} from "@/lib/workflow/executor/executor.workflow";
 
 type EdgeLike = {
   source: string;

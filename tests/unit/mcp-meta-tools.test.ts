@@ -458,7 +458,7 @@ describe("POST /api/mcp/workflows/[slug]/call: write workflow returns calldata",
     start: mockStart,
   }));
 
-  vi.mock("@/lib/workflow-executor.workflow", () => ({
+  vi.mock("@/lib/workflow/executor/executor.workflow", () => ({
     executeWorkflow: mockExecuteWorkflow,
   }));
 

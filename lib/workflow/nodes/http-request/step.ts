@@ -5,7 +5,7 @@ import "server-only";
 
 import { safeFetch } from "@/lib/safe-fetch";
 import { getErrorMessage } from "@/lib/utils";
-import { type StepInput, withStepLogging } from "@/lib/steps/step-handler";
+import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 
 type HttpRequestResult =
   | { success: true; data: unknown; status: number }

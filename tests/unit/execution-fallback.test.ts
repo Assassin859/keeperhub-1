@@ -6,7 +6,7 @@ vi.mock("@/lib/logging", () => ({
   logSystemError: (...args: unknown[]) => mockLogSystemError(...args),
 }));
 
-import { fallbackCompleteExecution } from "@/lib/execution-fallback";
+import { fallbackCompleteExecution } from "@/lib/workflow/executor/execution-fallback";
 
 describe("fallbackCompleteExecution", () => {
   let consoleWarnSpy: ReturnType<typeof vi.spyOn>;

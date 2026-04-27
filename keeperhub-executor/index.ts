@@ -37,7 +37,7 @@ import {
   workflows,
 } from "../lib/db/schema";
 import { generateId } from "../lib/utils/id";
-import type { WorkflowNode } from "../lib/workflow-store";
+import type { WorkflowNode } from "../lib/workflow/store";
 import { executeViaApi } from "./api-execute";
 import { CONFIG } from "./config";
 import { resolveDispatchTarget } from "./execution-mode";

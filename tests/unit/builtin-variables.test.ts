@@ -9,7 +9,7 @@ import {
   BUILTIN_VARIABLE_FIELDS,
   getBuiltinVariables,
 } from "@/lib/builtin-variables";
-import { evaluateConditionExpression } from "@/lib/workflow-executor.workflow";
+import { evaluateConditionExpression } from "@/lib/workflow/executor/executor.workflow";
 
 describe("builtin-variables", () => {
   describe("getBuiltinVariables", () => {

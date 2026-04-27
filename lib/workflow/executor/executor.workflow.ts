@@ -13,7 +13,7 @@ import {
   logSystemError,
   logUserError,
 } from "@/lib/logging";
-import { enterWorkflowErrorContext } from "@/lib/workflow-error-context";
+import { enterWorkflowErrorContext } from "@/lib/workflow/executor/error-context";
 import { getMetricsCollector } from "@/lib/metrics";
 import { LabelKeys, MetricNames } from "@/lib/metrics/types";
 import {
@@ -24,7 +24,7 @@ import {
   detectTriggerType,
   recordWorkflowComplete,
 } from "@/lib/metrics/instrumentation/workflow";
-import { clearExecution } from "@/lib/step-success-tracker";
+import { clearExecution } from "@/lib/workflow/executor/step-success-tracker";
 import { ARRAY_SOURCE_RE } from "@/lib/workflow/nodes/for-each/utils";
 import {
   buildEdgesBySourceHandle,
@@ -41,7 +41,7 @@ import {
   getReadyDownstreamIds,
   propagateConvergenceSkips,
   signalConvergenceArrival,
-} from "@/lib/convergence-barrier";
+} from "@/lib/workflow/executor/convergence-barrier";
 import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
 import {
   applyBigIntConversion,
@@ -55,12 +55,12 @@ import {
   getActionLabel,
   getStepImporter,
   type StepImporter,
-} from "./step-registry";
+} from "@/lib/step-registry";
 import { LEGACY_ACTION_MAPPINGS } from "@/plugins/legacy-mappings";
-import type { StepContext } from "@/lib/steps/step-handler";
+import type { StepContext } from "@/lib/workflow/executor/step-handler";
 import { triggerStep } from "@/lib/workflow/nodes/trigger/step";
-import { deserializeEventTriggerData, getErrorMessageAsync } from "./utils";
-import type { WorkflowEdge, WorkflowNode } from "./workflow-store";
+import { deserializeEventTriggerData, getErrorMessageAsync } from "@/lib/utils";
+import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 // System actions that don't have plugins - maps to module import functions
 const SYSTEM_ACTIONS: Record<string, StepImporter> = {

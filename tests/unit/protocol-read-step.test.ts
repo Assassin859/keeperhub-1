@@ -7,7 +7,7 @@ vi.mock("@/protocols", () => ({}));
 
 const mockWithStepLogging = vi.fn((_input: unknown, fn: () => unknown) => fn());
 
-vi.mock("@/lib/steps/step-handler", () => ({
+vi.mock("@/lib/workflow/executor/step-handler", () => ({
   withStepLogging: (...args: unknown[]) =>
     mockWithStepLogging(...(args as [unknown, () => unknown])),
 }));
