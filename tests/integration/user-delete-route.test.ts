@@ -24,20 +24,34 @@ vi.mock("@/lib/auth", () => ({
   auth: { api: { getSession: mockGetSession } },
 }));
 
+// The route runs the three deactivation writes inside db.transaction;
+// reproduce that by providing a `tx` shim with the same shape we expect
+// the route to call. Routing-by-table-string keeps the user-update and
+// org-key-update branches separate so the test can assert each
+// independently.
+const txStub = {
+  update: vi.fn((table: unknown) => {
+    if (table === "ORG_API_KEYS_TABLE") {
+      return {
+        set: vi.fn((value: unknown) => {
+          mockApiKeyUpdateSet(value);
+          return { where: mockApiKeyUpdateWhere };
+        }),
+      };
+    }
+    return { set: vi.fn(() => ({ where: mockUserUpdateWhere })) };
+  }),
+  delete: vi.fn(() => ({ where: mockSessionDeleteWhere })),
+};
+
 vi.mock("@/lib/db", () => ({
   db: {
     query: { users: { findFirst: mockUsersFindFirst } },
-    update: vi.fn((table: unknown) => {
-      if (table === "ORG_API_KEYS_TABLE") {
-        const setStub = vi.fn((value: unknown) => {
-          mockApiKeyUpdateSet(value);
-          return { where: mockApiKeyUpdateWhere };
-        });
-        return { set: setStub };
+    transaction: vi.fn(
+      async (cb: (tx: typeof txStub) => Promise<unknown>) => {
+        await cb(txStub);
       }
-      return { set: vi.fn(() => ({ where: mockUserUpdateWhere })) };
-    }),
-    delete: vi.fn(() => ({ where: mockSessionDeleteWhere })),
+    ),
   },
 }));
 
