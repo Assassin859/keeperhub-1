@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { DiscordIcon } from "@/components/icons/discord-icon";
 import { AddressBookOverlay } from "@/components/overlays/address-book-overlay";
 import { FeedbackOverlay } from "@/components/overlays/feedback-overlay";
@@ -737,6 +738,10 @@ export function NavigationSidebar(): React.ReactNode {
         .catch(() => [] as SavedWorkflow[]);
       const visible = existing.filter((w) => w.name !== "__current__");
       if (visible.length > 0) {
+        // Anonymous users are capped at one workflow. Surface the cap so the
+        // click isn't silently a no-op visually, then drop them onto their
+        // existing workflow.
+        toast.info("Sign in to create more workflows.");
         const latest = visible.sort(
           (a, b) =>
             new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
