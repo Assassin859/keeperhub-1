@@ -1,7 +1,7 @@
 import "server-only";
 
 import { NextResponse } from "next/server";
-import { resolveAbi } from "@/lib/abi-cache";
+import { resolveAbi } from "@/lib/abi/cache";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import { getErrorMessage } from "@/lib/utils";
 import { readContractCore } from "@/plugins/web3/steps/read-contract-core";

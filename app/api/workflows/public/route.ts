@@ -9,7 +9,7 @@ import {
   workflows,
 } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import type { VoteDirection } from "@/lib/workflow/votes";
+import type { VoteDirection } from "@/lib/workflow/editor/votes";
 type TagInfo = { id: string; name: string; slug: string };
 
 async function resolveTagFilter(tagSlug: string): Promise<string[] | "empty"> {

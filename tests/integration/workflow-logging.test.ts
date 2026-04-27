@@ -78,7 +78,7 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
-import { logWorkflowCompleteDb } from "@/lib/workflow-logging";
+import { logWorkflowCompleteDb } from "@/lib/workflow/executor/logging";
 
 function getExecUpdate(): UpdateCall | undefined {
   return updateCalls.find((c) => c.target === workflowExecutionsMock);

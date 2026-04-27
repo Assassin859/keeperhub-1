@@ -10,8 +10,8 @@ import { cn } from "@/lib/utils";
 import type {
   WorkflowNodeData,
   WorkflowTriggerType,
-} from "@/lib/workflow-store";
-import { WorkflowTriggerEnum } from "@/lib/workflow-store";
+} from "@/lib/workflow/store";
+import { WorkflowTriggerEnum } from "@/lib/workflow/store";
 
 type TriggerNodeProps = NodeProps & {
   data?: WorkflowNodeData;

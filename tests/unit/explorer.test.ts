@@ -44,11 +44,11 @@ describe("explorer", () => {
 
   const blockscoutConfig: ExplorerConfig = {
     id: "explorer_2",
-    chainId: 42_429,
+    chainId: 42_431,
     chainType: "evm",
-    explorerUrl: "https://explorer.testnet.tempo.xyz",
+    explorerUrl: "https://explore.testnet.tempo.xyz",
     explorerApiType: "blockscout",
-    explorerApiUrl: "https://explorer.testnet.tempo.xyz/api",
+    explorerApiUrl: "https://explore.testnet.tempo.xyz/api",
     explorerTxPath: "/tx/{hash}",
     explorerAddressPath: "/address/{address}",
     explorerContractPath: "/address/{address}?tab=contract",
@@ -83,7 +83,7 @@ describe("explorer", () => {
       const txHash = "0xabc123";
       const url = getTransactionUrl(blockscoutConfig, txHash);
 
-      expect(url).toBe(`https://explorer.testnet.tempo.xyz/tx/${txHash}`);
+      expect(url).toBe(`https://explore.testnet.tempo.xyz/tx/${txHash}`);
     });
 
     it("should build transaction URL for Solana", () => {
@@ -151,7 +151,7 @@ describe("explorer", () => {
       const url = getContractUrl(blockscoutConfig, address);
 
       expect(url).toBe(
-        `https://explorer.testnet.tempo.xyz/address/${address}?tab=contract`
+        `https://explore.testnet.tempo.xyz/address/${address}?tab=contract`
       );
     });
 
@@ -259,12 +259,12 @@ describe("explorer", () => {
           }),
       });
 
-      const result = await fetchContractAbi(blockscoutConfig, "0x123", 42_429);
+      const result = await fetchContractAbi(blockscoutConfig, "0x123", 42_431);
 
       expect(result.success).toBe(true);
       expect(result.abi).toEqual(mockAbi);
       expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining("https://explorer.testnet.tempo.xyz/api")
+        expect.stringContaining("https://explore.testnet.tempo.xyz/api")
       );
     });
   });
@@ -448,7 +448,7 @@ describe("explorer", () => {
   });
 
   describe("fetchBlockscoutAbi", () => {
-    const apiUrl = "https://explorer.testnet.tempo.xyz/api";
+    const apiUrl = "https://explore.testnet.tempo.xyz/api";
     const contractAddress = "0x1234567890123456789012345678901234567890";
 
     it("should return ABI on successful response", async () => {
@@ -866,7 +866,7 @@ describe("explorer", () => {
   });
 
   describe("fetchBlockscoutTransactions", () => {
-    const apiUrl = "https://explorer.testnet.tempo.xyz/api";
+    const apiUrl = "https://explore.testnet.tempo.xyz/api";
     const contractAddress = "0x1234567890123456789012345678901234567890";
     const startBlock = 100;
     const endBlock = 500;
@@ -1202,7 +1202,7 @@ describe("explorer", () => {
 
       const calledUrl = mockFetch.mock.calls[0][0] as string;
       expect(calledUrl).toContain(
-        "https://explorer.testnet.tempo.xyz/api/v2/addresses/"
+        "https://explore.testnet.tempo.xyz/api/v2/addresses/"
       );
       expect(calledUrl).toContain(contractAddress);
       expect(calledUrl).toContain("filter=to");

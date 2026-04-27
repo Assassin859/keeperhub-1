@@ -5,7 +5,7 @@ import {
   isSdkRetryError,
   reconcileMaxRetriesFailures,
   reconcileSdkFailures,
-} from "@/lib/max-retries-reconciler";
+} from "@/lib/workflow/executor/max-retries-reconciler";
 
 describe("isSdkRetryError", () => {
   it("should match 'exceeded max retries' error format", () => {

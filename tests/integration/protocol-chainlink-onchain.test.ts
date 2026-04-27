@@ -22,7 +22,7 @@
 
 import { ethers } from "ethers";
 import { describe, expect, it } from "vitest";
-import { reshapeArgsForAbi } from "@/lib/abi-struct-args";
+import { reshapeArgsForAbi } from "@/lib/abi/struct-args";
 import type {
   ProtocolAction,
   ProtocolContract,

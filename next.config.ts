@@ -137,6 +137,29 @@ const nextConfig = {
   ],
   outputFileTracingIncludes: {
     "/*": [
+      // Force-include the next package itself. The standalone server.js
+      // emitted by `output: "standalone"` does a bare `require('next')`,
+      // which needs next/package.json to resolve. Next's tracer only
+      // catches that bare specifier when some other file in the bundle
+      // also imports next directly. In prod builds INCLUDE_TEST_ENDPOINTS
+      // is empty, the staging-only `*.staging.ts` files that triggered
+      // the side-effect are excluded, and the standalone output ends up
+      // with next/dist/ but no next/package.json -- runtime crashes with
+      // "Cannot find module 'next'" on server.js line 16. Including next
+      // explicitly here makes the bundle robust regardless of which other
+      // pageExtensions are active. See KEEP-348 follow-up incident.
+      "./node_modules/next/**/*",
+      // Next 16's standalone tracer doesn't follow next's own runtime
+      // dependencies through pnpm's .pnpm/ store. Force-include the full
+      // set listed in next/package.json `dependencies` plus the
+      // architecture-specific @next/swc binary used on Alpine (musl).
+      "./node_modules/@next/env/**/*",
+      "./node_modules/@next/swc-linux-x64-musl/**/*",
+      "./node_modules/@swc/helpers/**/*",
+      "./node_modules/baseline-browser-mapping/**/*",
+      "./node_modules/caniuse-lite/**/*",
+      "./node_modules/postcss/**/*",
+      "./node_modules/styled-jsx/**/*",
       "./node_modules/@babel/code-frame/**/*",
       "./node_modules/@babel/helper-validator-identifier/**/*",
       "./node_modules/@cbor-extract/cbor-extract-darwin-arm64/**/*",
@@ -254,6 +277,15 @@ const nextConfig = {
   },
   async rewrites() {
     return [{ source: "/openapi.json", destination: "/api/openapi" }];
+  },
+  async redirects() {
+    return [
+      {
+        source: "/llms.txt",
+        destination: "https://docs.keeperhub.com/llms.txt",
+        permanent: true,
+      },
+    ];
   },
 } satisfies NextConfig & { eslint?: { ignoreDuringBuilds?: boolean } };
 

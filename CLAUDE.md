@@ -127,7 +127,6 @@ Exits with code 1 if errors are found. Errors are hardcoded colors in CSS and ar
 
 - `app/api/og/generate-og.tsx` -- server-rendered OG images, not interactive UI
 - `lib/monaco-theme.ts` -- editor syntax highlighting, uses Monaco's theming API
-- `lib/next-boilerplate/` -- upstream template code
 - `docs-site/` -- separate documentation site
 
 ---

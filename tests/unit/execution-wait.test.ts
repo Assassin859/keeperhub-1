@@ -41,7 +41,7 @@ describe("waitForExecutionCompletion (KEEP-265)", () => {
 
   it("returns null immediately when timeout <= 0", async () => {
     const { waitForExecutionCompletion } = await import(
-      "@/lib/x402/execution-wait"
+      "@/lib/payments/x402/execution-wait"
     );
     const result = await waitForExecutionCompletion("exec-1", 0);
     expect(result).toBeNull();
@@ -55,7 +55,7 @@ describe("waitForExecutionCompletion (KEEP-265)", () => {
       error: null,
     });
     const { waitForExecutionCompletion } = await import(
-      "@/lib/x402/execution-wait"
+      "@/lib/payments/x402/execution-wait"
     );
     const result = await waitForExecutionCompletion("exec-1", 1000, 10);
     expect(result).toEqual({
@@ -72,7 +72,7 @@ describe("waitForExecutionCompletion (KEEP-265)", () => {
       error: "RPC down",
     });
     const { waitForExecutionCompletion } = await import(
-      "@/lib/x402/execution-wait"
+      "@/lib/payments/x402/execution-wait"
     );
     const result = await waitForExecutionCompletion("exec-1", 1000, 10);
     expect(result?.status).toBe("error");
@@ -82,7 +82,7 @@ describe("waitForExecutionCompletion (KEEP-265)", () => {
   it("returns null if execution row is missing", async () => {
     mockFindFirstExecution.mockResolvedValue(undefined);
     const { waitForExecutionCompletion } = await import(
-      "@/lib/x402/execution-wait"
+      "@/lib/payments/x402/execution-wait"
     );
     const result = await waitForExecutionCompletion("exec-missing", 100, 10);
     expect(result).toBeNull();
@@ -98,7 +98,7 @@ describe("waitForExecutionCompletion (KEEP-265)", () => {
         error: null,
       });
     const { waitForExecutionCompletion } = await import(
-      "@/lib/x402/execution-wait"
+      "@/lib/payments/x402/execution-wait"
     );
     const result = await waitForExecutionCompletion("exec-2", 1000, 5);
     expect(result?.status).toBe("success");
@@ -112,7 +112,7 @@ describe("waitForExecutionCompletion (KEEP-265)", () => {
       error: null,
     });
     const { waitForExecutionCompletion } = await import(
-      "@/lib/x402/execution-wait"
+      "@/lib/payments/x402/execution-wait"
     );
     const start = Date.now();
     const result = await waitForExecutionCompletion("exec-3", 40, 10);
@@ -128,14 +128,14 @@ describe("applyOutputMapping (KEEP-265)", () => {
   });
 
   it("returns raw workflow output when outputMapping is null", async () => {
-    const { applyOutputMapping } = await import("@/lib/x402/execution-wait");
+    const { applyOutputMapping } = await import("@/lib/payments/x402/execution-wait");
     const result = await applyOutputMapping("exec-1", { balance: "1.5" }, null);
     expect(result).toEqual({ balance: "1.5" });
     expect(mockFindFirstLog).not.toHaveBeenCalled();
   });
 
   it("returns raw workflow output when outputMapping has no nodeId", async () => {
-    const { applyOutputMapping } = await import("@/lib/x402/execution-wait");
+    const { applyOutputMapping } = await import("@/lib/payments/x402/execution-wait");
     const result = await applyOutputMapping(
       "exec-1",
       { balance: "1.5" },
@@ -152,7 +152,7 @@ describe("applyOutputMapping (KEEP-265)", () => {
         internalDebug: "ignore-me",
       },
     });
-    const { applyOutputMapping } = await import("@/lib/x402/execution-wait");
+    const { applyOutputMapping } = await import("@/lib/payments/x402/execution-wait");
     const result = await applyOutputMapping("exec-1", null, {
       nodeId: "audit-1",
       fields: ["riskScore", "vulnerabilities"],
@@ -167,7 +167,7 @@ describe("applyOutputMapping (KEEP-265)", () => {
     mockFindFirstLog.mockResolvedValue({
       output: { a: 1, b: 2 },
     });
-    const { applyOutputMapping } = await import("@/lib/x402/execution-wait");
+    const { applyOutputMapping } = await import("@/lib/payments/x402/execution-wait");
     const result = await applyOutputMapping("exec-1", null, {
       nodeId: "audit-1",
     });
@@ -176,7 +176,7 @@ describe("applyOutputMapping (KEEP-265)", () => {
 
   it("falls back to workflow output when the mapped node log is missing", async () => {
     mockFindFirstLog.mockResolvedValue(undefined);
-    const { applyOutputMapping } = await import("@/lib/x402/execution-wait");
+    const { applyOutputMapping } = await import("@/lib/payments/x402/execution-wait");
     const result = await applyOutputMapping(
       "exec-1",
       { fallback: true },
@@ -198,7 +198,7 @@ describe("buildCallCompletionResponse (KEEP-265)", () => {
       error: null,
     });
     const { buildCallCompletionResponse } = await import(
-      "@/lib/x402/execution-wait"
+      "@/lib/payments/x402/execution-wait"
     );
     const res = await buildCallCompletionResponse("exec-timeout", null, 30);
     expect(res).toEqual({ executionId: "exec-timeout", status: "running" });
@@ -214,7 +214,7 @@ describe("buildCallCompletionResponse (KEEP-265)", () => {
       output: { balance: "1.3286 ETH", _debug: "noise" },
     });
     const { buildCallCompletionResponse } = await import(
-      "@/lib/x402/execution-wait"
+      "@/lib/payments/x402/execution-wait"
     );
     const res = await buildCallCompletionResponse(
       "exec-success",
@@ -235,7 +235,7 @@ describe("buildCallCompletionResponse (KEEP-265)", () => {
       error: "RPC failed",
     });
     const { buildCallCompletionResponse } = await import(
-      "@/lib/x402/execution-wait"
+      "@/lib/payments/x402/execution-wait"
     );
     const res = await buildCallCompletionResponse("exec-err", null, 1000);
     expect(res).toEqual({
@@ -252,7 +252,7 @@ describe("buildCallCompletionResponse (KEEP-265)", () => {
       error: null,
     });
     const { buildCallCompletionResponse } = await import(
-      "@/lib/x402/execution-wait"
+      "@/lib/payments/x402/execution-wait"
     );
     const res = await buildCallCompletionResponse("exec-cancel", null, 1000);
     expect(res).toEqual({

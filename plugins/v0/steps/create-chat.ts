@@ -2,7 +2,7 @@ import "server-only";
 
 import { createClient, type ChatsCreateResponse } from "v0-sdk";
 import { fetchCredentials } from "@/lib/credential-fetcher";
-import { type StepInput, withStepLogging } from "@/lib/steps/step-handler";
+import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 import type { V0Credentials } from "../credentials";
 

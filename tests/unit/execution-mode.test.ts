@@ -16,7 +16,7 @@ vi.mock("drizzle-orm", () => ({
 
 import { CONFIG } from "../../keeperhub-executor/config";
 import { resolveDispatchTarget } from "../../keeperhub-executor/execution-mode";
-import type { WorkflowNode } from "../../lib/workflow-store";
+import type { WorkflowNode } from "../../lib/workflow/store";
 
 function makeNode(
   type: "trigger" | "action" | "add",

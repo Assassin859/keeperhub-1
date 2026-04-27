@@ -39,7 +39,7 @@ const SKIP_PATTERNS = [
   "node_modules",
   ".next",
   "docs-site",
-  "lib/next-boilerplate",
+  "lib/workflow/codegen/boilerplate",
   // OG image generation is exempt (server-rendered images, not UI)
   "generate-og.tsx",
   // Monaco theme uses editor-specific theming API

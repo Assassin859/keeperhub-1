@@ -432,11 +432,11 @@ describe("POST /api/mcp/workflows/[slug]/call: write workflow returns calldata",
     tags: { id: "id", name: "name" },
   }));
 
-  vi.mock("@/lib/x402/server", () => ({
+  vi.mock("@/lib/payments/x402/server", () => ({
     server: { register: vi.fn() },
   }));
 
-  vi.mock("@/lib/x402/payment-gate", () => ({
+  vi.mock("@/lib/payments/x402/payment-gate", () => ({
     buildPaymentConfig: mockBuildPaymentConfig,
     hashPaymentSignature: mockHashPaymentSignature,
     findExistingPayment: mockFindExistingPayment,
@@ -445,7 +445,7 @@ describe("POST /api/mcp/workflows/[slug]/call: write workflow returns calldata",
     extractPayerAddress: mockExtractPayerAddress,
   }));
 
-  vi.mock("@/lib/x402/reconcile", () => ({
+  vi.mock("@/lib/payments/x402/reconcile", () => ({
     isTimeoutError: vi.fn().mockReturnValue(false),
     pollForPaymentConfirmation: vi.fn().mockResolvedValue(false),
   }));
@@ -458,7 +458,7 @@ describe("POST /api/mcp/workflows/[slug]/call: write workflow returns calldata",
     start: mockStart,
   }));
 
-  vi.mock("@/lib/workflow-executor.workflow", () => ({
+  vi.mock("@/lib/workflow/executor/executor.workflow", () => ({
     executeWorkflow: mockExecuteWorkflow,
   }));
 
@@ -471,7 +471,7 @@ describe("POST /api/mcp/workflows/[slug]/call: write workflow returns calldata",
     checkConcurrencyLimit: mockCheckConcurrencyLimit,
   }));
 
-  vi.mock("@/lib/x402/execution-wait", () => ({
+  vi.mock("@/lib/payments/x402/execution-wait", () => ({
     buildCallCompletionResponse: mockBuildCallCompletionResponse,
   }));
 

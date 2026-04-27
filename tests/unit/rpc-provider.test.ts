@@ -7,7 +7,7 @@ import {
   noopMetricsCollector,
   type RpcMetricsCollector,
   RpcProviderManager,
-} from "@/lib/rpc-provider";
+} from "@/lib/rpc/providers";
 
 // Mock ethers
 vi.mock("ethers", () => {

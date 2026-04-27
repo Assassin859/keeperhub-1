@@ -4,7 +4,7 @@
  * Tests the ABI fetching API endpoint for different explorer types:
  * - Etherscan (Ethereum mainnet, chain 1)
  * - Basescan via Etherscan v2 (Base, chain 8453)
- * - Blockscout (Tempo testnet, chain 42429)
+ * - Blockscout (Tempo testnet, chain 42431)
  * - Solscan (Solana, chain 101) - should return error
  *
  * Run with: pnpm vitest tests/integration/abi-route.test.ts
@@ -65,8 +65,8 @@ const mockChains = {
     isEnabled: true,
   },
   tempo: {
-    id: "chain_42429",
-    chainId: 42_429,
+    id: "chain_42431",
+    chainId: 42_431,
     name: "Tempo Testnet",
     symbol: "TEMPO",
     chainType: "evm",
@@ -110,12 +110,12 @@ const mockExplorers = {
     updatedAt: new Date(),
   },
   blockscout: {
-    id: "explorer_42429",
-    chainId: 42_429,
+    id: "explorer_42431",
+    chainId: 42_431,
     chainType: "evm",
-    explorerUrl: "https://explorer.testnet.tempo.xyz",
+    explorerUrl: "https://explore.testnet.tempo.xyz",
     explorerApiType: "blockscout",
-    explorerApiUrl: "https://explorer.testnet.tempo.xyz/api",
+    explorerApiUrl: "https://explore.testnet.tempo.xyz/api",
     explorerTxPath: "/tx/{hash}",
     explorerAddressPath: "/address/{address}",
     explorerContractPath: "/address/{address}?tab=contract",
@@ -401,7 +401,7 @@ describe("/api/chains/[chainId]/abi route", () => {
     });
   });
 
-  describe("Blockscout (chain 42429 - Tempo)", () => {
+  describe("Blockscout (chain 42431 - Tempo)", () => {
     const TEMPO_CONTRACT = "0x1234567890123456789012345678901234567890";
 
     it("should fetch ABI successfully from Blockscout", async () => {
@@ -420,9 +420,9 @@ describe("/api/chains/[chainId]/abi route", () => {
           }),
       });
 
-      const request = createRequest("42429", TEMPO_CONTRACT);
+      const request = createRequest("42431", TEMPO_CONTRACT);
       const response = await GET(request, {
-        params: Promise.resolve({ chainId: "42429" }),
+        params: Promise.resolve({ chainId: "42431" }),
       });
 
       expect(response.status).toBe(200);
@@ -430,12 +430,12 @@ describe("/api/chains/[chainId]/abi route", () => {
       expect(data.success).toBe(true);
       expect(data.abi).toEqual(mockAbi);
       expect(data.explorerUrl).toBe(
-        `https://explorer.testnet.tempo.xyz/address/${TEMPO_CONTRACT}?tab=contract`
+        `https://explore.testnet.tempo.xyz/address/${TEMPO_CONTRACT}?tab=contract`
       );
 
       // Verify Blockscout doesn't use chainid or apikey
       const calledUrl = mockFetch.mock.calls[0][0] as string;
-      expect(calledUrl).toContain("explorer.testnet.tempo.xyz/api");
+      expect(calledUrl).toContain("explore.testnet.tempo.xyz/api");
       expect(calledUrl).not.toContain("chainid");
       expect(calledUrl).not.toContain("apikey");
     });
@@ -451,9 +451,9 @@ describe("/api/chains/[chainId]/abi route", () => {
           }),
       });
 
-      const request = createRequest("42429", TEMPO_CONTRACT);
+      const request = createRequest("42431", TEMPO_CONTRACT);
       const response = await GET(request, {
-        params: Promise.resolve({ chainId: "42429" }),
+        params: Promise.resolve({ chainId: "42431" }),
       });
 
       expect(response.status).toBe(200);

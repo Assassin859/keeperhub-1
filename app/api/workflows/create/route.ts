@@ -7,7 +7,7 @@ import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { projects, tags, workflows } from "@/lib/db/schema";
 import { generateId } from "@/lib/utils/id";
-import { sanitizeWorkflowData } from "@/lib/workflow/sanitize-nodes";
+import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
 function createDefaultNodes() {
   const triggerId = nanoid();
   const actionId = nanoid();

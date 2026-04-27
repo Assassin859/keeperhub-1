@@ -54,11 +54,15 @@ import {
   type WorkflowNode,
   type WorkflowVisibility,
   workflowNotFoundAtom,
-} from "@/lib/workflow-store";
+} from "@/lib/workflow/store";
 import { findActionById } from "@/plugins/registry";
 
 type WorkflowPageProps = {
   params: Promise<{ workflowId: string }>;
+};
+
+type WorkflowEditorProps = {
+  workflowId: string;
 };
 
 // System actions that need integrations (not in plugin registry)
@@ -120,8 +124,7 @@ function checkNodeIntegration(
   return null;
 }
 
-const WorkflowEditor = ({ params }: WorkflowPageProps) => {
-  const { workflowId } = use(params);
+const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
   const searchParams = useSearchParams();
   const router = useRouter();
   const isMobile = useIsMobile();
@@ -926,8 +929,9 @@ const WorkflowEditor = ({ params }: WorkflowPageProps) => {
   );
 };
 
-const WorkflowPage = ({ params }: WorkflowPageProps) => (
-  <WorkflowEditor params={params} />
-);
+const WorkflowPage = ({ params }: WorkflowPageProps) => {
+  const { workflowId } = use(params);
+  return <WorkflowEditor workflowId={workflowId} />;
+};
 
 export default WorkflowPage;

@@ -1,8 +1,8 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { sessions, users } from "@/lib/db/schema";
+import { organizationApiKeys, sessions, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 
 /**
@@ -53,14 +53,35 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    // Deactivate the account
-    await db
-      .update(users)
-      .set({ deactivatedAt: new Date(), updatedAt: new Date() })
-      .where(eq(users.id, userId));
+    // Run the deactivation writes in one transaction so a partial failure
+    // never leaves the user marked deactivated while their sessions or
+    // API keys remain valid. authenticateApiKey gates on
+    // users.deactivatedAt as defence-in-depth, but Better Auth's session
+    // path does not, so without this transaction a session-delete failure
+    // after the users row update would leave the account reachable via
+    // session cookie until expiry.
+    const now = new Date();
+    await db.transaction(async (tx) => {
+      await tx
+        .update(users)
+        .set({ deactivatedAt: now, updatedAt: now })
+        .where(eq(users.id, userId));
 
-    // Invalidate all sessions
-    await db.delete(sessions).where(eq(sessions.userId, userId));
+      await tx.delete(sessions).where(eq(sessions.userId, userId));
+
+      // Soft-revoke any organization API keys this user issued. Without
+      // this, a kh_ key with createdBy = userId would survive deactivation
+      // and remain usable until manually revoked.
+      await tx
+        .update(organizationApiKeys)
+        .set({ revokedAt: now })
+        .where(
+          and(
+            eq(organizationApiKeys.createdBy, userId),
+            isNull(organizationApiKeys.revokedAt)
+          )
+        );
+    });
 
     return NextResponse.json({
       success: true,

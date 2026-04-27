@@ -15,9 +15,12 @@ https://app.keeperhub.com/api
 
 ## Authentication
 
-All API requests require authentication via either:
-- **Session**: Browser-based authentication via Better Auth
-- **API Key**: For programmatic access (see [API Keys](/api/api-keys))
+API requests require authentication. Two methods are supported, but their accepted scope differs:
+
+- **Session**: Browser-based authentication via Better Auth. Accepted on every endpoint.
+- **API Key** (`kh_`): For programmatic access to organization-scoped endpoints (workflows, integrations, billing, organization management). Not accepted on user-account, wallet write, OAuth-account-bound, or per-user endpoints.
+
+See [Authentication](/api/authentication) for the full scope.
 
 ## Response Format
 

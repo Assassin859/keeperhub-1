@@ -338,6 +338,87 @@ describe("signMppTransaction", () => {
     expect(envelope.nonce).toBe(BigInt(0));
   });
 
+  it("encodes the attribution memo identically to mppx Attribution.encode", async () => {
+    // Regression guard for the fourth MPP hotfix. The original /sign hardcoded
+    // the memo tag as ASCII "MPP\0" (0x4d505000). The real mppx tag is
+    // keccak256("mpp")[0..3] = 0xef1ed712 (mppx/tempo/Attribution.js:31). With
+    // the wrong tag, the post-broadcast assertChallengeBoundMemo check threw
+    // a non-PaymentError that the facilitator's outer catch wrapped as a
+    // reason-less "Payment verification failed" 402 -- same generic shape as
+    // the previous three hotfixes. This test pins the memo bytes to whatever
+    // mppx's own Attribution.encode produces for the same (challengeId,
+    // serverId), so any future drift gets caught before deploy.
+    const { TxEnvelopeTempo } = await import("ox/tempo");
+    const { decodeFunctionData, keccak256, toBytes } = await import("viem");
+    const { Abis } = await import("viem/tempo");
+
+    // Spec-equivalent reimplementation of mppx/tempo/Attribution.encode using
+    // viem primitives directly. We can't import mppx's Attribution at runtime
+    // (package.json exports map omits the submodule), so we mirror its logic
+    // here. Any divergence between this and the on-chain check is caught by
+    // the byte-level equality assertion below.
+    const mppxEncode = (params: {
+      challengeId: string;
+      serverId: string;
+    }): `0x${string}` => {
+      const tag = keccak256(toBytes("mpp")).slice(2, 10); // 4 bytes hex
+      const serverFingerprint = keccak256(toBytes(params.serverId)).slice(
+        2,
+        22
+      ); // 10 bytes hex
+      const challengeFingerprint = keccak256(toBytes(params.challengeId)).slice(
+        2,
+        16
+      ); // 7 bytes hex
+      const version = "01";
+      const clientId = "00000000000000000000"; // 10 bytes anonymous
+      return `0x${tag}${version}${serverFingerprint}${clientId}${challengeFingerprint}`;
+    };
+
+    const fullChallenge = Challenge.from({
+      secretKey: MPP_TEST_SECRET,
+      realm: "test.keeperhub.local",
+      method: "tempo",
+      intent: "charge",
+      request: {
+        amount: "10000",
+        currency: "0x20c000000000000000000000b9537d11c60e8b50",
+        recipient: "0x000000000000000000000000000000000000dead",
+        methodDetails: { chainId: 4217 },
+      },
+    });
+    const serializedChallenge = Challenge.serialize(fullChallenge);
+    const stripped = serializedChallenge.startsWith("Payment ")
+      ? serializedChallenge.slice("Payment ".length)
+      : serializedChallenge;
+
+    const out = await signMppTransaction(SUB_ORG, WALLET, {
+      chainId: 4217,
+      serialized: stripped,
+    });
+    const decoded = JSON.parse(
+      Buffer.from(out, "base64url").toString("utf-8")
+    ) as { payload: { signature: `0x76${string}` } };
+    const envelope = TxEnvelopeTempo.deserialize(decoded.payload.signature);
+    const call = envelope.calls?.[0];
+    if (!call?.data) {
+      throw new Error("envelope has no call data");
+    }
+    const { args } = decodeFunctionData({
+      abi: Abis.tip20,
+      data: call.data,
+    });
+    const ourMemo = args[2] as `0x${string}`;
+    const expectedMemo = mppxEncode({
+      challengeId: fullChallenge.id,
+      serverId: fullChallenge.realm,
+    });
+    expect(ourMemo.toLowerCase()).toBe(expectedMemo.toLowerCase());
+    // Pin the tag bytes explicitly so a regression on just the tag (the
+    // historic bug) surfaces with a clearer failure than a 32-byte diff.
+    expect(ourMemo.slice(0, 10).toLowerCase()).toBe("0xef1ed712");
+  });
+
   it("throws on non-charge intent (proof-mode belongs in signMppProof)", async () => {
     const zeroAmount = Challenge.serialize(
       Challenge.from({

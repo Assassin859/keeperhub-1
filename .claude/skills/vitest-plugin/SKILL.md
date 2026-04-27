@@ -42,7 +42,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-vi.mock("@/lib/steps/step-handler", () => ({
+vi.mock("@/lib/workflow/executor/step-handler", () => ({
   withStepLogging: (_input: unknown, fn: () => unknown) => fn(),
 }));
 

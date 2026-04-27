@@ -180,7 +180,7 @@ export function defineProtocol(def: ProtocolDefinition): ProtocolDefinition {
 import {
   type AbiDrivenProtocolInput,
   deriveActionsFromAbi,
-} from "@/lib/protocol-abi-derive";
+} from "@/lib/abi/protocol-derive";
 
 export type {
   AbiDrivenContract,
@@ -188,7 +188,7 @@ export type {
   AbiFunctionOverride,
   AbiInputOverride,
   AbiOutputOverride,
-} from "@/lib/protocol-abi-derive";
+} from "@/lib/abi/protocol-derive";
 
 export function defineAbiProtocol(
   input: AbiDrivenProtocolInput

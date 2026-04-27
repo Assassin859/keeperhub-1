@@ -1,4 +1,4 @@
-import type { WorkflowNode } from "@/lib/workflow-store";
+import type { WorkflowNode } from "@/lib/workflow/store";
 
 export function getWorkflowTrigger(nodes: WorkflowNode[]): string | null {
   const triggerNode = nodes.find(

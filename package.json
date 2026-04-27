@@ -98,7 +98,6 @@
     "import-in-the-middle": "^2.0.6",
     "jose": "^6.2.2",
     "jotai": "^2.19.0",
-    "jszip": "^3.10.1",
     "lucide-react": "^0.577.0",
     "motion": "^12.38.0",
     "mppx": "^0.5.12",

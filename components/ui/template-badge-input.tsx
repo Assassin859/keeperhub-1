@@ -2,10 +2,13 @@
 
 import { useAtom } from "jotai";
 import { useEffect, useRef, useState } from "react";
-import { doesNodeExist, getDisplayTextForTemplate } from "@/lib/template-utils";
+import { doesNodeExist, getDisplayTextForTemplate } from "@/lib/workflow/editor/template-utils";
 import { cn } from "@/lib/utils";
-import { nodesAtom, selectedNodeAtom } from "@/lib/workflow-store";
-import { TemplateAutocomplete } from "./template-autocomplete";
+import { nodesAtom, selectedNodeAtom } from "@/lib/workflow/store";
+import {
+  TemplateAutocomplete,
+  type TemplateAutocompleteCloseReason,
+} from "./template-autocomplete";
 
 // Guards `selection.getRangeAt(0)`, which throws IndexSizeError when
 // rangeCount is 0 (e.g. focus moved off the editable before keydown fired).
@@ -116,9 +119,37 @@ export function TemplateBadgeInput({
   // Autocomplete state
   const [showAutocomplete, setShowAutocomplete] = useState(false);
   const [autocompletePosition, setAutocompletePosition] = useState({ top: 0, left: 0 });
-  const [autocompleteFilter, setAutocompleteFilter] = useState("");
   const [atSignPosition, setAtSignPosition] = useState<number | null>(null);
   const pendingCursorPosition = useRef<number | null>(null);
+
+  const openAutocompleteAtAt = (atPosition: number): void => {
+    setAtSignPosition(atPosition);
+    if (contentRef.current) {
+      const inputRect = contentRef.current.getBoundingClientRect();
+      setAutocompletePosition({
+        top: inputRect.bottom + window.scrollY + 4,
+        left: inputRect.left + window.scrollX,
+      });
+    }
+    setShowAutocomplete(true);
+  };
+
+  const closeAutocomplete = (reason: TemplateAutocompleteCloseReason): void => {
+    setShowAutocomplete(false);
+    setAtSignPosition(null);
+    if (reason === "escape") {
+      // Return focus to the editor so the user can keep typing.
+      contentRef.current?.focus();
+      return;
+    }
+    // "outside": user clicked somewhere else. Don't refocus; also sync
+    // isFocused so the "@" chip hides if focus no longer lives in the editor.
+    setTimeout(() => {
+      if (document.activeElement !== contentRef.current) {
+        setIsFocused(false);
+      }
+    }, 0);
+  };
 
   // Update internal value when prop changes from outside
   useEffect(() => {
@@ -397,64 +428,10 @@ export function TemplateBadgeInput({
       // DON'T update display, just update the value
       setInternalValue(newValue);
       onChange?.(newValue);
-      // Don't trigger display update - this prevents cursor reset!
-      
-
-      // Check for @ sign to show autocomplete (moved here so it works with existing badges)
-      // Get cursor position first to find the closest @
-      const cursorPos = saveCursorPosition();
-      const cursorOffset = cursorPos?.offset ?? newValue.length;
-      
-      // Check if cursor is in a text node that contains "@"
-      const selection = window.getSelection();
-      const cursorInTextNodeWithAt = selection && selection.rangeCount > 0 && 
-        selection.getRangeAt(0).endContainer.nodeType === Node.TEXT_NODE &&
-        (selection.getRangeAt(0).endContainer.textContent || "").includes("@");
-      
-      const lastAtSign = findActiveAtSign(newValue, cursorOffset);
-      
-      if (lastAtSign !== -1) {
-        const textAfterAt = newValue.slice(lastAtSign + 1);
-        
-        // Extract filter up to next space or end of string
-        const spaceIndex = textAfterAt.indexOf(" ");
-        const filter = spaceIndex === -1 ? textAfterAt : textAfterAt.slice(0, spaceIndex);
-        
-        // Calculate distance from cursor to @
-        const distanceFromAt = cursorOffset - lastAtSign;
-        // Only consider cursor "near" if within 10 chars - if further, it's just normal text, not active typing
-        const isCursorNearAt = distanceFromAt <= 10;
-        
-        // Only open if cursor is very close to @ (within 10 chars) - if further, it's just normal text
-        // Always open if cursor is in a text node containing "@" (user is actively typing there)
-        // Close if cursor is far from @ OR if there's a space immediately after and cursor moved away
-        const shouldClose = !cursorInTextNodeWithAt && !isCursorNearAt;
-        
-        if (shouldClose) {
-          // User typed @ followed by space and moved cursor far away - they've moved on
-          setShowAutocomplete(false);
-        } else {
-          // Always open dropdown when @ is detected and cursor is nearby
-          setAutocompleteFilter(filter);
-          setAtSignPosition(lastAtSign);
-          
-          if (contentRef.current) {
-            const inputRect = contentRef.current.getBoundingClientRect();
-            const position = {
-              top: inputRect.bottom + window.scrollY + 4,
-              left: inputRect.left + window.scrollX,
-            };
-            setAutocompletePosition(position);
-          }
-          setShowAutocomplete(true);
-        }
-      } else {
-        setShowAutocomplete(false);
-      }
-      
+      maybeOpenAutocomplete(newValue);
       return;
     }
-    
+
     if (newTemplates < oldTemplates) {
       // A template was removed (e.g., user deleted a badge or part of template text)
       setInternalValue(newValue);
@@ -463,90 +440,51 @@ export function TemplateBadgeInput({
       requestAnimationFrame(() => updateDisplay());
       return;
     }
-    
+
     // Normal typing (no badges present)
     setInternalValue(newValue);
     onChange?.(newValue);
-    
-
-    // Check for @ sign to show autocomplete
-    // Get cursor position first to find the closest @
-    const cursorPos = saveCursorPosition();
-    const cursorOffset = cursorPos?.offset ?? newValue.length;
-    
-    // Check if cursor is in a text node that contains "@"
-    const selection2 = window.getSelection();
-    const cursorInTextNodeWithAt2 = selection2 && selection2.rangeCount > 0 && 
-      selection2.getRangeAt(0).endContainer.nodeType === Node.TEXT_NODE &&
-      (selection2.getRangeAt(0).endContainer.textContent || "").includes("@");
-    
-    const lastAtSign = findActiveAtSign(newValue, cursorOffset);
-    
-    if (lastAtSign !== -1) {
-      const textAfterAt = newValue.slice(lastAtSign + 1);
-      
-      // Extract filter up to next space or end of string
-      const spaceIndex = textAfterAt.indexOf(" ");
-      const filter = spaceIndex === -1 ? textAfterAt : textAfterAt.slice(0, spaceIndex);
-      
-      // Calculate distance from cursor to @
-      const distanceFromAt = cursorOffset - lastAtSign;
-      // Only consider cursor "near" if within 10 chars - if further, it's just normal text, not active typing
-      const isCursorNearAt = distanceFromAt <= 10;
-      
-      // Only open if cursor is very close to @ (within 10 chars) - if further, it's just normal text
-      // Always open if cursor is in a text node containing "@" (user is actively typing there)
-      // Close if cursor is far from @ OR if there's a space immediately after and cursor moved away
-      const shouldClose = !cursorInTextNodeWithAt2 && !isCursorNearAt;
-      
-      if (shouldClose) {
-        // User typed @ followed by space and moved cursor far away - they've moved on
-        setShowAutocomplete(false);
-      } else {
-        // Always open dropdown when @ is detected and cursor is nearby
-        setAutocompleteFilter(filter);
-        setAtSignPosition(lastAtSign);
-        
-        if (contentRef.current) {
-          const inputRect = contentRef.current.getBoundingClientRect();
-          const position = {
-            top: inputRect.bottom + window.scrollY + 4,
-            left: inputRect.left + window.scrollX,
-          };
-          setAutocompletePosition(position);
-        }
-        setShowAutocomplete(true);
-      }
-    } else {
-      setShowAutocomplete(false);
-    }
+    maybeOpenAutocomplete(newValue);
   };
 
-  const handleAutocompleteSelect = (template: string) => {
-    if (!contentRef.current || atSignPosition === null) return;
-    
-    // Get current text
+  // Detect the closest "@" to the cursor and open/close the dropdown accordingly.
+  // The search happens inside the dropdown itself, so we no longer care what the
+  // user types after "@" -- we only need the "@" anchor position for replacement.
+  const maybeOpenAutocomplete = (currentValue: string): void => {
+    const cursorPos = saveCursorPosition();
+    const cursorOffset = cursorPos?.offset ?? currentValue.length;
+    const atPosition = findActiveAtSign(currentValue, cursorOffset);
+
+    if (atPosition === -1 || atPosition > cursorOffset) {
+      setShowAutocomplete(false);
+      setAtSignPosition(null);
+      return;
+    }
+
+    openAutocompleteAtAt(atPosition);
+  };
+
+  const handleAutocompleteSelect = (template: string): void => {
+    if (!contentRef.current || atSignPosition === null) {
+      return;
+    }
+
+    // Filter text is typed into the dropdown's own search input, not the
+    // editor, so we only replace the single "@" character that triggered it.
     const currentText = extractValue();
-    
-    // Replace from @ position to end of filter with the template
     const beforeAt = currentText.slice(0, atSignPosition);
-    const afterFilter = currentText.slice(atSignPosition + 1 + autocompleteFilter.length);
-    const newText = beforeAt + template + afterFilter;
-    
-    // Calculate where cursor should be after the template (right after the badge)
+    const afterAt = currentText.slice(atSignPosition + 1);
+    const newText = beforeAt + template + afterAt;
     const targetCursorPosition = beforeAt.length + template.length;
-    
+
     setInternalValue(newText);
     onChange?.(newText);
     shouldUpdateDisplay.current = true;
-    
+
     setShowAutocomplete(false);
     setAtSignPosition(null);
 
-    // Set pending cursor position for the next update
     pendingCursorPosition.current = targetCursorPosition;
-    
-    // Ensure we focus the input so the display update and cursor restoration works
     contentRef.current.focus();
   };
 
@@ -555,17 +493,22 @@ export function TemplateBadgeInput({
     shouldUpdateDisplay.current = true;
   };
 
-  const handleBlur = () => {
-    // Delay to allow autocomplete click to register
+  const handleBlur = (): void => {
+    // Delay to allow autocomplete click / focus transfer to register
     setTimeout(() => {
-      if (document.activeElement === contentRef.current) {
+      const active = document.activeElement;
+      if (active === contentRef.current) {
+        return;
+      }
+      // Focus moved into the autocomplete (search input or option button).
+      // Keep the dropdown mounted and the editor in its "focused" state.
+      if (active instanceof Element && active.closest("[data-template-autocomplete]")) {
         return;
       }
       setIsFocused(false);
-      // Don't extract value on blur - it's already in sync from handleInput
-      // Just trigger a display update to ensure everything renders correctly
       shouldUpdateDisplay.current = true;
       setShowAutocomplete(false);
+      setAtSignPosition(null);
     }, 200);
   };
 
@@ -680,17 +623,39 @@ export function TemplateBadgeInput({
     }
   }, [internalValue, isFocused]);
 
+  // Hint 2: clicking the "@" chip focuses the editor, inserts an "@" at the
+  // cursor (or at the end if none), and lets handleInput open the dropdown.
+  const handleAtButtonClick = (): void => {
+    if (!contentRef.current || disabled) {
+      return;
+    }
+    contentRef.current.focus();
+    const selection = window.getSelection();
+    const hasCursorInEditor =
+      selection !== null &&
+      selection.rangeCount > 0 &&
+      contentRef.current.contains(selection.anchorNode);
+    if (!hasCursorInEditor) {
+      const range = document.createRange();
+      range.selectNodeContents(contentRef.current);
+      range.collapse(false);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    }
+    document.execCommand("insertText", false, "@");
+  };
+
   return (
     <>
       <div
         className={cn(
-          "flex min-h-9 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors focus-within:outline-none focus-within:ring-1 focus-within:ring-ring",
+          "flex min-h-9 w-full items-center gap-1 overflow-hidden rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors focus-within:outline-none focus-within:ring-1 focus-within:ring-ring",
           disabled && "cursor-not-allowed opacity-50",
           className
         )}
       >
         <div
-          className="w-full outline-none"
+          className="min-w-0 flex-1 overflow-hidden whitespace-nowrap outline-none"
           contentEditable={!disabled}
           id={id}
           onBlur={handleBlur}
@@ -702,13 +667,25 @@ export function TemplateBadgeInput({
           role="textbox"
           suppressContentEditableWarning
         />
+        {(isFocused || showAutocomplete) && !disabled && (
+          <button
+            aria-label="Insert workflow variable"
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground text-xs transition-colors hover:bg-accent hover:text-foreground"
+            onClick={handleAtButtonClick}
+            onMouseDown={(e) => e.preventDefault()}
+            tabIndex={-1}
+            title="Insert a workflow variable"
+            type="button"
+          >
+            @
+          </button>
+        )}
       </div>
-      
+
       <TemplateAutocomplete
-        currentNodeId={selectedNodeId || undefined}
-        filter={autocompleteFilter}
+        currentNodeId={selectedNodeId ?? undefined}
         isOpen={showAutocomplete}
-        onClose={() => setShowAutocomplete(false)}
+        onClose={closeAutocomplete}
         onSelect={handleAutocompleteSelect}
         position={autocompletePosition}
       />

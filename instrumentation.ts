@@ -50,7 +50,7 @@ export async function register() {
     // in Node.js (API routes / server actions).
     const { AsyncLocalStorage } = await import("node:async_hooks");
     const { setWorkflowErrorContextStorage } = await import(
-      "@/lib/workflow-error-context"
+      "@/lib/workflow/executor/error-context"
     );
     setWorkflowErrorContextStorage(new AsyncLocalStorage());
 

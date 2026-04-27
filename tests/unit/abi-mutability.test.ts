@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { deriveStateMutability } from "@/lib/web3/abi-mutability";
+import { deriveStateMutability } from "@/lib/abi/mutability";
 
 const PAYABLE_DEPOSIT = JSON.stringify([
   {

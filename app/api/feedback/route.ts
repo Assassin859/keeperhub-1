@@ -5,7 +5,7 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 const FEEDBACK_SERVICE_URL = process.env.FEEDBACK_SERVICE_URL || "";
 const FEEDBACK_API_KEY = process.env.FEEDBACK_API_KEY || "";
 
-export async function POST(request: Request) {
+export async function POST(request: Request): Promise<NextResponse> {
   try {
     // Validate configuration
     if (!FEEDBACK_SERVICE_URL) {
@@ -42,12 +42,12 @@ export async function POST(request: Request) {
       );
     }
 
-    // Get user session (optional - feedback can be submitted by authenticated users)
-    const session = await auth.api.getSession({
-      headers: request.headers,
-    });
+    // Session-only with optional auth: feedback submitted while logged in
+    // attaches the caller's email/name for support routing; anonymous
+    // callers still go through. API keys are intentionally not accepted --
+    // org credentials carry no user-specific support context. See KEEP-354.
+    const session = await auth.api.getSession({ headers: request.headers });
 
-    // Parse the incoming form data
     const formData = await request.formData();
     const message = formData.get("message") as string;
     const categories = formData.get("categories") as string;
@@ -60,7 +60,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Build form data for the feedback service
     const serviceFormData = new FormData();
     serviceFormData.append("message", message.trim());
 
@@ -72,10 +71,9 @@ export async function POST(request: Request) {
       serviceFormData.append("screenshot", screenshot);
     }
 
-    // Add user context if available
     if (session?.user) {
-      serviceFormData.append("userEmail", session.user.email || "");
-      serviceFormData.append("userName", session.user.name || "");
+      serviceFormData.append("userEmail", session.user.email ?? "");
+      serviceFormData.append("userName", session.user.name ?? "");
     }
 
     // Forward to feedback service

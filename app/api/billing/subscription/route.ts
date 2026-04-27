@@ -1,7 +1,5 @@
 import { desc, eq, sql } from "drizzle-orm";
-import { headers } from "next/headers";
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
 import { isBillingEnabled } from "@/lib/billing/feature-flag";
 import {
   getGasCreditBalance,
@@ -16,29 +14,27 @@ import { getOrgSubscription, resolvePriceId } from "@/lib/billing/plans-server";
 import { db } from "@/lib/db";
 import { overageBillingRecords } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { getActiveOrgId } from "@/lib/middleware/org-context";
+import {
+  type OrganizationAuthContext,
+  auditFromAuth,
+  resolveOrganizationId,
+} from "@/lib/middleware/auth-helpers";
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: Request): Promise<NextResponse> {
   if (!isBillingEnabled()) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  let authContext: OrganizationAuthContext | null = null;
   try {
-    const session = await auth.api.getSession({
-      headers: await headers(),
-    });
-
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const activeOrgId = getActiveOrgId(session);
-    if (!activeOrgId) {
+    authContext = await resolveOrganizationId(request);
+    if ("error" in authContext) {
       return NextResponse.json(
-        { error: "No active organization" },
-        { status: 400 }
+        { error: authContext.error },
+        { status: authContext.status }
       );
     }
+    const { organizationId: activeOrgId } = authContext;
 
     const sub = await getOrgSubscription(activeOrgId);
     const plan = parsePlanName(sub?.plan);
@@ -122,7 +118,11 @@ export async function GET(): Promise<NextResponse> {
       ErrorCategory.EXTERNAL_SERVICE,
       "[Billing] Subscription query error",
       error,
-      { endpoint: "/api/billing/subscription", operation: "get" }
+      {
+        endpoint: "/api/billing/subscription",
+        operation: "get",
+        ...auditFromAuth(authContext),
+      }
     );
     return NextResponse.json(
       { error: "Failed to fetch subscription" },

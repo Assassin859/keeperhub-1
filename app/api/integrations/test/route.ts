@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
 import { handleDatabaseTest, handlePluginTest } from "@/lib/db/test-connection";
+import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import type {
   IntegrationConfig,
   IntegrationType,
@@ -19,12 +19,12 @@ export type TestConnectionRequest = {
  */
 export async function POST(request: Request): Promise<NextResponse> {
   try {
-    const session = await auth.api.getSession({
-      headers: request.headers,
-    });
-
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const authContext = await getDualAuthContext(request);
+    if ("error" in authContext) {
+      return NextResponse.json(
+        { error: authContext.error },
+        { status: authContext.status }
+      );
     }
 
     const body: TestConnectionRequest = await request.json();

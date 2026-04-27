@@ -32,7 +32,7 @@ import {
   getWorkflowErrorContext,
   runWithWorkflowErrorContext,
   setWorkflowErrorContextStorage,
-} from "@/lib/workflow-error-context";
+} from "@/lib/workflow/executor/error-context";
 
 beforeAll(() => {
   // Mirrors what instrumentation.ts does at server startup.

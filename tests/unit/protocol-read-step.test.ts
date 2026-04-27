@@ -7,7 +7,7 @@ vi.mock("@/protocols", () => ({}));
 
 const mockWithStepLogging = vi.fn((_input: unknown, fn: () => unknown) => fn());
 
-vi.mock("@/lib/steps/step-handler", () => ({
+vi.mock("@/lib/workflow/executor/step-handler", () => ({
   withStepLogging: (...args: unknown[]) =>
     mockWithStepLogging(...(args as [unknown, () => unknown])),
 }));
@@ -23,7 +23,7 @@ vi.mock("@/lib/protocol-registry", () => ({
 }));
 
 const mockResolveAbi = vi.fn();
-vi.mock("@/lib/abi-cache", () => ({
+vi.mock("@/lib/abi/cache", () => ({
   resolveAbi: (...args: unknown[]) => mockResolveAbi(...args),
 }));
 
