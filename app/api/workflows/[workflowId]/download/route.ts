@@ -64,12 +64,17 @@ export async function GET(
     });
 
     const fileName = `${sanitizeFileName(workflow.name)}.workflow.json`;
+    // RFC 5987: encode the filename so non-ASCII or special characters
+    // cannot break the Content-Disposition header even if sanitization
+    // is loosened later. The unquoted "filename=" is kept as a fallback
+    // for older clients.
+    const encodedFileName = encodeURIComponent(fileName);
 
     return new NextResponse(JSON.stringify(exportPayload, null, 2), {
       status: 200,
       headers: {
         "Content-Type": "application/json; charset=utf-8",
-        "Content-Disposition": `attachment; filename="${fileName}"`,
+        "Content-Disposition": `attachment; filename="${fileName}"; filename*=UTF-8''${encodedFileName}`,
         "Cache-Control": "no-store",
       },
     });
