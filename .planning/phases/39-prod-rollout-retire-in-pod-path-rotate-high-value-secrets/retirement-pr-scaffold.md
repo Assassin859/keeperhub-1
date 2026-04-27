@@ -13,7 +13,7 @@
 ### `plugins/code/steps/run-code.ts` — reduce to ~80 lines
 
 Delete:
-- All imports except: `server-only`, `withPluginMetrics`, `withStepLogging` from the step-handler infra, `runRemote` from `@/lib/sandbox-client`, `ErrorCategory` + `logUserError` (optional — only if we keep server-side logging of errors here; runRemote already returns clean RunCodeResult).
+- All imports except: `server-only`, `withPluginMetrics`, `withStepLogging` from the step-handler infra, `runRemote` from `@/lib/sandbox/client`, `ErrorCategory` + `logUserError` (optional — only if we keep server-side logging of errors here; runRemote already returns clean RunCodeResult).
 - `spawn`, `deserialize` from node:child_process / node:v8 — no longer used here.
 - `CHILD_ENV_ALLOWLIST`, `buildChildEnv()`, `CHILD_SOURCE`, `parseChildOutput()`, `runInChild()`, `runLocal()` — entirely removed.
 - The `SANDBOX_BACKEND` env read — dispatcher always uses remote.
