@@ -17,7 +17,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import type { WorkflowNode } from "@/lib/workflow-store";
+import type { WorkflowNode } from "@/lib/workflow/store";
 import { DiscordIcon } from "@/plugins/discord/icon";
 import { Web3Icon } from "@/plugins/web3/icon";
 import { WebhookIcon } from "@/plugins/webhook/icon";

@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { WorkflowIcon } from "@/components/ui/workflow-icon";
 import { UserMenu } from "@/components/workflows/user-menu";
-import { getCustomLogo } from "@/lib/extension-registry";
+import { getCustomLogo } from "@/lib/workflow/editor/extension-registry";
 
 export function PersistentHeader() {
   const pathname = usePathname();

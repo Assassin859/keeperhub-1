@@ -13,9 +13,9 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY sandbox/package.json sandbox/tsconfig.json ./sandbox/
 COPY sandbox/src ./sandbox/src
 # Shared grandchild source, imported by sandbox/src/run-code.ts via
-# `../../lib/sandbox-child-source.js`. sandbox/tsconfig.json has
+# `../../lib/sandbox/child-source.js`. sandbox/tsconfig.json has
 # rootDir=".." so tsc can compile this file as part of the sandbox build.
-COPY lib/sandbox-child-source.ts ./lib/sandbox-child-source.ts
+COPY lib/sandbox/child-source.ts ./lib/sandbox/child-source.ts
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/sandbox/node_modules ./sandbox/node_modules
 RUN pnpm --filter @keeperhub/sandbox build
@@ -27,7 +27,7 @@ RUN addgroup -g 1001 -S sandbox && \
 WORKDIR /app
 # With rootDir=".." the tsc output mirrors the source tree:
 #   sandbox/src/index.ts -> dist/sandbox/src/index.js
-#   lib/sandbox-child-source.ts -> dist/lib/sandbox-child-source.js
+#   lib/sandbox/child-source.ts -> dist/lib/sandbox/child-source.js
 COPY --from=build --chown=sandbox:sandbox /app/sandbox/dist ./dist
 COPY --from=build --chown=sandbox:sandbox /app/sandbox/package.json ./package.json
 USER sandbox

@@ -1,4 +1,4 @@
-import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow-store";
+import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 type WorkflowMiniMapProps = {
   nodes: WorkflowNode[];

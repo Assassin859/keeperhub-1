@@ -12,7 +12,7 @@
 import "server-only";
 
 import { Connection } from "@solana/web3.js";
-import { classifyRpcError } from "@/lib/rpc-provider";
+import { classifyRpcError } from "@/lib/rpc/providers";
 import { rpcProbeMetrics } from "./collectors/prometheus";
 import type { ProbeChainConfig } from "./db-metrics";
 

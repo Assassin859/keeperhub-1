@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { resolveConditionExpression } from "@/lib/condition-resolver";
-import { evaluateConditionExpression } from "@/lib/workflow-executor.workflow";
+import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
+import { evaluateConditionExpression } from "@/lib/workflow/executor/executor.workflow";
 
 const NO_EXPRESSION_REGEX = /no expression configured/;
 

@@ -48,7 +48,7 @@ import { ErrorCategory, logUserError } from "@/lib/logging";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import { db } from "@/lib/db";
 import { workflowExecutions } from "@/lib/db/schema";
-import { type StepInput, withStepLogging } from "@/lib/steps/step-handler";
+import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 
 // Type definitions (exported)
@@ -116,7 +116,7 @@ Required mocks (must appear BEFORE importing the step file):
 ```typescript
 vi.mock("server-only", () => ({}));
 
-vi.mock("@/lib/steps/step-handler", () => ({
+vi.mock("@/lib/workflow/executor/step-handler", () => ({
   withStepLogging: (_input: unknown, fn: () => unknown) => fn(),
 }));
 

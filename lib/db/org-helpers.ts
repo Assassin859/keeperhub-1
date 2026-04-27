@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { cache } from "react";
 import { db } from "@/lib/db";
 import { organization } from "@/lib/db/schema";
-import { enterWorkflowErrorContext } from "@/lib/workflow-error-context";
+import { enterWorkflowErrorContext } from "@/lib/workflow/executor/error-context";
 
 /**
  * Resolve an organization's slug by id. Cached per request via React `cache()`

@@ -1,19 +1,19 @@
 import { withX402 } from "@x402/next";
 import { Challenge, Credential, Expires } from "mppx";
 import { type NextRequest, NextResponse } from "next/server";
-import { extractMppPayerAddress, hashMppCredential } from "@/lib/mpp/server";
+import { extractMppPayerAddress, hashMppCredential } from "@/lib/payments/mpp/server";
 import {
   buildPaymentConfig,
   extractPayerAddress,
   findExistingPayment,
   hashPaymentSignature,
-} from "@/lib/x402/payment-gate";
+} from "@/lib/payments/x402/payment-gate";
 import {
   isTimeoutError,
   pollForPaymentConfirmation,
-} from "@/lib/x402/reconcile";
-import { server } from "@/lib/x402/server";
-import type { CallRouteWorkflow } from "@/lib/x402/types";
+} from "@/lib/payments/x402/reconcile";
+import { server } from "@/lib/payments/x402/server";
+import type { CallRouteWorkflow } from "@/lib/payments/x402/types";
 
 export type PaymentProtocol = "x402" | "mpp";
 
@@ -294,7 +294,7 @@ async function handleMpp(
   }
 
   // Dynamic import to avoid loading mppx when not needed
-  const { getMppServer } = await import("@/lib/mpp/server");
+  const { getMppServer } = await import("@/lib/payments/mpp/server");
   type ChargeResult =
     | { status: 402; challenge: Response; withReceipt?: never }
     | {

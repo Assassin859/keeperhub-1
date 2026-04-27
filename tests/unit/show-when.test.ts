@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { evaluateShowWhen } from "@/lib/workflow/show-when";
+import { evaluateShowWhen } from "@/lib/workflow/editor/show-when";
 
 const PAYABLE_ABI = JSON.stringify([
   {

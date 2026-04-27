@@ -9,16 +9,16 @@ import "server-only";
 
 import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
-import { coerceArgsForAbi, reshapeArgsForAbi } from "@/lib/abi-struct-args";
-import { validateArgsForAbi } from "@/lib/abi-validate-args";
+import { coerceArgsForAbi, reshapeArgsForAbi } from "@/lib/abi/struct-args";
+import { validateArgsForAbi } from "@/lib/abi/validate-args";
 import { db } from "@/lib/db";
 import { workflowExecutions } from "@/lib/db/schema";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
-import { findAbiFunction } from "@/lib/abi-utils";
+import { findAbiFunction } from "@/lib/abi/utils";
 import { getErrorMessage } from "@/lib/utils";
-import { getAbiFunctionKey } from "@/lib/web3/abi-function-key";
+import { getAbiFunctionKey } from "@/lib/abi/function-key";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import { formatContractError } from "@/lib/web3/decode-revert-error";
 

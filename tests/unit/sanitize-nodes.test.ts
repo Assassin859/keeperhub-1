@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sanitizeWorkflowData } from "@/lib/workflow/sanitize-nodes";
+import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
 
 describe("sanitizeWorkflowData", () => {
   describe("React Flow UI state stripping", () => {

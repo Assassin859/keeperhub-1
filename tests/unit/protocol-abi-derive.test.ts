@@ -4,7 +4,7 @@ import {
   camelToKebab,
   camelToTitle,
   deriveActionsFromAbi,
-} from "@/lib/protocol-abi-derive";
+} from "@/lib/abi/protocol-derive";
 
 describe("camelToKebab", () => {
   it("converts camelCase to kebab-case", () => {

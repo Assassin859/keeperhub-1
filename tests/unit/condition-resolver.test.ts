@@ -3,8 +3,8 @@ import type {
   ConditionGroup,
   ConditionOperator,
   ConditionRule,
-} from "@/lib/condition-builder-types";
-import { resolveConditionExpression } from "@/lib/condition-resolver";
+} from "@/lib/workflow/nodes/condition/builder-types";
+import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
 
 function makeGroup(
   logic: "AND" | "OR",

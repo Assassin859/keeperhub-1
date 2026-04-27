@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   resolveForEachSyntheticOutput,
   traverseDotPath,
-} from "@/lib/for-each-utils";
+} from "@/lib/workflow/nodes/for-each/utils";
 
 // ---------------------------------------------------------------------------
 // Helpers

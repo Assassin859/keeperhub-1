@@ -14,8 +14,8 @@ import type {
   RpcErrorType,
   RpcMetricsCollector,
   RpcOperationType,
-} from "@/lib/rpc-provider";
-import type { SolanaRpcMetricsCollector } from "@/lib/rpc-provider/solana";
+} from "@/lib/rpc/providers";
+import type { SolanaRpcMetricsCollector } from "@/lib/rpc/providers/solana";
 import { rpcMetrics } from "./collectors/prometheus";
 
 /**

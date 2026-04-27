@@ -4,7 +4,7 @@ import {
   buildHaystack,
   filterOptionsByQuery,
   indexOption,
-} from "@/lib/template-autocomplete-filter";
+} from "@/lib/workflow/editor/template-autocomplete-filter";
 
 function opt(partial: Partial<AutocompleteOption>): AutocompleteOption {
   return {

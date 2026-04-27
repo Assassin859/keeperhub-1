@@ -8,8 +8,8 @@ import {
   BUILTIN_NODE_LABEL,
   BUILTIN_VARIABLE_FIELDS,
   getBuiltinVariables,
-} from "@/lib/builtin-variables";
-import { evaluateConditionExpression } from "@/lib/workflow-executor.workflow";
+} from "@/lib/workflow/editor/builtin-variables";
+import { evaluateConditionExpression } from "@/lib/workflow/executor/executor.workflow";
 
 describe("builtin-variables", () => {
   describe("getBuiltinVariables", () => {

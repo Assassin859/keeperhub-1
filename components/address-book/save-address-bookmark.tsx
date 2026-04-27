@@ -22,7 +22,7 @@ import {
   selectedNodeAtom,
   updateNodeDataAtom,
   type WorkflowNode,
-} from "@/lib/workflow-store";
+} from "@/lib/workflow/store";
 import { AddressSelectPopover } from "./address-select-popover";
 import { SaveAddressButton } from "./save-address-button";
 

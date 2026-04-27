@@ -7,7 +7,7 @@ import { api } from "@/lib/api-client";
 import { authClient } from "@/lib/auth-client";
 import { registerOrganizationRefetch } from "@/lib/refetch-organizations";
 import { refetchSidebar } from "@/lib/refetch-sidebar";
-import { resetWorkflowStateForOrgSwitchAtom } from "@/lib/workflow-store";
+import { resetWorkflowStateForOrgSwitchAtom } from "@/lib/workflow/store";
 
 export function useOrganization() {
   const {

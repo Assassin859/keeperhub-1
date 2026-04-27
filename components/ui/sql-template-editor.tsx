@@ -14,7 +14,7 @@ import {
   getCommonFields,
   getNodeDisplayName,
   sanitizeNodeId,
-} from "@/lib/template-helpers";
+} from "@/lib/workflow/editor/template-helpers";
 import { useStableRef } from "@/lib/use-stable-ref";
 import { getAvailableFields, type NodeOutputs } from "@/lib/utils/template";
 import {
@@ -25,7 +25,7 @@ import {
   nodesAtom,
   selectedNodeAtom,
   type WorkflowNode,
-} from "@/lib/workflow-store";
+} from "@/lib/workflow/store";
 
 // ---------------------------------------------------------------------------
 // Component

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { validateConditionExpressionUI } from "@/lib/condition-validator";
+import { validateConditionExpressionUI } from "@/lib/workflow/nodes/condition/validator";
 
 describe("validateConditionExpressionUI", () => {
   describe("empty and whitespace expressions", () => {
