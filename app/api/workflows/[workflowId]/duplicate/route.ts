@@ -7,7 +7,7 @@ import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
 import { generateId } from "@/lib/utils/id";
 import { remapTemplateRefsInString } from "@/lib/utils/template";
-import { sanitizeWorkflowData } from "@/lib/workflow/sanitize-nodes";
+import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
 // Node type for type-safe node manipulation
 type WorkflowNodeLike = {
   id: string;

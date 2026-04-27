@@ -3,7 +3,7 @@
 import { useAtom } from "jotai";
 import type { CSSProperties } from "react";
 import { useEffect, useRef, useState } from "react";
-import { doesNodeExist, getDisplayTextForTemplate } from "@/lib/template-utils";
+import { doesNodeExist, getDisplayTextForTemplate } from "@/lib/workflow/editor/template-utils";
 import { cn } from "@/lib/utils";
 import { nodesAtom, selectedNodeAtom } from "@/lib/workflow/store";
 import { TemplateAutocomplete } from "./template-autocomplete";

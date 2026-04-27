@@ -49,7 +49,7 @@ import {
   type WorkflowNode,
   type WorkflowNodeType,
 } from "@/lib/workflow/store";
-import { hasDuplicateEdge } from "@/lib/workflow/edge-helpers";
+import { hasDuplicateEdge } from "@/lib/workflow/editor/edge-helpers";
 import { Edge } from "../ai-elements/edge";
 import { Panel } from "../ai-elements/panel";
 import { ActionNode } from "./nodes/action-node";

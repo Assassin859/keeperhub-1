@@ -37,15 +37,15 @@ import { GoLiveOverlay } from "@/components/overlays/go-live-overlay";
 import { ListingOverlay } from "@/components/overlays/listing-overlay";
 import { Switch } from "@/components/ui/switch";
 import { WalletToolbarButton } from "@/components/workflow/wallet-toolbar-button";
-import { BUILTIN_NODE_ID } from "@/lib/builtin-variables";
+import { BUILTIN_NODE_ID } from "@/lib/workflow/editor/builtin-variables";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import { api, ApiError, type Project, type Tag } from "@/lib/api-client";
 import { authClient, useSession } from "@/lib/auth-client";
-import { getCustomLogo } from "@/lib/extension-registry";
+import { getCustomLogo } from "@/lib/workflow/editor/extension-registry";
 import { integrationsAtom } from "@/lib/integrations-store";
 import type { IntegrationType } from "@/lib/types/integration";
 import { cn } from "@/lib/utils";
-import { evaluateShowWhen, type ShowWhen } from "@/lib/workflow/show-when";
+import { evaluateShowWhen, type ShowWhen } from "@/lib/workflow/editor/show-when";
 import {
   addNodeAtom,
   canRedoAtom,

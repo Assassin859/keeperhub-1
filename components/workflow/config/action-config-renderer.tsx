@@ -23,10 +23,10 @@ import type { AbiComponent } from "@/components/workflow/config/abi-types";
 import { ArrayInputField } from "@/components/workflow/config/array-input-field";
 import { TupleInputField } from "@/components/workflow/config/tuple-input-field";
 import { computeSelector, findAbiFunction } from "@/lib/abi/utils";
-import { evaluateShowWhen } from "@/lib/workflow/show-when";
+import { evaluateShowWhen } from "@/lib/workflow/editor/show-when";
 import { parseAddressBookSelection } from "@/lib/address-book-selection";
 import { toChecksumAddress } from "@/lib/address-utils";
-import { getCustomFieldRenderer } from "@/lib/extension-registry";
+import { getCustomFieldRenderer } from "@/lib/workflow/editor/extension-registry";
 import {
   type ActionConfigField,
   type ActionConfigFieldBase,

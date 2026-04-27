@@ -4,7 +4,7 @@ import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { Check } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { BUILTIN_NODE_ID, BUILTIN_NODE_LABEL, BUILTIN_VARIABLE_FIELDS } from "@/lib/builtin-variables";
+import { BUILTIN_NODE_ID, BUILTIN_NODE_LABEL, BUILTIN_VARIABLE_FIELDS } from "@/lib/workflow/editor/builtin-variables";
 import { api } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import {
@@ -22,7 +22,7 @@ import {
   type WorkflowNode,
 } from "@/lib/workflow/store";
 import { findActionById } from "@/plugins/registry";
-import { getReadContractOutputFields } from "@/lib/action-output-fields";
+import { getReadContractOutputFields } from "@/lib/workflow/editor/action-output-fields";
 import { resolveForEachSyntheticOutput } from "@/lib/workflow/nodes/for-each/utils";
 import {
   type ExecutionLogsByNodeId,
@@ -32,8 +32,8 @@ import {
   isActionType,
   sanitizeNodeId,
   schemaToFields,
-} from "@/lib/template-helpers";
-import { getTriggerOutputFields } from "@/lib/trigger-output-fields";
+} from "@/lib/workflow/editor/template-helpers";
+import { getTriggerOutputFields } from "@/lib/workflow/editor/trigger-output-fields";
 
 type TemplateAutocompleteProps = {
   isOpen: boolean;

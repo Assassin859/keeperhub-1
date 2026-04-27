@@ -27,7 +27,7 @@ import {
   registerBranding,
   registerFieldRenderer,
   registerIntegrationFormHandler,
-} from "@/lib/extension-registry";
+} from "@/lib/workflow/editor/extension-registry";
 
 // ============================================================================
 // Register Custom Field Renderers

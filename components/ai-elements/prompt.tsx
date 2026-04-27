@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api-client";
-import { dedupeEdges } from "@/lib/workflow/edge-helpers";
+import { dedupeEdges } from "@/lib/workflow/editor/edge-helpers";
 import {
   currentWorkflowIdAtom,
   currentWorkflowNameAtom,

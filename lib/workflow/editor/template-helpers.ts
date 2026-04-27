@@ -1,5 +1,5 @@
-import { getReadContractOutputFields } from "@/lib/action-output-fields";
-import { getTriggerOutputFields } from "@/lib/trigger-output-fields";
+import { getReadContractOutputFields } from "@/lib/workflow/editor/action-output-fields";
+import { getTriggerOutputFields } from "@/lib/workflow/editor/trigger-output-fields";
 import type { ExecutionLogEntry, WorkflowNode } from "@/lib/workflow/store";
 import { WorkflowTriggerEnum } from "@/lib/workflow/store";
 import { findActionById } from "@/plugins/registry";

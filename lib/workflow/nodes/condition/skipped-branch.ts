@@ -3,7 +3,7 @@
  * nodes on dead (not-taken) branches during workflow execution.
  */
 
-import type { EdgesBySourceHandle } from "@/lib/edge-handle-utils";
+import type { EdgesBySourceHandle } from "@/lib/workflow/editor/edge-handle-utils";
 
 export type ConditionDecision = {
   taken: string;

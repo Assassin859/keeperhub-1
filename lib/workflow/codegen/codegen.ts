@@ -1,5 +1,5 @@
 import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
-import { buildEdgesBySourceHandle } from "@/lib/edge-handle-utils";
+import { buildEdgesBySourceHandle } from "@/lib/workflow/editor/edge-handle-utils";
 import { findActionById, flattenConfigFields } from "@/plugins/registry";
 import {
   analyzeNodeUsage,

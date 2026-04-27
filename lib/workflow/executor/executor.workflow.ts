@@ -7,7 +7,7 @@ import {
   BUILTIN_NODE_ID,
   BUILTIN_NODE_LABEL,
   getBuiltinVariables,
-} from "@/lib/builtin-variables";
+} from "@/lib/workflow/editor/builtin-variables";
 import {
   ErrorCategory,
   logSystemError,
@@ -29,7 +29,7 @@ import { ARRAY_SOURCE_RE } from "@/lib/workflow/nodes/for-each/utils";
 import {
   buildEdgesBySourceHandle,
   type EdgesBySourceHandle,
-} from "@/lib/edge-handle-utils";
+} from "@/lib/workflow/editor/edge-handle-utils";
 import {
   collectAllSkippedTargets,
   collectSkippedTargets,

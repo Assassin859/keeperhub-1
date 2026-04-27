@@ -13,7 +13,7 @@
 
 import type { Edge, Node } from "@xyflow/react";
 import { nanoid } from "nanoid";
-import { computeAutoLayout } from "@/lib/auto-layout";
+import { computeAutoLayout } from "@/lib/workflow/editor/auto-layout";
 import type { ConditionOperator } from "@/lib/workflow/nodes/condition/builder-types";
 
 /** Map common MCP/AI operator aliases to canonical ConditionOperator values */

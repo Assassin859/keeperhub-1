@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildEdgesBySourceHandle } from "@/lib/edge-handle-utils";
+import { buildEdgesBySourceHandle } from "@/lib/workflow/editor/edge-handle-utils";
 import {
   type ConditionDecision,
   collectAllSkippedTargets,
