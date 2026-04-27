@@ -30,6 +30,13 @@ vi.mock("@/lib/auth", () => ({
 
 vi.mock("@/lib/middleware/auth-helpers", () => ({
   resolveOrganizationId: mockResolveOrganizationId,
+  auditFromAuth: (ctx: unknown): { authMethod: string; apiKeyId: string } => {
+    if (ctx && typeof ctx === "object" && "error" in ctx) {
+      return { authMethod: "session", apiKeyId: "none" };
+    }
+    const c = ctx as { authMethod: string; apiKeyId?: string | null };
+    return { authMethod: c.authMethod, apiKeyId: c.apiKeyId ?? "none" };
+  },
 }));
 
 vi.mock("@/lib/db", () => ({

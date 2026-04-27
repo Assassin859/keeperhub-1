@@ -14,13 +14,18 @@ import { getOrgSubscription, resolvePriceId } from "@/lib/billing/plans-server";
 import { db } from "@/lib/db";
 import { overageBillingRecords } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
+import {
+  type AuthAuditLabels,
+  auditFromAuth,
+  resolveOrganizationId,
+} from "@/lib/middleware/auth-helpers";
 
 export async function GET(request: Request): Promise<NextResponse> {
   if (!isBillingEnabled()) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  let audit: AuthAuditLabels = { authMethod: "session", apiKeyId: "none" };
   try {
     const authContext = await resolveOrganizationId(request);
     if ("error" in authContext) {
@@ -29,6 +34,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         { status: authContext.status }
       );
     }
+    audit = auditFromAuth(authContext);
     const { organizationId: activeOrgId } = authContext;
 
     const sub = await getOrgSubscription(activeOrgId);
@@ -113,7 +119,11 @@ export async function GET(request: Request): Promise<NextResponse> {
       ErrorCategory.EXTERNAL_SERVICE,
       "[Billing] Subscription query error",
       error,
-      { endpoint: "/api/billing/subscription", operation: "get" }
+      {
+        endpoint: "/api/billing/subscription",
+        operation: "get",
+        ...audit,
+      }
     );
     return NextResponse.json(
       { error: "Failed to fetch subscription" },

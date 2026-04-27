@@ -4,10 +4,15 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { accounts, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import {
+  type AuthAuditLabels,
+  auditFromAuth,
+  getDualAuthContext,
+} from "@/lib/middleware/auth-helpers";
 import { getUserWallet } from "@/lib/para/wallet-helpers";
 
 export async function GET(request: Request): Promise<NextResponse> {
+  let audit: AuthAuditLabels = { authMethod: "session", apiKeyId: "none" };
   try {
     const authContext = await getDualAuthContext(request);
     if ("error" in authContext) {
@@ -16,6 +21,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         { status: authContext.status }
       );
     }
+    audit = auditFromAuth(authContext);
 
     const { userId } = authContext;
     if (!userId) {
@@ -64,6 +70,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     logSystemError(ErrorCategory.DATABASE, "Failed to get user", error, {
       endpoint: "/api/user",
       operation: "get",
+      ...audit,
     });
     return NextResponse.json(
       {

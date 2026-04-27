@@ -3,13 +3,18 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import {
+  type AuthAuditLabels,
+  auditFromAuth,
+  getDualAuthContext,
+} from "@/lib/middleware/auth-helpers";
 import { generateWorkflowSDKCode } from "@/lib/workflow-codegen-sdk";
 
 export async function GET(
   request: Request,
   context: { params: Promise<{ workflowId: string }> }
 ): Promise<NextResponse> {
+  let audit: AuthAuditLabels = { authMethod: "session", apiKeyId: "none" };
   try {
     const { workflowId } = await context.params;
 
@@ -20,6 +25,7 @@ export async function GET(
         { status: authContext.status }
       );
     }
+    audit = auditFromAuth(authContext);
     const { userId, organizationId } = authContext;
 
     const workflow = await db.query.workflows.findFirst({
@@ -65,6 +71,7 @@ export async function GET(
       {
         endpoint: "/api/workflows/[workflowId]/code",
         operation: "get",
+        ...audit,
       }
     );
     return NextResponse.json(

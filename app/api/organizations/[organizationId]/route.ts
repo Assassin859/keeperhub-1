@@ -3,7 +3,11 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { member, organization } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import {
+  type AuthAuditLabels,
+  auditFromAuth,
+  getDualAuthContext,
+} from "@/lib/middleware/auth-helpers";
 
 type UpdateOrganizationNameRequest = {
   name?: string;
@@ -13,6 +17,7 @@ export async function PATCH(
   request: Request,
   context: { params: Promise<{ organizationId: string }> }
 ): Promise<NextResponse> {
+  let audit: AuthAuditLabels = { authMethod: "session", apiKeyId: "none" };
   try {
     const { organizationId } = await context.params;
 
@@ -23,6 +28,7 @@ export async function PATCH(
         { status: authContext.status }
       );
     }
+    audit = auditFromAuth(authContext);
 
     const { userId, organizationId: callerOrgId, authMethod } = authContext;
     if (!userId) {
@@ -98,7 +104,11 @@ export async function PATCH(
       ErrorCategory.DATABASE,
       "Failed to update organization",
       error,
-      { endpoint: "/api/organizations/[organizationId]", operation: "update" }
+      {
+        endpoint: "/api/organizations/[organizationId]",
+        operation: "update",
+        ...audit,
+      }
     );
     return NextResponse.json(
       { error: "Failed to update organization" },

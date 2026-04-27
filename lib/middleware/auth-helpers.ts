@@ -3,13 +3,39 @@ import { auth } from "@/lib/auth";
 import { authenticateOAuthToken } from "@/lib/mcp/oauth-auth";
 import { getOrgContext } from "@/lib/middleware/org-context";
 
+export type AuthMethod = "oauth" | "api-key" | "session";
+
 export type DualAuthContext =
   | {
       userId: string | null;
       organizationId: string | null;
-      authMethod: "oauth" | "api-key" | "session";
+      authMethod: AuthMethod;
+      apiKeyId: string | null;
     }
   | { error: string; status: number };
+
+/**
+ * Stable label set to attach to log entries on dual-auth routes so we can
+ * answer "which credential made this call" in incident review. Routes pass
+ * the spread of this into their existing logSystemError / logUserError
+ * label objects.
+ */
+export type AuthAuditLabels = {
+  authMethod: AuthMethod;
+  apiKeyId: string;
+};
+
+export function auditFromAuth(
+  ctx: DualAuthContext | { authMethod: AuthMethod; apiKeyId: string | null }
+): AuthAuditLabels {
+  if ("error" in ctx) {
+    return { authMethod: "session", apiKeyId: "none" };
+  }
+  return {
+    authMethod: ctx.authMethod,
+    apiKeyId: ctx.apiKeyId ?? "none",
+  };
+}
 
 /**
  * Check for MCP OAuth JWT token authentication.
@@ -48,6 +74,7 @@ export async function getDualAuthContext(
     return {
       ...oauthAuth,
       authMethod: "oauth",
+      apiKeyId: null,
     };
   }
 
@@ -61,7 +88,12 @@ export async function getDualAuthContext(
     return { error: "Unauthorized", status: 401 };
   }
   if (!session?.user) {
-    return { userId: null, organizationId: null, authMethod: "session" };
+    return {
+      userId: null,
+      organizationId: null,
+      authMethod: "session",
+      apiKeyId: null,
+    };
   }
 
   const orgContext = await getOrgContext();
@@ -69,30 +101,43 @@ export async function getDualAuthContext(
     userId: session.user.id,
     organizationId: orgContext.organization?.id ?? null,
     authMethod: "session",
+    apiKeyId: null,
   };
 }
 
 function resolveApiKeyContext(apiKeyAuth: {
   organizationId?: string;
   userId?: string;
+  apiKeyId?: string;
 }): DualAuthContext {
   return {
     userId: apiKeyAuth.userId ?? null,
     organizationId: apiKeyAuth.organizationId ?? null,
     authMethod: "api-key",
+    apiKeyId: apiKeyAuth.apiKeyId ?? null,
   };
 }
 
 /**
- * Resolves the organization ID from OAuth, API key, or session.
- * Used by PATCH/DELETE routes that only need org-level authorization.
+ * Resolves the organization ID and audit context from OAuth, API key, or
+ * session. Used by routes that only need org-level authorization but still
+ * want authMethod / apiKeyId for logging.
  */
-export async function resolveOrganizationId(
-  request: Request
-): Promise<{ organizationId: string } | { error: string; status: number }> {
+export async function resolveOrganizationId(request: Request): Promise<
+  | {
+      organizationId: string;
+      authMethod: AuthMethod;
+      apiKeyId: string | null;
+    }
+  | { error: string; status: number }
+> {
   const oauthAuth = await resolveOAuthToken(request);
   if (oauthAuth?.organizationId) {
-    return { organizationId: oauthAuth.organizationId };
+    return {
+      organizationId: oauthAuth.organizationId,
+      authMethod: "oauth",
+      apiKeyId: null,
+    };
   }
 
   const apiKeyAuth = await authenticateApiKey(request);
@@ -102,7 +147,11 @@ export async function resolveOrganizationId(
     if (!organizationId) {
       return { error: "No active organization", status: 400 };
     }
-    return { organizationId };
+    return {
+      organizationId,
+      authMethod: "api-key",
+      apiKeyId: apiKeyAuth.apiKeyId ?? null,
+    };
   }
 
   const session = await auth.api.getSession({ headers: request.headers });
@@ -115,28 +164,39 @@ export async function resolveOrganizationId(
   if (!organizationId) {
     return { error: "No active organization", status: 400 };
   }
-  return { organizationId };
+  return { organizationId, authMethod: "session", apiKeyId: null };
 }
 
 /**
  * Resolves both organization ID and user ID from either OAuth, API key, or session.
  * Used by POST routes that need to track the creator.
  */
-export async function resolveCreatorContext(
-  request: Request
-): Promise<
-  { organizationId: string; userId: string } | { error: string; status: number }
+export async function resolveCreatorContext(request: Request): Promise<
+  | {
+      organizationId: string;
+      userId: string;
+      authMethod: AuthMethod;
+      apiKeyId: string | null;
+    }
+  | { error: string; status: number }
 > {
   const oauthAuth = await resolveOAuthToken(request);
   if (oauthAuth) {
-    return validateCreatorFields(oauthAuth.organizationId, oauthAuth.userId);
+    return validateCreatorFields(
+      oauthAuth.organizationId,
+      oauthAuth.userId,
+      "oauth",
+      null
+    );
   }
 
   const apiKeyAuth = await authenticateApiKey(request);
   if (apiKeyAuth.authenticated) {
     return validateCreatorFields(
       apiKeyAuth.organizationId ?? null,
-      apiKeyAuth.userId ?? null
+      apiKeyAuth.userId ?? null,
+      "api-key",
+      apiKeyAuth.apiKeyId ?? null
     );
   }
 
@@ -150,14 +210,26 @@ export async function resolveCreatorContext(
   if (!organizationId) {
     return { error: "No active organization", status: 400 };
   }
-  return { organizationId, userId: session.user.id };
+  return {
+    organizationId,
+    userId: session.user.id,
+    authMethod: "session",
+    apiKeyId: null,
+  };
 }
 
 function validateCreatorFields(
   organizationId: string | null | undefined,
-  userId: string | null | undefined
+  userId: string | null | undefined,
+  authMethod: AuthMethod,
+  apiKeyId: string | null
 ):
-  | { organizationId: string; userId: string }
+  | {
+      organizationId: string;
+      userId: string;
+      authMethod: AuthMethod;
+      apiKeyId: string | null;
+    }
   | { error: string; status: number } {
   if (!organizationId) {
     return { error: "No active organization", status: 400 };
@@ -168,5 +240,5 @@ function validateCreatorFields(
       status: 400,
     };
   }
-  return { organizationId, userId };
+  return { organizationId, userId, authMethod, apiKeyId };
 }
