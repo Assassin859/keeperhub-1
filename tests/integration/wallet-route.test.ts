@@ -132,9 +132,8 @@ describe("GET /api/user/wallet", () => {
     const res = await GET(createGetRequest());
     expect(res.status).toBe(200);
     const data = await res.json();
+    expect(data.hasWallet).toBe(true);
     expect(data.isOwner).toBe(true);
-    expect(data.wallets).toHaveLength(1);
-    expect(data.wallets[0].isOwner).toBe(true);
   });
 
   it("returns isOwner: false for members who did not create the wallet", async () => {
@@ -149,8 +148,8 @@ describe("GET /api/user/wallet", () => {
     const res = await GET(createGetRequest());
     expect(res.status).toBe(200);
     const data = await res.json();
+    expect(data.hasWallet).toBe(true);
     expect(data.isOwner).toBe(false);
-    expect(data.wallets[0].isOwner).toBe(false);
   });
 
   it("returns isOwner: false for an API-key caller (key export remains session-only)", async () => {
@@ -165,7 +164,7 @@ describe("GET /api/user/wallet", () => {
     const res = await GET(createGetRequest());
     expect(res.status).toBe(200);
     const data = await res.json();
+    expect(data.hasWallet).toBe(true);
     expect(data.isOwner).toBe(false);
-    expect(data.wallets[0].isOwner).toBe(false);
   });
 });
