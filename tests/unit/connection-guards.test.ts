@@ -8,7 +8,10 @@ vi.mock("node:dns", () => ({
   promises: { lookup: mockLookup },
 }));
 
-import { assertHostIsPublic } from "@/lib/db/connection-utils";
+import {
+  assertHostIsPublic,
+  extractHostFromConnectionString,
+} from "@/lib/db/connection-utils";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -89,5 +92,51 @@ describe("assertHostIsPublic", () => {
     await expect(assertHostIsPublic("localhost")).rejects.toThrow(
       "Host is not allowed: must resolve to a public address"
     );
+  });
+});
+
+describe("extractHostFromConnectionString", () => {
+  it.each([
+    ["postgres scheme with IPv4 host", "postgres://u:p@10.0.0.1:5432/db", "10.0.0.1"],
+    [
+      "postgresql scheme with hostname",
+      "postgresql://user:pass@db.example.com:5432/mydb",
+      "db.example.com",
+    ],
+    [
+      "URL-encoded password with @",
+      "postgres://user:p%40ss@db.example.com:5432/db",
+      "db.example.com",
+    ],
+    ["no port", "postgres://u:p@host.example/db", "host.example"],
+    ["no credentials", "postgres://host.example:5432/db", "host.example"],
+    [
+      "IPv6 host (square-bracketed per URL spec)",
+      "postgres://u:p@[::1]:5432/db",
+      "[::1]",
+    ],
+  ])("extracts %s", (_label, url, expected) => {
+    expect(extractHostFromConnectionString(url)).toBe(expected);
+  });
+
+  it.each([
+    ["empty string", ""],
+    ["plain garbage", "not-a-url"],
+    ["scheme-only", "postgres://"],
+  ])("returns null for %s", (_label, url) => {
+    expect(extractHostFromConnectionString(url)).toBeNull();
+  });
+
+  it("end-to-end: a connection string pointing at 10.0.0.1 is rejected by the guard", async () => {
+    const url = "postgres://u:p@10.0.0.1:5432/db";
+    const host = extractHostFromConnectionString(url);
+    expect(host).toBe("10.0.0.1");
+    if (!host) {
+      throw new Error("Unreachable: extraction returned null");
+    }
+    await expect(assertHostIsPublic(host)).rejects.toThrow(
+      "Host is not allowed: must resolve to a public address"
+    );
+    expect(mockLookup).not.toHaveBeenCalled();
   });
 });
