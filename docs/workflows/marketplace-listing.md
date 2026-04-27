@@ -130,8 +130,8 @@ Agents need an agentic wallet to pay for calls. Three wallet options are availab
 
 Install with two commands:
 ```
-npx @keeperhub/wallet skill install
-npx @keeperhub/wallet add
+npx -p @keeperhub/wallet keeperhub-wallet skill install
+npx -p @keeperhub/wallet keeperhub-wallet add
 ```
 
 Custody is server-side via Turnkey's secure enclave. No private key lands on disk. Supports both x402 (Base USDC) and MPP (Tempo USDC.e). Includes a three-tier safety hook (auto-approve, ask, block) with a configurable spending threshold.
