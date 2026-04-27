@@ -4,8 +4,7 @@ import { db } from "@/lib/db";
 import { member, organization } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
-  type AuthAuditLabels,
-  UNAUTHENTICATED_AUDIT,
+  type DualAuthContext,
   auditFromAuth,
   getDualAuthContext,
 } from "@/lib/middleware/auth-helpers";
@@ -18,18 +17,17 @@ export async function PATCH(
   request: Request,
   context: { params: Promise<{ organizationId: string }> }
 ): Promise<NextResponse> {
-  let audit: AuthAuditLabels = { ...UNAUTHENTICATED_AUDIT };
+  let authContext: DualAuthContext | null = null;
   try {
     const { organizationId } = await context.params;
 
-    const authContext = await getDualAuthContext(request);
+    authContext = await getDualAuthContext(request);
     if ("error" in authContext) {
       return NextResponse.json(
         { error: authContext.error },
         { status: authContext.status }
       );
     }
-    audit = auditFromAuth(authContext);
 
     const { userId, organizationId: callerOrgId, authMethod } = authContext;
     if (!userId) {
@@ -108,7 +106,7 @@ export async function PATCH(
       {
         endpoint: "/api/organizations/[organizationId]",
         operation: "update",
-        ...audit,
+        ...auditFromAuth(authContext),
       }
     );
     return NextResponse.json(

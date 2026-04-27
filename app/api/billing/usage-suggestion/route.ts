@@ -3,8 +3,7 @@ import { isBillingEnabled } from "@/lib/billing/feature-flag";
 import { getUpgradeSuggestion } from "@/lib/billing/tier-suggestions";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
-  type AuthAuditLabels,
-  UNAUTHENTICATED_AUDIT,
+  type OrganizationAuthContext,
   auditFromAuth,
   resolveOrganizationId,
 } from "@/lib/middleware/auth-helpers";
@@ -14,16 +13,15 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  let audit: AuthAuditLabels = { ...UNAUTHENTICATED_AUDIT };
+  let authContext: OrganizationAuthContext | null = null;
   try {
-    const authContext = await resolveOrganizationId(request);
+    authContext = await resolveOrganizationId(request);
     if ("error" in authContext) {
       return NextResponse.json(
         { error: authContext.error },
         { status: authContext.status }
       );
     }
-    audit = auditFromAuth(authContext);
     const { organizationId } = authContext;
 
     const suggestion = await getUpgradeSuggestion(organizationId);
@@ -36,7 +34,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       {
         endpoint: "/api/billing/usage-suggestion",
         operation: "get",
-        ...audit,
+        ...auditFromAuth(authContext),
       }
     );
     return NextResponse.json(

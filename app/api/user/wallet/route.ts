@@ -12,8 +12,7 @@ import { createIntegration } from "@/lib/db/integrations";
 import { integrations, organizationWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
-  type AuthAuditLabels,
-  UNAUTHENTICATED_AUDIT,
+  type DualAuthContext,
   auditFromAuth,
   getDualAuthContext,
 } from "@/lib/middleware/auth-helpers";
@@ -205,16 +204,15 @@ async function storeTurnkeyWalletAndIntegration(options: {
 }
 
 export async function GET(request: Request): Promise<NextResponse> {
-  let audit: AuthAuditLabels = { ...UNAUTHENTICATED_AUDIT };
+  let authContext: DualAuthContext | null = null;
   try {
-    const authContext = await getDualAuthContext(request);
+    authContext = await getDualAuthContext(request);
     if ("error" in authContext) {
       return NextResponse.json(
         { error: authContext.error },
         { status: authContext.status }
       );
     }
-    audit = auditFromAuth(authContext);
 
     const { userId, organizationId: activeOrgId } = authContext;
     if (!activeOrgId) {
@@ -270,7 +268,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     logSystemError(ErrorCategory.DATABASE, "Failed to get wallet", error, {
       endpoint: "/api/user/wallet",
       operation: "get",
-      ...audit,
+      ...auditFromAuth(authContext),
     });
     return apiError(error, "Failed to get wallet");
   }

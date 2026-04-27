@@ -5,24 +5,22 @@ import { db } from "@/lib/db";
 import { accounts, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
-  type AuthAuditLabels,
-  UNAUTHENTICATED_AUDIT,
+  type DualAuthContext,
   auditFromAuth,
   getDualAuthContext,
 } from "@/lib/middleware/auth-helpers";
 import { getUserWallet } from "@/lib/para/wallet-helpers";
 
 export async function GET(request: Request): Promise<NextResponse> {
-  let audit: AuthAuditLabels = { ...UNAUTHENTICATED_AUDIT };
+  let authContext: DualAuthContext | null = null;
   try {
-    const authContext = await getDualAuthContext(request);
+    authContext = await getDualAuthContext(request);
     if ("error" in authContext) {
       return NextResponse.json(
         { error: authContext.error },
         { status: authContext.status }
       );
     }
-    audit = auditFromAuth(authContext);
 
     const { userId } = authContext;
     if (!userId) {
@@ -71,7 +69,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     logSystemError(ErrorCategory.DATABASE, "Failed to get user", error, {
       endpoint: "/api/user",
       operation: "get",
-      ...audit,
+      ...auditFromAuth(authContext),
     });
     return NextResponse.json(
       {

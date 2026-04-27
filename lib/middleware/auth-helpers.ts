@@ -46,9 +46,13 @@ export const UNAUTHENTICATED_AUDIT: AuthAuditLabels = {
 };
 
 export function auditFromAuth(
-  ctx: DualAuthContext | { authMethod: AuthMethod; apiKeyId: string | null }
+  ctx:
+    | DualAuthContext
+    | { authMethod: AuthMethod; apiKeyId: string | null }
+    | null
+    | undefined
 ): AuthAuditLabels {
-  if ("error" in ctx) {
+  if (!ctx || "error" in ctx) {
     return UNAUTHENTICATED_AUDIT;
   }
   if (ctx.apiKeyId) {
@@ -138,19 +142,22 @@ function resolveApiKeyContext(apiKeyAuth: {
   };
 }
 
-/**
- * Resolves the organization ID and audit context from OAuth, API key, or
- * session. Used by routes that only need org-level authorization but still
- * want authMethod / apiKeyId for logging.
- */
-export async function resolveOrganizationId(request: Request): Promise<
+export type OrganizationAuthContext =
   | {
       organizationId: string;
       authMethod: AuthMethod;
       apiKeyId: string | null;
     }
-  | { error: string; status: number }
-> {
+  | { error: string; status: number };
+
+/**
+ * Resolves the organization ID and audit context from OAuth, API key, or
+ * session. Used by routes that only need org-level authorization but still
+ * want authMethod / apiKeyId for logging.
+ */
+export async function resolveOrganizationId(
+  request: Request
+): Promise<OrganizationAuthContext> {
   const oauthAuth = await resolveOAuthToken(request);
   if (oauthAuth?.organizationId) {
     return {
