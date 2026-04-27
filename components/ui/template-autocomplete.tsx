@@ -37,7 +37,7 @@ import {
   type IndexedAutocompleteOption,
   buildHaystack,
   filterOptionsByQuery,
-} from "@/lib/template-autocomplete-filter";
+} from "@/lib/workflow/editor/template-autocomplete-filter";
 import { getTriggerOutputFields } from "@/lib/workflow/editor/trigger-output-fields";
 
 /**
