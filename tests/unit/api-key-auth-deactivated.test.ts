@@ -3,24 +3,26 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-const { mockApiKeysFindFirst, mockUsersFindFirst, mockUpdate } = vi.hoisted(
-  () => ({
-    mockApiKeysFindFirst: vi.fn(),
-    mockUsersFindFirst: vi.fn(),
-    mockUpdate: vi.fn(() => ({
-      set: vi.fn(() => ({
-        where: vi.fn(() => Promise.resolve()),
-      })),
+const { mockSelectLimit, mockUpdate } = vi.hoisted(() => ({
+  mockSelectLimit: vi.fn(),
+  mockUpdate: vi.fn(() => ({
+    set: vi.fn(() => ({
+      where: vi.fn(() => Promise.resolve()),
     })),
-  })
-);
+  })),
+}));
 
 vi.mock("@/lib/db", () => ({
   db: {
-    query: {
-      organizationApiKeys: { findFirst: mockApiKeysFindFirst },
-      users: { findFirst: mockUsersFindFirst },
-    },
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        leftJoin: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: mockSelectLimit,
+          })),
+        })),
+      })),
+    })),
     update: mockUpdate,
   },
 }));
@@ -53,12 +55,14 @@ beforeEach(() => {
 
 describe("authenticateApiKey -- deactivated creator handling", () => {
   it("authenticates a key whose creator account is active", async () => {
-    mockApiKeysFindFirst.mockResolvedValue({
-      id: "key-1",
-      organizationId: "org-1",
-      createdBy: "user-1",
-    });
-    mockUsersFindFirst.mockResolvedValue({ deactivatedAt: null });
+    mockSelectLimit.mockResolvedValue([
+      {
+        id: "key-1",
+        organizationId: "org-1",
+        createdBy: "user-1",
+        creatorDeactivatedAt: null,
+      },
+    ]);
 
     const result = await authenticateApiKey(buildRequest());
 
@@ -69,14 +73,14 @@ describe("authenticateApiKey -- deactivated creator handling", () => {
   });
 
   it("rejects a key whose creator account is deactivated", async () => {
-    mockApiKeysFindFirst.mockResolvedValue({
-      id: "key-1",
-      organizationId: "org-1",
-      createdBy: "user-1",
-    });
-    mockUsersFindFirst.mockResolvedValue({
-      deactivatedAt: new Date("2026-01-01T00:00:00Z"),
-    });
+    mockSelectLimit.mockResolvedValue([
+      {
+        id: "key-1",
+        organizationId: "org-1",
+        createdBy: "user-1",
+        creatorDeactivatedAt: new Date("2026-01-01T00:00:00Z"),
+      },
+    ]);
 
     const result = await authenticateApiKey(buildRequest());
 
@@ -86,43 +90,45 @@ describe("authenticateApiKey -- deactivated creator handling", () => {
   });
 
   it("authenticates a key with no recorded creator (legacy compat)", async () => {
-    mockApiKeysFindFirst.mockResolvedValue({
-      id: "key-legacy",
-      organizationId: "org-1",
-      createdBy: null,
-    });
+    mockSelectLimit.mockResolvedValue([
+      {
+        id: "key-legacy",
+        organizationId: "org-1",
+        createdBy: null,
+        creatorDeactivatedAt: null,
+      },
+    ]);
 
     const result = await authenticateApiKey(buildRequest());
 
     expect(result.authenticated).toBe(true);
     expect(result.userId).toBeUndefined();
-    // No users lookup should happen for null createdBy
-    expect(mockUsersFindFirst).not.toHaveBeenCalled();
   });
 
   it("rejects a key whose row was not found (existing behaviour)", async () => {
-    mockApiKeysFindFirst.mockResolvedValue(undefined);
+    mockSelectLimit.mockResolvedValue([]);
 
     const result = await authenticateApiKey(buildRequest());
 
     expect(result.authenticated).toBe(false);
     expect(result.statusCode).toBe(401);
     expect(result.error).toBe("Invalid or revoked API key");
-    expect(mockUsersFindFirst).not.toHaveBeenCalled();
   });
 
   it("queries with the SHA-256 hash of the supplied key", async () => {
-    mockApiKeysFindFirst.mockResolvedValue({
-      id: "key-1",
-      organizationId: "org-1",
-      createdBy: "user-1",
-    });
-    mockUsersFindFirst.mockResolvedValue({ deactivatedAt: null });
+    mockSelectLimit.mockResolvedValue([
+      {
+        id: "key-1",
+        organizationId: "org-1",
+        createdBy: "user-1",
+        creatorDeactivatedAt: null,
+      },
+    ]);
 
     await authenticateApiKey(buildRequest());
 
     // Sanity: the hash we compute matches what the route should use.
     expect(KEY_HASH).toMatch(HEX_64);
-    expect(mockApiKeysFindFirst).toHaveBeenCalledTimes(1);
+    expect(mockSelectLimit).toHaveBeenCalledTimes(1);
   });
 });
