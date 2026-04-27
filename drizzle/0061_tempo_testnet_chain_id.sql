@@ -16,6 +16,50 @@
 -- per-migration transaction (matches the precedent set by 0025). If any UPDATE
 -- fails the FK drop is rolled back with it.
 
+-- Precondition: refuse to run if any 42431 rows already coexist with 42429
+-- rows in any of the affected tables. This avoids unique- or PK-collision
+-- errors mid-migration (chains, explorer_configs, supported_tokens are
+-- guarded by unique constraints; pending_transactions and wallet_locks by
+-- composite primary keys). If both ids are present a human needs to
+-- reconcile before this migration can run.
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM "chains" WHERE "chain_id" = 42429) > 0
+     AND (SELECT count(*) FROM "chains" WHERE "chain_id" = 42431) > 0 THEN
+    RAISE EXCEPTION 'Both chain_id 42429 and 42431 exist in chains; reconcile manually before running 0061.';
+  END IF;
+  IF (SELECT count(*) FROM "supported_tokens" WHERE "chain_id" = 42429) > 0
+     AND (SELECT count(*) FROM "supported_tokens" WHERE "chain_id" = 42431) > 0 THEN
+    RAISE EXCEPTION 'supported_tokens has rows for both 42429 and 42431; reconcile before running 0061.';
+  END IF;
+  IF (SELECT count(*) FROM "organization_tokens" WHERE "chain_id" = 42429) > 0
+     AND (SELECT count(*) FROM "organization_tokens" WHERE "chain_id" = 42431) > 0 THEN
+    RAISE EXCEPTION 'organization_tokens has rows for both 42429 and 42431; reconcile before running 0061.';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM "pending_transactions" a
+    JOIN "pending_transactions" b
+      ON a."wallet_address" = b."wallet_address" AND a."nonce" = b."nonce"
+    WHERE a."chain_id" = 42429 AND b."chain_id" = 42431
+  ) THEN
+    RAISE EXCEPTION 'pending_transactions has colliding (wallet,nonce) rows across 42429 and 42431; reconcile before running 0061.';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM "wallet_locks" a
+    JOIN "wallet_locks" b ON a."wallet_address" = b."wallet_address"
+    WHERE a."chain_id" = 42429 AND b."chain_id" = 42431
+  ) THEN
+    RAISE EXCEPTION 'wallet_locks has colliding wallet rows across 42429 and 42431; reconcile before running 0061.';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM "user_rpc_preferences" a
+    JOIN "user_rpc_preferences" b ON a."user_id" = b."user_id"
+    WHERE a."chain_id" = 42429 AND b."chain_id" = 42431
+  ) THEN
+    RAISE EXCEPTION 'user_rpc_preferences has colliding (user_id,chain_id) rows across 42429 and 42431; reconcile before running 0061.';
+  END IF;
+END$$;
+
 -- Drop the FK from explorer_configs.chain_id -> chains.chain_id so we can
 -- update both sides; it is recreated at the end. The constraint is not
 -- DEFERRABLE, so an in-place UPDATE on chains.chain_id would otherwise fail.
