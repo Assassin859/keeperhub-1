@@ -7,7 +7,7 @@ description: "KeeperHub User API - manage user profile, wallet, and RPC preferen
 
 Manage user profile and preferences.
 
-> **Authentication.** User endpoints below require **session authentication**. API keys (`kh_`) are not accepted on profile mutation, password change, forgot-password, account deactivation, RPC preferences, or any wallet write operation (withdraw, share, refresh-share, export-key, active wallet switch, fee estimation). The address book endpoints are organization-scoped and accept either method. See [Authentication](/api/authentication#endpoint-scope) for the full scope rules.
+> **Authentication.** Profile and wallet read operations in this section accept either a session cookie or an organization API key (`kh_`). Mutating operations require **session authentication** and reject API keys with `401`: profile mutation, password change, forgot-password, account deactivation, RPC preferences, and every wallet write operation (withdraw, share, refresh-share, export-key, active wallet switch, fee estimation). Address book entries are organization-scoped and accept either method. See [Authentication](/api/authentication#endpoint-scope) for the full scope rules.
 
 ## Get User Profile
 
