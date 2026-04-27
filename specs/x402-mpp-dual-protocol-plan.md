@@ -134,7 +134,7 @@ Create `tests/unit/mpp-server.test.ts`:
 
 ```typescript
 import { describe, expect, it } from "vitest";
-import { extractMppPayerAddress, hashMppCredential } from "@/lib/mpp/server";
+import { extractMppPayerAddress, hashMppCredential } from "@/lib/payments/mpp/server";
 
 describe("extractMppPayerAddress", () => {
   it("extracts address from did:pkh DID source", () => {
@@ -183,7 +183,7 @@ describe("hashMppCredential", () => {
 pnpm vitest run tests/unit/mpp-server.test.ts
 ```
 
-Expected: FAIL -- module `@/lib/mpp/server` does not exist.
+Expected: FAIL -- module `@/lib/payments/mpp/server` does not exist.
 
 - [ ] **Step 3: Implement MPP server module**
 
@@ -409,8 +409,8 @@ Expected: FAIL -- `buildDual402Response` is not exported.
 Add to `lib/payments/router.ts`:
 
 ```typescript
-import { buildPaymentConfig } from "@/lib/x402/payment-gate";
-import type { CallRouteWorkflow } from "@/lib/x402/types";
+import { buildPaymentConfig } from "@/lib/payments/x402/payment-gate";
+import type { CallRouteWorkflow } from "@/lib/payments/x402/types";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -918,14 +918,14 @@ import {
   extractPayerAddress,
   findExistingPayment,
   hashPaymentSignature,
-} from "@/lib/x402/payment-gate";
-import { server } from "@/lib/x402/server";
+} from "@/lib/payments/x402/payment-gate";
+import { server } from "@/lib/payments/x402/server";
 import {
   isTimeoutError,
   pollForPaymentConfirmation,
-} from "@/lib/x402/reconcile";
-import { extractMppPayerAddress, hashMppCredential } from "@/lib/mpp/server";
-import type { CallRouteWorkflow } from "@/lib/x402/types";
+} from "@/lib/payments/x402/reconcile";
+import { extractMppPayerAddress, hashMppCredential } from "@/lib/payments/mpp/server";
+import type { CallRouteWorkflow } from "@/lib/payments/x402/types";
 
 type HandlerFactory = (meta: PaymentMeta) => (req: NextRequest) => Promise<NextResponse>;
 
@@ -1013,7 +1013,7 @@ async function handleMpp(
   }
 
   // Dynamic import to avoid loading mppx when not needed
-  const { getMppServer } = await import("@/lib/mpp/server");
+  const { getMppServer } = await import("@/lib/payments/mpp/server");
   const mppServer = getMppServer() as {
     charge: (opts: { amount: string; recipient: string }) => {
       (request: Request): Promise<{
@@ -1097,16 +1097,16 @@ import {
   hashPaymentSignature,
   recordPayment,
   resolveCreatorWallet,
-} from "@/lib/x402/payment-gate";
+} from "@/lib/payments/x402/payment-gate";
 import {
   isTimeoutError,
   pollForPaymentConfirmation,
-} from "@/lib/x402/reconcile";
-import { server } from "@/lib/x402/server";
+} from "@/lib/payments/x402/reconcile";
+import { server } from "@/lib/payments/x402/server";
 
 // Add these imports:
-import { resolveCreatorWallet, recordPayment, hashPaymentSignature } from "@/lib/x402/payment-gate";
-import { hashMppCredential } from "@/lib/mpp/server";
+import { resolveCreatorWallet, recordPayment, hashPaymentSignature } from "@/lib/payments/x402/payment-gate";
+import { hashMppCredential } from "@/lib/payments/mpp/server";
 import { gatePayment, type PaymentMeta } from "@/lib/payments/router";
 ```
 

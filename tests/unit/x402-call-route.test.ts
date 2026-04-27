@@ -65,13 +65,13 @@ vi.mock("@/lib/db/schema", () => ({
   tags: { id: "id", name: "name" },
 }));
 
-vi.mock("@/lib/x402/payment-gate", () => ({
+vi.mock("@/lib/payments/x402/payment-gate", () => ({
   hashPaymentSignature: mockHashPaymentSignature,
   recordPayment: mockRecordPayment,
   resolveCreatorWallet: mockResolveCreatorWallet,
 }));
 
-vi.mock("@/lib/mpp/server", () => ({
+vi.mock("@/lib/payments/mpp/server", () => ({
   hashMppCredential: mockHashMppCredential,
 }));
 
@@ -110,7 +110,7 @@ vi.mock("@/lib/logging", () => ({
   logSystemError: mockLogSystemError,
 }));
 
-vi.mock("@/lib/x402/execution-wait", () => ({
+vi.mock("@/lib/payments/x402/execution-wait", () => ({
   buildCallCompletionResponse: mockBuildCallCompletionResponse,
 }));
 
