@@ -60,13 +60,32 @@ export const workflowExportV1Schema = z
     integrationBindings: z.array(integrationBindingSchema),
   })
   .superRefine((value, ctx) => {
-    const nodeIds = new Set(value.nodes.map((n) => n.id));
+    const nodesById = new Map(value.nodes.map((n) => [n.id, n]));
     for (const [index, binding] of value.integrationBindings.entries()) {
-      if (!nodeIds.has(binding.nodeId)) {
+      const node = nodesById.get(binding.nodeId);
+      if (!node) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["integrationBindings", index, "nodeId"],
           message: `integrationBindings[${index}].nodeId "${binding.nodeId}" does not match any node in nodes[]`,
+        });
+        continue;
+      }
+      // If the bound node carries its own integrationType (it usually does
+      // post-export), require the binding to agree. A divergence means the
+      // file was hand-edited or built by a non-canonical exporter.
+      const nodeConfig = node.data.config as
+        | Record<string, unknown>
+        | undefined;
+      const nodeIntegrationType = nodeConfig?.integrationType;
+      if (
+        typeof nodeIntegrationType === "string" &&
+        nodeIntegrationType !== binding.integrationType
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["integrationBindings", index, "integrationType"],
+          message: `integrationBindings[${index}].integrationType "${binding.integrationType}" disagrees with node "${binding.nodeId}".data.config.integrationType "${nodeIntegrationType}"`,
         });
       }
     }
@@ -157,9 +176,9 @@ export function buildWorkflowExportV1(workflow: {
     workflow: {
       name: workflow.name,
       // Preserve empty strings; only null/undefined collapse to "no description".
-      ...(workflow.description != null
-        ? { description: workflow.description }
-        : {}),
+      ...(workflow.description == null
+        ? {}
+        : { description: workflow.description }),
     },
     nodes: exportNodes as WorkflowExportV1["nodes"],
     edges: persistedEdges as WorkflowExportV1["edges"],

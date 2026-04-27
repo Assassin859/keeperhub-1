@@ -182,9 +182,7 @@ describe("GET /api/workflows/[workflowId]/download", () => {
     expect(body.nodes.map((n: { id: string }) => n.id)).not.toContain("add-1");
     expect(body.edges.map((e: { id: string }) => e.id)).not.toContain("e2");
 
-    expect(mockIncrementCounter).toHaveBeenCalledWith(
-      "workflow.exports.total"
-    );
+    expect(mockIncrementCounter).toHaveBeenCalledWith("workflow.exports.total");
   });
 
   it("does not increment the export counter on a 404", async () => {
@@ -284,9 +282,7 @@ describe("POST /api/workflows/import", () => {
     expect(insertedRows[0].userId).toBe(ownerId);
     expect(insertedRows[0].organizationId).toBe(orgId);
 
-    expect(mockIncrementCounter).toHaveBeenCalledWith(
-      "workflow.imports.total"
-    );
+    expect(mockIncrementCounter).toHaveBeenCalledWith("workflow.imports.total");
   });
 
   it("rejects an unsupported version", async () => {
