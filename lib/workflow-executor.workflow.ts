@@ -25,7 +25,7 @@ import {
   recordWorkflowComplete,
 } from "@/lib/metrics/instrumentation/workflow";
 import { clearExecution } from "@/lib/step-success-tracker";
-import { ARRAY_SOURCE_RE } from "@/lib/for-each-utils";
+import { ARRAY_SOURCE_RE } from "@/lib/workflow/nodes/for-each/utils";
 import {
   buildEdgesBySourceHandle,
   type EdgesBySourceHandle,
@@ -82,7 +82,7 @@ const SYSTEM_ACTIONS: Record<string, StepImporter> = {
   "For Each": {
     importer: () =>
       // biome-ignore lint/suspicious/noExplicitAny: Dynamic module import matches existing pattern
-      import("@/lib/steps/for-each") as Promise<any>,
+      import("@/lib/workflow/nodes/for-each/step") as Promise<any>,
     stepFunction: "forEachStep",
   },
   Collect: {
@@ -1566,7 +1566,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
 
     // 4. Run iterations with configurable concurrency
     const { runIterations } = await import(
-      "@/lib/for-each-concurrency"
+      "@/lib/workflow/nodes/for-each/concurrency"
     );
     const concurrencyMode =
       (processedConfig.concurrency as string) || "sequential";

@@ -23,7 +23,7 @@ import {
   groupLogsByIteration,
   type ChildLogsLookup,
   type IterationGroup,
-} from "@/lib/iteration-grouping";
+} from "@/lib/workflow/nodes/for-each/iteration-grouping";
 import { api } from "@/lib/api-client";
 import {
   OUTPUT_DISPLAY_CONFIGS,
@@ -525,7 +525,7 @@ function OutputDisplay({
 
 // Types and functions (ExecutionLog, IterationGroup, GroupedLogEntry,
 // buildIterationGroups, groupLogsByIteration) imported from
-// @/lib/iteration-grouping
+// @/lib/workflow/nodes/for-each/iteration-grouping
 
 /** Sum the duration (ms) of all logs in an iteration. */
 function computeIterationDuration(

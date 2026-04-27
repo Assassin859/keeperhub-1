@@ -23,7 +23,7 @@ import {
 } from "@/lib/workflow-store";
 import { findActionById } from "@/plugins/registry";
 import { getReadContractOutputFields } from "@/lib/action-output-fields";
-import { resolveForEachSyntheticOutput } from "@/lib/for-each-utils";
+import { resolveForEachSyntheticOutput } from "@/lib/workflow/nodes/for-each/utils";
 import {
   type ExecutionLogsByNodeId,
   type SchemaField,

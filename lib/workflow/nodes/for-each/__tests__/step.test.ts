@@ -7,7 +7,7 @@ vi.mock("@/lib/steps/step-handler", () => ({
   withStepLogging: (_input: unknown, fn: () => unknown) => fn(),
 }));
 
-import { type ForEachInput, forEachStep } from "../for-each";
+import { type ForEachInput, forEachStep } from "../step";
 
 function makeInput(overrides: Partial<ForEachInput> = {}): ForEachInput {
   return {
