@@ -5,7 +5,7 @@ import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { workflows } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
-import { LabelKeys, MetricNames } from "@/lib/metrics/types";
+import { MetricNames } from "@/lib/metrics/types";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { generateId } from "@/lib/utils/id";
 import {
@@ -101,13 +101,10 @@ export async function POST(request: Request) {
       })
       .returning();
 
-    getMetricsCollector().incrementCounter(
-      MetricNames.WORKFLOW_IMPORTS_TOTAL,
-      {
-        [LabelKeys.WORKFLOW_ID]: workflowId,
-        [LabelKeys.OWNER_ID]: userId,
-      }
-    );
+    // Aggregate-only counter to avoid Prometheus label-cardinality blow-up.
+    // Per-workflow attribution is available via the structured logs on this
+    // route if needed.
+    getMetricsCollector().incrementCounter(MetricNames.WORKFLOW_IMPORTS_TOTAL);
 
     return NextResponse.json({
       ...newWorkflow,

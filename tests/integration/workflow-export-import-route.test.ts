@@ -258,10 +258,7 @@ describe("POST /api/workflows/import", () => {
     expect(insertedRows[0].organizationId).toBe(orgId);
 
     expect(mockIncrementCounter).toHaveBeenCalledWith(
-      "workflow.imports.total",
-      expect.objectContaining({
-        owner_id: ownerId,
-      })
+      "workflow.imports.total"
     );
   });
 
