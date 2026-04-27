@@ -5,6 +5,7 @@ import { workflows } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
   type AuthAuditLabels,
+  UNAUTHENTICATED_AUDIT,
   auditFromAuth,
   getDualAuthContext,
 } from "@/lib/middleware/auth-helpers";
@@ -14,7 +15,7 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ workflowId: string }> }
 ): Promise<NextResponse> {
-  let audit: AuthAuditLabels = { authMethod: "session", apiKeyId: "none" };
+  let audit: AuthAuditLabels = { ...UNAUTHENTICATED_AUDIT };
   try {
     const { workflowId } = await context.params;
 

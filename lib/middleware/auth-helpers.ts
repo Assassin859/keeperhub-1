@@ -19,22 +19,42 @@ export type DualAuthContext =
  * answer "which credential made this call" in incident review. Routes pass
  * the spread of this into their existing logSystemError / logUserError
  * label objects.
+ *
+ * Two design choices worth calling out:
+ *
+ * - `authMethod` widens to "unknown" for the pre-auth / auth-failure case,
+ *   so log entries can never falsely claim a request authenticated as a
+ *   session when auth never resolved.
+ * - `apiKeyId` is omitted entirely when no key authenticated the request,
+ *   rather than emitting a sentinel like "none" which would be
+ *   indistinguishable in structured-log indexes from a real key id
+ *   literally named "none".
+ *
+ * Shaped as Record<string, string> so it spreads directly into label
+ * argument types without further coercion.
  */
-export type AuthAuditLabels = {
-  authMethod: AuthMethod;
-  apiKeyId: string;
+export type AuthAuditLabels = Record<string, string>;
+
+/**
+ * Default audit labels for a code path that has not yet resolved an auth
+ * context (or whose context resolution failed). Routes hoist this above
+ * their try block so a catch fired before auth populates the audit gets a
+ * non-misleading value.
+ */
+export const UNAUTHENTICATED_AUDIT: AuthAuditLabels = {
+  authMethod: "unknown",
 };
 
 export function auditFromAuth(
   ctx: DualAuthContext | { authMethod: AuthMethod; apiKeyId: string | null }
 ): AuthAuditLabels {
   if ("error" in ctx) {
-    return { authMethod: "session", apiKeyId: "none" };
+    return UNAUTHENTICATED_AUDIT;
   }
-  return {
-    authMethod: ctx.authMethod,
-    apiKeyId: ctx.apiKeyId ?? "none",
-  };
+  if (ctx.apiKeyId) {
+    return { authMethod: ctx.authMethod, apiKeyId: ctx.apiKeyId };
+  }
+  return { authMethod: ctx.authMethod };
 }
 
 /**

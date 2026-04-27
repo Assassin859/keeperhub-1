@@ -4,6 +4,7 @@ import { getUpgradeSuggestion } from "@/lib/billing/tier-suggestions";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
   type AuthAuditLabels,
+  UNAUTHENTICATED_AUDIT,
   auditFromAuth,
   resolveOrganizationId,
 } from "@/lib/middleware/auth-helpers";
@@ -13,7 +14,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  let audit: AuthAuditLabels = { authMethod: "session", apiKeyId: "none" };
+  let audit: AuthAuditLabels = { ...UNAUTHENTICATED_AUDIT };
   try {
     const authContext = await resolveOrganizationId(request);
     if ("error" in authContext) {

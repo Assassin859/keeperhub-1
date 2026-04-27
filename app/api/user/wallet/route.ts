@@ -13,6 +13,7 @@ import { integrations, organizationWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
   type AuthAuditLabels,
+  UNAUTHENTICATED_AUDIT,
   auditFromAuth,
   getDualAuthContext,
 } from "@/lib/middleware/auth-helpers";
@@ -204,7 +205,7 @@ async function storeTurnkeyWalletAndIntegration(options: {
 }
 
 export async function GET(request: Request): Promise<NextResponse> {
-  let audit: AuthAuditLabels = { authMethod: "session", apiKeyId: "none" };
+  let audit: AuthAuditLabels = { ...UNAUTHENTICATED_AUDIT };
   try {
     const authContext = await getDualAuthContext(request);
     if ("error" in authContext) {
