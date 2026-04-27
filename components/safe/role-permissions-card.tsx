@@ -310,7 +310,7 @@ function InstallRoleDialog({
         <PolicyWizard
           chainId={chainId}
           confirmLabel="Confirm & install"
-          defaultEnabledSlugs={["aave-v3", "cowswap"]}
+          defaultEnabledSlugs={[]}
           onCancel={() => setOpen(false)}
           onConfirm={handleInstall}
           simulate={simulate}

@@ -10,6 +10,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 /**
  * One row inside a protocol card: symbol badge + truncated address with
@@ -40,13 +45,6 @@ export const POLICY_PERIOD_OPTIONS: ReadonlyArray<{
   { label: "Monthly", seconds: MONTH },
 ] as const;
 
-function truncateAddress(addr: string): string {
-  if (addr.length < 12) {
-    return addr;
-  }
-  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
-}
-
 type PolicyTokenRowProps = {
   value: TokenRowValue;
   onChange: (next: TokenRowValue) => void;
@@ -62,29 +60,32 @@ export function PolicyTokenRow({
 
   return (
     <div className="flex flex-wrap items-center gap-2 rounded border bg-background p-2 text-sm">
-      <div className="flex min-w-0 flex-1 items-center gap-2">
-        <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 font-medium text-xs">
-          {value.tokenSymbol}
-        </span>
-        <div className="flex min-w-0 items-center gap-1 text-muted-foreground text-xs">
-          <span className="truncate font-mono">
-            {truncateAddress(value.tokenAddress)}
-          </span>
-          {value.explorerUrl && (
-            <a
-              className="inline-flex items-center gap-1 hover:text-foreground"
-              href={value.explorerUrl}
-              rel="noopener noreferrer"
-              target="_blank"
-            >
-              <ExternalLinkIcon className="h-3 w-3" />
-            </a>
-          )}
-        </div>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="inline-flex shrink-0 items-center rounded-full border bg-muted px-2.5 py-0.5 font-medium text-xs">
+              {value.tokenSymbol}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent className="font-mono text-xs">
+            {value.tokenAddress}
+          </TooltipContent>
+        </Tooltip>
+        {value.explorerUrl && (
+          <a
+            aria-label="View on explorer"
+            className="inline-flex shrink-0 items-center text-muted-foreground hover:text-foreground"
+            href={value.explorerUrl}
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            <ExternalLinkIcon className="h-3 w-3" />
+          </a>
+        )}
       </div>
 
       <Input
-        className="w-28"
+        className="min-w-0 flex-1"
         inputMode="decimal"
         onChange={(e) => onChange({ ...value, amountHuman: e.target.value })}
         placeholder="100"
@@ -97,7 +98,7 @@ export function PolicyTokenRow({
         }
         value={periodValue}
       >
-        <SelectTrigger className="w-32">
+        <SelectTrigger className="min-w-0 flex-1">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>

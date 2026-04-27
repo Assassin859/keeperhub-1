@@ -12,6 +12,7 @@ import {
 type RouteParams = { params: Promise<{ safeId: string }> };
 
 type SetAllowanceBody = {
+  protocolSlug?: string;
   tokenAddress?: string;
   maxRefillWei?: string;
   refillWei?: string;
@@ -92,6 +93,12 @@ export async function POST(
     }
 
     const body = (await request.json()) as SetAllowanceBody;
+    if (!body.protocolSlug || typeof body.protocolSlug !== "string") {
+      return NextResponse.json(
+        { error: "protocolSlug is required" },
+        { status: 400 }
+      );
+    }
     if (!(body.tokenAddress && ethers.isAddress(body.tokenAddress))) {
       return NextResponse.json(
         { error: "tokenAddress is required and must be a valid address" },
@@ -126,6 +133,7 @@ export async function POST(
     const result = await setRoleTokenAllowance({
       organizationId: admin.organizationId,
       chainId: safe.chainId,
+      protocolSlug: body.protocolSlug,
       tokenAddress: body.tokenAddress,
       maxRefillWei: body.maxRefillWei,
       refillWei: body.refillWei,

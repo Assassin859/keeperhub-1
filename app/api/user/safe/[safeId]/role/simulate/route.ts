@@ -33,7 +33,7 @@ import {
  * Returns a structured breakdown so the UI can render:
  *   - A list of "you will do X" lines (human-readable)
  *   - The raw gas units + priced estimate in native + USD
- *   - applied / skipped / conflictedTokens mirroring the install response
+ *   - applied / skipped mirroring the install response
  */
 
 const GAS_DEPLOY_MODULE = BigInt(350_000);
@@ -186,14 +186,10 @@ export async function POST(
     const body = (await request.json()) as SimulateBody;
     const { protocols: protocolInputs, skipped } = normaliseBody(body);
 
-    let conflictedTokens: ReturnType<
-      typeof flattenInstallInput
-    >["conflictedTokens"] = [];
     let tokenAllowances: ReturnType<typeof flattenInstallInput>["allowances"] =
       [];
     try {
       const flattened = flattenInstallInput(protocolInputs);
-      conflictedTokens = flattened.conflictedTokens;
       tokenAllowances = flattened.allowances;
     } catch (err) {
       return NextResponse.json(
@@ -250,7 +246,7 @@ export async function POST(
         continue;
       }
       applied.push(p.slug);
-      if (catalog.enforcementLevel === "target-only") {
+      if (catalog.enforcementLevel === "contract-allowlist") {
         const targets = getProtocolTargets(
           p.slug as ProtocolSlug,
           safe.chainId
@@ -350,8 +346,8 @@ export async function POST(
       },
       applied,
       skipped,
-      conflictedTokens,
       allowances: tokenAllowances.map((a) => ({
+        protocolSlug: a.protocolSlug,
         tokenAddress: a.tokenAddress,
         tokenSymbol: a.tokenSymbol,
         tokenDecimals: a.tokenDecimals,

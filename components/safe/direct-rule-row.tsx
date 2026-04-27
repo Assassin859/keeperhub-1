@@ -1,0 +1,261 @@
+"use client";
+
+import { ethers } from "ethers";
+import { ExternalLinkIcon, XIcon } from "lucide-react";
+import { useState } from "react";
+import type {
+  DirectRuleInput,
+  DirectRuleKind,
+} from "@/components/safe/policy-wizard";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { POLICY_PERIOD_OPTIONS } from "./policy-token-row";
+import { type PickedToken, TokenPicker } from "./token-picker";
+
+/**
+ * One direct-rule row inside the wizard. Encapsulates kind selector
+ * (transfer / approve / native), token picker (ERC20 only), counterparty
+ * input (recipient or spender depending on kind), amount + period, remove.
+ */
+
+type DirectRuleRowProps = {
+  value: DirectRuleInput;
+  chainId: number;
+  onChange: (next: DirectRuleInput) => void;
+  onRemove: () => void;
+};
+
+const RULE_KIND_OPTIONS: ReadonlyArray<{
+  value: DirectRuleKind;
+  label: string;
+  counterpartyLabel: string;
+  description: string;
+}> = [
+  {
+    value: "erc20-transfer",
+    label: "ERC20 transfer",
+    counterpartyLabel: "Recipient",
+    description: "token.transfer(recipient, amount)",
+  },
+  {
+    value: "erc20-approve",
+    label: "ERC20 approve",
+    counterpartyLabel: "Spender",
+    description: "token.approve(spender, amount)",
+  },
+  {
+    value: "native-transfer",
+    label: "Native ETH transfer",
+    counterpartyLabel: "Recipient",
+    description:
+      "Native value transfer to a specific recipient. Target-only on chain (no value cap).",
+  },
+];
+
+function ruleKindMeta(
+  kind: DirectRuleKind
+): (typeof RULE_KIND_OPTIONS)[number] {
+  return (
+    RULE_KIND_OPTIONS.find((o) => o.value === kind) ?? RULE_KIND_OPTIONS[0]
+  );
+}
+
+export function DirectRuleRow({
+  value,
+  chainId,
+  onChange,
+  onRemove,
+}: DirectRuleRowProps): React.ReactElement {
+  const [pickerOpen, setPickerOpen] = useState<boolean>(false);
+  const meta = ruleKindMeta(value.kind);
+  const isNative = value.kind === "native-transfer";
+  const counterpartyValid =
+    value.counterparty.length === 0 || ethers.isAddress(value.counterparty);
+
+  const handleKindChange = (next: string): void => {
+    const kind = next as DirectRuleKind;
+    if (kind === "native-transfer") {
+      onChange({
+        ...value,
+        kind,
+        tokenAddress: null,
+        tokenSymbol: "ETH",
+        tokenDecimals: 18,
+      });
+    } else {
+      onChange({ ...value, kind });
+    }
+  };
+
+  const handleTokenPicked = (picked: PickedToken): void => {
+    onChange({
+      ...value,
+      tokenAddress: picked.tokenAddress,
+      tokenSymbol: picked.tokenSymbol,
+      tokenDecimals: picked.tokenDecimals,
+    });
+  };
+
+  return (
+    <div className="space-y-2 rounded border bg-background p-3 text-sm">
+      <div className="flex items-start gap-2">
+        <Select onValueChange={handleKindChange} value={value.kind}>
+          <SelectTrigger className="w-44 shrink-0">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {RULE_KIND_OPTIONS.map((opt) => (
+              <SelectItem key={opt.value} value={opt.value}>
+                {opt.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          {isNative ? (
+            <span className="inline-flex shrink-0 items-center rounded-full border bg-muted px-2.5 py-0.5 font-medium text-xs">
+              ETH
+            </span>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  className="inline-flex shrink-0 items-center rounded-full border bg-muted px-2.5 py-0.5 font-medium text-xs hover:border-primary"
+                  onClick={() => setPickerOpen(true)}
+                  type="button"
+                >
+                  {value.tokenSymbol || "Pick token"}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent className="font-mono text-xs">
+                {value.tokenAddress ?? "Pick a token to scope"}
+              </TooltipContent>
+            </Tooltip>
+          )}
+        </div>
+
+        <Button
+          aria-label="Remove rule"
+          onClick={onRemove}
+          size="icon"
+          type="button"
+          variant="ghost"
+        >
+          <XIcon className="h-4 w-4" />
+        </Button>
+      </div>
+
+      <div className="text-muted-foreground text-xs">{meta.description}</div>
+
+      <div className="grid gap-2 sm:grid-cols-[2fr_1fr_1fr]">
+        <div className="space-y-1">
+          <Label className="text-xs" htmlFor={`direct-rule-cp-${value.kind}`}>
+            {meta.counterpartyLabel} address
+          </Label>
+          <Input
+            className={counterpartyValid ? undefined : "border-destructive"}
+            id={`direct-rule-cp-${value.kind}`}
+            onChange={(e) =>
+              onChange({ ...value, counterparty: e.target.value })
+            }
+            placeholder="0x..."
+            value={value.counterparty}
+          />
+          {!counterpartyValid && (
+            <div className="text-destructive text-xs">
+              Must be a valid 0x... address
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-1">
+          <Label
+            className="text-xs"
+            htmlFor={`direct-rule-amount-${value.kind}`}
+          >
+            Max {isNative ? "value" : "amount"}
+          </Label>
+          <Input
+            id={`direct-rule-amount-${value.kind}`}
+            inputMode="decimal"
+            onChange={(e) =>
+              onChange({ ...value, amountHuman: e.target.value })
+            }
+            placeholder="100"
+            value={value.amountHuman}
+          />
+        </div>
+
+        <div className="space-y-1">
+          <Label
+            className="text-xs"
+            htmlFor={`direct-rule-period-${value.kind}`}
+          >
+            Period
+          </Label>
+          <Select
+            disabled={isNative}
+            onValueChange={(next) =>
+              onChange({ ...value, periodSeconds: Number(next) })
+            }
+            value={String(value.periodSeconds)}
+          >
+            <SelectTrigger id={`direct-rule-period-${value.kind}`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {POLICY_PERIOD_OPTIONS.map((o) => (
+                <SelectItem key={o.seconds} value={String(o.seconds)}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {isNative && (
+        <div className="flex items-start gap-1 rounded border border-amber-300/40 bg-amber-500/5 p-2 text-amber-600/80 text-xs">
+          <span>
+            Native ETH rules scope the recipient at target level. The role
+            allows any value transferred to this address; on-chain value caps
+            are not yet enforced for native transfers.
+          </span>
+          {value.counterparty && counterpartyValid && (
+            <a
+              aria-label="View recipient on explorer"
+              className="ml-auto inline-flex shrink-0 items-center"
+              href={`https://etherscan.io/address/${value.counterparty}`}
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              <ExternalLinkIcon className="h-3 w-3" />
+            </a>
+          )}
+        </div>
+      )}
+
+      <TokenPicker
+        chainId={chainId}
+        excludeAddresses={[]}
+        onOpenChange={setPickerOpen}
+        onSelect={handleTokenPicked}
+        open={pickerOpen}
+      />
+    </div>
+  );
+}

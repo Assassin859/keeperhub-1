@@ -106,19 +106,6 @@ export type InstallRoleInput = {
   protocols: ProtocolInput[];
 };
 
-/**
- * When the admin sets the same token under two protocols with different
- * caps, the orchestrator records the resolution (max amount, min period)
- * and surfaces it here so the UI can show a one-line warning.
- */
-export type ConflictedToken = {
-  tokenAddress: string;
-  tokenSymbol: string;
-  resolvedAmountWei: string;
-  resolvedPeriodSeconds: number;
-  sourceProtocols: string[];
-};
-
 export type InstallRoleResult =
   | {
       success: true;
@@ -127,7 +114,6 @@ export type InstallRoleResult =
       allowances: SafeRoleAllowance[];
       applied: string[];
       skipped: string[];
-      conflictedTokens: ConflictedToken[];
       alreadyInstalled: boolean;
     }
   | { success: false; error: string };
@@ -135,6 +121,7 @@ export type InstallRoleResult =
 export type SetAllowanceInput = {
   organizationId: string;
   chainId: number;
+  protocolSlug: string;
   tokenAddress: string;
   maxRefillWei: string;
   refillWei: string;
@@ -315,100 +302,51 @@ function humanToWei(amountHuman: string, decimals: number): bigint {
 }
 
 /**
- * Flatten per-protocol token configuration into:
- *  - slug list (for buildPermissionsForProtocols)
- *  - token symbol union (what the protocol preset scopes)
- *  - per-token allowance rows (max amount / min period across protocols)
- *  - conflict list surfaced to the UI
+ * Per-(protocol, token) allowance entry emitted by `flattenInstallInput`.
+ * Each row maps directly to one on-chain `setAllowance` call and one
+ * `safe_role_allowances` DB row.
+ */
+export type FlattenedAllowance = {
+  protocolSlug: string;
+  tokenAddress: string;
+  tokenSymbol: string;
+  tokenDecimals: number;
+  maxRefillWei: string;
+  refillWei: string;
+  periodSeconds: number;
+};
+
+/**
+ * Flatten per-protocol token configuration. No cross-protocol aggregation:
+ * each `(protocolSlug, tokenAddress)` pair becomes its own allowance bucket
+ * so two protocols can hold independent caps for the same token.
+ *
+ * Returns the slug list (for `buildPermissionsForProtocols`), the union of
+ * token symbols (what the per-parameter presets scope), and the flat list
+ * of allowance rows.
  */
 export function flattenInstallInput(protocolInputs: ProtocolInput[]): {
   protocolSlugs: string[];
   allowedTokenSymbols: string[];
-  allowances: Array<{
-    tokenAddress: string;
-    tokenSymbol: string;
-    tokenDecimals: number;
-    maxRefillWei: string;
-    refillWei: string;
-    periodSeconds: number;
-  }>;
-  conflictedTokens: ConflictedToken[];
+  allowances: FlattenedAllowance[];
 } {
   const slugs = protocolInputs.map((p) => p.slug);
   const symbols = new Set<string>();
-  type Agg = {
-    tokenSymbol: string;
-    tokenDecimals: number;
-    maxAmount: bigint;
-    minPeriod: number;
-    sources: string[];
-    differingAmounts: boolean;
-    differingPeriods: boolean;
-  };
-  const perToken = new Map<string, Agg>();
+  const allowances: FlattenedAllowance[] = [];
 
   for (const p of protocolInputs) {
     for (const t of p.tokens) {
       symbols.add(t.tokenSymbol);
       const addr = normalizeAddressForStorage(t.tokenAddress);
       const amount = humanToWei(t.amountHuman, t.tokenDecimals);
-      const existing = perToken.get(addr);
-      if (!existing) {
-        perToken.set(addr, {
-          tokenSymbol: t.tokenSymbol,
-          tokenDecimals: t.tokenDecimals,
-          maxAmount: amount,
-          minPeriod: t.periodSeconds,
-          sources: [p.slug],
-          differingAmounts: false,
-          differingPeriods: false,
-        });
-        continue;
-      }
-      if (amount !== existing.maxAmount) {
-        existing.differingAmounts = true;
-      }
-      if (t.periodSeconds !== existing.minPeriod) {
-        existing.differingPeriods = true;
-      }
-      if (amount > existing.maxAmount) {
-        existing.maxAmount = amount;
-      }
-      if (t.periodSeconds < existing.minPeriod) {
-        existing.minPeriod = t.periodSeconds;
-      }
-      existing.sources.push(p.slug);
-    }
-  }
-
-  const conflictedTokens: ConflictedToken[] = [];
-  const allowances: Array<{
-    tokenAddress: string;
-    tokenSymbol: string;
-    tokenDecimals: number;
-    maxRefillWei: string;
-    refillWei: string;
-    periodSeconds: number;
-  }> = [];
-  for (const [addr, agg] of perToken.entries()) {
-    allowances.push({
-      tokenAddress: addr,
-      tokenSymbol: agg.tokenSymbol,
-      tokenDecimals: agg.tokenDecimals,
-      maxRefillWei: agg.maxAmount.toString(),
-      refillWei: agg.maxAmount.toString(),
-      periodSeconds: agg.minPeriod,
-    });
-    if (
-      agg.sources.length > 1 &&
-      (agg.differingAmounts || agg.differingPeriods)
-    ) {
-      conflictedTokens.push({
+      allowances.push({
+        protocolSlug: p.slug,
         tokenAddress: addr,
-        tokenSymbol: agg.tokenSymbol,
-        resolvedAmountWei: agg.maxAmount.toString(),
-        resolvedPeriodSeconds: agg.minPeriod,
-        sourceProtocols: agg.sources,
+        tokenSymbol: t.tokenSymbol,
+        tokenDecimals: t.tokenDecimals,
+        maxRefillWei: amount.toString(),
+        refillWei: amount.toString(),
+        periodSeconds: t.periodSeconds,
       });
     }
   }
@@ -417,7 +355,6 @@ export function flattenInstallInput(protocolInputs: ProtocolInput[]): {
     protocolSlugs: slugs,
     allowedTokenSymbols: Array.from(symbols),
     allowances,
-    conflictedTokens,
   };
 }
 
@@ -429,7 +366,6 @@ export async function installRolesWithInitialConfig(
     protocolSlugs: protocols,
     allowedTokenSymbols,
     allowances: tokenAllowances,
-    conflictedTokens,
   } = flattenInstallInput(protocolInputs);
 
   const safe = await findSafeForOrg(organizationId, chainId);
@@ -463,7 +399,6 @@ export async function installRolesWithInitialConfig(
       allowances: allowanceRows,
       applied: protocolRows.map((r) => r.protocolSlug),
       skipped: [],
-      conflictedTokens,
       alreadyInstalled: true,
     };
   }
@@ -607,9 +542,10 @@ export async function installRolesWithInitialConfig(
       });
     }
 
-    // d. per-token allowances
+    // d. per-(protocol, token) allowances
     const nowSec = BigInt(Math.floor(Date.now() / 1000));
     const allowanceRowsInput: Array<{
+      protocolSlug: string;
       allowanceKey: `0x${string}`;
       tokenAddress: string;
       tokenSymbol: string;
@@ -622,11 +558,14 @@ export async function installRolesWithInitialConfig(
       const normalizedToken = normalizeAddressForStorage(a.tokenAddress);
       const allowanceKey = tokenAllowanceKey(
         roleKey,
+        a.protocolSlug,
         normalizedToken
       ) as `0x${string}`;
       const { symbol, decimals } = resolveTokenMetadata(
         chainId,
-        normalizedToken
+        normalizedToken,
+        a.tokenSymbol,
+        a.tokenDecimals
       );
       const maxRefill = BigInt(a.maxRefillWei);
       const refill = BigInt(a.refillWei);
@@ -644,6 +583,7 @@ export async function installRolesWithInitialConfig(
         operation: 0,
       });
       allowanceRowsInput.push({
+        protocolSlug: a.protocolSlug,
         allowanceKey,
         tokenAddress: normalizedToken,
         tokenSymbol: symbol,
@@ -731,6 +671,7 @@ export async function installRolesWithInitialConfig(
         .insert(safeRoleAllowances)
         .values({
           roleId: roleRow.id,
+          protocolSlug: a.protocolSlug,
           allowanceKey: a.allowanceKey,
           tokenAddress: a.tokenAddress,
           tokenSymbol: a.tokenSymbol,
@@ -754,7 +695,6 @@ export async function installRolesWithInitialConfig(
       allowances: allowanceRows,
       applied: appliedProtocols,
       skipped: skippedProtocols,
-      conflictedTokens,
       alreadyInstalled: false,
     };
   } catch (error) {
@@ -813,8 +753,16 @@ export async function setRoleTokenAllowance(
     input.tokenDecimals
   );
 
+  if (!input.protocolSlug) {
+    return {
+      success: false,
+      error: "protocolSlug is required to set a per-protocol allowance",
+    };
+  }
+
   const allowanceKey = tokenAllowanceKey(
     role.roleKey,
+    input.protocolSlug,
     normalizedToken
   ) as `0x${string}`;
   const maxRefill = BigInt(input.maxRefillWei);
@@ -888,6 +836,7 @@ export async function setRoleTokenAllowance(
       .insert(safeRoleAllowances)
       .values({
         roleId: role.id,
+        protocolSlug: input.protocolSlug,
         allowanceKey,
         tokenAddress: normalizedToken,
         tokenSymbol: symbol,
@@ -901,8 +850,13 @@ export async function setRoleTokenAllowance(
         lastAppliedTxHash: result.txHash ?? null,
       })
       .onConflictDoUpdate({
-        target: [safeRoleAllowances.roleId, safeRoleAllowances.tokenAddress],
+        target: [
+          safeRoleAllowances.roleId,
+          safeRoleAllowances.protocolSlug,
+          safeRoleAllowances.tokenAddress,
+        ],
         set: {
+          allowanceKey,
           maxRefillWei: input.maxRefillWei,
           refillWei: input.refillWei,
           periodSeconds: input.periodSeconds,
@@ -943,14 +897,21 @@ export async function setRoleTokenAllowance(
 export async function revokeRoleTokenAllowance(input: {
   organizationId: string;
   chainId: number;
+  protocolSlug: string;
   tokenAddress: string;
 }): Promise<
   | { success: true; deleted: SafeRoleAllowance }
   | { success: false; error: string }
 > {
-  const { organizationId, chainId, tokenAddress } = input;
+  const { organizationId, chainId, protocolSlug, tokenAddress } = input;
   if (!ethers.isAddress(tokenAddress)) {
     return { success: false, error: `Invalid token address: ${tokenAddress}` };
+  }
+  if (!protocolSlug) {
+    return {
+      success: false,
+      error: "protocolSlug is required to revoke a per-protocol allowance",
+    };
   }
 
   const safe = await findSafeForOrg(organizationId, chainId);
@@ -965,6 +926,7 @@ export async function revokeRoleTokenAllowance(input: {
   const normalizedToken = normalizeAddressForStorage(tokenAddress);
   const allowanceKey = tokenAllowanceKey(
     role.roleKey,
+    protocolSlug,
     normalizedToken
   ) as `0x${string}`;
 
@@ -1023,6 +985,7 @@ export async function revokeRoleTokenAllowance(input: {
       .where(
         and(
           eq(safeRoleAllowances.roleId, role.id),
+          eq(safeRoleAllowances.protocolSlug, protocolSlug),
           eq(safeRoleAllowances.tokenAddress, normalizedToken)
         )
       )

@@ -1,5 +1,6 @@
 "use client";
 
+import { ethers } from "ethers";
 import { AlertTriangleIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -8,14 +9,41 @@ import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { buildAddressUrl } from "@/lib/build-explorer-url";
 import {
+  defaultAmountForSymbol,
+  resolveDefaultTokensForProtocol,
+} from "@/lib/safe/protocol-default-tokens";
+import {
   type EnforcementLevel,
   listProtocolsForChain,
   type ProtocolCatalogEntry,
   type ProtocolSlug,
 } from "@/lib/safe/protocol-registry";
 import { getProtocolTargets } from "@/lib/safe/protocol-targets";
+import { DirectRulesSection } from "./direct-rules-section";
 import { PolicyProtocolCard } from "./policy-protocol-card";
-import type { TokenRowValue } from "./policy-token-row";
+import { POLICY_PERIOD_OPTIONS, type TokenRowValue } from "./policy-token-row";
+
+const DEFAULT_PERIOD_SECONDS = POLICY_PERIOD_OPTIONS[1].seconds;
+
+function buildSeededTokens(
+  slug: ProtocolSlug,
+  chainId: number,
+  explorerInfo: { explorerUrl: string | null; addressPath: string | null }
+): TokenRowValue[] {
+  const defaults = resolveDefaultTokensForProtocol(slug, chainId);
+  return defaults.map((t) => ({
+    tokenAddress: t.address,
+    tokenSymbol: t.symbol,
+    tokenDecimals: t.decimals,
+    amountHuman: defaultAmountForSymbol(t.symbol),
+    periodSeconds: DEFAULT_PERIOD_SECONDS,
+    explorerUrl: buildAddressUrl(
+      explorerInfo.explorerUrl,
+      explorerInfo.addressPath,
+      t.address
+    ),
+  }));
+}
 
 /**
  * Shared policy wizard used by both:
@@ -45,8 +73,34 @@ export type ProtocolInput = {
   tokens: TokenLimitInput[];
 };
 
+/**
+ * Direct rules configure on-chain spending policies that don't go through
+ * a known protocol. Three kinds:
+ *   - erc20-transfer: ERC20 transfer to a specific recipient with refillable cap
+ *   - erc20-approve: ERC20 approve to a specific spender with refillable cap
+ *   - native-transfer: native ETH transfer to a specific recipient (target-only,
+ *     no on-chain value cap; the rule only enforces "this exact recipient is allowed")
+ *
+ * `tokenAddress` is required for the two ERC20 kinds and ignored for native.
+ */
+export type DirectRuleKind =
+  | "erc20-transfer"
+  | "erc20-approve"
+  | "native-transfer";
+
+export type DirectRuleInput = {
+  kind: DirectRuleKind;
+  tokenAddress: string | null;
+  tokenSymbol: string;
+  tokenDecimals: number;
+  counterparty: string;
+  amountHuman: string;
+  periodSeconds: number;
+};
+
 export type PolicyConfig = {
   protocols: ProtocolInput[];
+  directRules?: DirectRuleInput[];
 };
 
 export type SimulationPlan = {
@@ -101,22 +155,15 @@ type ProtocolState = {
   tokens: TokenRowValue[];
 };
 
-function ignoresTokenList(catalog: ProtocolCatalogEntry): boolean {
-  return (
-    catalog.templateSlug === "lido" ||
-    catalog.templateSlug === "rocket-pool" ||
-    catalog.templateSlug === "wrapped" ||
-    catalog.templateSlug === "target-only"
-  );
-}
-
 function enforcementLabel(level: EnforcementLevel): string {
-  return level === "full" ? "Full policy" : "Target-only";
+  return level === "per-parameter"
+    ? "Per-parameter policy"
+    : "Contract allowlist";
 }
 
 export function PolicyWizard({
   chainId,
-  defaultEnabledSlugs = ["aave-v3", "cowswap"],
+  defaultEnabledSlugs = [],
   submitting,
   simulate,
   onConfirm,
@@ -132,33 +179,52 @@ export function PolicyWizard({
     return listProtocolsForChain(chainId);
   }, [catalog, chainId]);
 
+  const explorerInfo = useMemo(
+    () => ({
+      explorerUrl: explorer?.explorerUrl ?? null,
+      addressPath: explorer?.explorerAddressPath ?? null,
+    }),
+    [explorer]
+  );
+
   const [step, setStep] = useState<"configure" | "review">("configure");
   const [states, setStates] = useState<Record<string, ProtocolState>>(() => {
     const init: Record<string, ProtocolState> = {};
     for (const entry of resolvedCatalog) {
       init[entry.slug] = {
         enabled: defaultEnabledSlugs.includes(entry.slug),
-        tokens: [],
+        tokens: buildSeededTokens(
+          entry.slug as ProtocolSlug,
+          chainId,
+          explorerInfo
+        ),
       };
     }
     return init;
   });
   const [simulating, setSimulating] = useState<boolean>(false);
   const [simulation, setSimulation] = useState<SimulationPlan | null>(null);
+  const [directRules, setDirectRules] = useState<DirectRuleInput[]>([]);
 
-  // Re-sync when chain changes (catalog may shrink/grow)
+  // Re-sync when chain changes (catalog may shrink/grow). Newly-introduced
+  // protocols get their default token seed; existing protocols keep
+  // whatever the admin already configured.
   useEffect(() => {
     setStates((prev) => {
       const next: Record<string, ProtocolState> = {};
       for (const entry of resolvedCatalog) {
         next[entry.slug] = prev[entry.slug] ?? {
           enabled: defaultEnabledSlugs.includes(entry.slug),
-          tokens: [],
+          tokens: buildSeededTokens(
+            entry.slug as ProtocolSlug,
+            chainId,
+            explorerInfo
+          ),
         };
       }
       return next;
     });
-  }, [resolvedCatalog, defaultEnabledSlugs]);
+  }, [resolvedCatalog, defaultEnabledSlugs, chainId, explorerInfo]);
 
   const targetsFor = useCallback(
     (slug: string): Array<{ address: string; explorerUrl: string | null }> => {
@@ -202,8 +268,7 @@ export function PolicyWizard({
       if (!state?.enabled) {
         continue;
       }
-      const needsTokens = !ignoresTokenList(entry);
-      if (needsTokens && state.tokens.length === 0) {
+      if (state.tokens.length === 0) {
         toast.error(`Add at least one token for ${entry.label}`);
         return null;
       }
@@ -230,11 +295,37 @@ export function PolicyWizard({
         })),
       });
     }
-    if (protocols.length === 0) {
-      toast.error("Enable at least one protocol");
+
+    const validatedDirect: DirectRuleInput[] = [];
+    for (const rule of directRules) {
+      if (rule.kind !== "native-transfer" && !rule.tokenAddress) {
+        toast.error("Pick a token for every ERC20 rule");
+        return null;
+      }
+      if (!ethers.isAddress(rule.counterparty)) {
+        toast.error("Direct rule recipient/spender must be a valid address");
+        return null;
+      }
+      if (!rule.amountHuman.trim()) {
+        toast.error("Set an amount for every direct rule");
+        return null;
+      }
+      if (!HUMAN_AMOUNT_REGEX.test(rule.amountHuman.trim())) {
+        toast.error("Direct-rule amount must be a positive number");
+        return null;
+      }
+      validatedDirect.push({
+        ...rule,
+        counterparty: ethers.getAddress(rule.counterparty),
+        amountHuman: rule.amountHuman.trim(),
+      });
+    }
+
+    if (protocols.length === 0 && validatedDirect.length === 0) {
+      toast.error("Enable at least one protocol or add a direct rule");
       return null;
     }
-    return { protocols };
+    return { protocols, directRules: validatedDirect };
   };
 
   const handleNext = async (): Promise<void> => {
@@ -293,10 +384,11 @@ export function PolicyWizard({
                 enforced on-chain per call.
               </li>
               <li>
-                Protocols marked {enforcementLabel("full")} have full
+                Protocols marked {enforcementLabel("per-parameter")} have full
                 per-parameter conditions from our audited preset. Protocols
-                marked {enforcementLabel("target-only")} are allowlisted at the
-                contract level only.
+                marked {enforcementLabel("contract-allowlist")} are allowlisted
+                at the contract level only -- per-token caps still apply, but
+                any function on the listed contracts can be called.
               </li>
               <li>
                 If you add the same token under two protocols with different
@@ -323,7 +415,6 @@ export function PolicyWizard({
                     catalog={entry}
                     chainId={chainId}
                     enabled={state.enabled}
-                    ignoresTokenList={ignoresTokenList(entry)}
                     key={entry.slug}
                     onEnabledChange={(enabled) =>
                       setEnabled(entry.slug, enabled)
@@ -341,6 +432,12 @@ export function PolicyWizard({
               )}
             </ul>
           </div>
+
+          <DirectRulesSection
+            chainId={chainId}
+            onChange={setDirectRules}
+            rules={directRules}
+          />
         </>
       )}
 

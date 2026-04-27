@@ -30,7 +30,7 @@ export type ProtocolSlug =
   | "chainlink"
   | "wrapped";
 
-export type EnforcementLevel = "full" | "target-only";
+export type EnforcementLevel = "per-parameter" | "contract-allowlist";
 
 export type ProtocolCatalogEntry = {
   slug: ProtocolSlug;
@@ -42,6 +42,22 @@ export type ProtocolCatalogEntry = {
   /** Chains where at least one target contract exists (see protocol-targets) */
   chainIds: readonly number[];
 };
+
+export const ENFORCEMENT_LEVEL_LABELS: Readonly<
+  Record<EnforcementLevel, string>
+> = {
+  "per-parameter": "Per-parameter policy",
+  "contract-allowlist": "Contract allowlist",
+} as const;
+
+export const ENFORCEMENT_LEVEL_TOOLTIPS: Readonly<
+  Record<EnforcementLevel, string>
+> = {
+  "per-parameter":
+    "KeeperHub controls which functions can be called and with what arguments. Example for Aave V3: only supply(USDC, recipient = your Safe) is allowed; arbitrary calls revert. Per-token spending caps apply on top.",
+  "contract-allowlist":
+    "KeeperHub lets workflows call any function on this protocol's contracts. The contract itself decides what's valid. Per-token spending caps still apply. Used when a per-parameter template hasn't shipped yet for this protocol.",
+} as const;
 
 const ETH = 1;
 const OPT = 10;
@@ -58,7 +74,7 @@ export const PROTOCOL_CATALOG: Readonly<
       "Supply, borrow, withdraw, repay on Aave V3. Recipient pinned to the Safe via the defi-kit preset.",
     docsUrl: "https://aave.com/docs",
     templateSlug: "aave-v3",
-    enforcementLevel: "full",
+    enforcementLevel: "per-parameter",
     chainIds: [ETH, BASE, ARB, OPT],
   },
   "aave-v4": {
@@ -68,7 +84,7 @@ export const PROTOCOL_CATALOG: Readonly<
       "Hub-and-Spoke supply and borrow via the Lido Spoke. Role scopes the Spoke contract at target level until a V4 per-parameter template ships.",
     docsUrl: "https://aave.com/docs/concepts/v4",
     templateSlug: "target-only",
-    enforcementLevel: "target-only",
+    enforcementLevel: "contract-allowlist",
     chainIds: [ETH],
   },
   "compound-v3": {
@@ -77,7 +93,7 @@ export const PROTOCOL_CATALOG: Readonly<
     description: "Supply and borrow on the Compound V3 Comet USDC markets.",
     docsUrl: "https://docs.compound.finance/",
     templateSlug: "compound-v3",
-    enforcementLevel: "full",
+    enforcementLevel: "per-parameter",
     chainIds: [ETH, BASE, ARB],
   },
   cowswap: {
@@ -87,7 +103,7 @@ export const PROTOCOL_CATALOG: Readonly<
       "MEV-protected batch swaps via GPv2Settlement. Recipient pinned to the Safe.",
     docsUrl: "https://docs.cow.fi/",
     templateSlug: "cowswap",
-    enforcementLevel: "full",
+    enforcementLevel: "per-parameter",
     chainIds: [ETH, BASE, ARB, OPT],
   },
   "uniswap-v3": {
@@ -97,7 +113,7 @@ export const PROTOCOL_CATALOG: Readonly<
       "Single and multi-hop swaps via the Uniswap V3 router between allowed tokens.",
     docsUrl: "https://docs.uniswap.org/contracts/v3/overview",
     templateSlug: "uniswap-v3",
-    enforcementLevel: "full",
+    enforcementLevel: "per-parameter",
     chainIds: [ETH, BASE, ARB, OPT],
   },
   curve: {
@@ -107,7 +123,7 @@ export const PROTOCOL_CATALOG: Readonly<
       "Stable-swap and meta-pool trading. Target-only today; per-pool conditions will ship with individual pool templates.",
     docsUrl: "https://docs.curve.fi/",
     templateSlug: "target-only",
-    enforcementLevel: "target-only",
+    enforcementLevel: "contract-allowlist",
     chainIds: [ETH],
   },
   lido: {
@@ -117,7 +133,7 @@ export const PROTOCOL_CATALOG: Readonly<
       "Stake ETH for stETH / wstETH. Trivial one-function ABI; condition enforced.",
     docsUrl: "https://docs.lido.fi/",
     templateSlug: "lido",
-    enforcementLevel: "full",
+    enforcementLevel: "per-parameter",
     chainIds: [ETH],
   },
   "rocket-pool": {
@@ -127,7 +143,7 @@ export const PROTOCOL_CATALOG: Readonly<
       "Mint rETH by depositing ETH into the Rocket Pool deposit pool.",
     docsUrl: "https://docs.rocketpool.net/",
     templateSlug: "rocket-pool",
-    enforcementLevel: "full",
+    enforcementLevel: "per-parameter",
     chainIds: [ETH],
   },
   morpho: {
@@ -137,7 +153,7 @@ export const PROTOCOL_CATALOG: Readonly<
       "Overcollateralised lending via the Morpho Blue singleton and MetaMorpho vaults. Target-only today.",
     docsUrl: "https://docs.morpho.org/morpho-blue",
     templateSlug: "target-only",
-    enforcementLevel: "target-only",
+    enforcementLevel: "contract-allowlist",
     chainIds: [ETH, BASE],
   },
   spark: {
@@ -146,7 +162,7 @@ export const PROTOCOL_CATALOG: Readonly<
     description: "Maker's Aave V3 fork. Supply and borrow with per-token caps.",
     docsUrl: "https://docs.spark.fi/",
     templateSlug: "spark",
-    enforcementLevel: "full",
+    enforcementLevel: "per-parameter",
     chainIds: [ETH],
   },
   sky: {
@@ -156,7 +172,7 @@ export const PROTOCOL_CATALOG: Readonly<
       "Deposit DAI / USDS and swap via Peg Stability Modules. Target-only today.",
     docsUrl: "https://docs.sky.money/",
     templateSlug: "target-only",
-    enforcementLevel: "target-only",
+    enforcementLevel: "contract-allowlist",
     chainIds: [ETH],
   },
   ethena: {
@@ -166,7 +182,7 @@ export const PROTOCOL_CATALOG: Readonly<
       "USDe and sUSDe deposits, withdrawals, yield. Target-only today.",
     docsUrl: "https://ethena-labs.gitbook.io/ethena-labs",
     templateSlug: "target-only",
-    enforcementLevel: "target-only",
+    enforcementLevel: "contract-allowlist",
     chainIds: [ETH],
   },
   "yearn-v3": {
@@ -176,7 +192,7 @@ export const PROTOCOL_CATALOG: Readonly<
       "ERC-4626 yield vaults. User-specified vault contracts scoped at target level.",
     docsUrl: "https://docs.yearn.finance/",
     templateSlug: "target-only",
-    enforcementLevel: "target-only",
+    enforcementLevel: "contract-allowlist",
     chainIds: [ETH, ARB],
   },
   pendle: {
@@ -186,7 +202,7 @@ export const PROTOCOL_CATALOG: Readonly<
       "Fixed and variable yield via PT and YT tokens. Router scoped at target level.",
     docsUrl: "https://docs.pendle.finance/",
     templateSlug: "target-only",
-    enforcementLevel: "target-only",
+    enforcementLevel: "contract-allowlist",
     chainIds: [ETH, BASE, ARB, OPT],
   },
   aerodrome: {
@@ -195,7 +211,7 @@ export const PROTOCOL_CATALOG: Readonly<
     description: "Base-native ve(3,3) DEX. Router scoped at target level.",
     docsUrl: "https://docs.aerodrome.finance/",
     templateSlug: "target-only",
-    enforcementLevel: "target-only",
+    enforcementLevel: "contract-allowlist",
     chainIds: [BASE],
   },
   ajna: {
@@ -205,7 +221,7 @@ export const PROTOCOL_CATALOG: Readonly<
       "Oracle-free permissionless lending pools. Pool info scoped at target level.",
     docsUrl: "https://www.ajna.finance/",
     templateSlug: "target-only",
-    enforcementLevel: "target-only",
+    enforcementLevel: "contract-allowlist",
     chainIds: [BASE],
   },
   chainlink: {
@@ -214,7 +230,7 @@ export const PROTOCOL_CATALOG: Readonly<
     description: "Cross-chain messaging and token transfers via CCIP routers.",
     docsUrl: "https://docs.chain.link/ccip",
     templateSlug: "target-only",
-    enforcementLevel: "target-only",
+    enforcementLevel: "contract-allowlist",
     chainIds: [ETH, BASE, ARB, OPT],
   },
   wrapped: {
@@ -224,7 +240,7 @@ export const PROTOCOL_CATALOG: Readonly<
       "Wrap ETH into WETH and unwrap back. Two functions only: deposit + withdraw.",
     docsUrl: "https://weth.io/",
     templateSlug: "wrapped",
-    enforcementLevel: "full",
+    enforcementLevel: "per-parameter",
     chainIds: [ETH, BASE, ARB, OPT],
   },
 } as const;

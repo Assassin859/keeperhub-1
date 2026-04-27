@@ -67,16 +67,23 @@ export function orgAutomationRoleKey(
 
 /**
  * Allowance key helpers. Zodiac allowances are keyed by `bytes32`. We derive
- * per-token allowance keys from the role key + token address so they're
- * deterministic and collision-free across roles/tokens.
+ * per-(role, protocol, token) allowance keys so each protocol owns its own
+ * spending bucket. Two protocols touching the same token (e.g. Aave V3 and
+ * CoW both holding USDC) get independent caps that the admin can configure
+ * separately on the wizard's per-protocol cards.
+ *
+ * The protocol slug is hashed into a `bytes32` via `ethers.id` so it
+ * abi-packs cleanly alongside the existing `roleKey` + `address` operands.
  */
 export function tokenAllowanceKey(
   roleKey: string,
+  protocolSlug: string,
   tokenAddress: string
 ): string {
+  const protocolDigest = ethers.id(protocolSlug);
   const encoded = ethers.solidityPacked(
-    ["bytes32", "address"],
-    [roleKey, ethers.getAddress(tokenAddress)]
+    ["bytes32", "bytes32", "address"],
+    [roleKey, protocolDigest, ethers.getAddress(tokenAddress)]
   );
   return ethers.keccak256(encoded);
 }

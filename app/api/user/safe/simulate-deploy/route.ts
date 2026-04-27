@@ -1,0 +1,340 @@
+import { eq } from "drizzle-orm";
+import { ethers } from "ethers";
+import { headers } from "next/headers";
+import { NextResponse } from "next/server";
+import { apiError } from "@/lib/api-error";
+import { auth } from "@/lib/auth";
+import { db } from "@/lib/db";
+import { chains } from "@/lib/db/schema";
+import { getActiveOrgId } from "@/lib/middleware/org-context";
+import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
+import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
+import { TEMPLATE_SPECS } from "@/lib/safe/condition-templates";
+import { isSafeSupportedChain } from "@/lib/safe/contracts";
+import { getNativeUsdPrice, weiToUsd } from "@/lib/safe/price-oracle";
+import {
+  PROTOCOL_CATALOG,
+  type ProtocolSlug,
+} from "@/lib/safe/protocol-registry";
+import { getProtocolTargets } from "@/lib/safe/protocol-targets";
+import {
+  flattenInstallInput,
+  type ProtocolInput,
+} from "@/lib/safe/roles-orchestrator";
+
+/**
+ * Pre-deploy simulation: tells the wizard what will land on chain when the
+ * admin clicks "Deploy + install policies", before the Safe actually exists.
+ *
+ * Reuses the same heuristic gas accounting as the post-deploy install
+ * simulator so the user sees a single coherent breakdown across the deploy
+ * + install MultiSend.
+ */
+
+const GAS_DEPLOY_SAFE = BigInt(300_000);
+const GAS_DEPLOY_MODULE = BigInt(350_000);
+const GAS_ENABLE_MODULE = BigInt(55_000);
+const GAS_ASSIGN_ROLES = BigInt(80_000);
+const GAS_SET_DEFAULT_ROLE = BigInt(45_000);
+const GAS_SCOPE_TARGET = BigInt(60_000);
+const GAS_SCOPE_FUNCTION = BigInt(70_000);
+const GAS_SET_ALLOWANCE = BigInt(75_000);
+const GAS_OUTER_WRAPPER = BigInt(50_000);
+const DEFAULT_GAS_PRICE_WEI = BigInt(25_000_000_000);
+
+type TokenLimitBody = {
+  tokenAddress?: string;
+  tokenSymbol?: string;
+  tokenDecimals?: number;
+  amountHuman?: string;
+  periodSeconds?: number;
+};
+
+type DirectRuleBody = {
+  kind?: "erc20-transfer" | "erc20-approve" | "native-transfer";
+  tokenAddress?: string | null;
+  tokenSymbol?: string;
+  tokenDecimals?: number;
+  counterparty?: string;
+  amountHuman?: string;
+  periodSeconds?: number;
+};
+
+type SimulateBody = {
+  chainId?: number;
+  protocols?: Array<{
+    slug?: string;
+    tokens?: TokenLimitBody[];
+  }>;
+  directRules?: DirectRuleBody[];
+};
+
+const GAS_DIRECT_RULE_TRANSFER = BigInt(70_000);
+const GAS_DIRECT_RULE_APPROVE = BigInt(70_000);
+const GAS_DIRECT_RULE_NATIVE = BigInt(60_000);
+
+type OperationSummary = {
+  label: string;
+  detail: string;
+  gasUnits: string;
+};
+
+function normaliseProtocols(body: SimulateBody): {
+  protocols: ProtocolInput[];
+  skipped: string[];
+} {
+  const skipped: string[] = [];
+  const out: ProtocolInput[] = [];
+  for (const entry of body.protocols ?? []) {
+    const slug = entry?.slug;
+    if (!slug) {
+      continue;
+    }
+    if (!(slug in PROTOCOL_CATALOG)) {
+      skipped.push(slug);
+      continue;
+    }
+    const tokens = (entry.tokens ?? []).flatMap((t) => {
+      if (
+        !(t.tokenAddress && t.tokenSymbol) ||
+        typeof t.tokenDecimals !== "number" ||
+        !t.amountHuman ||
+        typeof t.periodSeconds !== "number"
+      ) {
+        return [];
+      }
+      return [
+        {
+          tokenAddress: t.tokenAddress,
+          tokenSymbol: t.tokenSymbol,
+          tokenDecimals: t.tokenDecimals,
+          amountHuman: t.amountHuman,
+          periodSeconds: t.periodSeconds,
+        },
+      ];
+    });
+    out.push({ slug, tokens });
+  }
+  return { protocols: out, skipped };
+}
+
+async function getMaxFeePerGas(chainId: number): Promise<bigint> {
+  try {
+    const rpcUrl = getRpcUrlByChainId(chainId, "primary");
+    const manager = await getRpcProviderFromUrls(rpcUrl, undefined, chainId);
+    const feeData = await manager.getProvider().getFeeData();
+    if (feeData.maxFeePerGas) {
+      return feeData.maxFeePerGas;
+    }
+    if (feeData.gasPrice) {
+      return feeData.gasPrice;
+    }
+  } catch {
+    // fall through to default
+  }
+  return DEFAULT_GAS_PRICE_WEI;
+}
+
+export async function POST(request: Request): Promise<NextResponse> {
+  try {
+    const session = await auth.api.getSession({ headers: request.headers });
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const activeOrgId = getActiveOrgId(session);
+    if (!activeOrgId) {
+      return NextResponse.json(
+        { error: "No active organization" },
+        { status: 400 }
+      );
+    }
+    const activeMember = await auth.api.getActiveMember({
+      headers: await headers(),
+    });
+    if (!activeMember) {
+      return NextResponse.json(
+        { error: "Not a member of the active organization" },
+        { status: 403 }
+      );
+    }
+
+    const body = (await request.json()) as SimulateBody;
+    const chainId = body.chainId;
+    if (typeof chainId !== "number" || !Number.isInteger(chainId)) {
+      return NextResponse.json(
+        { error: "chainId is required and must be an integer" },
+        { status: 400 }
+      );
+    }
+    if (!isSafeSupportedChain(chainId)) {
+      return NextResponse.json(
+        { error: `Chain ${chainId} is not supported for Safe deployment` },
+        { status: 400 }
+      );
+    }
+
+    const { protocols: protocolInputs, skipped } = normaliseProtocols(body);
+
+    let tokenAllowances: ReturnType<typeof flattenInstallInput>["allowances"] =
+      [];
+    try {
+      const flattened = flattenInstallInput(protocolInputs);
+      tokenAllowances = flattened.allowances;
+    } catch (err) {
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : "Invalid amount input" },
+        { status: 400 }
+      );
+    }
+
+    const operations: OperationSummary[] = [];
+    let totalGas = BigInt(0);
+
+    operations.push({
+      label: "Deploy Safe smart account",
+      detail:
+        "SafeProxyFactory.createProxyWithNonce deploys a fresh Safe whose sole owner is the organization's Turnkey EOA at threshold 1.",
+      gasUnits: GAS_DEPLOY_SAFE.toString(),
+    });
+    totalGas += GAS_DEPLOY_SAFE;
+
+    if (protocolInputs.length > 0) {
+      operations.push({
+        label: "Deploy Zodiac Roles modifier",
+        detail:
+          "Deploys a fresh Roles proxy owned by the new Safe via the canonical ModuleProxyFactory.",
+        gasUnits: GAS_DEPLOY_MODULE.toString(),
+      });
+      totalGas += GAS_DEPLOY_MODULE;
+
+      operations.push({
+        label: "Enable module on Safe",
+        detail:
+          "safe.enableModule(rolesModifier) authorises the modifier to call execTransactionFromModule.",
+        gasUnits: GAS_ENABLE_MODULE.toString(),
+      });
+      totalGas += GAS_ENABLE_MODULE;
+
+      operations.push({
+        label: "Assign automation role to Turnkey EOA",
+        detail: "rolesModifier.assignRoles(delegate, [roleKey], [true])",
+        gasUnits: GAS_ASSIGN_ROLES.toString(),
+      });
+      totalGas += GAS_ASSIGN_ROLES;
+
+      operations.push({
+        label: "Set default role for delegate",
+        detail: "rolesModifier.setDefaultRole(delegate, roleKey)",
+        gasUnits: GAS_SET_DEFAULT_ROLE.toString(),
+      });
+      totalGas += GAS_SET_DEFAULT_ROLE;
+    }
+
+    const applied: string[] = [];
+    let totalFunctionScopings = 0;
+    let totalTargetScopings = 0;
+    for (const p of protocolInputs) {
+      const catalog = PROTOCOL_CATALOG[p.slug as ProtocolSlug];
+      if (!catalog) {
+        skipped.push(p.slug);
+        continue;
+      }
+      const template = TEMPLATE_SPECS[catalog.templateSlug];
+      if (!template) {
+        skipped.push(p.slug);
+        continue;
+      }
+      applied.push(p.slug);
+      if (catalog.enforcementLevel === "contract-allowlist") {
+        const targets = getProtocolTargets(p.slug as ProtocolSlug, chainId);
+        totalTargetScopings += targets.length;
+      } else {
+        const approxTargets = 2;
+        const approxFunctionsPerTarget = 4;
+        totalTargetScopings += approxTargets;
+        totalFunctionScopings += approxTargets * approxFunctionsPerTarget;
+      }
+    }
+
+    if (totalTargetScopings > 0 || totalFunctionScopings > 0) {
+      const scopeDetail =
+        totalFunctionScopings > 0
+          ? `~${totalTargetScopings} target allowlistings + ~${totalFunctionScopings} function scopings with parameter conditions (recipient, token allowlist, amount within allowance).`
+          : `~${totalTargetScopings} target-level allowlistings (no per-function conditions on these protocols).`;
+      operations.push({
+        label: `Scope ${applied.length} protocol${applied.length === 1 ? "" : "s"}`,
+        detail: scopeDetail,
+        gasUnits: (
+          BigInt(totalTargetScopings) * GAS_SCOPE_TARGET +
+          BigInt(totalFunctionScopings) * GAS_SCOPE_FUNCTION
+        ).toString(),
+      });
+      totalGas +=
+        BigInt(totalTargetScopings) * GAS_SCOPE_TARGET +
+        BigInt(totalFunctionScopings) * GAS_SCOPE_FUNCTION;
+    }
+
+    if (tokenAllowances.length > 0) {
+      operations.push({
+        label: `Set ${tokenAllowances.length} token allowance${tokenAllowances.length === 1 ? "" : "s"}`,
+        detail: tokenAllowances
+          .map(
+            (a) =>
+              `${a.tokenSymbol} (${a.tokenAddress.slice(0, 6)}...${a.tokenAddress.slice(-4)}): cap ${a.maxRefillWei} wei every ${a.periodSeconds}s`
+          )
+          .join("; "),
+        gasUnits: (
+          BigInt(tokenAllowances.length) * GAS_SET_ALLOWANCE
+        ).toString(),
+      });
+      totalGas += BigInt(tokenAllowances.length) * GAS_SET_ALLOWANCE;
+    }
+
+    totalGas += GAS_OUTER_WRAPPER;
+
+    const [chainRow] = await db
+      .select({ name: chains.name })
+      .from(chains)
+      .where(eq(chains.chainId, chainId))
+      .limit(1);
+
+    const maxFeePerGasWei = await getMaxFeePerGas(chainId);
+    const totalCostWei = totalGas * maxFeePerGasWei;
+    const totalCostNative = ethers.formatEther(totalCostWei);
+    const [totalCostUsd, nativePriceUsd] = await Promise.all([
+      weiToUsd({ chainId, amountWei: totalCostWei }),
+      getNativeUsdPrice(chainId),
+    ]);
+
+    return NextResponse.json({
+      safe: {
+        chainId,
+        chainName: chainRow?.name ?? `chain-${chainId}`,
+        safeAddress: "(deterministic CREATE2 address, computed at deploy time)",
+      },
+      plan: {
+        operations,
+        totalGasUnits: totalGas.toString(),
+        maxFeePerGasWei: maxFeePerGasWei.toString(),
+        totalCostWei: totalCostWei.toString(),
+        totalCostNative,
+        totalCostUsd,
+        nativePriceUsd,
+        note: "Estimate is heuristic (operation-count times typical cost per operation). Actual gas will vary by ~20%. The Safe's address is computed deterministically from the org and chain at deploy time.",
+      },
+      applied,
+      skipped,
+      allowances: tokenAllowances.map((a) => ({
+        protocolSlug: a.protocolSlug,
+        tokenAddress: a.tokenAddress,
+        tokenSymbol: a.tokenSymbol,
+        tokenDecimals: a.tokenDecimals,
+        maxRefillWei: a.maxRefillWei,
+        refillWei: a.refillWei,
+        periodSeconds: a.periodSeconds,
+      })),
+    });
+  } catch (error) {
+    return apiError(error, "Failed to simulate deploy");
+  }
+}

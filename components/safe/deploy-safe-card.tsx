@@ -10,6 +10,7 @@ import {
 import {
   type PolicyConfig,
   PolicyWizard,
+  type SimulationPlan,
 } from "@/components/safe/policy-wizard";
 import { RolePermissionsCard } from "@/components/safe/role-permissions-card";
 import { SafeSigningToggle } from "@/components/safe/safe-signing-toggle";
@@ -59,7 +60,7 @@ type DeployResponse = {
   error?: string;
 };
 
-const WIZARD_DEFAULT_PROTOCOLS: readonly string[] = ["aave-v3", "cowswap"];
+const WIZARD_DEFAULT_PROTOCOLS: readonly string[] = [];
 
 // Label map covers every chain we might ever render, not just the
 // currently deploy-supported set, so stale or legacy rows render with a
@@ -253,6 +254,29 @@ function DeployDialog({
     resetWizard();
   };
 
+  const handleSimulateDeploy = async (
+    config: PolicyConfig
+  ): Promise<SimulationPlan | null> => {
+    const chainId = Number.parseInt(selectedChain, 10);
+    if (!Number.isFinite(chainId)) {
+      throw new Error("Select a chain before simulating");
+    }
+    const res = await fetch("/api/user/safe/simulate-deploy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chainId, protocols: config.protocols }),
+    });
+    const data = (await res.json()) as SimulationPlan | { error?: string };
+    if (!res.ok || "error" in data) {
+      const message =
+        "error" in data
+          ? (data.error ?? "Simulation failed")
+          : "Simulation failed";
+      throw new Error(message);
+    }
+    return data as SimulationPlan;
+  };
+
   const chainIdNumber = Number.parseInt(selectedChain, 10);
   const hasValidChain = Number.isFinite(chainIdNumber);
 
@@ -337,6 +361,7 @@ function DeployDialog({
             defaultEnabledSlugs={WIZARD_DEFAULT_PROTOCOLS}
             onCancel={handleBack}
             onConfirm={handleConfirmWithPolicies}
+            simulate={handleSimulateDeploy}
             submitting={deploying}
           />
         )}

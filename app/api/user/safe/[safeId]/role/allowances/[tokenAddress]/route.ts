@@ -22,6 +22,15 @@ export async function DELETE(
       );
     }
 
+    const url = new URL(request.url);
+    const protocolSlug = url.searchParams.get("protocolSlug");
+    if (!protocolSlug) {
+      return NextResponse.json(
+        { error: "protocolSlug query parameter is required" },
+        { status: 400 }
+      );
+    }
+
     const admin = await validateSafeAdmin(request);
     if ("error" in admin) {
       return NextResponse.json(
@@ -41,6 +50,7 @@ export async function DELETE(
     const result = await revokeRoleTokenAllowance({
       organizationId: admin.organizationId,
       chainId: safe.chainId,
+      protocolSlug,
       tokenAddress,
     });
 

@@ -255,7 +255,13 @@ export const safeRoleAllowances = pgTable(
     roleId: text("role_id")
       .notNull()
       .references(() => safeRoles.id, { onDelete: "cascade" }),
-    /** bytes32 on-chain allowance key */
+    /**
+     * Protocol slug this allowance bucket belongs to. Combined with
+     * `tokenAddress` it uniquely identifies a bucket inside a role:
+     * Aave V3's USDC bucket is independent of CoW's USDC bucket.
+     */
+    protocolSlug: text("protocol_slug").notNull(),
+    /** bytes32 on-chain allowance key (= keccak256(roleKey, protocolSlug, token)) */
     allowanceKey: text("allowance_key").notNull(),
     tokenAddress: text("token_address").notNull(),
     tokenSymbol: text("token_symbol").notNull(),
@@ -279,8 +285,9 @@ export const safeRoleAllowances = pgTable(
       table.roleId,
       table.allowanceKey
     ),
-    uniqueIndex("safe_role_allowances_role_token_unique").on(
+    uniqueIndex("safe_role_allowances_role_protocol_token_unique").on(
       table.roleId,
+      table.protocolSlug,
       table.tokenAddress
     ),
     index("idx_safe_role_allowances_role").on(table.roleId),

@@ -180,6 +180,7 @@ export async function GET(
       })),
       allowances: allowances.map((a) => ({
         id: a.id,
+        protocolSlug: a.protocolSlug,
         allowanceKey: a.allowanceKey,
         tokenAddress: a.tokenAddress,
         tokenSymbol: a.tokenSymbol,
@@ -271,6 +272,7 @@ export async function POST(
       })),
       allowances: result.allowances.map((a) => ({
         id: a.id,
+        protocolSlug: a.protocolSlug,
         tokenAddress: a.tokenAddress,
         tokenSymbol: a.tokenSymbol,
         maxRefillWei: a.maxRefillWei,
@@ -279,7 +281,6 @@ export async function POST(
       })),
       applied: result.applied,
       skipped: [...result.skipped, ...skipped],
-      conflictedTokens: result.conflictedTokens,
     });
   } catch (error) {
     return apiError(error, "Failed to install Zodiac Roles");

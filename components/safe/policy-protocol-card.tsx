@@ -8,9 +8,16 @@ import {
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type {
-  EnforcementLevel,
-  ProtocolCatalogEntry,
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  ENFORCEMENT_LEVEL_LABELS,
+  ENFORCEMENT_LEVEL_TOOLTIPS,
+  type EnforcementLevel,
+  type ProtocolCatalogEntry,
 } from "@/lib/safe/protocol-registry";
 import {
   POLICY_PERIOD_OPTIONS,
@@ -43,8 +50,6 @@ type PolicyProtocolCardProps = {
   enabled: boolean;
   tokens: TokenRowValue[];
   targets: readonly TargetLink[];
-  /** If true, the protocol does not scope a token list (e.g. Lido stake). */
-  ignoresTokenList?: boolean;
   onEnabledChange: (next: boolean) => void;
   onTokensChange: (next: TokenRowValue[]) => void;
 };
@@ -56,18 +61,23 @@ function truncateAddress(addr: string): string {
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 }
 
-function enforcementBadge(level: EnforcementLevel): React.ReactElement {
-  if (level === "full") {
-    return (
-      <Badge className="text-[10px]" variant="default">
-        Full policy
-      </Badge>
-    );
-  }
+function EnforcementBadge({
+  level,
+}: {
+  level: EnforcementLevel;
+}): React.ReactElement {
+  const variant = level === "per-parameter" ? "default" : "secondary";
   return (
-    <Badge className="text-[10px]" variant="secondary">
-      Target-only
-    </Badge>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Badge className="cursor-help text-[10px]" variant={variant}>
+          {ENFORCEMENT_LEVEL_LABELS[level]}
+        </Badge>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-xs text-xs">
+        {ENFORCEMENT_LEVEL_TOOLTIPS[level]}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -77,7 +87,6 @@ export function PolicyProtocolCard({
   enabled,
   tokens,
   targets,
-  ignoresTokenList = false,
   onEnabledChange,
   onTokensChange,
 }: PolicyProtocolCardProps): React.ReactElement {
@@ -108,8 +117,6 @@ export function PolicyProtocolCard({
     onTokensChange(copy);
   };
 
-  const shouldShowTokens = enabled && !ignoresTokenList;
-
   return (
     <li
       className={`rounded border p-3 text-sm ${
@@ -130,7 +137,7 @@ export function PolicyProtocolCard({
         >
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium">{catalog.label}</span>
-            {enforcementBadge(catalog.enforcementLevel)}
+            <EnforcementBadge level={catalog.enforcementLevel} />
             {catalog.docsUrl && (
               <a
                 className="inline-flex items-center gap-1 text-muted-foreground text-xs hover:text-foreground"
@@ -196,7 +203,7 @@ export function PolicyProtocolCard({
         </div>
       )}
 
-      {shouldShowTokens && (
+      {enabled && (
         <div className="mt-3 space-y-2">
           {tokens.length === 0 && (
             <div className="rounded bg-muted/20 p-2 text-muted-foreground text-xs">
@@ -220,13 +227,6 @@ export function PolicyProtocolCard({
           >
             + Add token
           </Button>
-        </div>
-      )}
-
-      {enabled && ignoresTokenList && (
-        <div className="mt-3 rounded bg-muted/20 p-2 text-muted-foreground text-xs">
-          This protocol does not scope a token list (for example, Lido stakes
-          ETH directly). Enable it and continue.
         </div>
       )}
 

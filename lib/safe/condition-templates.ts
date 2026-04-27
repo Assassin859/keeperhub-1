@@ -14,13 +14,9 @@
  * a new template function + slug.
  */
 
-// biome-ignore lint/style/useImportType: defi-kit's `allow` is a runtime namespace of preset builders
 import { allow as allowArb } from "defi-kit/arb1";
-// biome-ignore lint/style/useImportType: defi-kit's `allow` is a runtime namespace of preset builders
 import { allow as allowBase } from "defi-kit/base";
-// biome-ignore lint/style/useImportType: defi-kit's `allow` is a runtime namespace of preset builders
 import { allow as allowEth } from "defi-kit/eth";
-// biome-ignore lint/style/useImportType: defi-kit's `allow` is a runtime namespace of preset builders
 import { allow as allowOpt } from "defi-kit/oeth";
 import type { PermissionSet } from "zodiac-roles-sdk";
 
@@ -241,8 +237,6 @@ export type ProtocolTemplateSpec = {
   label: string;
   description: string;
   build: (input: TemplateInput) => Promise<PermissionSet>;
-  /** When true, the preset does not consume the token allowlist (e.g. Lido stake) */
-  ignoresTokenList?: boolean;
 };
 
 export const TEMPLATE_SPECS: Readonly<
@@ -285,16 +279,14 @@ export const TEMPLATE_SPECS: Readonly<
   lido: {
     slug: "lido",
     label: "Lido staking",
-    description: "Stake ETH for stETH. Token list is not applicable.",
+    description: "Stake ETH for stETH.",
     build: buildLidoTemplate,
-    ignoresTokenList: true,
   },
   "rocket-pool": {
     slug: "rocket-pool",
     label: "Rocket Pool staking",
     description: "Mint rETH by depositing ETH into Rocket Pool.",
     build: buildRocketPoolTemplate,
-    ignoresTokenList: true,
   },
   "balancer-v2": {
     slug: "balancer-v2",
@@ -308,14 +300,12 @@ export const TEMPLATE_SPECS: Readonly<
     label: "Wrapped Native (WETH)",
     description: "Wrap and unwrap the chain's native token.",
     build: buildWrappedTemplate,
-    ignoresTokenList: true,
   },
   "target-only": {
     slug: "target-only",
-    label: "Target-only (fallback)",
+    label: "Contract allowlist (fallback)",
     description:
-      "Target-level allowlist for protocols without full per-parameter templates.",
+      "Target-level allowlist for protocols without per-parameter templates.",
     build: buildTargetOnlyTemplate,
-    ignoresTokenList: true,
   },
 } as const;
