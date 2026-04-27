@@ -4,8 +4,9 @@
  */
 
 import type { VoteDirection } from "@/lib/workflow/editor/votes";
-import type { IntegrationConfig, IntegrationType } from "./types/integration";
+import type { WorkflowExportV1 } from "@/lib/workflow/export-schema";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
+import type { IntegrationConfig, IntegrationType } from "./types/integration";
 
 // Workflow data types
 export type WorkflowVisibility = "private" | "public";
@@ -724,13 +725,19 @@ export const workflowApi = {
       }>;
     }>(`/api/workflows/executions/${executionId}/status`),
 
-  // Download workflow
+  // Export workflow as a versioned JSON document
   download: (id: string) =>
-    apiCall<{
-      success: boolean;
-      files?: Record<string, string>;
-      error?: string;
-    }>(`/api/workflows/${id}/download`),
+    apiCall<WorkflowExportV1>(`/api/workflows/${id}/download`),
+
+  // Import a workflow from a v1 JSON export
+  import: (payload: WorkflowExportV1) =>
+    apiCall<SavedWorkflow & { integrationBindings?: unknown[] }>(
+      "/api/workflows/import",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }
+    ),
 
   // Auto-save with debouncing (kept for backwards compatibility)
   autoSaveCurrent: (() => {

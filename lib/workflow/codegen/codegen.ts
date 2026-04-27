@@ -31,7 +31,6 @@ const CONST_ASSIGNMENT_PATTERN = /^(\s*)(const\s+\w+\s*=\s*)(.*)$/;
 /**
  * Generate TypeScript code from workflow JSON with "use workflow" directive
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: large function with many nested helpers, refactoring is out of scope
 export function generateWorkflowCode(
   nodes: WorkflowNode[],
   edges: WorkflowEdge[],
@@ -706,7 +705,6 @@ export function generateWorkflowCode(
     return lines;
   }
 
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Action type routing requires many conditionals
   function generateActionNodeCode(
     node: WorkflowNode,
     nodeId: string,
@@ -1345,26 +1343,4 @@ export function generateWorkflowCode(
     validationErrors:
       validationErrors.length > 0 ? validationErrors : undefined,
   };
-}
-
-/**
- * Generate a complete workflow module file
- */
-export function generateWorkflowModule(
-  workflowName: string,
-  nodes: WorkflowNode[],
-  edges: WorkflowEdge[],
-  options: CodeGenOptions = {}
-): string {
-  const { code } = generateWorkflowCode(nodes, edges, options);
-
-  return `/**
- * Generated Workflow: ${workflowName}
- * 
- * This file was automatically generated from a workflow definition.
- * DO NOT EDIT MANUALLY - regenerate from the workflow editor instead.
- */
-
-${code}
-`;
 }
