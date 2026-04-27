@@ -11,7 +11,7 @@ vi.mock("node:dns", () => ({
 import {
   assertHostIsPublic,
   extractHostFromConnectionString,
-} from "@/lib/db/connection-utils";
+} from "@/lib/db/connection-host-guard";
 
 beforeEach(() => {
   vi.clearAllMocks();
