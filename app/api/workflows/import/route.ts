@@ -4,6 +4,8 @@ import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { workflows } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { getMetricsCollector } from "@/lib/metrics";
+import { LabelKeys, MetricNames } from "@/lib/metrics/types";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { generateId } from "@/lib/utils/id";
 import {
@@ -98,6 +100,14 @@ export async function POST(request: Request) {
         isAnonymous,
       })
       .returning();
+
+    getMetricsCollector().incrementCounter(
+      MetricNames.WORKFLOW_IMPORTS_TOTAL,
+      {
+        [LabelKeys.WORKFLOW_ID]: workflowId,
+        [LabelKeys.OWNER_ID]: userId,
+      }
+    );
 
     return NextResponse.json({
       ...newWorkflow,

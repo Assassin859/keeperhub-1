@@ -4,6 +4,8 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { getMetricsCollector } from "@/lib/metrics";
+import { LabelKeys, MetricNames } from "@/lib/metrics/types";
 import { getOrgContext } from "@/lib/middleware/org-context";
 import { buildWorkflowExportV1 } from "@/lib/workflow/export-schema";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow-store";
@@ -69,6 +71,14 @@ export async function GET(
     // is loosened later. The unquoted "filename=" is kept as a fallback
     // for older clients.
     const encodedFileName = encodeURIComponent(fileName);
+
+    getMetricsCollector().incrementCounter(
+      MetricNames.WORKFLOW_EXPORTS_TOTAL,
+      {
+        [LabelKeys.WORKFLOW_ID]: workflowId,
+        [LabelKeys.OWNER_ID]: workflow.userId,
+      }
+    );
 
     return new NextResponse(JSON.stringify(exportPayload, null, 2), {
       status: 200,
