@@ -277,6 +277,12 @@ jobs:
           SERVICE_ACCOUNT_ROLE_ARN: ${{ vars.TO_SERVICE_ACCOUNT_ROLE_ARN }}
           TEST_PARA_USER_SHARE: ${{ secrets.TEST_PARA_USER_SHARE }}
         run: |
+          # Percent-encode DB_PASSWORD so base64 characters (+/=) don't break URL parsing
+          # in the pod. Init containers previously encoded at runtime but that path was
+          # fragile (stdout truncation on process.exit in piped $() capture).
+          ENCODED_DB_PASSWORD=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['DB_PASSWORD'], safe=''))")
+          echo "::add-mask::$ENCODED_DB_PASSWORD"
+          export ENCODED_DB_PASSWORD
           envsubst < deploy/pr-environment/values.template.yaml > ${{ github.workspace }}/values-pr-${{ env.PR_NUMBER }}.yaml
           envsubst < deploy/pr-environment/scheduler-dispatcher.template.yaml > ${{ github.workspace }}/schedule-pr-${{ env.PR_NUMBER }}.yaml
           envsubst < deploy/pr-environment/block-dispatcher.template.yaml > ${{ github.workspace }}/block-pr-${{ env.PR_NUMBER }}.yaml

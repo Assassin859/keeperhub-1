@@ -1,8 +1,8 @@
 "use client";
 
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { Check } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Check, Search } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { BUILTIN_NODE_ID, BUILTIN_NODE_LABEL, BUILTIN_VARIABLE_FIELDS } from "@/lib/workflow/editor/builtin-variables";
 import { api } from "@/lib/api-client";
@@ -33,16 +33,29 @@ import {
   sanitizeNodeId,
   schemaToFields,
 } from "@/lib/workflow/editor/template-helpers";
+import {
+  type IndexedAutocompleteOption,
+  buildHaystack,
+  filterOptionsByQuery,
+} from "@/lib/template-autocomplete-filter";
 import { getTriggerOutputFields } from "@/lib/workflow/editor/trigger-output-fields";
+
+/**
+ * - "escape": user pressed Escape while in the search input -- return focus
+ *   to the editor so they can keep typing.
+ * - "outside": user clicked/tapped somewhere outside the dropdown -- let
+ *   focus flow wherever the click landed and don't refocus the editor.
+ */
+export type TemplateAutocompleteCloseReason = "escape" | "outside";
 
 type TemplateAutocompleteProps = {
   isOpen: boolean;
   position: { top: number; left: number };
   onSelect: (template: string) => void;
-  onClose: () => void;
+  onClose: (reason: TemplateAutocompleteCloseReason) => void;
   currentNodeId?: string;
-  filter?: string;
 };
+
 // Get common fields based on node action type
 const getCommonFields = (node: WorkflowNode) => {
   const actionType = node.data.config?.actionType as string | undefined;
@@ -187,7 +200,6 @@ export function TemplateAutocomplete({
   onSelect,
   onClose,
   currentNodeId,
-  filter = "",
 }: TemplateAutocompleteProps) {
   const [nodes] = useAtom(nodesAtom);
   const [edges] = useAtom(edgesAtom);
@@ -199,9 +211,24 @@ export function TemplateAutocomplete({
   const lastFetchWorkflowIdRef = useRef<string | null>(null);
   currentWorkflowIdRef.current = currentWorkflowId;
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [searchQuery, setSearchQuery] = useState("");
   const menuRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [mounted, setMounted] = useState(false);
+
+  // Reset search + selection whenever the dropdown opens, and focus the search input
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    setSearchQuery("");
+    setSelectedIndex(0);
+    const frame = requestAnimationFrame(() => {
+      searchInputRef.current?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [isOpen]);
 
   // Ensure we're mounted before trying to use portal
   useEffect(() => {
@@ -277,7 +304,7 @@ export function TemplateAutocomplete({
   ]);
 
   // Find all nodes that come before the current node
-  const getUpstreamNodes = () => {
+  const upstreamNodes = useMemo(() => {
     if (!currentNodeId) {
       return [];
     }
@@ -285,7 +312,7 @@ export function TemplateAutocomplete({
     const visited = new Set<string>();
     const upstream: string[] = [];
 
-    const traverse = (nodeId: string) => {
+    const traverse = (nodeId: string): void => {
       if (visited.has(nodeId)) {
         return;
       }
@@ -301,60 +328,114 @@ export function TemplateAutocomplete({
     traverse(currentNodeId);
 
     return nodes.filter((node) => upstream.includes(node.id));
-  };
+  }, [nodes, edges, currentNodeId]);
 
-  const upstreamNodes = getUpstreamNodes();
-
-  // Build list of all available options (nodes + their fields)
-  const options: Array<{
-    type: "node" | "field";
-    nodeId: string;
-    nodeName: string;
-    field?: string;
-    description?: string;
-    template: string;
-  }> = [];
-
-  for (const node of upstreamNodes) {
-    const nodeName = getNodeDisplayName(node);
-    // 1) Prefer current execution in runtime; 2) else last execution output; 3) else getCommonFields
-    const runtimeOutput = executionLogs[node.id]?.output;
-    const hasRuntimeOutput =
-      runtimeOutput !== undefined && runtimeOutput !== null;
+  // Build list of all available options (nodes + their fields). Memoized so
+  // typing in the search input doesn't re-traverse the DAG, re-resolve For
+  // Each synthetic outputs, or re-compute execution-log-derived field maps.
+  // Each option carries a precomputed lowercase `haystack` so filtering is a
+  // cheap substring/subsequence scan per keystroke.
+  const options = useMemo<IndexedAutocompleteOption[]>(() => {
+    const result: IndexedAutocompleteOption[] = [];
     const lastLogsForWorkflow =
       lastExecutionLogs.workflowId === currentWorkflowId
         ? lastExecutionLogs.logs
-        : {};
-    const lastRunOutput = lastLogsForWorkflow[node.id]?.output;
-    const hasLastRunOutput =
-      lastRunOutput !== undefined && lastRunOutput !== null;
+        : ({} as ExecutionLogsByNodeId);
 
-    const outputToUse = hasRuntimeOutput
-      ? runtimeOutput
-      : hasLastRunOutput
-        ? lastRunOutput
-        : null;
+    const pushOption = (
+      opt: Omit<IndexedAutocompleteOption, "haystack">
+    ): void => {
+      result.push({ ...opt, haystack: buildHaystack(opt) });
+    };
 
-    // For Each nodes: override with synthetic output so autocomplete shows
-    // the actual currentItem shape (nested fields) instead of the step's
-    // generic metadata. Resolves the arraySource from upstream execution data.
-    const actionType = node.data.config?.actionType as string | undefined;
-    if (actionType === "For Each") {
-      const syntheticOutput = resolveForEachSyntheticOutput(
-        node,
-        executionLogs,
-        lastLogsForWorkflow,
-        upstreamNodes
-      );
+    for (const node of upstreamNodes) {
+      const nodeName = getNodeDisplayName(node);
+      const runtimeOutput = executionLogs[node.id]?.output;
+      const hasRuntimeOutput =
+        runtimeOutput !== undefined && runtimeOutput !== null;
+      const lastRunOutput = lastLogsForWorkflow[node.id]?.output;
+      const hasLastRunOutput =
+        lastRunOutput !== undefined && lastRunOutput !== null;
 
-      if (syntheticOutput) {
+      const outputToUse = hasRuntimeOutput
+        ? runtimeOutput
+        : hasLastRunOutput
+          ? lastRunOutput
+          : null;
+
+      // For Each nodes: override with synthetic output so autocomplete shows
+      // the actual currentItem shape (nested fields) instead of the step's
+      // generic metadata. Resolves the arraySource from upstream execution data.
+      const actionType = node.data.config?.actionType as string | undefined;
+      if (actionType === "For Each") {
+        const syntheticOutput = resolveForEachSyntheticOutput(
+          node,
+          executionLogs,
+          lastLogsForWorkflow,
+          upstreamNodes
+        );
+
+        if (syntheticOutput) {
+          const sanitizedId = sanitizeNodeId(node.id);
+          const nodeOutputs: NodeOutputs = {
+            [sanitizedId]: { label: nodeName, data: syntheticOutput },
+          };
+          const runtimeFields = getAvailableFields(nodeOutputs);
+
+          pushOption({
+            type: "node",
+            nodeId: node.id,
+            nodeName,
+            template: `{{@${node.id}:${nodeName}}}`,
+          });
+
+          for (const entry of runtimeFields) {
+            if (entry.fieldPath === "" && entry.field === "") {
+              continue;
+            }
+            const fieldPath = entry.fieldPath || entry.field;
+            pushOption({
+              type: "field",
+              nodeId: node.id,
+              nodeName,
+              field: fieldPath,
+              description: undefined,
+              template: `{{@${node.id}:${nodeName}.${fieldPath}}}`,
+            });
+          }
+        } else {
+          const fields = getCommonFields(node);
+          pushOption({
+            type: "node",
+            nodeId: node.id,
+            nodeName,
+            template: `{{@${node.id}:${nodeName}}}`,
+          });
+          for (const field of fields) {
+            pushOption({
+              type: "field",
+              nodeId: node.id,
+              nodeName,
+              field: field.field,
+              description: field.description,
+              template: `{{@${node.id}:${nodeName}.${field.field}}}`,
+            });
+          }
+        }
+        continue;
+      }
+
+      if (outputToUse !== null) {
         const sanitizedId = sanitizeNodeId(node.id);
         const nodeOutputs: NodeOutputs = {
-          [sanitizedId]: { label: nodeName, data: syntheticOutput },
+          [sanitizedId]: {
+            label: nodeName,
+            data: outputToUse,
+          },
         };
         const runtimeFields = getAvailableFields(nodeOutputs);
 
-        options.push({
+        pushOption({
           type: "node",
           nodeId: node.id,
           nodeName,
@@ -366,7 +447,7 @@ export function TemplateAutocomplete({
             continue;
           }
           const fieldPath = entry.fieldPath || entry.field;
-          options.push({
+          pushOption({
             type: "field",
             nodeId: node.id,
             nodeName,
@@ -377,14 +458,16 @@ export function TemplateAutocomplete({
         }
       } else {
         const fields = getCommonFields(node);
-        options.push({
+
+        pushOption({
           type: "node",
           nodeId: node.id,
           nodeName,
           template: `{{@${node.id}:${nodeName}}}`,
         });
+
         for (const field of fields) {
-          options.push({
+          pushOption({
             type: "field",
             nodeId: node.id,
             nodeName,
@@ -394,123 +477,93 @@ export function TemplateAutocomplete({
           });
         }
       }
-      continue;
     }
 
-    if (outputToUse !== null) {
-      const sanitizedId = sanitizeNodeId(node.id);
-      const nodeOutputs: NodeOutputs = {
-        [sanitizedId]: {
-          label: nodeName,
-          data: outputToUse,
-        },
-      };
-      const runtimeFields = getAvailableFields(nodeOutputs);
-
-      options.push({
-        type: "node",
-        nodeId: node.id,
-        nodeName,
-        template: `{{@${node.id}:${nodeName}}}`,
+    // Built-in system variables (available to all nodes, evaluated at execution time)
+    for (const field of BUILTIN_VARIABLE_FIELDS) {
+      pushOption({
+        type: "field",
+        nodeId: BUILTIN_NODE_ID,
+        nodeName: BUILTIN_NODE_LABEL,
+        field: field.field,
+        description: field.description,
+        template: `{{@${BUILTIN_NODE_ID}:${BUILTIN_NODE_LABEL}.${field.field}}}`,
       });
-
-      for (const entry of runtimeFields) {
-        if (entry.fieldPath === "" && entry.field === "") {
-          continue;
-        }
-        const fieldPath = entry.fieldPath || entry.field;
-        options.push({
-          type: "field",
-          nodeId: node.id,
-          nodeName,
-          field: fieldPath,
-          description: undefined,
-          template: `{{@${node.id}:${nodeName}.${fieldPath}}}`,
-        });
-      }
-    } else {
-      const fields = getCommonFields(node);
-
-      // Add node itself
-      options.push({
-        type: "node",
-        nodeId: node.id,
-        nodeName,
-        template: `{{@${node.id}:${nodeName}}}`,
-      });
-
-      // Add fields
-      for (const field of fields) {
-        options.push({
-          type: "field",
-          nodeId: node.id,
-          nodeName,
-          field: field.field,
-          description: field.description,
-          template: `{{@${node.id}:${nodeName}.${field.field}}}`,
-        });
-      }
     }
-  }
 
-  // Built-in system variables (available to all nodes, evaluated at execution time)
-  for (const field of BUILTIN_VARIABLE_FIELDS) {
-    options.push({
-      type: "field",
-      nodeId: BUILTIN_NODE_ID,
-      nodeName: BUILTIN_NODE_LABEL,
-      field: field.field,
-      description: field.description,
-      template: `{{@${BUILTIN_NODE_ID}:${BUILTIN_NODE_LABEL}.${field.field}}}`,
-    });
-  }
+    return result;
+  }, [upstreamNodes, executionLogs, lastExecutionLogs, currentWorkflowId]);
 
-  // Filter options based on search term
-  const filteredOptions = filter
-    ? options.filter(
-        (opt) =>
-          opt.nodeName.toLowerCase().includes(filter.toLowerCase()) ||
-          (opt.field && opt.field.toLowerCase().includes(filter.toLowerCase()))
-      )
-    : options;
+  // Case-insensitive substring search: each whitespace-separated token must
+  // appear as a contiguous substring somewhere in the precomputed haystack.
+  // Substring (not subsequence) avoids noisy matches where chars appear in
+  // order but spread across unrelated parts of the name/field.
+  const filteredOptions = useMemo(
+    () => filterOptionsByQuery(options, searchQuery),
+    [options, searchQuery]
+  );
 
-  // Reset selection when filter changes
+  // Reset selection when the result set shrinks below the current index
   useEffect(() => {
-    setSelectedIndex(0);
-  }, [filter]);
+    setSelectedIndex((prev) =>
+      prev >= filteredOptions.length ? 0 : prev
+    );
+  }, [filteredOptions.length]);
 
-  // Handle keyboard navigation
+  // Close the dropdown on any pointerdown outside of it. The parent editor's
+  // blur timeout only triggers when focus actually moves, so clicks on
+  // non-focusable elements (text, panels, etc.) would otherwise leave the
+  // dropdown open. We ignore clicks inside the menu itself so option clicks
+  // still register.
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (!isOpen) return;
-
-      switch (e.key) {
-        case "ArrowDown":
-          e.preventDefault();
-          setSelectedIndex((prev) =>
-            prev < filteredOptions.length - 1 ? prev + 1 : prev
-          );
-          break;
-        case "ArrowUp":
-          e.preventDefault();
-          setSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev));
-          break;
-        case "Enter":
-          e.preventDefault();
-          if (filteredOptions[selectedIndex]) {
-            onSelect(filteredOptions[selectedIndex].template);
-          }
-          break;
-        case "Escape":
-          e.preventDefault();
-          onClose();
-          break;
+    if (!isOpen) {
+      return;
+    }
+    const handlePointerDown = (e: PointerEvent): void => {
+      const target = e.target;
+      if (
+        target instanceof Element &&
+        target.closest("[data-template-autocomplete]")
+      ) {
+        return;
       }
+      onClose("outside");
     };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () =>
+      document.removeEventListener("pointerdown", handlePointerDown);
+  }, [isOpen, onClose]);
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, filteredOptions, selectedIndex, onSelect, onClose]);
+  const handleSearchKeyDown = (
+    e: React.KeyboardEvent<HTMLInputElement>
+  ): void => {
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        setSelectedIndex((prev) =>
+          prev < filteredOptions.length - 1 ? prev + 1 : prev
+        );
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        setSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev));
+        break;
+      case "Enter": {
+        e.preventDefault();
+        const option = filteredOptions[selectedIndex];
+        if (option) {
+          onSelect(option.template);
+        }
+        break;
+      }
+      case "Escape":
+        e.preventDefault();
+        onClose("escape");
+        break;
+      default:
+        break;
+    }
+  };
 
   // Scroll selected item into view (options live inside the scrollable list, not menuRef)
   useEffect(() => {
@@ -524,7 +577,7 @@ export function TemplateAutocomplete({
     }
   }, [selectedIndex]);
 
-  if (!isOpen || filteredOptions.length === 0 || !mounted) {
+  if (!(isOpen && mounted)) {
     return null;
   }
 
@@ -536,49 +589,72 @@ export function TemplateAutocomplete({
 
   const menuContent = (
     <div
-      className="fixed z-9999 w-80 rounded-lg border bg-popover p-1 text-popover-foreground shadow-md"
+      className="fixed z-9999 flex w-80 flex-col overflow-hidden rounded-lg border bg-popover text-popover-foreground shadow-md"
+      data-template-autocomplete=""
       ref={menuRef}
       style={{
         top: `${adjustedPosition.top}px`,
         left: `${adjustedPosition.left}px`,
       }}
     >
-      <div ref={listRef} className="max-h-60 overflow-y-auto">
-        {filteredOptions.map((option, index) => (
-          <div
-            className={cn(
-              "flex cursor-pointer items-center justify-between rounded px-2 py-1.5 text-sm transition-colors",
-              index === selectedIndex
-                ? "bg-accent text-accent-foreground"
-                : "hover:bg-accent/50"
-            )}
-            key={`${option.nodeId}-${option.field || "root"}`}
-            onClick={() => onSelect(option.template)}
-            onMouseEnter={() => setSelectedIndex(index)}
-          >
-            <div className="flex-1">
-              <div className="font-medium">
-                {option.type === "node" ? (
-                  option.nodeName
-                ) : (
-                  <>
-                    <span className="text-muted-foreground">
-                      {option.nodeName}.
-                    </span>
-                    {option.field}
-                  </>
+      <div className="flex items-center gap-2 border-b px-2 py-1.5">
+        <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <input
+          aria-label="Search variables"
+          autoComplete="off"
+          className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+          onChange={(e) => setSearchQuery(e.target.value)}
+          onKeyDown={handleSearchKeyDown}
+          placeholder="Search variables..."
+          ref={searchInputRef}
+          type="text"
+          value={searchQuery}
+        />
+      </div>
+      {filteredOptions.length === 0 ? (
+        <div className="px-3 py-6 text-center text-muted-foreground text-sm">
+          No variables found
+        </div>
+      ) : (
+        <div className="max-h-60 overflow-y-auto p-1" ref={listRef}>
+          {filteredOptions.map((option, index) => (
+            <button
+              className={cn(
+                "flex w-full cursor-pointer items-center justify-between rounded px-2 py-1.5 text-left text-sm transition-colors",
+                index === selectedIndex
+                  ? "bg-accent text-accent-foreground"
+                  : "hover:bg-accent/50"
+              )}
+              key={`${option.nodeId}-${option.field ?? "root"}`}
+              onClick={() => onSelect(option.template)}
+              onMouseDown={(e) => e.preventDefault()}
+              onMouseEnter={() => setSelectedIndex(index)}
+              type="button"
+            >
+              <div className="flex-1">
+                <div className="font-medium">
+                  {option.type === "node" ? (
+                    option.nodeName
+                  ) : (
+                    <>
+                      <span className="text-muted-foreground">
+                        {option.nodeName}.
+                      </span>
+                      {option.field}
+                    </>
+                  )}
+                </div>
+                {option.description && (
+                  <div className="text-muted-foreground text-xs">
+                    {option.description}
+                  </div>
                 )}
               </div>
-              {option.description && (
-                <div className="text-muted-foreground text-xs">
-                  {option.description}
-                </div>
-              )}
-            </div>
-            {index === selectedIndex && <Check className="h-4 w-4" />}
-          </div>
-        ))}
-      </div>
+              {index === selectedIndex && <Check className="h-4 w-4" />}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 
