@@ -7,6 +7,7 @@ import {
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow-store";
 
 const UNSUPPORTED_VERSION_REGEX = /Unsupported workflow export version/;
+const SIGN_IN_TO_IMPORT_REGEX = /Sign in to import/;
 
 const ownerId = "user-export-test";
 const orgId = "org-export-test";
@@ -374,6 +375,38 @@ describe("POST /api/workflows/import", () => {
 
     expect(response.status).toBe(400);
     expect(insertedRows).toHaveLength(0);
+  });
+
+  it("returns 403 for an anonymous session", async () => {
+    const { auth } = await import("@/lib/auth");
+    vi.mocked(auth.api.getSession).mockResolvedValueOnce({
+      user: { id: ownerId, email: "temp-abc@http://anon", name: "Anonymous" },
+    } as Awaited<ReturnType<typeof auth.api.getSession>>);
+
+    const exportPayload = buildWorkflowExportV1({
+      name: "x",
+      description: null,
+      nodes: storedWorkflow.nodes.filter(
+        (n) => n.data.type !== "add"
+      ) as WorkflowNode[],
+      edges: [],
+    });
+
+    const { POST } = await import("@/app/api/workflows/import/route");
+    const request = new Request("http://localhost/api/workflows/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(exportPayload),
+    });
+    const response = await POST(request);
+
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.error).toMatch(SIGN_IN_TO_IMPORT_REGEX);
+    expect(insertedRows).toHaveLength(0);
+    expect(mockIncrementCounter).not.toHaveBeenCalledWith(
+      "workflow.imports.total"
+    );
   });
 
   it("returns 401 when getDualAuthContext yields no userId", async () => {

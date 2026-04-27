@@ -6,9 +6,12 @@ import { Link2Off, Plus, Trash2, Upload } from "lucide-react";
 import { nanoid } from "nanoid";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef } from "react";
+import { toast } from "sonner";
 import { ConfirmOverlay } from "@/components/overlays/confirm-overlay";
 import { ImportWorkflowOverlay } from "@/components/overlays/import-workflow-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
+import { useSession } from "@/lib/auth-client";
+import { isAnonymousUser } from "@/lib/is-anonymous";
 import { cn } from "@/lib/utils";
 import {
   addNodeAtom,
@@ -47,6 +50,8 @@ export function WorkflowContextMenu({
   const setActiveTab = useSetAtom(propertiesPanelActiveTabAtom);
   const { open: openOverlay } = useOverlay();
   const router = useRouter();
+  const { data: session } = useSession();
+  const isAnonymous = isAnonymousUser(session?.user);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const handleDeleteNode = useCallback(() => {
@@ -194,6 +199,10 @@ export function WorkflowContextMenu({
             label="New Workflow from JSON"
             onClick={() => {
               onClose();
+              if (isAnonymous) {
+                toast.info("Sign in to import workflows.");
+                return;
+              }
               openOverlay(ImportWorkflowOverlay, {
                 onImported: (workflowId) => {
                   router.push(`/workflows/${workflowId}`);

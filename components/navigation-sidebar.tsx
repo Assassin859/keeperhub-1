@@ -851,6 +851,10 @@ export function NavigationSidebar(): React.ReactNode {
         <SidebarHeader
           expanded={expanded}
           onImportWorkflow={() => {
+            if (isAnonymous) {
+              toast.info("Sign in to import workflows.");
+              return;
+            }
             openOverlay(ImportWorkflowOverlay, {
               onImported: (workflowId) => {
                 fetchData().catch(() => undefined);

@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { workflows } from "@/lib/db/schema";
+import { isAnonymousUser } from "@/lib/is-anonymous";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
 import { MetricNames } from "@/lib/metrics/types";
@@ -32,6 +34,18 @@ export async function POST(request: Request) {
     const { userId, organizationId } = authContext;
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Anonymous (auto-provisioned, not signed-in) sessions cannot import.
+    // API key and OAuth callers are real principals and pass through.
+    if (authContext.authMethod === "session") {
+      const session = await auth.api.getSession({ headers: request.headers });
+      if (isAnonymousUser(session?.user)) {
+        return NextResponse.json(
+          { error: "Sign in to import workflows" },
+          { status: 403 }
+        );
+      }
     }
 
     const rawBody: unknown = await request.json();
