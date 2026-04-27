@@ -5,7 +5,7 @@ import { fetchCredentials } from "@/lib/credential-fetcher";
 import { db } from "@/lib/db";
 import { workflowExecutions, workflows } from "@/lib/db/schema";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
-import { type StepInput, withStepLogging } from "@/lib/steps/step-handler";
+import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import type { SendGridCredentials } from "../credentials";
 
 const SENDGRID_API_URL = "https://api.sendgrid.com";

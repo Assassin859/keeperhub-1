@@ -12,8 +12,8 @@
 
 import { ethers } from "ethers";
 import { describe, expect, it } from "vitest";
-import { reshapeArgsForAbi } from "@/lib/abi-struct-args";
-import { validateArgsForAbi } from "@/lib/abi-validate-args";
+import { reshapeArgsForAbi } from "@/lib/abi/struct-args";
+import { validateArgsForAbi } from "@/lib/abi/validate-args";
 
 const RPC_URL = process.env.INTEGRATION_TEST_RPC_URL;
 const TEST_ADDRESS = "0x0000000000000000000000000000000000000001";

@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { generateWorkflowCode } from "@/lib/workflow-codegen";
-import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow-store";
+import { generateWorkflowCode } from "@/lib/workflow/codegen/codegen";
+import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 function createTriggerNode(id: string): WorkflowNode {
   return {

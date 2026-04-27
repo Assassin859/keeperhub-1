@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractMppPayerAddress, hashMppCredential } from "@/lib/mpp/server";
+import { extractMppPayerAddress, hashMppCredential } from "@/lib/payments/mpp/server";
 
 const HEX_SHA256_RE = /^[a-f0-9]{64}$/;
 

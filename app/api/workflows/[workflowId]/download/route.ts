@@ -10,15 +10,15 @@ import {
   auditFromAuth,
   getDualAuthContext,
 } from "@/lib/middleware/auth-helpers";
-import { generateWorkflowModule } from "@/lib/workflow-codegen";
-import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow-store";
+import { generateWorkflowModule } from "@/lib/workflow/codegen/codegen";
+import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 import { getAllEnvVars, getDependenciesForActions } from "@/plugins/registry";
 
 // Path to the Next.js boilerplate directory
-const BOILERPLATE_PATH = join(process.cwd(), "lib", "next-boilerplate");
+const BOILERPLATE_PATH = join(process.cwd(), "lib", "workflow", "codegen", "boilerplate");
 
 // Path to the codegen templates directory
-const CODEGEN_TEMPLATES_PATH = join(process.cwd(), "lib", "codegen-templates");
+const CODEGEN_TEMPLATES_PATH = join(process.cwd(), "lib", "workflow", "codegen", "templates");
 
 // Regex patterns for code generation
 const NON_ALPHANUMERIC_REGEX = /[^a-zA-Z0-9\s]/g;

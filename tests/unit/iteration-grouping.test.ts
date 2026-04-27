@@ -4,7 +4,7 @@ import {
   buildIterationGroups,
   groupLogsByIteration,
   type IterationLogFields,
-} from "@/lib/iteration-grouping";
+} from "@/lib/workflow/nodes/for-each/iteration-grouping";
 
 // ---------------------------------------------------------------------------
 // Helpers

@@ -8,7 +8,7 @@ import {
   auditFromAuth,
   getDualAuthContext,
 } from "@/lib/middleware/auth-helpers";
-import { generateWorkflowSDKCode } from "@/lib/workflow-codegen-sdk";
+import { generateWorkflowSDKCode } from "@/lib/workflow/codegen/sdk";
 
 export async function GET(
   request: Request,

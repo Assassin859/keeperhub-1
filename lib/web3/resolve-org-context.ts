@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
 import { workflowExecutions } from "@/lib/db/schema";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/utils";
-import { getOrganizationIdFromExecution } from "@/lib/workflow-helpers";
+import { getOrganizationIdFromExecution } from "@/lib/workflow/executor/helpers";
 
 type WorkflowContext = {
   executionId?: string;

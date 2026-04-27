@@ -16,7 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, ApiError } from "@/lib/api-client";
-import type { WorkflowNode } from "@/lib/workflow-store";
+import type { WorkflowNode } from "@/lib/workflow/store";
 import { ConfirmOverlay } from "./confirm-overlay";
 
 // ---------------------------------------------------------------------------

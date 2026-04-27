@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
-import { BUILTIN_NODE_ID, BUILTIN_NODE_LABEL } from "@/lib/builtin-variables";
+import { BUILTIN_NODE_ID, BUILTIN_NODE_LABEL } from "@/lib/workflow/editor/builtin-variables";
 
 import { db } from "@/lib/db";
 import { chains, explorerConfigs } from "@/lib/db/schema";

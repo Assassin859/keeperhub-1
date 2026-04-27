@@ -190,7 +190,7 @@ COPY --link --from=source /app/tsconfig.json ./tsconfig.json
 
 # Copy auto-generated files from builder stage (step-registry.ts, etc. are in .gitignore)
 COPY --link --from=builder /app/lib/step-registry.ts ./lib/step-registry.ts
-COPY --link --from=builder /app/lib/codegen-registry.ts ./lib/codegen-registry.ts
+COPY --link --from=builder /app/lib/workflow/codegen/registry.ts ./lib/workflow/codegen/registry.ts
 COPY --link --from=builder /app/lib/output-display-configs.ts ./lib/output-display-configs.ts
 COPY --link --from=builder /app/lib/types/integration.ts ./lib/types/integration.ts
 COPY --link --from=builder /app/plugins/index.ts ./plugins/index.ts
@@ -228,7 +228,7 @@ COPY --link --from=source /app/tsconfig.json ./tsconfig.json
 
 # Copy auto-generated files from builder stage
 COPY --link --from=builder /app/lib/step-registry.ts ./lib/step-registry.ts
-COPY --link --from=builder /app/lib/codegen-registry.ts ./lib/codegen-registry.ts
+COPY --link --from=builder /app/lib/workflow/codegen/registry.ts ./lib/workflow/codegen/registry.ts
 COPY --link --from=builder /app/lib/output-display-configs.ts ./lib/output-display-configs.ts
 COPY --link --from=builder /app/lib/types/integration.ts ./lib/types/integration.ts
 COPY --link --from=builder /app/plugins/index.ts ./plugins/index.ts

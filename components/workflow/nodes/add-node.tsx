@@ -5,7 +5,7 @@ import { Globe, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { GettingStartedChecklist } from "@/components/onboarding/getting-started-checklist";
-import { getAppName, getCustomLogo } from "@/lib/extension-registry";
+import { getAppName, getCustomLogo } from "@/lib/workflow/editor/extension-registry";
 
 type AddNodeData = {
   onClick?: () => void;
