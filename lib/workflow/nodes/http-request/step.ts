@@ -3,9 +3,9 @@
  */
 import "server-only";
 
-import { safeFetch } from "../safe-fetch";
-import { getErrorMessage } from "../utils";
-import { type StepInput, withStepLogging } from "./step-handler";
+import { safeFetch } from "@/lib/safe-fetch";
+import { getErrorMessage } from "@/lib/utils";
+import { type StepInput, withStepLogging } from "@/lib/steps/step-handler";
 
 type HttpRequestResult =
   | { success: true; data: unknown; status: number }

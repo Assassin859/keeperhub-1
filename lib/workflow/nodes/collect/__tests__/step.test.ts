@@ -7,7 +7,7 @@ vi.mock("@/lib/steps/step-handler", () => ({
   withStepLogging: (_input: unknown, fn: () => unknown) => fn(),
 }));
 
-import { type CollectInput, collectStep } from "../collect";
+import { type CollectInput, collectStep } from "../step";
 
 function makeInput(overrides: Partial<CollectInput> = {}): CollectInput {
   return {

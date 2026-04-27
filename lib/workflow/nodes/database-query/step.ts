@@ -14,8 +14,8 @@ import {
   getPostgresConnectionOptions,
   type PostgresSslOption,
 } from "@/lib/db/connection-utils";
-import { fetchCredentials } from "../credential-fetcher";
-import { type StepInput, withStepLogging } from "./step-handler";
+import { fetchCredentials } from "@/lib/credential-fetcher";
+import { type StepInput, withStepLogging } from "@/lib/steps/step-handler";
 
 type DatabaseQueryResult =
   | { success: true; rows: unknown; count: number }

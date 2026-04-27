@@ -57,8 +57,8 @@ import {
   type StepImporter,
 } from "./step-registry";
 import { LEGACY_ACTION_MAPPINGS } from "@/plugins/legacy-mappings";
-import type { StepContext } from "./steps/step-handler";
-import { triggerStep } from "./steps/trigger";
+import type { StepContext } from "@/lib/steps/step-handler";
+import { triggerStep } from "@/lib/workflow/nodes/trigger/step";
 import { deserializeEventTriggerData, getErrorMessageAsync } from "./utils";
 import type { WorkflowEdge, WorkflowNode } from "./workflow-store";
 
@@ -66,12 +66,12 @@ import type { WorkflowEdge, WorkflowNode } from "./workflow-store";
 const SYSTEM_ACTIONS: Record<string, StepImporter> = {
   "Database Query": {
     // biome-ignore lint/suspicious/noExplicitAny: Dynamic module import
-    importer: () => import("./steps/database-query") as Promise<any>,
+    importer: () => import("@/lib/workflow/nodes/database-query/step") as Promise<any>,
     stepFunction: "databaseQueryStep",
   },
   "HTTP Request": {
     // biome-ignore lint/suspicious/noExplicitAny: Dynamic module import
-    importer: () => import("./steps/http-request") as Promise<any>,
+    importer: () => import("@/lib/workflow/nodes/http-request/step") as Promise<any>,
     stepFunction: "httpRequestStep",
   },
   Condition: {
@@ -88,7 +88,7 @@ const SYSTEM_ACTIONS: Record<string, StepImporter> = {
   Collect: {
     importer: () =>
       // biome-ignore lint/suspicious/noExplicitAny: Dynamic module import matches existing pattern
-      import("@/lib/steps/collect") as Promise<any>,
+      import("@/lib/workflow/nodes/collect/step") as Promise<any>,
     stepFunction: "collectStep",
   },
 };
@@ -1771,7 +1771,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
             if (config.network) {
               try {
                 const { enrichExplorerLinks } = await import(
-                  "@/lib/steps/enrich-explorer-links"
+                  "@/lib/workflow/nodes/enrich-explorer-links/step"
                 );
                 await enrichExplorerLinks(
                   triggerData,

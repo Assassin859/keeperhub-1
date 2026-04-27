@@ -8,7 +8,7 @@ import {
   logWorkflowComplete,
   type StepInput,
   withStepLogging,
-} from "./step-handler";
+} from "@/lib/steps/step-handler";
 
 type TriggerResult = {
   success: true;
