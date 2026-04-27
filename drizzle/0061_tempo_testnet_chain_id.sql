@@ -1,0 +1,44 @@
+-- Correct Tempo testnet chainId from 42429 to 42431 per Tempo docs:
+-- https://docs.tempo.xyz/quickstart/connection-details#testnet
+-- Also fix explorer URL host: explorer.testnet.tempo.xyz -> explore.testnet.tempo.xyz
+-- (matches the mainnet 'explore.mainnet.tempo.xyz' pattern).
+--
+-- Workflow node JSON references chains by network slug ("tempo-testnet"),
+-- not by raw chainId, so workflow definitions do not require migration.
+
+-- Drop the FK from explorer_configs.chain_id -> chains.chain_id so we can
+-- update both sides; it is recreated at the end. The constraint is not
+-- DEFERRABLE, so an in-place UPDATE on chains.chain_id would otherwise fail.
+ALTER TABLE "explorer_configs"
+  DROP CONSTRAINT "explorer_configs_chain_id_chains_chain_id_fk";
+
+UPDATE "chains" SET "chain_id" = 42431 WHERE "chain_id" = 42429;
+
+UPDATE "explorer_configs"
+  SET "chain_id" = 42431,
+      "explorer_url" = 'https://explore.testnet.tempo.xyz',
+      "explorer_api_url" = 'https://explore.testnet.tempo.xyz/api',
+      "updated_at" = now()
+  WHERE "chain_id" = 42429;
+
+-- Catch any explorer_configs row that already had chain_id=42431 (newly
+-- seeded environments) but still has the stale explorer host.
+UPDATE "explorer_configs"
+  SET "explorer_url" = 'https://explore.testnet.tempo.xyz',
+      "explorer_api_url" = 'https://explore.testnet.tempo.xyz/api',
+      "updated_at" = now()
+  WHERE "chain_id" = 42431
+    AND ("explorer_url" = 'https://explorer.testnet.tempo.xyz'
+      OR "explorer_api_url" = 'https://explorer.testnet.tempo.xyz/api');
+
+UPDATE "supported_tokens" SET "chain_id" = 42431 WHERE "chain_id" = 42429;
+UPDATE "organization_tokens" SET "chain_id" = 42431 WHERE "chain_id" = 42429;
+UPDATE "user_rpc_preferences" SET "chain_id" = 42431 WHERE "chain_id" = 42429;
+UPDATE "pending_transactions" SET "chain_id" = 42431 WHERE "chain_id" = 42429;
+UPDATE "wallet_locks" SET "chain_id" = 42431 WHERE "chain_id" = 42429;
+
+ALTER TABLE "explorer_configs"
+  ADD CONSTRAINT "explorer_configs_chain_id_chains_chain_id_fk"
+  FOREIGN KEY ("chain_id") REFERENCES "chains"("chain_id")
+  ON DELETE CASCADE
+  ON UPDATE NO ACTION;

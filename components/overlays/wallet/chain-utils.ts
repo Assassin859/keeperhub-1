@@ -1,5 +1,5 @@
 // TEMPO uses stablecoins for gas, so we display stablecoins only (no native token)
-const TEMPO_CHAIN_IDS: ReadonlySet<number> = new Set([42_429, 4217]);
+const TEMPO_CHAIN_IDS: ReadonlySet<number> = new Set([42_431, 4217]);
 
 // Chains whose token lineup doesn't mirror Ethereum mainnet's stablecoin set
 // (e.g. Plasma ships USDT0, no Circle USDC, no Sky USDS). For these chains we
@@ -7,7 +7,7 @@ const TEMPO_CHAIN_IDS: ReadonlySet<number> = new Set([42_429, 4217]);
 // them on the mainnet master list, which would otherwise produce misleading
 // "Not available" entries for assets that simply don't exist on the chain.
 const INDEPENDENT_TOKEN_LIST_CHAIN_IDS: ReadonlySet<number> = new Set([
-  42_429, 4217, 9745,
+  42_431, 4217, 9745,
 ]);
 
 export const MAINNET_CHAIN_ID = 1;
@@ -32,7 +32,7 @@ const CHAIN_DISPLAY_ORDER: Record<number, number> = {
   // Testnets
   11_155_111: 10, // Ethereum Sepolia
   84_532: 11, // Base Sepolia
-  42_429: 12, // TEMPO testnet
+  42_431: 12, // TEMPO testnet
 } as const;
 
 export function getChainOrderIndex(chainId: number): number {
