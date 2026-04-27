@@ -1,10 +1,6 @@
-import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { db } from "@/lib/db";
-import { users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 
 const FEEDBACK_SERVICE_URL = process.env.FEEDBACK_SERVICE_URL || "";
 const FEEDBACK_API_KEY = process.env.FEEDBACK_API_KEY || "";
@@ -46,31 +42,11 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    // Auth is optional. Either a session cookie or an API key attaches user
-    // context for the support team; unauthenticated callers still go through.
-    const authContext = await getDualAuthContext(request, { required: false });
-
-    let callerName: string | null = null;
-    let callerEmail: string | null = null;
-
-    if (!("error" in authContext) && authContext.userId) {
-      if (authContext.authMethod === "session") {
-        // Sessions already carry user fields in-memory; reuse them rather
-        // than spending a `users` lookup we don't need.
-        const session = await auth.api.getSession({ headers: request.headers });
-        callerName = session?.user?.name ?? null;
-        callerEmail = session?.user?.email ?? null;
-      } else {
-        // API key / OAuth callers don't carry email/name on their auth
-        // payload; look up the key creator for support routing.
-        const callerRow = await db.query.users.findFirst({
-          where: eq(users.id, authContext.userId),
-          columns: { name: true, email: true },
-        });
-        callerName = callerRow?.name ?? null;
-        callerEmail = callerRow?.email ?? null;
-      }
-    }
+    // Session-only with optional auth: feedback submitted while logged in
+    // attaches the caller's email/name for support routing; anonymous
+    // callers still go through. API keys are intentionally not accepted --
+    // org credentials carry no user-specific support context. See KEEP-354.
+    const session = await auth.api.getSession({ headers: request.headers });
 
     const formData = await request.formData();
     const message = formData.get("message") as string;
@@ -95,9 +71,9 @@ export async function POST(request: Request): Promise<NextResponse> {
       serviceFormData.append("screenshot", screenshot);
     }
 
-    if (callerEmail || callerName) {
-      serviceFormData.append("userEmail", callerEmail ?? "");
-      serviceFormData.append("userName", callerName ?? "");
+    if (session?.user) {
+      serviceFormData.append("userEmail", session.user.email ?? "");
+      serviceFormData.append("userName", session.user.name ?? "");
     }
 
     // Forward to feedback service
