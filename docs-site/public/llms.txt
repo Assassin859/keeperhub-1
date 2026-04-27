@@ -6,6 +6,36 @@ A KeeperHub workflow is a directed graph of **nodes**. A node is either a **trig
 
 Agents have three programmatic surfaces: (1) the **MCP server** at `https://app.keeperhub.com/mcp` for direct tool use from Claude Desktop, Claude Code, and other MCP clients; (2) the **REST API** under `https://app.keeperhub.com/api` for general programmatic control; (3) the **Claude Code plugin marketplace** at `github.com/KeeperHub/claude-plugins` for an opinionated workflow-building skill set.
 
+## Sites
+
+KeeperHub spans three public domains. The canonical `llms.txt` is this file at `docs.keeperhub.com/llms.txt`; `keeperhub.com/llms.txt` and `app.keeperhub.com/llms.txt` 308-redirect here.
+
+### keeperhub.com — marketing site
+
+For product overview, pricing, comparisons, and prospective-customer material.
+
+- [Home](https://keeperhub.com): Product overview
+- [Pricing](https://keeperhub.com/pricing): Tiers, execution quotas, gas credits
+- [DeFi protocols](https://keeperhub.com/defi-protocols): Use cases for protocol teams
+- [DAOs](https://keeperhub.com/daos): Use cases for DAO operators
+- [Enterprise](https://keeperhub.com/enterprise): SLAs, custom deployments, contact
+- [Compare](https://keeperhub.com/compare): vs. [Chainlink Automation](https://keeperhub.com/compare/chainlink), [OpenZeppelin Defender](https://keeperhub.com/compare/defender), [Gelato](https://keeperhub.com/compare/gelato), [Hypernative](https://keeperhub.com/compare/hypernative)
+- [Blog](https://keeperhub.com/blog): Engineering and product writing
+
+### app.keeperhub.com — web app
+
+The interactive product. Most routes require auth, but the surfaces below are how agents and integrators reach the platform programmatically.
+
+- [Sign in](https://app.keeperhub.com): Entry point to the workflow builder, runs view, wallets, billing
+- [Hub](https://app.keeperhub.com/hub): Browseable catalog of supported protocols and plugins
+- [REST API](https://app.keeperhub.com/api): Base path for programmatic control (see [/api docs](https://docs.keeperhub.com/api))
+- [OpenAPI spec](https://app.keeperhub.com/api/openapi): Machine-readable schema for the REST API
+- [MCP server](https://app.keeperhub.com/mcp): OAuth-authenticated Model Context Protocol endpoint for LLM clients
+
+### docs.keeperhub.com — documentation
+
+This site. Canonical reference for concepts, node configuration, plugins, API, CLI, and AI tooling. The deep-link map for docs is in the sections below.
+
 ## Docs
 
 - [Introduction](https://docs.keeperhub.com/intro/overview): What KeeperHub is and the problem it solves
@@ -70,5 +100,4 @@ Agents have three programmatic surfaces: (1) the **MCP server** at `https://app.
 ## Optional
 
 - [GitHub: KeeperHub/claude-plugins](https://github.com/KeeperHub/claude-plugins): Claude Code plugin marketplace source
-- [App](https://app.keeperhub.com): Web app
 - [Contact](mailto:sales@keeperhub.io)
