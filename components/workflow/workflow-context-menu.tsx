@@ -21,7 +21,7 @@ import {
   propertiesPanelActiveTabAtom,
   selectedNodeAtom,
   type WorkflowNode,
-} from "@/lib/workflow-store";
+} from "@/lib/workflow/store";
 
 export type ContextMenuType = "node" | "edge" | "pane" | null;
 

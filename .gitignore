@@ -101,7 +101,7 @@ docker-compose.override.yml
 
 # generated files
 lib/types/integration.ts
-lib/codegen-registry.ts
+lib/workflow/codegen/registry.ts
 lib/step-registry.ts
 lib/output-display-configs.ts
 public/monaco/

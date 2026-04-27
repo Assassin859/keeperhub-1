@@ -6,7 +6,7 @@ import {
   getAddressUrl as buildAddressUrl,
   getTransactionUrl as buildTransactionUrl,
 } from "@/lib/explorer";
-import type { RpcProviderManager } from "@/lib/rpc-provider";
+import type { RpcProviderManager } from "@/lib/rpc/providers";
 import type { AdaptiveGasStrategy, GasConfig } from "../gas-strategy";
 import type { NonceManager, NonceSession } from "../nonce-manager";
 import type {

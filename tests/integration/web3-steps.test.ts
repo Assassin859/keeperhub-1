@@ -111,7 +111,7 @@ vi.mock("@/lib/para/wallet-helpers", () => ({
 }));
 
 // Mock step handler
-vi.mock("@/lib/steps/step-handler", () => ({
+vi.mock("@/lib/workflow/executor/step-handler", () => ({
   withStepLogging: vi.fn((_input, handler) => handler()),
 }));
 

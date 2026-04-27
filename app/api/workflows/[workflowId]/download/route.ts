@@ -8,7 +8,7 @@ import { getMetricsCollector } from "@/lib/metrics";
 import { MetricNames } from "@/lib/metrics/types";
 import { getOrgContext } from "@/lib/middleware/org-context";
 import { buildWorkflowExportV1 } from "@/lib/workflow/export-schema";
-import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow-store";
+import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 const FILENAME_SANITIZE_REGEX = /[^a-z0-9]+/g;
 const TRIM_DASHES_REGEX = /^-+|-+$/g;

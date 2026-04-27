@@ -42,9 +42,9 @@ import {
   workflowSchedules,
   workflows,
 } from "../../../lib/db/schema";
-import { executeWorkflow } from "../../../lib/workflow-executor.workflow";
-import { calculateTotalSteps } from "../../../lib/workflow-progress";
-import type { WorkflowEdge, WorkflowNode } from "../../../lib/workflow-store";
+import { executeWorkflow } from "../../../lib/workflow/executor/executor.workflow";
+import { calculateTotalSteps } from "../../../lib/workflow/executor/progress";
+import type { WorkflowEdge, WorkflowNode } from "../../../lib/workflow/store";
 
 // ============================================================================
 // Profiler Types

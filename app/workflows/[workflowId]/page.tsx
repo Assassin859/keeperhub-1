@@ -54,7 +54,7 @@ import {
   type WorkflowNode,
   type WorkflowVisibility,
   workflowNotFoundAtom,
-} from "@/lib/workflow-store";
+} from "@/lib/workflow/store";
 import { findActionById } from "@/plugins/registry";
 
 type WorkflowPageProps = {

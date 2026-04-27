@@ -8,7 +8,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { SavedWorkflow } from "@/lib/api-client";
-import type { VoteDirection } from "@/lib/workflow/votes";
+import type { VoteDirection } from "@/lib/workflow/editor/votes";
 import { WorkflowMiniMap } from "./workflow-mini-map";
 
 type WorkflowTemplateCardProps = {

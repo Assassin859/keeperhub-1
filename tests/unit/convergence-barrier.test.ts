@@ -8,8 +8,8 @@ import {
   getReadyDownstreamIds,
   propagateConvergenceSkips,
   signalConvergenceArrival,
-} from "@/lib/convergence-barrier";
-import { buildEdgesBySourceHandle } from "@/lib/edge-handle-utils";
+} from "@/lib/workflow/executor/convergence-barrier";
+import { buildEdgesBySourceHandle } from "@/lib/workflow/editor/edge-handle-utils";
 
 describe("convergence barrier", () => {
   describe("basic convergence: A -> [B, C, D] -> E", () => {

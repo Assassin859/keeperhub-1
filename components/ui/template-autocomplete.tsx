@@ -4,7 +4,7 @@ import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { Check, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { BUILTIN_NODE_ID, BUILTIN_NODE_LABEL, BUILTIN_VARIABLE_FIELDS } from "@/lib/builtin-variables";
+import { BUILTIN_NODE_ID, BUILTIN_NODE_LABEL, BUILTIN_VARIABLE_FIELDS } from "@/lib/workflow/editor/builtin-variables";
 import { api } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import {
@@ -20,10 +20,10 @@ import {
   nodesAtom,
   WorkflowTriggerEnum,
   type WorkflowNode,
-} from "@/lib/workflow-store";
+} from "@/lib/workflow/store";
 import { findActionById } from "@/plugins/registry";
-import { getReadContractOutputFields } from "@/lib/action-output-fields";
-import { resolveForEachSyntheticOutput } from "@/lib/for-each-utils";
+import { getReadContractOutputFields } from "@/lib/workflow/editor/action-output-fields";
+import { resolveForEachSyntheticOutput } from "@/lib/workflow/nodes/for-each/utils";
 import {
   type ExecutionLogsByNodeId,
   type SchemaField,
@@ -32,13 +32,13 @@ import {
   isActionType,
   sanitizeNodeId,
   schemaToFields,
-} from "@/lib/template-helpers";
+} from "@/lib/workflow/editor/template-helpers";
 import {
   type IndexedAutocompleteOption,
   buildHaystack,
   filterOptionsByQuery,
-} from "@/lib/template-autocomplete-filter";
-import { getTriggerOutputFields } from "@/lib/trigger-output-fields";
+} from "@/lib/workflow/editor/template-autocomplete-filter";
+import { getTriggerOutputFields } from "@/lib/workflow/editor/trigger-output-fields";
 
 /**
  * - "escape": user pressed Escape while in the search input -- return focus

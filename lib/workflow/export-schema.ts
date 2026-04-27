@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow-store";
+import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 export const WORKFLOW_EXPORT_VERSION = 1;
 

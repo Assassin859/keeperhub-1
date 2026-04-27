@@ -7,9 +7,9 @@ import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import {
   SANDBOX_CHILD_SOURCE as CHILD_SOURCE,
   SANDBOX_RESULT_SENTINEL as RESULT_SENTINEL,
-} from "@/lib/sandbox-child-source";
-import { runRemote } from "@/lib/sandbox-client";
-import { type StepInput, withStepLogging } from "@/lib/steps/step-handler";
+} from "@/lib/sandbox/child-source";
+import { runRemote } from "@/lib/sandbox/client";
+import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 
 type LogEntry = {
   level: "log" | "warn" | "error";

@@ -3,10 +3,10 @@
  * Replaces server actions with API endpoints
  */
 
+import type { VoteDirection } from "@/lib/workflow/editor/votes";
 import type { WorkflowExportV1 } from "@/lib/workflow/export-schema";
-import type { VoteDirection } from "@/lib/workflow/votes";
+import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 import type { IntegrationConfig, IntegrationType } from "./types/integration";
-import type { WorkflowEdge, WorkflowNode } from "./workflow-store";
 
 // Workflow data types
 export type WorkflowVisibility = "private" | "public";

@@ -4,7 +4,7 @@ import {
   buildWorkflowExportV1,
   WORKFLOW_EXPORT_VERSION,
 } from "@/lib/workflow/export-schema";
-import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow-store";
+import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 const UNSUPPORTED_VERSION_REGEX = /Unsupported workflow export version/;
 const SIGN_IN_TO_IMPORT_REGEX = /Sign in to import/;
@@ -133,6 +133,7 @@ vi.mock("@/lib/metrics", () => ({
     incrementCounter: mockIncrementCounter,
     recordHistogram: vi.fn(),
     setGauge: vi.fn(),
+    recordError: vi.fn(),
   }),
 }));
 

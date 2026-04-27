@@ -441,7 +441,7 @@ Dependencies:
 - `lib/steps/*` - Step implementations
 - `plugins/*/steps/*` - Plugin step implementations
 - `lib/db/integrations.ts` - Credential fetching/decryption
-- `lib/condition-validator.ts` - Condition security validation
+- `lib/workflow/nodes/condition/validator.ts` - Condition security validation
 
 ---
 

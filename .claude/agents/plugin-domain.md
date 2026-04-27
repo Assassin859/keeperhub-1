@@ -91,7 +91,7 @@ import "server-only";
 
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import { fetchCredentials } from "@/lib/credential-fetcher";
-import { type StepInput, withStepLogging } from "@/lib/steps/step-handler";
+import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 import type { PluginNameCredentials } from "../credentials";
 
@@ -163,7 +163,7 @@ STEP FILE TEMPLATE (SYSTEM PLUGIN -- no credentials):
 import "server-only";
 
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
-import { type StepInput, withStepLogging } from "@/lib/steps/step-handler";
+import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 
 type ActionSlugResult =

@@ -7,21 +7,21 @@ import { db } from "@/lib/db";
 import { tags, workflowExecutions, workflows } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
-import { hashMppCredential } from "@/lib/mpp/server";
+import { hashMppCredential } from "@/lib/payments/mpp/server";
 import {
   detectProtocol,
   gatePayment,
   type PaymentMeta,
 } from "@/lib/payments/router";
-import { executeWorkflow } from "@/lib/workflow-executor.workflow";
-import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow-store";
-import { buildCallCompletionResponse } from "@/lib/x402/execution-wait";
+import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
+import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
+import { buildCallCompletionResponse } from "@/lib/payments/x402/execution-wait";
 import {
   hashPaymentSignature,
   recordPayment,
   resolveCreatorWallet,
-} from "@/lib/x402/payment-gate";
-import { CALL_ROUTE_COLUMNS, type CallRouteWorkflow } from "@/lib/x402/types";
+} from "@/lib/payments/x402/payment-gate";
+import { CALL_ROUTE_COLUMNS, type CallRouteWorkflow } from "@/lib/payments/x402/types";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",

@@ -12,7 +12,7 @@ import {
   validateDatabaseConfig,
   type DatabaseTab,
 } from "@/components/database-connection-form";
-import { getCustomIntegrationFormHandler } from "@/lib/extension-registry";
+import { getCustomIntegrationFormHandler } from "@/lib/workflow/editor/extension-registry";
 import type { IntegrationConfig } from "@/lib/types/integration";
 import { getIntegration, getIntegrationLabels } from "@/plugins/registry";
 import { ConfirmOverlay } from "./confirm-overlay";

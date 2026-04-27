@@ -6,7 +6,7 @@ import {
   WORKFLOW_EXPORT_VERSION,
   workflowExportV1Schema,
 } from "@/lib/workflow/export-schema";
-import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow-store";
+import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 function makeTriggerNode(): WorkflowNode {
   return {

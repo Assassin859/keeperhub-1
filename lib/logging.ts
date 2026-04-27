@@ -24,7 +24,7 @@
 import { captureException } from "@sentry/nextjs";
 import { getMetricsCollector } from "@/lib/metrics";
 import { LabelKeys, MetricNames } from "@/lib/metrics/types";
-import { getWorkflowErrorContext } from "@/lib/workflow-error-context";
+import { getWorkflowErrorContext } from "@/lib/workflow/executor/error-context";
 
 /**
  * Labels that have unbounded cardinality and must NEVER be sent to Prometheus. They are kept in console output and Sentry extras for debugging.

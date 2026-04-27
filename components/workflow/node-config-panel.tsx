@@ -34,7 +34,7 @@ import { refetchSidebar } from "@/lib/refetch-sidebar";
 import { api } from "@/lib/api-client";
 import { integrationsAtom } from "@/lib/integrations-store";
 import type { IntegrationType } from "@/lib/types/integration";
-import { generateWorkflowCode } from "@/lib/workflow-codegen";
+import { generateWorkflowCode } from "@/lib/workflow/codegen/codegen";
 import {
   clearNodeStatusesAtom,
   clearWorkflowAtom,
@@ -59,7 +59,7 @@ import {
   showDeleteDialogAtom,
   updateNodeDataAtom,
   workflowNotFoundAtom,
-} from "@/lib/workflow-store";
+} from "@/lib/workflow/store";
 import { findActionById, flattenConfigFields } from "@/plugins/registry";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { ActionConfig } from "./config/action-config";

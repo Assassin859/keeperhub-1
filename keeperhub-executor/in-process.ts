@@ -2,9 +2,9 @@ import { eq } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { validateWorkflowIntegrations } from "../lib/db/integrations";
 import { organization, workflows } from "../lib/db/schema";
-import { executeWorkflow } from "../lib/workflow-executor.workflow";
-import { calculateTotalSteps } from "../lib/workflow-progress";
-import type { WorkflowEdge, WorkflowNode } from "../lib/workflow-store";
+import { executeWorkflow } from "../lib/workflow/executor/executor.workflow";
+import { calculateTotalSteps } from "../lib/workflow/executor/progress";
+import type { WorkflowEdge, WorkflowNode } from "../lib/workflow/store";
 import type { DbSchema } from "./lib/db-helpers";
 import {
   initializeExecutionProgress,

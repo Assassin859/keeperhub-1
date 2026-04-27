@@ -15,7 +15,7 @@ import {
   WORKFLOW_EXPORT_VERSION,
   workflowExportV1Schema,
 } from "@/lib/workflow/export-schema";
-import { sanitizeWorkflowData } from "@/lib/workflow/sanitize-nodes";
+import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
 
 const versionedBodySchema = z
   .object({ version: z.unknown() })

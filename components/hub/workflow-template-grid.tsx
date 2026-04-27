@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { api, type SavedWorkflow, type VoteResponse } from "@/lib/api-client";
 import { authClient, useSession } from "@/lib/auth-client";
 import { refetchSidebar } from "@/lib/refetch-sidebar";
-import type { VoteDirection } from "@/lib/workflow/votes";
+import type { VoteDirection } from "@/lib/workflow/editor/votes";
 import { WorkflowTemplateCard } from "./workflow-template-card";
 
 type WorkflowTemplateGridProps = {

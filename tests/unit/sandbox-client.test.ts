@@ -93,7 +93,7 @@ describe("lib/sandbox-client runRemote", () => {
     });
     vi.resetModules();
     process.env.SANDBOX_URL = `http://127.0.0.1:${port}`;
-    const { runRemote } = await import("@/lib/sandbox-client");
+    const { runRemote } = await import("@/lib/sandbox/client");
     const outcome = await runRemote({ code: "return 1 + 1;", timeoutMs: 5000 });
     expect(outcome).toEqual({ success: true, result: 2, logs: [] });
   });
@@ -106,7 +106,7 @@ describe("lib/sandbox-client runRemote", () => {
     });
     vi.resetModules();
     process.env.SANDBOX_URL = `http://127.0.0.1:${port}`;
-    const { runRemote } = await import("@/lib/sandbox-client");
+    const { runRemote } = await import("@/lib/sandbox/client");
     const outcome = await runRemote({ code: "doesnt matter", timeoutMs: 1000 });
     expect(outcome.success).toBe(true);
     if (outcome.success) {
@@ -126,7 +126,7 @@ describe("lib/sandbox-client runRemote", () => {
     });
     vi.resetModules();
     process.env.SANDBOX_URL = `http://127.0.0.1:${port}`;
-    const { runRemote } = await import("@/lib/sandbox-client");
+    const { runRemote } = await import("@/lib/sandbox/client");
     const outcome = await runRemote({
       code: "throw new Error('boom');",
       timeoutMs: 1000,
@@ -145,7 +145,7 @@ describe("lib/sandbox-client runRemote", () => {
     });
     vi.resetModules();
     process.env.SANDBOX_URL = `http://127.0.0.1:${port}`;
-    const { runRemote } = await import("@/lib/sandbox-client");
+    const { runRemote } = await import("@/lib/sandbox/client");
     const startConnections = connectionCount;
     for (const _iteration of [1, 2, 3, 4, 5]) {
       void _iteration;
@@ -160,7 +160,7 @@ describe("lib/sandbox-client runRemote", () => {
     process.env.SANDBOX_URL = "http://127.0.0.1:1";
     try {
       vi.resetModules();
-      const { runRemote } = await import("@/lib/sandbox-client");
+      const { runRemote } = await import("@/lib/sandbox/client");
       const outcome = await runRemote({
         code: "return 1;",
         timeoutMs: 1000,
@@ -188,7 +188,7 @@ describe("lib/sandbox-client runRemote", () => {
     });
     vi.resetModules();
     process.env.SANDBOX_URL = `http://127.0.0.1:${port}`;
-    const { runRemote } = await import("@/lib/sandbox-client");
+    const { runRemote } = await import("@/lib/sandbox/client");
     const outcome = await runRemote({ code: "x", timeoutMs: 1000 });
     expect(outcome.success).toBe(true);
     if (outcome.success) {
@@ -207,7 +207,7 @@ describe("lib/sandbox-client runRemote", () => {
     };
     vi.resetModules();
     process.env.SANDBOX_URL = `http://127.0.0.1:${port}`;
-    const { runRemote } = await import("@/lib/sandbox-client");
+    const { runRemote } = await import("@/lib/sandbox/client");
     await runRemote({ code: "return null;", timeoutMs: 5000 });
     expect(capturedPayload).toMatchObject({
       code: "return null;",
@@ -232,7 +232,7 @@ describe("lib/sandbox-client runRemote", () => {
     process.env.SANDBOX_URL = `http://127.0.0.1:${hangingPort}`;
     try {
       vi.resetModules();
-      const { runRemote } = await import("@/lib/sandbox-client");
+      const { runRemote } = await import("@/lib/sandbox/client");
       const controller = new AbortController();
       setTimeout(() => controller.abort(), 50);
       const start = Date.now();
@@ -282,7 +282,7 @@ describe("lib/sandbox-client runRemote", () => {
     process.env.SANDBOX_HTTP_SLACK_MS = "50";
     try {
       vi.resetModules();
-      const { runRemote } = await import("@/lib/sandbox-client");
+      const { runRemote } = await import("@/lib/sandbox/client");
       const start = Date.now();
       const outcome = await runRemote({ code: "return 1;", timeoutMs: 50 });
       const elapsed = Date.now() - start;
@@ -322,7 +322,7 @@ describe("lib/sandbox-client runRemote", () => {
     });
     vi.resetModules();
     process.env.SANDBOX_URL = `http://127.0.0.1:${port}`;
-    const { runRemote } = await import("@/lib/sandbox-client");
+    const { runRemote } = await import("@/lib/sandbox/client");
     const outcome = await runRemote({ code: "return 1;", timeoutMs: 1000 });
     expect(outcome.success).toBe(false);
     if (!outcome.success) {

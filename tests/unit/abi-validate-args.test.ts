@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateArgsForAbi } from "@/lib/abi-validate-args";
+import { validateArgsForAbi } from "@/lib/abi/validate-args";
 
 describe("validateArgsForAbi", () => {
   it("accepts empty args when ABI has no inputs", () => {

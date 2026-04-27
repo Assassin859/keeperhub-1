@@ -1,7 +1,7 @@
 import {
   type AbiDrivenContract,
   deriveActionsFromAbi,
-} from "@/lib/protocol-abi-derive";
+} from "@/lib/abi/protocol-derive";
 import type { ProtocolAction } from "@/lib/protocol-registry";
 import { defineProtocol } from "@/lib/protocol-registry";
 import ccipBnmAbi from "./abis/ccip-bnm.json";

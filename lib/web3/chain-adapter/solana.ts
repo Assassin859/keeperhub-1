@@ -1,5 +1,5 @@
 import type { ethers } from "ethers";
-import type { RpcProviderManager } from "@/lib/rpc-provider";
+import type { RpcProviderManager } from "@/lib/rpc/providers";
 import type { NonceSession } from "../nonce-manager";
 import type {
   ChainAdapter,

@@ -61,8 +61,8 @@ const KNOWN_EXCEPTIONS: Record<string, Exception> = {
 // ---------------------------------------------------------------------------
 
 const CODEGEN_FILES = [
-  "lib/workflow-codegen-sdk.ts",
-  "lib/workflow-codegen-shared.ts",
+  "lib/workflow/codegen/sdk.ts",
+  "lib/workflow/codegen/shared.ts",
 ];
 
 function detectCodegenOnlyDeps(): Set<string> {
