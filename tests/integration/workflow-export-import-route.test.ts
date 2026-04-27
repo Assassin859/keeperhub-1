@@ -328,6 +328,38 @@ describe("POST /api/workflows/import", () => {
     expect(insertedRows).toHaveLength(0);
   });
 
+  it("rejects a payload whose integrationBindings reference unknown nodes", async () => {
+    const exportPayload = buildWorkflowExportV1({
+      name: "x",
+      description: null,
+      nodes: storedWorkflow.nodes.filter(
+        (n) => n.data.type !== "add"
+      ) as WorkflowNode[],
+      edges: [],
+    });
+
+    const tampered = {
+      ...exportPayload,
+      integrationBindings: [
+        { nodeId: "ghost-node", integrationType: "discord" },
+      ],
+    };
+
+    const { POST } = await import("@/app/api/workflows/import/route");
+    const request = new Request("http://localhost/api/workflows/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(tampered),
+    });
+    const response = await POST(request);
+
+    expect(response.status).toBe(400);
+    expect(insertedRows).toHaveLength(0);
+    expect(mockIncrementCounter).not.toHaveBeenCalledWith(
+      "workflow.imports.total"
+    );
+  });
+
   it("rejects a payload that fails strict schema validation", async () => {
     const malformed = {
       version: WORKFLOW_EXPORT_VERSION,
