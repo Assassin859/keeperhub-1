@@ -2,10 +2,12 @@
 
 import type { Edge, Node, XYPosition } from "@xyflow/react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { Link2Off, Plus, Trash2 } from "lucide-react";
+import { Link2Off, Plus, Trash2, Upload } from "lucide-react";
 import { nanoid } from "nanoid";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef } from "react";
 import { ConfirmOverlay } from "@/components/overlays/confirm-overlay";
+import { ImportWorkflowOverlay } from "@/components/overlays/import-workflow-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { cn } from "@/lib/utils";
 import {
@@ -44,6 +46,7 @@ export function WorkflowContextMenu({
   const setSelectedNode = useSetAtom(selectedNodeAtom);
   const setActiveTab = useSetAtom(propertiesPanelActiveTabAtom);
   const { open: openOverlay } = useOverlay();
+  const router = useRouter();
   const menuRef = useRef<HTMLDivElement>(null);
 
   const handleDeleteNode = useCallback(() => {
@@ -180,11 +183,25 @@ export function WorkflowContextMenu({
       )}
 
       {menuState.type === "pane" && (
-        <MenuItem
-          icon={<Plus className="size-4" />}
-          label="Add Step"
-          onClick={handleAddStep}
-        />
+        <>
+          <MenuItem
+            icon={<Plus className="size-4" />}
+            label="Add Step"
+            onClick={handleAddStep}
+          />
+          <MenuItem
+            icon={<Upload className="size-4" />}
+            label="New Workflow from JSON"
+            onClick={() => {
+              onClose();
+              openOverlay(ImportWorkflowOverlay, {
+                onImported: (workflowId) => {
+                  router.push(`/workflows/${workflowId}`);
+                },
+              });
+            }}
+          />
+        </>
       )}
     </div>
   );

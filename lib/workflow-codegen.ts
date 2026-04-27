@@ -1346,25 +1346,3 @@ export function generateWorkflowCode(
       validationErrors.length > 0 ? validationErrors : undefined,
   };
 }
-
-/**
- * Generate a complete workflow module file
- */
-export function generateWorkflowModule(
-  workflowName: string,
-  nodes: WorkflowNode[],
-  edges: WorkflowEdge[],
-  options: CodeGenOptions = {}
-): string {
-  const { code } = generateWorkflowCode(nodes, edges, options);
-
-  return `/**
- * Generated Workflow: ${workflowName}
- * 
- * This file was automatically generated from a workflow definition.
- * DO NOT EDIT MANUALLY - regenerate from the workflow editor instead.
- */
-
-${code}
-`;
-}

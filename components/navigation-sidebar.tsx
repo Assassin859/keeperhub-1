@@ -13,6 +13,7 @@ import {
   List,
   Loader2,
   Plus,
+  Upload,
   X,
 } from "lucide-react";
 import { useParams, usePathname, useRouter } from "next/navigation";
@@ -20,6 +21,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { DiscordIcon } from "@/components/icons/discord-icon";
 import { AddressBookOverlay } from "@/components/overlays/address-book-overlay";
 import { FeedbackOverlay } from "@/components/overlays/feedback-overlay";
+import { ImportWorkflowOverlay } from "@/components/overlays/import-workflow-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import {
   Tooltip,
@@ -353,10 +355,12 @@ function SidebarHeader({
   expanded,
   onToggle,
   onNewWorkflow,
+  onImportWorkflow,
 }: {
   expanded: boolean;
   onToggle: () => void;
   onNewWorkflow: () => void;
+  onImportWorkflow: () => void;
 }): React.ReactNode {
   return (
     <div
@@ -385,6 +389,22 @@ function SidebarHeader({
         />
         {expanded && <span>New Workflow</span>}
       </button>
+      {expanded && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              aria-label="Import workflow from JSON"
+              className="ml-1 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              data-testid="nav-import"
+              onClick={onImportWorkflow}
+              type="button"
+            >
+              <Upload className="size-3.5" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>Import workflow from JSON</TooltipContent>
+        </Tooltip>
+      )}
       <button
         aria-label={expanded ? "Collapse sidebar" : "Expand sidebar"}
         className={cn(
@@ -825,6 +845,15 @@ export function NavigationSidebar(): React.ReactNode {
       >
         <SidebarHeader
           expanded={expanded}
+          onImportWorkflow={() => {
+            openOverlay(ImportWorkflowOverlay, {
+              onImported: (workflowId) => {
+                fetchData().catch(() => undefined);
+                navState.setPanelState("projects", "open");
+                router.push(`/workflows/${workflowId}`);
+              },
+            });
+          }}
           onNewWorkflow={() => {
             handleNewWorkflow().catch(() => {
               router.push("/");
