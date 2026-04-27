@@ -47,17 +47,30 @@ const integrationBindingSchema = z.object({
   integrationType: z.string().min(1),
 });
 
-export const workflowExportV1Schema = z.object({
-  version: z.literal(WORKFLOW_EXPORT_VERSION),
-  exportedAt: z.string().datetime(),
-  workflow: z.object({
-    name: z.string().min(1),
-    description: z.string().optional(),
-  }),
-  nodes: z.array(exportNodeSchema),
-  edges: z.array(exportEdgeSchema),
-  integrationBindings: z.array(integrationBindingSchema),
-});
+export const workflowExportV1Schema = z
+  .object({
+    version: z.literal(WORKFLOW_EXPORT_VERSION),
+    exportedAt: z.string().datetime(),
+    workflow: z.object({
+      name: z.string().min(1),
+      description: z.string().optional(),
+    }),
+    nodes: z.array(exportNodeSchema),
+    edges: z.array(exportEdgeSchema),
+    integrationBindings: z.array(integrationBindingSchema),
+  })
+  .superRefine((value, ctx) => {
+    const nodeIds = new Set(value.nodes.map((n) => n.id));
+    for (const [index, binding] of value.integrationBindings.entries()) {
+      if (!nodeIds.has(binding.nodeId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["integrationBindings", index, "nodeId"],
+          message: `integrationBindings[${index}].nodeId "${binding.nodeId}" does not match any node in nodes[]`,
+        });
+      }
+    }
+  });
 
 export type WorkflowExportV1 = z.infer<typeof workflowExportV1Schema>;
 export type WorkflowExportIntegrationBinding = z.infer<

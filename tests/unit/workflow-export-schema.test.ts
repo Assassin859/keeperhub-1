@@ -129,6 +129,33 @@ describe("workflowExportV1Schema", () => {
     expect(parsed.success).toBe(false);
   });
 
+  it("rejects integrationBindings whose nodeId does not match any node", () => {
+    const payload = buildWorkflowExportV1({
+      name: "x",
+      description: null,
+      nodes: [makeTriggerNode(), makeActionNode()],
+      edges: [makeEdge()],
+    });
+
+    const tampered = {
+      ...payload,
+      integrationBindings: [
+        { nodeId: "ghost-node", integrationType: "discord" },
+      ],
+    };
+
+    const parsed = workflowExportV1Schema.safeParse(tampered);
+
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(parsed.error.issues[0].path).toEqual([
+        "integrationBindings",
+        0,
+        "nodeId",
+      ]);
+    }
+  });
+
   it("rejects a missing required field", () => {
     const parsed = workflowExportV1Schema.safeParse({
       version: WORKFLOW_EXPORT_VERSION,
