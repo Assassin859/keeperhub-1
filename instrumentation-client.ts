@@ -30,6 +30,19 @@ function isEip1193ProviderRejection(event: ErrorEvent): boolean {
   );
 }
 
+// Browser extensions (wallet shims, ad blockers, etc.) inject scripts into the
+// page and throw errors that surface to window.onerror. They show up in Sentry
+// with stacktraces composed entirely of non-app frames (`injected.js`,
+// `injectedScript.bundle.js`, vendor shims). Drop events where the SDK marked
+// every frame as out-of-app — they're third-party noise we can't fix.
+function hasNoInAppFrames(event: ErrorEvent): boolean {
+  const frames = event.exception?.values?.[0]?.stacktrace?.frames;
+  if (!frames || frames.length === 0) {
+    return false;
+  }
+  return !frames.some((frame) => frame.in_app === true);
+}
+
 if (SENTRY_DSN) {
   init({
     dsn: SENTRY_DSN,
@@ -48,6 +61,9 @@ if (SENTRY_DSN) {
 
     beforeSend(event) {
       if (isEip1193ProviderRejection(event)) {
+        return null;
+      }
+      if (hasNoInAppFrames(event)) {
         return null;
       }
       return event;
