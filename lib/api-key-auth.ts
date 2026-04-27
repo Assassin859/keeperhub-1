@@ -20,7 +20,7 @@
 import { createHash } from "node:crypto";
 import { and, eq, gt, isNull, or } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { organizationApiKeys } from "@/lib/db/schema";
+import { organizationApiKeys, users } from "@/lib/db/schema";
 
 export type ApiKeyAuthResult = {
   authenticated: boolean;
@@ -103,6 +103,27 @@ export async function authenticateApiKey(
         error: "Invalid or revoked API key",
         statusCode: 401,
       };
+    }
+
+    // Reject keys whose creator's account is soft-deleted. The deactivation
+    // flow (POST /api/user/delete) only stamps users.deactivatedAt and
+    // deletes sessions; member rows and organizationApiKeys.revokedAt are
+    // not cascaded, so without this check a leaked key from a deactivated
+    // ex-owner stays usable until manually revoked. Keys with no recorded
+    // creator (legacy rows where createdBy IS NULL) are passed through --
+    // there is no user to be deactivated.
+    if (apiKey.createdBy) {
+      const creator = await db.query.users.findFirst({
+        where: eq(users.id, apiKey.createdBy),
+        columns: { deactivatedAt: true },
+      });
+      if (creator?.deactivatedAt) {
+        return {
+          authenticated: false,
+          error: "API key creator account is deactivated",
+          statusCode: 401,
+        };
+      }
     }
 
     // Update last_used_at timestamp (fire and forget, don't block the request)
