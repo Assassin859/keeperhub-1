@@ -72,6 +72,16 @@ Endpoints that act on a user account, hold credential material, or sit on a huma
 
 If you have a use case for session-only behavior over an API key, open an issue describing it. The boundary is deliberate: it keeps a leaked API key from escalating into account control or wallet drainage.
 
+## Deactivated accounts
+
+Deactivating a user account from the dashboard immediately revokes the credentials that user holds, across every supported auth method:
+
+- **Sessions** are deleted server-side. The user is signed out everywhere they were logged in.
+- **Organization API keys** (`kh_`) the user created are soft-revoked (`revokedAt` is stamped). Subsequent requests with those keys return `401`.
+- **MCP OAuth tokens** for the user are rejected at the next request, even if their TTL has not yet elapsed.
+
+There is currently no reactivation flow. If a deactivated user wants to come back, they sign up again and provision new credentials.
+
 ## Webhook Authentication
 
 For webhook triggers, use a user-scoped key (`wfb_`) with the workflow-specific webhook URL:
