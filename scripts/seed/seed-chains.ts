@@ -522,9 +522,9 @@ const EXPLORER_CONFIG_TEMPLATES: Record<
   // Tempo Mainnet - Blockscout
   4217: {
     chainType: "evm",
-    explorerUrl: "https://explorer.tempo.xyz",
+    explorerUrl: "https://explore.mainnet.tempo.xyz",
     explorerApiType: "blockscout",
-    explorerApiUrl: "https://explorer.tempo.xyz/api",
+    explorerApiUrl: "https://explore.mainnet.tempo.xyz/api",
     explorerTxPath: "/tx/{hash}",
     explorerAddressPath: "/address/{address}",
     explorerContractPath: "/address/{address}?tab=contract",

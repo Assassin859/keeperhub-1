@@ -1,9 +1,7 @@
 -- Correct Tempo testnet chainId from 42429 to 42431 per Tempo docs:
 -- https://docs.tempo.xyz/quickstart/connection-details#testnet
--- Also fix explorer URL hosts:
---   testnet: explorer.testnet.tempo.xyz -> explore.testnet.tempo.xyz
---   mainnet: explore.mainnet.tempo.xyz -> explorer.tempo.xyz
--- (per Tempo's published explorer URLs).
+-- Also fix explorer URL host: explorer.testnet.tempo.xyz -> explore.testnet.tempo.xyz
+-- (matches the mainnet 'explore.mainnet.tempo.xyz' pattern).
 --
 -- Workflow node JSON stores the chainId as a numeric string in the per-node
 -- `network` field (see components/workflow/config/chain-select-field.tsx).
@@ -86,16 +84,6 @@ UPDATE "explorer_configs"
   WHERE "chain_id" = 42431
     AND ("explorer_url" = 'https://explorer.testnet.tempo.xyz'
       OR "explorer_api_url" = 'https://explorer.testnet.tempo.xyz/api');
-
--- Tempo mainnet (chain_id 4217): replace explore.mainnet.tempo.xyz with the
--- canonical explorer.tempo.xyz host.
-UPDATE "explorer_configs"
-  SET "explorer_url" = 'https://explorer.tempo.xyz',
-      "explorer_api_url" = 'https://explorer.tempo.xyz/api',
-      "updated_at" = now()
-  WHERE "chain_id" = 4217
-    AND ("explorer_url" = 'https://explore.mainnet.tempo.xyz'
-      OR "explorer_api_url" = 'https://explore.mainnet.tempo.xyz/api');
 
 UPDATE "supported_tokens" SET "chain_id" = 42431 WHERE "chain_id" = 42429;
 UPDATE "organization_tokens" SET "chain_id" = 42431 WHERE "chain_id" = 42429;
