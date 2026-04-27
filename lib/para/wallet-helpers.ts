@@ -1,14 +1,10 @@
 import "server-only";
-import { ParaEthersSigner } from "@getpara/ethers-v6-integration";
-import { Environment, Para as ParaServer } from "@getpara/server-sdk";
 import { TurnkeySigner } from "@turnkey/ethers";
 import { and, eq } from "drizzle-orm";
 import type { ethers } from "ethers";
 import { toChecksumAddress } from "@/lib/address-utils";
 import { db } from "@/lib/db";
 import { type OrganizationWallet, organizationWallets } from "@/lib/db/schema";
-import { decryptUserShare } from "@/lib/encryption";
-import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import { getTurnkeySignerConfig } from "@/lib/turnkey/turnkey-client";
 
@@ -62,7 +58,8 @@ export async function getUserWallet(userId: string) {
 
 /**
  * Initialize an ethers-compatible signer for the organization's active wallet.
- * Dispatches to the correct provider (Para MPC or Turnkey secure enclave).
+ * Turnkey is the only supported signer; legacy Para wallets throw so the
+ * org is forced to provision a Turnkey wallet via the create flow.
  */
 export async function initializeWalletSigner(
   organizationId: string,
@@ -73,10 +70,12 @@ export async function initializeWalletSigner(
   const rpcManager = await getRpcProviderFromUrls(rpcUrl, undefined, chainId);
   const provider = rpcManager.getProvider();
 
-  if (wallet.provider === "turnkey") {
-    return initializeTurnkeySigner(wallet, provider);
+  if (wallet.provider !== "turnkey") {
+    throw new Error(
+      "Para signing is no longer supported. Recreate the wallet via the wallet UI to use Turnkey."
+    );
   }
-  return initializeParaMpcSigner(wallet, provider);
+  return initializeTurnkeySigner(wallet, provider);
 }
 
 function initializeTurnkeySigner(
@@ -99,44 +98,6 @@ function initializeTurnkeySigner(
   });
 
   return signer.connect(provider);
-}
-
-async function initializeParaMpcSigner(
-  wallet: { userShare: string | null },
-  provider: ethers.Provider
-): Promise<ethers.Signer> {
-  const PARA_API_KEY = process.env.PARA_API_KEY;
-  const PARA_ENV = process.env.PARA_ENVIRONMENT ?? "beta";
-
-  if (!PARA_API_KEY) {
-    logSystemError(
-      ErrorCategory.INFRASTRUCTURE,
-      "[Para] PARA_API_KEY not configured",
-      new Error("PARA_API_KEY environment variable is not configured"),
-      { component: "para-service", service: "para" }
-    );
-    throw new Error("PARA_API_KEY not configured");
-  }
-
-  if (!wallet.userShare) {
-    throw new Error("Para wallet missing user share");
-  }
-
-  const paraClient = new ParaServer(
-    PARA_ENV === "prod" ? Environment.PROD : Environment.BETA,
-    PARA_API_KEY
-  );
-
-  const decryptedShare = decryptUserShare(wallet.userShare);
-  await paraClient.setUserShare(decryptedShare);
-
-  const signer = new ParaEthersSigner(
-    // biome-ignore lint/suspicious/noExplicitAny: Para server-sdk type incompatibility with core-sdk ParaCore
-    paraClient as any,
-    provider
-  );
-
-  return signer;
 }
 
 /**

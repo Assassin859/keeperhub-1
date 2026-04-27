@@ -248,14 +248,13 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.json({
       hasWallet: true,
       id: wallet.id,
-      provider: wallet.provider,
-      canExportKey: wallet.provider === "turnkey",
+      canExportKey: wallet.turnkeySubOrgId !== null,
       // Only the wallet creator may export its key, regardless of org role.
       // For API-key callers without a recorded creator (userId === null) this
       // resolves to false, which is correct: key export is session-only.
       isOwner: userId !== null && wallet.userId === userId,
       walletAddress: wallet.walletAddress,
-      walletId: wallet.paraWalletId ?? wallet.turnkeyWalletId,
+      walletId: wallet.turnkeyWalletId,
       email: wallet.email,
       createdAt: wallet.createdAt,
       organizationId: wallet.organizationId,
