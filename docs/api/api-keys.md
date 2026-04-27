@@ -54,7 +54,7 @@ The full key is never returned after creation.
 POST /api/keys
 ```
 
-**Session authentication required.** Cannot be invoked with an API key -- otherwise a leaked key could mint additional keys for the same organization.
+**Session authentication required.** Cannot be invoked with an API key. Otherwise a leaked key could mint additional keys for the same organization.
 
 #### Request Body
 
