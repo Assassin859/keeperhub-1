@@ -181,6 +181,33 @@ describe("GET /api/workflows/[workflowId]/download", () => {
     // "add" placeholder node and its edge are filtered out.
     expect(body.nodes.map((n: { id: string }) => n.id)).not.toContain("add-1");
     expect(body.edges.map((e: { id: string }) => e.id)).not.toContain("e2");
+
+    expect(mockIncrementCounter).toHaveBeenCalledWith(
+      "workflow.exports.total"
+    );
+  });
+
+  it("does not increment the export counter on a 404", async () => {
+    mockDbQuery.workflows.findFirst.mockResolvedValue({
+      ...storedWorkflow,
+      userId: "someone-else",
+      organizationId: "other-org",
+    });
+
+    const { GET } = await import(
+      "@/app/api/workflows/[workflowId]/download/route"
+    );
+    const request = new Request(
+      "http://localhost/api/workflows/wf-export-1/download"
+    );
+    const response = await GET(request, {
+      params: Promise.resolve({ workflowId: "wf-export-1" }),
+    });
+
+    expect(response.status).toBe(404);
+    expect(mockIncrementCounter).not.toHaveBeenCalledWith(
+      "workflow.exports.total"
+    );
   });
 
   it("returns 404 when the caller does not own the workflow and is not in the org", async () => {
