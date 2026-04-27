@@ -35,6 +35,7 @@ import {
   getOrgSubscription,
   getPriceId,
   resolvePriceId,
+  resolveSubscriptionPlan,
 } from "@/lib/billing/plans-server";
 
 beforeEach(() => {
@@ -345,5 +346,73 @@ describe("resolvePriceId", () => {
         }
       }
     }
+  });
+});
+
+describe("resolveSubscriptionPlan", () => {
+  it("falls back to subscription metadata for custom enterprise prices", () => {
+    const resolved = resolveSubscriptionPlan("price_custom_acme_inc", {
+      subscription: { plan: "enterprise", interval: "yearly" },
+    });
+    expect(resolved).toEqual({
+      plan: "enterprise",
+      tier: null,
+      interval: "yearly",
+    });
+  });
+
+  it("uses price metadata when subscription metadata is absent", () => {
+    const resolved = resolveSubscriptionPlan("price_custom_globex", {
+      price: { plan: "enterprise", interval: "monthly" },
+    });
+    expect(resolved).toEqual({
+      plan: "enterprise",
+      tier: null,
+      interval: "monthly",
+    });
+  });
+
+  it("subscription metadata wins over price metadata", () => {
+    const resolved = resolveSubscriptionPlan("price_custom", {
+      subscription: { plan: "enterprise", interval: "yearly" },
+      price: { plan: "business", tier: "1m", interval: "monthly" },
+    });
+    expect(resolved?.plan).toBe("enterprise");
+    expect(resolved?.interval).toBe("yearly");
+  });
+
+  it("returns null interval when metadata interval is missing", () => {
+    const resolved = resolveSubscriptionPlan("price_custom", {
+      subscription: { plan: "enterprise" },
+    });
+    expect(resolved?.interval).toBeNull();
+  });
+
+  it("ignores invalid plan names in metadata", () => {
+    const resolved = resolveSubscriptionPlan("price_unknown", {
+      subscription: { plan: "platinum" as unknown as string },
+    });
+    expect(resolved).toBeUndefined();
+  });
+
+  it("returns undefined when neither env-var map nor metadata can resolve", () => {
+    const resolved = resolveSubscriptionPlan("price_unknown_xyz");
+    expect(resolved).toBeUndefined();
+  });
+
+  it("env-var price ID takes precedence over metadata", () => {
+    if (!hasStripeEnv) {
+      return;
+    }
+    const priceId = String(process.env.STRIPE_PRICE_PRO_25K_MONTHLY);
+    const resolved = resolveSubscriptionPlan(priceId, {
+      subscription: { plan: "enterprise", interval: "yearly" },
+    });
+    // env-var match wins, metadata ignored
+    expect(resolved).toEqual({
+      plan: "pro",
+      tier: "25k",
+      interval: "monthly",
+    });
   });
 });

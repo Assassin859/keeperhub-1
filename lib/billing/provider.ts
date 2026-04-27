@@ -33,6 +33,10 @@ export type BillingWebhookEvent = {
     periodStart?: Date;
     periodEnd?: Date | null;
     invoiceUrl?: string;
+    // Metadata from Stripe used to resolve custom enterprise plans whose price
+    // IDs aren't in the env-var map. Subscription metadata takes precedence.
+    subscriptionMetadata?: Record<string, string>;
+    priceMetadata?: Record<string, string>;
   };
 };
 
@@ -66,6 +70,8 @@ export type SubscriptionDetails = {
   cancelAtPeriodEnd: boolean;
   periodStart: Date;
   periodEnd: Date | null;
+  subscriptionMetadata?: Record<string, string>;
+  priceMetadata?: Record<string, string>;
 };
 
 export type CreateInvoiceItemParams = {

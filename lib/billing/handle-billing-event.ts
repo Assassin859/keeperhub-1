@@ -7,7 +7,7 @@ import {
 import { BILLING_ALERTS } from "./constants";
 import { clearAllDebtForOrg, clearDebtForInvoice } from "./execution-debt";
 import { billOverageForOrg } from "./overage";
-import { resolvePriceId } from "./plans-server";
+import { resolveSubscriptionPlan } from "./plans-server";
 import type { BillingProvider, BillingWebhookEvent } from "./provider";
 
 const LOG_PREFIX = "[Billing Handler]";
@@ -120,7 +120,10 @@ async function handleCheckoutCompleted(
     return;
   }
 
-  const resolved = resolvePriceId(details.priceId);
+  const resolved = resolveSubscriptionPlan(details.priceId, {
+    subscription: details.subscriptionMetadata,
+    price: details.priceMetadata,
+  });
   if (!resolved) {
     console.error(
       LOG_PREFIX,
@@ -174,12 +177,25 @@ function buildSubscriptionUpdate(
   data: BillingWebhookEvent["data"],
   current: SubscriptionRow
 ): Record<string, unknown> {
-  const { priceId, status, cancelAtPeriodEnd, periodStart, periodEnd } = data;
+  const {
+    priceId,
+    status,
+    cancelAtPeriodEnd,
+    periodStart,
+    periodEnd,
+    subscriptionMetadata,
+    priceMetadata,
+  } = data;
 
   const priceChanged =
     priceId !== undefined && priceId !== current.providerPriceId;
   const resolved =
-    priceChanged && priceId ? resolvePriceId(priceId) : undefined;
+    priceChanged && priceId
+      ? resolveSubscriptionPlan(priceId, {
+          subscription: subscriptionMetadata,
+          price: priceMetadata,
+        })
+      : undefined;
 
   console.info(
     LOG_PREFIX,

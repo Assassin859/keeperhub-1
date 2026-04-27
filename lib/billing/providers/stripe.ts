@@ -46,6 +46,18 @@ const EVENT_TYPE_MAP: Record<string, BillingWebhookEvent["type"] | undefined> =
     "invoice.payment_action_required": "invoice.payment_action_required",
   };
 
+function pickMetadata(
+  metadata: Stripe.Metadata | null | undefined
+): Record<string, string> | undefined {
+  if (!metadata) {
+    return undefined;
+  }
+  const entries = Object.entries(metadata).filter(
+    ([, v]) => typeof v === "string" && v.length > 0
+  );
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
 function getSubscriptionPeriod(subscription: Stripe.Subscription): {
   start: Date;
   end: Date | null;
@@ -102,7 +114,8 @@ function normalizeSubscriptionEvent(
   subscription: Stripe.Subscription,
   type: "subscription.updated" | "subscription.deleted"
 ): BillingWebhookEvent {
-  const priceId = subscription.items.data[0]?.price.id;
+  const item = subscription.items.data[0];
+  const priceId = item?.price.id;
   const period = getSubscriptionPeriod(subscription);
 
   const cancelAtPeriodEnd =
@@ -118,6 +131,8 @@ function normalizeSubscriptionEvent(
       periodStart: period.start,
       periodEnd: period.end,
       priceId,
+      subscriptionMetadata: pickMetadata(subscription.metadata),
+      priceMetadata: pickMetadata(item?.price.metadata),
     },
   };
 }
@@ -451,7 +466,8 @@ export class StripeBillingProvider implements BillingProvider {
   ): Promise<SubscriptionDetails> {
     const subscription =
       await getStripe().subscriptions.retrieve(subscriptionId);
-    const priceId = subscription.items.data[0]?.price.id;
+    const item = subscription.items.data[0];
+    const priceId = item?.price.id;
     const period = getSubscriptionPeriod(subscription);
 
     return {
@@ -460,6 +476,8 @@ export class StripeBillingProvider implements BillingProvider {
       cancelAtPeriodEnd: subscription.cancel_at_period_end,
       periodStart: period.start,
       periodEnd: period.end,
+      subscriptionMetadata: pickMetadata(subscription.metadata),
+      priceMetadata: pickMetadata(item?.price.metadata),
     };
   }
 

@@ -39,7 +39,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     const sub = await getOrgSubscription(activeOrgId);
     const plan = parsePlanName(sub?.plan);
     const tier = parseTierKey(sub?.tier);
-    const limits = getPlanLimits(plan, tier);
+    const limits = getPlanLimits(plan, tier, sub?.planOverrides);
     const resolved = sub?.providerPriceId
       ? resolvePriceId(sub.providerPriceId)
       : undefined;
