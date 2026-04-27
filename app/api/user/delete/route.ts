@@ -1,8 +1,8 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { sessions, users } from "@/lib/db/schema";
+import { organizationApiKeys, sessions, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 
 /**
@@ -54,13 +54,30 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     // Deactivate the account
+    const now = new Date();
     await db
       .update(users)
-      .set({ deactivatedAt: new Date(), updatedAt: new Date() })
+      .set({ deactivatedAt: now, updatedAt: now })
       .where(eq(users.id, userId));
 
     // Invalidate all sessions
     await db.delete(sessions).where(eq(sessions.userId, userId));
+
+    // Soft-revoke any organization API keys this user issued. Without this,
+    // a kh_ key with createdBy = userId would survive deactivation and
+    // remain usable until manually revoked. authenticateApiKey() also
+    // gates on users.deactivatedAt as defence-in-depth, but revoking here
+    // is the proper cleanup so the rejection path rarely fires in steady
+    // state.
+    await db
+      .update(organizationApiKeys)
+      .set({ revokedAt: now })
+      .where(
+        and(
+          eq(organizationApiKeys.createdBy, userId),
+          isNull(organizationApiKeys.revokedAt)
+        )
+      );
 
     return NextResponse.json({
       success: true,
