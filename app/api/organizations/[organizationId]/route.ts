@@ -1,9 +1,13 @@
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { member, organization } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import {
+  type DualAuthContext,
+  auditFromAuth,
+  getDualAuthContext,
+} from "@/lib/middleware/auth-helpers";
 
 type UpdateOrganizationNameRequest = {
   name?: string;
@@ -12,16 +16,35 @@ type UpdateOrganizationNameRequest = {
 export async function PATCH(
   request: Request,
   context: { params: Promise<{ organizationId: string }> }
-) {
+): Promise<NextResponse> {
+  let authContext: DualAuthContext | null = null;
   try {
     const { organizationId } = await context.params;
 
-    const session = await auth.api.getSession({
-      headers: request.headers,
-    });
+    authContext = await getDualAuthContext(request);
+    if ("error" in authContext) {
+      return NextResponse.json(
+        { error: authContext.error },
+        { status: authContext.status }
+      );
+    }
 
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { userId, organizationId: callerOrgId, authMethod } = authContext;
+    if (!userId) {
+      return NextResponse.json(
+        { error: "Auth context missing user. Please recreate the API key." },
+        { status: 400 }
+      );
+    }
+
+    // Hard-scope only API-key callers to their own org. Session users may
+    // legitimately PATCH an org other than their currently-active session
+    // org (a user can own multiple orgs without switching first); the
+    // owner-membership query below gates that path on member.role = 'owner'
+    // so cross-org owners are still authorized when authenticating via
+    // session. API keys are by design org-scoped to the key's home org.
+    if (authMethod === "api-key" && callerOrgId !== organizationId) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     const body = (await request.json()) as UpdateOrganizationNameRequest;
@@ -48,7 +71,7 @@ export async function PATCH(
       .where(
         and(
           eq(member.organizationId, organizationId),
-          eq(member.userId, session.user.id),
+          eq(member.userId, userId),
           eq(member.role, "owner")
         )
       )
@@ -80,7 +103,11 @@ export async function PATCH(
       ErrorCategory.DATABASE,
       "Failed to update organization",
       error,
-      { endpoint: "/api/organizations/[organizationId]", operation: "update" }
+      {
+        endpoint: "/api/organizations/[organizationId]",
+        operation: "update",
+        ...auditFromAuth(authContext),
+      }
     );
     return NextResponse.json(
       { error: "Failed to update organization" },

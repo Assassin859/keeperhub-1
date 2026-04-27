@@ -60,6 +60,7 @@ describe("getDualAuthContext", () => {
         userId: "user_oauth",
         organizationId: "org_oauth",
         authMethod: "oauth",
+        apiKeyId: null,
       });
       expect(mockAuthenticateApiKey).not.toHaveBeenCalled();
       expect(mockGetSession).not.toHaveBeenCalled();
@@ -82,6 +83,7 @@ describe("getDualAuthContext", () => {
         userId: "user_creator",
         organizationId: "org_123",
         authMethod: "api-key",
+        apiKeyId: null,
       });
       expect(mockGetSession).not.toHaveBeenCalled();
     });
@@ -98,6 +100,25 @@ describe("getDualAuthContext", () => {
         userId: null,
         organizationId: "org_123",
         authMethod: "api-key",
+        apiKeyId: null,
+      });
+    });
+
+    it("propagates apiKeyId through to the auth context", async () => {
+      mockAuthenticateApiKey.mockResolvedValue({
+        authenticated: true,
+        organizationId: "org_123",
+        userId: "user_creator",
+        apiKeyId: "key-abc",
+      });
+
+      const result = await getDualAuthContext(makeRequest());
+
+      expect(result).toEqual({
+        userId: "user_creator",
+        organizationId: "org_123",
+        authMethod: "api-key",
+        apiKeyId: "key-abc",
       });
     });
 
@@ -119,6 +140,7 @@ describe("getDualAuthContext", () => {
         userId: "user_creator",
         organizationId: "org_native",
         authMethod: "api-key",
+        apiKeyId: null,
       });
     });
   });
@@ -142,6 +164,7 @@ describe("getDualAuthContext", () => {
         userId: "user_session",
         organizationId: "org_session",
         authMethod: "session",
+        apiKeyId: null,
       });
     });
 
@@ -157,6 +180,7 @@ describe("getDualAuthContext", () => {
         userId: "user_no_org",
         organizationId: null,
         authMethod: "session",
+        apiKeyId: null,
       });
     });
   });
@@ -182,6 +206,7 @@ describe("getDualAuthContext", () => {
         userId: null,
         organizationId: null,
         authMethod: "session",
+        apiKeyId: null,
       });
     });
   });
@@ -205,6 +230,7 @@ describe("getDualAuthContext", () => {
         userId: "user_oauth",
         organizationId: "org_oauth",
         authMethod: "oauth",
+        apiKeyId: null,
       });
       expect(mockAuthenticateApiKey).not.toHaveBeenCalled();
     });
@@ -225,6 +251,7 @@ describe("getDualAuthContext", () => {
         userId: "user_apikey",
         organizationId: "org_apikey",
         authMethod: "api-key",
+        apiKeyId: null,
       });
       expect(mockGetSession).not.toHaveBeenCalled();
     });

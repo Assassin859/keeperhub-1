@@ -20,7 +20,7 @@
 import { createHash } from "node:crypto";
 import { and, eq, gt, isNull, or } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { organizationApiKeys } from "@/lib/db/schema";
+import { organizationApiKeys, users } from "@/lib/db/schema";
 
 export type ApiKeyAuthResult = {
   authenticated: boolean;
@@ -80,27 +80,52 @@ export async function authenticateApiKey(
 
     const now = new Date();
 
-    // Find the API key in the database
-    const apiKey = await db.query.organizationApiKeys.findFirst({
-      where: and(
-        eq(organizationApiKeys.keyHash, keyHash),
-        isNull(organizationApiKeys.revokedAt), // Only active keys
-        or(
-          isNull(organizationApiKeys.expiresAt),
-          gt(organizationApiKeys.expiresAt, now)
+    // Find the API key plus the creator's deactivation flag in a single
+    // query. The leftJoin keeps legacy rows with createdBy IS NULL working
+    // (their creator row is null and the deactivation guard below
+    // short-circuits).
+    const rows = await db
+      .select({
+        id: organizationApiKeys.id,
+        organizationId: organizationApiKeys.organizationId,
+        createdBy: organizationApiKeys.createdBy,
+        creatorDeactivatedAt: users.deactivatedAt,
+      })
+      .from(organizationApiKeys)
+      .leftJoin(users, eq(users.id, organizationApiKeys.createdBy))
+      .where(
+        and(
+          eq(organizationApiKeys.keyHash, keyHash),
+          isNull(organizationApiKeys.revokedAt), // Only active keys
+          or(
+            isNull(organizationApiKeys.expiresAt),
+            gt(organizationApiKeys.expiresAt, now)
+          )
         )
-      ),
-      columns: {
-        id: true,
-        organizationId: true,
-        createdBy: true,
-      },
-    });
+      )
+      .limit(1);
+
+    const apiKey = rows[0];
 
     if (!apiKey) {
       return {
         authenticated: false,
         error: "Invalid or revoked API key",
+        statusCode: 401,
+      };
+    }
+
+    // Reject keys whose creator's account is soft-deleted. The deactivation
+    // flow (POST /api/user/delete) only stamps users.deactivatedAt and
+    // deletes sessions; member rows and organizationApiKeys.revokedAt are
+    // not cascaded, so without this check a leaked key from a deactivated
+    // ex-owner stays usable until manually revoked. Keys with no recorded
+    // creator (legacy rows where createdBy IS NULL) are passed through --
+    // there is no user to be deactivated.
+    if (apiKey.createdBy && apiKey.creatorDeactivatedAt) {
+      return {
+        authenticated: false,
+        error: "API key creator account is deactivated",
         statusCode: 401,
       };
     }

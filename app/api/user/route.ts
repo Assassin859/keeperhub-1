@@ -4,20 +4,34 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { accounts, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import {
+  type DualAuthContext,
+  auditFromAuth,
+  getDualAuthContext,
+} from "@/lib/middleware/auth-helpers";
 import { getUserWallet } from "@/lib/para/wallet-helpers";
 
-export async function GET(request: Request) {
+export async function GET(request: Request): Promise<NextResponse> {
+  let authContext: DualAuthContext | null = null;
   try {
-    const session = await auth.api.getSession({
-      headers: request.headers,
-    });
+    authContext = await getDualAuthContext(request);
+    if ("error" in authContext) {
+      return NextResponse.json(
+        { error: authContext.error },
+        { status: authContext.status }
+      );
+    }
 
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { userId } = authContext;
+    if (!userId) {
+      return NextResponse.json(
+        { error: "Auth context missing user. Please recreate the API key." },
+        { status: 400 }
+      );
     }
 
     const userData = await db.query.users.findFirst({
-      where: eq(users.id, session.user.id),
+      where: eq(users.id, userId),
       columns: {
         id: true,
         name: true,
@@ -31,21 +45,18 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    // Get the user's account to determine auth provider
     const userAccount = await db.query.accounts.findFirst({
-      where: eq(accounts.userId, session.user.id),
+      where: eq(accounts.userId, userId),
       columns: {
         providerId: true,
       },
     });
 
-    // Get the user's wallet address (if exists)
     let walletAddress: string | null = null;
     try {
-      const wallet = await getUserWallet(session.user.id);
+      const wallet = await getUserWallet(userId);
       walletAddress = wallet.walletAddress;
-    } catch (_error) {
-      // User doesn't have a wallet yet, that's ok
+    } catch {
       walletAddress = null;
     }
 
@@ -58,6 +69,7 @@ export async function GET(request: Request) {
     logSystemError(ErrorCategory.DATABASE, "Failed to get user", error, {
       endpoint: "/api/user",
       operation: "get",
+      ...auditFromAuth(authContext),
     });
     return NextResponse.json(
       {
