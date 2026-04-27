@@ -156,7 +156,10 @@ export function buildWorkflowExportV1(workflow: {
     exportedAt: new Date().toISOString(),
     workflow: {
       name: workflow.name,
-      ...(workflow.description ? { description: workflow.description } : {}),
+      // Preserve empty strings; only null/undefined collapse to "no description".
+      ...(workflow.description != null
+        ? { description: workflow.description }
+        : {}),
     },
     nodes: exportNodes as WorkflowExportV1["nodes"],
     edges: persistedEdges as WorkflowExportV1["edges"],

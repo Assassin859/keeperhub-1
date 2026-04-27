@@ -84,6 +84,24 @@ describe("buildWorkflowExportV1", () => {
     ]);
   });
 
+  it("preserves an empty-string description but omits null", () => {
+    const empty = buildWorkflowExportV1({
+      name: "x",
+      description: "",
+      nodes: [makeTriggerNode()],
+      edges: [],
+    });
+    expect(empty.workflow).toEqual({ name: "x", description: "" });
+
+    const nullDesc = buildWorkflowExportV1({
+      name: "x",
+      description: null,
+      nodes: [makeTriggerNode()],
+      edges: [],
+    });
+    expect(nullDesc.workflow).toEqual({ name: "x" });
+  });
+
   it("emits the current version literal and an ISO timestamp", () => {
     const exportPayload = buildWorkflowExportV1({
       name: "test",
