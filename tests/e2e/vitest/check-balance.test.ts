@@ -281,7 +281,7 @@ describe("Check Balance E2E", () => {
       expect(isSolanaChain(103)).toBe(true); // Solana Devnet
       expect(isSolanaChain(1)).toBe(false); // Ethereum Mainnet
       expect(isSolanaChain(8453)).toBe(false); // Base
-      expect(isSolanaChain(42_429)).toBe(false); // Tempo Testnet
+      expect(isSolanaChain(42_431)).toBe(false); // Tempo Testnet
     });
   });
 

@@ -4,7 +4,7 @@ import {
   type AbiItem,
   computeSelector,
   findAbiFunction,
-} from "@/lib/abi-utils";
+} from "@/lib/abi/utils";
 
 const SELECTOR_PATTERN = /^0x[\da-f]{8}$/;
 

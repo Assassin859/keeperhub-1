@@ -1,0 +1,103 @@
+# KeeperHub
+
+> KeeperHub is a Web3 workflow automation platform that lets users and AI agents build, schedule, and execute on-chain workflows — smart contract monitoring, token transfers, DeFi operations, multi-channel notifications — through a visual builder, a CLI, a REST API, or an MCP server.
+
+A KeeperHub workflow is a directed graph of **nodes**. A node is either a **trigger** (Manual, Schedule, Webhook, Event, Block) or an **action** (provided by a **plugin**). Nodes connect via **edges** with named **source handles** (e.g. `true`/`false` outputs on a Condition node). Runtime values flow between nodes using template syntax: `{{@nodeId:Label.field}}`. A single run of a workflow is an **execution**, tracked with status, logs, and metrics.
+
+Agents have three programmatic surfaces: (1) the **MCP server** at `https://app.keeperhub.com/mcp` for direct tool use from Claude Desktop, Claude Code, and other MCP clients; (2) the **REST API** under `https://app.keeperhub.com/api` for general programmatic control; (3) the **Claude Code plugin marketplace** at `github.com/KeeperHub/claude-plugins` for an opinionated workflow-building skill set.
+
+## Sites
+
+KeeperHub spans three public domains. The canonical `llms.txt` is this file at `docs.keeperhub.com/llms.txt`; `keeperhub.com/llms.txt` and `app.keeperhub.com/llms.txt` 308-redirect here.
+
+### keeperhub.com — marketing site
+
+For product overview, pricing, comparisons, and prospective-customer material.
+
+- [Home](https://keeperhub.com): Product overview
+- [Pricing](https://keeperhub.com/pricing): Tiers, execution quotas, gas credits
+- [DeFi protocols](https://keeperhub.com/defi-protocols): Use cases for protocol teams
+- [DAOs](https://keeperhub.com/daos): Use cases for DAO operators
+- [Enterprise](https://keeperhub.com/enterprise): SLAs, custom deployments, contact
+- [Compare](https://keeperhub.com/compare): vs. [Chainlink Automation](https://keeperhub.com/compare/chainlink), [OpenZeppelin Defender](https://keeperhub.com/compare/defender), [Gelato](https://keeperhub.com/compare/gelato), [Hypernative](https://keeperhub.com/compare/hypernative)
+- [Blog](https://keeperhub.com/blog): Engineering and product writing
+
+### app.keeperhub.com — web app
+
+The interactive product. Most routes require auth, but the surfaces below are how agents and integrators reach the platform programmatically.
+
+- [Sign in](https://app.keeperhub.com): Entry point to the workflow builder, runs view, wallets, billing
+- [Hub](https://app.keeperhub.com/hub): Browseable catalog of supported protocols and plugins
+- [REST API](https://app.keeperhub.com/api): Base path for programmatic control (see [/api docs](https://docs.keeperhub.com/api))
+- [OpenAPI spec](https://app.keeperhub.com/api/openapi): Machine-readable schema for the REST API
+- [MCP server](https://app.keeperhub.com/mcp): OAuth-authenticated Model Context Protocol endpoint for LLM clients
+
+### docs.keeperhub.com — documentation
+
+This site. Canonical reference for concepts, node configuration, plugins, API, CLI, and AI tooling. The deep-link map for docs is in the sections below.
+
+## Docs
+
+- [Introduction](https://docs.keeperhub.com/intro/overview): What KeeperHub is and the problem it solves
+- [Concepts](https://docs.keeperhub.com/intro/concepts): Workflow, node, trigger, action, edge, execution
+- [Benefits](https://docs.keeperhub.com/intro/benefits): Why use KeeperHub over rolling your own automation
+- [Getting Started](https://docs.keeperhub.com/getting-started): Build your first workflow
+- [Node Types](https://docs.keeperhub.com/keepers/overview): Triggers, actions, system steps, conditionals
+- [Node Configuration](https://docs.keeperhub.com/keepers/configuration): Configuring nodes and template references
+- [Workflow Introduction](https://docs.keeperhub.com/workflows/introduction): Workflow model and lifecycle
+- [Creating Workflows](https://docs.keeperhub.com/workflows/creating): Builder walkthrough
+- [Paid Workflows](https://docs.keeperhub.com/workflows/paid-workflows): Monetised workflows
+- [Workflow Examples](https://docs.keeperhub.com/workflows/examples): End-to-end patterns
+- [Keeper Runs](https://docs.keeperhub.com/keeper-runs): Execution status, logs, performance, troubleshooting
+- [Wallet Management](https://docs.keeperhub.com/wallet-management): Para MPC wallets, gas, address book
+- [Notifications](https://docs.keeperhub.com/notifications): Connections and message templates
+- [Best Practices](https://docs.keeperhub.com/practices): Security and reliability
+- [Users and Organizations](https://docs.keeperhub.com/users-teams-orgs): Team and org model
+- [API](https://docs.keeperhub.com/api): REST API reference
+- [CLI](https://docs.keeperhub.com/cli): Command-line interface
+- [Guides](https://docs.keeperhub.com/guides): Migration from OpenZeppelin Defender, Gelato
+- [FAQ](https://docs.keeperhub.com/FAQ): Common questions
+
+## AI tools
+
+- [AI Tools Overview](https://docs.keeperhub.com/ai-tools/overview): How agents interact with KeeperHub
+- [MCP Server](https://docs.keeperhub.com/ai-tools/mcp-server): OAuth-authenticated MCP server exposing workflow catalog, schema introspection, and execution
+- [Claude Code Plugin](https://docs.keeperhub.com/ai-tools/claude-code-plugin): Marketplace install and skill set
+- [Agentic Wallets](https://docs.keeperhub.com/ai-tools/agentic-wallet): Para MPC wallet model for autonomous agents
+
+## Plugins
+
+- [Plugin Overview](https://docs.keeperhub.com/plugins/overview): Plugin model and authoring
+- [Web3](https://docs.keeperhub.com/plugins/web3): Read and write smart contracts, transfer funds and tokens; auto-detects EIP-1967/1822/Diamond proxies; auto-fetches verified ABIs
+- [Code](https://docs.keeperhub.com/plugins/code): Execute JavaScript steps with access to prior node outputs
+- [Math](https://docs.keeperhub.com/plugins/math): Numeric operations and conversions
+- [Safe](https://docs.keeperhub.com/plugins/safe): Gnosis Safe interactions
+
+### DeFi protocol plugins
+
+- [Aave V3](https://docs.keeperhub.com/plugins/aave-v3)
+- [Aerodrome](https://docs.keeperhub.com/plugins/aerodrome)
+- [Ajna](https://docs.keeperhub.com/plugins/ajna)
+- [Chainlink](https://docs.keeperhub.com/plugins/chainlink)
+- [Compound V3](https://docs.keeperhub.com/plugins/compound)
+- [CoW Swap](https://docs.keeperhub.com/plugins/cowswap)
+- [Curve](https://docs.keeperhub.com/plugins/curve)
+- [Lido](https://docs.keeperhub.com/plugins/lido)
+- [Morpho](https://docs.keeperhub.com/plugins/morpho)
+- [Pendle](https://docs.keeperhub.com/plugins/pendle)
+- [Rocket Pool](https://docs.keeperhub.com/plugins/rocket-pool)
+- [Sky](https://docs.keeperhub.com/plugins/sky)
+- [Spark](https://docs.keeperhub.com/plugins/spark)
+- [Uniswap](https://docs.keeperhub.com/plugins/uniswap)
+
+### Notification plugins
+
+- [Discord](https://docs.keeperhub.com/plugins/discord): Send messages to Discord channels via webhooks
+- [Telegram](https://docs.keeperhub.com/plugins/telegram): Send messages to Telegram chats via bot API
+- [SendGrid](https://docs.keeperhub.com/plugins/sendgrid): Transactional email
+- [Webhook](https://docs.keeperhub.com/plugins/webhook): Send HTTP requests to arbitrary endpoints
+
+## Optional
+
+- [GitHub: KeeperHub/claude-plugins](https://github.com/KeeperHub/claude-plugins): Claude Code plugin marketplace source
+- [Contact](mailto:sales@keeperhub.io)

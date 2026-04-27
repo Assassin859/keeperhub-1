@@ -3,7 +3,7 @@ import "server-only";
 import { fetchCredentials } from "@/lib/credential-fetcher";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
-import { type StepInput, withStepLogging } from "@/lib/steps/step-handler";
+import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import type { TelegramCredentials } from "../credentials";
 
 type TelegramApiResponse = {

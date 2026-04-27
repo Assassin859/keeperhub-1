@@ -3,10 +3,13 @@
 import { useAtom } from "jotai";
 import type { CSSProperties } from "react";
 import { useEffect, useRef, useState } from "react";
-import { doesNodeExist, getDisplayTextForTemplate } from "@/lib/template-utils";
+import { doesNodeExist, getDisplayTextForTemplate } from "@/lib/workflow/editor/template-utils";
 import { cn } from "@/lib/utils";
-import { nodesAtom, selectedNodeAtom } from "@/lib/workflow-store";
-import { TemplateAutocomplete } from "./template-autocomplete";
+import { nodesAtom, selectedNodeAtom } from "@/lib/workflow/store";
+import {
+  TemplateAutocomplete,
+  type TemplateAutocompleteCloseReason,
+} from "./template-autocomplete";
 
 export interface TemplateBadgeTextareaProps {
   value?: string;
@@ -114,9 +117,37 @@ export function TemplateBadgeTextarea({
   // Autocomplete state
   const [showAutocomplete, setShowAutocomplete] = useState(false);
   const [autocompletePosition, setAutocompletePosition] = useState({ top: 0, left: 0 });
-  const [autocompleteFilter, setAutocompleteFilter] = useState("");
   const [atSignPosition, setAtSignPosition] = useState<number | null>(null);
   const pendingCursorPosition = useRef<number | null>(null);
+
+  const openAutocompleteAtAt = (atPosition: number): void => {
+    setAtSignPosition(atPosition);
+    if (contentRef.current) {
+      const textareaRect = contentRef.current.getBoundingClientRect();
+      setAutocompletePosition({
+        top: textareaRect.bottom + window.scrollY + 4,
+        left: textareaRect.left + window.scrollX,
+      });
+    }
+    setShowAutocomplete(true);
+  };
+
+  const closeAutocomplete = (reason: TemplateAutocompleteCloseReason): void => {
+    setShowAutocomplete(false);
+    setAtSignPosition(null);
+    if (reason === "escape") {
+      // Return focus to the editor so the user can keep typing.
+      contentRef.current?.focus();
+      return;
+    }
+    // "outside": user clicked somewhere else. Don't refocus; also sync
+    // isFocused so the "@" chip hides if focus no longer lives in the editor.
+    setTimeout(() => {
+      if (document.activeElement !== contentRef.current) {
+        setIsFocused(false);
+      }
+    }, 0);
+  };
 
   // Update internal value when prop changes from outside
   useEffect(() => {
@@ -135,21 +166,20 @@ export function TemplateBadgeTextarea({
 
   // Save cursor position
   const saveCursorPosition = (): { offset: number } | null => {
-    if (!contentRef.current) return null;
-    
-    const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0) {
-      console.log("[Textarea] saveCursorPosition: No selection");
+    if (!contentRef.current) {
       return null;
     }
-    
+
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+      return null;
+    }
+
     const range = selection.getRangeAt(0);
     const preCaretRange = range.cloneRange();
     preCaretRange.selectNodeContents(contentRef.current);
     preCaretRange.setEnd(range.endContainer, range.endOffset);
-    
-    console.log("[Textarea] saveCursorPosition: range.endContainer", range.endContainer, "endOffset", range.endOffset);
-    
+
     // Calculate offset considering badges as single characters
     let offset = 0;
     const walker = document.createTreeWalker(
@@ -157,19 +187,16 @@ export function TemplateBadgeTextarea({
       NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT,
       null
     );
-    
-    let node;
+
+    let node: Node | null;
     let found = false;
-    while ((node = walker.nextNode()) && !found) {
+    while (!found && (node = walker.nextNode())) {
       if (node.nodeType === Node.TEXT_NODE) {
         if (node === range.endContainer) {
           offset += range.endOffset;
           found = true;
-          console.log("[Textarea] saveCursorPosition: Found cursor in text node, offset:", offset);
         } else {
-          const textLength = (node.textContent || "").length;
-          offset += textLength;
-          console.log("[Textarea] saveCursorPosition: Text node before cursor, length:", textLength);
+          offset += (node.textContent ?? "").length;
         }
       } else if (node.nodeType === Node.ELEMENT_NODE) {
         const element = node as HTMLElement;
@@ -178,23 +205,19 @@ export function TemplateBadgeTextarea({
           if (element.contains(range.endContainer) || element === range.endContainer) {
             offset += template.length;
             found = true;
-            console.log("[Textarea] saveCursorPosition: Found cursor in badge, offset:", offset);
           } else {
             offset += template.length;
-            console.log("[Textarea] saveCursorPosition: Badge before cursor, length:", template.length);
           }
         } else if (element.tagName === "BR") {
           if (element === range.endContainer || element.contains(range.endContainer)) {
             found = true;
           } else {
             offset += 1; // Count line break as 1 character
-            console.log("[Textarea] saveCursorPosition: BR before cursor");
           }
         }
       }
     }
-    
-    console.log("[Textarea] saveCursorPosition: Final offset:", offset);
+
     return { offset };
   };
   
@@ -386,51 +409,37 @@ export function TemplateBadgeTextarea({
         // Only add text if it's NOT inside a badge
         if (!isInsideBadge) {
           result += node.textContent;
-          console.log("[Textarea] extractValue: Adding text node:", node.textContent);
-        } else {
-          console.log("[Textarea] extractValue: Skipping text inside badge:", node.textContent);
         }
       } else if (node.nodeType === Node.ELEMENT_NODE) {
         const element = node as HTMLElement;
         const template = element.getAttribute("data-template");
         if (template) {
           result += template;
-          console.log("[Textarea] extractValue: Adding template:", template);
         } else if (element.tagName === "BR") {
           result += "\n";
-          console.log("[Textarea] extractValue: Adding line break");
         }
       }
     }
 
-    console.log("[Textarea] extractValue: Final result:", result);
     return result;
   };
 
-  const handleInput = () => {
+  const handleInput = (): void => {
     // Extract the value from DOM
     const newValue = extractValue();
-    
-    console.log("[Textarea] handleInput: newValue:", newValue);
-    console.log("[Textarea] handleInput: internalValue:", internalValue);
-    console.log("[Textarea] handleInput: DOM innerHTML:", contentRef.current?.innerHTML);
-    
+
     // Check if the value has changed
     if (newValue === internalValue) {
       // No change, ignore (this can happen with badge clicks, etc)
-      console.log("[Textarea] handleInput: No change detected, ignoring");
       return;
     }
-    
+
     // Count templates in old and new values
-    const oldTemplates = (internalValue.match(/\{\{@([^:]+):([^}]+)\}\}/g) || []).length;
-    const newTemplates = (newValue.match(/\{\{@([^:]+):([^}]+)\}\}/g) || []).length;
-    
-    console.log("[Textarea] handleInput: oldTemplates:", oldTemplates, "newTemplates:", newTemplates);
-    
+    const oldTemplates = (internalValue.match(/\{\{@([^:]+):([^}]+)\}\}/g) ?? []).length;
+    const newTemplates = (newValue.match(/\{\{@([^:]+):([^}]+)\}\}/g) ?? []).length;
+
     if (newTemplates > oldTemplates) {
       // A new template was added, update display to show badge
-      console.log("[Textarea] handleInput: New template added, rendering badge");
       setInternalValue(newValue);
       onChange?.(newValue);
       shouldUpdateDisplay.current = true;
@@ -443,192 +452,90 @@ export function TemplateBadgeTextarea({
     
     if (newTemplates === oldTemplates && newTemplates > 0) {
       // Same number of templates, just typing around existing badges
-      // DON'T update display, just update the value
-      console.log("[Textarea] handleInput: Typing around existing badges, NOT updating display");
+      // DON'T update display, just update the value (prevents cursor reset)
       setInternalValue(newValue);
       onChange?.(newValue);
-      // Don't trigger display update - this prevents cursor reset!
-      
-
-      // Check for @ sign to show autocomplete (moved here so it works with existing badges)
-      // Get cursor position first to find the closest @
-      const cursorPos = saveCursorPosition();
-      const cursorOffset = cursorPos?.offset ?? newValue.length;
-      
-      // Check if cursor is in a text node that contains "@"
-      const selection = window.getSelection();
-      const cursorInTextNodeWithAt = selection && selection.rangeCount > 0 && 
-        selection.getRangeAt(0).endContainer.nodeType === Node.TEXT_NODE &&
-        (selection.getRangeAt(0).endContainer.textContent || "").includes("@");
-      
-      const lastAtSign = findActiveAtSign(newValue, cursorOffset);
-      
-      if (lastAtSign !== -1) {
-        const textAfterAt = newValue.slice(lastAtSign + 1);
-        
-        // Extract filter up to next space, newline, or end of string
-        const spaceIndex = textAfterAt.search(/[\s\n]/);
-        const filter = spaceIndex === -1 ? textAfterAt : textAfterAt.slice(0, spaceIndex);
-        
-      // Calculate distance from cursor to @
-      const distanceFromAt = cursorOffset - lastAtSign;
-      // Only consider cursor "near" if within 10 chars - if further, it's just normal text, not active typing
-      const isCursorNearAt = distanceFromAt <= 10;
-      
-      // Only open if cursor is very close to @ (within 10 chars) - if further, it's just normal text
-      // Always open if cursor is in a text node containing "@" (user is actively typing there)
-      // Close if cursor is far from @ OR if there's a space/newline immediately after and cursor moved away
-      const shouldClose = !cursorInTextNodeWithAt && !isCursorNearAt;
-        
-        if (shouldClose) {
-          // User typed @ followed by space and moved cursor far away - they've moved on
-          setShowAutocomplete(false);
-        } else {
-          // Always open dropdown when @ is detected and cursor is nearby
-          setAutocompleteFilter(filter);
-          setAtSignPosition(lastAtSign);
-          
-          if (contentRef.current) {
-            const textareaRect = contentRef.current.getBoundingClientRect();
-            const position = {
-              top: textareaRect.bottom + window.scrollY + 4,
-              left: textareaRect.left + window.scrollX,
-            };
-            setAutocompletePosition(position);
-          }
-          setShowAutocomplete(true);
-        }
-      } else {
-        setShowAutocomplete(false);
-      }
-      
+      maybeOpenAutocomplete(newValue);
       return;
     }
-    
+
     if (newTemplates < oldTemplates) {
       // A template was removed (e.g., user deleted a badge or part of template text)
-      console.log("[Textarea] handleInput: Template removed, updating display");
       setInternalValue(newValue);
       onChange?.(newValue);
       shouldUpdateDisplay.current = true;
       requestAnimationFrame(() => updateDisplay());
       return;
     }
-    
+
     // Normal typing (no badges present)
-    console.log("[Textarea] handleInput: Normal typing, no badges");
     setInternalValue(newValue);
     onChange?.(newValue);
-    
-
-    // Check for @ sign to show autocomplete
-    // Get cursor position first to find the closest @
-    const cursorPos = saveCursorPosition();
-    const cursorOffset = cursorPos?.offset ?? newValue.length;
-    
-    // Check if cursor is in a text node that contains "@"
-    const selection2 = window.getSelection();
-    const cursorInTextNodeWithAt2 = selection2 && selection2.rangeCount > 0 && 
-      selection2.getRangeAt(0).endContainer.nodeType === Node.TEXT_NODE &&
-      (selection2.getRangeAt(0).endContainer.textContent || "").includes("@");
-    
-    const lastAtSign = findActiveAtSign(newValue, cursorOffset);
-    
-    if (lastAtSign !== -1) {
-      const textAfterAt = newValue.slice(lastAtSign + 1);
-      
-      // Extract filter up to next space, newline, or end of string
-      const spaceIndex = textAfterAt.search(/[\s\n]/);
-      const filter = spaceIndex === -1 ? textAfterAt : textAfterAt.slice(0, spaceIndex);
-      
-      // Calculate distance from cursor to @
-      const distanceFromAt = cursorOffset - lastAtSign;
-      // Only consider cursor "near" if within 10 chars - if further, it's just normal text, not active typing
-      const isCursorNearAt = distanceFromAt <= 10;
-      
-      // Only open if cursor is very close to @ (within 10 chars) - if further, it's just normal text
-      // Always open if cursor is in a text node containing "@" (user is actively typing there)
-      // Close if cursor is far from @ OR if there's a space/newline immediately after and cursor moved away
-      const shouldClose = !cursorInTextNodeWithAt2 && !isCursorNearAt;
-      
-      if (shouldClose) {
-        // User typed @ followed by space and moved cursor far away - they've moved on
-        setShowAutocomplete(false);
-      } else {
-        // Always open dropdown when @ is detected and cursor is nearby
-        setAutocompleteFilter(filter);
-        setAtSignPosition(lastAtSign);
-        
-        if (contentRef.current) {
-          const textareaRect = contentRef.current.getBoundingClientRect();
-          const position = {
-            top: textareaRect.bottom + window.scrollY + 4,
-            left: textareaRect.left + window.scrollX,
-          };
-          setAutocompletePosition(position);
-        }
-        setShowAutocomplete(true);
-      }
-    } else {
-      setShowAutocomplete(false);
-    }
+    maybeOpenAutocomplete(newValue);
   };
 
-  const handleAutocompleteSelect = (template: string) => {
-    if (!contentRef.current || atSignPosition === null) return;
-    
-    // Get current text
+  // Detect the closest "@" to the cursor and open/close the dropdown accordingly.
+  // The search happens inside the dropdown itself, so we no longer extract any
+  // filter text from what follows the "@" -- we only need its anchor position.
+  const maybeOpenAutocomplete = (currentValue: string): void => {
+    const cursorPos = saveCursorPosition();
+    const cursorOffset = cursorPos?.offset ?? currentValue.length;
+    const atPosition = findActiveAtSign(currentValue, cursorOffset);
+
+    if (atPosition === -1 || atPosition > cursorOffset) {
+      setShowAutocomplete(false);
+      setAtSignPosition(null);
+      return;
+    }
+
+    openAutocompleteAtAt(atPosition);
+  };
+
+  const handleAutocompleteSelect = (template: string): void => {
+    if (!contentRef.current || atSignPosition === null) {
+      return;
+    }
+
+    // Filter text is typed into the dropdown's own search input, not the
+    // editor, so we only replace the single "@" character that triggered it.
     const currentText = extractValue();
-    
-    // Replace from @ position to end of filter with the template
     const beforeAt = currentText.slice(0, atSignPosition);
-    const afterFilter = currentText.slice(atSignPosition + 1 + autocompleteFilter.length);
-    const newText = beforeAt + template + afterFilter;
-    
-    // Calculate where cursor should be after the template (right after the badge)
+    const afterAt = currentText.slice(atSignPosition + 1);
+    const newText = beforeAt + template + afterAt;
     const targetCursorPosition = beforeAt.length + template.length;
-    
-    console.log("[Textarea] Autocomplete select:", {
-      currentText,
-      atSignPosition,
-      filter: autocompleteFilter,
-      template,
-      beforeAt,
-      afterFilter,
-      newText,
-      targetCursorPosition
-    });
-    
+
     setInternalValue(newText);
     onChange?.(newText);
     shouldUpdateDisplay.current = true;
-    
+
     setShowAutocomplete(false);
     setAtSignPosition(null);
 
-    // Set pending cursor position for the next update
     pendingCursorPosition.current = targetCursorPosition;
-    
-    // Ensure we focus the input so the display update and cursor restoration works
     contentRef.current.focus();
   };
 
-  const handleFocus = () => {
+  const handleFocus = (): void => {
     setIsFocused(true);
     shouldUpdateDisplay.current = true;
   };
 
-  const handleBlur = () => {
-    // Delay to allow autocomplete click to register
+  const handleBlur = (): void => {
+    // Delay to allow autocomplete click / focus transfer to register
     setTimeout(() => {
-      if (document.activeElement === contentRef.current) {
+      const active = document.activeElement;
+      if (active === contentRef.current) {
+        return;
+      }
+      // Focus moved into the autocomplete (search input or option button).
+      // Keep the dropdown mounted and the editor in its "focused" state.
+      if (active instanceof Element && active.closest("[data-template-autocomplete]")) {
         return;
       }
       setIsFocused(false);
-      // Don't extract value on blur - it's already in sync from handleInput
-      // Just trigger a display update to ensure everything renders correctly
       shouldUpdateDisplay.current = true;
       setShowAutocomplete(false);
+      setAtSignPosition(null);
     }, 200);
   };
 
@@ -658,6 +565,28 @@ export function TemplateBadgeTextarea({
     }
   }, [internalValue, isFocused]);
 
+  // Hint 2: clicking the "@" chip focuses the editor, inserts an "@" at the
+  // cursor (or at the end if none), and lets handleInput open the dropdown.
+  const handleAtButtonClick = (): void => {
+    if (!contentRef.current || disabled) {
+      return;
+    }
+    contentRef.current.focus();
+    const selection = window.getSelection();
+    const hasCursorInEditor =
+      selection !== null &&
+      selection.rangeCount > 0 &&
+      contentRef.current.contains(selection.anchorNode);
+    if (!hasCursorInEditor) {
+      const range = document.createRange();
+      range.selectNodeContents(contentRef.current);
+      range.collapse(false);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    }
+    document.execCommand("insertText", false, "@");
+  };
+
   // Calculate min height based on rows; max height when maxRows is set (truncates display, scrollable)
   const minHeight = `${rows * 1.5}rem`;
   const style: CSSProperties = { minHeight };
@@ -670,14 +599,14 @@ export function TemplateBadgeTextarea({
     <>
       <div
         className={cn(
-          "flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors focus-within:outline-none focus-within:ring-1 focus-within:ring-ring",
+          "flex w-full items-start gap-1 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors focus-within:outline-none focus-within:ring-1 focus-within:ring-ring",
           disabled && "cursor-not-allowed opacity-50",
           className
         )}
         style={style}
       >
         <div
-          className="w-full outline-none whitespace-pre-wrap break-words"
+          className="min-w-0 flex-1 whitespace-pre-wrap break-words outline-none"
           contentEditable={!disabled}
           id={id}
           onBlur={handleBlur}
@@ -689,13 +618,25 @@ export function TemplateBadgeTextarea({
           role="textbox"
           suppressContentEditableWarning
         />
+        {(isFocused || showAutocomplete) && !disabled && (
+          <button
+            aria-label="Insert workflow variable"
+            className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground text-xs transition-colors hover:bg-accent hover:text-foreground"
+            onClick={handleAtButtonClick}
+            onMouseDown={(e) => e.preventDefault()}
+            tabIndex={-1}
+            title="Insert a workflow variable"
+            type="button"
+          >
+            @
+          </button>
+        )}
       </div>
-      
+
       <TemplateAutocomplete
-        currentNodeId={selectedNodeId || undefined}
-        filter={autocompleteFilter}
+        currentNodeId={selectedNodeId ?? undefined}
         isOpen={showAutocomplete}
-        onClose={() => setShowAutocomplete(false)}
+        onClose={closeAutocomplete}
         onSelect={handleAutocompleteSelect}
         position={autocompletePosition}
       />

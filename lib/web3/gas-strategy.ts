@@ -13,7 +13,7 @@ import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
 import { db } from "@/lib/db";
 import { chains } from "@/lib/db/schema";
-import type { RpcProviderManager } from "@/lib/rpc-provider";
+import type { RpcProviderManager } from "@/lib/rpc/providers";
 
 /**
  * Route an RPC call through the failover-aware RpcProviderManager when one

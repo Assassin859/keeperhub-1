@@ -1,4 +1,4 @@
-import type { WorkflowNode } from "../lib/workflow-store";
+import type { WorkflowNode } from "../lib/workflow/store";
 import { findActionById } from "../plugins/registry";
 import { CONFIG } from "./config";
 import type { DispatchTarget } from "./types";

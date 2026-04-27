@@ -30,7 +30,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useIsTouch } from "@/hooks/use-touch";
 import { cn } from "@/lib/utils";
-import { nodesAtom } from "@/lib/workflow-store";
+import { nodesAtom } from "@/lib/workflow/store";
 import { getAllActions } from "@/plugins/registry";
 
 type ActionType = {

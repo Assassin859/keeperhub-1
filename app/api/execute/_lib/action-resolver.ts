@@ -22,17 +22,17 @@ const SYSTEM_ACTIONS: Record<
   { importer: () => Promise<any>; stepFunction: string; label: string }
 > = {
   "Database Query": {
-    importer: () => import("@/lib/steps/database-query"),
+    importer: () => import("@/lib/workflow/nodes/database-query/step"),
     stepFunction: "databaseQueryStep",
     label: "Database Query",
   },
   "HTTP Request": {
-    importer: () => import("@/lib/steps/http-request"),
+    importer: () => import("@/lib/workflow/nodes/http-request/step"),
     stepFunction: "httpRequestStep",
     label: "HTTP Request",
   },
   Condition: {
-    importer: () => import("@/lib/steps/condition"),
+    importer: () => import("@/lib/workflow/nodes/condition/step"),
     stepFunction: "conditionStep",
     label: "Condition",
   },

@@ -26,7 +26,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { api, ApiError } from "@/lib/api-client";
 import { integrationsAtom } from "@/lib/integrations-store";
 import type { IntegrationType } from "@/lib/types/integration";
-import { generateWorkflowCode } from "@/lib/workflow-codegen";
+import { generateWorkflowCode } from "@/lib/workflow/codegen/codegen";
 import {
   clearNodeStatusesAtom,
   clearWorkflowAtom,
@@ -44,7 +44,7 @@ import {
   selectedEdgeAtom,
   selectedNodeAtom,
   updateNodeDataAtom,
-} from "@/lib/workflow-store";
+} from "@/lib/workflow/store";
 import { findActionById } from "@/plugins/registry";
 import { ActionConfig } from "../workflow/config/action-config";
 import { ActionGrid } from "../workflow/config/action-grid";

@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
 import { explorerConfigs } from "@/lib/db/schema";
 import { getAddressUrl } from "@/lib/explorer";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
-import { type StepInput, withStepLogging } from "@/lib/steps/step-handler";
+import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import type {
   TransferTokenCoreInput,
   TransferTokenResult,

@@ -14,7 +14,7 @@ on:
       - "docker-bake.hcl"
       # Shared grandchild source consumed by the sandbox Dockerfile.
       # Changes here must rebuild and redeploy the sandbox image.
-      - "lib/sandbox-child-source.ts"
+      - "lib/sandbox/child-source.ts"
   workflow_dispatch:
 
 name: deploy-sandbox

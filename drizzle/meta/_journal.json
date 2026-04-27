@@ -428,6 +428,13 @@
       "when": 1777112436741,
       "tag": "0060_keep_344_wallet_lock_ttl",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1777200000000,
+      "tag": "0061_tempo_testnet_chain_id",
+      "breakpoints": true
     }
   ]
 }

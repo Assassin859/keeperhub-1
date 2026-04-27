@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { WorkflowNode } from "@/lib/workflow-store";
+import type { WorkflowNode } from "@/lib/workflow/store";
 
 const INTERNAL_CONFIG_KEYS = new Set([
   "actionType",

@@ -33,10 +33,10 @@ import {
   workflowSchedules,
   workflows,
 } from "../lib/db/schema";
-import { executeWorkflow } from "../lib/workflow-executor.workflow";
-import { calculateTotalSteps } from "../lib/workflow-progress";
-import { SHUTDOWN_TIMEOUT_MS } from "../lib/workflow-runner/constants";
-import type { WorkflowEdge, WorkflowNode } from "../lib/workflow-store";
+import { executeWorkflow } from "../lib/workflow/executor/executor.workflow";
+import { calculateTotalSteps } from "../lib/workflow/executor/progress";
+import { SHUTDOWN_TIMEOUT_MS } from "../lib/workflow/executor/runner-constants";
+import type { WorkflowEdge, WorkflowNode } from "../lib/workflow/store";
 import {
   initializeExecutionProgress,
   updateExecutionStatus,

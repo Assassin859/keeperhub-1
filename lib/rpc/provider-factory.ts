@@ -10,13 +10,13 @@ import {
   type FailoverStateChangeCallback,
   type RpcMetricsCollector,
   type RpcProviderManager,
-} from "@/lib/rpc-provider";
+} from "@/lib/rpc/providers";
 import {
   createSolanaProviderManager,
   type SolanaFailoverStateChangeCallback,
   type SolanaProviderManager,
   type SolanaRpcMetricsCollector,
-} from "@/lib/rpc-provider/solana";
+} from "@/lib/rpc/providers/solana";
 import { resolveRpcConfig } from "./config-service";
 
 /**
@@ -38,7 +38,7 @@ async function getEvmMetricsCollector(): Promise<RpcMetricsCollector> {
     );
     cachedEvmCollector = prometheusRpcMetricsCollector;
   } else {
-    const { consoleMetricsCollector } = await import("@/lib/rpc-provider");
+    const { consoleMetricsCollector } = await import("@/lib/rpc/providers");
     cachedEvmCollector = consoleMetricsCollector;
   }
 
@@ -57,7 +57,7 @@ async function getSolanaMetricsCollector(): Promise<SolanaRpcMetricsCollector> {
     cachedSolanaCollector = prometheusSolanaRpcMetricsCollector;
   } else {
     const { consoleSolanaMetricsCollector } = await import(
-      "@/lib/rpc-provider/solana"
+      "@/lib/rpc/providers/solana"
     );
     cachedSolanaCollector = consoleSolanaMetricsCollector;
   }

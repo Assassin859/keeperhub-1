@@ -3,7 +3,7 @@ import "server-only";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import { safeFetch } from "@/lib/safe-fetch";
-import { type StepInput, withStepLogging } from "@/lib/steps/step-handler";
+import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 
 type SendWebhookResult =

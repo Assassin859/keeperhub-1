@@ -1,4 +1,7 @@
+import { eq } from "drizzle-orm";
 import { jwtVerify, SignJWT } from "jose";
+import { db } from "@/lib/db";
+import { users } from "@/lib/db/schema";
 
 export type OAuthTokenPayload = {
   sub: string;
@@ -127,6 +130,25 @@ export async function authenticateOAuthToken(
       error: "OAuth token missing organization claim",
       statusCode: 401,
     };
+  }
+
+  // Reject tokens issued to a now-deactivated user. JWTs are valid for 1
+  // hour after creation; without this check, a user deactivated within that
+  // window could keep authenticating against MCP endpoints until the token
+  // organically expired. This mirrors the deactivation guard in
+  // authenticateApiKey -- both auth paths must close the same gap.
+  if (payload.sub) {
+    const user = await db.query.users.findFirst({
+      where: eq(users.id, payload.sub),
+      columns: { deactivatedAt: true },
+    });
+    if (user?.deactivatedAt) {
+      return {
+        authenticated: false,
+        error: "User account is deactivated",
+        statusCode: 401,
+      };
+    }
   }
 
   return {

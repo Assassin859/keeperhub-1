@@ -29,7 +29,7 @@ Main-app client `lib/sandbox-client.ts` that speaks the Plan 37-01 wire format o
 | `?? "local"` default | 1 | pass |
 | `SANDBOX_BACKEND === "remote"` branch | 1 | pass |
 | `async function runLocal` extracted | 1 | pass |
-| `from "@/lib/sandbox-client"` import | 1 | pass |
+| `from "@/lib/sandbox/client"` import | 1 | pass |
 | `runCodeStep.maxRetries = 0` preserved | 1 | pass |
 | `export async function runCodeStep` | 1 | pass |
 | Accidental helper exports (`runLocal|runRemote|validateInput`) | 0 | pass (plugins/CLAUDE.md Rule 1) |

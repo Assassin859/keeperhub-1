@@ -3,7 +3,7 @@ import { deserialize } from "node:v8";
 import {
   SANDBOX_CHILD_SOURCE as CHILD_SOURCE,
   SANDBOX_RESULT_SENTINEL as RESULT_SENTINEL,
-} from "../../lib/sandbox-child-source.js";
+} from "../../lib/sandbox/child-source.js";
 
 type LogEntry = {
   level: "log" | "warn" | "error";

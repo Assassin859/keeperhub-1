@@ -2,10 +2,10 @@
  * Code generation utilities for workflow step functions
  */
 
-import { AUTO_GENERATED_TEMPLATES } from "@/lib/codegen-registry";
-import conditionTemplate from "@/lib/codegen-templates/condition";
-import databaseQueryTemplate from "@/lib/codegen-templates/database-query";
-import httpRequestTemplate from "@/lib/codegen-templates/http-request";
+import { AUTO_GENERATED_TEMPLATES } from "@/lib/workflow/codegen/registry";
+import conditionTemplate from "@/lib/workflow/codegen/templates/condition";
+import databaseQueryTemplate from "@/lib/workflow/codegen/templates/database-query";
+import httpRequestTemplate from "@/lib/workflow/codegen/templates/http-request";
 import { findActionById } from "@/plugins/registry";
 
 // System action templates (non-plugin actions)

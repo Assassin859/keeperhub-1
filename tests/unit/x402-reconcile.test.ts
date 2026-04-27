@@ -21,27 +21,27 @@ describe("isTimeoutError", () => {
   });
 
   it("Test 1: returns true for 'context deadline exceeded'", async () => {
-    const { isTimeoutError } = await import("@/lib/x402/reconcile");
+    const { isTimeoutError } = await import("@/lib/payments/x402/reconcile");
     expect(isTimeoutError("context deadline exceeded")).toBe(true);
   });
 
   it("Test 2: returns true for 'did not confirm in time'", async () => {
-    const { isTimeoutError } = await import("@/lib/x402/reconcile");
+    const { isTimeoutError } = await import("@/lib/payments/x402/reconcile");
     expect(isTimeoutError("did not confirm in time")).toBe(true);
   });
 
   it("Test 3: returns true for 'unable to estimate gas'", async () => {
-    const { isTimeoutError } = await import("@/lib/x402/reconcile");
+    const { isTimeoutError } = await import("@/lib/payments/x402/reconcile");
     expect(isTimeoutError("unable to estimate gas")).toBe(true);
   });
 
   it("Test 4: returns false for 'invalid_payload'", async () => {
-    const { isTimeoutError } = await import("@/lib/x402/reconcile");
+    const { isTimeoutError } = await import("@/lib/payments/x402/reconcile");
     expect(isTimeoutError("invalid_payload")).toBe(false);
   });
 
   it("Test 5: returns false for 'insufficient balance'", async () => {
-    const { isTimeoutError } = await import("@/lib/x402/reconcile");
+    const { isTimeoutError } = await import("@/lib/payments/x402/reconcile");
     expect(isTimeoutError("insufficient balance")).toBe(false);
   });
 });
@@ -58,7 +58,7 @@ describe("pollForPaymentConfirmation", () => {
 
   it("Test 6: returns true when nonce is already used on first poll", async () => {
     mockAuthorizationState.mockResolvedValue(BigInt(1));
-    const { pollForPaymentConfirmation } = await import("@/lib/x402/reconcile");
+    const { pollForPaymentConfirmation } = await import("@/lib/payments/x402/reconcile");
     const result = await pollForPaymentConfirmation({
       payerAddress: "0xPAYER",
       nonce: "0xNONCE",
@@ -73,7 +73,7 @@ describe("pollForPaymentConfirmation", () => {
       .mockResolvedValueOnce(BigInt(0))
       .mockResolvedValueOnce(BigInt(1));
 
-    const { pollForPaymentConfirmation } = await import("@/lib/x402/reconcile");
+    const { pollForPaymentConfirmation } = await import("@/lib/payments/x402/reconcile");
 
     const resultPromise = pollForPaymentConfirmation({
       payerAddress: "0xPAYER",
@@ -90,7 +90,7 @@ describe("pollForPaymentConfirmation", () => {
   it("Test 8: returns false when nonce is never used within timeout", async () => {
     mockAuthorizationState.mockResolvedValue(BigInt(0));
 
-    const { pollForPaymentConfirmation } = await import("@/lib/x402/reconcile");
+    const { pollForPaymentConfirmation } = await import("@/lib/payments/x402/reconcile");
 
     const resultPromise = pollForPaymentConfirmation({
       payerAddress: "0xPAYER",
@@ -107,7 +107,7 @@ describe("pollForPaymentConfirmation", () => {
   it("Test 9: returns false immediately when nonce is cancelled", async () => {
     mockAuthorizationState.mockResolvedValue(BigInt(2));
 
-    const { pollForPaymentConfirmation } = await import("@/lib/x402/reconcile");
+    const { pollForPaymentConfirmation } = await import("@/lib/payments/x402/reconcile");
 
     const result = await pollForPaymentConfirmation({
       payerAddress: "0xPAYER",

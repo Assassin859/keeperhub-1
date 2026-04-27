@@ -17,9 +17,24 @@ vi.mock("@/lib/auth", () => ({
 }));
 
 const mockGetActiveOrgId = vi.fn();
+const mockGetDualAuthContext = vi.fn();
 
 vi.mock("@/lib/middleware/org-context", () => ({
   getActiveOrgId: (...args: unknown[]) => mockGetActiveOrgId(...args),
+}));
+
+vi.mock("@/lib/middleware/auth-helpers", () => ({
+  getDualAuthContext: (...args: unknown[]) => mockGetDualAuthContext(...args),
+  auditFromAuth: (ctx: unknown): Record<string, string> => {
+    if (ctx && typeof ctx === "object" && "error" in ctx) {
+      return { authMethod: "unknown" };
+    }
+    const c = ctx as { authMethod: string; apiKeyId?: string | null };
+    return c.apiKeyId
+      ? { authMethod: c.authMethod, apiKeyId: c.apiKeyId }
+      : { authMethod: c.authMethod };
+  },
+  UNAUTHENTICATED_AUDIT: { authMethod: "unknown" },
 }));
 
 const mockWalletSelectWhere = vi.fn();
@@ -94,8 +109,11 @@ describe("GET /api/user/wallet", () => {
     mockWalletSelectWhere.mockReset();
   });
 
-  it("returns 401 when there is no session (non-session callers blocked)", async () => {
-    mockGetSession.mockResolvedValue(null);
+  it("returns 401 when there is no auth context", async () => {
+    mockGetDualAuthContext.mockResolvedValue({
+      error: "Unauthorized",
+      status: 401,
+    });
     const res = await GET(createGetRequest());
     expect(res.status).toBe(401);
     const data = await res.json();
@@ -103,11 +121,12 @@ describe("GET /api/user/wallet", () => {
   });
 
   it("returns isOwner: true for the wallet creator", async () => {
-    mockGetSession.mockResolvedValue({
-      user: { id: CREATOR_ID, email: "creator@account.com" },
-      session: { activeOrganizationId: ORG_ID },
+    mockGetDualAuthContext.mockResolvedValue({
+      userId: CREATOR_ID,
+      organizationId: ORG_ID,
+      authMethod: "session",
+      apiKeyId: null,
     });
-    mockGetActiveOrgId.mockReturnValue(ORG_ID);
     mockWalletSelectWhere.mockResolvedValueOnce([buildWalletRow(CREATOR_ID)]);
 
     const res = await GET(createGetRequest());
@@ -119,11 +138,28 @@ describe("GET /api/user/wallet", () => {
   });
 
   it("returns isOwner: false for members who did not create the wallet", async () => {
-    mockGetSession.mockResolvedValue({
-      user: { id: OTHER_USER_ID, email: "other@account.com" },
-      session: { activeOrganizationId: ORG_ID },
+    mockGetDualAuthContext.mockResolvedValue({
+      userId: OTHER_USER_ID,
+      organizationId: ORG_ID,
+      authMethod: "session",
+      apiKeyId: null,
     });
-    mockGetActiveOrgId.mockReturnValue(ORG_ID);
+    mockWalletSelectWhere.mockResolvedValueOnce([buildWalletRow(CREATOR_ID)]);
+
+    const res = await GET(createGetRequest());
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.isOwner).toBe(false);
+    expect(data.wallets[0].isOwner).toBe(false);
+  });
+
+  it("returns isOwner: false for an API-key caller (key export remains session-only)", async () => {
+    mockGetDualAuthContext.mockResolvedValue({
+      userId: null,
+      organizationId: ORG_ID,
+      authMethod: "api-key",
+      apiKeyId: "key-1",
+    });
     mockWalletSelectWhere.mockResolvedValueOnce([buildWalletRow(CREATOR_ID)]);
 
     const res = await GET(createGetRequest());

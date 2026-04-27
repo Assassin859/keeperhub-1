@@ -59,16 +59,21 @@ const MPP_TX_VALIDITY_WINDOW_SECONDS = 300; // 5 minutes
 // prepareTransactionRequest on the Turnkey path).
 const MAX_UINT256 = (BigInt(1) << BigInt(256)) - BigInt(1);
 
-// MPP attribution memo layout (mirrors mppx internal Attribution.encode):
-//   bytes 0..3   : tag         "MPP\0" (3 printable + NUL)
+// MPP attribution memo layout (mirrors mppx/tempo/Attribution.encode):
+//   bytes 0..3   : tag         keccak256("mpp")[0..3] = 0xef1ed712
 //   byte  4      : version     1
 //   bytes 5..14  : serverId    first 10 bytes of keccak256(serverId)
 //   bytes 15..24 : clientId    first 10 bytes of keccak256(clientId) (zero if unset)
 //   bytes 25..31 : nonce       first 7 bytes of keccak256(challengeId)
 // The mppx Attribution module isn't in the public package exports so we
 // re-implement the exact layout here rather than reaching into the internal
-// path. Binary-compatible per a regression test in agentic-wallet-sign.test.ts.
-const MPP_ATTRIBUTION_TAG = new Uint8Array([0x4d, 0x50, 0x50, 0x00]);
+// path. The tag bytes are NOT the literal ASCII "MPP\0" -- mppx derives them
+// as `Hex.slice(keccak256("mpp"), 0, 4)` (mppx/tempo/Attribution.js:31). The
+// original /sign hardcoded `[0x4d,0x50,0x50,0x00]` ("MPP\0") which made the
+// memo's tag mismatch the server's expected fingerprint -- the post-broadcast
+// assertChallengeBoundMemo check threw a non-PaymentError that mppx's outer
+// catch wrapped as a reason-less VerificationFailedError 402.
+const MPP_ATTRIBUTION_TAG = new Uint8Array([0xef, 0x1e, 0xd7, 0x12]);
 const MPP_ATTRIBUTION_VERSION = 1;
 
 function attributionFingerprint(id: string): Uint8Array {
