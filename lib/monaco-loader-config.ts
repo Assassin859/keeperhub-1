@@ -1,9 +1,10 @@
 import { loader } from "@monaco-editor/react";
-import * as monaco from "monaco-editor";
 
 declare global {
   interface Window {
-    MonacoEnvironment?: monaco.Environment;
+    MonacoEnvironment?: {
+      getWorker(workerId: string, label: string): Worker;
+    };
   }
 }
 
@@ -55,6 +56,8 @@ if (typeof window !== "undefined") {
       );
     },
   };
-}
 
-loader.config({ monaco });
+  void import("monaco-editor").then((monaco) => {
+    loader.config({ monaco });
+  });
+}
