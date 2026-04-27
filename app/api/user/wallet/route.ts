@@ -222,47 +222,43 @@ export async function GET(request: Request): Promise<NextResponse> {
       );
     }
 
-    const allWallets = await db
+    // Turnkey is the only signer. Inactive Para rows may still exist in the
+    // DB for historical reasons but are not returned: the org has a single
+    // wallet surface, full stop.
+    const active = await db
       .select()
       .from(organizationWallets)
-      .where(eq(organizationWallets.organizationId, activeOrgId));
+      .where(
+        and(
+          eq(organizationWallets.organizationId, activeOrgId),
+          eq(organizationWallets.isActive, true)
+        )
+      )
+      .limit(1);
 
-    if (allWallets.length === 0) {
+    if (active.length === 0) {
       return NextResponse.json({
         hasWallet: false,
-        wallets: [],
         message: "No wallet found for this organization",
       });
     }
 
-    const PROVIDER_ORDER: Record<"para" | "turnkey", number> = {
-      para: 0,
-      turnkey: 1,
-    } as const;
-    const wallets = allWallets
-      .map((w) => ({
-        id: w.id,
-        provider: w.provider,
-        canExportKey: w.provider === "turnkey",
-        // Only the wallet creator may export its key, regardless of org role.
-        // For API-key callers without a recorded creator (userId === null) this
-        // resolves to false, which is correct: key export is session-only.
-        isOwner: userId !== null && w.userId === userId,
-        walletAddress: w.walletAddress,
-        walletId: w.paraWalletId ?? w.turnkeyWalletId,
-        email: w.email,
-        createdAt: w.createdAt,
-        organizationId: w.organizationId,
-        isActive: w.isActive,
-      }))
-      .sort((a, b) => PROVIDER_ORDER[a.provider] - PROVIDER_ORDER[b.provider]);
-
-    const primary = wallets.find((w) => w.isActive) ?? wallets[0];
+    const wallet = active[0];
 
     return NextResponse.json({
       hasWallet: true,
-      ...primary,
-      wallets,
+      id: wallet.id,
+      canExportKey: wallet.turnkeySubOrgId !== null,
+      // Only the wallet creator may export its key, regardless of org role.
+      // For API-key callers without a recorded creator (userId === null) this
+      // resolves to false, which is correct: key export is session-only.
+      isOwner: userId !== null && wallet.userId === userId,
+      walletAddress: wallet.walletAddress,
+      walletId: wallet.turnkeyWalletId,
+      email: wallet.email,
+      createdAt: wallet.createdAt,
+      organizationId: wallet.organizationId,
+      isActive: wallet.isActive,
     });
   } catch (error) {
     logSystemError(ErrorCategory.DATABASE, "Failed to get wallet", error, {

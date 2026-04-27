@@ -43,7 +43,9 @@ vi.mock("@/lib/db", () => ({
   db: {
     select: vi.fn(() => ({
       from: vi.fn(() => ({
-        where: (...args: unknown[]) => mockWalletSelectWhere(...args),
+        where: (...args: unknown[]) => ({
+          limit: () => mockWalletSelectWhere(...args),
+        }),
       })),
     })),
   },
@@ -55,8 +57,7 @@ vi.mock("@/lib/db/schema", () => ({
     userId: "user_id",
     email: "email",
     organizationId: "organization_id",
-    provider: "provider",
-    paraWalletId: "para_wallet_id",
+    turnkeySubOrgId: "turnkey_sub_org_id",
     turnkeyWalletId: "turnkey_wallet_id",
     walletAddress: "wallet_address",
     createdAt: "created_at",
@@ -89,10 +90,9 @@ function buildWalletRow(userId: string): Record<string, unknown> {
     id: "wallet-1",
     userId,
     organizationId: ORG_ID,
-    provider: "turnkey",
     email: "vault@example.com",
     walletAddress: "0x0000000000000000000000000000000000000001",
-    paraWalletId: null,
+    turnkeySubOrgId: "tk-sub-org-id",
     turnkeyWalletId: "tk-wallet-id",
     createdAt: new Date("2026-01-01"),
     isActive: true,
@@ -132,9 +132,8 @@ describe("GET /api/user/wallet", () => {
     const res = await GET(createGetRequest());
     expect(res.status).toBe(200);
     const data = await res.json();
+    expect(data.hasWallet).toBe(true);
     expect(data.isOwner).toBe(true);
-    expect(data.wallets).toHaveLength(1);
-    expect(data.wallets[0].isOwner).toBe(true);
   });
 
   it("returns isOwner: false for members who did not create the wallet", async () => {
@@ -149,8 +148,8 @@ describe("GET /api/user/wallet", () => {
     const res = await GET(createGetRequest());
     expect(res.status).toBe(200);
     const data = await res.json();
+    expect(data.hasWallet).toBe(true);
     expect(data.isOwner).toBe(false);
-    expect(data.wallets[0].isOwner).toBe(false);
   });
 
   it("returns isOwner: false for an API-key caller (key export remains session-only)", async () => {
@@ -165,7 +164,7 @@ describe("GET /api/user/wallet", () => {
     const res = await GET(createGetRequest());
     expect(res.status).toBe(200);
     const data = await res.json();
+    expect(data.hasWallet).toBe(true);
     expect(data.isOwner).toBe(false);
-    expect(data.wallets[0].isOwner).toBe(false);
   });
 });

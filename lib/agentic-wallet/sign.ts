@@ -51,7 +51,14 @@ const MPP_AUTH_PREFIX = "Payment ";
 // VerificationFailedError.
 const MPP_TX_GAS = BigInt(500_000);
 const MPP_TX_MAX_FEE_PER_GAS = BigInt(50_000_000_000); // 50 gwei
-const MPP_TX_VALIDITY_WINDOW_SECONDS = 300; // 5 minutes
+// TIP-1009 expiring-nonce hard limit: validBefore must fall within 30s of the
+// chain's block timestamp at broadcast time. Tempo's nonce manager rejects
+// `eth_sendRawTransactionSync` outright if the envelope sets a longer window
+// (`nonce manager error: expiring nonce valid_before too far in the future`).
+// Match mppx/client/Charge.js's 25s budget so the round-trip
+// (sign -> /sign returns -> client retry -> server broadcasts) stays well
+// inside the 30s ceiling even with a multi-second Turnkey latency.
+const MPP_TX_VALIDITY_WINDOW_SECONDS = 25;
 
 // TIP-1009 expiring-nonce marker. viem/tempo/chainConfig.js rewrites
 // `{nonceKey: 'expiring'}` to `{nonceKey: 2**256-1, nonce: 0}`; we hardcode

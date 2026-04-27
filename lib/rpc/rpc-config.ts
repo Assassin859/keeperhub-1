@@ -99,7 +99,7 @@ export const CHAIN_CONFIG: Record<number, ChainConfigEntry> = {
     publicDefault: PUBLIC_RPCS.BASE_SEPOLIA,
   },
   // Tempo Testnet
-  42429: {
+  42431: {
     jsonKey: "tempo-testnet",
     envKey: "CHAIN_TEMPO_TESTNET_PRIMARY_RPC",
     fallbackEnvKey: "CHAIN_TEMPO_TESTNET_FALLBACK_RPC",

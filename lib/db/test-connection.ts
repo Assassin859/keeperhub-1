@@ -1,9 +1,11 @@
 import postgres from "postgres";
 import {
   assertHostIsPublic,
+  extractHostFromConnectionString,
+} from "@/lib/db/connection-host-guard";
+import {
   buildDatabaseUrlFromConfig,
   type DatabaseConnectionConfig,
-  extractHostFromConnectionString,
   getDatabaseErrorMessage,
   getPostgresConnectionOptions,
 } from "@/lib/db/connection-utils";
