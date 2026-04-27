@@ -11,6 +11,11 @@
 -- scoped to the explicit "network":"42429" key/value pair so we cannot
 -- accidentally rewrite unrelated literal strings.
 
+-- This migration deliberately contains no `--> statement-breakpoint` markers
+-- so drizzle-kit runs the whole file as a single query inside its implicit
+-- per-migration transaction (matches the precedent set by 0025). If any UPDATE
+-- fails the FK drop is rolled back with it.
+
 -- Drop the FK from explorer_configs.chain_id -> chains.chain_id so we can
 -- update both sides; it is recreated at the end. The constraint is not
 -- DEFERRABLE, so an in-place UPDATE on chains.chain_id would otherwise fail.
