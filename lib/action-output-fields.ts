@@ -3,7 +3,7 @@
  * Defines dynamic output fields for plugin actions based on their configuration
  */
 
-import { findAbiFunction } from "@/lib/abi-utils";
+import { findAbiFunction } from "@/lib/abi/utils";
 import type { OutputField } from "@/plugins/registry";
 
 /**

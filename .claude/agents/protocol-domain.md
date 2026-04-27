@@ -568,7 +568,7 @@ Tests to include per action type:
 Calldata construction pattern (use the helper from `reshapeArgsForAbi`):
 
 ```typescript
-import { reshapeArgsForAbi } from "@/lib/abi-struct-args";
+import { reshapeArgsForAbi } from "@/lib/abi/struct-args";
 import { ethers } from "ethers";
 
 const action = protocol.actions.find((a) => a.slug === "{action-slug}");

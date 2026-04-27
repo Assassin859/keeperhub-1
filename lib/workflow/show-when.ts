@@ -12,7 +12,7 @@
  * is supported; add new kinds by extending the union in plugins/registry.ts
  * and the switch in `evaluateComputed`.
  */
-import { deriveStateMutability } from "@/lib/web3/abi-mutability";
+import { deriveStateMutability } from "@/lib/abi/mutability";
 
 export type ShowWhen =
   | { field: string; equals: string }

@@ -57,7 +57,7 @@ vi.mock("@/plugins/web3/steps/write-contract-core", () => ({
   writeContractCore: mocks.writeContractCore,
 }));
 
-vi.mock("@/lib/abi-cache", () => ({
+vi.mock("@/lib/abi/cache", () => ({
   resolveAbi: mocks.resolveAbi,
 }));
 

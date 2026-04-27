@@ -7,7 +7,7 @@ import { TemplateBadgeInput } from "@/components/ui/template-badge-input";
 import type { AbiComponent } from "@/components/workflow/config/abi-types";
 import { ArrayInputField } from "@/components/workflow/config/array-input-field";
 import { TupleInputField } from "@/components/workflow/config/tuple-input-field";
-import { findAbiFunction } from "@/lib/abi-utils";
+import { findAbiFunction } from "@/lib/abi/utils";
 import type { ActionConfigFieldBase } from "@/plugins/registry";
 
 type FunctionInput = {

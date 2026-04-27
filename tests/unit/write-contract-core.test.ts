@@ -78,11 +78,11 @@ vi.mock("@/lib/explorer", () => ({
   getTxUrl: vi.fn().mockReturnValue("https://etherscan.io/tx/0xhash"),
 }));
 
-vi.mock("@/lib/abi-struct-args", () => ({
+vi.mock("@/lib/abi/struct-args", () => ({
   reshapeArgsForAbi: vi.fn().mockImplementation((args: unknown[]) => args),
 }));
 
-vi.mock("@/lib/web3/abi-function-key", () => ({
+vi.mock("@/lib/abi/function-key", () => ({
   getAbiFunctionKey: vi.fn().mockReturnValue("transfer"),
 }));
 

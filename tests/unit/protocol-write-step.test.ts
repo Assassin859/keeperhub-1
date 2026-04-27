@@ -23,7 +23,7 @@ vi.mock("@/lib/protocol-registry", () => ({
 }));
 
 const mockResolveAbi = vi.fn();
-vi.mock("@/lib/abi-cache", () => ({
+vi.mock("@/lib/abi/cache", () => ({
   resolveAbi: (...args: unknown[]) => mockResolveAbi(...args),
 }));
 
