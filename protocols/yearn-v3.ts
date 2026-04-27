@@ -1,5 +1,5 @@
 import { defineProtocol } from "@/lib/protocol-registry";
-import { erc4626VaultActions } from "@/lib/standards/erc4626";
+import { erc4626VaultActions } from "@/lib/web3/standards/erc4626";
 
 // Yearn V3 vaults are EIP-1167 minimal proxies. The ABI cache cannot resolve
 // implementation ABIs for clones, so we provide the ABI inline. This covers

@@ -298,7 +298,7 @@ How to detect ERC-4626 compliance:
 Usage in protocol definitions:
 ```typescript
 import { defineProtocol } from "@/lib/protocol-registry";
-import { erc4626VaultActions } from "@/lib/standards/erc4626";
+import { erc4626VaultActions } from "@/lib/web3/standards/erc4626";
 
 export default defineProtocol({
   // ...

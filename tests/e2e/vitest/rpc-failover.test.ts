@@ -20,7 +20,7 @@ import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 import {
   clearRpcProviderManagerCache,
   RpcProviderManager,
-} from "@/lib/rpc-provider";
+} from "@/lib/rpc/providers";
 import { PERSISTENT_TEST_USER_EMAIL } from "../../utils/db";
 
 // Skip if DATABASE_URL not set or SKIP_INFRA_TESTS is true (CI environment without DB)
