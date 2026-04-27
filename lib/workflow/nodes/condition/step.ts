@@ -3,7 +3,7 @@
  */
 import "server-only";
 
-import { type StepInput, withStepLogging } from "./step-handler";
+import { type StepInput, withStepLogging } from "@/lib/steps/step-handler";
 
 export type ConditionInput = StepInput & {
   condition: boolean;

@@ -14,7 +14,7 @@
 import type { Edge, Node } from "@xyflow/react";
 import { nanoid } from "nanoid";
 import { computeAutoLayout } from "@/lib/auto-layout";
-import type { ConditionOperator } from "@/lib/condition-builder-types";
+import type { ConditionOperator } from "@/lib/workflow/nodes/condition/builder-types";
 
 /** Map common MCP/AI operator aliases to canonical ConditionOperator values */
 const OPERATOR_ALIASES: Record<string, ConditionOperator> = {

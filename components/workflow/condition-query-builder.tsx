@@ -14,14 +14,14 @@ import type {
   ConditionGroup,
   ConditionOperator,
   ConditionRule,
-} from "@/lib/condition-builder-types";
-import { isConditionGroup } from "@/lib/condition-builder-types";
+} from "@/lib/workflow/nodes/condition/builder-types";
+import { isConditionGroup } from "@/lib/workflow/nodes/condition/builder-types";
 import {
   createEmptyGroup,
   createEmptyRule,
   isUnaryOperator,
   OPERATOR_METADATA,
-} from "@/lib/condition-builder-utils";
+} from "@/lib/workflow/nodes/condition/builder-utils";
 import { cn } from "@/lib/utils";
 
 type ConditionQueryBuilderProps = {

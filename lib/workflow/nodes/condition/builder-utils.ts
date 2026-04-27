@@ -3,8 +3,8 @@ import type {
   ConditionGroup,
   ConditionOperator,
   ConditionRule,
-} from "./condition-builder-types";
-import { isConditionGroup } from "./condition-builder-types";
+} from "./builder-types";
+import { isConditionGroup } from "./builder-types";
 
 type OperatorCategory = "comparison" | "string" | "existence" | "pattern";
 
@@ -58,7 +58,7 @@ export function createEmptyGroup(): ConditionGroup {
   };
 }
 
-export { visualConditionToExpression } from "./condition-expression";
+export { visualConditionToExpression } from "./expression";
 
 // ---------------------------------------------------------------------------
 // Expression -> ConditionGroup parser (reverse of visualConditionToExpression)

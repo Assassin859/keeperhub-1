@@ -32,7 +32,7 @@ const SYSTEM_ACTIONS: Record<
     label: "HTTP Request",
   },
   Condition: {
-    importer: () => import("@/lib/steps/condition"),
+    importer: () => import("@/lib/workflow/nodes/condition/step"),
     stepFunction: "conditionStep",
     label: "Condition",
   },

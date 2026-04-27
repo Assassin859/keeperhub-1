@@ -1,5 +1,5 @@
-import type { ConditionGroup } from "./condition-builder-types";
-import { visualConditionToExpression } from "./condition-expression";
+import type { ConditionGroup } from "./builder-types";
+import { visualConditionToExpression } from "./expression";
 
 /**
  * Resolve the executable condition expression from a node's config.

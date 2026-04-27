@@ -30,15 +30,15 @@ import { SqlTemplateEditor } from "@/components/ui/sql-template-editor";
 import { TemplateCodeEditor } from "@/components/ui/template-code-editor";
 import { actionRequiresCredentials } from "@/lib/integration-helpers";
 import { ConditionQueryBuilder } from "@/components/workflow/condition-query-builder";
-import type { ConditionGroup } from "@/lib/condition-builder-types";
+import type { ConditionGroup } from "@/lib/workflow/nodes/condition/builder-types";
 import {
   createEmptyGroup,
   expressionToConditionGroup,
   visualConditionToExpression,
-} from "@/lib/condition-builder-utils";
-import { resolveConditionExpression } from "@/lib/condition-resolver";
+} from "@/lib/workflow/nodes/condition/builder-utils";
+import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
 import { aiGatewayStatusAtom } from "@/lib/ai-gateway/state";
-import { validateConditionExpressionUI } from "@/lib/condition-validator";
+import { validateConditionExpressionUI } from "@/lib/workflow/nodes/condition/validator";
 import {
   integrationsAtom,
   integrationsVersionAtom,

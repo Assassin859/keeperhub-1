@@ -4,7 +4,7 @@ import {
   type ConditionDecision,
   collectAllSkippedTargets,
   collectSkippedTargets,
-} from "@/lib/skipped-branch-utils";
+} from "@/lib/workflow/nodes/condition/skipped-branch";
 
 type EdgeLike = {
   source: string;

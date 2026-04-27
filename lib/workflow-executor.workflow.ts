@@ -34,7 +34,7 @@ import {
   collectAllSkippedTargets,
   collectSkippedTargets,
   type ConditionDecision,
-} from "@/lib/skipped-branch-utils";
+} from "@/lib/workflow/nodes/condition/skipped-branch";
 import {
   buildEdgesBySource,
   buildEdgesByTarget,
@@ -42,7 +42,7 @@ import {
   propagateConvergenceSkips,
   signalConvergenceArrival,
 } from "@/lib/convergence-barrier";
-import { resolveConditionExpression } from "@/lib/condition-resolver";
+import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
 import {
   applyBigIntConversion,
   needsBigIntMode,
@@ -50,7 +50,7 @@ import {
 import {
   preValidateConditionExpression,
   validateConditionExpression,
-} from "@/lib/condition-validator";
+} from "@/lib/workflow/nodes/condition/validator";
 import {
   getActionLabel,
   getStepImporter,
@@ -76,7 +76,7 @@ const SYSTEM_ACTIONS: Record<string, StepImporter> = {
   },
   Condition: {
     // biome-ignore lint/suspicious/noExplicitAny: Dynamic module import
-    importer: () => import("./steps/condition") as Promise<any>,
+    importer: () => import("@/lib/workflow/nodes/condition/step") as Promise<any>,
     stepFunction: "conditionStep",
   },
   "For Each": {

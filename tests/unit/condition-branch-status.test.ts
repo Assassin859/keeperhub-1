@@ -7,7 +7,7 @@ import {
   type ConditionDecision,
   collectAllSkippedTargets,
   collectSkippedTargets,
-} from "@/lib/skipped-branch-utils";
+} from "@/lib/workflow/nodes/condition/skipped-branch";
 import { evaluateConditionExpression } from "@/lib/workflow-executor.workflow";
 
 type ExecutionResult = {

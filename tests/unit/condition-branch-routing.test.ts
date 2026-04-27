@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { resolveConditionExpression } from "@/lib/condition-resolver";
+import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
 import { buildEdgesBySourceHandle } from "@/lib/edge-handle-utils";
 import { evaluateConditionExpression } from "@/lib/workflow-executor.workflow";
 

@@ -11,8 +11,8 @@ import type {
   ConditionGroup,
   ConditionOperator,
   ConditionRule,
-} from "./condition-builder-types";
-import { isConditionGroup } from "./condition-builder-types";
+} from "./builder-types";
+import { isConditionGroup } from "./builder-types";
 
 // Keep in sync with OPERATOR_METADATA in condition-builder-utils.ts (unary: true entries)
 const UNARY_OPERATORS: ReadonlySet<ConditionOperator> = new Set([
