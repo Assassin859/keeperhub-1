@@ -2,7 +2,7 @@
 
 import { Upload } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { Overlay } from "@/components/overlays/overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
@@ -10,7 +10,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
-import { workflowExportV1Schema } from "@/lib/workflow/export-schema";
+import {
+  type WorkflowExportV1,
+  workflowExportV1Schema,
+} from "@/lib/workflow/export-schema";
 import type { OverlayComponentProps } from "./types";
 
 type ImportWorkflowOverlayProps = OverlayComponentProps<{
@@ -23,11 +26,10 @@ export function ImportWorkflowOverlay({
 }: ImportWorkflowOverlayProps) {
   const { closeAll } = useOverlay();
   const router = useRouter();
-  const inputRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [parsedFile, setParsedFile] = useState<unknown>(null);
+  const [parsedFile, setParsedFile] = useState<WorkflowExportV1 | null>(null);
   const [bindingCount, setBindingCount] = useState(0);
 
   const handleFile = useCallback(async (file: File) => {
@@ -77,9 +79,7 @@ export function ImportWorkflowOverlay({
     }
     setSubmitting(true);
     try {
-      const created = await api.workflow.import(
-        parsedFile as Parameters<typeof api.workflow.import>[0]
-      );
+      const created = await api.workflow.import(parsedFile);
       toast.success("Workflow imported");
       closeAll();
       if (onImported) {
@@ -123,7 +123,6 @@ export function ImportWorkflowOverlay({
           accept="application/json,.json"
           id="workflow-import-file"
           onChange={handleFileChange}
-          ref={inputRef}
           type="file"
         />
       </div>
