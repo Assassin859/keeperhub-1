@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
 import {
   getIntegration as getIntegrationFromDb,
   mergeDatabaseConfig,
 } from "@/lib/db/integrations";
 import { handleDatabaseTest, handlePluginTest } from "@/lib/db/test-connection";
-import { getOrgContext } from "@/lib/middleware/org-context";
+import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import type { IntegrationConfig } from "@/lib/types/integration";
 
 export type { TestConnectionResult } from "@/lib/db/test-connection";
@@ -34,16 +33,14 @@ export async function POST(
   { params }: { params: Promise<{ integrationId: string }> }
 ): Promise<NextResponse> {
   try {
-    const session = await auth.api.getSession({
-      headers: request.headers,
-    });
-
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const authContext = await getDualAuthContext(request);
+    if ("error" in authContext) {
+      return NextResponse.json(
+        { error: authContext.error },
+        { status: authContext.status }
+      );
     }
-
-    const orgContext = await getOrgContext();
-    const organizationId = orgContext.organization?.id ?? null;
+    const { userId, organizationId } = authContext;
 
     const { integrationId } = await params;
 
@@ -54,9 +51,13 @@ export async function POST(
       );
     }
 
+    // getIntegrationFromDb prefers the org filter when organizationId is set,
+    // ignoring userId; otherwise it falls back to a userId match. For API-key
+    // callers the org path is the only one that fires, so userId ?? "" is a
+    // safe placeholder. The pattern matches PATCH /api/integrations/[id].
     const integration = await getIntegrationFromDb(
       integrationId,
-      session.user.id,
+      userId ?? "",
       organizationId
     );
 

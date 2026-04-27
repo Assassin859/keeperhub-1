@@ -1,7 +1,9 @@
 import postgres from "postgres";
 import {
+  assertHostIsPublic,
   buildDatabaseUrlFromConfig,
   type DatabaseConnectionConfig,
+  extractHostFromConnectionString,
   getDatabaseErrorMessage,
   getPostgresConnectionOptions,
 } from "@/lib/db/connection-utils";
@@ -27,6 +29,15 @@ export async function testDatabaseConnection(
       databaseUrl,
       sslMode
     );
+
+    const host = extractHostFromConnectionString(normalizedUrl);
+    if (!host) {
+      return {
+        status: "error",
+        message: "Connection string is missing a host",
+      };
+    }
+    await assertHostIsPublic(host);
 
     connection = postgres(normalizedUrl, {
       max: 1,

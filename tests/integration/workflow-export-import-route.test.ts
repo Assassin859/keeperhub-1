@@ -118,7 +118,10 @@ vi.mock("@/lib/middleware/auth-helpers", () => ({
     userId: ownerId,
     organizationId: orgId,
     authMethod: "session",
+    apiKeyId: null,
   }),
+  auditFromAuth: vi.fn().mockReturnValue({ authMethod: "session" }),
+  UNAUTHENTICATED_AUDIT: { authMethod: "unknown" },
 }));
 
 vi.mock("@/lib/middleware/org-context", () => ({
@@ -230,9 +233,14 @@ describe("GET /api/workflows/[workflowId]/download", () => {
     expect(response.status).toBe(404);
   });
 
-  it("returns 401 without a session", async () => {
-    const { auth } = await import("@/lib/auth");
-    vi.mocked(auth.api.getSession).mockResolvedValueOnce(null);
+  it("returns 401 when getDualAuthContext rejects the request", async () => {
+    const { getDualAuthContext } = await import(
+      "@/lib/middleware/auth-helpers"
+    );
+    vi.mocked(getDualAuthContext).mockResolvedValueOnce({
+      error: "Unauthorized",
+      status: 401,
+    });
 
     const { GET } = await import(
       "@/app/api/workflows/[workflowId]/download/route"
@@ -418,6 +426,7 @@ describe("POST /api/workflows/import", () => {
       userId: null,
       organizationId: null,
       authMethod: "session",
+      apiKeyId: null,
     });
 
     const exportPayload = buildWorkflowExportV1({

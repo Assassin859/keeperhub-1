@@ -8,7 +8,11 @@ import { isAnonymousUser } from "@/lib/is-anonymous";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
 import { MetricNames } from "@/lib/metrics/types";
-import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import {
+  type DualAuthContext,
+  auditFromAuth,
+  getDualAuthContext,
+} from "@/lib/middleware/auth-helpers";
 import { generateId } from "@/lib/utils/id";
 import {
   stripIntegrationsFromImportNodes,
@@ -21,9 +25,10 @@ const versionedBodySchema = z
   .object({ version: z.unknown() })
   .passthrough();
 
-export async function POST(request: Request) {
+export async function POST(request: Request): Promise<NextResponse> {
+  let authContext: DualAuthContext | null = null;
   try {
-    const authContext = await getDualAuthContext(request);
+    authContext = await getDualAuthContext(request);
     if ("error" in authContext) {
       return NextResponse.json(
         { error: authContext.error },
@@ -130,6 +135,7 @@ export async function POST(request: Request) {
     logSystemError(ErrorCategory.DATABASE, "Failed to import workflow", error, {
       endpoint: "/api/workflows/import",
       operation: "import",
+      ...auditFromAuth(authContext),
     });
     return NextResponse.json(
       {
