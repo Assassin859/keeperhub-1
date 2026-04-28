@@ -5,6 +5,7 @@ import "server-only";
 
 import { safeFetch } from "@/lib/safe-fetch";
 import { getErrorMessage } from "@/lib/utils";
+import { extractTemplateTokens } from "@/lib/utils/template";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 
 type HttpRequestResult =
@@ -18,19 +19,11 @@ export type HttpRequestInput = StepInput & {
   httpBody?: string;
 };
 
-/**
- * Match any unresolved `{{...}}` token. URLs never legitimately contain `{{`,
- * so any remaining match after template processing is a user-config bug we
- * surface clearly instead of forwarding to fetch as a malformed URL.
- */
-const UNRESOLVED_TEMPLATE_REGEX = /\{\{\s*([^}]+?)\s*\}\}/g;
-
+// URLs never legitimately contain `{{`, so any token left in the endpoint
+// after template processing is a user-config bug we surface clearly instead
+// of forwarding to fetch as a malformed URL.
 function findUnresolvedTemplateVariables(value: string): string[] {
-  const names = new Set<string>();
-  for (const match of value.matchAll(UNRESOLVED_TEMPLATE_REGEX)) {
-    names.add(match[1]);
-  }
-  return [...names];
+  return [...new Set(extractTemplateTokens(value))];
 }
 
 /**
