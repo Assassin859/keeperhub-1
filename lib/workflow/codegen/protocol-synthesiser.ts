@@ -429,9 +429,9 @@ function emitAbiSourceWarning(ctx: ProtocolActionContext): string[] {
   return [];
 }
 
-// -- Read template parts ---------------------------------------------------
+// -- Template parts --------------------------------------------------------
 
-type ReadParts = {
+type TemplateParts = {
   imports: string[];
   warnings: string[];
   addressLine: string;
@@ -441,7 +441,7 @@ type ReadParts = {
   bodyLines: string[]; // function body lines with input.X (no input/output type refs)
 };
 
-function buildReadParts(inputs: SynthesisInputs): ReadParts {
+function buildReadParts(inputs: SynthesisInputs): TemplateParts {
   const { ctx } = inputs;
   const chainEmission = emitChainImport(inputs.chain);
   const addressEmission = emitAddressBlock(inputs.address);
@@ -489,7 +489,7 @@ function buildReadParts(inputs: SynthesisInputs): ReadParts {
   };
 }
 
-function renderStandaloneRead(parts: ReadParts, fnVarName: string): string {
+function renderStandaloneRead(parts: TemplateParts, fnVarName: string): string {
   return [
     ...parts.imports,
     "",
@@ -520,17 +520,7 @@ function buildWriteOutputType(): string {
   ].join("\n");
 }
 
-type WriteParts = {
-  imports: string[];
-  warnings: string[];
-  addressLine: string;
-  abiLine: string;
-  inputType: string;
-  outputType: string;
-  bodyLines: string[];
-};
-
-function buildWriteParts(inputs: SynthesisInputs): WriteParts {
+function buildWriteParts(inputs: SynthesisInputs): TemplateParts {
   const { ctx } = inputs;
   const chainEmission = emitChainImport(inputs.chain);
   const addressEmission = emitAddressBlock(inputs.address);
@@ -604,7 +594,7 @@ function buildWriteParts(inputs: SynthesisInputs): WriteParts {
   };
 }
 
-function renderStandaloneWrite(parts: WriteParts, fnVarName: string): string {
+function renderStandaloneWrite(parts: TemplateParts, fnVarName: string): string {
   return [
     ...parts.imports,
     "",
