@@ -387,6 +387,12 @@ function emitChainImport(chain: ResolvedChain): {
   };
 }
 
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+function addressBlock(value: string): string {
+  return `const CONTRACT_ADDRESS = "${value}" as const;`;
+}
+
 function emitAddressBlock(address: ResolvedAddress): {
   block: string;
   warnings: string[];
@@ -395,27 +401,13 @@ function emitAddressBlock(address: ResolvedAddress): {
     address.kind === "literal" ||
     address.kind === "user-specified-with-value"
   ) {
-    return {
-      block: `const CONTRACT_ADDRESS = "${address.value}" as const;`,
-      warnings: [],
-    };
+    return { block: addressBlock(address.value), warnings: [] };
   }
-  if (address.kind === "user-specified-placeholder") {
-    return {
-      block:
-        'const CONTRACT_ADDRESS = "0x0000000000000000000000000000000000000000" as const;',
-      warnings: [
-        "// this contract address is user-specified at runtime; replace with the token address you target",
-      ],
-    };
-  }
-  return {
-    block:
-      'const CONTRACT_ADDRESS = "0x0000000000000000000000000000000000000000" as const;',
-    warnings: [
-      `// no deployment recorded for chain id ${address.chainId}; replace with the address you target`,
-    ],
-  };
+  const warning =
+    address.kind === "user-specified-placeholder"
+      ? "// this contract address is user-specified at runtime; replace with the token address you target"
+      : `// no deployment recorded for chain id ${address.chainId}; replace with the address you target`;
+  return { block: addressBlock(ZERO_ADDRESS), warnings: [warning] };
 }
 
 function emitAbiSourceWarning(ctx: ProtocolActionContext): string[] {
