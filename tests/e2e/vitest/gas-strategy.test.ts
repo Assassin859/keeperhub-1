@@ -22,9 +22,13 @@ import {
   vi,
 } from "vitest";
 
-// Unmock for e2e tests
+// `@/lib/rpc/providers` (transitively imported via provider-factory) pulls in
+// `lib/rpc/safe-ethers-fetch.ts`, which guards itself with
+// `import "server-only"`. Without this mock the file-load throws under vitest.
+vi.mock("server-only", () => ({}));
+
+// Unmock for e2e tests so the real DB module is loaded.
 vi.unmock("@/lib/db");
-vi.unmock("server-only");
 
 import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
