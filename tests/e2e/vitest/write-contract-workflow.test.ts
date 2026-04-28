@@ -33,6 +33,8 @@ import {
   workflowExecutions,
   workflows,
 } from "@/lib/db/schema";
+import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
+import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { generateId } from "@/lib/utils/id";
 import type { WriteContractInput } from "@/plugins/web3/steps/write-contract";
 
@@ -72,7 +74,7 @@ const MIN_BALANCE = ethers.parseEther("0.0001");
 describe.skipIf(shouldSkip)("Write Contract Workflow E2E", () => {
   let client: ReturnType<typeof postgres>;
   let db: ReturnType<typeof drizzle>;
-  let sepoliaProvider: ethers.JsonRpcProvider;
+  let sepoliaManager: RpcProviderManager;
   let orgId: string;
   let userId: string;
   let walletAddress: string;
@@ -104,7 +106,17 @@ describe.skipIf(shouldSkip)("Write Contract Workflow E2E", () => {
       );
     }
     sepoliaRpcUrl = sepoliaChain[0].defaultPrimaryRpc;
-    sepoliaProvider = new ethers.JsonRpcProvider(sepoliaRpcUrl);
+    // Route on-chain reads (balance check, contract.retrieve()) through the
+    // failover manager so a primary-RPC blip falls over to the secondary
+    // instead of failing the test. The manager pulls primary + fallback
+    // straight from the chains table -- same source the production runtime
+    // uses for this chain.
+    sepoliaManager = await getRpcProviderFromUrls(
+      sepoliaRpcUrl,
+      sepoliaChain[0].defaultFallbackRpc ?? undefined,
+      SEPOLIA_CHAIN_ID,
+      "sepolia"
+    );
 
     // Look up persistent test org
     const testOrg = await db
@@ -139,7 +151,9 @@ describe.skipIf(shouldSkip)("Write Contract Workflow E2E", () => {
     console.log(`Wallet:   ${walletAddress}`);
 
     // Verify the persistent wallet has sufficient gas
-    const balance = await sepoliaProvider.getBalance(walletAddress);
+    const balance = await sepoliaManager.executeWithFailover((p) =>
+      p.getBalance(walletAddress)
+    );
     console.log(`Wallet balance: ${ethers.formatEther(balance)} ETH`);
 
     if (balance < MIN_BALANCE) {
@@ -263,14 +277,17 @@ describe.skipIf(shouldSkip)("Write Contract Workflow E2E", () => {
     expect(result.transactionHash).toMatch(TX_HASH_PATTERN);
     console.log(`Transaction hash: ${result.transactionHash}`);
 
-    // Verify on-chain: call retrieve() and check the stored value
-    const contract = new ethers.Contract(
-      SIMPLE_STORAGE_ADDRESS,
-      JSON.parse(SIMPLE_STORAGE_ABI),
-      sepoliaProvider
-    );
-
-    const storedValue = await contract.retrieve();
+    // Verify on-chain: call retrieve() and check the stored value. Construct
+    // the Contract inside executeWithFailover so the read benefits from
+    // failover the same way every other RPC call in this test does.
+    const storedValue = await sepoliaManager.executeWithFailover((p) => {
+      const contract = new ethers.Contract(
+        SIMPLE_STORAGE_ADDRESS,
+        JSON.parse(SIMPLE_STORAGE_ABI),
+        p
+      );
+      return contract.retrieve();
+    });
     console.log(`On-chain retrieve(): ${storedValue}`);
     expect(storedValue).toBe(BigInt(randomValue));
   }, 180_000); // 3 minute timeout for real tx
