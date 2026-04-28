@@ -11,13 +11,13 @@
  * envVar (webhookUrl == webhookUrl), but it's included here as a control to
  * prove the fix doesn't regress the previously-working path.
  *
- * SendGrid is included as a test.fixme: at the time of writing,
- * plugins/sendgrid/steps/send-email.ts hardcodes useKeeperHubApiKey = true
- * (line 174), so the integration credential path is dead at runtime
- * regardless of the fetcher fix. The fixme'd test runs the same shape as
- * the others and will activate when that hardcode is removed. The unit
- * test in tests/unit/credential-fetcher.test.ts continues to pin SendGrid's
- * configKey/envVar mapping in the meantime.
+ * SendGrid is intentionally not covered here. By design, every workflow
+ * sends email through KeeperHub's platform-managed SENDGRID_API_KEY; the
+ * step (plugins/sendgrid/steps/send-email.ts) uses process.env directly and
+ * does not read integration credentials at runtime. The credential-fetcher
+ * bug class therefore cannot affect SendGrid in production. The unit test
+ * in tests/unit/credential-fetcher.test.ts still pins SendGrid's
+ * configKey/envVar mapping in case the platform-managed model ever changes.
  *
  * The unit tests in tests/unit/credential-fetcher* pin the static map's
  * correctness, but cannot prove the bundler actually ships it. This test
@@ -357,59 +357,8 @@ test.describe("Credential resolution in workflow step bundles", () => {
     });
   }
 
-  // SendGrid: the runtime credential-from-integration path is currently
-  // unreachable because plugins/sendgrid/steps/send-email.ts:174 hardcodes
-  // useKeeperHubApiKey = true, which makes the step always read
-  // process.env.SENDGRID_API_KEY and ignore the user's integration. So
-  // even though the unit tests pin SendGrid's configKey/envVar mapping,
-  // there is nothing for an e2e test to exercise yet. This test runs the
-  // same shape as the others. Once the hardcode is removed (so the user-
-  // key branch is reachable), unfixme it.
-  test.fixme(
-    "sendgrid step receives credentials via PLUGIN_CREDENTIAL_MAP, not the lossy fallback",
-    async ({ page }) => {
-      const { userId, organizationId } = await lookupUserAndOrg(
-        PERSISTENT_TEST_USER_EMAIL
-      );
-      const credentialValue = `SG.e2e_invalid_${randomBytes(8).toString("hex")}`;
-      const integrationId = await createIntegration({
-        userId,
-        organizationId,
-        type: "sendgrid",
-        label: "SendGrid (e2e bundle test)",
-        config: { apiKey: credentialValue, useKeeperHubApiKey: false },
-      });
-      const workflowId = await createWorkflowWithAction({
-        userId,
-        organizationId,
-        integrationId,
-        actionType: "sendgrid/send-email",
-        actionConfig: {
-          emailTo: "credential-bundle-e2e@example.invalid",
-          emailSubject: "credential-bundle e2e probe",
-          emailBody: "credential-bundle e2e probe",
-        },
-        workflowName: "sendgrid credential bundle e2e",
-      });
-      const cleanup: CleanupHandle = { workflowId, integrationId };
-
-      try {
-        const response = await page.request.post(
-          `/api/workflow/${workflowId}/execute`,
-          { data: {} }
-        );
-        expect(response.ok()).toBeTruthy();
-
-        const result = await waitForWorkflowExecution(workflowId, 90_000);
-        expect(result).not.toBeNull();
-        if (result?.error) {
-          expect(result.error).not.toMatch(
-            /SENDGRID_API_KEY is not configured\. Please add it in Project Integrations/i
-          );
-        }
-      } finally {
-        await safeCleanup(cleanup);
-      }
-    }
-  );
+  // SendGrid is intentionally not covered. By design, every workflow sends
+  // email through KeeperHub's platform-managed SENDGRID_API_KEY env var;
+  // the step does not read integration credentials at runtime, so the
+  // credential-fetcher bug class never applied to it.
 });
