@@ -10,6 +10,7 @@ import {
   TemplateAutocomplete,
   type TemplateAutocompleteCloseReason,
 } from "./template-autocomplete";
+import { toStringValue } from "./template-badge-utils";
 
 export interface TemplateBadgeTextareaProps {
   value?: string;
@@ -97,12 +98,6 @@ function findActiveAtSign(text: string, cursorOffset?: number): number {
  * A textarea component that renders template variables as styled badges
  * Converts {{@nodeId:DisplayName.field}} to badges showing "DisplayName.field"
  */
-// See toStringValue in template-badge-input.tsx -- same defense against
-// non-string values leaking through TS-only `as string` casts at call sites.
-function toStringValue(value: unknown): string {
-  return typeof value === "string" ? value : String(value ?? "");
-}
-
 export function TemplateBadgeTextarea({
   value = "",
   onChange,
