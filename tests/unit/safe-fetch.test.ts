@@ -6,12 +6,29 @@ vi.mock("server-only", () => ({}));
 // factory is invoked when safe-fetch.ts imports @sentry/nextjs during ES
 // module graph resolution, which is before top-level test file statements
 // execute. A bare `const` would hit TDZ.
-const { captureException } = vi.hoisted(() => ({
+const { captureException, mockPromisesLookup } = vi.hoisted(() => ({
   captureException: vi.fn(),
+  mockPromisesLookup: vi.fn(),
 }));
 vi.mock("@sentry/nextjs", () => ({
   captureException,
 }));
+
+// Override only `promises.lookup` (used by `assertUrlIsPublic`). The
+// callback-form `lookup` from the same module is preserved so the undici
+// connector inside `safeFetch` continues to use real DNS for the
+// `safeFetch` tests below — those tests rely on `localhost` resolving to
+// 127.0.0.1 / ::1.
+vi.mock("node:dns", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:dns")>();
+  return {
+    ...actual,
+    promises: {
+      ...actual.promises,
+      lookup: mockPromisesLookup,
+    },
+  };
+});
 
 const incrementCounter = vi.fn();
 vi.mock("@/lib/metrics", () => ({
@@ -24,6 +41,7 @@ vi.mock("@/lib/metrics", () => ({
 }));
 
 import {
+  assertUrlIsPublic,
   isBlockedIp,
   SsrfBlockedError,
   type SsrfBlockReason,
@@ -304,5 +322,163 @@ describe("safeFetch (shadow mode)", () => {
         }),
       })
     );
+  });
+});
+
+describe("assertUrlIsPublic", () => {
+  beforeEach(() => {
+    mockPromisesLookup.mockReset();
+  });
+
+  it("rejects malformed URLs with TypeError", async () => {
+    await expect(assertUrlIsPublic("not a url")).rejects.toBeInstanceOf(
+      TypeError
+    );
+  });
+
+  it("rejects empty hostname with TypeError", async () => {
+    // `file:///etc/passwd` parses but the hostname is empty.
+    // Scheme check fires first, so this also exercises that path.
+    await expect(
+      assertUrlIsPublic("file:///etc/passwd")
+    ).rejects.toBeInstanceOf(SsrfBlockedError);
+  });
+
+  const blockedSchemes = [
+    "file:///etc/passwd",
+    "data:text/plain,hello",
+    "gopher://example.com/",
+    "ftp://example.com/",
+    "javascript:alert(1)",
+  ];
+
+  for (const url of blockedSchemes) {
+    it(`rejects scheme in ${url}`, async () => {
+      await expect(assertUrlIsPublic(url)).rejects.toBeInstanceOf(
+        SsrfBlockedError
+      );
+      try {
+        await assertUrlIsPublic(url);
+      } catch (err) {
+        expect((err as SsrfBlockedError).reason).toBe("scheme");
+      }
+    });
+  }
+
+  const blockedLiterals: [string, SsrfBlockReason][] = [
+    ["http://127.0.0.1/", "loopback"],
+    ["http://169.254.169.254/latest/meta-data/", "link-local"],
+    ["http://10.0.0.1/", "private-ip"],
+    ["http://192.168.1.1/", "private-ip"],
+    ["http://172.16.0.1/", "private-ip"],
+    ["https://[::1]/", "loopback"],
+    ["https://[fe80::1]/", "link-local"],
+    ["https://[fc00::1]/", "private-ip"],
+    ["http://[::ffff:169.254.169.254]/", "ipv4-mapped-private"],
+  ];
+
+  for (const [url, reason] of blockedLiterals) {
+    it(`rejects IP-literal ${url} (${reason})`, async () => {
+      let thrown: unknown;
+      try {
+        await assertUrlIsPublic(url);
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(SsrfBlockedError);
+      expect((thrown as SsrfBlockedError).reason).toBe(reason);
+      // No DNS lookup for IP literals.
+      expect(mockPromisesLookup).not.toHaveBeenCalled();
+    });
+  }
+
+  const allowedLiterals = [
+    "http://1.1.1.1/",
+    "https://8.8.8.8/",
+    "https://[2606:4700:4700::1111]/",
+  ];
+
+  for (const url of allowedLiterals) {
+    it(`accepts public IP literal ${url}`, async () => {
+      await expect(assertUrlIsPublic(url)).resolves.toBeUndefined();
+      expect(mockPromisesLookup).not.toHaveBeenCalled();
+    });
+  }
+
+  it("accepts a domain that resolves only to public addresses", async () => {
+    mockPromisesLookup.mockResolvedValue([{ address: "1.1.1.1", family: 4 }]);
+    await expect(
+      assertUrlIsPublic("https://rpc.example.com/")
+    ).resolves.toBeUndefined();
+    expect(mockPromisesLookup).toHaveBeenCalledWith(
+      "rpc.example.com",
+      expect.objectContaining({ all: true })
+    );
+  });
+
+  it("rejects a domain that resolves to a private IPv4", async () => {
+    mockPromisesLookup.mockResolvedValue([{ address: "10.0.0.5", family: 4 }]);
+    let thrown: unknown;
+    try {
+      await assertUrlIsPublic("https://internal.example.com/");
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(SsrfBlockedError);
+    expect((thrown as SsrfBlockedError).reason).toBe("private-ip");
+    expect((thrown as SsrfBlockedError).resolvedIp).toBe("10.0.0.5");
+  });
+
+  it("rejects a domain that resolves to IMDS (link-local)", async () => {
+    mockPromisesLookup.mockResolvedValue([
+      { address: "169.254.169.254", family: 4 },
+    ]);
+    let thrown: unknown;
+    try {
+      await assertUrlIsPublic("https://metadata.example.com/");
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(SsrfBlockedError);
+    expect((thrown as SsrfBlockedError).reason).toBe("link-local");
+  });
+
+  it("rejects when ANY resolved address is private (mixed dual-stack)", async () => {
+    // dual-stack split-horizon: first record public, second private.
+    // Must reject — an attacker can race the second record.
+    mockPromisesLookup.mockResolvedValue([
+      { address: "1.1.1.1", family: 4 },
+      { address: "10.0.0.5", family: 4 },
+    ]);
+    await expect(
+      assertUrlIsPublic("https://split-horizon.example.com/")
+    ).rejects.toBeInstanceOf(SsrfBlockedError);
+  });
+
+  it("rejects a domain that resolves to private IPv6 (ULA)", async () => {
+    mockPromisesLookup.mockResolvedValue([{ address: "fc00::1", family: 6 }]);
+    let thrown: unknown;
+    try {
+      await assertUrlIsPublic("https://ula.example.com/");
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(SsrfBlockedError);
+    expect((thrown as SsrfBlockedError).reason).toBe("private-ip");
+  });
+
+  it("throws a plain Error when DNS resolution fails", async () => {
+    mockPromisesLookup.mockRejectedValue(
+      Object.assign(new Error("ENOTFOUND"), { code: "ENOTFOUND" })
+    );
+    let thrown: unknown;
+    try {
+      await assertUrlIsPublic("https://nonexistent.example.com/");
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect(thrown).not.toBeInstanceOf(SsrfBlockedError);
+    expect(thrown).not.toBeInstanceOf(TypeError);
   });
 });

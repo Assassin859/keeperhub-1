@@ -66,9 +66,9 @@ describe("encodeBalanceOfCallData", () => {
   });
 
   it("throws on too-long input", () => {
-    expect(() =>
-      encodeBalanceOfCallData(`${VALID_ADDRESS}deadbeef`)
-    ).toThrow(/Invalid EVM address/);
+    expect(() => encodeBalanceOfCallData(`${VALID_ADDRESS}deadbeef`)).toThrow(
+      /Invalid EVM address/
+    );
   });
 
   it("throws on non-hex characters", () => {
@@ -128,7 +128,7 @@ describe("getRpcBackoffMs", () => {
   });
 
   it("never exceeds ABSOLUTE_MAX_BACKOFF_MS even with maximum jitter", () => {
-    vi.spyOn(Math, "random").mockReturnValue(0.999999);
+    vi.spyOn(Math, "random").mockReturnValue(0.999_999);
     for (let attempt = 0; attempt < 10; attempt++) {
       expect(getRpcBackoffMs(attempt, "standard")).toBeLessThanOrEqual(
         RPC_RETRY_CONFIG.ABSOLUTE_MAX_BACKOFF_MS
@@ -283,7 +283,9 @@ describe("rpcCall", () => {
     await expect(
       runWithTimers(rpcCall(TEST_RPC_URL, TEST_PAYLOAD))
     ).rejects.toThrow(/HTTP 429/);
-    expect(fetchMock).toHaveBeenCalledTimes(RPC_RETRY_CONFIG.MAX_RETRIES + 1);
+    expect(fetchMock).toHaveBeenCalledTimes(
+      RPC_RETRY_CONFIG.MAX_RETRIES + 1
+    );
     expect(addBreadcrumbMock).toHaveBeenCalledTimes(
       RPC_RETRY_CONFIG.MAX_RETRIES
     );
@@ -341,10 +343,7 @@ describe("rpcCallWithFailover", () => {
     );
 
     expect(result).toBe("0xprimary");
-    expect(fetchMock).toHaveBeenCalledWith(
-      PRIMARY_URL,
-      expect.anything()
-    );
+    expect(fetchMock).toHaveBeenCalledWith(PRIMARY_URL, expect.anything());
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
