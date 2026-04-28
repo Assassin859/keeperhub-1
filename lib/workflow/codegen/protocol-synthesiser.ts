@@ -489,7 +489,7 @@ function buildReadParts(inputs: SynthesisInputs): TemplateParts {
   };
 }
 
-function renderStandaloneRead(parts: TemplateParts, fnVarName: string): string {
+function renderStandalone(parts: TemplateParts, fnVarName: string): string {
   return [
     ...parts.imports,
     "",
@@ -594,27 +594,6 @@ function buildWriteParts(inputs: SynthesisInputs): TemplateParts {
   };
 }
 
-function renderStandaloneWrite(parts: TemplateParts, fnVarName: string): string {
-  return [
-    ...parts.imports,
-    "",
-    ...parts.warnings,
-    parts.addressLine,
-    "",
-    parts.abiLine,
-    "",
-    parts.inputType,
-    "",
-    parts.outputType,
-    "",
-    `export async function ${fnVarName}(input: Input): Promise<Output> {`,
-    `  "use step";`,
-    ...parts.bodyLines,
-    "}",
-    "",
-  ].join("\n");
-}
-
 // -- Public entries --------------------------------------------------------
 
 function buildSynthesisInputs(
@@ -639,10 +618,11 @@ export function synthesiseProtocolTemplate(
   if (!inputs) {
     return null;
   }
-  if (inputs.ctx.action.type === "read") {
-    return renderStandaloneRead(buildReadParts(inputs), inputs.fnVarName);
-  }
-  return renderStandaloneWrite(buildWriteParts(inputs), inputs.fnVarName);
+  const parts =
+    inputs.ctx.action.type === "read"
+      ? buildReadParts(inputs)
+      : buildWriteParts(inputs);
+  return renderStandalone(parts, inputs.fnVarName);
 }
 
 // -- SDK integration -------------------------------------------------------
