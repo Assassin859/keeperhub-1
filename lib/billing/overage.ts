@@ -46,7 +46,7 @@ export async function billOverageForOrg(
     return { billed: false, reason: "no provider customer ID" };
   }
 
-  const limits = getPlanLimits(plan, tier);
+  const limits = getPlanLimits(plan, tier, sub.planOverrides);
   if (limits.maxExecutionsPerMonth === -1) {
     return { billed: false, reason: "unlimited plan" };
   }

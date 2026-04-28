@@ -126,6 +126,34 @@ describe("getPlanLimits", () => {
     const limits = getPlanLimits("pro", "999k" as unknown as undefined);
     expect(limits.maxExecutionsPerMonth).toBe(25_000);
   });
+
+  it("applies per-org overrides on top of plan defaults", () => {
+    const limits = getPlanLimits("enterprise", null, {
+      gasCreditsCents: 50_000,
+      sla: "99.999%",
+      logRetentionDays: 730,
+    });
+    expect(limits.gasCreditsCents).toBe(50_000);
+    expect(limits.sla).toBe("99.999%");
+    expect(limits.logRetentionDays).toBe(730);
+    // Unspecified fields fall through to plan defaults
+    expect(limits.maxExecutionsPerMonth).toBe(-1);
+  });
+
+  it("overrides win over tier-based execution caps", () => {
+    const limits = getPlanLimits("pro", "25k", {
+      maxExecutionsPerMonth: 500_000,
+    });
+    expect(limits.maxExecutionsPerMonth).toBe(500_000);
+  });
+
+  it("ignores undefined override values", () => {
+    const limits = getPlanLimits("pro", "50k", {
+      gasCreditsCents: undefined,
+    });
+    expect(limits.gasCreditsCents).toBe(500); // pro default
+    expect(limits.maxExecutionsPerMonth).toBe(50_000);
+  });
 });
 
 describe("PLANS structure", () => {
