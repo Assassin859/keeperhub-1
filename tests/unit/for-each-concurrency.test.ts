@@ -4,7 +4,7 @@ import {
   type ErrorHandler,
   type IterationExecutor,
   runIterations,
-} from "@/lib/for-each-concurrency";
+} from "@/lib/workflow/nodes/for-each/concurrency";
 
 // ---------------------------------------------------------------------------
 // Helpers

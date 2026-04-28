@@ -4,7 +4,7 @@ import {
   extractObjectPaths,
   resolveArraySourceElement,
   traverseDotPath,
-} from "@/lib/for-each-utils";
+} from "@/lib/workflow/nodes/for-each/utils";
 
 // ---------------------------------------------------------------------------
 // Tests

@@ -16,6 +16,6 @@
     "baseUrl": ".",
     "paths": { "@/*": ["./src/*"] }
   },
-  "include": ["src/**/*", "../lib/sandbox-child-source.ts"],
+  "include": ["src/**/*", "../lib/sandbox/child-source.ts"],
   "exclude": ["node_modules", "dist"]
 }

@@ -11,7 +11,7 @@
  */
 
 // Import extensions to register them
-import "@/lib/extensions";
+import "@/lib/workflow/editor/extensions";
 
 export function KeeperHubExtensionLoader() {
   // This component doesn't render anything

@@ -182,7 +182,8 @@ export const PLANS: Record<PlanName, PlanDefinition> = {
 
 export function getPlanLimits(
   plan: PlanName,
-  tier?: TierKey | null
+  tier?: TierKey | null,
+  overrides?: Partial<PlanLimits> | null
 ): PlanLimits {
   const planDef = PLANS[plan];
   const limits = { ...planDef.features };
@@ -191,6 +192,18 @@ export function getPlanLimits(
     const selectedTier = planDef.tiers.find((t) => t.key === tier);
     if (selectedTier) {
       limits.maxExecutionsPerMonth = selectedTier.executions;
+    }
+  }
+
+  // Per-org overrides win over tier and plan defaults. Used for custom enterprise
+  // contracts (e.g. higher gas credits, custom SLA) that exceed the public plan.
+  if (overrides) {
+    for (const key of Object.keys(overrides) as (keyof PlanLimits)[]) {
+      const value = overrides[key];
+      if (value !== undefined) {
+        // biome-ignore lint/suspicious/noExplicitAny: PlanLimits is a heterogeneous record; per-key narrowing is unnecessary here
+        (limits as any)[key] = value;
+      }
     }
   }
 

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildEdgesBySourceHandle } from "@/lib/edge-handle-utils";
+import { buildEdgesBySourceHandle } from "@/lib/workflow/editor/edge-handle-utils";
 import {
   type ConditionDecision,
   collectAllSkippedTargets,
   collectSkippedTargets,
-} from "@/lib/skipped-branch-utils";
+} from "@/lib/workflow/nodes/condition/skipped-branch";
 
 type EdgeLike = {
   source: string;

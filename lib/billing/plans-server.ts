@@ -86,6 +86,52 @@ export function resolvePriceId(priceId: string): ResolvedPrice | undefined {
   return undefined;
 }
 
+function resolveFromMetadata(
+  metadata: Record<string, string> | undefined
+): ResolvedPrice | undefined {
+  const planValue = metadata?.plan;
+  if (!isValidPlanName(planValue)) {
+    return undefined;
+  }
+  const intervalValue = metadata?.interval;
+  const interval = parseInterval(intervalValue);
+
+  if (planValue === "enterprise") {
+    return { plan: "enterprise", tier: null, interval };
+  }
+
+  const tier = parseTierKey(metadata?.tier);
+  return { plan: planValue, tier, interval };
+}
+
+/**
+ * Resolve a Stripe price to a (plan, tier, interval) tuple.
+ *
+ * Lookup order:
+ * 1. Env-var price ID map (catalog plans: pro, business, standard enterprise)
+ * 2. Subscription metadata (`plan`, `tier`, `interval`) — for custom enterprise prices
+ * 3. Price metadata — fallback when subscription wasn't tagged
+ *
+ * Returns undefined if no signal can identify the plan; the caller logs and
+ * leaves the subscription unchanged so a human can investigate.
+ */
+export function resolveSubscriptionPlan(
+  priceId: string,
+  metadata?: {
+    subscription?: Record<string, string>;
+    price?: Record<string, string>;
+  }
+): ResolvedPrice | undefined {
+  const fromEnv = resolvePriceId(priceId);
+  if (fromEnv) {
+    return fromEnv;
+  }
+  return (
+    resolveFromMetadata(metadata?.subscription) ??
+    resolveFromMetadata(metadata?.price)
+  );
+}
+
 export async function getOrgSubscription(
   organizationId: string
 ): Promise<typeof organizationSubscriptions.$inferSelect | undefined> {
@@ -111,7 +157,11 @@ export async function checkFeatureAccess(
 ): Promise<boolean> {
   const sub = await getOrgSubscription(organizationId);
   const plan = parsePlanName(sub?.plan);
-  const limits = getPlanLimits(plan, parseTierKey(sub?.tier));
+  const limits = getPlanLimits(
+    plan,
+    parseTierKey(sub?.tier),
+    sub?.planOverrides
+  );
 
   const value = limits[feature];
   if (typeof value === "boolean") {
@@ -179,7 +229,7 @@ export async function checkExecutionLimit(
   const sub = await getOrgSubscription(organizationId);
   const plan = parsePlanName(sub?.plan);
   const tier = parseTierKey(sub?.tier);
-  const limits = getPlanLimits(plan, tier);
+  const limits = getPlanLimits(plan, tier, sub?.planOverrides);
 
   if (limits.maxExecutionsPerMonth === -1) {
     // Unlimited plans are unaffected by debt -- skip the query intentionally

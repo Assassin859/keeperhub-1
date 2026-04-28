@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { serializeSqlParams } from "@/lib/steps/database-query";
+import { serializeSqlParams } from "@/lib/workflow/nodes/database-query/step";
 
 describe("serializeSqlParams", () => {
   it("passes null through", () => {

@@ -23,7 +23,7 @@ import {
   propertiesPanelActiveTabAtom,
   type WorkflowEdge,
   type WorkflowNode,
-} from "@/lib/workflow-store";
+} from "@/lib/workflow/store";
 
 const NODE_SIZE = 192;
 const NODE_GAP = 80;

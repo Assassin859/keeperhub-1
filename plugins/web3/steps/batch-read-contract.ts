@@ -9,8 +9,8 @@ import { ErrorCategory, logUserError } from "@/lib/logging";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
-import type { RpcProviderManager } from "@/lib/rpc-provider";
-import { type StepInput, withStepLogging } from "@/lib/steps/step-handler";
+import type { RpcProviderManager } from "@/lib/rpc/providers";
+import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 
 const LOG_PREFIX = "[Batch Read Contract]";

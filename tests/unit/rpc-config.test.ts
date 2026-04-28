@@ -907,7 +907,7 @@ describe("RPC Config Resolution", () => {
     it("should work with all chain metadata fields", () => {
       const rpcConfig: RpcConfig = {
         "tempo-testnet": {
-          chainId: 42_429,
+          chainId: 42_431,
           symbol: "TEMPO",
           isEnabled: true,
           isTestnet: true,
@@ -915,7 +915,7 @@ describe("RPC Config Resolution", () => {
       };
 
       expect(getConfigValue(rpcConfig, "tempo-testnet", "chainId", 0)).toBe(
-        42_429
+        42_431
       );
       expect(getConfigValue(rpcConfig, "tempo-testnet", "symbol", "USD")).toBe(
         "TEMPO"

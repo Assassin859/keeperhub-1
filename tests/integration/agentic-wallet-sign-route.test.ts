@@ -26,7 +26,7 @@ import { Challenge } from "mppx";
 import { recoverTypedDataAddress } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { extractPayerAddress } from "@/lib/x402/payment-gate";
+import { extractPayerAddress } from "@/lib/payments/x402/payment-gate";
 
 // A realistic mppx-issued Tempo challenge the route can deserialize. Zero
 // amount intentionally routes to proof-mode (signMppProof) so the existing

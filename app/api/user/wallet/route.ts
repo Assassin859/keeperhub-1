@@ -11,6 +11,11 @@ import { db } from "@/lib/db";
 import { createIntegration } from "@/lib/db/integrations";
 import { integrations, organizationWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import {
+  type DualAuthContext,
+  auditFromAuth,
+  getDualAuthContext,
+} from "@/lib/middleware/auth-helpers";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
 import { createTurnkeyWallet } from "@/lib/turnkey/turnkey-client";
 
@@ -198,14 +203,18 @@ async function storeTurnkeyWalletAndIntegration(options: {
   return { walletAddress: normalizedWalletAddress, walletId: turnkeyWalletId };
 }
 
-export async function GET(request: Request) {
+export async function GET(request: Request): Promise<NextResponse> {
+  let authContext: DualAuthContext | null = null;
   try {
-    const session = await auth.api.getSession({ headers: request.headers });
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    authContext = await getDualAuthContext(request);
+    if ("error" in authContext) {
+      return NextResponse.json(
+        { error: authContext.error },
+        { status: authContext.status }
+      );
     }
 
-    const activeOrgId = getActiveOrgId(session);
+    const { userId, organizationId: activeOrgId } = authContext;
     if (!activeOrgId) {
       return NextResponse.json(
         { error: "No active organization" },
@@ -213,49 +222,50 @@ export async function GET(request: Request) {
       );
     }
 
-    const userId = session.user.id;
-
-    const allWallets = await db
+    // Turnkey is the only signer. Inactive Para rows may still exist in the
+    // DB for historical reasons but are not returned: the org has a single
+    // wallet surface, full stop.
+    const active = await db
       .select()
       .from(organizationWallets)
-      .where(eq(organizationWallets.organizationId, activeOrgId));
+      .where(
+        and(
+          eq(organizationWallets.organizationId, activeOrgId),
+          eq(organizationWallets.isActive, true)
+        )
+      )
+      .limit(1);
 
-    if (allWallets.length === 0) {
+    if (active.length === 0) {
       return NextResponse.json({
         hasWallet: false,
-        wallets: [],
         message: "No wallet found for this organization",
       });
     }
 
-    const PROVIDER_ORDER: Record<"para" | "turnkey", number> = {
-      para: 0,
-      turnkey: 1,
-    } as const;
-    const wallets = allWallets
-      .map((w) => ({
-        id: w.id,
-        provider: w.provider,
-        canExportKey: w.provider === "turnkey",
-        // Only the wallet creator may export its key, regardless of org role.
-        isOwner: w.userId === userId,
-        walletAddress: w.walletAddress,
-        walletId: w.paraWalletId ?? w.turnkeyWalletId,
-        email: w.email,
-        createdAt: w.createdAt,
-        organizationId: w.organizationId,
-        isActive: w.isActive,
-      }))
-      .sort((a, b) => PROVIDER_ORDER[a.provider] - PROVIDER_ORDER[b.provider]);
-
-    const primary = wallets.find((w) => w.isActive) ?? wallets[0];
+    const wallet = active[0];
 
     return NextResponse.json({
       hasWallet: true,
-      ...primary,
-      wallets,
+      id: wallet.id,
+      canExportKey: wallet.turnkeySubOrgId !== null,
+      // Only the wallet creator may export its key, regardless of org role.
+      // For API-key callers without a recorded creator (userId === null) this
+      // resolves to false, which is correct: key export is session-only.
+      isOwner: userId !== null && wallet.userId === userId,
+      walletAddress: wallet.walletAddress,
+      walletId: wallet.turnkeyWalletId,
+      email: wallet.email,
+      createdAt: wallet.createdAt,
+      organizationId: wallet.organizationId,
+      isActive: wallet.isActive,
     });
   } catch (error) {
+    logSystemError(ErrorCategory.DATABASE, "Failed to get wallet", error, {
+      endpoint: "/api/user/wallet",
+      operation: "get",
+      ...auditFromAuth(authContext),
+    });
     return apiError(error, "Failed to get wallet");
   }
 }

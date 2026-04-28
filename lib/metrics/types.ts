@@ -111,6 +111,8 @@ export const MetricNames = {
 
   // Traffic metrics
   WORKFLOW_EXECUTIONS_TOTAL: "workflow.executions.total",
+  WORKFLOW_EXPORTS_TOTAL: "workflow.exports.total",
+  WORKFLOW_IMPORTS_TOTAL: "workflow.imports.total",
   PLUGIN_INVOCATIONS_TOTAL: "plugin.invocations.total",
   USER_ACTIVE_DAILY: "user.active.daily",
 

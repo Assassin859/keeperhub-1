@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isNonRetryableError,
   NON_RETRYABLE_ERROR_CODES,
-} from "@/lib/rpc-provider/error-classification";
+} from "@/lib/rpc/providers/error-classification";
 
 describe("isNonRetryableError", () => {
   it("returns false for non-object errors", () => {

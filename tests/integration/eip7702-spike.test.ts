@@ -8,6 +8,9 @@ vi.mock("server-only", () => ({}));
 // needs real DB access for Para wallet lookups
 vi.unmock("@/lib/db");
 
+import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
+import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
+
 // ---------------------------------------------------------------------------
 // Environment gate -- entire suite skips if keys are missing
 // ---------------------------------------------------------------------------
@@ -20,6 +23,23 @@ const HAS_ALL = HAS_PIMLICO && HAS_PARA;
 
 // Base Sepolia
 const CHAIN_ID = 84_532;
+
+// Build a failover-aware ethers provider for Base Sepolia. Used by every
+// RPC read on the ethers code path so a primary-endpoint hiccup falls back
+// to the secondary instead of failing the whole test. Note: viem-side
+// callers (Pimlico bundler / publicClient below) do not go through this --
+// they use viem's own transport and Pimlico's bundler has independent
+// retry semantics.
+async function getBaseSepoliaManager(): ReturnType<
+  typeof getRpcProviderFromUrls
+> {
+  return getRpcProviderFromUrls(
+    getRpcUrlByChainId(CHAIN_ID, "primary"),
+    getRpcUrlByChainId(CHAIN_ID, "fallback"),
+    CHAIN_ID,
+    "base-sepolia"
+  );
+}
 
 // Top-level regex patterns for lint compliance
 const HEX_64_PATTERN = /^0x[a-f0-9]{64}$/;
@@ -140,9 +160,12 @@ describe.skipIf(!HAS_PARA)("Scenario B: Para signer accepts type-4 RLP", () => {
     await paraClient.setUserShare(decryptedShare);
     await paraClient.setUserId(wallet.userId);
 
-    const provider = new ethers.JsonRpcProvider(
-      "https://base-sepolia-rpc.publicnode.com"
-    );
+    // ParaEthersSigner expects a single ethers.Provider; this test only asks
+    // the signer to sign (no broadcast), so attaching the failover manager's
+    // current primary provider is sufficient. If the test is later extended
+    // to broadcast, wrap the broadcast call in manager.executeWithFailover.
+    const manager = await getBaseSepoliaManager();
+    const provider = manager.getProvider();
     const paraSigner = new ParaEthersSigner(paraClient as any, provider);
     const signerAddress = await paraSigner.getAddress();
 
@@ -310,10 +333,10 @@ describe.skipIf(!HAS_ALL)(
 
       const { ethers } = await import("ethers");
 
-      const provider = new ethers.JsonRpcProvider(
-        "https://base-sepolia-rpc.publicnode.com"
+      const manager = await getBaseSepoliaManager();
+      const accountNonce = await manager.executeWithFailover((p) =>
+        p.getTransactionCount(extractedAddress as string)
       );
-      const accountNonce = await provider.getTransactionCount(extractedAddress);
 
       const authHash = ethers.hashAuthorization({
         chainId: CHAIN_ID,

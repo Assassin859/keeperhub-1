@@ -13,17 +13,21 @@
  */
 
 import { ethers } from "ethers";
-import { describe, expect, it } from "vitest";
-import { reshapeArgsForAbi } from "@/lib/abi-struct-args";
+import { beforeAll, describe, expect, it } from "vitest";
+import { reshapeArgsForAbi } from "@/lib/abi/struct-args";
 import type {
   ProtocolAction,
   ProtocolContract,
   ProtocolDefinition,
 } from "@/lib/protocol-registry";
+import type { RpcProviderManager } from "@/lib/rpc/providers";
+import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
+import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 import aaveV4Def from "@/protocols/aave-v4";
 
 const RPC_URL = process.env.INTEGRATION_TEST_MAINNET_RPC_URL;
 const CHAIN_ID = "1";
+const MAINNET_CHAIN_ID = 1;
 const TEST_ADDRESS = "0x0000000000000000000000000000000000000001";
 const CORE_HUB = "0xCca852Bc40e560adC3b1Cc58CA5b55638ce826c9";
 
@@ -84,8 +88,23 @@ function buildCalldata(
 //    on zero allowance); setUsingAsCollateral silently succeeds on
 //    reserveId=0 because the Spoke no-ops on nonexistent reserves.
 describe.skipIf(!RPC_URL)("Aave V4 Lido Spoke on-chain integration", () => {
-  const getProvider = (): ethers.JsonRpcProvider =>
-    new ethers.JsonRpcProvider(RPC_URL);
+  // Route every RPC call through the failover manager so a primary-endpoint
+  // hiccup falls back to the secondary instead of failing the test. The
+  // primary URL respects INTEGRATION_TEST_MAINNET_RPC_URL (the original
+  // gate); the fallback comes from the chains-config used in production.
+  let manager: RpcProviderManager;
+
+  beforeAll(async () => {
+    if (!RPC_URL) {
+      return;
+    }
+    manager = await getRpcProviderFromUrls(
+      RPC_URL,
+      getRpcUrlByChainId(MAINNET_CHAIN_ID, "fallback"),
+      MAINNET_CHAIN_ID,
+      "ethereum"
+    );
+  });
 
   it("getReserveId: eth_call returns a decodable uint256", async () => {
     const { to, data, contract } = buildCalldata(aaveV4Def, "get-reserve-id", {
@@ -93,8 +112,9 @@ describe.skipIf(!RPC_URL)("Aave V4 Lido Spoke on-chain integration", () => {
       assetId: "0",
     });
 
-    const provider = getProvider();
-    const result = await provider.call({ to, data });
+    const result = await manager.executeWithFailover((p) =>
+      p.call({ to, data })
+    );
     const abi = JSON.parse(contract.abi as string);
     const iface = new ethers.Interface(abi);
     const decoded = iface.decodeFunctionResult("getReserveId", result);
@@ -109,8 +129,9 @@ describe.skipIf(!RPC_URL)("Aave V4 Lido Spoke on-chain integration", () => {
       { reserveId: "0", user: TEST_ADDRESS }
     );
 
-    const provider = getProvider();
-    const result = await provider.call({ to, data });
+    const result = await manager.executeWithFailover((p) =>
+      p.call({ to, data })
+    );
     const abi = JSON.parse(contract.abi as string);
     const iface = new ethers.Interface(abi);
     const decoded = iface.decodeFunctionResult(
@@ -127,8 +148,9 @@ describe.skipIf(!RPC_URL)("Aave V4 Lido Spoke on-chain integration", () => {
       user: TEST_ADDRESS,
     });
 
-    const provider = getProvider();
-    const result = await provider.call({ to, data });
+    const result = await manager.executeWithFailover((p) =>
+      p.call({ to, data })
+    );
     const abi = JSON.parse(contract.abi as string);
     const iface = new ethers.Interface(abi);
     const decoded = iface.decodeFunctionResult("getUserDebt", result);
@@ -145,8 +167,9 @@ describe.skipIf(!RPC_URL)("Aave V4 Lido Spoke on-chain integration", () => {
       { user: TEST_ADDRESS }
     );
 
-    const provider = getProvider();
-    const result = await provider.call({ to, data });
+    const result = await manager.executeWithFailover((p) =>
+      p.call({ to, data })
+    );
     const abi = JSON.parse(contract.abi as string);
     const iface = new ethers.Interface(abi);
     const decoded = iface.decodeFunctionResult("getUserAccountData", result);
@@ -165,8 +188,7 @@ describe.skipIf(!RPC_URL)("Aave V4 Lido Spoke on-chain integration", () => {
       onBehalfOf: TEST_ADDRESS,
     });
 
-    const provider = getProvider();
-    await expectCallAcceptedByBytecode(provider, { to, data });
+    await expectCallAcceptedByBytecode(manager, { to, data });
   }, 15_000);
 
   it("setUsingAsCollateral: deployed bytecode accepts the calldata", async () => {
@@ -176,8 +198,7 @@ describe.skipIf(!RPC_URL)("Aave V4 Lido Spoke on-chain integration", () => {
       onBehalfOf: TEST_ADDRESS,
     });
 
-    const provider = getProvider();
-    await expectCallAcceptedByBytecode(provider, { to, data });
+    await expectCallAcceptedByBytecode(manager, { to, data });
   }, 15_000);
 });
 
@@ -185,14 +206,17 @@ describe.skipIf(!RPC_URL)("Aave V4 Lido Spoke on-chain integration", () => {
  * Asserts the deployed bytecode accepted our calldata: either the call
  * returned cleanly (void functions return "0x") or reverted at the contract
  * level (CALL_EXCEPTION). Any other error class means the ABI doesn't match
- * what's deployed.
+ * what's deployed. The call is routed through the failover manager so a
+ * primary-RPC hiccup falls back to the secondary endpoint.
  */
 async function expectCallAcceptedByBytecode(
-  provider: ethers.JsonRpcProvider,
+  manager: RpcProviderManager,
   tx: { to: string; data: string }
 ): Promise<void> {
   try {
-    const result = await provider.call({ ...tx, from: TEST_ADDRESS });
+    const result = await manager.executeWithFailover((p) =>
+      p.call({ ...tx, from: TEST_ADDRESS })
+    );
     expect(result).toMatch(/^0x/);
   } catch (err: unknown) {
     expect(err).toMatchObject({ code: "CALL_EXCEPTION" });

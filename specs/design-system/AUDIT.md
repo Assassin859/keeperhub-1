@@ -173,8 +173,7 @@ These files are intentionally exempt from token requirements:
 
 1. **`keeperhub/api/og/generate-og.tsx`** -- Server-rendered OG images, not interactive UI
 2. **`lib/monaco-theme.ts`** -- Editor syntax highlighting, uses Monaco's own theming API
-3. **`lib/next-boilerplate/app/globals.css`** -- Upstream template, do not modify
-4. **`docs-site/`** -- Separate documentation site with its own design system
+3. **`docs-site/`** -- Separate documentation site with its own design system
 
 ## Recurring Patterns
 

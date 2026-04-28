@@ -1,7 +1,9 @@
 /**
  * Database connection utilities
  *
- * Handles URL encoding of database credentials with special characters
+ * Handles URL encoding of database credentials with special characters.
+ * Imports must stay free of `server-only` (transitively) because
+ * `drizzle.config.ts` loads this file at CLI time.
  */
 
 /**

@@ -13,13 +13,16 @@ import {
   List,
   Loader2,
   Plus,
+  Upload,
   X,
 } from "lucide-react";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { DiscordIcon } from "@/components/icons/discord-icon";
 import { AddressBookOverlay } from "@/components/overlays/address-book-overlay";
 import { FeedbackOverlay } from "@/components/overlays/feedback-overlay";
+import { ImportWorkflowOverlay } from "@/components/overlays/import-workflow-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import {
   Tooltip,
@@ -353,10 +356,12 @@ function SidebarHeader({
   expanded,
   onToggle,
   onNewWorkflow,
+  onImportWorkflow,
 }: {
   expanded: boolean;
   onToggle: () => void;
   onNewWorkflow: () => void;
+  onImportWorkflow: () => void;
 }): React.ReactNode {
   return (
     <div
@@ -385,6 +390,22 @@ function SidebarHeader({
         />
         {expanded && <span>New Workflow</span>}
       </button>
+      {expanded && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              aria-label="Import workflow from JSON"
+              className="ml-1 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              data-testid="nav-import"
+              onClick={onImportWorkflow}
+              type="button"
+            >
+              <Upload className="size-3.5" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>Import workflow from JSON</TooltipContent>
+        </Tooltip>
+      )}
       <button
         aria-label={expanded ? "Collapse sidebar" : "Expand sidebar"}
         className={cn(
@@ -717,6 +738,10 @@ export function NavigationSidebar(): React.ReactNode {
         .catch(() => [] as SavedWorkflow[]);
       const visible = existing.filter((w) => w.name !== "__current__");
       if (visible.length > 0) {
+        // Anonymous users are capped at one workflow. Surface the cap so the
+        // click isn't silently a no-op visually, then drop them onto their
+        // existing workflow.
+        toast.info("Sign in to create more workflows.");
         const latest = visible.sort(
           (a, b) =>
             new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
@@ -825,6 +850,19 @@ export function NavigationSidebar(): React.ReactNode {
       >
         <SidebarHeader
           expanded={expanded}
+          onImportWorkflow={() => {
+            if (isAnonymous) {
+              toast.info("Sign in to import workflows.");
+              return;
+            }
+            openOverlay(ImportWorkflowOverlay, {
+              onImported: (workflowId) => {
+                fetchData().catch(() => undefined);
+                navState.setPanelState("projects", "open");
+                router.push(`/workflows/${workflowId}`);
+              },
+            });
+          }}
           onNewWorkflow={() => {
             handleNewWorkflow().catch(() => {
               router.push("/");

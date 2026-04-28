@@ -4,8 +4,8 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getProtocol } from "@/lib/protocol-registry";
 import { db } from "@/lib/db";
 import { type Chain, chains, workflows } from "@/lib/db/schema";
-import type { WorkflowNode } from "@/lib/workflow-store";
-import { WorkflowTriggerEnum } from "@/lib/workflow-store";
+import type { WorkflowNode } from "@/lib/workflow/store";
+import { WorkflowTriggerEnum } from "@/lib/workflow/store";
 
 /**
  * Internal endpoint for workers to fetch active Event-type workflows

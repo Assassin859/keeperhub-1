@@ -1,7 +1,7 @@
 import "server-only";
 
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
-import { type StepInput, withStepLogging } from "@/lib/steps/step-handler";
+import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import {
   type QueryTransactionsCoreInput,
   type QueryTransactionsResult,

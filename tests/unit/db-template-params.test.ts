@@ -6,7 +6,7 @@ import {
   extractTemplateParameters,
   resolveDisplayTemplate,
   resolveTemplateToRawValue,
-} from "@/lib/workflow-executor.workflow";
+} from "@/lib/workflow/executor/executor.workflow";
 
 type NodeOutputs = Record<string, { label: string; data: unknown }>;
 

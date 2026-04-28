@@ -37,15 +37,15 @@ import { GoLiveOverlay } from "@/components/overlays/go-live-overlay";
 import { ListingOverlay } from "@/components/overlays/listing-overlay";
 import { Switch } from "@/components/ui/switch";
 import { WalletToolbarButton } from "@/components/workflow/wallet-toolbar-button";
-import { BUILTIN_NODE_ID } from "@/lib/builtin-variables";
+import { BUILTIN_NODE_ID } from "@/lib/workflow/editor/builtin-variables";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import { api, ApiError, type Project, type Tag } from "@/lib/api-client";
 import { authClient, useSession } from "@/lib/auth-client";
-import { getCustomLogo } from "@/lib/extension-registry";
+import { getCustomLogo } from "@/lib/workflow/editor/extension-registry";
 import { integrationsAtom } from "@/lib/integrations-store";
 import type { IntegrationType } from "@/lib/types/integration";
 import { cn } from "@/lib/utils";
-import { evaluateShowWhen, type ShowWhen } from "@/lib/workflow/show-when";
+import { evaluateShowWhen, type ShowWhen } from "@/lib/workflow/editor/show-when";
 import {
   addNodeAtom,
   canRedoAtom,
@@ -85,7 +85,7 @@ import {
   type WorkflowNode,
   WorkflowTriggerEnum,
   type WorkflowVisibility,
-} from "@/lib/workflow-store";
+} from "@/lib/workflow/store";
 import {
   findActionById,
   flattenConfigFields,
@@ -1015,50 +1015,36 @@ function useWorkflowActions(state: ReturnType<typeof useWorkflowState>) {
 
   const handleDownload = async () => {
     if (!currentWorkflowId) {
-      toast.error("Please save the workflow before downloading");
+      toast.error("Please save the workflow before exporting");
       return;
     }
 
     setIsDownloading(true);
-    toast.info("Preparing workflow files for download...");
 
     try {
-      const result = await api.workflow.download(currentWorkflowId);
+      const exportPayload = await api.workflow.download(currentWorkflowId);
 
-      if (!result.success) {
-        throw new Error(result.error || "Failed to prepare download");
-      }
-
-      if (!result.files) {
-        throw new Error("No files to download");
-      }
-
-      // Import JSZip dynamically
-      const JSZip = (await import("jszip")).default;
-      const zip = new JSZip();
-
-      // Add all files to the zip
-      for (const [path, content] of Object.entries(result.files)) {
-        zip.file(path, content);
-      }
-
-      // Generate the zip file
-      const blob = await zip.generateAsync({ type: "blob" });
-
-      // Create download link
+      const blob = new Blob([JSON.stringify(exportPayload, null, 2)], {
+        type: "application/json",
+      });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
+      const slug =
+        workflowName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(
+          /^-+|-+$/g,
+          ""
+        ) || "workflow";
       a.href = url;
-      a.download = `${workflowName.toLowerCase().replace(/[^a-z0-9]/g, "-")}-workflow.zip`;
+      a.download = `${slug}.workflow.json`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
 
-      toast.success("Workflow downloaded successfully!");
+      toast.success("Workflow exported");
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to download workflow"
+        error instanceof Error ? error.message : "Failed to export workflow"
       );
     } finally {
       setIsDownloading(false);
@@ -1549,9 +1535,7 @@ function DownloadButton({
       onClick={handleClick}
       size="icon"
       title={
-        state.isDownloading
-          ? "Preparing download..."
-          : "Export workflow as code"
+        state.isDownloading ? "Exporting..." : "Export workflow as JSON"
       }
       variant="secondary"
     >

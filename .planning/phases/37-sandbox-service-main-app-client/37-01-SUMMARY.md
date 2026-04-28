@@ -46,7 +46,7 @@ Anchored by grep:
 
 Expected and documented:
 
-1. Dropped imports: `server-only`, `@/lib/logging`, `@/lib/metrics/instrumentation/plugin`, `@/lib/steps/step-handler`.
+1. Dropped imports: `server-only`, `@/lib/logging`, `@/lib/metrics/instrumentation/plugin`, `@/lib/workflow/executor/step-handler`.
 2. Dropped main-app code: `UNRESOLVED_TEMPLATE_REGEX`, `stripStringLiterals` (template validation stays in main app), `extractLineNumber` (caller extracts), `runCodeStep`, `_integrationType`, `"use step"` directive.
 3. Renamed result type: `RunCodeResult` (main-app shape `{success, error, logs, line?}`) → `ChildOutcome` (`{ok, result | errorMessage, logs}`). Main-app client in Plan 37-02 will reconstruct the `RunCodeResult` shape from `ChildOutcome`.
 4. New public API: `export async function runCode({code, timeoutMs}): Promise<ChildOutcome>`.

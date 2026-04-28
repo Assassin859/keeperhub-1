@@ -7,7 +7,7 @@ import {
   noopSolanaMetricsCollector,
   SolanaProviderManager,
   type SolanaRpcMetricsCollector,
-} from "@/lib/rpc-provider/solana";
+} from "@/lib/rpc/providers/solana";
 
 // Mock @solana/web3.js
 vi.mock("@solana/web3.js", () => {

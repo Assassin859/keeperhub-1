@@ -129,7 +129,7 @@ vi.mock("workflow/api", () => ({
   start: vi.fn().mockResolvedValue({ runId: "run-123" }),
 }));
 
-vi.mock("@/lib/workflow-executor.workflow", () => ({
+vi.mock("@/lib/workflow/executor/executor.workflow", () => ({
   executeWorkflow: vi.fn(),
 }));
 
