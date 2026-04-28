@@ -657,19 +657,10 @@ export function synthesiseProtocolForSDK(
   if (!inputs) {
     return null;
   }
-
-  if (inputs.ctx.action.type === "read") {
-    const parts = buildReadParts(inputs);
-    return {
-      imports: parts.imports,
-      inputs: inputs.ctx.action.inputs,
-      inlineDecls: [parts.addressLine, parts.abiLine],
-      warnings: parts.warnings,
-      bodyLines: parts.bodyLines.map(rebindInputToStepInput),
-    };
-  }
-
-  const parts = buildWriteParts(inputs);
+  const parts =
+    inputs.ctx.action.type === "read"
+      ? buildReadParts(inputs)
+      : buildWriteParts(inputs);
   return {
     imports: parts.imports,
     inputs: inputs.ctx.action.inputs,
