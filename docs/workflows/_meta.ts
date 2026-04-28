@@ -1,7 +1,6 @@
 export default {
-    introduction: "Introduction",
     creating: "Creating Workflows",
-    "paid-workflows": "Paid Workflows",
-    examples: "Examples",
-    "marketplace-listing": "Marketplace Listing",
+    "import-export": "Import/Export",
+    hub: "Hub",
+    marketplace: "Marketplace",
 };

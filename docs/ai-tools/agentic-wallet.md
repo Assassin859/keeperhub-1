@@ -155,7 +155,7 @@ The meta-tool pattern keeps the agent's tool list small regardless of how many w
 
 ## Paying for calls
 
-Paid workflows settle in USDC on Base (via x402) or USDC.e on Tempo (via MPP). Most workflows cost under `$0.05` per call. See [Paid Workflows](/workflows/paid-workflows) for the creator-side view of the same settlement.
+Paid workflows settle in USDC on Base (via x402) or USDC.e on Tempo (via MPP). Most workflows cost under `$0.05` per call. See [Marketplace](/workflows/marketplace) for the creator-side view of the same settlement.
 
 ## Known limitations
 

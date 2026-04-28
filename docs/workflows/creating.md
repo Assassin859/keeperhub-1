@@ -5,12 +5,19 @@ description: "Step-by-step guide to building workflows with the visual node-base
 
 # Creating Workflows
 
-This guide walks you through creating workflows using KeeperHub's visual workflow builder.
+There are several ways to create a KeeperHub workflow. The visual builder in the browser is the most direct path; for AI agents and terminal-driven workflows, you can also create them programmatically:
+
+- [**Visual builder**](/workflows/creating) (this guide): design workflows on a node canvas in the KeeperHub web app.
+- [**MCP server**](/ai-tools/mcp-server): AI agents call `create_workflow` over the Model Context Protocol to build workflows from natural language.
+- [**Claude Code plugin**](/ai-tools/claude-code-plugin): bundles the MCP server plus skills so you can ask Claude Code to "create a workflow that..." inside the terminal.
+- [**`kh` CLI**](/cli): scriptable workflow management for CI and headless environments.
+
+The rest of this page covers the visual builder.
 
 ## Getting Started
 
-1. Click the workflow dropdown in the top-left corner
-2. Select **New Workflow** to create a blank workflow
+1. Click **New Workflow** at the top of the left sidebar
+2. Give the workflow a name and description in the **Properties** panel on the right (the panel has Properties, Code, and Runs tabs)
 3. The visual canvas opens with zoom controls and the AI assistant
 
 ## The Workflow Canvas
@@ -28,7 +35,7 @@ This guide walks you through creating workflows using KeeperHub's visual workflo
 | + | Add a new node |
 | Undo/Redo | Undo or redo recent changes |
 | Save | Save current workflow state |
-| Download | Export workflow as JSON |
+| Download | Export the workflow as JSON. See [Import/Export](/workflows/import-export). |
 | Lock | Lock workflow to prevent edits |
 | Run | Execute the workflow manually |
 
@@ -141,8 +148,8 @@ Expression mode also supports JavaScript methods, array indexing, and property a
 
 Condition nodes have two output handles:
 
-- **true** -- downstream nodes connected here execute when the condition passes
-- **false** -- downstream nodes connected here execute when the condition fails
+- **true**: downstream nodes connected here execute when the condition passes
+- **false**: downstream nodes connected here execute when the condition fails
 
 Connect different branches to each handle to create if/else logic in a single node.
 
@@ -174,6 +181,7 @@ Click **Delete** in the node configuration panel to remove a node and its connec
 - Workflows automatically save when you make changes
 - Use the **Save** button to force-save current state
 - Invalid configurations prevent saving until fixed
+- The **Download** button exports the workflow as JSON, which you can re-upload from the workflows list to clone or share. See [Import/Export](/workflows/import-export) for the format and use cases.
 
 ## Using AI to Create Workflows
 
@@ -192,15 +200,7 @@ The **Ask AI...** input at the bottom of the canvas lets you describe your autom
 
 ## Importing from the Hub
 
-The **Hub** lists workflow templates shared by the community. To use a template:
-
-1. Browse the Hub from the main navigation
-2. Select a workflow template
-3. Click **Duplicate** to copy it into your workspace
-
-The copy is created with a unique name (e.g., "My Workflow (Copy)") and set to private visibility. Node configurations are preserved, but integration credentials are removed so you can assign your own connections.
-
-You can also duplicate any public workflow you are viewing by clicking the **Duplicate** button in the toolbar.
+If you'd rather start from a community template than build from scratch, see the [Hub](/workflows/hub).
 
 ## Workflow States
 
