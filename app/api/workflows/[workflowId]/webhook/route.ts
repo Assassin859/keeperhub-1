@@ -17,7 +17,7 @@ import { recordWebhookMetrics } from "@/lib/metrics/instrumentation/api";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { apiKeys, workflowExecutions, workflows } from "@/lib/db/schema";
-import { getOrgSlug } from "@/lib/db/org-helpers";
+import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
 import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 // Validate API key and return the user ID if valid
@@ -111,8 +111,9 @@ async function executeWorkflowBackground(
   input: Record<string, unknown>,
   organizationId?: string | null,
   ownerId?: string,
-  organizationSlug?: string
-) {
+  organizationSlug?: string,
+  organizationPlan?: string
+): Promise<void> {
   try {
     console.log("[Webhook] Starting execution:", executionId);
 
@@ -133,6 +134,7 @@ async function executeWorkflowBackground(
         organizationId: organizationId ?? undefined,
         ownerId,
         organizationSlug,
+        organizationPlan,
       },
     ]);
 
@@ -284,8 +286,11 @@ export async function POST(
       [LabelKeys.WORKFLOW_ID]: workflowId,
     });
 
-    // Resolve org slug for log labels (cached per request)
-    const organizationSlug = await getOrgSlug(workflow.organizationId);
+    // Resolve org slug + plan for log labels (cached per request)
+    const [organizationSlug, organizationPlan] = await Promise.all([
+      getOrgSlug(workflow.organizationId),
+      getOrgPlanLabel(workflow.organizationId),
+    ]);
 
     // Execute the workflow in the background (don't await)
     executeWorkflowBackground(
@@ -296,7 +301,8 @@ export async function POST(
       body,
       workflow.organizationId,
       workflow.userId,
-      organizationSlug
+      organizationSlug,
+      organizationPlan
     );
 
     recordWebhookMetrics({

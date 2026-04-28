@@ -4,6 +4,7 @@ import { start } from "workflow/api";
 import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { db } from "@/lib/db";
+import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
 import { tags, workflowExecutions, workflows } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
@@ -122,11 +123,15 @@ async function prepareExecution(
  * Fire-and-forget: kicks off the workflow in the background. The HTTP response
  * is returned to the caller immediately while the workflow runs.
  */
-function startExecutionInBackground(
+async function startExecutionInBackground(
   workflow: CallRouteWorkflow,
   body: Record<string, unknown>,
   executionId: string
-): void {
+): Promise<void> {
+  const [organizationSlug, organizationPlan] = await Promise.all([
+    getOrgSlug(workflow.organizationId),
+    getOrgPlanLabel(workflow.organizationId),
+  ]);
   start(executeWorkflow, [
     {
       nodes: workflow.nodes as WorkflowNode[],
@@ -135,6 +140,8 @@ function startExecutionInBackground(
       executionId,
       workflowId: workflow.id,
       organizationId: workflow.organizationId ?? undefined,
+      organizationSlug,
+      organizationPlan,
     },
   ]).catch((err: unknown) => {
     logSystemError(
@@ -159,7 +166,7 @@ async function createAndStartExecution(
   if ("error" in prepared) {
     return prepared.error;
   }
-  startExecutionInBackground(workflow, body, prepared.executionId);
+  await startExecutionInBackground(workflow, body, prepared.executionId);
   const responseBody = await buildCallCompletionResponse(
     prepared.executionId,
     workflow.outputMapping
@@ -335,7 +342,7 @@ async function handlePaidWorkflow(
           throw err;
         }
 
-        startExecutionInBackground(workflow, body, executionId);
+        await startExecutionInBackground(workflow, body, executionId);
 
         const responseBody = await buildCallCompletionResponse(
           executionId,
