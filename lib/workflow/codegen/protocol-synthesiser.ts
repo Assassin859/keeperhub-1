@@ -441,14 +441,42 @@ type TemplateParts = {
   bodyLines: string[]; // function body lines with input.X (no input/output type refs)
 };
 
-function buildReadParts(inputs: SynthesisInputs): TemplateParts {
-  const { ctx } = inputs;
-  const chainEmission = emitChainImport(inputs.chain);
-  const addressEmission = emitAddressBlock(inputs.address);
+type SharedSynthFrame = {
+  ctx: ProtocolActionContext;
+  chainEmission: ReturnType<typeof emitChainImport>;
+  addressEmission: ReturnType<typeof emitAddressBlock>;
+  argsList: string;
+};
 
-  const argsList = buildArgsList(ctx);
+function buildSharedFrame(inputs: SynthesisInputs): SharedSynthFrame {
+  return {
+    ctx: inputs.ctx,
+    chainEmission: emitChainImport(inputs.chain),
+    addressEmission: emitAddressBlock(inputs.address),
+    argsList: buildArgsList(inputs.ctx),
+  };
+}
+
+function commonTemplateFields(
+  frame: SharedSynthFrame
+): Pick<TemplateParts, "warnings" | "addressLine" | "abiLine" | "inputType"> {
+  const { ctx, chainEmission, addressEmission } = frame;
+  return {
+    warnings: [
+      ...emitAbiSourceWarning(ctx),
+      ...chainEmission.warnings,
+      ...addressEmission.warnings,
+    ],
+    addressLine: addressEmission.block,
+    abiLine: `const ABI = ${formatAbiFragment(ctx.abiFragment)};`,
+    inputType: buildInputType(ctx),
+  };
+}
+
+function buildReadParts(inputs: SynthesisInputs): TemplateParts {
+  const frame = buildSharedFrame(inputs);
+  const { ctx, chainEmission, argsList } = frame;
   const resultMapping = buildReadResultMapping(ctx);
-  const abiBlock = formatAbiFragment(ctx.abiFragment);
 
   const bodyLines: string[] = [
     "  const client = createPublicClient({",
@@ -472,18 +500,11 @@ function buildReadParts(inputs: SynthesisInputs): TemplateParts {
   ];
 
   return {
+    ...commonTemplateFields(frame),
     imports: [
       `import { createPublicClient, http } from "viem";`,
       chainEmission.importLine,
     ],
-    warnings: [
-      ...emitAbiSourceWarning(ctx),
-      ...chainEmission.warnings,
-      ...addressEmission.warnings,
-    ],
-    addressLine: addressEmission.block,
-    abiLine: `const ABI = ${abiBlock};`,
-    inputType: buildInputType(ctx),
     outputType: buildReadOutputType(ctx),
     bodyLines,
   };
@@ -521,11 +542,8 @@ function buildWriteOutputType(): string {
 }
 
 function buildWriteParts(inputs: SynthesisInputs): TemplateParts {
-  const { ctx } = inputs;
-  const chainEmission = emitChainImport(inputs.chain);
-  const addressEmission = emitAddressBlock(inputs.address);
-  const argsList = buildArgsList(ctx);
-  const abiBlock = formatAbiFragment(ctx.abiFragment);
+  const frame = buildSharedFrame(inputs);
+  const { ctx, chainEmission, argsList } = frame;
 
   const valueLine = ctx.action.payable
     ? "      value: input.ethValue ? BigInt(input.ethValue) : undefined,"
@@ -576,19 +594,12 @@ function buildWriteParts(inputs: SynthesisInputs): TemplateParts {
   ];
 
   return {
+    ...commonTemplateFields(frame),
     imports: [
       `import { createPublicClient, createWalletClient, http } from "viem";`,
       `import { privateKeyToAccount } from "viem/accounts";`,
       chainEmission.importLine,
     ],
-    warnings: [
-      ...emitAbiSourceWarning(ctx),
-      ...chainEmission.warnings,
-      ...addressEmission.warnings,
-    ],
-    addressLine: addressEmission.block,
-    abiLine: `const ABI = ${abiBlock};`,
-    inputType: buildInputType(ctx),
     outputType: buildWriteOutputType(),
     bodyLines,
   };
