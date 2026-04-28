@@ -20,13 +20,13 @@ Two steps: register the skill + safety hook, then provision a wallet. Run the co
 **Manual:**
 
 ```bash
-npx @keeperhub/wallet skill install
-npx @keeperhub/wallet add
+npx -p @keeperhub/wallet keeperhub-wallet skill install
+npx -p @keeperhub/wallet keeperhub-wallet add
 ```
 
 **Have your agent do it:** paste this prompt:
 
-> Install the KeeperHub agentic wallet: run `npx @keeperhub/wallet skill install` to register the skill and safety hook, then `npx @keeperhub/wallet add` to provision a new wallet. Report the subOrgId and wallet address when done.
+> Install the KeeperHub agentic wallet: run `npx -p @keeperhub/wallet keeperhub-wallet skill install` to register the skill and safety hook, then `npx -p @keeperhub/wallet keeperhub-wallet add` to provision a new wallet. Report the subOrgId and wallet address when done.
 
 The install step writes the skill file into every detected agent skill directory (Claude Code, Cursor, Cline, Windsurf, OpenCode) and registers the `keeperhub-wallet-hook` `PreToolUse` safety hook in `~/.claude/settings.json`. The `add` step provisions a fresh Turnkey sub-organisation and writes `~/.keeperhub/wallet.json` (mode `0600`). The file contains only your sub-org identifier, your EVM wallet address, and an HMAC shared secret used to authenticate signing requests against KeeperHub — **no private key**. The signing key material is generated inside [Turnkey's secure enclave](https://docs.turnkey.com/concepts/overview#the-system-level-threat-model-we-solve) and never leaves it; nothing in `wallet.json` alone is enough to sign a transaction.
 
@@ -130,7 +130,7 @@ Full documentation and security risk ratings: https://skills.sh/coinbase/agentic
 | Payment protocols       | x402 (Base USDC) + MPP (Tempo USDC.e)                  | x402                                                | x402 (Coinbase ecosystem)                                          |
 | PreToolUse safety hook  | Three-tier auto/ask/block built-in                     | Not bundled                                         | Not bundled                                                        |
 | Onboarding              | Zero-registration, under 60 seconds                    | Zero-registration                                   | Requires CDP account for the managed variant                       |
-| Install                 | `npx @keeperhub/wallet skill install`                  | `npx agentcash add https://app.keeperhub.com`       | `npx skills add coinbase/agentic-wallet-skills`                    |
+| Install                 | `npx -p @keeperhub/wallet keeperhub-wallet skill install`                  | `npx agentcash add https://app.keeperhub.com`       | `npx skills add coinbase/agentic-wallet-skills`                    |
 
 ## Choosing a wallet
 
@@ -179,7 +179,7 @@ If KeeperHub's operator key is compromised, the attacker is still bound by these
 
 ### What happens if I lose `wallet.json`?
 
-Today, the wallet is not recoverable. `wallet.json` holds the HMAC secret that authenticates your agent against KeeperHub; without it there is no way to re-authenticate to the same sub-org. Running `npx @keeperhub/wallet add` again creates a brand new sub-org with a brand new address. Any funds in the old wallet stay there but are unreachable.
+Today, the wallet is not recoverable. `wallet.json` holds the HMAC secret that authenticates your agent against KeeperHub; without it there is no way to re-authenticate to the same sub-org. Running `npx -p @keeperhub/wallet keeperhub-wallet add` again creates a brand new sub-org with a brand new address. Any funds in the old wallet stay there but are unreachable.
 
 Back up `wallet.json` the same way you would back up an SSH key. A passkey-backed recovery path is on the roadmap.
 
@@ -221,7 +221,7 @@ Installing an agentic wallet does not touch or affect your creator wallet, and v
 
 ### Can I delete my wallet?
 
-Not through the CLI today. If you've stopped using a wallet and want the sub-org cleaned up, get in touch via the KeeperHub support channel with your `subOrgId` (from `npx @keeperhub/wallet info`) and the operator team can remove it.
+Not through the CLI today. If you've stopped using a wallet and want the sub-org cleaned up, get in touch via the KeeperHub support channel with your `subOrgId` (from `npx -p @keeperhub/wallet keeperhub-wallet info`) and the operator team can remove it.
 
 ### What do I actually pay? Do I need ETH for gas?
 
