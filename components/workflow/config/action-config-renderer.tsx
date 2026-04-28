@@ -22,6 +22,7 @@ import { SaveAddressBookmark } from "@/components/address-book/save-address-book
 import type { AbiComponent } from "@/components/workflow/config/abi-types";
 import { ArrayInputField } from "@/components/workflow/config/array-input-field";
 import { TupleInputField } from "@/components/workflow/config/tuple-input-field";
+import { parseAbiFunctionArgs } from "@/lib/abi/parse-args";
 import { computeSelector, findAbiFunction } from "@/lib/abi/utils";
 import { evaluateShowWhen } from "@/lib/workflow/editor/show-when";
 import { parseAddressBookSelection } from "@/lib/address-book-selection";
@@ -318,22 +319,9 @@ export function AbiFunctionArgsField({
     }
   }, [abiValue, functionValue]);
 
-  // Parse prop value into array
-  const parsePropValue = React.useCallback((val: string): unknown[] => {
-    if (!val || val.trim() === "") {
-      return [];
-    }
-    try {
-      const parsed = JSON.parse(val);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  }, []);
-
   // Use local state to manage arg values - this prevents race conditions on blur
   const [localArgValues, setLocalArgValues] = React.useState<unknown[]>(() =>
-    parsePropValue(value)
+    parseAbiFunctionArgs(value)
   );
 
   // Track the last function to detect when user selects a different function
@@ -343,10 +331,10 @@ export function AbiFunctionArgsField({
   React.useEffect(() => {
     if (functionValue !== lastFunctionRef.current) {
       // Function changed - reset to prop value (which should be empty for new function)
-      setLocalArgValues(parsePropValue(value));
+      setLocalArgValues(parseAbiFunctionArgs(value));
       lastFunctionRef.current = functionValue;
     }
-  }, [functionValue, value, parsePropValue]);
+  }, [functionValue, value]);
 
   // Handle individual arg change - update local state and propagate to parent
   const handleArgChange = (index: number, newValue: unknown) => {

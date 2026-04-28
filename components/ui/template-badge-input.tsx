@@ -9,6 +9,7 @@ import {
   TemplateAutocomplete,
   type TemplateAutocompleteCloseReason,
 } from "./template-autocomplete";
+import { toStringValue } from "./template-badge-utils";
 
 // Guards `selection.getRangeAt(0)`, which throws IndexSizeError when
 // rangeCount is 0 (e.g. focus moved off the editable before keydown fired).
@@ -111,7 +112,9 @@ export function TemplateBadgeInput({
 }: TemplateBadgeInputProps) {
   const [isFocused, setIsFocused] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
-  const [internalValue, setInternalValue] = useState(value);
+  const [internalValue, setInternalValue] = useState<string>(() =>
+    toStringValue(value)
+  );
   const shouldUpdateDisplay = useRef(true);
   const [selectedNodeId] = useAtom(selectedNodeAtom);
   const [nodes] = useAtom(nodesAtom);
@@ -153,8 +156,9 @@ export function TemplateBadgeInput({
 
   // Update internal value when prop changes from outside
   useEffect(() => {
-    if (value !== internalValue && !isFocused) {
-      setInternalValue(value);
+    const safeValue = toStringValue(value);
+    if (safeValue !== internalValue && !isFocused) {
+      setInternalValue(safeValue);
       shouldUpdateDisplay.current = true;
     }
   }, [value, isFocused, internalValue]);

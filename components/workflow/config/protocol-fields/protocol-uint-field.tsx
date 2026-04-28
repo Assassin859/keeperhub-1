@@ -38,7 +38,7 @@ export function ProtocolUintField({
         id={fieldKey}
         onChange={onChange}
         placeholder={placeholder ?? "0"}
-        value={value ?? ""}
+        value={String(value ?? "")}
       />
       {validation && (
         <p className="mt-1 text-xs text-destructive">{validation}</p>
