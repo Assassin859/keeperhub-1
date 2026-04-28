@@ -12,7 +12,7 @@
  */
 
 import { protocolToPlugin, registerProtocol } from "@/lib/protocol-registry";
-import { registerIntegration } from "@/plugins/registry";
+import { registerIntegration } from "@/plugins/registry-core";
 
 import aaveV3Def from "./aave-v3";
 import aaveV4Def from "./aave-v4";
