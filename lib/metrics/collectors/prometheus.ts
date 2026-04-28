@@ -611,7 +611,7 @@ const pluginInvocations = getOrCreateCounter(
   apiRegistry,
   "keeperhub_plugin_invocations_total",
   "Total plugin invocations",
-  ["plugin_name", "action_name"]
+  ["plugin_name", "action_name", "org_slug", "plan"]
 );
 
 // Error counters
@@ -619,14 +619,14 @@ const pluginErrors = getOrCreateCounter(
   apiRegistry,
   "keeperhub_plugin_action_errors_total",
   "Failed plugin actions",
-  ["plugin_name", "action_name", "error_type"]
+  ["plugin_name", "action_name", "error_type", "org_slug", "plan"]
 );
 
 const apiErrors = getOrCreateCounter(
   apiRegistry,
   "keeperhub_api_errors_total",
   "API errors by status code",
-  ["endpoint", "status_code", "error_type"]
+  ["endpoint", "status_code", "error_type", "org_slug", "plan"]
 );
 
 // Common labels for all error counters (allows any subset to be used)
@@ -646,6 +646,8 @@ const ERROR_LABELS = [
   "execution_id",
   "integration_id",
   "status_code",
+  "org_slug",
+  "plan",
 ];
 
 // User-caused error counters (from unified logging system)
@@ -730,10 +732,28 @@ const dbPoolUtilization = getOrCreateGauge(
 
 // Allowed labels per error metric (must match counter definitions)
 const errorLabelAllowlist: Record<string, string[]> = {
-  "workflow.execution.errors": ["workflow_id", "trigger_type", "error_type"],
-  "workflow.step.errors": ["step_type", "error_type"],
-  "plugin.action.errors": ["plugin_name", "action_name", "error_type"],
-  "api.errors.total": ["endpoint", "status_code", "error_type"],
+  "workflow.execution.errors": [
+    "workflow_id",
+    "trigger_type",
+    "error_type",
+    "org_slug",
+    "plan",
+  ],
+  "workflow.step.errors": ["step_type", "error_type", "org_slug", "plan"],
+  "plugin.action.errors": [
+    "plugin_name",
+    "action_name",
+    "error_type",
+    "org_slug",
+    "plan",
+  ],
+  "api.errors.total": [
+    "endpoint",
+    "status_code",
+    "error_type",
+    "org_slug",
+    "plan",
+  ],
 };
 
 /**
