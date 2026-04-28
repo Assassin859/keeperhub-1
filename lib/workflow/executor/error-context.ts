@@ -18,6 +18,7 @@ export type WorkflowErrorContext = {
   execution_id?: string;
   org_id?: string;
   org_slug?: string;
+  plan?: string;
   owner_id?: string;
   plugin_id?: string;
   integration_id?: string;
