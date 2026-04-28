@@ -44,6 +44,21 @@ export async function register() {
 
   // Only register process handlers in Node.js runtime (not Edge)
   if (process.env.NEXT_RUNTIME === "nodejs") {
+    // Each secret signs a distinct cryptographic context (better-auth session
+    // cookies, OAuth access tokens, MCP session tokens). They must be set
+    // independently so a leak or rotation in one context does not cascade.
+    const requiredSecrets = [
+      "BETTER_AUTH_SECRET",
+      "OAUTH_JWT_SECRET",
+      "MCP_SESSION_SECRET",
+    ];
+    const missingSecrets = requiredSecrets.filter((name) => !process.env[name]);
+    if (missingSecrets.length > 0) {
+      throw new Error(
+        `Missing required environment variables: ${missingSecrets.join(", ")}`
+      );
+    }
+
     // Register AsyncLocalStorage for the workflow error context. The context
     // module avoids any static `node:async_hooks` import so it can be safely
     // pulled into the workflow runtime bundle; the storage is only available
