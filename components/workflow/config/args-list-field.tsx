@@ -7,6 +7,7 @@ import { TemplateBadgeInput } from "@/components/ui/template-badge-input";
 import type { AbiComponent } from "@/components/workflow/config/abi-types";
 import { ArrayInputField } from "@/components/workflow/config/array-input-field";
 import { TupleInputField } from "@/components/workflow/config/tuple-input-field";
+import { coerceAbiArgValue } from "@/lib/abi/parse-args";
 import { findAbiFunction } from "@/lib/abi/utils";
 import type { ActionConfigFieldBase } from "@/plugins/registry";
 
@@ -70,14 +71,7 @@ export function parseArgsListValue(
       const arr = Array.isArray(argSet) ? argSet : [];
       const values: unknown[] = [];
       for (let i = 0; i < paramCount; i++) {
-        const item = arr[i];
-        if (Array.isArray(item)) {
-          values.push(item);
-        } else if (item !== undefined && item !== null) {
-          values.push(String(item));
-        } else {
-          values.push("");
-        }
+        values.push(coerceAbiArgValue(arr[i]));
       }
       return { id: nextId(), values };
     });

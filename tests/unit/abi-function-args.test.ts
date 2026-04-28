@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseAbiFunctionArgs } from "@/components/workflow/config/action-config-renderer";
+import { parseAbiFunctionArgs } from "@/lib/abi/parse-args";
 
 describe("parseAbiFunctionArgs", () => {
   it("returns empty array for empty string", () => {

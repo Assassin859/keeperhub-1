@@ -22,6 +22,7 @@ import { SaveAddressBookmark } from "@/components/address-book/save-address-book
 import type { AbiComponent } from "@/components/workflow/config/abi-types";
 import { ArrayInputField } from "@/components/workflow/config/array-input-field";
 import { TupleInputField } from "@/components/workflow/config/tuple-input-field";
+import { parseAbiFunctionArgs } from "@/lib/abi/parse-args";
 import { computeSelector, findAbiFunction } from "@/lib/abi/utils";
 import { evaluateShowWhen } from "@/lib/workflow/editor/show-when";
 import { parseAddressBookSelection } from "@/lib/address-book-selection";
@@ -277,38 +278,6 @@ export type AbiFunctionArgsProps = FieldProps & {
   abiValue: string;
   functionValue: string;
 };
-
-// Coerce a single arg value into a shape the renderers expect:
-//   - arrays stay arrays (ArrayInputField)
-//   - non-array objects stay objects (TupleInputField)
-//   - primitives become strings (TemplateBadgeInput, ProtocolUintField, etc.)
-//   - null/undefined become "" so the input renders empty
-// Without this coercion, a stored JSON like "[1]" yields a number that flows
-// into TemplateBadgeInput and throws on internalValue.match() (KEEP-367).
-function coerceAbiArgValue(item: unknown): unknown {
-  if (Array.isArray(item)) {
-    return item;
-  }
-  if (typeof item === "object" && item !== null) {
-    return item;
-  }
-  if (item === undefined || item === null) {
-    return "";
-  }
-  return String(item);
-}
-
-export function parseAbiFunctionArgs(value: string): unknown[] {
-  if (!value || value.trim() === "") {
-    return [];
-  }
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed.map(coerceAbiArgValue) : [];
-  } catch {
-    return [];
-  }
-}
 
 export function AbiFunctionArgsField({
   field,
