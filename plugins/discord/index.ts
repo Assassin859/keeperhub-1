@@ -1,5 +1,5 @@
 import type { IntegrationPlugin } from "@/plugins/registry";
-import { registerIntegration } from "@/plugins/registry";
+import { registerIntegration } from "@/plugins/registry-core";
 import { DiscordIcon } from "./icon";
 
 const discordPlugin: IntegrationPlugin = {

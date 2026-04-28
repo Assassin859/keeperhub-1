@@ -152,7 +152,7 @@ async function loadProtocolDefinitions(): Promise<ProtocolEntry[]> {
  */
 async function registerProtocolPlugins(): Promise<string[]> {
   const { protocolToPlugin, registerProtocol } = await import("@/lib/protocol-registry");
-  const { registerIntegration } = await import("../plugins/registry");
+  const { registerIntegration } = await import("../plugins/registry-core");
 
   const definitions = await loadProtocolDefinitions();
   const slugs: string[] = [];
@@ -230,7 +230,7 @@ function generateProtocolsIndexFile(): void {
  */
 
 import { protocolToPlugin, registerProtocol } from "@/lib/protocol-registry";
-import { registerIntegration } from "@/plugins/registry";
+import { registerIntegration } from "@/plugins/registry-core";
 
 ${imports.join("\n")}
 
@@ -1042,8 +1042,7 @@ async function generateCredentialMap(): Promise<void> {
  * Used by lib/credential-fetcher.ts so that the credential keys exposed to
  * step files (e.g. credentials.TELEGRAM_BOT_TOKEN) can be resolved even when
  * the runtime plugin registry is unavailable - notably inside Workflow DevKit
- * step bundles, where the dynamic require("@/plugins") in ensurePluginsLoaded()
- * silently fails because the bundler cannot statically analyze it.
+ * step bundles, where the plugin registry import chain is not pulled in.
  *
  * Generated entries: ${integrations.length} plugin(s), ${totalFields} field(s)
  */

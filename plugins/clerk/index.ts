@@ -1,5 +1,5 @@
 import type { IntegrationPlugin } from "../registry";
-import { registerIntegration } from "../registry";
+import { registerIntegration } from "../registry-core";
 import { ClerkIcon } from "./icon";
 
 const clerkPlugin: IntegrationPlugin = {
