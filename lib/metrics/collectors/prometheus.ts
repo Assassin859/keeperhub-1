@@ -102,12 +102,15 @@ const workflowExecutionsTotal = getOrCreateGauge(
   ["status"]
 );
 
-// Workflow errors total (convenience gauge for alerting)
+// Workflow errors total (convenience gauge for alerting). Labeled by org_slug
+// so alerts can scope to managed clients. Personal/anonymous workflows are
+// emitted under org_slug="_anonymous" so the sum across labels matches the
+// global error count.
 const workflowErrorsTotal = getOrCreateGauge(
   dbRegistry,
   "keeperhub_workflow_execution_errors_total",
-  "Total failed workflow executions (all-time)",
-  []
+  "Total failed workflow executions (all-time), broken down by org_slug",
+  ["org_slug"]
 );
 
 // Workflow duration histogram as gauges (replaces histogram)
@@ -1040,8 +1043,15 @@ export async function updateDbMetrics(): Promise<void> {
       workflowStats.totalCancelled
     );
 
-    // Update workflow errors total (convenience gauge for alerting)
-    workflowErrorsTotal.set(workflowStats.totalError);
+    // Update workflow errors total per org_slug (convenience gauge for
+    // alerting). Reset before populating so series for orgs that no longer
+    // have errors clear out instead of going stale.
+    workflowErrorsTotal.reset();
+    for (const [orgSlug, errorCount] of Object.entries(
+      workflowStats.errorByOrgSlug
+    )) {
+      workflowErrorsTotal.set({ org_slug: orgSlug }, errorCount);
+    }
 
     // Update workflow duration histogram buckets
     for (let i = 0; i < WORKFLOW_DURATION_BUCKETS.length; i++) {
