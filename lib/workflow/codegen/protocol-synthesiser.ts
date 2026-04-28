@@ -264,26 +264,44 @@ function buildArgsList(ctx: ProtocolActionContext): string {
 
 // -- Output type & result mapping for reads ---------------------------------
 
-function buildReadOutputType(ctx: ProtocolActionContext): string {
+type ReadOutputShape =
+  | { kind: "void" }
+  | { kind: "single" }
+  | { kind: "multi"; fieldNames: string[] };
+
+function classifyReadOutputs(ctx: ProtocolActionContext): ReadOutputShape {
   const outputs = ctx.abiFragment.outputs ?? [];
   if (outputs.length === 0) {
+    return { kind: "void" };
+  }
+  if (outputs.length === 1) {
+    return { kind: "single" };
+  }
+  return {
+    kind: "multi",
+    fieldNames: outputs.map((out, i) =>
+      out.name && out.name.length > 0 ? out.name : `output${i}`
+    ),
+  };
+}
+
+function buildReadOutputType(ctx: ProtocolActionContext): string {
+  const shape = classifyReadOutputs(ctx);
+  if (shape.kind === "void") {
     return [
       "type Output =",
       "  | { success: true }",
       "  | { success: false; error: string };",
     ].join("\n");
   }
-  if (outputs.length === 1) {
+  if (shape.kind === "single") {
     return [
       "type Output =",
       "  | { success: true; result: string }",
       "  | { success: false; error: string };",
     ].join("\n");
   }
-  const namedFields = outputs.map((out, i) => {
-    const name = out.name && out.name.length > 0 ? out.name : `output${i}`;
-    return `      ${name}: string;`;
-  });
+  const namedFields = shape.fieldNames.map((name) => `      ${name}: string;`);
   return [
     "type Output =",
     "  | {",
@@ -295,17 +313,17 @@ function buildReadOutputType(ctx: ProtocolActionContext): string {
 }
 
 function buildReadResultMapping(ctx: ProtocolActionContext): string {
-  const outputs = ctx.abiFragment.outputs ?? [];
-  if (outputs.length === 0) {
+  const shape = classifyReadOutputs(ctx);
+  if (shape.kind === "void") {
     return "    return { success: true };";
   }
-  if (outputs.length === 1) {
+  if (shape.kind === "single") {
     return "    return { success: true, result: String(result) };";
   }
-  const fields = outputs.map((out, i) => {
-    const name = out.name && out.name.length > 0 ? out.name : `output${i}`;
-    return `      ${name}: String((result as readonly unknown[])[${i}]),`;
-  });
+  const fields = shape.fieldNames.map(
+    (name, i) =>
+      `      ${name}: String((result as readonly unknown[])[${i}]),`
+  );
   return ["    return {", "      success: true,", ...fields, "    };"].join(
     "\n"
   );
