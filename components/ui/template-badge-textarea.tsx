@@ -97,6 +97,12 @@ function findActiveAtSign(text: string, cursorOffset?: number): number {
  * A textarea component that renders template variables as styled badges
  * Converts {{@nodeId:DisplayName.field}} to badges showing "DisplayName.field"
  */
+// See toStringValue in template-badge-input.tsx -- same defense against
+// non-string values leaking through TS-only `as string` casts at call sites.
+function toStringValue(value: unknown): string {
+  return typeof value === "string" ? value : String(value ?? "");
+}
+
 export function TemplateBadgeTextarea({
   value = "",
   onChange,
@@ -109,7 +115,9 @@ export function TemplateBadgeTextarea({
 }: TemplateBadgeTextareaProps) {
   const [isFocused, setIsFocused] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
-  const [internalValue, setInternalValue] = useState(value);
+  const [internalValue, setInternalValue] = useState<string>(() =>
+    toStringValue(value)
+  );
   const shouldUpdateDisplay = useRef(true);
   const [selectedNodeId] = useAtom(selectedNodeAtom);
   const [nodes] = useAtom(nodesAtom);
@@ -151,8 +159,9 @@ export function TemplateBadgeTextarea({
 
   // Update internal value when prop changes from outside
   useEffect(() => {
-    if (value !== internalValue && !isFocused) {
-      setInternalValue(value);
+    const safeValue = toStringValue(value);
+    if (safeValue !== internalValue && !isFocused) {
+      setInternalValue(safeValue);
       shouldUpdateDisplay.current = true;
     }
   }, [value, isFocused, internalValue]);

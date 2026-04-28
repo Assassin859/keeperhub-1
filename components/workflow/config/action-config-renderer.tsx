@@ -278,6 +278,38 @@ export type AbiFunctionArgsProps = FieldProps & {
   functionValue: string;
 };
 
+// Coerce a single arg value into a shape the renderers expect:
+//   - arrays stay arrays (ArrayInputField)
+//   - non-array objects stay objects (TupleInputField)
+//   - primitives become strings (TemplateBadgeInput, ProtocolUintField, etc.)
+//   - null/undefined become "" so the input renders empty
+// Without this coercion, a stored JSON like "[1]" yields a number that flows
+// into TemplateBadgeInput and throws on internalValue.match() (KEEP-367).
+function coerceAbiArgValue(item: unknown): unknown {
+  if (Array.isArray(item)) {
+    return item;
+  }
+  if (typeof item === "object" && item !== null) {
+    return item;
+  }
+  if (item === undefined || item === null) {
+    return "";
+  }
+  return String(item);
+}
+
+export function parseAbiFunctionArgs(value: string): unknown[] {
+  if (!value || value.trim() === "") {
+    return [];
+  }
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(coerceAbiArgValue) : [];
+  } catch {
+    return [];
+  }
+}
+
 export function AbiFunctionArgsField({
   field,
   value,
@@ -318,22 +350,9 @@ export function AbiFunctionArgsField({
     }
   }, [abiValue, functionValue]);
 
-  // Parse prop value into array
-  const parsePropValue = React.useCallback((val: string): unknown[] => {
-    if (!val || val.trim() === "") {
-      return [];
-    }
-    try {
-      const parsed = JSON.parse(val);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  }, []);
-
   // Use local state to manage arg values - this prevents race conditions on blur
   const [localArgValues, setLocalArgValues] = React.useState<unknown[]>(() =>
-    parsePropValue(value)
+    parseAbiFunctionArgs(value)
   );
 
   // Track the last function to detect when user selects a different function
@@ -343,10 +362,10 @@ export function AbiFunctionArgsField({
   React.useEffect(() => {
     if (functionValue !== lastFunctionRef.current) {
       // Function changed - reset to prop value (which should be empty for new function)
-      setLocalArgValues(parsePropValue(value));
+      setLocalArgValues(parseAbiFunctionArgs(value));
       lastFunctionRef.current = functionValue;
     }
-  }, [functionValue, value, parsePropValue]);
+  }, [functionValue, value]);
 
   // Handle individual arg change - update local state and propagate to parent
   const handleArgChange = (index: number, newValue: unknown) => {

@@ -99,7 +99,7 @@ export function TupleInputField({
                 fieldKey={`${fieldKey}-${comp.name}`}
                 onChange={(val) => handleFieldChange(comp.name, String(val))}
                 placeholder="0x..."
-                value={(obj[comp.name] as string) ?? ""}
+                value={String(obj[comp.name] ?? "")}
               />
             ) : comp.type.startsWith("uint") ? (
               <ProtocolUintField
@@ -108,7 +108,7 @@ export function TupleInputField({
                 onChange={(val) => handleFieldChange(comp.name, String(val))}
                 placeholder=""
                 solidityType={comp.type}
-                value={(obj[comp.name] as string) ?? ""}
+                value={String(obj[comp.name] ?? "")}
               />
             ) : (
               <TemplateBadgeInput
@@ -116,7 +116,7 @@ export function TupleInputField({
                 id={`${fieldKey}-${comp.name}`}
                 onChange={(val) => handleFieldChange(comp.name, String(val))}
                 placeholder={`Enter ${comp.type} value or {{NodeName.value}}`}
-                value={(obj[comp.name] as string) ?? ""}
+                value={String(obj[comp.name] ?? "")}
               />
             )}
           </div>

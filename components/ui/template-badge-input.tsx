@@ -101,6 +101,14 @@ function findActiveAtSign(text: string, cursorOffset?: number): number {
  * An input component that renders template variables as styled badges
  * Converts {{@nodeId:DisplayName.field}} to badges showing "DisplayName.field"
  */
+// Defensive: parent components type `value` as string but TS-only `as string`
+// casts at call sites can leak non-strings (numbers, booleans) to us at runtime.
+// internalValue.match() in handleInput would throw "match is not a function"
+// in that case, blocking handleInput from propagating the user's edit (KEEP-367).
+function toStringValue(value: unknown): string {
+  return typeof value === "string" ? value : String(value ?? "");
+}
+
 export function TemplateBadgeInput({
   value = "",
   onChange,
@@ -111,7 +119,9 @@ export function TemplateBadgeInput({
 }: TemplateBadgeInputProps) {
   const [isFocused, setIsFocused] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
-  const [internalValue, setInternalValue] = useState(value);
+  const [internalValue, setInternalValue] = useState<string>(() =>
+    toStringValue(value)
+  );
   const shouldUpdateDisplay = useRef(true);
   const [selectedNodeId] = useAtom(selectedNodeAtom);
   const [nodes] = useAtom(nodesAtom);
@@ -153,8 +163,9 @@ export function TemplateBadgeInput({
 
   // Update internal value when prop changes from outside
   useEffect(() => {
-    if (value !== internalValue && !isFocused) {
-      setInternalValue(value);
+    const safeValue = toStringValue(value);
+    if (safeValue !== internalValue && !isFocused) {
+      setInternalValue(safeValue);
       shouldUpdateDisplay.current = true;
     }
   }, [value, isFocused, internalValue]);
