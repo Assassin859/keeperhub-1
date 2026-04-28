@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import { synthesiseProtocolForSDK } from "@/lib/workflow/codegen/protocol-synthesiser";
 
+// Mock server-only before importing the SDK module: sdk.ts imports
+// "server-only", which throws when loaded outside a server runtime.
 vi.mock("server-only", () => ({}));
 
 const { generateWorkflowSDKCode } = await import("@/lib/workflow/codegen/sdk");
@@ -84,5 +87,73 @@ describe("generateWorkflowSDKCode (protocol synthesis path)", () => {
     // Each step function inlines its own CONTRACT_ADDRESS const
     const occurrences = code.match(/const CONTRACT_ADDRESS =/g) ?? [];
     expect(occurrences.length).toBe(2);
+  });
+});
+
+describe("synthesiseProtocolForSDK (direct)", () => {
+  it("returns null for non-protocol action ids", () => {
+    expect(synthesiseProtocolForSDK("web3/check-balance")).toBeNull();
+    expect(synthesiseProtocolForSDK("malformed-no-slash")).toBeNull();
+  });
+
+  it("returns the SDK shape for a CCIP balance read", () => {
+    const out = synthesiseProtocolForSDK(
+      "chainlink/ccip-check-bridge-balance",
+      {
+        network: "11155111",
+        contractAddress: "0xFd57b4ddBf88a4e07fF4e34C487b99af2Fe82a05",
+      }
+    );
+
+    expect(out).not.toBeNull();
+    const sdk = out as NonNullable<typeof out>;
+
+    // Imports include only viem read-side dependencies.
+    expect(sdk.imports).toContain(
+      'import { createPublicClient, http } from "viem";'
+    );
+    expect(sdk.imports).toContain('import { sepolia } from "viem/chains";');
+
+    // ABI + address are inline declarations the SDK wrapper drops into the
+    // step function body so per-step constants do not collide across nodes.
+    expect(sdk.inlineDecls.length).toBe(2);
+    expect(sdk.inlineDecls[0]).toContain("CONTRACT_ADDRESS");
+    expect(sdk.inlineDecls[1]).toContain("const ABI = [");
+
+    // Body must have been rebound from input.X to stepInput.X.
+    const body = sdk.bodyLines.join("\n");
+    expect(body).toContain("args: [stepInput.account]");
+    expect(body).not.toContain("args: [input.account]");
+
+    // Inputs descriptor mirrors the action.inputs the SDK uses to build
+    // stepInput entries from node config.
+    expect(sdk.inputs.map((i) => i.name)).toEqual(["account"]);
+  });
+
+  it("returns the SDK shape for a CCIP approve write (signer + simulate path)", () => {
+    const out = synthesiseProtocolForSDK(
+      "chainlink/ccip-approve-bridge-token",
+      {
+        network: "11155111",
+        contractAddress: "0xFd57b4ddBf88a4e07fF4e34C487b99af2Fe82a05",
+      }
+    );
+
+    expect(out).not.toBeNull();
+    const sdk = out as NonNullable<typeof out>;
+
+    expect(sdk.imports).toContain(
+      'import { createPublicClient, createWalletClient, http } from "viem";'
+    );
+    expect(sdk.imports).toContain(
+      'import { privateKeyToAccount } from "viem/accounts";'
+    );
+
+    const body = sdk.bodyLines.join("\n");
+    expect(body).toContain("simulateContract");
+    expect(body).toContain(
+      "args: [stepInput.spender, BigInt(stepInput.amount)]"
+    );
+    expect(sdk.inputs.map((i) => i.name)).toEqual(["spender", "amount"]);
   });
 });

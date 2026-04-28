@@ -125,4 +125,87 @@ describe("synthesiseProtocolTemplate", () => {
       expect(out).toContain("BigInt(input.amount)");
     });
   });
+
+  describe("proxy contract ABI fallback (no inline abi)", () => {
+    it("synthesises an ABI fragment from action metadata for aave-v3/supply", () => {
+      const out = synthesiseProtocolTemplate("aave-v3/supply", {
+        network: "1",
+      });
+
+      expect(out).not.toBeNull();
+      const code = out as string;
+
+      // Header comment marks the synthesised origin so a reader knows the
+      // shape came from action metadata, not a real ABI lookup.
+      expect(code).toContain(
+        "// ABI fragment synthesised from protocol action metadata"
+      );
+
+      // Real Aave V3 pool address on mainnet, resolved per chain.
+      expect(code).toContain('"0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"');
+
+      // Action.inputs become positional contract args with the right casts.
+      expect(code).toContain('functionName: "supply"');
+      expect(code).toContain(
+        "args: [input.asset, BigInt(input.amount), input.onBehalfOf, BigInt(input.referralCode)]"
+      );
+
+      // Write-shaped output template.
+      expect(code).toContain("export async function supplyStep");
+      expect(code).toContain("publicClient.simulateContract");
+    });
+  });
+
+  describe("tuple input reconstruction", () => {
+    it("wraps uniswap quote-exact-input args in a single tuple object", () => {
+      const out = synthesiseProtocolTemplate("uniswap/quote-exact-input", {
+        network: "1",
+      });
+
+      expect(out).not.toBeNull();
+      const code = out as string;
+
+      // The contract takes a single tuple param; user-facing inputs are flat.
+      // Args MUST be a single object literal, not separate positional args.
+      expect(code).toContain(
+        "args: [{ tokenIn: input.tokenIn, tokenOut: input.tokenOut, amountIn: BigInt(input.amountIn), fee: BigInt(input.fee), sqrtPriceLimitX96: BigInt(input.sqrtPriceLimitX96) }]"
+      );
+
+      // Multi-output read uses indexed result destructuring.
+      expect(code).toContain(
+        "amountOut: String((result as readonly unknown[])[0])"
+      );
+    });
+  });
+
+  describe("ccip-send (payable + nested tuple + tuple[] + receiver pad)", () => {
+    it("reconstructs the message struct and inlines the receiver pad transform", () => {
+      const out = synthesiseProtocolTemplate("chainlink/ccip-send", {
+        network: "11155111",
+      });
+
+      expect(out).not.toBeNull();
+      const code = out as string;
+
+      // First arg is a top-level scalar; second is the message tuple.
+      expect(code).toContain(
+        "args: [BigInt(input.destinationChainSelector), {"
+      );
+
+      // Receiver field gets the padAddressToBytes transform inlined.
+      expect(code).toContain(
+        '("0x" + (input.receiver).slice(2).padStart(64, "0") as'
+      );
+
+      // tokenAmounts (tuple[]) becomes an array map with element-wise casts.
+      expect(code).toContain(
+        "tokenAmounts: (input.tokenAmounts).map((t) => ({ token: t.token, amount: BigInt(t.amount) }))"
+      );
+
+      // payable: ethValue line emitted only for payable functions.
+      expect(code).toContain(
+        "value: input.ethValue ? BigInt(input.ethValue) : undefined"
+      );
+    });
+  });
 });
