@@ -80,6 +80,29 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
 
+/**
+ * Build a `{ error: message }` JSON response and emit the matching webhook
+ * metric in one call. Covers the simple-error gates (404, 410, 401, 403, 400,
+ * 500). The two 429 variants have custom response bodies and stay inline.
+ */
+function failResponse(
+  workflowId: string,
+  timer: () => number,
+  statusCode: number,
+  message: string
+): NextResponse {
+  recordWebhookMetrics({
+    workflowId,
+    durationMs: timer(),
+    statusCode,
+    error: message,
+  });
+  return NextResponse.json(
+    { error: message },
+    { status: statusCode, headers: corsHeaders }
+  );
+}
+
 async function executeWorkflowBackground(
   executionId: string,
   workflowId: string,
@@ -152,32 +175,14 @@ export async function POST(
     });
 
     if (!workflow) {
-      recordWebhookMetrics({
-        workflowId,
-        durationMs: timer(),
-        statusCode: 404,
-        error: "Workflow not found",
-      });
-      return NextResponse.json(
-        { error: "Workflow not found" },
-        { status: 404, headers: corsHeaders }
-      );
+      return failResponse(workflowId, timer, 404, "Workflow not found");
     }
 
     // Aligned with schedule/event/block trigger paths, which all gate on
     // workflows.enabled. Without this check a disabled workflow keeps
     // executing every time the caller hits the URL.
     if (!workflow.enabled) {
-      recordWebhookMetrics({
-        workflowId,
-        durationMs: timer(),
-        statusCode: 410,
-        error: "Workflow is disabled",
-      });
-      return NextResponse.json(
-        { error: "Workflow is disabled" },
-        { status: 410, headers: corsHeaders }
-      );
+      return failResponse(workflowId, timer, 410, "Workflow is disabled");
     }
 
     // Validate API key - must belong to the workflow owner
@@ -185,16 +190,11 @@ export async function POST(
     const apiKeyValidation = await validateApiKey(authHeader, workflow.userId);
 
     if (!apiKeyValidation.valid) {
-      const statusCode = apiKeyValidation.statusCode || 401;
-      recordWebhookMetrics({
+      return failResponse(
         workflowId,
-        durationMs: timer(),
-        statusCode,
-        error: apiKeyValidation.error,
-      });
-      return NextResponse.json(
-        { error: apiKeyValidation.error },
-        { status: statusCode, headers: corsHeaders }
+        timer,
+        apiKeyValidation.statusCode || 401,
+        apiKeyValidation.error ?? "Invalid API key"
       );
     }
 
@@ -204,15 +204,11 @@ export async function POST(
     );
 
     if (!triggerNode || triggerNode.data.config?.triggerType !== "Webhook") {
-      recordWebhookMetrics({
+      return failResponse(
         workflowId,
-        durationMs: timer(),
-        statusCode: 400,
-        error: "This workflow is not configured for webhook triggers",
-      });
-      return NextResponse.json(
-        { error: "This workflow is not configured for webhook triggers" },
-        { status: 400, headers: corsHeaders }
+        timer,
+        400,
+        "This workflow is not configured for webhook triggers"
       );
     }
 
@@ -224,15 +220,11 @@ export async function POST(
     );
     if (!validation.valid) {
       logSystemError(ErrorCategory.WORKFLOW_ENGINE, "[Webhook] Invalid integration references", new Error(String(validation.invalidIds)), { endpoint: "/api/workflows/[workflowId]/webhook", operation: "validateIntegrations" });
-      recordWebhookMetrics({
+      return failResponse(
         workflowId,
-        durationMs: timer(),
-        statusCode: 403,
-        error: "Workflow contains invalid integration references",
-      });
-      return NextResponse.json(
-        { error: "Workflow contains invalid integration references" },
-        { status: 403, headers: corsHeaders }
+        timer,
+        403,
+        "Workflow contains invalid integration references"
       );
     }
 
@@ -326,20 +318,8 @@ export async function POST(
     logSystemError(ErrorCategory.WORKFLOW_ENGINE, "[Webhook] Failed to start workflow execution", error, { endpoint: "/api/workflows/[workflowId]/webhook", operation: "post" });
 
     const { workflowId } = await context.params;
-    recordWebhookMetrics({
-      workflowId,
-      durationMs: timer(),
-      statusCode: 500,
-      error:
-        error instanceof Error ? error.message : "Failed to execute workflow",
-    });
-
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error ? error.message : "Failed to execute workflow",
-      },
-      { status: 500, headers: corsHeaders }
-    );
+    const message =
+      error instanceof Error ? error.message : "Failed to execute workflow";
+    return failResponse(workflowId, timer, 500, message);
   }
 }
