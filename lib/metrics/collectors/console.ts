@@ -74,6 +74,41 @@ function createMetricEvent(options: CreateMetricEventOptions): MetricEvent {
 }
 
 /**
+ * Emit a counter metric event for an error/warning. Same payload shape;
+ * only the log level (and the console method) differ.
+ */
+function emitErrorEvent(
+  level: "error" | "warn",
+  name: string,
+  error: Error | ErrorContext,
+  labels?: MetricLabels
+): void {
+  const errorContext = extractErrorContext(error);
+  const enrichedLabels: MetricLabels = {
+    ...labels,
+    error_message: errorContext.message,
+    ...(errorContext.code && { error_code: errorContext.code }),
+  };
+
+  const event = createMetricEvent({
+    name,
+    type: "counter",
+    value: 1,
+    labels: enrichedLabels,
+    level,
+  });
+
+  // Include full error context in a separate field for debugging
+  const eventWithError = { ...event, error: errorContext };
+
+  if (level === "error") {
+    console.error(JSON.stringify(eventWithError));
+  } else {
+    console.warn(JSON.stringify(eventWithError));
+  }
+}
+
+/**
  * Console-based metrics collector that outputs structured JSON
  *
  * Output format is compatible with CloudWatch Logs Insights and Datadog:
@@ -111,28 +146,7 @@ export const consoleMetricsCollector: MetricsCollector = {
     error: Error | ErrorContext,
     labels?: MetricLabels
   ): void {
-    const errorContext = extractErrorContext(error);
-    const enrichedLabels: MetricLabels = {
-      ...labels,
-      error_message: errorContext.message,
-      ...(errorContext.code && { error_code: errorContext.code }),
-    };
-
-    const event = createMetricEvent({
-      name,
-      type: "counter",
-      value: 1,
-      labels: enrichedLabels,
-      level: "error",
-    });
-
-    // Include full error context in a separate field for debugging
-    const eventWithError = {
-      ...event,
-      error: errorContext,
-    };
-
-    console.error(JSON.stringify(eventWithError));
+    emitErrorEvent("error", name, error, labels);
   },
 
   recordWarning(
@@ -140,27 +154,7 @@ export const consoleMetricsCollector: MetricsCollector = {
     error: Error | ErrorContext,
     labels?: MetricLabels
   ): void {
-    const errorContext = extractErrorContext(error);
-    const enrichedLabels: MetricLabels = {
-      ...labels,
-      error_message: errorContext.message,
-      ...(errorContext.code && { error_code: errorContext.code }),
-    };
-
-    const event = createMetricEvent({
-      name,
-      type: "counter",
-      value: 1,
-      labels: enrichedLabels,
-      level: "warn",
-    });
-
-    const eventWithError = {
-      ...event,
-      error: errorContext,
-    };
-
-    console.warn(JSON.stringify(eventWithError));
+    emitErrorEvent("warn", name, error, labels);
   },
 
   setGauge(name: string, value: number, labels?: MetricLabels): void {
