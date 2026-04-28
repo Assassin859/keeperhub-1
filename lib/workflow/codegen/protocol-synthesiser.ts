@@ -1,4 +1,4 @@
-import { getEncodeTransform } from "@/lib/protocol-encode-transforms";
+import { getEncodeTransformKind } from "@/lib/protocol-encode-transforms";
 import type { ProtocolActionInput } from "@/lib/protocol-registry";
 import {
   type AbiFunctionFragment,
@@ -199,25 +199,20 @@ function applyEncodeTransform(
   ctx: ProtocolActionContext,
   fieldName: string
 ): string {
-  const transform = getEncodeTransform(
+  const kind = getEncodeTransformKind(
     ctx.protocolSlug,
     ctx.actionSlug,
     fieldName
   );
-  if (!transform) {
+  if (!kind) {
     return expr;
   }
-  // Only one production transform exists today (CCIP receiver padding).
-  // Probe it to confirm the shape so we can inline the equivalent.
-  const probed = transform("0x1111111111111111111111111111111111111111");
-  const expectedPad = `0x${"0".repeat(24)}1111111111111111111111111111111111111111`;
-  if (probed === expectedPad) {
-    // padAddressToBytes: left-pad to 32 bytes
+  if (kind === "padAddressToBytes") {
     return `("0x" + (${expr}).slice(2).padStart(64, "0") as ${HEX_BYTES_TYPE})`;
   }
-  // Unknown transform: emit expression unchanged with a marker comment.
-  // Synthesised output stays structurally valid; caller will see the warning
-  // surfaced separately and can decide how to proceed.
+  // Exhaustive over EncodeTransformKind. Adding a new kind to the registry
+  // requires a new branch above; until then the synthesiser preserves the
+  // raw expression rather than silently dropping the transform.
   return expr;
 }
 
