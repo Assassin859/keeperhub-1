@@ -159,15 +159,33 @@ function buildInlineObjectType(components: ComponentLike[]): string {
   return `{ ${fields.join("; ")} }`;
 }
 
+function decimalsAnnotation(
+  decimals: number | boolean | undefined
+): string | null {
+  if (decimals === undefined) {
+    return null;
+  }
+  if (typeof decimals === "number") {
+    return `  /** denominated in wei (10^${decimals} units) -- convert with parseUnits(value, ${decimals}) for human input */`;
+  }
+  // decimals: true -- token decimals must be looked up at runtime
+  return "  /** denominated in the token's smallest unit -- token decimals must be looked up at runtime; replace with parseUnits(value, <decimals>) once known */";
+}
+
 function buildInputType(ctx: ProtocolActionContext): string {
   if (ctx.action.inputs.length === 0) {
     return "type Input = Record<string, never>;";
   }
-  const fields = ctx.action.inputs.map((inp) => {
-    const tsType = abiTypeToTs(inp.type, inp.components);
-    return `  ${inp.name}: ${tsType};`;
-  });
-  return ["type Input = {", ...fields, "};"].join("\n");
+  const lines: string[] = ["type Input = {"];
+  for (const inp of ctx.action.inputs) {
+    const annotation = decimalsAnnotation(inp.decimals);
+    if (annotation) {
+      lines.push(annotation);
+    }
+    lines.push(`  ${inp.name}: ${abiTypeToTs(inp.type, inp.components)};`);
+  }
+  lines.push("};");
+  return lines.join("\n");
 }
 
 // -- Args reconstruction (ABI-shape driven) ----------------------------------
@@ -321,8 +339,7 @@ function buildReadResultMapping(ctx: ProtocolActionContext): string {
     return "    return { success: true, result: String(result) };";
   }
   const fields = shape.fieldNames.map(
-    (name, i) =>
-      `      ${name}: String((result as readonly unknown[])[${i}]),`
+    (name, i) => `      ${name}: String((result as readonly unknown[])[${i}]),`
   );
   return ["    return {", "      success: true,", ...fields, "    };"].join(
     "\n"

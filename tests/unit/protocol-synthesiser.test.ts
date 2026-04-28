@@ -178,6 +178,41 @@ describe("synthesiseProtocolTemplate", () => {
     });
   });
 
+  describe("decimals annotation in Input type", () => {
+    it("emits a wei + parseUnits hint for inputs with decimals: <number>", () => {
+      // aerodrome/create-lock has `_value: uint256, decimals: 18`
+      const out = synthesiseProtocolTemplate("aerodrome/create-lock", {
+        network: "8453",
+      });
+      expect(out).not.toBeNull();
+      const code = out as string;
+
+      // The annotation MUST appear on the line above the typed field.
+      expect(code).toContain(
+        "/** denominated in wei (10^18 units) -- convert with parseUnits(value, 18) for human input */"
+      );
+      // Annotation does not change the cast in args.
+      expect(code).toContain("BigInt(input._value)");
+
+      // Sibling field without decimals stays unannotated.
+      expect(code).toContain("_lockDuration: string;");
+      const lockDurationIndex = code.indexOf("_lockDuration: string;");
+      const annotationBeforeLockDuration = code
+        .slice(0, lockDurationIndex)
+        .endsWith("/** denominated in wei (10^18 units)");
+      expect(annotationBeforeLockDuration).toBe(false);
+    });
+
+    it("emits a runtime-lookup TODO for inputs with decimals: true", () => {
+      // morpho/supply has `assets: uint256, decimals: true`
+      const out = synthesiseProtocolTemplate("morpho/supply", { network: "1" });
+      expect(out).not.toBeNull();
+      expect(out).toContain(
+        "/** denominated in the token's smallest unit -- token decimals must be looked up at runtime; replace with parseUnits(value, <decimals>) once known */"
+      );
+    });
+  });
+
   describe("ccip-send (payable + nested tuple + tuple[] + receiver pad)", () => {
     it("reconstructs the message struct and inlines the receiver pad transform", () => {
       const out = synthesiseProtocolTemplate("chainlink/ccip-send", {
