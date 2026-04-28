@@ -13,6 +13,7 @@ import {
 } from "@/lib/utils/template";
 import {
   currentWorkflowIdAtom,
+  currentWorkflowInputSchemaAtom,
   edgesAtom,
   executionLogsAtom,
   type ExecutionLogEntry,
@@ -38,6 +39,7 @@ import {
   buildHaystack,
   filterOptionsByQuery,
 } from "@/lib/workflow/editor/template-autocomplete-filter";
+import { getInputSchemaFields } from "@/lib/workflow/editor/input-schema-fields";
 import { getTriggerOutputFields } from "@/lib/workflow/editor/trigger-output-fields";
 
 /**
@@ -205,6 +207,7 @@ export function TemplateAutocomplete({
   const [edges] = useAtom(edgesAtom);
   const executionLogs = useAtomValue(executionLogsAtom);
   const currentWorkflowId = useAtomValue(currentWorkflowIdAtom);
+  const workflowInputSchema = useAtomValue(currentWorkflowInputSchemaAtom);
   const lastExecutionLogs = useAtomValue(lastExecutionLogsAtom);
   const setLastExecutionLogs = useSetAtom(lastExecutionLogsAtom);
   const currentWorkflowIdRef = useRef<string | null>(null);
@@ -477,6 +480,37 @@ export function TemplateAutocomplete({
           });
         }
       }
+
+      // Listed-workflow inputSchema fields are exposed under data.<fieldName>
+      // because the executor merges request body into the trigger output's
+      // data at runtime. Inject them on both the runtime and static paths so
+      // they are available even before an agent has called the workflow, and
+      // dedupe against fields already pushed for this node so a runtime log
+      // that already captured them does not double-list.
+      if (node.data.type === "trigger" && workflowInputSchema) {
+        const schemaFields = getInputSchemaFields(workflowInputSchema);
+        if (schemaFields.length > 0) {
+          const existing = new Set<string>();
+          for (const opt of result) {
+            if (opt.nodeId === node.id && opt.type === "field" && opt.field) {
+              existing.add(opt.field);
+            }
+          }
+          for (const field of schemaFields) {
+            if (existing.has(field.field)) {
+              continue;
+            }
+            pushOption({
+              type: "field",
+              nodeId: node.id,
+              nodeName,
+              field: field.field,
+              description: field.description,
+              template: `{{@${node.id}:${nodeName}.${field.field}}}`,
+            });
+          }
+        }
+      }
     }
 
     // Built-in system variables (available to all nodes, evaluated at execution time)
@@ -492,7 +526,13 @@ export function TemplateAutocomplete({
     }
 
     return result;
-  }, [upstreamNodes, executionLogs, lastExecutionLogs, currentWorkflowId]);
+  }, [
+    upstreamNodes,
+    executionLogs,
+    lastExecutionLogs,
+    currentWorkflowId,
+    workflowInputSchema,
+  ]);
 
   // Case-insensitive substring search: each whitespace-separated token must
   // appear as a contiguous substring somewhere in the precomputed haystack.

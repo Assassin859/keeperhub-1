@@ -6,6 +6,7 @@ import { AlertTriangle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { CodeEditor } from "@/components/ui/code-editor";
 import { api } from "@/lib/api-client";
+import { getInputSchemaFields } from "@/lib/workflow/editor/input-schema-fields";
 import {
   buildExecutionLogsMap,
   type ExecutionLogsByNodeId,
@@ -19,6 +20,7 @@ import { useStableRef } from "@/lib/use-stable-ref";
 import { getAvailableFields, type NodeOutputs } from "@/lib/utils/template";
 import {
   currentWorkflowIdAtom,
+  currentWorkflowInputSchemaAtom,
   edgesAtom,
   executionLogsAtom,
   lastExecutionLogsAtom,
@@ -49,6 +51,7 @@ export function SqlTemplateEditor({
   const [selectedNodeId] = useAtom(selectedNodeAtom);
   const executionLogs = useAtomValue(executionLogsAtom);
   const currentWorkflowId = useAtomValue(currentWorkflowIdAtom);
+  const workflowInputSchema = useAtomValue(currentWorkflowInputSchemaAtom);
   const lastExecutionLogs = useAtomValue(lastExecutionLogsAtom);
   const setLastExecutionLogs = useSetAtom(lastExecutionLogsAtom);
 
@@ -59,6 +62,7 @@ export function SqlTemplateEditor({
   const executionLogsRef = useStableRef(executionLogs);
   const lastExecutionLogsRef = useStableRef(lastExecutionLogs);
   const currentWorkflowIdRef = useStableRef(currentWorkflowId);
+  const workflowInputSchemaRef = useStableRef(workflowInputSchema);
   const lastFetchWorkflowIdRef = useRef<string | null>(null);
 
   // Template mapping: "Label.field" -> nodeId (for display <-> stored conversion)
@@ -282,6 +286,36 @@ export function SqlTemplateEditor({
     return result;
   }
 
+  function inputSchemaSuggestions(
+    node: WorkflowNode,
+    nodeName: string,
+    existingFields: Set<string>
+  ): Suggestion[] {
+    if (node.data.type !== "trigger") {
+      return [];
+    }
+    const schemaFields = getInputSchemaFields(workflowInputSchemaRef.current);
+    if (schemaFields.length === 0) {
+      return [];
+    }
+    const result: Suggestion[] = [];
+    for (const f of schemaFields) {
+      if (existingFields.has(f.field)) {
+        continue;
+      }
+      const displayKey = `${nodeName}.${f.field}`;
+      templateMapRef.current.set(displayKey, node.id);
+      result.push({
+        label: displayKey,
+        insertText: `{{${displayKey}}}`,
+        detail: f.description,
+        nodeId: node.id,
+        field: f.field,
+      });
+    }
+    return result;
+  }
+
   // Build completion suggestions from upstream nodes
   function buildSuggestions(): Suggestion[] {
     const upstreamNodes = getUpstreamNodes();
@@ -295,6 +329,16 @@ export function SqlTemplateEditor({
           ? suggestionsFromOutput(node, nodeName, output)
           : suggestionsFromStaticFields(node, nodeName);
       suggestions.push(...nodeSuggestions);
+
+      // Listed-workflow inputSchema fields (data.<fieldName>) are exposed for
+      // trigger nodes regardless of whether a runtime execution captured them.
+      const existing = new Set<string>();
+      for (const s of nodeSuggestions) {
+        if (s.field) {
+          existing.add(s.field);
+        }
+      }
+      suggestions.push(...inputSchemaSuggestions(node, nodeName, existing));
     }
 
     return suggestions;
