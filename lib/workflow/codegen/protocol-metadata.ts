@@ -3,8 +3,6 @@ import "@/protocols";
 import {
   getProtocol,
   type ProtocolAction,
-  type ProtocolActionInput,
-  type ProtocolActionInputComponent,
   type ProtocolActionOutput,
   type ProtocolContract,
   type ProtocolDefinition,
@@ -68,26 +66,22 @@ function findFunctionFragment(
   return null;
 }
 
-function inputComponentToAbiParameter(
-  component: ProtocolActionInputComponent
-): AbiParameter {
-  const result: AbiParameter = {
-    name: component.name,
-    type: component.type,
-  };
-  if (component.components && component.components.length > 0) {
-    result.components = component.components.map(inputComponentToAbiParameter);
-  }
-  return result;
-}
+// Both ProtocolActionInput and ProtocolActionInputComponent share this
+// minimal shape; ProtocolActionInput just carries extra UI metadata.
+// One walker handles both via structural typing.
+type AbiShapedInput = {
+  name: string;
+  type: string;
+  components?: AbiShapedInput[];
+};
 
-function inputToAbiParameter(input: ProtocolActionInput): AbiParameter {
+function inputToAbiParameter(input: AbiShapedInput): AbiParameter {
   const result: AbiParameter = {
     name: input.name,
     type: input.type,
   };
   if (input.components && input.components.length > 0) {
-    result.components = input.components.map(inputComponentToAbiParameter);
+    result.components = input.components.map(inputToAbiParameter);
   }
   return result;
 }
