@@ -141,6 +141,31 @@ describe("Workflow Metrics Instrumentation", () => {
       expect(mockCollector.recordError).not.toHaveBeenCalled();
     });
 
+    it("should route safe-fetch disallowed-scheme failures through recordWarning", () => {
+      recordWorkflowComplete({
+        workflowId: "wf_123",
+        durationMs: 100,
+        success: false,
+        error:
+          'HTTP request failed: safe-fetch: scheme "file:" not allowed',
+      });
+
+      expect(mockCollector.recordWarning).toHaveBeenCalled();
+      expect(mockCollector.recordError).not.toHaveBeenCalled();
+    });
+
+    it("should route bare 'URL is required' failures through recordWarning", () => {
+      recordWorkflowComplete({
+        workflowId: "wf_123",
+        durationMs: 100,
+        success: false,
+        error: "HTTP request failed: URL is required",
+      });
+
+      expect(mockCollector.recordWarning).toHaveBeenCalled();
+      expect(mockCollector.recordError).not.toHaveBeenCalled();
+    });
+
     it("should keep system errors on recordError", () => {
       recordWorkflowComplete({
         workflowId: "wf_123",
