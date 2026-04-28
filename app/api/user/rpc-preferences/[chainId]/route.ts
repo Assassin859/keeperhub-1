@@ -7,6 +7,7 @@ import {
   resolveRpcConfig,
   setUserRpcPreference,
 } from "@/lib/rpc/config-service";
+import { assertUrlIsPublic, SsrfBlockedError } from "@/lib/safe-fetch";
 
 export type SetRpcPreferenceRequest = {
   primaryRpcUrl: string;
@@ -133,15 +134,39 @@ export async function PUT(
       );
     }
 
-    // Basic URL validation
+    // SSRF guard: reject any URL whose hostname resolves to a private,
+    // loopback, link-local, or otherwise reserved address. The persisted
+    // URL is later consumed by ethers/Solana/wallet RPC paths, which also
+    // route through `safeFetch` for runtime defense-in-depth, but blocking
+    // at write time gives a clear 400 to the user instead of an opaque
+    // runtime failure later.
     try {
-      new URL(body.primaryRpcUrl);
+      await assertUrlIsPublic(body.primaryRpcUrl);
       if (body.fallbackRpcUrl) {
-        new URL(body.fallbackRpcUrl);
+        await assertUrlIsPublic(body.fallbackRpcUrl);
       }
-    } catch {
+    } catch (err) {
+      if (err instanceof SsrfBlockedError) {
+        return NextResponse.json(
+          {
+            error: "RPC URL points to a non-public address",
+            details: err.message,
+          },
+          { status: 400 }
+        );
+      }
+      if (err instanceof TypeError) {
+        return NextResponse.json(
+          { error: "Invalid RPC URL format" },
+          { status: 400 }
+        );
+      }
+      // DNS resolution failure
       return NextResponse.json(
-        { error: "Invalid RPC URL format" },
+        {
+          error: "Could not resolve RPC URL host",
+          details: err instanceof Error ? err.message : "Unknown error",
+        },
         { status: 400 }
       );
     }

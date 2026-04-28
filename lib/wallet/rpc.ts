@@ -8,6 +8,7 @@
  */
 
 import { addBreadcrumb } from "@sentry/nextjs";
+import { safeFetch } from "@/lib/safe-fetch";
 
 const BIGINT_ZERO = BigInt(0);
 const EVM_ADDRESS_REGEX = /^(0x)?[0-9a-fA-F]{40}$/;
@@ -141,10 +142,11 @@ export async function rpcCall(
 
     let response: Response;
     try {
-      response = await fetch(rpcUrl, {
+      response = await safeFetch(rpcUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+        plugin: "wallet-rpc",
       });
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));

@@ -1,8 +1,33 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const addBreadcrumbMock = vi.fn();
+// `lib/wallet/rpc.ts` now imports `lib/safe-fetch`, which declares
+// `import "server-only"` and would otherwise throw under vitest.
+vi.mock("server-only", () => ({}));
+
+const { addBreadcrumbMock, safeFetchMock } = vi.hoisted(() => ({
+  addBreadcrumbMock: vi.fn(),
+  safeFetchMock: vi.fn(),
+}));
+
 vi.mock("@sentry/nextjs", () => ({
   addBreadcrumb: (...args: unknown[]) => addBreadcrumbMock(...args),
+  captureException: vi.fn(),
+}));
+
+// `rpcCall` calls `safeFetch`, which uses undici directly and bypasses
+// `globalThis.fetch`. Mock at the safe-fetch boundary so the existing
+// retry/failover assertions still work.
+vi.mock("@/lib/safe-fetch", () => ({
+  safeFetch: (...args: unknown[]) => safeFetchMock(...args),
+}));
+
+vi.mock("@/lib/metrics", () => ({
+  getMetricsCollector: () => ({
+    incrementCounter: vi.fn(),
+    recordLatency: vi.fn(),
+    recordError: vi.fn(),
+    setGauge: vi.fn(),
+  }),
 }));
 
 import {
@@ -66,9 +91,9 @@ describe("encodeBalanceOfCallData", () => {
   });
 
   it("throws on too-long input", () => {
-    expect(() =>
-      encodeBalanceOfCallData(`${VALID_ADDRESS}deadbeef`)
-    ).toThrow(/Invalid EVM address/);
+    expect(() => encodeBalanceOfCallData(`${VALID_ADDRESS}deadbeef`)).toThrow(
+      /Invalid EVM address/
+    );
   });
 
   it("throws on non-hex characters", () => {
@@ -128,7 +153,7 @@ describe("getRpcBackoffMs", () => {
   });
 
   it("never exceeds ABSOLUTE_MAX_BACKOFF_MS even with maximum jitter", () => {
-    vi.spyOn(Math, "random").mockReturnValue(0.999999);
+    vi.spyOn(Math, "random").mockReturnValue(0.999_999);
     for (let attempt = 0; attempt < 10; attempt++) {
       expect(getRpcBackoffMs(attempt, "standard")).toBeLessThanOrEqual(
         RPC_RETRY_CONFIG.ABSOLUTE_MAX_BACKOFF_MS
@@ -148,19 +173,15 @@ describe("getRpcBackoffMs", () => {
 });
 
 describe("rpcCall", () => {
-  const fetchMock = vi.fn();
-
   beforeEach(() => {
-    vi.stubGlobal("fetch", fetchMock);
     vi.useFakeTimers();
     addBreadcrumbMock.mockClear();
-    fetchMock.mockReset();
+    safeFetchMock.mockReset();
     vi.spyOn(Math, "random").mockReturnValue(0);
   });
 
   afterEach(() => {
     vi.useRealTimers();
-    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -178,19 +199,19 @@ describe("rpcCall", () => {
   }
 
   it("returns the result on first success", async () => {
-    fetchMock.mockResolvedValueOnce(
+    safeFetchMock.mockResolvedValueOnce(
       jsonResponse({ jsonrpc: "2.0", id: 1, result: "0x1234" })
     );
 
     const result = await runWithTimers(rpcCall(TEST_RPC_URL, TEST_PAYLOAD));
 
     expect(result).toBe("0x1234");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(safeFetchMock).toHaveBeenCalledTimes(1);
     expect(addBreadcrumbMock).not.toHaveBeenCalled();
   });
 
   it("retries on 429 then succeeds", async () => {
-    fetchMock
+    safeFetchMock
       .mockResolvedValueOnce(plainResponse(429, "Too Many Requests"))
       .mockResolvedValueOnce(
         jsonResponse({ jsonrpc: "2.0", id: 1, result: "0xdead" })
@@ -199,7 +220,7 @@ describe("rpcCall", () => {
     const result = await runWithTimers(rpcCall(TEST_RPC_URL, TEST_PAYLOAD));
 
     expect(result).toBe("0xdead");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(safeFetchMock).toHaveBeenCalledTimes(2);
     expect(addBreadcrumbMock).toHaveBeenCalledTimes(1);
     expect(addBreadcrumbMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -210,7 +231,7 @@ describe("rpcCall", () => {
   });
 
   it("retries on 5xx then succeeds", async () => {
-    fetchMock
+    safeFetchMock
       .mockResolvedValueOnce(plainResponse(502, "Bad Gateway"))
       .mockResolvedValueOnce(
         jsonResponse({ jsonrpc: "2.0", id: 1, result: "0x1" })
@@ -219,7 +240,7 @@ describe("rpcCall", () => {
     const result = await runWithTimers(rpcCall(TEST_RPC_URL, TEST_PAYLOAD));
 
     expect(result).toBe("0x1");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(safeFetchMock).toHaveBeenCalledTimes(2);
     expect(addBreadcrumbMock).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ kind: "standard" }),
@@ -228,7 +249,7 @@ describe("rpcCall", () => {
   });
 
   it("retries on network error then succeeds", async () => {
-    fetchMock
+    safeFetchMock
       .mockRejectedValueOnce(new TypeError("fetch failed"))
       .mockResolvedValueOnce(
         jsonResponse({ jsonrpc: "2.0", id: 1, result: "0x2" })
@@ -237,11 +258,11 @@ describe("rpcCall", () => {
     const result = await runWithTimers(rpcCall(TEST_RPC_URL, TEST_PAYLOAD));
 
     expect(result).toBe("0x2");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(safeFetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("retries when result is missing then succeeds", async () => {
-    fetchMock
+    safeFetchMock
       .mockResolvedValueOnce(jsonResponse({ jsonrpc: "2.0", id: 1 }))
       .mockResolvedValueOnce(
         jsonResponse({ jsonrpc: "2.0", id: 1, result: "0x3" })
@@ -250,11 +271,11 @@ describe("rpcCall", () => {
     const result = await runWithTimers(rpcCall(TEST_RPC_URL, TEST_PAYLOAD));
 
     expect(result).toBe("0x3");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(safeFetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("throws immediately on RPC-reported error without retrying", async () => {
-    fetchMock.mockResolvedValueOnce(
+    safeFetchMock.mockResolvedValueOnce(
       jsonResponse({
         jsonrpc: "2.0",
         id: 1,
@@ -265,56 +286,55 @@ describe("rpcCall", () => {
     await expect(
       runWithTimers(rpcCall(TEST_RPC_URL, TEST_PAYLOAD))
     ).rejects.toThrow(/execution reverted/);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(safeFetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("throws immediately on non-429 4xx without retrying", async () => {
-    fetchMock.mockResolvedValueOnce(plainResponse(404, "Not Found"));
+    safeFetchMock.mockResolvedValueOnce(plainResponse(404, "Not Found"));
 
     await expect(
       runWithTimers(rpcCall(TEST_RPC_URL, TEST_PAYLOAD))
     ).rejects.toThrow(/HTTP 404/);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(safeFetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("throws the last error after exhausting retries", async () => {
-    fetchMock.mockResolvedValue(plainResponse(429, "Too Many Requests"));
+    safeFetchMock.mockResolvedValue(plainResponse(429, "Too Many Requests"));
 
     await expect(
       runWithTimers(rpcCall(TEST_RPC_URL, TEST_PAYLOAD))
     ).rejects.toThrow(/HTTP 429/);
-    expect(fetchMock).toHaveBeenCalledTimes(RPC_RETRY_CONFIG.MAX_RETRIES + 1);
+    expect(safeFetchMock).toHaveBeenCalledTimes(
+      RPC_RETRY_CONFIG.MAX_RETRIES + 1
+    );
     expect(addBreadcrumbMock).toHaveBeenCalledTimes(
       RPC_RETRY_CONFIG.MAX_RETRIES
     );
   });
 
   it("honors the custom maxRetries argument", async () => {
-    fetchMock.mockResolvedValue(plainResponse(429, "Too Many Requests"));
+    safeFetchMock.mockResolvedValue(plainResponse(429, "Too Many Requests"));
 
     await expect(
       runWithTimers(rpcCall(TEST_RPC_URL, TEST_PAYLOAD, 1))
     ).rejects.toThrow(/HTTP 429/);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(safeFetchMock).toHaveBeenCalledTimes(2);
   });
 });
 
 describe("rpcCallWithFailover", () => {
-  const fetchMock = vi.fn();
   const PRIMARY_URL = "https://primary.rpc.test";
   const FALLBACK_URL = "https://fallback.rpc.test";
 
   beforeEach(() => {
-    vi.stubGlobal("fetch", fetchMock);
     vi.useFakeTimers();
     addBreadcrumbMock.mockClear();
-    fetchMock.mockReset();
+    safeFetchMock.mockReset();
     vi.spyOn(Math, "random").mockReturnValue(0);
   });
 
   afterEach(() => {
     vi.useRealTimers();
-    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -332,7 +352,7 @@ describe("rpcCallWithFailover", () => {
   }
 
   it("returns the primary result when primary succeeds", async () => {
-    fetchMock.mockResolvedValue(
+    safeFetchMock.mockResolvedValue(
       jsonResponse({ jsonrpc: "2.0", id: 1, result: "0xprimary" })
     );
 
@@ -341,15 +361,12 @@ describe("rpcCallWithFailover", () => {
     );
 
     expect(result).toBe("0xprimary");
-    expect(fetchMock).toHaveBeenCalledWith(
-      PRIMARY_URL,
-      expect.anything()
-    );
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(safeFetchMock).toHaveBeenCalledWith(PRIMARY_URL, expect.anything());
+    expect(safeFetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("fails over to the fallback URL when primary is exhausted", async () => {
-    fetchMock.mockImplementation((url: string) => {
+    safeFetchMock.mockImplementation((url: string) => {
       if (url === PRIMARY_URL) {
         return Promise.resolve(plainResponse(429, "Too Many Requests"));
       }
@@ -364,7 +381,7 @@ describe("rpcCallWithFailover", () => {
 
     expect(result).toBe("0xfallback");
     // Primary uses the reduced retry budget (1 retry => 2 attempts).
-    const primaryAttempts = fetchMock.mock.calls.filter(
+    const primaryAttempts = safeFetchMock.mock.calls.filter(
       ([url]) => url === PRIMARY_URL
     ).length;
     expect(primaryAttempts).toBe(
@@ -382,7 +399,7 @@ describe("rpcCallWithFailover", () => {
   });
 
   it("throws the last error when every URL is exhausted", async () => {
-    fetchMock.mockResolvedValue(plainResponse(429, "Too Many Requests"));
+    safeFetchMock.mockResolvedValue(plainResponse(429, "Too Many Requests"));
 
     await expect(
       runWithTimers(
@@ -392,7 +409,7 @@ describe("rpcCallWithFailover", () => {
   });
 
   it("does not emit a failover breadcrumb when there is only one URL", async () => {
-    fetchMock.mockResolvedValue(plainResponse(429, "Too Many Requests"));
+    safeFetchMock.mockResolvedValue(plainResponse(429, "Too Many Requests"));
 
     await expect(
       runWithTimers(rpcCallWithFailover([PRIMARY_URL], TEST_PAYLOAD))

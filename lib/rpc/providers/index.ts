@@ -1,4 +1,5 @@
 import { ethers, isError } from "ethers";
+import { safeEthersGetUrl } from "../safe-ethers-fetch";
 import { isNonRetryableError } from "./error-classification";
 
 export {
@@ -244,6 +245,7 @@ export class RpcProviderManager {
   private createProvider(url: string): ethers.JsonRpcProvider {
     const fetchRequest = new ethers.FetchRequest(url);
     fetchRequest.timeout = 5000;
+    fetchRequest.getUrlFunc = safeEthersGetUrl;
 
     const provider = new ethers.JsonRpcProvider(
       fetchRequest,

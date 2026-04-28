@@ -1,7 +1,11 @@
 import "server-only";
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { lookup as dnsLookup } from "node:dns";
+import {
+  lookup as dnsLookup,
+  promises as dnsPromises,
+  type LookupAddress,
+} from "node:dns";
 import { BlockList, isIP } from "node:net";
 import { captureException } from "@sentry/nextjs";
 import { Agent, buildConnector, fetch as undiciFetch } from "undici";
@@ -418,4 +422,84 @@ export async function safeFetch(
     undiciFetch(rawUrl, initWithDispatcher)
   );
   return response as unknown as Response;
+}
+
+/**
+ * Pre-flight URL guard for code paths that persist or hand off a URL to a
+ * client that does not route through `safeFetch` (RPC providers, postgres
+ * connection-test, etc.).
+ *
+ * Resolves the hostname via DNS and rejects if any returned address is in
+ * the SSRF denylist. IP-literal hostnames are checked directly without DNS.
+ *
+ * Always-on (no shadow flag): callers use this when there is no second line
+ * of defense at fetch time, so the entire SSRF surface depends on this
+ * check. Throws `SsrfBlockedError` on a denylist hit, `TypeError` on a
+ * malformed URL or empty hostname, and a plain `Error` on DNS failure.
+ *
+ * Caveat: this is a write-time check. An attacker-controlled domain that
+ * resolves to a public IP at validation time and re-binds to a private IP
+ * before the fetch (DNS rebinding) is not blocked here. Pair this with the
+ * runtime `safeFetch` guard wherever the URL is later used.
+ */
+export async function assertUrlIsPublic(rawUrl: string): Promise<void> {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new TypeError(`Invalid URL: ${rawUrl}`);
+  }
+
+  if (!ALLOWED_SCHEMES.has(parsed.protocol)) {
+    throw new SsrfBlockedError({
+      hostname: parsed.hostname,
+      reason: "scheme",
+      message: `URL scheme "${parsed.protocol}" is not allowed`,
+    });
+  }
+
+  const hostname = stripIpv6Brackets(parsed.hostname);
+  if (hostname === "") {
+    throw new TypeError(`URL has no hostname: ${rawUrl}`);
+  }
+
+  if (isIP(hostname) !== 0) {
+    const verdict = isBlockedIp(hostname);
+    if (verdict.blocked) {
+      throw new SsrfBlockedError({
+        hostname,
+        resolvedIp: hostname,
+        reason: verdict.reason,
+        message: blockedMessage({
+          hostname,
+          resolvedIp: hostname,
+          reason: verdict.reason,
+        }),
+      });
+    }
+    return;
+  }
+
+  let addresses: LookupAddress[];
+  try {
+    addresses = await dnsPromises.lookup(hostname, { all: true });
+  } catch {
+    throw new Error(`Cannot resolve host: ${hostname}`);
+  }
+
+  for (const addr of addresses) {
+    const verdict = isBlockedIp(addr.address);
+    if (verdict.blocked) {
+      throw new SsrfBlockedError({
+        hostname,
+        resolvedIp: addr.address,
+        reason: verdict.reason,
+        message: blockedMessage({
+          hostname,
+          resolvedIp: addr.address,
+          reason: verdict.reason,
+        }),
+      });
+    }
+  }
 }
