@@ -198,6 +198,7 @@ jobs:
           better_auth_secret: ${{ secrets.BETTER_AUTH_SECRET }}
           test_api_key: ${{ secrets.TEST_API_KEY }}
           chain_rpc_config: ${{ secrets.CHAIN_RPC_CONFIG }}
+          integration_encryption_key: ${{ secrets.TEST_INTEGRATION_ENCRYPTION_KEY }}
 
       - name: Run E2E Vitest tests
         run: pnpm test:e2e:vitest
@@ -290,6 +291,7 @@ jobs:
           better_auth_secret: ${{ secrets.BETTER_AUTH_SECRET }}
           test_api_key: ${{ secrets.TEST_API_KEY }}
           chain_rpc_config: ${{ secrets.CHAIN_RPC_CONFIG }}
+          integration_encryption_key: ${{ secrets.TEST_INTEGRATION_ENCRYPTION_KEY }}
 
       - name: Run Playwright tests
         run: pnpm test:e2e
