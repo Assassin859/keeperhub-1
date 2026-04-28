@@ -135,6 +135,34 @@ export const consoleMetricsCollector: MetricsCollector = {
     console.error(JSON.stringify(eventWithError));
   },
 
+  recordWarning(
+    name: string,
+    error: Error | ErrorContext,
+    labels?: MetricLabels
+  ): void {
+    const errorContext = extractErrorContext(error);
+    const enrichedLabels: MetricLabels = {
+      ...labels,
+      error_message: errorContext.message,
+      ...(errorContext.code && { error_code: errorContext.code }),
+    };
+
+    const event = createMetricEvent({
+      name,
+      type: "counter",
+      value: 1,
+      labels: enrichedLabels,
+      level: "warn",
+    });
+
+    const eventWithError = {
+      ...event,
+      error: errorContext,
+    };
+
+    console.warn(JSON.stringify(eventWithError));
+  },
+
   setGauge(name: string, value: number, labels?: MetricLabels): void {
     const event = createMetricEvent({ name, type: "gauge", value, labels });
     console.info(JSON.stringify(event));
@@ -164,6 +192,9 @@ export function createPrefixedConsoleCollector(
     },
     recordError(name, error, labels) {
       consoleMetricsCollector.recordError(`${prefix}.${name}`, error, labels);
+    },
+    recordWarning(name, error, labels) {
+      consoleMetricsCollector.recordWarning(`${prefix}.${name}`, error, labels);
     },
     setGauge(name, value, labels) {
       consoleMetricsCollector.setGauge(`${prefix}.${name}`, value, labels);

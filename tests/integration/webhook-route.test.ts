@@ -11,6 +11,7 @@ const webhookWorkflow = {
   id: WORKFLOW_ID,
   userId: OWNER_USER_ID,
   organizationId: "org-123",
+  enabled: true,
   nodes: [
     {
       id: "trigger-1",
@@ -25,6 +26,11 @@ const webhookWorkflow = {
     },
   ],
   edges: [],
+};
+
+const disabledWebhookWorkflow = {
+  ...webhookWorkflow,
+  enabled: false,
 };
 
 const manualWorkflow = {
@@ -184,6 +190,31 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
       expect(response.status).toBe(404);
       const data = await response.json();
       expect(data.error).toBe("Workflow not found");
+    });
+  });
+
+  describe("disabled workflow", () => {
+    it("should return 410 Gone when workflow.enabled is false", async () => {
+      mockWorkflowsFindFirst.mockResolvedValue(disabledWebhookWorkflow);
+
+      const response = await POST(
+        createWebhookRequest(VALID_API_KEY),
+        createContext(WORKFLOW_ID)
+      );
+      expect(response.status).toBe(410);
+      const data = await response.json();
+      expect(data.error).toBe("Workflow is disabled");
+    });
+
+    it("should not validate API key for a disabled workflow", async () => {
+      mockWorkflowsFindFirst.mockResolvedValue(disabledWebhookWorkflow);
+
+      await POST(
+        createWebhookRequest(VALID_API_KEY),
+        createContext(WORKFLOW_ID)
+      );
+
+      expect(mockApiKeysFindFirst).not.toHaveBeenCalled();
     });
   });
 

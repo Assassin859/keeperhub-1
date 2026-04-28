@@ -852,28 +852,16 @@ export const prometheusMetricsCollector: MetricsCollector = {
     error: Error | ErrorContext,
     labels?: MetricLabels
   ): void {
-    // Silently skip DB-sourced metrics (populated via updateDbMetrics)
-    if (dbSourcedMetrics.has(name)) {
-      return;
-    }
-    const counter = errorCounterMap[name];
-    if (counter) {
-      const sanitized = sanitizeLabels(labels);
-      // Add error type from error object if available
-      if ("code" in error && error.code) {
-        sanitized.error_type = error.code;
-      } else if (error instanceof Error) {
-        sanitized.error_type = error.name || "Error";
-      } else {
-        // Default error type for plain objects without code
-        sanitized.error_type = "UnknownError";
-      }
-      // Filter to only include labels defined for this counter
-      const errorLabels = filterLabelsForMetric(name, sanitized);
-      counter.inc(errorLabels);
-    } else {
-      console.warn(`[Prometheus] Unknown error metric: ${name}`);
-    }
+    recordErrorCounter(name, error, labels);
+  },
+
+  recordWarning(
+    name: string,
+    error: Error | ErrorContext,
+    labels?: MetricLabels
+  ): void {
+    // Same Prometheus counter as recordError; severity distinction lives in logs.
+    recordErrorCounter(name, error, labels);
   },
 
   setGauge(name: string, value: number, labels?: MetricLabels): void {
@@ -889,6 +877,31 @@ export const prometheusMetricsCollector: MetricsCollector = {
     }
   },
 };
+
+function recordErrorCounter(
+  name: string,
+  error: Error | ErrorContext,
+  labels?: MetricLabels
+): void {
+  if (dbSourcedMetrics.has(name)) {
+    return;
+  }
+  const counter = errorCounterMap[name];
+  if (!counter) {
+    console.warn(`[Prometheus] Unknown error metric: ${name}`);
+    return;
+  }
+  const sanitized = sanitizeLabels(labels);
+  if ("code" in error && error.code) {
+    sanitized.error_type = error.code;
+  } else if (error instanceof Error) {
+    sanitized.error_type = error.name || "Error";
+  } else {
+    sanitized.error_type = "UnknownError";
+  }
+  const errorLabels = filterLabelsForMetric(name, sanitized);
+  counter.inc(errorLabels);
+}
 
 /**
  * Update hub vote gauges from database stats.

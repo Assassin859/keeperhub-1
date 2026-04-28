@@ -164,6 +164,22 @@ export async function POST(
       );
     }
 
+    // Aligned with schedule/event/block trigger paths, which all gate on
+    // workflows.enabled. Without this check a disabled workflow keeps
+    // executing every time the caller hits the URL.
+    if (!workflow.enabled) {
+      recordWebhookMetrics({
+        workflowId,
+        durationMs: timer(),
+        statusCode: 410,
+        error: "Workflow is disabled",
+      });
+      return NextResponse.json(
+        { error: "Workflow is disabled" },
+        { status: 410, headers: corsHeaders }
+      );
+    }
+
     // Validate API key - must belong to the workflow owner
     const authHeader = request.headers.get("Authorization");
     const apiKeyValidation = await validateApiKey(authHeader, workflow.userId);

@@ -18,6 +18,7 @@ describe("Workflow Metrics Instrumentation", () => {
       recordLatency: vi.fn(),
       incrementCounter: vi.fn(),
       recordError: vi.fn(),
+      recordWarning: vi.fn(),
       setGauge: vi.fn(),
     };
     setMetricsCollector(mockCollector);
@@ -75,6 +76,7 @@ describe("Workflow Metrics Instrumentation", () => {
           workflow_id: "wf_123",
         })
       );
+      expect(mockCollector.recordWarning).not.toHaveBeenCalled();
     });
 
     it("should record failed workflow with Error object", () => {
@@ -92,6 +94,63 @@ describe("Workflow Metrics Instrumentation", () => {
         error,
         expect.any(Object)
       );
+    });
+
+    it("should route safe-fetch invalid URL failures through recordWarning", () => {
+      recordWorkflowComplete({
+        workflowId: "wf_123",
+        durationMs: 100,
+        success: false,
+        error:
+          'HTTP request failed: safe-fetch: invalid URL " https://example.com/{{address}}"',
+      });
+
+      expect(mockCollector.recordWarning).toHaveBeenCalledWith(
+        MetricNames.WORKFLOW_EXECUTION_ERRORS,
+        expect.objectContaining({
+          message: expect.stringContaining("safe-fetch: invalid URL"),
+        }),
+        expect.objectContaining({ workflow_id: "wf_123" })
+      );
+      expect(mockCollector.recordError).not.toHaveBeenCalled();
+    });
+
+    it("should route missing template variable failures through recordWarning", () => {
+      recordWorkflowComplete({
+        workflowId: "wf_123",
+        durationMs: 100,
+        success: false,
+        error:
+          "HTTP request failed: Missing template variable(s) in URL: address",
+      });
+
+      expect(mockCollector.recordWarning).toHaveBeenCalled();
+      expect(mockCollector.recordError).not.toHaveBeenCalled();
+    });
+
+    it("should route SSRF policy blocks through recordWarning", () => {
+      recordWorkflowComplete({
+        workflowId: "wf_123",
+        durationMs: 100,
+        success: false,
+        error:
+          "HTTP request failed: Outbound request to 169.254.169.254 blocked by SSRF policy (link-local).",
+      });
+
+      expect(mockCollector.recordWarning).toHaveBeenCalled();
+      expect(mockCollector.recordError).not.toHaveBeenCalled();
+    });
+
+    it("should keep system errors on recordError", () => {
+      recordWorkflowComplete({
+        workflowId: "wf_123",
+        durationMs: 100,
+        success: false,
+        error: "Database connection lost",
+      });
+
+      expect(mockCollector.recordError).toHaveBeenCalled();
+      expect(mockCollector.recordWarning).not.toHaveBeenCalled();
     });
   });
 

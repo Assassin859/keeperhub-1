@@ -17,6 +17,7 @@ describe("API Metrics Instrumentation", () => {
       recordLatency: vi.fn(),
       incrementCounter: vi.fn(),
       recordError: vi.fn(),
+      recordWarning: vi.fn(),
       setGauge: vi.fn(),
     };
     setMetricsCollector(mockCollector);

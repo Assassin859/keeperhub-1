@@ -18,6 +18,47 @@ export type HttpRequestInput = StepInput & {
   httpBody?: string;
 };
 
+/**
+ * Match any unresolved `{{...}}` token. URLs never legitimately contain `{{`,
+ * so any remaining match after template processing is a user-config bug we
+ * surface clearly instead of forwarding to fetch as a malformed URL.
+ */
+const UNRESOLVED_TEMPLATE_REGEX = /\{\{\s*([^}]+?)\s*\}\}/g;
+
+function findUnresolvedTemplateVariables(value: string): string[] {
+  const names = new Set<string>();
+  for (const match of value.matchAll(UNRESOLVED_TEMPLATE_REGEX)) {
+    names.add(match[1]);
+  }
+  return [...names];
+}
+
+/**
+ * Validate the rendered endpoint string before any network IO. Trims
+ * surrounding whitespace and rejects unresolved `{{var}}` template tokens
+ * (which usually mean a missing trigger payload field). Exported for tests.
+ */
+export type EndpointValidation =
+  | { ok: true; endpoint: string }
+  | { ok: false; error: string };
+
+export function validateHttpRequestEndpoint(
+  rawEndpoint: string | undefined | null
+): EndpointValidation {
+  const endpoint = rawEndpoint?.trim();
+  if (!endpoint) {
+    return { ok: false, error: "HTTP request failed: URL is required" };
+  }
+  const unresolved = findUnresolvedTemplateVariables(endpoint);
+  if (unresolved.length > 0) {
+    return {
+      ok: false,
+      error: `HTTP request failed: Missing template variable(s) in URL: ${unresolved.join(", ")}`,
+    };
+  }
+  return { ok: true, endpoint };
+}
+
 function parseHeaders(httpHeaders?: string): Record<string, string> {
   if (!httpHeaders) {
     return {};
@@ -58,15 +99,14 @@ function parseResponse(response: Response): Promise<unknown> {
 async function httpRequest(
   input: HttpRequestInput
 ): Promise<HttpRequestResult> {
-  if (!input.endpoint) {
-    return {
-      success: false,
-      error: "HTTP request failed: URL is required",
-    };
+  const validation = validateHttpRequestEndpoint(input.endpoint);
+  if (!validation.ok) {
+    return { success: false, error: validation.error };
   }
+  const { endpoint } = validation;
 
   try {
-    const response = await safeFetch(input.endpoint, {
+    const response = await safeFetch(endpoint, {
       method: input.httpMethod,
       headers: parseHeaders(input.httpHeaders),
       body: parseBody(input.httpMethod, input.httpBody),

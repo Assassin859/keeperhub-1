@@ -102,6 +102,28 @@ describe("Metrics Collectors", () => {
       expect(output.error.message).toBe("Test error message");
     });
 
+    it("should output JSON for recordWarning at warn level", () => {
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+        // noop - suppress console output
+      });
+
+      consoleMetricsCollector.recordWarning(
+        "test.errors",
+        new Error("user-config bad URL"),
+        { plugin_name: "http-request" }
+      );
+
+      expect(consoleSpy).toHaveBeenCalledOnce();
+      const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+
+      expect(output.level).toBe("warn");
+      expect(output.metric.name).toBe("test.errors");
+      expect(output.metric.type).toBe("counter");
+      expect(output.metric.value).toBe(1);
+      expect(output.metric.labels.error_message).toBe("user-config bad URL");
+      expect(output.error.message).toBe("user-config bad URL");
+    });
+
     it("should output JSON for recordError with ErrorContext", () => {
       const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {
         // noop - suppress console output
@@ -189,6 +211,12 @@ describe("Metrics Collectors", () => {
       }).not.toThrow();
     });
 
+    it("should not throw on recordWarning", () => {
+      expect(() => {
+        noopMetricsCollector.recordWarning("test", new Error("test"));
+      }).not.toThrow();
+    });
+
     it("should not throw on setGauge", () => {
       expect(() => {
         noopMetricsCollector.setGauge("test", 42);
@@ -240,6 +268,7 @@ describe("Metrics Collectors", () => {
         recordLatency: vi.fn(),
         incrementCounter: vi.fn(),
         recordError: vi.fn(),
+        recordWarning: vi.fn(),
         setGauge: vi.fn(),
       };
 
@@ -254,6 +283,7 @@ describe("Metrics Collectors", () => {
         recordLatency: vi.fn(),
         incrementCounter: vi.fn(),
         recordError: vi.fn(),
+        recordWarning: vi.fn(),
         setGauge: vi.fn(),
       };
 
@@ -291,6 +321,7 @@ describe("Metrics Collectors", () => {
         recordLatency: vi.fn(),
         incrementCounter: vi.fn(),
         recordError: vi.fn(),
+        recordWarning: vi.fn(),
         setGauge: vi.fn(),
       };
       setMetricsCollector(mockCollector);
@@ -317,6 +348,7 @@ describe("Metrics Collectors", () => {
         recordLatency: vi.fn(),
         incrementCounter: vi.fn(),
         recordError: vi.fn(),
+        recordWarning: vi.fn(),
         setGauge: vi.fn(),
       };
       setMetricsCollector(mockCollector);
@@ -341,6 +373,7 @@ describe("Metrics Collectors", () => {
         recordLatency: vi.fn(),
         incrementCounter: vi.fn(),
         recordError: vi.fn(),
+        recordWarning: vi.fn(),
         setGauge: vi.fn(),
       };
       setMetricsCollector(mockCollector);
@@ -368,6 +401,7 @@ describe("Metrics Collectors", () => {
         recordLatency: vi.fn(),
         incrementCounter: vi.fn(),
         recordError: vi.fn(),
+        recordWarning: vi.fn(),
         setGauge: vi.fn(),
       };
       setMetricsCollector(mockCollector);
