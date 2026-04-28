@@ -1,5 +1,11 @@
 "use client";
 
+// Side-effect import: forces the plugin barrel into the client bundle so each
+// plugin's index.ts runs and calls registerIntegration() before getAllActions
+// is read below. The dynamic require("@/plugins") in plugins/registry.ts is
+// not reliably included in the client bundle by webpack, which leaves the
+// registry empty and the action grid showing "No actions found".
+import "@/plugins";
 import {
   ChevronRight,
   Eye,
