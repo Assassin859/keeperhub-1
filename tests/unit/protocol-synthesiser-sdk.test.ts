@@ -69,10 +69,10 @@ describe("generateWorkflowSDKCode (protocol synthesis path)", () => {
     expect(code).not.toContain("return { success: true };\n}");
   });
 
-  it("namespaces nothing -- two CCIP balance nodes would collide on CONTRACT_ADDRESS", () => {
-    // Documenting the known limitation: constants are scoped inside each
-    // step function (not at file top), so two CCIP nodes get independent
-    // CONTRACT_ADDRESS bindings without colliding.
+  it("scopes CONTRACT_ADDRESS per step so duplicate action nodes do not collide", () => {
+    // Constants live inside each step function (not at file top), so two
+    // CCIP balance nodes can coexist with independent CONTRACT_ADDRESS
+    // bindings. Asserts the per-step scoping invariant.
     const node1 = ccipBalanceNode("a-1");
     const node2 = ccipBalanceNode("a-2");
     const code = generateWorkflowSDKCode(
