@@ -14,7 +14,13 @@
 
 import "dotenv/config";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// `lib/rpc/providers/index.ts` (transitively imported via provider-factory)
+// pulls in `lib/rpc/safe-ethers-fetch.ts`, which guards itself with
+// `import "server-only"`. Without this mock the file-load throws under vitest.
+vi.mock("server-only", () => ({}));
+
 import {
   getRpcProviderFromUrls,
   getSolanaProviderFromUrls,
