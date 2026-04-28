@@ -9,7 +9,7 @@ import {
   TemplateAutocomplete,
   type TemplateAutocompleteCloseReason,
 } from "./template-autocomplete";
-import { toStringValue } from "./template-badge-utils";
+import { countTemplateTokens, toStringValue } from "./template-badge-utils";
 
 // Guards `selection.getRangeAt(0)`, which throws IndexSizeError when
 // rangeCount is 0 (e.g. focus moved off the editable before keydown fired).
@@ -412,8 +412,8 @@ export function TemplateBadgeInput({
     }
     
     // Count templates in old and new values
-    const oldTemplates = (internalValue.match(/\{\{@([^:]+):([^}]+)\}\}/g) || []).length;
-    const newTemplates = (newValue.match(/\{\{@([^:]+):([^}]+)\}\}/g) || []).length;
+    const oldTemplates = countTemplateTokens(internalValue);
+    const newTemplates = countTemplateTokens(newValue);
     
     if (newTemplates > oldTemplates) {
       // A new template was added, update display to show badge
