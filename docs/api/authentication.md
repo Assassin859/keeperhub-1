@@ -45,7 +45,7 @@ KeeperHub has two types of API keys:
 
 ## Endpoint scope
 
-Session authentication is accepted everywhere. API keys (`kh_`) are accepted only on **organization-scoped** endpoints, the ones whose action and result depend on the caller's organization rather than on the individual user behind the key.
+Session authentication is accepted everywhere. API keys (`kh_`) are accepted only on **organization-scoped** endpoints, the ones whose action and result depend on the caller's organization rather than on the individual user behind the key. Wallets, billing, and spending caps are all attached to the organization, so a key that authorizes on-chain spend or billable usage is necessarily organization-scoped.
 
 ### Accepted on API keys
 
@@ -71,6 +71,10 @@ Endpoints that act on a user account, hold credential material, or sit on a huma
 - **Per-user state**: workflow drafts, workflow ratings, leaving an organization
 
 If you have a use case for session-only behavior over an API key, open an issue describing it. The boundary is deliberate: it keeps a leaked API key from escalating into account control or wallet drainage.
+
+### Webhook keys
+
+Workflow webhook triggers (`POST /api/workflows/{workflowId}/webhook`) accept only user-scoped (`wfb_`) keys. The route reads the `Authorization` header directly; session cookies are not consulted, and `kh_` keys are rejected with `401`. The `wfb_` key must belong to the same user that owns the target workflow; a key created by another member of the same organization is rejected with `403`. Webhook executions are attributed to the individual triggering user rather than to the organization, which is why the user-binding is enforced.
 
 ## Deactivated accounts
 

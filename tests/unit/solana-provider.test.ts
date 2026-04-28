@@ -1,4 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// `lib/rpc/providers/solana` now imports `lib/safe-fetch`, which declares
+// `import "server-only"` and would otherwise throw under vitest.
+vi.mock("server-only", () => ({}));
+vi.mock("@sentry/nextjs", () => ({ captureException: vi.fn() }));
+vi.mock("@/lib/metrics", () => ({
+  getMetricsCollector: () => ({
+    incrementCounter: vi.fn(),
+    recordLatency: vi.fn(),
+    recordError: vi.fn(),
+    setGauge: vi.fn(),
+  }),
+}));
+
 import {
   clearSolanaProviderManagerCache,
   consoleSolanaMetricsCollector,

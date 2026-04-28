@@ -1,4 +1,5 @@
 import { getReadContractOutputFields } from "@/lib/workflow/editor/action-output-fields";
+import { getInputSchemaFields } from "@/lib/workflow/editor/input-schema-fields";
 import { getTriggerOutputFields } from "@/lib/workflow/editor/trigger-output-fields";
 import type { ExecutionLogEntry, WorkflowNode } from "@/lib/workflow/store";
 import { WorkflowTriggerEnum } from "@/lib/workflow/store";
@@ -206,7 +207,43 @@ export function getActionFields(node: WorkflowNode): FieldEntry[] | null {
   return null;
 }
 
-export function getTriggerFields(node: WorkflowNode): FieldEntry[] {
+export type TriggerFieldOptions = {
+  /**
+   * Listing inputSchema for the workflow. When present, declared properties
+   * are appended as `data.<fieldName>` entries so listed-workflow inputs are
+   * available in autocomplete even before an agent has called the workflow.
+   */
+  inputSchema?: Record<string, unknown> | null;
+};
+
+/**
+ * Merge declared listing inputSchema fields into a base set of trigger
+ * fields without producing duplicates.
+ */
+function withInputSchemaFields(
+  baseFields: FieldEntry[],
+  options: TriggerFieldOptions | undefined
+): FieldEntry[] {
+  const schemaFields = getInputSchemaFields(options?.inputSchema);
+  if (schemaFields.length === 0) {
+    return baseFields;
+  }
+  const seen = new Set(baseFields.map((f) => f.field));
+  const merged = [...baseFields];
+  for (const field of schemaFields) {
+    if (seen.has(field.field)) {
+      continue;
+    }
+    merged.push(field);
+    seen.add(field.field);
+  }
+  return merged;
+}
+
+export function getTriggerFields(
+  node: WorkflowNode,
+  options?: TriggerFieldOptions
+): FieldEntry[] {
   const triggerType = node.data.config?.triggerType as string | undefined;
   const webhookSchema = node.data.config?.webhookSchema as string | undefined;
   const config = node.data.config || {};
@@ -214,39 +251,45 @@ export function getTriggerFields(node: WorkflowNode): FieldEntry[] {
   if (triggerType === WorkflowTriggerEnum.EVENT) {
     const fields = getTriggerOutputFields(triggerType, config);
     if (fields.length > 0) {
-      return fields;
+      return withInputSchemaFields(fields, options);
     }
   }
 
   if (triggerType === "Webhook") {
     const parsed = tryParseSchemaFields(webhookSchema);
     if (parsed) {
-      return parsed;
+      return withInputSchemaFields(parsed, options);
     }
   }
 
   if (triggerType) {
     const fields = getTriggerOutputFields(triggerType, config);
     if (fields.length > 0) {
-      return fields;
+      return withInputSchemaFields(fields, options);
     }
   }
 
-  return [
-    { field: "triggered", description: "Trigger status" },
-    { field: "timestamp", description: "Trigger timestamp" },
-    { field: "input", description: "Input data" },
-  ];
+  return withInputSchemaFields(
+    [
+      { field: "triggered", description: "Trigger status" },
+      { field: "timestamp", description: "Trigger timestamp" },
+      { field: "input", description: "Input data" },
+    ],
+    options
+  );
 }
 
-export function getCommonFields(node: WorkflowNode): FieldEntry[] {
+export function getCommonFields(
+  node: WorkflowNode,
+  options?: TriggerFieldOptions
+): FieldEntry[] {
   if (node.data.type === "action") {
     return (
       getActionFields(node) ?? [{ field: "data", description: "Output data" }]
     );
   }
   if (node.data.type === "trigger") {
-    return getTriggerFields(node);
+    return getTriggerFields(node, options);
   }
   return [{ field: "data", description: "Output data" }];
 }

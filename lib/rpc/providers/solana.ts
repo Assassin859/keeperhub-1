@@ -1,9 +1,25 @@
 import { type Commitment, Connection } from "@solana/web3.js";
+import { safeFetch } from "@/lib/safe-fetch";
 import {
   RPC_CONNECTION_ERROR_PATTERNS,
   type RpcErrorType,
   type RpcOperationType,
 } from "./index";
+
+/**
+ * Custom fetch passed to `Connection`'s `ConnectionConfig.fetch` so
+ * user-supplied Solana RPC URLs go through the SSRF guard. Without this
+ * the @solana/web3.js Connection uses Node's global fetch, which bypasses
+ * `lib/safe-fetch`'s denylist.
+ */
+const safeSolanaFetch = (
+  info: Parameters<typeof fetch>[0],
+  init?: Parameters<typeof fetch>[1]
+): Promise<Response> =>
+  safeFetch(info as Parameters<typeof safeFetch>[0], {
+    ...init,
+    plugin: "rpc-solana",
+  });
 
 /**
  * Solana RPC Provider Manager
@@ -204,6 +220,7 @@ export class SolanaProviderManager {
     return new Connection(url, {
       commitment: this.config.commitment,
       confirmTransactionInitialTimeout: this.config.timeoutMs,
+      fetch: safeSolanaFetch,
     });
   }
 

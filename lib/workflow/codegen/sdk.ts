@@ -1,6 +1,7 @@
 import "server-only";
 
 import { findActionById } from "@/plugins/registry";
+import { synthesiseProtocolForSDK } from "./protocol-synthesiser";
 // System action codegen templates (not in plugin registry)
 import conditionTemplate from "./templates/condition";
 import databaseQueryTemplate from "./templates/database-query";
@@ -13,6 +14,7 @@ const SYSTEM_CODEGEN_TEMPLATES: Record<string, string> = {
   Condition: conditionTemplate,
 };
 
+import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 import {
   ARRAY_INDEX_PATTERN,
   analyzeNodeUsage,
@@ -23,7 +25,6 @@ import {
   sanitizeStepName,
   sanitizeVarName,
 } from "./shared";
-import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 /**
  * Load step implementation from templates
@@ -437,6 +438,45 @@ export function generateWorkflowSDKCode(
     return builder ? builder() : [];
   }
 
+  function buildProtocolStepInputParams(
+    inputs: Array<{ name: string }>,
+    config: Record<string, unknown>
+  ): string[] {
+    return inputs.map((inp) => {
+      const raw = String(config[inp.name] ?? "");
+      const converted = convertTemplateToJS(raw);
+      return `${inp.name}: \`${escapeForTemplateLiteral(converted)}\``;
+    });
+  }
+
+  function generateProtocolStepFunctionBody(
+    actionType: string,
+    config: Record<string, unknown>
+  ): string | null {
+    const sdk = synthesiseProtocolForSDK(actionType, config);
+    if (!sdk) {
+      return null;
+    }
+    for (const imp of sdk.imports) {
+      imports.add(imp);
+    }
+    const inputParams = buildProtocolStepInputParams(sdk.inputs, config);
+    const lines: string[] = [];
+    for (const w of sdk.warnings) {
+      lines.push(`  ${w}`);
+    }
+    for (const decl of sdk.inlineDecls) {
+      lines.push(`  ${decl}`);
+    }
+    lines.push("  const stepInput = {");
+    for (const p of inputParams) {
+      lines.push(`    ${p},`);
+    }
+    lines.push("  };");
+    lines.push(...sdk.bodyLines);
+    return lines.join("\n");
+  }
+
   function generateStepFunction(
     node: WorkflowNode,
     uniqueStepName?: string
@@ -446,25 +486,33 @@ export function generateWorkflowSDKCode(
     const label = node.data.label || actionType || "UnnamedStep";
     const stepName = uniqueStepName || sanitizeStepName(label);
 
-    const stepImplementation = loadStepImplementation(actionType);
-
     let stepBody: string;
-    if (stepImplementation && node.data.type === "action") {
-      const inputParams = buildStepInputParams(actionType, config);
-      stepBody = `  // Call step function with constructed input
+    const protocolBody =
+      node.data.type === "action"
+        ? generateProtocolStepFunctionBody(actionType, config)
+        : null;
+
+    if (protocolBody) {
+      stepBody = protocolBody;
+    } else {
+      const stepImplementation = loadStepImplementation(actionType);
+      if (stepImplementation && node.data.type === "action") {
+        const inputParams = buildStepInputParams(actionType, config);
+        stepBody = `  // Call step function with constructed input
   const stepInput = {
     ${inputParams.join(",\n    ")}
   };
 
       // Execute step implementation
       ${stepImplementation}`;
-    } else {
-      stepBody = "  return { success: true };";
+      } else {
+        stepBody = "  return { success: true };";
+      }
     }
 
     return `async function ${stepName}(input: Record<string, unknown> & { outputs?: Record<string, { label: string; data: unknown }> }) {
   "use step";
-  
+
 ${stepBody}
 }`;
   }

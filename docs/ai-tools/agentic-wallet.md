@@ -42,7 +42,7 @@ With MCP + wallet both installed, ask your agent in plain language:
 
 > Run the KeeperHub `mcp-test` workflow for `0xC300...`.
 
-The agent discovers available workflows at runtime through the KeeperHub meta-tools (`search_workflows` + `call_workflow`) and picks the best match. When a paid workflow returns a `402`, the wallet intercepts the challenge, signs through the server-side proxy (x402 on Base USDC or MPP on Tempo USDC.e), and the call retries transparently. If both challenge types are offered it submits one MPP credential (cheaper, near-instant Tempo settlement). If the amount exceeds your `auto_approve_max_usd` the safety hook surfaces an inline permission prompt before any payment is authorised.
+The agent discovers available workflows at runtime through the KeeperHub meta-tools (`search_workflows` + `call_workflow`) and picks the best match. When a paid workflow returns a `402`, the wallet intercepts the challenge, signs through the server-side proxy (x402 on Base USDC or MPP on Tempo USDC.e), and the call retries transparently. Most KeeperHub paid workflows accept both protocols; today the wallet pays via x402 by default and uses MPP when the workflow is MPP-only. If the amount exceeds your `auto_approve_max_usd` the safety hook surfaces an inline permission prompt before any payment is authorised.
 
 ### Safety hooks
 
@@ -63,7 +63,7 @@ Beyond the client-side hook, a set of Turnkey-enforced policies apply to every w
 - **Contract allowlist.** Signing is denied on any call whose target contract is not Base USDC (`0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`) or Tempo USDC.e (`0x20C000000000000000000000B9537D11c60E8b50`). On the EIP-712 (x402) signing path the same restriction is applied against the typed-data domain's verifying contract.
 - **Per-transfer cap.** `transfer()` or `transferFrom()` of more than 100 USDC is denied. The same 100 USDC ceiling applies to EIP-3009 `TransferWithAuthorization` typed-data signing.
 - **Approval cap.** `approve()` above 100 USDC is denied. Anything over the same 100 USDC per-transfer ceiling is rejected.
-- **Chain allowlist.** EIP-712 signing is denied for any `domain.chainId` outside Base (8453), Tempo mainnet (4217), and Tempo testnet (4218).
+- **Chain allowlist.** EIP-712 signing is denied for any `domain.chainId` outside Base (8453), Tempo mainnet (4217), and Tempo testnet (42431).
 - **Daily spend cap.** Aggregate signed payments per wallet are bounded at **200 USDC per UTC day** by default. Requests that would exceed the cap return `429 DAILY_CAP_EXCEEDED` with a `Retry-After` header counting down to the next UTC midnight. The cap protects against a compromised HMAC secret being used to drain the wallet faster than an operator can notice and rotate. If a legitimate workflow needs a higher cap, contact KeeperHub support.
 
 These are defence-in-depth: even if an attacker bypassed the client-side hook entirely, Turnkey rejects the signature. They are also **not user-configurable today**. If you have a legitimate need to sign transfers above 100 USDC or to interact with contracts outside the USDC allowlist, contact KeeperHub support — a sub-organisation with a different policy set is possible but requires an operator action. Self-serve higher-cap configuration is on the roadmap.
@@ -159,7 +159,7 @@ Paid workflows settle in USDC on Base (via x402) or USDC.e on Tempo (via MPP). M
 
 ## Known limitations
 
-- Signing is supported on Base (8453), Tempo mainnet (4217), and Tempo testnet (4218) today. Solana, Arbitrum, Optimism and other chains are not yet supported.
+- Signing is supported on Base (8453), Tempo mainnet (4217), and Tempo testnet (42431) today. Solana, Arbitrum, Optimism and other chains are not yet supported.
 - Ask-tier approvals are surfaced inline via the agent's permission prompt. A browser-based review flow for larger amounts is on the roadmap.
 - Workflow discovery via the skill is scoped to KeeperHub's registry. The wallet auto-pays any x402 or MPP 402 challenge you direct it at, but discovering third-party x402 services from the agent is on the roadmap.
 
@@ -228,7 +228,7 @@ Not through the CLI today. If you've stopped using a wallet and want the sub-org
 No ETH, no gas out of your wallet for normal agentic wallet use.
 
 - **x402 on Base.** You sign an EIP-3009 `TransferWithAuthorization` — a pre-signed authorisation that lets the x402 facilitator move USDC on your behalf. The facilitator submits the on-chain transaction and pays the gas. Your wallet only debits the USDC amount.
-- **MPP on Tempo.** You sign a payment proof; Tempo settles the transfer through the MPP facilitator, which pays the network fees. Your wallet only debits the USDC.e amount.
+- **MPP on Tempo.** You sign an authorisation for the MPP facilitator to settle the USDC.e transfer for you. The facilitator pays the Tempo network fees. Your wallet only debits the USDC.e amount.
 
 So for a `$0.05` paid workflow, `$0.05` of USDC (or USDC.e) leaves your wallet — nothing else.
 

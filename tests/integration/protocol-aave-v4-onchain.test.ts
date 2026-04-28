@@ -13,15 +13,21 @@
  */
 
 import { ethers } from "ethers";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+
+// `lib/rpc/providers` transitively imports `lib/safe-fetch` (via the
+// safe-ethers adapter), which declares `import "server-only"` and would
+// otherwise throw under vitest's Node runtime.
+vi.mock("server-only", () => ({}));
+
 import { reshapeArgsForAbi } from "@/lib/abi/struct-args";
 import type {
   ProtocolAction,
   ProtocolContract,
   ProtocolDefinition,
 } from "@/lib/protocol-registry";
-import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
+import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 import aaveV4Def from "@/protocols/aave-v4";
 
@@ -134,10 +140,7 @@ describe.skipIf(!RPC_URL)("Aave V4 Lido Spoke on-chain integration", () => {
     );
     const abi = JSON.parse(contract.abi as string);
     const iface = new ethers.Interface(abi);
-    const decoded = iface.decodeFunctionResult(
-      "getUserSuppliedAssets",
-      result
-    );
+    const decoded = iface.decodeFunctionResult("getUserSuppliedAssets", result);
     expect(decoded).toBeDefined();
     expect(typeof decoded[0]).toBe("bigint");
   }, 15_000);

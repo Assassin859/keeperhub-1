@@ -12,6 +12,22 @@ const ARRAY_ACCESS_PATTERN = /^([^[]+)\[(\d+)\]$/;
 const TEMPLATE_REF_PATTERN = /\{\{@([^:]+):([^}]+)\}\}/g;
 
 /**
+ * Extract the trimmed expression inside every `{{...}}` token in a string.
+ * Includes both stored format (`{{@nodeId:Label.field}}`) and display
+ * format (`{{Label.field}}`). Returns each occurrence in order; callers
+ * dedupe if they need a unique list.
+ *
+ * Useful for "did any template fail to resolve?" checks at step boundaries.
+ */
+export function extractTemplateTokens(value: string): string[] {
+  const tokens: string[] = [];
+  for (const match of value.matchAll(TEMPLATE_PATTERN)) {
+    tokens.push(match[1].trim());
+  }
+  return tokens;
+}
+
+/**
  * Remap template reference node IDs in a string (e.g. after workflow duplication).
  * Replaces {{@oldId:...}} with {{@newId:...}} using the provided map.
  */
