@@ -5,14 +5,25 @@
  * fallback (lib/credential-fetcher.ts ca226048) silently returned raw
  * configKey-keyed credentials when the runtime plugin registry was unreachable
  * - which is the case inside step bundles. Plugins where configKey != envVar
- * (Telegram, Slack, SendGrid custom-key) failed at runtime with messages like
- * "Telegram bot token is required" because the step's credentials.<envVar>
- * read returned undefined. The unit tests in tests/unit/credential-fetcher*
- * pin the static map's correctness, but cannot prove the bundler actually
- * ships it. This test exercises the real prod execution path: start a
- * workflow run via POST /api/workflow/{id}/execute, let it run through the
- * step bundle, and assert the failure mode is downstream of the credential
- * gate.
+ * (Telegram, Slack) failed at runtime with messages like "Telegram bot token
+ * is required" because the step's credentials.<envVar> read returned
+ * undefined. Discord happened to work because its configKey matches its
+ * envVar (webhookUrl == webhookUrl), but it's included here as a control to
+ * prove the fix doesn't regress the previously-working path.
+ *
+ * SendGrid is included as a test.fixme: at the time of writing,
+ * plugins/sendgrid/steps/send-email.ts hardcodes useKeeperHubApiKey = true
+ * (line 174), so the integration credential path is dead at runtime
+ * regardless of the fetcher fix. The fixme'd test runs the same shape as
+ * the others and will activate when that hardcode is removed. The unit
+ * test in tests/unit/credential-fetcher.test.ts continues to pin SendGrid's
+ * configKey/envVar mapping in the meantime.
+ *
+ * The unit tests in tests/unit/credential-fetcher* pin the static map's
+ * correctness, but cannot prove the bundler actually ships it. This test
+ * exercises the real prod execution path: start a workflow run via
+ * POST /api/workflow/{id}/execute, let it run through the step bundle, and
+ * assert the failure mode is downstream of the credential gate.
  */
 
 import { createCipheriv, randomBytes } from "node:crypto";
@@ -24,7 +35,6 @@ import {
   waitForWorkflowExecution,
 } from "./utils/db";
 
-const TELEGRAM_BOT_TOKEN_REQUIRED_RE = /Telegram bot token is required/i;
 const ENCRYPTION_ALGORITHM = "aes-256-gcm";
 const ENCRYPTION_IV_LENGTH = 16;
 
@@ -32,6 +42,68 @@ type CleanupHandle = {
   workflowId: string;
   integrationId: string;
 };
+
+type CommsCase = {
+  name: string;
+  integrationType: string;
+  integrationLabel: string;
+  configKey: string;
+  buildConfigValue: () => string;
+  actionType: string;
+  buildActionConfig: () => Record<string, unknown>;
+  /**
+   * Regex matching the local "credential is required" guard error message.
+   * If this regex matches the run's error, the credential never reached the
+   * step - that is the regression we are catching.
+   */
+  localGuardErrorRe: RegExp;
+};
+
+const COMMS_CASES: CommsCase[] = [
+  {
+    name: "telegram",
+    integrationType: "telegram",
+    integrationLabel: "Telegram (e2e bundle test)",
+    configKey: "botToken",
+    buildConfigValue: () =>
+      `${randomBytes(4).readUInt32BE(0)}:e2e_invalid_token_${randomBytes(8).toString("hex")}`,
+    actionType: "telegram/send-message",
+    buildActionConfig: () => ({
+      chatId: "999999999",
+      message: "credential-bundle e2e probe",
+      parseMode: "none",
+    }),
+    localGuardErrorRe: /Telegram bot token is required/i,
+  },
+  {
+    name: "slack",
+    integrationType: "slack",
+    integrationLabel: "Slack (e2e bundle test)",
+    configKey: "apiKey",
+    buildConfigValue: () => `xoxb-e2e-invalid-${randomBytes(8).toString("hex")}`,
+    actionType: "slack/send-message",
+    buildActionConfig: () => ({
+      slackChannel: "#nonexistent-e2e-channel",
+      slackMessage: "credential-bundle e2e probe",
+    }),
+    localGuardErrorRe: /SLACK_API_KEY is not configured/i,
+  },
+  {
+    name: "discord",
+    integrationType: "discord",
+    integrationLabel: "Discord (e2e bundle test)",
+    configKey: "webhookUrl",
+    // Well-formed Discord webhook URL shape; the step's format check
+    // requires "discord.com/api/webhooks/" in the value.
+    buildConfigValue: () =>
+      `https://discord.com/api/webhooks/999999999999999999/e2e_invalid_token_${randomBytes(8).toString("hex")}`,
+    actionType: "discord/send-message",
+    buildActionConfig: () => ({
+      discordMessage: "credential-bundle e2e probe",
+    }),
+    localGuardErrorRe: /Discord webhook URL is required/i,
+  },
+];
 
 function getDb(): ReturnType<typeof postgres> {
   const url = process.env.DATABASE_URL;
@@ -101,15 +173,17 @@ async function lookupUserAndOrg(
   }
 }
 
-async function createTelegramIntegration(options: {
+async function createIntegration(options: {
   userId: string;
   organizationId: string;
-  botToken: string;
+  type: string;
+  label: string;
+  config: Record<string, unknown>;
 }): Promise<string> {
   const sql = getDb();
   try {
     const id = generateId();
-    const encryptedConfig = encryptConfig({ botToken: options.botToken });
+    const encryptedConfig = encryptConfig(options.config);
     const now = new Date();
     await sql`
       INSERT INTO integrations (
@@ -118,8 +192,8 @@ async function createTelegramIntegration(options: {
         ${id},
         ${options.userId},
         ${options.organizationId},
-        ${"Telegram (e2e bundle test)"},
-        ${"telegram"},
+        ${options.label},
+        ${options.type},
         ${encryptedConfig},
         ${now},
         ${now}
@@ -140,10 +214,13 @@ async function deleteIntegration(integrationId: string): Promise<void> {
   }
 }
 
-async function createTelegramTestWorkflow(options: {
+async function createWorkflowWithAction(options: {
   userId: string;
   organizationId: string;
   integrationId: string;
+  actionType: string;
+  actionConfig: Record<string, unknown>;
+  workflowName: string;
 }): Promise<string> {
   const sql = getDb();
   try {
@@ -161,24 +238,22 @@ async function createTelegramTestWorkflow(options: {
         },
       },
       {
-        id: "telegram-1",
+        id: "action-1",
         type: "action",
         position: { x: 400, y: 200 },
         data: {
-          label: "Send Telegram Message",
+          label: options.workflowName,
           type: "action",
           config: {
-            actionType: "telegram/send-message",
+            actionType: options.actionType,
             integrationId: options.integrationId,
-            chatId: "999999999",
-            message: "credential-bundle e2e probe",
-            parseMode: "none",
+            ...options.actionConfig,
           },
           status: "idle",
         },
       },
     ];
-    const edges = [{ id: "e1", source: "trigger-1", target: "telegram-1" }];
+    const edges = [{ id: "e1", source: "trigger-1", target: "action-1" }];
     const now = new Date();
     await sql.unsafe(
       `INSERT INTO workflows (
@@ -189,7 +264,7 @@ async function createTelegramTestWorkflow(options: {
       )`,
       [
         workflowId,
-        "Telegram credential bundle e2e probe",
+        options.workflowName,
         "Verifies credential plumbing through the Workflow DevKit step bundle.",
         options.userId,
         options.organizationId,
@@ -218,56 +293,123 @@ async function safeCleanup(handle: CleanupHandle | null): Promise<void> {
 }
 
 test.describe("Credential resolution in workflow step bundles", () => {
-  test("Telegram step receives bot token via PLUGIN_CREDENTIAL_MAP, not the lossy fallback", async ({
-    page,
-  }) => {
-    const { userId, organizationId } = await lookupUserAndOrg(
-      PERSISTENT_TEST_USER_EMAIL
-    );
-
-    // A well-formed but invalid token. Telegram's API will reject with 401,
-    // which is exactly what we want: it proves the credential reached the
-    // step and the step reached api.telegram.org. Before the fix the step
-    // would short-circuit with "Telegram bot token is required" before any
-    // outbound HTTP call.
-    const botToken = `${randomBytes(4).readUInt32BE(0)}:e2e_invalid_token_${randomBytes(8).toString("hex")}`;
-    const integrationId = await createTelegramIntegration({
-      userId,
-      organizationId,
-      botToken,
-    });
-    const workflowId = await createTelegramTestWorkflow({
-      userId,
-      organizationId,
-      integrationId,
-    });
-    const cleanup: CleanupHandle = { workflowId, integrationId };
-
-    try {
-      const response = await page.request.post(
-        `/api/workflow/${workflowId}/execute`,
-        { data: {} }
+  for (const commsCase of COMMS_CASES) {
+    test(`${commsCase.integrationType} step receives credentials via PLUGIN_CREDENTIAL_MAP, not the lossy fallback`, async ({
+      page,
+    }) => {
+      const { userId, organizationId } = await lookupUserAndOrg(
+        PERSISTENT_TEST_USER_EMAIL
       );
-      expect(
-        response.ok(),
-        `expected 2xx from execute endpoint, got ${response.status()} ${response.statusText()}: ${await response.text()}`
-      ).toBeTruthy();
 
-      const result = await waitForWorkflowExecution(workflowId, 90_000);
-      expect(result, "workflow execution did not complete in time").not.toBeNull();
+      // Use a well-formed but invalid credential. The upstream service
+      // rejects with HTTP 4xx, which is the success signal: it proves the
+      // credential reached the step and an outbound request was actually
+      // made. Before the fix, the step would short-circuit at the local
+      // guard before any HTTP traffic.
+      const credentialValue = commsCase.buildConfigValue();
+      const integrationId = await createIntegration({
+        userId,
+        organizationId,
+        type: commsCase.integrationType,
+        label: commsCase.integrationLabel,
+        config: { [commsCase.configKey]: credentialValue },
+      });
+      const workflowId = await createWorkflowWithAction({
+        userId,
+        organizationId,
+        integrationId,
+        actionType: commsCase.actionType,
+        actionConfig: commsCase.buildActionConfig(),
+        workflowName: `${commsCase.integrationType} credential bundle e2e`,
+      });
+      const cleanup: CleanupHandle = { workflowId, integrationId };
 
-      // The execution will fail (bad token) - that's fine. The point is HOW
-      // it fails. If the static credential map is wired correctly, the
-      // failure is a Telegram API rejection. If the lossy fallback is back,
-      // the failure is the local credential-required guard.
-      if (result?.error) {
+      try {
+        const response = await page.request.post(
+          `/api/workflow/${workflowId}/execute`,
+          { data: {} }
+        );
         expect(
-          result.error,
-          `step failed at the credential gate; static map regression: ${result.error}`
-        ).not.toMatch(TELEGRAM_BOT_TOKEN_REQUIRED_RE);
+          response.ok(),
+          `expected 2xx from execute endpoint, got ${response.status()} ${response.statusText()}: ${await response.text()}`
+        ).toBeTruthy();
+
+        const result = await waitForWorkflowExecution(workflowId, 90_000);
+        expect(
+          result,
+          "workflow execution did not complete in time"
+        ).not.toBeNull();
+
+        // The execution will fail (bad credential) - that's fine. What
+        // matters is HOW it fails. If the static credential map is wired
+        // correctly, the failure is an upstream API rejection. If the lossy
+        // fallback is back, the failure is the local "credential required"
+        // guard before any outbound HTTP call.
+        if (result?.error) {
+          expect(
+            result.error,
+            `step failed at the credential gate; static map regression for ${commsCase.integrationType}: ${result.error}`
+          ).not.toMatch(commsCase.localGuardErrorRe);
+        }
+      } finally {
+        await safeCleanup(cleanup);
       }
-    } finally {
-      await safeCleanup(cleanup);
+    });
+  }
+
+  // SendGrid: the runtime credential-from-integration path is currently
+  // unreachable because plugins/sendgrid/steps/send-email.ts:174 hardcodes
+  // useKeeperHubApiKey = true, which makes the step always read
+  // process.env.SENDGRID_API_KEY and ignore the user's integration. So
+  // even though the unit tests pin SendGrid's configKey/envVar mapping,
+  // there is nothing for an e2e test to exercise yet. This test runs the
+  // same shape as the others. Once the hardcode is removed (so the user-
+  // key branch is reachable), unfixme it.
+  test.fixme(
+    "sendgrid step receives credentials via PLUGIN_CREDENTIAL_MAP, not the lossy fallback",
+    async ({ page }) => {
+      const { userId, organizationId } = await lookupUserAndOrg(
+        PERSISTENT_TEST_USER_EMAIL
+      );
+      const credentialValue = `SG.e2e_invalid_${randomBytes(8).toString("hex")}`;
+      const integrationId = await createIntegration({
+        userId,
+        organizationId,
+        type: "sendgrid",
+        label: "SendGrid (e2e bundle test)",
+        config: { apiKey: credentialValue, useKeeperHubApiKey: false },
+      });
+      const workflowId = await createWorkflowWithAction({
+        userId,
+        organizationId,
+        integrationId,
+        actionType: "sendgrid/send-email",
+        actionConfig: {
+          emailTo: "credential-bundle-e2e@example.invalid",
+          emailSubject: "credential-bundle e2e probe",
+          emailBody: "credential-bundle e2e probe",
+        },
+        workflowName: "sendgrid credential bundle e2e",
+      });
+      const cleanup: CleanupHandle = { workflowId, integrationId };
+
+      try {
+        const response = await page.request.post(
+          `/api/workflow/${workflowId}/execute`,
+          { data: {} }
+        );
+        expect(response.ok()).toBeTruthy();
+
+        const result = await waitForWorkflowExecution(workflowId, 90_000);
+        expect(result).not.toBeNull();
+        if (result?.error) {
+          expect(result.error).not.toMatch(
+            /SENDGRID_API_KEY is not configured\. Please add it in Project Integrations/i
+          );
+        }
+      } finally {
+        await safeCleanup(cleanup);
+      }
     }
-  });
+  );
 });
