@@ -114,6 +114,10 @@ export type WorkflowExecutionInput = {
   organizationName?: string; // Used for log filtering by org name
   // Identifiers attached to every workflow error log line
   organizationSlug?: string;
+  // Org plan ("free" | "pro" | "business" | "enterprise") used as a
+  // low-cardinality label on error metrics so alerts can filter to managed
+  // clients. Resolved by the caller via getOrgPlanLabel().
+  organizationPlan?: string;
   ownerId?: string;
 };
 
@@ -1065,6 +1069,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     organizationId,
     organizationName,
     organizationSlug,
+    organizationPlan,
     ownerId,
   } = input;
 
@@ -1084,6 +1089,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     ...(executionId ? { execution_id: executionId } : {}),
     ...(organizationId ? { org_id: organizationId } : {}),
     ...(organizationSlug ? { org_slug: organizationSlug } : {}),
+    ...(organizationPlan ? { plan: organizationPlan } : {}),
     ...(organizationName ? { org_name: organizationName } : {}),
     ...(ownerId ? { owner_id: ownerId } : {}),
   };
@@ -1096,6 +1102,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     execution_id: executionId,
     org_id: organizationId,
     org_slug: organizationSlug,
+    plan: organizationPlan,
     owner_id: ownerId,
   });
 
