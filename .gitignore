@@ -104,6 +104,7 @@ lib/types/integration.ts
 lib/workflow/codegen/registry.ts
 lib/step-registry.ts
 lib/output-display-configs.ts
+lib/credential-map.ts
 public/monaco/
 
 # local kubernetes generated values (from templates)
