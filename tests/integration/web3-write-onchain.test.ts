@@ -11,11 +11,17 @@
  */
 
 import { ethers } from "ethers";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+
+// `lib/rpc/providers` transitively imports `lib/safe-fetch` (via the
+// safe-ethers adapter), which declares `import "server-only"` and would
+// otherwise throw under vitest's Node runtime.
+vi.mock("server-only", () => ({}));
+
 import { reshapeArgsForAbi } from "@/lib/abi/struct-args";
 import { validateArgsForAbi } from "@/lib/abi/validate-args";
-import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
+import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 
 const RPC_URL = process.env.INTEGRATION_TEST_RPC_URL;

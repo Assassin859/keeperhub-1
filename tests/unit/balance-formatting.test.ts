@@ -11,12 +11,7 @@
  * - 6 decimals: USDC, USDT, pathUSD
  */
 
-import { describe, expect, it, vi } from "vitest";
-
-// `lib/wallet/fetch-balances` transitively imports `lib/safe-fetch`, which
-// declares `import "server-only"` and would otherwise throw under vitest.
-vi.mock("server-only", () => ({}));
-
+import { describe, expect, it } from "vitest";
 import { formatWeiToBalance } from "@/lib/wallet/fetch-balances";
 
 describe("formatWeiToBalance", () => {
