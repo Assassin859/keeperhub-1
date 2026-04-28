@@ -664,6 +664,13 @@ export type ProtocolSdkSynthesis = {
   bodyLines: string[]; // body referencing stepInput.X
 };
 
+// Safe to do a naive textual rebind because the body builders only ever
+// reference the synthesised function's parameter (also called `input`) for
+// scalar field access. Inner closures introduced by buildArgExpression for
+// tuple[] handling bind to `t`, never `input`. If a future body builder
+// introduces another callback parameter named `input`, this rebind will
+// silently corrupt it -- prefer adding a fresh binder name (`row`, `el`)
+// over reusing `input`.
 const INPUT_DOT_REGEX = /\binput\./g;
 
 function rebindInputToStepInput(line: string): string {
