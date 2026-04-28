@@ -27,6 +27,9 @@ export const noopMetricsCollector: MetricsCollector = {
   recordError: () => {
     /* noop */
   },
+  recordWarning: () => {
+    /* noop */
+  },
   setGauge: () => {
     /* noop */
   },

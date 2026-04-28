@@ -12,11 +12,8 @@ import {
   createPrefixedConsoleCollector,
 } from "@/lib/metrics/collectors/console";
 import { noopMetricsCollector } from "@/lib/metrics/collectors/noop";
-import {
-  LabelKeys,
-  MetricNames,
-  type MetricsCollector,
-} from "@/lib/metrics/types";
+import { LabelKeys, MetricNames } from "@/lib/metrics/types";
+import { createMockMetricsCollector } from "../mocks/metrics";
 
 describe("Metrics Collectors", () => {
   beforeEach(() => {
@@ -100,6 +97,28 @@ describe("Metrics Collectors", () => {
       expect(output.level).toBe("error");
       expect(output.error).toBeDefined();
       expect(output.error.message).toBe("Test error message");
+    });
+
+    it("should output JSON for recordWarning at warn level", () => {
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+        // noop - suppress console output
+      });
+
+      consoleMetricsCollector.recordWarning(
+        "test.errors",
+        new Error("user-config bad URL"),
+        { plugin_name: "http-request" }
+      );
+
+      expect(consoleSpy).toHaveBeenCalledOnce();
+      const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+
+      expect(output.level).toBe("warn");
+      expect(output.metric.name).toBe("test.errors");
+      expect(output.metric.type).toBe("counter");
+      expect(output.metric.value).toBe(1);
+      expect(output.metric.labels.error_message).toBe("user-config bad URL");
+      expect(output.error.message).toBe("user-config bad URL");
     });
 
     it("should output JSON for recordError with ErrorContext", () => {
@@ -189,6 +208,12 @@ describe("Metrics Collectors", () => {
       }).not.toThrow();
     });
 
+    it("should not throw on recordWarning", () => {
+      expect(() => {
+        noopMetricsCollector.recordWarning("test", new Error("test"));
+      }).not.toThrow();
+    });
+
     it("should not throw on setGauge", () => {
       expect(() => {
         noopMetricsCollector.setGauge("test", 42);
@@ -236,12 +261,7 @@ describe("Metrics Collectors", () => {
     });
 
     it("should respect setMetricsCollector", () => {
-      const customCollector: MetricsCollector = {
-        recordLatency: vi.fn(),
-        incrementCounter: vi.fn(),
-        recordError: vi.fn(),
-        setGauge: vi.fn(),
-      };
+      const customCollector = createMockMetricsCollector();
 
       setMetricsCollector(customCollector);
 
@@ -250,12 +270,7 @@ describe("Metrics Collectors", () => {
     });
 
     it("should reset after resetMetricsCollector", () => {
-      const customCollector: MetricsCollector = {
-        recordLatency: vi.fn(),
-        incrementCounter: vi.fn(),
-        recordError: vi.fn(),
-        setGauge: vi.fn(),
-      };
+      const customCollector = createMockMetricsCollector();
 
       setMetricsCollector(customCollector);
       resetMetricsCollector();
@@ -287,12 +302,7 @@ describe("Metrics Collectors", () => {
 
   describe("withLatencyTracking", () => {
     it("should track latency for successful operations", async () => {
-      const mockCollector: MetricsCollector = {
-        recordLatency: vi.fn(),
-        incrementCounter: vi.fn(),
-        recordError: vi.fn(),
-        setGauge: vi.fn(),
-      };
+      const mockCollector = createMockMetricsCollector();
       setMetricsCollector(mockCollector);
 
       const result = await withLatencyTracking(
@@ -313,12 +323,7 @@ describe("Metrics Collectors", () => {
     });
 
     it("should track latency for failed operations and rethrow", async () => {
-      const mockCollector: MetricsCollector = {
-        recordLatency: vi.fn(),
-        incrementCounter: vi.fn(),
-        recordError: vi.fn(),
-        setGauge: vi.fn(),
-      };
+      const mockCollector = createMockMetricsCollector();
       setMetricsCollector(mockCollector);
 
       const testError = new Error("Test failure");
@@ -337,12 +342,7 @@ describe("Metrics Collectors", () => {
 
   describe("withMetrics", () => {
     it("should track latency, counter, and errors", async () => {
-      const mockCollector: MetricsCollector = {
-        recordLatency: vi.fn(),
-        incrementCounter: vi.fn(),
-        recordError: vi.fn(),
-        setGauge: vi.fn(),
-      };
+      const mockCollector = createMockMetricsCollector();
       setMetricsCollector(mockCollector);
 
       await withMetrics(async () => "result", {
@@ -364,12 +364,7 @@ describe("Metrics Collectors", () => {
     });
 
     it("should record error on failure", async () => {
-      const mockCollector: MetricsCollector = {
-        recordLatency: vi.fn(),
-        incrementCounter: vi.fn(),
-        recordError: vi.fn(),
-        setGauge: vi.fn(),
-      };
+      const mockCollector = createMockMetricsCollector();
       setMetricsCollector(mockCollector);
 
       const testError = new Error("Operation failed");
