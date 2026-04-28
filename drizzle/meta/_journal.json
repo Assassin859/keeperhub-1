@@ -435,6 +435,13 @@
       "when": 1777200000000,
       "tag": "0061_tempo_testnet_chain_id",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1777267669472,
+      "tag": "0062_plan_overrides",
+      "breakpoints": true
     }
   ]
 }

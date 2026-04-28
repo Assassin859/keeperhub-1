@@ -8,17 +8,21 @@
  */
 
 import { ethers } from "ethers";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { reshapeArgsForAbi } from "@/lib/abi/struct-args";
 import type {
   ProtocolAction,
   ProtocolContract,
   ProtocolDefinition,
 } from "@/lib/protocol-registry";
+import type { RpcProviderManager } from "@/lib/rpc/providers";
+import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
+import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 import wrappedDef from "@/protocols/wrapped";
 
 const RPC_URL = process.env.INTEGRATION_TEST_RPC_URL;
 const CHAIN_ID = "11155111";
+const SEPOLIA_CHAIN_ID = 11_155_111;
 const TEST_ADDRESS = "0x0000000000000000000000000000000000000001";
 
 function buildCalldata(
@@ -64,16 +68,32 @@ function buildCalldata(
 }
 
 describe.skipIf(!RPC_URL)("Wrapped on-chain integration", () => {
-  const getProvider = (): ethers.JsonRpcProvider =>
-    new ethers.JsonRpcProvider(RPC_URL);
+  // Route every RPC call through the failover manager so a primary-endpoint
+  // hiccup falls back to the secondary instead of failing the test. The
+  // primary URL respects INTEGRATION_TEST_RPC_URL (the original gate); the
+  // fallback comes from the same chains-config used in production.
+  let manager: RpcProviderManager;
+
+  beforeAll(async () => {
+    if (!RPC_URL) {
+      return;
+    }
+    manager = await getRpcProviderFromUrls(
+      RPC_URL,
+      getRpcUrlByChainId(SEPOLIA_CHAIN_ID, "fallback"),
+      SEPOLIA_CHAIN_ID,
+      "sepolia"
+    );
+  });
 
   it("balanceOf: eth_call returns a decodable uint256", async () => {
     const { to, data, contract } = buildCalldata(wrappedDef, "balance-of", {
       account: TEST_ADDRESS,
     });
 
-    const provider = getProvider();
-    const result = await provider.call({ to, data });
+    const result = await manager.executeWithFailover((p) =>
+      p.call({ to, data })
+    );
 
     const abi = JSON.parse(contract.abi as string);
     const iface = new ethers.Interface(abi);
@@ -85,13 +105,14 @@ describe.skipIf(!RPC_URL)("Wrapped on-chain integration", () => {
   it("deposit: estimateGas succeeds with ETH value", async () => {
     const { to, data } = buildCalldata(wrappedDef, "wrap", {});
 
-    const provider = getProvider();
-    const gas = await provider.estimateGas({
-      to,
-      data,
-      value: ethers.parseEther("0.001"),
-      from: TEST_ADDRESS,
-    });
+    const gas = await manager.executeWithFailover((p) =>
+      p.estimateGas({
+        to,
+        data,
+        value: ethers.parseEther("0.001"),
+        from: TEST_ADDRESS,
+      })
+    );
 
     expect(gas).toBeGreaterThan(BigInt(0));
   }, 15_000);
@@ -101,13 +122,14 @@ describe.skipIf(!RPC_URL)("Wrapped on-chain integration", () => {
       wad: "1000000000000000000",
     });
 
-    const provider = getProvider();
     try {
-      await provider.estimateGas({
-        to,
-        data,
-        from: TEST_ADDRESS,
-      });
+      await manager.executeWithFailover((p) =>
+        p.estimateGas({
+          to,
+          data,
+          from: TEST_ADDRESS,
+        })
+      );
     } catch (error) {
       const msg = String(error);
       expect(msg).not.toContain("INVALID_ARGUMENT");

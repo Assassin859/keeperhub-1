@@ -29,6 +29,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 // Note: Using relative paths instead of @/ aliases for drizzle-kit compatibility
+import type { PlanLimits } from "@/lib/billing/plans";
 import { organization, users, workflows } from "@/lib/db/schema";
 import { generateId } from "@/lib/utils/id";
 
@@ -528,6 +529,9 @@ export const organizationSubscriptions = pgTable(
     cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
     billingAlert: text("billing_alert"), // "payment_action_required" | "payment_failed" | "overdue" | null
     billingAlertUrl: text("billing_alert_url"), // hosted invoice URL for action-required
+    // Per-org override of any PlanLimits field. Used for custom enterprise contracts
+    // (e.g. higher gas credits, custom SLA, dedicated support) on top of the plan defaults.
+    planOverrides: jsonb("plan_overrides").$type<Partial<PlanLimits>>(),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
