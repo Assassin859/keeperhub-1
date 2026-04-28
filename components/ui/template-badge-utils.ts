@@ -8,3 +8,12 @@
 export function toStringValue(value: unknown): string {
   return typeof value === "string" ? value : String(value ?? "");
 }
+
+// Matches `{{@nodeId:field}}` template tokens used by the workflow editor.
+export const TEMPLATE_TOKEN_PATTERN = /\{\{@([^:]+):([^}]+)\}\}/g;
+
+// Counts template tokens in a value, coercing non-strings/undefined safely.
+// Direct `value.match(...)` calls throw when `value` is undefined (KEEP-366).
+export function countTemplateTokens(value: unknown): number {
+  return (toStringValue(value).match(TEMPLATE_TOKEN_PATTERN) ?? []).length;
+}

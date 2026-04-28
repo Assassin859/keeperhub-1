@@ -10,7 +10,7 @@ import {
   TemplateAutocomplete,
   type TemplateAutocompleteCloseReason,
 } from "./template-autocomplete";
-import { toStringValue } from "./template-badge-utils";
+import { countTemplateTokens, toStringValue } from "./template-badge-utils";
 
 export interface TemplateBadgeTextareaProps {
   value?: string;
@@ -439,8 +439,8 @@ export function TemplateBadgeTextarea({
     }
 
     // Count templates in old and new values
-    const oldTemplates = (internalValue.match(/\{\{@([^:]+):([^}]+)\}\}/g) ?? []).length;
-    const newTemplates = (newValue.match(/\{\{@([^:]+):([^}]+)\}\}/g) ?? []).length;
+    const oldTemplates = countTemplateTokens(internalValue);
+    const newTemplates = countTemplateTokens(newValue);
 
     if (newTemplates > oldTemplates) {
       // A new template was added, update display to show badge
