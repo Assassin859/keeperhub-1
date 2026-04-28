@@ -6,6 +6,7 @@ import {
   MetricNames,
   type MetricsCollector,
 } from "@/lib/metrics/types";
+import { createMockMetricsCollector } from "../mocks/metrics";
 
 describe("Unified Logging Helpers", () => {
   let mockCollector: MetricsCollector;
@@ -16,14 +17,7 @@ describe("Unified Logging Helpers", () => {
     vi.clearAllMocks();
     resetMetricsCollector();
 
-    // Create mock collector
-    mockCollector = {
-      recordLatency: vi.fn(),
-      incrementCounter: vi.fn(),
-      recordError: vi.fn(),
-      recordWarning: vi.fn(),
-      setGauge: vi.fn(),
-    };
+    mockCollector = createMockMetricsCollector();
     setMetricsCollector(mockCollector);
 
     // Spy on console methods

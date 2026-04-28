@@ -6,6 +6,7 @@ import {
   recordWorkflowComplete,
 } from "@/lib/metrics/instrumentation/workflow";
 import { MetricNames, type MetricsCollector } from "@/lib/metrics/types";
+import { createMockMetricsCollector } from "../mocks/metrics";
 
 describe("Workflow Metrics Instrumentation", () => {
   let mockCollector: MetricsCollector;
@@ -14,13 +15,7 @@ describe("Workflow Metrics Instrumentation", () => {
     vi.clearAllMocks();
     resetMetricsCollector();
 
-    mockCollector = {
-      recordLatency: vi.fn(),
-      incrementCounter: vi.fn(),
-      recordError: vi.fn(),
-      recordWarning: vi.fn(),
-      setGauge: vi.fn(),
-    };
+    mockCollector = createMockMetricsCollector();
     setMetricsCollector(mockCollector);
   });
 

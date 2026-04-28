@@ -11,6 +11,7 @@ import {
   withConcurrentTracking,
 } from "@/lib/metrics/instrumentation/saturation";
 import { MetricNames, type MetricsCollector } from "@/lib/metrics/types";
+import { createMockMetricsCollector } from "../mocks/metrics";
 
 describe("Saturation Metrics Instrumentation", () => {
   let mockCollector: MetricsCollector;
@@ -20,13 +21,7 @@ describe("Saturation Metrics Instrumentation", () => {
     resetMetricsCollector();
     resetConcurrentExecutions();
 
-    mockCollector = {
-      recordLatency: vi.fn(),
-      incrementCounter: vi.fn(),
-      recordError: vi.fn(),
-      recordWarning: vi.fn(),
-      setGauge: vi.fn(),
-    };
+    mockCollector = createMockMetricsCollector();
     setMetricsCollector(mockCollector);
   });
 

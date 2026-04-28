@@ -5,6 +5,7 @@ import {
   withPluginMetrics,
 } from "@/lib/metrics/instrumentation/plugin";
 import { MetricNames, type MetricsCollector } from "@/lib/metrics/types";
+import { createMockMetricsCollector } from "../mocks/metrics";
 
 describe("Plugin Metrics Instrumentation", () => {
   let mockCollector: MetricsCollector;
@@ -13,13 +14,7 @@ describe("Plugin Metrics Instrumentation", () => {
     vi.clearAllMocks();
     resetMetricsCollector();
 
-    mockCollector = {
-      recordLatency: vi.fn(),
-      incrementCounter: vi.fn(),
-      recordError: vi.fn(),
-      recordWarning: vi.fn(),
-      setGauge: vi.fn(),
-    };
+    mockCollector = createMockMetricsCollector();
     setMetricsCollector(mockCollector);
   });
 

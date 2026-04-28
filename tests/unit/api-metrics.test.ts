@@ -5,6 +5,7 @@ import {
   recordWebhookMetrics,
 } from "@/lib/metrics/instrumentation/api";
 import { MetricNames, type MetricsCollector } from "@/lib/metrics/types";
+import { createMockMetricsCollector } from "../mocks/metrics";
 
 describe("API Metrics Instrumentation", () => {
   let mockCollector: MetricsCollector;
@@ -13,13 +14,7 @@ describe("API Metrics Instrumentation", () => {
     vi.clearAllMocks();
     resetMetricsCollector();
 
-    mockCollector = {
-      recordLatency: vi.fn(),
-      incrementCounter: vi.fn(),
-      recordError: vi.fn(),
-      recordWarning: vi.fn(),
-      setGauge: vi.fn(),
-    };
+    mockCollector = createMockMetricsCollector();
     setMetricsCollector(mockCollector);
   });
 
