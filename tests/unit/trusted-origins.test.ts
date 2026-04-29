@@ -28,7 +28,10 @@ describe("isTrustedOrigin", () => {
     expect(isTrustedOrigin("https://localhost:3000")).toBe(false);
   });
 
-  it("does not allow path traversal in pattern", () => {
+  it("rejects inputs that include a path (must be a bare origin)", () => {
+    // isTrustedOrigin expects normaliseOrigin output, which strips paths.
+    // This guards against accidental misuse if a caller skips normalisation.
+    expect(isTrustedOrigin("https://app.keeperhub.com/foo")).toBe(false);
     expect(isTrustedOrigin("https://app.keeperhub.com/../evil")).toBe(false);
   });
 });
