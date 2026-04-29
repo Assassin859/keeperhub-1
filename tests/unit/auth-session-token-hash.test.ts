@@ -269,6 +269,30 @@ describe("wrapWithSessionTokenHash", () => {
       // through. Caller must not feed these back into a token-keyed query.
       expect(rows[0].token).toBe(HASH);
     });
+
+    it("does not restore tokens for ne / not_in token clauses", async () => {
+      // ne / not_in say which raw tokens are absent from the result set, not
+      // which are present, so the wrapper has no basis to map a returned
+      // hash back to a raw value. Returned rows keep their stored hashes.
+      const otherHash = hashSessionToken("excluded-token");
+      mocks.findMany.mockImplementationOnce(async () => [
+        { id: "sess-a", token: otherHash },
+      ]);
+      const rowsNe = await wrapped.findMany<{ token: string }>({
+        model: "session",
+        where: [{ field: "token", value: RAW, operator: "ne" }],
+      });
+      expect(rowsNe[0].token).toBe(otherHash);
+
+      mocks.findMany.mockImplementationOnce(async () => [
+        { id: "sess-b", token: otherHash },
+      ]);
+      const rowsNotIn = await wrapped.findMany<{ token: string }>({
+        model: "session",
+        where: [{ field: "token", value: [RAW], operator: "not_in" }],
+      });
+      expect(rowsNotIn[0].token).toBe(otherHash);
+    });
   });
 
   describe("count", () => {
