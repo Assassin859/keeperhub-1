@@ -1,12 +1,12 @@
 /**
- * Unit tests for the root CSRF middleware.
+ * Unit tests for the root CSRF proxy.
  * Pairs with the in-handler check in `lib/middleware/auth-helpers.ts`.
  * See KEEP-240.
  */
 
 import { NextRequest } from "next/server";
 import { describe, expect, it } from "vitest";
-import { middleware } from "@/middleware";
+import { proxy } from "@/proxy";
 
 function make(
   pathname: string,
@@ -18,9 +18,9 @@ function make(
   });
 }
 
-describe("CSRF middleware", () => {
+describe("CSRF proxy", () => {
   it("passes GET requests without inspection", () => {
-    const res = middleware(
+    const res = proxy(
       make("/api/workflows", {
         headers: {
           cookie: "better-auth.session_token=abc",
@@ -33,7 +33,7 @@ describe("CSRF middleware", () => {
 
   it("passes HEAD and OPTIONS without inspection", () => {
     for (const method of ["HEAD", "OPTIONS"]) {
-      const res = middleware(
+      const res = proxy(
         make("/api/workflows", {
           method,
           headers: {
@@ -47,7 +47,7 @@ describe("CSRF middleware", () => {
   });
 
   it("passes cookieless POST (Bearer/API-key callers)", () => {
-    const res = middleware(
+    const res = proxy(
       make("/api/workflows", {
         method: "POST",
         headers: { Authorization: "Bearer kh_test" },
@@ -57,7 +57,7 @@ describe("CSRF middleware", () => {
   });
 
   it("treats empty Cookie: header as no cookies", () => {
-    const res = middleware(
+    const res = proxy(
       make("/api/workflows", {
         method: "POST",
         headers: { cookie: "", origin: "https://evil.example.com" },
@@ -67,7 +67,7 @@ describe("CSRF middleware", () => {
   });
 
   it("blocks cookie POST with untrusted origin", async () => {
-    const res = middleware(
+    const res = proxy(
       make("/api/workflows", {
         method: "POST",
         headers: {
@@ -81,7 +81,7 @@ describe("CSRF middleware", () => {
   });
 
   it("blocks cookie POST with missing origin and no referer", async () => {
-    const res = middleware(
+    const res = proxy(
       make("/api/workflows", {
         method: "POST",
         headers: { cookie: "better-auth.session_token=abc" },
@@ -92,7 +92,7 @@ describe("CSRF middleware", () => {
   });
 
   it("falls back to Referer when Origin is absent", () => {
-    const res = middleware(
+    const res = proxy(
       make("/api/workflows", {
         method: "POST",
         headers: {
@@ -105,7 +105,7 @@ describe("CSRF middleware", () => {
   });
 
   it("allows trusted origin (exact match)", () => {
-    const res = middleware(
+    const res = proxy(
       make("/api/workflows", {
         method: "POST",
         headers: {
@@ -118,7 +118,7 @@ describe("CSRF middleware", () => {
   });
 
   it("allows trusted origin (wildcard subdomain)", () => {
-    const res = middleware(
+    const res = proxy(
       make("/api/workflows", {
         method: "POST",
         headers: {
@@ -132,7 +132,7 @@ describe("CSRF middleware", () => {
 
   it("checks PUT, PATCH, and DELETE", () => {
     for (const method of ["PUT", "PATCH", "DELETE"]) {
-      const res = middleware(
+      const res = proxy(
         make("/api/workflows", {
           method,
           headers: {
@@ -160,7 +160,7 @@ describe("CSRF middleware", () => {
 
     for (const path of exemptPaths) {
       it(`bypasses ${path}`, () => {
-        const res = middleware(
+        const res = proxy(
           make(path, {
             method: "POST",
             headers: {
@@ -174,7 +174,7 @@ describe("CSRF middleware", () => {
     }
 
     it("does NOT bypass /api/workflows/wf-123 (no trailing /webhook)", () => {
-      const res = middleware(
+      const res = proxy(
         make("/api/workflows/wf-123", {
           method: "POST",
           headers: {

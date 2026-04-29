@@ -7,8 +7,8 @@ import { isTrustedOrigin, normaliseOrigin } from "@/lib/trusted-origins";
 const STATE_CHANGING_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
 
 /**
- * Defence-in-depth CSRF check for session-authed routes. The root middleware
- * (`middleware.ts`) is the primary enforcement; this runs again on the small
+ * Defence-in-depth CSRF check for session-authed routes. The root proxy
+ * (`proxy.ts`) is the primary enforcement; this runs again on the small
  * set of routes that resolve auth via `getDualAuthContext`, so a misconfigured
  * matcher can't silently bypass the protection. See KEEP-240.
  *

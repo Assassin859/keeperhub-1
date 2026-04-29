@@ -39,7 +39,7 @@ function isExemptPath(pathname: string): boolean {
   return false;
 }
 
-export function middleware(request: NextRequest): NextResponse {
+export function proxy(request: NextRequest): NextResponse {
   const { method, nextUrl, headers } = request;
 
   if (!STATE_CHANGING_METHODS.has(method)) {

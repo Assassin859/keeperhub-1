@@ -3,7 +3,7 @@
  *
  * Source of truth shared by:
  * - better-auth config (`lib/auth.ts`) — guards `/api/auth/**`
- * - root `middleware.ts` — guards all other `/api/**` POST/PATCH/PUT/DELETE
+ * - root `proxy.ts` — guards all other `/api/**` POST/PATCH/PUT/DELETE
  * - `lib/middleware/auth-helpers.ts` — defence-in-depth on session-authed routes
  *
  * This module is Edge-runtime safe (no Node-only imports) so the root
