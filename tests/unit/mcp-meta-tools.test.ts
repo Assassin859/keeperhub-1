@@ -75,11 +75,21 @@ describe("registerMetaTools: tool registration", () => {
     vi.resetModules();
   });
 
-  it("Test 6: registerMetaTools registers exactly 4 tools total (2 existing + 2 new)", async () => {
+  it("Test 6: registerMetaTools registers all 8 meta-tools (4 protocol/marketplace + 4 curator)", async () => {
     const { server, registeredTools } = makeMockServer();
     const { registerMetaTools } = await import("@/lib/mcp/tools");
     registerMetaTools(server, "http://localhost:3000", "Bearer test-token");
-    expect(registeredTools.length).toBe(4);
+    expect(registeredTools.length).toBe(8);
+    expect(registeredTools.map((t) => t.name)).toEqual([
+      "search_protocol_actions",
+      "execute_protocol_action",
+      "search_workflows",
+      "call_workflow",
+      "list_workflow",
+      "unlist_workflow",
+      "update_workflow_listing",
+      "get_workflow_listing",
+    ]);
   });
 
   it("Test 7: registerMetaTools registers search_workflows as the 3rd tool", async () => {
