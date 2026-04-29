@@ -32,13 +32,29 @@ let workflowState: WorkflowRow;
 
 vi.mock("@/lib/db", () => ({
   db: {
-    select: (_cols?: unknown) => ({
-      from: (_table: unknown) => ({
-        where: (_condition: unknown) => ({
-          limit: (_n: number) => Promise.resolve([workflowState]),
+    select: (cols?: unknown) => {
+      // getWorkflowListing projects LISTING_COLUMNS (which includes listedSlug)
+      // and is a public read — must honour the isListed=true filter. Other
+      // selects (e.g. updateWorkflowListing's pre-flight by id+orgId) use
+      // db.select() with no columns and ignore the listing invariant.
+      const isPublicListingRead =
+        cols !== undefined &&
+        cols !== null &&
+        typeof cols === "object" &&
+        "listedSlug" in (cols as Record<string, unknown>);
+      return {
+        from: (_table: unknown) => ({
+          where: (_condition: unknown) => ({
+            limit: (_n: number) => {
+              if (isPublicListingRead && !workflowState.isListed) {
+                return Promise.resolve([]);
+              }
+              return Promise.resolve([workflowState]);
+            },
+          }),
         }),
-      }),
-    }),
+      };
+    },
     update: (_table: unknown) => ({
       set: (data: Partial<WorkflowRow>) => ({
         where: (_condition: unknown) => ({
@@ -72,7 +88,7 @@ vi.mock("@/lib/db/schema", () => ({
   },
 }));
 
-const { listWorkflow, unlistWorkflow } = await import("@/lib/mcp/listing");
+const { listWorkflow, unlistWorkflow, getWorkflowListing } = await import("@/lib/mcp/listing");
 
 const WORKFLOW_ID = "wf-test-001";
 const ORG_ID = "org-test-001";
@@ -118,6 +134,27 @@ describe("workflow listing lifecycle", () => {
     expect(result.listing.isListed).toBe(false);
     expect(result.listing.listedSlug).toBe("my-test-workflow");
     expect(result.listing.listedAt?.getTime()).toBe(listingTimestamp?.getTime());
+  });
+
+  it("getWorkflowListing: returns NOT_FOUND for unlisted workflow even when listedSlug is preserved (sticky-slug)", async () => {
+    // Public read invariant: an unlisted workflow MUST NOT leak metadata via the
+    // public GET endpoint, even though unlistWorkflow intentionally preserves
+    // listedSlug for relist. Without the isListed=true filter this query
+    // returned the unlisted row, exposing price/schemas/orgId publicly.
+    await listWorkflow(WORKFLOW_ID, ORG_ID, { slug: "leak-test" });
+    expect(workflowState.listedSlug).toBe("leak-test");
+
+    const listedRead = await getWorkflowListing("leak-test");
+    expect(listedRead.ok).toBe(true);
+
+    await unlistWorkflow(WORKFLOW_ID, ORG_ID);
+    expect(workflowState.isListed).toBe(false);
+    expect(workflowState.listedSlug).toBe("leak-test");
+
+    const unlistedRead = await getWorkflowListing("leak-test");
+    expect(unlistedRead.ok).toBe(false);
+    if (unlistedRead.ok) return;
+    expect(unlistedRead.error).toBe("NOT_FOUND");
   });
 
   it("relist: preserves listedSlug, refreshes listedAt, isListed=true", async () => {

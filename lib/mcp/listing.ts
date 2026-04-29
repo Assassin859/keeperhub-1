@@ -232,10 +232,16 @@ export async function updateWorkflowListing(
 export async function getWorkflowListing(
   slug: string
 ): Promise<ListingResult<ListingRow>> {
+  // Public read: only return currently-listed workflows. Unlisting preserves
+  // listedSlug (sticky-slug behavior on relist), so filtering by slug alone
+  // would leak unlisted workflows' metadata after the unlist. The public
+  // catalog at GET /api/mcp/workflows enforces the same invariant.
   const rows = await db
     .select(LISTING_COLUMNS)
     .from(workflows)
-    .where(eq(workflows.listedSlug, slug))
+    .where(
+      and(eq(workflows.listedSlug, slug), eq(workflows.isListed, true))
+    )
     .limit(1);
 
   if (rows.length === 0) {
