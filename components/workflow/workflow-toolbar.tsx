@@ -1349,7 +1349,7 @@ function ToolbarActions({
   };
 
   const triggerType = state.nodes.find((node) => node?.data?.type === "trigger")
-    ?.data?.config?.triggerType;
+    ?.data?.config?.triggerType as WorkflowTriggerEnum;
 
   const shouldDisplayEnableWorkflowSwitch = shouldShowEnableSwitch(triggerType);
 
