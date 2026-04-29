@@ -78,6 +78,7 @@ import {
   selectedEdgeAtom,
   selectedExecutionIdAtom,
   selectedNodeAtom,
+  shouldShowEnableSwitch,
   triggerExecuteAtom,
   undoAtom,
   updateNodeDataAtom,
@@ -1348,12 +1349,9 @@ function ToolbarActions({
   };
 
   const triggerType = state.nodes.find((node) => node?.data?.type === "trigger")
-    ?.data?.config?.triggerType;
+    ?.data?.config?.triggerType as WorkflowTriggerEnum;
 
-  const shouldDisplayEnableWorkflowSwitch =
-    triggerType === WorkflowTriggerEnum.EVENT ||
-    triggerType === WorkflowTriggerEnum.SCHEDULE ||
-    triggerType === WorkflowTriggerEnum.BLOCK;
+  const shouldDisplayEnableWorkflowSwitch = shouldShowEnableSwitch(triggerType);
 
   return (
     <>

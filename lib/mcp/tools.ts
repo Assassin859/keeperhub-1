@@ -140,7 +140,7 @@ export function registerTools(
 
   server.tool(
     "create_workflow",
-    "Create a new workflow with nodes and edges. Nodes define the trigger and actions; edges define the execution flow.",
+    "Create a new workflow with nodes and edges. Nodes define the trigger and actions; edges define the execution flow. Workflows are created disabled by default; pass enabled=true to make schedule/event/block/webhook triggers fire immediately.",
     {
       name: z.string().describe("Workflow name"),
       description: z
@@ -153,6 +153,12 @@ export function registerTools(
       edges: z
         .array(z.record(z.string(), z.unknown()))
         .describe("Workflow edges connecting nodes"),
+      enabled: z
+        .boolean()
+        .optional()
+        .describe(
+          "Whether the workflow is active on creation. Defaults to false; non-manual triggers stay dormant until enabled."
+        ),
       projectId: z
         .string()
         .optional()
@@ -175,6 +181,7 @@ export function registerTools(
             description: args.description,
             nodes: args.nodes,
             edges: args.edges,
+            enabled: args.enabled,
             projectId: args.projectId,
             tagId: args.tagId,
           }
@@ -188,7 +195,7 @@ export function registerTools(
 
   server.tool(
     "update_workflow",
-    "Update an existing workflow's name, description, nodes, edges, or project/tag assignment.",
+    "Update an existing workflow's name, description, nodes, edges, project/tag assignment, or enabled state. Set enabled=false to stop scheduled/event/block/webhook triggers from firing without deleting the workflow.",
     {
       workflowId: z.string().describe("The workflow ID to update"),
       name: z.string().optional().describe("New workflow name"),
@@ -201,6 +208,12 @@ export function registerTools(
         .array(z.record(z.string(), z.unknown()))
         .optional()
         .describe("Updated workflow edges"),
+      enabled: z
+        .boolean()
+        .optional()
+        .describe(
+          "Whether the workflow is active. Disabled workflows are skipped by schedule/event/block triggers and webhook calls return 410 Gone."
+        ),
       projectId: z
         .string()
         .nullable()
