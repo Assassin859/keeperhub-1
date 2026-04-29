@@ -194,6 +194,26 @@ describe("wrapWithSessionTokenHash", () => {
     });
   });
 
+  describe("count", () => {
+    it("hashes session token in eq where clause", async () => {
+      await wrapped.count({
+        model: "session",
+        where: [{ field: "token", value: RAW }],
+      });
+      const where = mocks.count.mock.calls[0][0].where as Where[];
+      expect(where[0].value).toBe(HASH);
+    });
+
+    it("passes through count for non-session models", async () => {
+      await wrapped.count({
+        model: "user",
+        where: [{ field: "token", value: RAW }],
+      });
+      const where = mocks.count.mock.calls[0][0].where as Where[];
+      expect(where[0].value).toBe(RAW);
+    });
+  });
+
   describe("update / updateMany", () => {
     it("hashes where token and any new token in the update payload", async () => {
       const newRaw = "rotated-token";
