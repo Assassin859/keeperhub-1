@@ -46,11 +46,25 @@ function hashTokenWhere(where: Where[] | undefined): Where[] | undefined {
     }
     const op = clause.operator ?? "eq";
     if (op === "in" || op === "not_in") {
-      const values = clause.value as string[];
-      return { ...clause, value: values.map(hashSessionToken) };
+      if (!Array.isArray(clause.value)) {
+        throw new Error(
+          `Session token where with operator "${op}" must have an array value`
+        );
+      }
+      return { ...clause, value: clause.value.map(hashSessionToken) };
+    }
+    if (op !== "eq" && op !== "ne") {
+      // Substring/range operators on a hashed column never match meaningfully.
+      // Throw loudly rather than silently returning the wrong rows if a future
+      // caller tries to query sessions by partial token.
+      throw new Error(
+        `Session token where with operator "${op}" is not supported by the session-token-hash wrapper`
+      );
     }
     if (typeof clause.value !== "string") {
-      return clause;
+      throw new Error(
+        `Session token where with operator "${op}" must have a string value, got ${typeof clause.value}`
+      );
     }
     return { ...clause, value: hashSessionToken(clause.value) };
   });
@@ -101,61 +115,73 @@ function wrapAdapter(inner: DBAdapter): DBAdapter {
         [TOKEN_FIELD]: rawToken,
       }));
     }) as DBAdapter["create"],
-    findOne: <T>(data: FindOneArgs): Promise<T | null> => {
+    // Each method below is async so that a synchronous throw from
+    // hashTokenWhere / hashTokenInUpdate becomes a rejected promise rather
+    // than crashing the caller's call site. better-auth always awaits, so a
+    // rejected promise surfaces as a normal error.
+    // Each method below is async so that a synchronous throw from
+    // hashTokenWhere / hashTokenInUpdate becomes a rejected promise rather
+    // than crashing the caller's call site. better-auth always awaits, so a
+    // rejected promise surfaces as a normal error.
+    findOne: async <T>(data: FindOneArgs): Promise<T | null> => {
       if (data.model !== SESSION_MODEL) {
-        return inner.findOne<T>(data);
+        return await inner.findOne<T>(data);
       }
-      return inner.findOne<T>({
+      return await inner.findOne<T>({
         ...data,
         where: hashTokenWhere(data.where) ?? [],
       });
     },
-    findMany: <T>(data: FindManyArgs): Promise<T[]> => {
+    findMany: async <T>(data: FindManyArgs): Promise<T[]> => {
       if (data.model !== SESSION_MODEL) {
-        return inner.findMany<T>(data);
+        return await inner.findMany<T>(data);
       }
-      return inner.findMany<T>({ ...data, where: hashTokenWhere(data.where) });
+      return await inner.findMany<T>({
+        ...data,
+        where: hashTokenWhere(data.where),
+      });
     },
-    count: (data: CountArgs): Promise<number> => {
+    count: async (data: CountArgs): Promise<number> => {
       if (data.model !== SESSION_MODEL) {
-        return inner.count(data);
+        return await inner.count(data);
       }
-      return inner.count({ ...data, where: hashTokenWhere(data.where) });
+      return await inner.count({ ...data, where: hashTokenWhere(data.where) });
     },
-    update: <T>(data: UpdateArgs): Promise<T | null> => {
+    update: async <T>(data: UpdateArgs): Promise<T | null> => {
       if (data.model !== SESSION_MODEL) {
-        return inner.update<T>(data);
+        return await inner.update<T>(data);
       }
-      return inner.update<T>({
+      return await inner.update<T>({
         ...data,
         where: hashTokenWhere(data.where) ?? [],
         update: hashTokenInUpdate(data.update),
       });
     },
-    updateMany: (data: UpdateManyArgs): Promise<number> => {
+    updateMany: async (data: UpdateManyArgs): Promise<number> => {
       if (data.model !== SESSION_MODEL) {
-        return inner.updateMany(data);
+        return await inner.updateMany(data);
       }
-      return inner.updateMany({
+      return await inner.updateMany({
         ...data,
         where: hashTokenWhere(data.where) ?? [],
         update: hashTokenInUpdate(data.update),
       });
     },
-    delete: <T>(data: DeleteArgs): Promise<void> => {
+    delete: async <T>(data: DeleteArgs): Promise<void> => {
       if (data.model !== SESSION_MODEL) {
-        return inner.delete<T>(data);
+        await inner.delete<T>(data);
+        return;
       }
-      return inner.delete<T>({
+      await inner.delete<T>({
         ...data,
         where: hashTokenWhere(data.where) ?? [],
       });
     },
-    deleteMany: (data: DeleteManyArgs): Promise<number> => {
+    deleteMany: async (data: DeleteManyArgs): Promise<number> => {
       if (data.model !== SESSION_MODEL) {
-        return inner.deleteMany(data);
+        return await inner.deleteMany(data);
       }
-      return inner.deleteMany({
+      return await inner.deleteMany({
         ...data,
         where: hashTokenWhere(data.where) ?? [],
       });

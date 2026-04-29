@@ -9,6 +9,9 @@ import {
 const RAW = "raw-session-token-abcdef0123456789";
 const HASH = createHash("sha256").update(RAW).digest("hex");
 const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
+const UNSUPPORTED_OP_PATTERN = /operator "contains" is not supported/;
+const NON_STRING_VALUE_PATTERN = /must have a string value/;
+const NON_ARRAY_VALUE_PATTERN = /must have an array value/;
 
 type Mock = ReturnType<typeof vi.fn>;
 
@@ -147,6 +150,26 @@ describe("wrapWithSessionTokenHash", () => {
       const where = mocks.findOne.mock.calls[0][0].where as Where[];
       expect(where[0].value).toBe(RAW);
     });
+
+    it("throws on substring operators against the token field", async () => {
+      await expect(
+        wrapped.findOne({
+          model: "session",
+          where: [{ field: "token", value: RAW, operator: "contains" }],
+        })
+      ).rejects.toThrow(UNSUPPORTED_OP_PATTERN);
+      expect(mocks.findOne).not.toHaveBeenCalled();
+    });
+
+    it("throws on non-string values for token eq lookups", async () => {
+      await expect(
+        wrapped.findOne({
+          model: "session",
+          where: [{ field: "token", value: 12_345 }],
+        })
+      ).rejects.toThrow(NON_STRING_VALUE_PATTERN);
+      expect(mocks.findOne).not.toHaveBeenCalled();
+    });
   });
 
   describe("findMany", () => {
@@ -159,6 +182,15 @@ describe("wrapWithSessionTokenHash", () => {
       });
       const where = mocks.findMany.mock.calls[0][0].where as Where[];
       expect(where[0].value).toEqual(expected);
+    });
+
+    it("throws when operator: in receives a non-array value", async () => {
+      await expect(
+        wrapped.findMany({
+          model: "session",
+          where: [{ field: "token", value: RAW, operator: "in" }],
+        })
+      ).rejects.toThrow(NON_ARRAY_VALUE_PATTERN);
     });
   });
 
