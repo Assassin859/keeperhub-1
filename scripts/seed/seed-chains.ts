@@ -455,7 +455,7 @@ const DEFAULT_CHAINS: NewChain[] = [
       type: "fallback",
     }),
     isTestnet: getChainConfigValue("0g-galileo", "isTestnet", true),
-    isEnabled: getChainConfigValue("0g-galileo", "isEnabled", false),
+    isEnabled: getChainConfigValue("0g-galileo", "isEnabled", true),
     usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "0g-galileo" }),
     defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "0g-galileo" }),
   },
