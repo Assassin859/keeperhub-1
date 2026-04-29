@@ -52,12 +52,12 @@ vi.mock("drizzle-orm", () => ({
 
 // Mock workflow executor
 const mockExecuteWorkflow = vi.fn();
-vi.mock("@/lib/workflow-executor.workflow", () => ({
+vi.mock("@/lib/workflow/executor/executor.workflow", () => ({
   executeWorkflow: mockExecuteWorkflow,
 }));
 
 // Mock workflow progress
-vi.mock("@/lib/workflow-progress", () => ({
+vi.mock("@/lib/workflow/executor/progress", () => ({
   calculateTotalSteps: vi.fn().mockReturnValue(3),
 }));
 
@@ -263,7 +263,7 @@ describe("workflow-runner", () => {
     it("should use 25s timeout (within K8s 30s grace period)", async () => {
       // Import the actual constants used by workflow-runner.ts
       const { SHUTDOWN_TIMEOUT_MS, K8S_GRACE_PERIOD_MS, SHUTDOWN_BUFFER_MS } =
-        await import("@/lib/workflow-runner/constants");
+        await import("@/lib/workflow/executor/runner-constants");
 
       // Verify the actual values
       expect(SHUTDOWN_TIMEOUT_MS).toBe(25_000);

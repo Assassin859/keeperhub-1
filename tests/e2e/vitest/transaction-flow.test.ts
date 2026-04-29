@@ -32,6 +32,8 @@ vi.unmock("@/lib/db");
 vi.mock("server-only", () => ({}));
 
 import { pendingTransactions, walletLocks } from "@/lib/db/schema-extensions";
+import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
+import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 import { AdaptiveGasStrategy, resetGasStrategy } from "@/lib/web3/gas-strategy";
 import { NonceManager, resetNonceManager } from "@/lib/web3/nonce-manager";
@@ -45,10 +47,27 @@ const TEST_WALLET = "0xTestWallet1234567890123456789012345678";
 const TEST_WALLET_NORMALIZED = TEST_WALLET.toLowerCase();
 const TEST_CHAIN_ID = 11_155_111; // Sepolia
 const SEPOLIA_RPC = getRpcUrlByChainId(11_155_111, "primary");
+const SEPOLIA_FALLBACK_RPC = getRpcUrlByChainId(11_155_111, "fallback");
+
+// Build a failover-aware Sepolia manager. Each describe block reuses this
+// shape: construct a manager, take its current primary as the
+// ethers.JsonRpcProvider that library calls (Para signer, NonceManager
+// startSession, etc.) need, and route explicit reads in this test through
+// manager.executeWithFailover so a primary-endpoint hiccup falls back to
+// the configured secondary.
+async function buildSepoliaManager(): Promise<RpcProviderManager> {
+  return getRpcProviderFromUrls(
+    SEPOLIA_RPC,
+    SEPOLIA_FALLBACK_RPC,
+    TEST_CHAIN_ID,
+    "sepolia"
+  );
+}
 
 describe.skipIf(shouldSkip)("Transaction Flow E2E", () => {
   let client: ReturnType<typeof postgres>;
   let db: ReturnType<typeof drizzle>;
+  let sepoliaManager: RpcProviderManager;
   let sepoliaProvider: ethers.JsonRpcProvider;
   let testExecutionId: string;
 
@@ -61,12 +80,15 @@ describe.skipIf(shouldSkip)("Transaction Flow E2E", () => {
     client = postgres(connectionString, { max: 5 });
     db = drizzle(client);
 
-    // Initialize RPC provider
-    sepoliaProvider = new ethers.JsonRpcProvider(SEPOLIA_RPC);
+    // Initialize RPC provider via failover manager
+    sepoliaManager = await buildSepoliaManager();
+    sepoliaProvider = sepoliaManager.getProvider();
 
-    // Verify connectivity
+    // Verify connectivity through failover so a primary-endpoint blip falls
+    // through to the configured secondary instead of triggering the
+    // "RPC not available" branch.
     try {
-      await sepoliaProvider.getBlockNumber();
+      await sepoliaManager.executeWithFailover((p) => p.getBlockNumber());
     } catch (_error) {
       console.warn("Sepolia RPC not available");
     }
@@ -128,12 +150,17 @@ describe.skipIf(shouldSkip)("Transaction Flow E2E", () => {
       expect(session.currentNonce).toBe(mockNonce);
       expect(validation.chainNonce).toBe(mockNonce);
 
-      // Get gas config for transaction
+      // Get gas config for transaction. Pass the failover manager so the
+      // gas strategy's internal RPC calls (fee history, getFeeData) route
+      // through executeWithFailover instead of dialing the primary directly.
       const gasConfig = await gasStrategy.getGasConfig(
         sepoliaProvider,
         "manual",
         BigInt(21_000),
-        TEST_CHAIN_ID
+        TEST_CHAIN_ID,
+        undefined,
+        undefined,
+        sepoliaManager
       );
 
       expect(gasConfig.gasLimit).toBeGreaterThan(BigInt(21_000));
@@ -198,7 +225,10 @@ describe.skipIf(shouldSkip)("Transaction Flow E2E", () => {
           sepoliaProvider,
           "scheduled",
           BigInt(50_000 + i * 10_000), // Varying gas
-          TEST_CHAIN_ID
+          TEST_CHAIN_ID,
+          undefined,
+          undefined,
+          sepoliaManager
         );
 
         const txHash = `0x${"def".repeat(21)}${i}`;
@@ -473,11 +503,19 @@ describe.skipIf(shouldSkip)("Transaction Flow E2E", () => {
       // This test verifies lock tracking and sequential session management.
 
       const manager = new NonceManager();
+      const wf1TxHash = `0x${"wf1tx".repeat(12)}abc`;
 
+      // After KEEP-348, validateAndReconcile runs before max(pending) is read.
+      // The recorded tx at nonce 40 is "still pending in mempool" for the
+      // duration of this test, so getTransaction must return a truthy response
+      // for that hash. Otherwise the reconciler would correctly mark the row
+      // dropped (matching its actual chain state) and workflow2 would reuse
+      // nonce 40 instead of advancing to 41.
       const mockProvider = {
         getTransactionCount: async () => 40,
         getTransactionReceipt: async () => null,
-        getTransaction: async () => null,
+        getTransaction: async (hash: string) =>
+          hash === wf1TxHash ? { hash } : null,
       };
 
       // First workflow
@@ -506,12 +544,7 @@ describe.skipIf(shouldSkip)("Transaction Flow E2E", () => {
       expect(nonce1).toBe(40);
 
       // Record transaction
-      await manager.recordTransaction(
-        session1,
-        nonce1,
-        `0x${"wf1tx".repeat(12)}abc`,
-        "workflow1"
-      );
+      await manager.recordTransaction(session1, nonce1, wf1TxHash, "workflow1");
 
       // End first workflow
       await manager.endSession(session1);
@@ -548,19 +581,21 @@ describe.skipIf(shouldSkip)("Transaction Flow E2E", () => {
 });
 
 describe.skipIf(shouldSkip)("Transaction Flow with Real RPC", () => {
+  let sepoliaManager: RpcProviderManager;
   let sepoliaProvider: ethers.JsonRpcProvider;
   let client: ReturnType<typeof postgres>;
   let db: ReturnType<typeof drizzle>;
   let testExecutionId: string;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     const connectionString =
       process.env.DATABASE_URL ||
       "postgresql://postgres:postgres@localhost:5433/KEEP-1240";
 
     client = postgres(connectionString, { max: 5 });
     db = drizzle(client);
-    sepoliaProvider = new ethers.JsonRpcProvider(SEPOLIA_RPC);
+    sepoliaManager = await buildSepoliaManager();
+    sepoliaProvider = sepoliaManager.getProvider();
   });
 
   afterAll(async () => {
@@ -606,12 +641,17 @@ describe.skipIf(shouldSkip)("Transaction Flow with Real RPC", () => {
     expect(validation.chainNonce).toBe(0);
     expect(session.currentNonce).toBe(0);
 
-    // Get real gas prices
+    // Get real gas prices via the failover manager so the strategy's
+    // internal fee-history calls retry against the secondary endpoint when
+    // the primary hiccups.
     const gasConfig = await gasStrategy.getGasConfig(
       sepoliaProvider,
       "manual",
       BigInt(21_000),
-      TEST_CHAIN_ID
+      TEST_CHAIN_ID,
+      undefined,
+      undefined,
+      sepoliaManager
     );
 
     expect(gasConfig.maxFeePerGas).toBeGreaterThan(BigInt(0));
@@ -649,6 +689,7 @@ const skipRealTx =
 describe.skipIf(skipRealTx)("Real Transaction Tests (Sepolia)", () => {
   let client: ReturnType<typeof postgres>;
   let db: ReturnType<typeof drizzle>;
+  let sepoliaManager: RpcProviderManager;
   let sepoliaProvider: ethers.JsonRpcProvider;
   let wallet: ethers.AbstractSigner;
   let walletAddress: string;
@@ -711,13 +752,17 @@ describe.skipIf(skipRealTx)("Real Transaction Tests (Sepolia)", () => {
     const decryptedShare = decryptUserShare(paraWallet.userShare);
     await paraClient.setUserShare(decryptedShare);
 
-    sepoliaProvider = new ethers.JsonRpcProvider(SEPOLIA_RPC);
+    sepoliaManager = await buildSepoliaManager();
+    sepoliaProvider = sepoliaManager.getProvider();
     wallet = new ParaEthersSigner(paraClient as any, sepoliaProvider);
 
     console.log(`Test wallet (Para): ${walletAddress}`);
 
-    // Check balance
-    const balance = await sepoliaProvider.getBalance(walletAddress);
+    // Check balance through failover so a primary-endpoint blip falls back
+    // to the configured secondary instead of failing setup.
+    const balance = await sepoliaManager.executeWithFailover((p) =>
+      p.getBalance(walletAddress)
+    );
     console.log(`Balance: ${ethers.formatEther(balance)} ETH`);
 
     if (balance < ethers.parseEther("0.001")) {

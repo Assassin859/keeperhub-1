@@ -2,11 +2,16 @@
 
 import type { Edge, Node, XYPosition } from "@xyflow/react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { Link2Off, Plus, Trash2 } from "lucide-react";
+import { Link2Off, Plus, Trash2, Upload } from "lucide-react";
 import { nanoid } from "nanoid";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef } from "react";
+import { toast } from "sonner";
 import { ConfirmOverlay } from "@/components/overlays/confirm-overlay";
+import { ImportWorkflowOverlay } from "@/components/overlays/import-workflow-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
+import { useSession } from "@/lib/auth-client";
+import { isAnonymousUser } from "@/lib/is-anonymous";
 import { cn } from "@/lib/utils";
 import {
   addNodeAtom,
@@ -16,7 +21,7 @@ import {
   propertiesPanelActiveTabAtom,
   selectedNodeAtom,
   type WorkflowNode,
-} from "@/lib/workflow-store";
+} from "@/lib/workflow/store";
 
 export type ContextMenuType = "node" | "edge" | "pane" | null;
 
@@ -44,6 +49,9 @@ export function WorkflowContextMenu({
   const setSelectedNode = useSetAtom(selectedNodeAtom);
   const setActiveTab = useSetAtom(propertiesPanelActiveTabAtom);
   const { open: openOverlay } = useOverlay();
+  const router = useRouter();
+  const { data: session } = useSession();
+  const isAnonymous = isAnonymousUser(session?.user);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const handleDeleteNode = useCallback(() => {
@@ -180,11 +188,29 @@ export function WorkflowContextMenu({
       )}
 
       {menuState.type === "pane" && (
-        <MenuItem
-          icon={<Plus className="size-4" />}
-          label="Add Step"
-          onClick={handleAddStep}
-        />
+        <>
+          <MenuItem
+            icon={<Plus className="size-4" />}
+            label="Add Step"
+            onClick={handleAddStep}
+          />
+          <MenuItem
+            icon={<Upload className="size-4" />}
+            label="New Workflow from JSON"
+            onClick={() => {
+              onClose();
+              if (isAnonymous) {
+                toast.info("Sign in to import workflows.");
+                return;
+              }
+              openOverlay(ImportWorkflowOverlay, {
+                onImported: (workflowId) => {
+                  router.push(`/workflows/${workflowId}`);
+                },
+              });
+            }}
+          />
+        </>
       )}
     </div>
   );

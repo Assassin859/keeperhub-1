@@ -42,6 +42,15 @@ export function createDualWriteCollector(
       prometheusCollector.recordError(name, error, labels);
     },
 
+    recordWarning(
+      name: string,
+      error: Error | ErrorContext,
+      labels?: MetricLabels
+    ): void {
+      consoleMetricsCollector.recordWarning(name, error, labels);
+      prometheusCollector.recordWarning(name, error, labels);
+    },
+
     setGauge(name: string, value: number, labels?: MetricLabels): void {
       consoleMetricsCollector.setGauge(name, value, labels);
       prometheusCollector.setGauge(name, value, labels);

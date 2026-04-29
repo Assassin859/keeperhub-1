@@ -31,6 +31,7 @@ import { formatContractError } from "@/lib/web3/decode-revert-error";
 import { resolveGasLimitOverrides } from "@/lib/web3/gas-defaults";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
 import { executeSponsoredTransaction } from "@/lib/web3/sponsored-transaction-manager";
+import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
 import {
   type TransactionContext,
   withNonceSession,
@@ -193,7 +194,11 @@ export async function transferFundsCore(
   // ERC-4337 bundlers use their own RPC (Pimlico), which bypasses Flashbots Protect.
   // KEEP-177: skip sponsorship in Safe mode -- the 4337 bundler sends from
   // its own smart account, which would change msg.sender away from the Safe.
-  if (!usePrivateMempool && signerMode.kind === "eoa") {
+  if (
+    !usePrivateMempool &&
+    signerMode.kind === "eoa" &&
+    isGasSponsorshipEnabled()
+  ) {
     // Try gas-sponsored execution first (ERC-4337 via Pimlico)
     try {
       const sponsoredResult = await executeSponsoredTransaction({

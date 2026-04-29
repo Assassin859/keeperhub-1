@@ -18,15 +18,14 @@ function formatSSE(event: AnalyticsStreamEvent): string {
   return `data: ${JSON.stringify(event)}\n\n`;
 }
 
-async function fetchAndEmit(
-  controller: ReadableStreamDefaultController,
+async function fetchSummaryEvent(
   encoder: TextEncoder,
   organizationId: string,
   range: ReturnType<typeof parseTimeRange>,
   customStart: string | undefined,
   customEnd: string | undefined,
   projectId: string | undefined
-): Promise<void> {
+): Promise<Uint8Array> {
   const summary = await getAnalyticsSummary(
     organizationId,
     range,
@@ -40,7 +39,7 @@ async function fetchAndEmit(
     data: summary,
   };
 
-  controller.enqueue(encoder.encode(formatSSE(event)));
+  return encoder.encode(formatSSE(event));
 }
 
 export const GET = requireOrganization(
@@ -69,25 +68,49 @@ export const GET = requireOrganization(
           const encoder = new TextEncoder();
           const startTime = Date.now();
 
-          const cleanup = (): void => {
+          const safeClose = (): void => {
+            if (closed) {
+              return;
+            }
             closed = true;
             clearInterval(pollTimer);
             clearInterval(heartbeatTimer);
+            try {
+              controller.close();
+            } catch {
+              // controller may already be closed by the platform
+            }
           };
 
-          const pollTimer = setInterval(async () => {
+          const safeEnqueue = (chunk: Uint8Array): boolean => {
+            if (closed) {
+              return false;
+            }
+            try {
+              controller.enqueue(chunk);
+              return true;
+            } catch {
+              safeClose();
+              return false;
+            }
+          };
+
+          const pollTimer = setInterval(async (): Promise<void> => {
             if (closed) {
               return;
             }
 
             if (Date.now() - startTime > MAX_LIFETIME_MS) {
-              cleanup();
-              controller.close();
+              safeClose();
               return;
             }
 
             try {
               const checksum = await getAnalyticsChecksum(organizationId);
+
+              if (closed) {
+                return;
+              }
 
               if (checksum === lastChecksum) {
                 return;
@@ -101,8 +124,7 @@ export const GET = requireOrganization(
               }
               lastEventTime = now;
 
-              await fetchAndEmit(
-                controller,
+              const chunk = await fetchSummaryEvent(
                 encoder,
                 organizationId,
                 range,
@@ -110,31 +132,31 @@ export const GET = requireOrganization(
                 customEnd,
                 projectId
               );
+
+              if (closed) {
+                return;
+              }
+
+              safeEnqueue(chunk);
             } catch {
-              cleanup();
-              controller.close();
+              safeClose();
             }
           }, POLL_INTERVAL_MS);
 
-          const heartbeatTimer = setInterval(() => {
+          const heartbeatTimer = setInterval((): void => {
             if (closed) {
               return;
             }
 
-            try {
-              const event: AnalyticsStreamEvent = {
-                type: "heartbeat",
-                data: { timestamp: new Date().toISOString() },
-              };
-              controller.enqueue(encoder.encode(formatSSE(event)));
-            } catch {
-              cleanup();
-            }
+            const event: AnalyticsStreamEvent = {
+              type: "heartbeat",
+              data: { timestamp: new Date().toISOString() },
+            };
+            safeEnqueue(encoder.encode(formatSSE(event)));
           }, HEARTBEAT_INTERVAL_MS);
 
           req.signal.addEventListener("abort", () => {
-            cleanup();
-            controller.close();
+            safeClose();
           });
         },
       });

@@ -36,11 +36,10 @@
   ],
   "exclude": [
     "node_modules",
-    "lib/next-boilerplate/**/*.ts",
-    "lib/next-boilerplate/**/*.tsx",
     "tmp/**/*",
     "docs-site/**/*",
     "keeperhub-events/**/*",
-    "keeperhub-scheduler/**/*"
+    "keeperhub-scheduler/**/*",
+    "sandbox/**/*"
   ]
 }

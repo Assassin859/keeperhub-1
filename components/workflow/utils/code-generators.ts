@@ -2,10 +2,11 @@
  * Code generation utilities for workflow step functions
  */
 
-import { AUTO_GENERATED_TEMPLATES } from "@/lib/codegen-registry";
-import conditionTemplate from "@/lib/codegen-templates/condition";
-import databaseQueryTemplate from "@/lib/codegen-templates/database-query";
-import httpRequestTemplate from "@/lib/codegen-templates/http-request";
+import { synthesiseProtocolTemplate } from "@/lib/workflow/codegen/protocol-synthesiser";
+import { AUTO_GENERATED_TEMPLATES } from "@/lib/workflow/codegen/registry";
+import conditionTemplate from "@/lib/workflow/codegen/templates/condition";
+import databaseQueryTemplate from "@/lib/workflow/codegen/templates/database-query";
+import httpRequestTemplate from "@/lib/workflow/codegen/templates/http-request";
 import { findActionById } from "@/plugins/registry";
 
 // System action templates (non-plugin actions)
@@ -63,7 +64,10 @@ export async function POST(request: NextRequest) {
   return "";
 }
 
-function generateActionCode(actionType: string | undefined): string {
+function generateActionCode(
+  actionType: string | undefined,
+  config: NodeConfig | undefined
+): string {
   if (!actionType) {
     return FALLBACK_ACTION_CODE;
   }
@@ -76,12 +80,17 @@ function generateActionCode(actionType: string | undefined): string {
   // Look up plugin actions in registry
   const action = findActionById(actionType);
   if (action) {
-    // Prefer auto-generated templates, fall back to manual templates
-    return (
-      AUTO_GENERATED_TEMPLATES[action.id] ||
-      action.codegenTemplate ||
-      FALLBACK_ACTION_CODE
-    );
+    const autoTemplate = AUTO_GENERATED_TEMPLATES[action.id];
+    if (autoTemplate) {
+      return autoTemplate;
+    }
+    // Synthesise protocol actions (ABI-driven) on demand. Returns null for
+    // non-protocol actions, falling through to manual templates / stub.
+    const synthesised = synthesiseProtocolTemplate(action.id, config);
+    if (synthesised) {
+      return synthesised;
+    }
+    return action.codegenTemplate || FALLBACK_ACTION_CODE;
   }
 
   return FALLBACK_ACTION_CODE;
@@ -102,7 +111,10 @@ export const generateNodeCode = (node: {
   }
 
   if (node.data.type === "action") {
-    return generateActionCode(node.data.config?.actionType as string);
+    return generateActionCode(
+      node.data.config?.actionType as string,
+      node.data.config
+    );
   }
 
   return FALLBACK_UNKNOWN_CODE;

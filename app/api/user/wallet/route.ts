@@ -1,4 +1,3 @@
-import { Environment, Para as ParaServer } from "@getpara/server-sdk";
 import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
@@ -12,12 +11,14 @@ import { db } from "@/lib/db";
 import { createIntegration } from "@/lib/db/integrations";
 import { integrations, organizationWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
+import {
+  type DualAuthContext,
+  auditFromAuth,
+  getDualAuthContext,
+} from "@/lib/middleware/auth-helpers";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
 import { createTurnkeyWallet } from "@/lib/turnkey/turnkey-client";
 
-const PARA_API_KEY = process.env.PARA_API_KEY ?? "";
-const PARA_ENV = process.env.PARA_ENVIRONMENT ?? "beta";
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Helper: Validate user authentication, organization membership, and admin permissions
@@ -202,56 +203,69 @@ async function storeTurnkeyWalletAndIntegration(options: {
   return { walletAddress: normalizedWalletAddress, walletId: turnkeyWalletId };
 }
 
-export async function GET(request: Request) {
+export async function GET(request: Request): Promise<NextResponse> {
+  let authContext: DualAuthContext | null = null;
   try {
-    const authCtx = await resolveOrganizationId(request);
-    if ("error" in authCtx) {
+    authContext = await getDualAuthContext(request);
+    if ("error" in authContext) {
       return NextResponse.json(
-        { error: authCtx.error },
-        { status: authCtx.status }
+        { error: authContext.error },
+        { status: authContext.status }
       );
     }
-    const { organizationId: activeOrgId } = authCtx;
 
-    const allWallets = await db
+    const { userId, organizationId: activeOrgId } = authContext;
+    if (!activeOrgId) {
+      return NextResponse.json(
+        { error: "No active organization" },
+        { status: 400 }
+      );
+    }
+
+    // Turnkey is the only signer. Inactive Para rows may still exist in the
+    // DB for historical reasons but are not returned: the org has a single
+    // wallet surface, full stop.
+    const active = await db
       .select()
       .from(organizationWallets)
-      .where(eq(organizationWallets.organizationId, activeOrgId));
+      .where(
+        and(
+          eq(organizationWallets.organizationId, activeOrgId),
+          eq(organizationWallets.isActive, true)
+        )
+      )
+      .limit(1);
 
-    if (allWallets.length === 0) {
+    if (active.length === 0) {
       return NextResponse.json({
         hasWallet: false,
-        wallets: [],
         message: "No wallet found for this organization",
       });
     }
 
-    const PROVIDER_ORDER: Record<"para" | "turnkey", number> = {
-      para: 0,
-      turnkey: 1,
-    } as const;
-    const wallets = allWallets
-      .map((w) => ({
-        id: w.id,
-        provider: w.provider,
-        canExportKey: w.provider === "turnkey",
-        walletAddress: w.walletAddress,
-        walletId: w.paraWalletId ?? w.turnkeyWalletId,
-        email: w.email,
-        createdAt: w.createdAt,
-        organizationId: w.organizationId,
-        isActive: w.isActive,
-      }))
-      .sort((a, b) => PROVIDER_ORDER[a.provider] - PROVIDER_ORDER[b.provider]);
-
-    const primary = wallets.find((w) => w.isActive) ?? wallets[0];
+    const wallet = active[0];
 
     return NextResponse.json({
       hasWallet: true,
-      ...primary,
-      wallets,
+      id: wallet.id,
+      canExportKey: wallet.turnkeySubOrgId !== null,
+      // Only the wallet creator may export its key, regardless of org role.
+      // For API-key callers without a recorded creator (userId === null) this
+      // resolves to false, which is correct: key export is session-only.
+      isOwner: userId !== null && wallet.userId === userId,
+      walletAddress: wallet.walletAddress,
+      walletId: wallet.turnkeyWalletId,
+      email: wallet.email,
+      createdAt: wallet.createdAt,
+      organizationId: wallet.organizationId,
+      isActive: wallet.isActive,
     });
   } catch (error) {
+    logSystemError(ErrorCategory.DATABASE, "Failed to get wallet", error, {
+      endpoint: "/api/user/wallet",
+      operation: "get",
+      ...auditFromAuth(authContext),
+    });
     return apiError(error, "Failed to get wallet");
   }
 }
@@ -319,111 +333,6 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     return getErrorResponse(error);
-  }
-}
-
-export async function PATCH(request: Request) {
-  try {
-    // 1. Validate user, organization, and admin permissions
-    const validation = await validateUserAndOrganization(request);
-    if ("error" in validation) {
-      return NextResponse.json(
-        { error: validation.error },
-        { status: validation.status }
-      );
-    }
-    const { organizationId } = validation;
-
-    // 2. Get new email from request body
-    const body = await request.json();
-    const newEmail = body.email;
-
-    if (!newEmail || typeof newEmail !== "string") {
-      return NextResponse.json(
-        { error: "Email is required to update wallet" },
-        { status: 400 }
-      );
-    }
-
-    // Basic email validation
-    if (!EMAIL_REGEX.test(newEmail)) {
-      return NextResponse.json(
-        { error: "Invalid email format" },
-        { status: 400 }
-      );
-    }
-
-    // 3. Get the org's active wallet (PATCH only targets the active wallet;
-    // the deactivated Para wallet during migration is not user-editable).
-    const existingWallet = await db
-      .select()
-      .from(organizationWallets)
-      .where(
-        and(
-          eq(organizationWallets.organizationId, organizationId),
-          eq(organizationWallets.isActive, true)
-        )
-      )
-      .limit(1);
-
-    if (existingWallet.length === 0) {
-      return NextResponse.json(
-        { error: "No wallet found for this organization" },
-        { status: 404 }
-      );
-    }
-
-    const wallet = existingWallet[0];
-
-    // 4. Check if email is actually different
-    if (wallet.email === newEmail) {
-      return NextResponse.json(
-        { error: "New email is the same as the current email" },
-        { status: 400 }
-      );
-    }
-
-    // 5. Update wallet identifier in provider (Para only)
-    if (wallet.provider === "para" && wallet.paraWalletId) {
-      const environment =
-        PARA_ENV === "prod" ? Environment.PROD : Environment.BETA;
-      const paraClient = new ParaServer(environment, PARA_API_KEY);
-
-      await paraClient.updatePregenWalletIdentifier({
-        walletId: wallet.paraWalletId,
-        newPregenId: { email: newEmail },
-      });
-    }
-
-    // 6. Update email in local database (only the active wallet row)
-    await db
-      .update(organizationWallets)
-      .set({ email: newEmail })
-      .where(
-        and(
-          eq(organizationWallets.organizationId, organizationId),
-          eq(organizationWallets.isActive, true)
-        )
-      );
-
-    return NextResponse.json({
-      success: true,
-      message: "Wallet email updated successfully",
-      wallet: {
-        address: wallet.walletAddress,
-        walletId: wallet.paraWalletId ?? wallet.turnkeyWalletId,
-        email: newEmail,
-        organizationId,
-      },
-    });
-  } catch (error) {
-    logSystemError(
-      ErrorCategory.EXTERNAL_SERVICE,
-      "[Para] Failed to update wallet email",
-      error,
-      { endpoint: "/api/user/wallet", operation: "patch" }
-    );
-    return apiError(error, "Failed to update wallet email");
   }
 }
 

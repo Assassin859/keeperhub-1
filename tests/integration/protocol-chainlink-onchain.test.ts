@@ -21,8 +21,14 @@
  */
 
 import { ethers } from "ethers";
-import { describe, expect, it } from "vitest";
-import { reshapeArgsForAbi } from "@/lib/abi-struct-args";
+import { describe, expect, it, vi } from "vitest";
+
+// `lib/rpc/providers` transitively imports `lib/safe-fetch` (via the
+// safe-ethers adapter), which declares `import "server-only"` and would
+// otherwise throw under vitest's Node runtime.
+vi.mock("server-only", () => ({}));
+
+import { reshapeArgsForAbi } from "@/lib/abi/struct-args";
 import type {
   ProtocolAction,
   ProtocolContract,

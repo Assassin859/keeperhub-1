@@ -75,11 +75,21 @@ describe("registerMetaTools: tool registration", () => {
     vi.resetModules();
   });
 
-  it("Test 6: registerMetaTools registers exactly 4 tools total (2 existing + 2 new)", async () => {
+  it("Test 6: registerMetaTools registers all 8 meta-tools (4 protocol/marketplace + 4 curator)", async () => {
     const { server, registeredTools } = makeMockServer();
     const { registerMetaTools } = await import("@/lib/mcp/tools");
     registerMetaTools(server, "http://localhost:3000", "Bearer test-token");
-    expect(registeredTools.length).toBe(4);
+    expect(registeredTools.length).toBe(8);
+    expect(registeredTools.map((t) => t.name)).toEqual([
+      "search_protocol_actions",
+      "execute_protocol_action",
+      "search_workflows",
+      "call_workflow",
+      "list_workflow",
+      "unlist_workflow",
+      "update_workflow_listing",
+      "get_workflow_listing",
+    ]);
   });
 
   it("Test 7: registerMetaTools registers search_workflows as the 3rd tool", async () => {
@@ -432,11 +442,11 @@ describe("POST /api/mcp/workflows/[slug]/call: write workflow returns calldata",
     tags: { id: "id", name: "name" },
   }));
 
-  vi.mock("@/lib/x402/server", () => ({
+  vi.mock("@/lib/payments/x402/server", () => ({
     server: { register: vi.fn() },
   }));
 
-  vi.mock("@/lib/x402/payment-gate", () => ({
+  vi.mock("@/lib/payments/x402/payment-gate", () => ({
     buildPaymentConfig: mockBuildPaymentConfig,
     hashPaymentSignature: mockHashPaymentSignature,
     findExistingPayment: mockFindExistingPayment,
@@ -445,7 +455,7 @@ describe("POST /api/mcp/workflows/[slug]/call: write workflow returns calldata",
     extractPayerAddress: mockExtractPayerAddress,
   }));
 
-  vi.mock("@/lib/x402/reconcile", () => ({
+  vi.mock("@/lib/payments/x402/reconcile", () => ({
     isTimeoutError: vi.fn().mockReturnValue(false),
     pollForPaymentConfirmation: vi.fn().mockResolvedValue(false),
   }));
@@ -458,7 +468,7 @@ describe("POST /api/mcp/workflows/[slug]/call: write workflow returns calldata",
     start: mockStart,
   }));
 
-  vi.mock("@/lib/workflow-executor.workflow", () => ({
+  vi.mock("@/lib/workflow/executor/executor.workflow", () => ({
     executeWorkflow: mockExecuteWorkflow,
   }));
 
@@ -471,7 +481,7 @@ describe("POST /api/mcp/workflows/[slug]/call: write workflow returns calldata",
     checkConcurrencyLimit: mockCheckConcurrencyLimit,
   }));
 
-  vi.mock("@/lib/x402/execution-wait", () => ({
+  vi.mock("@/lib/payments/x402/execution-wait", () => ({
     buildCallCompletionResponse: mockBuildCallCompletionResponse,
   }));
 
@@ -564,13 +574,12 @@ describe("POST /api/mcp/workflows/[slug]/call: write workflow returns calldata",
       }),
     });
     // Default: completion wait times out so we fall back to running response.
-    mockBuildCallCompletionResponse.mockImplementation(
-      (executionId: string) =>
-        Promise.resolve({ executionId, status: "running" })
+    mockBuildCallCompletionResponse.mockImplementation((executionId: string) =>
+      Promise.resolve({ executionId, status: "running" })
     );
     // Default: caller is authenticated. The write workflow path requires
     // an API key or MCP OAuth token, same as the free read path.
-    mockAuthenticateOAuthToken.mockReturnValue({
+    mockAuthenticateOAuthToken.mockResolvedValue({
       authenticated: true,
       organizationId: "caller-org-1",
       userId: "caller-user-1",

@@ -76,6 +76,19 @@ export type MetricsCollector = {
   ): void;
 
   /**
+   * Record a user-caused failure as a warning (does not page on-call).
+   * Same shape as recordError but logged at warn level.
+   * @param name - Metric name (e.g., "workflow.execution.errors")
+   * @param error - Error object or context
+   * @param labels - Optional labels for dimensions
+   */
+  recordWarning(
+    name: string,
+    error: Error | ErrorContext,
+    labels?: MetricLabels
+  ): void;
+
+  /**
    * Set a gauge metric (point-in-time value)
    * @param name - Metric name (e.g., "workflow.concurrent.count")
    * @param value - Current value
@@ -98,6 +111,8 @@ export const MetricNames = {
 
   // Traffic metrics
   WORKFLOW_EXECUTIONS_TOTAL: "workflow.executions.total",
+  WORKFLOW_EXPORTS_TOTAL: "workflow.exports.total",
+  WORKFLOW_IMPORTS_TOTAL: "workflow.imports.total",
   PLUGIN_INVOCATIONS_TOTAL: "plugin.invocations.total",
   USER_ACTIVE_DAILY: "user.active.daily",
 
@@ -140,6 +155,7 @@ export const LabelKeys = {
   EXECUTION_ID: "execution_id",
   ORG_ID: "org_id",
   ORG_SLUG: "org_slug",
+  PLAN: "plan",
   OWNER_ID: "owner_id",
   PLUGIN_ID: "plugin_id",
   INTEGRATION_ID: "integration_id",

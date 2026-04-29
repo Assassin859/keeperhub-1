@@ -170,6 +170,64 @@ class BlockMonitorService {
   }
 }
 
+// Ethers v6 WebSocketProvider teardown produces a detached eth_unsubscribe
+// rejection when the socket dies mid-subscription; log and swallow so Node
+// does not exit the process on transient RPC failures.
+process.on("unhandledRejection", (reason: unknown) => {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  const stack = reason instanceof Error ? reason.stack : "";
+  console.error(`[BlockDispatcher] Unhandled rejection: ${message}`, stack);
+});
+
+const RECOVERABLE_NETWORK_CODES = new Set([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "EAI_AGAIN",
+  "EPIPE",
+  "ENOTFOUND",
+]);
+
+function isRecoverableNetworkError(error: Error): boolean {
+  const message = error.message ?? "";
+  const code = (error as Error & { code?: string }).code ?? "";
+
+  if (RECOVERABLE_NETWORK_CODES.has(code)) {
+    return true;
+  }
+
+  // ws library emits "Unexpected server response: <status>" on non-101
+  // upgrade responses (HTTP 429 rate limits, 5xx, etc.). These should never
+  // crash the dispatcher — the offending ChainMonitor will handle reconnect.
+  if (message.includes("Unexpected server response")) {
+    return true;
+  }
+
+  return false;
+}
+
+// Uncaught sync exceptions indicate corrupted state in the general case, BUT
+// transient network/WebSocket errors (e.g. HTTP 429 on a WS upgrade) bubble
+// up here because ethers v6 does not attach an 'error' listener on the
+// underlying ws. Crashing the whole dispatcher on a single chain's rate limit
+// takes down monitoring for every other chain in the pod. Classify and only
+// exit on truly unknown errors.
+process.on("uncaughtException", (error: Error) => {
+  if (isRecoverableNetworkError(error)) {
+    console.warn(
+      `[BlockDispatcher] Recoverable network error (continuing): ${error.message}`
+    );
+    return;
+  }
+  console.error(
+    `[BlockDispatcher] Uncaught exception: ${error.message}`,
+    error.stack ?? ""
+  );
+  process.exit(1);
+});
+
 // Main entry point
 async function main(): Promise<void> {
   console.log("[BlockDispatcher] Starting block dispatcher...");
@@ -223,4 +281,8 @@ async function main(): Promise<void> {
   await service.start();
 }
 
-main();
+main().catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`[BlockDispatcher] Fatal startup error: ${message}`);
+  process.exit(1);
+});

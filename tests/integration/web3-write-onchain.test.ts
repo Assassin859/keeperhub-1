@@ -11,11 +11,21 @@
  */
 
 import { ethers } from "ethers";
-import { describe, expect, it } from "vitest";
-import { reshapeArgsForAbi } from "@/lib/abi-struct-args";
-import { validateArgsForAbi } from "@/lib/abi-validate-args";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+
+// `lib/rpc/providers` transitively imports `lib/safe-fetch` (via the
+// safe-ethers adapter), which declares `import "server-only"` and would
+// otherwise throw under vitest's Node runtime.
+vi.mock("server-only", () => ({}));
+
+import { reshapeArgsForAbi } from "@/lib/abi/struct-args";
+import { validateArgsForAbi } from "@/lib/abi/validate-args";
+import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
+import type { RpcProviderManager } from "@/lib/rpc/providers";
+import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 
 const RPC_URL = process.env.INTEGRATION_TEST_RPC_URL;
+const SEPOLIA_CHAIN_ID = 11_155_111;
 const TEST_ADDRESS = "0x0000000000000000000000000000000000000001";
 
 const WETH_SEPOLIA = "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14";
@@ -118,19 +128,34 @@ function buildWeb3Calldata(
 }
 
 describe.skipIf(!RPC_URL)("Web3 write-contract on-chain integration", () => {
-  const getProvider = (): ethers.JsonRpcProvider =>
-    new ethers.JsonRpcProvider(RPC_URL);
+  // Route every RPC call through the failover manager so a primary-endpoint
+  // hiccup falls back to the secondary instead of failing the test. Same
+  // gating as before: tests skipped without INTEGRATION_TEST_RPC_URL.
+  let manager: RpcProviderManager;
+
+  beforeAll(async () => {
+    if (!RPC_URL) {
+      return;
+    }
+    manager = await getRpcProviderFromUrls(
+      RPC_URL,
+      getRpcUrlByChainId(SEPOLIA_CHAIN_ID, "fallback"),
+      SEPOLIA_CHAIN_ID,
+      "sepolia"
+    );
+  });
 
   it("deposit (payable, no args): estimateGas with ETH value", async () => {
     const { data, value } = buildWeb3Calldata("deposit", undefined, "0.001");
 
-    const provider = getProvider();
-    const gas = await provider.estimateGas({
-      to: WETH_SEPOLIA,
-      data,
-      value,
-      from: TEST_ADDRESS,
-    });
+    const gas = await manager.executeWithFailover((p) =>
+      p.estimateGas({
+        to: WETH_SEPOLIA,
+        data,
+        value,
+        from: TEST_ADDRESS,
+      })
+    );
 
     expect(gas).toBeGreaterThan(BigInt(0));
   }, 15_000);
@@ -138,13 +163,14 @@ describe.skipIf(!RPC_URL)("Web3 write-contract on-chain integration", () => {
   it("withdraw (uint256 arg): calldata encodes correctly", async () => {
     const { data } = buildWeb3Calldata("withdraw", '["1000000000000000000"]');
 
-    const provider = getProvider();
     try {
-      await provider.estimateGas({
-        to: WETH_SEPOLIA,
-        data,
-        from: TEST_ADDRESS,
-      });
+      await manager.executeWithFailover((p) =>
+        p.estimateGas({
+          to: WETH_SEPOLIA,
+          data,
+          from: TEST_ADDRESS,
+        })
+      );
     } catch (error) {
       const msg = String(error);
       expect(msg).not.toContain("INVALID_ARGUMENT");
@@ -158,12 +184,13 @@ describe.skipIf(!RPC_URL)("Web3 write-contract on-chain integration", () => {
       `["${TEST_ADDRESS}", "1000000000000000000"]`
     );
 
-    const provider = getProvider();
-    const gas = await provider.estimateGas({
-      to: WETH_SEPOLIA,
-      data,
-      from: TEST_ADDRESS,
-    });
+    const gas = await manager.executeWithFailover((p) =>
+      p.estimateGas({
+        to: WETH_SEPOLIA,
+        data,
+        from: TEST_ADDRESS,
+      })
+    );
 
     expect(gas).toBeGreaterThan(BigInt(0));
   }, 15_000);
@@ -171,12 +198,13 @@ describe.skipIf(!RPC_URL)("Web3 write-contract on-chain integration", () => {
   it("transfer (address + uint256 args): calldata encodes correctly", async () => {
     const { data } = buildWeb3Calldata("transfer", `["${TEST_ADDRESS}", "0"]`);
 
-    const provider = getProvider();
-    const gas = await provider.estimateGas({
-      to: WETH_SEPOLIA,
-      data,
-      from: TEST_ADDRESS,
-    });
+    const gas = await manager.executeWithFailover((p) =>
+      p.estimateGas({
+        to: WETH_SEPOLIA,
+        data,
+        from: TEST_ADDRESS,
+      })
+    );
 
     expect(gas).toBeGreaterThan(BigInt(0));
   }, 15_000);
@@ -184,11 +212,12 @@ describe.skipIf(!RPC_URL)("Web3 write-contract on-chain integration", () => {
   it("balanceOf (read via eth_call): returns decodable uint256", async () => {
     const { data } = buildWeb3Calldata("balanceOf", `["${TEST_ADDRESS}"]`);
 
-    const provider = getProvider();
-    const result = await provider.call({
-      to: WETH_SEPOLIA,
-      data,
-    });
+    const result = await manager.executeWithFailover((p) =>
+      p.call({
+        to: WETH_SEPOLIA,
+        data,
+      })
+    );
 
     const iface = new ethers.Interface(WETH_ABI);
     const decoded = iface.decodeFunctionResult("balanceOf", result);
@@ -202,11 +231,12 @@ describe.skipIf(!RPC_URL)("Web3 write-contract on-chain integration", () => {
       `["${TEST_ADDRESS}", "${TEST_ADDRESS}"]`
     );
 
-    const provider = getProvider();
-    const result = await provider.call({
-      to: WETH_SEPOLIA,
-      data,
-    });
+    const result = await manager.executeWithFailover((p) =>
+      p.call({
+        to: WETH_SEPOLIA,
+        data,
+      })
+    );
 
     const iface = new ethers.Interface(WETH_ABI);
     const decoded = iface.decodeFunctionResult("allowance", result);

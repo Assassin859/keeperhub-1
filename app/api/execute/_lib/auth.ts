@@ -16,7 +16,7 @@ export type ApiKeyContext = {
 export async function validateApiKey(
   request: Request
 ): Promise<ApiKeyContext | null> {
-  const oauthResult = authenticateOAuthToken(request);
+  const oauthResult = await authenticateOAuthToken(request);
   if (oauthResult.authenticated && oauthResult.organizationId) {
     return {
       organizationId: oauthResult.organizationId,

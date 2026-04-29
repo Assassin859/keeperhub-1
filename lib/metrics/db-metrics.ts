@@ -28,6 +28,11 @@ import {
   workflows,
 } from "@/lib/db/schema";
 
+// Label value used for workflow executions whose workflow has no organization
+// (personal/anonymous workflows). Keeps the per-org error gauge total equal
+// to the global error count instead of silently dropping these executions.
+const ANONYMOUS_ORG_SLUG = "_anonymous";
+
 // Histogram bucket boundaries in milliseconds (must match prometheus.ts)
 const WORKFLOW_DURATION_BUCKETS = [
   100, 250, 500, 1000, 2000, 5000, 10_000, 30_000,
@@ -41,6 +46,10 @@ export type WorkflowStats = {
   totalRunning: number;
   totalPending: number;
   totalCancelled: number;
+
+  // Error count per org slug. Personal/anonymous workflows are bucketed
+  // under ANONYMOUS_ORG_SLUG so the sum across this map matches totalError.
+  errorByOrgSlug: Record<string, number>;
 
   // Duration histogram data (count of executions in each bucket)
   durationBuckets: number[];
@@ -71,6 +80,7 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
       totalRunning: 0,
       totalPending: 0,
       totalCancelled: 0,
+      errorByOrgSlug: {},
       durationBuckets: new Array(WORKFLOW_DURATION_BUCKETS.length + 1).fill(0),
       durationSum: 0,
       durationCount: 0,
@@ -97,6 +107,29 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
           // Ignore unknown status values
           break;
       }
+    }
+
+    // Per-org error breakdown: JOIN workflows + organization, LEFT JOIN so
+    // anonymous workflows still contribute (under ANONYMOUS_ORG_SLUG).
+    // GROUP BY uses the column reference (not the COALESCE expression):
+    // Drizzle would otherwise bind ANONYMOUS_ORG_SLUG as separate parameters
+    // in SELECT and GROUP BY clauses, and Postgres rejects the query because
+    // the two COALESCE expressions are not textually identical. Postgres
+    // groups all NULL slugs into one group (NULLs are equal in GROUP BY),
+    // and the SELECT-side COALESCE renders that group as ANONYMOUS_ORG_SLUG.
+    const errorByOrg = await db
+      .select({
+        orgSlug: sql<string>`COALESCE(${organization.slug}, ${ANONYMOUS_ORG_SLUG})`,
+        count: count(),
+      })
+      .from(workflowExecutions)
+      .innerJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
+      .leftJoin(organization, eq(workflows.organizationId, organization.id))
+      .where(eq(workflowExecutions.status, "error"))
+      .groupBy(organization.slug);
+
+    for (const row of errorByOrg) {
+      stats.errorByOrgSlug[row.orgSlug] = Number(row.count) || 0;
     }
 
     // Query duration histogram data for completed executions
@@ -150,6 +183,7 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
       totalRunning: 0,
       totalPending: 0,
       totalCancelled: 0,
+      errorByOrgSlug: {},
       durationBuckets: new Array(WORKFLOW_DURATION_BUCKETS.length + 1).fill(0),
       durationSum: 0,
       durationCount: 0,
@@ -639,7 +673,16 @@ export type InfraStats = {
   apiKeysTotal: number;
   chainsTotal: number;
   chainsEnabled: number;
+  /**
+   * @deprecated Counts all active org wallets regardless of provider.
+   * Kept for backward compatibility with the `keeperhub_para_wallet_total`
+   * gauge. Use `walletsByProvider` instead.
+   */
   paraWalletsTotal: number;
+  walletsByProvider: {
+    para: number;
+    turnkey: number;
+  };
   sessionsActive: number;
 };
 
@@ -657,6 +700,7 @@ export async function getInfraStatsFromDb(): Promise<InfraStats> {
       chainsResult,
       chainsEnabledResult,
       walletsResult,
+      walletsByProviderResult,
       sessionsResult,
     ] = await Promise.all([
       db.select({ count: count() }).from(apiKeys),
@@ -670,16 +714,29 @@ export async function getInfraStatsFromDb(): Promise<InfraStats> {
         .from(paraWallets)
         .where(eq(paraWallets.isActive, true)),
       db
+        .select({ provider: paraWallets.provider, count: count() })
+        .from(paraWallets)
+        .where(eq(paraWallets.isActive, true))
+        .groupBy(paraWallets.provider),
+      db
         .select({ count: count() })
         .from(sessions)
         .where(gte(sessions.expiresAt, now)),
     ]);
+
+    const walletsByProvider = { para: 0, turnkey: 0 };
+    for (const row of walletsByProviderResult) {
+      if (row.provider === "para" || row.provider === "turnkey") {
+        walletsByProvider[row.provider] = Number(row.count) || 0;
+      }
+    }
 
     return {
       apiKeysTotal: Number(apiKeysResult[0]?.count) || 0,
       chainsTotal: Number(chainsResult[0]?.count) || 0,
       chainsEnabled: Number(chainsEnabledResult[0]?.count) || 0,
       paraWalletsTotal: Number(walletsResult[0]?.count) || 0,
+      walletsByProvider,
       sessionsActive: Number(sessionsResult[0]?.count) || 0,
     };
   } catch (error) {
@@ -689,6 +746,7 @@ export async function getInfraStatsFromDb(): Promise<InfraStats> {
       chainsTotal: 0,
       chainsEnabled: 0,
       paraWalletsTotal: 0,
+      walletsByProvider: { para: 0, turnkey: 0 },
       sessionsActive: 0,
     };
   }

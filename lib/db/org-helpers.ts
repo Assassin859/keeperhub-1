@@ -4,8 +4,8 @@
 import { eq } from "drizzle-orm";
 import { cache } from "react";
 import { db } from "@/lib/db";
-import { organization } from "@/lib/db/schema";
-import { enterWorkflowErrorContext } from "@/lib/workflow-error-context";
+import { organization, organizationSubscriptions } from "@/lib/db/schema";
+import { enterWorkflowErrorContext } from "@/lib/workflow/executor/error-context";
 
 /**
  * Resolve an organization's slug by id. Cached per request via React `cache()`
@@ -32,10 +32,34 @@ export const getOrgSlug = cache(
 );
 
 /**
+ * Resolve an organization's plan by id. Cached per request. Returns "free"
+ * when the org has no subscription row, undefined when the lookup fails or
+ * orgId is missing. Used as a low-cardinality label on error metrics so
+ * alerts can filter to managed clients.
+ */
+export const getOrgPlanLabel = cache(
+  async (orgId: string | null | undefined): Promise<string | undefined> => {
+    if (!orgId) {
+      return undefined;
+    }
+    try {
+      const rows = await db
+        .select({ plan: organizationSubscriptions.plan })
+        .from(organizationSubscriptions)
+        .where(eq(organizationSubscriptions.organizationId, orgId))
+        .limit(1);
+      return rows[0]?.plan ?? "free";
+    } catch {
+      return undefined;
+    }
+  }
+);
+
+/**
  * Convenience for direct-execute API routes (e.g.
  * /api/execute/check-and-execute) that bypass the workflow executor and
- * therefore don't get its ALS scope. Resolves the org slug and enters the
- * workflow error context for the rest of the request.
+ * therefore don't get its ALS scope. Resolves the org slug and plan and
+ * enters the workflow error context for the rest of the request.
  */
 export async function enterApiExecuteErrorContext(
   organizationId: string | null | undefined
@@ -43,9 +67,13 @@ export async function enterApiExecuteErrorContext(
   if (!organizationId) {
     return;
   }
-  const slug = await getOrgSlug(organizationId);
+  const [slug, plan] = await Promise.all([
+    getOrgSlug(organizationId),
+    getOrgPlanLabel(organizationId),
+  ]);
   enterWorkflowErrorContext({
     org_id: organizationId,
     org_slug: slug,
+    plan,
   });
 }

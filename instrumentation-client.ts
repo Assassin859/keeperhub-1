@@ -3,6 +3,11 @@
 // https://docs.sentry.io/platforms/javascript/guides/nextjs/
 
 import { captureRouterTransitionStart, init } from "@sentry/nextjs";
+import {
+  hasNoInAppFrames,
+  isEip1193ProviderRejection,
+  isMonacoCancellation,
+} from "@/lib/sentry-filters";
 
 const SENTRY_DSN = process.env.NEXT_PUBLIC_SENTRY_DSN || process.env.SENTRY_DSN;
 const SENTRY_ENVIRONMENT = process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT;
@@ -22,6 +27,19 @@ if (SENTRY_DSN) {
     // Enable sending user PII (Personally Identifiable Information)
     // https://docs.sentry.io/platforms/javascript/guides/nextjs/configuration/options/#sendDefaultPii
     sendDefaultPii: true,
+
+    beforeSend(event) {
+      if (isEip1193ProviderRejection(event)) {
+        return null;
+      }
+      if (hasNoInAppFrames(event)) {
+        return null;
+      }
+      if (isMonacoCancellation(event)) {
+        return null;
+      }
+      return event;
+    },
   });
 }
 

@@ -1,5 +1,14 @@
 import type { IntegrationType } from "@/lib/types/integration";
 import { LEGACY_ACTION_MAPPINGS } from "./legacy-mappings";
+import { integrationRegistry, registerIntegration } from "./registry-core";
+
+// Side-effect import: forces every plugin's index.ts to evaluate (and call
+// registerIntegration) before any reader of this module runs. The Map and
+// register function live in registry-core to avoid a TDZ during the
+// circular load (registry → @/plugins → plugins/* → registry-core).
+import "@/plugins";
+
+export { registerIntegration };
 
 /**
  * Select Option
@@ -291,34 +300,6 @@ export type ActionWithFullId = PluginAction & {
 };
 
 /**
- * Integration Registry
- * Auto-populated by plugin files
- */
-const integrationRegistry = new Map<IntegrationType, IntegrationPlugin>();
-
-/**
- * Ensures all plugins have registered themselves.
- * Uses require() to avoid ESM hoisting, which would cause a TDZ error
- * on integrationRegistry during circular module resolution.
- * Guarded to run only once — subsequent calls are no-ops.
- * Falls back gracefully when require() cannot resolve the module
- * (e.g. in Vitest where @/ aliases and .ts files are not resolved
- * by Node's native require). In test environments, plugins should be
- * loaded via the test setup file instead.
- */
-let _pluginsLoaded = false;
-function ensurePluginsLoaded(): void {
-  if (_pluginsLoaded || integrationRegistry.size > 0) return;
-  _pluginsLoaded = true;
-  try {
-    require("@/plugins");
-  } catch {
-    // In Vitest, Node's require() can't resolve TypeScript path aliases.
-    // Plugins must be loaded via tests/setup.ts instead.
-  }
-}
-
-/**
  * Compute full action ID from integration type and action slug
  */
 export function computeActionId(
@@ -346,19 +327,11 @@ export function parseActionId(actionId: string | undefined | null): {
 }
 
 /**
- * Register an integration plugin
- */
-export function registerIntegration(plugin: IntegrationPlugin) {
-  integrationRegistry.set(plugin.type, plugin);
-}
-
-/**
  * Get an integration plugin
  */
 export function getIntegration(
   type: IntegrationType
 ): IntegrationPlugin | undefined {
-  ensurePluginsLoaded();
   return integrationRegistry.get(type);
 }
 
@@ -366,7 +339,6 @@ export function getIntegration(
  * Get all registered integrations
  */
 export function getAllIntegrations(): IntegrationPlugin[] {
-  ensurePluginsLoaded();
   return Array.from(integrationRegistry.values());
 }
 
@@ -374,7 +346,6 @@ export function getAllIntegrations(): IntegrationPlugin[] {
  * Get all integration types
  */
 export function getIntegrationTypes(): IntegrationType[] {
-  ensurePluginsLoaded();
   return Array.from(integrationRegistry.keys());
 }
 
@@ -382,7 +353,6 @@ export function getIntegrationTypes(): IntegrationType[] {
  * Get all actions across all integrations with full IDs
  */
 export function getAllActions(): ActionWithFullId[] {
-  ensurePluginsLoaded();
   const actions: ActionWithFullId[] = [];
 
   for (const plugin of integrationRegistry.values()) {
@@ -402,7 +372,6 @@ export function getAllActions(): ActionWithFullId[] {
  * Get actions by category
  */
 export function getActionsByCategory(): Record<string, ActionWithFullId[]> {
-  ensurePluginsLoaded();
   const categories: Record<string, ActionWithFullId[]> = {};
 
   for (const plugin of integrationRegistry.values()) {
@@ -428,7 +397,6 @@ export function getActionsByCategory(): Record<string, ActionWithFullId[]> {
 export function findActionById(
   actionId: string | undefined | null
 ): ActionWithFullId | undefined {
-  ensurePluginsLoaded();
   if (!actionId) {
     return undefined;
   }
@@ -475,7 +443,6 @@ export function findActionById(
  * Get integration labels map
  */
 export function getIntegrationLabels(): Record<IntegrationType, string> {
-  ensurePluginsLoaded();
   const labels: Record<string, string> = {};
   for (const plugin of integrationRegistry.values()) {
     labels[plugin.type] = plugin.label;
@@ -487,7 +454,6 @@ export function getIntegrationLabels(): Record<IntegrationType, string> {
  * Get integration descriptions map
  */
 export function getIntegrationDescriptions(): Record<IntegrationType, string> {
-  ensurePluginsLoaded();
   const descriptions: Record<string, string> = {};
   for (const plugin of integrationRegistry.values()) {
     descriptions[plugin.type] = plugin.description;
@@ -499,7 +465,6 @@ export function getIntegrationDescriptions(): Record<IntegrationType, string> {
  * Get sorted integration types for dropdowns
  */
 export function getSortedIntegrationTypes(): IntegrationType[] {
-  ensurePluginsLoaded();
   return Array.from(integrationRegistry.keys()).sort();
 }
 
@@ -507,7 +472,6 @@ export function getSortedIntegrationTypes(): IntegrationType[] {
  * Get all NPM dependencies across all integrations
  */
 export function getAllDependencies(): Record<string, string> {
-  ensurePluginsLoaded();
   const deps: Record<string, string> = {};
 
   for (const plugin of integrationRegistry.values()) {
@@ -517,70 +481,6 @@ export function getAllDependencies(): Record<string, string> {
   }
 
   return deps;
-}
-
-/**
- * Get NPM dependencies for specific action IDs
- */
-export function getDependenciesForActions(
-  actionIds: string[]
-): Record<string, string> {
-  ensurePluginsLoaded();
-  const deps: Record<string, string> = {};
-  const integrations = new Set<IntegrationType>();
-
-  // Find which integrations are used
-  for (const actionId of actionIds) {
-    const action = findActionById(actionId);
-    if (action) {
-      integrations.add(action.integration);
-    }
-  }
-
-  // Get dependencies for those integrations
-  for (const integrationType of integrations) {
-    const plugin = integrationRegistry.get(integrationType);
-    if (plugin?.dependencies) {
-      Object.assign(deps, plugin.dependencies);
-    }
-  }
-
-  return deps;
-}
-
-/**
- * Get environment variables for a single plugin (from formFields)
- */
-export function getPluginEnvVars(
-  plugin: IntegrationPlugin
-): Array<{ name: string; description: string }> {
-  const envVars: Array<{ name: string; description: string }> = [];
-
-  // Get env vars from form fields
-  for (const field of plugin.formFields) {
-    if (field.envVar) {
-      envVars.push({
-        name: field.envVar,
-        description: field.helpText || field.label,
-      });
-    }
-  }
-
-  return envVars;
-}
-
-/**
- * Get all environment variables across all integrations
- */
-export function getAllEnvVars(): Array<{ name: string; description: string }> {
-  ensurePluginsLoaded();
-  const envVars: Array<{ name: string; description: string }> = [];
-
-  for (const plugin of integrationRegistry.values()) {
-    envVars.push(...getPluginEnvVars(plugin));
-  }
-
-  return envVars;
 }
 
 /**
@@ -635,7 +535,6 @@ export function flattenConfigFields(
  * This dynamically builds the action types documentation for the AI
  */
 export function generateAIActionPrompts(): string {
-  ensurePluginsLoaded();
   const lines: string[] = [];
 
   for (const plugin of integrationRegistry.values()) {

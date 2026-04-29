@@ -1,16 +1,11 @@
 /**
  * E2E Tests for Nonce Manager
  *
- * These tests verify the full nonce management flow including:
- * - Lock acquisition and release with real PostgreSQL advisory locks
- * - Session management with database state
- * - Transaction recording and status updates
- * - Validation and reconciliation of pending transactions
- * - Concurrent access handling
+ * Verifies the row-based TTL lock against a real PostgreSQL.
  *
  * Prerequisites:
  * - Database running with nonce manager tables
- * - Run: pnpm db:push
+ * - Run: pnpm db:migrate
  */
 
 import { and, eq } from "drizzle-orm";
@@ -625,19 +620,19 @@ describe.skipIf(shouldSkip)("Nonce Manager E2E", () => {
     });
   });
 
-  describe("Stale Lock Detection", () => {
-    it("should release stale locks and allow new session", async () => {
-      // Manually insert a stale lock (2 minutes old)
+  describe("Expired Lock Takeover", () => {
+    it("should take over an expired lock and allow new session", async () => {
+      // Insert a lock whose expires_at is in the past — any caller can take it.
       await db.insert(walletLocks).values({
         walletAddress: TEST_WALLET_NORMALIZED,
         chainId: TEST_CHAIN_ID,
         lockedBy: "stale_execution",
-        lockedAt: new Date(Date.now() - 120_000), // 2 minutes ago
+        lockedAt: new Date(Date.now() - 120_000),
+        expiresAt: new Date(Date.now() - 60_000),
       });
 
-      // New manager with 60s timeout should detect and release stale lock
       const manager = new NonceManager({
-        lockTimeoutMs: 60_000, // 60 second timeout
+        lockTtlMs: 60_000,
         maxLockRetries: 3,
         lockRetryDelayMs: 100,
       });
@@ -670,66 +665,34 @@ describe.skipIf(shouldSkip)("Nonce Manager E2E", () => {
     }, 15_000);
   });
 
-  describe("Dedicated Connection Lock Cleanup", () => {
-    it("should release advisory lock when dedicated connection is closed (crash simulation)", async () => {
-      const manager1 = new NonceManager();
-      const provider = createMockProvider(5);
-
-      // Start first session
-      const { session: session1 } = await manager1.startSession(
-        TEST_WALLET,
-        TEST_CHAIN_ID,
-        `${testExecutionId}_crash`,
-        provider as any
-      );
-
-      // Verify lock is held
-      const locksBefore = await db
-        .select()
-        .from(walletLocks)
-        .where(
-          and(
-            eq(walletLocks.walletAddress, TEST_WALLET_NORMALIZED),
-            eq(walletLocks.chainId, TEST_CHAIN_ID)
-          )
-        );
-      expect(locksBefore[0]?.lockedBy).toBe(`${testExecutionId}_crash`);
-
-      // Simulate crash: close the dedicated connection directly without calling endSession
-      // This simulates what happens when a process crashes - the connection dies
-      if (session1._lockConnection) {
-        await session1._lockConnection.end();
-        session1._lockConnection = undefined;
-      }
-
-      // Clear the lock metadata (simulating what would happen after stale detection)
-      await db
-        .update(walletLocks)
-        .set({ lockedBy: null, lockedAt: null })
-        .where(
-          and(
-            eq(walletLocks.walletAddress, TEST_WALLET_NORMALIZED),
-            eq(walletLocks.chainId, TEST_CHAIN_ID)
-          )
-        );
-
-      // Now a new session should be able to acquire the lock immediately
-      const manager2 = new NonceManager({
-        maxLockRetries: 3, // Low retries since it should work immediately
-        lockRetryDelayMs: 50,
+  describe("TTL-based Lock Recovery", () => {
+    it("recovers a wedged lock once expires_at passes (no live holder needed)", async () => {
+      // Simulate a crashed holder: row exists with locked_by set but
+      // expires_at already in the past. With the old advisory-lock model
+      // this could only be cleared by closing the holder's connection.
+      await db.insert(walletLocks).values({
+        walletAddress: TEST_WALLET_NORMALIZED,
+        chainId: TEST_CHAIN_ID,
+        lockedBy: `${testExecutionId}_crash`,
+        lockedAt: new Date(Date.now() - 10_000),
+        expiresAt: new Date(Date.now() - 1000),
       });
 
-      const { session: session2 } = await manager2.startSession(
+      const manager = new NonceManager({
+        maxLockRetries: 3,
+        lockRetryDelayMs: 50,
+      });
+      const provider = createMockProvider(5);
+
+      const { session } = await manager.startSession(
         TEST_WALLET,
         TEST_CHAIN_ID,
         `${testExecutionId}_recovery`,
         provider as any
       );
 
-      // Should have acquired lock successfully
-      expect(session2.executionId).toBe(`${testExecutionId}_recovery`);
+      expect(session.executionId).toBe(`${testExecutionId}_recovery`);
 
-      // Verify new lock holder in database
       const locksAfter = await db
         .select()
         .from(walletLocks)
@@ -741,10 +704,10 @@ describe.skipIf(shouldSkip)("Nonce Manager E2E", () => {
         );
       expect(locksAfter[0]?.lockedBy).toBe(`${testExecutionId}_recovery`);
 
-      await manager2.endSession(session2);
+      await manager.endSession(session);
     }, 15_000);
 
-    it("should block concurrent sessions on same wallet/chain until lock is released", async () => {
+    it("blocks concurrent sessions on the same wallet+chain until release", async () => {
       const manager1 = new NonceManager();
       const manager2 = new NonceManager({
         maxLockRetries: 5,
@@ -752,7 +715,6 @@ describe.skipIf(shouldSkip)("Nonce Manager E2E", () => {
       });
       const provider = createMockProvider(5);
 
-      // Start first session
       const { session: session1 } = await manager1.startSession(
         TEST_WALLET,
         TEST_CHAIN_ID,
@@ -760,7 +722,6 @@ describe.skipIf(shouldSkip)("Nonce Manager E2E", () => {
         provider as any
       );
 
-      // Try to start second session - should block until first releases
       const session2Promise = manager2.startSession(
         TEST_WALLET,
         TEST_CHAIN_ID,
@@ -768,29 +729,24 @@ describe.skipIf(shouldSkip)("Nonce Manager E2E", () => {
         provider as any
       );
 
-      // Wait a bit to let second session start retrying
       await new Promise((resolve) => setTimeout(resolve, 200));
-
-      // Release first session
       await manager1.endSession(session1);
 
-      // Second session should now succeed
       const { session: session2 } = await session2Promise;
       expect(session2.executionId).toBe(`${testExecutionId}_waiter`);
 
       await manager2.endSession(session2);
     }, 15_000);
 
-    it("should fail to acquire lock if holder never releases within timeout", async () => {
+    it("fails to acquire if holder never releases and TTL has not expired", async () => {
       const manager1 = new NonceManager();
       const manager2 = new NonceManager({
-        maxLockRetries: 3, // Very low
+        maxLockRetries: 3,
         lockRetryDelayMs: 50,
-        lockTimeoutMs: 60_000, // But timeout is 60s, so stale detection won't help
+        lockTtlMs: 60_000,
       });
       const provider = createMockProvider(5);
 
-      // Start first session and hold the lock
       const { session: session1 } = await manager1.startSession(
         TEST_WALLET,
         TEST_CHAIN_ID,
@@ -798,7 +754,6 @@ describe.skipIf(shouldSkip)("Nonce Manager E2E", () => {
         provider as any
       );
 
-      // Second session should fail after retries (lock is not stale)
       await expect(
         manager2.startSession(
           TEST_WALLET,
@@ -808,29 +763,7 @@ describe.skipIf(shouldSkip)("Nonce Manager E2E", () => {
         )
       ).rejects.toThrow(FAILED_LOCK_REGEX);
 
-      // Cleanup
       await manager1.endSession(session1);
     }, 15_000);
-
-    it("should have _lockConnection on session object", async () => {
-      const manager = new NonceManager();
-      const provider = createMockProvider(5);
-
-      const { session } = await manager.startSession(
-        TEST_WALLET,
-        TEST_CHAIN_ID,
-        testExecutionId,
-        provider as any
-      );
-
-      // Session should have a dedicated lock connection
-      expect(session._lockConnection).toBeDefined();
-      expect(typeof session._lockConnection?.end).toBe("function");
-
-      await manager.endSession(session);
-
-      // After ending, _lockConnection should be undefined
-      expect(session._lockConnection).toBeUndefined();
-    });
   });
 });

@@ -28,7 +28,7 @@ export type BuildWithdrawableAssetsInput = {
   tokens: TokenData[];
 };
 
-const TEMPO_CHAIN_IDS: ReadonlySet<number> = new Set([42_429, 4217]);
+const TEMPO_CHAIN_IDS: ReadonlySet<number> = new Set([42_431, 4217]);
 const DEFAULT_STABLECOIN_DECIMALS = 6;
 
 function hasPositiveBalance(raw: string): boolean {

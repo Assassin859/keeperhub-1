@@ -8,7 +8,10 @@
     "dev": "tsx watch src/index.ts",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
-    "lint:fix": "biome check --write ."
+    "lint:fix": "biome check --write .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "vitest run"
   },
   "dependencies": {
     "@aws-sdk/client-sqs": "^3.1005.0",
@@ -16,10 +19,14 @@
     "ethers": "^6.13.4",
     "ioredis": "^5.4.2",
     "tsx": "^4.0.0",
-    "uuid": "^11.0.4"
+    "uuid": "^14.0.0"
   },
   "devDependencies": {
     "@types/deep-diff": "^1.0.5",
-    "@types/uuid": "^10.0.0"
+    "@types/node": "^24.12.2",
+    "@types/uuid": "^10.0.0",
+    "solc": "^0.8.29",
+    "vite": "^8.0.9",
+    "vitest": "4.1.2"
   }
 }

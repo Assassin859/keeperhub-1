@@ -22,7 +22,7 @@ import {
   validateDatabaseConfig,
   type DatabaseTab,
 } from "@/components/database-connection-form";
-import { getCustomIntegrationFormHandler } from "@/lib/extension-registry";
+import { getCustomIntegrationFormHandler } from "@/lib/workflow/editor/extension-registry";
 import { integrationsAtom } from "@/lib/integrations-store";
 import type { IntegrationType } from "@/lib/types/integration";
 import {

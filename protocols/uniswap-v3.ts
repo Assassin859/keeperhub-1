@@ -4,7 +4,7 @@ import positionManagerAbi from "./abis/uniswap-position-manager.json";
 import quoterAbi from "./abis/uniswap-quoter.json";
 import swapRouterAbi from "./abis/uniswap-swap-router.json";
 
-const UNISWAP_DOCS = "https://docs.uniswap.org/contracts/v3/reference";
+const UNISWAP_DOCS = "https://developers.uniswap.org/docs/protocols/v3/overview";
 
 const FEE_TIER_TIP =
   "Pool fee tier in hundredths of a basis point. Common values: 100 (0.01% - stablecoin pairs), 500 (0.05% - correlated pairs), 3000 (0.3% - most pairs), 10000 (1% - exotic pairs).";

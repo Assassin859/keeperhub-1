@@ -4,24 +4,25 @@ import { start } from "workflow/api";
 import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { db } from "@/lib/db";
+import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
 import { tags, workflowExecutions, workflows } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
-import { hashMppCredential } from "@/lib/mpp/server";
+import { hashMppCredential } from "@/lib/payments/mpp/server";
 import {
   detectProtocol,
   gatePayment,
   type PaymentMeta,
 } from "@/lib/payments/router";
-import { executeWorkflow } from "@/lib/workflow-executor.workflow";
-import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow-store";
-import { buildCallCompletionResponse } from "@/lib/x402/execution-wait";
+import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
+import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
+import { buildCallCompletionResponse } from "@/lib/payments/x402/execution-wait";
 import {
   hashPaymentSignature,
   recordPayment,
   resolveCreatorWallet,
-} from "@/lib/x402/payment-gate";
-import { CALL_ROUTE_COLUMNS, type CallRouteWorkflow } from "@/lib/x402/types";
+} from "@/lib/payments/x402/payment-gate";
+import { CALL_ROUTE_COLUMNS, type CallRouteWorkflow } from "@/lib/payments/x402/types";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -122,11 +123,15 @@ async function prepareExecution(
  * Fire-and-forget: kicks off the workflow in the background. The HTTP response
  * is returned to the caller immediately while the workflow runs.
  */
-function startExecutionInBackground(
+async function startExecutionInBackground(
   workflow: CallRouteWorkflow,
   body: Record<string, unknown>,
   executionId: string
-): void {
+): Promise<void> {
+  const [organizationSlug, organizationPlan] = await Promise.all([
+    getOrgSlug(workflow.organizationId),
+    getOrgPlanLabel(workflow.organizationId),
+  ]);
   start(executeWorkflow, [
     {
       nodes: workflow.nodes as WorkflowNode[],
@@ -135,6 +140,8 @@ function startExecutionInBackground(
       executionId,
       workflowId: workflow.id,
       organizationId: workflow.organizationId ?? undefined,
+      organizationSlug,
+      organizationPlan,
     },
   ]).catch((err: unknown) => {
     logSystemError(
@@ -159,7 +166,7 @@ async function createAndStartExecution(
   if ("error" in prepared) {
     return prepared.error;
   }
-  startExecutionInBackground(workflow, body, prepared.executionId);
+  await startExecutionInBackground(workflow, body, prepared.executionId);
   const responseBody = await buildCallCompletionResponse(
     prepared.executionId,
     workflow.outputMapping
@@ -335,7 +342,7 @@ async function handlePaidWorkflow(
           throw err;
         }
 
-        startExecutionInBackground(workflow, body, executionId);
+        await startExecutionInBackground(workflow, body, executionId);
 
         const responseBody = await buildCallCompletionResponse(
           executionId,

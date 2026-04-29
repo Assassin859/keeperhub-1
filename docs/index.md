@@ -1,11 +1,11 @@
 ---
 title: "Overview"
-description: "KeeperHub is a no-code blockchain automation platform. Build workflows that automate onchain operations without writing code."
+description: "KeeperHub is the execution and reliability layer for AI agents operating onchain."
 ---
 
 # Overview
 
-KeeperHub is the reliable execution layer for DeFi security and AI agents. Build visual workflows that monitor onchain state, execute transactions, and send notifications -- without writing code or managing infrastructure. Works with Ethereum, Base, Arbitrum, Polygon, and other EVM-compatible chains.
+KeeperHub is the execution and reliability layer for AI agents operating onchain. Build visual workflows that monitor onchain state, execute transactions, and send notifications -- without writing code or managing infrastructure. Works with Ethereum, Base, Arbitrum, Polygon, and other EVM-compatible chains.
 
 Whether you are a protocol team automating treasury operations, a security team responding to threats, or an AI agent executing onchain actions, KeeperHub handles gas estimation, transaction ordering, retries, and wallet security so you can focus on what to automate, not how to keep it running.
 
@@ -62,9 +62,9 @@ When a step fails, KeeperHub retries with configurable behavior. Failed runs are
 
 KeeperHub operates on Ethereum, Base, Arbitrum, Polygon, Sepolia, and additional EVM-compatible networks. Chain-specific gas defaults are applied automatically based on network conditions and trigger type. See [Gas Management](/wallet-management/gas) for details.
 
-### Para MPC Wallets
+### Turnkey Wallets
 
-Every account includes a Para wallet secured with multi-party computation. Private keys are split between you and Para -- neither party can sign alone. During workflow execution, the signing flow is automated: KeeperHub coordinates with Para to produce a valid signature without exposing the full key to either side. Write operations (transfers, contract calls) execute through this wallet. Read-only actions do not require a wallet. See [Para Integration](/wallet-management/para) for the full security and trust model.
+Every account is secured with a Turnkey wallet using hardware-backed key storage. Private keys are generated and stored inside secure enclaves and never leave the hardware boundary. Write operations (transfers, contract calls) execute through this wallet. Read-only actions do not require a wallet. See [Turnkey Integration](/wallet-management/turnkey) for the full security and trust model.
 
 ### AI-Assisted Workflow Generation
 
@@ -80,13 +80,13 @@ KeeperHub provides an MCP server that exposes workflow creation and execution as
 
 ## Infrastructure
 
-KeeperHub runs your workflows on managed infrastructure with automatic gas estimation, nonce management, and transaction ordering. Whether triggered by a human, a schedule, or an AI agent, every execution gets the same reliability guarantees. For technical details, see [Gas Management](/wallet-management/gas) and [Para Integration](/wallet-management/para).
+KeeperHub runs your workflows on managed infrastructure with automatic gas estimation, nonce management, and transaction ordering. Whether triggered by a human, a schedule, or an AI agent, every execution gets the same reliability guarantees. For technical details, see [Gas Management](/wallet-management/gas) and [Turnkey Integration](/wallet-management/turnkey).
 
 ## Getting Started
 
 The fastest path to your first automation:
 
-1. **Create an account** at app.keeperhub.com -- a Para wallet is provisioned automatically
+1. **Create an account** at app.keeperhub.com -- a Turnkey wallet is provisioned automatically
 2. **Fund your wallet** with ETH on your target network. Start on Sepolia (a free test network) to experiment without real funds
 3. **Build a workflow** using the visual builder or the AI assistant
 4. **Test with a manual trigger** before switching to an automated schedule

@@ -13,15 +13,18 @@ variable "NEXT_PUBLIC_AUTH_PROVIDERS" { default = "" }
 variable "NEXT_PUBLIC_GITHUB_CLIENT_ID" { default = "" }
 variable "NEXT_PUBLIC_GOOGLE_CLIENT_ID" { default = "" }
 variable "NEXT_PUBLIC_BILLING_ENABLED" { default = "" }
+variable "NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED" { default = "" }
 variable "ENVIRONMENT_TAG" { default = "" }
 variable "NEXT_PUBLIC_SENTRY_DSN" { default = "" }
 variable "SENTRY_ORG" { default = "" }
 variable "SENTRY_PROJECT" { default = "" }
 variable "SENTRY_AUTH_TOKEN" { default = "" }
 variable "SENTRY_RELEASE" { default = "" }
+variable "INCLUDE_TEST_ENDPOINTS" { default = "" }
 variable "EVENTS_ECR_TRACKER_REPO" { default = "" }
 variable "SCHEDULER_ECR_REPO" { default = "" }
 variable "EXECUTOR_ECR_REPO" { default = "" }
+variable "SANDBOX_ECR_REPO" { default = "" }
 
 group "default" {
   targets = ["app", "migrator", "workflow-runner"]
@@ -35,8 +38,12 @@ group "scheduler" {
   targets = ["schedule-dispatcher", "block-dispatcher"]
 }
 
+group "sandbox" {
+  targets = ["sandbox"]
+}
+
 group "all" {
-  targets = ["app", "migrator", "workflow-runner", "event-tracker", "schedule-dispatcher", "block-dispatcher", "executor"]
+  targets = ["app", "migrator", "workflow-runner", "event-tracker", "schedule-dispatcher", "block-dispatcher", "executor", "sandbox"]
 }
 
 target "app" {
@@ -48,7 +55,9 @@ target "app" {
     NEXT_PUBLIC_GITHUB_CLIENT_ID = NEXT_PUBLIC_GITHUB_CLIENT_ID
     NEXT_PUBLIC_GOOGLE_CLIENT_ID = NEXT_PUBLIC_GOOGLE_CLIENT_ID
     NEXT_PUBLIC_BILLING_ENABLED  = NEXT_PUBLIC_BILLING_ENABLED
+    NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED = NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED
     NEXT_PUBLIC_SENTRY_DSN       = NEXT_PUBLIC_SENTRY_DSN
+    INCLUDE_TEST_ENDPOINTS       = INCLUDE_TEST_ENDPOINTS
   }
   tags = ECR_REGISTRY != "" ? compact([
     "${ECR_REGISTRY}/${ECR_REPO}:app-${IMAGE_TAG}",
@@ -70,7 +79,9 @@ target "sentry-upload" {
     NEXT_PUBLIC_GITHUB_CLIENT_ID = NEXT_PUBLIC_GITHUB_CLIENT_ID
     NEXT_PUBLIC_GOOGLE_CLIENT_ID = NEXT_PUBLIC_GOOGLE_CLIENT_ID
     NEXT_PUBLIC_BILLING_ENABLED  = NEXT_PUBLIC_BILLING_ENABLED
+    NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED = NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED
     NEXT_PUBLIC_SENTRY_DSN       = NEXT_PUBLIC_SENTRY_DSN
+    INCLUDE_TEST_ENDPOINTS       = INCLUDE_TEST_ENDPOINTS
     SENTRY_ORG                   = SENTRY_ORG
     SENTRY_PROJECT               = SENTRY_PROJECT
     SENTRY_AUTH_TOKEN            = SENTRY_AUTH_TOKEN
@@ -170,5 +181,22 @@ target "executor" {
   ])
   cache-from = ["type=registry,ref=${ECR_REGISTRY}/${EXECUTOR_ECR_REPO}:cache"]
   cache-to   = ["type=registry,ref=${ECR_REGISTRY}/${EXECUTOR_ECR_REPO}:cache,mode=max"]
+  attest     = []
+}
+
+# v1.9 Code Sandbox standalone HTTP service. Runs user-supplied JS in a
+# scrubbed child_process inside a dedicated Pod so main-pod secrets stay
+# unreachable even on sandbox escape. Context is repo root because the
+# Dockerfile needs pnpm-workspace.yaml and pnpm-lock.yaml from root.
+target "sandbox" {
+  context    = "."
+  dockerfile = "sandbox/Dockerfile"
+  tags = compact([
+    "${ECR_REGISTRY}/${SANDBOX_ECR_REPO}:sandbox-${IMAGE_TAG}",
+    "${ECR_REGISTRY}/${SANDBOX_ECR_REPO}:sandbox-latest",
+    ENVIRONMENT_TAG != "" ? "${ECR_REGISTRY}/${SANDBOX_ECR_REPO}:${ENVIRONMENT_TAG}" : "",
+  ])
+  cache-from = ["type=registry,ref=${ECR_REGISTRY}/${SANDBOX_ECR_REPO}:cache"]
+  cache-to   = ["type=registry,ref=${ECR_REGISTRY}/${SANDBOX_ECR_REPO}:cache,mode=max"]
   attest     = []
 }

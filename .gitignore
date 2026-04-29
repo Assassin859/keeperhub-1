@@ -101,10 +101,12 @@ docker-compose.override.yml
 
 # generated files
 lib/types/integration.ts
-lib/codegen-registry.ts
+lib/workflow/codegen/registry.ts
 lib/step-registry.ts
 lib/output-display-configs.ts
 public/.well-known/
+lib/credential-map.ts
+public/monaco/
 
 # local kubernetes generated values (from templates)
 deploy/local/values-keeperhub.yaml
@@ -121,6 +123,9 @@ tailwindcss-*.log
 
 # Subdirectory node_modules
 */node_modules/*
+
+# pnpm workspace package build outputs
+packages/*/dist/
 
 # Worktrees (local only)
 .worktrees/

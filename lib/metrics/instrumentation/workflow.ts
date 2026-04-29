@@ -8,6 +8,26 @@ import { createTimer, getMetricsCollector } from "../index";
 import { LabelKeys, MetricNames, type TriggerType } from "../types";
 
 /**
+ * Error message prefixes that indicate a user-config failure (bad URL,
+ * missing template variable, etc.) rather than a system fault. These
+ * route through `recordWarning` so they don't fire system-error alerts.
+ *
+ * Match against the message's `HTTP request failed: ` step wrapper too,
+ * since that's how http-request.ts surfaces safeFetch throws.
+ */
+const USER_CONFIG_ERROR_PATTERNS: readonly RegExp[] = [
+  /safe-fetch: invalid URL/i,
+  /safe-fetch: scheme .* not allowed/i,
+  /blocked by SSRF policy/i,
+  /URL is required/i,
+  /Missing template variable/i,
+];
+
+function isUserConfigError(message: string): boolean {
+  return USER_CONFIG_ERROR_PATTERNS.some((p) => p.test(message));
+}
+
+/**
  * Record workflow execution start and return a timer function
  */
 export function startWorkflowMetrics(options: {
@@ -81,11 +101,19 @@ export function recordWorkflowComplete(options: {
         ? { message: options.error }
         : options.error;
 
-    metrics.recordError(
-      MetricNames.WORKFLOW_EXECUTION_ERRORS,
-      errorObj,
-      labels
-    );
+    if (isUserConfigError(errorObj.message)) {
+      metrics.recordWarning(
+        MetricNames.WORKFLOW_EXECUTION_ERRORS,
+        errorObj,
+        labels
+      );
+    } else {
+      metrics.recordError(
+        MetricNames.WORKFLOW_EXECUTION_ERRORS,
+        errorObj,
+        labels
+      );
+    }
   }
 }
 

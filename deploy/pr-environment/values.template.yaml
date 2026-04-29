@@ -1,5 +1,6 @@
 # Helm values template for PR environments
-# Variables to be replaced: ${PR_NUMBER}, ${ECR_REGISTRY}, ${IMAGE_TAG}, ${DB_PASSWORD}
+# Variables to be replaced: ${PR_NUMBER}, ${ECR_REGISTRY}, ${IMAGE_TAG}, ${ENCODED_DB_PASSWORD}
+# ENCODED_DB_PASSWORD is the percent-encoded form of DB_PASSWORD, computed at CI time.
 
 shared_env: &shared_env
   NODE_EXTRA_CA_CERTS:
@@ -7,10 +8,10 @@ shared_env: &shared_env
     value: "/etc/ssl/certs/rds-combined-ca-bundle.pem"
   DATABASE_URL:
     type: kv
-    value: "postgresql://keeperhub:${DB_PASSWORD}@keeperhub-pr-${PR_NUMBER}-db-rw.pr-${PR_NUMBER}.svc.cluster.local:5432/keeperhub"
+    value: "postgresql://keeperhub:${ENCODED_DB_PASSWORD}@keeperhub-pr-${PR_NUMBER}-db-rw.pr-${PR_NUMBER}.svc.cluster.local:5432/keeperhub"
   WORKFLOW_POSTGRES_URL:
     type: kv
-    value: "postgresql://keeperhub:${DB_PASSWORD}@keeperhub-pr-${PR_NUMBER}-db-rw.pr-${PR_NUMBER}.svc.cluster.local:5432/keeperhub"
+    value: "postgresql://keeperhub:${ENCODED_DB_PASSWORD}@keeperhub-pr-${PR_NUMBER}-db-rw.pr-${PR_NUMBER}.svc.cluster.local:5432/keeperhub"
   CHAIN_RPC_CONFIG:
     type: parameterStore
     name: chain-rpc-config
@@ -60,7 +61,6 @@ deployment:
         - |
           set -e
           echo "Setting up workflow postgres tables..."
-          export WORKFLOW_POSTGRES_URL=$(tsx scripts/encode-pg-url.ts)
           pnpm exec workflow-postgres-setup
           echo "Running database migrations..."
           pnpm db:migrate
@@ -198,6 +198,10 @@ env:
     type: parameterStore
     name: oauth-jwt-secret
     parameter_name: /eks/techops-staging/keeperhub/oauth-jwt-secret
+  MCP_SESSION_SECRET:
+    type: parameterStore
+    name: mcp-session-secret
+    parameter_name: /eks/techops-staging/keeperhub/mcp-session-secret
   OPENAI_API_KEY:
     type: parameterStore
     name: openai-api-key
@@ -269,6 +273,9 @@ env:
     parameter_name: /eks/techops-staging/keeperhub-feedback/feedback-api-key
   # Billing (Stripe)
   NEXT_PUBLIC_BILLING_ENABLED:
+    type: kv
+    value: "true"
+  NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED:
     type: kv
     value: "true"
   STRIPE_SECRET_KEY:

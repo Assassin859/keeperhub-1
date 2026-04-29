@@ -25,11 +25,33 @@ const NO_BLOCK_TIMEOUT_MS = 5 * 60_000; // 5 minutes
 const STALE_BLOCK_THRESHOLD_S = 120; // warn if block timestamp >2 min behind
 const HEARTBEAT_INTERVAL_MS = 60_000;
 const MAX_BACKFILL_BLOCKS = 100;
+const PRIMARY_PROBE_TIMEOUT_MS = 5_000;
+// Overridable via env so dev/tests don't wait 5 minutes. Read on each
+// startPrimaryProbe() call so the override applies even when set after
+// module load (e.g. inside a test setup).
+function getPrimaryProbeIntervalMs(): number {
+  return Number(process.env.PRIMARY_PROBE_INTERVAL_MS) || 5 * 60_000;
+}
 
 type ChainMonitorConfig = {
   chain: ChainConfig;
   workflows: BlockWorkflow[];
 };
+
+// Reduces a probe-failure error to a single short tag like "HTTP 429",
+// "timeout", or a 60-char first-line slice. Keeps log lines compact —
+// ethers errors can include long JSON-RPC payloads and ABI dumps otherwise.
+function summarizeProbeError(error: unknown): string {
+  const fullMessage = error instanceof Error ? error.message : String(error);
+  const httpMatch = fullMessage.match(/Unexpected server response: (\d{3})/);
+  if (httpMatch) {
+    return `HTTP ${httpMatch[1]}`;
+  }
+  if (fullMessage.toLowerCase().includes("timeout")) {
+    return "timeout";
+  }
+  return fullMessage.split("\n")[0].slice(0, 60);
+}
 
 export class ChainMonitor {
   private readonly chainId: number;
@@ -50,6 +72,8 @@ export class ChainMonitor {
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private pongTimer: ReturnType<typeof setTimeout> | null = null;
   private noBlockTimer: ReturnType<typeof setTimeout> | null = null;
+  private primaryProbeTimer: ReturnType<typeof setInterval> | null = null;
+  private currentUrlIndex = 0;
   private hasActiveSubscription = false;
   private wsCloseHandler: (() => void) | null = null;
 
@@ -69,10 +93,10 @@ export class ChainMonitor {
 
     try {
       await this.connect();
-      await this.validateConnection();
       await this.subscribeToBlocks();
       this.startPingPong();
       this.resetNoBlockTimer();
+      this.startPrimaryProbe();
     } catch (error) {
       this.isRunning = false;
       throw error;
@@ -174,19 +198,37 @@ export class ChainMonitor {
       try {
         provider = new ethers.WebSocketProvider(url);
 
-        await Promise.race([
-          provider.ready,
-          new Promise((_, reject) =>
+        // ethers v6 WebSocketProvider does not attach an 'error' listener on
+        // the underlying ws. Without one, an HTTP 429 (or any non-101 upgrade
+        // response) makes ws emit 'error' on the socket which Node escalates
+        // to uncaughtException, killing the entire dispatcher process.
+        //
+        // Attach our own listener so the error is consumed and surfaces as a
+        // normal rejection of the connect race below, allowing the fallback
+        // URL loop and reconnect-with-backoff to do their job.
+        const wsErrorPromise = this.attachConnectErrorListener(provider);
+
+        // NOTE: provider.ready is a synchronous boolean getter
+        // (`get ready() { return this.#notReady == null; }`), NOT a Promise.
+        // Awaiting it resolves immediately and tells us nothing about the ws.
+        // To actually confirm the upgrade succeeded we issue a real network
+        // call which internally waits for the underlying ws to be open via
+        // `_waitUntilReady()`.
+        const blockNumber = (await Promise.race([
+          provider.getBlockNumber(),
+          wsErrorPromise,
+          new Promise<number>((_, reject) => {
             setTimeout(
               () => reject(new Error("Connection timeout")),
               CONNECT_TIMEOUT_MS
-            )
-          ),
-        ]);
+            );
+          }),
+        ])) as number;
 
         this.provider = provider;
+        this.currentUrlIndex = index;
         console.log(
-          `[BlockMonitor:${this.chainName}] Connected to ${label} WSS`
+          `[BlockMonitor:${this.chainName}] Connected to ${label} WSS (block: ${blockNumber})`
         );
         return;
       } catch (error) {
@@ -208,22 +250,22 @@ export class ChainMonitor {
     throw new Error("Unreachable");
   }
 
-  private async validateConnection(): Promise<void> {
-    if (!this.provider) {
-      return;
-    }
+  private attachConnectErrorListener(
+    provider: ethers.WebSocketProvider
+  ): Promise<never> {
+    const ws = provider.websocket as unknown as {
+      on?: (event: string, cb: (err: Error) => void) => void;
+    };
 
-    try {
-      const blockNumber = await this.provider.getBlockNumber();
-      console.log(
-        `[BlockMonitor:${this.chainName}] Provider reports block: ${blockNumber}`
-      );
-    } catch (error) {
-      console.warn(
-        `[BlockMonitor:${this.chainName}] Failed to validate connection:`,
-        error instanceof Error ? error.message : error
-      );
-    }
+    return new Promise<never>((_, reject) => {
+      ws?.on?.("error", (err: Error) => {
+        const message = err?.message ?? String(err);
+        console.warn(
+          `[BlockMonitor:${this.chainName}] WebSocket error during connect: ${message}`
+        );
+        reject(new Error(`WebSocket error: ${message}`));
+      });
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -537,6 +579,91 @@ export class ChainMonitor {
   private stopTimers(): void {
     this.stopPingPong();
     this.stopNoBlockTimer();
+    this.stopPrimaryProbe();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Primary recovery probe
+  //
+  // When we are running on the fallback URL, periodically test the primary in a
+  // throwaway provider. If it answers a getBlockNumber within the timeout, we
+  // close the current (fallback) connection and let reconnectWithBackoff swap
+  // back to primary. The fallback is kept active until the moment we trigger
+  // the swap, so monitoring is never interrupted.
+  // ---------------------------------------------------------------------------
+
+  private startPrimaryProbe(): void {
+    this.stopPrimaryProbe();
+
+    if (this.currentUrlIndex === 0 || !this.primaryWss) {
+      return;
+    }
+
+    this.primaryProbeTimer = setInterval(() => {
+      this.probePrimary().catch(() => {
+        // probePrimary handles its own logging; nothing to do here
+      });
+    }, getPrimaryProbeIntervalMs());
+  }
+
+  private stopPrimaryProbe(): void {
+    if (this.primaryProbeTimer) {
+      clearInterval(this.primaryProbeTimer);
+      this.primaryProbeTimer = null;
+    }
+  }
+
+  private async probePrimary(): Promise<void> {
+    if (!(this.isRunning && this.primaryWss) || this.currentUrlIndex === 0) {
+      this.stopPrimaryProbe();
+      return;
+    }
+
+    let probeProvider: ethers.WebSocketProvider | null = null;
+    try {
+      probeProvider = new ethers.WebSocketProvider(this.primaryWss);
+      // Inline silent listener (not attachConnectErrorListener) so probe
+      // failures produce only the single "Primary probe failed" line below.
+      const ws = probeProvider.websocket as unknown as {
+        on?: (event: string, cb: (err: Error) => void) => void;
+      };
+      const wsErrorPromise = new Promise<never>((_, reject) => {
+        ws?.on?.("error", (err: Error) => {
+          reject(new Error(err?.message ?? String(err)));
+        });
+      });
+
+      await Promise.race([
+        probeProvider.getBlockNumber(),
+        wsErrorPromise,
+        new Promise<never>((_, reject) => {
+          setTimeout(
+            () => reject(new Error("Primary probe timeout")),
+            PRIMARY_PROBE_TIMEOUT_MS
+          );
+        }),
+      ]);
+
+      console.log(
+        `[BlockMonitor:${this.chainName}] Primary recovered, switching back from fallback`
+      );
+      await probeProvider.removeAllListeners();
+      await probeProvider.destroy().catch(() => {
+        // ignore cleanup errors
+      });
+      this.handleDisconnect();
+    } catch (error) {
+      const reason = summarizeProbeError(error);
+      console.warn(
+        `[BlockMonitor:${this.chainName}] Primary probe failed: ${reason}`
+      );
+      if (probeProvider) {
+        await probeProvider.removeAllListeners();
+        await probeProvider.destroy().catch(() => {
+          // ignore cleanup errors
+        });
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -593,12 +720,12 @@ export class ChainMonitor {
 
       try {
         await this.connect();
-        await this.validateConnection();
         await this.subscribeToBlocks();
         this.reconnectAttempts = 0;
         this.isReconnecting = false;
         this.startPingPong();
         this.resetNoBlockTimer();
+        this.startPrimaryProbe();
         return;
       } catch (error) {
         console.warn(

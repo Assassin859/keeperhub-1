@@ -14,7 +14,7 @@ vi.mock("@/plugins/web3/steps/write-contract-core", () => ({
   writeContractCore: (...args: unknown[]) => mockWriteContractCore(...args),
 }));
 
-vi.mock("@/lib/abi-cache", () => ({
+vi.mock("@/lib/abi/cache", () => ({
   resolveAbi: vi.fn().mockResolvedValue({ abi: "[]" }),
 }));
 

@@ -11,7 +11,12 @@ import {
   getEthUsdFeedAddress,
 } from "@/lib/web3/chainlink-feeds";
 import { isBillingEnabled } from "./feature-flag";
-import { getPlanLimits, type PlanName, parsePlanName } from "./plans";
+import {
+  getPlanLimits,
+  type PlanLimits,
+  type PlanName,
+  parsePlanName,
+} from "./plans";
 import { getOrgSubscription } from "./plans-server";
 
 const MICRO_USD_PER_CENT = 10_000;
@@ -24,10 +29,21 @@ const PLAN_ENV_KEYS: Record<PlanName, string> = {
 };
 
 /**
- * Get the gas credit cap for a plan, preferring env var override.
- * Falls back to the hardcoded plan default if the env var is unset or invalid.
+ * Get the gas credit cap for a plan.
+ *
+ * Precedence (most specific wins):
+ *   1. Org-specific override on `organization_subscriptions.plan_overrides.gasCreditsCents`
+ *   2. Env-var override per plan (e.g. GAS_CREDITS_PRO_CENTS)
+ *   3. Hardcoded plan default
  */
-export function getGasCreditCapCents(plan: PlanName): number {
+export function getGasCreditCapCents(
+  plan: PlanName,
+  overrides?: Partial<PlanLimits> | null
+): number {
+  const orgOverride = overrides?.gasCreditsCents;
+  if (typeof orgOverride === "number" && orgOverride >= 0) {
+    return orgOverride;
+  }
   const envVal = process.env[PLAN_ENV_KEYS[plan]];
   if (envVal !== undefined && envVal !== "") {
     const parsed = Number(envVal);
@@ -72,7 +88,8 @@ type GasCreditCheckResult =
 async function resolveAllocation(
   organizationId: string,
   planName: PlanName,
-  periodStart: Date
+  periodStart: Date,
+  overrides?: Partial<PlanLimits> | null
 ): Promise<number> {
   const existing = await db
     .select({ allocatedCents: gasCreditAllocations.allocatedCents })
@@ -89,7 +106,7 @@ async function resolveAllocation(
     return existing[0].allocatedCents;
   }
 
-  const capCents = getGasCreditCapCents(planName);
+  const capCents = getGasCreditCapCents(planName, overrides);
 
   await db
     .insert(gasCreditAllocations)
@@ -130,7 +147,8 @@ export async function getGasCreditBalance(
   const totalCents = await resolveAllocation(
     organizationId,
     planName,
-    periodStart
+    periodStart,
+    sub?.planOverrides
   );
 
   const result = await db

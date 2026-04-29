@@ -4,7 +4,7 @@ const DIRECT_ID_PREFIX_REGEX = /^direct-/;
 
 vi.mock("server-only", () => ({}));
 
-vi.mock("@/lib/steps/step-handler", () => ({
+vi.mock("@/lib/workflow/executor/step-handler", () => ({
   withStepLogging: (_input: unknown, fn: () => unknown) => fn(),
 }));
 
@@ -78,11 +78,11 @@ vi.mock("@/lib/explorer", () => ({
   getTxUrl: vi.fn().mockReturnValue("https://etherscan.io/tx/0xhash"),
 }));
 
-vi.mock("@/lib/abi-struct-args", () => ({
+vi.mock("@/lib/abi/struct-args", () => ({
   reshapeArgsForAbi: vi.fn().mockImplementation((args: unknown[]) => args),
 }));
 
-vi.mock("@/lib/web3/abi-function-key", () => ({
+vi.mock("@/lib/abi/function-key", () => ({
   getAbiFunctionKey: vi.fn().mockReturnValue("transfer"),
 }));
 

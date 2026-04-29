@@ -11,6 +11,20 @@
 
 type EncodeTransform = (value: string) => string;
 
+/**
+ * Discriminator for registered transforms. The runtime applies the
+ * transform function regardless; the codegen synthesiser switches on
+ * `kind` to emit equivalent inline source. Add a new value here when
+ * registering a new transform shape, then teach the synthesiser to
+ * handle it.
+ */
+export type EncodeTransformKind = "padAddressToBytes";
+
+type TransformEntry = {
+  kind: EncodeTransformKind;
+  transform: EncodeTransform;
+};
+
 type TransformKey = string;
 
 function makeKey(
@@ -21,15 +35,19 @@ function makeKey(
   return `${protocolSlug}/${actionSlug}/${inputName}`;
 }
 
-const transforms = new Map<TransformKey, EncodeTransform>();
+const transforms = new Map<TransformKey, TransformEntry>();
 
 export function registerEncodeTransform(
   protocolSlug: string,
   actionSlug: string,
   inputName: string,
-  transform: EncodeTransform
+  transform: EncodeTransform,
+  kind: EncodeTransformKind
 ): void {
-  transforms.set(makeKey(protocolSlug, actionSlug, inputName), transform);
+  transforms.set(makeKey(protocolSlug, actionSlug, inputName), {
+    kind,
+    transform,
+  });
 }
 
 export function getEncodeTransform(
@@ -37,7 +55,16 @@ export function getEncodeTransform(
   actionSlug: string,
   inputName: string
 ): EncodeTransform | undefined {
-  return transforms.get(makeKey(protocolSlug, actionSlug, inputName));
+  return transforms.get(makeKey(protocolSlug, actionSlug, inputName))
+    ?.transform;
+}
+
+export function getEncodeTransformKind(
+  protocolSlug: string,
+  actionSlug: string,
+  inputName: string
+): EncodeTransformKind | undefined {
+  return transforms.get(makeKey(protocolSlug, actionSlug, inputName))?.kind;
 }
 
 export function applyEncodeTransformsNamed(
@@ -50,11 +77,9 @@ export function applyEncodeTransformsNamed(
   }
 
   return inputs.map((input) => {
-    const transform = transforms.get(
-      makeKey(protocolSlug, actionSlug, input.name)
-    );
-    if (transform) {
-      return { name: input.name, value: transform(input.value) };
+    const entry = transforms.get(makeKey(protocolSlug, actionSlug, input.name));
+    if (entry) {
+      return { name: input.name, value: entry.transform(input.value) };
     }
     return input;
   });
@@ -83,11 +108,13 @@ registerEncodeTransform(
   "chainlink",
   "ccip-get-fee",
   "receiver",
-  padAddressToBytes
+  padAddressToBytes,
+  "padAddressToBytes"
 );
 registerEncodeTransform(
   "chainlink",
   "ccip-send",
   "receiver",
-  padAddressToBytes
+  padAddressToBytes,
+  "padAddressToBytes"
 );

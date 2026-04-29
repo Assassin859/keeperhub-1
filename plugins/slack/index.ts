@@ -1,5 +1,5 @@
 import type { IntegrationPlugin } from "../registry";
-import { registerIntegration } from "../registry";
+import { registerIntegration } from "../registry-core";
 import { SlackIcon } from "./icon";
 
 const slackPlugin: IntegrationPlugin = {

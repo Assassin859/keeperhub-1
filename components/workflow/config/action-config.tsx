@@ -30,15 +30,15 @@ import { SqlTemplateEditor } from "@/components/ui/sql-template-editor";
 import { TemplateCodeEditor } from "@/components/ui/template-code-editor";
 import { actionRequiresCredentials } from "@/lib/integration-helpers";
 import { ConditionQueryBuilder } from "@/components/workflow/condition-query-builder";
-import type { ConditionGroup } from "@/lib/condition-builder-types";
+import type { ConditionGroup } from "@/lib/workflow/nodes/condition/builder-types";
 import {
   createEmptyGroup,
   expressionToConditionGroup,
   visualConditionToExpression,
-} from "@/lib/condition-builder-utils";
-import { resolveConditionExpression } from "@/lib/condition-resolver";
+} from "@/lib/workflow/nodes/condition/builder-utils";
+import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
 import { aiGatewayStatusAtom } from "@/lib/ai-gateway/state";
-import { validateConditionExpressionUI } from "@/lib/condition-validator";
+import { validateConditionExpressionUI } from "@/lib/workflow/nodes/condition/validator";
 import {
   integrationsAtom,
   integrationsVersionAtom,
@@ -49,12 +49,12 @@ import {
   extractObjectPaths,
   resolveArraySourceElement,
   traverseDotPath,
-} from "@/lib/for-each-utils";
+} from "@/lib/workflow/nodes/for-each/utils";
 import {
   executionLogsAtom,
   lastExecutionLogsAtom,
   nodesAtom,
-} from "@/lib/workflow-store";
+} from "@/lib/workflow/store";
 import {
   findActionById,
   getActionsByCategory,
@@ -64,7 +64,7 @@ import {
 import { ActionConfigRenderer } from "./action-config-renderer";
 import { SchemaBuilder, type SchemaField } from "./schema-builder";
 
-type ConfigValue = string | Record<string, unknown> | undefined;
+type ConfigValue = string | boolean | Record<string, unknown> | undefined;
 
 type ActionConfigProps = {
   config: Record<string, unknown>;
@@ -776,8 +776,22 @@ export function ActionConfig({
     onUpdateConfig("actionType", value);
   };
 
-  // Adapter for plugin config components that expect (key, value: unknown)
-  const handlePluginUpdateConfig = (key: string, value: unknown) => {
+  // Adapter for plugin config components that expect (key, value: unknown).
+  // KEEP-137: do NOT coerce to string -- booleans (e.g. usePrivateMempool)
+  // must remain booleans so downstream truthy checks work and the ChainSelect
+  // private-mempool variant resolves correctly. String() turns `false` into
+  // the truthy string "false", which both breaks the UI (Select stuck on the
+  // Flashbots variant) and the runtime (private-mempool routing stays on).
+  const handlePluginUpdateConfig = (key: string, value: unknown): void => {
+    if (
+      typeof value === "string" ||
+      typeof value === "boolean" ||
+      value === undefined ||
+      (typeof value === "object" && value !== null && !Array.isArray(value))
+    ) {
+      onUpdateConfig(key, value as ConfigValue);
+      return;
+    }
     onUpdateConfig(key, String(value));
   };
 

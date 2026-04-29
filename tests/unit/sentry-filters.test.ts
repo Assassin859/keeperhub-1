@@ -1,0 +1,192 @@
+import type { ErrorEvent } from "@sentry/nextjs";
+import { describe, expect, it } from "vitest";
+import {
+  hasNoInAppFrames,
+  isEip1193ProviderRejection,
+  isMonacoCancellation,
+} from "@/lib/sentry-filters";
+
+// Minimal shape the filter predicates actually read. Cast to ErrorEvent so we
+// don't have to spell out the dozens of fields the SDK accepts at runtime.
+type TestEvent = {
+  exception?: {
+    values?: Array<{
+      type?: string;
+      value?: string;
+      mechanism?: { type?: string; handled?: boolean };
+      stacktrace?: { frames?: Array<{ in_app?: boolean; filename?: string }> };
+    }>;
+  };
+  extra?: Record<string, unknown>;
+};
+
+function makeEvent(partial: TestEvent): ErrorEvent {
+  return partial as ErrorEvent;
+}
+
+describe("isEip1193ProviderRejection", () => {
+  it("matches a rejection that carries a serialized provider error", () => {
+    const event = makeEvent({
+      exception: {
+        values: [
+          {
+            mechanism: {
+              type: "auto.browser.global_handlers.onunhandledrejection",
+              handled: false,
+            },
+          },
+        ],
+      },
+      extra: {
+        __serialized__: { code: 4001, message: "User rejected the request" },
+      },
+    });
+    expect(isEip1193ProviderRejection(event)).toBe(true);
+  });
+
+  it("ignores non-unhandledrejection events", () => {
+    const event = makeEvent({
+      exception: {
+        values: [{ mechanism: { type: "onerror", handled: false } }],
+      },
+      extra: { __serialized__: { code: 1, message: "x" } },
+    });
+    expect(isEip1193ProviderRejection(event)).toBe(false);
+  });
+
+  it("ignores events without a serialized record", () => {
+    const event = makeEvent({
+      exception: {
+        values: [
+          { mechanism: { type: "onunhandledrejection", handled: false } },
+        ],
+      },
+    });
+    expect(isEip1193ProviderRejection(event)).toBe(false);
+  });
+
+  it("ignores events whose serialized record is not the EIP-1193 shape", () => {
+    const event = makeEvent({
+      exception: {
+        values: [
+          { mechanism: { type: "onunhandledrejection", handled: false } },
+        ],
+      },
+      extra: { __serialized__: { foo: "bar" } },
+    });
+    expect(isEip1193ProviderRejection(event)).toBe(false);
+  });
+});
+
+describe("hasNoInAppFrames", () => {
+  it("returns true when every frame is out-of-app", () => {
+    const event = makeEvent({
+      exception: {
+        values: [
+          {
+            stacktrace: {
+              frames: [
+                { in_app: false, filename: "injected.js" },
+                { in_app: false, filename: "injectedScript.bundle.js" },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    expect(hasNoInAppFrames(event)).toBe(true);
+  });
+
+  it("returns false when at least one frame is in-app", () => {
+    const event = makeEvent({
+      exception: {
+        values: [
+          {
+            stacktrace: {
+              frames: [
+                { in_app: false, filename: "injected.js" },
+                { in_app: true, filename: "app/page.tsx" },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    expect(hasNoInAppFrames(event)).toBe(false);
+  });
+
+  it("returns false when there are no frames", () => {
+    const event = makeEvent({ exception: { values: [{}] } });
+    expect(hasNoInAppFrames(event)).toBe(false);
+  });
+});
+
+describe("isMonacoCancellation", () => {
+  it("matches an unhandled rejection with type and value 'Canceled'", () => {
+    const event = makeEvent({
+      exception: {
+        values: [
+          {
+            type: "Canceled",
+            value: "Canceled",
+            mechanism: {
+              type: "auto.browser.global_handlers.onunhandledrejection",
+              handled: false,
+            },
+          },
+        ],
+      },
+    });
+    expect(isMonacoCancellation(event)).toBe(true);
+  });
+
+  it("does not match when the mechanism is not unhandledrejection", () => {
+    const event = makeEvent({
+      exception: {
+        values: [
+          {
+            type: "Canceled",
+            value: "Canceled",
+            mechanism: { type: "onerror", handled: false },
+          },
+        ],
+      },
+    });
+    expect(isMonacoCancellation(event)).toBe(false);
+  });
+
+  it("does not match when only value is 'Canceled' but type is something else", () => {
+    const event = makeEvent({
+      exception: {
+        values: [
+          {
+            type: "Error",
+            value: "Canceled",
+            mechanism: { type: "onunhandledrejection", handled: false },
+          },
+        ],
+      },
+    });
+    expect(isMonacoCancellation(event)).toBe(false);
+  });
+
+  it("does not match unrelated cancellation messages", () => {
+    const event = makeEvent({
+      exception: {
+        values: [
+          {
+            type: "AbortError",
+            value: "The user aborted a request.",
+            mechanism: { type: "onunhandledrejection", handled: false },
+          },
+        ],
+      },
+    });
+    expect(isMonacoCancellation(event)).toBe(false);
+  });
+
+  it("does not match an empty exception", () => {
+    const event = makeEvent({});
+    expect(isMonacoCancellation(event)).toBe(false);
+  });
+});

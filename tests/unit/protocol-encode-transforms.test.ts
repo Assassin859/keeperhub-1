@@ -3,6 +3,7 @@ import {
   applyEncodeTransformsNamed,
   clearEncodeTransforms,
   getEncodeTransform,
+  getEncodeTransformKind,
   registerEncodeTransform,
 } from "@/lib/protocol-encode-transforms";
 
@@ -13,7 +14,13 @@ afterEach(() => {
 describe("registerEncodeTransform / getEncodeTransform", () => {
   it("registers and retrieves a transform", () => {
     const transform = (v: string): string => `padded:${v}`;
-    registerEncodeTransform("chainlink", "ccip-send", "receiver", transform);
+    registerEncodeTransform(
+      "chainlink",
+      "ccip-send",
+      "receiver",
+      transform,
+      "padAddressToBytes"
+    );
     const retrieved = getEncodeTransform("chainlink", "ccip-send", "receiver");
     expect(retrieved).toBe(transform);
   });
@@ -26,10 +33,43 @@ describe("registerEncodeTransform / getEncodeTransform", () => {
   it("overwrites existing transform on re-register", () => {
     const first = (v: string): string => `first:${v}`;
     const second = (v: string): string => `second:${v}`;
-    registerEncodeTransform("proto", "action", "input", first);
-    registerEncodeTransform("proto", "action", "input", second);
+    registerEncodeTransform(
+      "proto",
+      "action",
+      "input",
+      first,
+      "padAddressToBytes"
+    );
+    registerEncodeTransform(
+      "proto",
+      "action",
+      "input",
+      second,
+      "padAddressToBytes"
+    );
     const retrieved = getEncodeTransform("proto", "action", "input");
     expect(retrieved).toBe(second);
+  });
+});
+
+describe("getEncodeTransformKind", () => {
+  it("returns the kind registered alongside the transform", () => {
+    registerEncodeTransform(
+      "chainlink",
+      "ccip-send",
+      "receiver",
+      (v: string): string => v,
+      "padAddressToBytes"
+    );
+    expect(getEncodeTransformKind("chainlink", "ccip-send", "receiver")).toBe(
+      "padAddressToBytes"
+    );
+  });
+
+  it("returns undefined for unregistered transform", () => {
+    expect(
+      getEncodeTransformKind("chainlink", "ccip-send", "receiver")
+    ).toBeUndefined();
   });
 });
 
@@ -48,7 +88,8 @@ describe("applyEncodeTransformsNamed", () => {
       "chainlink",
       "ccip-send",
       "receiver",
-      (v: string): string => `0x${"0".repeat(24)}${v.slice(2)}`
+      (v: string): string => `0x${"0".repeat(24)}${v.slice(2)}`,
+      "padAddressToBytes"
     );
 
     const inputs = [
@@ -68,7 +109,8 @@ describe("applyEncodeTransformsNamed", () => {
       "chainlink",
       "ccip-send",
       "receiver",
-      (v: string): string => `transformed:${v}`
+      (v: string): string => `transformed:${v}`,
+      "padAddressToBytes"
     );
 
     const inputs = [{ name: "receiver", value: "0xABC" }];

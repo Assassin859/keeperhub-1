@@ -12,7 +12,7 @@ import {
 } from "@/lib/explorer";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
-import type { RpcProviderManager } from "@/lib/rpc-provider";
+import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { getErrorMessage } from "@/lib/utils";
 
 const DEFAULT_BLOCK_LOOKBACK = 6500;

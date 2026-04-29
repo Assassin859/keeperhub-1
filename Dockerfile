@@ -57,10 +57,12 @@ ARG NEXT_PUBLIC_AUTH_PROVIDERS
 ARG NEXT_PUBLIC_GITHUB_CLIENT_ID
 ARG NEXT_PUBLIC_GOOGLE_CLIENT_ID
 ARG NEXT_PUBLIC_BILLING_ENABLED
+ARG NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED
 ENV NEXT_PUBLIC_AUTH_PROVIDERS=$NEXT_PUBLIC_AUTH_PROVIDERS
 ENV NEXT_PUBLIC_GITHUB_CLIENT_ID=$NEXT_PUBLIC_GITHUB_CLIENT_ID
 ENV NEXT_PUBLIC_GOOGLE_CLIENT_ID=$NEXT_PUBLIC_GOOGLE_CLIENT_ID
 ENV NEXT_PUBLIC_BILLING_ENABLED=$NEXT_PUBLIC_BILLING_ENABLED
+ENV NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED=$NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED
 
 # Sentry DSN baked into client bundle for error reporting.
 # SENTRY_ORG/PROJECT/AUTH_TOKEN/RELEASE are intentionally NOT set here
@@ -68,6 +70,12 @@ ENV NEXT_PUBLIC_BILLING_ENABLED=$NEXT_PUBLIC_BILLING_ENABLED
 ARG NEXT_PUBLIC_SENTRY_DSN
 ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN
 ENV CI=true
+
+# KEEP-237: Gate admin test routes at build time. Set to "true" for
+# staging/PR builds to compile route.staging.ts files; leave unset for prod
+# so those routes are excluded from the bundle entirely.
+ARG INCLUDE_TEST_ENDPOINTS
+ENV INCLUDE_TEST_ENDPOINTS=$INCLUDE_TEST_ENDPOINTS
 
 # Build the application with Turbopack (source maps generated but not uploaded).
 # Cache mount persists .next/cache across builds on the same BuildKit instance,
@@ -182,7 +190,8 @@ COPY --link --from=source /app/tsconfig.json ./tsconfig.json
 
 # Copy auto-generated files from builder stage (step-registry.ts, etc. are in .gitignore)
 COPY --link --from=builder /app/lib/step-registry.ts ./lib/step-registry.ts
-COPY --link --from=builder /app/lib/codegen-registry.ts ./lib/codegen-registry.ts
+COPY --link --from=builder /app/lib/credential-map.ts ./lib/credential-map.ts
+COPY --link --from=builder /app/lib/workflow/codegen/registry.ts ./lib/workflow/codegen/registry.ts
 COPY --link --from=builder /app/lib/output-display-configs.ts ./lib/output-display-configs.ts
 COPY --link --from=builder /app/lib/types/integration.ts ./lib/types/integration.ts
 COPY --link --from=builder /app/plugins/index.ts ./plugins/index.ts
@@ -220,7 +229,8 @@ COPY --link --from=source /app/tsconfig.json ./tsconfig.json
 
 # Copy auto-generated files from builder stage
 COPY --link --from=builder /app/lib/step-registry.ts ./lib/step-registry.ts
-COPY --link --from=builder /app/lib/codegen-registry.ts ./lib/codegen-registry.ts
+COPY --link --from=builder /app/lib/credential-map.ts ./lib/credential-map.ts
+COPY --link --from=builder /app/lib/workflow/codegen/registry.ts ./lib/workflow/codegen/registry.ts
 COPY --link --from=builder /app/lib/output-display-configs.ts ./lib/output-display-configs.ts
 COPY --link --from=builder /app/lib/types/integration.ts ./lib/types/integration.ts
 COPY --link --from=builder /app/plugins/index.ts ./plugins/index.ts

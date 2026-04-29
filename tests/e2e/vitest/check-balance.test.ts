@@ -14,7 +14,13 @@
 
 import "dotenv/config";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// `lib/rpc/providers/index.ts` (transitively imported via provider-factory)
+// pulls in `lib/rpc/safe-ethers-fetch.ts`, which guards itself with
+// `import "server-only"`. Without this mock the file-load throws under vitest.
+vi.mock("server-only", () => ({}));
+
 import {
   getRpcProviderFromUrls,
   getSolanaProviderFromUrls,
@@ -281,7 +287,7 @@ describe("Check Balance E2E", () => {
       expect(isSolanaChain(103)).toBe(true); // Solana Devnet
       expect(isSolanaChain(1)).toBe(false); // Ethereum Mainnet
       expect(isSolanaChain(8453)).toBe(false); // Base
-      expect(isSolanaChain(42_429)).toBe(false); // Tempo Testnet
+      expect(isSolanaChain(42_431)).toBe(false); // Tempo Testnet
     });
   });
 

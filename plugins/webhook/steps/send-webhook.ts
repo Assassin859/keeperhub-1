@@ -2,7 +2,8 @@ import "server-only";
 
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
-import { type StepInput, withStepLogging } from "@/lib/steps/step-handler";
+import { safeFetch } from "@/lib/safe-fetch";
+import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 
 type SendWebhookResult =
@@ -130,7 +131,10 @@ async function stepHandler(
       fetchOptions.body = JSON.stringify(payload);
     }
 
-    const response = await fetch(url, fetchOptions);
+    const response = await safeFetch(url, {
+      ...fetchOptions,
+      plugin: "webhook",
+    });
 
     let responseData: unknown;
     const contentType = response.headers.get("content-type");

@@ -10,11 +10,34 @@ vi.mock("@/lib/internal-service-auth", () => ({
   authenticateInternalService: vi.fn(() => mockAuthResult),
 }));
 
+type UpdateCall = {
+  target: unknown;
+  set: Record<string, unknown>;
+};
+
 let mockActiveExecutionIds: { executionId: string }[] = [];
 let mockReapedRows: { id: string }[] = [];
-const mockUpdateReturning = vi.fn(() => mockReapedRows);
-const mockUpdateWhere = vi.fn(() => ({ returning: mockUpdateReturning }));
-const mockUpdateSet = vi.fn(() => ({ where: mockUpdateWhere }));
+let updateCalls: UpdateCall[] = [];
+
+// The reaper chains db.update(target).set(values).where(cond) and for the
+// workflowExecutions update adds .returning(). We record every (target,
+// values) pair so tests can assert on either UPDATE independently.
+type WhereChain = { returning: () => { id: string }[] };
+type SetChain = { where: () => WhereChain };
+type UpdateChain = { set: (values: Record<string, unknown>) => SetChain };
+
+function buildUpdate(target: unknown): UpdateChain {
+  return {
+    set: (values: Record<string, unknown>): SetChain => {
+      updateCalls.push({ target, set: values });
+      return {
+        where: (): WhereChain => ({
+          returning: (): { id: string }[] => mockReapedRows,
+        }),
+      };
+    },
+  };
+}
 
 vi.mock("@/lib/db", () => ({
   db: {
@@ -25,24 +48,46 @@ vi.mock("@/lib/db", () => ({
         })),
       })),
     })),
-    update: vi.fn(() => ({ set: mockUpdateSet })),
+    update: vi.fn((target: unknown) => buildUpdate(target)),
   },
 }));
 
+// vi.mock factories are hoisted; use vi.hoisted for shared identity with
+// assertions so `target === workflowExecutionsMock` works in tests.
+const { workflowExecutionsMock, workflowExecutionLogsMock, walletLocksMock } =
+  vi.hoisted(() => ({
+    workflowExecutionsMock: {
+      id: "id",
+      workflowId: "workflow_id",
+      startedAt: "started_at",
+      status: "status",
+      completedAt: "completed_at",
+      error: "error",
+      duration: "duration",
+    },
+    workflowExecutionLogsMock: {
+      id: "id",
+      executionId: "execution_id",
+      status: "status",
+      error: "error",
+      completedAt: "completed_at",
+    },
+    walletLocksMock: {
+      walletAddress: "wallet_address",
+      chainId: "chain_id",
+      lockedBy: "locked_by",
+      lockedAt: "locked_at",
+      expiresAt: "expires_at",
+    },
+  }));
+
 vi.mock("@/lib/db/schema", () => ({
-  workflowExecutions: {
-    id: "id",
-    workflowId: "workflow_id",
-    startedAt: "started_at",
-    status: "status",
-    completedAt: "completed_at",
-    error: "error",
-    duration: "duration",
-  },
-  workflowExecutionLogs: {
-    executionId: "execution_id",
-    completedAt: "completed_at",
-  },
+  workflowExecutions: workflowExecutionsMock,
+  workflowExecutionLogs: workflowExecutionLogsMock,
+}));
+
+vi.mock("@/lib/db/schema-extensions", () => ({
+  walletLocks: walletLocksMock,
 }));
 
 import { GET } from "@/app/api/internal/reaper/route";
@@ -54,11 +99,24 @@ function createRequest(): Request {
   });
 }
 
+function getExecUpdate(): UpdateCall | undefined {
+  return updateCalls.find((c) => c.target === workflowExecutionsMock);
+}
+
+function getLogUpdate(): UpdateCall | undefined {
+  return updateCalls.find((c) => c.target === workflowExecutionLogsMock);
+}
+
+function getWalletLocksUpdate(): UpdateCall | undefined {
+  return updateCalls.find((c) => c.target === walletLocksMock);
+}
+
 describe("/api/internal/reaper", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockActiveExecutionIds = [];
     mockReapedRows = [];
+    updateCalls = [];
     mockAuthResult.authenticated = true;
   });
 
@@ -103,7 +161,7 @@ describe("/api/internal/reaper", () => {
 
     await GET(createRequest());
 
-    expect(mockUpdateSet).toHaveBeenCalledWith(
+    expect(getExecUpdate()?.set).toEqual(
       expect.objectContaining({
         status: "error",
         error: expect.stringContaining("timed out"),
@@ -117,9 +175,7 @@ describe("/api/internal/reaper", () => {
 
     await GET(createRequest());
 
-    const calls = mockUpdateSet.mock.calls as unknown[][];
-    const setArg = calls[0]?.[0] as Record<string, unknown> | undefined;
-    expect(setArg?.duration).toBeDefined();
+    expect(getExecUpdate()?.set.duration).toBeDefined();
   });
 
   it("excludes executions with recent step activity", async () => {
@@ -142,7 +198,10 @@ describe("/api/internal/reaper", () => {
     expect(response.status).toBe(200);
     expect(data.reapedCount).toBe(3);
     expect(data.reapedIds).toEqual(["exec_1", "exec_2", "exec_3"]);
-    expect(mockUpdateSet).toHaveBeenCalledTimes(1);
+    // Exactly one UPDATE against workflow_executions, one against logs.
+    expect(
+      updateCalls.filter((c) => c.target === workflowExecutionsMock)
+    ).toHaveLength(1);
   });
 
   it("uses configurable threshold from env var", async () => {
@@ -151,10 +210,8 @@ describe("/api/internal/reaper", () => {
 
     await GET(createRequest());
 
-    expect(mockUpdateSet).toHaveBeenCalledWith(
-      expect.objectContaining({
-        error: expect.stringContaining("60 minutes"),
-      })
+    expect(getExecUpdate()?.set.error).toEqual(
+      expect.stringContaining("60 minutes")
     );
   });
 
@@ -163,5 +220,57 @@ describe("/api/internal/reaper", () => {
     await GET(request);
 
     expect(authenticateInternalService).toHaveBeenCalledWith(request);
+  });
+
+  // KEEP-333: orphaned running step logs must be closed alongside the
+  // workflow execution so the Runs tab doesn't render stuck spinners.
+  it("closes orphaned 'running' step logs for reaped executions", async () => {
+    mockReapedRows = [{ id: "exec_1" }, { id: "exec_2" }];
+
+    await GET(createRequest());
+
+    const logUpdate = getLogUpdate();
+    expect(logUpdate).toBeDefined();
+    expect(logUpdate?.set).toEqual(
+      expect.objectContaining({
+        status: "error",
+        error: expect.stringContaining("did not record completion"),
+        completedAt: expect.any(Date),
+      })
+    );
+  });
+
+  it("does not run the log cleanup update when nothing was reaped", async () => {
+    mockReapedRows = [];
+
+    await GET(createRequest());
+
+    expect(getLogUpdate()).toBeUndefined();
+  });
+
+  // KEEP-344: any nonce lock held by a reaped execution is released eagerly
+  // so the affected wallet+chain unblocks at reaper time instead of waiting
+  // for the wallet_locks TTL to expire.
+  it("releases nonce locks held by reaped executions", async () => {
+    mockReapedRows = [{ id: "exec_1" }, { id: "exec_2" }];
+
+    await GET(createRequest());
+
+    const lockUpdate = getWalletLocksUpdate();
+    expect(lockUpdate).toBeDefined();
+    expect(lockUpdate?.set).toEqual(
+      expect.objectContaining({
+        lockedBy: null,
+        lockedAt: null,
+      })
+    );
+  });
+
+  it("does not touch wallet_locks when nothing was reaped", async () => {
+    mockReapedRows = [];
+
+    await GET(createRequest());
+
+    expect(getWalletLocksUpdate()).toBeUndefined();
   });
 });

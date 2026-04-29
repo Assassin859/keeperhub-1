@@ -102,12 +102,15 @@ const workflowExecutionsTotal = getOrCreateGauge(
   ["status"]
 );
 
-// Workflow errors total (convenience gauge for alerting)
+// Workflow errors total (convenience gauge for alerting). Labeled by org_slug
+// so alerts can scope to managed clients. Personal/anonymous workflows are
+// emitted under org_slug="_anonymous" so the sum across labels matches the
+// global error count.
 const workflowErrorsTotal = getOrCreateGauge(
   dbRegistry,
   "keeperhub_workflow_execution_errors_total",
-  "Total failed workflow executions (all-time)",
-  []
+  "Total failed workflow executions (all-time), broken down by org_slug",
+  ["org_slug"]
 );
 
 // Workflow duration histogram as gauges (replaces histogram)
@@ -368,11 +371,22 @@ const chainEnabled = getOrCreateGauge(
   []
 );
 
+/**
+ * @deprecated Counts all active org wallets (Para + Turnkey) and is retained
+ * for backward compatibility. Use `keeperhub_wallet_total{provider}` instead.
+ */
 const paraWalletTotal = getOrCreateGauge(
   dbRegistry,
   "keeperhub_para_wallet_total",
-  "Total Para wallets",
+  "[Deprecated] Total active org wallets (all providers). Use keeperhub_wallet_total{provider} instead.",
   []
+);
+
+const walletTotalByProvider = getOrCreateGauge(
+  dbRegistry,
+  "keeperhub_wallet_total",
+  "Total active org wallets by provider",
+  ["provider"]
 );
 
 const sessionActive = getOrCreateGauge(
@@ -600,7 +614,7 @@ const pluginInvocations = getOrCreateCounter(
   apiRegistry,
   "keeperhub_plugin_invocations_total",
   "Total plugin invocations",
-  ["plugin_name", "action_name"]
+  ["plugin_name", "action_name", "org_slug", "plan"]
 );
 
 // Error counters
@@ -608,14 +622,14 @@ const pluginErrors = getOrCreateCounter(
   apiRegistry,
   "keeperhub_plugin_action_errors_total",
   "Failed plugin actions",
-  ["plugin_name", "action_name", "error_type"]
+  ["plugin_name", "action_name", "error_type", "org_slug", "plan"]
 );
 
 const apiErrors = getOrCreateCounter(
   apiRegistry,
   "keeperhub_api_errors_total",
   "API errors by status code",
-  ["endpoint", "status_code", "error_type"]
+  ["endpoint", "status_code", "error_type", "org_slug", "plan"]
 );
 
 // Common labels for all error counters (allows any subset to be used)
@@ -635,6 +649,8 @@ const ERROR_LABELS = [
   "execution_id",
   "integration_id",
   "status_code",
+  "org_slug",
+  "plan",
 ];
 
 // User-caused error counters (from unified logging system)
@@ -719,10 +735,28 @@ const dbPoolUtilization = getOrCreateGauge(
 
 // Allowed labels per error metric (must match counter definitions)
 const errorLabelAllowlist: Record<string, string[]> = {
-  "workflow.execution.errors": ["workflow_id", "trigger_type", "error_type"],
-  "workflow.step.errors": ["step_type", "error_type"],
-  "plugin.action.errors": ["plugin_name", "action_name", "error_type"],
-  "api.errors.total": ["endpoint", "status_code", "error_type"],
+  "workflow.execution.errors": [
+    "workflow_id",
+    "trigger_type",
+    "error_type",
+    "org_slug",
+    "plan",
+  ],
+  "workflow.step.errors": ["step_type", "error_type", "org_slug", "plan"],
+  "plugin.action.errors": [
+    "plugin_name",
+    "action_name",
+    "error_type",
+    "org_slug",
+    "plan",
+  ],
+  "api.errors.total": [
+    "endpoint",
+    "status_code",
+    "error_type",
+    "org_slug",
+    "plan",
+  ],
 };
 
 /**
@@ -852,28 +886,16 @@ export const prometheusMetricsCollector: MetricsCollector = {
     error: Error | ErrorContext,
     labels?: MetricLabels
   ): void {
-    // Silently skip DB-sourced metrics (populated via updateDbMetrics)
-    if (dbSourcedMetrics.has(name)) {
-      return;
-    }
-    const counter = errorCounterMap[name];
-    if (counter) {
-      const sanitized = sanitizeLabels(labels);
-      // Add error type from error object if available
-      if ("code" in error && error.code) {
-        sanitized.error_type = error.code;
-      } else if (error instanceof Error) {
-        sanitized.error_type = error.name || "Error";
-      } else {
-        // Default error type for plain objects without code
-        sanitized.error_type = "UnknownError";
-      }
-      // Filter to only include labels defined for this counter
-      const errorLabels = filterLabelsForMetric(name, sanitized);
-      counter.inc(errorLabels);
-    } else {
-      console.warn(`[Prometheus] Unknown error metric: ${name}`);
-    }
+    recordErrorCounter(name, error, labels);
+  },
+
+  recordWarning(
+    name: string,
+    error: Error | ErrorContext,
+    labels?: MetricLabels
+  ): void {
+    // Same Prometheus counter as recordError; severity distinction lives in logs.
+    recordErrorCounter(name, error, labels);
   },
 
   setGauge(name: string, value: number, labels?: MetricLabels): void {
@@ -889,6 +911,31 @@ export const prometheusMetricsCollector: MetricsCollector = {
     }
   },
 };
+
+function recordErrorCounter(
+  name: string,
+  error: Error | ErrorContext,
+  labels?: MetricLabels
+): void {
+  if (dbSourcedMetrics.has(name)) {
+    return;
+  }
+  const counter = errorCounterMap[name];
+  if (!counter) {
+    console.warn(`[Prometheus] Unknown error metric: ${name}`);
+    return;
+  }
+  const sanitized = sanitizeLabels(labels);
+  if ("code" in error && error.code) {
+    sanitized.error_type = error.code;
+  } else if (error instanceof Error) {
+    sanitized.error_type = error.name || "Error";
+  } else {
+    sanitized.error_type = "UnknownError";
+  }
+  const errorLabels = filterLabelsForMetric(name, sanitized);
+  counter.inc(errorLabels);
+}
 
 /**
  * Update hub vote gauges from database stats.
@@ -996,8 +1043,15 @@ export async function updateDbMetrics(): Promise<void> {
       workflowStats.totalCancelled
     );
 
-    // Update workflow errors total (convenience gauge for alerting)
-    workflowErrorsTotal.set(workflowStats.totalError);
+    // Update workflow errors total per org_slug (convenience gauge for
+    // alerting). Reset before populating so series for orgs that no longer
+    // have errors clear out instead of going stale.
+    workflowErrorsTotal.reset();
+    for (const [orgSlug, errorCount] of Object.entries(
+      workflowStats.errorByOrgSlug
+    )) {
+      workflowErrorsTotal.set({ org_slug: orgSlug }, errorCount);
+    }
 
     // Update workflow duration histogram buckets
     for (let i = 0; i < WORKFLOW_DURATION_BUCKETS.length; i++) {
@@ -1127,6 +1181,14 @@ export async function updateDbMetrics(): Promise<void> {
     chainTotal.set(infraStats.chainsTotal);
     chainEnabled.set(infraStats.chainsEnabled);
     paraWalletTotal.set(infraStats.paraWalletsTotal);
+    walletTotalByProvider.set(
+      { provider: "para" },
+      infraStats.walletsByProvider.para
+    );
+    walletTotalByProvider.set(
+      { provider: "turnkey" },
+      infraStats.walletsByProvider.turnkey
+    );
     sessionActive.set(infraStats.sessionsActive);
 
     updateHubVoteMetrics(voteStats);

@@ -7,10 +7,9 @@ description: "Manage wallets, gas, and address books in KeeperHub."
 
 Secure wallet integration and management for your blockchain automations.
 
-## Wallet Providers
+## Wallet Provider
 
-- [Turnkey](/wallet-management/turnkey) -- Secure enclave wallets with private key export
-- [Para](/wallet-management/para) -- MPC-based wallet management without handling private keys
+- [Turnkey](/wallet-management/turnkey) -- Secure enclave wallets with private key export. The default wallet provider in KeeperHub.
 
 ## Other
 

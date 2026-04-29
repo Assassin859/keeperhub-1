@@ -4,8 +4,8 @@ import { apiError } from "@/lib/api-error";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { users, workflowRatings, workflows } from "@/lib/db/schema";
-import { checkVoteRateLimit } from "@/lib/workflow/vote-rate-limit";
-import { VOTE_DIRECTIONS, isValidDirection } from "@/lib/workflow/votes";
+import { checkVoteRateLimit } from "@/lib/workflow/editor/vote-rate-limit";
+import { VOTE_DIRECTIONS, isValidDirection } from "@/lib/workflow/editor/votes";
 
 type RouteParams = { params: Promise<{ workflowId: string }> };
 

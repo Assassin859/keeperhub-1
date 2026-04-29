@@ -65,13 +65,13 @@ vi.mock("@/lib/db/schema", () => ({
   tags: { id: "id", name: "name" },
 }));
 
-vi.mock("@/lib/x402/payment-gate", () => ({
+vi.mock("@/lib/payments/x402/payment-gate", () => ({
   hashPaymentSignature: mockHashPaymentSignature,
   recordPayment: mockRecordPayment,
   resolveCreatorWallet: mockResolveCreatorWallet,
 }));
 
-vi.mock("@/lib/mpp/server", () => ({
+vi.mock("@/lib/payments/mpp/server", () => ({
   hashMppCredential: mockHashMppCredential,
 }));
 
@@ -92,7 +92,7 @@ vi.mock("workflow/api", () => ({
   start: mockStart,
 }));
 
-vi.mock("@/lib/workflow-executor.workflow", () => ({
+vi.mock("@/lib/workflow/executor/executor.workflow", () => ({
   executeWorkflow: mockExecuteWorkflow,
 }));
 
@@ -110,7 +110,7 @@ vi.mock("@/lib/logging", () => ({
   logSystemError: mockLogSystemError,
 }));
 
-vi.mock("@/lib/x402/execution-wait", () => ({
+vi.mock("@/lib/payments/x402/execution-wait", () => ({
   buildCallCompletionResponse: mockBuildCallCompletionResponse,
 }));
 
@@ -231,9 +231,8 @@ describe("POST /api/mcp/workflows/[slug]/call", () => {
     mockResolveCreatorWallet.mockResolvedValue(CREATOR_WALLET);
     // Default: simulate timeout so we fall back to running response. Tests
     // exercising the synchronous completion path override this explicitly.
-    mockBuildCallCompletionResponse.mockImplementation(
-      (executionId: string) =>
-        Promise.resolve({ executionId, status: "running" })
+    mockBuildCallCompletionResponse.mockImplementation((executionId: string) =>
+      Promise.resolve({ executionId, status: "running" })
     );
     // Default no-op update chain: db.update(table).set(values).where(filter)
     mockDbUpdate.mockReturnValue({
@@ -243,7 +242,7 @@ describe("POST /api/mcp/workflows/[slug]/call", () => {
     });
     // Default: caller is authenticated. Tests that exercise the unauthenticated
     // path must explicitly override these to return { authenticated: false }.
-    mockAuthenticateOAuthToken.mockReturnValue({
+    mockAuthenticateOAuthToken.mockResolvedValue({
       authenticated: true,
       organizationId: "caller-org-1",
       userId: "caller-user-1",
@@ -272,7 +271,7 @@ describe("POST /api/mcp/workflows/[slug]/call", () => {
   });
 
   function setUnauthenticated(): void {
-    mockAuthenticateOAuthToken.mockReturnValue({ authenticated: false });
+    mockAuthenticateOAuthToken.mockResolvedValue({ authenticated: false });
     mockAuthenticateApiKey.mockResolvedValue({ authenticated: false });
   }
 

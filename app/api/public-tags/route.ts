@@ -56,10 +56,9 @@ export async function GET(): Promise<NextResponse> {
 
 export async function POST(request: Request): Promise<NextResponse> {
   try {
-    const session = await auth.api.getSession({
-      headers: request.headers,
-    });
-
+    // Session-only: public tag creation writes to a global table, so an
+    // org-scoped API key is the wrong credential class. See KEEP-354.
+    const session = await auth.api.getSession({ headers: request.headers });
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

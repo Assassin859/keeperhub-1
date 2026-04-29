@@ -5,7 +5,7 @@ import {
   dedupeEdges,
   hasDuplicateEdge,
   normalizeHandle,
-} from "@/lib/workflow/edge-helpers";
+} from "@/lib/workflow/editor/edge-helpers";
 
 function edge(
   id: string,

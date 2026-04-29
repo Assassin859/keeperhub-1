@@ -6,6 +6,11 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// `lib/safe-fetch` is now a transitive import via the route handler's
+// SSRF guard. It declares `import "server-only"`, which throws under
+// vitest unless stubbed.
+vi.mock("server-only", () => ({}));
+
 // Mock auth before imports
 vi.mock("@/lib/auth", () => ({
   auth: {
@@ -26,6 +31,39 @@ vi.mock("@/lib/rpc/config-service", () => ({
   resolveAllRpcConfigs: vi.fn(),
   resolveRpcConfig: vi.fn(),
   setUserRpcPreference: vi.fn(),
+}));
+
+// Mock DNS so the SSRF guard in the PUT handler doesn't hit the real
+// network. Default behaviour returns a public IP; individual tests override
+// via mockPromisesLookup.mockResolvedValue / mockRejectedValue.
+const { mockPromisesLookup } = vi.hoisted(() => ({
+  mockPromisesLookup: vi.fn(),
+}));
+vi.mock("node:dns", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:dns")>();
+  return {
+    ...actual,
+    promises: {
+      ...actual.promises,
+      lookup: mockPromisesLookup,
+    },
+  };
+});
+
+// Sentry is pulled in transitively via lib/safe-fetch; stub it out so the
+// test runner doesn't try to initialise the SDK.
+vi.mock("@sentry/nextjs", () => ({
+  captureException: vi.fn(),
+  addBreadcrumb: vi.fn(),
+}));
+
+vi.mock("@/lib/metrics", () => ({
+  getMetricsCollector: () => ({
+    incrementCounter: vi.fn(),
+    recordLatency: vi.fn(),
+    recordError: vi.fn(),
+    setGauge: vi.fn(),
+  }),
 }));
 
 import {
@@ -106,6 +144,9 @@ describe("RPC Preferences API Routes", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default: any hostname resolves to a public address. Override per-test
+    // for SSRF-block scenarios.
+    mockPromisesLookup.mockResolvedValue([{ address: "1.1.1.1", family: 4 }]);
   });
 
   // Helper to create mock request
@@ -367,6 +408,117 @@ describe("RPC Preferences API Routes", () => {
 
       expect(response.status).toBe(200);
       expect(data.fallbackRpcUrl).toBeNull();
+    });
+
+    describe("SSRF guard", () => {
+      const ssrfBlockedLiterals: [string, string][] = [
+        ["loopback IPv4", "http://127.0.0.1:8545/"],
+        ["link-local IMDS", "http://169.254.169.254/latest/meta-data/"],
+        ["RFC1918", "http://10.0.0.1:8545/"],
+        ["RFC1918 192.168", "http://192.168.1.1:8545/"],
+        ["loopback IPv6", "https://[::1]:8545/"],
+        ["link-local IPv6", "https://[fe80::1]:8545/"],
+        [
+          "IPv4-mapped IPv6 IMDS",
+          "http://[::ffff:169.254.169.254]/latest/meta-data/",
+        ],
+      ];
+
+      for (const [label, url] of ssrfBlockedLiterals) {
+        it(`should return 400 for ${label} primaryRpcUrl (${url})`, async () => {
+          vi.mocked(auth.api.getSession).mockResolvedValue(mockSession);
+          vi.mocked(getChainByChainId).mockResolvedValue(mockChain);
+
+          const request = createRequest({
+            method: "PUT",
+            body: { primaryRpcUrl: url },
+          });
+          const response = await PUT(request, { params: createParams("1") });
+          const data = await response.json();
+
+          expect(response.status).toBe(400);
+          expect(data.error).toBe("RPC URL points to a non-public address");
+          expect(setUserRpcPreference).not.toHaveBeenCalled();
+        });
+      }
+
+      it("should return 400 when fallbackRpcUrl resolves to a private IP", async () => {
+        vi.mocked(auth.api.getSession).mockResolvedValue(mockSession);
+        vi.mocked(getChainByChainId).mockResolvedValue(mockChain);
+        // Primary resolves public, fallback resolves private. The handler
+        // must validate both — leaving the fallback unchecked would let an
+        // attacker stash an internal URL behind a "valid" primary.
+        mockPromisesLookup
+          .mockResolvedValueOnce([{ address: "1.1.1.1", family: 4 }])
+          .mockResolvedValueOnce([{ address: "10.0.0.5", family: 4 }]);
+
+        const request = createRequest({
+          method: "PUT",
+          body: {
+            primaryRpcUrl: "https://public.example.com",
+            fallbackRpcUrl: "https://internal.example.com",
+          },
+        });
+        const response = await PUT(request, { params: createParams("1") });
+        const data = await response.json();
+
+        expect(response.status).toBe(400);
+        expect(data.error).toBe("RPC URL points to a non-public address");
+        expect(setUserRpcPreference).not.toHaveBeenCalled();
+      });
+
+      it("should return 400 when DNS resolution fails", async () => {
+        vi.mocked(auth.api.getSession).mockResolvedValue(mockSession);
+        vi.mocked(getChainByChainId).mockResolvedValue(mockChain);
+        mockPromisesLookup.mockRejectedValue(
+          Object.assign(new Error("ENOTFOUND"), { code: "ENOTFOUND" })
+        );
+
+        const request = createRequest({
+          method: "PUT",
+          body: { primaryRpcUrl: "https://nonexistent.example.com" },
+        });
+        const response = await PUT(request, { params: createParams("1") });
+        const data = await response.json();
+
+        expect(response.status).toBe(400);
+        expect(data.error).toBe("Could not resolve RPC URL host");
+        expect(setUserRpcPreference).not.toHaveBeenCalled();
+      });
+
+      it("should return 400 for non-http(s) scheme", async () => {
+        vi.mocked(auth.api.getSession).mockResolvedValue(mockSession);
+        vi.mocked(getChainByChainId).mockResolvedValue(mockChain);
+
+        const request = createRequest({
+          method: "PUT",
+          body: { primaryRpcUrl: "file:///etc/passwd" },
+        });
+        const response = await PUT(request, { params: createParams("1") });
+        const data = await response.json();
+
+        expect(response.status).toBe(400);
+        expect(data.error).toBe("RPC URL points to a non-public address");
+        expect(setUserRpcPreference).not.toHaveBeenCalled();
+      });
+
+      it("should accept domain that resolves to a public address", async () => {
+        vi.mocked(auth.api.getSession).mockResolvedValue(mockSession);
+        vi.mocked(getChainByChainId).mockResolvedValue(mockChain);
+        vi.mocked(setUserRpcPreference).mockResolvedValue(mockPreference);
+        mockPromisesLookup.mockResolvedValue([
+          { address: "8.8.8.8", family: 4 },
+        ]);
+
+        const request = createRequest({
+          method: "PUT",
+          body: { primaryRpcUrl: "https://rpc.publicnode.com" },
+        });
+        const response = await PUT(request, { params: createParams("1") });
+
+        expect(response.status).toBe(200);
+        expect(setUserRpcPreference).toHaveBeenCalled();
+      });
     });
   });
 

@@ -1,7 +1,8 @@
-import { and, eq, gt, lt, notInArray, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, lt, notInArray, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { workflowExecutionLogs, workflowExecutions } from "@/lib/db/schema";
+import { walletLocks } from "@/lib/db/schema-extensions";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 
@@ -69,6 +70,38 @@ export async function GET(request: Request): Promise<NextResponse> {
       .returning({ id: workflowExecutions.id });
 
     const reapedIds = reaped.map((row) => row.id);
+
+    // KEEP-333: Close orphaned 'running' step logs for reaped executions so
+    // the UI doesn't show stuck spinners after the workflow has been marked
+    // as timed out.
+    if (reapedIds.length > 0) {
+      await db
+        .update(workflowExecutionLogs)
+        .set({
+          status: "error",
+          error: "Step did not record completion",
+          completedAt: new Date(),
+        })
+        .where(
+          and(
+            inArray(workflowExecutionLogs.executionId, reapedIds),
+            eq(workflowExecutionLogs.status, "running")
+          )
+        );
+
+      // KEEP-344: Release any nonce locks still held by reaped executions.
+      // The wallet_locks TTL would clear them on its own, but releasing them
+      // here unwedges affected wallets immediately when reaper runs, instead
+      // of leaving the user blocked until expires_at.
+      await db
+        .update(walletLocks)
+        .set({
+          lockedBy: null,
+          lockedAt: null,
+          expiresAt: sql`NOW()`,
+        })
+        .where(inArray(walletLocks.lockedBy, reapedIds));
+    }
 
     return NextResponse.json({
       reapedCount: reapedIds.length,

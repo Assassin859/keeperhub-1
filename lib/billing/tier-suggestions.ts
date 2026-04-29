@@ -40,7 +40,7 @@ export async function getUpgradeSuggestion(
   const sub = await getOrgSubscription(organizationId);
   const plan = parsePlanName(sub?.plan);
   const tier = parseTierKey(sub?.tier);
-  const limits = getPlanLimits(plan, tier);
+  const limits = getPlanLimits(plan, tier, sub?.planOverrides);
 
   if (limits.maxExecutionsPerMonth === -1) {
     return { shouldUpgrade: false };

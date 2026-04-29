@@ -34,7 +34,7 @@ import { refetchSidebar } from "@/lib/refetch-sidebar";
 import { api } from "@/lib/api-client";
 import { integrationsAtom } from "@/lib/integrations-store";
 import type { IntegrationType } from "@/lib/types/integration";
-import { generateWorkflowCode } from "@/lib/workflow-codegen";
+import { generateWorkflowCode } from "@/lib/workflow/codegen/codegen";
 import {
   clearNodeStatusesAtom,
   clearWorkflowAtom,
@@ -59,7 +59,7 @@ import {
   showDeleteDialogAtom,
   updateNodeDataAtom,
   workflowNotFoundAtom,
-} from "@/lib/workflow-store";
+} from "@/lib/workflow/store";
 import { findActionById, flattenConfigFields } from "@/plugins/registry";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { ActionConfig } from "./config/action-config";
@@ -555,7 +555,11 @@ export const PanelInner = () => {
   );
 
   // Widened value type to support structured config objects (e.g. conditionConfig)
-  const handleUpdateConfig = (key: string, value: string | Record<string, unknown> | undefined) => {
+  // and booleans (e.g. usePrivateMempool for Flashbots routing).
+  const handleUpdateConfig = (
+    key: string,
+    value: string | boolean | Record<string, unknown> | undefined
+  ): void => {
     if (selectedNode) {
       const baseConfig = pendingConfigRef.current ?? selectedNode.data.config;
       let newConfig = { ...baseConfig, [key]: value };

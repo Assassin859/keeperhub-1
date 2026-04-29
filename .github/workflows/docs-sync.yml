@@ -247,10 +247,98 @@ jobs:
 
           echo "Prepared diffs for $FILE_COUNT files ($TOTAL_LINES total lines)."
 
-          # Prepare the docs directory listing
-          find docs -name "*.md" -o -name "_meta.json" | sort > /tmp/docs-listing.txt
+          # Prepare the docs directory listing (docs/ uses _meta.ts for nav)
+          find docs -name "*.md" -o -name "_meta.ts" | sort > /tmp/docs-listing.txt
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Detect removed source items and orphan doc candidates
+        if: steps.tag.outputs.release_tag != ''
+        id: removals
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          DAYS_BACK_INPUT: ${{ github.event.inputs.days_back }}
+          CURRENT_TAG: ${{ steps.tag.outputs.release_tag }}
+        run: |
+          # Resolve the same BASE_REF..HEAD_REF window the diffs step uses,
+          # so we scan the same range for deletions.
+          : > /tmp/removal-candidates.txt
+
+          if [ "$EVENT_NAME" != "workflow_dispatch" ]; then
+            PREV_TAG=$(gh release list --limit 2 --json tagName --jq '.[1].tagName' 2>/dev/null || echo "")
+            if [ -n "$PREV_TAG" ]; then
+              BASE_REF="$PREV_TAG"
+              HEAD_REF="$CURRENT_TAG"
+            else
+              echo "No previous tag, skipping stale-doc detection."
+              exit 0
+            fi
+          else
+            DAYS_BACK="${DAYS_BACK_INPUT:-30}"
+            BASE_REF=$(git log --since="${DAYS_BACK} days ago" --format=%H -- | tail -1)
+            HEAD_REF="HEAD"
+            if [ -z "$BASE_REF" ]; then
+              echo "No base ref found, skipping stale-doc detection."
+              exit 0
+            fi
+          fi
+
+          echo "Scanning deletions in ${BASE_REF}..${HEAD_REF}"
+
+          DELETED_FILES=$(git diff --name-only --diff-filter=D "$BASE_REF".."$HEAD_REF" -- \
+            'lib/' 'plugins/' 'app/api/' 2>/dev/null || true)
+
+          if [ -z "$DELETED_FILES" ]; then
+            echo "No source file deletions detected."
+            exit 0
+          fi
+
+          # Dedup tokens so many files in the same removed plugin only grep once
+          SEEN_TOKENS=""
+
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+
+            TOKEN=""
+            KIND=""
+
+            if echo "$file" | grep -qE '^plugins/[^/]+/'; then
+              TOKEN=$(echo "$file" | cut -d/ -f2)
+              KIND="plugin"
+            elif echo "$file" | grep -qE '^app/api/.+/route\.(ts|tsx|js|jsx)$'; then
+              TOKEN=$(echo "$file" | sed 's|^app||' | sed 's|/route\.[a-zA-Z]*$||')
+              KIND="endpoint"
+            else
+              continue
+            fi
+
+            [ -z "$TOKEN" ] && continue
+
+            KEY="${KIND}:${TOKEN}"
+            case " $SEEN_TOKENS " in
+              *" $KEY "*) continue ;;
+            esac
+            SEEN_TOKENS="$SEEN_TOKENS $KEY"
+
+            MATCHES=$(grep -rlF -- "$TOKEN" docs/ 2>/dev/null | head -10 || true)
+
+            if [ -n "$MATCHES" ]; then
+              {
+                echo "=== deleted ${KIND}: ${TOKEN} (source path: ${file}) ==="
+                echo "Docs referencing this item:"
+                echo "$MATCHES" | sed 's/^/  - /'
+                echo ""
+              } >> /tmp/removal-candidates.txt
+            fi
+          done <<< "$DELETED_FILES"
+
+          if [ -s /tmp/removal-candidates.txt ]; then
+            COUNT=$(grep -c "^===" /tmp/removal-candidates.txt || echo 0)
+            echo "Found $COUNT deleted item(s) with matching doc references."
+          else
+            echo "Deletions detected, but no docs reference any of them."
+          fi
 
       - name: Create docs branch
         if: steps.tag.outputs.release_tag != ''
@@ -340,10 +428,14 @@ jobs:
           The file /tmp/file-diffs.txt contains compact unified diffs for all
           changed files (capped at 60 lines per file, 3000 lines total).
           The file /tmp/docs-listing.txt contains the full docs directory listing.
+          The file /tmp/removal-candidates.txt lists plugins and API endpoints
+          that were deleted in this range, along with docs pages that mention
+          them. If that file is empty, no deletions were detected and you can
+          skip the stale-doc step.
 
-          Start by reading these two files instead of individually reading each source
-          file. This saves significant time. Only read individual source files if you need
-          more context than the diff provides.
+          Start by reading these three files instead of individually reading each
+          source file. This saves significant time. Only read individual source
+          files if you need more context than the diff provides.
 
           NOTE: Internal/non-user-facing files (OG images, metrics, db internals,
           internal APIs) have already been filtered out. All files in the list are
@@ -354,9 +446,12 @@ jobs:
           - Documentation lives in the /docs/ directory at the repository root.
           - The docs site uses Nextra 4 (a Next.js-based docs framework). Content is plain
             Markdown with YAML frontmatter.
-          - Navigation is controlled by _meta.json files in each directory. The root
-            _meta.json at /docs/_meta.json defines the top-level sections. Each
-            subdirectory has its own _meta.json for page ordering within that section.
+          - Navigation is controlled by _meta.ts files in each directory. The root
+            _meta.ts at /docs/_meta.ts defines the top-level sections. Each
+            subdirectory has its own _meta.ts for page ordering within that section.
+            Each file exports a default object mapping page slugs to their display
+            titles, e.g. export default { overview: "Overview", web3: "Web3" };
+            When you add or remove a page, update the matching slug entry here.
           - There are approximately 35 documentation pages organized across these sections:
             intro, getting-started, keepers, workflows, keeper-runs, notifications,
             wallet-management, users-teams-orgs, practices, api, FAQ.
@@ -400,29 +495,50 @@ jobs:
              - If a plugin gained new configuration options, add them to the relevant
                docs table or list.
 
-          4. Do NOT do any of the following:
+          4. If /tmp/removal-candidates.txt is non-empty, handle stale docs for
+             the removed items. For each "=== deleted <kind>: <token> ===" entry:
+             - Decide whether the feature was genuinely removed, renamed, or
+               refactored. Cross-check /tmp/file-diffs.txt: a nearby addition
+               with a similar name usually means a rename, not a removal.
+             - Genuinely removed: delete the dedicated doc page with
+               `git rm docs/<path>.md`, then remove the matching slug from the
+               parent _meta.ts file using the Edit tool. Preserve trailing
+               commas, quoting, and surrounding whitespace.
+             - Renamed: update references in the listed doc pages instead of
+               deleting them.
+             - Only mentioned in passing (not the page's primary subject):
+               remove just the mention, keep the page.
+             - Be conservative. When in doubt whether something was truly
+               removed or merely refactored, prefer updating over deleting,
+               and leave a note in the commit body explaining your reasoning.
+
+          5. Do NOT do any of the following:
              - Do NOT rewrite working documentation for style or tone improvements.
              - Do NOT add changelog or release notes entries.
-             - Do NOT reorganize existing documentation structure or navigation.
+             - Do NOT reorganize existing documentation structure or navigation
+               beyond removing entries for pages you delete in step 4.
              - Do NOT add sections about internal implementation details.
              - Do NOT modify documentation that is already accurate.
              - Do NOT create documentation for test utilities, internal helpers, or
                non-user-facing code.
 
-          5. If you create any new documentation pages:
+          6. If you create any new documentation pages:
              - Use kebab-case filenames.
-             - Add the page to the appropriate _meta.json file.
+             - Add the page to the appropriate _meta.ts file.
              - Include proper YAML frontmatter with title and description.
              - Match the writing style and depth of existing pages in that section.
 
-          6. If after analyzing all changes you determine that no documentation updates
+          7. If after analyzing all changes you determine that no documentation updates
              are needed (the docs are already accurate), report that finding and do not
              create a PR. Simply state: "Documentation is up to date. No changes needed."
 
-          7. If you do make changes, commit them to the current branch. Use a commit
-             message format like: "docs: sync documentation with ${RELEASE_TAG}"
-             and include a summary of what was updated and why in the commit body.
-             The CI system will push the branch and create a PR automatically after you commit.
+          8. If you do make changes, commit them to the current branch. Use
+             `git add` for edits/additions and `git rm` for deletions (git rm
+             already stages the removal). Use a commit message format like:
+             "docs: sync documentation with ${RELEASE_TAG}" and include a
+             summary of what was updated, added, or removed and why in the
+             commit body. The CI system will push the branch and create a PR
+             automatically after you commit.
           PROMPT_EOF
 
       - name: Run Claude Code docs sync

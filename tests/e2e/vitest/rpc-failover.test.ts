@@ -14,13 +14,27 @@
 import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+
+// `@/lib/rpc/providers` pulls in `lib/rpc/safe-ethers-fetch.ts`, which guards
+// itself with `import "server-only"`. Without this mock the file-load throws
+// under vitest.
+vi.mock("server-only", () => ({}));
+
 import { type Chain, chains, userRpcPreferences, users } from "@/lib/db/schema";
 import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 import {
   clearRpcProviderManagerCache,
   RpcProviderManager,
-} from "@/lib/rpc-provider";
+} from "@/lib/rpc/providers";
 import { PERSISTENT_TEST_USER_EMAIL } from "../../utils/db";
 
 // Skip if DATABASE_URL not set or SKIP_INFRA_TESTS is true (CI environment without DB)

@@ -123,31 +123,31 @@ const TOKEN_CONFIGS: TokenConfig[] = [
   },
 
   // ==========================================================================
-  // Tempo Testnet (chainId: 42429)
+  // Tempo Testnet (chainId: 42431)
   // ==========================================================================
   {
-    chainId: 42_429,
+    chainId: 42_431,
     tokenAddress: "0x20c0000000000000000000000000000000000000", // pathUSD
     logoUrl: null, // Tempo testnet token
     isStablecoin: true,
     sortOrder: 1,
   },
   {
-    chainId: 42_429,
+    chainId: 42_431,
     tokenAddress: "0x20c0000000000000000000000000000000000001", // AlphaUSD
     logoUrl: null, // Tempo testnet token
     isStablecoin: true,
     sortOrder: 2,
   },
   {
-    chainId: 42_429,
+    chainId: 42_431,
     tokenAddress: "0x20c0000000000000000000000000000000000002", // BetaUSD
     logoUrl: null, // Tempo testnet token
     isStablecoin: true,
     sortOrder: 3,
   },
   {
-    chainId: 42_429,
+    chainId: 42_431,
     tokenAddress: "0x20c0000000000000000000000000000000000003", // ThetaUSD
     logoUrl: null, // Tempo testnet token
     isStablecoin: true,
@@ -217,7 +217,7 @@ const TOKEN_CONFIGS: TokenConfig[] = [
   // ==========================================================================
   {
     chainId: 421_614,
-    tokenAddress: "0xf3c3351d6bd0098eeb33ca8f830faf2a141ea2e1", // USDC (Circle testnet)
+    tokenAddress: "0x75faf114eafb1bdbe2f0316df893fd58ce46aa4d", // USDC (Circle testnet)
     logoUrl: LOGOS.USDC,
     isStablecoin: true,
     sortOrder: 1,
@@ -272,6 +272,21 @@ const TOKEN_CONFIGS: TokenConfig[] = [
   {
     chainId: 43_113,
     tokenAddress: "0x5425890298aed601595a70ab815c96711a31bc65", // USDC (Circle testnet)
+    logoUrl: LOGOS.USDC,
+    isStablecoin: true,
+    sortOrder: 1,
+  },
+
+  // ==========================================================================
+  // 0G Mainnet (chainId: 16661)
+  // ==========================================================================
+  // Only XSwap-bridged USDC.e is tracked: Circle has not deployed native USDC
+  // on 0G, and no other stablecoin issuer has deployed natively. Bridged via
+  // Chainlink CCIP from Ethereum. Galileo testnet has no canonical bridged
+  // USDC (CCIP is decommissioned on Galileo), so no testnet entry.
+  {
+    chainId: 16_661,
+    tokenAddress: "0x1f3aa82227281ca364bfb3d253b0f1af1da6473e", // USDC.e (XSwap Bridged USDC via Chainlink CCIP)
     logoUrl: LOGOS.USDC,
     isStablecoin: true,
     sortOrder: 1,

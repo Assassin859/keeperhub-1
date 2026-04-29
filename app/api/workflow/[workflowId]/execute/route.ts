@@ -10,10 +10,10 @@ import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
-import { getOrgSlug } from "@/lib/db/org-helpers";
+import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
 import { workflowExecutions, workflows } from "@/lib/db/schema";
-import { executeWorkflow } from "@/lib/workflow-executor.workflow";
-import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow-store";
+import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
+import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 async function executeWorkflowBackground(
   executionId: string,
@@ -23,8 +23,9 @@ async function executeWorkflowBackground(
   input: Record<string, unknown>,
   organizationId?: string | null,
   ownerId?: string,
-  organizationSlug?: string
-) {
+  organizationSlug?: string,
+  organizationPlan?: string
+): Promise<void> {
   try {
     console.log("[Workflow Execute] Starting execution:", executionId);
 
@@ -49,6 +50,7 @@ async function executeWorkflowBackground(
         organizationId: organizationId ?? undefined,
         ownerId,
         organizationSlug,
+        organizationPlan,
       },
     ]);
 
@@ -222,8 +224,11 @@ export async function POST(
       [LabelKeys.WORKFLOW_ID]: workflowId,
     });
 
-    // Resolve org slug for log labels (cached per request)
-    const organizationSlug = await getOrgSlug(workflow.organizationId);
+    // Resolve org slug + plan for log labels (cached per request)
+    const [organizationSlug, organizationPlan] = await Promise.all([
+      getOrgSlug(workflow.organizationId),
+      getOrgPlanLabel(workflow.organizationId),
+    ]);
 
     // Execute the workflow in the background (don't await)
     executeWorkflowBackground(
@@ -234,7 +239,8 @@ export async function POST(
       input,
       workflow.organizationId,
       workflow.userId,
-      organizationSlug
+      organizationSlug,
+      organizationPlan
     );
 
     // Return immediately with the execution ID

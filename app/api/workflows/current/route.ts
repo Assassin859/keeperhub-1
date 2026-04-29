@@ -5,7 +5,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
 import { generateId } from "@/lib/utils/id";
-import { sanitizeWorkflowData } from "@/lib/workflow/sanitize-nodes";
+import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
 
 const CURRENT_WORKFLOW_NAME = "~~__CURRENT__~~";
 

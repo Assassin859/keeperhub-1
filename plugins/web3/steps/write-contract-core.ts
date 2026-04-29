@@ -9,8 +9,8 @@ import "server-only";
 
 import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
-import { coerceArgsForAbi, reshapeArgsForAbi } from "@/lib/abi-struct-args";
-import { validateArgsForAbi } from "@/lib/abi-validate-args";
+import { coerceArgsForAbi, reshapeArgsForAbi } from "@/lib/abi/struct-args";
+import { validateArgsForAbi } from "@/lib/abi/validate-args";
 import { db } from "@/lib/db";
 import { explorerConfigs, workflowExecutions } from "@/lib/db/schema";
 import { getTransactionUrl } from "@/lib/explorer";
@@ -21,9 +21,9 @@ import {
 } from "@/lib/para/wallet-helpers";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
-import { findAbiFunction } from "@/lib/abi-utils";
+import { findAbiFunction } from "@/lib/abi/utils";
 import { getErrorMessage } from "@/lib/utils";
-import { getAbiFunctionKey } from "@/lib/web3/abi-function-key";
+import { getAbiFunctionKey } from "@/lib/abi/function-key";
 import { generateId } from "@/lib/utils/id";
 import {
   executeContractCallAsRole,
@@ -35,6 +35,7 @@ import { formatContractError } from "@/lib/web3/decode-revert-error";
 import { resolveGasLimitOverrides } from "@/lib/web3/gas-defaults";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
 import { executeSponsoredContractTransaction } from "@/lib/web3/sponsored-transaction-manager";
+import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
 import {
   type TransactionContext,
   withNonceSession,
@@ -291,7 +292,11 @@ export async function writeContractCore(
   // ERC-4337 bundlers use their own RPC (Pimlico), which bypasses Flashbots Protect.
   // KEEP-177: skip sponsorship in Safe mode -- the 4337 bundler sends from
   // its own smart account, which would change msg.sender away from the Safe.
-  if (!usePrivateMempool && signerMode.kind === "eoa") {
+  if (
+    !usePrivateMempool &&
+    signerMode.kind === "eoa" &&
+    isGasSponsorshipEnabled()
+  ) {
     try {
       const sponsoredResult = await executeSponsoredContractTransaction({
         organizationId,

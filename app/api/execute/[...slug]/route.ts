@@ -2,7 +2,7 @@ import "server-only";
 import "@/protocols";
 
 import { NextResponse } from "next/server";
-import { resolveAbi } from "@/lib/abi-cache";
+import { resolveAbi } from "@/lib/abi/cache";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import { getProtocol } from "@/lib/protocol-registry";
 import { PLUGIN_STEP_IMPORTERS } from "@/lib/step-registry";

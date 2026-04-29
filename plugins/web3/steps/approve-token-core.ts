@@ -33,6 +33,7 @@ import { resolveGasLimitOverrides } from "@/lib/web3/gas-defaults";
 import { isSponsorshipSupported } from "@/lib/web3/pimlico-config";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
 import { executeSponsoredContractTransaction } from "@/lib/web3/sponsored-transaction-manager";
+import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
 import {
   type TransactionContext,
   withNonceSession,
@@ -229,7 +230,8 @@ export async function approveTokenCore(
   if (
     isSponsorshipSupported(chainId) &&
     !usePrivateMempool &&
-    signerMode.kind === "eoa"
+    signerMode.kind === "eoa" &&
+    isGasSponsorshipEnabled()
   ) {
     try {
       const [decimals, symbol] = await rpcManager.executeWithFailover(
