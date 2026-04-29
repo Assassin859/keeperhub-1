@@ -97,6 +97,14 @@ export function wrapWithSessionTokenHash<F extends AdapterFactory>(
 function wrapAdapter(inner: DBAdapter): DBAdapter {
   return {
     ...inner,
+    // The cast on `create` is intentional and worth preserving. DBAdapter.create
+    // is `<T, R = T>(data: { model; data: Omit<T, "id">; ... }) => Promise<R>`,
+    // so writing the body as a generic function loses the `T` binding when we
+    // spread `data` into a fresh object: TS widens to `Record<string, any>`
+    // which then doesn't satisfy `Omit<T, "id">` on the recursive inner.create
+    // call. Casting the implementation to `DBAdapter["create"]` keeps the
+    // public type intact at the cost of unchecked types inside the function;
+    // we get the type-checking back at the call sites where it matters.
     create: ((data: CreateArgs) => {
       const incoming = data.data as Record<string, unknown>;
       if (
