@@ -2,6 +2,7 @@ import type { ErrorEvent } from "@sentry/nextjs";
 import { describe, expect, it } from "vitest";
 import {
   hasNoInAppFrames,
+  isBrowserExtensionError,
   isEip1193ProviderRejection,
   isMonacoCancellation,
 } from "@/lib/sentry-filters";
@@ -14,7 +15,13 @@ type TestEvent = {
       type?: string;
       value?: string;
       mechanism?: { type?: string; handled?: boolean };
-      stacktrace?: { frames?: Array<{ in_app?: boolean; filename?: string }> };
+      stacktrace?: {
+        frames?: Array<{
+          in_app?: boolean;
+          filename?: string;
+          abs_path?: string;
+        }>;
+      };
     }>;
   };
   extra?: Record<string, unknown>;
@@ -118,6 +125,101 @@ describe("hasNoInAppFrames", () => {
   it("returns false when there are no frames", () => {
     const event = makeEvent({ exception: { values: [{}] } });
     expect(hasNoInAppFrames(event)).toBe(false);
+  });
+});
+
+describe("isBrowserExtensionError", () => {
+  it("matches when a frame's filename is the wallet extension service worker", () => {
+    const event = makeEvent({
+      exception: {
+        values: [
+          {
+            mechanism: {
+              type: "auto.browser.browserapierrors.addEventListener",
+              handled: false,
+            },
+            stacktrace: {
+              frames: [
+                {
+                  in_app: true,
+                  filename: "app:///extensionServiceWorker.js",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    expect(isBrowserExtensionError(event)).toBe(true);
+  });
+
+  it("matches when a frame's abs_path uses the chrome-extension protocol", () => {
+    const event = makeEvent({
+      exception: {
+        values: [
+          {
+            stacktrace: {
+              frames: [
+                {
+                  in_app: true,
+                  filename: "app:///inpage.js",
+                  abs_path:
+                    "chrome-extension://nkbihfbeogaeaoehlefnkodbefgpgknn/inpage.js",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    expect(isBrowserExtensionError(event)).toBe(true);
+  });
+
+  it("matches firefox moz-extension abs_paths", () => {
+    const event = makeEvent({
+      exception: {
+        values: [
+          {
+            stacktrace: {
+              frames: [
+                {
+                  in_app: true,
+                  filename: "app:///inpage.js",
+                  abs_path: "moz-extension://abc/inpage.js",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    expect(isBrowserExtensionError(event)).toBe(true);
+  });
+
+  it("does not match plain app frames", () => {
+    const event = makeEvent({
+      exception: {
+        values: [
+          {
+            stacktrace: {
+              frames: [
+                {
+                  in_app: true,
+                  filename: "app:///app/workflows/[workflowId]/page.tsx",
+                  abs_path: "https://app.keeperhub.com/workflows/x",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    expect(isBrowserExtensionError(event)).toBe(false);
+  });
+
+  it("does not match when there are no frames", () => {
+    const event = makeEvent({ exception: { values: [{}] } });
+    expect(isBrowserExtensionError(event)).toBe(false);
   });
 });
 
