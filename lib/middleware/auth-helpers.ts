@@ -2,6 +2,54 @@ import { authenticateApiKey } from "@/lib/api-key-auth";
 import { auth } from "@/lib/auth";
 import { authenticateOAuthToken } from "@/lib/mcp/oauth-auth";
 import { getOrgContext } from "@/lib/middleware/org-context";
+import { isTrustedOrigin, normaliseOrigin } from "@/lib/trusted-origins";
+
+const STATE_CHANGING_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
+
+/**
+ * Defence-in-depth CSRF check for session-authed routes. The root middleware
+ * (`middleware.ts`) is the primary enforcement; this runs again on the small
+ * set of routes that resolve auth via `getDualAuthContext`, so a misconfigured
+ * matcher can't silently bypass the protection. See KEEP-240.
+ *
+ * Skipped for OAuth Bearer and API-key callers because those auth methods are
+ * intentionally cross-origin and not vulnerable to cookie CSRF.
+ */
+function checkSessionOrigin(
+  request: Request
+): { error: string; status: 403 } | null {
+  const method = request.method.toUpperCase();
+  if (!STATE_CHANGING_METHODS.has(method)) {
+    return null;
+  }
+  if (!request.headers.has("cookie")) {
+    return null;
+  }
+
+  const raw = request.headers.get("origin") ?? request.headers.get("referer");
+  const origin = normaliseOrigin(raw);
+  const path = (() => {
+    try {
+      return new URL(request.url).pathname;
+    } catch {
+      return "<unparseable>";
+    }
+  })();
+
+  if (!origin) {
+    console.info("[csrf] blocked: missing origin (session)", { method, path });
+    return { error: "Invalid origin", status: 403 };
+  }
+  if (!isTrustedOrigin(origin)) {
+    console.info("[csrf] blocked: untrusted origin (session)", {
+      method,
+      path,
+      origin,
+    });
+    return { error: "Invalid origin", status: 403 };
+  }
+  return null;
+}
 
 export type AuthMethod = "oauth" | "api-key" | "session";
 
@@ -120,6 +168,11 @@ export async function getDualAuthContext(
     };
   }
 
+  const originError = checkSessionOrigin(request);
+  if (originError) {
+    return originError;
+  }
+
   const orgContext = await getOrgContext();
   return {
     userId: session.user.id,
@@ -186,6 +239,11 @@ export async function resolveOrganizationId(
     return { error: "Unauthorized", status: 401 };
   }
 
+  const originError = checkSessionOrigin(request);
+  if (originError) {
+    return originError;
+  }
+
   const orgContext = await getOrgContext();
   const organizationId = orgContext.organization?.id;
   if (!organizationId) {
@@ -230,6 +288,11 @@ export async function resolveCreatorContext(request: Request): Promise<
   const session = await auth.api.getSession({ headers: request.headers });
   if (!session?.user) {
     return { error: "Unauthorized", status: 401 };
+  }
+
+  const originError = checkSessionOrigin(request);
+  if (originError) {
+    return originError;
   }
 
   const context = await getOrgContext();
