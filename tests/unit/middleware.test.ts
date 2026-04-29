@@ -56,6 +56,16 @@ describe("CSRF middleware", () => {
     expect(res.status).toBe(200);
   });
 
+  it("treats empty Cookie: header as no cookies", () => {
+    const res = middleware(
+      make("/api/workflows", {
+        method: "POST",
+        headers: { cookie: "", origin: "https://evil.example.com" },
+      })
+    );
+    expect(res.status).toBe(200);
+  });
+
   it("blocks cookie POST with untrusted origin", async () => {
     const res = middleware(
       make("/api/workflows", {

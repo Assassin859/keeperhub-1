@@ -50,7 +50,8 @@ export function middleware(request: NextRequest): NextResponse {
     return NextResponse.next();
   }
 
-  if (!headers.has("cookie")) {
+  // Treat empty Cookie: header as no cookies (some proxies strip values).
+  if (!headers.get("cookie")) {
     return NextResponse.next();
   }
 

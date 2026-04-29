@@ -388,6 +388,22 @@ describe("getDualAuthContext", () => {
       });
     });
 
+    it("treats empty Cookie: header as no cookies", async () => {
+      const result = await getDualAuthContext(
+        makeRequest(
+          { cookie: "", origin: "https://evil.example.com" },
+          { method: "POST" }
+        )
+      );
+
+      expect(result).toEqual({
+        userId: "user_session",
+        organizationId: "org_session",
+        authMethod: "session",
+        apiKeyId: null,
+      });
+    });
+
     it("does not gate OAuth Bearer requests on origin", async () => {
       mockAuthenticateOAuthToken.mockResolvedValue({
         authenticated: true,

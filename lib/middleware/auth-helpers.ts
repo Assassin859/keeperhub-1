@@ -22,7 +22,8 @@ function checkSessionOrigin(
   if (!STATE_CHANGING_METHODS.has(method)) {
     return null;
   }
-  if (!request.headers.has("cookie")) {
+  // Empty Cookie: header is treated as no cookies (some proxies strip values).
+  if (!request.headers.get("cookie")) {
     return null;
   }
 
