@@ -674,25 +674,25 @@ const EXPLORER_CONFIG_TEMPLATES: Record<
     explorerAddressPath: "/address/{address}",
     explorerContractPath: "/address/{address}#code",
   },
-  // 0G Mainnet - Blockscout (0G ChainScan)
+  // 0G Mainnet - ConfluxScan-derived explorer with Etherscan-compat API at /open/api
   16661: {
     chainType: "evm",
     explorerUrl: "https://chainscan.0g.ai",
-    explorerApiType: "blockscout",
-    explorerApiUrl: "https://chainscan.0g.ai/api",
+    explorerApiType: "etherscan",
+    explorerApiUrl: "https://chainscan.0g.ai/open/api",
     explorerTxPath: "/tx/{hash}",
     explorerAddressPath: "/address/{address}",
-    explorerContractPath: "/address/{address}?tab=contract",
+    explorerContractPath: "/address/{address}?tab=contract-viewer",
   },
-  // 0G Galileo Testnet - Blockscout (0G ChainScan)
+  // 0G Galileo Testnet - ConfluxScan-derived explorer with Etherscan-compat API at /open/api
   16602: {
     chainType: "evm",
     explorerUrl: "https://chainscan-galileo.0g.ai",
-    explorerApiType: "blockscout",
-    explorerApiUrl: "https://chainscan-galileo.0g.ai/api",
+    explorerApiType: "etherscan",
+    explorerApiUrl: "https://chainscan-galileo.0g.ai/open/api",
     explorerTxPath: "/tx/{hash}",
     explorerAddressPath: "/address/{address}",
-    explorerContractPath: "/address/{address}?tab=contract",
+    explorerContractPath: "/address/{address}?tab=contract-viewer",
   },
   // Solana Mainnet - Solscan
   101: {
