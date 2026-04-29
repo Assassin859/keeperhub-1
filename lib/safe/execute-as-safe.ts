@@ -1,7 +1,7 @@
 import "server-only";
 
 import { ethers } from "ethers";
-import type { RpcProviderManager } from "@/lib/rpc-provider";
+import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { buildExecTransactionCalldata } from "@/lib/safe/allowance-module";
 import { buildExecTransactionWithRoleCalldata } from "@/lib/safe/zodiac-roles";
 import type { TransactionReceipt } from "@/lib/web3/chain-adapter/types";
