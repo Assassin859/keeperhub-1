@@ -198,6 +198,7 @@ export async function POST(request: Request) {
         isAnonymous,
         projectId: body.projectId || null,
         tagId: body.tagId || null,
+        ...(typeof body.enabled === "boolean" ? { enabled: body.enabled } : {}),
       })
       .returning();
 
