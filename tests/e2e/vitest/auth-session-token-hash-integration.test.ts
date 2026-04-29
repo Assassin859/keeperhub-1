@@ -219,6 +219,54 @@ describe.skipIf(shouldSkip)("wrapWithSessionTokenHash (integration)", () => {
     expect(rows.map((r) => r.token).sort()).toEqual([tokenA, tokenB].sort());
   });
 
+  it("findMany with operator: ne / not_in returns rows with the stored hash", async () => {
+    // ne / not_in describe which raw tokens are absent from the result, not
+    // which are present, so the wrapper has no basis to map a returned hash
+    // back to a raw value. Returned rows keep their stored hashes; callers
+    // must not feed those tokens back into a token-keyed query.
+    const present = `ne-present-${generateId()}`;
+    const excluded = `ne-excluded-${generateId()}`;
+    const expiresAt = new Date(Date.now() + 60_000);
+
+    for (const token of [present, excluded]) {
+      await adapter.create({
+        model: "session",
+        data: {
+          id: `sess-${generateId()}`,
+          token,
+          userId: testUserId,
+          expiresAt,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      });
+    }
+
+    const neRows = await adapter.findMany<{ token: string }>({
+      model: "session",
+      where: [
+        { field: "userId", value: testUserId },
+        { field: "token", value: excluded, operator: "ne" },
+      ],
+    });
+    const neTokens = neRows.map((r) => r.token);
+    expect(neTokens).toContain(hashSessionToken(present));
+    expect(neTokens).not.toContain(present);
+    expect(neTokens).not.toContain(hashSessionToken(excluded));
+
+    const notInRows = await adapter.findMany<{ token: string }>({
+      model: "session",
+      where: [
+        { field: "userId", value: testUserId },
+        { field: "token", value: [excluded], operator: "not_in" },
+      ],
+    });
+    const notInTokens = notInRows.map((r) => r.token);
+    expect(notInTokens).toContain(hashSessionToken(present));
+    expect(notInTokens).not.toContain(present);
+    expect(notInTokens).not.toContain(hashSessionToken(excluded));
+  });
+
   it("delete by raw token removes the row", async () => {
     const rawToken = `delete-me-${generateId()}`;
     const expiresAt = new Date(Date.now() + 60_000);
