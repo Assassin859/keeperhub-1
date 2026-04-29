@@ -362,22 +362,8 @@
     {
       "idx": 51,
       "version": "7",
-      "when": 1776709266555,
-      "tag": "0051_even_true_believers",
-      "breakpoints": true
-    },
-    {
-      "idx": 52,
-      "version": "7",
-      "when": 1777062367044,
-      "tag": "0052_military_photon",
-      "breakpoints": true
-    },
-    {
-      "idx": 53,
-      "version": "7",
-      "when": 1777324837688,
-      "tag": "0053_futuristic_living_lightning",
+      "when": 1776750254755,
+      "tag": "0051_rename_aave_slug_to_v3",
       "breakpoints": true
     }
   ]
