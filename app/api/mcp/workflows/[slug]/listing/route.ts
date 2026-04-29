@@ -1,22 +1,68 @@
 import { NextResponse } from "next/server";
-import { getWorkflowListing } from "@/lib/mcp/listing";
+import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import {
+  getWorkflowListing,
+  listWorkflow,
+  unlistWorkflow,
+  updateWorkflowListing,
+  type ListWorkflowMetadata,
+  type UpdateWorkflowPatch,
+} from "@/lib/mcp/listing";
 import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
 import { sanitizeDescription } from "@/lib/sanitize-description";
 
 const LISTING_RATE_LIMIT = 60;
 const LISTING_RATE_WINDOW_MS = 60_000;
 
+type RouteContext = { params: Promise<{ slug: string }> };
+
+function mapListingError(error: string): NextResponse {
+  if (error === "NOT_FOUND") {
+    return NextResponse.json({ error: "Workflow not found" }, { status: 404 });
+  }
+  if (error === "SLUG_CONFLICT") {
+    return NextResponse.json(
+      {
+        error: "SLUG_CONFLICT",
+        message: "This slug is already in use by another listed workflow.",
+      },
+      { status: 409 }
+    );
+  }
+  if (error === "PRICE_CHANGE_WHILE_LISTED") {
+    return NextResponse.json(
+      {
+        error: "PRICE_CHANGE_WHILE_LISTED",
+        message: "Unlist the workflow before changing the price.",
+      },
+      { status: 409 }
+    );
+  }
+  return NextResponse.json(
+    { error: "INVALID_INPUT", message: "Invalid request." },
+    { status: 400 }
+  );
+}
+
+// GET — public read by listedSlug. The `slug` URL segment is the listed slug.
 export async function GET(
   request: Request,
-  { params }: { params: Promise<{ slug: string }> }
+  { params }: RouteContext
 ): Promise<NextResponse> {
   try {
     const clientIp = getClientIp(request);
-    const rateCheck = checkIpRateLimit(clientIp, LISTING_RATE_LIMIT, LISTING_RATE_WINDOW_MS);
+    const rateCheck = checkIpRateLimit(
+      clientIp,
+      LISTING_RATE_LIMIT,
+      LISTING_RATE_WINDOW_MS
+    );
     if (!rateCheck.allowed) {
       return NextResponse.json(
         { error: "Too many requests" },
-        { status: 429, headers: { "Retry-After": String(rateCheck.retryAfter) } }
+        {
+          status: 429,
+          headers: { "Retry-After": String(rateCheck.retryAfter) },
+        }
       );
     }
 
@@ -29,10 +75,9 @@ export async function GET(
 
     const listing = {
       ...result.listing,
-      description:
-        result.listing.description
-          ? sanitizeDescription(result.listing.description)
-          : null,
+      description: result.listing.description
+        ? sanitizeDescription(result.listing.description)
+        : null,
     };
 
     return NextResponse.json(listing, {
@@ -41,6 +86,162 @@ export async function GET(
       },
     });
   } catch {
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
   }
+}
+
+// POST/PATCH/DELETE — curator mutations. The `slug` URL segment is the workflowId.
+// Named `slug` in the route file because the parent directory `[slug]` must use
+// a single param name across siblings (Next.js constraint, shared with [slug]/call).
+
+export async function POST(
+  request: Request,
+  { params }: RouteContext
+): Promise<NextResponse> {
+  const authContext = await getDualAuthContext(request);
+  if ("error" in authContext) {
+    return NextResponse.json(
+      { error: authContext.error },
+      { status: authContext.status }
+    );
+  }
+
+  const { organizationId } = authContext;
+  if (!organizationId) {
+    return NextResponse.json(
+      { error: "Organization required" },
+      { status: 401 }
+    );
+  }
+
+  const { slug: workflowId } = await params;
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const rawBody = body as Record<string, unknown>;
+  const metadata: ListWorkflowMetadata = {
+    slug: typeof rawBody.slug === "string" ? rawBody.slug : undefined,
+    category:
+      typeof rawBody.category === "string" ? rawBody.category : undefined,
+    chain: typeof rawBody.chain === "string" ? rawBody.chain : undefined,
+    inputSchema:
+      rawBody.inputSchema !== null && typeof rawBody.inputSchema === "object"
+        ? (rawBody.inputSchema as Record<string, unknown>)
+        : undefined,
+    outputMapping:
+      rawBody.outputMapping !== null &&
+      typeof rawBody.outputMapping === "object"
+        ? (rawBody.outputMapping as Record<string, unknown>)
+        : undefined,
+    workflowType:
+      typeof rawBody.workflowType === "string"
+        ? rawBody.workflowType
+        : undefined,
+  };
+
+  const result = await listWorkflow(workflowId, organizationId, metadata);
+  if (!result.ok) {
+    return mapListingError(result.error);
+  }
+
+  return NextResponse.json(result.listing, { status: 200 });
+}
+
+export async function PATCH(
+  request: Request,
+  { params }: RouteContext
+): Promise<NextResponse> {
+  const authContext = await getDualAuthContext(request);
+  if ("error" in authContext) {
+    return NextResponse.json(
+      { error: authContext.error },
+      { status: authContext.status }
+    );
+  }
+
+  const { organizationId } = authContext;
+  if (!organizationId) {
+    return NextResponse.json(
+      { error: "Organization required" },
+      { status: 401 }
+    );
+  }
+
+  const { slug: workflowId } = await params;
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const rawBody = body as Record<string, unknown>;
+  const patch: UpdateWorkflowPatch = {
+    category:
+      typeof rawBody.category === "string" ? rawBody.category : undefined,
+    chain: typeof rawBody.chain === "string" ? rawBody.chain : undefined,
+    inputSchema:
+      rawBody.inputSchema !== null && typeof rawBody.inputSchema === "object"
+        ? (rawBody.inputSchema as Record<string, unknown>)
+        : undefined,
+    outputMapping:
+      rawBody.outputMapping !== null &&
+      typeof rawBody.outputMapping === "object"
+        ? (rawBody.outputMapping as Record<string, unknown>)
+        : undefined,
+    workflowType:
+      typeof rawBody.workflowType === "string"
+        ? rawBody.workflowType
+        : undefined,
+    priceUsdcPerCall:
+      typeof rawBody.priceUsdcPerCall === "string"
+        ? rawBody.priceUsdcPerCall
+        : undefined,
+  };
+
+  const result = await updateWorkflowListing(workflowId, organizationId, patch);
+  if (!result.ok) {
+    return mapListingError(result.error);
+  }
+
+  return NextResponse.json(result.listing, { status: 200 });
+}
+
+export async function DELETE(
+  request: Request,
+  { params }: RouteContext
+): Promise<NextResponse> {
+  const authContext = await getDualAuthContext(request);
+  if ("error" in authContext) {
+    return NextResponse.json(
+      { error: authContext.error },
+      { status: authContext.status }
+    );
+  }
+
+  const { organizationId } = authContext;
+  if (!organizationId) {
+    return NextResponse.json(
+      { error: "Organization required" },
+      { status: 401 }
+    );
+  }
+
+  const { slug: workflowId } = await params;
+
+  const result = await unlistWorkflow(workflowId, organizationId);
+  if (!result.ok) {
+    return mapListingError(result.error);
+  }
+
+  return NextResponse.json(result.listing, { status: 200 });
 }

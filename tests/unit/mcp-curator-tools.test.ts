@@ -15,7 +15,7 @@ import { listWorkflow, unlistWorkflow } from "@/lib/mcp/listing";
 
 // Dynamic import after mocks are set up
 const { POST, DELETE } = await import(
-  "@/app/api/mcp/workflows/[id]/listing/route"
+  "@/app/api/mcp/workflows/[slug]/listing/route"
 );
 
 const makePostRequest = (body?: unknown) =>
@@ -30,7 +30,7 @@ const makeDeleteRequest = () =>
     method: "DELETE",
   });
 
-const makeParams = (id = "wf-123") => ({ params: Promise.resolve({ id }) });
+const makeParams = (id = "wf-123") => ({ params: Promise.resolve({ slug: id }) });
 
 const mockAuth = (orgId = "org-abc") =>
   vi.mocked(getDualAuthContext).mockResolvedValue({

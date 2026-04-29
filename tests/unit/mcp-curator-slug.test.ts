@@ -14,7 +14,7 @@ import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { listWorkflow, updateWorkflowListing } from "@/lib/mcp/listing";
 
 const { POST, PATCH } = await import(
-  "@/app/api/mcp/workflows/[id]/listing/route"
+  "@/app/api/mcp/workflows/[slug]/listing/route"
 );
 
 const makeRequest = (body: unknown, method = "POST") =>
@@ -24,7 +24,7 @@ const makeRequest = (body: unknown, method = "POST") =>
     body: JSON.stringify(body),
   });
 
-const makeParams = (id = "wf-123") => ({ params: Promise.resolve({ id }) });
+const makeParams = (id = "wf-123") => ({ params: Promise.resolve({ slug: id }) });
 
 const mockAuth = (orgId = "org-abc") =>
   vi.mocked(getDualAuthContext).mockResolvedValue({
