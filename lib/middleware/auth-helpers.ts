@@ -2,7 +2,11 @@ import { authenticateApiKey } from "@/lib/api-key-auth";
 import { auth } from "@/lib/auth";
 import { authenticateOAuthToken } from "@/lib/mcp/oauth-auth";
 import { getOrgContext } from "@/lib/middleware/org-context";
-import { isTrustedOrigin, normaliseOrigin } from "@/lib/trusted-origins";
+import {
+  hasSessionCookie,
+  isTrustedOrigin,
+  normaliseOrigin,
+} from "@/lib/trusted-origins";
 
 const STATE_CHANGING_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
 
@@ -22,8 +26,10 @@ function checkSessionOrigin(
   if (!STATE_CHANGING_METHODS.has(method)) {
     return null;
   }
-  // Empty Cookie: header is treated as no cookies (some proxies strip values).
-  if (!request.headers.get("cookie")) {
+  // Only enforce when the request actually carries the better-auth session
+  // cookie. Bearer/API-key callers that traverse Cloudflare Access carry
+  // CF tokens but no session token, and shouldn't be gated.
+  if (!hasSessionCookie(request.headers)) {
     return null;
   }
 

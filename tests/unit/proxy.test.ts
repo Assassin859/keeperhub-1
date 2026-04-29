@@ -66,6 +66,49 @@ describe("CSRF proxy", () => {
     expect(res.status).toBe(200);
   });
 
+  it("bypasses when only non-session cookies are present (CF Access tokens)", () => {
+    // Bearer/API-key callers behind Cloudflare Access carry CF cookies
+    // but no better-auth session — they shouldn't be gated.
+    const res = proxy(
+      make("/api/workflows", {
+        method: "POST",
+        headers: {
+          cookie: "CF_AppSession=abc; CF_Authorization=xyz",
+          origin: "https://evil.example.com",
+        },
+      })
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("bypasses when only unrelated tracking cookies are present", () => {
+    const res = proxy(
+      make("/api/workflows", {
+        method: "POST",
+        headers: {
+          cookie: "_ga=GA1.2.123; _gid=GA1.2.456",
+          origin: "https://evil.example.com",
+        },
+      })
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("enforces when session cookie is present alongside CF cookies (real browser)", async () => {
+    const res = proxy(
+      make("/api/workflows", {
+        method: "POST",
+        headers: {
+          cookie:
+            "CF_AppSession=abc; __Secure-better-auth.session_token=tok; _ga=x",
+          origin: "https://evil.example.com",
+        },
+      })
+    );
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({ error: "Invalid origin" });
+  });
+
   it("blocks cookie POST with untrusted origin", async () => {
     const res = proxy(
       make("/api/workflows", {

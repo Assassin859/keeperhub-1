@@ -1,10 +1,20 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { isTrustedOrigin, normaliseOrigin } from "@/lib/trusted-origins";
+import {
+  hasSessionCookie,
+  isTrustedOrigin,
+  normaliseOrigin,
+} from "@/lib/trusted-origins";
 
 /**
  * CSRF defence: enforce Origin header against trustedOrigins on state-changing
- * /api/** requests that carry a cookie. Layered with SameSite=Lax cookies
- * (better-auth default) to close sibling-subdomain CSRF gaps. See KEEP-240.
+ * /api/** requests that carry a better-auth session cookie. Layered with
+ * SameSite=Lax cookies (better-auth default) to close sibling-subdomain CSRF
+ * gaps. See KEEP-240.
+ *
+ * The cookie check is scoped to the better-auth session token rather than any
+ * cookie, so Bearer/API-key callers that happen to traverse Cloudflare Access
+ * (which sets `CF_AppSession` / `CF_Authorization`) aren't false-positively
+ * blocked.
  *
  * Exempts paths that legitimately accept cross-origin POSTs and don't depend
  * on session cookies (webhooks, cron, OAuth client flow, MCP workflow calls,
@@ -50,8 +60,10 @@ export function proxy(request: NextRequest): NextResponse {
     return NextResponse.next();
   }
 
-  // Treat empty Cookie: header as no cookies (some proxies strip values).
-  if (!headers.get("cookie")) {
+  // Only enforce when the request actually carries the better-auth session
+  // cookie. Cookieless callers and callers with only unrelated cookies
+  // (Cloudflare Access tokens, analytics) bypass the check.
+  if (!hasSessionCookie(headers)) {
     return NextResponse.next();
   }
 

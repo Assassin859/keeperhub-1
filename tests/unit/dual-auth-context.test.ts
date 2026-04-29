@@ -404,6 +404,29 @@ describe("getDualAuthContext", () => {
       });
     });
 
+    it("bypasses origin check when only non-session cookies are present", async () => {
+      // Bearer-API-key callers behind Cloudflare Access carry CF cookies but
+      // no better-auth session. They reach getDualAuthContext as session-fall-
+      // through (auth methods above already returned), but origin should not
+      // gate them.
+      const result = await getDualAuthContext(
+        makeRequest(
+          {
+            cookie: "CF_AppSession=abc; CF_Authorization=xyz",
+            origin: "https://evil.example.com",
+          },
+          { method: "POST" }
+        )
+      );
+
+      expect(result).toEqual({
+        userId: "user_session",
+        organizationId: "org_session",
+        authMethod: "session",
+        apiKeyId: null,
+      });
+    });
+
     it("does not gate OAuth Bearer requests on origin", async () => {
       mockAuthenticateOAuthToken.mockResolvedValue({
         authenticated: true,

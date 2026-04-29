@@ -88,3 +88,32 @@ export function isTrustedOrigin(origin: string): boolean {
   }
   return false;
 }
+
+/**
+ * Substring that uniquely identifies the better-auth session cookie in a
+ * Cookie header, regardless of the `__Secure-` prefix added in production.
+ * Matches `better-auth.session_token=` and
+ * `__Secure-better-auth.session_token=`.
+ *
+ * The pinning test in `tests/unit/trusted-origins.test.ts` asserts this
+ * substring is in fact what better-auth generates, so a future better-auth
+ * upgrade that renames the cookie fails CI rather than silently disabling
+ * the CSRF check. See KEEP-240.
+ */
+export const SESSION_COOKIE_NAME_SUBSTRING = "better-auth.session_token=";
+
+/**
+ * Returns true when the request's Cookie header carries a better-auth
+ * session token. Used by the proxy and `getDualAuthContext` to decide
+ * whether the request is potentially session-authenticated and therefore
+ * subject to the origin check. Cookieless callers (Bearer / API key) and
+ * callers that only carry unrelated cookies (Cloudflare Access tokens,
+ * analytics, etc.) bypass the check.
+ */
+export function hasSessionCookie(headers: Headers): boolean {
+  const cookie = headers.get("cookie");
+  if (!cookie) {
+    return false;
+  }
+  return cookie.includes(SESSION_COOKIE_NAME_SUBSTRING);
+}
