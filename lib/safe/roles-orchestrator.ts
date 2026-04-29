@@ -100,10 +100,34 @@ export type ProtocolInput = {
   tokens: TokenLimitInput[];
 };
 
+/**
+ * "Direct" rules sit outside any protocol preset. They scope the role to
+ * call ERC20 transfer / approve / native ETH transfer at a specific
+ * counterparty (recipient or spender). Today they install as a target-level
+ * allowlist plus a setAllowance bucket for the ERC20 ones. Per-parameter
+ * constraints on transfer/approve calldata are a follow-up; the bucket is
+ * still useful so the UI can show "remaining this period" from chain.
+ */
+export type DirectRuleInput = {
+  kind: "erc20-transfer" | "erc20-approve" | "native-transfer";
+  /** ERC20 token contract address; null for native-transfer */
+  tokenAddress: string | null;
+  tokenSymbol: string;
+  tokenDecimals: number;
+  /** Recipient (transfer/native) or spender (approve) */
+  counterparty: string;
+  amountHuman: string;
+  periodSeconds: number;
+};
+
+/** Synthetic protocol slug for direct rules in safe_role_allowances. */
+export const DIRECT_RULE_PROTOCOL_SLUG = "direct" as const;
+
 export type InstallRoleInput = {
   organizationId: string;
   chainId: number;
   protocols: ProtocolInput[];
+  directRules?: DirectRuleInput[];
 };
 
 export type InstallRoleResult =
@@ -325,7 +349,10 @@ export type FlattenedAllowance = {
  * token symbols (what the per-parameter presets scope), and the flat list
  * of allowance rows.
  */
-export function flattenInstallInput(protocolInputs: ProtocolInput[]): {
+export function flattenInstallInput(
+  protocolInputs: ProtocolInput[],
+  directRules: DirectRuleInput[] = []
+): {
   protocolSlugs: string[];
   allowedTokenSymbols: string[];
   allowances: FlattenedAllowance[];
@@ -351,6 +378,27 @@ export function flattenInstallInput(protocolInputs: ProtocolInput[]): {
     }
   }
 
+  // Direct rules: only ERC20 ones contribute to safe_role_allowances. Native
+  // transfers are scoped at the recipient target only (no on-chain value cap
+  // until a transaction guard ships).
+  for (const rule of directRules) {
+    if (rule.kind === "native-transfer" || !rule.tokenAddress) {
+      continue;
+    }
+    symbols.add(rule.tokenSymbol);
+    const addr = normalizeAddressForStorage(rule.tokenAddress);
+    const amount = humanToWei(rule.amountHuman, rule.tokenDecimals);
+    allowances.push({
+      protocolSlug: DIRECT_RULE_PROTOCOL_SLUG,
+      tokenAddress: addr,
+      tokenSymbol: rule.tokenSymbol,
+      tokenDecimals: rule.tokenDecimals,
+      maxRefillWei: amount.toString(),
+      refillWei: amount.toString(),
+      periodSeconds: rule.periodSeconds,
+    });
+  }
+
   return {
     protocolSlugs: slugs,
     allowedTokenSymbols: Array.from(symbols),
@@ -361,12 +409,17 @@ export function flattenInstallInput(protocolInputs: ProtocolInput[]): {
 export async function installRolesWithInitialConfig(
   input: InstallRoleInput
 ): Promise<InstallRoleResult> {
-  const { organizationId, chainId, protocols: protocolInputs } = input;
+  const {
+    organizationId,
+    chainId,
+    protocols: protocolInputs,
+    directRules = [],
+  } = input;
   const {
     protocolSlugs: protocols,
     allowedTokenSymbols,
     allowances: tokenAllowances,
-  } = flattenInstallInput(protocolInputs);
+  } = flattenInstallInput(protocolInputs, directRules);
 
   const safe = await findSafeForOrg(organizationId, chainId);
   if (!safe) {
@@ -481,10 +534,30 @@ export async function installRolesWithInitialConfig(
       protocols,
       allowedTokenSymbols,
     });
+
+    // Direct rules: scope each rule's counterparty (or the ERC20 token
+    // contract for transfer/approve) at target level. The on-chain bucket
+    // for ERC20 rules is set further below in the per-allowance loop.
+    const directRulePermissions: Permission[] = [];
+    for (const rule of directRules) {
+      const target =
+        rule.kind === "native-transfer"
+          ? rule.counterparty
+          : (rule.tokenAddress ?? "");
+      if (!ethers.isAddress(target)) {
+        continue;
+      }
+      directRulePermissions.push({
+        targetAddress: ethers.getAddress(target) as `0x${string}`,
+        send: rule.kind === "native-transfer",
+        delegatecall: false,
+      } as unknown as Permission);
+    }
+
     const desiredRole: Role = buildDesiredRole({
       roleKey,
       delegate: ownerAddress as `0x${string}`,
-      permissions,
+      permissions: [...permissions, ...directRulePermissions],
     });
     const emptyRole: Role = {
       key: roleKey,

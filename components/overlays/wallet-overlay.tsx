@@ -1,9 +1,11 @@
 "use client";
 
+import { ChevronLeftIcon } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Overlay } from "@/components/overlays/overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
+import { DeploySafeCard } from "@/components/safe/deploy-safe-card";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSession } from "@/lib/auth-client";
@@ -24,7 +26,7 @@ import { ManageTab } from "./wallet/manage-tab";
 import { NoWalletSection } from "./wallet/no-wallet-section";
 import { type WithdrawableAsset, WithdrawModal } from "./withdraw-modal";
 
-type WalletTab = "balances" | "manage";
+type WalletTab = "balances" | "manage" | "safe";
 
 type WalletOverlayProps = {
   overlayId: string;
@@ -380,9 +382,21 @@ export function WalletOverlay({
                 canExportKey={!!walletData.canExportKey}
                 email={walletData.email}
                 isOwner={!!walletData.isOwner}
+                onOpenSafeView={() => setActiveTab("safe")}
                 walletAddress={walletData.walletAddress}
               />
             )}
+          </TabsContent>
+          <TabsContent className="mt-4 space-y-4" value="safe">
+            <button
+              className="inline-flex items-center gap-1 text-muted-foreground text-sm hover:text-foreground"
+              onClick={() => setActiveTab("manage")}
+              type="button"
+            >
+              <ChevronLeftIcon aria-hidden="true" className="h-4 w-4" />
+              Back to Manage
+            </button>
+            <DeploySafeCard isAdmin={!!walletData.isOwner} />
           </TabsContent>
         </Tabs>
       )}

@@ -1,6 +1,6 @@
 "use client";
 
-import { DeploySafeCard } from "@/components/safe/deploy-safe-card";
+import { SafeWalletsEntryCard } from "@/components/safe/safe-wallets-entry-card";
 import { RecoveryEmailCard } from "./recovery-email-card";
 import { SecurityCard } from "./security-card";
 import { WalletAddressCard } from "./wallet-address-card";
@@ -9,11 +9,13 @@ export function ManageTab({
   canExportKey,
   email,
   isOwner,
+  onOpenSafeView,
   walletAddress,
 }: {
   canExportKey: boolean;
   email: string;
   isOwner: boolean;
+  onOpenSafeView: () => void;
   walletAddress: string;
 }): React.ReactElement {
   return (
@@ -21,7 +23,7 @@ export function ManageTab({
       <WalletAddressCard walletAddress={walletAddress} />
       <RecoveryEmailCard email={email} />
       {isOwner && canExportKey && <SecurityCard />}
-      <DeploySafeCard isAdmin={isOwner} />
+      <SafeWalletsEntryCard isAdmin={isOwner} onOpen={onOpenSafeView} />
     </>
   );
 }

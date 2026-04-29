@@ -4,6 +4,7 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getSafeForOrg, validateSafeAdmin } from "@/lib/safe/auth";
 import { PROTOCOL_CATALOG } from "@/lib/safe/protocol-registry";
 import {
+  type DirectRuleInput,
   getSafeRole,
   installRolesWithInitialConfig,
   listRoleAllowances,
@@ -21,6 +22,16 @@ type InstallBodyTokenEntry = {
   periodSeconds?: number;
 };
 
+type InstallBodyDirectRule = {
+  kind?: "erc20-transfer" | "erc20-approve" | "native-transfer";
+  tokenAddress?: string | null;
+  tokenSymbol?: string;
+  tokenDecimals?: number;
+  counterparty?: string;
+  amountHuman?: string;
+  periodSeconds?: number;
+};
+
 type InstallBody = {
   protocols?: Array<
     | string
@@ -29,6 +40,7 @@ type InstallBody = {
         tokens?: InstallBodyTokenEntry[];
       }
   >;
+  directRules?: InstallBodyDirectRule[];
   allowedTokenSymbols?: string[];
   allowances?: Array<{
     tokenAddress: string;
@@ -37,6 +49,33 @@ type InstallBody = {
     periodSeconds: number;
   }>;
 };
+
+function normaliseDirectRules(body: InstallBody): DirectRuleInput[] {
+  const out: DirectRuleInput[] = [];
+  for (const rule of body.directRules ?? []) {
+    if (
+      !(rule.kind && rule.counterparty && rule.amountHuman && rule.tokenSymbol)
+    ) {
+      continue;
+    }
+    if (
+      typeof rule.tokenDecimals !== "number" ||
+      typeof rule.periodSeconds !== "number"
+    ) {
+      continue;
+    }
+    out.push({
+      kind: rule.kind,
+      tokenAddress: rule.tokenAddress ?? null,
+      tokenSymbol: rule.tokenSymbol,
+      tokenDecimals: rule.tokenDecimals,
+      counterparty: rule.counterparty,
+      amountHuman: rule.amountHuman,
+      periodSeconds: rule.periodSeconds,
+    });
+  }
+  return out;
+}
 
 /**
  * Accept both the new `{ protocols: ProtocolInput[] }` shape and the legacy
@@ -226,10 +265,14 @@ export async function POST(
 
     const body = (await request.json()) as InstallBody;
     const { protocols: perProtocol, skipped } = normaliseInstallBody(body);
+    const directRules = normaliseDirectRules(body);
 
-    if (perProtocol.length === 0) {
+    if (perProtocol.length === 0 && directRules.length === 0) {
       return NextResponse.json(
-        { error: "At least one supported protocol must be selected" },
+        {
+          error:
+            "At least one protocol or direct rule must be configured to install the role",
+        },
         { status: 400 }
       );
     }
@@ -238,6 +281,7 @@ export async function POST(
       organizationId: admin.organizationId,
       chainId: safe.chainId,
       protocols: perProtocol,
+      directRules,
     });
 
     if (!result.success) {

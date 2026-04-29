@@ -1,7 +1,7 @@
 "use client";
 
 import { ethers } from "ethers";
-import { ExternalLinkIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, ExternalLinkIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 import type {
   DirectRuleInput,
@@ -127,22 +127,43 @@ export function DirectRuleRow({
 
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           {isNative ? (
-            <span className="inline-flex shrink-0 items-center rounded-full border bg-muted px-2.5 py-0.5 font-medium text-xs">
-              ETH
-            </span>
+            <div
+              aria-label="Native ETH (no other token applies for this rule kind)"
+              className="flex h-9 w-full items-center justify-between rounded-md border bg-muted/40 px-3 text-muted-foreground text-sm"
+            >
+              <span className="font-medium">ETH</span>
+              <span className="text-xs">native</span>
+            </div>
           ) : (
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
-                  className="inline-flex shrink-0 items-center rounded-full border bg-muted px-2.5 py-0.5 font-medium text-xs hover:border-primary"
+                  aria-label={
+                    value.tokenSymbol
+                      ? `Change token (currently ${value.tokenSymbol})`
+                      : "Pick a token"
+                  }
+                  className="flex h-9 w-full items-center justify-between rounded-md border bg-background px-3 text-sm hover:border-primary focus:outline-none focus:ring-2 focus:ring-ring"
                   onClick={() => setPickerOpen(true)}
                   type="button"
                 >
-                  {value.tokenSymbol || "Pick token"}
+                  <span
+                    className={
+                      value.tokenSymbol
+                        ? "font-medium"
+                        : "text-muted-foreground"
+                    }
+                  >
+                    {value.tokenSymbol || "Pick a token"}
+                  </span>
+                  <ChevronDownIcon
+                    aria-hidden="true"
+                    className="ml-2 h-4 w-4 text-muted-foreground"
+                  />
                 </button>
               </TooltipTrigger>
               <TooltipContent className="font-mono text-xs">
-                {value.tokenAddress ?? "Pick a token to scope"}
+                {value.tokenAddress ?? "Click to pick a token"}
               </TooltipContent>
             </Tooltip>
           )}

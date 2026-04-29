@@ -470,22 +470,11 @@ export function DeploySafeCard({
             success?: boolean;
             error?: string;
             skipped?: string[];
-            conflictedTokens?: Array<{ tokenSymbol: string }>;
           };
           if (installRes.ok && installData.success) {
             if (installData.skipped && installData.skipped.length > 0) {
               toast.warning(
                 `Skipped protocols: ${installData.skipped.join(", ")}`
-              );
-            }
-            if (
-              installData.conflictedTokens &&
-              installData.conflictedTokens.length > 0
-            ) {
-              toast.warning(
-                `Resolved conflicts on ${installData.conflictedTokens
-                  .map((c) => c.tokenSymbol)
-                  .join(", ")}`
               );
             }
             toast.success("On-chain policies installed");
