@@ -13,9 +13,9 @@
  *   3. DELETE agentic_wallet_rate_limits rows whose bucket_start is older
  *      than 24h.
  *
- * Auth: in production, require Authorization: Bearer $CRON_SECRET (Vercel cron
- * injects this). In dev/test, no header is required so local pnpm dev can
- * trigger it via curl.
+ * Auth: in production, require Authorization: Bearer $CRON_SECRET (the cron
+ * scheduler injects this). In dev/test, no header is required so local
+ * pnpm dev can trigger it via curl.
  *
  * Strategy: mirror the mock pattern from
  * tests/integration/agentic-wallet-approval-lifecycle.test.ts -- hoisted vi.fn

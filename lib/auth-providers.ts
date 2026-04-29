@@ -1,10 +1,9 @@
-type AuthProvider = "email" | "github" | "google" | "vercel";
+type AuthProvider = "email" | "github" | "google";
 
 type EnabledProviders = {
   email: boolean;
   github: boolean;
   google: boolean;
-  vercel: boolean;
 };
 
 interface WindowWithEnv extends Window {
@@ -12,7 +11,6 @@ interface WindowWithEnv extends Window {
     NEXT_PUBLIC_AUTH_PROVIDERS?: string;
     NEXT_PUBLIC_GITHUB_CLIENT_ID?: string;
     NEXT_PUBLIC_GOOGLE_CLIENT_ID?: string;
-    NEXT_PUBLIC_VERCEL_CLIENT_ID?: string;
   };
 }
 
@@ -47,13 +45,6 @@ export function getEnabledAuthProviders(): EnabledProviders {
         process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ||
         (typeof window !== "undefined" &&
           (window as WindowWithEnv).ENV?.NEXT_PUBLIC_GOOGLE_CLIENT_ID)
-      ),
-    vercel:
-      enabledProviders.includes("vercel") &&
-      !!(
-        process.env.NEXT_PUBLIC_VERCEL_CLIENT_ID ||
-        (typeof window !== "undefined" &&
-          (window as WindowWithEnv).ENV?.NEXT_PUBLIC_VERCEL_CLIENT_ID)
       ),
   };
 }

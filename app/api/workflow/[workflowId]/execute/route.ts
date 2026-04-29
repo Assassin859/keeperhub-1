@@ -31,7 +31,7 @@ async function executeWorkflowBackground(
 
     // SECURITY: We pass only the workflowId as a reference
     // Steps will fetch credentials internally using fetchWorkflowCredentials(workflowId)
-    // This prevents credentials from being logged in Vercel's observability
+    // This prevents credentials from being logged in workflow observability output
     console.log("[Workflow Execute] Calling executeWorkflow with:", {
       nodeCount: nodes.length,
       edgeCount: edges.length,

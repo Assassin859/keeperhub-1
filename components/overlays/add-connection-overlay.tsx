@@ -1,8 +1,8 @@
 "use client";
 
-import { useAtomValue, useSetAtom } from "jotai";
+import { useAtomValue } from "jotai";
 import { Search } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { AuthDialog } from "@/components/auth/dialog";
 import { Button } from "@/components/ui/button";
@@ -10,11 +10,6 @@ import { Input } from "@/components/ui/input";
 import { IntegrationIcon } from "@/components/ui/integration-icon";
 import { Label } from "@/components/ui/label";
 import { useIsMobile } from "@/hooks/use-mobile";
-import {
-  aiGatewayStatusAtom,
-  aiGatewayTeamsAtom,
-  aiGatewayTeamsLoadingAtom,
-} from "@/lib/ai-gateway/state";
 import { api } from "@/lib/api-client";
 import { useSession } from "@/lib/auth-client";
 import {
@@ -31,7 +26,6 @@ import {
   getSortedIntegrationTypes,
 } from "@/plugins/registry";
 import { getIntegrationDescriptions } from "@/plugins/registry";
-import { AiGatewayConsentOverlay } from "./ai-gateway-consent-overlay";
 import { ConfirmOverlay } from "./confirm-overlay";
 import { Overlay } from "./overlay";
 import { OverlayFooter } from "./overlay-footer";
@@ -74,19 +68,9 @@ export function AddConnectionOverlay({
   overlayId,
   onSuccess,
 }: AddConnectionOverlayProps) {
-  const { push, closeAll } = useOverlay();
+  const { push } = useOverlay();
   const [searchQuery, setSearchQuery] = useState("");
-  const [fetchingGateway, setFetchingGateway] = useState(false);
   const isMobile = useIsMobile();
-
-  // AI Gateway state
-  const aiGatewayStatus = useAtomValue(aiGatewayStatusAtom);
-  const setAiGatewayStatus = useSetAtom(aiGatewayStatusAtom);
-  const setTeams = useSetAtom(aiGatewayTeamsAtom);
-  const setTeamsLoading = useSetAtom(aiGatewayTeamsLoadingAtom);
-
-  const shouldUseManagedKeys =
-    aiGatewayStatus?.enabled && aiGatewayStatus?.isVercelUser;
 
   const existingIntegrations = useAtomValue(integrationsAtom);
   const existingIntegrationTypes = useMemo(
@@ -117,54 +101,7 @@ export function AddConnectionOverlay({
     return plugin?.requiresCredentials === false;
   };
 
-  const showConsentModalWithCallbacks = useCallback(() => {
-    push(AiGatewayConsentOverlay, {
-      onConsent: (integrationId: string) => {
-        onSuccess?.(integrationId);
-        closeAll();
-      },
-    });
-  }, [push, closeAll, onSuccess]);
-
-  const fetchAiGatewayAndShow = async (): Promise<void> => {
-    if (fetchingGateway) {
-      return;
-    }
-    setFetchingGateway(true);
-    try {
-      const status = await api.aiGateway.getStatus();
-      setAiGatewayStatus(status);
-      if (status?.enabled && status?.isVercelUser) {
-        setTeamsLoading(true);
-        try {
-          const response = await api.aiGateway.getTeams();
-          setTeams(response.teams);
-        } finally {
-          setTeamsLoading(false);
-        }
-        showConsentModalWithCallbacks();
-      } else {
-        push(ConfigureConnectionOverlay, {
-          type: "ai-gateway" as IntegrationType,
-          onSuccess,
-        });
-      }
-    } finally {
-      setFetchingGateway(false);
-    }
-  };
-
-  const handleSelectType = async (type: IntegrationType): Promise<void> => {
-    if (type === "ai-gateway" && shouldUseManagedKeys) {
-      showConsentModalWithCallbacks();
-      return;
-    }
-
-    if (type === "ai-gateway" && aiGatewayStatus === null) {
-      await fetchAiGatewayAndShow();
-      return;
-    }
-
+  const handleSelectType = (type: IntegrationType): void => {
     push(ConfigureConnectionOverlay, { type, onSuccess });
   };
 
@@ -211,7 +148,7 @@ export function AddConnectionOverlay({
                 >
                   <IntegrationIcon
                     className="size-5 shrink-0"
-                    integration={type === "ai-gateway" ? "vercel" : type}
+                    integration={type}
                   />
                   <span className="min-w-0 flex-1 truncate">
                     <span className="font-medium">{getLabel(type)}</span>

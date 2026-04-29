@@ -52,8 +52,8 @@ function emitConcurrentExecutionsGauge(): void {
 }
 
 /**
- * Track workflow queue depth (if available)
- * This would typically come from Vercel's Workflow SDK or a custom queue
+ * Track workflow queue depth (if available).
+ * Sourced from the Workflow DevKit runtime or a custom queue implementation.
  */
 export function recordQueueDepth(depth: number): void {
   const metrics = getMetricsCollector();

@@ -71,7 +71,7 @@ env:
     type: kv
     value: "https://workflow.keeperhub.local"
   # AI Configuration - Choose ONE based on your setup:
-  # Option 1: Vercel AI Gateway API key
+  # Option 1: AI Gateway API key
   AI_GATEWAY_API_KEY:
     type: kv
     value: ""

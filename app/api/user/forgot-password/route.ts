@@ -8,7 +8,7 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { hashPassword } from "@/lib/password";
 import { generateId } from "@/lib/utils/id";
 
-const OAUTH_PROVIDERS = ["vercel", "github", "google"];
+const OAUTH_PROVIDERS = ["github", "google"];
 const OTP_EXPIRY_MINUTES = 5;
 
 function generateOTP(): string {

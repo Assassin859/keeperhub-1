@@ -36,19 +36,6 @@ type ModalView =
   | "forgot-password"
   | "reset-password";
 
-const VercelIcon = ({ className = "mr-2 h-3 w-3" }: { className?: string }) => (
-  <svg
-    aria-label="Vercel"
-    className={className}
-    fill="currentColor"
-    role="img"
-    viewBox="0 0 76 65"
-  >
-    <title>Vercel</title>
-    <path d="M37.5274 0L75.0548 65H0L37.5274 0Z" />
-  </svg>
-);
-
 const GitHubIcon = () => (
   <svg
     aria-label="GitHub"
@@ -89,13 +76,11 @@ const GoogleIcon = () => (
   </svg>
 );
 
-type Provider = "email" | "github" | "google" | "vercel";
+type Provider = "email" | "github" | "google";
 
 const getProviderIcon = (provider: Provider, compact = false) => {
-  const iconClass = compact ? "size-3.5" : undefined;
+  const _iconClass = compact ? "size-3.5" : undefined;
   switch (provider) {
-    case "vercel":
-      return <VercelIcon className={iconClass} />;
     case "github":
       return <GitHubIcon />;
     case "google":
@@ -107,8 +92,6 @@ const getProviderIcon = (provider: Provider, compact = false) => {
 
 const getProviderLabel = (provider: Provider) => {
   switch (provider) {
-    case "vercel":
-      return "Vercel";
     case "github":
       return "GitHub";
     case "google":
@@ -120,9 +103,9 @@ const getProviderLabel = (provider: Provider) => {
 
 // Social buttons component
 type SocialButtonsProps = {
-  enabledProviders: { vercel: boolean; github: boolean; google: boolean };
-  onSignIn: (provider: "github" | "google" | "vercel") => void;
-  loadingProvider: "github" | "google" | "vercel" | null;
+  enabledProviders: { github: boolean; google: boolean };
+  onSignIn: (provider: "github" | "google") => void;
+  loadingProvider: "github" | "google" | null;
 };
 
 const SocialButtons = ({
@@ -131,18 +114,6 @@ const SocialButtons = ({
   loadingProvider,
 }: SocialButtonsProps) => (
   <div className="flex flex-col gap-2">
-    {enabledProviders.vercel && (
-      <Button
-        className="w-full"
-        disabled={loadingProvider !== null}
-        onClick={() => onSignIn("vercel")}
-        type="button"
-        variant="outline"
-      >
-        <VercelIcon />
-        {loadingProvider === "vercel" ? "Loading..." : "Continue with Vercel"}
-      </Button>
-    )}
     {enabledProviders.github && (
       <Button
         className="w-full"
@@ -262,8 +233,8 @@ let pendingVerifyPassword: string | null = null;
 
 type SingleProviderButtonProps = {
   provider: Provider;
-  loadingProvider: "github" | "google" | "vercel" | null;
-  onSignIn: (provider: "github" | "google" | "vercel") => Promise<void>;
+  loadingProvider: "github" | "google" | null;
+  onSignIn: (provider: "github" | "google") => Promise<void>;
 };
 
 const SingleProviderButton = ({
@@ -277,7 +248,7 @@ const SingleProviderButton = ({
   const handleClick = () => {
     singleProviderSignInInitiated = true;
     setIsInitiated(true);
-    onSignIn(provider as "github" | "google" | "vercel");
+    onSignIn(provider as "github" | "google");
   };
 
   return (
@@ -359,7 +330,7 @@ export const AuthDialog = ({ children }: AuthDialogProps) => {
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
   const [loadingProvider, setLoadingProvider] = useState<
-    "github" | "google" | "vercel" | null
+    "github" | "google" | null
   >(null);
 
   // Handle pending verification when component mounts/remounts
@@ -379,10 +350,7 @@ export const AuthDialog = ({ children }: AuthDialogProps) => {
 
   const enabledProviders = getEnabledAuthProviders();
   const singleProvider = getSingleProvider();
-  const hasSocialProviders =
-    enabledProviders.vercel ||
-    enabledProviders.github ||
-    enabledProviders.google;
+  const hasSocialProviders = enabledProviders.github || enabledProviders.google;
 
   const resetForm = () => {
     setEmail("");
@@ -429,9 +397,7 @@ export const AuthDialog = ({ children }: AuthDialogProps) => {
     }
   };
 
-  const handleSocialSignIn = async (
-    provider: "github" | "google" | "vercel"
-  ) => {
+  const handleSocialSignIn = async (provider: "github" | "google") => {
     try {
       setLoadingProvider(provider);
       const claimContext = await getClaimContext();

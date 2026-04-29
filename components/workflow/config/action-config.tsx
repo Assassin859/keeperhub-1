@@ -4,7 +4,6 @@ import { useAtomValue, useSetAtom } from "jotai";
 import { HelpCircle, Plus, Settings } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ConfigureConnectionOverlay } from "@/components/overlays/add-connection-overlay";
-import { AiGatewayConsentOverlay } from "@/components/overlays/ai-gateway-consent-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,7 +36,6 @@ import {
   visualConditionToExpression,
 } from "@/lib/workflow/nodes/condition/builder-utils";
 import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
-import { aiGatewayStatusAtom } from "@/lib/ai-gateway/state";
 import { validateConditionExpressionUI } from "@/lib/workflow/nodes/condition/validator";
 import {
   integrationsAtom,
@@ -754,9 +752,6 @@ export function ActionConfig({
     };
   }, []);
 
-  // AI Gateway managed keys state
-  const aiGatewayStatus = useAtomValue(aiGatewayStatusAtom);
-
   // Sync category state when actionType changes (e.g., when switching nodes)
   useEffect(() => {
     const newCategory = actionType ? getCategoryForAction(actionType) : null;
@@ -820,25 +815,15 @@ export function ActionConfig({
     [actionType]
   );
 
-  // Check if AI Gateway managed keys should be offered (user can have multiple for different teams)
-  const shouldUseManagedKeys =
-    integrationType === "ai-gateway" &&
-    aiGatewayStatus?.enabled &&
-    aiGatewayStatus?.isVercelUser;
-
   // Check if there are existing connections for this integration type
   const hasExistingConnections = useMemo(() => {
-    // biome-ignore lint/style/useBlockStatements: upstream code
-    if (!integrationType) return false;
+    if (!integrationType) {
+      return false;
+    }
     return globalIntegrations.some((i) => i.type === integrationType);
   }, [integrationType, globalIntegrations]);
 
-  const handleConsentSuccess = (integrationId: string) => {
-    onUpdateConfig("integrationId", integrationId);
-    setIntegrationsVersion((v) => v + 1);
-  };
-
-  const openConnectionOverlay = () => {
+  const handleAddSecondaryConnection = () => {
     if (integrationType) {
       push(ConfigureConnectionOverlay, {
         type: integrationType,
@@ -847,17 +832,6 @@ export function ActionConfig({
           onUpdateConfig("integrationId", integrationId);
         },
       });
-    }
-  };
-
-  const handleAddSecondaryConnection = () => {
-    if (shouldUseManagedKeys) {
-      push(AiGatewayConsentOverlay, {
-        onConsent: handleConsentSuccess,
-        onManualEntry: openConnectionOverlay,
-      });
-    } else {
-      openConnectionOverlay();
     }
   };
 

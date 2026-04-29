@@ -16,13 +16,11 @@ export async function fallbackCompleteExecution(
   params: FallbackCompleteParams
 ): Promise<void> {
   const serviceKey = process.env.EVENTS_SERVICE_API_KEY;
-  const baseUrl =
-    process.env.NEXT_PUBLIC_APP_URL ??
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined);
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL;
 
   if (!(baseUrl && serviceKey)) {
     const missing = [
-      !baseUrl && "NEXT_PUBLIC_APP_URL or VERCEL_URL",
+      !baseUrl && "NEXT_PUBLIC_APP_URL",
       !serviceKey && "EVENTS_SERVICE_API_KEY",
     ]
       .filter(Boolean)

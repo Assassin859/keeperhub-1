@@ -1,7 +1,6 @@
 // Structured event logger for MCP operations.
-// Intentionally lightweight: emits structured JSON lines to stdout so they
-// are captured by the host log aggregator (Vercel / CloudWatch / Datadog).
-// Do NOT log tokens, API keys, or other secrets.
+// Emits structured JSON lines to stdout so they are captured by the host log
+// aggregator (CloudWatch). Do NOT log tokens, API keys, or other secrets.
 
 export function logMcpEvent(
   event: string,

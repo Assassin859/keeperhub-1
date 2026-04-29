@@ -17,11 +17,7 @@ const aiGatewayPlugin: IntegrationPlugin = {
       placeholder: "Your AI Gateway API key",
       configKey: "apiKey",
       envVar: "AI_GATEWAY_API_KEY",
-      helpText: "Get your API key from ",
-      helpLink: {
-        text: "vercel.com/ai-gateway",
-        url: "https://vercel.com/docs/ai-gateway/getting-started",
-      },
+      helpText: "Provide an AI Gateway API key.",
     },
   ],
 

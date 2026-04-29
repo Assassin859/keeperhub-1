@@ -5,8 +5,8 @@ import { db } from "@/lib/db";
 import { accounts, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
-  type DualAuthContext,
   auditFromAuth,
+  type DualAuthContext,
   getDualAuthContext,
 } from "@/lib/middleware/auth-helpers";
 import { getUserWallet } from "@/lib/para/wallet-helpers";
@@ -98,8 +98,8 @@ export async function PATCH(request: Request) {
       },
     });
 
-    // Block updates for OAuth users (vercel, github, google, etc.)
-    const oauthProviders = ["vercel", "github", "google"];
+    // Block updates for OAuth users (github, google, etc.)
+    const oauthProviders = ["github", "google"];
     if (userAccount && oauthProviders.includes(userAccount.providerId)) {
       return NextResponse.json(
         { error: "Cannot update profile for OAuth users" },

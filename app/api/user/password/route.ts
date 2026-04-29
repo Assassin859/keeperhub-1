@@ -6,7 +6,7 @@ import { accounts } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { hashPassword, verifyPassword } from "@/lib/password";
 
-const OAUTH_PROVIDERS = ["vercel", "github", "google"];
+const OAUTH_PROVIDERS = ["github", "google"];
 
 export async function POST(request: Request): Promise<NextResponse> {
   try {

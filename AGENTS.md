@@ -74,7 +74,6 @@ If any of the above commands fail or show errors:
   - `api.ai.*` - AI operations (generate workflows)
   - `api.integration.*` - Test integration connections
   - `api.user.*` - User operations (get, update)
-  - `api.vercelProject.*` - Vercel project integrations
   - `api.workflow.*` - Workflow CRUD and operations (create, update, delete, deploy, execute, etc.)
 - **No Barrel Files**: Do not create barrel/index files that re-export from other files
 

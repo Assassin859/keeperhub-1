@@ -1,12 +1,10 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Provider } from "jotai";
-import { type ReactNode, Suspense } from "react";
+import type { ReactNode } from "react";
 import { AppBanner } from "@/components/app-banner";
 import { AuthProvider } from "@/components/auth/provider";
 import { KeeperHubExtensionLoader } from "@/components/extension-loader";
-import { GitHubStarsLoader } from "@/components/github-stars-loader";
-import { GitHubStarsProvider } from "@/components/github-stars-provider";
 import { GlobalModals } from "@/components/global-modals";
 import { LayoutContent } from "@/components/layout-content";
 import { MobileWarningDialog } from "@/components/mobile-warning-dialog";
@@ -72,9 +70,6 @@ const RootLayout = ({ children }: RootLayoutProps) => (
         <Provider>
           <AuthProvider>
             <OverlayProvider>
-              <Suspense fallback={<GitHubStarsProvider stars={null} />}>
-                <GitHubStarsLoader />
-              </Suspense>
               <AppBanner />
               <LayoutContent>{children}</LayoutContent>
               <Toaster />

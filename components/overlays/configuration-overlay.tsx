@@ -69,7 +69,7 @@ function getCodeFilename(node: {
   if (node.data.type === "trigger") {
     const triggerType = node.data.config?.triggerType as string;
     if (triggerType === "Schedule") {
-      return "vercel.json";
+      return "schedule.json";
     }
     const webhookPath = (node.data.config?.webhookPath as string) || "/webhook";
     return `app/api${webhookPath}/route.ts`;
