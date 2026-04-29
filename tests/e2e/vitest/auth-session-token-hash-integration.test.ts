@@ -36,8 +36,6 @@ describe.skipIf(shouldSkip)("wrapWithSessionTokenHash (integration)", () => {
   // object is enough for the operations we use here.
   let adapter: ReturnType<ReturnType<typeof drizzleAdapter>>;
 
-  const createdSessionTokens: string[] = [];
-
   beforeAll(async () => {
     const connectionString =
       process.env.DATABASE_URL ??
@@ -70,12 +68,13 @@ describe.skipIf(shouldSkip)("wrapWithSessionTokenHash (integration)", () => {
     if (!client) {
       return;
     }
-    for (const token of createdSessionTokens) {
-      await db
-        .delete(sessions)
-        .where(eq(sessions.token, hashSessionToken(token)));
-    }
+    // Sweep by userId rather than tracking individual tokens. sessions.userId
+    // has no ON DELETE CASCADE, so any session row that leaked past test-level
+    // cleanup would block the user delete with an FK violation. This sweep
+    // catches all rows the test created, even when an assertion fails between
+    // create and per-test cleanup.
     if (testUserId) {
+      await db.delete(sessions).where(eq(sessions.userId, testUserId));
       await db.delete(users).where(eq(users.id, testUserId));
     }
     await client.end({ timeout: 2 });
@@ -83,7 +82,6 @@ describe.skipIf(shouldSkip)("wrapWithSessionTokenHash (integration)", () => {
 
   it("stores sha256(token) in the DB and round-trips lookups via raw token", async () => {
     const rawToken = `raw-token-${generateId()}`;
-    createdSessionTokens.push(rawToken);
     const expiresAt = new Date(Date.now() + 60_000);
 
     const created = await adapter.create<Record<string, unknown>>({
@@ -130,7 +128,6 @@ describe.skipIf(shouldSkip)("wrapWithSessionTokenHash (integration)", () => {
   it("findMany with operator: in hashes every value", async () => {
     const tokenA = `multi-a-${generateId()}`;
     const tokenB = `multi-b-${generateId()}`;
-    createdSessionTokens.push(tokenA, tokenB);
     const expiresAt = new Date(Date.now() + 60_000);
 
     for (const token of [tokenA, tokenB]) {
