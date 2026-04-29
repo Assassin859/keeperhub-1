@@ -442,6 +442,7 @@ describe("code/run-code - sandbox globals", () => {
         "DATABASE_URL",
         "BETTER_AUTH_SECRET",
         "OAUTH_JWT_SECRET",
+        "MCP_SESSION_SECRET",
         "STRIPE_SECRET_KEY",
         "GITHUB_CLIENT_SECRET",
         "GOOGLE_CLIENT_SECRET",

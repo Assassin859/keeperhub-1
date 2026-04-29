@@ -84,6 +84,8 @@ runs:
         printf '%s\n' \
           "DATABASE_URL=${DATABASE_URL}" \
           "BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}" \
+          "OAUTH_JWT_SECRET=ci-oauth-jwt-test-secret" \
+          "MCP_SESSION_SECRET=ci-mcp-session-test-secret" \
           "NODE_ENV=production" \
           "HOSTNAME=0.0.0.0" \
           "CI=true" \
@@ -158,6 +160,8 @@ runs:
       env:
         DATABASE_URL: ${{ inputs.database_url }}
         BETTER_AUTH_SECRET: ${{ inputs.better_auth_secret }}
+        OAUTH_JWT_SECRET: ci-oauth-jwt-test-secret
+        MCP_SESSION_SECRET: ci-mcp-session-test-secret
         CI: true
         TEST_API_KEY: ${{ inputs.test_api_key }}
         INTEGRATION_ENCRYPTION_KEY: ${{ inputs.integration_encryption_key }}
