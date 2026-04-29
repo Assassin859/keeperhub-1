@@ -51,6 +51,11 @@ function hashTokenWhere(where: Where[] | undefined): Where[] | undefined {
           `Session token where with operator "${op}" must have an array value`
         );
       }
+      if (!clause.value.every((v) => typeof v === "string")) {
+        throw new Error(
+          `Session token where with operator "${op}" must contain only string values`
+        );
+      }
       return { ...clause, value: clause.value.map(hashSessionToken) };
     }
     if (op !== "eq" && op !== "ne") {
