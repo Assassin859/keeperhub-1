@@ -13,6 +13,12 @@ import type { DBAdapter, Where } from "better-auth";
 //     rows via `where: [{ field: "token", value }]` (eq) or `operator: "in"`.
 // If either changes upstream, the unit tests in
 // tests/unit/auth-session-token-hash.test.ts will fail before the bug ships.
+//
+// IMPORTANT: this wrapper is bypassed when `betterAuth({ secondaryStorage })`
+// is configured. better-auth's createSession writes directly to the cache via
+// `secondaryStorage.set(data.token, ...)` without calling the DB adapter, so
+// plaintext tokens would land in the cache. If the project ever enables
+// secondaryStorage, this protection must be re-implemented at that layer too.
 
 const SESSION_MODEL = "session";
 const TOKEN_FIELD = "token";
