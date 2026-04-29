@@ -155,6 +155,11 @@ export async function getDualAuthContext(
     return resolveApiKeyContext(apiKeyAuth);
   }
 
+  const originError = checkSessionOrigin(request);
+  if (originError) {
+    return originError;
+  }
+
   const session = await auth.api.getSession({ headers: request.headers });
   if (!session?.user && required) {
     return { error: "Unauthorized", status: 401 };
@@ -166,11 +171,6 @@ export async function getDualAuthContext(
       authMethod: "session",
       apiKeyId: null,
     };
-  }
-
-  const originError = checkSessionOrigin(request);
-  if (originError) {
-    return originError;
   }
 
   const orgContext = await getOrgContext();
@@ -234,14 +234,14 @@ export async function resolveOrganizationId(
     };
   }
 
-  const session = await auth.api.getSession({ headers: request.headers });
-  if (!session?.user) {
-    return { error: "Unauthorized", status: 401 };
-  }
-
   const originError = checkSessionOrigin(request);
   if (originError) {
     return originError;
+  }
+
+  const session = await auth.api.getSession({ headers: request.headers });
+  if (!session?.user) {
+    return { error: "Unauthorized", status: 401 };
   }
 
   const orgContext = await getOrgContext();
@@ -285,14 +285,14 @@ export async function resolveCreatorContext(request: Request): Promise<
     );
   }
 
-  const session = await auth.api.getSession({ headers: request.headers });
-  if (!session?.user) {
-    return { error: "Unauthorized", status: 401 };
-  }
-
   const originError = checkSessionOrigin(request);
   if (originError) {
     return originError;
+  }
+
+  const session = await auth.api.getSession({ headers: request.headers });
+  if (!session?.user) {
+    return { error: "Unauthorized", status: 401 };
   }
 
   const context = await getOrgContext();
