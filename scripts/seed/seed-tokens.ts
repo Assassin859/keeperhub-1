@@ -217,7 +217,7 @@ const TOKEN_CONFIGS: TokenConfig[] = [
   // ==========================================================================
   {
     chainId: 421_614,
-    tokenAddress: "0xf3c3351d6bd0098eeb33ca8f830faf2a141ea2e1", // USDC (Circle testnet)
+    tokenAddress: "0x75faf114eafb1bdbe2f0316df893fd58ce46aa4d", // USDC (Circle testnet)
     logoUrl: LOGOS.USDC,
     isStablecoin: true,
     sortOrder: 1,
