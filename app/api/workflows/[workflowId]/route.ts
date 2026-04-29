@@ -5,7 +5,6 @@ import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { projects, publicTags, tags, workflowExecutions, workflowPublicTags, workflows } from "@/lib/db/schema";
-import { listWorkflow, unlistWorkflow, updateWorkflowListing } from "@/lib/mcp/listing";
 import { syncWorkflowSchedule } from "@/lib/schedule-service";
 import { sanitizeDescription } from "@/lib/sanitize-description";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
@@ -141,7 +140,7 @@ export async function GET(
   }
 }
 
-// Helper to build update data from request body (non-listing fields only)
+// Helper to build update data from request body
 function buildUpdateData(
   body: Record<string, unknown>
 ): Record<string, unknown> {
@@ -158,9 +157,11 @@ function buildUpdateData(
     "enabled", // keeperhub custom field //
     "projectId", // keeperhub custom field //
     "tagId", // keeperhub custom field //
-    // Listing fields (isListed, listedSlug, inputSchema, outputMapping,
-    // priceUsdcPerCall, category, chain, workflowType) are handled by
-    // lib/mcp/listing.ts helpers in the PATCH handler below.
+    "isListed", // v1.7 listing fields //
+    "listedSlug", // v1.7 listing fields //
+    "inputSchema", // v1.7 listing fields //
+    "outputMapping", // v1.7 listing fields //
+    "priceUsdcPerCall", // v1.7 listing fields //
   ];
   for (const field of fields) {
     if (body[field] !== undefined) {
@@ -336,106 +337,25 @@ export async function PATCH(
       }
     }
 
-    // Listing-state dispatch: delegate isListed/slug/metadata mutations to lib/mcp/listing.ts
-    const hasListingState = body.isListed !== undefined;
-    const hasListingMetadata =
-      body.inputSchema !== undefined ||
-      body.outputMapping !== undefined ||
-      body.category !== undefined ||
-      body.chain !== undefined ||
-      body.workflowType !== undefined ||
-      body.priceUsdcPerCall !== undefined;
-
-    if (hasListingState || hasListingMetadata) {
-      const orgId = existingWorkflow.organizationId ?? organizationId;
-      if (!orgId) {
-        return NextResponse.json(
-          { error: "Cannot update listing without an organization" },
-          { status: 400 }
-        );
-      }
-
-      type ListingHelperResult = Awaited<ReturnType<typeof listWorkflow>>;
-      let listingResult: ListingHelperResult;
-
-      if (body.isListed === true) {
-        listingResult = await listWorkflow(workflowId, orgId, {
-          slug: typeof body.listedSlug === "string" ? body.listedSlug : undefined,
-          category: typeof body.category === "string" ? body.category : undefined,
-          chain: typeof body.chain === "string" ? body.chain : undefined,
-          inputSchema:
-            body.inputSchema !== null && typeof body.inputSchema === "object"
-              ? (body.inputSchema as Record<string, unknown>)
-              : undefined,
-          outputMapping:
-            body.outputMapping !== null && typeof body.outputMapping === "object"
-              ? (body.outputMapping as Record<string, unknown>)
-              : undefined,
-          workflowType:
-            typeof body.workflowType === "string" ? body.workflowType : undefined,
-        });
-      } else if (body.isListed === false) {
-        listingResult = await unlistWorkflow(workflowId, orgId);
-      } else {
-        listingResult = await updateWorkflowListing(workflowId, orgId, {
-          category: typeof body.category === "string" ? body.category : undefined,
-          chain: typeof body.chain === "string" ? body.chain : undefined,
-          inputSchema:
-            body.inputSchema !== null && typeof body.inputSchema === "object"
-              ? (body.inputSchema as Record<string, unknown>)
-              : undefined,
-          outputMapping:
-            body.outputMapping !== null && typeof body.outputMapping === "object"
-              ? (body.outputMapping as Record<string, unknown>)
-              : undefined,
-          workflowType:
-            typeof body.workflowType === "string" ? body.workflowType : undefined,
-          priceUsdcPerCall:
-            typeof body.priceUsdcPerCall === "string" ? body.priceUsdcPerCall : undefined,
-        });
-      }
-
-      if (!listingResult.ok) {
-        if (listingResult.error === "NOT_FOUND") {
-          return NextResponse.json({ error: "Workflow not found" }, { status: 404 });
-        }
-        if (listingResult.error === "SLUG_CONFLICT") {
-          return NextResponse.json(
-            { error: "This slug is already in use. Choose a different slug." },
-            { status: 400 }
-          );
-        }
-        if (listingResult.error === "PRICE_CHANGE_WHILE_LISTED") {
-          return NextResponse.json(
-            { error: "Cannot change price while workflow is listed" },
-            { status: 409 }
-          );
-        }
-        return NextResponse.json({ error: "Invalid listing update" }, { status: 400 });
-      }
-
-      const hasNonListingFields =
-        body.name !== undefined ||
-        body.description !== undefined ||
-        body.nodes !== undefined ||
-        body.edges !== undefined ||
-        body.visibility !== undefined ||
-        body.enabled !== undefined ||
-        body.projectId !== undefined ||
-        body.tagId !== undefined;
-
-      if (!hasNonListingFields) {
-        await handlePostUpdateSideEffects(workflowId, body);
-        return NextResponse.json({
-          ...listingResult.listing,
-          createdAt: listingResult.listing.createdAt.toISOString(),
-          updatedAt: listingResult.listing.updatedAt.toISOString(),
-          isOwner: true,
-        });
-      }
+    // Slug immutability: reject changes to listedSlug when workflow is already listed
+    if (
+      body.listedSlug !== undefined &&
+      existingWorkflow.isListed === true &&
+      existingWorkflow.listedSlug !== null &&
+      body.listedSlug !== existingWorkflow.listedSlug
+    ) {
+      return NextResponse.json(
+        { error: "This slug cannot be changed after listing. Create a new workflow if you need a different slug." },
+        { status: 400 }
+      );
     }
 
     const updateData = buildUpdateData(body);
+
+    // Set listedAt server-side on first listing (never from client, never cleared on unlist)
+    if (body.isListed === true && existingWorkflow.listedAt === null) {
+      updateData.listedAt = new Date();
+    }
 
     let updatedWorkflow: typeof workflows.$inferSelect;
     try {
