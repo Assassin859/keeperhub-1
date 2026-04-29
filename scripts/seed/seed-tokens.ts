@@ -278,6 +278,21 @@ const TOKEN_CONFIGS: TokenConfig[] = [
   },
 
   // ==========================================================================
+  // 0G Mainnet (chainId: 16661)
+  // ==========================================================================
+  // Only XSwap-bridged USDC.e is tracked: Circle has not deployed native USDC
+  // on 0G, and no other stablecoin issuer has deployed natively. Bridged via
+  // Chainlink CCIP from Ethereum. Galileo testnet has no canonical bridged
+  // USDC (CCIP is decommissioned on Galileo), so no testnet entry.
+  {
+    chainId: 16_661,
+    tokenAddress: "0x1f3aa82227281ca364bfb3d253b0f1af1da6473e", // USDC.e (XSwap Bridged USDC via Chainlink CCIP)
+    logoUrl: LOGOS.USDC,
+    isStablecoin: true,
+    sortOrder: 1,
+  },
+
+  // ==========================================================================
   // Plasma Mainnet (chainId: 9745)
   // ==========================================================================
   // Only USDT0 is tracked: Circle has not deployed native USDC on Plasma, and
