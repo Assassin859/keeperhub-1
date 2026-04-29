@@ -140,7 +140,7 @@ export function registerTools(
 
   server.tool(
     "create_workflow",
-    "Create a new workflow with nodes and edges. Nodes define the trigger and actions; edges define the execution flow.",
+    "Create a new workflow with nodes and edges. Nodes define the trigger and actions; edges define the execution flow. Workflows are created disabled by default; pass enabled=true to make schedule/event/block/webhook triggers fire immediately.",
     {
       name: z.string().describe("Workflow name"),
       description: z
@@ -153,6 +153,12 @@ export function registerTools(
       edges: z
         .array(z.record(z.string(), z.unknown()))
         .describe("Workflow edges connecting nodes"),
+      enabled: z
+        .boolean()
+        .optional()
+        .describe(
+          "Whether the workflow is active on creation. Defaults to false; non-manual triggers stay dormant until enabled."
+        ),
       projectId: z
         .string()
         .optional()
@@ -175,6 +181,7 @@ export function registerTools(
             description: args.description,
             nodes: args.nodes,
             edges: args.edges,
+            enabled: args.enabled,
             projectId: args.projectId,
             tagId: args.tagId,
           }
@@ -188,7 +195,7 @@ export function registerTools(
 
   server.tool(
     "update_workflow",
-    "Update an existing workflow's name, description, nodes, edges, or project/tag assignment.",
+    "Update an existing workflow's name, description, nodes, edges, project/tag assignment, or enabled state. Set enabled=false to stop scheduled/event/block/webhook triggers from firing without deleting the workflow.",
     {
       workflowId: z.string().describe("The workflow ID to update"),
       name: z.string().optional().describe("New workflow name"),
@@ -201,6 +208,12 @@ export function registerTools(
         .array(z.record(z.string(), z.unknown()))
         .optional()
         .describe("Updated workflow edges"),
+      enabled: z
+        .boolean()
+        .optional()
+        .describe(
+          "Whether the workflow is active. Disabled workflows are skipped by schedule/event/block triggers and webhook calls return 410 Gone."
+        ),
       projectId: z
         .string()
         .nullable()
@@ -1084,6 +1097,154 @@ export function registerMetaTools(
           `/api/mcp/workflows/${encodeURIComponent(args.slug)}/call`,
           "POST",
           args.inputs
+        );
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+        };
+      })
+    )
+  );
+
+  // Curator tool 1: Publish a workflow to the marketplace catalog
+  server.tool(
+    "list_workflow",
+    "Publish a workflow to the KeeperHub marketplace catalog. Sets isListed=true, assigns or preserves listedSlug, refreshes listedAt. Other agents discover the listing via search_workflows and invoke it via call_workflow. Use this after creating a workflow with create_workflow. Idempotent: re-publishing preserves the original slug.",
+    {
+      workflowId: z.string().describe("The internal ID of the workflow to publish"),
+      slug: z
+        .string()
+        .optional()
+        .describe(
+          "Public URL slug for the listing (e.g. 'my-defi-alert'). Required on first publish; preserved on re-publish."
+        ),
+      category: z
+        .string()
+        .optional()
+        .describe("Workflow category (e.g. 'defi', 'monitoring')"),
+      chain: z
+        .string()
+        .optional()
+        .describe("Chain ID this workflow targets (e.g. '8453' for Base)"),
+      inputSchema: z
+        .record(z.string(), z.unknown())
+        .optional()
+        .describe("JSON Schema for the workflow's input parameters"),
+      outputMapping: z
+        .record(z.string(), z.unknown())
+        .optional()
+        .describe("Mapping of workflow output fields to return values"),
+      workflowType: z
+        .enum(["read", "write"])
+        .optional()
+        .describe("Workflow type: 'read' for read-only, 'write' for state-changing"),
+    },
+    { title: "List Workflow", readOnlyHint: false, destructiveHint: false },
+    withScopeCheck("list_workflow", scope, async (args) =>
+      withToolLogging("list_workflow", undefined, async () => {
+        const { workflowId, ...metadata } = args;
+        const data = await callApi(
+          baseUrl,
+          authHeader,
+          `/api/mcp/workflows/${encodeURIComponent(workflowId)}/listing`,
+          "POST",
+          metadata
+        );
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+        };
+      })
+    )
+  );
+
+  // Curator tool 2: Remove a workflow from the marketplace catalog
+  server.tool(
+    "unlist_workflow",
+    "Remove a workflow from the marketplace catalog. Slug is preserved for re-listing. Use when the workflow is deprecated or temporarily unavailable. Does not delete the workflow itself; use delete_workflow for permanent removal.",
+    {
+      workflowId: z.string().describe("The internal ID of the workflow to unlist"),
+    },
+    { title: "Unlist Workflow", readOnlyHint: false, destructiveHint: true },
+    withScopeCheck("unlist_workflow", scope, async (args) =>
+      withToolLogging("unlist_workflow", undefined, async () => {
+        const data = await callApi(
+          baseUrl,
+          authHeader,
+          `/api/mcp/workflows/${encodeURIComponent(args.workflowId)}/listing`,
+          "DELETE"
+        );
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+        };
+      })
+    )
+  );
+
+  // Curator tool 3: Edit listing metadata for a workflow
+  server.tool(
+    "update_workflow_listing",
+    "Edit listing metadata for a workflow (description, tags, category, chain, schemas). Cannot change pricing while listed — unlist first, update price, then re-list.",
+    {
+      workflowId: z.string().describe("The internal ID of the workflow to update"),
+      category: z
+        .string()
+        .optional()
+        .describe("Updated category (e.g. 'defi', 'monitoring')"),
+      chain: z
+        .string()
+        .optional()
+        .describe("Updated chain ID (e.g. '8453' for Base)"),
+      inputSchema: z
+        .record(z.string(), z.unknown())
+        .optional()
+        .describe("Updated JSON Schema for input parameters (full replace)"),
+      outputMapping: z
+        .record(z.string(), z.unknown())
+        .optional()
+        .describe("Updated output field mapping (full replace)"),
+      workflowType: z
+        .enum(["read", "write"])
+        .optional()
+        .describe("Updated workflow type"),
+      priceUsdcPerCall: z
+        .string()
+        .optional()
+        .describe("Updated price in USDC (only allowed while unlisted)"),
+    },
+    { title: "Update Workflow Listing", readOnlyHint: false, destructiveHint: false },
+    withScopeCheck("update_workflow_listing", scope, async (args) =>
+      withToolLogging("update_workflow_listing", undefined, async () => {
+        const { workflowId, ...patch } = args;
+        const data = await callApi(
+          baseUrl,
+          authHeader,
+          `/api/mcp/workflows/${encodeURIComponent(workflowId)}/listing`,
+          "PATCH",
+          patch
+        );
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+        };
+      })
+    )
+  );
+
+  // Curator tool 4: Read listing metadata for a workflow by slug
+  server.tool(
+    "get_workflow_listing",
+    "Read full listing metadata for a workflow by its public slug. Public access; no auth required.",
+    {
+      slug: z
+        .string()
+        .describe("The workflow's public listing slug (e.g. 'my-defi-alert')"),
+    },
+    { title: "Get Workflow Listing", readOnlyHint: true, destructiveHint: false },
+    withScopeCheck("get_workflow_listing", scope, async (args) =>
+      withToolLogging("get_workflow_listing", undefined, async () => {
+        const data = await callApi(
+          baseUrl,
+          authHeader,
+          `/api/mcp/workflows/${encodeURIComponent(args.slug)}/listing`,
+          "GET"
         );
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],

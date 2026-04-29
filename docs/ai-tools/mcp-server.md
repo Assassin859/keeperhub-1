@@ -98,7 +98,7 @@ Each server entry has its own tool namespace, so the AI agent can distinguish wh
 | `list_workflows` | List all workflows in the organization. Accepts `limit` and `offset` for pagination. |
 | `get_workflow` | Get full workflow configuration by ID including nodes and edges. |
 | `create_workflow` | Create a workflow with explicit nodes and edges. Call `list_action_schemas` first to get valid action types. |
-| `update_workflow` | Update a workflow's name, description, nodes, or edges. |
+| `update_workflow` | Update a workflow's name, description, nodes, edges, or enabled state. Pass `enabled: false` to halt schedule, event, block, or webhook triggers without deleting the workflow. |
 | `delete_workflow` | Permanently delete a workflow and stop all its executions. Use `force: true` to delete workflows with execution history (cascades to all runs and logs). |
 
 ### Execution
