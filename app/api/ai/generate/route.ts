@@ -338,9 +338,6 @@ export async function POST(request: Request) {
       getAiGenerateRateLimitKey(authContext)
     );
     if (!rateLimit.allowed) {
-      metrics.recordLatency(MetricNames.AI_GENERATION_DURATION, timer(), {
-        status: "failure",
-      });
       return NextResponse.json(
         { error: "Rate limit exceeded" },
         {
@@ -354,17 +351,11 @@ export async function POST(request: Request) {
     try {
       rawBody = await request.json();
     } catch {
-      metrics.recordLatency(MetricNames.AI_GENERATION_DURATION, timer(), {
-        status: "failure",
-      });
       return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
     }
 
     const validation = validateGenerateBody(rawBody);
     if (!validation.ok) {
-      metrics.recordLatency(MetricNames.AI_GENERATION_DURATION, timer(), {
-        status: "failure",
-      });
       return NextResponse.json(
         { error: validation.error },
         { status: validation.status }
