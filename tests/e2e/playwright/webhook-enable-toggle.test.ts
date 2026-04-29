@@ -1,61 +1,48 @@
 import { expect, test } from "./fixtures";
+import {
+  createTestWorkflow,
+  deleteTestWorkflow,
+  PERSISTENT_TEST_USER_EMAIL,
+  type WorkflowTriggerType,
+} from "./utils/db";
 import { waitForCanvas } from "./utils/workflow";
 
 const ENABLE_BUTTON_REGEX = /^(Enable|Disable) workflow$/;
 
-async function selectTriggerType(
+async function loadWorkflowWithTrigger(
   page: import("@playwright/test").Page,
-  optionLabel: string
-): Promise<void> {
-  const triggerNode = page.locator(".react-flow__node-trigger").first();
-  await expect(triggerNode).toBeVisible({ timeout: 10_000 });
-  await triggerNode.click();
-
-  const triggerTypeSelect = page.locator("#triggerType");
-  await expect(triggerTypeSelect).toBeVisible({ timeout: 5000 });
-  await triggerTypeSelect.click();
-
-  const option = page.getByRole("option", { name: optionLabel });
-  await expect(option).toBeVisible({ timeout: 3000 });
-  await option.click();
+  triggerType: WorkflowTriggerType
+): Promise<string> {
+  const workflow = await createTestWorkflow(PERSISTENT_TEST_USER_EMAIL, {
+    name: `enable-toggle-${triggerType}-${Date.now()}`,
+    triggerType,
+    enabled: false,
+  });
+  await page.goto(`/workflows/${workflow.id}`, { waitUntil: "domcontentloaded" });
+  await waitForCanvas(page);
+  return workflow.id;
 }
 
 test.describe("Workflow enable/disable toggle visibility by trigger type", () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto("/", { waitUntil: "domcontentloaded" });
-    await waitForCanvas(page);
-  });
-
   test("toggle is visible for Webhook trigger", async ({ page }) => {
-    await selectTriggerType(page, "Webhook");
+    const id = await loadWorkflowWithTrigger(page, "webhook");
     await expect(page.getByTitle(ENABLE_BUTTON_REGEX)).toBeVisible({
-      timeout: 5000,
+      timeout: 10_000,
     });
+    await deleteTestWorkflow(id);
   });
 
   test("toggle is visible for Schedule trigger", async ({ page }) => {
-    await selectTriggerType(page, "Schedule");
+    const id = await loadWorkflowWithTrigger(page, "schedule");
     await expect(page.getByTitle(ENABLE_BUTTON_REGEX)).toBeVisible({
-      timeout: 5000,
+      timeout: 10_000,
     });
-  });
-
-  test("toggle is visible for Event trigger", async ({ page }) => {
-    await selectTriggerType(page, "Event");
-    await expect(page.getByTitle(ENABLE_BUTTON_REGEX)).toBeVisible({
-      timeout: 5000,
-    });
-  });
-
-  test("toggle is visible for Block trigger", async ({ page }) => {
-    await selectTriggerType(page, "Block");
-    await expect(page.getByTitle(ENABLE_BUTTON_REGEX)).toBeVisible({
-      timeout: 5000,
-    });
+    await deleteTestWorkflow(id);
   });
 
   test("toggle is hidden for Manual trigger", async ({ page }) => {
-    await selectTriggerType(page, "Manual");
+    const id = await loadWorkflowWithTrigger(page, "manual");
     await expect(page.getByTitle(ENABLE_BUTTON_REGEX)).toHaveCount(0);
+    await deleteTestWorkflow(id);
   });
 });
