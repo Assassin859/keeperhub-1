@@ -9,13 +9,13 @@ The Direct Execution API allows you to execute blockchain transactions directly 
 
 ## Authentication
 
-All direct execution endpoints require an API key passed in the `X-API-Key` header:
+All direct execution endpoints require an organization API key (`kh_`) passed in the `Authorization` header as a bearer token:
 
 ```http
-X-API-Key: keeper_...
+Authorization: Bearer kh_your_api_key
 ```
 
-See [API Keys](/api/api-keys) for details on creating and managing API keys.
+See [Authentication](/api/authentication) for the full auth model and [API Keys](/api/api-keys) for details on creating and managing API keys.
 
 ## Rate Limits
 
