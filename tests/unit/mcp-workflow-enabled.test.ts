@@ -69,12 +69,15 @@ describe("MCP workflow tools accept enabled flag", () => {
   });
 
   it("update_workflow handler forwards enabled to the workflow PATCH endpoint", async () => {
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      headers: new Headers({ "content-type": "application/json" }),
-      json: async () => ({ id: "wf-1", enabled: true }),
-      text: async () => "",
-    }));
+    const fetchMock = vi.fn(
+      async (_url: string, _init: RequestInit) =>
+        ({
+          ok: true,
+          headers: new Headers({ "content-type": "application/json" }),
+          json: async () => ({ id: "wf-1", enabled: true }),
+          text: async () => "",
+        }) as unknown as Response
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     const tool = await findTool("update_workflow");
@@ -89,12 +92,15 @@ describe("MCP workflow tools accept enabled flag", () => {
   });
 
   it("create_workflow handler forwards enabled to the workflow create endpoint", async () => {
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      headers: new Headers({ "content-type": "application/json" }),
-      json: async () => ({ id: "wf-2", enabled: true }),
-      text: async () => "",
-    }));
+    const fetchMock = vi.fn(
+      async (_url: string, _init: RequestInit) =>
+        ({
+          ok: true,
+          headers: new Headers({ "content-type": "application/json" }),
+          json: async () => ({ id: "wf-2", enabled: true }),
+          text: async () => "",
+        }) as unknown as Response
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     const tool = await findTool("create_workflow");
