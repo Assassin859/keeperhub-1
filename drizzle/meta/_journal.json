@@ -442,6 +442,13 @@
       "when": 1777267669472,
       "tag": "0062_plan_overrides",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1777423425214,
+      "tag": "0063_keep_377_arbitrum_sepolia_usdc_address",
+      "breakpoints": true
     }
   ]
 }
