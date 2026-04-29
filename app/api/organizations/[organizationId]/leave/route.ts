@@ -50,6 +50,9 @@ export async function POST(
         ? body.newOwnerMemberId.trim()
         : "";
 
+    // Post-KEEP-239 this is the sha256 hash stored in sessions.token, not the
+    // raw bearer. Safe to use as a row key against sessions.token (both sides
+    // hashed); never expose to clients or use as an Authorization header.
     const sessionToken = session.session?.token;
     if (!sessionToken) {
       return NextResponse.json(

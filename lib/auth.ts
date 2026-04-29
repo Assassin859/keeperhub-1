@@ -17,6 +17,7 @@ import { nanoid } from "nanoid";
 import { rateLimitBypassRule } from "@/lib/admin-auth";
 import { sendInvitationEmail, sendVerificationOTP } from "@/lib/email";
 import { isAiGatewayManagedKeysEnabled } from "./ai-gateway/config";
+import { wrapWithSessionTokenHash } from "./auth-session-token-hash";
 import { db } from "./db";
 import {
   accounts,
@@ -401,10 +402,12 @@ async function notifyDiscordSignup(user: {
 
 export const auth = betterAuth({
   baseURL: getBaseURL(),
-  database: drizzleAdapter(db, {
-    provider: "pg",
-    schema,
-  }),
+  database: wrapWithSessionTokenHash(
+    drizzleAdapter(db, {
+      provider: "pg",
+      schema,
+    })
+  ),
   logger: {
     level: "debug",
     disabled: false,

@@ -449,6 +449,13 @@
       "when": 1777423425214,
       "tag": "0063_keep_377_arbitrum_sepolia_usdc_address",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1777429262207,
+      "tag": "0064_keep_239_hash_session_tokens",
+      "breakpoints": true
     }
   ]
 }
