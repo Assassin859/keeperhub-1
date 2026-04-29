@@ -108,14 +108,15 @@ describe.skipIf(shouldSkip)("wrapWithSessionTokenHash (integration)", () => {
     expect(row.token).toBe(hashSessionToken(rawToken));
     expect(row.token).not.toBe(rawToken);
 
-    // findOne via the wrapper, presenting the raw token, finds the row.
+    // findOne via the wrapper, presenting the raw token, finds the row and
+    // hands the raw token back so callers can reuse it for further token-
+    // keyed queries (the setActiveOrganization flow depends on this).
     const found = await adapter.findOne<{ id: string; token: string }>({
       model: "session",
       where: [{ field: "token", value: rawToken }],
     });
     expect(found?.id).toBe(created.id);
-    // Returned row's token is the stored hash (post-KEEP-239 semantics).
-    expect(found?.token).toBe(hashSessionToken(rawToken));
+    expect(found?.token).toBe(rawToken);
 
     // A wrong token finds nothing.
     const missing = await adapter.findOne({
@@ -125,7 +126,64 @@ describe.skipIf(shouldSkip)("wrapWithSessionTokenHash (integration)", () => {
     expect(missing).toBeNull();
   });
 
-  it("findMany with operator: in hashes every value", async () => {
+  it("supports the setActiveOrganization flow: load session, then update by the loaded token", async () => {
+    // Reproduces the exact better-auth call sequence that broke ORG-1:
+    //   1. orgSessionMiddleware: findOne(session, where token = cookieToken)
+    //   2. setActiveOrganization endpoint:
+    //      updateSession(session.token, { activeOrganizationId })
+    //      -> update(session, where token = sessionFromStep1.token, update: {...})
+    // Without round-trip restoration, step 2 hashes an already-hashed value
+    // and the update silently misses, returning null.
+    const rawToken = `set-active-${generateId()}`;
+    const expiresAt = new Date(Date.now() + 60_000);
+
+    // The drizzle adapter ignores caller-supplied ids and generates its own,
+    // so we capture the id from the create return rather than asserting on
+    // ours.
+    const created = await adapter.create<{ id: string }>({
+      model: "session",
+      data: {
+        id: `sess-${generateId()}`,
+        token: rawToken,
+        userId: testUserId,
+        expiresAt,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    });
+
+    const loaded = await adapter.findOne<{ id: string; token: string }>({
+      model: "session",
+      where: [{ field: "token", value: rawToken }],
+    });
+    expect(loaded).not.toBeNull();
+    expect(loaded?.id).toBe(created.id);
+
+    // Use a field the base session schema knows about so the test exercises
+    // round-trip behaviour without depending on plugin-extended fields.
+    const newExpiresAt = new Date(Date.now() + 120_000);
+    const updated = await adapter.update<{ id: string }>({
+      model: "session",
+      // Use the loaded session's token field, exactly as better-auth does.
+      where: [{ field: "token", value: loaded?.token as string }],
+      update: { expiresAt: newExpiresAt },
+    });
+
+    // The pre-fix bug returned null here. With the round-trip wrapper the
+    // update reaches the row keyed by hash(rawToken).
+    expect(updated).not.toBeNull();
+    expect(updated?.id).toBe(created.id);
+
+    // Confirm the column was actually written, independently of the adapter's
+    // return shape.
+    const [row] = await db
+      .select({ expiresAt: sessions.expiresAt })
+      .from(sessions)
+      .where(eq(sessions.id, created.id));
+    expect(row.expiresAt.getTime()).toBe(newExpiresAt.getTime());
+  });
+
+  it("findMany with operator: in returns the raw tokens the caller looked up with", async () => {
     const tokenA = `multi-a-${generateId()}`;
     const tokenB = `multi-b-${generateId()}`;
     const expiresAt = new Date(Date.now() + 60_000);
@@ -144,15 +202,69 @@ describe.skipIf(shouldSkip)("wrapWithSessionTokenHash (integration)", () => {
       });
     }
 
+    // Verify the column holds hashes, not raw tokens.
+    const dbRows = await db
+      .select({ token: sessions.token })
+      .from(sessions)
+      .where(eq(sessions.userId, testUserId));
+    const dbTokens = dbRows.map((r) => r.token);
+    expect(dbTokens).toContain(hashSessionToken(tokenA));
+    expect(dbTokens).toContain(hashSessionToken(tokenB));
+
     const rows = await adapter.findMany<{ token: string }>({
       model: "session",
       where: [{ field: "token", value: [tokenA, tokenB], operator: "in" }],
     });
     expect(rows).toHaveLength(2);
-    const storedTokens = rows.map((r) => r.token).sort();
-    expect(storedTokens).toEqual(
-      [hashSessionToken(tokenA), hashSessionToken(tokenB)].sort()
-    );
+    expect(rows.map((r) => r.token).sort()).toEqual([tokenA, tokenB].sort());
+  });
+
+  it("findMany with operator: ne / not_in returns rows with the stored hash", async () => {
+    // ne / not_in describe which raw tokens are absent from the result, not
+    // which are present, so the wrapper has no basis to map a returned hash
+    // back to a raw value. Returned rows keep their stored hashes; callers
+    // must not feed those tokens back into a token-keyed query.
+    const present = `ne-present-${generateId()}`;
+    const excluded = `ne-excluded-${generateId()}`;
+    const expiresAt = new Date(Date.now() + 60_000);
+
+    for (const token of [present, excluded]) {
+      await adapter.create({
+        model: "session",
+        data: {
+          id: `sess-${generateId()}`,
+          token,
+          userId: testUserId,
+          expiresAt,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      });
+    }
+
+    const neRows = await adapter.findMany<{ token: string }>({
+      model: "session",
+      where: [
+        { field: "userId", value: testUserId },
+        { field: "token", value: excluded, operator: "ne" },
+      ],
+    });
+    const neTokens = neRows.map((r) => r.token);
+    expect(neTokens).toContain(hashSessionToken(present));
+    expect(neTokens).not.toContain(present);
+    expect(neTokens).not.toContain(hashSessionToken(excluded));
+
+    const notInRows = await adapter.findMany<{ token: string }>({
+      model: "session",
+      where: [
+        { field: "userId", value: testUserId },
+        { field: "token", value: [excluded], operator: "not_in" },
+      ],
+    });
+    const notInTokens = notInRows.map((r) => r.token);
+    expect(notInTokens).toContain(hashSessionToken(present));
+    expect(notInTokens).not.toContain(present);
+    expect(notInTokens).not.toContain(hashSessionToken(excluded));
   });
 
   it("delete by raw token removes the row", async () => {

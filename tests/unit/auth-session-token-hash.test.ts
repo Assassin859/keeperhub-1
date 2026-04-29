@@ -170,6 +170,57 @@ describe("wrapWithSessionTokenHash", () => {
       ).rejects.toThrow(NON_STRING_VALUE_PATTERN);
       expect(mocks.findOne).not.toHaveBeenCalled();
     });
+
+    it("rewrites the returned row's token back to the raw value", async () => {
+      mocks.findOne.mockImplementationOnce(async () => ({
+        id: "sess-1",
+        token: HASH,
+        userId: "u-1",
+      }));
+      const found = await wrapped.findOne<{ id: string; token: string }>({
+        model: "session",
+        where: [{ field: "token", value: RAW }],
+      });
+      expect(found?.token).toBe(RAW);
+    });
+
+    it("leaves the row untouched when the returned hash is unrelated", async () => {
+      // Defensive: if the inner adapter returns a row whose hash doesn't
+      // match what we looked up (shouldn't happen with eq), don't pretend it
+      // was the caller's raw token.
+      const otherHash = hashSessionToken("different-token");
+      mocks.findOne.mockImplementationOnce(async () => ({
+        id: "sess-other",
+        token: otherHash,
+      }));
+      const found = await wrapped.findOne<{ id: string; token: string }>({
+        model: "session",
+        where: [{ field: "token", value: RAW }],
+      });
+      expect(found?.token).toBe(otherHash);
+    });
+
+    it("returns null untouched when the inner adapter finds nothing", async () => {
+      mocks.findOne.mockImplementationOnce(async () => null);
+      const found = await wrapped.findOne({
+        model: "session",
+        where: [{ field: "token", value: RAW }],
+      });
+      expect(found).toBeNull();
+    });
+
+    it("does not rewrite the token when the where lookup is by id", async () => {
+      mocks.findOne.mockImplementationOnce(async () => ({
+        id: "sess-1",
+        token: HASH,
+      }));
+      const found = await wrapped.findOne<{ token: string }>({
+        model: "session",
+        where: [{ field: "id", value: "sess-1" }],
+      });
+      // No token on the wire, no raw value to map back to.
+      expect(found?.token).toBe(HASH);
+    });
   });
 
   describe("findMany", () => {
@@ -191,6 +242,32 @@ describe("wrapWithSessionTokenHash", () => {
           where: [{ field: "token", value: RAW, operator: "in" }],
         })
       ).rejects.toThrow(NON_ARRAY_VALUE_PATTERN);
+    });
+
+    it("rewrites each returned row's token back to its raw value", async () => {
+      const otherRaw = "another-raw-token";
+      mocks.findMany.mockImplementationOnce(async () => [
+        { id: "sess-a", token: HASH },
+        { id: "sess-b", token: hashSessionToken(otherRaw) },
+      ]);
+      const rows = await wrapped.findMany<{ id: string; token: string }>({
+        model: "session",
+        where: [{ field: "token", value: [RAW, otherRaw], operator: "in" }],
+      });
+      expect(rows.map((r) => r.token).sort()).toEqual([RAW, otherRaw].sort());
+    });
+
+    it("leaves rows untouched when the where has no token clause", async () => {
+      mocks.findMany.mockImplementationOnce(async () => [
+        { id: "sess-a", token: HASH },
+      ]);
+      const rows = await wrapped.findMany<{ token: string }>({
+        model: "session",
+        where: [{ field: "userId", value: "u-1" }],
+      });
+      // Listing by userId can't recover raw tokens; the stored hash leaks
+      // through. Caller must not feed these back into a token-keyed query.
+      expect(rows[0].token).toBe(HASH);
     });
   });
 
@@ -225,6 +302,53 @@ describe("wrapWithSessionTokenHash", () => {
       const call = mocks.update.mock.calls[0][0];
       expect((call.where as Where[])[0].value).toBe(HASH);
       expect(call.update.token).toBe(hashSessionToken(newRaw));
+    });
+
+    it("rewrites the returned row's token back to the raw value", async () => {
+      // Reproduces the setActiveOrganization regression: better-auth loads a
+      // session, then calls updateSession(session.token, ...). Our wrapper
+      // must hand back the raw token on the loaded row so the second hop
+      // hashes once, not twice.
+      mocks.update.mockImplementationOnce(async () => ({
+        id: "sess-1",
+        token: HASH,
+        activeOrganizationId: "org-1",
+      }));
+      const result = await wrapped.update<{
+        id: string;
+        token: string;
+      }>({
+        model: "session",
+        where: [{ field: "token", value: RAW }],
+        update: { activeOrganizationId: "org-1" },
+      });
+      expect(result?.token).toBe(RAW);
+    });
+
+    it("returns the rotated raw token when the update payload sets a new token", async () => {
+      const newRaw = "rotated-token";
+      mocks.update.mockImplementationOnce(async () => ({
+        id: "sess-1",
+        token: hashSessionToken(newRaw),
+      }));
+      const result = await wrapped.update<{ token: string }>({
+        model: "session",
+        // Lookup by id — only the new token in the update payload is
+        // available for the round-trip map.
+        where: [{ field: "id", value: "sess-1" }],
+        update: { token: newRaw },
+      });
+      expect(result?.token).toBe(newRaw);
+    });
+
+    it("returns null untouched when the inner adapter updates nothing", async () => {
+      mocks.update.mockImplementationOnce(async () => null);
+      const result = await wrapped.update({
+        model: "session",
+        where: [{ field: "token", value: RAW }],
+        update: { activeOrganizationId: "org-1" },
+      });
+      expect(result).toBeNull();
     });
 
     it("updateMany hashes where clause", async () => {
