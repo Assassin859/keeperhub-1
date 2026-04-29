@@ -16,14 +16,9 @@ export const MAX_SESSION_LIFETIME_SECONDS = 30 * 24 * 60 * 60; // 30 days
 let cachedSessionSecret: { raw: string; encoded: Uint8Array } | null = null;
 
 function getSessionSecret(): Uint8Array {
-  const secret =
-    process.env.MCP_SESSION_SECRET ??
-    process.env.OAUTH_JWT_SECRET ??
-    process.env.BETTER_AUTH_SECRET;
+  const secret = process.env.MCP_SESSION_SECRET;
   if (!secret) {
-    throw new Error(
-      "No session secret configured. Set MCP_SESSION_SECRET, OAUTH_JWT_SECRET, or BETTER_AUTH_SECRET."
-    );
+    throw new Error("MCP_SESSION_SECRET environment variable is not set");
   }
   if (cachedSessionSecret?.raw === secret) {
     return cachedSessionSecret.encoded;
