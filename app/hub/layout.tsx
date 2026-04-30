@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import type { ReactNode } from "react";
 
 const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.keeperhub.com";
@@ -36,6 +37,28 @@ type HubLayoutProps = {
   children: ReactNode;
 };
 
-export default function HubLayout({ children }: HubLayoutProps) {
-  return children;
+// Workaround for a Next.js 16 dev-mode race: on browser back/forward
+// navigation to /hub the framework occasionally streams an RSC payload
+// the React client never finishes hydrating, leaving the page stuck on
+// the loading skeleton with zero interactive elements. Detection point
+// is `performance.getEntriesByType('navigation')[0]?.type === 'back_forward'`
+// — a forced reload converts it into a normal navigation and React
+// hydrates cleanly. Production is unaffected (NODE_ENV check below
+// drops the script entirely from the prod build).
+const HUB_DEV_BFCACHE_RELOAD =
+  "if(typeof window!=='undefined'&&typeof performance!=='undefined'){var n=performance.getEntriesByType('navigation')[0];if(n&&n.type==='back_forward'){window.location.reload();}}";
+
+export default function HubLayout({
+  children,
+}: HubLayoutProps): React.ReactElement {
+  return (
+    <>
+      {process.env.NODE_ENV === "development" && (
+        <Script id="hub-dev-bfcache-reload" strategy="beforeInteractive">
+          {HUB_DEV_BFCACHE_RELOAD}
+        </Script>
+      )}
+      {children}
+    </>
+  );
 }
