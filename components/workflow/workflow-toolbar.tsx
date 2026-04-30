@@ -38,9 +38,10 @@ import { ListingOverlay } from "@/components/overlays/listing-overlay";
 import { Switch } from "@/components/ui/switch";
 import { WalletToolbarButton } from "@/components/workflow/wallet-toolbar-button";
 import { BUILTIN_NODE_ID } from "@/lib/workflow/editor/builtin-variables";
+import { useAuthPrompt } from "@/components/auth/provider";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import { api, ApiError, type Project, type Tag } from "@/lib/api-client";
-import { authClient, useSession } from "@/lib/auth-client";
+import { useSession } from "@/lib/auth-client";
 import { getCustomLogo } from "@/lib/workflow/editor/extension-registry";
 import { integrationsAtom } from "@/lib/integrations-store";
 import type { IntegrationType } from "@/lib/types/integration";
@@ -898,6 +899,8 @@ function useWorkflowState() {
 // Hook for workflow actions
 function useWorkflowActions(state: ReturnType<typeof useWorkflowState>) {
   const { open: openOverlay } = useOverlay();
+  const { openAuthPrompt } = useAuthPrompt();
+  const pathname = usePathname();
   const {
     currentWorkflowId,
     workflowName,
@@ -1197,19 +1200,37 @@ function useWorkflowActions(state: ReturnType<typeof useWorkflowState>) {
   };
 
   const handleUseTemplate = async () => {
-    if (!currentWorkflowId) {
+    const isAnon = !session?.user || isAnonymousUser(session.user);
+
+    // HUB-03 / HUB-06: anonymous + auto-anonymous users go through the
+    // auth modal. The pending_template cookie carries the workflowId
+    // across the OAuth round-trip; PendingTemplateRunner picks it up
+    // post-callback and fires the duplicate exactly once.
+    if (isAnon) {
+      if (!currentWorkflowId) {
+        toast.error("Cannot use template: workflow ID missing");
+        return;
+      }
+      try {
+        await fetch("/api/auth/template-intent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ workflowId: currentWorkflowId }),
+        });
+      } catch (err) {
+        console.error("[UseTemplate] Failed to set intent cookie:", err);
+        // Fall through and open the modal anyway — user retries on return.
+      }
+      openAuthPrompt({ action: "use-template", redirectTo: pathname });
       return;
     }
 
+    // Signed-in real (non-owner) user — existing duplicate flow.
+    if (!currentWorkflowId) {
+      return;
+    }
     setIsDuplicating(true);
     try {
-      // Auto-sign in as anonymous if user has no session
-      if (!session?.user) {
-        await authClient.signIn.anonymous();
-        // Wait for session to be established
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-
       const newWorkflow = await api.workflow.duplicate(currentWorkflowId);
       toast.success("Template ready in your workflows");
       router.push(`/workflows/${newWorkflow.id}`);
