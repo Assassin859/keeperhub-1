@@ -2,6 +2,11 @@ import "server-only";
 
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
+import { truncateAddress } from "@/lib/address-utils";
+import {
+  getOrganizationWallet,
+  organizationHasWallet,
+} from "@/lib/para/wallet-helpers";
 import {
   findActionById,
   getIntegration as getPluginDefinition,
@@ -269,6 +274,61 @@ export async function createIntegration(
     ...result,
     config,
   };
+}
+
+/**
+ * Ensure the org's KeeperHub wallet has a backing web3 integration row.
+ *
+ * Wallet provisioning at app/api/user/wallet/route.ts:195 auto-creates a
+ * cosmetic web3 integration alongside the wallet. For orgs whose wallet
+ * pre-dates that auto-create code, or whose integration was deleted /
+ * migrated, the row can be missing -- which made the Workflow Builder
+ * render a misleading "Add Web3 connection" warning even though the
+ * wallet itself was working fine.
+ *
+ * Heals that drift idempotently: if the org has an active wallet but no
+ * web3 integration row, create one with the same payload the
+ * provisioning route would have written. Safe to call from any read path
+ * that lists integrations -- after the first call for a given org the
+ * row exists and subsequent calls early-return.
+ *
+ * Two concurrent callers can race and both pass the existence check,
+ * resulting in two web3 rows for the same wallet. We accept that rare
+ * edge case rather than introducing a unique constraint or transaction
+ * lock; the multi-integration list still renders, and the user can
+ * delete the extra row.
+ */
+export async function ensureWalletIntegration(
+  userId: string,
+  organizationId: string
+): Promise<void> {
+  const hasWallet = await organizationHasWallet(organizationId);
+  if (!hasWallet) {
+    return;
+  }
+
+  const existing = await db
+    .select({ id: integrations.id })
+    .from(integrations)
+    .where(
+      and(
+        eq(integrations.organizationId, organizationId),
+        eq(integrations.type, "web3")
+      )
+    )
+    .limit(1);
+  if (existing.length > 0) {
+    return;
+  }
+
+  const wallet = await getOrganizationWallet(organizationId);
+  await createIntegration({
+    userId,
+    organizationId,
+    name: truncateAddress(wallet.walletAddress),
+    type: "web3",
+    config: {},
+  });
 }
 
 /**
