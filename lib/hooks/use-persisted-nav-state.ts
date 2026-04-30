@@ -8,6 +8,11 @@ type NavPanelStates = {
   projects: PanelState;
   tags: PanelState;
   workflows: PanelState;
+  // Phase 43 / HUB-23: Hub sidebar Sort section. Independent of the
+  // projects -> tags -> workflows cascade — peelRightmost / applyPanelClose
+  // do not touch this slot. The HubSidebar component owns its own
+  // first-paint expanded default via local state when this is "closed".
+  sort: PanelState;
 };
 
 type PersistedNavState = {
@@ -20,12 +25,17 @@ type PersistedNavState = {
 
 const STORAGE_KEY = "keeperhub-nav-state";
 const LEGACY_KEY = "keeperhub-sidebar-expanded";
-const VERSION = 2;
+const VERSION = 3;
 
 const DEFAULT_STATE: PersistedNavState = {
   version: VERSION,
   sidebar: true,
-  panels: { projects: "closed", tags: "closed", workflows: "closed" },
+  panels: {
+    projects: "closed",
+    tags: "closed",
+    workflows: "closed",
+    sort: "closed",
+  },
   selectedProjectId: null,
   selectedTagId: null,
 };
@@ -177,9 +187,17 @@ export function usePersistedNavState(): UsePersistedNavStateReturn {
   );
 
   const closeAll = useCallback(() => {
+    // Preserve the existing sort panel state — closeAll targets the
+    // navigation cascade (projects -> tags -> workflows), not the
+    // independent Hub sidebar Sort section (HUB-23).
     commit({
       ...stateRef.current,
-      panels: { projects: "closed", tags: "closed", workflows: "closed" },
+      panels: {
+        ...stateRef.current.panels,
+        projects: "closed",
+        tags: "closed",
+        workflows: "closed",
+      },
       selectedProjectId: null,
       selectedTagId: null,
     });
