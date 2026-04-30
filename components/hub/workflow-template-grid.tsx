@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { type MouseEvent, useCallback, useState } from "react";
 import { toast } from "sonner";
 import { api, type SavedWorkflow, type VoteResponse } from "@/lib/api-client";
-import { authClient, useSession } from "@/lib/auth-client";
+import { useSession } from "@/lib/auth-client";
 import { refetchSidebar } from "@/lib/refetch-sidebar";
 import type { VoteDirection } from "@/lib/workflow/editor/votes";
 import { WorkflowTemplateCard } from "./workflow-template-card";
@@ -67,11 +67,10 @@ export function WorkflowTemplateGrid({
     setDuplicatingIds((prev) => new Set(prev).add(workflowId));
 
     try {
-      if (!session?.user) {
-        await authClient.signIn.anonymous();
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-
+      // HUB-06 / 43-05: legacy anonymous-signin fallback removed.
+      // Anonymous + auto-anonymous Use-template flow now lives in the
+      // workflow toolbar (components/workflow/workflow-toolbar.tsx)
+      // which routes through the AuthDialog + pending_template cookie.
       const duplicated = await api.workflow.duplicate(workflowId);
       refetchSidebar();
       toast.success("Template duplicated");
