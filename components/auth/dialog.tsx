@@ -25,8 +25,27 @@ import { refetchOrganizations } from "@/lib/refetch-organizations";
 
 const WORKFLOW_PATH_REGEX = /^\/workflows\/([^/]+)$/;
 
+export type AuthPromptIntent = {
+  action?: string;
+  redirectTo?: string;
+};
+
 type AuthDialogProps = {
   children?: ReactNode;
+  /**
+   * When provided, AuthDialog is in controlled mode: this prop drives the
+   * open state and `onControlledOpenChange` is invoked on every change.
+   * When absent, AuthDialog uses internal useState as today.
+   * Used by AuthProvider/useAuthPrompt for programmatic open.
+   */
+  controlledOpen?: boolean;
+  onControlledOpenChange?: (open: boolean) => void;
+  /**
+   * Optional intent payload — telemetry/analytics hint and post-sign-in
+   * redirect bias. Not consumed by the modal copy itself.
+   * Phase 43 will read `redirectTo` after OAuth callback.
+   */
+  intent?: AuthPromptIntent;
 };
 
 type ModalView =
@@ -338,9 +357,31 @@ const getViewDescription = (view: ModalView, email?: string) => {
 };
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Auth dialog handles multiple views and flows
-export const AuthDialog = ({ children }: AuthDialogProps) => {
-  // Use lazy initialization to check for pending verification on mount/remount
-  const [open, setOpen] = useState(() => pendingVerifyEmail !== null);
+export const AuthDialog = ({
+  children,
+  controlledOpen,
+  onControlledOpenChange,
+  // intent prop is intentionally accepted but not yet wired to flow
+  // (Phase 43 reads redirectTo from the AuthPromptProvider's stored intent
+  // after OAuth callback). Accept-and-ignore here is the locked contract.
+  // biome-ignore lint/correctness/noUnusedFunctionParameters: forward-compat
+  intent: _intent,
+}: AuthDialogProps) => {
+  // Internal state — used when not controlled. We always call useState to
+  // keep hook order stable; the value is just ignored when controlled.
+  const [internalOpen, setInternalOpen] = useState(
+    () => pendingVerifyEmail !== null
+  );
+
+  const isControlled = controlledOpen !== undefined;
+  const open = isControlled ? controlledOpen : internalOpen;
+  const setOpen = (next: boolean) => {
+    if (isControlled) {
+      onControlledOpenChange?.(next);
+    } else {
+      setInternalOpen(next);
+    }
+  };
   const [view, setView] = useState<ModalView>(() =>
     pendingVerifyEmail === null ? "signin" : "verify"
   );
@@ -834,13 +875,15 @@ export const AuthDialog = ({ children }: AuthDialogProps) => {
 
   return (
     <Dialog onOpenChange={handleOpenChange} open={open}>
-      <DialogTrigger asChild>
-        {children || (
-          <Button size="sm" variant="default">
-            Sign In
-          </Button>
-        )}
-      </DialogTrigger>
+      {!isControlled && (
+        <DialogTrigger asChild>
+          {children || (
+            <Button size="sm" variant="default">
+              Sign In
+            </Button>
+          )}
+        </DialogTrigger>
+      )}
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{getViewTitle(view)}</DialogTitle>
