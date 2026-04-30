@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { publicTags, workflowPublicTags } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { isReservedSlug } from "@/lib/workflow/reserved-slugs";
 
 function slugify(name: string): string {
   return name
@@ -74,6 +75,17 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     if (!slug) {
       return NextResponse.json({ error: "Invalid tag name" }, { status: 400 });
+    }
+
+    // Reserved-slug guard (HUB-11): reject tag slugs that collide with reserved
+    // path segments under /hub/tags/[tag].
+    if (isReservedSlug(slug)) {
+      return NextResponse.json(
+        {
+          error: `"${slug}" is a reserved word and cannot be used.`,
+        },
+        { status: 400 }
+      );
     }
 
     const [existing] = await db
