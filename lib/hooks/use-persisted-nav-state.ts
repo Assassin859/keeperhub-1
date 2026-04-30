@@ -11,6 +11,7 @@ type NavPanelStates = {
 };
 
 type PersistedNavState = {
+  version: number;
   sidebar: boolean;
   panels: NavPanelStates;
   selectedProjectId: string | null;
@@ -19,8 +20,10 @@ type PersistedNavState = {
 
 const STORAGE_KEY = "keeperhub-nav-state";
 const LEGACY_KEY = "keeperhub-sidebar-expanded";
+const VERSION = 2;
 
 const DEFAULT_STATE: PersistedNavState = {
+  version: VERSION,
   sidebar: true,
   panels: { projects: "closed", tags: "closed", workflows: "closed" },
   selectedProjectId: null,
@@ -31,7 +34,13 @@ function loadState(): PersistedNavState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      return JSON.parse(raw) as PersistedNavState;
+      const parsed = JSON.parse(raw) as Partial<PersistedNavState>;
+      if (parsed.version !== VERSION) {
+        // NAV-07: stale snapshot - discard. NAV-FUTURE-01 will revisit migration.
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_STATE));
+        return DEFAULT_STATE;
+      }
+      return parsed as PersistedNavState;
     }
 
     const legacy = localStorage.getItem(LEGACY_KEY);
@@ -258,3 +267,15 @@ export function usePersistedNavState(): UsePersistedNavStateReturn {
 }
 
 export type { NavPanelStates, PanelState, PersistedNavState };
+
+// Test-only exports. The hook itself is the public surface; these helpers are
+// exposed so unit tests can exercise the version-discard branch without a
+// React renderer (this codebase does not depend on @testing-library/react).
+export {
+  DEFAULT_STATE as __DEFAULT_STATE_FOR_TESTING,
+  LEGACY_KEY as __LEGACY_KEY_FOR_TESTING,
+  loadState as __loadStateForTesting,
+  persistState as __persistStateForTesting,
+  STORAGE_KEY as __STORAGE_KEY_FOR_TESTING,
+  VERSION as __VERSION_FOR_TESTING,
+};
