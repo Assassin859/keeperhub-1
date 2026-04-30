@@ -1763,23 +1763,26 @@ function UseTemplateButton({
   onUseTemplate: () => void;
 }) {
   return (
-    <Button
+    <button
       aria-label="Use this workflow as a template"
-      className="h-9 bg-[var(--ds-green-accent)] font-semibold text-[var(--color-bg-inverse)] transition-opacity duration-150 hover:opacity-90 focus-visible:ring-2 focus-visible:ring-[var(--color-border-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-50 motion-reduce:transition-none"
+      className="inline-flex h-8 items-center rounded-md border px-2.5 font-normal text-xs transition-colors duration-150 hover:bg-[var(--color-bg-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-50 motion-reduce:transition-none"
       data-analytics="template_use_clicked"
       disabled={isUsingTemplate}
       onClick={onUseTemplate}
-      size="sm"
+      style={{
+        borderColor: "color-mix(in oklab, var(--color-text-accent) 50%, transparent)",
+        color: "var(--color-text-accent)",
+      }}
       title="Use this workflow as a template in your account"
-      variant="default"
+      type="button"
     >
       {isUsingTemplate ? (
-        <Loader2 className="mr-2 size-4 animate-spin" />
+        <Loader2 className="mr-1.5 size-3.5 animate-spin" />
       ) : (
-        <Copy className="mr-2 size-4" />
+        <Copy className="mr-1.5 size-3.5" />
       )}
-      {isUsingTemplate ? "Using template…" : "Use template"}
-    </Button>
+      {isUsingTemplate ? "Importing…" : "Use template"}
+    </button>
   );
 }
 
@@ -1869,7 +1872,13 @@ export const WorkflowToolbar = ({
           {isWorkflowRoute &&
             effectiveWorkflowId &&
             (state.workflowVisibility === "public" || !state.isOwner) && (
-              <ReadOnlyBadge className="hidden lg:inline-flex" />
+              <>
+                <ReadOnlyBadge className="hidden lg:inline-flex" />
+                <UseTemplateButton
+                  isUsingTemplate={state.isDuplicating}
+                  onUseTemplate={actions.handleUseTemplate}
+                />
+              </>
             )}
         </div>
 
@@ -1885,14 +1894,6 @@ export const WorkflowToolbar = ({
             )}
             <div className="flex items-center gap-2">
               <WalletToolbarButton />
-              {isWorkflowRoute &&
-                effectiveWorkflowId &&
-                (state.workflowVisibility === "public" || !state.isOwner) && (
-                <UseTemplateButton
-                  isUsingTemplate={state.isDuplicating}
-                  onUseTemplate={actions.handleUseTemplate}
-                />
-              )}
               <UserMenu />
             </div>
           </div>
@@ -1930,7 +1931,13 @@ export const WorkflowToolbar = ({
           {isWorkflowRoute &&
             effectiveWorkflowId &&
             (state.workflowVisibility === "public" || !state.isOwner) && (
-              <ReadOnlyBadge className="hidden lg:inline-flex" />
+              <>
+                <ReadOnlyBadge className="hidden lg:inline-flex" />
+                <UseTemplateButton
+                  isUsingTemplate={state.isDuplicating}
+                  onUseTemplate={actions.handleUseTemplate}
+                />
+              </>
             )}
         </div>
       </Panel>
@@ -1945,14 +1952,6 @@ export const WorkflowToolbar = ({
             />
           )}
           <div className="flex items-center gap-2">
-            {isWorkflowRoute &&
-              effectiveWorkflowId &&
-              (state.workflowVisibility === "public" || !state.isOwner) && (
-                <UseTemplateButton
-                  isUsingTemplate={state.isDuplicating}
-                  onUseTemplate={actions.handleUseTemplate}
-                />
-              )}
             <UserMenu />
           </div>
         </div>

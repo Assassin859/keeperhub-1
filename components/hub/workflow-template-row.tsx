@@ -71,7 +71,7 @@ export function WorkflowTemplateRow({
     // biome-ignore lint/a11y/useSemanticElements: row uses an <article> with the row A11y role per UI-SPEC §2 to act as a click target with the ::before overlay; nested vote buttons forbid wrapping <a>.
     <article
       aria-label={`Open ${workflow.name} preview`}
-      className="group relative flex min-h-[3rem] cursor-pointer items-center gap-3 border-border/20 border-b bg-[var(--color-hub-card)] px-4 py-3 transition-colors duration-100 ease before:absolute before:inset-0 before:z-[1] before:cursor-pointer before:content-[''] last:border-b-0 even:bg-[var(--color-row-stripe)] hover:bg-[var(--color-hub-icon-bg)] focus-within:ring-2 focus-within:ring-[var(--color-border-accent)] motion-reduce:transition-none"
+      className="group relative flex min-h-[3rem] cursor-pointer items-center gap-3 bg-[var(--color-hub-card)] px-4 py-3 transition-colors duration-100 ease before:absolute before:inset-0 before:z-[1] before:cursor-pointer before:content-[''] even:bg-[var(--color-row-stripe)] hover:bg-[var(--color-hub-icon-bg)] motion-reduce:transition-none"
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: UI-SPEC §2 mandates an <article> with the row A11y role for rowgroup/row semantics; the row is interactive via the ::before overlay and onKeyDown handler.
@@ -102,17 +102,6 @@ export function WorkflowTemplateRow({
         </div>
       )}
 
-      {score !== 0 && (
-        <span
-          aria-label={`Score ${score}`}
-          className={`pointer-events-none relative z-[2] hidden shrink-0 font-semibold text-[0.6875rem] tabular-nums md:inline-flex ${voteCountColorClass(userVote)}`}
-          role="status"
-        >
-          {score > 0 ? "+" : ""}
-          {score}
-        </span>
-      )}
-
       {price && (
         <span className="pointer-events-none relative z-[2] shrink-0 font-semibold text-foreground text-xs tabular-nums">
           {price}
@@ -134,13 +123,17 @@ export function WorkflowTemplateRow({
         <div className="pointer-events-auto relative z-[2] flex shrink-0 items-center gap-0.5">
           <button
             aria-label="Upvote"
+            aria-pressed={upActive}
             className={`rounded p-0.5 transition-colors duration-150 motion-reduce:transition-none ${
               upActive
-                ? "text-[var(--color-text-accent)]"
+                ? "cursor-default text-[var(--color-text-accent)]"
                 : "text-muted-foreground/50 hover:text-[var(--color-text-accent)]"
             }`}
             onClick={(e) => {
               e.stopPropagation();
+              if (upActive) {
+                return;
+              }
               onVote("upvote");
             }}
             type="button"
@@ -158,13 +151,17 @@ export function WorkflowTemplateRow({
           </span>
           <button
             aria-label="Downvote"
+            aria-pressed={downActive}
             className={`rounded p-0.5 transition-colors duration-150 motion-reduce:transition-none ${
               downActive
-                ? "text-[var(--color-text-error)]"
+                ? "cursor-default text-[var(--color-text-error)]"
                 : "text-muted-foreground/50 hover:text-[var(--color-text-error)]"
             }`}
             onClick={(e) => {
               e.stopPropagation();
+              if (downActive) {
+                return;
+              }
               onVote("downvote");
             }}
             type="button"

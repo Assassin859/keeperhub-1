@@ -24,9 +24,9 @@ type HubSidebarProps = {
 };
 
 const SORT_OPTIONS: ReadonlyArray<{ value: SortValue; label: string }> = [
+  { value: "top-rated", label: "Top rated" },
   { value: "most-used", label: "Most used" },
   { value: "featured", label: "Featured" },
-  { value: "top-rated", label: "Top rated" },
   { value: "name", label: "Name" },
 ] as const;
 
@@ -42,7 +42,7 @@ function SectionHeader({
   return (
     <CollapsibleTrigger asChild>
       <button
-        className="group flex w-full items-center justify-between rounded-md px-3 py-2 font-normal text-muted-foreground text-xs uppercase tracking-widest transition-colors duration-100 hover:bg-[var(--color-hub-icon-bg)]/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-accent)] motion-reduce:transition-none"
+        className="group flex w-full items-center justify-between rounded-md px-3 py-2 font-normal text-muted-foreground text-xs uppercase tracking-widest transition-colors duration-100 hover:bg-[var(--color-hub-icon-bg)]/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-text-accent)] motion-reduce:transition-none"
         type="button"
       >
         <span className="inline-flex items-center gap-2">
@@ -95,10 +95,10 @@ export function HubSidebar({
               // biome-ignore lint/a11y/useSemanticElements: WAI-ARIA radio pattern on a <button> is the only option that supports rich label markup + click handling without form-association side effects (matches Radix RadioGroupItem).
               <button
                 aria-checked={active}
-                className={`flex items-center rounded-md px-3 py-1.5 text-left text-sm transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-accent)] motion-reduce:transition-none ${
+                className={`flex min-h-7 items-center rounded-md px-3 py-1.5 text-left text-sm transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-text-accent)] motion-reduce:transition-none ${
                   active
-                    ? "font-semibold text-[var(--color-text-accent)]"
-                    : "font-normal text-muted-foreground hover:text-foreground"
+                    ? "bg-muted font-normal text-foreground"
+                    : "font-normal text-muted-foreground hover:bg-muted hover:text-foreground"
                 }`}
                 key={opt.value}
                 onClick={() => onSortChange(opt.value)}
@@ -120,6 +120,19 @@ export function HubSidebar({
             tagsOverflow ? "max-h-96 overflow-y-auto" : ""
           }`}
         >
+          <Link
+            aria-current={activeTagSlug === null ? "page" : undefined}
+            className={`flex min-h-7 items-center justify-between rounded-md px-3 py-1.5 text-sm transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-text-accent)] motion-reduce:transition-none ${
+              activeTagSlug === null
+                ? "bg-muted font-normal text-foreground"
+                : "font-normal text-muted-foreground hover:bg-muted hover:text-foreground"
+            }`}
+            href="/hub"
+            prefetch
+            scroll={false}
+          >
+            <span className="truncate">All</span>
+          </Link>
           {publicTags.map((tag) => {
             const active = activeTagSlug === tag.slug;
             // Sidebar tag links stay on /hub and use ?tag= for smooth
@@ -129,10 +142,10 @@ export function HubSidebar({
             return (
               <Link
                 aria-current={active ? "page" : undefined}
-                className={`flex min-h-7 items-center justify-between rounded-md py-1.5 text-sm transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-accent)] motion-reduce:transition-none ${
+                className={`flex min-h-7 items-center justify-between rounded-md px-3 py-1.5 text-sm transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-text-accent)] motion-reduce:transition-none ${
                   active
-                    ? "border-l-2 border-l-[var(--color-border-accent)] bg-[var(--color-hub-icon-bg)] pr-3 pl-2 font-semibold text-[var(--color-text-accent)]"
-                    : "px-3 font-normal text-muted-foreground hover:bg-[var(--color-hub-icon-bg)] hover:text-foreground"
+                    ? "bg-muted font-normal text-foreground"
+                    : "font-normal text-muted-foreground hover:bg-muted hover:text-foreground"
                 }`}
                 href={href}
                 key={tag.slug}

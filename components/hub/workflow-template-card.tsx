@@ -2,11 +2,6 @@
 
 import { ArrowBigDown, ArrowBigUp, Star } from "lucide-react";
 import type { KeyboardEvent, MouseEvent } from "react";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import type { SavedWorkflow } from "@/lib/api-client";
 import type { VoteDirection } from "@/lib/workflow/editor/votes";
 import { WorkflowMiniMap } from "./workflow-mini-map";
@@ -54,13 +49,17 @@ function VoteCluster({
     <div className="pointer-events-auto relative z-[2] flex items-center gap-0.5">
       <button
         aria-label="Upvote"
+        aria-pressed={upActive}
         className={`rounded p-0.5 transition-colors duration-150 motion-reduce:transition-none ${
           upActive
-            ? "text-[var(--color-text-accent)]"
+            ? "cursor-default text-[var(--color-text-accent)]"
             : "text-muted-foreground/50 hover:text-[var(--color-text-accent)]"
         }`}
         onClick={(e) => {
           e.stopPropagation();
+          if (upActive) {
+            return;
+          }
           onVote("upvote");
         }}
         type="button"
@@ -78,13 +77,17 @@ function VoteCluster({
       </span>
       <button
         aria-label="Downvote"
+        aria-pressed={downActive}
         className={`rounded p-0.5 transition-colors duration-150 motion-reduce:transition-none ${
           downActive
-            ? "text-[var(--color-text-error)]"
+            ? "cursor-default text-[var(--color-text-error)]"
             : "text-muted-foreground/50 hover:text-[var(--color-text-error)]"
         }`}
         onClick={(e) => {
           e.stopPropagation();
+          if (downActive) {
+            return;
+          }
           onVote("downvote");
         }}
         type="button"
@@ -159,22 +162,6 @@ export function WorkflowTemplateCard({
                 {tag.name}
               </span>
             ))}
-            {workflow.publicTags.length > 3 && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="cursor-default rounded-full bg-[var(--color-hub-icon-bg)] px-1.5 py-0.5 font-normal text-[0.625rem] text-muted-foreground">
-                    +{workflow.publicTags.length - 3}
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent className="flex flex-col gap-0.5" side="bottom">
-                  {workflow.publicTags.map((tag) => (
-                    <span className="text-xs" key={tag.slug}>
-                      {tag.name}
-                    </span>
-                  ))}
-                </TooltipContent>
-              </Tooltip>
-            )}
           </div>
         )}
 
