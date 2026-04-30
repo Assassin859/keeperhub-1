@@ -9,7 +9,9 @@ import {
   Plus,
   Settings,
 } from "lucide-react";
+import type * as React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useWalletInfo } from "@/lib/wallet/use-wallet-info";
 import { ConfigureConnectionOverlay } from "@/components/overlays/add-connection-overlay";
 import { AiGatewayConsentOverlay } from "@/components/overlays/ai-gateway-consent-overlay";
 import { EditConnectionOverlay } from "@/components/overlays/edit-connection-overlay";
@@ -274,8 +276,24 @@ export function IntegrationSelector({
   const managedIntegrations = integrations.filter((i) => i.isManaged);
   const manualIntegrations = integrations.filter((i) => !i.isManaged);
 
-  // No integrations - show add button
+  // No integrations - show add button.
+  //
+  // Special case for the web3 integration type: KeeperHub provisions an org
+  // wallet automatically, and write/transfer/approve actions sign with that
+  // wallet -- not with a "web3 integration" credential. Showing the loud
+  // orange "Add Web3 connection" warning is misleading for those actions
+  // (the action will run fine without any web3 integration). Render a
+  // wallet-aware empty state instead, with a discreet add button so users
+  // who do want a custom RPC can still attach one.
   if (integrations.length === 0) {
+    if (integrationType === "web3") {
+      return (
+        <Web3WalletAwareEmptyState
+          disabled={disabled}
+          onAddConnection={handleAddConnection}
+        />
+      );
+    }
     return (
       <>
         <Button
@@ -425,5 +443,71 @@ export function IntegrationSelector({
         )}
       </div>
     </>
+  );
+}
+
+type Web3WalletAwareEmptyStateProps = {
+  disabled?: boolean;
+  onAddConnection: () => void;
+};
+
+/**
+ * Empty state for the Web3 IntegrationSelector. Web3 actions sign with the
+ * org's KeeperHub wallet, not with a "web3 integration" credential -- the
+ * loud orange "Add Web3 connection" warning was misleading users into
+ * thinking the action was misconfigured. Show a quieter wallet-aware state
+ * instead, with a discreet "+" for users who actually want to attach a
+ * custom RPC.
+ */
+function Web3WalletAwareEmptyState({
+  disabled,
+  onAddConnection,
+}: Web3WalletAwareEmptyStateProps): React.JSX.Element {
+  const { hasWallet, isLoading } = useWalletInfo();
+
+  // While wallet status is still loading, prefer the wallet-aware copy --
+  // most signed-in orgs have a wallet, so flashing the orange warning
+  // before the fetch resolves causes a visible jump.
+  if (isLoading || hasWallet) {
+    return (
+      <div
+        className={cn(
+          "flex h-9 w-full items-center gap-2 rounded-md border px-3 text-sm",
+          disabled && "cursor-not-allowed opacity-50"
+        )}
+      >
+        <Check className="size-4 shrink-0 text-green-600" />
+        <span className="flex-1 truncate text-muted-foreground">
+          Uses your KeeperHub wallet
+        </span>
+        <Button
+          aria-label="Add custom RPC connection"
+          className="size-6 shrink-0"
+          disabled={disabled}
+          onClick={onAddConnection}
+          size="icon"
+          title="Add custom RPC"
+          variant="ghost"
+        >
+          <Plus className="size-3" />
+        </Button>
+      </div>
+    );
+  }
+
+  // No wallet yet -- keep the original prompt so the user knows action is
+  // needed (the wallet onboarding flow lives elsewhere; the integration
+  // overlay still lets them attach a custom RPC).
+  return (
+    <Button
+      className="w-full justify-start gap-2 border-orange-500/50 bg-orange-500/10 text-orange-600 hover:bg-orange-500/20 dark:text-orange-400"
+      disabled={disabled}
+      onClick={onAddConnection}
+      variant="outline"
+    >
+      <AlertTriangle className="size-4" />
+      <span className="flex-1 text-left">Add Web3 connection</span>
+      <Plus className="size-4" />
+    </Button>
   );
 }
