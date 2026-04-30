@@ -58,6 +58,33 @@ function makeWriteNode(overrides: Record<string, unknown> = {}): unknown {
   };
 }
 
+// Canonical post-sanitize shape: actionType lives at data.config.actionType.
+// Mirrors what lib/workflow/editor/sanitize-nodes.ts produces and what the DB
+// actually stores for a saved workflow.
+function makeCanonicalWriteNode(
+  overrides: Record<string, unknown> = {}
+): unknown {
+  return {
+    id: "write-1",
+    type: "action",
+    data: {
+      type: "action",
+      label: "Write transfer",
+      status: "idle",
+      config: {
+        actionType: "web3/write-contract",
+        contractAddress: "0xContractAddress",
+        network: "base",
+        abi: SAMPLE_ABI,
+        abiFunction: "transfer",
+        functionArgs: JSON.stringify(["0xRecipient", "1000"]),
+        ethValue: "",
+        ...overrides,
+      },
+    },
+  };
+}
+
 describe("generateCalldataForWorkflow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -67,6 +94,21 @@ describe("generateCalldataForWorkflow", () => {
 
   it("returns success with to, data, value for a valid write-contract node", () => {
     const nodes = [makeWriteNode()];
+    const result = generateCalldataForWorkflow(nodes, {});
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.to).toBe("0xContractAddress");
+      expect(result.data).toBe("0xencodeddata");
+      expect(result.value).toBe("0");
+    }
+  });
+
+  it("matches the canonical post-sanitize shape (data.config.actionType)", () => {
+    // This is the shape the canvas actually persists -- the sanitizer at
+    // lib/workflow/editor/sanitize-nodes.ts:233-238 nests actionType inside
+    // data.config. Workflows saved through the UI will only ever match here.
+    const nodes = [makeCanonicalWriteNode()];
     const result = generateCalldataForWorkflow(nodes, {});
 
     expect(result.success).toBe(true);

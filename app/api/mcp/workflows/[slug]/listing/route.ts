@@ -38,6 +38,16 @@ function mapListingError(error: string): NextResponse {
       { status: 409 }
     );
   }
+  if (error === "MISSING_WRITE_ACTION") {
+    return NextResponse.json(
+      {
+        error: "MISSING_WRITE_ACTION",
+        message:
+          "Workflow is declared as workflowType='write' but no node has data.actionType containing 'write-contract' or 'protocol-write'. Add a web3/write-contract or protocol/protocol-write action node to the workflow before listing it.",
+      },
+      { status: 422 }
+    );
+  }
   return NextResponse.json(
     { error: "INVALID_INPUT", message: "Invalid request." },
     { status: 400 }

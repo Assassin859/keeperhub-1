@@ -80,7 +80,40 @@ export function validateContractCallInput(body: unknown): ValidationResult {
     };
   }
 
+  const priorityFeeError = validatePriorityFeeGwei(record.priorityFeeGwei);
+  if (priorityFeeError) {
+    return priorityFeeError;
+  }
+
   return { valid: true };
+}
+
+function validatePriorityFeeGwei(value: unknown): ValidationResult | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (typeof value !== "string" || value.trim() === "") {
+    return {
+      valid: false,
+      error: {
+        error: "Invalid field type",
+        field: "priorityFeeGwei",
+        details: "priorityFeeGwei must be a non-empty decimal string in gwei",
+      },
+    };
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return {
+      valid: false,
+      error: {
+        error: "Invalid field value",
+        field: "priorityFeeGwei",
+        details: "priorityFeeGwei must be a finite positive decimal in gwei",
+      },
+    };
+  }
+  return null;
 }
 
 function isNonNullObject(value: unknown): value is Record<string, unknown> {

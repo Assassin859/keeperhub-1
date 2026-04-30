@@ -108,6 +108,7 @@ vi.mock("@/lib/web3/gas-defaults", () => ({
     multiplierOverride: undefined,
     gasLimitOverride: undefined,
   }),
+  parsePriorityFeeGwei: vi.fn().mockReturnValue(undefined),
 }));
 
 vi.mock("@/lib/web3/resolve-org-context", () => ({

@@ -37,24 +37,36 @@ function isWriteActionType(actionType: unknown): boolean {
  * only the first one is used to generate calldata. This matches the current
  * "one transaction per call" model. If multi-write composition is needed in
  * the future, this function and its callers must change together.
+ *
+ * Node shape (post-sanitize, see lib/workflow/editor/sanitize-nodes.ts:233-238):
+ *   { id, type:"action", data: { type:"action", config: { actionType, ... } } }
+ * actionType lives at data.config.actionType -- the older top-level
+ * data.actionType path is also accepted as a fallback for any legacy fixtures
+ * or in-memory shapes that pre-date the sanitizer normalization.
  */
 export function findFirstWriteActionNode(
   nodes: unknown[]
 ): WriteNode | undefined {
   for (const node of nodes) {
     if (
-      node !== null &&
-      typeof node === "object" &&
-      "data" in node &&
-      node.data !== null &&
-      typeof node.data === "object" &&
-      "actionType" in node.data &&
-      isWriteActionType(node.data.actionType) &&
-      "config" in node.data &&
-      node.data.config !== null &&
-      typeof node.data.config === "object"
+      node === null ||
+      typeof node !== "object" ||
+      !("data" in node) ||
+      node.data === null ||
+      typeof node.data !== "object" ||
+      !("config" in node.data) ||
+      node.data.config === null ||
+      typeof node.data.config !== "object"
     ) {
-      const config = node.data.config as WriteNodeConfig;
+      continue;
+    }
+    const config = node.data.config as WriteNodeConfig & {
+      actionType?: unknown;
+    };
+    const candidateActionType =
+      config.actionType ??
+      ("actionType" in node.data ? node.data.actionType : undefined);
+    if (isWriteActionType(candidateActionType)) {
       return { config };
     }
   }

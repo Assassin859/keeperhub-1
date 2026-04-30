@@ -27,7 +27,10 @@ import { getAbiFunctionKey } from "@/lib/abi/function-key";
 import { generateId } from "@/lib/utils/id";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import { formatContractError } from "@/lib/web3/decode-revert-error";
-import { resolveGasLimitOverrides } from "@/lib/web3/gas-defaults";
+import {
+  parsePriorityFeeGwei,
+  resolveGasLimitOverrides,
+} from "@/lib/web3/gas-defaults";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
 import { executeSponsoredContractTransaction } from "@/lib/web3/sponsored-transaction-manager";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
@@ -44,6 +47,11 @@ export type WriteContractCoreInput = {
   functionArgs?: string;
   ethValue?: string;
   gasLimitMultiplier?: string;
+  // Explicit caller override for maxPriorityFeePerGas (in gwei). Bypasses the
+  // chain's min/max priority-fee clamp in lib/web3/gas-strategy.ts. Use when
+  // the network's mempool requires a tip above the configured floor (e.g. 0G
+  // Galileo demands >= 2 gwei but the strategy floor is lower).
+  priorityFeeGwei?: string;
   // KEEP-137: Route the write transaction through the chain's private mempool
   // RPC (e.g. Flashbots Protect). Skips ERC-4337 sponsorship -- mutually exclusive.
   usePrivateMempool?: boolean;
@@ -86,6 +94,7 @@ export async function writeContractCore(
     functionArgs,
     ethValue,
     gasLimitMultiplier,
+    priorityFeeGwei,
     usePrivateMempool,
     strict,
     _context,
@@ -93,6 +102,7 @@ export async function writeContractCore(
 
   const { multiplierOverride, gasLimitOverride } =
     resolveGasLimitOverrides(gasLimitMultiplier);
+  const priorityFeeOverride = parsePriorityFeeGwei(priorityFeeGwei);
 
   // Validate contract address
   if (!ethers.isAddress(contractAddress)) {
@@ -370,7 +380,11 @@ export async function writeContractCore(
         value: parsedEthValue,
       }, session, {
         triggerType: txContext.triggerType ?? "manual",
-        gasOverrides: { multiplierOverride, gasLimitOverride },
+        gasOverrides: {
+          multiplierOverride,
+          gasLimitOverride,
+          priorityFeeOverride,
+        },
         workflowId,
         rpcManager,
       });

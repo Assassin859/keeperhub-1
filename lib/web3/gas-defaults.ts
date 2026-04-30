@@ -71,6 +71,8 @@ const CHAIN_GAS_DEFAULTS: Record<number, ChainGasDefaults> = {
   137: { multiplier: 2.0, conservative: 2.5 },
   // Polygon Amoy testnet
   80002: { multiplier: 2.0, conservative: 2.5 },
+  // 0G Galileo testnet
+  16602: { multiplier: 2.0, conservative: 2.5 },
 };
 
 const GLOBAL_DEFAULT: ChainGasDefaults = {
@@ -89,6 +91,7 @@ export function getChainGasDefaults(chainId: number): ChainGasDefaults {
 export type GasLimitOverrides = {
   multiplierOverride?: number;
   gasLimitOverride?: bigint;
+  priorityFeeOverride?: bigint;
 };
 
 /**
@@ -116,4 +119,23 @@ export function resolveGasLimitOverrides(
   }
 
   return {};
+}
+
+/**
+ * Convert a caller-supplied priority fee (gwei, decimal string) to wei.
+ * Returns undefined when the value is missing, malformed, or non-positive --
+ * callers should fall through to the default chain-clamped strategy in that
+ * case rather than raising.
+ */
+export function parsePriorityFeeGwei(raw: string | undefined): bigint | undefined {
+  if (!raw || raw.trim() === "") {
+    return;
+  }
+  const value = Number.parseFloat(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    return;
+  }
+  // 1 gwei = 1e9 wei. Multiply in float, then floor to bigint to preserve
+  // sub-gwei precision (e.g. "1.5" -> 1500000000n).
+  return BigInt(Math.floor(value * 1e9));
 }
