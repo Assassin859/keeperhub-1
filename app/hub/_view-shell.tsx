@@ -4,6 +4,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { HubHero } from "@/components/hub/hub-hero";
 import { HubResults } from "@/components/hub/hub-results";
+import { HubSidebar } from "@/components/hub/hub-sidebar";
 import { HubViewToggle } from "@/components/hub/hub-view-toggle";
 import { ProtocolDetailModal } from "@/components/hub/protocol-detail-modal";
 import { ProtocolStrip } from "@/components/hub/protocol-strip";
@@ -201,13 +202,18 @@ function HubPageContent({
                 />
               ))}
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div
-                  className="h-[180px] rounded-xl bg-muted/10"
-                  key={`card-${String(i)}`}
-                />
-              ))}
+            <div className="mt-4 flex gap-6">
+              <div className="hidden h-[400px] w-[var(--flyout-width,280px)] shrink-0 rounded-xl bg-muted/10 lg:block" />
+              <div className="min-w-0 flex-1">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <div
+                      className="h-[180px] rounded-xl bg-muted/10"
+                      key={`card-${String(i)}`}
+                    />
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         ) : (
@@ -224,54 +230,43 @@ function HubPageContent({
               />
             )}
 
-            <div className="mt-4 mb-4">
-              <div className="mb-4">
-                <div className="mb-3 flex items-center gap-3">
-                  <div className="h-px flex-1 bg-border/30" />
-                  <h2 className="shrink-0 text-[var(--color-text-accent)]/60 text-xs uppercase tracking-widest">
-                    Templates
-                  </h2>
-                  <div className="h-px flex-1 bg-border/30" />
-                  <div className="flex shrink-0 items-center gap-2">
+            <div className="mt-4 flex gap-6">
+              <HubSidebar
+                onSortChange={setSortBy}
+                publicTags={publicTags}
+                sortBy={sortBy}
+              />
+
+              <div className="min-w-0 flex-1">
+                <div className="mb-4">
+                  <div className="mb-3 flex items-center gap-3">
+                    <div className="h-px flex-1 bg-border/30" />
+                    <h2 className="shrink-0 text-[var(--color-text-accent)]/60 text-xs uppercase tracking-widest">
+                      Templates
+                    </h2>
+                    <div className="h-px flex-1 bg-border/30" />
                     <HubViewToggle
                       initialView={initialView}
                       onChange={setViewMode}
                     />
-                    {/* existing sort toggle stays here for now — plan 43-08 moves it to the sidebar */}
-                    <div className="flex shrink-0 gap-1 rounded-lg border border-border/30 p-0.5">
-                      <button
-                        className={`rounded-md px-2.5 py-1 text-[10px] font-medium transition-colors ${sortBy === "recent" ? "bg-[var(--color-hub-icon-bg)] text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-                        onClick={() => setSortBy("recent")}
-                        type="button"
-                      >
-                        Recent
-                      </button>
-                      <button
-                        className={`rounded-md px-2.5 py-1 text-[10px] font-medium transition-colors ${sortBy === "votes" ? "bg-[var(--color-hub-icon-bg)] text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-                        onClick={() => setSortBy("votes")}
-                        type="button"
-                      >
-                        Top voted
-                      </button>
-                    </div>
                   </div>
+
+                  <WorkflowSearchFilter
+                    onTagToggle={handleToggleTag}
+                    publicTags={publicTags}
+                    selectedTagSlugs={selectedTagSlugs}
+                  />
                 </div>
 
-                <WorkflowSearchFilter
-                  onTagToggle={handleToggleTag}
-                  publicTags={publicTags}
-                  selectedTagSlugs={selectedTagSlugs}
+                <HubResults
+                  communityWorkflows={allWorkflows}
+                  featuredIds={featuredIds}
+                  isSearchActive={isSearchActive}
+                  onClearFilters={clearFilters}
+                  searchResults={searchResults}
+                  viewMode={viewMode}
                 />
               </div>
-
-              <HubResults
-                communityWorkflows={allWorkflows}
-                featuredIds={featuredIds}
-                isSearchActive={isSearchActive}
-                onClearFilters={clearFilters}
-                searchResults={searchResults}
-                viewMode={viewMode}
-              />
             </div>
 
             <ProtocolDetailModal
