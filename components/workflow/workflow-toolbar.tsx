@@ -1793,7 +1793,7 @@ function WorkflowMenuComponent({
 
   return (
     <div className="flex flex-col gap-1">
-      {isWorkflowRoute && workflowId && (state.isListed || !state.isOwner) && (
+      {isWorkflowRoute && workflowId && (state.workflowVisibility === "public" || !state.isOwner) && (
         <ReadOnlyBadge className="lg:hidden" />
       )}
     </div>
@@ -1864,7 +1864,7 @@ export const WorkflowToolbar = ({
           />
           {isWorkflowRoute &&
             effectiveWorkflowId &&
-            (state.isListed || !state.isOwner) && (
+            (state.workflowVisibility === "public" || !state.isOwner) && (
               <ReadOnlyBadge className="hidden lg:inline-flex" />
             )}
         </div>
@@ -1923,7 +1923,7 @@ export const WorkflowToolbar = ({
           />
           {isWorkflowRoute &&
             effectiveWorkflowId &&
-            (state.isListed || !state.isOwner) && (
+            (state.workflowVisibility === "public" || !state.isOwner) && (
               <ReadOnlyBadge className="hidden lg:inline-flex" />
             )}
         </div>
