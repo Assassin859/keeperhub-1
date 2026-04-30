@@ -5,11 +5,11 @@ import { useAtomValue, useSetAtom } from "jotai";
 import { Link2Off, Plus, Trash2, Upload } from "lucide-react";
 import { nanoid } from "nanoid";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ConfirmOverlay } from "@/components/overlays/confirm-overlay";
-import { ImportWorkflowOverlay } from "@/components/overlays/import-workflow-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
+import { WorkflowIOOverlay } from "@/components/overlays/workflow-io-overlay";
 import { useSession } from "@/lib/auth-client";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import { cn } from "@/lib/utils";
@@ -53,6 +53,21 @@ export function WorkflowContextMenu({
   const { data: session } = useSession();
   const isAnonymous = isAnonymousUser(session?.user);
   const menuRef = useRef<HTMLDivElement>(null);
+  const [ioOpen, setIoOpen] = useState(false);
+
+  const handleIoImported = useCallback(
+    (workflowId: string) => {
+      router.push(`/workflows/${workflowId}`);
+    },
+    [router]
+  );
+
+  const handleNoopExport = useCallback(() => {
+    // Pane context-menu entry is import-only. The export section in the
+    // shared overlay is not reachable from this entry point because the
+    // menu opens in pane context where there is no current workflow to
+    // export. Keeping a no-op satisfies the overlay's required prop.
+  }, []);
 
   const handleDeleteNode = useCallback(() => {
     if (menuState?.nodeId) {
@@ -148,12 +163,8 @@ export function WorkflowContextMenu({
     };
   }, [menuState, onClose]);
 
-  if (!menuState) {
-    return null;
-  }
-
-  const getNodeLabel = () => {
-    if (!menuState.nodeId) {
+  const getNodeLabel = (): string => {
+    if (!menuState?.nodeId) {
       return "Step";
     }
     const node = nodes.find((n) => n.id === menuState.nodeId);
@@ -161,58 +172,64 @@ export function WorkflowContextMenu({
   };
 
   return (
-    <div
-      className="fade-in-0 zoom-in-95 fixed z-50 min-w-[8rem] animate-in overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
-      ref={menuRef}
-      style={{
-        left: menuState.position.x,
-        top: menuState.position.y,
-      }}
-    >
-      {menuState.type === "node" && (
-        <MenuItem
-          icon={<Trash2 className="size-4" />}
-          label={`Delete ${getNodeLabel()}`}
-          onClick={handleDeleteNode}
-          variant="destructive"
-        />
-      )}
+    <>
+      {menuState && (
+        <div
+          className="fade-in-0 zoom-in-95 fixed z-50 min-w-[8rem] animate-in overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
+          ref={menuRef}
+          style={{
+            left: menuState.position.x,
+            top: menuState.position.y,
+          }}
+        >
+          {menuState.type === "node" && (
+            <MenuItem
+              icon={<Trash2 className="size-4" />}
+              label={`Delete ${getNodeLabel()}`}
+              onClick={handleDeleteNode}
+              variant="destructive"
+            />
+          )}
 
-      {menuState.type === "edge" && (
-        <MenuItem
-          icon={<Link2Off className="size-4" />}
-          label="Delete Connection"
-          onClick={handleDeleteEdge}
-          variant="destructive"
-        />
-      )}
+          {menuState.type === "edge" && (
+            <MenuItem
+              icon={<Link2Off className="size-4" />}
+              label="Delete Connection"
+              onClick={handleDeleteEdge}
+              variant="destructive"
+            />
+          )}
 
-      {menuState.type === "pane" && (
-        <>
-          <MenuItem
-            icon={<Plus className="size-4" />}
-            label="Add Step"
-            onClick={handleAddStep}
-          />
-          <MenuItem
-            icon={<Upload className="size-4" />}
-            label="New Workflow from JSON"
-            onClick={() => {
-              onClose();
-              if (isAnonymous) {
-                toast.info("Sign in to import workflows.");
-                return;
-              }
-              openOverlay(ImportWorkflowOverlay, {
-                onImported: (workflowId) => {
-                  router.push(`/workflows/${workflowId}`);
-                },
-              });
-            }}
-          />
-        </>
+          {menuState.type === "pane" && (
+            <>
+              <MenuItem
+                icon={<Plus className="size-4" />}
+                label="Add Step"
+                onClick={handleAddStep}
+              />
+              <MenuItem
+                icon={<Upload className="size-4" />}
+                label="New Workflow from JSON"
+                onClick={() => {
+                  onClose();
+                  if (isAnonymous) {
+                    toast.info("Sign in to import workflows.");
+                    return;
+                  }
+                  setIoOpen(true);
+                }}
+              />
+            </>
+          )}
+        </div>
       )}
-    </div>
+      <WorkflowIOOverlay
+        onExport={handleNoopExport}
+        onImported={handleIoImported}
+        onOpenChange={setIoOpen}
+        open={ioOpen}
+      />
+    </>
   );
 }
 
