@@ -1281,9 +1281,13 @@ function ToolbarActions({
   const selectedEdge = edges.find((edge) => edge.id === selectedEdgeId);
   const hasSelection = selectedNode || selectedEdge;
 
-  // For non-owners viewing public workflows, don't show toolbar actions
-  // (Duplicate button is now in the main toolbar next to Sign In)
-  if (workflowId && !state.isOwner) {
+  // Hide toolbar actions (Run, Save, Edit, Settings) in preview context:
+  // either the viewer is not the owner, OR the workflow is publicly visible
+  // (preview surface). Owners viewing their own public templates see the
+  // Use-template CTA in the main toolbar instead.
+  const isPreviewContext =
+    !state.isOwner || state.workflowVisibility === "public";
+  if (workflowId && isPreviewContext) {
     return null;
   }
 
@@ -1881,7 +1885,9 @@ export const WorkflowToolbar = ({
             )}
             <div className="flex items-center gap-2">
               <WalletToolbarButton />
-              {isWorkflowRoute && effectiveWorkflowId && !state.isOwner && (
+              {isWorkflowRoute &&
+                effectiveWorkflowId &&
+                (state.workflowVisibility === "public" || !state.isOwner) && (
                 <UseTemplateButton
                   isUsingTemplate={state.isDuplicating}
                   onUseTemplate={actions.handleUseTemplate}
@@ -1939,12 +1945,14 @@ export const WorkflowToolbar = ({
             />
           )}
           <div className="flex items-center gap-2">
-            {isWorkflowRoute && effectiveWorkflowId && !state.isOwner && (
-              <UseTemplateButton
-                isUsingTemplate={state.isDuplicating}
-                onUseTemplate={actions.handleUseTemplate}
-              />
-            )}
+            {isWorkflowRoute &&
+              effectiveWorkflowId &&
+              (state.workflowVisibility === "public" || !state.isOwner) && (
+                <UseTemplateButton
+                  isUsingTemplate={state.isDuplicating}
+                  onUseTemplate={actions.handleUseTemplate}
+                />
+              )}
             <UserMenu />
           </div>
         </div>
