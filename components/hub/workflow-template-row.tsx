@@ -117,8 +117,6 @@ export function WorkflowTemplateRow({
         </span>
       )}
 
-      {/* Phase 44 will fill the marketplace-badge slot here when isListed */}
-
       {onVote && (
         <div className="pointer-events-auto relative z-[2] flex shrink-0 items-center gap-0.5">
           <button

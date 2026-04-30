@@ -24,8 +24,9 @@
 ## Phases
 
 - [ ] **Phase 42: Foundations & Shared Primitives** - Single Import/Export modal, shared SignInPromptOverlay, logged-out left-nav, hardened import schema (KEEP-368 + KEEP-297)
-- [ ] **Phase 43: Hub UX Overhaul** - Green Use-template CTA + login gate, deep-link tag URLs, fully-clickable tile, Cards/List toggle, sidebar reorg with Tags + Sort (KEEP-326)
-- [ ] **Phase 44: Marketplace Ladder** - Top-level `/marketplace` popularity-sorted leaderboard, `?sort` extension to `/api/mcp/workflows` and `search_workflows`, "Listed in marketplace" badge on Hub cards (KEEP-303)
+- [x] **Phase 43: Hub UX Overhaul** - Green Use-template CTA + login gate, deep-link tag URLs, fully-clickable tile, Cards/List toggle, sidebar reorg with Tags + Sort (KEEP-326) — UAT complete 2026-05-01, 15/15 passed
+- [ ] **Phase 44: Marketplace Ladder** - Top-level `/marketplace` popularity-sorted leaderboard, `?sort` extension to `/api/mcp/workflows` and `search_workflows` (KEEP-303). Marketplace surfacing lives entirely on `/marketplace` — no marketplace-related badges on Hub cards or List rows.
+- [ ] **Phase 45: Back/Forward Hydration Fix** - Properly diagnose and resolve the Next.js 16 App Router back/forward hydration race that leaves pages stuck on SSR skeletons with no interactive elements; remove the dev-only force-reload workaround introduced in Phase 43
 
 ---
 
@@ -69,6 +70,24 @@
 **Plans**: TBD
 **UI hint**: yes
 
+### Phase 45: Back/Forward Hydration Fix
+**Goal**: Replace the dev-only force-reload workaround on `/hub` (`app/hub/layout.tsx`, committed in Phase 43 as commit `cef214f0`) with a real fix that lets every page recover from a browser back/forward navigation without losing client hydration. Either land the fix in Next.js itself, or apply a framework-agnostic workaround at root layout that does not break legitimate user flows depending on persisted page state.
+**Depends on**: Nothing — orthogonal cleanup. Should land before any phase that adds heavy client-side state to pages users routinely back-button into.
+**Requirements** (to be expanded into a SPEC during /gsd-plan-phase):
+  - Reproduce on a clean `pnpm dev` instance: navigate to any client-component-heavy page (`/hub`, `/billing`), navigate away, navigate back, observe the React tree fail to hydrate (DOM has no `__reactContainer*` markers, `__next_f` flight buffer empty, zero interactive elements).
+  - Determine root cause: streaming RSC payload, Router cache restoration, App Router init order, HMR WebSocket race, or interaction between them. Compare against `pnpm build && pnpm start` to confirm prod is unaffected (or, if it's not, escalate scope accordingly).
+  - Land the fix at root layout (or upstream) so all pages benefit, not just `/hub`.
+  - Remove the dev-only Script in `app/hub/layout.tsx` once the upstream fix is in place.
+  - Verify in Chrome (Cmd+Shift+T tab restore), Firefox (Cmd+Shift+T), and Safari (back gesture) that the same flow no longer regresses.
+**Success Criteria** (what must be TRUE):
+  1. After back/forward navigation to any page, `document.querySelectorAll('button').length` matches what a direct nav to the same page produces, and `document.querySelectorAll('[__reactContainer]')` (or the React 19 equivalent) is non-empty.
+  2. The dev-only `<Script>` in `app/hub/layout.tsx` is deleted; no other page-level workarounds remain.
+  3. A Playwright test (`tests/e2e/playwright/back-forward-hydration.test.ts`) navigates `/hub → /billing → goBack`, asserts the rehydrated page renders the expected sidebar nav buttons and template tiles, and asserts `performance.getEntriesByType('navigation')[0]?.type !== 'reload'` (proving we are not relying on a forced reload to recover).
+  4. The same test runs against `pnpm dev` and `pnpm start` builds.
+  5. Local UAT gate passed before PR is opened: `pnpm check` + `pnpm type-check` green, `pnpm test:e2e --grep "back-forward"` green.
+**Plans**: TBD
+**UI hint**: no
+
 ### Phase 44: Marketplace Ladder
 **Goal**: Ship the platform-wide popularity-sorted ladder of listed workflows at a new top-level `/marketplace` route, surfaced consistently to humans (UI), agents (extended `/api/mcp/workflows` and `search_workflows`), and Hub browsers ("Listed in marketplace" badge) — without leaking a single per-creator USDC figure or wallet address.
 **Depends on**: Phase 42 (consumes the shared `SignInPromptOverlay` and logged-out-nav primitives — the Marketplace nav entry is visible to all users and gates on click). Phase 43 is recommended-but-not-required (Hub overhaul ships the cross-link badge surface).
@@ -78,7 +97,7 @@
   2. A grep of the rendered HTML and the JSON response surfaces zero occurrences of `creatorWalletAddress`, `userId`, `organizationId`, `payerAddress`, or precise `amountUsdc` — the Drizzle SELECT explicitly whitelists public columns only. Verified by the MARKET-13 Playwright test asserting no leaked sensitive columns.
   3. The aggregate query is a direct Drizzle GROUP-BY join over `workflows ⋈ workflow_payments`, wrapped in `unstable_cache` (5-10 minute TTL) with `revalidate: 60`; response carries `Cache-Control: s-maxage=300, stale-while-revalidate=60`; pagination is `LIMIT 50` + cursor; the `(workflow_id, settled_at)` composite index on `workflow_payments` is reviewed and added (with a Drizzle migration committed in this phase) if missing.
   4. `GET /api/mcp/workflows?sort=popular|recent` returns the same sorted catalog as the UI; the existing `search_workflows` MCP tool gains a `sort` parameter with the same enum and defaults to popularity ranking. Total registered MCP tool count is unchanged — no new tools added.
-  5. Hub template cards display a "Listed in marketplace" badge for any workflow with `isListed=true`; a Marketplace nav entry is added to the left sidebar (visible to all users, click-gated for signed-in-only actions through Phase 42's `SignInPromptOverlay`).
+  5. A Marketplace nav entry is added to the left sidebar (visible to all users, click-gated for signed-in-only actions through Phase 42's `SignInPromptOverlay`). Marketplace discovery is consolidated on `/marketplace` — no "Listed in marketplace" badge or marketplace-related decoration on Hub cards or List rows; cross-link discovery happens via the nav entry only.
   6. Local UAT gate passed before PR is opened: `pnpm dev` smoke against seeded `workflow_payments` data, `pnpm discover /marketplace --auth --highlight` report captured, sort dropdown manually exercised across all three options, manual viewport check at 1280x800 minimum, `pnpm check` + `pnpm type-check` + `node scripts/token-audit.js` all green, and the planning agent applied the `/frontend-design:frontend-design` skill before writing plans.
 **Plans**: TBD
 **UI hint**: yes
@@ -90,5 +109,6 @@
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 42. Foundations & Shared Primitives | 0/10 | Not started | - |
-| 43. Hub UX Overhaul | 12/14 | In Progress|  |
+| 43. Hub UX Overhaul | 14/14 | UAT complete | 2026-05-01 |
 | 44. Marketplace Ladder | 0/? | Not started | - |
+| 45. Back/Forward Hydration Fix | 0/? | Not started | - |
