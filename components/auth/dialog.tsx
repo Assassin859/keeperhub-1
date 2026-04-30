@@ -16,6 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { authClient, signIn, signUp } from "@/lib/auth-client";
+import { AUTH_SUCCESS_EVENT } from "@/lib/auth-events";
 import {
   getEnabledAuthProviders,
   getSingleProvider,
@@ -555,6 +556,7 @@ export const AuthDialog = ({
 
       toast.success("Signed in successfully!");
       setOpen(false);
+      window.dispatchEvent(new CustomEvent(AUTH_SUCCESS_EVENT));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign in failed");
     } finally {
@@ -718,6 +720,7 @@ export const AuthDialog = ({
       toast.success("Email verified! You're now signed in.");
       setOpen(false);
       resetForm();
+      window.dispatchEvent(new CustomEvent(AUTH_SUCCESS_EVENT));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Verification failed");
       setLoading(false);

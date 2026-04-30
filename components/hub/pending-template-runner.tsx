@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api-client";
+import { AUTH_SUCCESS_EVENT } from "@/lib/auth-events";
 
 const SESSION_KEY_PREFIX = "pending_template:";
 const IDEMPOTENCY_TTL_MS = 30_000; // 30s (43-CONTEXT.md HUB-05)
@@ -51,72 +52,92 @@ function isFlagFresh(flag: StoredFlag): boolean {
 }
 
 /**
- * Mounts in app/layout.tsx (broadest scope). On first mount per OAuth
- * round-trip, fetches GET /api/auth/template-intent to read the
- * pending_template cookie (which the server clears atomically), then —
- * if a workflowId comes back — runs router.refresh() before firing
- * api.workflow.duplicate exactly once. SessionStorage with a 30s TTL
- * guards against re-mount re-fires within the same tab.
+ * Mounts in app/layout.tsx (broadest scope). Reads the pending_template
+ * intent cookie via GET /api/auth/template-intent (server clears it
+ * atomically) and, if a workflowId is returned, triggers
+ * api.workflow.duplicate exactly once. Runs in two situations:
+ *
+ *   1. Initial mount per page load — covers OAuth / magic-link
+ *      round-trips that reload the page after auth.
+ *   2. AUTH_SUCCESS_EVENT dispatched by the auth modal — covers
+ *      in-place email+password sign-in / verify, where the modal
+ *      closes without a navigation and the runner would otherwise
+ *      never re-fetch the intent.
+ *
+ * Idempotency is guarded by (a) the server-side atomic cookie clear
+ * (concurrent fires after the first one see workflowId=null), (b) a
+ * 30s sessionStorage flag per workflowId, and (c) an in-flight ref to
+ * suppress overlapping calls within the same tab.
  *
  * 43-CONTEXT.md HUB-05; UI-SPEC §4 Post-OAuth auto-trigger.
  */
 export function PendingTemplateRunner(): null {
   const router = useRouter();
-  const hasRun = useRef(false);
+  const inFlight = useRef(false);
 
   useEffect(() => {
-    if (hasRun.current) {
-      return;
-    }
-    hasRun.current = true;
-
     let cancelled = false;
 
     const run = async (): Promise<void> => {
-      let workflowId: string | null = null;
+      if (inFlight.current) {
+        return;
+      }
+      inFlight.current = true;
+
       try {
-        const res = await fetch("/api/auth/template-intent", {
-          method: "GET",
-          credentials: "same-origin",
-        });
-        if (!res.ok) {
+        let workflowId: string | null = null;
+        try {
+          const res = await fetch("/api/auth/template-intent", {
+            method: "GET",
+            credentials: "same-origin",
+          });
+          if (!res.ok) {
+            return;
+          }
+          const data = (await res.json()) as IntentResponse;
+          workflowId = data.workflowId;
+        } catch (err) {
+          console.error("[PendingTemplate] read intent failed:", err);
           return;
         }
-        const data = (await res.json()) as IntentResponse;
-        workflowId = data.workflowId;
-      } catch (err) {
-        console.error("[PendingTemplate] read intent failed:", err);
-        return;
-      }
 
-      if (!workflowId || cancelled) {
-        return;
-      }
+        if (!workflowId || cancelled) {
+          return;
+        }
 
-      const existing = readSessionFlag(workflowId);
-      if (existing && isFlagFresh(existing)) {
-        return;
-      }
+        const existing = readSessionFlag(workflowId);
+        if (existing && isFlagFresh(existing)) {
+          return;
+        }
 
-      router.refresh();
+        router.refresh();
 
-      try {
-        const duplicated = await api.workflow.duplicate(workflowId);
-        writeSessionFlag(workflowId);
-        toast.success("Template ready in your workflows");
-        router.push(`/workflows/${duplicated.id}`);
-      } catch (err) {
-        console.error("[PendingTemplate] duplicate failed:", err);
-        const message =
-          err instanceof Error ? err.message : "Failed to use template";
-        toast.error(message);
+        try {
+          const duplicated = await api.workflow.duplicate(workflowId);
+          writeSessionFlag(workflowId);
+          toast.success("Template ready in your workflows");
+          router.push(`/workflows/${duplicated.id}`);
+        } catch (err) {
+          console.error("[PendingTemplate] duplicate failed:", err);
+          const message =
+            err instanceof Error ? err.message : "Failed to use template";
+          toast.error(message);
+        }
+      } finally {
+        inFlight.current = false;
       }
     };
 
     run();
 
+    const handler = (): void => {
+      run();
+    };
+    window.addEventListener(AUTH_SUCCESS_EVENT, handler);
+
     return () => {
       cancelled = true;
+      window.removeEventListener(AUTH_SUCCESS_EVENT, handler);
     };
   }, [router]);
 
