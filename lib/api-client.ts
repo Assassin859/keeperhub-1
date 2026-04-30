@@ -60,6 +60,7 @@ export type SavedWorkflow = WorkflowData & {
   score?: number;
   userVote?: VoteDirection | null;
   canVote?: boolean;
+  duplicateCount?: number;
 };
 
 export type VoteResponse = {

@@ -109,6 +109,31 @@ async function fetchUserVotes(
   return result;
 }
 
+async function fetchDuplicateCounts(
+  workflowIds: string[]
+): Promise<Record<string, number>> {
+  if (workflowIds.length === 0) {
+    return {};
+  }
+
+  const rows = await db
+    .select({
+      sourceWorkflowId: workflows.sourceWorkflowId,
+      count: sql<string>`COUNT(*)`,
+    })
+    .from(workflows)
+    .where(inArray(workflows.sourceWorkflowId, workflowIds))
+    .groupBy(workflows.sourceWorkflowId);
+
+  const result: Record<string, number> = {};
+  for (const row of rows) {
+    if (row.sourceWorkflowId) {
+      result[row.sourceWorkflowId] = Number(row.count);
+    }
+  }
+  return result;
+}
+
 async function fetchUserDuplications(
   userId: string,
   workflowIds: string[]
@@ -208,17 +233,23 @@ export async function GET(request: Request): Promise<NextResponse> {
     const emptyVotes = {} as Record<string, VoteDirection>;
     const emptySet = new Set<string>();
 
-    const [tagsByWorkflow, scores, userVotes, userDuplications] =
-      await Promise.all([
-        fetchTagsByWorkflow(workflowIds),
-        fetchScores(workflowIds),
-        userId
-          ? fetchUserVotes(userId, workflowIds)
-          : Promise.resolve(emptyVotes),
-        userId
-          ? fetchUserDuplications(userId, workflowIds)
-          : Promise.resolve(emptySet),
-      ]);
+    const [
+      tagsByWorkflow,
+      scores,
+      userVotes,
+      userDuplications,
+      duplicateCounts,
+    ] = await Promise.all([
+      fetchTagsByWorkflow(workflowIds),
+      fetchScores(workflowIds),
+      userId
+        ? fetchUserVotes(userId, workflowIds)
+        : Promise.resolve(emptyVotes),
+      userId
+        ? fetchUserDuplications(userId, workflowIds)
+        : Promise.resolve(emptySet),
+      fetchDuplicateCounts(workflowIds),
+    ]);
 
     const mappedWorkflows = publicWorkflows.map((workflow) => ({
       ...workflow,
@@ -226,6 +257,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       score: scores[workflow.id] ?? 0,
       userVote: userVotes[workflow.id] ?? null,
       canVote: userDuplications.has(workflow.id),
+      duplicateCount: duplicateCounts[workflow.id] ?? 0,
       createdAt: workflow.createdAt.toISOString(),
       updatedAt: workflow.updatedAt.toISOString(),
     }));
