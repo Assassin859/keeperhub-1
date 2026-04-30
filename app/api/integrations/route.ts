@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { createIntegration, getIntegrations } from "@/lib/db/integrations";
+import {
+  createIntegration,
+  ensureWalletIntegration,
+  getIntegrations,
+} from "@/lib/db/integrations";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import type {
@@ -54,6 +58,31 @@ export async function GET(request: Request) {
     // Get optional type filter from query params
     const { searchParams } = new URL(request.url);
     const typeFilter = searchParams.get("type") as IntegrationType | null;
+
+    // Repair wallet/integration data drift before listing: orgs whose
+    // wallet pre-dates the auto-create code (or whose web3 integration
+    // row was deleted) would otherwise see "Add Web3 connection" in the
+    // workflow builder despite having a working wallet. This makes the
+    // first read after deploy heal silently and is a no-op for everyone
+    // already in the consistent state.
+    if (userId && organizationId) {
+      try {
+        await ensureWalletIntegration(userId, organizationId);
+      } catch (error) {
+        // Non-fatal: log and continue. Worst case is the user briefly
+        // sees the orange warning until the next read; the wallet
+        // itself still works.
+        logSystemError(
+          ErrorCategory.DATABASE,
+          "[Integrations] Failed to ensure wallet integration",
+          error,
+          {
+            endpoint: "/api/integrations",
+            operation: "ensureWalletIntegration",
+          }
+        );
+      }
+    }
 
     const integrations = await getIntegrations(
       userId ?? "",
