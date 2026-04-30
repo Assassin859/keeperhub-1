@@ -1735,12 +1735,12 @@ function RunButtonGroup({
   return button;
 }
 
-// Read-only badge - pill with a live green accent on the toolbar
+// Read-only badge - pill with a strong accent outline on the toolbar
 function ReadOnlyBadge({ className }: { className?: string }) {
   return (
     <Badge
       className={cn(
-        "border-keeperhub-green/60 bg-keeperhub-green/10 font-medium text-foreground/90 uppercase backdrop-blur-sm dark:border-keeperhub-green/50 dark:bg-transparent",
+        "border-2 border-[var(--color-text-accent)]/60 bg-[var(--color-bg-accent)]/10 font-semibold text-[var(--color-text-accent)] text-xs uppercase tracking-wider backdrop-blur-sm dark:border-[var(--color-text-accent)]/50 dark:bg-transparent",
         className
       )}
       variant="outline"
