@@ -85,6 +85,8 @@ const CHAIN_GAS_DEFAULTS: Record<number, ChainGasDefaults> = {
   80002: { multiplier: 2.0, conservative: 2.5 },
   // 0G Galileo testnet
   16602: { multiplier: 2.0, conservative: 2.5 },
+  // 0G Mainnet
+  16661: { multiplier: 2.0, conservative: 2.5 },
 };
 
 const GLOBAL_DEFAULT: ChainGasDefaults = {

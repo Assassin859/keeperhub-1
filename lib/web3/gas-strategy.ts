@@ -560,6 +560,14 @@ export class AdaptiveGasStrategy {
         minPriorityFeeGwei: 2.0,
         maxPriorityFeeGwei: 500,
       },
+      // 0G Mainnet -- mirrors Galileo's tip-cap requirement (same client/protocol).
+      // If mainnet's actual floor differs, narrow this entry; defensive default
+      // until we have mainnet-specific signal.
+      16661: {
+        gasLimitMultiplier: 2.0,
+        minPriorityFeeGwei: 2.0,
+        maxPriorityFeeGwei: 500,
+      },
     };
 
     return overrides[chainId] || {};
