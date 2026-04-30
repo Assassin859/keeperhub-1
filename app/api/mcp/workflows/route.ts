@@ -56,9 +56,9 @@ export async function GET(request: Request): Promise<NextResponse> {
     const q = searchParams.get("q") ?? undefined;
     const category = searchParams.get("category") ?? undefined;
     const chain = searchParams.get("chain") ?? undefined;
-    const workflowTypeParam = searchParams.get("workflowType") ?? undefined;
+    const workflowTypeParam = searchParams.get("workflowType");
     if (
-      workflowTypeParam !== undefined &&
+      workflowTypeParam !== null &&
       workflowTypeParam !== "read" &&
       workflowTypeParam !== "write"
     ) {
@@ -67,10 +67,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         { status: 400 }
       );
     }
-    const workflowType: "read" | "write" | undefined = workflowTypeParam as
-      | "read"
-      | "write"
-      | undefined;
+    const workflowType = workflowTypeParam ?? undefined;
     const page = Math.max(
       1,
       Number.parseInt(searchParams.get("page") ?? String(DEFAULT_PAGE), 10) ||
