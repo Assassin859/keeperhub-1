@@ -55,7 +55,14 @@ export function OrgSwitcher() {
     autoSwitching,
   ]);
 
-  // Don't show anything if user is not logged in or is anonymous
+  // NAV-05: hide entirely when signed out (session === null) or anonymous.
+  // isAnonymousUser semantics already include null/undefined → true via the
+  // `!session?.user` branch below, but we keep the explicit `session === null`
+  // check first so the requirement ID is grep-able and the intent is obvious
+  // to future readers.
+  if (session === null) {
+    return null;
+  }
   // Anonymous users have name "Anonymous" and temp- prefixed emails
   const isAnonymous =
     !session?.user ||
