@@ -2,8 +2,8 @@
 
 import { ChevronDown } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useState, useTransition } from "react";
 import {
   Collapsible,
   CollapsibleContent,
@@ -81,6 +81,8 @@ export function HubSidebar({
 }: HubSidebarProps): React.ReactElement {
   const pathname = usePathname() ?? "/hub";
   const activeTagSlug = getActiveTagSlug(pathname);
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
 
   // First-paint defaults are owned locally so the navigation-sidebar's
   // global panels.sort/panels.tags state (which both default to "closed"
@@ -136,16 +138,40 @@ export function HubSidebar({
         >
           {publicTags.map((tag) => {
             const active = activeTagSlug === tag.slug;
+            const href = `/hub/tags/${tag.slug}`;
             return (
               <Link
                 aria-current={active ? "page" : undefined}
+                aria-disabled={isPending}
                 className={`flex min-h-7 items-center justify-between rounded-md py-1.5 text-sm transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-accent)] motion-reduce:transition-none ${
                   active
                     ? "border-l-2 border-l-[var(--color-border-accent)] bg-[var(--color-hub-icon-bg)] pr-3 pl-2 font-semibold text-[var(--color-text-accent)]"
                     : "px-3 font-normal text-muted-foreground hover:bg-[var(--color-hub-icon-bg)] hover:text-foreground"
-                }`}
-                href={`/hub/tags/${tag.slug}`}
+                } ${isPending ? "opacity-70" : ""}`}
+                href={href}
                 key={tag.slug}
+                onClick={(e: React.MouseEvent<HTMLAnchorElement>): void => {
+                  // Defer modifier-clicks (cmd/ctrl/shift/middle-click) to the
+                  // browser so open-in-new-tab semantics are preserved.
+                  if (
+                    e.defaultPrevented ||
+                    e.metaKey ||
+                    e.ctrlKey ||
+                    e.shiftKey ||
+                    e.altKey ||
+                    e.button !== 0
+                  ) {
+                    return;
+                  }
+                  // Wrap the navigation in startTransition so React 19 keeps
+                  // the old grid visible while /hub/tags/{slug} streams in.
+                  // Without this, _view-shell.tsx re-mounts and the user sees
+                  // a brief empty/loading flash between tag routes (UAT gap #4).
+                  e.preventDefault();
+                  startTransition((): void => {
+                    router.push(href, { scroll: false });
+                  });
+                }}
               >
                 <span className="truncate">{tag.name}</span>
               </Link>
