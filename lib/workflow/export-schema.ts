@@ -1,6 +1,9 @@
 import { z } from "zod";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
+// SEC: Webhook URLs must use https only. Rejects http://, file://, javascript:, etc.
+const HTTPS_URL_REGEX = /^https:\/\//;
+
 export const WORKFLOW_EXPORT_VERSION = 1;
 
 const positionSchema = z.object({
@@ -10,15 +13,17 @@ const positionSchema = z.object({
 
 const nodeDataSchema = z
   .object({
-    label: z.string(),
-    description: z.string().optional(),
+    label: z.string().max(500),
+    description: z.string().max(2000).optional(),
     // "add" is a UI placeholder node and must not appear in exports.
     type: z.enum(["trigger", "action"]),
+    // CRITICAL: data.config keeps z.record(z.string(), z.unknown()) — plugin-specific keys must remain free.
+    // .strict() lives ONLY on the outer envelope, not on config.
     config: z.record(z.string(), z.unknown()).optional(),
     status: z.enum(["idle", "running", "success", "error"]).optional(),
     enabled: z.boolean().optional(),
   })
-  .passthrough();
+  .strict();
 
 const exportNodeSchema = z
   .object({
@@ -27,7 +32,7 @@ const exportNodeSchema = z
     position: positionSchema,
     data: nodeDataSchema,
   })
-  .passthrough();
+  .strict();
 
 const exportEdgeSchema = z
   .object({
@@ -52,11 +57,11 @@ export const workflowExportV1Schema = z
     version: z.literal(WORKFLOW_EXPORT_VERSION),
     exportedAt: z.string().datetime(),
     workflow: z.object({
-      name: z.string().min(1),
-      description: z.string().optional(),
+      name: z.string().min(1).max(200),
+      description: z.string().max(2000).optional(),
     }),
-    nodes: z.array(exportNodeSchema),
-    edges: z.array(exportEdgeSchema),
+    nodes: z.array(exportNodeSchema).max(200),
+    edges: z.array(exportEdgeSchema).max(500),
     integrationBindings: z.array(integrationBindingSchema),
   })
   .superRefine((value, ctx) => {
@@ -86,6 +91,21 @@ export const workflowExportV1Schema = z
           code: z.ZodIssueCode.custom,
           path: ["integrationBindings", index, "integrationType"],
           message: `integrationBindings[${index}].integrationType "${binding.integrationType}" disagrees with node "${binding.nodeId}".data.config.integrationType "${nodeIntegrationType}"`,
+        });
+      }
+    }
+    // SEC: https-only webhook URL gate. Rejects http://, file://, javascript:, etc.
+    for (const [index, node] of value.nodes.entries()) {
+      const cfg = node.data.config as Record<string, unknown> | undefined;
+      if (!cfg) {
+        continue;
+      }
+      const webhookUrl = cfg.webhookUrl;
+      if (typeof webhookUrl === "string" && !HTTPS_URL_REGEX.test(webhookUrl)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["nodes", index, "data", "config", "webhookUrl"],
+          message: `Webhook URL must use https:// (received: ${webhookUrl.slice(0, 64)}...)`,
         });
       }
     }
