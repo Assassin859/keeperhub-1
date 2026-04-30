@@ -12,6 +12,7 @@ type HubResultsProps = {
   isSearchActive: boolean;
   featuredIds?: Set<string>;
   onClearFilters?: () => void;
+  viewMode: "cards" | "list"; // HUB-18 — branches on cookie-driven view
 };
 
 export function HubResults({
@@ -20,6 +21,7 @@ export function HubResults({
   isSearchActive,
   featuredIds,
   onClearFilters,
+  viewMode,
 }: HubResultsProps): React.ReactElement {
   const workflows = isSearchActive ? searchResults : communityWorkflows;
 
@@ -57,8 +59,19 @@ export function HubResults({
     );
   }
 
+  if (viewMode === "list") {
+    // TODO(43-07): swap to <WorkflowTemplateRow> rendering once that component lands.
+    // For this plan, list mode falls back to the cards grid so the toggle is
+    // functional end-to-end and the cookie round-trip can be validated.
+    return (
+      <section data-view-mode="list">
+        <WorkflowTemplateGrid featuredIds={featuredIds} workflows={workflows} />
+      </section>
+    );
+  }
+
   return (
-    <section>
+    <section data-view-mode="cards">
       <WorkflowTemplateGrid featuredIds={featuredIds} workflows={workflows} />
     </section>
   );
