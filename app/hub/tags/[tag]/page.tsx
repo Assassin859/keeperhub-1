@@ -121,10 +121,14 @@ export default async function TagPage({
   }
 
   // Reuse the same client shell as `/hub` so layout, view toggle, and
-  // results grid stay identical. The visible tag-active highlight in
-  // the sidebar (which reads pathname) lands in plan 43-08; the binding
-  // contract for THIS plan is metadata + 200/404 behavior (HUB-08).
+  // results grid stay identical. Pass the tag slug as initialTagSlug so the
+  // shared shell applies the same single-tag filter the sidebar drives via
+  // ?tag= on /hub. The canonical /hub/tags/{slug} route remains the SEO
+  // surface (sitemap + canonical link) — only the sidebar links shifted to
+  // the query-param form for smooth client-side filtering.
   const cookieStore = await cookies();
   const initialView = readView(cookieStore.get("hub_view")?.value);
-  return <HubViewShell initialView={initialView} />;
+  return (
+    <HubViewShell initialTagSlug={loaded.tag.slug} initialView={initialView} />
+  );
 }

@@ -16,24 +16,31 @@ type ViewMode = "cards" | "list";
 
 type HubViewShellProps = {
   initialView: ViewMode;
+  initialTagSlug: string | null;
 };
 
 export default function HubViewShell({
   initialView,
+  initialTagSlug,
 }: HubViewShellProps): React.ReactElement {
   return (
     <Suspense>
-      <HubPageContent initialView={initialView} />
+      <HubPageContent
+        initialTagSlug={initialTagSlug}
+        initialView={initialView}
+      />
     </Suspense>
   );
 }
 
 type HubPageContentProps = {
   initialView: ViewMode;
+  initialTagSlug: string | null;
 };
 
 function HubPageContent({
   initialView,
+  initialTagSlug,
 }: HubPageContentProps): React.ReactElement {
   const [featuredWorkflows, setFeaturedWorkflows] = useState<SavedWorkflow[]>(
     []
@@ -54,6 +61,12 @@ function HubPageContent({
   const [selectedProtocolSlug, setSelectedProtocolSlug] = useState<
     string | null
   >(searchParams.get("protocol"));
+
+  // Active tag filter is driven by the ?tag= query param. The server pre-seeds
+  // it via initialTagSlug so the first paint already filters; on subsequent
+  // sidebar clicks <Link href="/hub?tag=…"> updates searchParams and React
+  // re-renders without a route change.
+  const activeTagSlug = searchParams.get("tag") ?? initialTagSlug;
 
   const selectedProtocol = useMemo(
     () => protocols.find((p) => p.slug === selectedProtocolSlug) ?? null,
@@ -140,7 +153,7 @@ function HubPageContent({
   );
 
   const isSearchActive = Boolean(
-    debouncedSearchQuery.trim() || selectedTagSlugs.length > 0
+    debouncedSearchQuery.trim() || selectedTagSlugs.length > 0 || activeTagSlug
   );
 
   const searchResults = useMemo((): SavedWorkflow[] | null => {
@@ -150,6 +163,14 @@ function HubPageContent({
 
     const query = debouncedSearchQuery.trim().toLowerCase();
     let filtered = allWorkflows;
+
+    // Sidebar single-tag filter (?tag=slug) takes precedence over the inline
+    // multi-tag filter. Both can stack additively if a user combines them.
+    if (activeTagSlug) {
+      filtered = filtered.filter((w) =>
+        w.publicTags?.some((t) => t.slug === activeTagSlug)
+      );
+    }
 
     if (selectedTagSlugs.length > 0) {
       filtered = filtered.filter((w) =>
@@ -166,12 +187,27 @@ function HubPageContent({
     }
 
     return filtered;
-  }, [isSearchActive, allWorkflows, selectedTagSlugs, debouncedSearchQuery]);
+  }, [
+    isSearchActive,
+    allWorkflows,
+    activeTagSlug,
+    selectedTagSlugs,
+    debouncedSearchQuery,
+  ]);
 
   const clearFilters = useCallback((): void => {
     setSearchQuery("");
     setSelectedTagSlugs([]);
-  }, []);
+    // Drop the sidebar single-tag filter from the URL too. Use replaceState
+    // (not router.push) to keep the navigation cheap and avoid a re-render
+    // round-trip — the searchParams hook still picks up the change.
+    if (activeTagSlug) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("tag");
+      const qs = params.toString();
+      window.history.replaceState(null, "", qs ? `/hub?${qs}` : "/hub");
+    }
+  }, [activeTagSlug, searchParams]);
 
   useEffect(() => {
     const fetchWorkflows = async (): Promise<void> => {
@@ -274,6 +310,7 @@ function HubPageContent({
 
             <div className="flex gap-6">
               <HubSidebar
+                activeTagSlug={activeTagSlug}
                 onSortChange={setSortBy}
                 publicTags={publicTags}
                 sortBy={sortBy}
