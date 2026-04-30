@@ -76,7 +76,6 @@ export class EvmChainAdapter implements ChainAdapter {
 
     const gasConfig = await this.gasStrategy.getGasConfig(
       provider,
-      options.triggerType,
       estimatedGas,
       this.chainId,
       options.gasOverrides.multiplierOverride,
@@ -171,7 +170,6 @@ export class EvmChainAdapter implements ChainAdapter {
 
     const gasConfig = await this.gasStrategy.getGasConfig(
       provider,
-      options.triggerType,
       estimatedGas,
       this.chainId,
       options.gasOverrides.multiplierOverride,
