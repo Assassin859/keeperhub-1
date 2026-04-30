@@ -155,7 +155,6 @@ describe.skipIf(shouldSkip)("Transaction Flow E2E", () => {
       // through executeWithFailover instead of dialing the primary directly.
       const gasConfig = await gasStrategy.getGasConfig(
         sepoliaProvider,
-        "manual",
         BigInt(21_000),
         TEST_CHAIN_ID,
         undefined,
@@ -223,7 +222,6 @@ describe.skipIf(shouldSkip)("Transaction Flow E2E", () => {
 
         const gasConfig = await gasStrategy.getGasConfig(
           sepoliaProvider,
-          "scheduled",
           BigInt(50_000 + i * 10_000), // Varying gas
           TEST_CHAIN_ID,
           undefined,
@@ -646,7 +644,6 @@ describe.skipIf(shouldSkip)("Transaction Flow with Real RPC", () => {
     // the primary hiccups.
     const gasConfig = await gasStrategy.getGasConfig(
       sepoliaProvider,
-      "manual",
       BigInt(21_000),
       TEST_CHAIN_ID,
       undefined,
@@ -822,7 +819,6 @@ describe.skipIf(skipRealTx)("Real Transaction Tests (Sepolia)", () => {
     // Get gas config
     const gasConfig = await gasStrategy.getGasConfig(
       sepoliaProvider,
-      "manual",
       BigInt(21_000),
       TEST_CHAIN_ID
     );
@@ -913,7 +909,6 @@ describe.skipIf(skipRealTx)("Real Transaction Tests (Sepolia)", () => {
 
       const gasConfig = await gasStrategy.getGasConfig(
         sepoliaProvider,
-        "scheduled",
         BigInt(21_000),
         TEST_CHAIN_ID
       );
@@ -982,7 +977,6 @@ describe.skipIf(skipRealTx)("Real Transaction Tests (Sepolia)", () => {
     const nonce = nonceManager.getNextNonce(session1);
     const gasConfig = await gasStrategy.getGasConfig(
       sepoliaProvider,
-      "manual",
       BigInt(21_000),
       TEST_CHAIN_ID
     );

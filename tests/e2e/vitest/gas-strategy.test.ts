@@ -96,7 +96,6 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
 
       const config = await strategy.getGasConfig(
         sepoliaProvider,
-        "manual",
         BigInt(21_000),
         11_155_111, // Sepolia
         undefined,
@@ -124,7 +123,6 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
 
       const config = await strategy.getGasConfig(
         baseSepoliaProvider,
-        "scheduled",
         BigInt(21_000),
         84_532, // Base Sepolia
         undefined,
@@ -149,7 +147,6 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
 
       const config = await strategy.getGasConfig(
         sepoliaProvider,
-        "manual",
         estimatedGas,
         11_155_111,
         undefined,
@@ -165,59 +162,6 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
     }, 30_000);
   });
 
-  describe("Trigger Type Handling", () => {
-    it("should handle manual trigger with appropriate urgency", async () => {
-      const strategy = new AdaptiveGasStrategy();
-
-      const manualConfig = await strategy.getGasConfig(
-        sepoliaProvider,
-        "manual",
-        BigInt(21_000),
-        11_155_111,
-        undefined,
-        undefined,
-        sepoliaManager
-      );
-
-      const scheduledConfig = await strategy.getGasConfig(
-        sepoliaProvider,
-        "scheduled",
-        BigInt(21_000),
-        11_155_111,
-        undefined,
-        undefined,
-        sepoliaManager
-      );
-
-      // Manual triggers may use higher percentile fees for faster inclusion
-      // But this depends on current network conditions
-      expect(manualConfig.maxFeePerGas).toBeGreaterThan(BigInt(0));
-      expect(scheduledConfig.maxFeePerGas).toBeGreaterThan(BigInt(0));
-
-      console.log("Manual vs Scheduled:", {
-        manual: `${ethers.formatUnits(manualConfig.maxFeePerGas, "gwei")} gwei`,
-        scheduled: `${ethers.formatUnits(scheduledConfig.maxFeePerGas, "gwei")} gwei`,
-      });
-    }, 60_000);
-
-    it("should handle webhook trigger type", async () => {
-      const strategy = new AdaptiveGasStrategy();
-
-      const config = await strategy.getGasConfig(
-        sepoliaProvider,
-        "webhook",
-        BigInt(50_000),
-        11_155_111,
-        undefined,
-        undefined,
-        sepoliaManager
-      );
-
-      expect(config.gasLimit).toBeGreaterThan(BigInt(50_000));
-      expect(config.maxFeePerGas).toBeGreaterThan(BigInt(0));
-    }, 30_000);
-  });
-
   describe("Fee History Analysis", () => {
     it("should fetch and analyze fee history", async () => {
       const strategy = new AdaptiveGasStrategy();
@@ -225,7 +169,6 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
       // Get config which internally fetches fee history
       const config = await strategy.getGasConfig(
         sepoliaProvider,
-        "scheduled",
         BigInt(21_000),
         11_155_111,
         undefined,
@@ -269,7 +212,6 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
 
       const config = await strategy.getGasConfig(
         mockProvider as any,
-        "manual",
         BigInt(21_000),
         99_999 // Unknown chain
       );
@@ -288,7 +230,6 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
       // Note: This tests the config lookup, not actual mainnet fees
       const config = await strategy.getGasConfig(
         sepoliaProvider,
-        "manual",
         BigInt(21_000),
         1, // Mainnet chain ID
         undefined,
@@ -307,7 +248,6 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
 
       const config = await strategy.getGasConfig(
         sepoliaProvider,
-        "scheduled",
         BigInt(21_000),
         42_161, // Arbitrum
         undefined,
@@ -326,7 +266,6 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
 
       const config = await strategy.getGasConfig(
         baseSepoliaProvider,
-        "manual",
         BigInt(21_000),
         8453, // Base mainnet
         undefined,
@@ -345,7 +284,6 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
 
       const config = await strategy.getGasConfig(
         sepoliaProvider,
-        "manual",
         BigInt(21_000),
         11_155_111,
         undefined,
@@ -369,7 +307,6 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
 
       const config = await strategy.getGasConfig(
         sepoliaProvider,
-        "manual",
         BigInt(1000),
         11_155_111,
         undefined,
@@ -387,7 +324,6 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
 
       const config = await strategy.getGasConfig(
         sepoliaProvider,
-        "manual",
         highGas,
         11_155_111,
         undefined,
@@ -419,7 +355,6 @@ describe.skipIf(shouldSkip)("Gas Strategy E2E", () => {
       // Should still return a config (may use fallback values)
       const config = await strategy.getGasConfig(
         slowProvider,
-        "manual",
         BigInt(21_000),
         11_155_111
       );
@@ -479,7 +414,6 @@ describe.skipIf(shouldSkip)("Gas Strategy Real Transaction Estimation", () => {
 
     const config = await strategy.getGasConfig(
       sepoliaProvider,
-      "manual",
       estimatedGas,
       11_155_111,
       undefined,
@@ -505,7 +439,6 @@ describe.skipIf(shouldSkip)("Gas Strategy Real Transaction Estimation", () => {
 
     const config = await strategy.getGasConfig(
       sepoliaProvider,
-      "webhook",
       estimatedGas,
       11_155_111,
       undefined,
