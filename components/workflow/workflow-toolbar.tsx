@@ -96,8 +96,8 @@ import {
 import { Panel } from "../ai-elements/panel";
 import { ConfigurationOverlay } from "../overlays/configuration-overlay";
 import { ConfirmOverlay } from "../overlays/confirm-overlay";
-import { ExportWorkflowOverlay } from "../overlays/export-workflow-overlay";
 import { useOverlay } from "../overlays/overlay-provider";
+import { WorkflowIOOverlay } from "../overlays/workflow-io-overlay";
 import { WorkflowIssuesOverlay } from "../overlays/workflow-issues-overlay";
 import {
   Tooltip,
@@ -1512,37 +1512,38 @@ function DownloadButton({
   state: ReturnType<typeof useWorkflowState>;
   actions: ReturnType<typeof useWorkflowActions>;
 }) {
-  const { open: openOverlay } = useOverlay();
-
-  const handleClick = () => {
-    openOverlay(ExportWorkflowOverlay, {
-      onExport: actions.handleDownload,
-      isDownloading: state.isDownloading,
-    });
-  };
+  const [ioOpen, setIoOpen] = useState(false);
 
   return (
-    <Button
-      className="border hover:bg-black/5 disabled:opacity-100 dark:hover:bg-white/5 disabled:[&>svg]:text-muted-foreground"
-      disabled={
-        state.isDownloading ||
-        state.nodes.length === 0 ||
-        state.isGenerating ||
-        !state.currentWorkflowId
-      }
-      onClick={handleClick}
-      size="icon"
-      title={
-        state.isDownloading ? "Exporting..." : "Export workflow as JSON"
-      }
-      variant="secondary"
-    >
-      {state.isDownloading ? (
-        <Loader2 className="size-4 animate-spin" />
-      ) : (
-        <Download className="size-4" />
-      )}
-    </Button>
+    <>
+      <Button
+        className="border hover:bg-black/5 disabled:opacity-100 dark:hover:bg-white/5 disabled:[&>svg]:text-muted-foreground"
+        disabled={
+          state.isDownloading ||
+          state.nodes.length === 0 ||
+          state.isGenerating ||
+          !state.currentWorkflowId
+        }
+        onClick={() => setIoOpen(true)}
+        size="icon"
+        title={
+          state.isDownloading ? "Exporting..." : "Export workflow as JSON"
+        }
+        variant="secondary"
+      >
+        {state.isDownloading ? (
+          <Loader2 className="size-4 animate-spin" />
+        ) : (
+          <Download className="size-4" />
+        )}
+      </Button>
+      <WorkflowIOOverlay
+        isDownloading={state.isDownloading}
+        onExport={actions.handleDownload}
+        onOpenChange={setIoOpen}
+        open={ioOpen}
+      />
+    </>
   );
 }
 
