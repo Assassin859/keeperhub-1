@@ -42,7 +42,9 @@ export function HubViewToggle({
       setView(next);
       onChange?.(next);
     });
-    void writeCookie(next);
+    writeCookie(next).catch(() => {
+      // Cookie write is fire-and-forget; ignored — see writeCookie comment.
+    });
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
@@ -64,7 +66,10 @@ export function HubViewToggle({
     }
     if (e.key === "End") {
       e.preventDefault();
-      select(ORDER[ORDER.length - 1] as View);
+      const last = ORDER.at(-1);
+      if (last !== undefined) {
+        select(last);
+      }
     }
   };
 
@@ -78,13 +83,13 @@ export function HubViewToggle({
     ].join(" ");
 
   return (
-    // biome-ignore lint/a11y/useSemanticElements: WAI-ARIA radiogroup pattern with two button radios; no native HTML element provides this composition
     <div
       aria-label="Choose Hub view"
       className="inline-flex shrink-0 gap-0.5 rounded-lg border border-border/30 p-0.5"
       onKeyDown={handleKeyDown}
       role="radiogroup"
     >
+      {/* biome-ignore lint/a11y/useSemanticElements: WAI-ARIA radiogroup pattern needs custom radio buttons with icon+label content; native <input type="radio"> cannot host children */}
       <button
         aria-checked={view === "cards"}
         aria-label="View as cards"
@@ -97,6 +102,7 @@ export function HubViewToggle({
         <LayoutGrid aria-hidden="true" className="size-3.5" />
         Cards
       </button>
+      {/* biome-ignore lint/a11y/useSemanticElements: WAI-ARIA radiogroup pattern needs custom radio buttons with icon+label content; native <input type="radio"> cannot host children */}
       <button
         aria-checked={view === "list"}
         aria-label="View as list"

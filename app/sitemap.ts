@@ -2,8 +2,7 @@ import type { MetadataRoute } from "next";
 import { db } from "@/lib/db";
 import { publicTags } from "@/lib/db/schema";
 
-const baseUrl =
-  process.env.NEXT_PUBLIC_APP_URL ?? "https://app.keeperhub.com";
+const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.keeperhub.com";
 
 /**
  * Sitemap metadata route (HUB-12, HUB-13).

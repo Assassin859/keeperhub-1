@@ -11,8 +11,7 @@ export const dynamicParams = true;
 // 1-hour ISR window for newly-added tags (HUB-10, CONTEXT.md)
 export const revalidate = 3600;
 
-const baseUrl =
-  process.env.NEXT_PUBLIC_APP_URL ?? "https://app.keeperhub.com";
+const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.keeperhub.com";
 
 type Params = { tag: string };
 
@@ -105,8 +104,7 @@ export async function generateMetadata({
       images: [`${baseUrl}/api/og/hub`],
     },
     // HUB-14: empty tag pages noindex,follow rather than 404
-    robots:
-      workflowsCount === 0 ? { index: false, follow: true } : undefined,
+    robots: workflowsCount === 0 ? { index: false, follow: true } : undefined,
   };
 }
 

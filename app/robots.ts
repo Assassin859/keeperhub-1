@@ -1,7 +1,6 @@
 import type { MetadataRoute } from "next";
 
-const baseUrl =
-  process.env.NEXT_PUBLIC_APP_URL ?? "https://app.keeperhub.com";
+const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.keeperhub.com";
 
 /**
  * robots.txt metadata route (HUB-13).
