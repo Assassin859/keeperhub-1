@@ -1196,7 +1196,7 @@ function useWorkflowActions(state: ReturnType<typeof useWorkflowState>) {
     }
   };
 
-  const handleDuplicate = async () => {
+  const handleUseTemplate = async () => {
     if (!currentWorkflowId) {
       return;
     }
@@ -1211,7 +1211,7 @@ function useWorkflowActions(state: ReturnType<typeof useWorkflowState>) {
       }
 
       const newWorkflow = await api.workflow.duplicate(currentWorkflowId);
-      toast.success("Workflow duplicated successfully");
+      toast.success("Template ready in your workflows");
       router.push(`/workflows/${newWorkflow.id}`);
     } catch (error) {
       console.error("Failed to duplicate workflow:", error);
@@ -1232,7 +1232,7 @@ function useWorkflowActions(state: ReturnType<typeof useWorkflowState>) {
     handleToggleVisibility,
     handleEditPublicSettings, // keeperhub custom field //
     handleToggleEnabled,
-    handleDuplicate,
+    handleUseTemplate,
     handleOpenListing, // keeperhub custom field //
   };
 }
@@ -1729,29 +1729,31 @@ function ReadOnlyBadge({ className }: { className?: string }) {
   );
 }
 
-// Duplicate Button Component - placed next to Sign In for non-owners
-function DuplicateButton({
-  isDuplicating,
-  onDuplicate,
+// Use-template Button — placed next to Sign In for non-owners (HUB-01, HUB-02).
+function UseTemplateButton({
+  isUsingTemplate,
+  onUseTemplate,
 }: {
-  isDuplicating: boolean;
-  onDuplicate: () => void;
+  isUsingTemplate: boolean;
+  onUseTemplate: () => void;
 }) {
   return (
     <Button
-      className="h-9 border hover:bg-black/5 dark:hover:bg-white/5"
-      disabled={isDuplicating}
-      onClick={onDuplicate}
+      aria-label="Use this workflow as a template"
+      className="h-9 bg-[var(--ds-green-accent)] font-semibold text-[var(--color-bg-inverse)] transition-opacity duration-150 hover:opacity-90 focus-visible:ring-2 focus-visible:ring-[var(--color-border-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-50 motion-reduce:transition-none"
+      data-analytics="template_use_clicked"
+      disabled={isUsingTemplate}
+      onClick={onUseTemplate}
       size="sm"
-      title="Duplicate to your workflows"
-      variant="secondary"
+      title="Use this workflow as a template in your account"
+      variant="default"
     >
-      {isDuplicating ? (
+      {isUsingTemplate ? (
         <Loader2 className="mr-2 size-4 animate-spin" />
       ) : (
         <Copy className="mr-2 size-4" />
       )}
-      Duplicate
+      {isUsingTemplate ? "Using template…" : "Use template"}
     </Button>
   );
 }
@@ -1857,9 +1859,9 @@ export const WorkflowToolbar = ({
             <div className="flex items-center gap-2">
               <WalletToolbarButton />
               {isWorkflowRoute && effectiveWorkflowId && !state.isOwner && (
-                <DuplicateButton
-                  isDuplicating={state.isDuplicating}
-                  onDuplicate={actions.handleDuplicate}
+                <UseTemplateButton
+                  isUsingTemplate={state.isDuplicating}
+                  onUseTemplate={actions.handleUseTemplate}
                 />
               )}
               <UserMenu />
@@ -1913,9 +1915,9 @@ export const WorkflowToolbar = ({
           )}
           <div className="flex items-center gap-2">
             {isWorkflowRoute && effectiveWorkflowId && !state.isOwner && (
-              <DuplicateButton
-                isDuplicating={state.isDuplicating}
-                onDuplicate={actions.handleDuplicate}
+              <UseTemplateButton
+                isUsingTemplate={state.isDuplicating}
+                onUseTemplate={actions.handleUseTemplate}
               />
             )}
             <UserMenu />
