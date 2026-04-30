@@ -807,8 +807,14 @@ function useWorkflowState() {
   );
   const [priceUsdc, setPriceUsdc] = useAtom(currentWorkflowPriceUsdcAtom);
 
-  // Load all workflows and projects on mount
+  // Load all workflows and projects on mount.
+  // NAV-04: persistent toolbar mounts on every route including `/`. Skip the
+  // fetches for anonymous / signed-out users so they do not see 401 spam in the
+  // network log on initial load. Re-runs when the session resolves.
   useEffect(() => {
+    if (!session?.user || isAnonymousUser(session.user)) {
+      return;
+    }
     const loadAllWorkflows = async () => {
       try {
         const [workflows, projects, tags] = await Promise.all([
@@ -824,7 +830,7 @@ function useWorkflowState() {
       }
     };
     loadAllWorkflows();
-  }, []);
+  }, [session]);
 
   return {
     nodes,
@@ -1785,6 +1791,14 @@ export const WorkflowToolbar = ({
   const pathname = usePathname();
   const isWorkflowRoute = pathname.startsWith("/workflows/");
 
+  // NAV-04 / NAV-05: do not mount OrgSwitcher for anonymous or signed-out users.
+  // The hooks inside OrgSwitcher (better-auth `useActiveOrganization`,
+  // `useOrganizations`) auto-fire protected fetches before any internal
+  // null-render can short-circuit them, so the only way to keep the network
+  // log clean on initial load is to skip mounting entirely.
+  const showOrgSwitcher =
+    !!state.session?.user && !isAnonymousUser(state.session.user);
+
   // If persistent mode, use fixed positioning
   const containerClassName = persistent
     ? "pointer-events-auto fixed top-[var(--app-banner-height,0px)] right-0 left-0 z-50 flex items-center justify-between border-b bg-background px-4 py-3"
@@ -1815,9 +1829,11 @@ export const WorkflowToolbar = ({
               </a>
             ) : null;
           })()}
-          <div className="hidden ml-2 lg:block">
-            <OrgSwitcher />
-          </div>
+          {showOrgSwitcher && (
+            <div className="hidden ml-2 lg:block">
+              <OrgSwitcher />
+            </div>
+          )}
           <WorkflowMenuComponent
             actions={actions}
             state={state}
@@ -1870,9 +1886,11 @@ export const WorkflowToolbar = ({
               </a>
             ) : null;
           })()}
-          <div className="hidden ml-2 lg:block">
-            <OrgSwitcher />
-          </div>
+          {showOrgSwitcher && (
+            <div className="hidden ml-2 lg:block">
+              <OrgSwitcher />
+            </div>
+          )}
           <WorkflowMenuComponent
             actions={actions}
             state={state}

@@ -37,34 +37,6 @@ import { useActiveMember, useOrganization } from "@/lib/hooks/use-organization";
 
 export const UserMenu = (): React.ReactElement => {
   const { data: session, isPending } = useSession();
-  const { open: openOverlay } = useOverlay();
-  const [orgModalOpen, setOrgModalOpen] = useState(false);
-  const { organization } = useOrganization();
-  const { isOwner } = useActiveMember();
-  const router = useRouter();
-  const showBilling = isOwner && isBillingEnabled();
-
-  const handleLogout = async () => {
-    await signOut();
-    // Full page refresh to clear all React/jotai state
-    window.location.href = "/";
-  };
-
-  const getUserInitials = () => {
-    if (session?.user?.name) {
-      return session.user.name
-        .split(" ")
-        .map((n) => n[0])
-        .join("")
-        .toUpperCase()
-        .slice(0, 2);
-    }
-    if (session?.user?.email) {
-      return session.user.email.slice(0, 2).toUpperCase();
-    }
-    return "U";
-  };
-
   const signInInProgress = isSingleProviderSignInInitiated();
 
   // Check if user is anonymous
@@ -85,7 +57,11 @@ export const UserMenu = (): React.ReactElement => {
     );
   }
 
-  // Show Sign In button if user is anonymous, not logged in, or email not verified
+  // NAV-04: only mount the authenticated dropdown when the user is signed in
+  // and verified. The dropdown depends on `useOrganization` and
+  // `useActiveMember`, which auto-fire protected fetches as soon as they are
+  // called. Routing anonymous users through a separate sign-in surface keeps
+  // the network log clean on initial load.
   if (isAnonymousUser || !isEmailVerified) {
     return (
       <div className="flex items-center gap-2">
@@ -101,6 +77,39 @@ export const UserMenu = (): React.ReactElement => {
       </div>
     );
   }
+
+  return <AuthenticatedUserMenu />;
+};
+
+const AuthenticatedUserMenu = (): React.ReactElement => {
+  const { data: session } = useSession();
+  const { open: openOverlay } = useOverlay();
+  const [orgModalOpen, setOrgModalOpen] = useState(false);
+  const { organization } = useOrganization();
+  const { isOwner } = useActiveMember();
+  const router = useRouter();
+  const showBilling = isOwner && isBillingEnabled();
+
+  const handleLogout = async (): Promise<void> => {
+    await signOut();
+    // Full page refresh to clear all React/jotai state
+    window.location.href = "/";
+  };
+
+  const getUserInitials = (): string => {
+    if (session?.user?.name) {
+      return session.user.name
+        .split(" ")
+        .map((n) => n[0])
+        .join("")
+        .toUpperCase()
+        .slice(0, 2);
+    }
+    if (session?.user?.email) {
+      return session.user.email.slice(0, 2).toUpperCase();
+    }
+    return "U";
+  };
 
   return (
     <>

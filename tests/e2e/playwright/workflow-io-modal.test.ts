@@ -1,6 +1,5 @@
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import { signUpAndVerify } from "./utils/auth";
 import { createWorkflow } from "./utils/workflow";
 
 const VALID_FIXTURE_PATH = join(
@@ -18,9 +17,10 @@ const WORKFLOW_URL_REGEX = /\/workflows?\/[^/]+/;
 
 test.describe("Workflow I/O modal (MODAL-04, MODAL-05, MODAL-06, MODAL-08)", () => {
   test.beforeEach(async ({ page }) => {
-    // Sign up + verify to get an authenticated session, then create a workflow
-    // so the toolbar Download button is enabled (it gates on currentWorkflowId).
-    await signUpAndVerify(page);
+    // The Playwright `chromium` project loads the persistent test user's
+    // storageState (tests/e2e/playwright/.auth/user.json) via auth.setup.ts,
+    // so the page starts authenticated. Just create a workflow so the toolbar
+    // Download button is enabled (it gates on currentWorkflowId).
     await createWorkflow(page);
   });
 
