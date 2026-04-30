@@ -121,7 +121,7 @@ export function WorkflowTemplateCard({
     // biome-ignore lint/a11y/useSemanticElements: tile is semantically an <article> that also acts as a link per UI-SPEC HUB-16; wrapping <a> is forbidden because it breaks nested-button (vote) accessibility.
     <article
       aria-label={`Open ${workflow.name} preview`}
-      className={`group relative flex cursor-pointer flex-col overflow-hidden rounded-xl border border-border/20 bg-[var(--color-hub-card)] shadow-sm transition-all duration-150 ease before:absolute before:inset-0 before:z-[1] before:cursor-pointer before:content-[''] hover:-translate-y-[2px] hover:border-[var(--color-border-accent)] hover:shadow-md focus-within:ring-2 focus-within:ring-[var(--color-border-accent)] motion-reduce:transition-none ${className ?? "aspect-square"}`}
+      className={`group relative flex cursor-pointer flex-col overflow-hidden rounded-xl border border-border/20 bg-[var(--color-hub-card)] shadow-sm transition-colors duration-150 before:absolute before:inset-0 before:z-[1] before:cursor-pointer before:content-[''] hover:brightness-125 focus-within:ring-2 focus-within:ring-[var(--color-border-accent)] motion-reduce:transition-none ${className ?? "aspect-square"}`}
       onClick={handleArticleClick}
       onKeyDown={handleArticleKeyDown}
       // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: UI-SPEC HUB-16 mandates <article role="link"> with the ::before overlay click pattern; nested vote buttons would be invalid descendants of an <a>.
