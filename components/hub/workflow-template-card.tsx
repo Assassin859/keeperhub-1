@@ -130,32 +130,9 @@ export function WorkflowTemplateCard({
     >
       <div className="pointer-events-none relative z-[2] flex flex-1 flex-col p-4">
         <div className="shrink-0">
-          <div className="flex items-start gap-1.5">
-            <h3 className="line-clamp-2 flex-1 font-semibold text-sm leading-snug">
-              {workflow.name}
-            </h3>
-            {/*
-              Top-right cluster: vote group renders when onVote is provided;
-              Featured pill renders to the right of vote when isFeatured.
-            */}
-            <div className="pointer-events-auto flex shrink-0 items-center gap-2">
-              {onVote && (
-                <VoteCluster
-                  onVote={onVote}
-                  score={score}
-                  userVote={userVote}
-                />
-              )}
-              {isFeatured && (
-                <span className="inline-flex h-[20px] shrink-0 items-center gap-1 rounded-full bg-[var(--color-bg-accent)] px-2">
-                  <Star className="size-2.5 fill-[var(--color-text-accent)] text-[var(--color-text-accent)]" />
-                  <span className="font-normal text-[0.625rem] text-[var(--color-text-accent)]">
-                    Featured
-                  </span>
-                </span>
-              )}
-            </div>
-          </div>
+          <h3 className="line-clamp-2 font-semibold text-sm leading-snug">
+            {workflow.name}
+          </h3>
           {workflow.description && (
             <p className="mt-1.5 line-clamp-3 text-muted-foreground/80 text-xs leading-relaxed">
               {workflow.description}
@@ -197,6 +174,25 @@ export function WorkflowTemplateCard({
                   ))}
                 </TooltipContent>
               </Tooltip>
+            )}
+          </div>
+        )}
+
+        {/* Bottom row: vote cluster (LEFT) + Featured pill (RIGHT) */}
+        {(onVote || isFeatured) && (
+          <div
+            className={`pointer-events-auto mt-2 flex shrink-0 items-center gap-2 ${onVote ? "justify-between" : "justify-end"}`}
+          >
+            {onVote && (
+              <VoteCluster onVote={onVote} score={score} userVote={userVote} />
+            )}
+            {isFeatured && (
+              <span className="inline-flex h-[20px] shrink-0 items-center gap-1 rounded-full bg-[var(--color-bg-accent)] px-2">
+                <Star className="size-2.5 fill-[var(--color-text-accent)] text-[var(--color-text-accent)]" />
+                <span className="font-normal text-[0.625rem] text-[var(--color-text-accent)]">
+                  Featured
+                </span>
+              </span>
             )}
           </div>
         )}
