@@ -1793,7 +1793,7 @@ function WorkflowMenuComponent({
 
   return (
     <div className="flex flex-col gap-1">
-      {isWorkflowRoute && workflowId && !state.isOwner && (
+      {isWorkflowRoute && workflowId && (state.isListed || !state.isOwner) && (
         <ReadOnlyBadge className="lg:hidden" />
       )}
     </div>
@@ -1862,9 +1862,11 @@ export const WorkflowToolbar = ({
             state={state}
             workflowId={effectiveWorkflowId}
           />
-          {isWorkflowRoute && effectiveWorkflowId && !state.isOwner && (
-            <ReadOnlyBadge className="hidden lg:inline-flex" />
-          )}
+          {isWorkflowRoute &&
+            effectiveWorkflowId &&
+            (state.isListed || !state.isOwner) && (
+              <ReadOnlyBadge className="hidden lg:inline-flex" />
+            )}
         </div>
 
         {/* Right side: Actions + User Menu */}
@@ -1919,9 +1921,11 @@ export const WorkflowToolbar = ({
             state={state}
             workflowId={effectiveWorkflowId}
           />
-          {isWorkflowRoute && effectiveWorkflowId && !state.isOwner && (
-            <ReadOnlyBadge className="hidden lg:inline-flex" />
-          )}
+          {isWorkflowRoute &&
+            effectiveWorkflowId &&
+            (state.isListed || !state.isOwner) && (
+              <ReadOnlyBadge className="hidden lg:inline-flex" />
+            )}
         </div>
       </Panel>
 
