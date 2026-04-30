@@ -90,5 +90,5 @@
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 42. Foundations & Shared Primitives | 0/10 | Not started | - |
-| 43. Hub UX Overhaul | 5/10 | In Progress|  |
+| 43. Hub UX Overhaul | 10/14 | In Progress|  |
 | 44. Marketplace Ladder | 0/? | Not started | - |
