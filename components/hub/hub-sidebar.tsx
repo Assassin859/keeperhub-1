@@ -36,7 +36,7 @@ function SectionHeader({
   return (
     <CollapsibleTrigger asChild>
       <button
-        className="group flex w-full items-center justify-between rounded-md px-3 py-2 font-normal text-muted-foreground text-xs uppercase tracking-widest transition-colors duration-100 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-accent)] motion-reduce:transition-none"
+        className="group flex w-full items-center justify-between rounded-md px-3 py-2 font-normal text-muted-foreground text-xs uppercase tracking-widest transition-colors duration-100 hover:bg-[var(--color-hub-icon-bg)]/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-accent)] motion-reduce:transition-none"
         type="button"
       >
         <span className="inline-flex items-center gap-2">
@@ -87,11 +87,12 @@ export function HubSidebar({
   // them manually within a session.
   const [sortOpen, setSortOpen] = useState(true);
   const [tagsOpen, setTagsOpen] = useState(true);
+  const tagsOverflow = publicTags.length > 12;
 
   return (
     <aside
       aria-label="Hub filters"
-      className="hidden w-[var(--flyout-width,280px)] shrink-0 flex-col gap-8 border-border/20 border-r bg-[var(--color-hub-card)] p-4 lg:flex"
+      className="hidden w-[var(--flyout-width,280px)] shrink-0 flex-col gap-8 rounded-r-xl bg-[var(--color-hub-card)] p-4 shadow-sm lg:flex"
     >
       <Collapsible onOpenChange={setSortOpen} open={sortOpen}>
         <SectionHeader label="Sort" />
@@ -126,16 +127,20 @@ export function HubSidebar({
 
       <Collapsible onOpenChange={setTagsOpen} open={tagsOpen}>
         <SectionHeader count={publicTags.length} label="Tags" />
-        <CollapsibleContent className="flex flex-col gap-0.5 pt-1 pb-2">
+        <CollapsibleContent
+          className={`flex flex-col gap-0.5 pt-1 pb-2 ${
+            tagsOverflow ? "max-h-96 overflow-y-auto" : ""
+          }`}
+        >
           {publicTags.map((tag) => {
             const active = activeTagSlug === tag.slug;
             return (
               <Link
                 aria-current={active ? "page" : undefined}
-                className={`flex items-center justify-between rounded-md px-3 py-1.5 text-sm transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-accent)] motion-reduce:transition-none ${
+                className={`flex min-h-7 items-center justify-between rounded-md py-1.5 text-sm transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-accent)] motion-reduce:transition-none ${
                   active
-                    ? "bg-[var(--color-hub-icon-bg)] font-semibold text-[var(--color-text-accent)]"
-                    : "font-normal text-muted-foreground hover:bg-[var(--color-hub-icon-bg)] hover:text-foreground"
+                    ? "border-l-2 border-l-[var(--color-border-accent)] bg-[var(--color-hub-icon-bg)] pr-3 pl-2 font-semibold text-[var(--color-text-accent)]"
+                    : "px-3 font-normal text-muted-foreground hover:bg-[var(--color-hub-icon-bg)] hover:text-foreground"
                 }`}
                 href={`/hub/tags/${tag.slug}`}
                 key={tag.slug}
