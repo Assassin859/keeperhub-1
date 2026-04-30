@@ -13,6 +13,9 @@ export type TransactionReceipt = {
 export type GasOverrides = {
   multiplierOverride?: number;
   gasLimitOverride?: bigint;
+  // Caller-supplied maxPriorityFeePerGas (in wei). When set, the gas strategy
+  // skips its chain min/max priority-fee clamp and uses this value directly.
+  priorityFeeOverride?: bigint;
 };
 
 export type SendTransactionRequest = {

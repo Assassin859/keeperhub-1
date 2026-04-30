@@ -1,12 +1,14 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
+import { findFirstWriteActionNode } from "@/lib/mcp/calldata";
 
 export type ListingErrorCode =
   | "NOT_FOUND"
   | "SLUG_CONFLICT"
   | "PRICE_CHANGE_WHILE_LISTED"
-  | "INVALID_INPUT";
+  | "INVALID_INPUT"
+  | "MISSING_WRITE_ACTION";
 
 export type ListingResult<T> =
   | { ok: true; listing: T }
@@ -122,6 +124,20 @@ export async function listWorkflow(
     updateSet.workflowType = metadata.workflowType as "read" | "write";
   }
 
+  // A write workflow must contain at least one node whose actionType matches
+  // the calldata matcher; otherwise call_workflow would later fail at runtime
+  // with "No write action node found in workflow". Reject at publish time so
+  // the listing can never reach search results in a broken state.
+  const resolvedWorkflowType: "read" | "write" =
+    (updateSet.workflowType as "read" | "write" | undefined) ??
+    current.workflowType;
+  if (
+    resolvedWorkflowType === "write" &&
+    findFirstWriteActionNode(current.nodes) === undefined
+  ) {
+    return { ok: false, error: "MISSING_WRITE_ACTION" };
+  }
+
   try {
     const [result] = await db
       .update(workflows)
@@ -208,6 +224,21 @@ export async function updateWorkflowListing(
   if (patch.priceUsdcPerCall !== undefined) {
     // Only reachable when isListed === false (price-change-while-listed guard above)
     updateSet.priceUsdcPerCall = patch.priceUsdcPerCall;
+  }
+
+  // Same write-workflow guard as listWorkflow: only validate when the row is
+  // (or is becoming) listed AND resolves to write. An unlisted draft is allowed
+  // to be in a read state with a "write" type still set, but a listed write
+  // must have a matching action node.
+  const resolvedWorkflowType: "read" | "write" =
+    (patch.workflowType as "read" | "write" | undefined) ??
+    current.workflowType;
+  if (
+    current.isListed === true &&
+    resolvedWorkflowType === "write" &&
+    findFirstWriteActionNode(current.nodes) === undefined
+  ) {
+    return { ok: false, error: "MISSING_WRITE_ACTION" };
   }
 
   try {

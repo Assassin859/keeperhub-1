@@ -270,7 +270,8 @@ export class AdaptiveGasStrategy {
     chainId: number,
     gasLimitMultiplierOverride?: number,
     gasLimitOverride?: bigint,
-    rpcManager?: RpcProviderManager
+    rpcManager?: RpcProviderManager,
+    priorityFeeOverride?: bigint
   ): Promise<GasConfig> {
     // Apply chain-specific overrides (from DB with hardcoded fallback)
     const chainConfig = await this.getChainConfig(chainId);
@@ -289,6 +290,26 @@ export class AdaptiveGasStrategy {
       chainConfig,
       rpcManager
     );
+
+    // Caller-supplied priority fee override (e.g. when the network's mempool
+    // requires a tip above the configured chain floor). Bypasses clampPriorityFee.
+    // Preserve the base-fee component of maxFeePerGas (computed maxFeePerGas
+    // minus computed priority) and rebuild it with the override so the EIP-1559
+    // invariant maxFeePerGas >= maxPriorityFeePerGas is maintained.
+    if (priorityFeeOverride !== undefined && priorityFeeOverride > BigInt(0)) {
+      const baseComponent =
+        feeConfig.maxFeePerGas > feeConfig.maxPriorityFeePerGas
+          ? feeConfig.maxFeePerGas - feeConfig.maxPriorityFeePerGas
+          : BigInt(0);
+      console.log(
+        `[GasStrategy] Priority fee override: ${ethers.formatUnits(priorityFeeOverride, "gwei")} gwei (clamp bypassed)`
+      );
+      return {
+        gasLimit,
+        maxFeePerGas: baseComponent + priorityFeeOverride,
+        maxPriorityFeePerGas: priorityFeeOverride,
+      };
+    }
 
     return {
       gasLimit,
@@ -532,6 +553,20 @@ export class AdaptiveGasStrategy {
         gasLimitMultiplier: 2.0,
         minPriorityFeeGwei: 30,
         maxPriorityFeeGwei: 1000,
+      },
+      // 0G Galileo testnet -- mempool rejects tips below 2 gwei
+      16602: {
+        gasLimitMultiplier: 2.0,
+        minPriorityFeeGwei: 2.0,
+        maxPriorityFeeGwei: 500,
+      },
+      // 0G Mainnet -- mirrors Galileo's tip-cap requirement (same client/protocol).
+      // If mainnet's actual floor differs, narrow this entry; defensive default
+      // until we have mainnet-specific signal.
+      16661: {
+        gasLimitMultiplier: 2.0,
+        minPriorityFeeGwei: 2.0,
+        maxPriorityFeeGwei: 500,
       },
     };
 

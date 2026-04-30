@@ -24,6 +24,7 @@ type WorkflowRow = {
   category: string | null;
   chain: string | null;
   workflowType: "read" | "write";
+  nodes: unknown[];
   createdAt: Date;
   updatedAt: Date;
 };
@@ -83,12 +84,13 @@ vi.mock("@/lib/db/schema", () => ({
     category: "category",
     chain: "chain",
     workflowType: "workflowType",
+    nodes: "nodes",
     createdAt: "createdAt",
     updatedAt: "updatedAt",
   },
 }));
 
-const { listWorkflow, unlistWorkflow, getWorkflowListing } = await import("@/lib/mcp/listing");
+const { listWorkflow, unlistWorkflow, getWorkflowListing, updateWorkflowListing } = await import("@/lib/mcp/listing");
 
 const WORKFLOW_ID = "wf-test-001";
 const ORG_ID = "org-test-001";
@@ -110,6 +112,7 @@ describe("workflow listing lifecycle", () => {
       category: null,
       chain: null,
       workflowType: "read",
+      nodes: [],
       createdAt: new Date("2026-01-01"),
       updatedAt: new Date("2026-01-01"),
     };
@@ -155,6 +158,94 @@ describe("workflow listing lifecycle", () => {
     expect(unlistedRead.ok).toBe(false);
     if (unlistedRead.ok) return;
     expect(unlistedRead.error).toBe("NOT_FOUND");
+  });
+
+  it("list: rejects workflowType='write' when no node has a write actionType", async () => {
+    workflowState.nodes = [
+      {
+        id: "read-1",
+        data: {
+          actionType: "web3/read-contract",
+          config: { contractAddress: "0xabc" },
+        },
+      },
+    ];
+
+    const result = await listWorkflow(WORKFLOW_ID, ORG_ID, {
+      slug: "broken-write",
+      workflowType: "write",
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBe("MISSING_WRITE_ACTION");
+    expect(workflowState.isListed).toBe(false);
+  });
+
+  it("list: succeeds when workflowType='write' and a web3/write-contract node exists", async () => {
+    workflowState.nodes = [
+      {
+        id: "write-1",
+        data: {
+          actionType: "web3/write-contract",
+          config: {
+            contractAddress: "0xabc",
+            network: "16602",
+            abi: "[]",
+            abiFunction: "transfer",
+          },
+        },
+      },
+    ];
+
+    const result = await listWorkflow(WORKFLOW_ID, ORG_ID, {
+      slug: "good-write",
+      workflowType: "write",
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.listing.isListed).toBe(true);
+    expect(result.listing.workflowType).toBe("write");
+  });
+
+  it("update on a LISTED write workflow with no write node returns MISSING_WRITE_ACTION", async () => {
+    // Listed write workflow whose nodes were swapped out for read-only after
+    // listing -- updateWorkflowListing must catch the broken state.
+    workflowState.isListed = true;
+    workflowState.listedSlug = "live-write";
+    workflowState.workflowType = "write";
+    workflowState.nodes = [
+      {
+        id: "read-1",
+        data: {
+          actionType: "web3/read-contract",
+          config: { contractAddress: "0xabc" },
+        },
+      },
+    ];
+
+    const result = await updateWorkflowListing(WORKFLOW_ID, ORG_ID, {
+      category: "test",
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBe("MISSING_WRITE_ACTION");
+  });
+
+  it("update on an UNLISTED draft skips the MISSING_WRITE_ACTION guard", async () => {
+    // Drafts can be saved with workflow_type=write while still under construction.
+    // The guard only fires on listed rows.
+    workflowState.isListed = false;
+    workflowState.workflowType = "write";
+    workflowState.nodes = [];
+
+    const result = await updateWorkflowListing(WORKFLOW_ID, ORG_ID, {
+      category: "test",
+    });
+
+    expect(result.ok).toBe(true);
   });
 
   it("relist: preserves listedSlug, refreshes listedAt, isListed=true", async () => {
