@@ -4,7 +4,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { HubHero } from "@/components/hub/hub-hero";
 import { HubResults } from "@/components/hub/hub-results";
-import { HubSidebar } from "@/components/hub/hub-sidebar";
+import { HubSidebar, type SortValue } from "@/components/hub/hub-sidebar";
 import { HubViewToggle } from "@/components/hub/hub-view-toggle";
 import { ProtocolDetailModal } from "@/components/hub/protocol-detail-modal";
 import { ProtocolStrip } from "@/components/hub/protocol-strip";
@@ -46,7 +46,7 @@ function HubPageContent({
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTagSlugs, setSelectedTagSlugs] = useState<string[]>([]);
-  const [sortBy, setSortBy] = useState<"recent" | "votes">("recent");
+  const [sortBy, setSortBy] = useState<SortValue>("most-used");
   const [viewMode, setViewMode] = useState<ViewMode>(initialView);
   const debouncedSearchQuery = useDebounce(searchQuery, 300);
 
@@ -95,8 +95,42 @@ function HubPageContent({
         merged.push(w);
       }
     }
-    if (sortBy === "votes") {
-      merged.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    switch (sortBy) {
+      case "most-used":
+        merged.sort(
+          (a, b) => (b.duplicateCount ?? 0) - (a.duplicateCount ?? 0)
+        );
+        break;
+      case "featured": {
+        merged.sort((a, b) => {
+          const aFeat = a.featured ? 1 : 0;
+          const bFeat = b.featured ? 1 : 0;
+          if (aFeat !== bFeat) {
+            return bFeat - aFeat;
+          }
+          if (a.featured && b.featured) {
+            const aOrd = a.featuredOrder ?? Number.MAX_SAFE_INTEGER;
+            const bOrd = b.featuredOrder ?? Number.MAX_SAFE_INTEGER;
+            if (aOrd !== bOrd) {
+              return aOrd - bOrd;
+            }
+          }
+          const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+          const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+          return bTime - aTime;
+        });
+        break;
+      }
+      case "top-rated":
+        merged.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+        break;
+      case "name":
+        merged.sort((a, b) =>
+          a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
+        );
+        break;
+      default:
+        break;
     }
     return merged;
   }, [featuredWorkflows, communityWorkflows, sortBy]);

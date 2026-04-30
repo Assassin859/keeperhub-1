@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/collapsible";
 import type { PublicTag } from "@/lib/api-client";
 
-type SortValue = "recent" | "votes";
+export type SortValue = "most-used" | "featured" | "top-rated" | "name";
 
 type HubSidebarProps = {
   publicTags: PublicTag[];
@@ -20,8 +20,10 @@ type HubSidebarProps = {
 };
 
 const SORT_OPTIONS: ReadonlyArray<{ value: SortValue; label: string }> = [
-  { value: "recent", label: "Recent" },
-  { value: "votes", label: "Top voted" },
+  { value: "most-used", label: "Most used" },
+  { value: "featured", label: "Featured" },
+  { value: "top-rated", label: "Top rated" },
+  { value: "name", label: "Name" },
 ] as const;
 
 type SectionHeaderProps = {
