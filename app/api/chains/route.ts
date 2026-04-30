@@ -10,8 +10,6 @@ export type ChainResponse = {
   name: string;
   symbol: string;
   chainType: string;
-  defaultPrimaryRpc: string;
-  defaultFallbackRpc: string | null;
   explorerUrl: string | null;
   explorerAddressPath: string | null;
   explorerApiUrl: string | null;
@@ -49,14 +47,16 @@ export async function GET(request: Request) {
       ? await query
       : await query.where(eq(chains.isEnabled, true));
 
+    // SECURITY: defaultPrimaryRpc / defaultFallbackRpc are intentionally NOT
+    // returned. Some entries embed provider API keys (Infura, Alchemy) and the
+    // response is publicly cacheable. Server-side callers read these fields
+    // directly from the `chains` table.
     const response: GetChainsResponse = results.map(({ chain, explorer }) => ({
       id: chain.id,
       chainId: chain.chainId,
       name: chain.name,
       symbol: chain.symbol,
       chainType: chain.chainType,
-      defaultPrimaryRpc: chain.defaultPrimaryRpc,
-      defaultFallbackRpc: chain.defaultFallbackRpc,
       explorerUrl: explorer?.explorerUrl ?? null,
       explorerAddressPath: explorer?.explorerAddressPath ?? null,
       explorerApiUrl: explorer?.explorerApiUrl ?? null,

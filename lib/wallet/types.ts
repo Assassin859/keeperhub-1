@@ -15,8 +15,6 @@ export type ChainData = {
   name: string;
   symbol: string;
   chainType: string;
-  defaultPrimaryRpc: string;
-  defaultFallbackRpc: string | null;
   explorerUrl: string | null;
   explorerAddressPath: string | null;
   isTestnet: boolean;
