@@ -8,7 +8,6 @@ import { HubSidebar, type SortValue } from "@/components/hub/hub-sidebar";
 import { HubViewToggle } from "@/components/hub/hub-view-toggle";
 import { ProtocolDetailModal } from "@/components/hub/protocol-detail-modal";
 import { ProtocolStrip } from "@/components/hub/protocol-strip";
-import { WorkflowSearchFilter } from "@/components/hub/workflow-search-filter";
 import { api, type PublicTag, type SavedWorkflow } from "@/lib/api-client";
 import { useDebounce } from "@/lib/hooks/use-debounce";
 import type { ProtocolDefinition } from "@/lib/protocol-registry";
@@ -169,12 +168,6 @@ function HubPageContent({
     return filtered;
   }, [isSearchActive, allWorkflows, selectedTagSlugs, debouncedSearchQuery]);
 
-  const handleToggleTag = (slug: string): void => {
-    setSelectedTagSlugs((prev) =>
-      prev.includes(slug) ? prev.filter((s) => s !== slug) : [...prev, slug]
-    );
-  };
-
   const clearFilters = useCallback((): void => {
     setSearchQuery("");
     setSelectedTagSlugs([]);
@@ -287,12 +280,6 @@ function HubPageContent({
               />
 
               <div className="min-w-0 flex-1">
-                <WorkflowSearchFilter
-                  onTagToggle={handleToggleTag}
-                  publicTags={publicTags}
-                  selectedTagSlugs={selectedTagSlugs}
-                />
-
                 <HubResults
                   communityWorkflows={allWorkflows}
                   featuredIds={featuredIds}
