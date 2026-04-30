@@ -236,7 +236,7 @@ function HubPageContent({
               <div className="h-9 w-32 rounded-lg bg-muted/10" />
             </div>
             <div className="flex gap-6">
-              <div className="hidden h-[400px] w-[var(--flyout-width,280px)] shrink-0 rounded-xl bg-muted/10 lg:block" />
+              <div className="hidden h-[400px] w-[240px] shrink-0 rounded-xl bg-muted/10 lg:block" />
               <div className="min-w-0 flex-1">
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {Array.from({ length: 6 }).map((_, i) => (

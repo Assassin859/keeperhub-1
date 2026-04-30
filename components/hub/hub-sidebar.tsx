@@ -96,7 +96,7 @@ export function HubSidebar({
   return (
     <aside
       aria-label="Hub filters"
-      className="hidden w-[var(--flyout-width,280px)] shrink-0 flex-col gap-8 rounded-r-xl bg-[var(--color-hub-card)] p-4 shadow-sm lg:flex"
+      className="hidden w-[240px] shrink-0 flex-col gap-8 rounded-r-xl bg-[var(--color-hub-card)] p-4 shadow-sm lg:flex"
     >
       <Collapsible onOpenChange={setSortOpen} open={sortOpen}>
         <SectionHeader label="Sort" />
