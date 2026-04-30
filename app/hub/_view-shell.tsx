@@ -8,6 +8,7 @@ import { HubSidebar, type SortValue } from "@/components/hub/hub-sidebar";
 import { HubViewToggle } from "@/components/hub/hub-view-toggle";
 import { ProtocolDetailModal } from "@/components/hub/protocol-detail-modal";
 import { ProtocolStrip } from "@/components/hub/protocol-strip";
+import { useVoteOverrides } from "@/components/hub/use-vote-overrides";
 import { api, type PublicTag, type SavedWorkflow } from "@/lib/api-client";
 import { useDebounce } from "@/lib/hooks/use-debounce";
 import type { ProtocolDefinition } from "@/lib/protocol-registry";
@@ -52,7 +53,7 @@ function HubPageContent({
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTagSlugs, setSelectedTagSlugs] = useState<string[]>([]);
-  const [sortBy, setSortBy] = useState<SortValue>("most-used");
+  const [sortBy, setSortBy] = useState<SortValue>("top-rated");
   const [viewMode, setViewMode] = useState<ViewMode>(initialView);
   const debouncedSearchQuery = useDebounce(searchQuery, 300);
 
@@ -91,8 +92,8 @@ function HubPageContent({
     window.history.replaceState(null, "", qs ? `/hub?${qs}` : "/hub");
   }, [searchParams]);
 
-  /** Merge featured + community, featured first, deduplicated */
-  const allWorkflows = useMemo((): SavedWorkflow[] => {
+  /** Merge featured + community, featured first, deduplicated (unsorted). */
+  const mergedWorkflows = useMemo((): SavedWorkflow[] => {
     const seen = new Set<string>();
     const merged: SavedWorkflow[] = [];
     for (const w of featuredWorkflows) {
@@ -107,14 +108,29 @@ function HubPageContent({
         merged.push(w);
       }
     }
+    return merged;
+  }, [featuredWorkflows, communityWorkflows]);
+
+  // Optimistic vote state lives at this level so (a) Top-rated sort can use
+  // the effective score and (b) votes persist when toggling Cards <-> List.
+  const { voteOverrides, handleVote } = useVoteOverrides(mergedWorkflows);
+
+  const allWorkflows = useMemo((): SavedWorkflow[] => {
+    const sorted = [...mergedWorkflows];
+    const effectiveScore = (w: SavedWorkflow): number =>
+      voteOverrides[w.id]?.score ?? w.score ?? 0;
     switch (sortBy) {
       case "most-used":
-        merged.sort(
-          (a, b) => (b.duplicateCount ?? 0) - (a.duplicateCount ?? 0)
-        );
+        sorted.sort((a, b) => {
+          const dupDiff = (b.duplicateCount ?? 0) - (a.duplicateCount ?? 0);
+          if (dupDiff !== 0) {
+            return dupDiff;
+          }
+          return effectiveScore(b) - effectiveScore(a);
+        });
         break;
       case "featured": {
-        merged.sort((a, b) => {
+        sorted.sort((a, b) => {
           const aFeat = a.featured ? 1 : 0;
           const bFeat = b.featured ? 1 : 0;
           if (aFeat !== bFeat) {
@@ -134,18 +150,18 @@ function HubPageContent({
         break;
       }
       case "top-rated":
-        merged.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+        sorted.sort((a, b) => effectiveScore(b) - effectiveScore(a));
         break;
       case "name":
-        merged.sort((a, b) =>
+        sorted.sort((a, b) =>
           a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
         );
         break;
       default:
         break;
     }
-    return merged;
-  }, [featuredWorkflows, communityWorkflows, sortBy]);
+    return sorted;
+  }, [mergedWorkflows, sortBy, voteOverrides]);
 
   const featuredIds = useMemo(
     () => new Set(featuredWorkflows.map((w) => w.id)),
@@ -322,8 +338,10 @@ function HubPageContent({
                   featuredIds={featuredIds}
                   isSearchActive={isSearchActive}
                   onClearFilters={clearFilters}
+                  onVote={handleVote}
                   searchResults={searchResults}
                   viewMode={viewMode}
+                  voteOverrides={voteOverrides}
                 />
               </div>
             </div>
