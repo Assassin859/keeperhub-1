@@ -18,8 +18,6 @@ const MAINNET: ChainData = {
   name: "Ethereum Mainnet",
   symbol: "ETH",
   chainType: "evm",
-  defaultPrimaryRpc: "https://rpc.eth.example",
-  defaultFallbackRpc: null,
   explorerUrl: null,
   explorerAddressPath: null,
   isTestnet: false,
@@ -31,7 +29,6 @@ const SEPOLIA: ChainData = {
   id: "eth-sepolia",
   chainId: 11_155_111,
   name: "Ethereum Sepolia",
-  defaultPrimaryRpc: "https://rpc.sepolia.example",
   isTestnet: true,
 };
 
@@ -40,7 +37,6 @@ const TEMPO: ChainData = {
   id: "tempo",
   chainId: 4217,
   name: "Tempo",
-  defaultPrimaryRpc: "https://rpc.tempo.example",
 };
 
 function nativeBalance(overrides: Partial<ChainBalance> = {}): ChainBalance {
@@ -144,7 +140,6 @@ describe("buildWithdrawableAssets", () => {
       symbol: "ETH",
       balance: "0.5",
       decimals: 18,
-      rpcUrl: MAINNET.defaultPrimaryRpc,
     });
   });
 
