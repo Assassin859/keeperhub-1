@@ -202,7 +202,13 @@ function HubPageContent({
                 />
               ))}
             </div>
-            <div className="mt-4 flex gap-6">
+            <div className="mt-6 mb-4 flex items-center gap-3">
+              <div className="h-px flex-1 bg-border/30" />
+              <div className="h-3 w-20 rounded bg-muted/10" />
+              <div className="h-px flex-1 bg-border/30" />
+              <div className="h-9 w-32 rounded-lg bg-muted/10" />
+            </div>
+            <div className="flex gap-6">
               <div className="hidden h-[400px] w-[var(--flyout-width,280px)] shrink-0 rounded-xl bg-muted/10 lg:block" />
               <div className="min-w-0 flex-1">
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -230,7 +236,16 @@ function HubPageContent({
               />
             )}
 
-            <div className="mt-4 flex gap-6">
+            <div className="mt-6 mb-4 flex items-center gap-3">
+              <div className="h-px flex-1 bg-border/30" />
+              <h2 className="shrink-0 text-[var(--color-text-accent)]/60 text-xs uppercase tracking-widest">
+                Templates
+              </h2>
+              <div className="h-px flex-1 bg-border/30" />
+              <HubViewToggle initialView={initialView} onChange={setViewMode} />
+            </div>
+
+            <div className="flex gap-6">
               <HubSidebar
                 onSortChange={setSortBy}
                 publicTags={publicTags}
@@ -238,25 +253,11 @@ function HubPageContent({
               />
 
               <div className="min-w-0 flex-1">
-                <div className="mb-4">
-                  <div className="mb-3 flex items-center gap-3">
-                    <div className="h-px flex-1 bg-border/30" />
-                    <h2 className="shrink-0 text-[var(--color-text-accent)]/60 text-xs uppercase tracking-widest">
-                      Templates
-                    </h2>
-                    <div className="h-px flex-1 bg-border/30" />
-                    <HubViewToggle
-                      initialView={initialView}
-                      onChange={setViewMode}
-                    />
-                  </div>
-
-                  <WorkflowSearchFilter
-                    onTagToggle={handleToggleTag}
-                    publicTags={publicTags}
-                    selectedTagSlugs={selectedTagSlugs}
-                  />
-                </div>
+                <WorkflowSearchFilter
+                  onTagToggle={handleToggleTag}
+                  publicTags={publicTags}
+                  selectedTagSlugs={selectedTagSlugs}
+                />
 
                 <HubResults
                   communityWorkflows={allWorkflows}
