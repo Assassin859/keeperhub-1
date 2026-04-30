@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import type * as React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { truncateAddress } from "@/lib/address-utils";
 import { useWalletInfo } from "@/lib/wallet/use-wallet-info";
 import { ConfigureConnectionOverlay } from "@/components/overlays/add-connection-overlay";
 import { AiGatewayConsentOverlay } from "@/components/overlays/ai-gateway-consent-overlay";
@@ -453,22 +454,27 @@ type Web3WalletAwareEmptyStateProps = {
 
 /**
  * Empty state for the Web3 IntegrationSelector. Web3 actions sign with the
- * org's KeeperHub wallet, not with a "web3 integration" credential -- the
- * loud orange "Add Web3 connection" warning was misleading users into
- * thinking the action was misconfigured. Show a quieter wallet-aware state
- * instead, with a discreet "+" for users who actually want to attach a
- * custom RPC.
+ * org's KeeperHub wallet, so when wallet exists but the auto-created
+ * integration row is missing (legacy data, member ownership mismatch, etc.)
+ * render the same single-integration shape used in the integrations.length
+ * === 1 branch -- truncated wallet address with a green check -- so the
+ * panel reads consistently regardless of whether an integration row backs
+ * the wallet. The "+" affordance opens ConfigureConnectionOverlay for users
+ * who want to attach a custom RPC.
  */
 function Web3WalletAwareEmptyState({
   disabled,
   onAddConnection,
 }: Web3WalletAwareEmptyStateProps): React.JSX.Element {
-  const { hasWallet, isLoading } = useWalletInfo();
+  const { hasWallet, walletAddress, isLoading } = useWalletInfo();
 
   // While wallet status is still loading, prefer the wallet-aware copy --
   // most signed-in orgs have a wallet, so flashing the orange warning
   // before the fetch resolves causes a visible jump.
-  if (isLoading || hasWallet) {
+  if (isLoading || (hasWallet && walletAddress)) {
+    const displayName = walletAddress
+      ? truncateAddress(walletAddress)
+      : "Loading wallet...";
     return (
       <div
         className={cn(
@@ -477,9 +483,7 @@ function Web3WalletAwareEmptyState({
         )}
       >
         <Check className="size-4 shrink-0 text-green-600" />
-        <span className="flex-1 truncate text-muted-foreground">
-          Uses your KeeperHub wallet
-        </span>
+        <span className="flex-1 truncate">{displayName}</span>
         <Button
           aria-label="Add custom RPC connection"
           className="size-6 shrink-0"
