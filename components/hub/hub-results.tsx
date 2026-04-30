@@ -3,6 +3,7 @@
 import { Search, Workflow } from "lucide-react";
 import Link from "next/link";
 import { WorkflowTemplateGrid } from "@/components/hub/workflow-template-grid";
+import { WorkflowTemplateList } from "@/components/hub/workflow-template-list";
 import { Button } from "@/components/ui/button";
 import type { SavedWorkflow } from "@/lib/api-client";
 
@@ -60,12 +61,9 @@ export function HubResults({
   }
 
   if (viewMode === "list") {
-    // TODO(43-07): swap to <WorkflowTemplateRow> rendering once that component lands.
-    // For this plan, list mode falls back to the cards grid so the toggle is
-    // functional end-to-end and the cookie round-trip can be validated.
     return (
       <section data-view-mode="list">
-        <WorkflowTemplateGrid featuredIds={featuredIds} workflows={workflows} />
+        <WorkflowTemplateList featuredIds={featuredIds} workflows={workflows} />
       </section>
     );
   }
