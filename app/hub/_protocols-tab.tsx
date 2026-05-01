@@ -16,10 +16,7 @@ export function HubProtocolsTab(): React.ReactElement {
         aria-label="Protocols"
         className="flex flex-col items-center rounded-xl border border-border/30 border-dashed bg-[var(--color-hub-card)] p-12 text-center"
       >
-        <Box
-          aria-hidden="true"
-          className="size-8 text-muted-foreground/50"
-        />
+        <Box aria-hidden="true" className="size-8 text-muted-foreground/50" />
         <h2 className="mt-4 font-semibold text-foreground text-sm">
           No protocols available yet.
         </h2>

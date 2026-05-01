@@ -1,6 +1,7 @@
 // Pure (non-"use client") module so this Server Component can call the type
 // guard safely; importing through _tabs-shell would trip Next.js' RSC
 // "Attempted to call isHubTabValue() from the server" error.
+import { HubProtocolsTab } from "./_protocols-tab";
 import { type HubTabValue, isHubTabValue } from "./_tabs-shared";
 import { HubTabsShell } from "./_tabs-shell";
 import { HubWorkflowsTab } from "./_workflows-tab";
@@ -34,12 +35,10 @@ export default async function HubPage({
   const initialTab = readInitialTab(params.tab);
   const initialTagSlug = readTagSlug(params.tag);
 
-  // Wave-1 placeholders for tabs not yet wired. Wave-2 plans (44-03, 44-05)
-  // replace these with real RSC tab bodies. The tab shell streams them as
+  // Marketplace is the last remaining Wave-1 placeholder; plan 44-05 swaps
+  // it for the real RSC tab body. Tab content is passed to HubTabsShell as
   // RSC slot props.
-  const protocolsContent = (
-    <div data-tab-placeholder="protocols">Protocols tab — pending 44-03</div>
-  );
+  const protocolsContent = <HubProtocolsTab />;
   const workflowsContent = <HubWorkflowsTab initialTagSlug={initialTagSlug} />;
   const marketplaceContent = (
     <div data-tab-placeholder="marketplace">
