@@ -34,15 +34,12 @@ import {
 import { getGasStrategy } from "./gas-strategy";
 import { getNonceManager, type NonceSession } from "./nonce-manager";
 
-export type TriggerType = "event" | "webhook" | "scheduled" | "manual";
-
 export type TransactionContext = {
   organizationId: string;
   executionId: string;
   workflowId?: string;
   chainId: number;
   rpcUrl: string;
-  triggerType?: TriggerType;
   rpcManager?: RpcProviderManager;
 };
 

@@ -234,7 +234,6 @@ export async function POST(request: Request) {
       executionId,
       chainId,
       rpcUrl,
-      triggerType: "manual",
     };
 
     // Execute transaction with nonce management
