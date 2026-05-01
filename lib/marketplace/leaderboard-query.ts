@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
 import { workflowPayments } from "@/lib/db/schema-payments";
 
-export type MarketplaceSort = "popular" | "newest" | "top-calls";
+export type MarketplaceSort = "popular" | "newest" | "top-calls" | "price";
 
 export type MarketplaceLeaderboardRow = {
   workflowId: string;
@@ -81,10 +81,20 @@ async function runLeaderboardQuery(
 
   const whereClause = and(baseFilter, cursorFilter, queryFilter);
 
-  const orderClause =
-    sort === "newest"
-      ? [desc(workflows.listedAt), desc(workflows.id)]
-      : [desc(callCountExpr), desc(workflows.id)];
+  const orderClause = (() => {
+    if (sort === "newest") {
+      return [desc(workflows.listedAt), desc(workflows.id)];
+    }
+    if (sort === "price") {
+      // Price sort: highest priced first; nulls last so unpriced rows don't
+      // float to the top. Tiebreak by id for stable ordering.
+      return [
+        sql`${workflows.priceUsdcPerCall} desc nulls last`,
+        desc(workflows.id),
+      ];
+    }
+    return [desc(callCountExpr), desc(workflows.id)];
+  })();
 
   const rows = await db
     .select({

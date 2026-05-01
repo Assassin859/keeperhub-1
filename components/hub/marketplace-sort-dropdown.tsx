@@ -12,20 +12,18 @@ import {
 } from "@/components/ui/dropdown-menu";
 import type { MarketplaceSort } from "@/lib/marketplace/leaderboard-query";
 
-type SortUiValue = Extract<MarketplaceSort, "popular" | "newest">;
-
 type SortUiOption = {
-  value: SortUiValue;
+  value: MarketplaceSort;
   label: string;
 };
 
-// UI-VISIBLE options ONLY. The third API value `top-calls` is intentionally
-// excluded from the dropdown (UI-SPEC Open Issues #2) - it is an agent-facing
-// alias for `popular` and showing both confuses humans. Revenue-based sort is
-// EXPLICITLY DEFERRED per MARKET-02 + MARKET-FUTURE-01 (privacy review pending).
+// Revenue-based sort is EXPLICITLY DEFERRED per MARKET-02 + MARKET-FUTURE-01
+// (privacy review pending).
 const SORT_OPTIONS: readonly SortUiOption[] = [
   { value: "popular", label: "Popular" },
   { value: "newest", label: "Newest" },
+  { value: "top-calls", label: "Calls" },
+  { value: "price", label: "Price" },
 ] as const;
 
 type Props = {
@@ -33,10 +31,6 @@ type Props = {
 };
 
 function uiLabelFor(active: MarketplaceSort): string {
-  // Map the API alias `top-calls` to the UI label `Popular` (they sort identically).
-  if (active === "top-calls") {
-    return "Popular";
-  }
   const option = SORT_OPTIONS.find((opt) => opt.value === active);
   return option?.label ?? "Popular";
 }
@@ -46,7 +40,7 @@ export function MarketplaceSortDropdown({ active }: Props): React.ReactElement {
   const searchParams = useSearchParams();
   const [, startTransition] = useTransition();
 
-  const handleSelect = (value: SortUiValue): void => {
+  const handleSelect = (value: MarketplaceSort): void => {
     const params = new URLSearchParams(searchParams.toString());
     params.set("tab", "marketplace");
     params.set("sort", value);
@@ -61,7 +55,7 @@ export function MarketplaceSortDropdown({ active }: Props): React.ReactElement {
     <DropdownMenu>
       <DropdownMenuTrigger
         aria-label="Sort marketplace by"
-        className="inline-flex h-9 items-center gap-2 rounded-md border border-border/40 bg-[var(--color-hub-icon-bg)] px-3 font-normal text-foreground text-sm transition-colors hover:bg-[var(--color-hub-icon-bg-hover)] focus:outline-none focus-visible:border-[var(--color-border-accent)] focus-visible:outline-none motion-reduce:transition-none"
+        className="inline-flex h-9 items-center gap-2 rounded-md bg-[var(--color-hub-icon-bg)] px-3 font-normal text-foreground text-sm transition-colors hover:bg-[var(--color-hub-icon-bg-hover)] focus:outline-none focus-visible:outline-none motion-reduce:transition-none"
         type="button"
       >
         Sort: {uiLabelFor(active)}
@@ -75,9 +69,7 @@ export function MarketplaceSortDropdown({ active }: Props): React.ReactElement {
         className="min-w-[160px] rounded-md border border-border/30 bg-[var(--color-hub-card)] p-1 shadow-md"
       >
         {SORT_OPTIONS.map((option) => {
-          const isActive =
-            option.value === active ||
-            (option.value === "popular" && active === "top-calls");
+          const isActive = option.value === active;
           return (
             <DropdownMenuItem
               aria-checked={isActive}

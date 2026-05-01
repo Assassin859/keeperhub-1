@@ -10,12 +10,14 @@ const VALID_SORTS: readonly MarketplaceSort[] = [
   "popular",
   "newest",
   "top-calls",
+  "price",
 ];
 
 const SORT_LABELS: Record<MarketplaceSort, string> = {
   popular: "Popular",
   newest: "Newest",
-  "top-calls": "Top calls",
+  "top-calls": "Calls",
+  price: "Price",
 };
 
 function readSort(raw: string | string[] | undefined): MarketplaceSort {
