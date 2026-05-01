@@ -1,4 +1,8 @@
+"use client";
+
 import { BookOpen, Play } from "lucide-react";
+import { useSession } from "@/lib/auth-client";
+import { isAnonymousUser } from "@/lib/is-anonymous";
 
 const HERO_SUB =
   "Browse protocols, fork community workflows, and discover paid services on the marketplace.";
@@ -15,12 +19,30 @@ type HubHeroProps = {
   onSearchChange?: (query: string) => void;
 };
 
+function trimmedName(name: string | null | undefined): string | null {
+  if (!name) {
+    return null;
+  }
+  const trimmed = name.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 export function HubHero(_props: HubHeroProps = {}): React.ReactElement {
+  const { data: session, isPending } = useSession();
+  // Show the bare headline on first paint and for anonymous / signed-out
+  // users. Signed-in users get their full name appended.
+  const showName =
+    !isPending && session?.user && !isAnonymousUser(session.user);
+  const name = showName ? trimmedName(session?.user?.name) : null;
+  const headline = name
+    ? `Welcome to KeeperHub ${name}!`
+    : "Welcome to KeeperHub!";
+
   return (
     <div className="pb-6">
       <div className="flex items-end justify-between gap-8">
         <div>
-          <h1 className="font-semibold text-xl tracking-tight">Hub</h1>
+          <h1 className="font-semibold text-xl tracking-tight">{headline}</h1>
           <p className="mt-1 text-muted-foreground text-sm">{HERO_SUB}</p>
         </div>
         <div className="flex shrink-0 items-center gap-2 pb-0.5">
