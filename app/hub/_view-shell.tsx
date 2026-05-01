@@ -1,6 +1,6 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { HubResults } from "@/components/hub/hub-results";
 import { HubSidebar, type SortValue } from "@/components/hub/hub-sidebar";
@@ -65,8 +65,12 @@ function HubPageContent({
   // Active tag filter is driven by the ?tag= query param. The server pre-seeds
   // it via initialTagSlug so the first paint already filters; on subsequent
   // sidebar clicks <Link href="/hub?tag=…"> updates searchParams and React
-  // re-renders without a route change.
-  const activeTagSlug = searchParams.get("tag") ?? initialTagSlug;
+  // re-renders without a route change. The fallback is held in state so
+  // `clearFilters()` can null it out — otherwise the SSR-derived slug would
+  // resurrect after the URL is cleared.
+  const router = useRouter();
+  const [tagFallback, setTagFallback] = useState<string | null>(initialTagSlug);
+  const activeTagSlug = searchParams.get("tag") ?? tagFallback;
 
   /** Merge featured + community, featured first, deduplicated (unsorted). */
   const mergedWorkflows = useMemo((): SavedWorkflow[] => {
@@ -190,16 +194,20 @@ function HubPageContent({
   const clearFilters = useCallback((): void => {
     setSearchQuery("");
     setSelectedTagSlugs([]);
-    // Drop the sidebar single-tag filter from the URL too. Use replaceState
-    // (not router.push) to keep the navigation cheap and avoid a re-render
-    // round-trip — the searchParams hook still picks up the change.
-    if (activeTagSlug) {
-      const params = new URLSearchParams(searchParams.toString());
-      params.delete("tag");
-      const qs = params.toString();
-      window.history.replaceState(null, "", qs ? `/hub?${qs}` : "/hub");
-    }
-  }, [activeTagSlug, searchParams]);
+    // Null the SSR-derived fallback so `?tag=` removal actually takes
+    // effect — without this, deleting `?tag=` from the URL would just
+    // re-show `initialTagSlug` via the `?? tagFallback` fallback.
+    setTagFallback(null);
+    // Drop tag/q/cursor from the URL via router.replace so the
+    // useSearchParams subscription fires (window.history.replaceState
+    // alone doesn't notify Next's client router).
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("tag");
+    params.delete("q");
+    params.delete("cursor");
+    const qs = params.toString();
+    router.replace(qs ? `/hub?${qs}` : "/hub", { scroll: false });
+  }, [router, searchParams]);
 
   useEffect(() => {
     const fetchWorkflows = async (): Promise<void> => {
