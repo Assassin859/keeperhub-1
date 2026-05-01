@@ -22,7 +22,7 @@ function callCountLabel(count: number): string {
   return count.toLocaleString("en-US");
 }
 
-type ChainBadge = { label: string; isBase: boolean } | null;
+type ChainBadge = { label: string } | null;
 
 function chainBadge(chain: string | null): ChainBadge {
   if (chain === null) {
@@ -30,10 +30,10 @@ function chainBadge(chain: string | null): ChainBadge {
   }
   const lower = chain.toLowerCase();
   if (lower === "base" || lower === "8453") {
-    return { label: "Base", isBase: true };
+    return { label: "Base" };
   }
   if (lower === "tempo") {
-    return { label: "Tempo", isBase: false };
+    return { label: "Tempo" };
   }
   // Unknown chain string: hide the badge entirely rather than rendering an
   // empty oval. Marketplace surfaces only base/tempo officially today.
@@ -89,13 +89,7 @@ export function MarketplaceRow({
       </span>
 
       {badge ? (
-        <span
-          className={
-            badge.isBase
-              ? "hidden items-center justify-center justify-self-end rounded-full bg-[var(--color-bg-accent)] px-2 py-0.5 font-semibold text-[0.625rem] text-[var(--color-text-accent)] md:inline-flex"
-              : "hidden items-center justify-center justify-self-end rounded-full bg-[var(--color-hub-icon-bg)] px-2 py-0.5 font-semibold text-[0.625rem] text-muted-foreground md:inline-flex"
-          }
-        >
+        <span className="hidden items-center justify-center justify-self-end rounded-full bg-[var(--color-bg-accent)] px-2 py-0.5 font-semibold text-[0.625rem] text-[var(--color-text-accent)] md:inline-flex">
           {badge.label}
         </span>
       ) : (
