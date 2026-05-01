@@ -52,6 +52,10 @@ export function HubTabSearch(): React.ReactElement {
     } else {
       params.set("q", next);
     }
+    // Reset pagination when the result set changes — the cursor payload was
+    // encoded against the prior filtered set and would either skip rows or
+    // return an empty page on the new query.
+    params.delete("cursor");
     const qs = params.toString();
     startTransition(() => {
       // With `export const dynamic = 'force-dynamic'` on app/hub/page.tsx,

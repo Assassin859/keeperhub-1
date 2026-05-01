@@ -2,13 +2,13 @@
 
 import { Box, Workflow as WorkflowIcon } from "lucide-react";
 import Image from "next/image";
-import type { KeyboardEvent, MouseEvent } from "react";
+import type { KeyboardEvent } from "react";
 import type { ProtocolDefinition } from "@/lib/protocol-registry";
 
 type ProtocolCardV2Props = {
   protocol: ProtocolDefinition;
   workflowCount: number;
-  onSelect: (slug: string, e: MouseEvent | KeyboardEvent) => void;
+  onSelect: (slug: string) => void;
 };
 
 function capabilityLabel(
@@ -36,14 +36,14 @@ export function ProtocolCardV2({
   workflowCount,
   onSelect,
 }: ProtocolCardV2Props): React.ReactElement {
-  const handleClick = (e: MouseEvent<HTMLElement>): void => {
-    onSelect(protocol.slug, e);
+  const handleClick = (): void => {
+    onSelect(protocol.slug);
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLElement>): void => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      onSelect(protocol.slug, e);
+      onSelect(protocol.slug);
     }
   };
 

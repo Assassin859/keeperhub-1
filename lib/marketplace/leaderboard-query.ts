@@ -26,6 +26,13 @@ export type MarketplaceLeaderboardResult = {
 
 const PAGE_LIMIT = 50;
 
+// Escape LIKE/ILIKE metacharacters so user input is treated as a literal
+// substring. Drizzle parameterises the bound value, so this is a UX fix
+// (no accidental wildcard) rather than a security fix.
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
 type CursorPayload = {
   c: number; // last callCount
   i: string; // last workflowId tiebreaker
@@ -62,12 +69,14 @@ async function runLeaderboardQuery(
   //   - workflowPayments.{usdc amount, payer wallet, creator wallet}
   // The grep gate in 44-05 acceptance asserts these literal identifiers
   // appear ZERO times in this file -- spell them out in PROSE only.
-  const callCountExpr = sql<number>`coalesce(count(${workflowPayments.id})::int, 0)`;
+  const callCountExpr = sql<number>`count(${workflowPayments.id})::int`;
 
   const baseFilter = eq(workflows.isListed, true);
 
-  // Cursor filter for popular/top-calls (callCount tiebroken by id).
-  // Newest sort uses listedAt cursor (separate path below).
+  // Cursor filter for popular/top-calls (callCount tiebroken by id). The
+  // cursor payload encodes `{c: callCount, i: id}` which only makes sense
+  // for those two sorts; nextCursor is gated to match below so newest/price
+  // never emit a cursor in the first place.
   const cursorFilter =
     cursor && (sort === "popular" || sort === "top-calls")
       ? or(
@@ -77,9 +86,13 @@ async function runLeaderboardQuery(
       : undefined;
 
   // Free-text filter on the public display name. Case-insensitive, simple
-  // substring match; no full-text indexing yet — fine at v1.11 scale.
+  // substring match; no full-text indexing yet — fine at v1.11 scale. Escape
+  // LIKE metacharacters so a user typing `_` or `%` doesn't get unexpected
+  // wildcard semantics.
   const queryFilter =
-    query === "" ? undefined : ilike(workflows.name, `%${query}%`);
+    query === ""
+      ? undefined
+      : ilike(workflows.name, `%${escapeLikePattern(query)}%`);
 
   const whereClause = and(baseFilter, cursorFilter, queryFilter);
 
@@ -128,8 +141,13 @@ async function runLeaderboardQuery(
   const hasMore = rows.length > PAGE_LIMIT;
   const pageRows = hasMore ? rows.slice(0, PAGE_LIMIT) : rows;
   const last = pageRows.at(-1);
+  // Only emit a cursor for sorts whose cursor payload is meaningful. For
+  // newest + price, the cursor decoder would silently no-op the filter and
+  // page 2 would re-return page 1, so we suppress the cursor entirely until
+  // those branches grow real listedAt / priceUsdcPerCall cursor support.
+  const cursorEligible = sort === "popular" || sort === "top-calls";
   const nextCursor =
-    hasMore && last
+    cursorEligible && hasMore && last
       ? encodeCursor({ c: last.callCount, i: last.workflowId })
       : null;
 
