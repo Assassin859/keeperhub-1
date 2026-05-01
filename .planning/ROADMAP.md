@@ -12,10 +12,19 @@
 - Complete **v1.8 Agentic Wallet for KeeperHub** - Phases 32-36 (shipped 2026-04-21) — archived in [milestones/v1.8-ROADMAP.md](milestones/v1.8-ROADMAP.md)
 - Complete **v1.9 Code Sandbox Hardening (Minimal)** - Phases 37-39 (shipped 2026-04-23) — archived in [milestones/v1.9-ROADMAP.md](milestones/v1.9-ROADMAP.md)
 - Complete **v1.10 Agentic Wallet & Marketplace Plumbing** - Phases 40-41 (shipped 2026-04-29) — archived in [milestones/v1.10-ROADMAP.md](milestones/v1.10-ROADMAP.md)
+- Complete **v1.11 Marketplace Discovery & Hub UX** - Phases 42-45 (shipped 2026-05-01) — archived in [milestones/v1.11-ROADMAP.md](milestones/v1.11-ROADMAP.md)
 
 ---
 
-## Current Milestone: v1.11 Marketplace Discovery & Hub UX
+## Current Milestone: TBD (v1.12 — run `/gsd-new-milestone` to define)
+
+(Previous v1.11 milestone archived above. Run `/gsd-new-milestone` to start the next milestone with fresh requirements.)
+
+---
+
+<!-- Archived v1.11 phase details preserved below for reference; will be removed when v1.12 starts. -->
+
+## Archived: v1.11 Marketplace Discovery & Hub UX
 
 **Goal:** Make listed workflows discoverable across the platform, modernize Hub UX so logged-out users can browse, consolidate workflow import/export into one modal, and let template adoption flow through a clear login-gated CTA.
 
