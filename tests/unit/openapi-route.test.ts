@@ -83,7 +83,7 @@ describe("GET /api/openapi", () => {
     expect(path.post.responses["402"]).toBeDefined();
   });
 
-  it("declares x-auth-mode=paid on paid read workflows", async () => {
+  it("paid read workflows: no `security` (paid auth via x-payment-info → 402) + open-object fallback requestBody", async () => {
     mockDbSelect.mockReturnValue({
       from: vi.fn().mockReturnValue({
         where: vi.fn().mockResolvedValue([
@@ -108,17 +108,21 @@ describe("GET /api/openapi", () => {
     const body = await response.json();
     const op = body.paths["/api/mcp/workflows/paid-wf/call"].post;
 
-    expect(op["x-auth-mode"]).toBe("paid");
+    // Paid routes' auth mode is conveyed by x-payment-info + responses[402];
+    // OpenAPI security stays unset (NOT empty) so scanners infer "paid".
+    expect(op.security).toBeUndefined();
+    expect(op["x-payment-info"]).toBeDefined();
+    expect(op.responses["402"]).toBeDefined();
     // Paid routes without a DB-backed inputSchema get a default open-object
-    // schema so discovery scanners get a valid request body.
+    // schema so discovery scanners (e.g. @agentcash/discovery) don't emit
+    // L3_INPUT_SCHEMA_MISSING.
     expect(op.requestBody).toBeDefined();
     expect(op.requestBody.content["application/json"].schema).toEqual({
       type: "object",
-      additionalProperties: true,
     });
   });
 
-  it("declares x-auth-mode=free on free read workflows", async () => {
+  it("free read workflows: declare `security: []` (= no auth required, OpenAPI 3.x)", async () => {
     mockDbSelect.mockReturnValue({
       from: vi.fn().mockReturnValue({
         where: vi.fn().mockResolvedValue([
@@ -143,11 +147,111 @@ describe("GET /api/openapi", () => {
     const body = await response.json();
     const op = body.paths["/api/mcp/workflows/free-wf/call"].post;
 
-    expect(op["x-auth-mode"]).toBe("free");
+    // Empty array is canonical OpenAPI for "no auth"; agentcash/x402scan
+    // both read this and stop emitting L2/L3_AUTH_MODE_MISSING.
+    expect(op.security).toEqual([]);
     expect(op["x-payment-info"]).toBeUndefined();
     // Free read workflows with no DB-backed schema don't need a fallback
     // request body.
     expect(op.requestBody).toBeUndefined();
+  });
+
+  it("write workflows: also declare `security: []` (writes never paid at HTTP layer) + fallback requestBody", async () => {
+    mockDbSelect.mockReturnValue({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue([
+          {
+            id: "wf-write-priced",
+            name: "Priced Write Workflow",
+            description: null,
+            listedSlug: "priced-write",
+            inputSchema: null,
+            priceUsdcPerCall: "0.10",
+            workflowType: "write",
+            category: null,
+            chain: null,
+          },
+        ]),
+      }),
+    });
+
+    const { GET } = await import("@/app/api/openapi/route");
+    const request = new Request("https://app.keeperhub.com/api/openapi");
+    const response = await GET(request);
+    const body = await response.json();
+    const op = body.paths["/api/mcp/workflows/priced-write/call"].post;
+
+    // Write workflows with priceUsdcPerCall > 0 are still NOT paid at the
+    // HTTP layer — handleWriteWorkflow returns calldata for the caller to
+    // sign+broadcast (gas paid on-chain). No 402 ever fires. Security must
+    // be `[]`, not unset, so the auth scanner doesn't think these are paid.
+    expect(op.security).toEqual([]);
+    expect(op["x-payment-info"]).toBeUndefined();
+    expect(op.responses["402"]).toBeUndefined();
+    expect(op["x-workflow-type"]).toBe("write");
+    expect(op.requestBody).toBeDefined();
+  });
+
+  it("DB-backed inputSchema takes precedence over the open-object fallback", async () => {
+    mockDbSelect.mockReturnValue({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue([
+          {
+            id: "wf-with-schema",
+            name: "Paid With Schema",
+            description: null,
+            listedSlug: "paid-with-schema",
+            inputSchema: {
+              type: "object",
+              required: ["address"],
+              properties: { address: { type: "string" } },
+            },
+            priceUsdcPerCall: "0.01",
+            workflowType: "read",
+            category: null,
+            chain: null,
+          },
+        ]),
+      }),
+    });
+
+    const { GET } = await import("@/app/api/openapi/route");
+    const request = new Request("https://app.keeperhub.com/api/openapi");
+    const response = await GET(request);
+    const body = await response.json();
+    const op = body.paths["/api/mcp/workflows/paid-with-schema/call"].post;
+
+    expect(op.requestBody.required).toBe(true);
+    expect(op.requestBody.content["application/json"].schema.required).toEqual([
+      "address",
+    ]);
+  });
+
+  it("workflows with null listedSlug are silently skipped", async () => {
+    mockDbSelect.mockReturnValue({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue([
+          {
+            id: "wf-null-slug",
+            name: "No Slug",
+            description: null,
+            listedSlug: null,
+            inputSchema: null,
+            priceUsdcPerCall: "0",
+            workflowType: "read",
+            category: null,
+            chain: null,
+          },
+        ]),
+      }),
+    });
+
+    const { GET } = await import("@/app/api/openapi/route");
+    const request = new Request("https://app.keeperhub.com/api/openapi");
+    const response = await GET(request);
+    const body = await response.json();
+
+    expect(Object.keys(body.paths)).toHaveLength(0);
   });
 
   it("includes worked examples in info.x-guidance", async () => {
@@ -167,6 +271,8 @@ describe("GET /api/openapi", () => {
       "/api/mcp/workflows/aave-v3-health-check/call"
     );
     expect(body.info["x-guidance"]).toContain('"address": "0x..."');
+    // YAML/Markdown consumers expect the guidance as a real multi-line block.
+    expect(body.info["x-guidance"].split("\n").length).toBeGreaterThan(10);
   });
 
   it("excludes x-payment-info for write workflows", async () => {

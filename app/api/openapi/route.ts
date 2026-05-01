@@ -52,10 +52,19 @@ function buildPathEntry(workflow: DiscoveryWorkflow): Record<string, unknown> {
     description: workflow.description
       ? sanitizeDescription(workflow.description)
       : undefined,
-    // Explicit auth mode on every operation so discovery scanners
-    // (agentcash, x402scan, mppscan, CDP Bazaar) don't have to infer.
-    "x-auth-mode": isPaid ? "paid" : "free",
   };
+
+  // Canonical OpenAPI 3.x auth declaration. Paid routes leave `security`
+  // unset (their auth comes via x-payment-info → 402); non-paid routes
+  // declare `security: []` which OpenAPI defines as "no authentication
+  // required". Discovery scanners (agentcash, x402scan, CDP Bazaar) read
+  // the standard fields, not custom x-auth-mode extensions.
+  // Note: write workflows are never paid at the HTTP layer — they always
+  // return unsigned calldata that the caller signs+broadcasts (see
+  // app/api/mcp/workflows/[slug]/call/route.ts handleWriteWorkflow).
+  if (!isPaid) {
+    operation.security = [];
+  }
 
   if (isWrite) {
     operation["x-workflow-type"] = "write";
@@ -87,12 +96,14 @@ function buildPathEntry(workflow: DiscoveryWorkflow): Record<string, unknown> {
       },
     };
   } else if (isPaid || isWrite) {
+    // Fallback so paid+write routes always declare a body schema. Validators
+    // (e.g. @agentcash/discovery) flag L3_INPUT_SCHEMA_MISSING when paid
+    // routes have no requestBody at all. `type: object` already permits any
+    // properties; no `additionalProperties: true` needed.
     operation.requestBody = {
       required: false,
       content: {
-        "application/json": {
-          schema: { type: "object", additionalProperties: true },
-        },
+        "application/json": { schema: { type: "object" } },
       },
     };
   }
@@ -188,7 +199,7 @@ export async function GET(request: Request): Promise<Response> {
         "GET /api/mcp/workflows  (returns the list of all listed workflows + pricing)",
         "GET /openapi.json       (this document — full schema for every workflow)",
         "",
-        "When in doubt, fetch /openapi.json and read the per-workflow x-payment-info, x-auth-mode, and requestBody fields.",
+        "When in doubt, fetch /openapi.json and read the per-workflow `x-payment-info`, `security`, and `requestBody` fields.",
       ].join("\n"),
     },
     "x-service-info": {
