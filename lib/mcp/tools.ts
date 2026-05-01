@@ -45,11 +45,14 @@ type ApiResponse = Record<string, unknown>;
  * `API call failed: <status> <statusText> - <body>`, so a substring
  * match on the prefix is sufficient and avoids parsing the body twice.
  */
+const API_CALL_FAILED_402_PREFIX = "API call failed: 402";
+
 function is402Error(message: string): boolean {
-  return message.includes("API call failed: 402");
+  return message.includes(API_CALL_FAILED_402_PREFIX);
 }
 
 type X402Accept = {
+  scheme?: unknown;
   network?: unknown;
   asset?: unknown;
   amount?: unknown;
@@ -61,35 +64,74 @@ type X402ChallengeShape = {
   accepts?: unknown;
 };
 
+function formatAcceptOption(accept: X402Accept): string {
+  const scheme = typeof accept.scheme === "string" ? accept.scheme : "exact";
+  const network =
+    typeof accept.network === "string" ? accept.network : "unknown";
+  const asset =
+    typeof accept.asset === "string" ? accept.asset : "unknown asset";
+  const amount =
+    typeof accept.amount === "string" ? accept.amount : "unknown amount";
+  const payTo = typeof accept.payTo === "string" ? accept.payTo : "unknown";
+  return `${scheme} | ${amount} (atomic units) of ${asset} on ${network}, payTo ${payTo}`;
+}
+
 /**
  * Pull the price/chain/asset from an x402 challenge embedded in a
  * `callApi` 402 error message and emit a hint that points the caller at
- * the three concrete auto-pay paths. Best-effort: if the body is not
- * valid x402 JSON we still return the original message verbatim with a
- * generic hint appended, so callers always get actionable guidance.
+ * the three concrete auto-pay paths.
+ *
+ * Surfaces every entry in `accepts[]` rather than only the first. x402
+ * challenges can offer multiple payment schemes (e.g. x402 on Base
+ * alongside MPP on Tempo), and an agent shouldn't have to re-parse the
+ * raw challenge body to discover the alternatives. Limited to a small
+ * cap so a pathological challenge (or future spec extension) doesn't
+ * blow the error message size.
+ *
+ * Best-effort throughout: if the body is unparseable, accepts is empty,
+ * or individual fields are missing/wrong-typed, we degrade to a generic
+ * line rather than throwing — the caller always gets actionable text.
  */
+const MAX_ACCEPT_OPTIONS_TO_SHOW = 5;
+
 function buildPaymentRequiredHint(
   slug: string,
   originalMessage: string
 ): string {
-  const bodyStart = originalMessage.indexOf(" - ");
+  // Search for the body separator only after the known prefix, so a
+  // body that itself contains " - " before its JSON cannot truncate
+  // the parse. callApi's format is deterministic, but the
+  // narrower-anchored search costs nothing and removes a footgun.
+  const bodyStart = originalMessage.indexOf(
+    " - ",
+    API_CALL_FAILED_402_PREFIX.length
+  );
   const body = bodyStart >= 0 ? originalMessage.slice(bodyStart + 3) : "";
-  let priceLine = "Price: see challenge body above";
+  const priceLines: string[] = ["Price: see challenge body above"];
   try {
     const parsed = JSON.parse(body) as X402ChallengeShape;
     const accepts = Array.isArray(parsed.accepts)
       ? (parsed.accepts as X402Accept[])
       : [];
-    const accept = accepts[0];
-    if (accept) {
-      const network =
-        typeof accept.network === "string" ? accept.network : "unknown";
-      const asset =
-        typeof accept.asset === "string" ? accept.asset : "unknown asset";
-      const amount =
-        typeof accept.amount === "string" ? accept.amount : "unknown amount";
-      const payTo = typeof accept.payTo === "string" ? accept.payTo : "unknown";
-      priceLine = `Price: ${amount} (atomic units) of ${asset} on ${network}, payTo ${payTo}`;
+    if (accepts.length > 0) {
+      // Replace the placeholder with one line per option (capped).
+      priceLines.length = 0;
+      const total = accepts.length;
+      for (const [i, accept] of accepts.entries()) {
+        if (i >= MAX_ACCEPT_OPTIONS_TO_SHOW) {
+          break;
+        }
+        if (!accept) {
+          continue;
+        }
+        const tag = total === 1 ? "Price" : `Option ${i + 1}/${total}`;
+        priceLines.push(`${tag}: ${formatAcceptOption(accept)}`);
+      }
+      if (total > MAX_ACCEPT_OPTIONS_TO_SHOW) {
+        priceLines.push(
+          `... ${total - MAX_ACCEPT_OPTIONS_TO_SHOW} more options in the challenge body above`
+        );
+      }
     }
   } catch {
     // Body was not parseable JSON — fall back to the generic price line.
@@ -98,7 +140,7 @@ function buildPaymentRequiredHint(
     originalMessage,
     "",
     `Paid workflow "${slug}" — this MCP tool does not auto-pay.`,
-    priceLine,
+    ...priceLines,
     "Retry with one of:",
     "  - @keeperhub/wallet: `paymentSigner.fetch(url, { method: 'POST', body, paymentHint: 'x402' })`",
     "  - agentcash: `mcp__agentcash__fetch` against the same endpoint",

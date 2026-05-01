@@ -14,6 +14,17 @@ const AGENTCASH_RE = /mcp__agentcash__fetch/;
 const PAID_WEIRD_RE = /Paid workflow "weird"/;
 const API_402_PREFIX_RE = /^API call failed: 402/;
 const API_500_RE = /API call failed: 500/;
+// Multi-accepts[] follow-up regexes.
+const OPTION_1_OF_2_RE = /Option 1\/2/;
+const OPTION_2_OF_2_RE = /Option 2\/2/;
+const TEMPO_NETWORK_RE = /tempo/;
+const SINGLE_PRICE_LABEL_RE = /^Price:/m;
+const NO_OPTION_TAG_RE = /Option 1\/1/;
+const OVERFLOW_HINT_RE = /more options in the challenge body/;
+const SEE_CHALLENGE_BODY_RE = /Price: see challenge body above/;
+const UNKNOWN_AMOUNT_RE = /unknown amount/;
+const UNKNOWN_ASSET_RE = /unknown asset/;
+const SCHEME_PIPE_RE = /exact \|/;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -466,6 +477,175 @@ describe("call_workflow tool behavior", () => {
         expect(msg).not.toContain("paymentSigner.fetch");
         expect(msg).not.toContain("Paid workflow");
       }
+    });
+
+    // Reviewer follow-ups (KEEP-393): multi-accepts surfacing, empty
+    // accepts handling, non-string field tolerance.
+    it("surfaces every accepts[] option with Option N/M tagging when challenge offers multiple", async () => {
+      // Realistic dual-protocol challenge: x402 on Base + MPP on Tempo.
+      mockFetch402(
+        JSON.stringify({
+          x402Version: 2,
+          accepts: [
+            {
+              scheme: "exact",
+              network: "eip155:8453",
+              asset: "0x833589fcD6eDb6E08f4c7C32D4f71b54bdA02913",
+              amount: "50000",
+              payTo: "0x52a93213b2748c8121691110ffb1c9389bd22308",
+            },
+            {
+              scheme: "mpp",
+              network: "tempo",
+              asset: "0x20c000000000000000000000b9537d11c60e8b50",
+              amount: "50000",
+              payTo: "0x52a93213b2748c8121691110ffb1c9389bd22308",
+            },
+          ],
+        })
+      );
+      await expect(
+        invokeCallWorkflow({ slug: "dual", inputs: {} })
+      ).rejects.toThrow(OPTION_1_OF_2_RE);
+
+      mockFetch402(
+        JSON.stringify({
+          x402Version: 2,
+          accepts: [
+            { scheme: "exact", network: "eip155:8453", amount: "50000" },
+            { scheme: "mpp", network: "tempo", amount: "50000" },
+          ],
+        })
+      );
+      await expect(
+        invokeCallWorkflow({ slug: "dual", inputs: {} })
+      ).rejects.toThrow(OPTION_2_OF_2_RE);
+
+      mockFetch402(
+        JSON.stringify({
+          x402Version: 2,
+          accepts: [
+            { scheme: "exact", network: "eip155:8453", amount: "50000" },
+            { scheme: "mpp", network: "tempo", amount: "50000" },
+          ],
+        })
+      );
+      await expect(
+        invokeCallWorkflow({ slug: "dual", inputs: {} })
+      ).rejects.toThrow(TEMPO_NETWORK_RE);
+    });
+
+    it("uses single 'Price:' label (no Option N/M) when only one accepts entry", async () => {
+      // Don't add option tags when there's only one option — the existing
+      // single-accept tests use SLUG_RE/AMOUNT_RE on the same shape.
+      mockFetch402(
+        JSON.stringify({
+          x402Version: 2,
+          accepts: [
+            { scheme: "exact", network: "eip155:8453", amount: "50000" },
+          ],
+        })
+      );
+      await expect(
+        invokeCallWorkflow({ slug: "single", inputs: {} })
+      ).rejects.toThrow(SINGLE_PRICE_LABEL_RE);
+
+      mockFetch402(
+        JSON.stringify({
+          x402Version: 2,
+          accepts: [
+            { scheme: "exact", network: "eip155:8453", amount: "50000" },
+          ],
+        })
+      );
+      // Must NOT see "Option 1/1" tagging.
+      try {
+        await invokeCallWorkflow({ slug: "single", inputs: {} });
+      } catch (e) {
+        expect((e as Error).message).not.toMatch(NO_OPTION_TAG_RE);
+      }
+    });
+
+    it("falls back to generic price line when accepts is an empty array", async () => {
+      mockFetch402(JSON.stringify({ x402Version: 2, accepts: [] }));
+      await expect(
+        invokeCallWorkflow({ slug: "no-accepts", inputs: {} })
+      ).rejects.toThrow(SEE_CHALLENGE_BODY_RE);
+    });
+
+    it("tolerates non-string field types in an accepts entry (degrades gracefully)", async () => {
+      // amount: 50000 (number, not string) and asset: null. Type guards
+      // in formatAcceptOption must convert these to "unknown amount" /
+      // "unknown asset" rather than throwing or rendering [object Object].
+      mockFetch402(
+        JSON.stringify({
+          x402Version: 2,
+          accepts: [
+            {
+              scheme: "exact",
+              network: "eip155:8453",
+              asset: null,
+              amount: 50_000,
+              payTo: { addr: "0xabc" },
+            },
+          ],
+        })
+      );
+      await expect(
+        invokeCallWorkflow({ slug: "weird-types", inputs: {} })
+      ).rejects.toThrow(UNKNOWN_AMOUNT_RE);
+
+      mockFetch402(
+        JSON.stringify({
+          x402Version: 2,
+          accepts: [
+            {
+              scheme: "exact",
+              network: "eip155:8453",
+              asset: null,
+              amount: 50_000,
+              payTo: { addr: "0xabc" },
+            },
+          ],
+        })
+      );
+      await expect(
+        invokeCallWorkflow({ slug: "weird-types", inputs: {} })
+      ).rejects.toThrow(UNKNOWN_ASSET_RE);
+
+      mockFetch402(
+        JSON.stringify({
+          x402Version: 2,
+          accepts: [
+            {
+              scheme: "exact",
+              network: "eip155:8453",
+              asset: null,
+              amount: 50_000,
+              payTo: { addr: "0xabc" },
+            },
+          ],
+        })
+      );
+      // Scheme defaults to "exact" and the formatter still runs.
+      await expect(
+        invokeCallWorkflow({ slug: "weird-types", inputs: {} })
+      ).rejects.toThrow(SCHEME_PIPE_RE);
+    });
+
+    it("caps the option list and shows an overflow hint when accepts has many entries", async () => {
+      // Generate 7 accepts to exceed the cap of 5.
+      const many = Array.from({ length: 7 }, (_, i) => ({
+        scheme: "exact",
+        network: `eip155:${8453 + i}`,
+        amount: "50000",
+        asset: "0xasset",
+        payTo: "0xpayto",
+      }));
+      mockFetch402(JSON.stringify({ x402Version: 2, accepts: many }));
+      await expect(
+        invokeCallWorkflow({ slug: "many", inputs: {} })
+      ).rejects.toThrow(OVERFLOW_HINT_RE);
     });
   });
 
