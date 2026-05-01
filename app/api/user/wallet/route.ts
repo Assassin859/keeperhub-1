@@ -1,14 +1,14 @@
 import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
-import {
-  normalizeAddressForStorage,
-  truncateAddress,
-} from "@/lib/address-utils";
+import { normalizeAddressForStorage } from "@/lib/address-utils";
 import { apiError } from "@/lib/api-error";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { createIntegration } from "@/lib/db/integrations";
+import {
+  buildWalletIntegrationPayload,
+  createIntegration,
+} from "@/lib/db/integrations";
 import { integrations, organizationWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
@@ -191,14 +191,9 @@ async function storeTurnkeyWalletAndIntegration(options: {
     turnkeyPrivateKeyId,
   });
 
-  const truncatedAddress = truncateAddress(normalizedWalletAddress);
-  await createIntegration({
-    userId,
-    organizationId,
-    name: truncatedAddress,
-    type: "web3",
-    config: {},
-  });
+  await createIntegration(
+    buildWalletIntegrationPayload(userId, organizationId, normalizedWalletAddress)
+  );
 
   return { walletAddress: normalizedWalletAddress, walletId: turnkeyWalletId };
 }
