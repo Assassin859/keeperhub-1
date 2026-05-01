@@ -32,11 +32,45 @@ export function WorkflowTemplateList({
   }
 
   return (
-    // biome-ignore lint/a11y/useSemanticElements: rowgroup A11y wrapper without using a real <table> -- the rows inside are <article role="row"> per UI-SPEC §2; <tbody> would not be a valid parent for <article>.
+    // biome-ignore lint/a11y/useSemanticElements: matches the marketplace table — UI-SPEC §5 mandates a CSS grid layout (grid-cols-[48px_1fr_220px_96px_96px_80px]); a native <table> cannot drive grid tracks. The role="table"/"row"/"columnheader" hierarchy preserves screen-reader semantics.
     <div
-      className="overflow-hidden rounded-xl border border-border/20"
-      role="rowgroup"
+      aria-label="Workflow templates"
+      className="overflow-hidden rounded-xl border border-border/20 bg-[var(--color-hub-card)]"
+      role="table"
     >
+      {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
+      {/* biome-ignore lint/a11y/useFocusableInteractive: header row is a label container, not a tab stop. */}
+      <div
+        className="grid grid-cols-[48px_1fr_220px_96px_96px_80px] items-center gap-x-3 border-border/30 border-b bg-[var(--color-hub-overlay)] px-4 py-3 font-normal text-muted-foreground text-xs uppercase tracking-widest"
+        role="row"
+      >
+        {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
+        {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
+        <span role="columnheader">{/* icon */}</span>
+        {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
+        {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
+        <span role="columnheader">Name</span>
+        {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
+        {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
+        <span className="hidden lg:inline" role="columnheader">
+          Tags
+        </span>
+        {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
+        {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
+        <span className="text-right" role="columnheader">
+          Uses
+        </span>
+        {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
+        {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
+        <span className="text-right" role="columnheader">
+          Score
+        </span>
+        {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
+        {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
+        <span className="hidden text-right md:inline" role="columnheader">
+          {/* featured */}
+        </span>
+      </div>
       {workflows.map((workflow) => {
         const override = voteOverrides[workflow.id];
         return (

@@ -26,22 +26,11 @@ function voteCountColorClass(userVote: VoteDirection | null): string {
   if (userVote === "downvote") {
     return "text-[var(--color-text-error)]";
   }
-  return "text-muted-foreground";
+  return "text-foreground";
 }
 
-function priceLabel(workflow: SavedWorkflow): string | null {
-  if (!workflow.isListed) {
-    return null;
-  }
-  const raw = workflow.priceUsdcPerCall;
-  if (raw === null || raw === undefined || raw === "") {
-    return null;
-  }
-  const num = typeof raw === "number" ? raw : Number(raw);
-  if (!Number.isFinite(num)) {
-    return null;
-  }
-  return `$${num.toFixed(2)}/call`;
+function usesLabel(count: number): string {
+  return count.toLocaleString("en-US");
 }
 
 export function WorkflowTemplateRow({
@@ -63,15 +52,15 @@ export function WorkflowTemplateRow({
     }
   };
 
-  const price = priceLabel(workflow);
   const upActive = userVote === "upvote";
   const downActive = userVote === "downvote";
+  const uses = workflow.duplicateCount ?? 0;
 
   return (
     // biome-ignore lint/a11y/useSemanticElements: row uses an <article> with the row A11y role per UI-SPEC §2 to act as a click target with the ::before overlay; nested vote buttons forbid wrapping <a>.
     <article
       aria-label={`Open ${workflow.name} preview`}
-      className="group relative flex min-h-[3rem] cursor-pointer items-center gap-3 bg-[var(--color-hub-card)] px-4 py-3 transition-colors duration-100 ease before:absolute before:inset-0 before:z-[1] before:cursor-pointer before:content-[''] even:bg-[var(--color-row-stripe)] hover:bg-[var(--color-hub-icon-bg)] motion-reduce:transition-none"
+      className="group relative grid min-h-[3rem] cursor-pointer grid-cols-[48px_1fr_220px_96px_96px_80px] items-center gap-x-3 border-border/20 border-b bg-[var(--color-hub-card)] px-4 py-3 transition-colors duration-100 ease before:absolute before:inset-0 before:z-[1] before:cursor-pointer before:content-[''] last:border-b-0 even:bg-[var(--color-hub-overlay)] hover:bg-[var(--color-hub-icon-bg)] motion-reduce:transition-none"
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: UI-SPEC §2 mandates an <article> with the row A11y role for rowgroup/row semantics; the row is interactive via the ::before overlay and onKeyDown handler.
@@ -85,42 +74,27 @@ export function WorkflowTemplateRow({
         <WorkflowIcon className="size-3.5" />
       </span>
 
-      <span className="pointer-events-none relative z-[2] flex-1 truncate font-semibold text-foreground text-sm">
+      <span className="pointer-events-none relative z-[2] truncate font-semibold text-foreground text-sm">
         {workflow.name}
       </span>
 
-      {workflow.publicTags && workflow.publicTags.length > 0 && (
-        <div className="pointer-events-none relative z-[2] hidden shrink-0 gap-1 lg:flex">
-          {workflow.publicTags.slice(0, 3).map((tag) => (
-            <span
-              className="rounded-full bg-[var(--color-hub-icon-bg)] px-2 py-0.5 font-normal text-[0.625rem] text-muted-foreground"
-              key={tag.slug}
-            >
-              {tag.name}
-            </span>
-          ))}
-        </div>
-      )}
-
-      {price && (
-        <span className="pointer-events-none relative z-[2] shrink-0 font-semibold text-foreground text-xs tabular-nums">
-          {price}
-        </span>
-      )}
-
-      {/* MARKETPLACE_BADGE_SLOT: reserved for cross-tab discovery — Phase 44 HUBV2-08 explicitly forbids rendering anything here. Tab-strip is the only cross-tab discovery mechanism. */}
-
-      {isFeatured && (
-        <span className="pointer-events-none relative z-[2] inline-flex h-[20px] shrink-0 items-center gap-1 rounded-full bg-[var(--color-bg-accent)] px-2">
-          <Star className="size-2.5 fill-[var(--color-text-accent)] text-[var(--color-text-accent)]" />
-          <span className="font-normal text-[0.625rem] text-[var(--color-text-accent)]">
-            Featured
+      <div className="pointer-events-none relative z-[2] hidden flex-wrap gap-1 lg:flex">
+        {workflow.publicTags?.slice(0, 3).map((tag) => (
+          <span
+            className="rounded-full bg-[var(--color-hub-icon-bg)] px-2 py-0.5 font-medium text-[0.625rem] text-muted-foreground"
+            key={tag.slug}
+          >
+            {tag.name}
           </span>
-        </span>
-      )}
+        ))}
+      </div>
 
-      {onVote && (
-        <div className="pointer-events-auto relative z-[2] flex shrink-0 items-center gap-0.5">
+      <span className="pointer-events-none relative z-[2] text-right font-semibold text-foreground text-sm tabular-nums">
+        {usesLabel(uses)}
+      </span>
+
+      {onVote ? (
+        <div className="pointer-events-auto relative z-[2] flex items-center justify-end gap-0.5">
           <button
             aria-label="Upvote"
             aria-pressed={upActive}
@@ -171,6 +145,19 @@ export function WorkflowTemplateRow({
             />
           </button>
         </div>
+      ) : (
+        <span className="pointer-events-none relative z-[2] text-right font-semibold text-foreground text-sm tabular-nums">
+          {score}
+        </span>
+      )}
+
+      {isFeatured ? (
+        <span className="pointer-events-none relative z-[2] hidden items-center justify-center justify-self-end gap-1 rounded-full bg-[var(--color-bg-accent)] px-2 py-0.5 font-semibold text-[0.625rem] text-[var(--color-text-accent)] md:inline-flex">
+          <Star className="size-2.5 fill-[var(--color-text-accent)] text-[var(--color-text-accent)]" />
+          Featured
+        </span>
+      ) : (
+        <span className="hidden md:inline" />
       )}
     </article>
   );
