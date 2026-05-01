@@ -1119,7 +1119,9 @@ export function registerMetaTools(
     "list_workflow",
     "Publish a workflow to the KeeperHub marketplace catalog. Sets isListed=true, assigns or preserves listedSlug, refreshes listedAt. Other agents discover the listing via search_workflows and invoke it via call_workflow. Use this after creating a workflow with create_workflow. Idempotent: re-publishing preserves the original slug.",
     {
-      workflowId: z.string().describe("The internal ID of the workflow to publish"),
+      workflowId: z
+        .string()
+        .describe("The internal ID of the workflow to publish"),
       slug: z
         .string()
         .optional()
@@ -1145,7 +1147,9 @@ export function registerMetaTools(
       workflowType: z
         .enum(["read", "write"])
         .optional()
-        .describe("Workflow type: 'read' for read-only, 'write' for state-changing"),
+        .describe(
+          "Workflow type: 'read' for read-only, 'write' for state-changing"
+        ),
     },
     { title: "List Workflow", readOnlyHint: false, destructiveHint: false },
     withScopeCheck("list_workflow", scope, async (args) =>
@@ -1170,7 +1174,9 @@ export function registerMetaTools(
     "unlist_workflow",
     "Remove a workflow from the marketplace catalog. Slug is preserved for re-listing. Use when the workflow is deprecated or temporarily unavailable. Does not delete the workflow itself; use delete_workflow for permanent removal.",
     {
-      workflowId: z.string().describe("The internal ID of the workflow to unlist"),
+      workflowId: z
+        .string()
+        .describe("The internal ID of the workflow to unlist"),
     },
     { title: "Unlist Workflow", readOnlyHint: false, destructiveHint: true },
     withScopeCheck("unlist_workflow", scope, async (args) =>
@@ -1193,7 +1199,9 @@ export function registerMetaTools(
     "update_workflow_listing",
     "Edit listing metadata for a workflow (description, tags, category, chain, schemas). Cannot change pricing while listed — unlist first, update price, then re-list.",
     {
-      workflowId: z.string().describe("The internal ID of the workflow to update"),
+      workflowId: z
+        .string()
+        .describe("The internal ID of the workflow to update"),
       category: z
         .string()
         .optional()
@@ -1219,7 +1227,11 @@ export function registerMetaTools(
         .optional()
         .describe("Updated price in USDC (only allowed while unlisted)"),
     },
-    { title: "Update Workflow Listing", readOnlyHint: false, destructiveHint: false },
+    {
+      title: "Update Workflow Listing",
+      readOnlyHint: false,
+      destructiveHint: false,
+    },
     withScopeCheck("update_workflow_listing", scope, async (args) =>
       withToolLogging("update_workflow_listing", undefined, async () => {
         const { workflowId, ...patch } = args;
@@ -1246,7 +1258,11 @@ export function registerMetaTools(
         .string()
         .describe("The workflow's public listing slug (e.g. 'my-defi-alert')"),
     },
-    { title: "Get Workflow Listing", readOnlyHint: true, destructiveHint: false },
+    {
+      title: "Get Workflow Listing",
+      readOnlyHint: true,
+      destructiveHint: false,
+    },
     withScopeCheck("get_workflow_listing", scope, async (args) =>
       withToolLogging("get_workflow_listing", undefined, async () => {
         const data = await callApi(

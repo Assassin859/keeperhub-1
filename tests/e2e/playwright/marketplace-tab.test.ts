@@ -16,6 +16,15 @@ const BANNED_TOKENS = [
   "amountUsdc",
 ] as const;
 
+// Top-level regex literals — Biome lint rule
+// `lint/performance/useTopLevelRegex` requires regex literals to live at
+// module scope so they are compiled once instead of on every test invocation.
+const URL_SORT_NEWEST = /[?&]sort=newest/;
+const URL_TAB_MARKETPLACE = /[?&]tab=marketplace/;
+const URL_SORT_POPULAR = /[?&]sort=popular/;
+const URL_TAB_WORKFLOWS = /[?&]tab=workflows/;
+const NAME_EARNINGS = /earnings/i;
+
 test.describe("Marketplace tab (MARKET-13)", () => {
   test.beforeEach(async ({ context }) => {
     await context.clearCookies();
@@ -72,19 +81,19 @@ test.describe("Marketplace tab (MARKET-13)", () => {
     // Switch to Newest.
     await trigger.click();
     const newestOption = page.getByRole("menuitemradio", { name: "Newest" });
-    await expect(newestOption).toBeVisible({ timeout: 5_000 });
+    await expect(newestOption).toBeVisible({ timeout: 5000 });
     await newestOption.click();
-    await expect(page).toHaveURL(/[?&]sort=newest/, { timeout: 5_000 });
+    await expect(page).toHaveURL(URL_SORT_NEWEST, { timeout: 5000 });
     // URL should still carry tab=marketplace alongside sort=newest.
-    await expect(page).toHaveURL(/[?&]tab=marketplace/);
+    await expect(page).toHaveURL(URL_TAB_MARKETPLACE);
     await expect(trigger).toContainText("Newest");
 
     // Switch back to Popular.
     await trigger.click();
     const popularOption = page.getByRole("menuitemradio", { name: "Popular" });
-    await expect(popularOption).toBeVisible({ timeout: 5_000 });
+    await expect(popularOption).toBeVisible({ timeout: 5000 });
     await popularOption.click();
-    await expect(page).toHaveURL(/[?&]sort=popular/, { timeout: 5_000 });
+    await expect(page).toHaveURL(URL_SORT_POPULAR, { timeout: 5000 });
     await expect(trigger).toContainText("Popular");
   });
 
@@ -101,7 +110,7 @@ test.describe("Marketplace tab (MARKET-13)", () => {
     // earnings/revenue sort is explicitly deferred (MARKET-FUTURE-01) until
     // privacy review + bucketing-threshold sign-off.
     const earningsOption = page.getByRole("menuitemradio", {
-      name: /earnings/i,
+      name: NAME_EARNINGS,
     });
     await expect(earningsOption).toHaveCount(0);
   });
@@ -130,7 +139,7 @@ test.describe("Marketplace tab (MARKET-13)", () => {
     await page.getByRole("tab", { name: "Workflows" }).click();
     await page.waitForTimeout(150);
     expect(await shellPulseLocator.count()).toBe(0);
-    await expect(page).toHaveURL(/[?&]tab=workflows/);
+    await expect(page).toHaveURL(URL_TAB_WORKFLOWS);
     // Marker survives → shell did not re-mount.
     await expect(sidebar).toHaveAttribute(
       "data-shell-mount-marker",

@@ -4,6 +4,16 @@ import { expect, test } from "@playwright/test";
 // pass for logged-out visitors too (the Hub is publicly browseable).
 test.use({ storageState: { cookies: [], origins: [] } });
 
+// Top-level regex literals — Biome lint rule
+// `lint/performance/useTopLevelRegex` requires regex literals to be defined
+// once at module scope rather than recompiled inside each test invocation.
+const URL_TAB_WORKFLOWS = /[?&]tab=workflows/;
+const URL_TAB_MARKETPLACE = /[?&]tab=marketplace/;
+const URL_TAB_PROTOCOLS = /[?&]tab=protocols/;
+const HTML_LISTED_IN_MARKETPLACE = /Listed in marketplace/i;
+const SRC_MARKETPLACE_BADGE_SLOT = /MARKETPLACE_BADGE_SLOT/;
+const SRC_LISTED_IN_MARKETPLACE = /Listed in marketplace/;
+
 test.describe("Tabbed Hub shell (HUBV2-02 / HUBV2-03 / HUBV2-08)", () => {
   test.beforeEach(async ({ context }) => {
     // Belt-and-braces: even though storageState above resets browser state,
@@ -53,16 +63,18 @@ test.describe("Tabbed Hub shell (HUBV2-02 / HUBV2-03 / HUBV2-08)", () => {
   }) => {
     await page.goto("/hub", { waitUntil: "domcontentloaded" });
     // Wait for tabs to be interactive before snapshotting history length.
-    await expect(
-      page.getByRole("tab", { name: "Protocols" })
-    ).toHaveAttribute("data-state", "active", { timeout: 15_000 });
+    await expect(page.getByRole("tab", { name: "Protocols" })).toHaveAttribute(
+      "data-state",
+      "active",
+      { timeout: 15_000 }
+    );
     const initialHistoryLength = await page.evaluate(() => history.length);
 
     await page.getByRole("tab", { name: "Workflows" }).click();
-    await expect(page).toHaveURL(/[?&]tab=workflows/, { timeout: 5_000 });
+    await expect(page).toHaveURL(URL_TAB_WORKFLOWS, { timeout: 5000 });
 
     await page.getByRole("tab", { name: "Marketplace" }).click();
-    await expect(page).toHaveURL(/[?&]tab=marketplace/, { timeout: 5_000 });
+    await expect(page).toHaveURL(URL_TAB_MARKETPLACE, { timeout: 5000 });
 
     const finalHistoryLength = await page.evaluate(() => history.length);
     // router.replace MUST NOT push new history entries — HUBV2-03 contract.
@@ -84,21 +96,21 @@ test.describe("Tabbed Hub shell (HUBV2-02 / HUBV2-03 / HUBV2-08)", () => {
     });
 
     await page.getByRole("tab", { name: "Workflows" }).click();
-    await expect(page).toHaveURL(/[?&]tab=workflows/, { timeout: 5_000 });
+    await expect(page).toHaveURL(URL_TAB_WORKFLOWS, { timeout: 5000 });
     await expect(sidebar).toHaveAttribute(
       "data-shell-mount-marker",
       "persisted"
     );
 
     await page.getByRole("tab", { name: "Marketplace" }).click();
-    await expect(page).toHaveURL(/[?&]tab=marketplace/, { timeout: 5_000 });
+    await expect(page).toHaveURL(URL_TAB_MARKETPLACE, { timeout: 5000 });
     await expect(sidebar).toHaveAttribute(
       "data-shell-mount-marker",
       "persisted"
     );
 
     await page.getByRole("tab", { name: "Protocols" }).click();
-    await expect(page).toHaveURL(/[?&]tab=protocols/, { timeout: 5_000 });
+    await expect(page).toHaveURL(URL_TAB_PROTOCOLS, { timeout: 5000 });
     await expect(sidebar).toHaveAttribute(
       "data-shell-mount-marker",
       "persisted"
@@ -109,9 +121,11 @@ test.describe("Tabbed Hub shell (HUBV2-02 / HUBV2-03 / HUBV2-08)", () => {
     page,
   }) => {
     await page.goto("/hub", { waitUntil: "domcontentloaded" });
-    await expect(
-      page.getByRole("tab", { name: "Protocols" })
-    ).toHaveAttribute("data-state", "active", { timeout: 15_000 });
+    await expect(page.getByRole("tab", { name: "Protocols" })).toHaveAttribute(
+      "data-state",
+      "active",
+      { timeout: 15_000 }
+    );
 
     // Trigger a tab swap; assert no .animate-pulse element appears at the
     // SHELL level for >100ms. Tab CONTENT may have its own skeleton (e.g.
@@ -137,12 +151,14 @@ test.describe("Tabbed Hub shell (HUBV2-02 / HUBV2-03 / HUBV2-08)", () => {
     await page.goto("/hub?tab=workflows", { waitUntil: "domcontentloaded" });
     // Wait for the Workflows tab content to render (any view-mode wrapper or
     // empty state — both are acceptable; we only care about the badge string).
-    await expect(
-      page.getByRole("tab", { name: "Workflows" })
-    ).toHaveAttribute("data-state", "active", { timeout: 15_000 });
+    await expect(page.getByRole("tab", { name: "Workflows" })).toHaveAttribute(
+      "data-state",
+      "active",
+      { timeout: 15_000 }
+    );
     // Give the Workflows tab a beat to fully stream in.
     await page
-      .locator('[data-view-mode]')
+      .locator("[data-view-mode]")
       .first()
       .waitFor({ state: "visible", timeout: 15_000 })
       .catch(() => {
@@ -150,7 +166,7 @@ test.describe("Tabbed Hub shell (HUBV2-02 / HUBV2-03 / HUBV2-08)", () => {
         // badge-absence assertion below is still meaningful.
       });
     const html = await page.content();
-    expect(html).not.toMatch(/Listed in marketplace/i);
+    expect(html).not.toMatch(HTML_LISTED_IN_MARKETPLACE);
   });
 
   test("HUBV2-08 source-grep: MARKETPLACE_BADGE_SLOT marker exists in workflow-template-row.tsx", async () => {
@@ -162,7 +178,7 @@ test.describe("Tabbed Hub shell (HUBV2-02 / HUBV2-03 / HUBV2-08)", () => {
       "components/hub/workflow-template-row.tsx",
       "utf8"
     );
-    expect(src).toMatch(/MARKETPLACE_BADGE_SLOT/);
-    expect(src).not.toMatch(/Listed in marketplace/);
+    expect(src).toMatch(SRC_MARKETPLACE_BADGE_SLOT);
+    expect(src).not.toMatch(SRC_LISTED_IN_MARKETPLACE);
   });
 });
