@@ -16,6 +16,7 @@ type HubTabsShellProps = {
   workflowsContent: React.ReactNode;
   marketplaceContent: React.ReactNode;
   searchSlot?: React.ReactNode;
+  actionsSlot?: React.ReactNode;
 };
 
 const PILL_CLASSES =
@@ -30,6 +31,7 @@ export function HubTabsShell({
   workflowsContent,
   marketplaceContent,
   searchSlot,
+  actionsSlot,
 }: HubTabsShellProps): React.ReactElement {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -68,6 +70,7 @@ export function HubTabsShell({
             Marketplace
           </TabsTrigger>
         </TabsList>
+        {actionsSlot ? <div className="ml-auto">{actionsSlot}</div> : null}
       </div>
 
       <TabsContent

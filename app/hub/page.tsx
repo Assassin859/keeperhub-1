@@ -2,6 +2,7 @@
 // guard safely; importing through _tabs-shell would trip Next.js' RSC
 // "Attempted to call isHubTabValue() from the server" error.
 import type { Metadata } from "next";
+import { HubExternalLinks } from "@/components/hub/hub-external-links";
 import { HubHero } from "@/components/hub/hub-hero";
 import { HubTabSearch } from "@/components/hub/hub-tab-search";
 import { HubMarketplaceTab } from "./_marketplace-tab";
@@ -144,6 +145,7 @@ export default async function HubPage({
         <div className="container mx-auto max-w-7xl px-6 pt-20 pb-8">
           <HubHero />
           <HubTabsShell
+            actionsSlot={<HubExternalLinks />}
             initialTab={initialTab}
             marketplaceContent={marketplaceContent}
             protocolsContent={protocolsContent}
