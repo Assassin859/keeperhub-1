@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Provider } from "jotai";
+import Script from "next/script";
 import { type ReactNode, Suspense } from "react";
 import { AppBanner } from "@/components/app-banner";
 import { AuthProvider } from "@/components/auth/provider";
@@ -56,6 +57,20 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
+// Workaround for a Next.js 16 dev-mode race: on browser back-or-forward
+// navigation (including Cmd+Shift+T tab restore) the framework
+// occasionally streams an RSC payload the React client never finishes
+// hydrating, leaving client-component-heavy pages (/hub, /billing, etc.)
+// stuck on the loading skeleton with zero interactive elements.
+// Detection uses the Performance Navigation Timing API to check the
+// navigation type; a forced reload converts the back-or-forward entry
+// into a normal navigation and React hydrates cleanly. Production is
+// unaffected — the JSX gate below uses process.env.NODE_ENV which
+// Webpack/Turbopack inline-substitute at build time, so the entire
+// <Script> element is dead-code-eliminated from prod bundles.
+const ROOT_DEV_BFCACHE_RELOAD =
+  "if(typeof window!=='undefined'&&typeof performance!=='undefined'){var n=performance.getEntriesByType('navigation')[0];if(n&&n.type==='back_forward'){window.location.reload();}}";
+
 type RootLayoutProps = {
   children: ReactNode;
 };
@@ -86,6 +101,11 @@ const RootLayout = ({ children }: RootLayoutProps) => (
           </AuthProvider>
         </Provider>
       </ThemeProvider>
+      {process.env.NODE_ENV === "development" && (
+        <Script id="root-dev-bfcache-reload" strategy="beforeInteractive">
+          {ROOT_DEV_BFCACHE_RELOAD}
+        </Script>
+      )}
     </body>
   </html>
 );
