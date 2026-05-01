@@ -15,7 +15,6 @@ export type WithdrawableAsset = {
   balance: string;
   tokenAddress?: string;
   decimals: number;
-  rpcUrl: string;
   explorerUrl: string | null;
 };
 
@@ -55,8 +54,7 @@ function collectNativeAssets(
       symbol: balance.symbol,
       balance: balance.balance,
       decimals: 18,
-      rpcUrl: chain.defaultPrimaryRpc,
-      explorerUrl: balance.explorerUrl,
+          explorerUrl: balance.explorerUrl,
     });
   }
   return assets;
@@ -89,8 +87,7 @@ function collectSupportedTokenAssets(
       balance: token.balance,
       tokenAddress: token.tokenAddress,
       decimals: tokenMeta?.decimals ?? DEFAULT_STABLECOIN_DECIMALS,
-      rpcUrl: chain.defaultPrimaryRpc,
-      explorerUrl: nativeBalance?.explorerUrl ?? null,
+          explorerUrl: nativeBalance?.explorerUrl ?? null,
     });
   }
   return assets;
@@ -126,8 +123,7 @@ function collectCustomTokenAssets(
       balance: token.balance,
       tokenAddress: token.tokenAddress,
       decimals: tokenMeta.decimals,
-      rpcUrl: chain.defaultPrimaryRpc,
-      explorerUrl: nativeBalance?.explorerUrl ?? null,
+          explorerUrl: nativeBalance?.explorerUrl ?? null,
     });
   }
   return assets;

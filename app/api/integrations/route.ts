@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { createIntegration, getIntegrations } from "@/lib/db/integrations";
+import {
+  createIntegration,
+  ensureWalletIntegration,
+  getIntegrations,
+} from "@/lib/db/integrations";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import type {
@@ -54,6 +58,31 @@ export async function GET(request: Request) {
     // Get optional type filter from query params
     const { searchParams } = new URL(request.url);
     const typeFilter = searchParams.get("type") as IntegrationType | null;
+
+    // Repair wallet/integration data drift before listing: orgs whose
+    // wallet pre-dates the auto-create code (or whose web3 integration
+    // row was deleted) would otherwise see "Add Web3 connection" in the
+    // workflow builder despite having a working wallet. This makes the
+    // first read after deploy heal silently and is a no-op for everyone
+    // already in the consistent state.
+    if (userId && organizationId) {
+      try {
+        await ensureWalletIntegration(userId, organizationId);
+      } catch (error) {
+        // Non-fatal: log and continue. Worst case is the user briefly
+        // sees the orange warning until the next read; the wallet
+        // itself still works.
+        logSystemError(
+          ErrorCategory.DATABASE,
+          "[Integrations] Failed to ensure wallet integration",
+          error,
+          {
+            endpoint: "/api/integrations",
+            operation: "ensureWalletIntegration",
+          }
+        );
+      }
+    }
 
     const integrations = await getIntegrations(
       userId ?? "",
@@ -141,6 +170,17 @@ export async function POST(request: Request) {
 
     return NextResponse.json(response);
   } catch (error) {
+    // KEEP-384: idx_integrations_org_web3 enforces at most one web3
+    // integration per org. Surface that as a 409 instead of falling
+    // through to the generic 500.
+    if (isUniqueViolation(error)) {
+      return NextResponse.json(
+        {
+          error: "This organization already has a web3 integration.",
+        },
+        { status: 409 }
+      );
+    }
     logSystemError(
       ErrorCategory.DATABASE,
       "Failed to create integration",
@@ -158,4 +198,12 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  if (!err || typeof err !== "object") {
+    return false;
+  }
+  const e = err as { code?: string; cause?: { code?: string } };
+  return (e.cause?.code ?? e.code) === "23505";
 }

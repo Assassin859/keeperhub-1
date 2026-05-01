@@ -45,7 +45,6 @@ export type TransferFundsCoreInput = {
   strict?: boolean;
   _context?: {
     executionId?: string;
-    triggerType?: string;
     organizationId?: string;
   };
 };
@@ -178,7 +177,6 @@ export async function transferFundsCore(
     workflowId,
     chainId,
     rpcUrl,
-    triggerType: _context.triggerType as TransactionContext["triggerType"],
     rpcManager,
   };
 
@@ -258,7 +256,6 @@ export async function transferFundsCore(
         to: recipientAddress,
         value: amountInWei,
       }, session, {
-        triggerType: txContext.triggerType ?? "manual",
         gasOverrides: { multiplierOverride, gasLimitOverride },
         workflowId,
         rpcManager,

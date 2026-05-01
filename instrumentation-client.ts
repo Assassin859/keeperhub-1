@@ -5,6 +5,7 @@
 import { captureRouterTransitionStart, init } from "@sentry/nextjs";
 import {
   hasNoInAppFrames,
+  isBrowserExtensionError,
   isEip1193ProviderRejection,
   isMonacoCancellation,
 } from "@/lib/sentry-filters";
@@ -33,6 +34,9 @@ if (SENTRY_DSN) {
         return null;
       }
       if (hasNoInAppFrames(event)) {
+        return null;
+      }
+      if (isBrowserExtensionError(event)) {
         return null;
       }
       if (isMonacoCancellation(event)) {

@@ -4,11 +4,19 @@ import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import ERC20_ABI from "@/lib/contracts/abis/erc20.json";
 import { db } from "@/lib/db";
-import { chains, organizationTokens } from "@/lib/db/schema";
+import {
+  chains,
+  explorerConfigs,
+  organizationTokens,
+  supportedTokens,
+} from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { getOrganizationWallet } from "@/lib/para/wallet-helpers";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
+import { formatWeiToBalance } from "@/lib/wallet/fetch-balances";
+
+const NATIVE_DECIMALS = 18;
 
 type TokenBalance = {
   address: string;
@@ -20,6 +28,17 @@ type TokenBalance = {
   logoUrl?: string;
 };
 
+type SupportedTokenBalance = {
+  tokenAddress: string;
+  symbol: string;
+  name: string;
+  decimals: number;
+  balance: string;
+  balanceRaw: string;
+  logoUrl: string | null;
+  explorerUrl: string | null;
+};
+
 type ChainBalance = {
   chainId: number;
   chainName: string;
@@ -28,9 +47,22 @@ type ChainBalance = {
   nativeBalance: string;
   nativeBalanceRaw: string;
   tokens: TokenBalance[];
+  supportedTokens: SupportedTokenBalance[];
   loading?: boolean;
   error?: string;
 };
+
+function buildTokenExplorerUrl(
+  explorerUrl: string | null,
+  explorerAddressPath: string | null,
+  tokenAddress: string
+): string | null {
+  if (!explorerUrl) {
+    return null;
+  }
+  const path = explorerAddressPath || "/address/{address}";
+  return `${explorerUrl}${path.replace("{address}", tokenAddress)}`;
+}
 
 /**
  * GET /api/user/wallet/balances
@@ -60,11 +92,11 @@ export async function GET(request: Request) {
 
     const walletAddress = wallet.walletAddress;
 
-    // Get all enabled chains
-    const enabledChains = await db
-      .select()
-      .from(chains)
-      .where(eq(chains.isEnabled, true));
+    // Get all enabled EVM chains. Non-EVM chains (Solana) need a different
+    // provider/RPC stack and are out of scope for this endpoint.
+    const enabledChains = (
+      await db.select().from(chains).where(eq(chains.isEnabled, true))
+    ).filter((chain) => chain.chainType === "evm");
 
     // Get tracked tokens for this organization
     const trackedTokens = await db
@@ -78,6 +110,32 @@ export async function GET(request: Request) {
       const existing = tokensByChain.get(token.chainId) || [];
       existing.push(token);
       tokensByChain.set(token.chainId, existing);
+    }
+
+    // Get system-supported tokens (stablecoins) and explorer configs for all
+    // chains. Only one row per supported token actually present on a chain;
+    // chains where a token isn't deployed simply have no row.
+    const [allSupportedTokens, allExplorerConfigs] = await Promise.all([
+      db
+        .select()
+        .from(supportedTokens)
+        .orderBy(supportedTokens.chainId, supportedTokens.sortOrder),
+      db.select().from(explorerConfigs),
+    ]);
+
+    const supportedTokensByChain = new Map<
+      number,
+      typeof allSupportedTokens
+    >();
+    for (const token of allSupportedTokens) {
+      const existing = supportedTokensByChain.get(token.chainId) ?? [];
+      existing.push(token);
+      supportedTokensByChain.set(token.chainId, existing);
+    }
+
+    const explorerByChain = new Map<number, (typeof allExplorerConfigs)[0]>();
+    for (const explorer of allExplorerConfigs) {
+      explorerByChain.set(explorer.chainId, explorer);
     }
 
     // Fetch balances for each chain in parallel
@@ -94,10 +152,13 @@ export async function GET(request: Request) {
           const nativeBalanceRaw = await rpcManager.executeWithFailover(
             (provider) => provider.getBalance(walletAddress)
           );
-          const nativeBalance = ethers.formatEther(nativeBalanceRaw);
+          const nativeBalance = formatWeiToBalance(
+            nativeBalanceRaw,
+            NATIVE_DECIMALS
+          );
 
           // Fetch ERC20 token balances for this chain
-          const chainTokens = tokensByChain.get(chain.chainId) || [];
+          const chainTokens = tokensByChain.get(chain.chainId) ?? [];
           const tokenBalances: TokenBalance[] = [];
 
           for (const token of chainTokens) {
@@ -112,7 +173,7 @@ export async function GET(request: Request) {
                   return (await contract.balanceOf(walletAddress)) as bigint;
                 }
               );
-              const balance = ethers.formatUnits(balanceRaw, token.decimals);
+              const balance = formatWeiToBalance(balanceRaw, token.decimals);
 
               tokenBalances.push({
                 address: token.tokenAddress,
@@ -121,7 +182,7 @@ export async function GET(request: Request) {
                 decimals: token.decimals,
                 balance,
                 balanceRaw: balanceRaw.toString(),
-                logoUrl: token.logoUrl || undefined,
+                logoUrl: token.logoUrl ?? undefined,
               });
             } catch (tokenError) {
               logSystemError(
@@ -140,7 +201,64 @@ export async function GET(request: Request) {
                 decimals: token.decimals,
                 balance: "0",
                 balanceRaw: "0",
-                logoUrl: token.logoUrl || undefined,
+                logoUrl: token.logoUrl ?? undefined,
+              });
+            }
+          }
+
+          // Fetch system-supported token (stablecoin) balances for this chain
+          const chainSupported =
+            supportedTokensByChain.get(chain.chainId) ?? [];
+          const explorer = explorerByChain.get(chain.chainId);
+          const supportedTokenBalances: SupportedTokenBalance[] = [];
+
+          for (const token of chainSupported) {
+            const explorerUrl = buildTokenExplorerUrl(
+              explorer?.explorerUrl ?? null,
+              explorer?.explorerAddressPath ?? null,
+              token.tokenAddress
+            );
+            try {
+              const balanceRaw = await rpcManager.executeWithFailover(
+                async (provider) => {
+                  const contract = new ethers.Contract(
+                    token.tokenAddress,
+                    ERC20_ABI,
+                    provider
+                  );
+                  return (await contract.balanceOf(walletAddress)) as bigint;
+                }
+              );
+              const balance = formatWeiToBalance(balanceRaw, token.decimals);
+              supportedTokenBalances.push({
+                tokenAddress: token.tokenAddress,
+                symbol: token.symbol,
+                name: token.name,
+                decimals: token.decimals,
+                balance,
+                balanceRaw: balanceRaw.toString(),
+                logoUrl: token.logoUrl,
+                explorerUrl,
+              });
+            } catch (tokenError) {
+              logSystemError(
+                ErrorCategory.EXTERNAL_SERVICE,
+                `[Balances] Failed to fetch supported-token balance for ${token.symbol}`,
+                tokenError,
+                {
+                  endpoint: "/api/user/wallet/balances",
+                  operation: "fetchSupportedTokenBalance",
+                }
+              );
+              supportedTokenBalances.push({
+                tokenAddress: token.tokenAddress,
+                symbol: token.symbol,
+                name: token.name,
+                decimals: token.decimals,
+                balance: "0",
+                balanceRaw: "0",
+                logoUrl: token.logoUrl,
+                explorerUrl,
               });
             }
           }
@@ -153,6 +271,7 @@ export async function GET(request: Request) {
             nativeBalance,
             nativeBalanceRaw: nativeBalanceRaw.toString(),
             tokens: tokenBalances,
+            supportedTokens: supportedTokenBalances,
           };
         } catch (error) {
           logSystemError(
@@ -172,6 +291,7 @@ export async function GET(request: Request) {
             nativeBalance: "0",
             nativeBalanceRaw: "0",
             tokens: [],
+            supportedTokens: [],
             error:
               error instanceof Error
                 ? error.message

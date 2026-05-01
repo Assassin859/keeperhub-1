@@ -234,7 +234,6 @@ export async function POST(request: Request) {
       executionId,
       chainId,
       rpcUrl,
-      triggerType: "manual",
     };
 
     // Execute transaction with nonce management
@@ -289,7 +288,6 @@ export async function POST(request: Request) {
         // Get gas configuration from strategy
         const baseGasConfig = await gasStrategy.getGasConfig(
           provider,
-          "manual",
           estimatedGas,
           chainId
         );

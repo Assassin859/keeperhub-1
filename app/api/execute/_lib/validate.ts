@@ -80,7 +80,56 @@ export function validateContractCallInput(body: unknown): ValidationResult {
     };
   }
 
+  const priorityFeeError = validatePriorityFeeGwei(record.priorityFeeGwei);
+  if (priorityFeeError) {
+    return priorityFeeError;
+  }
+
   return { valid: true };
+}
+
+// Sanity ceiling on caller-supplied priority fees. The override is intended to
+// bypass the chain-specific clamp, not to remove all bounds: 10_000 gwei is
+// ~100x typical worst-case mainnet conditions, so anything above this is
+// almost certainly a fat-finger ("100000" instead of "100"). Reject loudly.
+const MAX_PRIORITY_FEE_GWEI = 10_000;
+
+function validatePriorityFeeGwei(value: unknown): ValidationResult | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (typeof value !== "string" || value.trim() === "") {
+    return {
+      valid: false,
+      error: {
+        error: "Invalid field type",
+        field: "priorityFeeGwei",
+        details: "priorityFeeGwei must be a non-empty decimal string in gwei",
+      },
+    };
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return {
+      valid: false,
+      error: {
+        error: "Invalid field value",
+        field: "priorityFeeGwei",
+        details: "priorityFeeGwei must be a finite positive decimal in gwei",
+      },
+    };
+  }
+  if (parsed > MAX_PRIORITY_FEE_GWEI) {
+    return {
+      valid: false,
+      error: {
+        error: "Invalid field value",
+        field: "priorityFeeGwei",
+        details: `priorityFeeGwei must not exceed ${MAX_PRIORITY_FEE_GWEI} gwei`,
+      },
+    };
+  }
+  return null;
 }
 
 function isNonNullObject(value: unknown): value is Record<string, unknown> {

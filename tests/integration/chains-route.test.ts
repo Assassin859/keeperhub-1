@@ -208,14 +208,10 @@ describe("/api/chains route", () => {
       expect(chain).toHaveProperty("name", "Ethereum Mainnet");
       expect(chain).toHaveProperty("symbol", "ETH");
       expect(chain).toHaveProperty("chainType", "evm");
-      expect(chain).toHaveProperty(
-        "defaultPrimaryRpc",
-        "https://eth.example.com"
-      );
-      expect(chain).toHaveProperty(
-        "defaultFallbackRpc",
-        "https://eth-backup.example.com"
-      );
+      // SECURITY: defaultPrimaryRpc / defaultFallbackRpc must NOT be returned
+      // by the public endpoint (some entries embed provider API keys).
+      expect(chain).not.toHaveProperty("defaultPrimaryRpc");
+      expect(chain).not.toHaveProperty("defaultFallbackRpc");
       expect(chain).toHaveProperty("explorerUrl", "https://etherscan.io");
       expect(chain).toHaveProperty(
         "explorerApiUrl",

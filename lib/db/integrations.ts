@@ -2,6 +2,11 @@ import "server-only";
 
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
+import { truncateAddress } from "@/lib/address-utils";
+import {
+  getOrganizationWallet,
+  organizationHasWallet,
+} from "@/lib/para/wallet-helpers";
 import {
   findActionById,
   getIntegration as getPluginDefinition,
@@ -269,6 +274,93 @@ export async function createIntegration(
     ...result,
     config,
   };
+}
+
+/**
+ * Build the canonical payload used to create the cosmetic web3 integration
+ * row that backs an org's KeeperHub wallet. Shared between the provisioning
+ * route (`app/api/user/wallet/route.ts`) and the read-path heal below so the
+ * shape can't drift if one site adds a field.
+ */
+export function buildWalletIntegrationPayload(
+  userId: string,
+  organizationId: string,
+  walletAddress: string
+): CreateIntegrationOptions {
+  return {
+    userId,
+    organizationId,
+    name: truncateAddress(walletAddress),
+    type: "web3",
+    config: {},
+  };
+}
+
+/**
+ * Ensure the org's KeeperHub wallet has a backing web3 integration row.
+ *
+ * Wallet provisioning auto-creates a cosmetic web3 integration alongside the
+ * wallet. For orgs whose wallet pre-dates that auto-create code, or whose
+ * integration was deleted / migrated, the row can be missing -- which made
+ * the Workflow Builder render a misleading "Add Web3 connection" warning
+ * even though the wallet itself was working fine.
+ *
+ * Heals that drift idempotently: if the org has an active wallet but no
+ * web3 integration row, create one with the canonical payload. Safe to call
+ * from any read path that lists integrations -- after the first call for a
+ * given org the row exists and subsequent calls early-return. The userId on
+ * a healed row is just the first member to GET after deploy; reads are
+ * org-scoped so this is benign.
+ */
+export async function ensureWalletIntegration(
+  userId: string,
+  organizationId: string
+): Promise<void> {
+  const hasWallet = await organizationHasWallet(organizationId);
+  if (!hasWallet) {
+    return;
+  }
+
+  const existing = await db
+    .select({ id: integrations.id })
+    .from(integrations)
+    .where(
+      and(
+        eq(integrations.organizationId, organizationId),
+        eq(integrations.type, "web3")
+      )
+    )
+    .limit(1);
+  if (existing.length > 0) {
+    return;
+  }
+
+  const wallet = await getOrganizationWallet(organizationId);
+  // The existence check above is racy: two concurrent /api/integrations GETs
+  // for the same org can both pass it and both insert. The
+  // `idx_integrations_org_web3` partial unique index makes the second insert
+  // fail with Postgres unique_violation (23505); swallow it and treat as
+  // success since the other caller already created the row. drizzle-orm wraps
+  // driver errors in DrizzleQueryError with the original PostgresError on
+  // `.cause` -- match the repo's established pattern (lib/mcp/listing.ts,
+  // app/api/user/wallet/route.ts).
+  try {
+    await createIntegration(
+      buildWalletIntegrationPayload(userId, organizationId, wallet.walletAddress)
+    );
+  } catch (err) {
+    if (!isUniqueViolation(err)) {
+      throw err;
+    }
+  }
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  if (!err || typeof err !== "object") {
+    return false;
+  }
+  const e = err as { code?: string; cause?: { code?: string } };
+  return (e.cause?.code ?? e.code) === "23505";
 }
 
 /**

@@ -1,11 +1,23 @@
 /**
- * Gas Defaults (Client-Safe)
+ * Gas Defaults & Override Parsing (Client-Safe)
  *
- * Static map of chain-specific gas limit multiplier defaults.
- * Mirrors the hardcoded overrides in gas-strategy.ts for display purposes only.
+ * Two related concerns live here:
  *
- * Execution still uses DB -> hardcoded -> default resolution in gas-strategy.ts.
- * This file is purely informational for the UI.
+ *  1. CHAIN_GAS_DEFAULTS / getChainGasDefaults(chainId)
+ *     Display-only multipliers mirroring the hardcoded entries in
+ *     gas-strategy.ts. UI code (e.g. gas-limit-multiplier-field.tsx) reads
+ *     these to show users what default would apply.
+ *
+ *  2. resolveGasLimitOverrides / parsePriorityFeeGwei
+ *     Execution-path helpers that turn user-supplied strings into the
+ *     bigint/number overrides the gas strategy accepts. Shared between
+ *     write-contract / transfer-funds / transfer-token step handlers.
+ *
+ * Execution still uses DB -> hardcoded -> default resolution in
+ * gas-strategy.ts; this file does NOT replace that lookup. It only parses
+ * caller inputs and exposes display defaults.
+ *
+ * Must remain ethers-free so it stays bundle-safe for the React canvas.
  */
 
 export type ChainGasDefaults = {
@@ -71,6 +83,10 @@ const CHAIN_GAS_DEFAULTS: Record<number, ChainGasDefaults> = {
   137: { multiplier: 2.0, conservative: 2.5 },
   // Polygon Amoy testnet
   80002: { multiplier: 2.0, conservative: 2.5 },
+  // 0G Galileo testnet
+  16602: { multiplier: 2.0, conservative: 2.5 },
+  // 0G Mainnet
+  16661: { multiplier: 2.0, conservative: 2.5 },
 };
 
 const GLOBAL_DEFAULT: ChainGasDefaults = {
@@ -89,6 +105,7 @@ export function getChainGasDefaults(chainId: number): ChainGasDefaults {
 export type GasLimitOverrides = {
   multiplierOverride?: number;
   gasLimitOverride?: bigint;
+  priorityFeeOverride?: bigint;
 };
 
 /**
@@ -116,4 +133,26 @@ export function resolveGasLimitOverrides(
   }
 
   return {};
+}
+
+/**
+ * Convert a caller-supplied priority fee (gwei, decimal string) to wei.
+ * Returns undefined when the value is missing, malformed, or non-positive --
+ * callers should fall through to the default chain-clamped strategy in that
+ * case rather than raising. Implemented without ethers so this module remains
+ * client-safe (gas-limit-multiplier-field.tsx imports it). Float64 has
+ * ~15-16 decimal digits of precision, which comfortably covers gwei values
+ * up to ~10^7 (well past any realistic priority fee).
+ */
+export function parsePriorityFeeGwei(
+  raw: string | undefined
+): bigint | undefined {
+  if (!raw || raw.trim() === "") {
+    return;
+  }
+  const value = Number.parseFloat(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    return;
+  }
+  return BigInt(Math.floor(value * 1e9));
 }
