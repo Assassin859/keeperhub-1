@@ -412,6 +412,71 @@ describe("AdaptiveGasStrategy", () => {
       // Should use default 2.0x multiplier
       expect(config.gasLimit).toBe(BigInt(200_000));
     });
+
+    it("should bypass priority-fee clamp when caller passes priorityFeeOverride", async () => {
+      const strategy = new AdaptiveGasStrategy();
+      // Provider returns a low tip the chain config would normally clamp up.
+      const provider = createMockProvider({
+        maxPriorityFeePerGas: BigInt(0.5e9),
+      });
+
+      const config = await strategy.getGasConfig(
+        provider as unknown as import("ethers").Provider,
+        BigInt(21_000),
+        1, // Ethereum mainnet (min floor 0.5 gwei)
+        undefined, // gasLimitMultiplierOverride
+        undefined, // gasLimitOverride
+        undefined, // rpcManager
+        BigInt(5e9) // priorityFeeOverride: 5 gwei -- well above any clamp
+      );
+
+      expect(config.maxPriorityFeePerGas).toBe(BigInt(5e9));
+      expect(config.maxFeePerGas).toBeGreaterThanOrEqual(BigInt(5e9));
+    });
+
+    // Both 0G chains share a hardcoded floor of 4 gwei
+    // (gasLimitMultiplier=2.0, minPriorityFeeGwei=4.0). Mainnet (16661)
+    // mirrors Galileo (16602) defensively until mainnet has measurable
+    // tx volume to sample independently.
+    it.each([
+      { chainId: 16_602, name: "0G Galileo" },
+      { chainId: 16_661, name: "0G Mainnet" },
+    ])("should enforce $name ($chainId) 4 gwei priority floor", async ({
+      chainId,
+    }) => {
+      const strategy = new AdaptiveGasStrategy();
+      // Provider returns 1.5 gwei tip -- well below 0G's 4 gwei inclusion
+      // threshold. Force volatile path so the conservative branch + clamp
+      // is exercised.
+      const provider = createMockProvider({
+        maxPriorityFeePerGas: BigInt(1.5e9),
+        feeHistory: {
+          baseFeePerGas: [
+            "0x174876e800",
+            "0x2e90edd000",
+            "0x4a817c8000",
+            "0x174876e800",
+            "0x5d21dba000",
+            "0x174876e800",
+            "0x2e90edd000",
+            "0x4a817c8000",
+            "0x174876e800",
+            "0x5d21dba000",
+            "0x2e90edd000",
+          ],
+          reward: new Array(10).fill(["0x3b9aca00"]),
+        },
+      });
+
+      const config = await strategy.getGasConfig(
+        provider as unknown as import("ethers").Provider,
+        BigInt(21_000),
+        chainId
+      );
+
+      expect(config.maxPriorityFeePerGas).toBeGreaterThanOrEqual(BigInt(4e9));
+      expect(config.gasLimit).toBe(BigInt(42_000));
+    });
   });
 
   describe("priority fee clamping", () => {

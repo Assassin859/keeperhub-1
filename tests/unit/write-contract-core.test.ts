@@ -86,13 +86,18 @@ vi.mock("@/lib/abi/function-key", () => ({
   getAbiFunctionKey: vi.fn().mockReturnValue("transfer"),
 }));
 
+// Spy on executeContractCall so tests can inspect the gasOverrides arg.
+// Hoisted so the mock factory below sees an initialized value at module load.
+const { mockExecuteContractCall } = vi.hoisted(() => ({
+  mockExecuteContractCall: vi.fn().mockResolvedValue({
+    hash: "0xhash",
+    gasUsed: BigInt(21_000),
+    effectiveGasPrice: BigInt(1_000_000_000),
+  }),
+}));
 vi.mock("@/lib/web3/chain-adapter", () => ({
   getChainAdapter: vi.fn().mockReturnValue({
-    executeContractCall: vi.fn().mockResolvedValue({
-      hash: "0xhash",
-      gasUsed: BigInt(21_000),
-      effectiveGasPrice: BigInt(1_000_000_000),
-    }),
+    executeContractCall: mockExecuteContractCall,
     getTransactionUrl: vi
       .fn()
       .mockResolvedValue("https://etherscan.io/tx/0xhash"),
@@ -108,6 +113,7 @@ vi.mock("@/lib/web3/gas-defaults", () => ({
     multiplierOverride: undefined,
     gasLimitOverride: undefined,
   }),
+  parsePriorityFeeGwei: vi.fn().mockReturnValue(undefined),
 }));
 
 vi.mock("@/lib/web3/resolve-org-context", () => ({
@@ -153,6 +159,7 @@ vi.mock("@/lib/web3/transaction-manager", () => ({
 // Import mocks for assertion
 import { initializeWalletSigner } from "@/lib/para/wallet-helpers";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
+import { parsePriorityFeeGwei } from "@/lib/web3/gas-defaults";
 
 // Import SUT after all mocks
 import { writeContractCore } from "@/plugins/web3/steps/write-contract-core";
@@ -246,5 +253,57 @@ describe("writeContractCore signer chain ID", () => {
       "https://rpc.example.com",
       1
     );
+  });
+});
+
+describe("writeContractCore priorityFeeGwei override", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedTxContext = null;
+    mockExecuteContractCall.mockResolvedValue({
+      hash: "0xhash",
+      gasUsed: BigInt(21_000),
+      effectiveGasPrice: BigInt(1_000_000_000),
+    });
+  });
+
+  it("forwards parsed priorityFeeGwei into adapter gasOverrides.priorityFeeOverride", async () => {
+    // 5 gwei in wei -- what parsePriorityFeeGwei("5") would return.
+    const fiveGweiWei = BigInt(5e9);
+    vi.mocked(parsePriorityFeeGwei).mockReturnValue(fiveGweiWei);
+
+    await writeContractCore({
+      contractAddress: "0x1234567890123456789012345678901234567890",
+      network: "16602",
+      abi: VALID_ABI,
+      abiFunction: "transfer",
+      priorityFeeGwei: "5",
+      _context: { organizationId: "org-1" },
+    });
+
+    expect(parsePriorityFeeGwei).toHaveBeenCalledWith("5");
+    expect(mockExecuteContractCall).toHaveBeenCalled();
+    const optionsArg = mockExecuteContractCall.mock.calls[0]?.[3] as {
+      gasOverrides: { priorityFeeOverride?: bigint };
+    };
+    expect(optionsArg.gasOverrides.priorityFeeOverride).toBe(fiveGweiWei);
+  });
+
+  it("omits priorityFeeOverride from gasOverrides when input is missing", async () => {
+    vi.mocked(parsePriorityFeeGwei).mockReturnValue(undefined);
+
+    await writeContractCore({
+      contractAddress: "0x1234567890123456789012345678901234567890",
+      network: "16602",
+      abi: VALID_ABI,
+      abiFunction: "transfer",
+      _context: { organizationId: "org-1" },
+    });
+
+    expect(mockExecuteContractCall).toHaveBeenCalled();
+    const optionsArg = mockExecuteContractCall.mock.calls[0]?.[3] as {
+      gasOverrides: { priorityFeeOverride?: bigint };
+    };
+    expect(optionsArg.gasOverrides.priorityFeeOverride).toBeUndefined();
   });
 });

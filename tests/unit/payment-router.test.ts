@@ -244,9 +244,9 @@ describe("buildDual402Response", () => {
     // extensions.bazaar.schema.properties.input.properties.body and
     // extensions.bazaar.schema.properties.output.properties.example -- see
     // @agentcash/discovery dist/index.js extractSchemas2.
-    expect(body.extensions.bazaar.schema.properties.input.properties.body).toEqual(
-      inputSchema
-    );
+    expect(
+      body.extensions.bazaar.schema.properties.input.properties.body
+    ).toEqual(inputSchema);
     expect(
       body.extensions.bazaar.schema.properties.output.properties.example
     ).toEqual({ executionId: "exec_abc123", status: "running" });
@@ -261,10 +261,29 @@ describe("buildDual402Response", () => {
     });
     const body = await response.json();
     expect(body.extensions.bazaar.discoverable).toBe(true);
-    // schema subtree is only populated when inputSchema is provided
-    expect(body.extensions.bazaar.schema).toBeUndefined();
     expect(body.extensions.bazaar.category).toBeUndefined();
     expect(body.extensions.bazaar.tags).toBeUndefined();
+  });
+
+  it("emits extensions.bazaar.schema with an open-object body fallback when inputSchema is missing", async () => {
+    const response = buildDual402Response({
+      price: "0.01",
+      creatorWalletAddress: "0xCreator",
+      workflowName: "Workflow With No DB Schema",
+      resourceUrl: "https://example.com/api/mcp/workflows/no-schema/call",
+    });
+    const body = await response.json();
+    // Without this fallback, @agentcash/discovery's getWarningsFor402Body
+    // emits SCHEMA_INPUT_MISSING / SCHEMA_OUTPUT_MISSING for the resource
+    // and CDP Bazaar can't index it.
+    expect(
+      body.extensions.bazaar.schema.properties.input.properties.body
+    ).toEqual({
+      type: "object",
+    });
+    expect(
+      body.extensions.bazaar.schema.properties.output.properties.example
+    ).toEqual({ executionId: "exec_abc123", status: "running" });
   });
 
   it("emits extensions.bazaar.category and tags when provided", async () => {

@@ -748,6 +748,12 @@ export function registerTools(
         .string()
         .optional()
         .describe("Gas limit multiplier (e.g., '1.5' for 50% buffer)"),
+      priority_fee_gwei: z
+        .string()
+        .optional()
+        .describe(
+          "Explicit maxPriorityFeePerGas in gwei (e.g., '2'). Bypasses the chain's default min/max priority-fee clamp. Use when the network's mempool requires a tip above the configured floor."
+        ),
     },
     { title: "Contract Call", readOnlyHint: false, destructiveHint: false },
     withScopeCheck("execute_contract_call", scope, async (args) =>
@@ -765,6 +771,7 @@ export function registerTools(
             abi: args.abi,
             value: args.value,
             gasLimitMultiplier: args.gas_limit_multiplier,
+            priorityFeeGwei: args.priority_fee_gwei,
           }
         );
         return {
@@ -1050,6 +1057,12 @@ export function registerMetaTools(
         .string()
         .optional()
         .describe("Chain ID filter (e.g., '8453' for Base, '1' for Ethereum)"),
+      workflowType: z
+        .enum(["read", "write"])
+        .optional()
+        .describe(
+          "Filter by workflow type. 'read' executes and returns the result; 'write' returns unsigned calldata for the caller to submit."
+        ),
     },
     { title: "Search Workflows", readOnlyHint: true, destructiveHint: false },
     withScopeCheck("search_workflows", scope, async (args) =>
@@ -1063,6 +1076,9 @@ export function registerMetaTools(
         }
         if (args.chain) {
           params.set("chain", args.chain);
+        }
+        if (args.workflowType) {
+          params.set("workflowType", args.workflowType);
         }
         const query = params.toString();
         const path = `/api/mcp/workflows${query ? `?${query}` : ""}`;

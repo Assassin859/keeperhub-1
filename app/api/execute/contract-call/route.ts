@@ -118,6 +118,7 @@ async function handleWriteCall(
     functionArgs: body.functionArgs as string | undefined,
     ethValue: body.ethValue as string | undefined,
     gasLimitMultiplier: body.gasLimitMultiplier as string | undefined,
+    priorityFeeGwei: body.priorityFeeGwei as string | undefined,
     _context: { organizationId },
   });
 

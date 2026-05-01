@@ -1,7 +1,10 @@
 import { withX402 } from "@x402/next";
 import { Challenge, Credential, Expires } from "mppx";
 import { type NextRequest, NextResponse } from "next/server";
-import { extractMppPayerAddress, hashMppCredential } from "@/lib/payments/mpp/server";
+import {
+  extractMppPayerAddress,
+  hashMppCredential,
+} from "@/lib/payments/mpp/server";
 import {
   buildPaymentConfig,
   extractPayerAddress,
@@ -119,14 +122,25 @@ function buildPaymentRequired(params: Dual402Params): PaymentRequiredV2 {
   if (tagName) {
     bazaar.tags = [tagName];
   }
-  if (inputSchema) {
-    bazaar.schema = {
-      properties: {
-        input: { properties: { body: inputSchema } },
-        output: { properties: { example: WORKFLOW_OUTPUT_EXAMPLE } },
+  // Always emit `bazaar.schema` for paid resources (every 402 is paid by
+  // construction). Workflows whose owners haven't backfilled `inputSchema`
+  // in the DB get an open-object placeholder rather than missing the
+  // schema entirely -- @agentcash/discovery's getWarningsFor402Body emits
+  // SCHEMA_INPUT_MISSING / SCHEMA_OUTPUT_MISSING at the
+  // `extensions.bazaar.schema.properties.{input,output}` paths when this
+  // subtree is absent. Open-object is permissive but lets the resource
+  // index correctly; owners should still backfill real schemas for
+  // ranking + agent UX.
+  bazaar.schema = {
+    properties: {
+      input: {
+        properties: {
+          body: inputSchema ?? { type: "object" },
+        },
       },
-    };
-  }
+      output: { properties: { example: WORKFLOW_OUTPUT_EXAMPLE } },
+    },
+  };
   payload.extensions = { bazaar };
 
   return payload;
