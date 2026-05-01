@@ -293,6 +293,16 @@ export async function updateWorkflowListing(
   // /api/workflows/[workflowId] PATCH gate), refuse to apply curator-side
   // metadata changes that would re-emphasize a broken listing. Same gate as
   // the publish path. Only runs when the row is (or stays) listed.
+  //
+  // Asymmetry note: the workflows-PATCH route uses field-touched-only
+  // semantics (only validates a field when the PATCH actually changes it,
+  // for backwards-compat with legacy listings). This curator path is
+  // intentionally STRICTER — every metadata change re-checks the full state
+  // unconditionally. Rationale: a corrupted listing should not receive
+  // metadata refreshes (category/chain/price etc.) that re-emphasize it on
+  // the bazaar surface. Authors of legacy null-inputSchema or bad-nodes
+  // listings must self-heal via the workflow editor before metadata edits
+  // land here.
   if (current.isListed === true) {
     const literals = findBareAtLiterals(current.nodes);
     if (literals.length > 0) {

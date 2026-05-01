@@ -5,6 +5,7 @@ import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { projects, publicTags, tags, workflowExecutions, workflowPublicTags, workflows } from "@/lib/db/schema";
+import { findFirstWriteActionNode } from "@/lib/mcp/calldata";
 import {
   findBareAtLiterals,
   isInputSchemaPresent,
@@ -368,15 +369,30 @@ export async function PATCH(
     // workflow via /listing then PATCH `nodes` here to introduce a bare-@
     // literal, leaving a broken listing live in the bazaar.
     //
-    // To stay backwards-compatible with workflows listed before the gates
-    // existed, we only validate the field the PATCH actually touches —
-    // legacy listings with null inputSchema continue to work until the next
-    // edit that touches the schema. The exception is a fresh isListed=true
-    // transition through this route, which validates the full final state.
+    // Field-touched-only semantics: stay backwards-compatible with workflows
+    // listed before the gates existed by only validating the field the PATCH
+    // actually changes. Legacy listings with null inputSchema continue to
+    // work until the next edit that touches THAT field. The exception is a
+    // fresh isListed=true transition through this route, which validates the
+    // full final state (effectively a publish event).
+    //
+    // Unlist-and-clean-up bypass: a PATCH that explicitly sets isListed=false
+    // is leaving the listed surface — the bazaar will never see the
+    // post-patch state, so there's no value in blocking the user from fixing
+    // a corrupted workflow on the way out. Skip the gates in that case.
+    //
+    // The 422 messages here intentionally diverge from the listing curator's
+    // (app/api/mcp/workflows/[slug]/listing/route.ts:mapListingError) — they
+    // include "or unlist the workflow before saving these changes" as
+    // context-aware UX guidance. The curator-publish path has no such
+    // option, so its messages don't mention unlisting.
+    const isTransitioningToUnlisted =
+      body.isListed === false && existingWorkflow.isListed === true;
     const isTransitioningToListed =
       body.isListed === true && existingWorkflow.isListed !== true;
     const willBeListed =
-      isTransitioningToListed || existingWorkflow.isListed === true;
+      !isTransitioningToUnlisted &&
+      (isTransitioningToListed || existingWorkflow.isListed === true);
 
     if (willBeListed) {
       const checkNodes =
@@ -412,6 +428,31 @@ export async function PATCH(
             error: "INPUT_SCHEMA_REQUIRED",
             message:
               'Listed workflows must declare an `inputSchema`. Set it to a JSON-schema-shaped object — `{"type": "object"}` is fine for workflows that take no inputs — or unlist the workflow before saving these changes.',
+          },
+          { status: 422 }
+        );
+      }
+
+      // Third publish-time gate from PR #1079: a listed write workflow must
+      // contain at least one write-action node. Same field-touched-only
+      // semantics — only revalidate when nodes are being edited or when
+      // transitioning to listed. workflowType is read from updateData when
+      // the PATCH changes it; otherwise from the existing row.
+      const checkWriteAction =
+        updateData.nodes !== undefined || isTransitioningToListed;
+      const finalWorkflowType =
+        (updateData.workflowType as "read" | "write" | undefined) ??
+        existingWorkflow.workflowType;
+      if (
+        checkWriteAction &&
+        finalWorkflowType === "write" &&
+        findFirstWriteActionNode(finalNodes) === undefined
+      ) {
+        return NextResponse.json(
+          {
+            error: "MISSING_WRITE_ACTION",
+            message:
+              "Listed workflows with workflowType='write' must contain at least one write-contract or protocol-write action node. Add the action back, or unlist the workflow before saving these changes.",
           },
           { status: 422 }
         );

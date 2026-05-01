@@ -388,6 +388,161 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
     expect(data.error).toBe("INPUT_SCHEMA_REQUIRED");
   });
 
+  it("LIST-VALIDATE unlist+cleanup: PATCH {isListed: false, nodes: [bad]} on listed workflow succeeds", async () => {
+    // The workflow is leaving the listed surface in this same PATCH — the
+    // bazaar will never see the post-patch state, so blocking the user from
+    // unlisting+cleaning-up in one shot is unnecessary friction. The gate
+    // explicitly skips when body.isListed === false on a currently-listed row.
+    const existing = makeWorkflow({
+      isListed: true,
+      listedSlug: "live-wf",
+      listedAt: new Date(),
+      inputSchema: { type: "object" },
+      nodes: [goodNode],
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+    mockUpdateReturning.mockResolvedValue([
+      makeWorkflow({
+        isListed: false,
+        listedSlug: "live-wf",
+        listedAt: new Date(),
+        inputSchema: { type: "object" },
+        nodes: [badNode],
+      }),
+    ]);
+
+    const response = await PATCH(
+      createRequest("PATCH", { isListed: false, nodes: [badNode], edges: [] }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("LIST-VALIDATE unlist+null-schema: PATCH {isListed: false, inputSchema: null} on listed workflow succeeds", async () => {
+    const existing = makeWorkflow({
+      isListed: true,
+      listedSlug: "live-wf",
+      listedAt: new Date(),
+      inputSchema: { type: "object" },
+      nodes: [goodNode],
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+    mockUpdateReturning.mockResolvedValue([
+      makeWorkflow({ isListed: false, inputSchema: null }),
+    ]);
+
+    const response = await PATCH(
+      createRequest("PATCH", { isListed: false, inputSchema: null }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("LIST-VALIDATE write-action removed on listed write workflow: rejects MISSING_WRITE_ACTION", async () => {
+    // Third publish-time gate: an author can publish a write workflow then
+    // PATCH `nodes` here to remove the only write-action node, leaving the
+    // listing live but executing nothing meaningful. Same backdoor class as
+    // bare-@ on listed.
+    const writeNode = {
+      id: "write-1",
+      type: "action",
+      data: {
+        type: "action",
+        config: {
+          actionType: "web3/write-contract",
+          contractAddress: "0xabc",
+          network: "1",
+          abi: "[]",
+          abiFunction: "transfer",
+        },
+      },
+    };
+    const existing = makeWorkflow({
+      isListed: true,
+      listedSlug: "live-write",
+      listedAt: new Date(),
+      inputSchema: { type: "object" },
+      workflowType: "write",
+      nodes: [writeNode],
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+
+    const response = await PATCH(
+      createRequest("PATCH", { nodes: [goodNode], edges: [] }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(422);
+    const data = await response.json();
+    expect(data.error).toBe("MISSING_WRITE_ACTION");
+    expect(mockUpdateReturning).not.toHaveBeenCalled();
+  });
+
+  it("LIST-VALIDATE inputSchema as array: rejects INPUT_SCHEMA_REQUIRED", async () => {
+    // Edge case: arrays are objects per typeof but not valid JSON-schema
+    // shapes. isInputSchemaPresent rejects them.
+    const existing = makeWorkflow({
+      isListed: true,
+      listedSlug: "live-wf",
+      listedAt: new Date(),
+      inputSchema: { type: "object" },
+      nodes: [goodNode],
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+
+    const response = await PATCH(createRequest("PATCH", { inputSchema: [] }), {
+      params: mockParams,
+    });
+
+    expect(response.status).toBe(422);
+    const data = await response.json();
+    expect(data.error).toBe("INPUT_SCHEMA_REQUIRED");
+  });
+
+  it("LIST-VALIDATE messaging-skip on listed: PATCH adding @everyone in discord/* node still succeeds", async () => {
+    // The findBareAtLiterals validator skips action types in the messaging
+    // skip-list (discord/*, slack/*, telegram/*, email/*, ai/*, ai-gateway/*,
+    // code/*). A PATCH that adds a Discord node with @everyone in the message
+    // body must not 422 — same skip semantics as the publish path.
+    const discordNode = {
+      id: "discord-1",
+      type: "action",
+      data: {
+        type: "action",
+        config: {
+          actionType: "discord/send-message",
+          content: "Alert @here token spiked, @user1 please review",
+        },
+      },
+    };
+    const existing = makeWorkflow({
+      isListed: true,
+      listedSlug: "live-wf",
+      listedAt: new Date(),
+      inputSchema: { type: "object" },
+      nodes: [goodNode],
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+    mockUpdateReturning.mockResolvedValue([
+      makeWorkflow({
+        isListed: true,
+        listedSlug: "live-wf",
+        listedAt: new Date(),
+        inputSchema: { type: "object" },
+        nodes: [discordNode],
+      }),
+    ]);
+
+    const response = await PATCH(
+      createRequest("PATCH", { nodes: [discordNode], edges: [] }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+  });
+
   it("LIST-VALIDATE legacy: PATCH on listed workflow with null inputSchema, not touching nodes or schema, still succeeds", async () => {
     // Backwards-compat: workflows listed before the gates existed have null
     // inputSchema. They should keep working until the next PATCH that touches
