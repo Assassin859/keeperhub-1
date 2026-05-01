@@ -54,15 +54,32 @@ async function loadTag(slug: string): Promise<LoadedTag | null> {
 }
 
 export async function generateStaticParams(): Promise<Params[]> {
-  // Returns the slug list to pre-render at build. Build runs in a
-  // container with no DB access, so swallow connection errors and rely
-  // on `dynamicParams = true` to render any tag on demand at request
-  // time. Pages will still be statically generated/refreshed via the
-  // 1-hour ISR window once they're first hit in production.
+  // Returns the slug list to pre-render at build. The Docker build
+  // container has no DB access, so a connection failure here is the
+  // expected case — fall back to `dynamicParams = true` and render any
+  // tag on demand at request time (cached for 1 hour via the ISR
+  // revalidate window).
+  //
+  // BUT: a broad `catch {}` would also swallow schema typos, column
+  // renames, or wrong DATABASE_URL in a real prod build, masking real
+  // misconfigurations. So when DATABASE_URL is set AND we're in a
+  // production build, rethrow — the build SHOULD fail loud. The
+  // unconfigured-build path (Docker `pnpm build` with no DATABASE_URL)
+  // continues to swallow the error.
   try {
     const rows = await db.select({ slug: publicTags.slug }).from(publicTags);
     return rows.map((row) => ({ tag: row.slug }));
-  } catch {
+  } catch (err) {
+    const isConfiguredProdBuild =
+      process.env.NODE_ENV === "production" &&
+      Boolean(process.env.DATABASE_URL);
+    if (isConfiguredProdBuild) {
+      throw err;
+    }
+    console.warn(
+      "[generateStaticParams] tag DB read failed, falling back to dynamicParams:",
+      err
+    );
     return [];
   }
 }
