@@ -102,12 +102,30 @@ function applyPanelCollapse(
   return { ...current, panels };
 }
 
+// Cookie used by the root layout to set --nav-sidebar-width on <html>
+// during SSR so page wrappers paint at the correct left margin without
+// a JS hop. Lifetime ~1 year; non-secure so it's available everywhere
+// the user navigates.
+const SIDEBAR_WIDTH_COOKIE = "kh_nav_sidebar_w";
+const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
+
+function persistSidebarWidthCookie(expanded: boolean): void {
+  try {
+    const width = expanded ? 200 : 60;
+    // biome-ignore lint/suspicious/noDocumentCookie: the Cookie Store API isn't shipped in all evergreen browsers yet (Safari lags); document.cookie is the broadly supported write path.
+    document.cookie = `${SIDEBAR_WIDTH_COOKIE}=${width}; path=/; max-age=${COOKIE_MAX_AGE_SECONDS}; samesite=lax`;
+  } catch {
+    // Ignore (some embedded contexts disallow cookies)
+  }
+}
+
 function persistState(state: PersistedNavState): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
     // Ignore storage errors
   }
+  persistSidebarWidthCookie(state.sidebar);
 }
 
 type UsePersistedNavStateReturn = {
@@ -136,6 +154,11 @@ export function usePersistedNavState(): UsePersistedNavStateReturn {
     stateRef.current = loaded;
     setState(loaded);
     setHasMounted(true);
+    // Seed the SSR cookie on first mount so existing users get the
+    // server-side render path on their next page load. New writes go
+    // through commit() -> persistState() which already updates the
+    // cookie.
+    persistSidebarWidthCookie(loaded.sidebar);
   }, []);
 
   const commit = useCallback((next: PersistedNavState) => {
