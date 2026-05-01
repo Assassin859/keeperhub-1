@@ -70,12 +70,26 @@ const MAX_ACCEPT_OPTIONS_TO_SHOW = 5;
 // network slugs, base-10 amounts) while bounding worst-case output if a
 // misbehaving upstream endpoint returns inflated payloads.
 const MAX_ACCEPT_FIELD_CHARS = 128;
-// Strip ASCII control chars (newline, tab, CR, escape, etc.) plus DEL
-// before rendering. A network/asset string carrying `\n` could otherwise
-// inject fabricated `Option N/M` lines into the joined output, poisoning
-// logs and any LLM agent that reads the error.
-// biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching ASCII control chars (U+0000..U+001F and U+007F) to strip them before rendering upstream-supplied strings
-const ACCEPT_CONTROL_CHARS_RE = /[\u0000-\u001f\u007f]/g;
+// Strip control + invisible + reordering characters before rendering
+// upstream-supplied strings. Covers: ASCII C0 (U+0000..U+001F), DEL +
+// C1 (U+007F..U+009F), Unicode line/paragraph separators (U+2028/U+2029),
+// zero-width chars (U+200B..U+200F: ZWSP/ZWNJ/ZWJ/LRM/RLM), and
+// bidi-override controls (U+202A..U+202E: LRE/RLE/PDF/LRO/RLO).
+//
+// Threat surface:
+//  - C0 newline/CR: would inject fabricated `Option N/M` lines into the
+//    joined output, poisoning logs and any LLM agent that reads the
+//    error message.
+//  - U+2028/U+2029: not line-terminators in Node's Error.message or
+//    console.error output, but render as inline whitespace which can
+//    visually fragment fields. Stripping is cheap defence in depth.
+//  - Zero-width + bidi-overrides: a human reading the rendered error
+//    cannot see ZWSP and may read RLO-flipped text in a different
+//    order than the bytes appear, hiding malicious content. Stripping
+//    keeps what the human reads aligned with what the bytes contain.
+const ACCEPT_CONTROL_CHARS_RE =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control chars + Unicode separators + bidi-overrides to neutralise log-injection / hidden-text vectors before rendering upstream-supplied strings
+  /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e]/g;
 
 function sanitiseAcceptField(value: unknown, fallback: string): string {
   if (typeof value !== "string") {
