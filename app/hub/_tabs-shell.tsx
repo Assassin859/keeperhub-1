@@ -4,13 +4,11 @@ import { Box, Store, Workflow as WorkflowIcon } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTransition } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { type HubTabValue, isHubTabValue } from "./_tabs-shared";
 
-const TABS = ["protocols", "workflows", "marketplace"] as const;
-export type HubTabValue = (typeof TABS)[number];
-
-export function isHubTabValue(value: string): value is HubTabValue {
-  return (TABS as readonly string[]).includes(value);
-}
+// Re-export for callers that already import from this file (matches the
+// public surface promised in 44-01-PLAN.md acceptance criteria).
+export { type HubTabValue, isHubTabValue } from "./_tabs-shared";
 
 type HubTabsShellProps = {
   initialTab: HubTabValue;
