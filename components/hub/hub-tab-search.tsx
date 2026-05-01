@@ -27,7 +27,7 @@ import { type HubTabValue, isHubTabValue } from "@/app/hub/_tabs-shared";
 
 const PLACEHOLDERS: Record<HubTabValue, string> = {
   protocols: "Search protocols…",
-  workflows: "Search templates…",
+  workflows: "Search workflows…",
   marketplace: "Search marketplace…",
 };
 
