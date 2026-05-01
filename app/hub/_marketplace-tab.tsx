@@ -1,5 +1,6 @@
 import { Box } from "lucide-react";
 import { MarketplaceRow } from "@/components/hub/marketplace-row";
+import { MarketplaceSortDropdown } from "@/components/hub/marketplace-sort-dropdown";
 import {
   fetchMarketplaceLeaderboard,
   type MarketplaceSort,
@@ -67,7 +68,7 @@ export async function HubMarketplaceTab({
           aria-live="polite"
           className="text-muted-foreground text-xs"
         >{`Showing 1–${rows.length} of ${total}, sorted by ${SORT_LABELS[sort]}`}</p>
-        {/* Sort dropdown wired in plan 44-06 — slot left empty here. */}
+        <MarketplaceSortDropdown active={sort} />
       </div>
       {/* biome-ignore lint/a11y/useSemanticElements: UI-SPEC §5 mandates a CSS grid layout (grid-cols-[48px_1fr_220px_96px_96px_80px_140px]); a native <table> cannot drive grid tracks. The role="table"/"row"/"columnheader" hierarchy preserves screen-reader semantics. */}
       <div
