@@ -240,4 +240,76 @@ describe("verifyWorkflowBinding", () => {
     const r = await verifyWorkflowBinding(SLUG, "base", CREATOR, "50000");
     expect(r.ok).toBe(true);
   });
+
+  // KEEP-391 (Fix-pack-4): the chain match must be performed on a normalised
+  // tag so listings stored with a numeric chain id are interoperable with
+  // the wallet's slug-form payload. Before this fix, a workflow listed with
+  // chain="8453" rejected every legitimate Base x402 payment because the
+  // wallet client always sends chain="base".
+  describe("chain tag normalisation (KEEP-391)", () => {
+    it("accepts caller chain=base when workflow.chain is the Base chain id 8453", async () => {
+      queueWorkflow({ chain: "8453" });
+      queueWallet({});
+      const r = await verifyWorkflowBinding(SLUG, "base", CREATOR, "50000");
+      expect(r.ok).toBe(true);
+    });
+
+    it("accepts caller chain=tempo when workflow.chain is Tempo mainnet id 4217", async () => {
+      queueWorkflow({ chain: "4217" });
+      queueWallet({});
+      const r = await verifyWorkflowBinding(SLUG, "tempo", "", "0");
+      expect(r.ok).toBe(true);
+    });
+
+    it("accepts caller chain=tempo when workflow.chain is Tempo testnet id 4218", async () => {
+      queueWorkflow({ chain: "4218" });
+      queueWallet({});
+      const r = await verifyWorkflowBinding(SLUG, "tempo", "", "0");
+      expect(r.ok).toBe(true);
+    });
+
+    it("normalises case + whitespace on slug input (Base, ' tempo ')", async () => {
+      queueWorkflow({ chain: "Base" });
+      queueWallet({});
+      const r1 = await verifyWorkflowBinding(SLUG, "base", CREATOR, "50000");
+      expect(r1.ok).toBe(true);
+
+      queueWorkflow({ chain: " tempo " });
+      queueWallet({});
+      const r2 = await verifyWorkflowBinding(SLUG, "tempo", "", "0");
+      expect(r2.ok).toBe(true);
+    });
+
+    it("still rejects when normalised wf.chain differs from caller (Base id vs tempo caller)", async () => {
+      queueWorkflow({ chain: "8453" });
+      const r = await verifyWorkflowBinding(SLUG, "tempo", "", "0");
+      expect(r).toMatchObject({
+        ok: false,
+        status: 403,
+        code: "CHAIN_MISMATCH",
+      });
+    });
+
+    it("rejects an unrecognised wf.chain tag (defensive — no silent widening)", async () => {
+      // wf.chain is a non-null string we cannot normalise. Treat as
+      // mismatch rather than falling through to permissive null branch,
+      // so a typo or future chain stored as "ethereum" can never pass
+      // a stolen-HMAC attacker's request through.
+      queueWorkflow({ chain: "ethereum" });
+      const rBase = await verifyWorkflowBinding(SLUG, "base", CREATOR, "50000");
+      expect(rBase).toMatchObject({
+        ok: false,
+        status: 403,
+        code: "CHAIN_MISMATCH",
+      });
+
+      queueWorkflow({ chain: "1" });
+      const rTempo = await verifyWorkflowBinding(SLUG, "tempo", "", "0");
+      expect(rTempo).toMatchObject({
+        ok: false,
+        status: 403,
+        code: "CHAIN_MISMATCH",
+      });
+    });
+  });
 });

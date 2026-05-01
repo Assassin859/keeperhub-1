@@ -125,7 +125,7 @@ serviceMonitors:
 
 resources:
   limits:
-    memory: 2Gi
+    memory: 3Gi
   requests:
     cpu: 100m
     memory: 512Mi
@@ -146,7 +146,7 @@ env:
     value: "5000"
   NODE_OPTIONS:
     type: kv
-    value: "--enable-source-maps"
+    value: "--enable-source-maps --max-old-space-size=2048"
   HOSTNAME:
     type: kv
     value: "0.0.0.0"
