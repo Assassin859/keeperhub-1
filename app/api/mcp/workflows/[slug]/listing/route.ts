@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   getWorkflowListing,
+  type ListingErrorDetails,
   type ListWorkflowMetadata,
   listWorkflow,
   type UpdateWorkflowPatch,
@@ -16,7 +17,10 @@ const LISTING_RATE_WINDOW_MS = 60_000;
 
 type RouteContext = { params: Promise<{ slug: string }> };
 
-function mapListingError(error: string): NextResponse {
+function mapListingError(
+  error: string,
+  details?: ListingErrorDetails
+): NextResponse {
   if (error === "NOT_FOUND") {
     return NextResponse.json({ error: "Workflow not found" }, { status: 404 });
   }
@@ -54,6 +58,9 @@ function mapListingError(error: string): NextResponse {
         error: "INVALID_TEMPLATE_LITERALS",
         message:
           "One or more node config fields contain a bare `@<word>` literal outside a `{{...}}` template wrapper. This usually means the editor's `@` autocomplete was dismissed before the reference was completed. Re-open the workflow, replace the literal with a proper `{{@nodeId:Label.field}}` reference, and try listing again.",
+        ...(details?.literals && details.literals.length > 0
+          ? { literals: details.literals }
+          : {}),
       },
       { status: 422 }
     );
@@ -179,7 +186,7 @@ export async function POST(
 
   const result = await listWorkflow(workflowId, organizationId, metadata);
   if (!result.ok) {
-    return mapListingError(result.error);
+    return mapListingError(result.error, result.details);
   }
 
   return NextResponse.json(result.listing, { status: 200 });
@@ -240,7 +247,7 @@ export async function PATCH(
 
   const result = await updateWorkflowListing(workflowId, organizationId, patch);
   if (!result.ok) {
-    return mapListingError(result.error);
+    return mapListingError(result.error, result.details);
   }
 
   return NextResponse.json(result.listing, { status: 200 });
@@ -270,7 +277,7 @@ export async function DELETE(
 
   const result = await unlistWorkflow(workflowId, organizationId);
   if (!result.ok) {
-    return mapListingError(result.error);
+    return mapListingError(result.error, result.details);
   }
 
   return NextResponse.json(result.listing, { status: 200 });

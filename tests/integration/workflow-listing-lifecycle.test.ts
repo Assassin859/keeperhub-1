@@ -90,7 +90,12 @@ vi.mock("@/lib/db/schema", () => ({
   },
 }));
 
-const { listWorkflow, unlistWorkflow, getWorkflowListing, updateWorkflowListing } = await import("@/lib/mcp/listing");
+const {
+  listWorkflow,
+  unlistWorkflow,
+  getWorkflowListing,
+  updateWorkflowListing,
+} = await import("@/lib/mcp/listing");
 
 const WORKFLOW_ID = "wf-test-001";
 const ORG_ID = "org-test-001";
@@ -121,7 +126,9 @@ describe("workflow listing lifecycle", () => {
   });
 
   it("list: sets isListed=true, assigns listedSlug, sets listedAt", async () => {
-    const result = await listWorkflow(WORKFLOW_ID, ORG_ID, { slug: "my-test-workflow" });
+    const result = await listWorkflow(WORKFLOW_ID, ORG_ID, {
+      slug: "my-test-workflow",
+    });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.listing.isListed).toBe(true);
@@ -138,7 +145,9 @@ describe("workflow listing lifecycle", () => {
     if (!result.ok) return;
     expect(result.listing.isListed).toBe(false);
     expect(result.listing.listedSlug).toBe("my-test-workflow");
-    expect(result.listing.listedAt?.getTime()).toBe(listingTimestamp?.getTime());
+    expect(result.listing.listedAt?.getTime()).toBe(
+      listingTimestamp?.getTime()
+    );
   });
 
   it("getWorkflowListing: returns NOT_FOUND for unlisted workflow even when listedSlug is preserved (sticky-slug)", async () => {
@@ -288,6 +297,7 @@ describe("workflow listing lifecycle", () => {
           config: {
             actionType: "web3/read-contract",
             address: "@40",
+            backup: 'fallback: "@trigger-2"',
           },
         },
       },
@@ -300,6 +310,11 @@ describe("workflow listing lifecycle", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error).toBe("INVALID_TEMPLATE_LITERALS");
+    // details.literals surfaces the offending tokens so the route can return
+    // them in the 422 body for debuggability.
+    expect(result.details?.literals).toEqual(
+      expect.arrayContaining(["@40", "@trigger-2"])
+    );
     expect(workflowState.isListed).toBe(false);
   });
 
