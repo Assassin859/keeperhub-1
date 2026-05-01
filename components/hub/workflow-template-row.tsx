@@ -78,6 +78,8 @@ export function WorkflowTemplateRow({
         {workflow.name}
       </span>
 
+      {/* MARKETPLACE_BADGE_SLOT: reserved for cross-tab discovery — Phase 44 HUBV2-08 forbids rendering anything here. Tab-strip is the only cross-tab discovery mechanism. */}
+
       <div className="pointer-events-none relative z-[2] hidden flex-wrap gap-1 lg:flex">
         {workflow.publicTags?.slice(0, 3).map((tag) => (
           <span
