@@ -1,29 +1,14 @@
 "use client";
 
 import { Search, X } from "lucide-react";
-import { useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState, useTransition } from "react";
 import { type HubTabValue, isHubTabValue } from "@/app/hub/_tabs-shared";
 
-// Phase 44 plan 44-09: tab-strip search input. Per UI-SPEC §1 + §Open
-// Issues #3 recommendation, ship the visual + per-active-tab placeholder
-// now. The onChange handler holds local state but is intentionally NOT
-// wired to the per-tab filters in Phase 44:
-//
-//   - Workflows tab: existing Phase-43 search lives inside the Workflows
-//     client island (`app/hub/_view-shell.tsx` `searchQuery` useState).
-//     Rewiring through the RSC ↔ client boundary requires either lifting
-//     state into a shared client provider or piping a Zustand store —
-//     both are out of scope for this wave.
-//   - Protocols / Marketplace tabs: server-rendered, no client-side
-//     search wiring exists yet. Adding `?q=` to the marketplace cache key
-//     and a client filter to the protocols grid are explicit follow-ups.
-//
-// Cross-tab UNIFIED search (single input that searches across all three
-// surfaces simultaneously) is deferred per UI-SPEC §Open Issues #3 and
-// CONTEXT.md `Deferred Ideas`. The visual + dynamic placeholder ship now
-// so the tab-strip layout is complete; the functional wiring comes in a
-// follow-up sub-phase.
+// Tab-strip search input. URL `?q=` is the single source of truth so the
+// active tab's RSC content (Protocols / Marketplace) can read it directly
+// from `searchParams`, and the Workflows client island can sync its
+// internal `searchQuery` state to it.
 
 const PLACEHOLDERS: Record<HubTabValue, string> = {
   protocols: "Search protocols…",
@@ -42,10 +27,46 @@ function readActiveTab(value: string | null): HubTabValue {
 }
 
 export function HubTabSearch(): React.ReactElement {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const activeTab = readActiveTab(searchParams.get("tab"));
-  const [value, setValue] = useState("");
   const placeholder = PLACEHOLDERS[activeTab];
+
+  // Local mirror of `?q=` so typing feels instant. We push to the URL on
+  // every keystroke through useTransition so the RSC re-render doesn't
+  // block the input.
+  const urlQuery = searchParams.get("q") ?? "";
+  const [value, setValue] = useState(urlQuery);
+  const [, startTransition] = useTransition();
+
+  // Keep the input in sync when the URL changes externally (e.g. tab
+  // switch that preserves `?q=`, or back/forward navigation).
+  useEffect(() => {
+    setValue(urlQuery);
+  }, [urlQuery]);
+
+  const writeUrl = (next: string): void => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (next === "") {
+      params.delete("q");
+    } else {
+      params.set("q", next);
+    }
+    const qs = params.toString();
+    startTransition(() => {
+      router.replace(qs ? `/hub?${qs}` : "/hub", { scroll: false });
+    });
+  };
+
+  const handleChange = (next: string): void => {
+    setValue(next);
+    writeUrl(next);
+  };
+
+  const handleClear = (): void => {
+    setValue("");
+    writeUrl("");
+  };
 
   return (
     <div className="flex w-[280px] items-center gap-2 rounded-lg border border-border/60 bg-[var(--color-hub-icon-bg)] px-3.5 py-2 transition-colors focus-within:border-[var(--color-text-accent)]/40 focus-within:ring-1 focus-within:ring-[var(--color-text-accent)]/20 motion-reduce:transition-none">
@@ -59,7 +80,7 @@ export function HubTabSearch(): React.ReactElement {
       <input
         className="h-5 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/50"
         id="hub-tab-search"
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => handleChange(e.target.value)}
         placeholder={placeholder}
         type="search"
         value={value}
@@ -68,7 +89,7 @@ export function HubTabSearch(): React.ReactElement {
         <button
           aria-label="Clear search"
           className="text-muted-foreground transition-colors hover:text-foreground motion-reduce:transition-none"
-          onClick={() => setValue("")}
+          onClick={handleClear}
           type="button"
         >
           <X className="size-3.5" />

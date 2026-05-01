@@ -81,6 +81,13 @@ function readTagSlug(value: string | string[] | undefined): string | null {
   return trimmed === "" ? null : trimmed;
 }
 
+function readQuery(value: string | string[] | undefined): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value.trim();
+}
+
 function metaForTab(value: string | string[] | undefined): TabMetadata {
   if (typeof value !== "string") {
     return TAB_METADATA.default;
@@ -133,11 +140,14 @@ export default async function HubPage({
   const params = await searchParams;
   const initialTab = readInitialTab(params.tab);
   const initialTagSlug = readTagSlug(params.tag);
+  const query = readQuery(params.q);
 
   // Tab content is passed to HubTabsShell as RSC slot props.
-  const protocolsContent = <HubProtocolsTab />;
+  const protocolsContent = <HubProtocolsTab query={query} />;
   const workflowsContent = <HubWorkflowsTab initialTagSlug={initialTagSlug} />;
-  const marketplaceContent = <HubMarketplaceTab searchParams={params} />;
+  const marketplaceContent = (
+    <HubMarketplaceTab query={query} searchParams={params} />
+  );
 
   return (
     <div className="pointer-events-auto fixed inset-0 overflow-x-hidden overflow-y-auto bg-sidebar [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">

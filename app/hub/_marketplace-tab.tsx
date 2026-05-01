@@ -34,16 +34,23 @@ function readCursor(raw: string | string[] | undefined): string | null {
 
 type MarketplaceTabProps = {
   searchParams: Record<string, string | string[] | undefined>;
+  query: string;
 };
 
 export async function HubMarketplaceTab({
   searchParams,
+  query,
 }: MarketplaceTabProps): Promise<React.ReactElement> {
   const sort = readSort(searchParams.sort);
   const cursor = readCursor(searchParams.cursor);
-  const { rows, total } = await fetchMarketplaceLeaderboard(sort, cursor);
+  const { rows, total } = await fetchMarketplaceLeaderboard(
+    sort,
+    cursor,
+    query
+  );
 
   if (rows.length === 0) {
+    const hasQuery = query.trim().length > 0;
     return (
       <section
         aria-label="Marketplace results"
@@ -51,11 +58,14 @@ export async function HubMarketplaceTab({
       >
         <Box aria-hidden="true" className="size-8 text-muted-foreground/50" />
         <h2 className="mt-4 font-semibold text-foreground text-sm">
-          No paid services listed yet.
+          {hasQuery
+            ? `No marketplace services match “${query}”.`
+            : "No paid services listed yet."}
         </h2>
         <p className="mt-1 text-muted-foreground text-xs">
-          Listed workflows show up here once they have payment activity. List a
-          workflow from your workflow toolbar to get started.
+          {hasQuery
+            ? "Try a different keyword or clear the search."
+            : "Listed workflows show up here once they have payment activity. List a workflow from your workflow toolbar to get started."}
         </p>
       </section>
     );

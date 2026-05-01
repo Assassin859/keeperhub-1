@@ -47,16 +47,20 @@ function HubPageContent({
   );
   const [publicTags, setPublicTags] = useState<PublicTag[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  // Phase 44 plan 44-02: HubHero no longer wires the search input (props
-  // deprecated); the tab-strip search input is plan 44-09. searchQuery state
-  // is retained so 44-09 can rewire it without churn.
-  const [searchQuery, setSearchQuery] = useState("");
   const [selectedTagSlugs, setSelectedTagSlugs] = useState<string[]>([]);
   const [sortBy, setSortBy] = useState<SortValue>("top-rated");
   const [viewMode, setViewMode] = useState<ViewMode>(initialView);
-  const debouncedSearchQuery = useDebounce(searchQuery, 300);
 
   const searchParams = useSearchParams();
+  // Tab-strip search (`?q=` query param) is the authoritative source for
+  // the Workflows tab text filter. Mirror it into local state so the
+  // existing useDebounce + filter pipeline keeps working unchanged.
+  const urlQuery = searchParams.get("q") ?? "";
+  const [searchQuery, setSearchQuery] = useState(urlQuery);
+  useEffect(() => {
+    setSearchQuery(urlQuery);
+  }, [urlQuery]);
+  const debouncedSearchQuery = useDebounce(searchQuery, 300);
 
   // Active tag filter is driven by the ?tag= query param. The server pre-seeds
   // it via initialTagSlug so the first paint already filters; on subsequent

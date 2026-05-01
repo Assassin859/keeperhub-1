@@ -1,4 +1,4 @@
-import { and, desc, eq, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, lt, or, sql } from "drizzle-orm";
 import { unstable_cache } from "next/cache";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
@@ -51,7 +51,8 @@ function decodeCursor(raw: string | null): CursorPayload | null {
 
 async function runLeaderboardQuery(
   sort: MarketplaceSort,
-  cursor: CursorPayload | null
+  cursor: CursorPayload | null,
+  query: string
 ): Promise<MarketplaceLeaderboardResult> {
   // PUBLIC COLUMN WHITELIST -- see MARKET-04. Adding fields here requires
   // re-reading MARKET-04 + MARKET-13 first. NEVER add private columns:
@@ -73,7 +74,12 @@ async function runLeaderboardQuery(
         )
       : undefined;
 
-  const whereClause = and(baseFilter, cursorFilter);
+  // Free-text filter on the public display name. Case-insensitive, simple
+  // substring match; no full-text indexing yet — fine at v1.11 scale.
+  const queryFilter =
+    query === "" ? undefined : ilike(workflows.name, `%${query}%`);
+
+  const whereClause = and(baseFilter, cursorFilter, queryFilter);
 
   const orderClause =
     sort === "newest"
@@ -97,12 +103,14 @@ async function runLeaderboardQuery(
     .orderBy(...orderClause)
     .limit(PAGE_LIMIT + 1);
 
-  // Total count of listed workflows (for the "Showing 1-N of TOTAL" footer).
-  // Single COUNT(*) -- cheap because workflows.is_listed has an index path.
+  // Total count of listed workflows matching the active query (for the
+  // "Showing 1-N of TOTAL" footer). Single COUNT(*) — cheap because
+  // workflows.is_listed has an index path; the optional ILIKE adds a
+  // small linear scan over the listed subset.
   const totalRow = await db
     .select({ value: sql<number>`count(*)::int` })
     .from(workflows)
-    .where(eq(workflows.isListed, true));
+    .where(and(baseFilter, queryFilter));
   const total = totalRow[0]?.value ?? 0;
 
   const hasMore = rows.length > PAGE_LIMIT;
@@ -119,10 +127,11 @@ async function runLeaderboardQuery(
 export const fetchMarketplaceLeaderboard = unstable_cache(
   async (
     sort: MarketplaceSort,
-    cursorRaw: string | null
+    cursorRaw: string | null,
+    query: string
   ): Promise<MarketplaceLeaderboardResult> => {
     const cursor = decodeCursor(cursorRaw);
-    return await runLeaderboardQuery(sort, cursor);
+    return await runLeaderboardQuery(sort, cursor, query);
   },
   ["marketplace-leaderboard"],
   { revalidate: 60, tags: ["marketplace"] }
