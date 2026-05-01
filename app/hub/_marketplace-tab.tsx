@@ -70,7 +70,7 @@ export async function HubMarketplaceTab({
         >{`Showing 1–${rows.length} of ${total}, sorted by ${SORT_LABELS[sort]}`}</p>
         <MarketplaceSortDropdown active={sort} />
       </div>
-      {/* biome-ignore lint/a11y/useSemanticElements: UI-SPEC §5 mandates a CSS grid layout (grid-cols-[48px_1fr_220px_96px_96px_80px_140px]); a native <table> cannot drive grid tracks. The role="table"/"row"/"columnheader" hierarchy preserves screen-reader semantics. */}
+      {/* biome-ignore lint/a11y/useSemanticElements: UI-SPEC §5 mandates a CSS grid layout (grid-cols-[48px_1fr_220px_96px_96px_80px]); a native <table> cannot drive grid tracks. The role="table"/"row"/"columnheader" hierarchy preserves screen-reader semantics. */}
       <div
         aria-label="Marketplace leaderboard"
         className="overflow-hidden rounded-xl border border-border/20 bg-[var(--color-hub-card)]"
@@ -79,7 +79,7 @@ export async function HubMarketplaceTab({
         {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
         {/* biome-ignore lint/a11y/useFocusableInteractive: the header row is a label container, not a tab stop; making it focusable would create empty stops in the keyboard order. */}
         <div
-          className="grid grid-cols-[48px_1fr_220px_96px_96px_80px_140px] items-center border-border/30 border-b bg-[var(--color-hub-overlay)] px-4 py-3 font-normal text-muted-foreground text-xs uppercase tracking-widest"
+          className="grid grid-cols-[48px_1fr_220px_96px_96px_80px] items-center gap-x-3 border-border/30 border-b bg-[var(--color-hub-overlay)] px-4 py-3 font-normal text-muted-foreground text-xs uppercase tracking-widest"
           role="row"
         >
           {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
@@ -108,9 +108,6 @@ export async function HubMarketplaceTab({
           <span className="hidden md:inline" role="columnheader">
             Chain
           </span>
-          {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
-          {/* biome-ignore lint/a11y/useFocusableInteractive: column header for the CTA column is intentionally empty and non-interactive. */}
-          <span role="columnheader" />
         </div>
         {rows.map((row, idx) => (
           <MarketplaceRow key={row.workflowId} rank={idx + 1} row={row} />
