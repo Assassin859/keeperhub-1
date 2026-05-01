@@ -2,17 +2,30 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
 import { findFirstWriteActionNode } from "@/lib/mcp/calldata";
+import {
+  findBareAtLiterals,
+  isInputSchemaPresent,
+} from "@/lib/mcp/listing-validators";
 
 export type ListingErrorCode =
   | "NOT_FOUND"
   | "SLUG_CONFLICT"
   | "PRICE_CHANGE_WHILE_LISTED"
   | "INVALID_INPUT"
-  | "MISSING_WRITE_ACTION";
+  | "MISSING_WRITE_ACTION"
+  | "INVALID_TEMPLATE_LITERALS"
+  | "INPUT_SCHEMA_REQUIRED";
+
+export interface ListingErrorDetails {
+  // Bare-@ literals found in node configs at publish time, surfaced so the
+  // author can locate the offending field without spelunking. Capped at
+  // MAX_FINDINGS by the validator.
+  literals?: string[];
+}
 
 export type ListingResult<T> =
   | { ok: true; listing: T }
-  | { ok: false; error: ListingErrorCode };
+  | { ok: false; error: ListingErrorCode; details?: ListingErrorDetails };
 
 export interface ListWorkflowMetadata {
   slug?: string;
@@ -81,7 +94,9 @@ export async function listWorkflow(
   const existing = await db
     .select()
     .from(workflows)
-    .where(and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId)))
+    .where(
+      and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId))
+    )
     .limit(1);
 
   if (existing.length === 0) {
@@ -138,11 +153,37 @@ export async function listWorkflow(
     return { ok: false, error: "MISSING_WRITE_ACTION" };
   }
 
+  // Reject bare-@ literals in node configs. These are the trapped state of the
+  // editor's `@` autocomplete (user typed `@40` and dismissed the picker before
+  // it wrapped the reference into `{{@nodeId:Label.field}}`). The executor only
+  // resolves wrapped templates, so an unwrapped `@40` would silently flow
+  // through as a literal at runtime. Surface the offending literals so the
+  // author can locate the field without spelunking.
+  const bareLiterals = findBareAtLiterals(current.nodes);
+  if (bareLiterals.length > 0) {
+    return {
+      ok: false,
+      error: "INVALID_TEMPLATE_LITERALS",
+      details: { literals: bareLiterals },
+    };
+  }
+
+  // Listed workflows must declare an inputSchema. Bazaar consumers (agentcash,
+  // x402scan, the OpenAPI spec) need a JSON-schema-shaped object to render and
+  // validate inputs; an empty `{type: "object"}` is fine for zero-input
+  // workflows. Allowing null at publish time leaves the listing unrenderable.
+  const finalInputSchema = updateSet.inputSchema ?? current.inputSchema;
+  if (!isInputSchemaPresent(finalInputSchema)) {
+    return { ok: false, error: "INPUT_SCHEMA_REQUIRED" };
+  }
+
   try {
     const [result] = await db
       .update(workflows)
       .set(updateSet)
-      .where(and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId)))
+      .where(
+        and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId))
+      )
       .returning();
     if (!result) {
       return { ok: false, error: "NOT_FOUND" };
@@ -163,7 +204,9 @@ export async function unlistWorkflow(
   const existing = await db
     .select()
     .from(workflows)
-    .where(and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId)))
+    .where(
+      and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId))
+    )
     .limit(1);
 
   if (existing.length === 0) {
@@ -173,7 +216,9 @@ export async function unlistWorkflow(
   const [result] = await db
     .update(workflows)
     .set({ isListed: false, updatedAt: new Date() })
-    .where(and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId)))
+    .where(
+      and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId))
+    )
     .returning();
 
   if (!result) {
@@ -191,7 +236,9 @@ export async function updateWorkflowListing(
   const existing = await db
     .select()
     .from(workflows)
-    .where(and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId)))
+    .where(
+      and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId))
+    )
     .limit(1);
 
   if (existing.length === 0) {
@@ -245,7 +292,9 @@ export async function updateWorkflowListing(
     const [result] = await db
       .update(workflows)
       .set(updateSet)
-      .where(and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId)))
+      .where(
+        and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId))
+      )
       .returning();
 
     if (!result) {
@@ -270,9 +319,7 @@ export async function getWorkflowListing(
   const rows = await db
     .select(LISTING_COLUMNS)
     .from(workflows)
-    .where(
-      and(eq(workflows.listedSlug, slug), eq(workflows.isListed, true))
-    )
+    .where(and(eq(workflows.listedSlug, slug), eq(workflows.isListed, true)))
     .limit(1);
 
   if (rows.length === 0) {
