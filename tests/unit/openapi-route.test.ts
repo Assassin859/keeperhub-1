@@ -83,6 +83,92 @@ describe("GET /api/openapi", () => {
     expect(path.post.responses["402"]).toBeDefined();
   });
 
+  it("declares x-auth-mode=paid on paid read workflows", async () => {
+    mockDbSelect.mockReturnValue({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue([
+          {
+            id: "wf-paid",
+            name: "Paid Workflow",
+            description: null,
+            listedSlug: "paid-wf",
+            inputSchema: null,
+            priceUsdcPerCall: "0.01",
+            workflowType: "read",
+            category: null,
+            chain: null,
+          },
+        ]),
+      }),
+    });
+
+    const { GET } = await import("@/app/api/openapi/route");
+    const request = new Request("https://app.keeperhub.com/api/openapi");
+    const response = await GET(request);
+    const body = await response.json();
+    const op = body.paths["/api/mcp/workflows/paid-wf/call"].post;
+
+    expect(op["x-auth-mode"]).toBe("paid");
+    // Paid routes without a DB-backed inputSchema get a default open-object
+    // schema so discovery scanners get a valid request body.
+    expect(op.requestBody).toBeDefined();
+    expect(op.requestBody.content["application/json"].schema).toEqual({
+      type: "object",
+      additionalProperties: true,
+    });
+  });
+
+  it("declares x-auth-mode=free on free read workflows", async () => {
+    mockDbSelect.mockReturnValue({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue([
+          {
+            id: "wf-free",
+            name: "Free Workflow",
+            description: null,
+            listedSlug: "free-wf",
+            inputSchema: null,
+            priceUsdcPerCall: "0",
+            workflowType: "read",
+            category: null,
+            chain: null,
+          },
+        ]),
+      }),
+    });
+
+    const { GET } = await import("@/app/api/openapi/route");
+    const request = new Request("https://app.keeperhub.com/api/openapi");
+    const response = await GET(request);
+    const body = await response.json();
+    const op = body.paths["/api/mcp/workflows/free-wf/call"].post;
+
+    expect(op["x-auth-mode"]).toBe("free");
+    expect(op["x-payment-info"]).toBeUndefined();
+    // Free read workflows with no DB-backed schema don't need a fallback
+    // request body.
+    expect(op.requestBody).toBeUndefined();
+  });
+
+  it("includes worked examples in info.x-guidance", async () => {
+    mockDbSelect.mockReturnValue({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue([]),
+      }),
+    });
+
+    const { GET } = await import("@/app/api/openapi/route");
+    const request = new Request("https://app.keeperhub.com/api/openapi");
+    const response = await GET(request);
+    const body = await response.json();
+
+    expect(body.info["x-guidance"]).toContain("Worked examples");
+    expect(body.info["x-guidance"]).toContain(
+      "/api/mcp/workflows/aave-v3-health-check/call"
+    );
+    expect(body.info["x-guidance"]).toContain('"address": "0x..."');
+  });
+
   it("excludes x-payment-info for write workflows", async () => {
     mockDbSelect.mockReturnValue({
       from: vi.fn().mockReturnValue({
