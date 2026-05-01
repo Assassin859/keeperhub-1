@@ -2,6 +2,7 @@
 
 import { ChevronDown } from "lucide-react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import {
   Collapsible,
@@ -62,12 +63,31 @@ function SectionHeader({
   );
 }
 
+function buildHref(
+  currentParams: ReturnType<typeof useSearchParams>,
+  tagSlug: string | null
+): string {
+  // Sidebar is mounted only inside the Workflows tab — the tabbed-hub URL
+  // contract requires `tab=workflows` on every link out of the sidebar so
+  // /hub doesn't bounce back to the default Protocols tab. Preserve any
+  // unrelated query params the user is carrying (e.g. ?q=).
+  const next = new URLSearchParams(currentParams.toString());
+  next.set("tab", "workflows");
+  if (tagSlug === null) {
+    next.delete("tag");
+  } else {
+    next.set("tag", tagSlug);
+  }
+  return `/hub?${next.toString()}`;
+}
+
 export function HubSidebar({
   publicTags,
   sortBy,
   onSortChange,
   activeTagSlug,
 }: HubSidebarProps): React.ReactElement {
+  const searchParams = useSearchParams();
   // First-paint defaults are owned locally so the navigation-sidebar's
   // global panels.sort/panels.tags state (which both default to "closed"
   // for the nav sidebar UX) does not bleed through to the Hub sidebar.
@@ -127,7 +147,7 @@ export function HubSidebar({
                 ? "bg-muted font-normal text-foreground"
                 : "font-normal text-muted-foreground hover:bg-muted hover:text-foreground"
             }`}
-            href="/hub"
+            href={buildHref(searchParams, null)}
             prefetch
             scroll={false}
           >
@@ -138,7 +158,7 @@ export function HubSidebar({
             // Sidebar tag links stay on /hub and use ?tag= for smooth
             // in-place filtering (no segment change, no shell remount).
             // The /hub/tags/[tag] canonical route still exists for SEO.
-            const href = `/hub?tag=${tag.slug}`;
+            const href = buildHref(searchParams, tag.slug);
             return (
               <Link
                 aria-current={active ? "page" : undefined}
