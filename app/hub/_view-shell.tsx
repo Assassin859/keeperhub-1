@@ -233,9 +233,13 @@ function HubPageContent({
   return (
     <div data-view={viewMode}>
       {isLoading ? (
+        // Skeleton must mirror the loaded layout 1:1 so switching to the
+        // Workflows tab doesn't shift content vertically. Phase 44 plan
+        // 44-09 moved the hero to the page shell, so the skeleton no
+        // longer renders title/description placeholders inside the tab
+        // body — keeping them caused a ~72px shrink when the real
+        // content replaced the skeleton.
         <div className="animate-pulse pb-8">
-          <div className="mb-1 h-8 w-64 rounded bg-muted/20" />
-          <div className="mb-5 h-4 w-80 rounded bg-muted/10" />
           <div className="mb-4 flex justify-end">
             <div className="h-9 w-32 rounded-lg bg-muted/10" />
           </div>
