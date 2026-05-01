@@ -43,6 +43,17 @@ export function HubTabsShell({
     }
     const params = new URLSearchParams(searchParams.toString());
     params.set("tab", value);
+    // Drop tab-scoped params that don't apply to the destination tab so
+    // the URL doesn't carry e.g. `sort=newest` from Marketplace into
+    // Workflows. `q` is intentionally preserved (it filters all three
+    // tabs); other params are scoped per-tab.
+    params.delete("cursor"); // marketplace-only pagination cursor
+    if (value !== "marketplace") {
+      params.delete("sort");
+    }
+    if (value !== "workflows") {
+      params.delete("tag");
+    }
     const qs = params.toString();
     startTransition(() => {
       router.replace(qs ? `/hub?${qs}` : "/hub", { scroll: false });
