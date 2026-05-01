@@ -3,6 +3,7 @@
 // "Attempted to call isHubTabValue() from the server" error.
 import type { Metadata } from "next";
 import { HubHero } from "@/components/hub/hub-hero";
+import { HubTabSearch } from "@/components/hub/hub-tab-search";
 import { HubMarketplaceTab } from "./_marketplace-tab";
 import { HubProtocolsTab } from "./_protocols-tab";
 import { type HubTabValue, isHubTabValue } from "./_tabs-shared";
@@ -146,6 +147,7 @@ export default async function HubPage({
             initialTab={initialTab}
             marketplaceContent={marketplaceContent}
             protocolsContent={protocolsContent}
+            searchSlot={<HubTabSearch />}
             workflowsContent={workflowsContent}
           />
         </div>
