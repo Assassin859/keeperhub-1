@@ -39,7 +39,7 @@ export function AddNode({ data }: NodeProps & { data?: AddNodeData }) {
           variant="outline"
         >
           <Globe className="size-4" />
-          Browse Templates
+          Browse the Hub
         </Button>
       </div>
       <GettingStartedChecklist onCreateWorkflow={data.onClick} />
