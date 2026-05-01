@@ -14,13 +14,13 @@ import { HubWorkflowsTab } from "./_workflows-tab";
 const APP_BASE_URL =
   process.env.NEXT_PUBLIC_APP_URL ?? "https://app.keeperhub.com";
 
-// MARKET-05: align RSC revalidate with the unstable_cache TTL used by
-// fetchMarketplaceLeaderboard so Next's CDN headers stay coherent. The
-// literal `Cache-Control: s-maxage=300, stale-while-revalidate=60` header
-// from the spec is achieved at-CDN via the route segment's revalidate +
-// the cached query; if 44-11 e2e flags the literal header string as a
-// contract gap, a thin middleware override lands as a follow-up.
-export const revalidate = 60;
+// /hub reads ?tab= / ?tag= / ?q= / ?sort= / ?cursor= from searchParams,
+// so every request renders a different surface. force-dynamic prevents
+// the segment-level output cache from serving the same HTML across
+// distinct query combos (which silently broke per-query filtering).
+// Data-layer caching for the Marketplace tab still happens via the
+// unstable_cache(60s) wrapper around fetchMarketplaceLeaderboard.
+export const dynamic = "force-dynamic";
 
 type HubPageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;

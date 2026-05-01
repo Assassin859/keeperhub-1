@@ -55,6 +55,12 @@ export function HubTabSearch(): React.ReactElement {
     const qs = params.toString();
     startTransition(() => {
       router.replace(qs ? `/hub?${qs}` : "/hub", { scroll: false });
+      // router.replace alone doesn't invalidate the RSC Router cache for
+      // searchParams-only changes on the same route — the server-rendered
+      // tabs (Protocols, Marketplace) would keep their previous HTML.
+      // router.refresh forces a fresh RSC fetch with the new ?q= so the
+      // server components actually see the updated query.
+      router.refresh();
     });
   };
 
