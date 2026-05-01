@@ -85,85 +85,95 @@ export async function HubMarketplaceTab({
   const clearFiltersHref = `/hub?tab=marketplace&sort=${sort}`;
 
   return (
-    <section aria-label="Marketplace results" className="flex gap-6">
-      <MarketplaceSidebar active={sort} activeTagSlug={tagSlug} tags={tags} />
-      <div className="min-w-0 flex-1">
-        {rows.length === 0 ? (
-          <section
-            aria-label="No marketplace results"
-            className="flex flex-col items-center rounded-xl border border-border/30 border-dashed bg-[var(--color-hub-card)] p-12 text-center"
-          >
-            <Box
-              aria-hidden="true"
-              className="size-8 text-muted-foreground/50"
-            />
-            <h2 className="mt-4 font-semibold text-foreground text-sm">
-              {hasFilter
-                ? hasQuery
-                  ? `No marketplace services match “${query}”.`
-                  : "No marketplace services match this filter."
-                : "No paid services listed yet."}
-            </h2>
-            <p className="mt-1 text-muted-foreground text-xs">
-              {hasFilter
-                ? "Try a different keyword or clear the filter."
-                : "Listed workflows show up here once they have payment activity. List a workflow from your workflow toolbar to get started."}
-            </p>
-            {hasFilter && (
-              <Button asChild className="mt-4 h-8 text-xs" variant="outline">
-                <Link href={clearFiltersHref} scroll={false}>
-                  Clear filters
-                </Link>
-              </Button>
-            )}
-          </section>
-        ) : (
-          // biome-ignore lint/a11y/useSemanticElements: UI-SPEC §5 mandates a CSS grid layout (grid-cols-[48px_1fr_220px_96px_96px_80px]); a native <table> cannot drive grid tracks. The role="table"/"row"/"columnheader" hierarchy preserves screen-reader semantics.
-          <div
-            aria-label="Marketplace leaderboard"
-            aria-rowcount={total}
-            className="overflow-hidden rounded-xl border border-border/20 bg-[var(--color-hub-card)]"
-            role="table"
-          >
-            {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
-            {/* biome-ignore lint/a11y/useFocusableInteractive: the header row is a label container, not a tab stop; making it focusable would create empty stops in the keyboard order. */}
+    // Top spacer mirrors the height of the Workflows tab's view-toggle row
+    // (HubViewToggle is h-9 + mb-4 = 52px). Marketplace doesn't have a
+    // cards/list toggle yet, but reserving the same vertical space keeps
+    // table content from jumping when the user switches between tabs.
+    <>
+      <div aria-hidden="true" className="mb-4 h-9" />
+      <section aria-label="Marketplace results" className="flex gap-6">
+        <MarketplaceSidebar active={sort} activeTagSlug={tagSlug} tags={tags} />
+        <div className="min-w-0 flex-1">
+          {rows.length === 0 ? (
+            <section
+              aria-label="No marketplace results"
+              className="flex flex-col items-center rounded-xl border border-border/30 border-dashed bg-[var(--color-hub-card)] p-12 text-center"
+            >
+              <Box
+                aria-hidden="true"
+                className="size-8 text-muted-foreground/50"
+              />
+              <h2 className="mt-4 font-semibold text-foreground text-sm">
+                {hasFilter
+                  ? hasQuery
+                    ? `No marketplace services match “${query}”.`
+                    : "No marketplace services match this filter."
+                  : "No paid services listed yet."}
+              </h2>
+              <p className="mt-1 text-muted-foreground text-xs">
+                {hasFilter
+                  ? "Try a different keyword or clear the filter."
+                  : "Listed workflows show up here once they have payment activity. List a workflow from your workflow toolbar to get started."}
+              </p>
+              {hasFilter && (
+                <Button asChild className="mt-4 h-8 text-xs" variant="outline">
+                  <Link href={clearFiltersHref} scroll={false}>
+                    Clear filters
+                  </Link>
+                </Button>
+              )}
+            </section>
+          ) : (
+            // biome-ignore lint/a11y/useSemanticElements: UI-SPEC §5 mandates a CSS grid layout (grid-cols-[48px_1fr_220px_96px_96px_80px]); a native <table> cannot drive grid tracks. The role="table"/"row"/"columnheader" hierarchy preserves screen-reader semantics.
             <div
-              className="grid grid-cols-[48px_1fr_220px_96px_96px_80px] items-center gap-x-3 border-border/30 border-b bg-[var(--color-hub-overlay)] px-4 py-3 font-normal text-muted-foreground text-xs uppercase tracking-widest"
-              role="row"
+              aria-label="Marketplace leaderboard"
+              aria-rowcount={total}
+              className="overflow-hidden rounded-xl border border-border/20 bg-[var(--color-hub-card)]"
+              role="table"
             >
               {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
-              {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels; focusable headers would clutter keyboard order without adding navigation value. */}
-              <span role="columnheader">Rank</span>
-              {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
-              {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
-              <span role="columnheader">Name</span>
-              {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
-              {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
-              <span className="hidden lg:inline" role="columnheader">
-                Tags
-              </span>
-              {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
-              {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
-              <span className="text-right" role="columnheader">
-                Calls
-              </span>
-              {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
-              {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
-              <span className="text-right" role="columnheader">
-                Price
-              </span>
-              {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
-              {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
-              <span className="hidden text-right md:inline" role="columnheader">
-                Chain
-              </span>
+              {/* biome-ignore lint/a11y/useFocusableInteractive: the header row is a label container, not a tab stop; making it focusable would create empty stops in the keyboard order. */}
+              <div
+                className="grid grid-cols-[48px_1fr_220px_96px_96px_80px] items-center gap-x-3 border-border/30 border-b bg-[var(--color-hub-overlay)] px-4 py-3 font-normal text-muted-foreground text-xs uppercase tracking-widest"
+                role="row"
+              >
+                {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
+                {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels; focusable headers would clutter keyboard order without adding navigation value. */}
+                <span role="columnheader">Rank</span>
+                {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
+                {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
+                <span role="columnheader">Name</span>
+                {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
+                {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
+                <span className="hidden lg:inline" role="columnheader">
+                  Tags
+                </span>
+                {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
+                {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
+                <span className="text-right" role="columnheader">
+                  Calls
+                </span>
+                {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
+                {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
+                <span className="text-right" role="columnheader">
+                  Price
+                </span>
+                {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
+                {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
+                <span
+                  className="hidden text-right md:inline"
+                  role="columnheader"
+                >
+                  Chain
+                </span>
+              </div>
+              {rows.map((row, idx) => (
+                <MarketplaceRow key={row.workflowId} rank={idx + 1} row={row} />
+              ))}
             </div>
-            {rows.map((row, idx) => (
-              <MarketplaceRow key={row.workflowId} rank={idx + 1} row={row} />
-            ))}
-          </div>
-        )}
-      </div>
-    </section>
+          )}
+        </div>
+      </section>
+    </>
   );
 }
