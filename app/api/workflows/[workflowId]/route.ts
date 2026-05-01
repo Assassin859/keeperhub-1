@@ -5,6 +5,10 @@ import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { projects, publicTags, tags, workflowExecutions, workflowPublicTags, workflows } from "@/lib/db/schema";
+import {
+  findBareAtLiterals,
+  isInputSchemaPresent,
+} from "@/lib/mcp/listing-validators";
 import { syncWorkflowSchedule } from "@/lib/schedule-service";
 import { sanitizeDescription } from "@/lib/sanitize-description";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
@@ -355,6 +359,63 @@ export async function PATCH(
     // Set listedAt server-side on first listing (never from client, never cleared on unlist)
     if (body.isListed === true && existingWorkflow.listedAt === null) {
       updateData.listedAt = new Date();
+    }
+
+    // Re-run the publish-time gates from /listing/route.ts when this PATCH
+    // either (a) edits a workflow that's already listed or (b) is the act of
+    // listing it. This route is a backdoor around the dedicated listing
+    // curator route — without these checks an author could publish a clean
+    // workflow via /listing then PATCH `nodes` here to introduce a bare-@
+    // literal, leaving a broken listing live in the bazaar.
+    //
+    // To stay backwards-compatible with workflows listed before the gates
+    // existed, we only validate the field the PATCH actually touches —
+    // legacy listings with null inputSchema continue to work until the next
+    // edit that touches the schema. The exception is a fresh isListed=true
+    // transition through this route, which validates the full final state.
+    const isTransitioningToListed =
+      body.isListed === true && existingWorkflow.isListed !== true;
+    const willBeListed =
+      isTransitioningToListed || existingWorkflow.isListed === true;
+
+    if (willBeListed) {
+      const checkNodes =
+        updateData.nodes !== undefined || isTransitioningToListed;
+      const finalNodes =
+        updateData.nodes !== undefined
+          ? updateData.nodes
+          : existingWorkflow.nodes;
+      const checkSchema =
+        updateData.inputSchema !== undefined || isTransitioningToListed;
+      const finalSchema =
+        updateData.inputSchema !== undefined
+          ? updateData.inputSchema
+          : existingWorkflow.inputSchema;
+
+      if (checkNodes) {
+        const literals = findBareAtLiterals(finalNodes);
+        if (literals.length > 0) {
+          return NextResponse.json(
+            {
+              error: "INVALID_TEMPLATE_LITERALS",
+              message:
+                "Listed workflow contains a bare `@<word>` literal in a node config field outside a `{{...}}` template wrapper. Replace it with a `{{@nodeId:Label.field}}` reference, or unlist the workflow before saving these changes.",
+              literals,
+            },
+            { status: 422 }
+          );
+        }
+      }
+      if (checkSchema && !isInputSchemaPresent(finalSchema)) {
+        return NextResponse.json(
+          {
+            error: "INPUT_SCHEMA_REQUIRED",
+            message:
+              'Listed workflows must declare an `inputSchema`. Set it to a JSON-schema-shaped object — `{"type": "object"}` is fine for workflows that take no inputs — or unlist the workflow before saving these changes.',
+          },
+          { status: 422 }
+        );
+      }
     }
 
     let updatedWorkflow: typeof workflows.$inferSelect;

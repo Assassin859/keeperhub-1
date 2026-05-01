@@ -131,12 +131,21 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
   });
 
   it("LIST-01: PATCH with isListed=true sets listedAt server-side when listedAt is null", async () => {
-    const existing = makeWorkflow({ isListed: false, listedAt: null });
+    // Transitioning to listed via this route triggers the publish-time gates,
+    // so the existing row must already have a valid inputSchema (or the PATCH
+    // body must supply one). Use an existing valid schema here — listing-flow
+    // tests cover the gate failures directly.
+    const existing = makeWorkflow({
+      isListed: false,
+      listedAt: null,
+      inputSchema: { type: "object" },
+    });
     mockWorkflowsFindFirst.mockResolvedValue(existing);
 
     const updated = makeWorkflow({
       isListed: true,
       listedAt: new Date("2026-03-30T00:00:00Z"),
+      inputSchema: { type: "object" },
     });
     mockUpdateReturning.mockResolvedValue([updated]);
 
@@ -256,6 +265,159 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
     expect(data.listedSlug).toBe("my-workflow");
     expect(data.listedAt).not.toBeNull();
     expect(data.priceUsdcPerCall).toBe("2.00");
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Edit-while-listed re-validation
+  // ──────────────────────────────────────────────────────────────────────
+
+  const badNode = {
+    id: "read-1",
+    type: "action",
+    data: {
+      type: "action",
+      config: { actionType: "web3/read-contract", address: "@40" },
+    },
+  };
+  const goodNode = {
+    id: "read-1",
+    type: "action",
+    data: {
+      type: "action",
+      config: { actionType: "web3/read-contract", address: "0xabc" },
+    },
+  };
+
+  it("LIST-VALIDATE bare-@ on listed: rejects with 422 INVALID_TEMPLATE_LITERALS", async () => {
+    const existing = makeWorkflow({
+      isListed: true,
+      listedSlug: "live-wf",
+      listedAt: new Date(),
+      inputSchema: { type: "object" },
+      nodes: [goodNode],
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+
+    const response = await PATCH(
+      createRequest("PATCH", { nodes: [badNode], edges: [] }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(422);
+    const data = await response.json();
+    expect(data.error).toBe("INVALID_TEMPLATE_LITERALS");
+    expect(data.literals).toContain("@40");
+    expect(mockUpdateReturning).not.toHaveBeenCalled();
+  });
+
+  it("LIST-VALIDATE bare-@ on unlisted: PATCH succeeds (gate only fires when listed)", async () => {
+    const existing = makeWorkflow({
+      isListed: false,
+      nodes: [goodNode],
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+    mockUpdateReturning.mockResolvedValue([
+      makeWorkflow({ isListed: false, nodes: [badNode] }),
+    ]);
+
+    const response = await PATCH(
+      createRequest("PATCH", { nodes: [badNode], edges: [] }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("LIST-VALIDATE null inputSchema on listed: rejects with 422 INPUT_SCHEMA_REQUIRED", async () => {
+    const existing = makeWorkflow({
+      isListed: true,
+      listedSlug: "live-wf",
+      listedAt: new Date(),
+      inputSchema: { type: "object" },
+      nodes: [goodNode],
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+
+    const response = await PATCH(
+      createRequest("PATCH", { inputSchema: null }),
+      {
+        params: mockParams,
+      }
+    );
+
+    expect(response.status).toBe(422);
+    const data = await response.json();
+    expect(data.error).toBe("INPUT_SCHEMA_REQUIRED");
+    expect(mockUpdateReturning).not.toHaveBeenCalled();
+  });
+
+  it("LIST-VALIDATE transition to listed with bare-@ in existing nodes: rejects", async () => {
+    // Backdoor: workflow was created with bare-@ in a node (out-of-band) and
+    // the user now PATCHes isListed=true here. The transition-to-listed branch
+    // validates the full final state, not just patched fields.
+    const existing = makeWorkflow({
+      isListed: false,
+      inputSchema: { type: "object" },
+      nodes: [badNode],
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+
+    const response = await PATCH(createRequest("PATCH", { isListed: true }), {
+      params: mockParams,
+    });
+
+    expect(response.status).toBe(422);
+    const data = await response.json();
+    expect(data.error).toBe("INVALID_TEMPLATE_LITERALS");
+  });
+
+  it("LIST-VALIDATE transition to listed with null existing inputSchema: rejects", async () => {
+    const existing = makeWorkflow({
+      isListed: false,
+      inputSchema: null,
+      nodes: [goodNode],
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+
+    const response = await PATCH(createRequest("PATCH", { isListed: true }), {
+      params: mockParams,
+    });
+
+    expect(response.status).toBe(422);
+    const data = await response.json();
+    expect(data.error).toBe("INPUT_SCHEMA_REQUIRED");
+  });
+
+  it("LIST-VALIDATE legacy: PATCH on listed workflow with null inputSchema, not touching nodes or schema, still succeeds", async () => {
+    // Backwards-compat: workflows listed before the gates existed have null
+    // inputSchema. They should keep working until the next PATCH that touches
+    // nodes or schema. PATCH that only changes other fields (e.g. description)
+    // must not retroactively reject them.
+    const existing = makeWorkflow({
+      isListed: true,
+      listedSlug: "legacy",
+      listedAt: new Date(),
+      inputSchema: null,
+      nodes: [goodNode],
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+    mockUpdateReturning.mockResolvedValue([
+      makeWorkflow({
+        isListed: true,
+        listedSlug: "legacy",
+        listedAt: new Date(),
+        inputSchema: null,
+        nodes: [goodNode],
+        description: "updated text",
+      }),
+    ]);
+
+    const response = await PATCH(
+      createRequest("PATCH", { description: "updated text" }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
   });
 });
 

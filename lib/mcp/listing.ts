@@ -288,6 +288,27 @@ export async function updateWorkflowListing(
     return { ok: false, error: "MISSING_WRITE_ACTION" };
   }
 
+  // Defense in depth: if the listed workflow's nodes were corrupted via an
+  // out-of-band path (e.g. a script or an admin tool that bypassed the
+  // /api/workflows/[workflowId] PATCH gate), refuse to apply curator-side
+  // metadata changes that would re-emphasize a broken listing. Same gate as
+  // the publish path. Only runs when the row is (or stays) listed.
+  if (current.isListed === true) {
+    const literals = findBareAtLiterals(current.nodes);
+    if (literals.length > 0) {
+      return {
+        ok: false,
+        error: "INVALID_TEMPLATE_LITERALS",
+        details: { literals },
+      };
+    }
+    const finalInputSchema =
+      patch.inputSchema === undefined ? current.inputSchema : patch.inputSchema;
+    if (!isInputSchemaPresent(finalInputSchema)) {
+      return { ok: false, error: "INPUT_SCHEMA_REQUIRED" };
+    }
+  }
+
   try {
     const [result] = await db
       .update(workflows)
