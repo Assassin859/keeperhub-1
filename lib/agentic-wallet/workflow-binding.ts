@@ -24,11 +24,25 @@
  * avoid breaking legacy listings that pre-date the column; log a metric when
  * the column is populated so ops can track coverage.
  *
+ * Fix-pack-4 (KEEP-391): the chain match is now performed on a normalised
+ * tag so listings stored with a numeric chain id ("8453", "4217", "4218")
+ * compare equal to the caller's slug form ("base", "tempo"). Before this
+ * fix, a listing with chain="8453" rejected every legitimate Base-USDC
+ * payment with CHAIN_MISMATCH because the wallet's payViaX402 always sends
+ * chain="base". Unknown / unparseable wf.chain values are treated as a
+ * mismatch (defensive) rather than null (permissive) so we never silently
+ * widen access on an unrecognised tag.
+ *
  * Lookup chain mirrors lib/x402/payment-gate.ts:resolveCreatorWallet.
  */
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { organizationWallets, workflows } from "@/lib/db/schema";
+import {
+  BASE_CHAIN_ID,
+  TEMPO_MAINNET_CHAIN_ID,
+  TEMPO_TESTNET_CHAIN_ID,
+} from "./constants";
 
 export type BindingFailure = {
   ok: false;
@@ -55,6 +69,43 @@ export type BindingResult = BindingOk | BindingFailure;
 export type BindingChain = "base" | "tempo";
 
 const USDC_DECIMALS = 6;
+
+const BASE_CHAIN_ID_STR = String(BASE_CHAIN_ID);
+const TEMPO_MAINNET_CHAIN_ID_STR = String(TEMPO_MAINNET_CHAIN_ID);
+const TEMPO_TESTNET_CHAIN_ID_STR = String(TEMPO_TESTNET_CHAIN_ID);
+
+/**
+ * Map any chain tag we accept on a workflow listing — slug ("base",
+ * "tempo") or numeric chain id ("8453", "4217", "4218") — into the
+ * canonical BindingChain form used by /sign callers. Returns null for
+ * unrecognised values so the caller can decide whether null means
+ * "permissive legacy" (when wf.chain itself is null) or "defensive
+ * mismatch" (when wf.chain is set but unparseable).
+ *
+ * Case-insensitive on slug input; whitespace-trimmed. Numeric forms
+ * are matched as decimal strings against the canonical constants in
+ * lib/agentic-wallet/constants.ts so a future chain-id rename only
+ * has to be done in one place.
+ */
+function normaliseChainTag(
+  value: string | null | undefined
+): BindingChain | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const v = value.trim().toLowerCase();
+  if (v === "base" || v === BASE_CHAIN_ID_STR) {
+    return "base";
+  }
+  if (
+    v === "tempo" ||
+    v === TEMPO_MAINNET_CHAIN_ID_STR ||
+    v === TEMPO_TESTNET_CHAIN_ID_STR
+  ) {
+    return "tempo";
+  }
+  return null;
+}
 
 function priceToMicro(
   priceUsdcPerCall: string | null | undefined
@@ -105,17 +156,24 @@ export async function verifyWorkflowBinding(
     };
   }
 
-  // Fix-pack-3 N-1: reject requests whose caller-supplied chain does not
-  // match the workflow's registered chain. Null is permissive for legacy
-  // listings that pre-date the workflows.chain column; once backfilled the
-  // null branch should be tightened to reject.
-  if (wf.chain && wf.chain !== chain) {
-    return {
-      ok: false,
-      status: 403,
-      code: "CHAIN_MISMATCH",
-      error: "chain does not match workflow's registered chain",
-    };
+  // Fix-pack-3 N-1 + Fix-pack-4 (KEEP-391): reject requests whose
+  // caller-supplied chain does not match the workflow's registered chain,
+  // comparing on a normalised tag so listings stored with a numeric chain
+  // id ("8453", "4217", "4218") compare equal to the slug forms ("base",
+  // "tempo"). Null is permissive for legacy listings that pre-date the
+  // workflows.chain column. Unknown / unparseable values are treated as a
+  // mismatch (defensive) rather than null (permissive) so we never silently
+  // widen access on an unrecognised tag.
+  if (wf.chain) {
+    const wfNorm = normaliseChainTag(wf.chain);
+    if (wfNorm === null || wfNorm !== chain) {
+      return {
+        ok: false,
+        status: 403,
+        code: "CHAIN_MISMATCH",
+        error: "chain does not match workflow's registered chain",
+      };
+    }
   }
 
   const orgId = wf.organizationId;
