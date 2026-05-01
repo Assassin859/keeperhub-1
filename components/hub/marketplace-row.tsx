@@ -70,7 +70,14 @@ export function MarketplaceRow({
       </span>
 
       <div className="hidden flex-wrap gap-1 lg:flex">
-        {/* Top-3 public tags: Phase 44 ships without the tag join in the Drizzle query — Task 1 deferred it to keep the SELECT whitelist narrow. The cell still occupies the grid track so the column template stays stable; a follow-up plan can populate. */}
+        {row.tags.slice(0, 3).map((tag) => (
+          <span
+            className="rounded-full bg-[var(--color-hub-icon-bg)] px-2 py-0.5 font-medium text-[0.625rem] text-muted-foreground"
+            key={tag}
+          >
+            {tag}
+          </span>
+        ))}
       </div>
 
       <span className="text-right font-semibold text-foreground text-sm tabular-nums">

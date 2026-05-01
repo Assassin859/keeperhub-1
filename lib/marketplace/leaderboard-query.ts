@@ -1,7 +1,8 @@
-import { and, desc, eq, ilike, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, lt, or, sql } from "drizzle-orm";
 import { unstable_cache } from "next/cache";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
+import { publicTags, workflowPublicTags } from "@/lib/db/schema-extensions";
 import { workflowPayments } from "@/lib/db/schema-payments";
 
 export type MarketplaceSort = "popular" | "newest" | "top-calls" | "price";
@@ -14,6 +15,7 @@ export type MarketplaceLeaderboardRow = {
   priceUsdcPerCall: string | null;
   chain: string | null;
   listedAt: Date | null;
+  tags: string[];
 };
 
 export type MarketplaceLeaderboardResult = {
@@ -131,7 +133,39 @@ async function runLeaderboardQuery(
       ? encodeCursor({ c: last.callCount, i: last.workflowId })
       : null;
 
-  return { rows: pageRows, nextCursor, total };
+  // Tags fetched in a separate query to avoid row multiplication on the main
+  // GROUP BY (joining the tag link table here would inflate COUNT(payments)).
+  // Public tag names are part of the marketplace's public column whitelist.
+  const pageIds = pageRows.map((r) => r.workflowId);
+  const tagRows =
+    pageIds.length === 0
+      ? []
+      : await db
+          .select({
+            workflowId: workflowPublicTags.workflowId,
+            name: publicTags.name,
+          })
+          .from(workflowPublicTags)
+          .innerJoin(
+            publicTags,
+            eq(publicTags.id, workflowPublicTags.publicTagId)
+          )
+          .where(inArray(workflowPublicTags.workflowId, pageIds))
+          .orderBy(publicTags.name);
+
+  const tagsByWorkflow = new Map<string, string[]>();
+  for (const { workflowId, name } of tagRows) {
+    const list = tagsByWorkflow.get(workflowId) ?? [];
+    list.push(name);
+    tagsByWorkflow.set(workflowId, list);
+  }
+
+  const rowsWithTags: MarketplaceLeaderboardRow[] = pageRows.map((row) => ({
+    ...row,
+    tags: tagsByWorkflow.get(row.workflowId) ?? [],
+  }));
+
+  return { rows: rowsWithTags, nextCursor, total };
 }
 
 export const fetchMarketplaceLeaderboard = unstable_cache(
