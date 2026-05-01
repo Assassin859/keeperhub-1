@@ -277,26 +277,40 @@ export async function createIntegration(
 }
 
 /**
+ * Build the canonical payload used to create the cosmetic web3 integration
+ * row that backs an org's KeeperHub wallet. Shared between the provisioning
+ * route (`app/api/user/wallet/route.ts`) and the read-path heal below so the
+ * shape can't drift if one site adds a field.
+ */
+export function buildWalletIntegrationPayload(
+  userId: string,
+  organizationId: string,
+  walletAddress: string
+): CreateIntegrationOptions {
+  return {
+    userId,
+    organizationId,
+    name: truncateAddress(walletAddress),
+    type: "web3",
+    config: {},
+  };
+}
+
+/**
  * Ensure the org's KeeperHub wallet has a backing web3 integration row.
  *
- * Wallet provisioning at app/api/user/wallet/route.ts:195 auto-creates a
- * cosmetic web3 integration alongside the wallet. For orgs whose wallet
- * pre-dates that auto-create code, or whose integration was deleted /
- * migrated, the row can be missing -- which made the Workflow Builder
- * render a misleading "Add Web3 connection" warning even though the
- * wallet itself was working fine.
+ * Wallet provisioning auto-creates a cosmetic web3 integration alongside the
+ * wallet. For orgs whose wallet pre-dates that auto-create code, or whose
+ * integration was deleted / migrated, the row can be missing -- which made
+ * the Workflow Builder render a misleading "Add Web3 connection" warning
+ * even though the wallet itself was working fine.
  *
  * Heals that drift idempotently: if the org has an active wallet but no
- * web3 integration row, create one with the same payload the
- * provisioning route would have written. Safe to call from any read path
- * that lists integrations -- after the first call for a given org the
- * row exists and subsequent calls early-return.
- *
- * Two concurrent callers can race and both pass the existence check,
- * resulting in two web3 rows for the same wallet. We accept that rare
- * edge case rather than introducing a unique constraint or transaction
- * lock; the multi-integration list still renders, and the user can
- * delete the extra row.
+ * web3 integration row, create one with the canonical payload. Safe to call
+ * from any read path that lists integrations -- after the first call for a
+ * given org the row exists and subsequent calls early-return. The userId on
+ * a healed row is just the first member to GET after deploy; reads are
+ * org-scoped so this is benign.
  */
 export async function ensureWalletIntegration(
   userId: string,
@@ -322,13 +336,21 @@ export async function ensureWalletIntegration(
   }
 
   const wallet = await getOrganizationWallet(organizationId);
-  await createIntegration({
-    userId,
-    organizationId,
-    name: truncateAddress(wallet.walletAddress),
-    type: "web3",
-    config: {},
-  });
+  // The existence check above is racy: two concurrent /api/integrations GETs
+  // for the same org can both pass it and both insert. The
+  // `idx_integrations_org_web3` partial unique index makes the second insert
+  // fail with Postgres unique_violation (23505); swallow it and treat as
+  // success since the other caller already created the row.
+  try {
+    await createIntegration(
+      buildWalletIntegrationPayload(userId, organizationId, wallet.walletAddress)
+    );
+  } catch (err) {
+    const code = (err as { code?: string } | null)?.code;
+    if (code !== "23505") {
+      throw err;
+    }
+  }
 }
 
 /**

@@ -1,4 +1,4 @@
-import { isNotNull, relations } from "drizzle-orm";
+import { isNotNull, relations, sql } from "drizzle-orm";
 import {
   boolean,
   index,
@@ -249,25 +249,38 @@ export const workflows = pgTable(
 );
 
 // Integrations table for storing user credentials
-export const integrations = pgTable("integrations", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => generateId()),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id),
-  organizationId: text("organization_id").references(() => organization.id, {
-    onDelete: "cascade",
-  }),
-  name: text("name").notNull(),
-  type: text("type").notNull().$type<IntegrationType>(),
-  // biome-ignore lint/suspicious/noExplicitAny: JSONB type - encrypted credentials stored as JSON
-  config: jsonb("config").notNull().$type<any>(),
-  // Whether this integration was created via OAuth (managed by app) vs manual entry
-  isManaged: boolean("is_managed").default(false),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+export const integrations = pgTable(
+  "integrations",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    organizationId: text("organization_id").references(() => organization.id, {
+      onDelete: "cascade",
+    }),
+    name: text("name").notNull(),
+    type: text("type").notNull().$type<IntegrationType>(),
+    // biome-ignore lint/suspicious/noExplicitAny: JSONB type - encrypted credentials stored as JSON
+    config: jsonb("config").notNull().$type<any>(),
+    // Whether this integration was created via OAuth (managed by app) vs manual entry
+    isManaged: boolean("is_managed").default(false),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    // At most one cosmetic web3 integration row per org. Closes the race
+    // in ensureWalletIntegration where two concurrent /api/integrations GETs
+    // could both pass the existence check and both insert.
+    uniqueIndex("idx_integrations_org_web3")
+      .on(table.organizationId)
+      .where(
+        sql`${table.type} = 'web3' AND ${table.organizationId} IS NOT NULL`
+      ),
+  ]
+);
 
 // Workflow executions table to track workflow runs
 export const workflowExecutions = pgTable(
