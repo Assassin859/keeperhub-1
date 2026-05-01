@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
@@ -115,16 +115,21 @@ describe("ensureWalletIntegration", () => {
     expect(mockInsertReturning).toHaveBeenCalledTimes(1);
   });
 
-  it("swallows 23505 unique_violation when a concurrent caller wins the race", async () => {
+  it("swallows 23505 wrapped by DrizzleQueryError on .cause when the race fires", async () => {
     mockOrganizationHasWallet.mockResolvedValue(true);
     mockSelectLimit.mockResolvedValue([]);
     mockGetOrganizationWallet.mockResolvedValue({
       walletAddress: WALLET_ADDRESS,
     });
-    const uniqueViolation = Object.assign(new Error("duplicate key"), {
+    // drizzle-orm wraps driver errors: outer DrizzleQueryError, original
+    // PostgresError on .cause carrying the SQLSTATE code.
+    const pgError = Object.assign(new Error("duplicate key value"), {
       code: "23505",
     });
-    mockInsertReturning.mockRejectedValueOnce(uniqueViolation);
+    const drizzleWrapped = Object.assign(new Error("Failed query"), {
+      cause: pgError,
+    });
+    mockInsertReturning.mockRejectedValueOnce(drizzleWrapped);
 
     await expect(
       ensureWalletIntegration(USER_ID, ORG_ID)
@@ -132,19 +137,38 @@ describe("ensureWalletIntegration", () => {
     expect(mockInsertReturning).toHaveBeenCalledTimes(1);
   });
 
-  it("re-throws non-23505 errors from createIntegration", async () => {
+  it("also swallows 23505 surfaced as a top-level code (defense-in-depth)", async () => {
     mockOrganizationHasWallet.mockResolvedValue(true);
     mockSelectLimit.mockResolvedValue([]);
     mockGetOrganizationWallet.mockResolvedValue({
       walletAddress: WALLET_ADDRESS,
     });
-    const otherError = Object.assign(new Error("connection refused"), {
+    const directError = Object.assign(new Error("duplicate key value"), {
+      code: "23505",
+    });
+    mockInsertReturning.mockRejectedValueOnce(directError);
+
+    await expect(
+      ensureWalletIntegration(USER_ID, ORG_ID)
+    ).resolves.toBeUndefined();
+  });
+
+  it("re-throws non-23505 errors (e.g. wrapped 08006 connection refused)", async () => {
+    mockOrganizationHasWallet.mockResolvedValue(true);
+    mockSelectLimit.mockResolvedValue([]);
+    mockGetOrganizationWallet.mockResolvedValue({
+      walletAddress: WALLET_ADDRESS,
+    });
+    const pgError = Object.assign(new Error("connection refused"), {
       code: "08006",
     });
-    mockInsertReturning.mockRejectedValueOnce(otherError);
+    const wrapped = Object.assign(new Error("Failed query"), {
+      cause: pgError,
+    });
+    mockInsertReturning.mockRejectedValueOnce(wrapped);
 
     await expect(ensureWalletIntegration(USER_ID, ORG_ID)).rejects.toThrow(
-      "connection refused"
+      "Failed query"
     );
   });
 });
@@ -167,8 +191,10 @@ describe("buildWalletIntegrationPayload", () => {
   });
 });
 
-if (ORIGINAL_ENCRYPTION_KEY === undefined) {
-  process.env.INTEGRATION_ENCRYPTION_KEY = undefined;
-} else {
-  process.env.INTEGRATION_ENCRYPTION_KEY = ORIGINAL_ENCRYPTION_KEY;
-}
+afterAll(() => {
+  if (ORIGINAL_ENCRYPTION_KEY === undefined) {
+    delete process.env.INTEGRATION_ENCRYPTION_KEY;
+  } else {
+    process.env.INTEGRATION_ENCRYPTION_KEY = ORIGINAL_ENCRYPTION_KEY;
+  }
+});

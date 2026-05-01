@@ -7,13 +7,17 @@
 -- a duplicate radio entry plus loss of single-integration auto-select.
 --
 -- Step 1: dedupe any existing duplicates, keeping the oldest row per org so
--- user-supplied names / edits on the original survive.
+-- user-supplied names / edits on the original survive. The (created_at, id)
+-- tuple comparison gives a deterministic total order even when two rows tie
+-- on microsecond-resolution created_at -- which is exactly what the race we
+-- are closing produces. Without the id tiebreaker, ties survive on both
+-- rows and the CREATE UNIQUE INDEX below would abort the migration.
 DELETE FROM integrations a USING integrations b
 WHERE a.organization_id = b.organization_id
   AND a.type = 'web3'
   AND b.type = 'web3'
   AND a.organization_id IS NOT NULL
-  AND a.created_at > b.created_at;
+  AND (a.created_at, a.id) > (b.created_at, b.id);
 
 -- Step 2: prevent the race from ever producing a duplicate again. Partial
 -- index keyed on organization_id, scoped to web3 rows with a non-null org.

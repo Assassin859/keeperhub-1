@@ -340,17 +340,27 @@ export async function ensureWalletIntegration(
   // for the same org can both pass it and both insert. The
   // `idx_integrations_org_web3` partial unique index makes the second insert
   // fail with Postgres unique_violation (23505); swallow it and treat as
-  // success since the other caller already created the row.
+  // success since the other caller already created the row. drizzle-orm wraps
+  // driver errors in DrizzleQueryError with the original PostgresError on
+  // `.cause` -- match the repo's established pattern (lib/mcp/listing.ts,
+  // app/api/user/wallet/route.ts).
   try {
     await createIntegration(
       buildWalletIntegrationPayload(userId, organizationId, wallet.walletAddress)
     );
   } catch (err) {
-    const code = (err as { code?: string } | null)?.code;
-    if (code !== "23505") {
+    if (!isUniqueViolation(err)) {
       throw err;
     }
   }
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  if (!err || typeof err !== "object") {
+    return false;
+  }
+  const e = err as { code?: string; cause?: { code?: string } };
+  return (e.cause?.code ?? e.code) === "23505";
 }
 
 /**
