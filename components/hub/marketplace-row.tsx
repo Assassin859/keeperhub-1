@@ -85,15 +85,19 @@ export function MarketplaceRow({
         <span
           className={
             badge.isBase
-              ? "hidden items-center justify-center rounded-full bg-[var(--color-bg-accent)] px-2 py-0.5 font-semibold text-[0.625rem] text-[var(--color-text-accent)] md:inline-flex"
-              : "hidden items-center justify-center rounded-full bg-[var(--color-hub-icon-bg)] px-2 py-0.5 font-semibold text-[0.625rem] text-muted-foreground md:inline-flex"
+              ? "hidden items-center justify-center justify-self-end rounded-full bg-[var(--color-bg-accent)] px-2 py-0.5 font-semibold text-[0.625rem] text-[var(--color-text-accent)] md:inline-flex"
+              : "hidden items-center justify-center justify-self-end rounded-full bg-[var(--color-hub-icon-bg)] px-2 py-0.5 font-semibold text-[0.625rem] text-muted-foreground md:inline-flex"
           }
         >
           {badge.label}
         </span>
       ) : (
-        // Empty cell preserves the grid track when the chain is unknown.
-        <span aria-hidden="true" />
+        <span
+          className="hidden text-right font-mono font-semibold text-muted-foreground/40 text-xs md:inline"
+          title="Chain unknown"
+        >
+          —
+        </span>
       )}
     </div>
   );

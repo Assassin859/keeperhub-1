@@ -61,7 +61,7 @@ export function MarketplaceSortDropdown({ active }: Props): React.ReactElement {
     <DropdownMenu>
       <DropdownMenuTrigger
         aria-label="Sort marketplace by"
-        className="inline-flex h-9 items-center gap-2 rounded-md border border-border/40 bg-[var(--color-hub-icon-bg)] px-3 font-normal text-foreground text-sm transition-colors hover:bg-[var(--color-hub-icon-bg-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-accent)] motion-reduce:transition-none"
+        className="inline-flex h-9 items-center gap-2 rounded-md border border-border/40 bg-[var(--color-hub-icon-bg)] px-3 font-normal text-foreground text-sm transition-colors hover:bg-[var(--color-hub-icon-bg-hover)] focus:outline-none focus-visible:border-[var(--color-border-accent)] focus-visible:outline-none motion-reduce:transition-none"
         type="button"
       >
         Sort: {uiLabelFor(active)}

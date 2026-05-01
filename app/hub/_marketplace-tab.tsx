@@ -115,7 +115,7 @@ export async function HubMarketplaceTab({
           </span>
           {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
           {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
-          <span className="hidden md:inline" role="columnheader">
+          <span className="hidden text-right md:inline" role="columnheader">
             Chain
           </span>
         </div>
