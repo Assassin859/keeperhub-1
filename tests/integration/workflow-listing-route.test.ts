@@ -543,6 +543,66 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
     expect(response.status).toBe(200);
   });
 
+  it("LIST-VALIDATE transition to listed write workflow with read-only nodes: rejects MISSING_WRITE_ACTION", async () => {
+    // Covers the isTransitioningToListed branch of the write-action gate —
+    // the previous PATCH-route tests only exercised the already-listed branch.
+    // This is also the only realistic way to reach the gate via this route
+    // since workflowType isn't editable here (curator-only).
+    const existing = makeWorkflow({
+      isListed: false,
+      listedAt: null,
+      workflowType: "write",
+      inputSchema: { type: "object" },
+      nodes: [goodNode], // read-only node, no write-action
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+
+    const response = await PATCH(createRequest("PATCH", { isListed: true }), {
+      params: mockParams,
+    });
+
+    expect(response.status).toBe(422);
+    const data = await response.json();
+    expect(data.error).toBe("MISSING_WRITE_ACTION");
+    expect(mockUpdateReturning).not.toHaveBeenCalled();
+  });
+
+  it("LIST-VALIDATE legacy write: PATCH only-description on listed write workflow with no write nodes still succeeds", async () => {
+    // Backwards-compat for legacy listings: a workflowType=write row that
+    // somehow exists with only read-only nodes (e.g. predates the publish
+    // gate, or was corrupted out-of-band) should keep accepting metadata
+    // edits via the workflows-PATCH route as long as the patch doesn't
+    // touch nodes. The curator path (updateWorkflowListing) is stricter
+    // and would reject — that's the documented asymmetry.
+    const existing = makeWorkflow({
+      isListed: true,
+      listedSlug: "legacy-write",
+      listedAt: new Date(),
+      workflowType: "write",
+      inputSchema: { type: "object" },
+      nodes: [goodNode], // read-only, no write-action
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+    mockUpdateReturning.mockResolvedValue([
+      makeWorkflow({
+        isListed: true,
+        listedSlug: "legacy-write",
+        listedAt: new Date(),
+        workflowType: "write",
+        inputSchema: { type: "object" },
+        nodes: [goodNode],
+        description: "updated text",
+      }),
+    ]);
+
+    const response = await PATCH(
+      createRequest("PATCH", { description: "updated text" }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+  });
+
   it("LIST-VALIDATE legacy: PATCH on listed workflow with null inputSchema, not touching nodes or schema, still succeeds", async () => {
     // Backwards-compat: workflows listed before the gates existed have null
     // inputSchema. They should keep working until the next PATCH that touches

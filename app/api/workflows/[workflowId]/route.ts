@@ -408,6 +408,38 @@ export async function PATCH(
           ? updateData.inputSchema
           : existingWorkflow.inputSchema;
 
+      // Gate ordering matches the publish path (lib/mcp/listing.ts::listWorkflow):
+      // write-action -> bare-@ -> input-schema. Same DB state therefore yields
+      // the same error code regardless of which gate-bearing route the caller
+      // hits, which keeps client-side error handling consistent.
+      //
+      // workflowType is curator-only — it's not in `buildUpdateData`'s field
+      // allowlist (lines 156-170 above), so a body's `workflowType` is silently
+      // dropped at the persistence layer. We read it directly from
+      // `existingWorkflow.workflowType` (no fallback chain) so the gate truly
+      // reflects what will be persisted. Type changes flow through
+      // updateWorkflowListing (lib/mcp/listing.ts), which is unconditionally
+      // strict.
+      // `finalNodes` is `unknown` (updateData.nodes is unknown after the
+      // generic Record cast). Both code paths actually hold an array — the
+      // body branch went through `sanitizeWorkflowData`, the existing branch
+      // is `nodes` declared `$type<any[]>` in lib/db/schema.ts. The cast is
+      // honest and matches how lib/mcp/listing.ts:151 calls the same function.
+      if (
+        checkNodes &&
+        existingWorkflow.workflowType === "write" &&
+        findFirstWriteActionNode(finalNodes as unknown[]) === undefined
+      ) {
+        return NextResponse.json(
+          {
+            error: "MISSING_WRITE_ACTION",
+            message:
+              "Workflows listed as workflowType='write' must contain at least one write-contract or protocol-write action node. Add the action back, or unlist the workflow before saving these changes.",
+          },
+          { status: 422 }
+        );
+      }
+
       if (checkNodes) {
         const literals = findBareAtLiterals(finalNodes);
         if (literals.length > 0) {
@@ -428,31 +460,6 @@ export async function PATCH(
             error: "INPUT_SCHEMA_REQUIRED",
             message:
               'Listed workflows must declare an `inputSchema`. Set it to a JSON-schema-shaped object — `{"type": "object"}` is fine for workflows that take no inputs — or unlist the workflow before saving these changes.',
-          },
-          { status: 422 }
-        );
-      }
-
-      // Third publish-time gate from PR #1079: a listed write workflow must
-      // contain at least one write-action node. Same field-touched-only
-      // semantics — only revalidate when nodes are being edited or when
-      // transitioning to listed. workflowType is read from updateData when
-      // the PATCH changes it; otherwise from the existing row.
-      const checkWriteAction =
-        updateData.nodes !== undefined || isTransitioningToListed;
-      const finalWorkflowType =
-        (updateData.workflowType as "read" | "write" | undefined) ??
-        existingWorkflow.workflowType;
-      if (
-        checkWriteAction &&
-        finalWorkflowType === "write" &&
-        findFirstWriteActionNode(finalNodes) === undefined
-      ) {
-        return NextResponse.json(
-          {
-            error: "MISSING_WRITE_ACTION",
-            message:
-              "Listed workflows with workflowType='write' must contain at least one write-contract or protocol-write action node. Add the action back, or unlist the workflow before saving these changes.",
           },
           { status: 422 }
         );
