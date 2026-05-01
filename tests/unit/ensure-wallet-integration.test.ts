@@ -137,6 +137,11 @@ describe("ensureWalletIntegration", () => {
     expect(mockInsertReturning).toHaveBeenCalledTimes(1);
   });
 
+  // Drizzle wraps every driver error in DrizzleQueryError today, so the
+  // top-level `err.code` path is unreachable in production. Kept as a
+  // defense-in-depth regression guard against the `?? e.code` fallback
+  // being deleted as "dead" -- if a future driver path surfaces
+  // PostgresError directly, the guard still fires. Do not strip.
   it("also swallows 23505 surfaced as a top-level code (defense-in-depth)", async () => {
     mockOrganizationHasWallet.mockResolvedValue(true);
     mockSelectLimit.mockResolvedValue([]);

@@ -271,9 +271,11 @@ export const integrations = pgTable(
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    // At most one cosmetic web3 integration row per org. Closes the race
-    // in ensureWalletIntegration where two concurrent /api/integrations GETs
-    // could both pass the existence check and both insert.
+    // At most one web3 integration row per org. Today the only web3 row is
+    // the cosmetic KeeperHub-wallet entry; the broader rule is enforced
+    // here so any future web3 write hits the same guard. Closes the race
+    // in ensureWalletIntegration where two concurrent /api/integrations
+    // GETs could both pass the existence check and both insert.
     uniqueIndex("idx_integrations_org_web3")
       .on(table.organizationId)
       .where(

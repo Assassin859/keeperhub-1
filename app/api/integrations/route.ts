@@ -171,13 +171,12 @@ export async function POST(request: Request) {
     return NextResponse.json(response);
   } catch (error) {
     // KEEP-384: idx_integrations_org_web3 enforces at most one web3
-    // integration per org. Surface that as a 409 with a meaningful
-    // message instead of letting it fall through to a generic 500.
-    if (isWeb3UniqueViolation(error)) {
+    // integration per org. Surface that as a 409 instead of falling
+    // through to the generic 500.
+    if (isUniqueViolation(error)) {
       return NextResponse.json(
         {
-          error:
-            "This organization already has a web3 integration for the KeeperHub wallet.",
+          error: "This organization already has a web3 integration.",
         },
         { status: 409 }
       );
@@ -201,7 +200,7 @@ export async function POST(request: Request) {
   }
 }
 
-function isWeb3UniqueViolation(err: unknown): boolean {
+function isUniqueViolation(err: unknown): boolean {
   if (!err || typeof err !== "object") {
     return false;
   }
