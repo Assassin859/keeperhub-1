@@ -43,8 +43,17 @@ async function fetchMarketplaceTags(): Promise<MarketplaceSidebarTag[]> {
   }
 }
 
+// Slugs are kebab-case `[a-z0-9-]` per HUB-15 / reserved-slugs and
+// pubic_tags.slug schema. Bound length to prevent unstable_cache key
+// pollution via `?tag=<random>` spam (each unique value = a fresh DB
+// hit before the cache gates).
+const SLUG_PATTERN = /^[a-z0-9-]{1,64}$/;
+
 function readTag(raw: string | string[] | undefined): string | null {
-  return typeof raw === "string" && raw.length > 0 ? raw : null;
+  if (typeof raw !== "string" || raw.length === 0) {
+    return null;
+  }
+  return SLUG_PATTERN.test(raw) ? raw : null;
 }
 
 function readSort(raw: string | string[] | undefined): MarketplaceSort {

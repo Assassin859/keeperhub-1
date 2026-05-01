@@ -81,11 +81,16 @@ function readTagSlug(value: string | string[] | undefined): string | null {
   return trimmed === "" ? null : trimmed;
 }
 
+// Cap query length to prevent unstable_cache key pollution via random
+// `?q=` spam — each distinct cache key triggers a fresh DB hit before
+// the data cache.
+const MAX_QUERY_LENGTH = 100;
+
 function readQuery(value: string | string[] | undefined): string {
   if (typeof value !== "string") {
     return "";
   }
-  return value.trim();
+  return value.trim().slice(0, MAX_QUERY_LENGTH);
 }
 
 function metaForTab(value: string | string[] | undefined): TabMetadata {

@@ -63,7 +63,7 @@ export function WorkflowTemplateList({
         {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
         {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
         <span className="text-right" role="columnheader">
-          Score
+          Votes
         </span>
         {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
         {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
