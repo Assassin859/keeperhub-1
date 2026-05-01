@@ -2,7 +2,6 @@
 
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { HubHero } from "@/components/hub/hub-hero";
 import { HubResults } from "@/components/hub/hub-results";
 import { HubSidebar, type SortValue } from "@/components/hub/hub-sidebar";
 import { HubViewToggle } from "@/components/hub/hub-view-toggle";
@@ -244,11 +243,9 @@ function HubPageContent({
         </div>
       ) : (
         <div className="pb-8">
-          {/* Phase 44 transitional: HubHero stays mounted inside the Workflows
-              tab body. Plan 44-09 lifts the hero to the page-shell level
-              (above the tab strip) and removes this mount. */}
-          <HubHero />
-
+          {/* Phase 44 plan 44-09: HubHero is now mounted in app/hub/page.tsx
+              above the tab strip — a single hero for all three tabs.
+              Workflows-tab body starts directly with the view toggle. */}
           <div className="mb-4 flex justify-end">
             <HubViewToggle initialView={initialView} onChange={setViewMode} />
           </div>
