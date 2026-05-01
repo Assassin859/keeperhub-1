@@ -89,6 +89,15 @@ export async function HubMarketplaceTab({
 
   const hasQuery = query.trim().length > 0;
   const hasFilter = hasQuery || tagSlug !== null;
+  const emptyHeading = (() => {
+    if (hasQuery) {
+      return `No marketplace services match “${query}”.`;
+    }
+    if (hasFilter) {
+      return "No marketplace services match this filter.";
+    }
+    return "No paid services listed yet.";
+  })();
   // Clear-filters target preserves sort (sort is a view choice, not a
   // filter) and tab. Drops q, tag, cursor.
   const clearFiltersHref = `/hub?tab=marketplace&sort=${sort}`;
@@ -113,11 +122,7 @@ export async function HubMarketplaceTab({
                 className="size-8 text-muted-foreground/50"
               />
               <h2 className="mt-4 font-semibold text-foreground text-sm">
-                {hasFilter
-                  ? hasQuery
-                    ? `No marketplace services match “${query}”.`
-                    : "No marketplace services match this filter."
-                  : "No paid services listed yet."}
+                {emptyHeading}
               </h2>
               <p className="mt-1 text-muted-foreground text-xs">
                 {hasFilter
