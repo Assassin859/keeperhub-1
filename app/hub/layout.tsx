@@ -1,36 +1,11 @@
-import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
-const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.keeperhub.com";
-
-export const metadata: Metadata = {
-  title: "Workflow Hub | KeeperHub",
-  description:
-    "Discover and deploy community-built blockchain workflow automations. Browse featured templates, DeFi strategies, and monitoring setups.",
-  openGraph: {
-    title: "Workflow Hub | KeeperHub",
-    description:
-      "Discover and deploy community-built blockchain workflow automations.",
-    type: "website",
-    url: `${baseUrl}/hub`,
-    siteName: "KeeperHub",
-    images: [
-      {
-        url: `${baseUrl}/api/og/hub`,
-        width: 1200,
-        height: 630,
-        alt: "KeeperHub Workflow Hub",
-      },
-    ],
-  },
-  twitter: {
-    card: "summary_large_image",
-    title: "Workflow Hub | KeeperHub",
-    description:
-      "Discover and deploy community-built blockchain workflow automations.",
-    images: [`${baseUrl}/api/og/hub`],
-  },
-};
+// Phase 44 plan 44-09: per-tab metadata moved to `app/hub/page.tsx` via
+// `generateMetadata({ searchParams })` (MARKET-12). This layout no longer
+// declares static metadata so the page-level generator owns title,
+// description, openGraph and twitter unambiguously — Next.js metadata merge
+// rules replace at the leaf-key level, and keeping a static `title` here
+// would only race with the dynamic per-tab title.
 
 type HubLayoutProps = { children: ReactNode };
 

@@ -1,11 +1,15 @@
 // Pure (non-"use client") module so this Server Component can call the type
 // guard safely; importing through _tabs-shell would trip Next.js' RSC
 // "Attempted to call isHubTabValue() from the server" error.
+import type { Metadata } from "next";
 import { HubMarketplaceTab } from "./_marketplace-tab";
 import { HubProtocolsTab } from "./_protocols-tab";
 import { type HubTabValue, isHubTabValue } from "./_tabs-shared";
 import { HubTabsShell } from "./_tabs-shell";
 import { HubWorkflowsTab } from "./_workflows-tab";
+
+const APP_BASE_URL =
+  process.env.NEXT_PUBLIC_APP_URL ?? "https://app.keeperhub.com";
 
 // MARKET-05: align RSC revalidate with the unstable_cache TTL used by
 // fetchMarketplaceLeaderboard so Next's CDN headers stay coherent. The
@@ -19,7 +23,44 @@ type HubPageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
 
+type MetadataProps = {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+};
+
+type TabMetadata = {
+  title: string;
+  description: string;
+};
+
 const DEFAULT_TAB: HubTabValue = "protocols";
+
+// MARKET-12: per-tab title + description. OG image stays on the existing
+// /api/og/hub default route for all tabs (per HUB-FUTURE-02 — per-tab OG
+// generation is deferred). Default branch (no `?tab=`) uses the umbrella
+// "Hub" title rather than the per-tab string so direct shares to /hub keep
+// surfacing all three tabs in the description.
+const TAB_METADATA: Record<HubTabValue | "default", TabMetadata> = {
+  default: {
+    title: "Hub — KeeperHub",
+    description:
+      "Browse protocols, fork community workflows, and discover paid services on the marketplace.",
+  },
+  protocols: {
+    title: "Protocols — Hub | KeeperHub",
+    description:
+      "Browse Web3 protocols KeeperHub workflows can interact with — Aave, Uniswap, Compound, and more.",
+  },
+  workflows: {
+    title: "Workflows — Hub | KeeperHub",
+    description:
+      "Browse community workflow templates. Fork any template to your organisation in one click.",
+  },
+  marketplace: {
+    title: "Marketplace — Hub | KeeperHub",
+    description:
+      "Discover paid services. Listed workflows ranked by call count, callable by humans and AI agents.",
+  },
+} as const;
 
 function readInitialTab(value: string | string[] | undefined): HubTabValue {
   if (typeof value !== "string") {
@@ -35,6 +76,52 @@ function readTagSlug(value: string | string[] | undefined): string | null {
   }
   const trimmed = value.trim();
   return trimmed === "" ? null : trimmed;
+}
+
+function metaForTab(value: string | string[] | undefined): TabMetadata {
+  if (typeof value !== "string") {
+    return TAB_METADATA.default;
+  }
+  const normalized = value.trim().toLowerCase();
+  return isHubTabValue(normalized)
+    ? TAB_METADATA[normalized]
+    : TAB_METADATA.default;
+}
+
+export async function generateMetadata({
+  searchParams,
+}: MetadataProps): Promise<Metadata> {
+  const params = await searchParams;
+  const meta = metaForTab(params.tab);
+  const ogImageUrl = `${APP_BASE_URL}/api/og/hub`;
+  return {
+    title: meta.title,
+    description: meta.description,
+    openGraph: {
+      title: meta.title,
+      description: meta.description,
+      type: "website",
+      url: `${APP_BASE_URL}/hub`,
+      siteName: "KeeperHub",
+      // HUB-FUTURE-02: per-tab OG generation deferred. Default Hub OG used
+      // for every tab — keeps the share-card story coherent until the
+      // per-tab OG renderer ships.
+      images: [
+        {
+          url: ogImageUrl,
+          width: 1200,
+          height: 630,
+          alt: "KeeperHub Hub",
+        },
+      ],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: meta.title,
+      description: meta.description,
+      images: [ogImageUrl],
+    },
+  };
 }
 
 export default async function HubPage({
