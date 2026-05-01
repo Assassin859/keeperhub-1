@@ -23,7 +23,7 @@
 
 ## Phases
 
-- [ ] **Phase 42: Foundations & Shared Primitives** - Single Import/Export modal, shared SignInPromptOverlay, logged-out left-nav, hardened import schema (KEEP-368 + KEEP-297)
+- [x] **Phase 42: Foundations & Shared Primitives** - Single Import/Export modal, shared SignInPromptOverlay, logged-out left-nav, hardened import schema (KEEP-368 + KEEP-297) — 9/10 plans complete; VERIFICATION.md `status: human_needed` pending the 42-10 manual UAT gate
 - [x] **Phase 43: Hub UX Overhaul** - Green Use-template CTA + login gate, deep-link tag URLs, fully-clickable tile, Cards/List toggle, sidebar reorg with Tags + Sort (KEEP-326) — UAT complete 2026-05-01, 15/15 passed
 - [ ] **Phase 44: Unified Tabbed Hub (Protocols / Workflows / Marketplace)** - Consolidate Protocols, Workflows, and Marketplace into one `/hub` page with tabbed navigation (ClawHub Skills/Plugins style — instant tab switching with no flicker, URL updates per tab). Drop the standalone Protocols strip and the "Templates" header/divider; protocols become full cards inside their own tab. Rename the page hero to reflect the unified content. Marketplace tab is the popularity-sorted leaderboard with `?sort` extension to `/api/mcp/workflows` and `search_workflows` (KEEP-303). All marketplace surfacing lives inside the Marketplace tab — no marketplace-related badges on Workflows or Protocols rows.
 - [ ] **Phase 45: Back/Forward Hydration Fix** - Properly diagnose and resolve the Next.js 16 App Router back/forward hydration race that leaves pages stuck on SSR skeletons with no interactive elements; remove the dev-only force-reload workaround introduced in Phase 43
@@ -112,7 +112,7 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 42. Foundations & Shared Primitives | 0/10 | Not started | - |
+| 42. Foundations & Shared Primitives | 9/10 | Verification: human_needed | - |
 | 43. Hub UX Overhaul | 14/14 | UAT complete | 2026-05-01 |
 | 44. Marketplace Ladder | 0/? | Not started | - |
 | 45. Back/Forward Hydration Fix | 0/? | Not started | - |
