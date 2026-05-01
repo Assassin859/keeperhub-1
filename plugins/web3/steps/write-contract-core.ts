@@ -60,7 +60,6 @@ export type WriteContractCoreInput = {
   strict?: boolean;
   _context?: {
     executionId?: string;
-    triggerType?: string;
     organizationId?: string;
   };
 };
@@ -283,7 +282,6 @@ export async function writeContractCore(
     workflowId,
     chainId,
     rpcUrl,
-    triggerType: _context?.triggerType as TransactionContext["triggerType"],
     rpcManager,
   };
 
@@ -379,7 +377,6 @@ export async function writeContractCore(
         args,
         value: parsedEthValue,
       }, session, {
-        triggerType: txContext.triggerType ?? "manual",
         gasOverrides: {
           multiplierOverride,
           gasLimitOverride,

@@ -1,7 +1,6 @@
 import type { ethers } from "ethers";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import type { NonceSession } from "../nonce-manager";
-import type { TriggerType } from "../transaction-manager";
 
 export type TransactionReceipt = {
   hash: string;
@@ -82,7 +81,6 @@ export interface ChainAdapter {
 }
 
 export type TransactionOptions = {
-  triggerType: TriggerType;
   gasOverrides: GasOverrides;
   workflowId?: string;
   rpcManager?: RpcProviderManager;
