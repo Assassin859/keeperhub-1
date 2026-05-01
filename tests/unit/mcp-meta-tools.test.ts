@@ -4,6 +4,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Regex at top level per Biome useTopLevelRegex rule
 const NO_QUERY_STRING_RE = /\/api\/mcp\/workflows$/;
 
+// KEEP-393: regex constants used in 402-augmentation tests, hoisted to
+// module scope per the lint/performance/useTopLevelRegex rule.
+const SLUG_RE = /yield-cmp/;
+const AMOUNT_RE = /50000/;
+const NETWORK_RE = /eip155:8453/;
+const PAYMENT_SIGNER_RE = /paymentSigner\.fetch/;
+const AGENTCASH_RE = /mcp__agentcash__fetch/;
+const PAID_WEIRD_RE = /Paid workflow "weird"/;
+const API_402_PREFIX_RE = /^API call failed: 402/;
+const API_500_RE = /API call failed: 500/;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -342,6 +353,120 @@ describe("call_workflow tool behavior", () => {
     )) as { content: Array<{ type: string; text: string }> };
     const parsed = JSON.parse(result.content[0].text) as { error?: string };
     expect(parsed.error).not.toBe("Forbidden");
+  });
+
+  // KEEP-393: paid workflows return HTTP 402 with an x402 challenge body.
+  // Previously the tool surfaced the raw `API call failed: 402 ...` message
+  // and left agents to figure out how to pay. The augmented error now
+  // names the price + chain + asset and lists the three concrete auto-pay
+  // paths (paymentSigner.fetch, mcp__agentcash__fetch, marketplace UI).
+  describe("Test 23.5: call_workflow 402 augmentation (KEEP-393)", () => {
+    function mockFetch402(challengeBody: string): void {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({
+          ok: false,
+          status: 402,
+          statusText: "Payment Required",
+          headers: {
+            get: (_key: string) => "application/json",
+          },
+          json: async () => JSON.parse(challengeBody),
+          text: async () => challengeBody,
+        })
+      );
+    }
+
+    it("augments 402 error with parsed price, chain, asset, and 3 retry paths", async () => {
+      const challenge = JSON.stringify({
+        x402Version: 2,
+        error: "Payment required",
+        resource: { url: "https://app/api/mcp/workflows/yield-cmp/call" },
+        accepts: [
+          {
+            scheme: "exact",
+            network: "eip155:8453",
+            asset: "0x833589fcD6eDb6E08f4c7C32D4f71b54bdA02913",
+            amount: "50000",
+            payTo: "0x52a93213b2748c8121691110ffb1c9389bd22308",
+          },
+        ],
+      });
+      mockFetch402(challenge);
+      await expect(
+        invokeCallWorkflow({ slug: "yield-cmp", inputs: {} })
+      ).rejects.toThrow(SLUG_RE);
+
+      mockFetch402(challenge);
+      await expect(
+        invokeCallWorkflow({ slug: "yield-cmp", inputs: {} })
+      ).rejects.toThrow(AMOUNT_RE);
+
+      mockFetch402(challenge);
+      await expect(
+        invokeCallWorkflow({ slug: "yield-cmp", inputs: {} })
+      ).rejects.toThrow(NETWORK_RE);
+
+      mockFetch402(challenge);
+      await expect(
+        invokeCallWorkflow({ slug: "yield-cmp", inputs: {} })
+      ).rejects.toThrow(PAYMENT_SIGNER_RE);
+
+      mockFetch402(challenge);
+      await expect(
+        invokeCallWorkflow({ slug: "yield-cmp", inputs: {} })
+      ).rejects.toThrow(AGENTCASH_RE);
+    });
+
+    it("falls back to generic hint when 402 body is unparseable", async () => {
+      mockFetch402("<html>402</html>");
+      // Match the fallback line that appears regardless of body shape.
+      await expect(
+        invokeCallWorkflow({ slug: "weird", inputs: {} })
+      ).rejects.toThrow(PAID_WEIRD_RE);
+
+      mockFetch402("<html>402</html>");
+      await expect(
+        invokeCallWorkflow({ slug: "weird", inputs: {} })
+      ).rejects.toThrow(PAYMENT_SIGNER_RE);
+    });
+
+    it("preserves the original 'API call failed: 402' prefix for callers that pattern-match", async () => {
+      // The augmentation is purely additive — the original error message
+      // appears unchanged at the start, so callers that grep for the
+      // status line continue to work.
+      mockFetch402(JSON.stringify({ x402Version: 2, accepts: [] }));
+      await expect(
+        invokeCallWorkflow({ slug: "preserved", inputs: {} })
+      ).rejects.toThrow(API_402_PREFIX_RE);
+    });
+
+    it("does NOT augment non-402 errors (e.g. 500)", async () => {
+      // 5xx and other failures stay verbatim — only 402 carries the
+      // payment-retry semantics worth annotating.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({
+          ok: false,
+          status: 500,
+          statusText: "Internal Server Error",
+          headers: { get: (_k: string) => "application/json" },
+          json: async () => ({ error: "boom" }),
+          text: async () => "boom",
+        })
+      );
+      await expect(
+        invokeCallWorkflow({ slug: "explode", inputs: {} })
+      ).rejects.toThrow(API_500_RE);
+      // Augmentation strings must NOT leak into 5xx errors.
+      try {
+        await invokeCallWorkflow({ slug: "explode", inputs: {} });
+      } catch (e) {
+        const msg = (e as Error).message;
+        expect(msg).not.toContain("paymentSigner.fetch");
+        expect(msg).not.toContain("Paid workflow");
+      }
+    });
   });
 
   it("Test 23: call_workflow with scope 'mcp:read' is denied", async () => {

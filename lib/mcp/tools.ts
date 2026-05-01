@@ -39,6 +39,73 @@ function withScopeCheck<H extends AnyToolHandler>(
 
 type ApiResponse = Record<string, unknown>;
 
+/**
+ * Detect whether an error message produced by `callApi` represents an
+ * HTTP 402 Payment Required response. callApi formats failures as
+ * `API call failed: <status> <statusText> - <body>`, so a substring
+ * match on the prefix is sufficient and avoids parsing the body twice.
+ */
+function is402Error(message: string): boolean {
+  return message.includes("API call failed: 402");
+}
+
+type X402Accept = {
+  network?: unknown;
+  asset?: unknown;
+  amount?: unknown;
+  payTo?: unknown;
+};
+
+type X402ChallengeShape = {
+  x402Version?: unknown;
+  accepts?: unknown;
+};
+
+/**
+ * Pull the price/chain/asset from an x402 challenge embedded in a
+ * `callApi` 402 error message and emit a hint that points the caller at
+ * the three concrete auto-pay paths. Best-effort: if the body is not
+ * valid x402 JSON we still return the original message verbatim with a
+ * generic hint appended, so callers always get actionable guidance.
+ */
+function buildPaymentRequiredHint(
+  slug: string,
+  originalMessage: string
+): string {
+  const bodyStart = originalMessage.indexOf(" - ");
+  const body = bodyStart >= 0 ? originalMessage.slice(bodyStart + 3) : "";
+  let priceLine = "Price: see challenge body above";
+  try {
+    const parsed = JSON.parse(body) as X402ChallengeShape;
+    const accepts = Array.isArray(parsed.accepts)
+      ? (parsed.accepts as X402Accept[])
+      : [];
+    const accept = accepts[0];
+    if (accept) {
+      const network =
+        typeof accept.network === "string" ? accept.network : "unknown";
+      const asset =
+        typeof accept.asset === "string" ? accept.asset : "unknown asset";
+      const amount =
+        typeof accept.amount === "string" ? accept.amount : "unknown amount";
+      const payTo = typeof accept.payTo === "string" ? accept.payTo : "unknown";
+      priceLine = `Price: ${amount} (atomic units) of ${asset} on ${network}, payTo ${payTo}`;
+    }
+  } catch {
+    // Body was not parseable JSON — fall back to the generic price line.
+  }
+  return [
+    originalMessage,
+    "",
+    `Paid workflow "${slug}" — this MCP tool does not auto-pay.`,
+    priceLine,
+    "Retry with one of:",
+    "  - @keeperhub/wallet: `paymentSigner.fetch(url, { method: 'POST', body, paymentHint: 'x402' })`",
+    "  - agentcash: `mcp__agentcash__fetch` against the same endpoint",
+    "  - Marketplace UI: open the listing's public page and run it interactively",
+  ].join("\n");
+}
+
 async function callApi(
   baseUrl: string,
   authHeader: string,
@@ -1093,7 +1160,7 @@ export function registerMetaTools(
   // Meta-tool 4: Invoke a listed workflow by its globally unique slug
   server.tool(
     "call_workflow",
-    "Invoke a listed KeeperHub workflow. For read workflows, executes and returns the result. For write workflows, returns unsigned calldata {to, data, value} for the caller to submit. Use search_workflows first to discover available workflows.",
+    "Invoke a listed KeeperHub workflow. For read workflows, executes and returns the result. For write workflows, returns unsigned calldata {to, data, value} for the caller to submit. Use search_workflows first to discover available workflows. PAID WORKFLOWS: this tool DOES NOT auto-pay. A paid listing returns HTTP 402 with an x402 challenge — pay it with @keeperhub/wallet's paymentSigner.fetch(), agentcash's mcp__agentcash__fetch, or the marketplace UI, then retry. The 402 error message includes the price and concrete next-step paths.",
     {
       slug: z
         .string()
@@ -1107,16 +1174,28 @@ export function registerMetaTools(
     { title: "Call Workflow", readOnlyHint: false, destructiveHint: false },
     withScopeCheck("call_workflow", scope, async (args) =>
       withToolLogging("call_workflow", undefined, async () => {
-        const data = await callApi(
-          baseUrl,
-          authHeader,
-          `/api/mcp/workflows/${encodeURIComponent(args.slug)}/call`,
-          "POST",
-          args.inputs
-        );
-        return {
-          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-        };
+        try {
+          const data = await callApi(
+            baseUrl,
+            authHeader,
+            `/api/mcp/workflows/${encodeURIComponent(args.slug)}/call`,
+            "POST",
+            args.inputs
+          );
+          return {
+            content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+          };
+        } catch (err) {
+          // 402 is an expected outcome for paid listings. Augment the
+          // generic API error with the price and concrete payment paths so
+          // the caller knows how to retry — the previous behaviour was to
+          // surface a raw `API call failed: 402 Payment Required - {...}`
+          // error, which left agents guessing.
+          if (err instanceof Error && is402Error(err.message)) {
+            throw new Error(buildPaymentRequiredHint(args.slug, err.message));
+          }
+          throw err;
+        }
       })
     )
   );
@@ -1126,7 +1205,9 @@ export function registerMetaTools(
     "list_workflow",
     "Publish a workflow to the KeeperHub marketplace catalog. Sets isListed=true, assigns or preserves listedSlug, refreshes listedAt. Other agents discover the listing via search_workflows and invoke it via call_workflow. Use this after creating a workflow with create_workflow. Idempotent: re-publishing preserves the original slug.",
     {
-      workflowId: z.string().describe("The internal ID of the workflow to publish"),
+      workflowId: z
+        .string()
+        .describe("The internal ID of the workflow to publish"),
       slug: z
         .string()
         .optional()
@@ -1152,7 +1233,9 @@ export function registerMetaTools(
       workflowType: z
         .enum(["read", "write"])
         .optional()
-        .describe("Workflow type: 'read' for read-only, 'write' for state-changing"),
+        .describe(
+          "Workflow type: 'read' for read-only, 'write' for state-changing"
+        ),
     },
     { title: "List Workflow", readOnlyHint: false, destructiveHint: false },
     withScopeCheck("list_workflow", scope, async (args) =>
@@ -1177,7 +1260,9 @@ export function registerMetaTools(
     "unlist_workflow",
     "Remove a workflow from the marketplace catalog. Slug is preserved for re-listing. Use when the workflow is deprecated or temporarily unavailable. Does not delete the workflow itself; use delete_workflow for permanent removal.",
     {
-      workflowId: z.string().describe("The internal ID of the workflow to unlist"),
+      workflowId: z
+        .string()
+        .describe("The internal ID of the workflow to unlist"),
     },
     { title: "Unlist Workflow", readOnlyHint: false, destructiveHint: true },
     withScopeCheck("unlist_workflow", scope, async (args) =>
@@ -1200,7 +1285,9 @@ export function registerMetaTools(
     "update_workflow_listing",
     "Edit listing metadata for a workflow (description, tags, category, chain, schemas). Cannot change pricing while listed — unlist first, update price, then re-list.",
     {
-      workflowId: z.string().describe("The internal ID of the workflow to update"),
+      workflowId: z
+        .string()
+        .describe("The internal ID of the workflow to update"),
       category: z
         .string()
         .optional()
@@ -1226,7 +1313,11 @@ export function registerMetaTools(
         .optional()
         .describe("Updated price in USDC (only allowed while unlisted)"),
     },
-    { title: "Update Workflow Listing", readOnlyHint: false, destructiveHint: false },
+    {
+      title: "Update Workflow Listing",
+      readOnlyHint: false,
+      destructiveHint: false,
+    },
     withScopeCheck("update_workflow_listing", scope, async (args) =>
       withToolLogging("update_workflow_listing", undefined, async () => {
         const { workflowId, ...patch } = args;
@@ -1253,7 +1344,11 @@ export function registerMetaTools(
         .string()
         .describe("The workflow's public listing slug (e.g. 'my-defi-alert')"),
     },
-    { title: "Get Workflow Listing", readOnlyHint: true, destructiveHint: false },
+    {
+      title: "Get Workflow Listing",
+      readOnlyHint: true,
+      destructiveHint: false,
+    },
     withScopeCheck("get_workflow_listing", scope, async (args) =>
       withToolLogging("get_workflow_listing", undefined, async () => {
         const data = await callApi(
