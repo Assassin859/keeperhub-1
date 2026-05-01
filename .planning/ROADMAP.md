@@ -85,7 +85,13 @@
   3. A Playwright test (`tests/e2e/playwright/back-forward-hydration.test.ts`) navigates `/hub → /billing → goBack`, asserts the rehydrated page renders the expected sidebar nav buttons and template tiles, and asserts `performance.getEntriesByType('navigation')[0]?.type !== 'reload'` (proving we are not relying on a forced reload to recover).
   4. The same test runs against `pnpm dev` and `pnpm start` builds.
   5. Local UAT gate passed before PR is opened: `pnpm check` + `pnpm type-check` green, `pnpm test:e2e --grep "back-forward"` green.
-**Plans**: TBD
+**Plans:** 6 plans
+- [ ] 45-01-PLAN.md — Add dev-only bfcache reload Script to root layout (BFCACHE-01)
+- [ ] 45-02-PLAN.md — Strip per-page bfcache workaround from app/hub/layout.tsx (BFCACHE-02)
+- [ ] 45-03-PLAN.md — Write back-forward hydration ADR under specs/architecture/ (BFCACHE-06)
+- [ ] 45-04-PLAN.md — Replace hub-layout-bfcache.test.ts with root-layout-bfcache.test.ts (BFCACHE-03)
+- [ ] 45-05-PLAN.md — Dual-mode Playwright e2e test + NEXT_BUILD_MODE config + npm scripts (BFCACHE-04, BFCACHE-05)
+- [ ] 45-06-PLAN.md — Local UAT gate + cross-browser sweep + STATE.md/ADR commit-ref backfill (BFCACHE-07)
 **UI hint**: no
 
 ### Phase 44: Unified Tabbed Hub (Protocols / Workflows / Marketplace)
