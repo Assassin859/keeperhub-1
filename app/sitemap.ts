@@ -17,9 +17,28 @@ const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.keeperhub.com";
  * sitemap-index pattern.
  */
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const tagRows = await db
-    .select({ slug: publicTags.slug, createdAt: publicTags.createdAt })
-    .from(publicTags);
+  // Build container has no DB access — see same pattern in
+  // app/hub/tags/[tag]/page.tsx generateStaticParams. Fall back to a
+  // sitemap with only the static surface so the build doesn't fail.
+  // Real prod builds with DATABASE_URL set rethrow so misconfigurations
+  // surface loud rather than silently shipping an empty sitemap.
+  let tagRows: { slug: string; createdAt: Date }[] = [];
+  try {
+    tagRows = await db
+      .select({ slug: publicTags.slug, createdAt: publicTags.createdAt })
+      .from(publicTags);
+  } catch (err) {
+    const isConfiguredProdBuild =
+      process.env.NODE_ENV === "production" &&
+      Boolean(process.env.DATABASE_URL);
+    if (isConfiguredProdBuild) {
+      throw err;
+    }
+    console.warn(
+      "[sitemap] tag DB read failed, emitting static-only sitemap:",
+      err
+    );
+  }
 
   const tagEntries: MetadataRoute.Sitemap = tagRows.map((row) => ({
     url: `${baseUrl}/hub/tags/${row.slug}`,
