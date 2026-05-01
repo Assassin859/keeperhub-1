@@ -64,15 +64,38 @@ type X402ChallengeShape = {
   accepts?: unknown;
 };
 
+const MAX_ACCEPT_OPTIONS_TO_SHOW = 5;
+// Per-field cap on accept-entry strings rendered into the error message.
+// 128 chars comfortably fits real values (40-char EVM address, short
+// network slugs, base-10 amounts) while bounding worst-case output if a
+// misbehaving upstream endpoint returns inflated payloads.
+const MAX_ACCEPT_FIELD_CHARS = 128;
+// Strip ASCII control chars (newline, tab, CR, escape, etc.) plus DEL
+// before rendering. A network/asset string carrying `\n` could otherwise
+// inject fabricated `Option N/M` lines into the joined output, poisoning
+// logs and any LLM agent that reads the error.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching ASCII control chars (U+0000..U+001F and U+007F) to strip them before rendering upstream-supplied strings
+const ACCEPT_CONTROL_CHARS_RE = /[\u0000-\u001f\u007f]/g;
+
+function sanitiseAcceptField(value: unknown, fallback: string): string {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+  const stripped = value.replace(ACCEPT_CONTROL_CHARS_RE, " ");
+  if (stripped.length > MAX_ACCEPT_FIELD_CHARS) {
+    return `${stripped.slice(0, MAX_ACCEPT_FIELD_CHARS - 3)}...`;
+  }
+  return stripped;
+}
+
 function formatAcceptOption(accept: X402Accept): string {
-  const scheme = typeof accept.scheme === "string" ? accept.scheme : "exact";
-  const network =
-    typeof accept.network === "string" ? accept.network : "unknown";
-  const asset =
-    typeof accept.asset === "string" ? accept.asset : "unknown asset";
-  const amount =
-    typeof accept.amount === "string" ? accept.amount : "unknown amount";
-  const payTo = typeof accept.payTo === "string" ? accept.payTo : "unknown";
+  // scheme defaults to "unknown" — never "exact" — so a missing or
+  // future-spec scheme isn't silently mislabelled as classic x402.
+  const scheme = sanitiseAcceptField(accept.scheme, "unknown");
+  const network = sanitiseAcceptField(accept.network, "unknown");
+  const asset = sanitiseAcceptField(accept.asset, "unknown asset");
+  const amount = sanitiseAcceptField(accept.amount, "unknown amount");
+  const payTo = sanitiseAcceptField(accept.payTo, "unknown");
   return `${scheme} | ${amount} (atomic units) of ${asset} on ${network}, payTo ${payTo}`;
 }
 
@@ -91,8 +114,11 @@ function formatAcceptOption(accept: X402Accept): string {
  * Best-effort throughout: if the body is unparseable, accepts is empty,
  * or individual fields are missing/wrong-typed, we degrade to a generic
  * line rather than throwing — the caller always gets actionable text.
+ *
+ * Defence-in-depth: each per-accept field is sanitised before rendering
+ * (control chars stripped, length capped) so an adversarial upstream
+ * endpoint can't inject fake option lines or bloat the error output.
  */
-const MAX_ACCEPT_OPTIONS_TO_SHOW = 5;
 
 function buildPaymentRequiredHint(
   slug: string,
