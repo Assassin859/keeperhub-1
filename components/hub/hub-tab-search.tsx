@@ -54,13 +54,14 @@ export function HubTabSearch(): React.ReactElement {
     }
     const qs = params.toString();
     startTransition(() => {
+      // With `export const dynamic = 'force-dynamic'` on app/hub/page.tsx,
+      // router.replace is sufficient — server components re-render with the
+      // new searchParams and useSearchParams subscriptions in client
+      // components fire too. Pairing with router.refresh() races: refresh
+      // re-fetches the current URL, which on fast keystrokes is the
+      // pre-replace URL, producing phantom /hub?tab=X (no q) requests that
+      // overwrite the just-typed query in the RSC payload.
       router.replace(qs ? `/hub?${qs}` : "/hub", { scroll: false });
-      // router.replace alone doesn't invalidate the RSC Router cache for
-      // searchParams-only changes on the same route — the server-rendered
-      // tabs (Protocols, Marketplace) would keep their previous HTML.
-      // router.refresh forces a fresh RSC fetch with the new ?q= so the
-      // server components actually see the updated query.
-      router.refresh();
     });
   };
 
