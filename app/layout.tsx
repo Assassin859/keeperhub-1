@@ -71,6 +71,20 @@ export const viewport: Viewport = {
 const ROOT_DEV_BFCACHE_RELOAD =
   "if(typeof window!=='undefined'&&typeof performance!=='undefined'){var n=performance.getEntriesByType('navigation')[0];if(n&&n.type==='back_forward'){window.location.reload();}}";
 
+// Pre-paint inline script: read the persisted nav-sidebar state from
+// localStorage and set --nav-sidebar-width on documentElement BEFORE
+// React hydrates. Without this, page shells using
+// `md:ml-[var(--nav-sidebar-width,60px)]` paint at the 60px fallback
+// margin, then animate to 200px when NavigationSidebar mounts and
+// applies the variable in a useEffect — visible content shift.
+//
+// Width values MUST match COLLAPSED_WIDTH (60) and EXPANDED_WIDTH (200)
+// in components/navigation-sidebar.tsx. DEFAULT_STATE.sidebar=true in
+// lib/hooks/use-persisted-nav-state.ts means new users default to
+// expanded, so 200 is the right pre-paint guess.
+const ROOT_NAV_WIDTH_PREPAINT =
+  "try{var r=localStorage.getItem('keeperhub-nav-state');var w=200;if(r){var p=JSON.parse(r);if(p&&p.sidebar===false){w=60;}}document.documentElement.style.setProperty('--nav-sidebar-width',w+'px');}catch(e){}";
+
 type RootLayoutProps = {
   children: ReactNode;
 };
@@ -78,6 +92,14 @@ type RootLayoutProps = {
 const RootLayout = ({ children }: RootLayoutProps) => (
   <html lang="en" suppressHydrationWarning>
     <body className={cn(sans.variable, mono.variable, "antialiased")}>
+      {/* Pre-paint inline script — runs during HTML parsing BEFORE the
+          page content below it is laid out, so md:ml-[var(--nav-sidebar-width,60px)]
+          wrappers paint at the correct margin and no margin-left
+          transition fires on first render. Must stay as the first body
+          child for the timing guarantee. */}
+      <Script id="root-nav-width-prepaint" strategy="beforeInteractive">
+        {ROOT_NAV_WIDTH_PREPAINT}
+      </Script>
       <KeeperHubExtensionLoader />
       <ThemeProvider
         attribute="class"
