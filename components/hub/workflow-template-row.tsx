@@ -108,6 +108,8 @@ export function WorkflowTemplateRow({
         </span>
       )}
 
+      {/* MARKETPLACE_BADGE_SLOT: reserved for cross-tab discovery — Phase 44 HUBV2-08 explicitly forbids rendering anything here. Tab-strip is the only cross-tab discovery mechanism. */}
+
       {isFeatured && (
         <span className="pointer-events-none relative z-[2] inline-flex h-[20px] shrink-0 items-center gap-1 rounded-full bg-[var(--color-bg-accent)] px-2">
           <Star className="size-2.5 fill-[var(--color-text-accent)] text-[var(--color-text-accent)]" />

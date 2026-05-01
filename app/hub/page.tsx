@@ -3,6 +3,7 @@
 // "Attempted to call isHubTabValue() from the server" error.
 import { type HubTabValue, isHubTabValue } from "./_tabs-shared";
 import { HubTabsShell } from "./_tabs-shell";
+import { HubWorkflowsTab } from "./_workflows-tab";
 
 type HubPageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -18,20 +19,28 @@ function readInitialTab(value: string | string[] | undefined): HubTabValue {
   return isHubTabValue(normalized) ? normalized : DEFAULT_TAB;
 }
 
+function readTagSlug(value: string | string[] | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
 export default async function HubPage({
   searchParams,
 }: HubPageProps): Promise<React.ReactElement> {
   const params = await searchParams;
   const initialTab = readInitialTab(params.tab);
+  const initialTagSlug = readTagSlug(params.tag);
 
-  // Wave-1 placeholders. Wave-2 plans (44-02, 44-03, 44-05) replace these
-  // with real RSC tab bodies. The tab shell streams them as RSC slot props.
+  // Wave-1 placeholders for tabs not yet wired. Wave-2 plans (44-03, 44-05)
+  // replace these with real RSC tab bodies. The tab shell streams them as
+  // RSC slot props.
   const protocolsContent = (
     <div data-tab-placeholder="protocols">Protocols tab — pending 44-03</div>
   );
-  const workflowsContent = (
-    <div data-tab-placeholder="workflows">Workflows tab — pending 44-02</div>
-  );
+  const workflowsContent = <HubWorkflowsTab initialTagSlug={initialTagSlug} />;
   const marketplaceContent = (
     <div data-tab-placeholder="marketplace">
       Marketplace tab — pending 44-05
