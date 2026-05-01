@@ -85,7 +85,10 @@ export function HubTabSearch(): React.ReactElement {
         Search the active tab
       </label>
       <input
-        className="h-5 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/50"
+        // Hide the WebKit/Chromium native [type=search] clear control —
+        // it doubled up with our styled X. The custom Clear button below
+        // is the single clear affordance.
+        className="h-5 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/50 [&::-webkit-search-cancel-button]:hidden [&::-webkit-search-decoration]:hidden"
         id="hub-tab-search"
         onChange={(e) => handleChange(e.target.value)}
         placeholder={placeholder}
