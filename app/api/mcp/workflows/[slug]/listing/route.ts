@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
-import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import {
   getWorkflowListing,
+  type ListWorkflowMetadata,
   listWorkflow,
+  type UpdateWorkflowPatch,
   unlistWorkflow,
   updateWorkflowListing,
-  type ListWorkflowMetadata,
-  type UpdateWorkflowPatch,
 } from "@/lib/mcp/listing";
 import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
+import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { sanitizeDescription } from "@/lib/sanitize-description";
 
 const LISTING_RATE_LIMIT = 60;
@@ -44,6 +44,26 @@ function mapListingError(error: string): NextResponse {
         error: "MISSING_WRITE_ACTION",
         message:
           "Workflows listed as workflowType='write' must contain at least one write-contract or protocol-write action node. Add the action to the workflow before listing it.",
+      },
+      { status: 422 }
+    );
+  }
+  if (error === "INVALID_TEMPLATE_LITERALS") {
+    return NextResponse.json(
+      {
+        error: "INVALID_TEMPLATE_LITERALS",
+        message:
+          "One or more node config fields contain a bare `@<word>` literal outside a `{{...}}` template wrapper. This usually means the editor's `@` autocomplete was dismissed before the reference was completed. Re-open the workflow, replace the literal with a proper `{{@nodeId:Label.field}}` reference, and try listing again.",
+      },
+      { status: 422 }
+    );
+  }
+  if (error === "INPUT_SCHEMA_REQUIRED") {
+    return NextResponse.json(
+      {
+        error: "INPUT_SCHEMA_REQUIRED",
+        message:
+          'Listed workflows must declare an `inputSchema`. Set it to a JSON-schema-shaped object — `{"type": "object"}` is fine for workflows that take no inputs.',
       },
       { status: 422 }
     );

@@ -107,7 +107,9 @@ describe("workflow listing lifecycle", () => {
       priceUsdcPerCall: null,
       name: "Test Workflow",
       description: null,
-      inputSchema: null,
+      // Listed workflows must declare an inputSchema (enforced by listWorkflow).
+      // An empty object is fine for zero-input workflows.
+      inputSchema: { type: "object" },
       outputMapping: null,
       category: null,
       chain: null,
@@ -246,6 +248,59 @@ describe("workflow listing lifecycle", () => {
     });
 
     expect(result.ok).toBe(true);
+  });
+
+  it("list: rejects INPUT_SCHEMA_REQUIRED when neither row nor metadata declares inputSchema", async () => {
+    workflowState.inputSchema = null;
+
+    const result = await listWorkflow(WORKFLOW_ID, ORG_ID, {
+      slug: "no-schema",
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBe("INPUT_SCHEMA_REQUIRED");
+    expect(workflowState.isListed).toBe(false);
+  });
+
+  it("list: accepts inputSchema supplied via metadata even when row is null", async () => {
+    workflowState.inputSchema = null;
+
+    const result = await listWorkflow(WORKFLOW_ID, ORG_ID, {
+      slug: "schema-via-metadata",
+      inputSchema: { type: "object" },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.listing.isListed).toBe(true);
+    expect(result.listing.inputSchema).toEqual({ type: "object" });
+  });
+
+  it("list: rejects INVALID_TEMPLATE_LITERALS when a node config has a bare @-literal", async () => {
+    workflowState.nodes = [
+      {
+        id: "read-1",
+        type: "action",
+        data: {
+          label: "Trapped autocomplete",
+          type: "action",
+          config: {
+            actionType: "web3/read-contract",
+            address: "@40",
+          },
+        },
+      },
+    ];
+
+    const result = await listWorkflow(WORKFLOW_ID, ORG_ID, {
+      slug: "trapped-autocomplete",
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBe("INVALID_TEMPLATE_LITERALS");
+    expect(workflowState.isListed).toBe(false);
   });
 
   it("relist: preserves listedSlug, refreshes listedAt, isListed=true", async () => {

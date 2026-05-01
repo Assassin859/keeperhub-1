@@ -2,13 +2,19 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
 import { findFirstWriteActionNode } from "@/lib/mcp/calldata";
+import {
+  findBareAtLiterals,
+  isInputSchemaPresent,
+} from "@/lib/mcp/listing-validators";
 
 export type ListingErrorCode =
   | "NOT_FOUND"
   | "SLUG_CONFLICT"
   | "PRICE_CHANGE_WHILE_LISTED"
   | "INVALID_INPUT"
-  | "MISSING_WRITE_ACTION";
+  | "MISSING_WRITE_ACTION"
+  | "INVALID_TEMPLATE_LITERALS"
+  | "INPUT_SCHEMA_REQUIRED";
 
 export type ListingResult<T> =
   | { ok: true; listing: T }
@@ -136,6 +142,24 @@ export async function listWorkflow(
     findFirstWriteActionNode(current.nodes) === undefined
   ) {
     return { ok: false, error: "MISSING_WRITE_ACTION" };
+  }
+
+  // Reject bare-@ literals in node configs. These are the trapped state of the
+  // editor's `@` autocomplete (user typed `@40` and dismissed the picker before
+  // it wrapped the reference into `{{@nodeId:Label.field}}`). The executor only
+  // resolves wrapped templates, so an unwrapped `@40` would silently flow
+  // through as a literal at runtime.
+  if (findBareAtLiterals(current.nodes).length > 0) {
+    return { ok: false, error: "INVALID_TEMPLATE_LITERALS" };
+  }
+
+  // Listed workflows must declare an inputSchema. Bazaar consumers (agentcash,
+  // x402scan, the OpenAPI spec) need a JSON-schema-shaped object to render and
+  // validate inputs; an empty `{type: "object"}` is fine for zero-input
+  // workflows. Allowing null at publish time leaves the listing unrenderable.
+  const finalInputSchema = updateSet.inputSchema ?? current.inputSchema;
+  if (!isInputSchemaPresent(finalInputSchema)) {
+    return { ok: false, error: "INPUT_SCHEMA_REQUIRED" };
   }
 
   try {
