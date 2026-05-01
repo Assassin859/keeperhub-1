@@ -62,12 +62,31 @@ jobs:
       image_tag: ${{ needs.build-images.outputs.image_tag }}
     secrets: inherit
 
+  # Synthetic gate that turns green only once BOTH deploy jobs finish. The
+  # app and executor deploys run in parallel and their durations diverge
+  # (executor is consistently the slower of the two because it rebuilds the
+  # workflow-runner image). Without this gate, users seeing the faster job
+  # turn green can retry workflows on a stale executor and observe phantom
+  # failures. KEEP-388 was a staging exec submitted ~2 min after the app
+  # deploy finished but ~5 min before the executor deploy finished -- the
+  # workflow-runner that picked it up was still on the old image. This job
+  # makes "all deployments rolled" a single, observable signal.
+  deploy-ready:
+    needs: [deploy, deploy-executor]
+    if: ${{ github.event_name != 'pull_request' && !failure() && !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm deployment complete
+        run: |
+          echo "App + executor deploys both rolled to new image."
+          echo "Workflows submitted from this point will run on the new build."
+
   # Release and docs-sync only run on prod pushes, after successful deploy.
   # Previously a separate workflow — moved here so e2e/deploy failures block release.
   # Note: if ENABLE_E2E_EPHEMERAL_TESTS is false, e2e jobs are skipped (not failed),
   # so deploy and release proceed unconditionally — the variable is the kill switch.
   release:
-    needs: [deploy, deploy-executor]
+    needs: [deploy-ready]
     if: ${{ github.ref_name == 'prod' && !failure() && !cancelled() }}
     uses: ./.github/workflows/release.yml
     secrets: inherit

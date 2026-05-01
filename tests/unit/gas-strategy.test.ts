@@ -434,10 +434,20 @@ describe("AdaptiveGasStrategy", () => {
       expect(config.maxFeePerGas).toBeGreaterThanOrEqual(BigInt(5e9));
     });
 
-    it("should enforce 0G Galileo (16602) 2 gwei priority floor", async () => {
+    // Both 0G chains share a hardcoded floor of 4 gwei
+    // (gasLimitMultiplier=2.0, minPriorityFeeGwei=4.0). Mainnet (16661)
+    // mirrors Galileo (16602) defensively until mainnet has measurable
+    // tx volume to sample independently.
+    it.each([
+      { chainId: 16_602, name: "0G Galileo" },
+      { chainId: 16_661, name: "0G Mainnet" },
+    ])("should enforce $name ($chainId) 4 gwei priority floor", async ({
+      chainId,
+    }) => {
       const strategy = new AdaptiveGasStrategy();
-      // Provider returns 1.5 gwei tip -- below 0G's 2 gwei mempool minimum.
-      // Force volatile path so the conservative branch + clamp is exercised.
+      // Provider returns 1.5 gwei tip -- well below 0G's 4 gwei inclusion
+      // threshold. Force volatile path so the conservative branch + clamp
+      // is exercised.
       const provider = createMockProvider({
         maxPriorityFeePerGas: BigInt(1.5e9),
         feeHistory: {
@@ -461,11 +471,10 @@ describe("AdaptiveGasStrategy", () => {
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
         BigInt(21_000),
-        16_602 // 0G Galileo
+        chainId
       );
 
-      // Hardcoded override: minPriorityFeeGwei=2.0, gasLimitMultiplier=2.0
-      expect(config.maxPriorityFeePerGas).toBeGreaterThanOrEqual(BigInt(2e9));
+      expect(config.maxPriorityFeePerGas).toBeGreaterThanOrEqual(BigInt(4e9));
       expect(config.gasLimit).toBe(BigInt(42_000));
     });
   });

@@ -554,10 +554,16 @@ export class AdaptiveGasStrategy {
         minPriorityFeeGwei: 30,
         maxPriorityFeeGwei: 1000,
       },
-      // 0G Galileo testnet -- mempool rejects tips below 2 gwei
+      // 0G Galileo testnet. The mempool admits tips at 2 gwei (matching the
+      // node's "needed 2 gwei" floor) but validators only include txs paying
+      // >= ~4 gwei. Validated 2026-05-01: sampled 10k recent blocks (400 txs);
+      // 77% paid exactly 4.0 gwei, 91% paid >= 4.0, eth_maxPriorityFeePerGas
+      // returns 4.0. A 2 gwei tip clears mempool admission then sits unmined
+      // indefinitely. If 0G validator policy shifts (mempool floor != inclusion
+      // floor is the trap), re-sample and adjust this entry.
       16602: {
         gasLimitMultiplier: 2.0,
-        minPriorityFeeGwei: 2.0,
+        minPriorityFeeGwei: 4.0,
         maxPriorityFeeGwei: 500,
       },
       // 0G Mainnet -- mirrors Galileo's tip-cap requirement (same client/protocol).
@@ -565,7 +571,7 @@ export class AdaptiveGasStrategy {
       // until we have mainnet-specific signal.
       16661: {
         gasLimitMultiplier: 2.0,
-        minPriorityFeeGwei: 2.0,
+        minPriorityFeeGwei: 4.0,
         maxPriorityFeeGwei: 500,
       },
     };
