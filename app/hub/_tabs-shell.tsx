@@ -49,7 +49,8 @@ export function HubTabsShell({
 
   return (
     <Tabs className="w-full" onValueChange={handleChange} value={initialTab}>
-      <div className="mb-6 flex items-center justify-between gap-4 border-border/20 border-b py-2">
+      <div className="mb-6 flex items-center gap-4 border-border/20 border-b py-2">
+        {searchSlot}
         <TabsList
           aria-label="Hub views"
           className="inline-flex h-auto items-center gap-1 bg-transparent p-0"
@@ -67,7 +68,6 @@ export function HubTabsShell({
             Marketplace
           </TabsTrigger>
         </TabsList>
-        {searchSlot}
       </div>
 
       <TabsContent
