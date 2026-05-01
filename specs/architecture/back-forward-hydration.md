@@ -99,6 +99,6 @@ The decision will be revisited if the bug persists in Next.js 16.3+ or if a futu
 
 - **Date:** 2026-05-01.
 - **Status:** Workaround shipped at root layout; per-page workaround deleted; root cause unisolated within the time budget; upstream issue filing deferred.
-- **Owner:** Phase 45 commit (SHA TBD post-merge — to be backfilled when the commit lands on `staging`).
+- **Owner:** Phase 45 root-layout fix commit `06c1867f` (`feat(45): lift dev-only bfcache reload Script to root layout`) on branch `feature/v1.11-phase-42-foundations`. Companion commits: `d4e61a36` (per-page deletion), `30a05ad0` (replacement unit test), `554e7d93` + `84d1eb4f` + `69063092` (dual-mode Playwright wiring + scripts + e2e suite), `2df832d1` (this ADR).
 - **Supersedes:** the per-page workaround in `app/hub/layout.tsx` introduced by commit `cef214f0` in Phase 43 (October 2025 era). The per-page `<Script>` block, the `HUB_DEV_BFCACHE_RELOAD` const, and the associated `tests/unit/hub-layout-bfcache.test.ts` have all been deleted; `app/hub/layout.tsx` is now a metadata-only passthrough that simply renders `<>{children}</>`.
 - **Revisit trigger:** If Next.js 16.3+ ships a fix for any of the three streaming-RSC / bfcache / Turbopack-hydration issues catalogued in `## Bounding the Hypothesis Space`, re-test the bug signature on a clean `pnpm dev` instance. If the symptom is gone, delete the workaround per the file list in `## What Would Constitute a Real Upstream Fix`.
