@@ -1,8 +1,12 @@
+import { asc } from "drizzle-orm";
 import { Box } from "lucide-react";
-import { cookies } from "next/headers";
-import { HubViewToggle } from "@/components/hub/hub-view-toggle";
 import { MarketplaceRow } from "@/components/hub/marketplace-row";
-import { MarketplaceSidebar } from "@/components/hub/marketplace-sidebar";
+import {
+  MarketplaceSidebar,
+  type MarketplaceSidebarTag,
+} from "@/components/hub/marketplace-sidebar";
+import { db } from "@/lib/db";
+import { publicTags } from "@/lib/db/schema-extensions";
 import {
   fetchMarketplaceLeaderboard,
   type MarketplaceSort,
@@ -15,10 +19,19 @@ const VALID_SORTS: readonly MarketplaceSort[] = [
   "price",
 ];
 
-type ViewMode = "cards" | "list";
+async function fetchPublicTags(): Promise<MarketplaceSidebarTag[]> {
+  try {
+    return await db
+      .select({ name: publicTags.name, slug: publicTags.slug })
+      .from(publicTags)
+      .orderBy(asc(publicTags.name));
+  } catch {
+    return [];
+  }
+}
 
-function readView(value: string | undefined): ViewMode {
-  return value === "list" ? "list" : "cards";
+function readTag(raw: string | string[] | undefined): string | null {
+  return typeof raw === "string" && raw.length > 0 ? raw : null;
 }
 
 function readSort(raw: string | string[] | undefined): MarketplaceSort {
@@ -46,13 +59,11 @@ export async function HubMarketplaceTab({
 }: MarketplaceTabProps): Promise<React.ReactElement> {
   const sort = readSort(searchParams.sort);
   const cursor = readCursor(searchParams.cursor);
-  const cookieStore = await cookies();
-  const initialView = readView(cookieStore.get("hub_view")?.value);
-  const { rows, total } = await fetchMarketplaceLeaderboard(
-    sort,
-    cursor,
-    query
-  );
+  const tagSlug = readTag(searchParams.tag);
+  const [{ rows, total }, tags] = await Promise.all([
+    fetchMarketplaceLeaderboard(sort, cursor, query, tagSlug),
+    fetchPublicTags(),
+  ]);
 
   if (rows.length === 0) {
     const hasQuery = query.trim().length > 0;
@@ -77,57 +88,52 @@ export async function HubMarketplaceTab({
   }
 
   return (
-    <section aria-label="Marketplace results">
-      <div className="mb-4 flex justify-end">
-        <HubViewToggle initialView={initialView} />
-      </div>
-      <div className="flex gap-6">
-        <MarketplaceSidebar active={sort} />
-        <div className="min-w-0 flex-1">
-          {/* biome-ignore lint/a11y/useSemanticElements: UI-SPEC §5 mandates a CSS grid layout (grid-cols-[48px_1fr_220px_96px_96px_80px]); a native <table> cannot drive grid tracks. The role="table"/"row"/"columnheader" hierarchy preserves screen-reader semantics. */}
+    <section aria-label="Marketplace results" className="flex gap-6">
+      <MarketplaceSidebar active={sort} activeTagSlug={tagSlug} tags={tags} />
+      <div className="min-w-0 flex-1">
+        {/* biome-ignore lint/a11y/useSemanticElements: UI-SPEC §5 mandates a CSS grid layout (grid-cols-[48px_1fr_220px_96px_96px_80px]); a native <table> cannot drive grid tracks. The role="table"/"row"/"columnheader" hierarchy preserves screen-reader semantics. */}
+        <div
+          aria-label="Marketplace leaderboard"
+          aria-rowcount={total}
+          className="overflow-hidden rounded-xl border border-border/20 bg-[var(--color-hub-card)]"
+          role="table"
+        >
+          {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
+          {/* biome-ignore lint/a11y/useFocusableInteractive: the header row is a label container, not a tab stop; making it focusable would create empty stops in the keyboard order. */}
           <div
-            aria-label="Marketplace leaderboard"
-            aria-rowcount={total}
-            className="overflow-hidden rounded-xl border border-border/20 bg-[var(--color-hub-card)]"
-            role="table"
+            className="grid grid-cols-[48px_1fr_220px_96px_96px_80px] items-center gap-x-3 border-border/30 border-b bg-[var(--color-hub-overlay)] px-4 py-3 font-normal text-muted-foreground text-xs uppercase tracking-widest"
+            role="row"
           >
             {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
-            {/* biome-ignore lint/a11y/useFocusableInteractive: the header row is a label container, not a tab stop; making it focusable would create empty stops in the keyboard order. */}
-            <div
-              className="grid grid-cols-[48px_1fr_220px_96px_96px_80px] items-center gap-x-3 border-border/30 border-b bg-[var(--color-hub-overlay)] px-4 py-3 font-normal text-muted-foreground text-xs uppercase tracking-widest"
-              role="row"
-            >
-              {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
-              {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels; focusable headers would clutter keyboard order without adding navigation value. */}
-              <span role="columnheader">Rank</span>
-              {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
-              {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
-              <span role="columnheader">Name</span>
-              {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
-              {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
-              <span className="hidden lg:inline" role="columnheader">
-                Tags
-              </span>
-              {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
-              {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
-              <span className="text-right" role="columnheader">
-                Calls
-              </span>
-              {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
-              {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
-              <span className="text-right" role="columnheader">
-                Price
-              </span>
-              {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
-              {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
-              <span className="hidden text-right md:inline" role="columnheader">
-                Chain
-              </span>
-            </div>
-            {rows.map((row, idx) => (
-              <MarketplaceRow key={row.workflowId} rank={idx + 1} row={row} />
-            ))}
+            {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels; focusable headers would clutter keyboard order without adding navigation value. */}
+            <span role="columnheader">Rank</span>
+            {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
+            {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
+            <span role="columnheader">Name</span>
+            {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
+            {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
+            <span className="hidden lg:inline" role="columnheader">
+              Tags
+            </span>
+            {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
+            {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
+            <span className="text-right" role="columnheader">
+              Calls
+            </span>
+            {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
+            {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
+            <span className="text-right" role="columnheader">
+              Price
+            </span>
+            {/* biome-ignore lint/a11y/useSemanticElements: see role="table" justification above. */}
+            {/* biome-ignore lint/a11y/useFocusableInteractive: column headers are static labels. */}
+            <span className="hidden text-right md:inline" role="columnheader">
+              Chain
+            </span>
           </div>
+          {rows.map((row, idx) => (
+            <MarketplaceRow key={row.workflowId} rank={idx + 1} row={row} />
+          ))}
         </div>
       </div>
     </section>

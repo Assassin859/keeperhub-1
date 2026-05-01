@@ -61,7 +61,8 @@ function decodeCursor(raw: string | null): CursorPayload | null {
 async function runLeaderboardQuery(
   sort: MarketplaceSort,
   cursor: CursorPayload | null,
-  query: string
+  query: string,
+  tagSlug: string | null
 ): Promise<MarketplaceLeaderboardResult> {
   // PUBLIC COLUMN WHITELIST -- see MARKET-04. Adding fields here requires
   // re-reading MARKET-04 + MARKET-13 first. NEVER add private columns:
@@ -94,7 +95,24 @@ async function runLeaderboardQuery(
       ? undefined
       : ilike(workflows.name, `%${escapeLikePattern(query)}%`);
 
-  const whereClause = and(baseFilter, cursorFilter, queryFilter);
+  // Tag filter — restrict to workflows linked to the given public tag slug.
+  // Resolved via a sub-select on workflow_public_tags + public_tags (slug is
+  // the human-shareable URL token; id is the internal FK).
+  const tagFilter = tagSlug
+    ? inArray(
+        workflows.id,
+        db
+          .select({ workflowId: workflowPublicTags.workflowId })
+          .from(workflowPublicTags)
+          .innerJoin(
+            publicTags,
+            eq(publicTags.id, workflowPublicTags.publicTagId)
+          )
+          .where(eq(publicTags.slug, tagSlug))
+      )
+    : undefined;
+
+  const whereClause = and(baseFilter, cursorFilter, queryFilter, tagFilter);
 
   const orderClause = (() => {
     if (sort === "newest") {
@@ -135,7 +153,7 @@ async function runLeaderboardQuery(
   const totalRow = await db
     .select({ value: sql<number>`count(*)::int` })
     .from(workflows)
-    .where(and(baseFilter, queryFilter));
+    .where(and(baseFilter, queryFilter, tagFilter));
   const total = totalRow[0]?.value ?? 0;
 
   const hasMore = rows.length > PAGE_LIMIT;
@@ -190,10 +208,11 @@ export const fetchMarketplaceLeaderboard = unstable_cache(
   async (
     sort: MarketplaceSort,
     cursorRaw: string | null,
-    query: string
+    query: string,
+    tagSlug: string | null
   ): Promise<MarketplaceLeaderboardResult> => {
     const cursor = decodeCursor(cursorRaw);
-    return await runLeaderboardQuery(sort, cursor, query);
+    return await runLeaderboardQuery(sort, cursor, query, tagSlug);
   },
   ["marketplace-leaderboard"],
   { revalidate: 60, tags: ["marketplace"] }

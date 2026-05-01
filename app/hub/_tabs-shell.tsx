@@ -51,7 +51,10 @@ export function HubTabsShell({
     if (value !== "marketplace") {
       params.delete("sort");
     }
-    if (value !== "workflows") {
+    // Tag applies to both Workflows and Marketplace (each tab filters
+    // its own dataset by the same `public_tags` taxonomy). Drop only
+    // when going to Protocols, where there's no tag taxonomy.
+    if (value === "protocols") {
       params.delete("tag");
     }
     const qs = params.toString();
