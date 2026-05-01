@@ -67,49 +67,53 @@ test.describe("Marketplace tab (MARKET-13)", () => {
     }
   });
 
-  test("sort dropdown switches between Popular and Newest, updating ?sort= URL param", async ({
+  test("sort sidebar switches between Popular and Newest, updating ?sort= URL param", async ({
     page,
   }) => {
     await page.goto("/hub?tab=marketplace", {
       waitUntil: "domcontentloaded",
     });
-    const trigger = page.getByRole("button", { name: "Sort marketplace by" });
-    await expect(trigger).toBeVisible({ timeout: 15_000 });
+    // Sidebar Sort section is a radiogroup; each option is a role=radio
+    // button. The dropdown was replaced with this sidebar in 44-tweaks.
+    const sortGroup = page.getByRole("radiogroup", {
+      name: "Sort marketplace by",
+    });
+    await expect(sortGroup).toBeVisible({ timeout: 15_000 });
     // Default sort is Popular.
-    await expect(trigger).toContainText("Popular");
+    await expect(
+      sortGroup.getByRole("radio", { name: "Popular" })
+    ).toHaveAttribute("aria-checked", "true");
 
     // Switch to Newest.
-    await trigger.click();
-    const newestOption = page.getByRole("menuitemradio", { name: "Newest" });
-    await expect(newestOption).toBeVisible({ timeout: 5000 });
-    await newestOption.click();
+    await sortGroup.getByRole("radio", { name: "Newest" }).click();
     await expect(page).toHaveURL(URL_SORT_NEWEST, { timeout: 5000 });
     // URL should still carry tab=marketplace alongside sort=newest.
     await expect(page).toHaveURL(URL_TAB_MARKETPLACE);
-    await expect(trigger).toContainText("Newest");
+    await expect(
+      sortGroup.getByRole("radio", { name: "Newest" })
+    ).toHaveAttribute("aria-checked", "true");
 
     // Switch back to Popular.
-    await trigger.click();
-    const popularOption = page.getByRole("menuitemradio", { name: "Popular" });
-    await expect(popularOption).toBeVisible({ timeout: 5000 });
-    await popularOption.click();
+    await sortGroup.getByRole("radio", { name: "Popular" }).click();
     await expect(page).toHaveURL(URL_SORT_POPULAR, { timeout: 5000 });
-    await expect(trigger).toContainText("Popular");
+    await expect(
+      sortGroup.getByRole("radio", { name: "Popular" })
+    ).toHaveAttribute("aria-checked", "true");
   });
 
-  test("sort dropdown does NOT expose Earnings option (MARKET-02 deferred)", async ({
+  test("sort sidebar does NOT expose Earnings option (MARKET-02 deferred)", async ({
     page,
   }) => {
     await page.goto("/hub?tab=marketplace", {
       waitUntil: "domcontentloaded",
     });
-    const trigger = page.getByRole("button", { name: "Sort marketplace by" });
-    await expect(trigger).toBeVisible({ timeout: 15_000 });
-    await trigger.click();
-    // Assert there is no menu item containing "Earnings" / "earnings". The
-    // earnings/revenue sort is explicitly deferred (MARKET-FUTURE-01) until
-    // privacy review + bucketing-threshold sign-off.
-    const earningsOption = page.getByRole("menuitemradio", {
+    const sortGroup = page.getByRole("radiogroup", {
+      name: "Sort marketplace by",
+    });
+    await expect(sortGroup).toBeVisible({ timeout: 15_000 });
+    // Assert no radio with "Earnings" / "earnings". The earnings/revenue
+    // sort is explicitly deferred (MARKET-FUTURE-01).
+    const earningsOption = sortGroup.getByRole("radio", {
       name: NAME_EARNINGS,
     });
     await expect(earningsOption).toHaveCount(0);
