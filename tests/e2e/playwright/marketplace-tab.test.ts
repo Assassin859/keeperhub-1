@@ -53,10 +53,11 @@ test.describe("Marketplace tab (MARKET-13)", () => {
     await page.goto("/hub?tab=marketplace", {
       waitUntil: "domcontentloaded",
     });
-    // Wait for marketplace render to settle — `region` aria-label is set on
-    // both the populated and empty states (`<section aria-label="Marketplace results">`).
+    // Wait for marketplace render to settle. Use exact match so the
+    // empty-state inner section (`aria-label="No marketplace results"`)
+    // doesn't fuzzy-match this selector.
     await page
-      .getByRole("region", { name: "Marketplace results" })
+      .getByRole("region", { name: "Marketplace results", exact: true })
       .waitFor({ state: "visible", timeout: 15_000 });
     const html = await page.content();
     for (const banned of BANNED_TOKENS) {
