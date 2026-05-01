@@ -10,9 +10,9 @@ import {
   Github,
   Globe,
   Info,
-  List,
   Loader2,
   Plus,
+  Workflow as WorkflowIcon,
   X,
 } from "lucide-react";
 import { useParams, usePathname, useRouter } from "next/navigation";
@@ -490,17 +490,17 @@ function NavItem({
 
 const NAV_ITEMS: NavItemDef[] = [
   {
-    id: "workflows",
-    icon: List,
-    label: "All Workflows",
-    href: null,
-    requireAuth: false,
-  },
-  {
     id: "hub",
     icon: Globe,
     label: "Hub",
     href: "/hub",
+    requireAuth: false,
+  },
+  {
+    id: "workflows",
+    icon: WorkflowIcon,
+    label: "Workflows",
+    href: null,
     requireAuth: false,
   },
   {
@@ -1000,7 +1000,7 @@ export function NavigationSidebar(): React.ReactNode {
         onCollapse={() => navState.setPanelState("projects", "collapsed")}
         onExpand={() => navState.setPanelState("projects", "open")}
         state={navState.state.panels.projects}
-        title="All Workflows"
+        title="Workflows"
       >
         <ProjectsPanel
           activeWorkflowId={workflowId}
