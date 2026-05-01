@@ -54,8 +54,17 @@ async function loadTag(slug: string): Promise<LoadedTag | null> {
 }
 
 export async function generateStaticParams(): Promise<Params[]> {
-  const rows = await db.select({ slug: publicTags.slug }).from(publicTags);
-  return rows.map((row) => ({ tag: row.slug }));
+  // Returns the slug list to pre-render at build. Build runs in a
+  // container with no DB access, so swallow connection errors and rely
+  // on `dynamicParams = true` to render any tag on demand at request
+  // time. Pages will still be statically generated/refreshed via the
+  // 1-hour ISR window once they're first hit in production.
+  try {
+    const rows = await db.select({ slug: publicTags.slug }).from(publicTags);
+    return rows.map((row) => ({ tag: row.slug }));
+  } catch {
+    return [];
+  }
 }
 
 export async function generateMetadata({

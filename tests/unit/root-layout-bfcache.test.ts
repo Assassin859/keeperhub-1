@@ -104,12 +104,20 @@ describe("app/hub/layout.tsx — per-page workaround removed (Phase 45 supersede
     expect(hubLayoutSource).not.toContain('from "next/script"');
   });
 
-  it("HubLayout still exports metadata (no SEO regression)", () => {
-    expect(hubLayoutSource).toContain("export const metadata");
-  });
-
   it("HubLayout default export is preserved", () => {
     expect(hubLayoutSource).toContain("export default function HubLayout");
+  });
+
+  it("Hub SEO has not regressed (per-tab generateMetadata now owns it)", () => {
+    // Phase 44 plan 44-09 (MARKET-12) moved per-tab metadata to
+    // `app/hub/page.tsx` via `generateMetadata({ searchParams })`. The
+    // layout no longer declares static metadata so the page-level
+    // generator owns title/description/openGraph/twitter unambiguously.
+    // Assert the migration target rather than the layout export.
+    const HUB_PAGE_PATH = resolve(process.cwd(), "app/hub/page.tsx");
+    const hubPageSource = readFileSync(HUB_PAGE_PATH, "utf-8");
+    expect(hubPageSource).toContain("generateMetadata");
+    expect(hubLayoutSource).not.toContain("export const metadata");
   });
 });
 
