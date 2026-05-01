@@ -109,7 +109,19 @@
   8. The standalone `/marketplace` route from the original Phase 44 plan is NOT created; marketplace is a `/hub` tab only. The standalone Marketplace nav entry in the left sidebar planned in v1 is replaced by relying on the Hub nav entry to land on `/hub` — final nav decision (single Hub entry vs Hub-with-default-tab + secondary tab links) decided during /gsd-spec-phase 44. No "Listed in marketplace" badge or marketplace-related decoration on Workflows tab cards or rows; cross-tab discovery happens via the tab strip only.
   9. Tab switches do NOT cause a full route re-mount (no skeleton flicker on the surrounding shell). The shared sidebar Sort+Tags and Cards/List toggle are scoped to the tab they belong to (Workflows) and either hide or swap when other tabs are active. Tab switching round-trip latency is dominated by data fetch only — no Next.js Router cache miss / RSC re-render of the tab shell.
   10. Local UAT gate passed before PR is opened: `pnpm dev` smoke against seeded `workflow_payments` data, `pnpm discover /hub --auth --highlight` reports captured for each tab, sort dropdown manually exercised across all three options on the Marketplace tab, manual viewport check at 1280x800 minimum, `pnpm check` + `pnpm type-check` + `node scripts/token-audit.js` all green, the planning agent applied the `/frontend-design:frontend-design` skill before writing plans, and the existing Phase 43 UAT (43-UAT.md) re-passes — every Phase 43 success criterion still holds inside the new Workflows tab.
-**Plans**: TBD
+**Plans:** 12 plans
+- [ ] 44-01-PLAN.md — Tab shell scaffolding (HubTabsShell + page.tsx host; default = Protocols)
+- [ ] 44-02-PLAN.md — Workflows tab lift + delete Protocols strip + Templates divider + plant marketplace-badge slot marker
+- [ ] 44-03-PLAN.md — Protocols tab content (HubProtocolsTab + ProtocolCardV2 + detail island)
+- [ ] 44-04-PLAN.md — HubHero rewrite ("Hub" + locked sub copy)
+- [ ] 44-05-PLAN.md — Marketplace tab content (cached Drizzle leaderboard + MarketplaceRow + privacy whitelist)
+- [ ] 44-06-PLAN.md — Marketplace sort dropdown (Popular default, Newest; earnings absent)
+- [ ] 44-07-PLAN.md — MCP API + tool extension (?sort=popular|recent + search_workflows sort param)
+- [ ] 44-08-PLAN.md — Drizzle migration evaluation for workflow_payments composite index (gated on EXPLAIN)
+- [ ] 44-09-PLAN.md — Per-tab generateMetadata + tab-strip search slot + HubHero mount
+- [ ] 44-10-PLAN.md — Sidebar audit (single Hub entry, no Marketplace addition)
+- [ ] 44-11-PLAN.md — Playwright e2e (tabbed-hub-shell + marketplace-tab tests)
+- [ ] 44-12-PLAN.md — Local UAT gate + REQUIREMENTS.md HUBV2-01 wording correction
 **UI hint**: yes
 
 ---
@@ -120,5 +132,5 @@
 |-------|----------------|--------|-----------|
 | 42. Foundations & Shared Primitives | 9/10 | Verification: human_needed | - |
 | 43. Hub UX Overhaul | 14/14 | UAT complete | 2026-05-01 |
-| 44. Marketplace Ladder | 0/? | Not started | - |
+| 44. Unified Tabbed Hub | 0/12 | Not started | - |
 | 45. Back/Forward Hydration Fix | 0/? | Not started | - |
