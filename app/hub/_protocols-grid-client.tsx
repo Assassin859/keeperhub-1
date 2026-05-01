@@ -7,10 +7,12 @@ import type { ProtocolDefinition } from "@/lib/protocol-registry";
 
 type ProtocolGridClientProps = {
   protocols: ProtocolDefinition[];
+  workflowCounts: Record<string, number>;
 };
 
 export function ProtocolGridClient({
   protocols,
+  workflowCounts,
 }: ProtocolGridClientProps): React.ReactElement {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -37,6 +39,7 @@ export function ProtocolGridClient({
           key={protocol.slug}
           onSelect={handleSelect}
           protocol={protocol}
+          workflowCount={workflowCounts[protocol.slug] ?? 0}
         />
       ))}
     </div>

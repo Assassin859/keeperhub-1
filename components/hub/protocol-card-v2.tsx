@@ -7,16 +7,23 @@ import type { ProtocolDefinition } from "@/lib/protocol-registry";
 
 type ProtocolCardV2Props = {
   protocol: ProtocolDefinition;
+  workflowCount: number;
   onSelect: (slug: string, e: MouseEvent | KeyboardEvent) => void;
 };
 
-function capabilityLabel(protocol: ProtocolDefinition): string {
+function capabilityLabel(
+  protocol: ProtocolDefinition,
+  workflowCount: number
+): string {
   const parts: string[] = [];
   if (protocol.actions.length > 0) {
     parts.push("Actions");
   }
   if (protocol.events && protocol.events.length > 0) {
     parts.push("Events");
+  }
+  if (workflowCount > 0) {
+    parts.push("Workflows");
   }
   if (parts.length === 0) {
     return "Coming soon";
@@ -26,6 +33,7 @@ function capabilityLabel(protocol: ProtocolDefinition): string {
 
 export function ProtocolCardV2({
   protocol,
+  workflowCount,
   onSelect,
 }: ProtocolCardV2Props): React.ReactElement {
   const handleClick = (e: MouseEvent<HTMLElement>): void => {
@@ -81,7 +89,7 @@ export function ProtocolCardV2({
           className="size-3.5 text-muted-foreground"
         />
         <span className="text-muted-foreground text-xs">
-          {capabilityLabel(protocol)}
+          {capabilityLabel(protocol, workflowCount)}
         </span>
       </div>
     </article>
