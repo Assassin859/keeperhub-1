@@ -1,0 +1,90 @@
+"use client";
+
+import { Box, Workflow as WorkflowIcon } from "lucide-react";
+import Image from "next/image";
+import type { KeyboardEvent, MouseEvent } from "react";
+import type { ProtocolDefinition } from "@/lib/protocol-registry";
+
+type ProtocolCardV2Props = {
+  protocol: ProtocolDefinition;
+  workflowCount?: number;
+  onSelect: (slug: string, e: MouseEvent | KeyboardEvent) => void;
+};
+
+function workflowCountLabel(count: number | undefined): string {
+  if (count === undefined) {
+    return "View workflows";
+  }
+  if (count === 0) {
+    return "No workflows yet";
+  }
+  if (count === 1) {
+    return "1 workflow";
+  }
+  return `${count} workflows`;
+}
+
+export function ProtocolCardV2({
+  protocol,
+  workflowCount,
+  onSelect,
+}: ProtocolCardV2Props): React.ReactElement {
+  const handleClick = (e: MouseEvent<HTMLElement>): void => {
+    onSelect(protocol.slug, e);
+  };
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLElement>): void => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onSelect(protocol.slug, e);
+    }
+  };
+
+  return (
+    // biome-ignore lint/a11y/useSemanticElements: card uses an <article> with role="link" + ::before overlay per UI-SPEC §1; wrapping <a> is forbidden to preserve nested-button A11y
+    <article
+      aria-label={`Open ${protocol.name} details`}
+      className="group relative flex min-h-[180px] cursor-pointer flex-col rounded-xl border border-border/20 bg-[var(--color-hub-card)] p-4 transition-colors duration-150 ease before:absolute before:inset-0 before:z-[1] before:cursor-pointer before:rounded-xl before:content-[''] hover:border-[var(--color-border-accent)]/40 hover:brightness-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-hub-overlay)] motion-reduce:transition-none"
+      onClick={handleClick}
+      onKeyDown={handleKeyDown}
+      // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: UI-SPEC §1 mandates <article role="link"> for the card; click is delivered via the ::before overlay and onKeyDown handler.
+      role="link"
+      tabIndex={0}
+    >
+      <div className="pointer-events-none relative z-[2] flex size-12 items-center justify-center rounded-lg bg-[var(--color-hub-icon-bg)]">
+        {protocol.icon ? (
+          <Image
+            alt=""
+            className="size-8 object-contain"
+            height={32}
+            src={protocol.icon}
+            width={32}
+          />
+        ) : (
+          <Box
+            aria-hidden="true"
+            className="size-6 text-[var(--color-text-accent)]"
+          />
+        )}
+      </div>
+
+      <h3 className="pointer-events-none relative z-[2] mt-3 line-clamp-2 font-semibold text-foreground text-sm">
+        {protocol.name}
+      </h3>
+
+      <p className="pointer-events-none relative z-[2] mt-1.5 line-clamp-3 text-muted-foreground/80 text-xs">
+        {protocol.description}
+      </p>
+
+      <div className="pointer-events-none relative z-[2] mt-auto flex items-center gap-2 border-border/30 border-t pt-3">
+        <WorkflowIcon
+          aria-hidden="true"
+          className="size-3.5 text-muted-foreground"
+        />
+        <span className="text-muted-foreground text-xs">
+          {workflowCountLabel(workflowCount)}
+        </span>
+      </div>
+    </article>
+  );
+}
