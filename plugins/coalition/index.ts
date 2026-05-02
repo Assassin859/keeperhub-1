@@ -304,6 +304,102 @@ const coalitionPlugin: IntegrationPlugin = {
       ],
     },
     {
+      slug: "slash",
+      label: "Slash Breached Party",
+      description:
+        "Transfer the breached party's stake pro-rata to non-breached participants. Reliability-tuned: routes through private mempool, supports priority-fee override.",
+      category: "Coalition",
+      requiresCredentials: true,
+      stepFunction: "slashStep",
+      stepImportPath: "slash",
+      outputFields: [
+        { field: "success", description: "Whether the slash succeeded" },
+        { field: "transactionHash", description: "Tx hash" },
+        { field: "transactionLink", description: "Block explorer link" },
+        {
+          field: "amountRedistributed",
+          description:
+            "Total stake redistributed (wei string), parsed from the Slashed event",
+        },
+        { field: "party", description: "Address of the slashed party" },
+        { field: "error", description: "Error message if failed" },
+      ],
+      configFields: [
+        {
+          key: "network",
+          label: "Network",
+          type: "chain-select",
+          chainTypeFilter: "evm",
+          showPrivateVariants: true,
+          placeholder: "Select network",
+          required: true,
+        },
+        {
+          key: "coalitionId",
+          label: "Coalition ID",
+          type: "template-input",
+          placeholder: "1",
+          required: true,
+        },
+        {
+          key: "party",
+          label: "Party to Slash",
+          type: "template-input",
+          placeholder: "0x... (must be marked breached)",
+          required: true,
+        },
+        {
+          type: "group",
+          label: "Reliability",
+          defaultExpanded: true,
+          fields: [
+            {
+              key: "usePrivateMempool",
+              label: "Use Private Mempool",
+              type: "select",
+              options: [
+                { value: "yes", label: "Yes (recommended for slash)" },
+                { value: "no", label: "No (public mempool)" },
+              ],
+              defaultValue: "yes",
+              helpTip:
+                "Routes the slash transaction through Flashbots Protect (or the chain's private RPC) to avoid frontrunning.",
+            },
+            {
+              key: "strict",
+              label: "Strict Private Mempool",
+              type: "select",
+              options: [
+                { value: "no", label: "No (fall back to public if private RPC unreachable)" },
+                { value: "yes", label: "Yes (fail rather than fall back)" },
+              ],
+              defaultValue: "no",
+            },
+            {
+              key: "priorityFeeGwei",
+              label: "Priority Fee Override (gwei)",
+              type: "template-input",
+              placeholder: "Leave empty for chain default; set 2-5 above baseline for fast inclusion",
+            },
+          ],
+        },
+        {
+          type: "group",
+          label: "Advanced",
+          defaultExpanded: false,
+          fields: [
+            {
+              key: "gasLimitMultiplier",
+              label: "Gas Limit",
+              type: "gas-limit-multiplier",
+              networkField: "network",
+              actionSlug: "slash",
+            },
+          ],
+        },
+      ],
+    },
+    {
       slug: "check-status",
       label: "Check Coalition Status",
       description:
