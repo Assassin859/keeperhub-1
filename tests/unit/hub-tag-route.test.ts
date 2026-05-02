@@ -143,14 +143,14 @@ describe("app/hub/tags/[tag]/page.tsx", () => {
   });
 
   describe("route segment config", () => {
-    it("exports dynamicParams = true (HUB-10 ISR for new tags)", async () => {
+    it("exports dynamicParams = true (HUB-10 — new tags render on demand)", async () => {
       const mod = await import("@/app/hub/tags/[tag]/page");
       expect(mod.dynamicParams).toBe(true);
     });
 
-    it("exports revalidate = 3600 (1-hour ISR window)", async () => {
+    it('exports dynamic = "force-dynamic" so notFound() yields 404 in prod (was a 500 under SSG + revalidate + dynamicParams)', async () => {
       const mod = await import("@/app/hub/tags/[tag]/page");
-      expect(mod.revalidate).toBe(3600);
+      expect(mod.dynamic).toBe("force-dynamic");
     });
   });
 

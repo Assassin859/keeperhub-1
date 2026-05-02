@@ -7,9 +7,16 @@ import { db } from "@/lib/db";
 import { publicTags, workflowPublicTags } from "@/lib/db/schema";
 import { isReservedSlug } from "@/lib/workflow/reserved-slugs";
 
+// Force every request through the dynamic page handler. The page already
+// reads `cookies()`, which makes each request dynamic anyway — but with
+// `generateStaticParams` returning rows we end up classified as SSG with
+// `revalidate` + `dynamicParams` + on-demand fallback. In that mode,
+// `notFound()` for reserved/unknown slugs surfaces as a 500 in production
+// instead of a 404 (Next 16 ISR + on-demand fallback interaction). Forcing
+// `dynamic` removes the SSG classification and the 500 with it; the cookie
+// read already prevented the page from being a useful prerender candidate.
+export const dynamic = "force-dynamic";
 export const dynamicParams = true;
-// 1-hour ISR window for newly-added tags (HUB-10, CONTEXT.md)
-export const revalidate = 3600;
 
 const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.keeperhub.com";
 
