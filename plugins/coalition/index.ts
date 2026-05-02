@@ -110,6 +110,77 @@ const coalitionPlugin: IntegrationPlugin = {
       ],
     },
     {
+      slug: "sign",
+      label: "Sign Coalition",
+      description:
+        "Sign in as a participant and escrow your stake. Auto-approves the stakeToken allowance if needed. Idempotent — safe to retry.",
+      category: "Coalition",
+      requiresCredentials: true,
+      stepFunction: "signStep",
+      stepImportPath: "sign",
+      outputFields: [
+        { field: "success", description: "Whether the sign-in succeeded" },
+        {
+          field: "transactionHash",
+          description: "Sign transaction hash (empty if already signed)",
+        },
+        { field: "transactionLink", description: "Block explorer link" },
+        {
+          field: "approvalTransactionHash",
+          description:
+            "Approval tx hash (only present if allowance was insufficient and skipApproval=No)",
+        },
+        {
+          field: "wasAlreadySigned",
+          description:
+            "True if the wallet had already signed; the action returned without sending a tx",
+        },
+        { field: "error", description: "Error message if failed" },
+      ],
+      configFields: [
+        {
+          key: "network",
+          label: "Network",
+          type: "chain-select",
+          chainTypeFilter: "evm",
+          showPrivateVariants: true,
+          placeholder: "Select network",
+          required: true,
+        },
+        {
+          key: "coalitionId",
+          label: "Coalition ID",
+          type: "template-input",
+          placeholder: "1 or {{Propose.coalitionId}}",
+          required: true,
+        },
+        {
+          type: "group",
+          label: "Advanced",
+          defaultExpanded: false,
+          fields: [
+            {
+              key: "skipApproval",
+              label: "Skip Auto-Approval",
+              type: "select",
+              options: [
+                { value: "no", label: "No (auto-approve if needed)" },
+                { value: "yes", label: "Yes (assume already approved)" },
+              ],
+              defaultValue: "no",
+            },
+            {
+              key: "gasLimitMultiplier",
+              label: "Gas Limit",
+              type: "gas-limit-multiplier",
+              networkField: "network",
+              actionSlug: "sign",
+            },
+          ],
+        },
+      ],
+    },
+    {
       slug: "check-status",
       label: "Check Coalition Status",
       description:
