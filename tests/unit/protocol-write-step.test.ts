@@ -550,6 +550,87 @@ describe("protocolWriteStep", () => {
         const coreCall = (mockWriteContractCore as Mock).mock.calls[0][0];
         expect(coreCall.ethValue).toBe("0.25");
       });
+
+      it("passes ethValue through when the ABI is valid JSON but not an array", async () => {
+        // Some auto-fetched ABIs come back wrapped (e.g. `{"abi": [...]}`).
+        // We only know how to inspect array-form ABIs; fall back to passing
+        // the value through and let writeContractCore handle it.
+        mockResolveProtocolMeta.mockReturnValue(COMPOUND_SUPPLY_META);
+        mockGetProtocol.mockReturnValue(COMPOUND_PROTOCOL);
+        mockResolveAbi.mockResolvedValue({
+          abi: '{"type":"function","name":"supply"}',
+        });
+        mockWriteContractCore.mockResolvedValue({
+          success: true,
+          transactionHash: "0x000",
+          transactionLink: "",
+          gasUsed: "21000",
+        });
+
+        await protocolWriteStep(makeInput({ ethValue: "0.5" }));
+
+        const coreCall = (mockWriteContractCore as Mock).mock.calls[0][0];
+        expect(coreCall.ethValue).toBe("0.5");
+        expect(mockLogUserError).not.toHaveBeenCalled();
+      });
+
+      it("preserves ethValue when the function has no stateMutability field", async () => {
+        // Pre-Solidity 0.5 ABIs may omit stateMutability. Without explicit
+        // information we cannot know whether the function is payable, so
+        // err on the side of preserving user input.
+        mockResolveProtocolMeta.mockReturnValue(COMPOUND_SUPPLY_META);
+        mockGetProtocol.mockReturnValue(COMPOUND_PROTOCOL);
+        mockResolveAbi.mockResolvedValue({
+          abi: JSON.stringify([
+            { type: "function", name: "supply", inputs: [], outputs: [] },
+          ]),
+        });
+        mockWriteContractCore.mockResolvedValue({
+          success: true,
+          transactionHash: "0x000",
+          transactionLink: "",
+          gasUsed: "21000",
+        });
+
+        await protocolWriteStep(makeInput({ ethValue: "0.75" }));
+
+        const coreCall = (mockWriteContractCore as Mock).mock.calls[0][0];
+        expect(coreCall.ethValue).toBe("0.75");
+        expect(mockLogUserError).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ["view", "view"],
+        ["pure", "pure"],
+      ])("drops ethValue when the resolved function is %s", async (_label, mutability) => {
+        mockResolveProtocolMeta.mockReturnValue(COMPOUND_SUPPLY_META);
+        mockGetProtocol.mockReturnValue(COMPOUND_PROTOCOL);
+        mockResolveAbi.mockResolvedValue({
+          abi: JSON.stringify([
+            {
+              type: "function",
+              name: "supply",
+              stateMutability: mutability,
+              inputs: [],
+              outputs: [],
+            },
+          ]),
+        });
+        mockWriteContractCore.mockResolvedValue({
+          success: true,
+          transactionHash: "0x000",
+          transactionLink: "",
+          gasUsed: "21000",
+        });
+
+        await protocolWriteStep(makeInput({ ethValue: "0.1" }));
+
+        const coreCall = (mockWriteContractCore as Mock).mock.calls[0][0];
+        expect(coreCall.ethValue).toBeUndefined();
+        expect(mockLogUserError).toHaveBeenCalledTimes(1);
+        const labels = (mockLogUserError as Mock).mock.calls[0][3];
+        expect(labels.state_mutability).toBe(mutability);
+      });
     });
 
     it("omits _context when input has no _context", async () => {
