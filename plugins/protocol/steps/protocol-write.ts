@@ -8,6 +8,7 @@ import {
 } from "@/plugins/web3/steps/write-contract-core";
 import { resolveAbi } from "@/lib/abi/cache";
 import { type AbiItem, findAbiFunction } from "@/lib/abi/utils";
+import { ErrorCategory, logUserError } from "@/lib/logging";
 import { getProtocol } from "@/lib/protocol-registry";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { applyEncodeTransformsNamed } from "@/lib/protocol-encode-transforms";
@@ -31,7 +32,8 @@ type ProtocolWriteInput = StepInput & {
 function resolveEthValue(
   rawEthValue: unknown,
   abi: string,
-  functionName: string
+  functionName: string,
+  protocolSlug: string
 ): string | undefined {
   if (typeof rawEthValue !== "string" || rawEthValue.trim() === "") {
     return undefined;
@@ -55,7 +57,19 @@ function resolveEthValue(
   // ABI or its mutability is unknown, pass the value through and let
   // writeContractCore surface the existing payable/not-found errors.
   const fn = findAbiFunction(parsedAbi as AbiItem[], functionName);
-  if (fn && fn.stateMutability && fn.stateMutability !== "payable") {
+  if (fn?.stateMutability && fn.stateMutability !== "payable") {
+    logUserError(
+      ErrorCategory.CONFIGURATION,
+      `[Protocol Write] Dropped ethValue for non-payable function '${functionName}' (was '${trimmed}')`,
+      undefined,
+      {
+        plugin_name: "protocol",
+        action_name: "protocol-write",
+        protocol_slug: protocolSlug,
+        function_name: functionName,
+        state_mutability: fn.stateMutability,
+      }
+    );
     return undefined;
   }
   return trimmed;
@@ -167,7 +181,8 @@ export async function protocolWriteStep(
     const ethValue = resolveEthValue(
       input.ethValue,
       resolvedAbi,
-      meta.functionName
+      meta.functionName,
+      meta.protocolSlug
     );
 
     const coreInput: WriteContractCoreInput = {

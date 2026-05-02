@@ -5,6 +5,12 @@ import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 vi.mock("@/protocols", () => ({}));
 
+const mockLogUserError = vi.fn();
+vi.mock("@/lib/logging", () => ({
+  ErrorCategory: { CONFIGURATION: "configuration" },
+  logUserError: (...args: unknown[]) => mockLogUserError(...args),
+}));
+
 const mockWithStepLogging = vi.fn((_input: unknown, fn: () => unknown) => fn());
 
 vi.mock("@/lib/workflow/executor/step-handler", () => ({
@@ -411,7 +417,7 @@ describe("protocolWriteStep", () => {
         },
       ]);
 
-      it("drops ethValue when the resolved function is nonpayable", async () => {
+      it("drops ethValue when the resolved function is nonpayable and logs the drop", async () => {
         mockResolveProtocolMeta.mockReturnValue({
           protocolSlug: "uniswap",
           contractKey: "swapRouter",
@@ -450,6 +456,21 @@ describe("protocolWriteStep", () => {
 
         const coreCall = (mockWriteContractCore as Mock).mock.calls[0][0];
         expect(coreCall.ethValue).toBeUndefined();
+
+        expect(mockLogUserError).toHaveBeenCalledTimes(1);
+        const [category, message, , labels] = (mockLogUserError as Mock).mock
+          .calls[0];
+        expect(category).toBe("configuration");
+        expect(message).toContain("Dropped ethValue");
+        expect(message).toContain("exactInputSingle");
+        expect(message).toContain("0.04");
+        expect(labels).toMatchObject({
+          plugin_name: "protocol",
+          action_name: "protocol-write",
+          protocol_slug: "uniswap",
+          function_name: "exactInputSingle",
+          state_mutability: "nonpayable",
+        });
       });
 
       it("preserves ethValue when the resolved function is payable", async () => {
