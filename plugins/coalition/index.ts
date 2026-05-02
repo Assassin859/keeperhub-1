@@ -400,6 +400,102 @@ const coalitionPlugin: IntegrationPlugin = {
       ],
     },
     {
+      slug: "dissolve",
+      label: "Dissolve Coalition",
+      description:
+        "Clean close of an active coalition. Returns each non-breached participant's stake. Restricted to participants.",
+      category: "Coalition",
+      requiresCredentials: true,
+      stepFunction: "dissolveStep",
+      stepImportPath: "dissolve",
+      outputFields: [
+        { field: "success", description: "Whether the dissolve succeeded" },
+        { field: "transactionHash", description: "Tx hash" },
+        { field: "transactionLink", description: "Block explorer link" },
+        { field: "error", description: "Error message if failed" },
+      ],
+      configFields: [
+        {
+          key: "network",
+          label: "Network",
+          type: "chain-select",
+          chainTypeFilter: "evm",
+          showPrivateVariants: true,
+          placeholder: "Select network",
+          required: true,
+        },
+        {
+          key: "coalitionId",
+          label: "Coalition ID",
+          type: "template-input",
+          placeholder: "1",
+          required: true,
+        },
+        {
+          type: "group",
+          label: "Advanced",
+          defaultExpanded: false,
+          fields: [
+            {
+              key: "gasLimitMultiplier",
+              label: "Gas Limit",
+              type: "gas-limit-multiplier",
+              networkField: "network",
+              actionSlug: "dissolve",
+            },
+          ],
+        },
+      ],
+    },
+    {
+      slug: "expire",
+      label: "Expire Coalition",
+      description:
+        "Refund signed stakes after the deadline if not all parties signed. Transitions to EXPIRED. Anyone can call.",
+      category: "Coalition",
+      requiresCredentials: true,
+      stepFunction: "expireStep",
+      stepImportPath: "expire",
+      outputFields: [
+        { field: "success", description: "Whether the expire succeeded" },
+        { field: "transactionHash", description: "Tx hash" },
+        { field: "transactionLink", description: "Block explorer link" },
+        { field: "error", description: "Error message if failed" },
+      ],
+      configFields: [
+        {
+          key: "network",
+          label: "Network",
+          type: "chain-select",
+          chainTypeFilter: "evm",
+          showPrivateVariants: true,
+          placeholder: "Select network",
+          required: true,
+        },
+        {
+          key: "coalitionId",
+          label: "Coalition ID",
+          type: "template-input",
+          placeholder: "1",
+          required: true,
+        },
+        {
+          type: "group",
+          label: "Advanced",
+          defaultExpanded: false,
+          fields: [
+            {
+              key: "gasLimitMultiplier",
+              label: "Gas Limit",
+              type: "gas-limit-multiplier",
+              networkField: "network",
+              actionSlug: "expire",
+            },
+          ],
+        },
+      ],
+    },
+    {
       slug: "check-status",
       label: "Check Coalition Status",
       description:
