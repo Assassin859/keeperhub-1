@@ -13,6 +13,7 @@ import {
 import { syncWorkflowSchedule } from "@/lib/schedule-service";
 import { sanitizeDescription } from "@/lib/sanitize-description";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
+import { isReservedSlug } from "@/lib/workflow/reserved-slugs";
 async function fetchWorkflowPublicTags(
   workflowId: string
 ): Promise<Array<{ id: string; name: string; slug: string }>> {
@@ -340,6 +341,22 @@ export async function PATCH(
           }
         }
       }
+    }
+
+    // Reserved-slug guard (HUB-11): reject listed slugs that collide with reserved
+    // path segments under /hub/tags/[tag]. Applies only to non-null new values.
+    if (
+      body.listedSlug !== undefined &&
+      body.listedSlug !== null &&
+      typeof body.listedSlug === "string" &&
+      isReservedSlug(body.listedSlug)
+    ) {
+      return NextResponse.json(
+        {
+          error: `"${body.listedSlug}" is a reserved word and cannot be used.`,
+        },
+        { status: 400 }
+      );
     }
 
     // Slug immutability: reject changes to listedSlug when workflow is already listed

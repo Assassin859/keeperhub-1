@@ -28,9 +28,10 @@ import { useWalletInfo } from "@/lib/wallet/use-wallet-info";
  */
 export function WalletToolbarButton(): React.ReactElement | null {
   const { data: session, isPending } = useSession();
-  const { open: openOverlay } = useOverlay();
-  const { hasWallet, walletAddress, isLoading } = useWalletInfo();
 
+  // NAV-04: defer mounting the inner button (and its `useWalletInfo` hook,
+  // which auto-fires `useActiveOrganization` and triggers a 401 for
+  // anonymous users) until the session resolves to a verified user.
   if (isPending) {
     return null;
   }
@@ -42,6 +43,13 @@ export function WalletToolbarButton(): React.ReactElement | null {
   if (session.user.emailVerified !== true) {
     return null;
   }
+
+  return <AuthenticatedWalletToolbarButton />;
+}
+
+function AuthenticatedWalletToolbarButton(): React.ReactElement | null {
+  const { open: openOverlay } = useOverlay();
+  const { hasWallet, walletAddress, isLoading } = useWalletInfo();
 
   if (isLoading && !walletAddress) {
     return null;

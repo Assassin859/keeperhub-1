@@ -25,6 +25,10 @@ tests/e2e/playwright/.auth/
 /out/
 /.swc/
 
+# Workflow DevKit-generated routes/manifest
+# (machine-specific pnpm hashes; regenerated on every install)
+/public/.well-known/
+
 # production
 /build
 

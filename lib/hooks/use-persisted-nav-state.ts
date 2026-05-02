@@ -8,9 +8,15 @@ type NavPanelStates = {
   projects: PanelState;
   tags: PanelState;
   workflows: PanelState;
+  // Phase 43 / HUB-23: Hub sidebar Sort section. Independent of the
+  // projects -> tags -> workflows cascade — peelRightmost / applyPanelClose
+  // do not touch this slot. The HubSidebar component owns its own
+  // first-paint expanded default via local state when this is "closed".
+  sort: PanelState;
 };
 
 type PersistedNavState = {
+  version: number;
   sidebar: boolean;
   panels: NavPanelStates;
   selectedProjectId: string | null;
@@ -19,10 +25,17 @@ type PersistedNavState = {
 
 const STORAGE_KEY = "keeperhub-nav-state";
 const LEGACY_KEY = "keeperhub-sidebar-expanded";
+const VERSION = 3;
 
 const DEFAULT_STATE: PersistedNavState = {
+  version: VERSION,
   sidebar: true,
-  panels: { projects: "closed", tags: "closed", workflows: "closed" },
+  panels: {
+    projects: "closed",
+    tags: "closed",
+    workflows: "closed",
+    sort: "closed",
+  },
   selectedProjectId: null,
   selectedTagId: null,
 };
@@ -31,7 +44,13 @@ function loadState(): PersistedNavState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      return JSON.parse(raw) as PersistedNavState;
+      const parsed = JSON.parse(raw) as Partial<PersistedNavState>;
+      if (parsed.version !== VERSION) {
+        // NAV-07: stale snapshot - discard. NAV-FUTURE-01 will revisit migration.
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_STATE));
+        return DEFAULT_STATE;
+      }
+      return parsed as PersistedNavState;
     }
 
     const legacy = localStorage.getItem(LEGACY_KEY);
@@ -83,12 +102,30 @@ function applyPanelCollapse(
   return { ...current, panels };
 }
 
+// Cookie used by the root layout to set --nav-sidebar-width on <html>
+// during SSR so page wrappers paint at the correct left margin without
+// a JS hop. Lifetime ~1 year; non-secure so it's available everywhere
+// the user navigates.
+const SIDEBAR_WIDTH_COOKIE = "kh_nav_sidebar_w";
+const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
+
+function persistSidebarWidthCookie(expanded: boolean): void {
+  try {
+    const width = expanded ? 200 : 60;
+    // biome-ignore lint/suspicious/noDocumentCookie: the Cookie Store API isn't shipped in all evergreen browsers yet (Safari lags); document.cookie is the broadly supported write path.
+    document.cookie = `${SIDEBAR_WIDTH_COOKIE}=${width}; path=/; max-age=${COOKIE_MAX_AGE_SECONDS}; samesite=lax`;
+  } catch {
+    // Ignore (some embedded contexts disallow cookies)
+  }
+}
+
 function persistState(state: PersistedNavState): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
     // Ignore storage errors
   }
+  persistSidebarWidthCookie(state.sidebar);
 }
 
 type UsePersistedNavStateReturn = {
@@ -117,6 +154,11 @@ export function usePersistedNavState(): UsePersistedNavStateReturn {
     stateRef.current = loaded;
     setState(loaded);
     setHasMounted(true);
+    // Seed the SSR cookie on first mount so existing users get the
+    // server-side render path on their next page load. New writes go
+    // through commit() -> persistState() which already updates the
+    // cookie.
+    persistSidebarWidthCookie(loaded.sidebar);
   }, []);
 
   const commit = useCallback((next: PersistedNavState) => {
@@ -168,9 +210,17 @@ export function usePersistedNavState(): UsePersistedNavStateReturn {
   );
 
   const closeAll = useCallback(() => {
+    // Preserve the existing sort panel state — closeAll targets the
+    // navigation cascade (projects -> tags -> workflows), not the
+    // independent Hub sidebar Sort section (HUB-23).
     commit({
       ...stateRef.current,
-      panels: { projects: "closed", tags: "closed", workflows: "closed" },
+      panels: {
+        ...stateRef.current.panels,
+        projects: "closed",
+        tags: "closed",
+        workflows: "closed",
+      },
       selectedProjectId: null,
       selectedTagId: null,
     });
@@ -258,3 +308,15 @@ export function usePersistedNavState(): UsePersistedNavStateReturn {
 }
 
 export type { NavPanelStates, PanelState, PersistedNavState };
+
+// Test-only exports. The hook itself is the public surface; these helpers are
+// exposed so unit tests can exercise the version-discard branch without a
+// React renderer (this codebase does not depend on @testing-library/react).
+export {
+  DEFAULT_STATE as __DEFAULT_STATE_FOR_TESTING,
+  LEGACY_KEY as __LEGACY_KEY_FOR_TESTING,
+  loadState as __loadStateForTesting,
+  persistState as __persistStateForTesting,
+  STORAGE_KEY as __STORAGE_KEY_FOR_TESTING,
+  VERSION as __VERSION_FOR_TESTING,
+};

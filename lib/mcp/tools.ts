@@ -1195,7 +1195,7 @@ export function registerMetaTools(
   // Meta-tool 3: Search listed workflows callable by external agents
   server.tool(
     "search_workflows",
-    "Search KeeperHub listed workflows callable by external agents. Returns slug, description, inputSchema, and price for each match. Use call_workflow to invoke a result.",
+    "Search KeeperHub listed workflows callable by external agents. Returns slug, description, inputSchema, and price for each match. Use sort='popular' to rank by usage, sort='recent' to see new listings first; omit sort for the default ordering. Use call_workflow to invoke a result.",
     {
       query: z.string().optional().describe("Natural-language search query"),
       category: z
@@ -1206,6 +1206,12 @@ export function registerMetaTools(
         .string()
         .optional()
         .describe("Chain ID filter (e.g., '8453' for Base, '1' for Ethereum)"),
+      sort: z
+        .enum(["popular", "recent"])
+        .optional()
+        .describe(
+          "Sort order: 'popular' (most-called workflows first) or 'recent' (most-recently listed first). Omit for the default catalog ordering."
+        ),
       workflowType: z
         .enum(["read", "write"])
         .optional()
@@ -1225,6 +1231,9 @@ export function registerMetaTools(
         }
         if (args.chain) {
           params.set("chain", args.chain);
+        }
+        if (args.sort) {
+          params.set("sort", args.sort);
         }
         if (args.workflowType) {
           params.set("workflowType", args.workflowType);

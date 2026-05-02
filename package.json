@@ -35,6 +35,8 @@
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "test:e2e": "playwright test",
+    "test:e2e:bfcache:dev": "playwright test back-forward-hydration",
+    "test:e2e:bfcache:prod": "NEXT_BUILD_MODE=production playwright test back-forward-hydration",
     "dep-audit": "tsx scripts/dep-audit.ts",
     "discover": "tsx tests/e2e/playwright/discover.ts",
     "test:health": "tsx tests/e2e/playwright/health.ts",
