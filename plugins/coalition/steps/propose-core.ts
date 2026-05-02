@@ -32,16 +32,11 @@ import {
 
 const HEX_32_BYTES = /^0x[a-fA-F0-9]{64}$/;
 
-// The platform's TransactionReceipt strips logs, but the EVM adapter's
-// underlying ethers receipt includes them. We extend the type locally so
-// parseCoalitionEvent can read the Proposed event without modifying the
-// shared platform type.
-type ReceiptWithLogs = {
+type StrippedReceipt = {
   hash: string;
   gasUsed: bigint;
   effectiveGasPrice: bigint;
   blockNumber: number;
-  logs: readonly { topics: readonly string[]; data: string }[];
 };
 
 export type ProposeCoreInput = {
@@ -290,9 +285,37 @@ export async function proposeCore(
           workflowId: undefined,
           rpcManager,
         }
-      )) as ReceiptWithLogs;
+      )) as StrippedReceipt;
 
-      const proposedArgs = parseCoalitionEvent(receipt.logs, "Proposed");
+      // The platform's TransactionReceipt strips logs (see lib/web3/chain-adapter/evm.ts).
+      // Refetch via the RPC manager to access the Proposed event.
+      let fullReceipt: ethers.TransactionReceipt | null = null;
+      try {
+        fullReceipt = await rpcManager.executeWithFailover(
+          (rpcProvider) => rpcProvider.getTransactionReceipt(receipt.hash),
+          "fetch-receipt-logs"
+        );
+      } catch (error) {
+        logUserError(
+          ErrorCategory.NETWORK_RPC,
+          "[Coalition propose] Failed to refetch receipt for event parsing",
+          error,
+          { plugin_name: "coalition", action_name: "propose" }
+        );
+        return {
+          success: false,
+          error: `Tx ${receipt.hash} confirmed but receipt could not be refetched: ${getErrorMessage(error)}`,
+        };
+      }
+
+      if (!fullReceipt) {
+        return {
+          success: false,
+          error: `Tx ${receipt.hash} confirmed but provider returned null receipt`,
+        };
+      }
+
+      const proposedArgs = parseCoalitionEvent(fullReceipt.logs, "Proposed");
       if (!proposedArgs) {
         return {
           success: false,

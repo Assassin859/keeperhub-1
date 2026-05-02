@@ -36,20 +36,12 @@ export const coalitionInterface = new ethers.Interface(
   COALITION_ABI as unknown as ethers.InterfaceAbi
 );
 
-type MinimalLog = {
-  topics: readonly string[];
-  data: string;
-};
-
 /**
  * Parse a single event from a transaction receipt's logs.
- * Accepts the minimal log shape (topics + data) so it works with both
- * full ethers.Log objects and the stripped ReceiptWithLogs type used in
- * propose-core and other write steps.
  * Returns the event args (typed via ethers.Result) or null if not found.
  */
 export function parseCoalitionEvent(
-  logs: readonly MinimalLog[],
+  logs: readonly ethers.Log[],
   eventName: string
 ): ethers.Result | null {
   for (const log of logs) {

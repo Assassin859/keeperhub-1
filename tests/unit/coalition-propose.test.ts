@@ -54,9 +54,17 @@ vi.mock("@/lib/rpc/network-utils", () => ({
   },
 }));
 
+let mockReceiptForRefetch: { logs: { topics: string[]; data: string }[] } | null = null;
+
 vi.mock("@/lib/rpc/provider-factory", () => ({
   getRpcProvider: vi.fn(async () => ({
     resolveActiveRpcUrl: async () => "http://rpc",
+    executeWithFailover: async (
+      fn: (provider: { getTransactionReceipt: (h: string) => Promise<unknown> }) => Promise<unknown>,
+      _label?: string,
+    ) => fn({
+      getTransactionReceipt: async (_h: string) => mockReceiptForRefetch,
+    }),
   })),
 }));
 
@@ -134,6 +142,7 @@ const VALID_STAKE_PER_PARTY = "1000000000000000000";
 beforeEach(() => {
   readContractMock.mockReset();
   executeContractCallMock.mockReset();
+  mockReceiptForRefetch = null;
 });
 
 describe("coalition propose", () => {
@@ -162,8 +171,9 @@ describe("coalition propose", () => {
       hash: "0xtxhash",
       gasUsed: BigInt(100000),
       effectiveGasPrice: BigInt(1000000000),
-      logs: [{ topics: log.topics, data: log.data }],
     });
+
+    mockReceiptForRefetch = { logs: [{ topics: log.topics, data: log.data }] };
 
     const result = await proposeCore({
       network: "base-sepolia",
