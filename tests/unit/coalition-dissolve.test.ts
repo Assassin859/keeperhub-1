@@ -130,9 +130,17 @@ beforeEach(() => {
   executeContractCallMock.mockReset();
 });
 
+const PARTICIPANT_ERROR_RE = /participant/i;
+
 describe("coalition dissolve", () => {
   it("happy path: ACTIVE -> dissolves", async () => {
-    readContractMock.mockResolvedValueOnce({ state: 2 });
+    readContractMock.mockResolvedValueOnce({
+      state: 2,
+      participants: [
+        "0xWallet",
+        "0x0000000000000000000000000000000000000002",
+      ],
+    });
 
     executeContractCallMock.mockResolvedValueOnce({
       hash: "0xdissolve",
@@ -155,7 +163,7 @@ describe("coalition dissolve", () => {
   });
 
   it("fast-fail when not ACTIVE", async () => {
-    readContractMock.mockResolvedValueOnce({ state: 1 });
+    readContractMock.mockResolvedValueOnce({ state: 1, participants: [] });
 
     const result = await dissolveCore({
       network: "base-sepolia",
@@ -168,6 +176,29 @@ describe("coalition dissolve", () => {
       return;
     }
     expect(result.error).toMatch(ACTIVE_ERROR_RE);
+    expect(executeContractCallMock).not.toHaveBeenCalled();
+  });
+
+  it("fast-fail when caller is not a participant", async () => {
+    readContractMock.mockResolvedValueOnce({
+      state: 2,
+      participants: [
+        "0x0000000000000000000000000000000000000001",
+        "0x0000000000000000000000000000000000000002",
+      ],
+    });
+
+    const result = await dissolveCore({
+      network: "base-sepolia",
+      coalitionId: "1",
+      _context: { organizationId: "org_1" },
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      return;
+    }
+    expect(result.error).toMatch(PARTICIPANT_ERROR_RE);
     expect(executeContractCallMock).not.toHaveBeenCalled();
   });
 });

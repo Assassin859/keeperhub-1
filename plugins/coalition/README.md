@@ -79,7 +79,7 @@ Because each KeeperHub workflow runs as a single Para wallet, multi-party signin
 
 | Chain | Chain ID | Address |
 |---|---|---|
-| Base Sepolia | 84532 | (paste after deploy) |
+| Base Sepolia | 84532 | (empty -- paste after deploy) |
 | Base Mainnet | 8453 | not yet deployed |
 
 The contract is deployed out-of-band via `pnpm tsx scripts/deploy-coalition.ts --network base-sepolia` and verified on the block explorer. Update `plugins/coalition/contracts/addresses.ts` with the deployed address.

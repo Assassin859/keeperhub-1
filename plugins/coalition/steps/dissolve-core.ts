@@ -37,6 +37,7 @@ export type DissolveResult =
 
 type RawCoalitionForDissolve = {
   state: number | bigint;
+  participants: string[];
 };
 
 export async function dissolveCore(
@@ -121,6 +122,20 @@ export async function dissolveCore(
 
   if (Number(coalition.state) !== 2) {
     return { success: false, error: "Coalition is not active" };
+  }
+
+  // Pre-check participation client-side so the workflow doesn't pay gas for a
+  // tx that would revert with NotParticipant on-chain (dissolve is restricted
+  // to participants in Coalition.sol).
+  const callerLower = walletAddress.toLowerCase();
+  const isCallerParticipant = coalition.participants.some(
+    (p) => p.toLowerCase() === callerLower
+  );
+  if (!isCallerParticipant) {
+    return {
+      success: false,
+      error: "Caller is not a participant of this coalition",
+    };
   }
 
   const { multiplierOverride, gasLimitOverride } =

@@ -58,8 +58,8 @@ export async function checkStatusCore(
   let parsedId: bigint;
   try {
     parsedId = BigInt(coalitionId);
-    if (parsedId < BigInt(0)) {
-      throw new Error("coalitionId must be non-negative");
+    if (parsedId <= BigInt(0)) {
+      throw new Error("coalitionId must be positive");
     }
   } catch (error) {
     return {
