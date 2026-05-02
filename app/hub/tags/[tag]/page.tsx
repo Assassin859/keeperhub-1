@@ -7,16 +7,12 @@ import { db } from "@/lib/db";
 import { publicTags, workflowPublicTags } from "@/lib/db/schema";
 import { isReservedSlug } from "@/lib/workflow/reserved-slugs";
 
-// Force every request through the dynamic page handler. The page already
-// reads `cookies()`, which makes each request dynamic anyway — but with
-// `generateStaticParams` returning rows we end up classified as SSG with
-// `revalidate` + `dynamicParams` + on-demand fallback. In that mode,
-// `notFound()` for reserved/unknown slugs surfaces as a 500 in production
-// instead of a 404 (Next 16 ISR + on-demand fallback interaction). Forcing
-// `dynamic` removes the SSG classification and the 500 with it; the cookie
-// read already prevented the page from being a useful prerender candidate.
+// Force per-request rendering. The page already reads `cookies()` so SSG was
+// nominal anyway, but classifying it as SSG (via `generateStaticParams`) +
+// `dynamicParams` + on-demand fallback caused `notFound()` to surface as 500
+// in Next 16 production. Forcing `dynamic` drops the SSG bucket and the 500
+// with it.
 export const dynamic = "force-dynamic";
-export const dynamicParams = true;
 
 const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.keeperhub.com";
 
@@ -58,37 +54,6 @@ async function loadTag(slug: string): Promise<LoadedTag | null> {
 
   const workflowsCount = Number(countRows[0]?.value ?? 0);
   return { tag, workflowsCount };
-}
-
-export async function generateStaticParams(): Promise<Params[]> {
-  // Returns the slug list to pre-render at build. The Docker build
-  // container has no DB access, so a connection failure here is the
-  // expected case — fall back to `dynamicParams = true` and render any
-  // tag on demand at request time (cached for 1 hour via the ISR
-  // revalidate window).
-  //
-  // BUT: a broad `catch {}` would also swallow schema typos, column
-  // renames, or wrong DATABASE_URL in a real prod build, masking real
-  // misconfigurations. So when DATABASE_URL is set AND we're in a
-  // production build, rethrow — the build SHOULD fail loud. The
-  // unconfigured-build path (Docker `pnpm build` with no DATABASE_URL)
-  // continues to swallow the error.
-  try {
-    const rows = await db.select({ slug: publicTags.slug }).from(publicTags);
-    return rows.map((row) => ({ tag: row.slug }));
-  } catch (err) {
-    const isConfiguredProdBuild =
-      process.env.NODE_ENV === "production" &&
-      Boolean(process.env.DATABASE_URL);
-    if (isConfiguredProdBuild) {
-      throw err;
-    }
-    console.warn(
-      "[generateStaticParams] tag DB read failed, falling back to dynamicParams:",
-      err
-    );
-    return [];
-  }
 }
 
 export async function generateMetadata({

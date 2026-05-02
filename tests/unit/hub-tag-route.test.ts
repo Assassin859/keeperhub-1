@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const HUB_OG_PATH_REGEX = /\/api\/og\/hub$/;
+
 // Mock next/navigation BEFORE the module under test imports it.
 const notFoundMock = vi.fn(() => {
   throw new Error("NEXT_NOT_FOUND");
@@ -48,13 +50,6 @@ function setupSelect(tagRows: TagRow[], workflowsCount: number): void {
       }),
     };
   });
-}
-
-function setupSelectAllSlugs(slugs: string[]): void {
-  const selectMock = db.select as unknown as ReturnType<typeof vi.fn>;
-  selectMock.mockImplementation(() => ({
-    from: vi.fn().mockResolvedValue(slugs.map((slug) => ({ slug }))),
-  }));
 }
 
 const seededTag: TagRow = {
@@ -125,30 +120,15 @@ describe("app/hub/tags/[tag]/page.tsx", () => {
         firstImage && typeof firstImage === "object" && "url" in firstImage
           ? firstImage.url
           : "";
-      expect(String(ogImageUrl)).toMatch(/\/api\/og\/hub$/);
-    });
-  });
-
-  describe("generateStaticParams", () => {
-    it("returns one entry per public tag row", async () => {
-      setupSelectAllSlugs(["defi", "monitoring", "nft"]);
-      const mod = await import("@/app/hub/tags/[tag]/page");
-      const result = await mod.generateStaticParams();
-      expect(result).toEqual([
-        { tag: "defi" },
-        { tag: "monitoring" },
-        { tag: "nft" },
-      ]);
+      expect(String(ogImageUrl)).toMatch(HUB_OG_PATH_REGEX);
     });
   });
 
   describe("route segment config", () => {
-    it("exports dynamicParams = true (HUB-10 — new tags render on demand)", async () => {
-      const mod = await import("@/app/hub/tags/[tag]/page");
-      expect(mod.dynamicParams).toBe(true);
-    });
-
-    it('exports dynamic = "force-dynamic" so notFound() yields 404 in prod (was a 500 under SSG + revalidate + dynamicParams)', async () => {
+    // HUB-10: prod build classified the route as SSG with `revalidate` +
+    // `dynamicParams` + on-demand fallback, which surfaced `notFound()` as
+    // a 500 in Next 16. `force-dynamic` drops that bucket and restores 404.
+    it('exports dynamic = "force-dynamic"', async () => {
       const mod = await import("@/app/hub/tags/[tag]/page");
       expect(mod.dynamic).toBe("force-dynamic");
     });
@@ -159,9 +139,7 @@ describe("app/hub/tags/[tag]/page.tsx", () => {
       setupSelect([], 0);
       const mod = await import("@/app/hub/tags/[tag]/page");
       const params = Promise.resolve({ tag: "tags" });
-      await expect(
-        mod.default({ params })
-      ).rejects.toThrow("NEXT_NOT_FOUND");
+      await expect(mod.default({ params })).rejects.toThrow("NEXT_NOT_FOUND");
       expect(notFoundMock).toHaveBeenCalled();
     });
 
@@ -169,9 +147,7 @@ describe("app/hub/tags/[tag]/page.tsx", () => {
       setupSelect([], 0);
       const mod = await import("@/app/hub/tags/[tag]/page");
       const params = Promise.resolve({ tag: "no-such-tag" });
-      await expect(
-        mod.default({ params })
-      ).rejects.toThrow("NEXT_NOT_FOUND");
+      await expect(mod.default({ params })).rejects.toThrow("NEXT_NOT_FOUND");
       expect(notFoundMock).toHaveBeenCalled();
     });
   });
