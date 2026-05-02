@@ -386,6 +386,151 @@ describe("protocolWriteStep", () => {
       expect(coreCall.ethValue).toBeUndefined();
     });
 
+    // KEEP-393: form state can carry a stale ethValue from a previous action
+    // configuration (e.g. WETH.deposit) into a non-payable action (e.g. a
+    // Uniswap swap). Drop the value rather than let writeContractCore surface
+    // the opaque "function is not payable" error.
+    describe("KEEP-393 stale ethValue guard", () => {
+      const NONPAYABLE_ABI = JSON.stringify([
+        {
+          type: "function",
+          name: "exactInputSingle",
+          stateMutability: "nonpayable",
+          inputs: [],
+          outputs: [],
+        },
+      ]);
+
+      const PAYABLE_ABI = JSON.stringify([
+        {
+          type: "function",
+          name: "deposit",
+          stateMutability: "payable",
+          inputs: [],
+          outputs: [],
+        },
+      ]);
+
+      it("drops ethValue when the resolved function is nonpayable", async () => {
+        mockResolveProtocolMeta.mockReturnValue({
+          protocolSlug: "uniswap",
+          contractKey: "swapRouter",
+          functionName: "exactInputSingle",
+          actionType: "write",
+        });
+        mockGetProtocol.mockReturnValue({
+          name: "Uniswap V3",
+          slug: "uniswap",
+          contracts: {
+            swapRouter: {
+              label: "SwapRouter02",
+              userSpecifiedAddress: false,
+              addresses: {
+                "11155111": "0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E",
+              },
+            },
+          },
+          actions: [],
+        });
+        mockResolveAbi.mockResolvedValue({ abi: NONPAYABLE_ABI });
+        mockWriteContractCore.mockResolvedValue({
+          success: true,
+          transactionHash: "0xswap",
+          transactionLink: "",
+          gasUsed: "150000",
+        });
+
+        await protocolWriteStep(
+          makeInput({
+            network: "11155111",
+            ethValue: "0.04",
+            _actionType: "uniswap/swap-exact-input",
+          })
+        );
+
+        const coreCall = (mockWriteContractCore as Mock).mock.calls[0][0];
+        expect(coreCall.ethValue).toBeUndefined();
+      });
+
+      it("preserves ethValue when the resolved function is payable", async () => {
+        mockResolveProtocolMeta.mockReturnValue({
+          protocolSlug: "wrapped",
+          contractKey: "weth",
+          functionName: "deposit",
+          actionType: "write",
+        });
+        mockGetProtocol.mockReturnValue({
+          name: "WETH",
+          slug: "wrapped",
+          contracts: {
+            weth: {
+              label: "WETH",
+              userSpecifiedAddress: false,
+              addresses: {
+                "11155111": "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14",
+              },
+            },
+          },
+          actions: [],
+        });
+        mockResolveAbi.mockResolvedValue({ abi: PAYABLE_ABI });
+        mockWriteContractCore.mockResolvedValue({
+          success: true,
+          transactionHash: "0xdep",
+          transactionLink: "",
+          gasUsed: "50000",
+        });
+
+        await protocolWriteStep(
+          makeInput({
+            network: "11155111",
+            ethValue: "0.04",
+            _actionType: "wrapped/deposit",
+          })
+        );
+
+        const coreCall = (mockWriteContractCore as Mock).mock.calls[0][0];
+        expect(coreCall.ethValue).toBe("0.04");
+      });
+
+      it("passes ethValue through when the function is missing from the ABI", async () => {
+        // ABI does not contain the resolved function name. Pass through and
+        // let writeContractCore produce its existing "function not found" error
+        // instead of silently mutating user input.
+        mockResolveProtocolMeta.mockReturnValue(COMPOUND_SUPPLY_META);
+        mockGetProtocol.mockReturnValue(COMPOUND_PROTOCOL);
+        mockResolveAbi.mockResolvedValue({ abi: "[]" });
+        mockWriteContractCore.mockResolvedValue({
+          success: true,
+          transactionHash: "0x000",
+          transactionLink: "",
+          gasUsed: "21000",
+        });
+
+        await protocolWriteStep(makeInput({ ethValue: "1.5" }));
+
+        const coreCall = (mockWriteContractCore as Mock).mock.calls[0][0];
+        expect(coreCall.ethValue).toBe("1.5");
+      });
+
+      it("passes ethValue through when the ABI fails to parse", async () => {
+        mockResolveProtocolMeta.mockReturnValue(COMPOUND_SUPPLY_META);
+        mockGetProtocol.mockReturnValue(COMPOUND_PROTOCOL);
+        mockResolveAbi.mockResolvedValue({ abi: "not-json" });
+        mockWriteContractCore.mockResolvedValue({
+          success: true,
+          transactionHash: "0x000",
+          transactionLink: "",
+          gasUsed: "21000",
+        });
+
+        await protocolWriteStep(makeInput({ ethValue: "0.25" }));
+
+        const coreCall = (mockWriteContractCore as Mock).mock.calls[0][0];
+        expect(coreCall.ethValue).toBe("0.25");
+      });
+    });
+
     it("omits _context when input has no _context", async () => {
       mockResolveProtocolMeta.mockReturnValue(COMPOUND_SUPPLY_META);
       mockGetProtocol.mockReturnValue(COMPOUND_PROTOCOL);

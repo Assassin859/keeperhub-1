@@ -7,6 +7,7 @@ import {
   writeContractCore,
 } from "@/plugins/web3/steps/write-contract-core";
 import { resolveAbi } from "@/lib/abi/cache";
+import { type AbiItem, findAbiFunction } from "@/lib/abi/utils";
 import { getProtocol } from "@/lib/protocol-registry";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { applyEncodeTransformsNamed } from "@/lib/protocol-encode-transforms";
@@ -26,6 +27,39 @@ type ProtocolWriteInput = StepInput & {
   _actionType?: string;
   [key: string]: unknown;
 };
+
+function resolveEthValue(
+  rawEthValue: unknown,
+  abi: string,
+  functionName: string
+): string | undefined {
+  if (typeof rawEthValue !== "string" || rawEthValue.trim() === "") {
+    return undefined;
+  }
+  const trimmed = rawEthValue.trim();
+
+  let parsedAbi: unknown;
+  try {
+    parsedAbi = JSON.parse(abi);
+  } catch {
+    return trimmed;
+  }
+  if (!Array.isArray(parsedAbi)) {
+    return trimmed;
+  }
+
+  // Drop ethValue when the resolved function is positively non-payable. Form
+  // state can retain stale ethValue from a previous configuration (e.g. a
+  // WETH.deposit action reconfigured into a Uniswap swap), and the value
+  // cannot reach the contract anyway. If the function is missing from the
+  // ABI or its mutability is unknown, pass the value through and let
+  // writeContractCore surface the existing payable/not-found errors.
+  const fn = findAbiFunction(parsedAbi as AbiItem[], functionName);
+  if (fn && fn.stateMutability && fn.stateMutability !== "payable") {
+    return undefined;
+  }
+  return trimmed;
+}
 
 function buildFunctionArgs(
   input: ProtocolWriteInput,
@@ -130,10 +164,11 @@ export async function protocolWriteStep(
     const functionArgs = buildFunctionArgs(input, meta);
 
     // 6. Delegate to writeContractCore
-    const ethValue =
-      typeof input.ethValue === "string" && input.ethValue.trim() !== ""
-        ? input.ethValue.trim()
-        : undefined;
+    const ethValue = resolveEthValue(
+      input.ethValue,
+      resolvedAbi,
+      meta.functionName
+    );
 
     const coreInput: WriteContractCoreInput = {
       contractAddress,
