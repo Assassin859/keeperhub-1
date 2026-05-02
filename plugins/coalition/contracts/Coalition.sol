@@ -7,6 +7,15 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 
 /// @title Coalition
 /// @notice Multi-party on-chain commitments with stake escrow and slashing.
+/// @dev v1 design notes:
+///  - `recordBreach`, `slash`, and `expire` are anyone-callable; off-chain
+///    arbitration is expected to gate breach evidence in production deployments.
+///  - `dissolve` is restricted to participants to prevent griefing.
+///  - Pro-rata math truncates dust into the contract when stake does not
+///    divide evenly across recipients.
+///  - When every participant has been breached, the last `slash` has no
+///    eligible recipients; the breached party's stake remains in the contract
+///    and the coalition transitions to SLASHED.
 contract Coalition is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -20,12 +29,14 @@ contract Coalition is ReentrancyGuard {
         uint256 deadline;
         uint8 signedCount;
         uint8 breachedCount;
+        uint8 slashedCount;
         State state;
     }
 
     mapping(uint256 => CoalitionData) private _coalitions;
     mapping(uint256 => mapping(address => bool)) private _signed;
     mapping(uint256 => mapping(address => bool)) private _breached;
+    mapping(uint256 => mapping(address => bool)) private _slashed;
     mapping(uint256 => mapping(address => bool)) private _isParticipant;
 
     uint256 public nextId = 1;
@@ -44,8 +55,8 @@ contract Coalition is ReentrancyGuard {
     error NotAllSigned();
     error PartyNotBreached();
     error PartyAlreadyBreached();
+    error PartyAlreadySlashed();
     error DeadlineNotReached();
-    error NoNonBreachedParticipants();
 
     event Proposed(
         uint256 indexed id,
@@ -128,42 +139,65 @@ contract Coalition is ReentrancyGuard {
         emit Breach(id, party, evidenceHash);
     }
 
+    /// @notice Slash a breached party's stake pro-rata across non-breached participants.
+    /// @dev `_breached` and `_slashed` are both permanent flags. `_breached` is set on
+    ///      `recordBreach` and never reset. `_slashed` is set here and never reset, used
+    ///      to enforce single-slash-per-party. Recipients are participants who are
+    ///      neither the slashed party, breached, nor slashed. When every party has been
+    ///      breached, the last `slash` has zero recipients and the stake remains in
+    ///      the contract; the coalition transitions to SLASHED on the final slash.
     function slash(uint256 id, address party) external nonReentrant returns (uint256 amountRedistributed) {
         CoalitionData storage c = _coalitions[id];
         if (c.state != State.ACTIVE) revert CoalitionNotActive();
         if (!_breached[id][party]) revert PartyNotBreached();
+        if (_slashed[id][party]) revert PartyAlreadySlashed();
 
-        uint256 stake = c.stakePerParty;
-        uint256 nonBreached = c.participants.length - c.breachedCount;
-        if (nonBreached == 0) revert NoNonBreachedParticipants();
+        _slashed[id][party] = true;
+        c.slashedCount += 1;
 
-        uint256 share = stake / nonBreached;
-        amountRedistributed = share * nonBreached;
-
-        _breached[id][party] = false;
-
-        IERC20 token = IERC20(c.stakeToken);
-        for (uint256 i = 0; i < c.participants.length; i++) {
+        // Count eligible recipients first so share is exact and known to be safe.
+        uint256 recipientCount = 0;
+        uint256 participantsLen = c.participants.length;
+        for (uint256 i = 0; i < participantsLen; i++) {
             address p = c.participants[i];
             if (p == party) continue;
             if (_breached[id][p]) continue;
-            token.safeTransfer(p, share);
+            recipientCount += 1;
         }
 
-        if (c.breachedCount == c.participants.length) {
+        if (recipientCount > 0) {
+            uint256 share = c.stakePerParty / recipientCount;
+            amountRedistributed = share * recipientCount;
+
+            IERC20 token = IERC20(c.stakeToken);
+            for (uint256 i = 0; i < participantsLen; i++) {
+                address p = c.participants[i];
+                if (p == party) continue;
+                if (_breached[id][p]) continue;
+                token.safeTransfer(p, share);
+            }
+        }
+        // If recipientCount == 0 (every other party is breached), amountRedistributed
+        // stays at 0 and the slashed stake remains in the contract.
+
+        if (c.slashedCount == participantsLen) {
             c.state = State.SLASHED;
         }
 
         emit Slashed(id, party, amountRedistributed);
     }
 
+    /// @notice Clean close of an active coalition. Returns each non-breached
+    ///         participant's stake. Restricted to participants to prevent griefing.
     function dissolve(uint256 id) external nonReentrant {
         CoalitionData storage c = _coalitions[id];
         if (c.state != State.ACTIVE) revert CoalitionNotActive();
+        if (!_isParticipant[id][msg.sender]) revert NotParticipant();
 
         c.state = State.DISSOLVED;
         IERC20 token = IERC20(c.stakeToken);
-        for (uint256 i = 0; i < c.participants.length; i++) {
+        uint256 participantsLen = c.participants.length;
+        for (uint256 i = 0; i < participantsLen; i++) {
             address p = c.participants[i];
             if (_breached[id][p]) continue;
             token.safeTransfer(p, c.stakePerParty);
@@ -172,6 +206,8 @@ contract Coalition is ReentrancyGuard {
         emit Dissolved(id);
     }
 
+    /// @notice Anyone-callable refund after deadline if state is still PROPOSED.
+    ///         Returns each signed participant's stake.
     function expire(uint256 id) external nonReentrant {
         CoalitionData storage c = _coalitions[id];
         if (c.state != State.PROPOSED) revert CoalitionNotProposed();
@@ -179,7 +215,8 @@ contract Coalition is ReentrancyGuard {
 
         c.state = State.EXPIRED;
         IERC20 token = IERC20(c.stakeToken);
-        for (uint256 i = 0; i < c.participants.length; i++) {
+        uint256 participantsLen = c.participants.length;
+        for (uint256 i = 0; i < participantsLen; i++) {
             address p = c.participants[i];
             if (_signed[id][p]) {
                 token.safeTransfer(p, c.stakePerParty);
@@ -191,6 +228,8 @@ contract Coalition is ReentrancyGuard {
 
     // ---------- Views ----------
 
+    /// @notice Returns full coalition state. Used by the workflow plugin's
+    ///         `check-status` and `sign`/`activate`/etc. pre-checks.
     function getCoalition(uint256 id)
         external
         view
@@ -202,6 +241,7 @@ contract Coalition is ReentrancyGuard {
             uint256 deadline,
             uint8 signedCount,
             uint8 breachedCount,
+            uint8 slashedCount,
             State state
         )
     {
@@ -214,6 +254,7 @@ contract Coalition is ReentrancyGuard {
             c.deadline,
             c.signedCount,
             c.breachedCount,
+            c.slashedCount,
             c.state
         );
     }
@@ -224,5 +265,9 @@ contract Coalition is ReentrancyGuard {
 
     function isBreached(uint256 id, address party) external view returns (bool) {
         return _breached[id][party];
+    }
+
+    function isSlashed(uint256 id, address party) external view returns (bool) {
+        return _slashed[id][party];
     }
 }
