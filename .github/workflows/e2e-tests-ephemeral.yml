@@ -308,6 +308,12 @@ jobs:
           PARA_PORTAL_API_KEY: ${{ secrets.PARA_PORTAL_API_KEY }}
           CI: true
           TEST_API_KEY: ${{ secrets.TEST_API_KEY }}
+          # Start application step above runs `pnpm build && pnpm start`
+          # (production), so back-forward-hydration.test.ts must assert
+          # the prod-mode contract (no reload-driven recovery). Without
+          # this var, the test defaults to dev-mode assertions and fails
+          # against the prod server.
+          NEXT_BUILD_MODE: production
 
       - name: Dump app container logs
         if: failure() && inputs.image_tag != ''

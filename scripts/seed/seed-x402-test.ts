@@ -206,6 +206,7 @@ async function ensureListedWorkflow(
       required: ["message"],
     },
     priceUsdcPerCall: TEST_WORKFLOW_PRICE,
+    chain: "base",
     workflowType: "read",
   });
   console.log(`Created listed workflow (slug: ${TEST_WORKFLOW_SLUG}, price: $${TEST_WORKFLOW_PRICE})`);
