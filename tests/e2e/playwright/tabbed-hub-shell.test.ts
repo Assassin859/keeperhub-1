@@ -149,22 +149,18 @@ test.describe("Tabbed Hub shell (HUBV2-02 / HUBV2-03 / HUBV2-08)", () => {
     page,
   }) => {
     await page.goto("/hub?tab=workflows", { waitUntil: "domcontentloaded" });
-    // Wait for the Workflows tab content to render (any view-mode wrapper or
-    // empty state — both are acceptable; we only care about the badge string).
+    // Wait for the Workflows tab to mount and stream in its results section.
+    // The view-mode wrapper now always renders (HUB-22 — populated AND empty
+    // states share a single wrapper), so we can wait on it unconditionally.
     await expect(page.getByRole("tab", { name: "Workflows" })).toHaveAttribute(
       "data-state",
       "active",
       { timeout: 15_000 }
     );
-    // Give the Workflows tab a beat to fully stream in.
     await page
       .locator("[data-view-mode]")
       .first()
-      .waitFor({ state: "visible", timeout: 15_000 })
-      .catch(() => {
-        // If no view-mode wrapper renders (empty results), continue — the
-        // badge-absence assertion below is still meaningful.
-      });
+      .waitFor({ state: "visible", timeout: 15_000 });
     const html = await page.content();
     expect(html).not.toMatch(HTML_LISTED_IN_MARKETPLACE);
   });
