@@ -293,7 +293,7 @@ export async function proposeCore(
       try {
         fullReceipt = await rpcManager.executeWithFailover(
           (rpcProvider) => rpcProvider.getTransactionReceipt(receipt.hash),
-          "fetch-receipt-logs"
+          "read"
         );
       } catch (error) {
         logUserError(
