@@ -78,6 +78,12 @@ env:
   AWS_REGION:
     type: kv
     value: "us-east-2"
+  # KEEP-295 Phase 6 cutover: run listeners in-process instead of forking
+  # a child per workflow. See TechOps/docs/keeperhub/KEEP-214/KEEP-295/plan.md.
+  # Keep flag enabled for at least one deploy cycle as kill-switch (KEEP-328).
+  ENABLE_INPROC_LISTENERS:
+    type: kv
+    value: "true"
 
 externalSecrets:
   clusterSecretStoreName: techops-prod
