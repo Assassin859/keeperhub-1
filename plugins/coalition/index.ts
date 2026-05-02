@@ -19,6 +19,97 @@ const coalitionPlugin: IntegrationPlugin = {
   },
   actions: [
     {
+      slug: "propose",
+      label: "Propose Coalition",
+      description:
+        "Create a new on-chain coalition with N participants, a stake token, stake amount, and deadline. Returns the coalitionId for downstream nodes.",
+      category: "Coalition",
+      requiresCredentials: true,
+      stepFunction: "proposeStep",
+      stepImportPath: "propose",
+      outputFields: [
+        { field: "success", description: "Whether the proposal succeeded" },
+        {
+          field: "coalitionId",
+          description:
+            "ID of the newly created coalition (parsed from the Proposed event)",
+        },
+        { field: "transactionHash", description: "Transaction hash" },
+        { field: "transactionLink", description: "Block explorer link" },
+        { field: "gasUsed", description: "Gas cost in wei" },
+        { field: "error", description: "Error message if the call failed" },
+      ],
+      configFields: [
+        {
+          key: "network",
+          label: "Network",
+          type: "chain-select",
+          chainTypeFilter: "evm",
+          showPrivateVariants: true,
+          placeholder: "Select network",
+          required: true,
+        },
+        {
+          key: "participants",
+          label: "Participants",
+          type: "template-textarea",
+          placeholder: '["0x...", "0x...", "0x..."]',
+          rows: 4,
+          helpTip:
+            "JSON array of EVM addresses (2-20 participants). Each must approve the stakeToken before signing.",
+          required: true,
+        },
+        {
+          key: "termsHash",
+          label: "Terms Hash",
+          type: "template-input",
+          placeholder: "0x... (32-byte keccak256 of off-chain terms)",
+          example:
+            "0xabababababababababababababababababababababababababababababababab",
+          required: true,
+        },
+        {
+          key: "deadlineUnix",
+          label: "Deadline (Unix timestamp)",
+          type: "template-input",
+          placeholder: "1800000000 or {{Now.plusDays}}",
+          helpTip:
+            "Unix seconds. After this time, expire() can refund signers if not all signed.",
+          required: true,
+        },
+        {
+          key: "stakeToken",
+          label: "Stake Token Address",
+          type: "template-input",
+          placeholder: "0x... (ERC-20)",
+          example: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+          required: true,
+        },
+        {
+          key: "stakePerParty",
+          label: "Stake Per Party",
+          type: "template-input",
+          placeholder: "Amount in token's smallest units (e.g. wei)",
+          example: "1000000000000000000",
+          required: true,
+        },
+        {
+          type: "group",
+          label: "Advanced",
+          defaultExpanded: false,
+          fields: [
+            {
+              key: "gasLimitMultiplier",
+              label: "Gas Limit",
+              type: "gas-limit-multiplier",
+              networkField: "network",
+              actionSlug: "propose",
+            },
+          ],
+        },
+      ],
+    },
+    {
       slug: "check-status",
       label: "Check Coalition Status",
       description:
