@@ -236,6 +236,74 @@ const coalitionPlugin: IntegrationPlugin = {
       ],
     },
     {
+      slug: "breach",
+      label: "Record Breach",
+      description:
+        "Record breach evidence against a participant of an active coalition. Pre-validates state, participation, and prior breach status.",
+      category: "Coalition",
+      requiresCredentials: true,
+      stepFunction: "breachStep",
+      stepImportPath: "breach",
+      outputFields: [
+        { field: "success", description: "Whether the breach record succeeded" },
+        { field: "transactionHash", description: "Tx hash" },
+        { field: "transactionLink", description: "Block explorer link" },
+        { field: "error", description: "Error message if failed" },
+      ],
+      configFields: [
+        {
+          key: "network",
+          label: "Network",
+          type: "chain-select",
+          chainTypeFilter: "evm",
+          showPrivateVariants: true,
+          placeholder: "Select network",
+          required: true,
+        },
+        {
+          key: "coalitionId",
+          label: "Coalition ID",
+          type: "template-input",
+          placeholder: "1",
+          required: true,
+        },
+        {
+          key: "breachingParty",
+          label: "Breaching Party",
+          type: "template-input",
+          placeholder: "0x...",
+          required: true,
+        },
+        {
+          key: "evidenceHash",
+          label: "Evidence Hash",
+          type: "template-input",
+          placeholder: "0x... (32-byte keccak256 of evidence document)",
+          required: true,
+        },
+        {
+          type: "group",
+          label: "Advanced",
+          defaultExpanded: false,
+          fields: [
+            {
+              key: "evidenceUri",
+              label: "Evidence URI",
+              type: "template-input",
+              placeholder: "ipfs://... or https://... (logged off-chain only)",
+            },
+            {
+              key: "gasLimitMultiplier",
+              label: "Gas Limit",
+              type: "gas-limit-multiplier",
+              networkField: "network",
+              actionSlug: "breach",
+            },
+          ],
+        },
+      ],
+    },
+    {
       slug: "check-status",
       label: "Check Coalition Status",
       description:
