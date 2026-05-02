@@ -4,6 +4,11 @@ import { expect, test } from "@playwright/test";
 // test in this file. The view toggle must work for anonymous users too.
 test.use({ storageState: { cookies: [], origins: [] } });
 
+// Phase 44 plan 44-01 made `/hub` default to the Protocols tab, where the
+// view toggle does not render. The toggle lives in the Workflows tab, so
+// every test in this file targets `/hub?tab=workflows` explicitly.
+const WORKFLOWS_TAB_URL = "/hub?tab=workflows";
+
 test.describe("Hub view toggle persistence (HUB-22)", () => {
   test.beforeEach(async ({ context }) => {
     // Belt-and-braces: even though storageState above resets browser state,
@@ -15,7 +20,7 @@ test.describe("Hub view toggle persistence (HUB-22)", () => {
   test("defaults to cards view on first visit (no cookie)", async ({
     page,
   }) => {
-    await page.goto("/hub", { waitUntil: "domcontentloaded" });
+    await page.goto(WORKFLOWS_TAB_URL, { waitUntil: "domcontentloaded" });
     await expect(page.locator('[data-view-mode="cards"]')).toBeVisible({
       timeout: 15_000,
     });
@@ -27,7 +32,7 @@ test.describe("Hub view toggle persistence (HUB-22)", () => {
     page,
     context,
   }) => {
-    await page.goto("/hub", { waitUntil: "domcontentloaded" });
+    await page.goto(WORKFLOWS_TAB_URL, { waitUntil: "domcontentloaded" });
 
     const listRadio = page.getByRole("radio", { name: "View as list" });
     await expect(listRadio).toBeVisible({ timeout: 15_000 });
@@ -61,9 +66,11 @@ test.describe("Hub view toggle persistence (HUB-22)", () => {
     page,
     context,
   }) => {
-    // Start on /hub, switch to list, then back to cards.
-    await page.goto("/hub", { waitUntil: "domcontentloaded" });
-    await page.getByRole("radio", { name: "View as list" }).click();
+    // Start on the workflows tab, switch to list, then back to cards.
+    await page.goto(WORKFLOWS_TAB_URL, { waitUntil: "domcontentloaded" });
+    const listRadio = page.getByRole("radio", { name: "View as list" });
+    await expect(listRadio).toBeVisible({ timeout: 15_000 });
+    await listRadio.click();
     await expect(page.locator('[data-view-mode="list"]')).toBeVisible();
 
     await page.getByRole("radio", { name: "View as cards" }).click();
@@ -87,7 +94,7 @@ test.describe("Hub view toggle persistence (HUB-22)", () => {
   });
 
   test("keyboard navigation cycles between options", async ({ page }) => {
-    await page.goto("/hub", { waitUntil: "domcontentloaded" });
+    await page.goto(WORKFLOWS_TAB_URL, { waitUntil: "domcontentloaded" });
     const cardsRadio = page.getByRole("radio", { name: "View as cards" });
     await expect(cardsRadio).toBeVisible({ timeout: 15_000 });
     await cardsRadio.focus();
