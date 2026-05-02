@@ -33,9 +33,15 @@ export function HubResults({
   const workflows = isSearchActive ? searchResults : communityWorkflows;
 
   if (!workflows || workflows.length === 0) {
+    // The view-mode wrapper is kept on the empty state so its
+    // `data-view-mode` attribute remains a stable selector for tests
+    // (HUB-22) regardless of whether any templates have been published.
     if (isSearchActive) {
       return (
-        <section className="flex flex-col items-center justify-center py-16 text-center">
+        <section
+          className="flex flex-col items-center justify-center py-16 text-center"
+          data-view-mode={viewMode}
+        >
           <Search className="mb-3 size-8 text-muted-foreground/40" />
           <p className="mb-3 text-muted-foreground text-sm">
             No templates match your filters.
@@ -54,7 +60,10 @@ export function HubResults({
     }
 
     return (
-      <section className="flex flex-col items-center justify-center py-16 text-center">
+      <section
+        className="flex flex-col items-center justify-center py-16 text-center"
+        data-view-mode={viewMode}
+      >
         <Workflow className="mb-3 size-8 text-muted-foreground/40" />
         <p className="mb-3 text-muted-foreground text-sm">
           No templates available yet.
