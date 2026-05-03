@@ -22,7 +22,7 @@ Use for errors caused by user actions or external factors (not system failures).
 **Categories:**
 - `ErrorCategory.VALIDATION` - Invalid inputs, addresses, schema violations
 - `ErrorCategory.CONFIGURATION` - Missing API keys, invalid settings (user-provided config)
-- `ErrorCategory.EXTERNAL_SERVICE` - Etherscan, Discord, SendGrid, Vercel API failures
+- `ErrorCategory.EXTERNAL_SERVICE` - Etherscan, Discord, SendGrid API failures
 - `ErrorCategory.NETWORK_RPC` - RPC connection failures, timeouts, chain unavailable
 - `ErrorCategory.TRANSACTION` - Transaction failures, gas estimation errors, nonce issues
 
@@ -144,7 +144,7 @@ The context (part in brackets) is automatically extracted and added as the `erro
 ## Label Conventions
 
 ### Common Labels
-- `service` - External service name (e.g., "etherscan", "sendgrid", "vercel")
+- `service` - External service name (e.g., "etherscan", "sendgrid")
 - `endpoint` - API endpoint path (e.g., "/api/workflows")
 - `component` - System component (e.g., "para-service", "events-service")
 - `chain_id` - Blockchain chain ID (as string)

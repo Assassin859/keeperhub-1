@@ -47,7 +47,7 @@ If you forget your password, use the forgot password flow from the sign-in page.
 
 ### OAuth Users
 
-If you signed up with a social provider (Google, GitHub, or Vercel), your password is managed by that provider. The change password option will direct you to your provider's account settings. If you attempt a password reset, you will receive an email indicating which provider manages your account.
+If you signed up with a social provider (Google or GitHub), your password is managed by that provider. The change password option will direct you to your provider's account settings. If you attempt a password reset, you will receive an email indicating which provider manages your account.
 
 ## Personal Workflows
 

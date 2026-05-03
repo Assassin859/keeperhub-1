@@ -1217,7 +1217,7 @@ export const PanelInner = () => {
 
             if (selectedNode.data.type === "trigger") {
               if (triggerType === "Schedule") {
-                filename = "vercel.json";
+                filename = "schedule.json";
                 language = "json";
               } else if (triggerType === "Webhook") {
                 const webhookPath =

@@ -229,13 +229,6 @@ const plugins = [
     },
   }),
   // end keeperhub code //
-  ...(process.env.VERCEL_CLIENT_ID
-    ? [
-        genericOAuth({
-          /* existing Vercel OAuth config */
-        }),
-      ]
-    : []),
 ];
 
 export const auth = betterAuth({

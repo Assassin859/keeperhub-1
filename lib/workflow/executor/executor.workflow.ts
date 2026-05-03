@@ -4,19 +4,11 @@
  */
 
 import {
-  BUILTIN_NODE_ID,
-  BUILTIN_NODE_LABEL,
-  getBuiltinVariables,
-} from "@/lib/workflow/editor/builtin-variables";
-import {
-  ErrorCategory,
-  logSystemError,
-  logUserError,
-} from "@/lib/logging";
-import { enterWorkflowErrorContext } from "@/lib/workflow/executor/error-context";
-import { runBodyNode } from "@/lib/workflow/executor/for-each-body-runner";
+  applyBigIntConversion,
+  needsBigIntMode,
+} from "@/lib/bigint-condition-utils";
+import { ErrorCategory, logSystemError, logUserError } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
-import { LabelKeys, MetricNames } from "@/lib/metrics/types";
 import {
   decrementConcurrentExecutions,
   incrementConcurrentExecutions,
@@ -25,17 +17,22 @@ import {
   detectTriggerType,
   recordWorkflowComplete,
 } from "@/lib/metrics/instrumentation/workflow";
-import { clearExecution } from "@/lib/workflow/executor/step-success-tracker";
-import { ARRAY_SOURCE_RE } from "@/lib/workflow/nodes/for-each/utils";
+import { LabelKeys, MetricNames } from "@/lib/metrics/types";
+import {
+  getActionLabel,
+  getStepImporter,
+  type StepImporter,
+} from "@/lib/step-registry";
+import { deserializeEventTriggerData, getErrorMessageAsync } from "@/lib/utils";
+import {
+  BUILTIN_NODE_ID,
+  BUILTIN_NODE_LABEL,
+  getBuiltinVariables,
+} from "@/lib/workflow/editor/builtin-variables";
 import {
   buildEdgesBySourceHandle,
   type EdgesBySourceHandle,
 } from "@/lib/workflow/editor/edge-handle-utils";
-import {
-  collectAllSkippedTargets,
-  collectSkippedTargets,
-  type ConditionDecision,
-} from "@/lib/workflow/nodes/condition/skipped-branch";
 import {
   buildEdgesBySource,
   buildEdgesByTarget,
@@ -43,41 +40,43 @@ import {
   propagateConvergenceSkips,
   signalConvergenceArrival,
 } from "@/lib/workflow/executor/convergence-barrier";
+import { enterWorkflowErrorContext } from "@/lib/workflow/executor/error-context";
+import { runBodyNode } from "@/lib/workflow/executor/for-each-body-runner";
+import type { StepContext } from "@/lib/workflow/executor/step-handler";
+import { clearExecution } from "@/lib/workflow/executor/step-success-tracker";
 import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
 import {
-  applyBigIntConversion,
-  needsBigIntMode,
-} from "@/lib/bigint-condition-utils";
+  type ConditionDecision,
+  collectAllSkippedTargets,
+  collectSkippedTargets,
+} from "@/lib/workflow/nodes/condition/skipped-branch";
 import {
   preValidateConditionExpression,
   validateConditionExpression,
 } from "@/lib/workflow/nodes/condition/validator";
-import {
-  getActionLabel,
-  getStepImporter,
-  type StepImporter,
-} from "@/lib/step-registry";
-import { LEGACY_ACTION_MAPPINGS } from "@/plugins/legacy-mappings";
-import type { StepContext } from "@/lib/workflow/executor/step-handler";
+import { ARRAY_SOURCE_RE } from "@/lib/workflow/nodes/for-each/utils";
 import { triggerStep } from "@/lib/workflow/nodes/trigger/step";
-import { deserializeEventTriggerData, getErrorMessageAsync } from "@/lib/utils";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
+import { LEGACY_ACTION_MAPPINGS } from "@/plugins/legacy-mappings";
 
 // System actions that don't have plugins - maps to module import functions
 const SYSTEM_ACTIONS: Record<string, StepImporter> = {
   "Database Query": {
     // biome-ignore lint/suspicious/noExplicitAny: Dynamic module import
-    importer: () => import("@/lib/workflow/nodes/database-query/step") as Promise<any>,
+    importer: () =>
+      import("@/lib/workflow/nodes/database-query/step") as Promise<any>,
     stepFunction: "databaseQueryStep",
   },
   "HTTP Request": {
     // biome-ignore lint/suspicious/noExplicitAny: Dynamic module import
-    importer: () => import("@/lib/workflow/nodes/http-request/step") as Promise<any>,
+    importer: () =>
+      import("@/lib/workflow/nodes/http-request/step") as Promise<any>,
     stepFunction: "httpRequestStep",
   },
   Condition: {
     // biome-ignore lint/suspicious/noExplicitAny: Dynamic module import
-    importer: () => import("@/lib/workflow/nodes/condition/step") as Promise<any>,
+    importer: () =>
+      import("@/lib/workflow/nodes/condition/step") as Promise<any>,
     stepFunction: "conditionStep",
   },
   "For Each": {
@@ -144,7 +143,11 @@ function replaceTemplateVariable(
     // Dead-branch grace: if the node exists in the workflow graph but was never
     // executed (it sits on a branch that a condition did not take), return
     // undefined instead of throwing so the condition evaluates gracefully.
-    if (nodeMap?.has(nodeId) && executionResults && !(nodeId in executionResults)) {
+    if (
+      nodeMap?.has(nodeId) &&
+      executionResults &&
+      !(nodeId in executionResults)
+    ) {
       const varName = `__v${varCounter.value}`;
       varCounter.value += 1;
       evalContext[varName] = undefined;
@@ -353,7 +356,7 @@ export function evaluateConditionExpression(
 /**
  * Execute a single action step with logging via stepHandler
  * IMPORTANT: Steps receive only the integration ID as a reference to fetch credentials.
- * This prevents credentials from being logged in Vercel's workflow observability.
+ * This prevents credentials from being logged in workflow observability output.
  */
 async function executeActionStep(input: {
   actionType: string;
@@ -668,23 +671,26 @@ function processCodeTemplates(code: string, outputs: NodeOutputs): string {
   const storedPattern = /\{\{@([^:]+):([^}]+)\}\}/g;
   const displayPattern = /\{\{([^@}][^}]*)\}\}/g;
 
-  let result = code.replace(storedPattern, (full, nodeId: string, rest: string) => {
-    const trimmedNodeId = nodeId.trim();
-    const sanitizedNodeId = trimmedNodeId.replace(/[^a-zA-Z0-9]/g, "_");
-    const output = outputs[sanitizedNodeId] ?? outputs[trimmedNodeId];
-    if (!output) {
-      return full;
+  let result = code.replace(
+    storedPattern,
+    (full, nodeId: string, rest: string) => {
+      const trimmedNodeId = nodeId.trim();
+      const sanitizedNodeId = trimmedNodeId.replace(/[^a-zA-Z0-9]/g, "_");
+      const output = outputs[sanitizedNodeId] ?? outputs[trimmedNodeId];
+      if (!output) {
+        return full;
+      }
+      const { data } = output;
+      if (data === null || data === undefined) {
+        return "null";
+      }
+      const fieldPath = rest.includes(".")
+        ? rest.substring(rest.indexOf(".") + 1).trim()
+        : "";
+      const resolved = resolveFromOutputData(data, fieldPath);
+      return formatCodeValue(resolved ?? null);
     }
-    const { data } = output;
-    if (data === null || data === undefined) {
-      return "null";
-    }
-    const fieldPath = rest.includes(".")
-      ? rest.substring(rest.indexOf(".") + 1).trim()
-      : "";
-    const resolved = resolveFromOutputData(data, fieldPath);
-    return formatCodeValue(resolved ?? null);
-  });
+  );
 
   result = result.replace(displayPattern, (_full, displayRef: string) => {
     const resolved = resolveDisplayTemplate(displayRef, outputs);
@@ -990,7 +996,12 @@ export function identifyLoopBody(
     }
   }
 
-  return { bodyNodeIds, collectNodeId, bodyEdgesBySource, bodyEdgesBySourceHandle };
+  return {
+    bodyNodeIds,
+    collectNodeId,
+    bodyEdgesBySource,
+    bodyEdgesBySourceHandle,
+  };
 }
 
 /**
@@ -1358,7 +1369,12 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     const itemsToProcess = resolvedArray.slice(0, maxIterations);
 
     // 2. Identify body subgraph
-    const { bodyNodeIds, collectNodeId, bodyEdgesBySource, bodyEdgesBySourceHandle } = identifyLoopBody(
+    const {
+      bodyNodeIds,
+      collectNodeId,
+      bodyEdgesBySource,
+      bodyEdgesBySourceHandle,
+    } = identifyLoopBody(
       forEachNodeId,
       currentEdgesBySource,
       nodeMap,
@@ -1738,7 +1754,11 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           return;
         }
 
-        const processedConfig = processActionConfig(config, actionType, outputs);
+        const processedConfig = processActionConfig(
+          config,
+          actionType,
+          outputs
+        );
 
         // Build step context for logging (stepHandler will handle the logging)
         const stepContext: StepContext = {
@@ -2003,14 +2023,17 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       const unexecutedNodes = [...nodeMap.keys()].filter(
         (id) => !(id in results)
       );
-      console.log("[Workflow Executor] Branch-aware finalSuccess=false diagnostic:", {
-        failedNodes,
-        conditionDecisions: [...conditionDecisions.entries()].map(
-          ([id, d]) => ({ id, ...d })
-        ),
-        skippedTargets: [...allSkippedTargets],
-        unexecutedNodes,
-      });
+      console.log(
+        "[Workflow Executor] Branch-aware finalSuccess=false diagnostic:",
+        {
+          failedNodes,
+          conditionDecisions: [...conditionDecisions.entries()].map(
+            ([id, d]) => ({ id, ...d })
+          ),
+          skippedTargets: [...allSkippedTargets],
+          unexecutedNodes,
+        }
+      );
     }
 
     recordWorkflowComplete({
