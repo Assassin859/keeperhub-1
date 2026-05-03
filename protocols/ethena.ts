@@ -1,5 +1,8 @@
 import { defineProtocol } from "@/lib/protocol-registry";
 import { erc4626VaultActions } from "@/lib/web3/standards/erc4626";
+import sUsdeAbi from "./abis/ethena-susde.json";
+
+const SUSDE_ABI = JSON.stringify(sUsdeAbi);
 
 const ERC20_ABI = JSON.stringify([
   {
@@ -39,6 +42,7 @@ export default defineProtocol({
   contracts: {
     sUsde: {
       label: "sUSDe (Staked USDe)",
+      abi: SUSDE_ABI,
       addresses: {
         // Ethereum Mainnet
         "1": "0x9D39A5DE30e57443BfF2A8307A4256c8797A3497",
