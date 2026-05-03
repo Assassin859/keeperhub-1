@@ -3,6 +3,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import {
+  EXCEEDED_MAX_RETRIES_REGEX,
+  FAILED_AFTER_RETRIES_REGEX,
+  NO_STEP_COMPLETION_REGEX,
+} from "@/lib/workflow/executor/executor.workflow";
+import {
   clearExecution,
   getSuccessfulSteps,
   recordStepSuccess,
@@ -32,19 +37,21 @@ import {
  * dynamically generated step-registry, all of which would require
  * >200 lines of mocking. The pure-logic and tracker behaviour fully
  * exercise the new branch in the catch block.
+ *
+ * The regex constants are imported from the production module (not redefined
+ * here) so any rename or pattern change in executor.workflow.ts breaks this
+ * test instead of silently passing.
  */
 
 // ---------------------------------------------------------------------------
 // Predicate -- mirrors the catch-block check in executor.workflow.ts
 // ---------------------------------------------------------------------------
 
-const EXCEEDED_MAX_RETRIES_REGEX = /exceeded max retries/;
-const NO_COMPLETION_REGEX = /Step did not record completion/;
-
 function isSpuriousMaxRetriesError(message: string): boolean {
   return (
     EXCEEDED_MAX_RETRIES_REGEX.test(message) ||
-    NO_COMPLETION_REGEX.test(message)
+    FAILED_AFTER_RETRIES_REGEX.test(message) ||
+    NO_STEP_COMPLETION_REGEX.test(message)
   );
 }
 
@@ -78,12 +85,34 @@ describe("isSpuriousMaxRetriesError predicate", () => {
     ).toBe(true);
   });
 
+  it("matches the SDK 'failed after N retries' shape (catch-path variant)", () => {
+    expect(
+      isSpuriousMaxRetriesError(
+        'Step "runCodeStep" failed after 1 retries: ECONNRESET'
+      )
+    ).toBe(true);
+    expect(
+      isSpuriousMaxRetriesError(
+        'Step "combine" failed after 0 retries: state replay mismatch'
+      )
+    ).toBe(true);
+  });
+
   it("matches the SDK 'Step did not record completion' shape", () => {
     expect(
       isSpuriousMaxRetriesError(
         "Step did not record completion within timeout window"
       )
     ).toBe(true);
+  });
+
+  it("matches case-insensitively (SDK wording occasionally varies)", () => {
+    expect(
+      isSpuriousMaxRetriesError('Step "x" EXCEEDED MAX RETRIES (1 retry)')
+    ).toBe(true);
+    expect(isSpuriousMaxRetriesError("step did not record completion")).toBe(
+      true
+    );
   });
 
   it("does not match unrelated step errors", () => {
