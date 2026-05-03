@@ -1,10 +1,33 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ConsoleMessage, Page, TestInfo } from "@playwright/test";
+import type {
+  APIRequestContext,
+  ConsoleMessage,
+  Page,
+  TestInfo,
+} from "@playwright/test";
 import { test as base } from "@playwright/test";
 import { probe } from "./utils/discover";
 
 export { expect } from "@playwright/test";
+
+/**
+ * Wrapper around `page.request` for state-changing API calls. Defaults the
+ * Origin header to baseURL so the proxy.ts CSRF guard (KEEP-240) accepts the
+ * request. Playwright's APIRequestContext is server-side fetch and does not
+ * auto-attach Origin like a browser would.
+ *
+ * Use raw `page.request` when you specifically want to exercise the guard's
+ * negative path (e.g. assert that origin-less or wrong-origin requests 403).
+ */
+export type AuthenticatedApiRequest = {
+  post: APIRequestContext["post"];
+  put: APIRequestContext["put"];
+  patch: APIRequestContext["patch"];
+  delete: APIRequestContext["delete"];
+};
+
+type StateChangingOptions = Parameters<APIRequestContext["post"]>[1];
 
 const MAX_CONSOLE_ENTRIES = 200;
 const MAX_CONSOLE_ENTRY_LENGTH = 500;
@@ -32,7 +55,23 @@ interface NetworkFailure {
  */
 export const test = base.extend<{
   _autoFailureDiagnostics: undefined;
+  apiRequest: AuthenticatedApiRequest;
 }>({
+  apiRequest: async ({ page, baseURL }, use) => {
+    const origin = baseURL ?? "http://localhost:3000";
+    const withOrigin = (
+      options: StateChangingOptions
+    ): StateChangingOptions => ({
+      ...options,
+      headers: { Origin: origin, ...options?.headers },
+    });
+    await use({
+      post: (url, options) => page.request.post(url, withOrigin(options)),
+      put: (url, options) => page.request.put(url, withOrigin(options)),
+      patch: (url, options) => page.request.patch(url, withOrigin(options)),
+      delete: (url, options) => page.request.delete(url, withOrigin(options)),
+    });
+  },
   _autoFailureDiagnostics: [
     async ({ page }, use, testInfo) => {
       const consoleLogs: ConsoleEntry[] = [];
