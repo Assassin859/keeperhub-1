@@ -4,7 +4,7 @@ export default defineProtocol({
   name: "Aave V3",
   slug: "aave-v3",
   description:
-    "Aave V3 lending and borrowing protocol -- supply, borrow, repay, and monitor account health",
+    "Aave V3 lending and borrowing protocol: supply, borrow, repay, and monitor account health",
   website: "https://aave.com",
   icon: "/protocols/aave.png",
 

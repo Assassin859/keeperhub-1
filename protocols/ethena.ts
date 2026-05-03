@@ -32,7 +32,7 @@ export default defineProtocol({
   name: "Ethena",
   slug: "ethena",
   description:
-    "Ethena Protocol -- sUSDe staking vault (ERC-4626), USDe stablecoin, and ENA governance token on Ethereum",
+    "Ethena Protocol: sUSDe staking vault (ERC-4626), USDe stablecoin, and ENA governance token on Ethereum",
   website: "https://ethena.fi",
   icon: "/protocols/ethena.png",
 
