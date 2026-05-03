@@ -19,7 +19,6 @@ export const TRUSTED_ORIGINS: readonly string[] = [
   // start custom keeperhub code //
   "http://127.0.0.1:*", // CLI browser auth callback (dynamic port)
   // end keeperhub code //
-  "https://app-staging.keeperhub.com",
   "https://*.keeperhub.com",
 ];
 
@@ -90,17 +89,18 @@ export function isTrustedOrigin(origin: string): boolean {
 }
 
 /**
- * Substring that uniquely identifies the better-auth session cookie in a
+ * Boundary-anchored regex matching the better-auth session cookie name in a
  * Cookie header, regardless of the `__Secure-` prefix added in production.
- * Matches `better-auth.session_token=` and
- * `__Secure-better-auth.session_token=`.
+ * The leading `(?:^|;\s*)` anchor avoids false positives where the substring
+ * appears inside another cookie's value or as a suffix of an unrelated name.
  *
- * The pinning test in `tests/unit/trusted-origins.test.ts` asserts this
- * substring is in fact what better-auth generates, so a future better-auth
+ * The pinning test in `tests/unit/trusted-origins.test.ts` asserts this regex
+ * still matches the cookie name better-auth generates, so a future better-auth
  * upgrade that renames the cookie fails CI rather than silently disabling
  * the CSRF check. See KEEP-240.
  */
-export const SESSION_COOKIE_NAME_SUBSTRING = "better-auth.session_token=";
+export const SESSION_COOKIE_RE =
+  /(?:^|;\s*)(?:__Secure-)?better-auth\.session_token=/;
 
 /**
  * Returns true when the request's Cookie header carries a better-auth
@@ -112,8 +112,5 @@ export const SESSION_COOKIE_NAME_SUBSTRING = "better-auth.session_token=";
  */
 export function hasSessionCookie(headers: Headers): boolean {
   const cookie = headers.get("cookie");
-  if (!cookie) {
-    return false;
-  }
-  return cookie.includes(SESSION_COOKIE_NAME_SUBSTRING);
+  return cookie ? SESSION_COOKIE_RE.test(cookie) : false;
 }

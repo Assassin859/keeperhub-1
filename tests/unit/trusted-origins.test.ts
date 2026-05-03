@@ -4,18 +4,18 @@ import {
   hasSessionCookie,
   isTrustedOrigin,
   normaliseOrigin,
-  SESSION_COOKIE_NAME_SUBSTRING,
+  SESSION_COOKIE_RE,
 } from "@/lib/trusted-origins";
 
 describe("isTrustedOrigin", () => {
   it("matches exact entries", () => {
     expect(isTrustedOrigin("http://localhost:3000")).toBe(true);
-    expect(isTrustedOrigin("https://app-staging.keeperhub.com")).toBe(true);
   });
 
   it("matches subdomains via *.keeperhub.com", () => {
     expect(isTrustedOrigin("https://app.keeperhub.com")).toBe(true);
     expect(isTrustedOrigin("https://docs.keeperhub.com")).toBe(true);
+    expect(isTrustedOrigin("https://app-staging.keeperhub.com")).toBe(true);
   });
 
   it("matches dynamic ports on 127.0.0.1 (CLI auth callback)", () => {
@@ -114,19 +114,51 @@ describe("hasSessionCookie", () => {
   });
 });
 
+describe("SESSION_COOKIE_RE boundary anchoring", () => {
+  // The regex must reject lookalikes that could otherwise sneak past a plain
+  // substring check.
+
+  it("rejects the substring appearing inside a cookie value", () => {
+    expect(SESSION_COOKIE_RE.test("first=better-auth.session_token=evil")).toBe(
+      false
+    );
+  });
+
+  it("rejects an unrelated cookie name with the substring as suffix", () => {
+    expect(SESSION_COOKIE_RE.test("xbetter-auth.session_token=foo")).toBe(
+      false
+    );
+    expect(SESSION_COOKIE_RE.test("MyApp-better-auth.session_token=foo")).toBe(
+      false
+    );
+  });
+
+  it("accepts the cookie when separated by ; with or without whitespace", () => {
+    expect(SESSION_COOKIE_RE.test("a=1;better-auth.session_token=tok")).toBe(
+      true
+    );
+    expect(SESSION_COOKIE_RE.test("a=1; better-auth.session_token=tok")).toBe(
+      true
+    );
+    expect(
+      SESSION_COOKIE_RE.test("a=1;\t__Secure-better-auth.session_token=tok")
+    ).toBe(true);
+  });
+});
+
 describe("better-auth cookie name pinning", () => {
-  // If better-auth ever renames its session cookie, our substring check in
+  // If better-auth ever renames its session cookie, our regex check in
   // proxy.ts and auth-helpers.ts becomes a no-op (silently disabling the
   // CSRF protection). This test imports the actual better-auth helper used
-  // to generate cookie names and asserts our substring still matches, so a
+  // to generate cookie names and asserts our regex still matches, so a
   // future upgrade fails CI rather than silently weakening the gate.
   // See KEEP-240.
 
   it("matches the dev cookie name better-auth generates from default options", () => {
     const cookies = getCookies({} as Parameters<typeof getCookies>[0]);
     expect(cookies.sessionToken.name).toBe("better-auth.session_token");
-    expect(`${cookies.sessionToken.name}=`).toContain(
-      SESSION_COOKIE_NAME_SUBSTRING
+    expect(SESSION_COOKIE_RE.test(`${cookies.sessionToken.name}=tok`)).toBe(
+      true
     );
   });
 
@@ -137,8 +169,8 @@ describe("better-auth cookie name pinning", () => {
     expect(cookies.sessionToken.name).toBe(
       "__Secure-better-auth.session_token"
     );
-    expect(`${cookies.sessionToken.name}=`).toContain(
-      SESSION_COOKIE_NAME_SUBSTRING
+    expect(SESSION_COOKIE_RE.test(`${cookies.sessionToken.name}=tok`)).toBe(
+      true
     );
   });
 });
