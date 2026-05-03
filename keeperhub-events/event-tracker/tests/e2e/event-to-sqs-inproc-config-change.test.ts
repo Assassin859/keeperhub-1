@@ -134,11 +134,6 @@ describe.skipIf(SKIP_INFRA_TESTS)(
     let mockApi: MockApiServer;
     let sqsClient: SQSClient;
     let queueUrl: string;
-    let syncModule: {
-      registerContainer: () => Promise<void>;
-      removeAllContainers: () => Promise<void>;
-      rtStorage?: { quit?: () => Promise<unknown> };
-    };
     let synchronizeData: () => Promise<void>;
     let getRegistry: () => {
       size: () => number;
@@ -173,16 +168,10 @@ describe.skipIf(SKIP_INFRA_TESTS)(
       process.env.REDIS_HOST = REDIS_HOST;
       process.env.REDIS_PORT = String(REDIS_PORT);
       process.env.NODE_ENV = "test";
-      process.env.ENABLE_INPROC_LISTENERS = "true";
 
-      const redisMod = await import("../../lib/sync/redis");
-      syncModule = redisMod.syncModule;
       const mainMod = await import("../../src/main");
       synchronizeData = mainMod.synchronizeData;
       getRegistry = mainMod.getRegistry;
-
-      await syncModule.removeAllContainers();
-      await syncModule.registerContainer();
     }, 120_000);
 
     afterAll(async () => {
@@ -190,16 +179,6 @@ describe.skipIf(SKIP_INFRA_TESTS)(
         if (getRegistry) {
           await getRegistry().stopAll();
         }
-      } catch {
-        // ignore
-      }
-      try {
-        await syncModule?.removeAllContainers?.();
-      } catch {
-        // ignore
-      }
-      try {
-        await syncModule?.rtStorage?.quit?.();
       } catch {
         // ignore
       }

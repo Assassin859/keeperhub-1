@@ -39,11 +39,12 @@ const OTHER_EVENTS = [
   },
 ];
 
-// Production call site (evm-chain.ts) passes `rawEventsAbi.map(buildEventAbi)`
-// which returns `string[]` of signature strings, not the AbiEvent object
-// array above. Both shapes are valid ethers.InterfaceAbi, but we cache on
-// hashed content so the cache key spaces are disjoint. Tests here must
-// exercise the string-array shape that real listeners pass.
+// Production call sites (event-listener.ts, workflow-mapper.ts) pass
+// `rawEventsAbi.map(buildEventAbi)` which returns `string[]` of signature
+// strings, not the AbiEvent object array above. Both shapes are valid
+// ethers.InterfaceAbi, but we cache on hashed content so the cache key
+// spaces are disjoint. Tests here must exercise the string-array shape
+// that real listeners pass.
 const ERC20_EVENT_STRINGS = [
   "event Transfer(address indexed from, address indexed to, uint256 value)",
   "event Approval(address indexed owner, address indexed spender, uint256 value)",
