@@ -308,12 +308,16 @@ function buildConfigFieldsFromAction(
   }
 
   if (action.payable) {
+    // Native value is opt-in: most payable functions are payable only to support
+    // multicall composition (e.g. Uniswap swaps where the dominant case is
+    // ERC20-to-ERC20 with no msg.value). Required: true would break that path
+    // by forcing users to type "0" on every config.
     fields.push({
       key: "ethValue",
       label: "ETH Value",
       type: "protocol-eth-value",
       placeholder: "0.0",
-      required: true,
+      required: false,
     });
   }
 

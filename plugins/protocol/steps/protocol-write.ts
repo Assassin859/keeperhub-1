@@ -29,6 +29,17 @@ type ProtocolWriteInput = StepInput & {
   [key: string]: unknown;
 };
 
+const UNISWAP_PAYABLE_SWAP_FUNCTIONS: ReadonlySet<string> = new Set([
+  "exactInputSingle",
+  "exactOutputSingle",
+]);
+
+const ZERO_ETH_VALUE_PATTERN = /^0(\.0+)?$/;
+
+type PreflightResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
 function resolveEthValue(
   rawEthValue: unknown,
   abi: string,
@@ -73,6 +84,58 @@ function resolveEthValue(
     return undefined;
   }
   return trimmed;
+}
+
+// KEEP-408: Uniswap swap functions are `payable` so SwapRouter02 can wrap
+// msg.value into WETH internally - but only when tokenIn IS the chain's WETH
+// address. Setting ETH Value with any other tokenIn strands the ETH in the
+// router (the contract has no way to refund it without an explicit refundETH
+// in a multicall, which we don't expose). Catch this before the tx is sent.
+function checkUniswapNativeEthPreflight(
+  input: ProtocolWriteInput,
+  meta: ProtocolMeta,
+  ethValue: string | undefined
+): PreflightResult {
+  const isUniswapSwap =
+    meta.protocolSlug === "uniswap" &&
+    UNISWAP_PAYABLE_SWAP_FUNCTIONS.has(meta.functionName);
+  if (!isUniswapSwap) {
+    return { ok: true };
+  }
+  if (!ethValue) {
+    return { ok: true };
+  }
+  const trimmed = ethValue.trim();
+  if (trimmed === "" || ZERO_ETH_VALUE_PATTERN.test(trimmed)) {
+    return { ok: true };
+  }
+
+  const wrapped = getProtocol("wrapped");
+  const wethAddress = wrapped?.contracts.weth?.addresses[input.network];
+  if (!wethAddress) {
+    return {
+      ok: false,
+      error: `ETH Value is set but the WETH address for chain "${input.network}" is not registered. Cannot verify that this swap accepts native ETH; remove ETH Value or add WETH for this chain in protocols/wrapped.ts.`,
+    };
+  }
+
+  const tokenIn = input.tokenIn;
+  if (typeof tokenIn !== "string" || tokenIn.trim() === "") {
+    return {
+      ok: false,
+      error:
+        "ETH Value is set but Input Token Address is missing. To swap native ETH, set Input Token to the WETH address for this chain.",
+    };
+  }
+
+  if (tokenIn.trim().toLowerCase() !== wethAddress.toLowerCase()) {
+    return {
+      ok: false,
+      error: `ETH Value is set but Input Token (${tokenIn}) is not the WETH address for chain "${input.network}" (${wethAddress}). To swap native ETH, set Input Token to the WETH address; otherwise the ETH would be stranded in SwapRouter02.`,
+    };
+  }
+
+  return { ok: true };
 }
 
 function buildFunctionArgs(
@@ -184,6 +247,11 @@ export async function protocolWriteStep(
       meta.functionName,
       meta.protocolSlug
     );
+
+    const preflight = checkUniswapNativeEthPreflight(input, meta, ethValue);
+    if (!preflight.ok) {
+      return { success: false, error: preflight.error };
+    }
 
     const coreInput: WriteContractCoreInput = {
       contractAddress,

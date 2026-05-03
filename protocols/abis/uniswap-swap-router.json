@@ -2,7 +2,7 @@
   {
     "type": "function",
     "name": "exactInputSingle",
-    "stateMutability": "nonpayable",
+    "stateMutability": "payable",
     "inputs": [
       {
         "name": "params",
@@ -23,7 +23,7 @@
   {
     "type": "function",
     "name": "exactOutputSingle",
-    "stateMutability": "nonpayable",
+    "stateMutability": "payable",
     "inputs": [
       {
         "name": "params",
