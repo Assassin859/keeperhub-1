@@ -1,20 +1,13 @@
-import { ENABLE_INPROC_LISTENERS } from "../lib/config/environment";
-import { syncModule } from "../lib/sync/redis";
-import type { ChildProcessMap, NetworksMap, RawWorkflow } from "../lib/types";
+import type { NetworksMap, RawWorkflow } from "../lib/types";
 import { fetchActiveWorkflows } from "../lib/utils/fetch-utils";
 import { logger } from "../lib/utils/logger";
 import { createRegistry } from "./listener/factory";
 import type { ListenerRegistry } from "./listener/registry";
 import { buildRegistration } from "./listener/workflow-mapper";
-import {
-  handleActiveWorkflows,
-  removeExcessProcesses,
-} from "./process/manager";
 
-const childProcesses: ChildProcessMap = {};
-
-// Lazy: creating the registry opens a Redis connection for dedup, which we
-// should not do unless the in-process path is actually in use.
+// Lazy: creating the registry opens a Redis connection for dedup. Defer
+// construction until the first reconcile so unit tests that import this
+// module without env wiring do not connect on import.
 let registry: ListenerRegistry | null = null;
 
 function getRegistry(): ListenerRegistry {
@@ -25,9 +18,7 @@ function getRegistry(): ListenerRegistry {
 }
 
 /**
- * Stops every listener in the registry if one was constructed. No-op when
- * the registry was never touched (fork-mode pods, or in-proc pods that
- * received a signal before the first reconcile). Kept separate from
+ * Stops every listener if the registry was constructed. Kept separate from
  * `getRegistry` so shutdown does not lazily construct a registry just to
  * tear it down - that would open a Redis connection for no reason.
  */
@@ -37,27 +28,7 @@ async function shutdownRegistry(): Promise<void> {
   }
 }
 
-async function reconcileForked(
-  workflows: RawWorkflow[],
-  networks: NetworksMap,
-): Promise<void> {
-  await removeExcessProcesses({
-    workflows,
-    childProcesses,
-    syncService: syncModule,
-    logger,
-  });
-
-  await handleActiveWorkflows({
-    workflows,
-    childProcesses,
-    networks: { networks },
-    syncService: syncModule,
-    logger,
-  });
-}
-
-async function reconcileInproc(
+async function reconcile(
   workflows: RawWorkflow[],
   networks: NetworksMap,
 ): Promise<void> {
@@ -117,11 +88,7 @@ async function synchronizeData(): Promise<void> {
       );
     }
 
-    if (ENABLE_INPROC_LISTENERS) {
-      await reconcileInproc(workflows, networks);
-    } else {
-      await reconcileForked(workflows, networks);
-    }
+    await reconcile(workflows, networks);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     logger.error(`Error during synchronization: ${message}`);
