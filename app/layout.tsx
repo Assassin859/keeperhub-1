@@ -3,12 +3,10 @@ import "./globals.css";
 import { Provider } from "jotai";
 import { cookies } from "next/headers";
 import Script from "next/script";
-import { type ReactNode, Suspense } from "react";
+import type { ReactNode } from "react";
 import { AppBanner } from "@/components/app-banner";
 import { AuthProvider } from "@/components/auth/provider";
 import { KeeperHubExtensionLoader } from "@/components/extension-loader";
-import { GitHubStarsLoader } from "@/components/github-stars-loader";
-import { GitHubStarsProvider } from "@/components/github-stars-provider";
 import { GlobalModals } from "@/components/global-modals";
 import { PendingTemplateRunner } from "@/components/hub/pending-template-runner";
 import { LayoutContent } from "@/components/layout-content";
@@ -116,9 +114,6 @@ const RootLayout = async ({ children }: RootLayoutProps) => {
             <AuthProvider>
               <PendingTemplateRunner />
               <OverlayProvider>
-                <Suspense fallback={<GitHubStarsProvider stars={null} />}>
-                  <GitHubStarsLoader />
-                </Suspense>
                 <AppBanner />
                 <LayoutContent>{children}</LayoutContent>
                 <Toaster />

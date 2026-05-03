@@ -4,19 +4,11 @@
  */
 
 import {
-  BUILTIN_NODE_ID,
-  BUILTIN_NODE_LABEL,
-  getBuiltinVariables,
-} from "@/lib/workflow/editor/builtin-variables";
-import {
-  ErrorCategory,
-  logSystemError,
-  logUserError,
-} from "@/lib/logging";
-import { enterWorkflowErrorContext } from "@/lib/workflow/executor/error-context";
-import { runBodyNode } from "@/lib/workflow/executor/for-each-body-runner";
+  applyBigIntConversion,
+  needsBigIntMode,
+} from "@/lib/bigint-condition-utils";
+import { ErrorCategory, logSystemError, logUserError } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
-import { LabelKeys, MetricNames } from "@/lib/metrics/types";
 import {
   decrementConcurrentExecutions,
   incrementConcurrentExecutions,
@@ -25,17 +17,22 @@ import {
   detectTriggerType,
   recordWorkflowComplete,
 } from "@/lib/metrics/instrumentation/workflow";
-import { clearExecution } from "@/lib/workflow/executor/step-success-tracker";
-import { ARRAY_SOURCE_RE } from "@/lib/workflow/nodes/for-each/utils";
+import { LabelKeys, MetricNames } from "@/lib/metrics/types";
+import {
+  getActionLabel,
+  getStepImporter,
+  type StepImporter,
+} from "@/lib/step-registry";
+import { deserializeEventTriggerData, getErrorMessageAsync } from "@/lib/utils";
+import {
+  BUILTIN_NODE_ID,
+  BUILTIN_NODE_LABEL,
+  getBuiltinVariables,
+} from "@/lib/workflow/editor/builtin-variables";
 import {
   buildEdgesBySourceHandle,
   type EdgesBySourceHandle,
 } from "@/lib/workflow/editor/edge-handle-utils";
-import {
-  collectAllSkippedTargets,
-  collectSkippedTargets,
-  type ConditionDecision,
-} from "@/lib/workflow/nodes/condition/skipped-branch";
 import {
   buildEdgesBySource,
   buildEdgesByTarget,
@@ -43,41 +40,48 @@ import {
   propagateConvergenceSkips,
   signalConvergenceArrival,
 } from "@/lib/workflow/executor/convergence-barrier";
+import { mergeFromTracker } from "@/lib/workflow/executor/convergence-tracker-merge";
+import { enterWorkflowErrorContext } from "@/lib/workflow/executor/error-context";
+import { runBodyNode } from "@/lib/workflow/executor/for-each-body-runner";
+import { createPendingTracker } from "@/lib/workflow/executor/pending-tasks";
+import type { StepContext } from "@/lib/workflow/executor/step-handler";
+import {
+  clearExecution,
+  getSuccessfulSteps,
+} from "@/lib/workflow/executor/step-success-tracker";
 import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
 import {
-  applyBigIntConversion,
-  needsBigIntMode,
-} from "@/lib/bigint-condition-utils";
+  type ConditionDecision,
+  collectAllSkippedTargets,
+  collectSkippedTargets,
+} from "@/lib/workflow/nodes/condition/skipped-branch";
 import {
   preValidateConditionExpression,
   validateConditionExpression,
 } from "@/lib/workflow/nodes/condition/validator";
-import {
-  getActionLabel,
-  getStepImporter,
-  type StepImporter,
-} from "@/lib/step-registry";
-import { LEGACY_ACTION_MAPPINGS } from "@/plugins/legacy-mappings";
-import type { StepContext } from "@/lib/workflow/executor/step-handler";
+import { ARRAY_SOURCE_RE } from "@/lib/workflow/nodes/for-each/utils";
 import { triggerStep } from "@/lib/workflow/nodes/trigger/step";
-import { deserializeEventTriggerData, getErrorMessageAsync } from "@/lib/utils";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
+import { LEGACY_ACTION_MAPPINGS } from "@/plugins/legacy-mappings";
 
 // System actions that don't have plugins - maps to module import functions
 const SYSTEM_ACTIONS: Record<string, StepImporter> = {
   "Database Query": {
     // biome-ignore lint/suspicious/noExplicitAny: Dynamic module import
-    importer: () => import("@/lib/workflow/nodes/database-query/step") as Promise<any>,
+    importer: () =>
+      import("@/lib/workflow/nodes/database-query/step") as Promise<any>,
     stepFunction: "databaseQueryStep",
   },
   "HTTP Request": {
     // biome-ignore lint/suspicious/noExplicitAny: Dynamic module import
-    importer: () => import("@/lib/workflow/nodes/http-request/step") as Promise<any>,
+    importer: () =>
+      import("@/lib/workflow/nodes/http-request/step") as Promise<any>,
     stepFunction: "httpRequestStep",
   },
   Condition: {
     // biome-ignore lint/suspicious/noExplicitAny: Dynamic module import
-    importer: () => import("@/lib/workflow/nodes/condition/step") as Promise<any>,
+    importer: () =>
+      import("@/lib/workflow/nodes/condition/step") as Promise<any>,
     stepFunction: "conditionStep",
   },
   "For Each": {
@@ -102,8 +106,47 @@ type ExecutionResult = {
 
 type NodeOutputs = Record<string, { label: string; data: unknown }>;
 
+/**
+ * Branch-aware finalSuccess computation: a workflow succeeds iff every node
+ * in `results` succeeded OR was on a not-taken condition branch (skipped).
+ *
+ * Extracted so callers can re-evaluate after `pendingTasks.drain()` (KEEP-395
+ * Bug 2 hardening): drained orphan-node failures land in `results` while
+ * drain awaits them, but the original computation ran before drain and
+ * missed them. Calling this once after drain is the authoritative answer.
+ */
+export function computeFinalSuccess(
+  results: Record<string, ExecutionResult>,
+  skippedTargets: ReadonlySet<string>
+): boolean {
+  for (const [nodeId, r] of Object.entries(results)) {
+    if (!(r.success || skippedTargets.has(nodeId))) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /** Matches path segment like "carts[0]" for array index access (same as template.ts) */
 const ARRAY_ACCESS_PATTERN = /^([^[]+)\[(\d+)\]$/;
+
+/**
+ * KEEP-398: SDK error shapes that indicate a spurious step-completion failure.
+ *
+ * The Workflow DevKit produces three distinct messages for the same underlying
+ * lost-completion-event situation, depending on which code path the framework
+ * takes when it re-fires the step on resume:
+ *   1. "Step ... exceeded max retries (N retries)" -- pre-check path
+ *   2. "Step ... failed after N retries: ..."      -- catch path
+ *   3. "Step did not record completion ..."        -- direct timeout path
+ *
+ * Exported so the unit test in tests/unit/executor-spurious-max-retries.test.ts
+ * exercises the production patterns rather than redefining them locally
+ * (a rename here would otherwise silently leave the test green).
+ */
+export const EXCEEDED_MAX_RETRIES_REGEX = /exceeded max retries/i;
+export const FAILED_AFTER_RETRIES_REGEX = /failed after.*retries/i;
+export const NO_STEP_COMPLETION_REGEX = /Step did not record completion/i;
 
 export type WorkflowExecutionInput = {
   nodes: WorkflowNode[];
@@ -144,7 +187,11 @@ function replaceTemplateVariable(
     // Dead-branch grace: if the node exists in the workflow graph but was never
     // executed (it sits on a branch that a condition did not take), return
     // undefined instead of throwing so the condition evaluates gracefully.
-    if (nodeMap?.has(nodeId) && executionResults && !(nodeId in executionResults)) {
+    if (
+      nodeMap?.has(nodeId) &&
+      executionResults &&
+      !(nodeId in executionResults)
+    ) {
       const varName = `__v${varCounter.value}`;
       varCounter.value += 1;
       evalContext[varName] = undefined;
@@ -353,7 +400,7 @@ export function evaluateConditionExpression(
 /**
  * Execute a single action step with logging via stepHandler
  * IMPORTANT: Steps receive only the integration ID as a reference to fetch credentials.
- * This prevents credentials from being logged in Vercel's workflow observability.
+ * This prevents credentials from being logged in workflow observability output.
  */
 async function executeActionStep(input: {
   actionType: string;
@@ -668,23 +715,26 @@ function processCodeTemplates(code: string, outputs: NodeOutputs): string {
   const storedPattern = /\{\{@([^:]+):([^}]+)\}\}/g;
   const displayPattern = /\{\{([^@}][^}]*)\}\}/g;
 
-  let result = code.replace(storedPattern, (full, nodeId: string, rest: string) => {
-    const trimmedNodeId = nodeId.trim();
-    const sanitizedNodeId = trimmedNodeId.replace(/[^a-zA-Z0-9]/g, "_");
-    const output = outputs[sanitizedNodeId] ?? outputs[trimmedNodeId];
-    if (!output) {
-      return full;
+  let result = code.replace(
+    storedPattern,
+    (full, nodeId: string, rest: string) => {
+      const trimmedNodeId = nodeId.trim();
+      const sanitizedNodeId = trimmedNodeId.replace(/[^a-zA-Z0-9]/g, "_");
+      const output = outputs[sanitizedNodeId] ?? outputs[trimmedNodeId];
+      if (!output) {
+        return full;
+      }
+      const { data } = output;
+      if (data === null || data === undefined) {
+        return "null";
+      }
+      const fieldPath = rest.includes(".")
+        ? rest.substring(rest.indexOf(".") + 1).trim()
+        : "";
+      const resolved = resolveFromOutputData(data, fieldPath);
+      return formatCodeValue(resolved ?? null);
     }
-    const { data } = output;
-    if (data === null || data === undefined) {
-      return "null";
-    }
-    const fieldPath = rest.includes(".")
-      ? rest.substring(rest.indexOf(".") + 1).trim()
-      : "";
-    const resolved = resolveFromOutputData(data, fieldPath);
-    return formatCodeValue(resolved ?? null);
-  });
+  );
 
   result = result.replace(displayPattern, (_full, displayRef: string) => {
     const resolved = resolveDisplayTemplate(displayRef, outputs);
@@ -990,7 +1040,12 @@ export function identifyLoopBody(
     }
   }
 
-  return { bodyNodeIds, collectNodeId, bodyEdgesBySource, bodyEdgesBySourceHandle };
+  return {
+    bodyNodeIds,
+    collectNodeId,
+    bodyEdgesBySource,
+    bodyEdgesBySourceHandle,
+  };
 }
 
 /**
@@ -1109,6 +1164,23 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
 
   const outputs: NodeOutputs = {};
   const results: Record<string, ExecutionResult> = {};
+
+  // KEEP-395 (Bug 2): track every in-flight Promise.allSettled that
+  // schedules executeNode calls, so we can drain orphaned downstream
+  // branches before finalisation. The SDK's checkpoint resume can truncate
+  // the call-stack-await chain inside executeReadyDownstream recursion;
+  // wrapping every settle in `pendingTasks.track(...)` and draining at the
+  // end ensures we never finalise before downstream nodes have run.
+  const pendingTasks = createPendingTracker();
+
+  // KEEP-395 observability: in a multi-process / multi-pod world the
+  // step-success-tracker is in-process only. If a convergence node executes
+  // on a pod that did not run its predecessors, getSuccessfulSteps returns
+  // undefined and the merge-from-tracker silently degrades to closure
+  // outputs (which may carry the staleness this fix exists to prevent).
+  // Emit a one-time per-execution warning when that happens so prod logs
+  // surface the degradation. Set membership prevents log spam.
+  const warnedDegradationConvergenceIds = new Set<string>();
 
   // Build node and edge maps
   const nodeMap = new Map(nodes.map((n) => [n.id, n]));
@@ -1278,7 +1350,12 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         ownerId,
         workflowId,
       },
-      runStep: async ({ actionType, processedConfig, scopedOutputs: outputs, stepContext }) =>
+      runStep: async ({
+        actionType,
+        processedConfig,
+        scopedOutputs: outputs,
+        stepContext,
+      }) =>
         await executeActionStep({
           actionType,
           config: processedConfig,
@@ -1358,7 +1435,12 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     const itemsToProcess = resolvedArray.slice(0, maxIterations);
 
     // 2. Identify body subgraph
-    const { bodyNodeIds, collectNodeId, bodyEdgesBySource, bodyEdgesBySourceHandle } = identifyLoopBody(
+    const {
+      bodyNodeIds,
+      collectNodeId,
+      bodyEdgesBySource,
+      bodyEdgesBySourceHandle,
+    } = identifyLoopBody(
       forEachNodeId,
       currentEdgesBySource,
       nodeMap,
@@ -1568,8 +1650,8 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     );
 
     if (readyIds.length > 0) {
-      const settled = await Promise.allSettled(
-        readyIds.map((id) => executeNode(id, visited))
+      const settled = await pendingTasks.track(
+        Promise.allSettled(readyIds.map((id) => executeNode(id, visited)))
       );
       processSettledResults(settled, readyIds);
     }
@@ -1738,7 +1820,50 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           return;
         }
 
-        const processedConfig = processActionConfig(config, actionType, outputs);
+        // KEEP-395 (Bug 1): for convergence-target nodes (multiple incoming
+        // edges) the closure-captured `outputs` map can carry a stale snapshot
+        // for the LAST predecessor when the SDK replays/rehydrates this
+        // workflow. Merge tracker-recorded outputs over the closure before
+        // template rendering -- the in-process step-success-tracker is
+        // authoritative for completed steps.
+        const predecessorIds = edgesByTarget.get(nodeId) ?? [];
+        const liveOutputs =
+          predecessorIds.length > 1
+            ? mergeFromTracker({
+                outputs,
+                executionId,
+                predecessorIds,
+                nodeMap,
+                getTracker: (execId: string) => {
+                  const tracker = getSuccessfulSteps(execId);
+                  if (
+                    tracker === undefined &&
+                    !warnedDegradationConvergenceIds.has(nodeId)
+                  ) {
+                    warnedDegradationConvergenceIds.add(nodeId);
+                    logSystemError(
+                      ErrorCategory.WORKFLOW_ENGINE,
+                      "[Workflow Executor] convergence-tracker degraded -- in-process tracker has no entries for this execution (likely cross-pod replay); merge-from-tracker fix is silently inert here",
+                      new Error(
+                        `tracker_degraded execution_id=${execId} convergence_node_id=${nodeId}`
+                      ),
+                      {
+                        ...baseLogLabels,
+                        node_id: nodeId,
+                      }
+                    );
+                  }
+                  return tracker;
+                },
+                getNodeName,
+              })
+            : outputs;
+
+        const processedConfig = processActionConfig(
+          config,
+          actionType,
+          liveOutputs
+        );
 
         // Build step context for logging (stepHandler will handle the logging)
         const stepContext: StepContext = {
@@ -1760,7 +1885,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         const stepResult = await executeActionStep({
           actionType,
           config: processedConfig,
-          outputs,
+          outputs: liveOutputs,
           context: stepContext,
           nodeMap,
           executionResults: results,
@@ -1900,8 +2025,10 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
                 ...new Set([...preSeedUnblocked, ...unblockedIds]),
               ];
               if (allUnblocked.length > 0) {
-                const settled = await Promise.allSettled(
-                  allUnblocked.map((id) => executeNode(id, visited))
+                const settled = await pendingTasks.track(
+                  Promise.allSettled(
+                    allUnblocked.map((id) => executeNode(id, visited))
+                  )
                 );
                 processSettledResults(settled, allUnblocked);
               }
@@ -1925,6 +2052,60 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         }
       }
     } catch (error) {
+      const errorMessage = await getErrorMessageAsync(error);
+
+      // KEEP-398: Reconcile spurious max-retries / step-completion errors using
+      // the in-process step-success-tracker. The Workflow DevKit framework's
+      // post-step "step_completed" event is occasionally lost under heavy
+      // fan-in (e.g. many parallel reads converging into a code/run-code
+      // combine). When that happens, useStep re-fires the step on resume and
+      // -- with runCodeStep.maxRetries=0 -- the framework throws
+      // "Step ... exceeded max retries" / "Step ... failed after N retries"
+      // even though the step body returned successfully and recorded its
+      // output via recordStepSuccess.
+      const isSpuriousMaxRetries =
+        EXCEEDED_MAX_RETRIES_REGEX.test(errorMessage) ||
+        FAILED_AFTER_RETRIES_REGEX.test(errorMessage) ||
+        NO_STEP_COMPLETION_REGEX.test(errorMessage);
+      const recordedOutput = executionId
+        ? getSuccessfulSteps(executionId)?.get(nodeId)
+        : undefined;
+      if (isSpuriousMaxRetries && recordedOutput !== undefined) {
+        // Recovered execution: the step body succeeded, only the SDK's
+        // bookkeeping tripped. Emit a structured warn (no Sentry) and a
+        // dedicated counter so we can alert on rate without one Sentry
+        // event per recovered run.
+        console.warn(
+          "[Workflow Executor] Reconciled spurious max-retries error using step-success-tracker",
+          {
+            ...baseLogLabels,
+            node_id: nodeId,
+            error: errorMessage,
+          }
+        );
+        getMetricsCollector().incrementCounter(
+          "workflow.executor.spurious_recovery.total",
+          {
+            ...(workflowId ? { [LabelKeys.WORKFLOW_ID]: workflowId } : {}),
+            ...(organizationId ? { [LabelKeys.ORG_ID]: organizationId } : {}),
+            ...(organizationPlan ? { [LabelKeys.PLAN]: organizationPlan } : {}),
+          }
+        );
+        const reconciledResult: ExecutionResult = {
+          success: true,
+          data: recordedOutput,
+        };
+        results[nodeId] = reconciledResult;
+        const reconciledSanitizedNodeId = nodeId.replace(/[^a-zA-Z0-9]/g, "_");
+        outputs[reconciledSanitizedNodeId] = {
+          label: getNodeName(node),
+          data: recordedOutput,
+        };
+        const nextNodes = edgesBySource.get(nodeId) ?? [];
+        await executeReadyDownstream(nodeId, nextNodes, visited);
+        return;
+      }
+
       logSystemError(
         ErrorCategory.WORKFLOW_ENGINE,
         "[Workflow Executor] Error executing node:",
@@ -1934,7 +2115,6 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           node_id: nodeId,
         }
       );
-      const errorMessage = await getErrorMessageAsync(error);
       const errorResult = {
         success: false,
         error: errorMessage,
@@ -1983,16 +2163,69 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     incrementConcurrentExecutions();
 
     const triggerNodeIds = triggerNodes.map((trigger) => trigger.id);
-    const triggerSettled = await Promise.allSettled(
-      triggerNodeIds.map((id) => executeNode(id))
+    const triggerSettled = await pendingTasks.track(
+      Promise.allSettled(triggerNodeIds.map((id) => executeNode(id)))
     );
     processSettledResults(triggerSettled, triggerNodeIds);
 
-    // Branch-aware finalSuccess: exclude nodes on dead (not-taken) condition branches
+    // KEEP-395 (Bug 2): drain any in-flight downstream branches before
+    // finalisation. The recursive executeReadyDownstream chain runs in the
+    // workflow layer and can be truncated by SDK checkpoint resume, leaving
+    // an orphaned promise in pendingTasks. Drain catches those so the
+    // workflow does not finalise before all scheduled nodes complete.
+    //
+    // Drain is bounded by a timeout (default 5min, override via
+    // KH_EXECUTOR_DRAIN_TIMEOUT_MS) to prevent a hung step (most plugin
+    // steps lack AbortSignal) from stalling the workflow indefinitely.
+    if (process.env.DEBUG_DRAIN === "1") {
+      console.log(
+        `[Workflow Executor] drain starting with ${pendingTasks.size()} pending`
+      );
+    }
+    // Snapshot result keys BEFORE drain so we can identify drained-node
+    // failures and re-evaluate finalSuccess after drain (KEEP-395 Bug 2
+    // hardening: orphan failures must flow into finalSuccess, not be silently
+    // accepted as success).
+    const resultKeysBeforeDrain = new Set(Object.keys(results));
+    await pendingTasks.drain({
+      onTimeout: (pendingCount) => {
+        logSystemError(
+          ErrorCategory.WORKFLOW_ENGINE,
+          "[Workflow Executor] drain timed out with pending promises -- workflow may finalise with incomplete state",
+          new Error(
+            `drain_timeout pending=${pendingCount} workflow_id=${workflowId ?? "unknown"} execution_id=${executionId ?? "unknown"}`
+          ),
+          {
+            ...baseLogLabels,
+            pending_count: String(pendingCount),
+          }
+        );
+      },
+    });
+
+    // Branch-aware finalSuccess: exclude nodes on dead (not-taken) condition branches.
+    // KEEP-395 Bug 2 hardening: re-evaluated AFTER drain so any failures from
+    // drained orphan nodes are reflected here. The pre-drain computation (now
+    // unused) only ever saw nodes whose call-stack reached processSettledResults;
+    // drained orphans land in `results` while drain awaits them.
     const allSkippedTargets = collectAllSkippedTargets(conditionDecisions);
-    const finalSuccess = Object.entries(results).every(
-      ([nodeId, r]) => r.success || allSkippedTargets.has(nodeId)
+    const finalSuccess = computeFinalSuccess(results, allSkippedTargets);
+
+    // Surface drained-orphan failures explicitly so prod logs make the
+    // SDK-checkpoint-truncation case visible (otherwise the failure looks
+    // identical to a normal sync-path failure).
+    const drainedNodeIds = Object.keys(results).filter(
+      (id) => !resultKeysBeforeDrain.has(id)
     );
+    const drainedFailures = drainedNodeIds.filter(
+      (id) => !(results[id]?.success || allSkippedTargets.has(id))
+    );
+    if (drainedFailures.length > 0) {
+      console.log(
+        "[Workflow Executor] drained orphan node failures captured:",
+        drainedFailures
+      );
+    }
     const duration = Date.now() - workflowStartTime;
 
     // Diagnostic logging for branching workflow failures
@@ -2003,14 +2236,17 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       const unexecutedNodes = [...nodeMap.keys()].filter(
         (id) => !(id in results)
       );
-      console.log("[Workflow Executor] Branch-aware finalSuccess=false diagnostic:", {
-        failedNodes,
-        conditionDecisions: [...conditionDecisions.entries()].map(
-          ([id, d]) => ({ id, ...d })
-        ),
-        skippedTargets: [...allSkippedTargets],
-        unexecutedNodes,
-      });
+      console.log(
+        "[Workflow Executor] Branch-aware finalSuccess=false diagnostic:",
+        {
+          failedNodes,
+          conditionDecisions: [...conditionDecisions.entries()].map(
+            ([id, d]) => ({ id, ...d })
+          ),
+          skippedTargets: [...allSkippedTargets],
+          unexecutedNodes,
+        }
+      );
     }
 
     recordWorkflowComplete({

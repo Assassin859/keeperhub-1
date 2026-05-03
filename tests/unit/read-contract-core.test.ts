@@ -256,3 +256,101 @@ describe("read-contract-core - staticCall for non-view functions", () => {
     }
   });
 });
+
+describe("read-contract-core - tuple output decoding", () => {
+  // Aave V3 Pool.getReserveData(address) returns a single ReserveData tuple.
+  // The first sub-field is itself a nested tuple (ReserveConfigurationMap).
+  // ethers v6 auto-unwraps the outer single-output Result, so we already
+  // hold the 15 tuple components -- the post-processing must NOT unwrap
+  // again or it discards 14 fields (KEEP-390).
+  const AAVE_GET_RESERVE_DATA_ABI = [
+    {
+      name: "getReserveData",
+      type: "function",
+      stateMutability: "view",
+      inputs: [{ name: "asset", type: "address" }],
+      outputs: [
+        {
+          name: "",
+          type: "tuple",
+          components: [
+            {
+              name: "configuration",
+              type: "tuple",
+              components: [{ name: "data", type: "uint256" }],
+            },
+            { name: "liquidityIndex", type: "uint128" },
+            { name: "currentLiquidityRate", type: "uint128" },
+            { name: "variableBorrowIndex", type: "uint128" },
+            { name: "currentVariableBorrowRate", type: "uint128" },
+            { name: "currentStableBorrowRate", type: "uint128" },
+            { name: "lastUpdateTimestamp", type: "uint40" },
+            { name: "id", type: "uint16" },
+            { name: "aTokenAddress", type: "address" },
+            { name: "stableDebtTokenAddress", type: "address" },
+            { name: "variableDebtTokenAddress", type: "address" },
+            { name: "interestRateStrategyAddress", type: "address" },
+            { name: "accruedToTreasury", type: "uint128" },
+            { name: "unbacked", type: "uint128" },
+            { name: "isolationModeTotalDebt", type: "uint128" },
+          ],
+        },
+      ],
+    },
+  ];
+
+  // Shape returned by ethers v6 Contract.getReserveData(...) -- the outer
+  // single-output Result is auto-unwrapped, so we get the 15-element tuple
+  // directly. The first element (configuration) is itself an inner tuple.
+  const RESERVE_DATA_TUPLE = [
+    [BigInt("12345")], // configuration: { data }
+    BigInt("1000000000000000000000000000"), // liquidityIndex
+    BigInt("10000000000000000000000000"), // currentLiquidityRate
+    BigInt("1000000000000000000000000000"), // variableBorrowIndex
+    BigInt("20000000000000000000000000"), // currentVariableBorrowRate
+    BigInt("0"), // currentStableBorrowRate
+    BigInt("1700000000"), // lastUpdateTimestamp
+    BigInt("3"), // id
+    "0x1111111111111111111111111111111111111111", // aTokenAddress
+    "0x2222222222222222222222222222222222222222", // stableDebtTokenAddress
+    "0x3333333333333333333333333333333333333333", // variableDebtTokenAddress
+    "0x4444444444444444444444444444444444444444", // interestRateStrategyAddress
+    BigInt("500"), // accruedToTreasury
+    BigInt("0"), // unbacked
+    BigInt("0"), // isolationModeTotalDebt
+  ];
+
+  it("preserves all 15 tuple components for Aave V3 getReserveData", async () => {
+    setupRpcMocks();
+    mockContractFunction.mockResolvedValueOnce(RESERVE_DATA_TUPLE);
+
+    const result = await readContractCore({
+      contractAddress: VALID_ADDRESS,
+      network: "ethereum",
+      abi: JSON.stringify(AAVE_GET_RESERVE_DATA_ABI),
+      abiFunction: "getReserveData",
+      functionArgs: JSON.stringify([VALID_ADDRESS]),
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+
+    // Output has empty name, so structuredResult should be the unwrapped
+    // tuple itself (the 15-element array), NOT just the first sub-field.
+    expect(Array.isArray(result.result)).toBe(true);
+    expect((result.result as unknown[]).length).toBe(15);
+
+    const tuple = result.result as unknown[];
+    // First element is the nested ReserveConfigurationMap tuple -- it must
+    // remain a tuple (array), not collapse to its lone "data" field.
+    expect(Array.isArray(tuple[0])).toBe(true);
+    expect((tuple[0] as unknown[])[0]).toBe("12345");
+    // Remaining fields must be preserved (BigInts serialized to strings).
+    expect(tuple[1]).toBe("1000000000000000000000000000");
+    expect(tuple[7]).toBe("3");
+    expect(tuple[8]).toBe("0x1111111111111111111111111111111111111111");
+    expect(tuple[14]).toBe("0");
+  });
+});

@@ -5,7 +5,7 @@ export default defineProtocol({
   name: "Morpho",
   slug: "morpho",
   description:
-    "Trustless lending protocol -- overcollateralized borrowing and lending of ERC-20 tokens via a singleton contract",
+    "Trustless lending protocol: overcollateralized borrowing and lending of ERC-20 tokens via a singleton contract",
   website: "https://app.morpho.org",
   icon: "/protocols/morpho.png",
 

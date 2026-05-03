@@ -438,7 +438,7 @@ export function ProtocolDetail({
             )}
           </div>
           <p className="mt-1 text-muted-foreground text-sm">
-            {protocol.description.replace(/ -- /g, ". ")}
+            {protocol.description}
           </p>
           <div className="mt-3 flex flex-wrap gap-1">
             {allChains.map((chain) => (

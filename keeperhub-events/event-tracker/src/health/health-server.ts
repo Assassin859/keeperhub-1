@@ -7,7 +7,7 @@ import {
 import type { ChainProviderManager } from "../chains/provider-manager";
 
 /**
- * HTTP `/healthz` endpoint for the in-process architecture (KEEP-295).
+ * HTTP `/healthz` endpoint backed by ChainProviderManager.
  *
  * Semantics:
  *   - 200 `{ status: "ok", chains: [...] }` when every registered chain
@@ -16,13 +16,6 @@ import type { ChainProviderManager } from "../chains/provider-manager";
  *   - 503 `{ status: "degraded", chains: [...] }` when any chain is
  *     reconnecting or has no provider.
  *   - 404 for any path other than `/healthz`.
- *
- * Fork mode note: in fork mode the parent process does not use
- * ChainProviderManager (children own their own WsConnection). This
- * endpoint will therefore always return 200 in fork mode with an empty
- * chains list, providing no additional signal over the existing pgrep
- * probe. It becomes meaningful only when ENABLE_INPROC_LISTENERS is on.
- * Helm values should keep the pgrep probe until cutover.
  */
 
 export interface HealthResponseBody {

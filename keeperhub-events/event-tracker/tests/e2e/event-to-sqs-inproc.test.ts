@@ -1,11 +1,8 @@
 /**
- * E2E for the in-process listener architecture (KEEP-295 Phase 4+).
+ * E2E for the in-process listener architecture.
  *
- * Same functional assertion as event-to-sqs.test.ts (emit on chain, see SQS
- * message) but with ENABLE_INPROC_LISTENERS=true so main.ts takes the
- * ListenerRegistry path instead of forking children. Also asserts that the
- * registry actually holds the workflow after synchronise, proving we're on
- * the in-process path and not silently falling back to fork.
+ * Emits an event on a local chain and asserts the corresponding SQS message
+ * is dispatched. Also asserts the registry holds the workflow after sync.
  *
  * Requires the `test` docker-compose profile (test-anvil, test-localstack,
  * test-redis). Skipped when SKIP_INFRA_TESTS=true.
@@ -117,14 +114,9 @@ describe.skipIf(SKIP_INFRA_TESTS)(
     let mockApi: MockApiServer;
     let sqsClient: SQSClient;
     let queueUrl: string;
-    // Modules imported dynamically after env is set so that env-captured
-    // module-level state (redis client in lib/sync/redis, dedup client in
-    // listener/dedup) picks up the test values.
-    let syncModule: {
-      registerContainer: () => Promise<void>;
-      removeAllContainers: () => Promise<void>;
-      rtStorage?: { quit?: () => Promise<unknown> };
-    };
+    // main.ts is imported dynamically after env is set so that env-captured
+    // module-level state (dedup client in listener/dedup-redis) picks up the
+    // test values.
     let synchronizeData: () => Promise<void>;
     let getRegistry: () => {
       size: () => number;
@@ -148,7 +140,6 @@ describe.skipIf(SKIP_INFRA_TESTS)(
         networks: buildNetworks(),
       });
 
-      // See event-to-sqs.test.ts for why env mutation is not restored.
       process.env.KEEPERHUB_API_URL = mockApi.url;
       process.env.KEEPERHUB_API_KEY = "test-key";
       process.env.SQS_QUEUE_URL = queueUrl;
@@ -159,17 +150,10 @@ describe.skipIf(SKIP_INFRA_TESTS)(
       process.env.REDIS_HOST = REDIS_HOST;
       process.env.REDIS_PORT = String(REDIS_PORT);
       process.env.NODE_ENV = "test";
-      // The flag that flips main.ts onto the in-process path.
-      process.env.ENABLE_INPROC_LISTENERS = "true";
 
-      const redisMod = await import("../../lib/sync/redis");
-      syncModule = redisMod.syncModule;
       const mainMod = await import("../../src/main");
       synchronizeData = mainMod.synchronizeData;
       getRegistry = mainMod.getRegistry;
-
-      await syncModule.removeAllContainers();
-      await syncModule.registerContainer();
     }, 120_000);
 
     afterAll(async () => {
@@ -179,18 +163,6 @@ describe.skipIf(SKIP_INFRA_TESTS)(
         if (getRegistry) {
           await getRegistry().stopAll();
         }
-      } catch {
-        // ignore
-      }
-      try {
-        await syncModule?.removeAllContainers?.();
-      } catch {
-        // ignore
-      }
-      try {
-        // Same brittle-but-acceptable escape hatch as the fork E2E to close
-        // the SyncModule's protected Redis connection. Phase 6 deletes both.
-        await syncModule?.rtStorage?.quit?.();
       } catch {
         // ignore
       }

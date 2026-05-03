@@ -32,10 +32,18 @@ vi.mock("@/lib/mcp/oauth-auth", () => ({
   authenticateOAuthToken: mockAuthenticateOAuthToken,
 }));
 
-import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import {
+  getDualAuthContext,
+  resolveCreatorContext,
+  resolveOrganizationId,
+} from "@/lib/middleware/auth-helpers";
 
-function makeRequest(headers: Record<string, string> = {}): Request {
-  return new Request("http://localhost/test", {
+function makeRequest(
+  headers: Record<string, string> = {},
+  init: { method?: string; url?: string } = {}
+): Request {
+  return new Request(init.url ?? "http://localhost/test", {
+    method: init.method ?? "GET",
     headers: new Headers(headers),
   });
 }
@@ -254,6 +262,280 @@ describe("getDualAuthContext", () => {
         apiKeyId: null,
       });
       expect(mockGetSession).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("session origin (CSRF defence-in-depth)", () => {
+    beforeEach(() => {
+      mockAuthenticateApiKey.mockResolvedValue({ authenticated: false });
+      mockGetSession.mockResolvedValue({ user: { id: "user_session" } });
+      mockGetOrgContext.mockResolvedValue({
+        organization: { id: "org_session" },
+      });
+    });
+
+    it("allows state-changing request with cookie and trusted origin", async () => {
+      const result = await getDualAuthContext(
+        makeRequest(
+          {
+            cookie: "better-auth.session_token=abc",
+            origin: "http://localhost:3000",
+          },
+          { method: "POST" }
+        )
+      );
+
+      expect(result).toEqual({
+        userId: "user_session",
+        organizationId: "org_session",
+        authMethod: "session",
+        apiKeyId: null,
+      });
+    });
+
+    it("allows wildcard match (https://*.keeperhub.com)", async () => {
+      const result = await getDualAuthContext(
+        makeRequest(
+          {
+            cookie: "better-auth.session_token=abc",
+            origin: "https://app.keeperhub.com",
+          },
+          { method: "POST" }
+        )
+      );
+
+      expect(result).toEqual({
+        userId: "user_session",
+        organizationId: "org_session",
+        authMethod: "session",
+        apiKeyId: null,
+      });
+    });
+
+    it("rejects state-changing request with cookie and untrusted origin", async () => {
+      const result = await getDualAuthContext(
+        makeRequest(
+          {
+            cookie: "better-auth.session_token=abc",
+            origin: "https://evil.example.com",
+          },
+          { method: "POST" }
+        )
+      );
+
+      expect(result).toEqual({ error: "Invalid origin", status: 403 });
+    });
+
+    it("rejects state-changing request with cookie and no origin/referer", async () => {
+      const result = await getDualAuthContext(
+        makeRequest(
+          { cookie: "better-auth.session_token=abc" },
+          { method: "POST" }
+        )
+      );
+
+      expect(result).toEqual({ error: "Invalid origin", status: 403 });
+    });
+
+    it("falls back to Referer when Origin is missing", async () => {
+      const result = await getDualAuthContext(
+        makeRequest(
+          {
+            cookie: "better-auth.session_token=abc",
+            referer: "http://localhost:3000/some/page",
+          },
+          { method: "POST" }
+        )
+      );
+
+      expect(result).toEqual({
+        userId: "user_session",
+        organizationId: "org_session",
+        authMethod: "session",
+        apiKeyId: null,
+      });
+    });
+
+    it("allows GET requests regardless of origin (CSRF only blocks mutations)", async () => {
+      const result = await getDualAuthContext(
+        makeRequest(
+          {
+            cookie: "better-auth.session_token=abc",
+            origin: "https://evil.example.com",
+          },
+          { method: "GET" }
+        )
+      );
+
+      expect(result).toEqual({
+        userId: "user_session",
+        organizationId: "org_session",
+        authMethod: "session",
+        apiKeyId: null,
+      });
+    });
+
+    it("allows cookieless POST (Bearer-only callers)", async () => {
+      const result = await getDualAuthContext(
+        makeRequest({ origin: "https://evil.example.com" }, { method: "POST" })
+      );
+
+      expect(result).toEqual({
+        userId: "user_session",
+        organizationId: "org_session",
+        authMethod: "session",
+        apiKeyId: null,
+      });
+    });
+
+    it("treats empty Cookie: header as no cookies", async () => {
+      const result = await getDualAuthContext(
+        makeRequest(
+          { cookie: "", origin: "https://evil.example.com" },
+          { method: "POST" }
+        )
+      );
+
+      expect(result).toEqual({
+        userId: "user_session",
+        organizationId: "org_session",
+        authMethod: "session",
+        apiKeyId: null,
+      });
+    });
+
+    it("bypasses origin check when only non-session cookies are present", async () => {
+      // Bearer-API-key callers behind Cloudflare Access carry CF cookies but
+      // no better-auth session. They reach getDualAuthContext as session-fall-
+      // through (auth methods above already returned), but origin should not
+      // gate them.
+      const result = await getDualAuthContext(
+        makeRequest(
+          {
+            cookie: "CF_AppSession=abc; CF_Authorization=xyz",
+            origin: "https://evil.example.com",
+          },
+          { method: "POST" }
+        )
+      );
+
+      expect(result).toEqual({
+        userId: "user_session",
+        organizationId: "org_session",
+        authMethod: "session",
+        apiKeyId: null,
+      });
+    });
+
+    it("does not gate OAuth Bearer requests on origin", async () => {
+      mockAuthenticateOAuthToken.mockResolvedValue({
+        authenticated: true,
+        userId: "user_oauth",
+        organizationId: "org_oauth",
+      });
+
+      const result = await getDualAuthContext(
+        makeRequest(
+          {
+            cookie: "better-auth.session_token=abc",
+            origin: "https://evil.example.com",
+            Authorization: "Bearer token",
+          },
+          { method: "POST" }
+        )
+      );
+
+      expect(result).toEqual({
+        userId: "user_oauth",
+        organizationId: "org_oauth",
+        authMethod: "oauth",
+        apiKeyId: null,
+      });
+    });
+  });
+});
+
+describe("resolveOrganizationId — origin check wiring", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAuthenticateOAuthToken.mockResolvedValue({ authenticated: false });
+    mockAuthenticateApiKey.mockResolvedValue({ authenticated: false });
+    mockGetSession.mockResolvedValue({ user: { id: "user_session" } });
+    mockGetOrgContext.mockResolvedValue({
+      organization: { id: "org_session" },
+    });
+  });
+
+  it("rejects untrusted origin on cookie POST", async () => {
+    const result = await resolveOrganizationId(
+      makeRequest(
+        {
+          cookie: "better-auth.session_token=abc",
+          origin: "https://evil.example.com",
+        },
+        { method: "POST" }
+      )
+    );
+    expect(result).toEqual({ error: "Invalid origin", status: 403 });
+  });
+
+  it("allows trusted origin on cookie POST", async () => {
+    const result = await resolveOrganizationId(
+      makeRequest(
+        {
+          cookie: "better-auth.session_token=abc",
+          origin: "http://localhost:3000",
+        },
+        { method: "POST" }
+      )
+    );
+    expect(result).toEqual({
+      organizationId: "org_session",
+      authMethod: "session",
+      apiKeyId: null,
+    });
+  });
+});
+
+describe("resolveCreatorContext — origin check wiring", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAuthenticateOAuthToken.mockResolvedValue({ authenticated: false });
+    mockAuthenticateApiKey.mockResolvedValue({ authenticated: false });
+    mockGetSession.mockResolvedValue({ user: { id: "user_session" } });
+    mockGetOrgContext.mockResolvedValue({
+      organization: { id: "org_session" },
+    });
+  });
+
+  it("rejects untrusted origin on cookie POST", async () => {
+    const result = await resolveCreatorContext(
+      makeRequest(
+        {
+          cookie: "better-auth.session_token=abc",
+          origin: "https://evil.example.com",
+        },
+        { method: "POST" }
+      )
+    );
+    expect(result).toEqual({ error: "Invalid origin", status: 403 });
+  });
+
+  it("allows trusted origin on cookie POST", async () => {
+    const result = await resolveCreatorContext(
+      makeRequest(
+        {
+          cookie: "better-auth.session_token=abc",
+          origin: "http://localhost:3000",
+        },
+        { method: "POST" }
+      )
+    );
+    expect(result).toEqual({
+      organizationId: "org_session",
+      userId: "user_session",
+      authMethod: "session",
+      apiKeyId: null,
     });
   });
 });

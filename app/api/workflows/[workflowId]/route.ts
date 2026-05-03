@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { revalidateTag } from "next/cache";
 import { NextResponse } from "next/server";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
@@ -237,6 +238,17 @@ async function handlePostUpdateSideEffects(
     await db
       .delete(workflowPublicTags)
       .where(eq(workflowPublicTags.workflowId, workflowId));
+  }
+
+  // Marketplace leaderboard caches tags + isListed for 60s. Drop the cache
+  // whenever a change might have flipped a row in or out of the listed set,
+  // or rewritten the tag column on a still-listed row.
+  if (
+    body.isListed !== undefined ||
+    body.visibility !== undefined ||
+    body.priceUsdcPerCall !== undefined
+  ) {
+    revalidateTag("marketplace", "max");
   }
 
   if (body.nodes !== undefined) {

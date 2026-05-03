@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { revalidateTag } from "next/cache";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { workflowPublicTags, workflows } from "@/lib/db/schema";
@@ -92,6 +93,13 @@ export async function PUT(
         { error: "Workflow not found" },
         { status: 404 }
       );
+    }
+
+    // Marketplace tab caches its leaderboard (incl. tag column) for 60s.
+    // If this workflow is listed, the tag set the user just chose should
+    // appear immediately rather than after the next revalidation tick.
+    if (updatedWorkflow.isListed) {
+      revalidateTag("marketplace", "max");
     }
 
     return NextResponse.json({

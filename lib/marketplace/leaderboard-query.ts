@@ -1,21 +1,31 @@
 import { and, desc, eq, ilike, inArray, lt, or, sql } from "drizzle-orm";
 import { unstable_cache } from "next/cache";
 import { db } from "@/lib/db";
-import { workflows } from "@/lib/db/schema";
+import { organization, workflows } from "@/lib/db/schema";
 import { publicTags, workflowPublicTags } from "@/lib/db/schema-extensions";
 import { workflowPayments } from "@/lib/db/schema-payments";
+import { sanitizeDescription } from "@/lib/sanitize-description";
 
-export type MarketplaceSort = "popular" | "newest" | "top-calls" | "price";
+export type MarketplaceSort =
+  | "popular"
+  | "newest"
+  | "top-calls"
+  | "price"
+  | "owner";
 
 export type MarketplaceLeaderboardRow = {
   workflowId: string;
   listedSlug: string | null;
   displayName: string;
+  description: string | null;
+  organizationName: string | null;
   callCount: number;
   priceUsdcPerCall: string | null;
   chain: string | null;
   listedAt: Date | null;
   tags: string[];
+  inputSchema: Record<string, unknown> | null;
+  outputMapping: Record<string, unknown> | null;
 };
 
 export type MarketplaceLeaderboardResult = {
@@ -66,10 +76,16 @@ async function runLeaderboardQuery(
 ): Promise<MarketplaceLeaderboardResult> {
   // PUBLIC COLUMN WHITELIST -- see MARKET-04. Adding fields here requires
   // re-reading MARKET-04 + MARKET-13 first. NEVER add private columns:
-  //   - workflows.{user identity, org identity}
+  //   - workflows.{user identity}
   //   - workflowPayments.{usdc amount, payer wallet, creator wallet}
   // The grep gate in 44-05 acceptance asserts these literal identifiers
   // appear ZERO times in this file -- spell them out in PROSE only.
+  //
+  // Phase 44.x revision: the org's public display name is now exposed in the
+  // marketplace as a trust signal (analog to App Store developer name). The
+  // internal organization id is NOT surfaced — only the human-chosen name
+  // joined from the organization table, which keeps MARKET-13's banned-token
+  // grep clean.
   const callCountExpr = sql<number>`count(${workflowPayments.id})::int`;
 
   const baseFilter = eq(workflows.isListed, true);
@@ -126,6 +142,14 @@ async function runLeaderboardQuery(
         desc(workflows.id),
       ];
     }
+    if (sort === "owner") {
+      // Owner sort: A→Z by joined organization name; anonymous (null)
+      // listings sink to the bottom so named providers lead. Tiebreak by id.
+      return [
+        sql`${organization.name} asc nulls last`,
+        desc(workflows.id),
+      ];
+    }
     return [desc(callCountExpr), desc(workflows.id)];
   })();
 
@@ -134,15 +158,25 @@ async function runLeaderboardQuery(
       workflowId: workflows.id,
       listedSlug: workflows.listedSlug,
       displayName: workflows.name,
+      description: workflows.description,
+      organizationName: organization.name,
       callCount: callCountExpr,
       priceUsdcPerCall: workflows.priceUsdcPerCall,
       chain: workflows.chain,
       listedAt: workflows.listedAt,
+      inputSchema: workflows.inputSchema,
+      outputMapping: workflows.outputMapping,
     })
     .from(workflows)
+    .leftJoin(organization, eq(organization.id, workflows.organizationId))
     .leftJoin(workflowPayments, eq(workflowPayments.workflowId, workflows.id))
     .where(whereClause)
-    .groupBy(workflows.id)
+    // Postgres strict-aggregate rule: any non-aggregated SELECT column must
+    // appear in GROUP BY. workflows.id functionally determines every other
+    // workflows.* column (PK), so adding it here is enough — but joined
+    // tables don't get the same free pass, so organization.name must be
+    // listed explicitly.
+    .groupBy(workflows.id, organization.name)
     .orderBy(...orderClause)
     .limit(PAGE_LIMIT + 1);
 
@@ -196,26 +230,40 @@ async function runLeaderboardQuery(
     tagsByWorkflow.set(workflowId, list);
   }
 
+  // Marketplace is a public surface — every viewer is treated as a non-owner
+  // for description purposes. Mirrors the GET /api/workflows/[id] sanitisation
+  // applied on listed workflows so injection markers can't reach the row card.
   const rowsWithTags: MarketplaceLeaderboardRow[] = pageRows.map((row) => ({
     ...row,
+    description: row.description
+      ? sanitizeDescription(row.description, { maxLength: 2000 })
+      : null,
     tags: tagsByWorkflow.get(row.workflowId) ?? [],
   }));
 
   return { rows: rowsWithTags, nextCursor, total };
 }
 
-export const fetchMarketplaceLeaderboard = unstable_cache(
-  async (
-    sort: MarketplaceSort,
-    cursorRaw: string | null,
-    query: string,
-    tagSlug: string | null
-  ): Promise<MarketplaceLeaderboardResult> => {
-    const cursor = decodeCursor(cursorRaw);
-    return await runLeaderboardQuery(sort, cursor, query, tagSlug);
-  },
-  ["marketplace-leaderboard"],
-  { revalidate: 60, tags: ["marketplace"] }
-);
+async function fetchUncached(
+  sort: MarketplaceSort,
+  cursorRaw: string | null,
+  query: string,
+  tagSlug: string | null
+): Promise<MarketplaceLeaderboardResult> {
+  const cursor = decodeCursor(cursorRaw);
+  return await runLeaderboardQuery(sort, cursor, query, tagSlug);
+}
+
+// Bypass unstable_cache in dev so editor changes (schema, sort columns,
+// seeded data) show up on the next request instead of waiting up to 60s
+// or surviving across restarts via the persisted Next data cache. Prod
+// keeps the 60s cache for marketplace traffic.
+export const fetchMarketplaceLeaderboard =
+  process.env.NODE_ENV === "production"
+    ? unstable_cache(fetchUncached, ["marketplace-leaderboard"], {
+        revalidate: 60,
+        tags: ["marketplace"],
+      })
+    : fetchUncached;
 
 export { encodeCursor as encodeMarketplaceCursor };

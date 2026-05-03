@@ -69,6 +69,13 @@ vi.mock("@/lib/sanitize-description", () => ({
   sanitizeDescription: vi.fn((raw: string) => `SANITIZED:${raw}`),
 }));
 
+// PATCH route now calls revalidateTag("marketplace", "max") on listing
+// transitions; stub it so tests don't hit the real Next 16 cache layer
+// (which throws outside a request context).
+vi.mock("next/cache", () => ({
+  revalidateTag: vi.fn(),
+}));
+
 import { GET, PATCH } from "@/app/api/workflows/[workflowId]/route";
 
 const SANITIZED_PREFIX_RE = /^SANITIZED:/;

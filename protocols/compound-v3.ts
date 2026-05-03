@@ -4,7 +4,7 @@ export default defineProtocol({
   name: "Compound V3",
   slug: "compound",
   description:
-    "Compound V3 (Comet) lending protocol -- supply assets, borrow base tokens, and monitor balances across isolated markets",
+    "Compound V3 (Comet) lending protocol: supply assets, borrow base tokens, and monitor balances across isolated markets",
   website: "https://compound.finance",
   icon: "/protocols/compound.png",
 

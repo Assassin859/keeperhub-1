@@ -4,7 +4,7 @@ export default defineProtocol({
   name: "Pendle Finance",
   slug: "pendle",
   description:
-    "Pendle Finance -- yield tokenization protocol for trading fixed and variable yield on DeFi assets",
+    "Pendle Finance: yield tokenization protocol for trading fixed and variable yield on DeFi assets",
   website: "https://pendle.finance",
   icon: "/protocols/pendle.png",
 
