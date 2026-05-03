@@ -19,6 +19,7 @@ const SORT_OPTIONS: ReadonlyArray<{ value: MarketplaceSort; label: string }> = [
   { value: "newest", label: "Newest" },
   { value: "top-calls", label: "Calls" },
   { value: "price", label: "Price" },
+  { value: "owner", label: "Owner" },
 ] as const;
 
 export type MarketplaceSidebarTag = {

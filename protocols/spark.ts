@@ -5,7 +5,7 @@ export default defineProtocol({
   name: "Spark",
   slug: "spark",
   description:
-    "Spark Protocol (Aave V3 fork) -- lending, borrowing, and sDAI savings in the Sky/Maker ecosystem",
+    "Spark Protocol (Aave V3 fork): lending, borrowing, and sDAI savings in the Sky/Maker ecosystem",
   website: "https://spark.fi",
   icon: "/protocols/spark.png",
 

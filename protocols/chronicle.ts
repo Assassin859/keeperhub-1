@@ -106,7 +106,7 @@ export default defineProtocol({
   name: "Chronicle",
   slug: "chronicle",
   description:
-    "Chronicle Protocol -- decentralized, verifiable oracle price feeds with Schnorr signature verification",
+    "Chronicle Protocol: decentralized, verifiable oracle price feeds with Schnorr signature verification",
   website: "https://chroniclelabs.org",
   icon: "/protocols/chronicle.png",
 
