@@ -40,10 +40,21 @@ import {
   propagateConvergenceSkips,
   signalConvergenceArrival,
 } from "@/lib/workflow/executor/convergence-barrier";
-import { mergeFromTracker } from "@/lib/workflow/executor/convergence-tracker-merge";
+import { mergeFromAuthority } from "@/lib/workflow/executor/convergence-tracker-merge";
 import { enterWorkflowErrorContext } from "@/lib/workflow/executor/error-context";
+import {
+  computeFinalSuccess,
+  type ExecutionResult,
+} from "@/lib/workflow/executor/final-success";
 import { runBodyNode } from "@/lib/workflow/executor/for-each-body-runner";
+import { clearOutputCache } from "@/lib/workflow/executor/get-completed-step-output";
 import { createPendingTracker } from "@/lib/workflow/executor/pending-tasks";
+import {
+  EXCEEDED_MAX_RETRIES_REGEX,
+  FAILED_AFTER_RETRIES_REGEX,
+  NO_STEP_COMPLETION_REGEX,
+} from "@/lib/workflow/executor/runner-error-patterns";
+import { reconcileSpuriousFailures } from "@/lib/workflow/executor/spurious-recovery";
 import type { StepContext } from "@/lib/workflow/executor/step-handler";
 import {
   clearExecution,
@@ -98,34 +109,12 @@ const SYSTEM_ACTIONS: Record<string, StepImporter> = {
   },
 };
 
-type ExecutionResult = {
-  success: boolean;
-  data?: unknown;
-  error?: string;
-};
+export {
+  computeFinalSuccess,
+  type ExecutionResult,
+} from "@/lib/workflow/executor/final-success";
 
 type NodeOutputs = Record<string, { label: string; data: unknown }>;
-
-/**
- * Branch-aware finalSuccess computation: a workflow succeeds iff every node
- * in `results` succeeded OR was on a not-taken condition branch (skipped).
- *
- * Extracted so callers can re-evaluate after `pendingTasks.drain()` (KEEP-395
- * Bug 2 hardening): drained orphan-node failures land in `results` while
- * drain awaits them, but the original computation ran before drain and
- * missed them. Calling this once after drain is the authoritative answer.
- */
-export function computeFinalSuccess(
-  results: Record<string, ExecutionResult>,
-  skippedTargets: ReadonlySet<string>
-): boolean {
-  for (const [nodeId, r] of Object.entries(results)) {
-    if (!(r.success || skippedTargets.has(nodeId))) {
-      return false;
-    }
-  }
-  return true;
-}
 
 /** Matches path segment like "carts[0]" for array index access (same as template.ts) */
 const ARRAY_ACCESS_PATTERN = /^([^[]+)\[(\d+)\]$/;
@@ -133,20 +122,15 @@ const ARRAY_ACCESS_PATTERN = /^([^[]+)\[(\d+)\]$/;
 /**
  * KEEP-398: SDK error shapes that indicate a spurious step-completion failure.
  *
- * The Workflow DevKit produces three distinct messages for the same underlying
- * lost-completion-event situation, depending on which code path the framework
- * takes when it re-fires the step on resume:
- *   1. "Step ... exceeded max retries (N retries)" -- pre-check path
- *   2. "Step ... failed after N retries: ..."      -- catch path
- *   3. "Step did not record completion ..."        -- direct timeout path
- *
- * Exported so the unit test in tests/unit/executor-spurious-max-retries.test.ts
- * exercises the production patterns rather than redefining them locally
- * (a rename here would otherwise silently leave the test green).
+ * Defined in runner-error-patterns.ts and re-exported here so the existing
+ * unit test (executor-spurious-max-retries.test.ts) that imports from this
+ * module continues to work without change.
  */
-export const EXCEEDED_MAX_RETRIES_REGEX = /exceeded max retries/i;
-export const FAILED_AFTER_RETRIES_REGEX = /failed after.*retries/i;
-export const NO_STEP_COMPLETION_REGEX = /Step did not record completion/i;
+export {
+  EXCEEDED_MAX_RETRIES_REGEX,
+  FAILED_AFTER_RETRIES_REGEX,
+  NO_STEP_COMPLETION_REGEX,
+} from "@/lib/workflow/executor/runner-error-patterns";
 
 export type WorkflowExecutionInput = {
   nodes: WorkflowNode[];
@@ -1823,41 +1807,46 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         // KEEP-395 (Bug 1): for convergence-target nodes (multiple incoming
         // edges) the closure-captured `outputs` map can carry a stale snapshot
         // for the LAST predecessor when the SDK replays/rehydrates this
-        // workflow. Merge tracker-recorded outputs over the closure before
-        // template rendering -- the in-process step-success-tracker is
-        // authoritative for completed steps.
+        // workflow across a process boundary. `mergeFromAuthority` consults the
+        // in-process tracker first (fast path, zero I/O) and falls back to
+        // `workflow_execution_logs` for any predecessor missing from the
+        // tracker -- which happens when predecessors ran on a different pod.
+        // Emits a `tracker_degraded` log when the DB fallback fires so prod
+        // logs surface cross-pod resumes without alerting (observability only).
         const predecessorIds = edgesByTarget.get(nodeId) ?? [];
         const liveOutputs =
           predecessorIds.length > 1
-            ? mergeFromTracker({
+            ? await mergeFromAuthority({
                 outputs,
                 executionId,
                 predecessorIds,
                 nodeMap,
-                getTracker: (execId: string) => {
-                  const tracker = getSuccessfulSteps(execId);
-                  if (
-                    tracker === undefined &&
-                    !warnedDegradationConvergenceIds.has(nodeId)
-                  ) {
-                    warnedDegradationConvergenceIds.add(nodeId);
-                    logSystemError(
-                      ErrorCategory.WORKFLOW_ENGINE,
-                      "[Workflow Executor] convergence-tracker degraded -- in-process tracker has no entries for this execution (likely cross-pod replay); merge-from-tracker fix is silently inert here",
-                      new Error(
-                        `tracker_degraded execution_id=${execId} convergence_node_id=${nodeId}`
-                      ),
-                      {
-                        ...baseLogLabels,
-                        node_id: nodeId,
-                      }
-                    );
-                  }
-                  return tracker;
-                },
                 getNodeName,
               })
             : outputs;
+
+        if (
+          predecessorIds.length > 1 &&
+          liveOutputs !== outputs &&
+          !warnedDegradationConvergenceIds.has(nodeId)
+        ) {
+          const trackerEmpty =
+            getSuccessfulSteps(executionId ?? "") === undefined;
+          if (trackerEmpty) {
+            warnedDegradationConvergenceIds.add(nodeId);
+            logSystemError(
+              ErrorCategory.WORKFLOW_ENGINE,
+              "[Workflow Executor] tracker_degraded -- DB fallback fired for convergence merge (cross-pod resume)",
+              new Error(
+                `tracker_degraded execution_id=${executionId ?? ""} convergence_node_id=${nodeId}`
+              ),
+              {
+                ...baseLogLabels,
+                node_id: nodeId,
+              }
+            );
+          }
+        }
 
         const processedConfig = processActionConfig(
           config,
@@ -2203,6 +2192,21 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       },
     });
 
+    // KEEP-398: Post-drain reconciliation pass. After drain completes all
+    // pending promises have settled, so any tracker writes that raced the SDK's
+    // max-retries throw have now landed. For any result entry that still shows a
+    // spurious error, consult the step-success-tracker and then
+    // workflow_execution_logs. If a success record exists, override the failed
+    // entry. This catches both the 20% in-process case (tracker populated after
+    // drain) and the 80% cross-pod case (tracker empty, DB authoritative).
+    await reconcileSpuriousFailures({
+      executionId,
+      results,
+      workflowId,
+      organizationId,
+      organizationPlan,
+    });
+
     // Branch-aware finalSuccess: exclude nodes on dead (not-taken) condition branches.
     // KEEP-395 Bug 2 hardening: re-evaluated AFTER drain so any failures from
     // drained orphan nodes are reflected here. The pre-drain computation (now
@@ -2346,6 +2350,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
   } finally {
     if (executionId) {
       clearExecution(executionId);
+      clearOutputCache(executionId);
     }
   }
 }
