@@ -139,6 +139,63 @@ describe("createPendingTracker (KEEP-395 Bug 2)", () => {
     expect(tracker.size()).toBe(0);
   });
 
+  it("drain returns and invokes onTimeout when timeout fires before pending settles", async () => {
+    // KEEP-395 Bug 2 hardening (R2 BLOCKER 1): drain must be bounded so a
+    // hung step (most plugin steps lack AbortSignal) cannot stall the
+    // workflow indefinitely. Timeout fires -> drain resolves -> onTimeout
+    // is called once with the remaining pending count.
+    const tracker = createPendingTracker();
+    const d1 = deferred<number>();
+    const d2 = deferred<number>();
+    // Suppress unhandled-rejection noise on never-resolved promises.
+    d1.promise.catch(() => undefined);
+    d2.promise.catch(() => undefined);
+    tracker.track(d1.promise);
+    tracker.track(d2.promise);
+
+    const onTimeout = vi.fn();
+    const start = Date.now();
+    await tracker.drain({ timeoutMs: 25, onTimeout });
+    const elapsed = Date.now() - start;
+
+    expect(elapsed).toBeGreaterThanOrEqual(20);
+    expect(elapsed).toBeLessThan(500); // generous CI margin
+    expect(onTimeout).toHaveBeenCalledTimes(1);
+    expect(onTimeout).toHaveBeenCalledWith(2);
+    // The two never-settled promises remain in the set; tracker is leaked
+    // but that's the documented behaviour (no AbortController plumbing).
+    expect(tracker.size()).toBe(2);
+
+    // Cleanup: settle them so vitest doesn't report leaks.
+    d1.resolve(1);
+    d2.resolve(2);
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  it("drain does NOT invoke onTimeout when pending settles before timeout", async () => {
+    const tracker = createPendingTracker();
+    const d = deferred<string>();
+    tracker.track(d.promise);
+
+    const onTimeout = vi.fn();
+    const drainPromise = tracker.drain({ timeoutMs: 5000, onTimeout });
+    d.resolve("done");
+    await drainPromise;
+
+    expect(onTimeout).not.toHaveBeenCalled();
+    expect(tracker.size()).toBe(0);
+  });
+
+  it("drain returns immediately (no timer) when pending is already empty", async () => {
+    const tracker = createPendingTracker();
+    const onTimeout = vi.fn();
+    // Zero timeout would normally fire instantly; the empty-set short-circuit
+    // must skip the timer entirely so onTimeout is never called.
+    await tracker.drain({ timeoutMs: 0, onTimeout });
+    expect(onTimeout).not.toHaveBeenCalled();
+  });
+
   it("simulates the executor pattern: trigger settle + recursive downstream + drain", async () => {
     // Fake a workflow shape: trigger -> A -> B. Trigger settle awaits
     // executeNode(trigger), which schedules A inside its promise chain. A

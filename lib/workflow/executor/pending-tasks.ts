@@ -18,7 +18,40 @@
  * `Promise.allSettled` resolves naturally and the drain loop sees an empty
  * set immediately. The new behaviour only kicks in when an orphaned promise
  * exists -- previously they were silently dropped, now they are awaited.
+ *
+ * KEEP-395 (Bug 2 hardening): drain is bounded by a timeout so a hung step
+ * (no AbortSignal in most plugin implementations) cannot stall the workflow
+ * indefinitely. Default 5 minutes, override via `KH_EXECUTOR_DRAIN_TIMEOUT_MS`.
+ * When the timeout fires, drain returns and the caller is informed via the
+ * `onTimeout` callback (if supplied) so it can log the leak with workflow
+ * context. The leaked promises are NOT cancelled (no AbortController plumbing
+ * here) -- they continue running in the background and the platform-level
+ * workflow timeout will eventually clean them up.
  */
+
+const DEFAULT_DRAIN_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
+function readDrainTimeoutMs(): number {
+  const raw = process.env.KH_EXECUTOR_DRAIN_TIMEOUT_MS;
+  if (!raw) {
+    return DEFAULT_DRAIN_TIMEOUT_MS;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    return DEFAULT_DRAIN_TIMEOUT_MS;
+  }
+  return parsed;
+}
+
+export type DrainOptions = {
+  /** Override the timeout in ms. Defaults to env or 5 minutes. */
+  timeoutMs?: number;
+  /**
+   * Called once if the drain hits its timeout with promises still pending.
+   * `pendingCount` is the snapshot size at the moment the timeout fired.
+   */
+  onTimeout?: (pendingCount: number) => void;
+};
 
 export type PendingTracker = {
   /**
@@ -30,9 +63,9 @@ export type PendingTracker = {
   /**
    * Drain the pending set: await every currently-tracked promise. New
    * promises added by the awaited promises are also drained. Returns once
-   * the set is empty.
+   * the set is empty OR the timeout fires (whichever first).
    */
-  drain(): Promise<void>;
+  drain(opts?: DrainOptions): Promise<void>;
   /** Current count of in-flight promises (used in tests / diagnostics). */
   size(): number;
 };
@@ -53,13 +86,41 @@ export function createPendingTracker(): PendingTracker {
     return p;
   }
 
-  async function drain(): Promise<void> {
+  async function drainLoop(): Promise<void> {
     // New promises may be added while we await existing ones (e.g. an
     // awaited branch schedules another downstream node). Loop until the
     // set is fully drained.
     while (pending.size > 0) {
       const snapshot = [...pending];
       await Promise.allSettled(snapshot);
+    }
+  }
+
+  async function drain(opts?: DrainOptions): Promise<void> {
+    if (pending.size === 0) {
+      return;
+    }
+
+    const timeoutMs = opts?.timeoutMs ?? readDrainTimeoutMs();
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+
+    const timeoutPromise = new Promise<"timeout">((resolve) => {
+      timeoutHandle = setTimeout(() => resolve("timeout"), timeoutMs);
+      // Don't keep the event loop alive for this watchdog.
+      timeoutHandle.unref?.();
+    });
+
+    const result = await Promise.race([
+      drainLoop().then(() => "drained" as const),
+      timeoutPromise,
+    ]);
+
+    if (timeoutHandle !== undefined) {
+      clearTimeout(timeoutHandle);
+    }
+
+    if (result === "timeout") {
+      opts?.onTimeout?.(pending.size);
     }
   }
 
