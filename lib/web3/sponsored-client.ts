@@ -15,6 +15,7 @@ import {
   getPimlicoUrl,
   isSponsorshipSupported,
 } from "@/lib/web3/pimlico-config";
+import { clampSponsoredFees } from "@/lib/web3/sponsored-fee-clamp";
 
 const LOG_PREFIX = "[Sponsorship]";
 
@@ -92,6 +93,7 @@ export async function createSponsoredClient(
     });
 
     const gasPrices = await pimlicoClient.getUserOperationGasPrice();
+    const sponsoredFees = clampSponsoredFees(gasPrices.fast);
 
     const smartAccountClient = createSmartAccountClient({
       chain,
@@ -100,7 +102,7 @@ export async function createSponsoredClient(
       bundlerTransport: http(pimlicoUrl),
       paymaster: pimlicoClient,
       userOperation: {
-        estimateFeesPerGas: async () => gasPrices.fast,
+        estimateFeesPerGas: async () => sponsoredFees,
       },
     });
 
