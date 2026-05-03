@@ -241,8 +241,13 @@ export async function readContractCore(
         const outputName = singleOutput.name?.trim();
         const outputType = singleOutput.type ?? "";
         const isArrayType = outputType.endsWith("[]");
+        // covers "tuple" and "tuple[]"
+        const isTupleType = outputType.startsWith("tuple");
+        // ethers v6 Contract methods auto-unwrap single-output Results; for
+        // tuples that means we already hold the tuple's components, NOT a
+        // wrapper array. Unwrapping again would discard sub-fields.
         const singleValue =
-          Array.isArray(serializedResult) && !isArrayType
+          Array.isArray(serializedResult) && !isArrayType && !isTupleType
             ? serializedResult[0]
             : serializedResult;
         if (outputName) {
