@@ -7,21 +7,29 @@
  *
  * The in-process tracker is cleared between "predecessor completion" and the
  * convergence merge to simulate the prod cross-process boundary.
+ *
+ * The batch helper `getCompletedStepOutputs` is used internally; tests mock
+ * `findMany` accordingly.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-const { mockFindFirst } = vi.hoisted(() => ({
-  mockFindFirst: vi.fn(),
-}));
+const { mockFindMany, mockIncrementCounter, mockRecordLatency } = vi.hoisted(
+  () => ({
+    mockFindMany: vi.fn(),
+    mockIncrementCounter: vi.fn(),
+    mockRecordLatency: vi.fn(),
+  })
+);
 
 vi.mock("@/lib/db", () => ({
   db: {
     query: {
       workflowExecutionLogs: {
-        findFirst: mockFindFirst,
+        findFirst: vi.fn(),
+        findMany: mockFindMany,
       },
     },
   },
@@ -32,7 +40,23 @@ vi.mock("@/lib/db/schema", () => ({
     executionId: "execution_id",
     nodeId: "node_id",
     status: "status",
+    iterationIndex: "iteration_index",
+    forEachNodeId: "for_each_node_id",
+    completedAt: "completed_at",
+    outputRaw: "output_raw",
   },
+}));
+
+vi.mock("@/lib/logging", () => ({
+  ErrorCategory: { WORKFLOW_ENGINE: "workflow_engine" },
+  logSystemError: vi.fn(),
+}));
+
+vi.mock("@/lib/metrics", () => ({
+  getMetricsCollector: () => ({
+    incrementCounter: mockIncrementCounter,
+    recordLatency: mockRecordLatency,
+  }),
 }));
 
 import {
@@ -68,7 +92,9 @@ describe("mergeFromAuthority (KEEP-395 cross-process DB fallback)", () => {
   beforeEach(() => {
     clearOutputCache(executionId);
     clearExecution(executionId);
-    mockFindFirst.mockReset();
+    mockFindMany.mockReset();
+    mockIncrementCounter.mockReset();
+    mockRecordLatency.mockReset();
   });
 
   afterEach(() => {
@@ -88,7 +114,7 @@ describe("mergeFromAuthority (KEEP-395 cross-process DB fallback)", () => {
     });
 
     expect(result).toBe(outputs);
-    expect(mockFindFirst).not.toHaveBeenCalled();
+    expect(mockFindMany).not.toHaveBeenCalled();
   });
 
   it("returns original outputs unchanged when predecessorIds is empty", async () => {
@@ -103,7 +129,7 @@ describe("mergeFromAuthority (KEEP-395 cross-process DB fallback)", () => {
     });
 
     expect(result).toBe(outputs);
-    expect(mockFindFirst).not.toHaveBeenCalled();
+    expect(mockFindMany).not.toHaveBeenCalled();
   });
 
   describe("fast path: tracker hit (same process)", () => {
@@ -123,12 +149,12 @@ describe("mergeFromAuthority (KEEP-395 cross-process DB fallback)", () => {
       });
 
       expect(result.predA.data).toEqual({ rate: 4.5 });
-      expect(mockFindFirst).not.toHaveBeenCalled();
+      expect(mockFindMany).not.toHaveBeenCalled();
     });
   });
 
   describe("DB authority: cross-process resume simulation", () => {
-    it("prod KEEP-395 repro: 9-fan-in, tracker empty, DB returns all 9 predecessor outputs", async () => {
+    it("prod KEEP-395 repro: 9-fan-in, tracker empty, DB returns all 9 predecessor outputs with exactly 1 query", async () => {
       const predIds = ["p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9"];
       const nodeMap = new Map(predIds.map((id) => [id, makeNode(id)]));
 
@@ -136,9 +162,11 @@ describe("mergeFromAuthority (KEEP-395 cross-process DB fallback)", () => {
         predIds.map((id) => [id, { label: id, data: null }])
       );
 
-      // Simulate all 9 predecessors in DB (no tracker entries -- cross-process)
-      mockFindFirst.mockImplementation(() =>
-        Promise.resolve({ output: { value: "result-for-db" } })
+      mockFindMany.mockResolvedValue(
+        predIds.map((nodeId) => ({
+          nodeId,
+          outputRaw: { value: "result-for-db" },
+        }))
       );
 
       const result = await mergeFromAuthority({
@@ -149,6 +177,7 @@ describe("mergeFromAuthority (KEEP-395 cross-process DB fallback)", () => {
         getNodeName,
       });
 
+      expect(mockFindMany).toHaveBeenCalledTimes(1);
       for (const id of predIds) {
         expect(result[id].data).toEqual({ value: "result-for-db" });
         expect(result[id].data).not.toBeNull();
@@ -156,8 +185,10 @@ describe("mergeFromAuthority (KEEP-395 cross-process DB fallback)", () => {
     });
 
     it("stale closure null is overridden by DB output for the missing predecessor", async () => {
-      // Tracker is empty (cross-process). DB has the success row.
-      mockFindFirst.mockResolvedValue({ output: { sparkPos: 1234 } });
+      mockFindMany.mockResolvedValue([
+        { nodeId: "sparkPosOut", outputRaw: { sparkPos: 1234 } },
+        { nodeId: "otherPred", outputRaw: { ok: true } },
+      ]);
 
       const outputs: NodeOutputs = {
         sparkPosOut: { label: "Spark Pos", data: null },
@@ -178,15 +209,16 @@ describe("mergeFromAuthority (KEEP-395 cross-process DB fallback)", () => {
       expect(result.sparkPosOut.data).toEqual({ sparkPos: 1234 });
     });
 
-    it("partial cross-process: tracker has some, DB fills the rest", async () => {
+    it("partial cross-process: tracker has some, DB fills the rest in 1 query", async () => {
       const predIds = ["pA", "pB", "pC"];
       const nodeMap = new Map(predIds.map((id) => [id, makeNode(id)]));
 
-      // pA is in tracker (same-process predecessor)
       recordStepSuccess(executionId, "pA", { fromTracker: true });
 
-      // pB and pC are only in DB (cross-process predecessors)
-      mockFindFirst.mockResolvedValue({ output: { fromDb: true } });
+      mockFindMany.mockResolvedValue([
+        { nodeId: "pB", outputRaw: { fromDb: true } },
+        { nodeId: "pC", outputRaw: { fromDb: true } },
+      ]);
 
       const outputs: NodeOutputs = {
         pA: { label: "pA", data: null },
@@ -205,12 +237,37 @@ describe("mergeFromAuthority (KEEP-395 cross-process DB fallback)", () => {
       expect(result.pA.data).toEqual({ fromTracker: true });
       expect(result.pB.data).toEqual({ fromDb: true });
       expect(result.pC.data).toEqual({ fromDb: true });
+      expect(mockFindMany).toHaveBeenCalledTimes(1);
+    });
+
+    it("output_raw flows through unredacted: apiKey field is preserved", async () => {
+      const rawOutput = { apiKey: "0xSECRET", amount: 500 };
+
+      mockFindMany.mockResolvedValue([
+        { nodeId: "predA", outputRaw: rawOutput },
+      ]);
+
+      const outputs: NodeOutputs = {
+        predA: { label: "A", data: null },
+      };
+
+      const result = await mergeFromAuthority({
+        outputs,
+        executionId,
+        predecessorIds: ["predA"],
+        nodeMap: new Map([["predA", makeNode("predA", "A")]]),
+        getNodeName,
+      });
+
+      expect((result.predA.data as Record<string, unknown>)?.apiKey).toBe(
+        "0xSECRET"
+      );
     });
   });
 
   describe("negative: DB also has no success row", () => {
     it("closure value stands when both tracker and DB miss", async () => {
-      mockFindFirst.mockResolvedValue(undefined);
+      mockFindMany.mockResolvedValue([]);
 
       const closureValue = { staleButOnlyValue: true };
       const outputs: NodeOutputs = {
@@ -229,7 +286,7 @@ describe("mergeFromAuthority (KEEP-395 cross-process DB fallback)", () => {
     });
 
     it("returns original outputs object (identity) when no merge occurred", async () => {
-      mockFindFirst.mockResolvedValue(undefined);
+      mockFindMany.mockResolvedValue([]);
 
       const outputs: NodeOutputs = {
         pred: { label: "P", data: null },
@@ -252,7 +309,9 @@ describe("mergeFromAuthority (KEEP-395 cross-process DB fallback)", () => {
       const rawId = "node-with-dashes.and.dots";
       const sanitized = "node_with_dashes_and_dots";
 
-      mockFindFirst.mockResolvedValue({ output: { dbResult: true } });
+      mockFindMany.mockResolvedValue([
+        { nodeId: rawId, outputRaw: { dbResult: true } },
+      ]);
 
       const outputs: NodeOutputs = {
         [sanitized]: { label: "raw", data: null },

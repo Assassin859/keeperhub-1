@@ -14,8 +14,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-const { mockFindFirst } = vi.hoisted(() => ({
+const { mockFindFirst, mockFindMany } = vi.hoisted(() => ({
   mockFindFirst: vi.fn(),
+  mockFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -23,6 +24,7 @@ vi.mock("@/lib/db", () => ({
     query: {
       workflowExecutionLogs: {
         findFirst: mockFindFirst,
+        findMany: mockFindMany,
       },
     },
   },
@@ -33,12 +35,22 @@ vi.mock("@/lib/db/schema", () => ({
     executionId: "execution_id",
     nodeId: "node_id",
     status: "status",
+    iterationIndex: "iteration_index",
+    forEachNodeId: "for_each_node_id",
+    completedAt: "completed_at",
+    outputRaw: "output_raw",
   },
+}));
+
+vi.mock("@/lib/logging", () => ({
+  ErrorCategory: { WORKFLOW_ENGINE: "workflow_engine" },
+  logSystemError: vi.fn(),
 }));
 
 vi.mock("@/lib/metrics", () => ({
   getMetricsCollector: () => ({
     incrementCounter: vi.fn(),
+    recordLatency: vi.fn(),
   }),
 }));
 
@@ -89,6 +101,7 @@ describe("KEEP-395/398 cross-process tracker simulation -- regression canary", (
     clearOutputCache(executionId);
     clearExecution(executionId);
     mockFindFirst.mockReset();
+    mockFindMany.mockReset();
   });
 
   afterEach(() => {
@@ -106,7 +119,7 @@ describe("KEEP-395/398 cross-process tracker simulation -- regression canary", (
 
   it("new code path (getCompletedStepOutput) returns DB value when tracker is empty", async () => {
     const prodOutput = { sparkPos: 1234, timestamp: 1_716_123_199_442 };
-    mockFindFirst.mockResolvedValue({ output: prodOutput });
+    mockFindFirst.mockResolvedValue({ outputRaw: prodOutput });
 
     const result = await getCompletedStepOutput(executionId, missingNodeId);
 
@@ -124,10 +137,23 @@ describe("KEEP-395/398 cross-process tracker simulation -- regression canary", (
     expect(result?.source).toBe("tracker");
     expect(result?.output).toEqual(trackerOutput);
     expect(mockFindFirst).not.toHaveBeenCalled();
+    expect(mockFindMany).not.toHaveBeenCalled();
+  });
+
+  it("output_raw flows through unredacted: sensitive field is not replaced with [REDACTED]", async () => {
+    const rawOutput = { apiKey: "0xSECRET", amount: 100 };
+    mockFindFirst.mockResolvedValue({ outputRaw: rawOutput });
+
+    const result = await getCompletedStepOutput(executionId, missingNodeId);
+
+    expect(result?.source).toBe("db");
+    expect((result?.output as Record<string, unknown>)?.apiKey).toBe(
+      "0xSECRET"
+    );
   });
 
   describe("KEEP-395: 9-fan-in convergence across process boundary", () => {
-    it("mergeFromAuthority fills all 9 predecessor slots from DB when tracker is empty", async () => {
+    it("mergeFromAuthority fills all 9 predecessor slots from DB with exactly 1 query", async () => {
       const predIds = ["p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9"];
       const nodeMap = new Map(predIds.map((id) => [id, makeNode(id)]));
 
@@ -137,8 +163,8 @@ describe("KEEP-395/398 cross-process tracker simulation -- regression canary", (
       );
 
       // DB has all 9 success rows
-      mockFindFirst.mockImplementation(() =>
-        Promise.resolve({ output: { value: 42 } })
+      mockFindMany.mockResolvedValue(
+        predIds.map((nodeId) => ({ nodeId, outputRaw: { value: 42 } }))
       );
 
       const result = await mergeFromAuthority({
@@ -149,6 +175,7 @@ describe("KEEP-395/398 cross-process tracker simulation -- regression canary", (
         getNodeName,
       });
 
+      expect(mockFindMany).toHaveBeenCalledTimes(1);
       for (const id of predIds) {
         expect(result[id].data).not.toBeNull();
         expect(result[id].data).toEqual({ value: 42 });
@@ -191,7 +218,7 @@ describe("KEEP-395/398 cross-process tracker simulation -- regression canary", (
 
     it("tracker empty + DB hit: spurious error CAN be recovered via DB authority", async () => {
       const dbOutput = { combine: "result", items: [1, 2, 3] };
-      mockFindFirst.mockResolvedValue({ output: dbOutput });
+      mockFindFirst.mockResolvedValue({ outputRaw: dbOutput });
 
       const result = await getCompletedStepOutput(executionId, missingNodeId);
 
@@ -201,8 +228,8 @@ describe("KEEP-395/398 cross-process tracker simulation -- regression canary", (
   });
 
   describe("single-flight guarantee under concurrent convergence nodes", () => {
-    it("multiple convergence nodes querying the same predecessor issue exactly 1 DB call", async () => {
-      mockFindFirst.mockResolvedValue({ output: { shared: true } });
+    it("multiple convergence nodes querying the same predecessor via getCompletedStepOutput issue exactly 1 DB call", async () => {
+      mockFindFirst.mockResolvedValue({ outputRaw: { shared: true } });
 
       const [r1, r2, r3] = await Promise.all([
         getCompletedStepOutput(executionId, missingNodeId),

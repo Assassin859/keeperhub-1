@@ -5,7 +5,7 @@
  * before computeFinalSuccess. When a result entry matches the spurious
  * max-retries error pattern AND a success row exists in workflow_execution_logs,
  * the failed entry is overridden to success and the spurious_recovery counter
- * is incremented.
+ * is incremented with source="post_drain".
  *
  * The reconciler is imported as a standalone function so it can be unit-tested
  * without spinning up the full executor.
@@ -15,16 +15,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-const { mockFindFirst, mockIncrementCounter } = vi.hoisted(() => ({
-  mockFindFirst: vi.fn(),
-  mockIncrementCounter: vi.fn(),
-}));
+const { mockFindFirst, mockFindMany, mockIncrementCounter } = vi.hoisted(
+  () => ({
+    mockFindFirst: vi.fn(),
+    mockFindMany: vi.fn(),
+    mockIncrementCounter: vi.fn(),
+  })
+);
 
 vi.mock("@/lib/db", () => ({
   db: {
     query: {
       workflowExecutionLogs: {
         findFirst: mockFindFirst,
+        findMany: mockFindMany,
       },
     },
   },
@@ -35,12 +39,22 @@ vi.mock("@/lib/db/schema", () => ({
     executionId: "execution_id",
     nodeId: "node_id",
     status: "status",
+    iterationIndex: "iteration_index",
+    forEachNodeId: "for_each_node_id",
+    completedAt: "completed_at",
+    outputRaw: "output_raw",
   },
+}));
+
+vi.mock("@/lib/logging", () => ({
+  ErrorCategory: { WORKFLOW_ENGINE: "workflow_engine" },
+  logSystemError: vi.fn(),
 }));
 
 vi.mock("@/lib/metrics", () => ({
   getMetricsCollector: () => ({
     incrementCounter: mockIncrementCounter,
+    recordLatency: vi.fn(),
   }),
 }));
 
@@ -60,6 +74,7 @@ describe("reconcileSpuriousFailures (KEEP-398 post-drain pass)", () => {
     clearOutputCache(executionId);
     clearExecution(executionId);
     mockFindFirst.mockReset();
+    mockFindMany.mockReset();
     mockIncrementCounter.mockReset();
   });
 
@@ -85,7 +100,7 @@ describe("reconcileSpuriousFailures (KEEP-398 post-drain pass)", () => {
       expect(results[nodeId].data).toEqual({ merged: 42 });
       expect(mockIncrementCounter).toHaveBeenCalledWith(
         "workflow.executor.spurious_recovery.total",
-        expect.anything()
+        expect.objectContaining({ source: "post_drain" })
       );
       expect(mockFindFirst).not.toHaveBeenCalled();
     });
@@ -123,7 +138,7 @@ describe("reconcileSpuriousFailures (KEEP-398 post-drain pass)", () => {
 
   describe("prod KEEP-398 repro: tracker empty, DB has success row", () => {
     it("overrides failed result from DB when tracker is empty but DB row exists", async () => {
-      mockFindFirst.mockResolvedValue({ output: { mergedFromDb: true } });
+      mockFindFirst.mockResolvedValue({ outputRaw: { mergedFromDb: true } });
 
       const results: Record<string, ExecutionResult> = {
         [nodeId]: {
@@ -138,12 +153,12 @@ describe("reconcileSpuriousFailures (KEEP-398 post-drain pass)", () => {
       expect(results[nodeId].data).toEqual({ mergedFromDb: true });
       expect(mockIncrementCounter).toHaveBeenCalledWith(
         "workflow.executor.spurious_recovery.total",
-        expect.anything()
+        expect.objectContaining({ source: "post_drain" })
       );
     });
 
-    it("increments counter exactly once per recovered node", async () => {
-      mockFindFirst.mockResolvedValue({ output: { x: 1 } });
+    it("increments spurious_recovery.total exactly once per recovered node", async () => {
+      mockFindFirst.mockResolvedValue({ outputRaw: { x: 1 } });
 
       const results: Record<string, ExecutionResult> = {
         [nodeId]: {
@@ -154,12 +169,16 @@ describe("reconcileSpuriousFailures (KEEP-398 post-drain pass)", () => {
 
       await reconcileSpuriousFailures({ executionId, results });
 
-      expect(mockIncrementCounter).toHaveBeenCalledTimes(1);
+      const recoveryCalls = mockIncrementCounter.mock.calls.filter(
+        (call: unknown[]) =>
+          call[0] === "workflow.executor.spurious_recovery.total"
+      );
+      expect(recoveryCalls).toHaveLength(1);
     });
 
     it("recovers multiple failed nodes in the same pass", async () => {
       const nodeB = "combine-node-2";
-      mockFindFirst.mockResolvedValue({ output: { db: true } });
+      mockFindFirst.mockResolvedValue({ outputRaw: { db: true } });
 
       const results: Record<string, ExecutionResult> = {
         [nodeId]: {
@@ -176,7 +195,53 @@ describe("reconcileSpuriousFailures (KEEP-398 post-drain pass)", () => {
 
       expect(results[nodeId].success).toBe(true);
       expect(results[nodeB].success).toBe(true);
-      expect(mockIncrementCounter).toHaveBeenCalledTimes(2);
+      const recoveryCalls = mockIncrementCounter.mock.calls.filter(
+        (call: unknown[]) =>
+          call[0] === "workflow.executor.spurious_recovery.total"
+      );
+      expect(recoveryCalls).toHaveLength(2);
+    });
+  });
+
+  describe("error containment: DB error on one candidate does not abort the pass", () => {
+    it("skips erroring candidate and continues with the next one", async () => {
+      const nodeB = "combine-node-2";
+
+      // First call rejects (DB blip for nodeId); second resolves (nodeB recovers).
+      // The rejection is caught inside getCompletedStepOutput which evicts the
+      // cache, increments tracker_db_fallback.total{outcome=error}, and returns
+      // null -- so reconcileSpuriousFailures skips nodeId and proceeds to nodeB.
+      mockFindFirst
+        .mockRejectedValueOnce(new Error("Pool exhausted"))
+        .mockResolvedValueOnce({ outputRaw: { recovered: true } });
+
+      const results: Record<string, ExecutionResult> = {
+        [nodeId]: {
+          success: false,
+          error: 'Step "runCodeStep" exceeded max retries (1 retry)',
+        },
+        [nodeB]: {
+          success: false,
+          error: "Step did not record completion within timeout window",
+        },
+      };
+
+      await reconcileSpuriousFailures({ executionId, results });
+
+      // nodeId: DB rejected -> null returned -> entry not recovered
+      expect(results[nodeId].success).toBe(false);
+      // nodeB: DB succeeded -> entry recovered
+      expect(results[nodeB].success).toBe(true);
+      // The error counter from getCompletedStepOutput fires on the DB rejection
+      expect(mockIncrementCounter).toHaveBeenCalledWith(
+        "workflow.executor.tracker_db_fallback.total",
+        expect.objectContaining({ outcome: "error" })
+      );
+      // The recovery counter fires for nodeB
+      expect(mockIncrementCounter).toHaveBeenCalledWith(
+        "workflow.executor.spurious_recovery.total",
+        expect.objectContaining({ source: "post_drain" })
+      );
     });
   });
 
@@ -194,11 +259,14 @@ describe("reconcileSpuriousFailures (KEEP-398 post-drain pass)", () => {
       await reconcileSpuriousFailures({ executionId, results });
 
       expect(results[nodeId].success).toBe(false);
-      expect(mockIncrementCounter).not.toHaveBeenCalled();
+      expect(mockIncrementCounter).not.toHaveBeenCalledWith(
+        "workflow.executor.spurious_recovery.total",
+        expect.anything()
+      );
     });
 
     it("does not override for unrelated errors even when DB has a success row", async () => {
-      mockFindFirst.mockResolvedValue({ output: { ok: true } });
+      mockFindFirst.mockResolvedValue({ outputRaw: { ok: true } });
 
       const results: Record<string, ExecutionResult> = {
         [nodeId]: {
@@ -210,7 +278,10 @@ describe("reconcileSpuriousFailures (KEEP-398 post-drain pass)", () => {
       await reconcileSpuriousFailures({ executionId, results });
 
       expect(results[nodeId].success).toBe(false);
-      expect(mockIncrementCounter).not.toHaveBeenCalled();
+      expect(mockIncrementCounter).not.toHaveBeenCalledWith(
+        "workflow.executor.spurious_recovery.total",
+        expect.anything()
+      );
     });
 
     it("does not modify already-successful entries", async () => {
