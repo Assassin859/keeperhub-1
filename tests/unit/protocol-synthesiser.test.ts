@@ -126,8 +126,8 @@ describe("synthesiseProtocolTemplate", () => {
     });
   });
 
-  describe("proxy contract ABI fallback (no inline abi)", () => {
-    it("synthesises an ABI fragment from action metadata for aave-v3/supply", () => {
+  describe("inline ABI present (KEEP-396)", () => {
+    it("uses the inline Pool ABI for aave-v3/supply (no synthesis fallback)", () => {
       const out = synthesiseProtocolTemplate("aave-v3/supply", {
         network: "1",
       });
@@ -135,16 +135,10 @@ describe("synthesiseProtocolTemplate", () => {
       expect(out).not.toBeNull();
       const code = out as string;
 
-      // Header comment marks the synthesised origin so a reader knows the
-      // shape came from action metadata, not a real ABI lookup.
-      expect(code).toContain(
-        "// ABI fragment synthesised from protocol action metadata"
-      );
-
       // Real Aave V3 pool address on mainnet, resolved per chain.
       expect(code).toContain('"0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"');
 
-      // Action.inputs become positional contract args with the right casts.
+      // Function name + positional arg casts come from the resolved ABI fragment.
       expect(code).toContain('functionName: "supply"');
       expect(code).toContain(
         "args: [input.asset, BigInt(input.amount), input.onBehalfOf, BigInt(input.referralCode)]"
@@ -153,6 +147,12 @@ describe("synthesiseProtocolTemplate", () => {
       // Write-shaped output template.
       expect(code).toContain("export async function supplyStep");
       expect(code).toContain("publicClient.simulateContract");
+
+      // Inline ABI is now present on the pool contract, so the synthesis
+      // fallback comment must NOT appear.
+      expect(code).not.toContain(
+        "// ABI fragment synthesised from protocol action metadata"
+      );
     });
   });
 
