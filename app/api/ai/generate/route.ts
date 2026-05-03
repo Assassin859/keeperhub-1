@@ -8,6 +8,11 @@ import { createTimer, getMetricsCollector } from "@/lib/metrics";
 import { MetricNames } from "@/lib/metrics/types";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { generateAIActionPrompts } from "@/plugins/registry";
+import {
+  checkAiGenerateRateLimit,
+  getAiGenerateRateLimitKey,
+} from "../_lib/rate-limit";
+import { validateGenerateBody } from "../_lib/validate";
 
 // Simple type for operations
 type Operation = {
@@ -329,18 +334,34 @@ export async function POST(request: Request) {
       );
     }
 
-    const body = await request.json();
-    const { prompt, existingWorkflow } = body;
-
-    if (!prompt) {
-      metrics.recordLatency(MetricNames.AI_GENERATION_DURATION, timer(), {
-        status: "failure",
-      });
+    const rateLimit = checkAiGenerateRateLimit(
+      getAiGenerateRateLimitKey(authContext)
+    );
+    if (!rateLimit.allowed) {
       return NextResponse.json(
-        { error: "Prompt is required" },
-        { status: 400 }
+        { error: "Rate limit exceeded" },
+        {
+          status: 429,
+          headers: { "Retry-After": String(rateLimit.retryAfter) },
+        }
       );
     }
+
+    let rawBody: unknown;
+    try {
+      rawBody = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+
+    const validation = validateGenerateBody(rawBody);
+    if (!validation.ok) {
+      return NextResponse.json(
+        { error: validation.error },
+        { status: validation.status }
+      );
+    }
+    const { prompt, existingWorkflow } = validation;
 
     // Determine which AI provider and model to use
     const modelString = process.env.AI_MODEL || "gpt-4o";
