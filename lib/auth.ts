@@ -16,7 +16,6 @@ import { nanoid } from "nanoid";
 import { rateLimitBypassRule } from "@/lib/admin-auth";
 import { sendInvitationEmail, sendVerificationOTP } from "@/lib/email";
 import { TRUSTED_ORIGINS } from "@/lib/trusted-origins";
-import { isAiGatewayManagedKeysEnabled } from "./ai-gateway/config";
 import { wrapWithSessionTokenHash } from "./auth-session-token-hash";
 import { db } from "./db";
 import {
