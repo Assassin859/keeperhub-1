@@ -1,49 +1,39 @@
 "use client";
 
-import { ArrowBigDown, ArrowBigUp, Copy, Eye, Star } from "lucide-react";
-import type { MouseEvent } from "react";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { ArrowBigDown, ArrowBigUp, Star } from "lucide-react";
+import type { KeyboardEvent, MouseEvent } from "react";
 import type { SavedWorkflow } from "@/lib/api-client";
 import type { VoteDirection } from "@/lib/workflow/editor/votes";
 import { WorkflowMiniMap } from "./workflow-mini-map";
 
 type WorkflowTemplateCardProps = {
   workflow: SavedWorkflow;
-  isDuplicating: boolean;
+  /**
+   * @deprecated Tile no longer renders Use-template CTA; kept for caller compat.
+   * The Use-template CTA lives in the workflow Preview/detail toolbar (plan 43-04).
+   */
+  isDuplicating?: boolean;
   isFeatured?: boolean;
   score?: number;
   userVote?: VoteDirection | null;
   className?: string;
-  onDuplicate: (e: MouseEvent) => void;
+  /** @deprecated See isDuplicating. */
+  onDuplicate?: (e: MouseEvent) => void;
   onPreview: (e: MouseEvent) => void;
   onVote?: (direction: VoteDirection) => void;
 };
 
-function voteColorClass(userVote: VoteDirection | null): string {
+function voteCountColorClass(userVote: VoteDirection | null): string {
   if (userVote === "upvote") {
-    return "text-green-400";
+    return "text-[var(--color-text-accent)]";
   }
   if (userVote === "downvote") {
-    return "text-red-400";
+    return "text-[var(--color-text-error)]";
   }
   return "text-muted-foreground";
 }
 
-function scoreColorClass(score: number): string {
-  if (score > 0) {
-    return "text-green-400/80";
-  }
-  if (score < 0) {
-    return "text-red-400/80";
-  }
-  return "text-muted-foreground";
-}
-
-function VoteButtons({
+function VoteCluster({
   score,
   userVote,
   onVote,
@@ -52,45 +42,58 @@ function VoteButtons({
   userVote: VoteDirection | null;
   onVote: (direction: VoteDirection) => void;
 }): React.ReactElement {
+  const upActive = userVote === "upvote";
+  const downActive = userVote === "downvote";
+
   return (
-    <div className="flex items-center gap-0.5">
+    <div className="pointer-events-auto relative z-[2] flex items-center gap-0.5">
       <button
         aria-label="Upvote"
-        className={`rounded p-0.5 transition-colors duration-150 ${
-          userVote === "upvote"
-            ? "text-green-400"
-            : "text-muted-foreground/50 hover:text-green-400"
+        aria-pressed={upActive}
+        className={`rounded p-0.5 transition-colors duration-150 motion-reduce:transition-none ${
+          upActive
+            ? "cursor-default text-[var(--color-text-accent)]"
+            : "text-muted-foreground/50 hover:text-[var(--color-text-accent)]"
         }`}
         onClick={(e) => {
           e.stopPropagation();
+          if (upActive) {
+            return;
+          }
           onVote("upvote");
         }}
         type="button"
       >
         <ArrowBigUp
-          className={`size-4 ${userVote === "upvote" ? "fill-green-400" : ""}`}
+          className={`size-4 ${upActive ? "fill-[var(--color-text-accent)]" : ""}`}
         />
       </button>
       <span
-        className={`min-w-[1rem] text-center font-medium text-[11px] tabular-nums transition-colors duration-150 ${voteColorClass(userVote)}`}
+        aria-label={`Score ${score}`}
+        className={`min-w-[1rem] text-center font-semibold text-[0.6875rem] tabular-nums transition-colors duration-150 motion-reduce:transition-none ${voteCountColorClass(userVote)}`}
+        role="status"
       >
         {score}
       </span>
       <button
         aria-label="Downvote"
-        className={`rounded p-0.5 transition-colors duration-150 ${
-          userVote === "downvote"
-            ? "text-red-400"
-            : "text-muted-foreground/50 hover:text-red-400"
+        aria-pressed={downActive}
+        className={`rounded p-0.5 transition-colors duration-150 motion-reduce:transition-none ${
+          downActive
+            ? "cursor-default text-[var(--color-text-error)]"
+            : "text-muted-foreground/50 hover:text-[var(--color-text-error)]"
         }`}
         onClick={(e) => {
           e.stopPropagation();
+          if (downActive) {
+            return;
+          }
           onVote("downvote");
         }}
         type="button"
       >
         <ArrowBigDown
-          className={`size-4 ${userVote === "downvote" ? "fill-red-400" : ""}`}
+          className={`size-4 ${downActive ? "fill-[var(--color-text-error)]" : ""}`}
         />
       </button>
     </div>
@@ -99,46 +102,40 @@ function VoteButtons({
 
 export function WorkflowTemplateCard({
   workflow,
-  isDuplicating,
   isFeatured = false,
   score = 0,
   userVote = null,
   className,
-  onDuplicate,
   onPreview,
   onVote,
 }: WorkflowTemplateCardProps): React.ReactElement {
+  const handleArticleClick = (e: MouseEvent<HTMLElement>): void => {
+    onPreview(e);
+  };
+
+  const handleArticleKeyDown = (e: KeyboardEvent<HTMLElement>): void => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onPreview(e as unknown as MouseEvent);
+    }
+  };
+
   return (
+    // biome-ignore lint/a11y/useSemanticElements: tile is semantically an <article> that also acts as a link per UI-SPEC HUB-16; wrapping <a> is forbidden because it breaks nested-button (vote) accessibility.
     <article
-      className={`group relative flex flex-col overflow-hidden rounded-xl border border-border/20 bg-[var(--color-hub-card)] transition-all duration-200 hover:border-border/50 hover:shadow-[0_0_20px_rgba(9,253,103,0.03)] motion-reduce:transition-none ${className ?? "aspect-square"}`}
+      aria-label={`Open ${workflow.name} preview`}
+      className={`group relative flex cursor-pointer flex-col overflow-hidden rounded-xl border border-border/20 bg-[var(--color-hub-card)] shadow-sm transition-colors duration-150 before:absolute before:inset-0 before:z-[1] before:cursor-pointer before:content-[''] hover:brightness-125 motion-reduce:transition-none ${className ?? "min-h-[340px]"}`}
+      onClick={handleArticleClick}
+      onKeyDown={handleArticleKeyDown}
+      // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: UI-SPEC HUB-16 mandates <article role="link"> with the ::before overlay click pattern; nested vote buttons would be invalid descendants of an <a>.
+      role="link"
+      tabIndex={0}
     >
-      <div className="relative flex flex-1 flex-col p-4">
+      <div className="pointer-events-none relative z-[2] flex flex-1 flex-col p-4">
         <div className="shrink-0">
-          <div className="flex items-start gap-1.5">
-            <h3 className="line-clamp-2 flex-1 font-semibold text-sm leading-snug">
-              {workflow.name}
-            </h3>
-            {score !== 0 && (
-              <div className="flex h-[20px] shrink-0 items-center gap-0.5">
-                <ArrowBigUp
-                  className={`size-3 ${score > 0 ? "fill-green-400/60 text-green-400" : "text-muted-foreground/40"}`}
-                />
-                <span
-                  className={`font-medium text-[11px] tabular-nums ${scoreColorClass(score)}`}
-                >
-                  {score}
-                </span>
-              </div>
-            )}
-            {isFeatured && (
-              <span className="inline-flex h-[20px] shrink-0 items-center gap-1 rounded-full bg-[var(--color-bg-accent)] px-2">
-                <Star className="size-2.5 fill-[var(--color-text-accent)] text-[var(--color-text-accent)]" />
-                <span className="font-medium text-[var(--color-text-accent)] text-[10px]">
-                  Featured
-                </span>
-              </span>
-            )}
-          </div>
+          <h3 className="line-clamp-2 font-semibold text-sm leading-snug">
+            {workflow.name}
+          </h3>
           {workflow.description && (
             <p className="mt-1.5 line-clamp-3 text-muted-foreground/80 text-xs leading-relaxed">
               {workflow.description}
@@ -146,7 +143,7 @@ export function WorkflowTemplateCard({
           )}
         </div>
 
-        <div className="pointer-events-none my-auto shrink opacity-30 transition-opacity duration-200 group-hover:opacity-50">
+        <div className="pointer-events-none my-auto shrink opacity-30 transition-opacity duration-200 group-hover:opacity-50 motion-reduce:transition-none">
           <WorkflowMiniMap
             edges={workflow.edges}
             height={160}
@@ -156,58 +153,36 @@ export function WorkflowTemplateCard({
         </div>
 
         {workflow.publicTags && workflow.publicTags.length > 0 && (
-          <div className="flex shrink-0 flex-wrap gap-1">
+          <div className="pointer-events-auto flex shrink-0 flex-wrap gap-1">
             {workflow.publicTags.slice(0, 3).map((tag) => (
               <span
-                className="rounded-full bg-[var(--color-hub-icon-bg)] px-2 py-0.5 text-muted-foreground text-[10px]"
+                className="rounded-full bg-[var(--color-hub-icon-bg)] px-2 py-0.5 font-normal text-[0.625rem] text-muted-foreground"
                 key={tag.slug}
               >
                 {tag.name}
               </span>
             ))}
-            {workflow.publicTags.length > 3 && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="cursor-default rounded-full bg-[var(--color-hub-icon-bg)] px-1.5 py-0.5 text-muted-foreground text-[10px]">
-                    +{workflow.publicTags.length - 3}
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent className="flex flex-col gap-0.5" side="bottom">
-                  {workflow.publicTags.map((tag) => (
-                    <span className="text-xs" key={tag.slug}>
-                      {tag.name}
-                    </span>
-                  ))}
-                </TooltipContent>
-              </Tooltip>
+          </div>
+        )}
+
+        {/* Bottom row: vote cluster (LEFT) + Featured pill (RIGHT) */}
+        {(onVote || isFeatured) && (
+          <div
+            className={`pointer-events-auto mt-2 flex shrink-0 items-center gap-2 ${onVote ? "justify-between" : "justify-end"}`}
+          >
+            {onVote && (
+              <VoteCluster onVote={onVote} score={score} userVote={userVote} />
+            )}
+            {isFeatured && (
+              <span className="inline-flex h-[20px] shrink-0 items-center gap-1 rounded-full bg-[var(--color-bg-accent)] px-2">
+                <Star className="size-2.5 fill-[var(--color-text-accent)] text-[var(--color-text-accent)]" />
+                <span className="font-normal text-[0.625rem] text-[var(--color-text-accent)]">
+                  Featured
+                </span>
+              </span>
             )}
           </div>
         )}
-      </div>
-
-      <div className="pointer-events-none absolute inset-0 flex items-end bg-gradient-to-t from-[var(--color-hub-card)] via-[var(--color-hub-card)] via-60% to-transparent opacity-0 transition-opacity duration-200 group-hover:pointer-events-auto group-hover:opacity-100 motion-reduce:transition-none">
-        <div className="flex w-full items-center gap-2 p-4 pt-12">
-          <button
-            className="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg bg-[var(--color-text-accent)] font-medium text-[#0a0f14] text-xs transition-colors hover:bg-[var(--color-text-accent)]/90 disabled:opacity-50"
-            disabled={isDuplicating}
-            onClick={onDuplicate}
-            type="button"
-          >
-            <Copy className="size-3" />
-            {isDuplicating ? "Duplicating..." : "Use Template"}
-          </button>
-          <button
-            className="flex h-8 items-center gap-1.5 rounded-lg border border-border/50 bg-[var(--color-hub-icon-bg)] px-3 text-muted-foreground text-xs transition-colors hover:border-border hover:text-foreground"
-            onClick={onPreview}
-            type="button"
-          >
-            <Eye className="size-3" />
-            Preview
-          </button>
-          {onVote && (
-            <VoteButtons onVote={onVote} score={score} userVote={userVote} />
-          )}
-        </div>
       </div>
     </article>
   );

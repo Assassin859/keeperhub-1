@@ -760,13 +760,28 @@ const errorLabelAllowlist: Record<string, string[]> = {
 };
 
 /**
- * Filter labels to only include allowed ones for a specific metric
+ * Filter labels to only include allowed ones for a specific metric.
+ *
+ * Precedence: a metric in `errorLabelAllowlist` uses that legacy allowlist;
+ * otherwise the counter's own declared `labelNames` are used as the allowlist.
+ * Either way, unknown labels are silently dropped before reaching prom-client.
+ *
+ * This prevents callers from accidentally exploding the labelset with
+ * high-cardinality fields (contract addresses, transaction hashes, raw error
+ * messages, etc.) and -- critically -- prevents prom-client from throwing
+ * "Added label X is not included in initial labelset" out of metric code,
+ * which would otherwise bubble up through `logUserError` and break the
+ * user-facing API call that emitted the log.
  */
 function filterLabelsForMetric(
   metricName: string,
+  counter: Counter,
   labels: Record<string, string>
 ): Record<string, string> {
-  const allowed = errorLabelAllowlist[metricName];
+  const allowed =
+    errorLabelAllowlist[metricName] ??
+    (counter as Counter & { labelNames?: string[] }).labelNames;
+
   if (!allowed) {
     return labels;
   }
@@ -933,8 +948,15 @@ function recordErrorCounter(
   } else {
     sanitized.error_type = "UnknownError";
   }
-  const errorLabels = filterLabelsForMetric(name, sanitized);
-  counter.inc(errorLabels);
+  const errorLabels = filterLabelsForMetric(name, counter, sanitized);
+  try {
+    counter.inc(errorLabels);
+  } catch (err) {
+    // Defense-in-depth: if filtering missed something or prom-client rejects
+    // the label set for any other reason, never let metrics break the
+    // user-facing operation that called us.
+    console.warn(`[Prometheus] Failed to record error counter ${name}:`, err);
+  }
 }
 
 /**

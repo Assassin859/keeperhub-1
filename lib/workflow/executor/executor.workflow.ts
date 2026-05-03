@@ -41,6 +41,7 @@ import {
   signalConvergenceArrival,
 } from "@/lib/workflow/executor/convergence-barrier";
 import { enterWorkflowErrorContext } from "@/lib/workflow/executor/error-context";
+import { runBodyNode } from "@/lib/workflow/executor/for-each-body-runner";
 import type { StepContext } from "@/lib/workflow/executor/step-handler";
 import { clearExecution } from "@/lib/workflow/executor/step-success-tracker";
 import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
@@ -1244,11 +1245,14 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
   // -------------------------------------------------------------------
 
   /**
-   * Execute a single body node within a For Each iteration.
-   * Uses scoped outputs so loop variable references resolve correctly
-   * and body-specific edges so traversal stays within the loop body.
+   * Execute a single body node within a For Each iteration. Thin wrapper
+   * around `runBodyNode` (extracted to lib/workflow/executor/for-each-body-runner.ts)
+   * that captures the executor's closures (nodeMap, processActionConfig,
+   * executeActionStep, etc.) into a `RunBodyContext`.
+   *
+   * The recursion logic itself lives in the pure runner so it can be
+   * exercised directly in unit tests with a mocked step runner.
    */
-  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Body execution mirrors main executeNode with loop-specific scoping
   async function executeBodyNode(
     nodeId: string,
     bodyVisited: Set<string>,
@@ -1259,118 +1263,47 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     iterationMeta?: { iterationIndex: number; forEachNodeId: string },
     bodyHandleMap?: EdgesBySourceHandle
   ): Promise<void> {
-    if (bodyVisited.has(nodeId)) {
-      return;
-    }
-    if (nodeId === collectNodeId) {
-      return; // Don't execute the Collect boundary
-    }
-    bodyVisited.add(nodeId);
-
-    const node = nodeMap.get(nodeId);
-    if (!node) {
-      return;
-    }
-
-    // Skip disabled nodes
-    if (node.data.enabled === false) {
-      const sanitizedId = nodeId.replace(/[^a-zA-Z0-9]/g, "_");
-      scopedOutputs[sanitizedId] = {
-        label: getNodeName(node),
-        data: null,
-      };
-      const nextNodes = bodyEdgesBySource.get(nodeId) ?? [];
-      for (const next of nextNodes) {
-        await executeBodyNode(
-          next,
-          bodyVisited,
-          scopedOutputs,
-          bodyResults,
-          bodyEdgesBySource,
-          collectNodeId,
-          iterationMeta,
-          bodyHandleMap
-        );
-      }
-      return;
-    }
-
-    // Inject builtin variables
-    const builtinSanitized = BUILTIN_NODE_ID.replace(/[^a-zA-Z0-9]/g, "_");
-    scopedOutputs[builtinSanitized] = {
-      label: BUILTIN_NODE_LABEL,
-      data: getBuiltinVariables(),
-    };
-
-    try {
-      const config = node.data.config ?? {};
-      const actionType = config.actionType as string | undefined;
-
-      if (!actionType) {
-        bodyResults[nodeId] = {
-          success: false,
-          error: `Action node "${node.data.label || node.id}" has no action type configured`,
+    await runBodyNode(nodeId, {
+      nodeMap,
+      bodyEdgesBySource,
+      bodyEdgesBySourceHandle: bodyHandleMap,
+      collectNodeId,
+      bodyVisited,
+      bodyResults,
+      scopedOutputs,
+      iterationMeta,
+      processConfig: processActionConfig,
+      getNodeName,
+      getErrorMessageAsync,
+      injectBuiltinVariables: (outputs) => {
+        const builtinSanitized = BUILTIN_NODE_ID.replace(/[^a-zA-Z0-9]/g, "_");
+        outputs[builtinSanitized] = {
+          label: BUILTIN_NODE_LABEL,
+          data: getBuiltinVariables(),
         };
-        return;
-      }
-
-      const processedConfig = processActionConfig(
-        config,
-        actionType,
-        scopedOutputs
-      );
-
-      const stepContext: StepContext = {
+      },
+      baseStepContext: {
         executionId,
-        nodeId: node.id,
-        nodeName: getNodeName(node),
-        nodeType: actionType,
-        iterationIndex: iterationMeta?.iterationIndex,
-        forEachNodeId: iterationMeta?.forEachNodeId,
         organizationId,
         orgSlug: organizationSlug,
         ownerId,
         workflowId,
-      };
-
-      const stepResult = await executeActionStep({
-        actionType,
-        config: processedConfig,
-        outputs: scopedOutputs,
-        context: stepContext,
-      });
-
-      const isErrorResult =
-        stepResult &&
-        typeof stepResult === "object" &&
-        "success" in stepResult &&
-        (stepResult as { success: boolean }).success === false;
-
-      const result: ExecutionResult = isErrorResult
-        ? {
-            success: false,
-            error:
-              (stepResult as { error?: string }).error ||
-              `Step "${actionType}" failed.`,
-          }
-        : { success: true, data: stepResult };
-
-      bodyResults[nodeId] = result;
-      const sanitizedId = nodeId.replace(/[^a-zA-Z0-9]/g, "_");
-      scopedOutputs[sanitizedId] = {
-        label: getNodeName(node),
-        data: result.data,
-      };
-
-      if (!result.success) {
-        return;
-      }
-
-      // Nested For Each inside the body
-      if (actionType === "For Each") {
+      },
+      runStep: async ({ actionType, processedConfig, scopedOutputs: outputs, stepContext }) =>
+        await executeActionStep({
+          actionType,
+          config: processedConfig,
+          outputs,
+          context: stepContext,
+        }),
+      handleNestedForEach: async ({
+        forEachNodeId: nestedForEachNodeId,
+        forEachNode: nestedForEachNode,
+        processedConfig,
+      }) => {
         await handleForEachExecution({
-          forEachNodeId: nodeId,
-          forEachNode: node,
+          forEachNodeId: nestedForEachNodeId,
+          forEachNode: nestedForEachNode,
           processedConfig,
           currentOutputs: scopedOutputs,
           currentResults: bodyResults,
@@ -1392,50 +1325,8 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
             }
           },
         });
-      } else if (actionType === "Condition") {
-        const conditionValue = (result.data as { condition?: boolean })
-          ?.condition;
-        const conditionTargets = resolveBodyConditionTargets(
-          conditionValue === true,
-          nodeId,
-          bodyHandleMap,
-          bodyEdgesBySource
-        );
-        for (const next of conditionTargets) {
-          await executeBodyNode(
-            next,
-            bodyVisited,
-            scopedOutputs,
-            bodyResults,
-            bodyEdgesBySource,
-            collectNodeId,
-            iterationMeta,
-            bodyHandleMap
-          );
-        }
-        // Condition routing is fully handled; skip the generic downstream pass
-      }
-
-      // Continue to downstream body nodes for non-condition actions.
-      if (actionType !== "Condition") {
-        const nextNodes = bodyEdgesBySource.get(nodeId) ?? [];
-        for (const next of nextNodes) {
-          await executeBodyNode(
-            next,
-            bodyVisited,
-            scopedOutputs,
-            bodyResults,
-            bodyEdgesBySource,
-            collectNodeId,
-            iterationMeta,
-            bodyHandleMap
-          );
-        }
-      }
-    } catch (error) {
-      const errorMessage = await getErrorMessageAsync(error);
-      bodyResults[nodeId] = { success: false, error: errorMessage };
-    }
+      },
+    });
   }
 
   // -------------------------------------------------------------------

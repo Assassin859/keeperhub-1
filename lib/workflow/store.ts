@@ -18,6 +18,21 @@ export enum WorkflowTriggerEnum {
 
 export type WorkflowTriggerType = `${WorkflowTriggerEnum}`;
 
+// Trigger types that need a UI toggle to flip `workflows.enabled`.
+// Server-side gates (schedule/event/block/webhook) all check this column,
+// so a disabled workflow keeps the trigger registered but rejects executions.
+// Manual triggers don't fire on their own, so the switch isn't needed there.
+export function shouldShowEnableSwitch(
+  triggerType: WorkflowTriggerType | undefined
+): boolean {
+  return (
+    triggerType === WorkflowTriggerEnum.EVENT ||
+    triggerType === WorkflowTriggerEnum.SCHEDULE ||
+    triggerType === WorkflowTriggerEnum.BLOCK ||
+    triggerType === WorkflowTriggerEnum.WEBHOOK
+  );
+}
+
 export type WorkflowNodeData = {
   label: string;
   description?: string;

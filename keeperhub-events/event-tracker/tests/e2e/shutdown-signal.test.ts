@@ -96,7 +96,6 @@ describe.skipIf(SKIP_INFRA_TESTS)(
           REDIS_HOST,
           REDIS_PORT,
           NODE_ENV: "test",
-          ENABLE_INPROC_LISTENERS: "true",
         },
         stdio: ["ignore", "pipe", "pipe"],
       });

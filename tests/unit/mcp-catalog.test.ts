@@ -324,4 +324,36 @@ describe("GET /api/mcp/workflows", () => {
 
     expect(body.items[0]).toHaveProperty("workflowType", "read");
   });
+
+  it("?workflowType=write adds eq filter on workflow_type column", async () => {
+    const { eq } = await import("drizzle-orm");
+    const req = makeRequest(
+      "http://localhost:3000/api/mcp/workflows?workflowType=write"
+    );
+    const res = await GET(req);
+    expect(res.status).toBe(200);
+
+    expect(eq).toHaveBeenCalledWith("workflow_type", "write");
+  });
+
+  it("?workflowType=read adds eq filter on workflow_type column", async () => {
+    const { eq } = await import("drizzle-orm");
+    const req = makeRequest(
+      "http://localhost:3000/api/mcp/workflows?workflowType=read"
+    );
+    const res = await GET(req);
+    expect(res.status).toBe(200);
+
+    expect(eq).toHaveBeenCalledWith("workflow_type", "read");
+  });
+
+  it("?workflowType=invalid returns 400", async () => {
+    const req = makeRequest(
+      "http://localhost:3000/api/mcp/workflows?workflowType=foo"
+    );
+    const res = await GET(req);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/workflowType/);
+  });
 });

@@ -1,263 +1,173 @@
-"use client";
-
-import { useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+// Pure (non-"use client") module so this Server Component can call the type
+// guard safely; importing through _tabs-shell would trip Next.js' RSC
+// "Attempted to call isHubTabValue() from the server" error.
+import type { Metadata } from "next";
+import { HubExternalLinks } from "@/components/hub/hub-external-links";
 import { HubHero } from "@/components/hub/hub-hero";
-import { HubResults } from "@/components/hub/hub-results";
-import { ProtocolDetailModal } from "@/components/hub/protocol-detail-modal";
-import { ProtocolStrip } from "@/components/hub/protocol-strip";
-import { WorkflowSearchFilter } from "@/components/hub/workflow-search-filter";
-import { api, type PublicTag, type SavedWorkflow } from "@/lib/api-client";
-import { useDebounce } from "@/lib/hooks/use-debounce";
-import type { ProtocolDefinition } from "@/lib/protocol-registry";
+import { HubTabSearch } from "@/components/hub/hub-tab-search";
+import { HubMarketplaceTab } from "./_marketplace-tab";
+import { HubProtocolsTab } from "./_protocols-tab";
+import { type HubTabValue, isHubTabValue } from "./_tabs-shared";
+import { HubTabsShell } from "./_tabs-shell";
+import { HubWorkflowsTab } from "./_workflows-tab";
 
-export default function HubPage(): React.ReactElement {
-  return (
-    <Suspense>
-      <HubPageContent />
-    </Suspense>
-  );
+const APP_BASE_URL =
+  process.env.NEXT_PUBLIC_APP_URL ?? "https://app.keeperhub.com";
+
+// /hub reads ?tab= / ?tag= / ?q= / ?sort= / ?cursor= from searchParams,
+// so every request renders a different surface. force-dynamic prevents
+// the segment-level output cache from serving the same HTML across
+// distinct query combos (which silently broke per-query filtering).
+// Data-layer caching for the Marketplace tab still happens via the
+// unstable_cache(60s) wrapper around fetchMarketplaceLeaderboard.
+export const dynamic = "force-dynamic";
+
+type HubPageProps = {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+};
+
+type MetadataProps = {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+};
+
+type TabMetadata = {
+  title: string;
+  description: string;
+};
+
+const DEFAULT_TAB: HubTabValue = "protocols";
+
+// MARKET-12: per-tab title + description. OG image stays on the existing
+// /api/og/hub default route for all tabs (per HUB-FUTURE-02 — per-tab OG
+// generation is deferred). Default branch (no `?tab=`) uses the umbrella
+// "Hub" title rather than the per-tab string so direct shares to /hub keep
+// surfacing all three tabs in the description.
+const TAB_METADATA: Record<HubTabValue | "default", TabMetadata> = {
+  default: {
+    title: "Hub — KeeperHub",
+    description:
+      "Browse protocols, fork community workflows, and discover paid services on the marketplace.",
+  },
+  protocols: {
+    title: "Protocols — Hub | KeeperHub",
+    description:
+      "Browse Web3 protocols KeeperHub workflows can interact with — Aave, Uniswap, Compound, and more.",
+  },
+  workflows: {
+    title: "Workflows — Hub | KeeperHub",
+    description:
+      "Browse community workflow templates. Fork any template to your organisation in one click.",
+  },
+  marketplace: {
+    title: "Marketplace — Hub | KeeperHub",
+    description:
+      "Discover paid services. Listed workflows ranked by call count, callable by humans and AI agents.",
+  },
+} as const;
+
+function readInitialTab(value: string | string[] | undefined): HubTabValue {
+  if (typeof value !== "string") {
+    return DEFAULT_TAB;
+  }
+  const normalized = value.trim().toLowerCase();
+  return isHubTabValue(normalized) ? normalized : DEFAULT_TAB;
 }
 
-function HubPageContent(): React.ReactElement {
-  const [featuredWorkflows, setFeaturedWorkflows] = useState<SavedWorkflow[]>(
-    []
-  );
-  const [communityWorkflows, setCommunityWorkflows] = useState<SavedWorkflow[]>(
-    []
-  );
-  const [publicTags, setPublicTags] = useState<PublicTag[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedTagSlugs, setSelectedTagSlugs] = useState<string[]>([]);
-  const [sortBy, setSortBy] = useState<"recent" | "votes">("recent");
-  const debouncedSearchQuery = useDebounce(searchQuery, 300);
+function readTagSlug(value: string | string[] | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
+}
 
-  const [protocols, setProtocols] = useState<ProtocolDefinition[]>([]);
-  const searchParams = useSearchParams();
-  const [selectedProtocolSlug, setSelectedProtocolSlug] = useState<
-    string | null
-  >(searchParams.get("protocol"));
+// Cap query length to prevent unstable_cache key pollution via random
+// `?q=` spam — each distinct cache key triggers a fresh DB hit before
+// the data cache.
+const MAX_QUERY_LENGTH = 100;
 
-  const selectedProtocol = useMemo(
-    () => protocols.find((p) => p.slug === selectedProtocolSlug) ?? null,
-    [protocols, selectedProtocolSlug]
-  );
+function readQuery(value: string | string[] | undefined): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value.trim().slice(0, MAX_QUERY_LENGTH);
+}
 
-  const handleProtocolSelect = useCallback(
-    (slug: string): void => {
-      setSelectedProtocolSlug(slug);
-      const params = new URLSearchParams(searchParams.toString());
-      params.set("protocol", slug);
-      window.history.replaceState(null, "", `/hub?${params.toString()}`);
+function metaForTab(value: string | string[] | undefined): TabMetadata {
+  if (typeof value !== "string") {
+    return TAB_METADATA.default;
+  }
+  const normalized = value.trim().toLowerCase();
+  return isHubTabValue(normalized)
+    ? TAB_METADATA[normalized]
+    : TAB_METADATA.default;
+}
+
+export async function generateMetadata({
+  searchParams,
+}: MetadataProps): Promise<Metadata> {
+  const params = await searchParams;
+  const meta = metaForTab(params.tab);
+  const ogImageUrl = `${APP_BASE_URL}/api/og/hub`;
+  return {
+    title: meta.title,
+    description: meta.description,
+    openGraph: {
+      title: meta.title,
+      description: meta.description,
+      type: "website",
+      url: `${APP_BASE_URL}/hub`,
+      siteName: "KeeperHub",
+      // HUB-FUTURE-02: per-tab OG generation deferred. Default Hub OG used
+      // for every tab — keeps the share-card story coherent until the
+      // per-tab OG renderer ships.
+      images: [
+        {
+          url: ogImageUrl,
+          width: 1200,
+          height: 630,
+          alt: "KeeperHub Hub",
+        },
+      ],
     },
-    [searchParams]
-  );
-
-  const clearProtocolSelection = useCallback((): void => {
-    setSelectedProtocolSlug(null);
-    const params = new URLSearchParams(searchParams.toString());
-    params.delete("protocol");
-    const qs = params.toString();
-    window.history.replaceState(null, "", qs ? `/hub?${qs}` : "/hub");
-  }, [searchParams]);
-
-  /** Merge featured + community, featured first, deduplicated */
-  const allWorkflows = useMemo((): SavedWorkflow[] => {
-    const seen = new Set<string>();
-    const merged: SavedWorkflow[] = [];
-    for (const w of featuredWorkflows) {
-      if (!seen.has(w.id)) {
-        seen.add(w.id);
-        merged.push(w);
-      }
-    }
-    for (const w of communityWorkflows) {
-      if (!seen.has(w.id)) {
-        seen.add(w.id);
-        merged.push(w);
-      }
-    }
-    if (sortBy === "votes") {
-      merged.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-    }
-    return merged;
-  }, [featuredWorkflows, communityWorkflows, sortBy]);
-
-  const featuredIds = useMemo(
-    () => new Set(featuredWorkflows.map((w) => w.id)),
-    [featuredWorkflows]
-  );
-
-  const isSearchActive = Boolean(
-    debouncedSearchQuery.trim() || selectedTagSlugs.length > 0
-  );
-
-  const searchResults = useMemo((): SavedWorkflow[] | null => {
-    if (!isSearchActive) {
-      return null;
-    }
-
-    const query = debouncedSearchQuery.trim().toLowerCase();
-    let filtered = allWorkflows;
-
-    if (selectedTagSlugs.length > 0) {
-      filtered = filtered.filter((w) =>
-        w.publicTags?.some((t) => selectedTagSlugs.includes(t.slug))
-      );
-    }
-
-    if (query) {
-      filtered = filtered.filter(
-        (w) =>
-          w.name.toLowerCase().includes(query) ||
-          w.description?.toLowerCase().includes(query)
-      );
-    }
-
-    return filtered;
-  }, [isSearchActive, allWorkflows, selectedTagSlugs, debouncedSearchQuery]);
-
-  const handleToggleTag = (slug: string): void => {
-    setSelectedTagSlugs((prev) =>
-      prev.includes(slug) ? prev.filter((s) => s !== slug) : [...prev, slug]
-    );
+    twitter: {
+      card: "summary_large_image",
+      title: meta.title,
+      description: meta.description,
+      images: [ogImageUrl],
+    },
   };
+}
 
-  const clearFilters = useCallback((): void => {
-    setSearchQuery("");
-    setSelectedTagSlugs([]);
-  }, []);
+export default async function HubPage({
+  searchParams,
+}: HubPageProps): Promise<React.ReactElement> {
+  const params = await searchParams;
+  const initialTab = readInitialTab(params.tab);
+  const initialTagSlug = readTagSlug(params.tag);
+  const query = readQuery(params.q);
 
-  useEffect(() => {
-    const fetchWorkflows = async (): Promise<void> => {
-      try {
-        const [featured, community, tags] = await Promise.all([
-          api.workflow.getFeatured(),
-          api.workflow.getPublic(),
-          api.publicTag.getAll().catch(() => [] as PublicTag[]),
-        ]);
-        setFeaturedWorkflows(featured);
-        setCommunityWorkflows(community);
-        setPublicTags(tags);
-      } catch {
-        // Workflow fetch failure handled by empty state
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchWorkflows();
-  }, []);
-
-  useEffect(() => {
-    const fetchProtocols = async (): Promise<void> => {
-      try {
-        const res = await fetch("/api/protocols");
-        if (res.ok) {
-          const data: ProtocolDefinition[] = await res.json();
-          setProtocols(data);
-        }
-      } catch {
-        // Protocol fetch failure should not block the Hub
-      }
-    };
-
-    fetchProtocols();
-  }, []);
+  // Tab content is passed to HubTabsShell as RSC slot props.
+  const protocolsContent = <HubProtocolsTab query={query} />;
+  const workflowsContent = <HubWorkflowsTab initialTagSlug={initialTagSlug} />;
+  const marketplaceContent = (
+    <HubMarketplaceTab query={query} searchParams={params} />
+  );
 
   return (
     <div className="pointer-events-auto fixed inset-0 overflow-x-hidden overflow-y-auto bg-sidebar [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-      <div className="flex min-h-full flex-col transition-[margin-left] duration-200 ease-out md:ml-[var(--nav-sidebar-width,60px)]">
-        {isLoading ? (
-          <div className="container mx-auto max-w-7xl px-6 pt-20 pb-8 animate-pulse">
-            <div className="mb-1 h-8 w-64 rounded bg-muted/20" />
-            <div className="mb-5 h-4 w-80 rounded bg-muted/10" />
-            <div className="mb-8 h-10 w-96 rounded-lg bg-muted/10" />
-            <div className="mb-6 flex gap-2">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <div
-                  className="h-9 w-28 rounded-lg bg-muted/10"
-                  key={`proto-${String(i)}`}
-                />
-              ))}
-            </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div
-                  className="h-[180px] rounded-xl bg-muted/10"
-                  key={`card-${String(i)}`}
-                />
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="container mx-auto max-w-7xl px-6 pt-20 pb-8">
-            <HubHero
-              onSearchChange={setSearchQuery}
-              searchQuery={searchQuery}
-            />
-
-            {protocols.length > 0 && (
-              <ProtocolStrip
-                onSelect={handleProtocolSelect}
-                protocols={protocols}
-              />
-            )}
-
-            <div className="mt-4 mb-4">
-              <div className="mb-4">
-                <div className="mb-3 flex items-center gap-3">
-                  <div className="h-px flex-1 bg-border/30" />
-                  <h2 className="shrink-0 text-[var(--color-text-accent)]/60 text-xs uppercase tracking-widest">
-                    Templates
-                  </h2>
-                  <div className="h-px flex-1 bg-border/30" />
-                  <div className="flex shrink-0 gap-1 rounded-lg border border-border/30 p-0.5">
-                    <button
-                      className={`rounded-md px-2.5 py-1 text-[10px] font-medium transition-colors ${sortBy === "recent" ? "bg-[var(--color-hub-icon-bg)] text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-                      onClick={() => setSortBy("recent")}
-                      type="button"
-                    >
-                      Recent
-                    </button>
-                    <button
-                      className={`rounded-md px-2.5 py-1 text-[10px] font-medium transition-colors ${sortBy === "votes" ? "bg-[var(--color-hub-icon-bg)] text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-                      onClick={() => setSortBy("votes")}
-                      type="button"
-                    >
-                      Top voted
-                    </button>
-                  </div>
-                </div>
-
-                <WorkflowSearchFilter
-                  onTagToggle={handleToggleTag}
-                  publicTags={publicTags}
-                  selectedTagSlugs={selectedTagSlugs}
-                />
-              </div>
-
-              <HubResults
-                communityWorkflows={allWorkflows}
-                featuredIds={featuredIds}
-                isSearchActive={isSearchActive}
-                onClearFilters={clearFilters}
-                searchResults={searchResults}
-              />
-            </div>
-
-            <ProtocolDetailModal
-              onOpenChange={(open) => {
-                if (!open) {
-                  clearProtocolSelection();
-                }
-              }}
-              open={selectedProtocolSlug !== null}
-              protocol={selectedProtocol}
-            />
-          </div>
-        )}
+      <div className="flex min-h-full flex-col md:ml-[var(--nav-sidebar-width,60px)]">
+        <div className="container mx-auto max-w-7xl px-6 pt-20 pb-8">
+          <HubHero />
+          <HubTabsShell
+            actionsSlot={<HubExternalLinks />}
+            initialTab={initialTab}
+            marketplaceContent={marketplaceContent}
+            protocolsContent={protocolsContent}
+            searchSlot={<HubTabSearch />}
+            workflowsContent={workflowsContent}
+          />
+        </div>
       </div>
     </div>
   );

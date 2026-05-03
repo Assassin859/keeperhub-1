@@ -54,6 +54,18 @@ function buildPathEntry(workflow: DiscoveryWorkflow): Record<string, unknown> {
       : undefined,
   };
 
+  // Canonical OpenAPI 3.x auth declaration. Paid routes leave `security`
+  // unset (their auth comes via x-payment-info → 402); non-paid routes
+  // declare `security: []` which OpenAPI defines as "no authentication
+  // required". Discovery scanners (agentcash, x402scan, CDP Bazaar) read
+  // the standard fields, not custom x-auth-mode extensions.
+  // Note: write workflows are never paid at the HTTP layer — they always
+  // return unsigned calldata that the caller signs+broadcasts (see
+  // app/api/mcp/workflows/[slug]/call/route.ts handleWriteWorkflow).
+  if (!isPaid) {
+    operation.security = [];
+  }
+
   if (isWrite) {
     operation["x-workflow-type"] = "write";
   }
@@ -72,11 +84,26 @@ function buildPathEntry(workflow: DiscoveryWorkflow): Record<string, unknown> {
     };
   }
 
+  // Always declare a request body for paid routes so scanners get a clean
+  // input schema (validator complains: L3_INPUT_SCHEMA_MISSING). For
+  // workflows whose owners haven't backfilled inputSchema in the DB, fall
+  // back to an open object — better than nothing.
   if (workflow.inputSchema && "properties" in workflow.inputSchema) {
     operation.requestBody = {
       required: true,
       content: {
         "application/json": { schema: workflow.inputSchema },
+      },
+    };
+  } else if (isPaid || isWrite) {
+    // Fallback so paid+write routes always declare a body schema. Validators
+    // (e.g. @agentcash/discovery) flag L3_INPUT_SCHEMA_MISSING when paid
+    // routes have no requestBody at all. `type: object` already permits any
+    // properties; no `additionalProperties: true` needed.
+    operation.requestBody = {
+      required: false,
+      content: {
+        "application/json": { schema: { type: "object" } },
       },
     };
   }
@@ -150,8 +177,30 @@ export async function GET(request: Request): Promise<Response> {
       version: "1.0.0",
       description:
         "Web3 workflow automation platform. Workflows are callable by AI agents via REST or MCP.",
-      "x-guidance":
-        "KeeperHub exposes workflows as REST endpoints. Each workflow has a slug and accepts JSON input. Paid workflows require x402 or MPP payment. Free workflows can be called directly. Use GET /api/mcp/workflows to discover available workflows and their pricing.",
+      "x-guidance": [
+        "KeeperHub exposes workflows as REST endpoints under /api/mcp/workflows/{slug}/call.",
+        "Each workflow has a slug, accepts a JSON body, and returns a JSON response with `executionId`, `status`, and `output`.",
+        "Auth: paid workflows return HTTP 402 with x402/MPP payment info on the first call; pay (e.g. via agentcash, openclaw, or any x402 client) and replay. Free workflows can be called directly.",
+        "Categories of workflows include: DeFi yield/risk reads (e.g. usdc-yield-rates-aave-vs-compound, aave-v3-health-check, defi-risk-snapshot), tipping primitives (microtip), and write-type workflows that return unsigned calldata for the caller to sign and broadcast.",
+        "",
+        "## Worked examples",
+        "",
+        "### Example 1 — Compare USDC yield (paid, $0.01)",
+        "POST /api/mcp/workflows/usdc-yield-rates-aave-vs-compound/call",
+        "Body: {}",
+        'Response (after payment): { executionId, status: "success", output: { result: { rates: [...], bestRate, bestProtocol } } }',
+        "",
+        "### Example 2 — Aave v3 health check (paid, $0.01)",
+        "POST /api/mcp/workflows/aave-v3-health-check/call",
+        'Body: { "address": "0x..." }',
+        'Response (after payment): { executionId, status: "success", output: { result: { healthFactor, totalCollateralUSD, totalDebtUSD, riskLevel } } }',
+        "",
+        "### Example 3 — Discover available workflows (free)",
+        "GET /api/mcp/workflows  (returns the list of all listed workflows + pricing)",
+        "GET /openapi.json       (this document — full schema for every workflow)",
+        "",
+        "When in doubt, fetch /openapi.json and read the per-workflow `x-payment-info`, `security`, and `requestBody` fields.",
+      ].join("\n"),
     },
     "x-service-info": {
       categories: ["web3", "automation", "blockchain"],

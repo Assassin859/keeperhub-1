@@ -331,7 +331,7 @@ describe("protocolWriteStep", () => {
           "1000000",
         ]),
         ethValue: undefined,
-        _context: { executionId: "exec-456", triggerType: "manual" },
+        _context: { executionId: "exec-456" },
       });
     });
 

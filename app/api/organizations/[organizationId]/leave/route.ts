@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { hashSessionToken } from "@/lib/auth-session-token-hash";
 import { db } from "@/lib/db";
 import { member, sessions } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
@@ -50,9 +51,10 @@ export async function POST(
         ? body.newOwnerMemberId.trim()
         : "";
 
-    // Post-KEEP-239 this is the sha256 hash stored in sessions.token, not the
-    // raw bearer. Safe to use as a row key against sessions.token (both sides
-    // hashed); never expose to clients or use as an Authorization header.
+    // KEEP-239: better-auth's adapter wrapper rewrites session.token back to
+    // the raw cookie/bearer value before returning it from getSession. The
+    // column itself holds sha256(token), so any direct drizzle query against
+    // sessions.token must hash first.
     const sessionToken = session.session?.token;
     if (!sessionToken) {
       return NextResponse.json(
@@ -127,7 +129,7 @@ export async function POST(
         await tx
           .update(sessions)
           .set({ activeOrganizationId: null })
-          .where(eq(sessions.token, sessionToken));
+          .where(eq(sessions.token, hashSessionToken(sessionToken)));
       }
 
       return { success: true };

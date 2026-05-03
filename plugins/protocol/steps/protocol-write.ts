@@ -148,7 +148,6 @@ export async function protocolWriteStep(
       _context: input._context
         ? {
             executionId: input._context.executionId,
-            triggerType: input._context.triggerType,
           }
         : undefined,
     };

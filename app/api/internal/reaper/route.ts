@@ -1,4 +1,4 @@
-import { and, eq, gt, inArray, lt, notInArray, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, lt, notInArray, or, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { workflowExecutionLogs, workflowExecutions } from "@/lib/db/schema";
@@ -7,6 +7,11 @@ import { authenticateInternalService } from "@/lib/internal-service-auth";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 
 const DEFAULT_THRESHOLD_MINUTES = 30;
+
+// Pending rows that have produced no step logs are unambiguously stuck:
+// the executor inserted but the runtime never started. A few minutes is
+// generous for image pulls and k8s scheduling; beyond that, it's dead.
+const PENDING_THRESHOLD_MINUTES = 5;
 
 function getThresholdMinutes(): number {
   const envValue = process.env.STALE_EXECUTION_THRESHOLD_MINUTES;
@@ -36,7 +41,10 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   try {
     const thresholdMinutes = getThresholdMinutes();
-    const cutoff = new Date(Date.now() - thresholdMinutes * 60 * 1000);
+    const runningCutoff = new Date(Date.now() - thresholdMinutes * 60 * 1000);
+    const pendingCutoff = new Date(
+      Date.now() - PENDING_THRESHOLD_MINUTES * 60 * 1000
+    );
 
     // Find execution IDs that have recent step activity (should NOT be reaped)
     const activeExecutionIds = await db
@@ -44,25 +52,46 @@ export async function GET(request: Request): Promise<NextResponse> {
         executionId: workflowExecutionLogs.executionId,
       })
       .from(workflowExecutionLogs)
-      .where(gt(workflowExecutionLogs.completedAt, cutoff))
+      .where(gt(workflowExecutionLogs.completedAt, runningCutoff))
       .groupBy(workflowExecutionLogs.executionId);
 
     const excludeIds = activeExecutionIds.map((row) => row.executionId);
 
-    // Bulk update all stale executions in a single query, excluding those with recent activity
-    const staleConditions = and(
-      eq(workflowExecutions.status, "running"),
-      lt(workflowExecutions.startedAt, cutoff),
-      excludeIds.length > 0
-        ? notInArray(workflowExecutions.id, excludeIds)
-        : undefined
+    // Bulk update all stale executions in a single query.
+    //
+    // Two independent stuck-state predicates combined with OR:
+    //   - status='running' rows that haven't recorded recent step activity
+    //     within the running threshold (default 30 min). The runtime claimed
+    //     the execution but stopped progressing.
+    //   - status='pending' rows older than the pending threshold (5 min) with
+    //     no step logs at all. The SQS executor inserted the row but the
+    //     runtime never started (dispatch failed, pod crash before first
+    //     step, etc). Guarded by NOT EXISTS rather than a NOT IN list because
+    //     every successful execution has step logs and a NOT IN would load
+    //     that entire set into the predicate.
+    const staleConditions = or(
+      and(
+        eq(workflowExecutions.status, "running"),
+        lt(workflowExecutions.startedAt, runningCutoff),
+        excludeIds.length > 0
+          ? notInArray(workflowExecutions.id, excludeIds)
+          : undefined
+      ),
+      and(
+        eq(workflowExecutions.status, "pending"),
+        lt(workflowExecutions.startedAt, pendingCutoff),
+        sql`NOT EXISTS (
+          SELECT 1 FROM ${workflowExecutionLogs}
+          WHERE ${workflowExecutionLogs.executionId} = ${workflowExecutions.id}
+        )`
+      )
     );
 
     const reaped = await db
       .update(workflowExecutions)
       .set({
         status: "error",
-        error: `Execution timed out: no activity for ${thresholdMinutes} minutes`,
+        error: `Execution timed out: no progress for ${thresholdMinutes} minutes`,
         completedAt: new Date(),
         duration: sql`ROUND(EXTRACT(EPOCH FROM (NOW() - ${workflowExecutions.startedAt})) * 1000)`,
       })

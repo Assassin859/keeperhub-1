@@ -8,12 +8,11 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSession } from "@/lib/auth-client";
 import { useActiveMember } from "@/lib/hooks/use-organization";
+import { ErrorCategory, logUserError } from "@/lib/logging";
 import { buildWithdrawableAssets } from "@/lib/wallet/build-withdrawable-assets";
-import { fetchAllSupportedTokenBalances } from "@/lib/wallet/fetch-balances";
 import type {
   ChainData,
   SupportedToken,
-  SupportedTokenBalance,
   TokenData,
   WalletData,
 } from "@/lib/wallet/types";
@@ -45,21 +44,16 @@ export function WalletOverlay({
   const [chains, setChains] = useState<ChainData[]>([]);
   const [tokens, setTokens] = useState<TokenData[]>([]);
   const [supportedTokens, setSupportedTokens] = useState<SupportedToken[]>([]);
-  const [supportedTokenBalances, setSupportedTokenBalances] = useState<
-    SupportedTokenBalance[]
-  >([]);
-  const [supportedBalancesLoading, setSupportedBalancesLoading] =
-    useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<WalletTab>(initialTab);
 
   const {
     balances,
     tokenBalances,
-    loading: nativeBalancesLoading,
+    supportedTokenBalances,
+    loading: isLoadingBalances,
     fetchBalances,
   } = useWalletBalances();
-  const isLoadingBalances = nativeBalancesLoading || supportedBalancesLoading;
 
   const fetchChains = useCallback(async (): Promise<ChainData[]> => {
     try {
@@ -101,44 +95,6 @@ export function WalletOverlay({
     }
   }, []);
 
-  const fetchSupportedBalances = useCallback(
-    async (
-      walletAddress: string,
-      chainList: ChainData[],
-      tokenList: SupportedToken[]
-    ): Promise<void> => {
-      if (tokenList.length === 0) {
-        setSupportedTokenBalances([]);
-        return;
-      }
-
-      setSupportedBalancesLoading(true);
-      setSupportedTokenBalances(
-        tokenList.map((token) => ({
-          chainId: token.chainId,
-          tokenAddress: token.tokenAddress,
-          symbol: token.symbol,
-          name: token.name,
-          logoUrl: token.logoUrl,
-          balance: "0",
-          loading: true,
-        }))
-      );
-
-      try {
-        const results = await fetchAllSupportedTokenBalances(
-          walletAddress,
-          tokenList,
-          chainList
-        );
-        setSupportedTokenBalances(results);
-      } finally {
-        setSupportedBalancesLoading(false);
-      }
-    },
-    []
-  );
-
   const loadWallet = useCallback(async () => {
     setWalletLoading(true);
     try {
@@ -156,49 +112,40 @@ export function WalletOverlay({
       setWalletData(data);
       setWalletLoading(false);
 
-      // Phase 2: Fetch chains/tokens in background
-      const [chainList, tokenList, supportedList] = await Promise.all([
+      // Phase 2: Fetch chains/tokens metadata in parallel. The chain list is
+      // used for explorer links and the manage tab; tokens / supportedTokens
+      // power the manage UI. Balances are fetched server-side below.
+      const [chainList] = await Promise.all([
         fetchChains(),
         fetchTokens(),
         fetchSupportedTokensData(),
       ]);
 
-      // Phase 3: Fetch balances (they show loading states internally)
+      // Phase 3: Fetch native + tracked + supported balances from the
+      // server-side endpoint (provider URLs never reach the browser).
       if (data.walletAddress && chainList.length > 0) {
-        fetchBalances(data.walletAddress, chainList, tokenList);
-        fetchSupportedBalances(data.walletAddress, chainList, supportedList);
+        fetchBalances(data.walletAddress, chainList);
       }
     } catch (error) {
-      console.error("Failed to load wallet:", error);
+      logUserError(
+        ErrorCategory.EXTERNAL_SERVICE,
+        "Failed to load wallet",
+        error,
+        { component: "WalletOverlay" }
+      );
       setWalletData({ hasWallet: false });
       setWalletLoading(false);
     }
-  }, [
-    fetchChains,
-    fetchTokens,
-    fetchSupportedTokensData,
-    fetchBalances,
-    fetchSupportedBalances,
-  ]);
+  }, [fetchChains, fetchTokens, fetchSupportedTokensData, fetchBalances]);
 
   const handleRefresh = useCallback(async () => {
     if (!(walletData?.walletAddress && chains.length > 0)) {
       return;
     }
     setRefreshing(true);
-    await Promise.all([
-      fetchBalances(walletData.walletAddress, chains, tokens),
-      fetchSupportedBalances(walletData.walletAddress, chains, supportedTokens),
-    ]);
+    await fetchBalances(walletData.walletAddress, chains);
     setRefreshing(false);
-  }, [
-    walletData?.walletAddress,
-    chains,
-    tokens,
-    supportedTokens,
-    fetchBalances,
-    fetchSupportedBalances,
-  ]);
+  }, [walletData?.walletAddress, chains, fetchBalances]);
 
   const handleAddToken = async (
     chainId: number,

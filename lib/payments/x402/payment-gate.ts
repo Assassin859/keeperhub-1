@@ -52,6 +52,12 @@ export function buildPaymentConfig(
       network: "eip155:8453",
       payTo: creatorWalletAddress,
       price: `$${price.toFixed(2)}`,
+      // extra.name and extra.version are required by @x402/evm verifyEIP3009 to
+      // reconstruct the EIP-712 domain. Without these fields the CDP facilitator
+      // throws "EIP-712 domain parameters (name, version) are required" and the
+      // payment surfaces as verification-failed for all callers (KEEP-364).
+      // Values must match BASE_USDC_DOMAIN in lib/agentic-wallet/sign.ts exactly.
+      extra: { name: "USD Coin", version: "2" } as const,
     },
     resource: `${publicHost}/api/mcp/workflows/${workflow.listedSlug}/call`,
     description: `Pay to run workflow: ${workflow.name}`,

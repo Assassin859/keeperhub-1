@@ -103,7 +103,7 @@ describe("EvmChainAdapter preflight signer address", () => {
         },
         // biome-ignore lint/suspicious/noExplicitAny: test mock
         { currentNonce: 5 } as any,
-        { triggerType: "manual", gasOverrides: {} }
+        { gasOverrides: {} }
       );
     } catch (err) {
       // confirmTransaction fails with mocks - expected
@@ -144,7 +144,7 @@ describe("EvmChainAdapter preflight signer address", () => {
         },
         // biome-ignore lint/suspicious/noExplicitAny: test mock
         { currentNonce: 5 } as any,
-        { triggerType: "manual", gasOverrides: {} }
+        { gasOverrides: {} }
       );
     } catch {
       // confirmTransaction fails with mocks - expected

@@ -215,6 +215,19 @@ describe("/api/internal/reaper", () => {
     );
   });
 
+  // The reaper now covers both 'running' rows (stale activity) and 'pending'
+  // rows (runtime never started, no step logs at all). The unified error
+  // message describes both states accurately.
+  it("uses 'no progress' wording in the timeout error message", async () => {
+    mockReapedRows = [{ id: "exec_1" }];
+
+    await GET(createRequest());
+
+    expect(getExecUpdate()?.set.error).toEqual(
+      expect.stringContaining("no progress")
+    );
+  });
+
   it("calls authenticateInternalService with the request", async () => {
     const request = createRequest();
     await GET(request);

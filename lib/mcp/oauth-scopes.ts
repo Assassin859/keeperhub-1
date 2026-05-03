@@ -26,6 +26,7 @@ const READ_TOOLS = new Set<string>([
   "search_protocol_actions",
   "get_direct_execution_status",
   "search_workflows",
+  "get_workflow_listing",
 ]);
 
 const WRITE_TOOLS = new Set<string>([
@@ -41,6 +42,9 @@ const WRITE_TOOLS = new Set<string>([
   "execute_contract_call",
   "execute_check_and_execute",
   "call_workflow",
+  "list_workflow",
+  "unlist_workflow",
+  "update_workflow_listing",
 ]);
 
 export function isScopeValid(scope: string): boolean {

@@ -1,13 +1,27 @@
-import { and, count, desc, eq, ilike, or } from "drizzle-orm";
+import { and, count, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
+import { workflowPayments } from "@/lib/db/schema-payments";
 import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
 import { sanitizeDescription } from "@/lib/sanitize-description";
 
 const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 20;
 const DEFAULT_PAGE = 1;
+
+const VALID_SORTS = ["popular", "recent"] as const;
+type CatalogSort = (typeof VALID_SORTS)[number] | undefined;
+
+function readSort(value: string | null): CatalogSort {
+  if (value === null) {
+    return undefined;
+  }
+  const lower = value.toLowerCase();
+  return (VALID_SORTS as readonly string[]).includes(lower)
+    ? (lower as CatalogSort)
+    : undefined;
+}
 
 function escapeLikePattern(value: string): string {
   return value.replace(/[%_\\]/g, "\\$&");
@@ -56,6 +70,18 @@ export async function GET(request: Request): Promise<NextResponse> {
     const q = searchParams.get("q") ?? undefined;
     const category = searchParams.get("category") ?? undefined;
     const chain = searchParams.get("chain") ?? undefined;
+    const workflowTypeParam = searchParams.get("workflowType");
+    if (
+      workflowTypeParam !== null &&
+      workflowTypeParam !== "read" &&
+      workflowTypeParam !== "write"
+    ) {
+      return NextResponse.json(
+        { error: "workflowType must be 'read' or 'write'" },
+        { status: 400 }
+      );
+    }
+    const workflowType = workflowTypeParam ?? undefined;
     const page = Math.max(
       1,
       Number.parseInt(searchParams.get("page") ?? String(DEFAULT_PAGE), 10) ||
@@ -72,6 +98,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       )
     );
     const offset = (page - 1) * limit;
+    const sort = readSort(searchParams.get("sort"));
 
     const baseFilter = eq(workflows.isListed, true);
     const textFilter = q
@@ -87,23 +114,47 @@ export async function GET(request: Request): Promise<NextResponse> {
     const chainFilter = chain
       ? ilike(workflows.chain, `%${escapeLikePattern(chain)}%`)
       : undefined;
+    const workflowTypeFilter = workflowType
+      ? eq(workflows.workflowType, workflowType)
+      : undefined;
 
     const whereClause = and(
       baseFilter,
       textFilter,
       categoryFilter,
-      chainFilter
+      chainFilter,
+      workflowTypeFilter
     );
+
+    const callCountExpr = sql<number>`coalesce(count(${workflowPayments.id})::int, 0)`;
+    const rowsQuery =
+      sort === "popular"
+        ? db
+            .select({
+              ...LISTED_WORKFLOW_COLUMNS,
+              callCount: callCountExpr,
+            })
+            .from(workflows)
+            .leftJoin(
+              workflowPayments,
+              eq(workflowPayments.workflowId, workflows.id)
+            )
+            .where(whereClause)
+            .groupBy(workflows.id)
+            .orderBy(desc(callCountExpr), desc(workflows.id))
+            .limit(limit)
+            .offset(offset)
+        : db
+            .select(LISTED_WORKFLOW_COLUMNS)
+            .from(workflows)
+            .where(whereClause)
+            .orderBy(desc(workflows.listedAt))
+            .limit(limit)
+            .offset(offset);
 
     const [countResult, rows] = await Promise.all([
       db.select({ count: count() }).from(workflows).where(whereClause),
-      db
-        .select(LISTED_WORKFLOW_COLUMNS)
-        .from(workflows)
-        .where(whereClause)
-        .orderBy(desc(workflows.listedAt))
-        .limit(limit)
-        .offset(offset),
+      rowsQuery,
     ]);
 
     const total = Number(countResult[0]?.count ?? 0);

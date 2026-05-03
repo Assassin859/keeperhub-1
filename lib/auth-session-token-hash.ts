@@ -14,6 +14,18 @@ import type { DBAdapter, Where } from "better-auth";
 // If either changes upstream, the unit tests in
 // tests/unit/auth-session-token-hash.test.ts will fail before the bug ships.
 //
+// Round-trip contract: for any read/update where the caller supplied a raw
+// token in the where clause (or in the update payload), the returned row's
+// `.token` is rewritten back to that raw value. better-auth re-uses
+// `session.token` for subsequent ops (e.g. setActiveOrganization loads the
+// session, then calls `updateSession(session.token, ...)`); without this
+// rewrite the second hop hashes an already-hashed value and silently misses,
+// returning null and breaking the calling endpoint.
+//
+// Rows returned without a token-keyed lookup (e.g. `findMany` by userId for
+// session listing) keep the stored hash on `.token`. Callers must not feed
+// those tokens back into a token-keyed query.
+//
 // IMPORTANT: this wrapper is bypassed when `betterAuth({ secondaryStorage })`
 // is configured. better-auth's createSession writes directly to the cache via
 // `secondaryStorage.set(data.token, ...)` without calling the DB adapter, so
@@ -87,6 +99,52 @@ function hashTokenInUpdate(
   };
 }
 
+// Build a hash -> raw map from the raw values the caller put on the wire.
+// Only positive matches contribute (eq, in): a row returned from the inner
+// adapter is guaranteed to have one of those raw tokens behind its hashed
+// column value. ne / not_in tell us nothing about which raw tokens the
+// returned rows correspond to, so we deliberately skip them.
+function buildTokenRoundTripMap(
+  where: Where[] | undefined
+): Map<string, string> {
+  const map = new Map<string, string>();
+  if (!where) {
+    return map;
+  }
+  for (const clause of where) {
+    if (clause.field !== TOKEN_FIELD) {
+      continue;
+    }
+    const op = clause.operator ?? "eq";
+    if (op === "eq" && typeof clause.value === "string") {
+      map.set(hashSessionToken(clause.value), clause.value);
+    } else if (op === "in" && Array.isArray(clause.value)) {
+      for (const v of clause.value) {
+        if (typeof v === "string") {
+          map.set(hashSessionToken(v), v);
+        }
+      }
+    }
+  }
+  return map;
+}
+
+function restoreSessionTokenInRow<T>(row: T, remap: Map<string, string>): T {
+  if (!row || remap.size === 0) {
+    return row;
+  }
+  const r = row as unknown as Record<string, unknown>;
+  const stored = r[TOKEN_FIELD];
+  if (typeof stored !== "string") {
+    return row;
+  }
+  const raw = remap.get(stored);
+  if (!raw) {
+    return row;
+  }
+  return { ...r, [TOKEN_FIELD]: raw } as unknown as T;
+}
+
 type AdapterFactory = (...args: never[]) => DBAdapter;
 
 export function wrapWithSessionTokenHash<F extends AdapterFactory>(
@@ -132,27 +190,30 @@ function wrapAdapter(inner: DBAdapter): DBAdapter {
     // hashTokenWhere / hashTokenInUpdate becomes a rejected promise rather
     // than crashing the caller's call site. better-auth always awaits, so a
     // rejected promise surfaces as a normal error.
-    // Each method below is async so that a synchronous throw from
-    // hashTokenWhere / hashTokenInUpdate becomes a rejected promise rather
-    // than crashing the caller's call site. better-auth always awaits, so a
-    // rejected promise surfaces as a normal error.
     findOne: async <T>(data: FindOneArgs): Promise<T | null> => {
       if (data.model !== SESSION_MODEL) {
         return await inner.findOne<T>(data);
       }
-      return await inner.findOne<T>({
+      const remap = buildTokenRoundTripMap(data.where);
+      const result = await inner.findOne<T>({
         ...data,
         where: hashTokenWhere(data.where) ?? [],
       });
+      return result ? restoreSessionTokenInRow(result, remap) : result;
     },
     findMany: async <T>(data: FindManyArgs): Promise<T[]> => {
       if (data.model !== SESSION_MODEL) {
         return await inner.findMany<T>(data);
       }
-      return await inner.findMany<T>({
+      const remap = buildTokenRoundTripMap(data.where);
+      const results = await inner.findMany<T>({
         ...data,
         where: hashTokenWhere(data.where),
       });
+      if (remap.size === 0) {
+        return results;
+      }
+      return results.map((row) => restoreSessionTokenInRow(row, remap));
     },
     count: async (data: CountArgs): Promise<number> => {
       if (data.model !== SESSION_MODEL) {
@@ -164,11 +225,20 @@ function wrapAdapter(inner: DBAdapter): DBAdapter {
       if (data.model !== SESSION_MODEL) {
         return await inner.update<T>(data);
       }
-      return await inner.update<T>({
+      const remap = buildTokenRoundTripMap(data.where);
+      // If the caller is rotating the token, the returned row's stored value
+      // will be hash(newRaw); add that to the map so the caller can keep
+      // signing with the raw token they just wrote.
+      const updateToken = data.update[TOKEN_FIELD];
+      if (typeof updateToken === "string") {
+        remap.set(hashSessionToken(updateToken), updateToken);
+      }
+      const result = await inner.update<T>({
         ...data,
         where: hashTokenWhere(data.where) ?? [],
         update: hashTokenInUpdate(data.update),
       });
+      return result ? restoreSessionTokenInRow(result, remap) : result;
     },
     updateMany: async (data: UpdateManyArgs): Promise<number> => {
       if (data.model !== SESSION_MODEL) {

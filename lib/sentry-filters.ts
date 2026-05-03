@@ -36,6 +36,34 @@ export function hasNoInAppFrames(event: ErrorEvent): boolean {
   return !frames.some((frame) => frame.in_app === true);
 }
 
+// Browser wallet extensions (MetaMask and forks) bundle a service worker that
+// throws "Attempting to use a disconnected port object" when their
+// `chrome.runtime.Port` to the page detaches mid-message. Sentry's
+// `browserApiErrors` integration wraps `addEventListener` and surfaces these
+// as in-app errors because Sentry's frame normalizer rewrites the original
+// `chrome-extension://<id>/...` URL to `app:///...`, defeating
+// `hasNoInAppFrames`. Match on the rewritten filename or the original
+// extension-protocol abs_path so we drop them at ingest.
+const EXTENSION_FILENAME_PATTERN = /extensionServiceWorker\.js$/;
+const EXTENSION_PROTOCOL_PATTERN =
+  /^(?:chrome|moz|safari|safari-web)-extension:\/\//;
+
+export function isBrowserExtensionError(event: ErrorEvent): boolean {
+  const frames = event.exception?.values?.[0]?.stacktrace?.frames;
+  if (!frames || frames.length === 0) {
+    return false;
+  }
+  return frames.some((frame) => {
+    const filename = frame.filename;
+    const absPath = (frame as { abs_path?: string }).abs_path;
+    return (
+      (typeof filename === "string" &&
+        EXTENSION_FILENAME_PATTERN.test(filename)) ||
+      (typeof absPath === "string" && EXTENSION_PROTOCOL_PATTERN.test(absPath))
+    );
+  });
+}
+
 // `@monaco-editor/react` rejects with a `CancellationError` ("Canceled") when
 // its loader/dispose chain unwinds before the editor finishes mounting — for
 // example when the user navigates away from `/workflows/:workflowId` quickly.

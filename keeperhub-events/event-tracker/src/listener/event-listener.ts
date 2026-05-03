@@ -16,14 +16,9 @@ import type { DedupStore } from "./dedup";
 import { formatError } from "./format-error";
 
 /**
- * EventListener encapsulates a single workflow's contract-event listener
- * running in-process (no child_process.fork). It registers with
- * ChainProviderManager's shared block-subscription + demux, so many
- * listeners on the same chain share one WSS connection.
- *
- * Phase 3 scope: standalone class + unit tests. Phase 4 wires the
- * ListenerRegistry into `main.ts` behind the ENABLE_INPROC_LISTENERS
- * feature flag.
+ * EventListener encapsulates a single workflow's contract-event listener.
+ * Registers with ChainProviderManager's shared block-subscription + demux,
+ * so many listeners on the same chain share one WSS connection.
  */
 
 const DEFAULT_JITTER_MS = 10_000;
@@ -45,9 +40,8 @@ export interface EventListenerOptions {
   providerManager: ChainProviderManager;
 
   /**
-   * Maximum jitter applied before forwarding a matched event to SQS. Keeps
-   * parity with the existing `evm-chain.ts:processEventLog` behaviour which
-   * spreads downstream load when many events fire simultaneously. Tests
+   * Maximum jitter applied before forwarding a matched event to SQS.
+   * Spreads downstream load when many events fire simultaneously. Tests
    * should pass 0 to keep runs deterministic.
    */
   jitterMs?: number;

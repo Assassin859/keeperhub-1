@@ -31,13 +31,8 @@ import {
   rpcMetricsCtx,
   withRpcMetrics,
 } from "@/lib/rpc/providers/with-rpc-metrics";
-import {
-  type TriggerType as GasTriggerType,
-  getGasStrategy,
-} from "./gas-strategy";
+import { getGasStrategy } from "./gas-strategy";
 import { getNonceManager, type NonceSession } from "./nonce-manager";
-
-export type TriggerType = GasTriggerType;
 
 export type TransactionContext = {
   organizationId: string;
@@ -45,7 +40,6 @@ export type TransactionContext = {
   workflowId?: string;
   chainId: number;
   rpcUrl: string;
-  triggerType?: TriggerType;
   rpcManager?: RpcProviderManager;
 };
 
@@ -315,7 +309,6 @@ export async function executeTransaction(
 
     const gasConfig = await gasStrategy.getGasConfig(
       provider,
-      context.triggerType ?? "manual",
       estimatedGas,
       context.chainId,
       undefined,
@@ -404,7 +397,6 @@ export async function executeContractTransaction(
 
     const gasConfig = await gasStrategy.getGasConfig(
       provider as ethers.Provider,
-      context.triggerType ?? "manual",
       estimatedGas,
       context.chainId,
       undefined,

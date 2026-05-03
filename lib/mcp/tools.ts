@@ -39,6 +39,155 @@ function withScopeCheck<H extends AnyToolHandler>(
 
 type ApiResponse = Record<string, unknown>;
 
+/**
+ * Detect whether an error message produced by `callApi` represents an
+ * HTTP 402 Payment Required response. callApi formats failures as
+ * `API call failed: <status> <statusText> - <body>`, so a substring
+ * match on the prefix is sufficient and avoids parsing the body twice.
+ */
+const API_CALL_FAILED_402_PREFIX = "API call failed: 402";
+
+function is402Error(message: string): boolean {
+  return message.includes(API_CALL_FAILED_402_PREFIX);
+}
+
+type X402Accept = {
+  scheme?: unknown;
+  network?: unknown;
+  asset?: unknown;
+  amount?: unknown;
+  payTo?: unknown;
+};
+
+type X402ChallengeShape = {
+  x402Version?: unknown;
+  accepts?: unknown;
+};
+
+const MAX_ACCEPT_OPTIONS_TO_SHOW = 5;
+// Per-field cap on accept-entry strings rendered into the error message.
+// 128 chars comfortably fits real values (40-char EVM address, short
+// network slugs, base-10 amounts) while bounding worst-case output if a
+// misbehaving upstream endpoint returns inflated payloads.
+const MAX_ACCEPT_FIELD_CHARS = 128;
+// Strip control + invisible + reordering characters before rendering
+// upstream-supplied strings. Covers: ASCII C0 (U+0000..U+001F), DEL +
+// C1 (U+007F..U+009F), Unicode line/paragraph separators (U+2028/U+2029),
+// zero-width chars (U+200B..U+200F: ZWSP/ZWNJ/ZWJ/LRM/RLM), and
+// bidi-override controls (U+202A..U+202E: LRE/RLE/PDF/LRO/RLO).
+//
+// Threat surface:
+//  - C0 newline/CR: would inject fabricated `Option N/M` lines into the
+//    joined output, poisoning logs and any LLM agent that reads the
+//    error message.
+//  - U+2028/U+2029: not line-terminators in Node's Error.message or
+//    console.error output, but render as inline whitespace which can
+//    visually fragment fields. Stripping is cheap defence in depth.
+//  - Zero-width + bidi-overrides: a human reading the rendered error
+//    cannot see ZWSP and may read RLO-flipped text in a different
+//    order than the bytes appear, hiding malicious content. Stripping
+//    keeps what the human reads aligned with what the bytes contain.
+const ACCEPT_CONTROL_CHARS_RE =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately matching control chars + Unicode separators + bidi-overrides to neutralise log-injection / hidden-text vectors before rendering upstream-supplied strings
+  /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e]/g;
+
+function sanitiseAcceptField(value: unknown, fallback: string): string {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+  const stripped = value.replace(ACCEPT_CONTROL_CHARS_RE, " ");
+  if (stripped.length > MAX_ACCEPT_FIELD_CHARS) {
+    return `${stripped.slice(0, MAX_ACCEPT_FIELD_CHARS - 3)}...`;
+  }
+  return stripped;
+}
+
+function formatAcceptOption(accept: X402Accept): string {
+  // scheme defaults to "unknown" — never "exact" — so a missing or
+  // future-spec scheme isn't silently mislabelled as classic x402.
+  const scheme = sanitiseAcceptField(accept.scheme, "unknown");
+  const network = sanitiseAcceptField(accept.network, "unknown");
+  const asset = sanitiseAcceptField(accept.asset, "unknown asset");
+  const amount = sanitiseAcceptField(accept.amount, "unknown amount");
+  const payTo = sanitiseAcceptField(accept.payTo, "unknown");
+  return `${scheme} | ${amount} (atomic units) of ${asset} on ${network}, payTo ${payTo}`;
+}
+
+/**
+ * Pull the price/chain/asset from an x402 challenge embedded in a
+ * `callApi` 402 error message and emit a hint that points the caller at
+ * the three concrete auto-pay paths.
+ *
+ * Surfaces every entry in `accepts[]` rather than only the first. x402
+ * challenges can offer multiple payment schemes (e.g. x402 on Base
+ * alongside MPP on Tempo), and an agent shouldn't have to re-parse the
+ * raw challenge body to discover the alternatives. Limited to a small
+ * cap so a pathological challenge (or future spec extension) doesn't
+ * blow the error message size.
+ *
+ * Best-effort throughout: if the body is unparseable, accepts is empty,
+ * or individual fields are missing/wrong-typed, we degrade to a generic
+ * line rather than throwing — the caller always gets actionable text.
+ *
+ * Defence-in-depth: each per-accept field is sanitised before rendering
+ * (control chars stripped, length capped) so an adversarial upstream
+ * endpoint can't inject fake option lines or bloat the error output.
+ */
+
+function buildPaymentRequiredHint(
+  slug: string,
+  originalMessage: string
+): string {
+  // Search for the body separator only after the known prefix, so a
+  // body that itself contains " - " before its JSON cannot truncate
+  // the parse. callApi's format is deterministic, but the
+  // narrower-anchored search costs nothing and removes a footgun.
+  const bodyStart = originalMessage.indexOf(
+    " - ",
+    API_CALL_FAILED_402_PREFIX.length
+  );
+  const body = bodyStart >= 0 ? originalMessage.slice(bodyStart + 3) : "";
+  const priceLines: string[] = ["Price: see challenge body above"];
+  try {
+    const parsed = JSON.parse(body) as X402ChallengeShape;
+    const accepts = Array.isArray(parsed.accepts)
+      ? (parsed.accepts as X402Accept[])
+      : [];
+    if (accepts.length > 0) {
+      // Replace the placeholder with one line per option (capped).
+      priceLines.length = 0;
+      const total = accepts.length;
+      for (const [i, accept] of accepts.entries()) {
+        if (i >= MAX_ACCEPT_OPTIONS_TO_SHOW) {
+          break;
+        }
+        if (!accept) {
+          continue;
+        }
+        const tag = total === 1 ? "Price" : `Option ${i + 1}/${total}`;
+        priceLines.push(`${tag}: ${formatAcceptOption(accept)}`);
+      }
+      if (total > MAX_ACCEPT_OPTIONS_TO_SHOW) {
+        priceLines.push(
+          `... ${total - MAX_ACCEPT_OPTIONS_TO_SHOW} more options in the challenge body above`
+        );
+      }
+    }
+  } catch {
+    // Body was not parseable JSON — fall back to the generic price line.
+  }
+  return [
+    originalMessage,
+    "",
+    `Paid workflow "${slug}" — this MCP tool does not auto-pay.`,
+    ...priceLines,
+    "Retry with one of:",
+    "  - @keeperhub/wallet: `paymentSigner.fetch(url, { method: 'POST', body, paymentHint: 'x402' })`",
+    "  - agentcash: `mcp__agentcash__fetch` against the same endpoint",
+    "  - Marketplace UI: open the listing's public page and run it interactively",
+  ].join("\n");
+}
+
 async function callApi(
   baseUrl: string,
   authHeader: string,
@@ -140,7 +289,7 @@ export function registerTools(
 
   server.tool(
     "create_workflow",
-    "Create a new workflow with nodes and edges. Nodes define the trigger and actions; edges define the execution flow.",
+    "Create a new workflow with nodes and edges. Nodes define the trigger and actions; edges define the execution flow. Workflows are created disabled by default; pass enabled=true to make schedule/event/block/webhook triggers fire immediately.",
     {
       name: z.string().describe("Workflow name"),
       description: z
@@ -153,6 +302,12 @@ export function registerTools(
       edges: z
         .array(z.record(z.string(), z.unknown()))
         .describe("Workflow edges connecting nodes"),
+      enabled: z
+        .boolean()
+        .optional()
+        .describe(
+          "Whether the workflow is active on creation. Defaults to false; non-manual triggers stay dormant until enabled."
+        ),
       projectId: z
         .string()
         .optional()
@@ -175,6 +330,7 @@ export function registerTools(
             description: args.description,
             nodes: args.nodes,
             edges: args.edges,
+            enabled: args.enabled,
             projectId: args.projectId,
             tagId: args.tagId,
           }
@@ -188,7 +344,7 @@ export function registerTools(
 
   server.tool(
     "update_workflow",
-    "Update an existing workflow's name, description, nodes, edges, or project/tag assignment.",
+    "Update an existing workflow's name, description, nodes, edges, project/tag assignment, or enabled state. Set enabled=false to stop scheduled/event/block/webhook triggers from firing without deleting the workflow.",
     {
       workflowId: z.string().describe("The workflow ID to update"),
       name: z.string().optional().describe("New workflow name"),
@@ -201,6 +357,12 @@ export function registerTools(
         .array(z.record(z.string(), z.unknown()))
         .optional()
         .describe("Updated workflow edges"),
+      enabled: z
+        .boolean()
+        .optional()
+        .describe(
+          "Whether the workflow is active. Disabled workflows are skipped by schedule/event/block triggers and webhook calls return 410 Gone."
+        ),
       projectId: z
         .string()
         .nullable()
@@ -735,6 +897,12 @@ export function registerTools(
         .string()
         .optional()
         .describe("Gas limit multiplier (e.g., '1.5' for 50% buffer)"),
+      priority_fee_gwei: z
+        .string()
+        .optional()
+        .describe(
+          "Explicit maxPriorityFeePerGas in gwei (e.g., '2'). Bypasses the chain's default min/max priority-fee clamp. Use when the network's mempool requires a tip above the configured floor."
+        ),
     },
     { title: "Contract Call", readOnlyHint: false, destructiveHint: false },
     withScopeCheck("execute_contract_call", scope, async (args) =>
@@ -752,6 +920,7 @@ export function registerTools(
             abi: args.abi,
             value: args.value,
             gasLimitMultiplier: args.gas_limit_multiplier,
+            priorityFeeGwei: args.priority_fee_gwei,
           }
         );
         return {
@@ -1026,7 +1195,7 @@ export function registerMetaTools(
   // Meta-tool 3: Search listed workflows callable by external agents
   server.tool(
     "search_workflows",
-    "Search KeeperHub listed workflows callable by external agents. Returns slug, description, inputSchema, and price for each match. Use call_workflow to invoke a result.",
+    "Search KeeperHub listed workflows callable by external agents. Returns slug, description, inputSchema, and price for each match. Use sort='popular' to rank by usage, sort='recent' to see new listings first; omit sort for the default ordering. Use call_workflow to invoke a result.",
     {
       query: z.string().optional().describe("Natural-language search query"),
       category: z
@@ -1037,6 +1206,18 @@ export function registerMetaTools(
         .string()
         .optional()
         .describe("Chain ID filter (e.g., '8453' for Base, '1' for Ethereum)"),
+      sort: z
+        .enum(["popular", "recent"])
+        .optional()
+        .describe(
+          "Sort order: 'popular' (most-called workflows first) or 'recent' (most-recently listed first). Omit for the default catalog ordering."
+        ),
+      workflowType: z
+        .enum(["read", "write"])
+        .optional()
+        .describe(
+          "Filter by workflow type. 'read' executes and returns the result; 'write' returns unsigned calldata for the caller to submit."
+        ),
     },
     { title: "Search Workflows", readOnlyHint: true, destructiveHint: false },
     withScopeCheck("search_workflows", scope, async (args) =>
@@ -1051,6 +1232,12 @@ export function registerMetaTools(
         if (args.chain) {
           params.set("chain", args.chain);
         }
+        if (args.sort) {
+          params.set("sort", args.sort);
+        }
+        if (args.workflowType) {
+          params.set("workflowType", args.workflowType);
+        }
         const query = params.toString();
         const path = `/api/mcp/workflows${query ? `?${query}` : ""}`;
         const data = await callApi(baseUrl, authHeader, path, "GET");
@@ -1064,7 +1251,7 @@ export function registerMetaTools(
   // Meta-tool 4: Invoke a listed workflow by its globally unique slug
   server.tool(
     "call_workflow",
-    "Invoke a listed KeeperHub workflow. For read workflows, executes and returns the result. For write workflows, returns unsigned calldata {to, data, value} for the caller to submit. Use search_workflows first to discover available workflows.",
+    "Invoke a listed KeeperHub workflow. For read workflows, executes and returns the result. For write workflows, returns unsigned calldata {to, data, value} for the caller to submit. Use search_workflows first to discover available workflows. PAID WORKFLOWS: this tool DOES NOT auto-pay. A paid listing returns HTTP 402 with an x402 challenge — pay it with @keeperhub/wallet's paymentSigner.fetch(), agentcash's mcp__agentcash__fetch, or the marketplace UI, then retry. The 402 error message includes the price and concrete next-step paths.",
     {
       slug: z
         .string()
@@ -1078,12 +1265,188 @@ export function registerMetaTools(
     { title: "Call Workflow", readOnlyHint: false, destructiveHint: false },
     withScopeCheck("call_workflow", scope, async (args) =>
       withToolLogging("call_workflow", undefined, async () => {
+        try {
+          const data = await callApi(
+            baseUrl,
+            authHeader,
+            `/api/mcp/workflows/${encodeURIComponent(args.slug)}/call`,
+            "POST",
+            args.inputs
+          );
+          return {
+            content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+          };
+        } catch (err) {
+          // 402 is an expected outcome for paid listings. Augment the
+          // generic API error with the price and concrete payment paths so
+          // the caller knows how to retry — the previous behaviour was to
+          // surface a raw `API call failed: 402 Payment Required - {...}`
+          // error, which left agents guessing.
+          if (err instanceof Error && is402Error(err.message)) {
+            throw new Error(buildPaymentRequiredHint(args.slug, err.message));
+          }
+          throw err;
+        }
+      })
+    )
+  );
+
+  // Curator tool 1: Publish a workflow to the marketplace catalog
+  server.tool(
+    "list_workflow",
+    "Publish a workflow to the KeeperHub marketplace catalog. Sets isListed=true, assigns or preserves listedSlug, refreshes listedAt. Other agents discover the listing via search_workflows and invoke it via call_workflow. Use this after creating a workflow with create_workflow. Idempotent: re-publishing preserves the original slug.",
+    {
+      workflowId: z
+        .string()
+        .describe("The internal ID of the workflow to publish"),
+      slug: z
+        .string()
+        .optional()
+        .describe(
+          "Public URL slug for the listing (e.g. 'my-defi-alert'). Required on first publish; preserved on re-publish."
+        ),
+      category: z
+        .string()
+        .optional()
+        .describe("Workflow category (e.g. 'defi', 'monitoring')"),
+      chain: z
+        .string()
+        .optional()
+        .describe("Chain ID this workflow targets (e.g. '8453' for Base)"),
+      inputSchema: z
+        .record(z.string(), z.unknown())
+        .optional()
+        .describe("JSON Schema for the workflow's input parameters"),
+      outputMapping: z
+        .record(z.string(), z.unknown())
+        .optional()
+        .describe("Mapping of workflow output fields to return values"),
+      workflowType: z
+        .enum(["read", "write"])
+        .optional()
+        .describe(
+          "Workflow type: 'read' for read-only, 'write' for state-changing"
+        ),
+    },
+    { title: "List Workflow", readOnlyHint: false, destructiveHint: false },
+    withScopeCheck("list_workflow", scope, async (args) =>
+      withToolLogging("list_workflow", undefined, async () => {
+        const { workflowId, ...metadata } = args;
         const data = await callApi(
           baseUrl,
           authHeader,
-          `/api/mcp/workflows/${encodeURIComponent(args.slug)}/call`,
+          `/api/mcp/workflows/${encodeURIComponent(workflowId)}/listing`,
           "POST",
-          args.inputs
+          metadata
+        );
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+        };
+      })
+    )
+  );
+
+  // Curator tool 2: Remove a workflow from the marketplace catalog
+  server.tool(
+    "unlist_workflow",
+    "Remove a workflow from the marketplace catalog. Slug is preserved for re-listing. Use when the workflow is deprecated or temporarily unavailable. Does not delete the workflow itself; use delete_workflow for permanent removal.",
+    {
+      workflowId: z
+        .string()
+        .describe("The internal ID of the workflow to unlist"),
+    },
+    { title: "Unlist Workflow", readOnlyHint: false, destructiveHint: true },
+    withScopeCheck("unlist_workflow", scope, async (args) =>
+      withToolLogging("unlist_workflow", undefined, async () => {
+        const data = await callApi(
+          baseUrl,
+          authHeader,
+          `/api/mcp/workflows/${encodeURIComponent(args.workflowId)}/listing`,
+          "DELETE"
+        );
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+        };
+      })
+    )
+  );
+
+  // Curator tool 3: Edit listing metadata for a workflow
+  server.tool(
+    "update_workflow_listing",
+    "Edit listing metadata for a workflow (description, tags, category, chain, schemas). Cannot change pricing while listed — unlist first, update price, then re-list.",
+    {
+      workflowId: z
+        .string()
+        .describe("The internal ID of the workflow to update"),
+      category: z
+        .string()
+        .optional()
+        .describe("Updated category (e.g. 'defi', 'monitoring')"),
+      chain: z
+        .string()
+        .optional()
+        .describe("Updated chain ID (e.g. '8453' for Base)"),
+      inputSchema: z
+        .record(z.string(), z.unknown())
+        .optional()
+        .describe("Updated JSON Schema for input parameters (full replace)"),
+      outputMapping: z
+        .record(z.string(), z.unknown())
+        .optional()
+        .describe("Updated output field mapping (full replace)"),
+      workflowType: z
+        .enum(["read", "write"])
+        .optional()
+        .describe("Updated workflow type"),
+      priceUsdcPerCall: z
+        .string()
+        .optional()
+        .describe("Updated price in USDC (only allowed while unlisted)"),
+    },
+    {
+      title: "Update Workflow Listing",
+      readOnlyHint: false,
+      destructiveHint: false,
+    },
+    withScopeCheck("update_workflow_listing", scope, async (args) =>
+      withToolLogging("update_workflow_listing", undefined, async () => {
+        const { workflowId, ...patch } = args;
+        const data = await callApi(
+          baseUrl,
+          authHeader,
+          `/api/mcp/workflows/${encodeURIComponent(workflowId)}/listing`,
+          "PATCH",
+          patch
+        );
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+        };
+      })
+    )
+  );
+
+  // Curator tool 4: Read listing metadata for a workflow by slug
+  server.tool(
+    "get_workflow_listing",
+    "Read full listing metadata for a workflow by its public slug. Public access; no auth required.",
+    {
+      slug: z
+        .string()
+        .describe("The workflow's public listing slug (e.g. 'my-defi-alert')"),
+    },
+    {
+      title: "Get Workflow Listing",
+      readOnlyHint: true,
+      destructiveHint: false,
+    },
+    withScopeCheck("get_workflow_listing", scope, async (args) =>
+      withToolLogging("get_workflow_listing", undefined, async () => {
+        const data = await callApi(
+          baseUrl,
+          authHeader,
+          `/api/mcp/workflows/${encodeURIComponent(args.slug)}/listing`,
+          "GET"
         );
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],

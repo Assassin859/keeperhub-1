@@ -111,17 +111,22 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
 
     // Per-org error breakdown: JOIN workflows + organization, LEFT JOIN so
     // anonymous workflows still contribute (under ANONYMOUS_ORG_SLUG).
-    const orgSlugExpr = sql<string>`COALESCE(${organization.slug}, ${ANONYMOUS_ORG_SLUG})`;
+    // GROUP BY uses the column reference (not the COALESCE expression):
+    // Drizzle would otherwise bind ANONYMOUS_ORG_SLUG as separate parameters
+    // in SELECT and GROUP BY clauses, and Postgres rejects the query because
+    // the two COALESCE expressions are not textually identical. Postgres
+    // groups all NULL slugs into one group (NULLs are equal in GROUP BY),
+    // and the SELECT-side COALESCE renders that group as ANONYMOUS_ORG_SLUG.
     const errorByOrg = await db
       .select({
-        orgSlug: orgSlugExpr,
+        orgSlug: sql<string>`COALESCE(${organization.slug}, ${ANONYMOUS_ORG_SLUG})`,
         count: count(),
       })
       .from(workflowExecutions)
       .innerJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
       .leftJoin(organization, eq(workflows.organizationId, organization.id))
       .where(eq(workflowExecutions.status, "error"))
-      .groupBy(orgSlugExpr);
+      .groupBy(organization.slug);
 
     for (const row of errorByOrg) {
       stats.errorByOrgSlug[row.orgSlug] = Number(row.count) || 0;

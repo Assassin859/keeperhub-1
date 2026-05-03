@@ -53,6 +53,10 @@ export const PUBLIC_RPCS = {
   PLASMA_MAINNET_FALLBACK: "https://plasma.drpc.org",
   PLASMA_TESTNET: "https://testnet-rpc.plasma.to",
   PLASMA_TESTNET_FALLBACK: "https://9746.rpc.thirdweb.com",
+  ZERO_G_MAINNET: "https://evmrpc.0g.ai",
+  ZERO_G_MAINNET_FALLBACK: "https://0g.drpc.org",
+  ZERO_G_GALILEO: "https://evmrpc-testnet.0g.ai",
+  ZERO_G_GALILEO_FALLBACK: "https://16602.rpc.thirdweb.com",
   SOLANA_MAINNET: "https://api.mainnet-beta.solana.com",
   SOLANA_DEVNET: "https://api.devnet.solana.com",
 } as const;
@@ -191,6 +195,22 @@ export const CHAIN_CONFIG: Record<number, ChainConfigEntry> = {
     fallbackEnvKey: "CHAIN_PLASMA_TESTNET_FALLBACK_RPC",
     publicDefault: PUBLIC_RPCS.PLASMA_TESTNET,
     publicFallback: PUBLIC_RPCS.PLASMA_TESTNET_FALLBACK,
+  },
+  // 0G Mainnet (Aristotle)
+  16661: {
+    jsonKey: "0g-mainnet",
+    envKey: "CHAIN_ZERO_G_MAINNET_PRIMARY_RPC",
+    fallbackEnvKey: "CHAIN_ZERO_G_MAINNET_FALLBACK_RPC",
+    publicDefault: PUBLIC_RPCS.ZERO_G_MAINNET,
+    publicFallback: PUBLIC_RPCS.ZERO_G_MAINNET_FALLBACK,
+  },
+  // 0G Galileo Testnet
+  16602: {
+    jsonKey: "0g-galileo",
+    envKey: "CHAIN_ZERO_G_GALILEO_PRIMARY_RPC",
+    fallbackEnvKey: "CHAIN_ZERO_G_GALILEO_FALLBACK_RPC",
+    publicDefault: PUBLIC_RPCS.ZERO_G_GALILEO,
+    publicFallback: PUBLIC_RPCS.ZERO_G_GALILEO_FALLBACK,
   },
   // Solana Mainnet
   101: {
