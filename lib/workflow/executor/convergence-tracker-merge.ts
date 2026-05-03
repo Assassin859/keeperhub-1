@@ -11,16 +11,15 @@
  * existing callers and unit tests.
  *
  * `mergeFromAuthority` (async, tracker + DB fallback) is the durable
- * replacement. It consults the in-process tracker first (fast path, zero I/O)
- * and falls back to `workflow_execution_logs` for any predecessor missing from
- * the tracker -- which happens on cross-process / cross-pod SDK resumes where
- * the predecessor steps ran on a different worker.
+ * replacement. It issues a single batch DB query for all predecessors missing
+ * from the tracker, reducing N sequential round-trips to one for cold-pod
+ * fan-in convergence.
  *
  * This helper is split into a separate module so it can be unit-tested in
  * isolation without spinning up the full workflow executor.
  */
 
-import { getCompletedStepOutput } from "@/lib/workflow/executor/get-completed-step-output";
+import { getCompletedStepOutputs } from "@/lib/workflow/executor/get-completed-step-output";
 import type { WorkflowNode } from "@/lib/workflow/store";
 
 export type NodeOutputs = Record<string, { label: string; data: unknown }>;
@@ -40,6 +39,12 @@ type NodeNameLookup = (node: WorkflowNode) => string;
  * Otherwise returns a fresh shallow-copied outputs map with the tracker
  * entries merged in. The tracker value wins -- if the closure already has a
  * value for a predecessor, the tracker entry overrides it.
+ *
+ * @deprecated Use `mergeFromAuthority` instead. This function is retained as a
+ * regression-canary reference (KEEP-395) and for the unit tests that
+ * demonstrate the pre-fix behaviour. Do NOT wire new convergence paths to this
+ * function -- it has no DB fallback and silently returns stale closure values
+ * on cross-pod resumes.
  */
 export function mergeFromTracker(params: {
   outputs: NodeOutputs;
@@ -93,10 +98,10 @@ export function mergeFromTracker(params: {
 /**
  * Authoritative async replacement for `mergeFromTracker`.
  *
- * For every direct predecessor, checks the in-process tracker first. For any
- * predecessor missing from the tracker (cross-process / cross-pod resume),
- * queries `workflow_execution_logs` for the latest success row and merges that
- * output over the closure map.
+ * For every direct predecessor, checks the in-process tracker first (fast
+ * path, zero I/O). For predecessors missing from the tracker (cross-process /
+ * cross-pod resume), issues a SINGLE batch DB query for all misses rather than
+ * N sequential round-trips. Merges results over the closure map.
  *
  * When both tracker and DB miss for a predecessor, the existing closure value
  * is left unchanged (the step genuinely has not completed yet, or was never
@@ -117,16 +122,27 @@ export async function mergeFromAuthority(params: {
     return outputs;
   }
 
+  const knownIds = predecessorIds.filter((id) => nodeMap.has(id));
+  if (knownIds.length === 0) {
+    return outputs;
+  }
+
+  const completedOutputs = await getCompletedStepOutputs(executionId, knownIds);
+
+  if (completedOutputs.size === 0) {
+    return outputs;
+  }
+
   let merged: NodeOutputs | null = null;
 
-  for (const predId of predecessorIds) {
-    const node = nodeMap.get(predId);
-    if (!node) {
+  for (const predId of knownIds) {
+    const result = completedOutputs.get(predId);
+    if (result === undefined) {
       continue;
     }
 
-    const result = await getCompletedStepOutput(executionId, predId);
-    if (result === null) {
+    const node = nodeMap.get(predId);
+    if (!node) {
       continue;
     }
 
