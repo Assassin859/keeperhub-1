@@ -106,6 +106,27 @@ type ExecutionResult = {
 
 type NodeOutputs = Record<string, { label: string; data: unknown }>;
 
+/**
+ * Branch-aware finalSuccess computation: a workflow succeeds iff every node
+ * in `results` succeeded OR was on a not-taken condition branch (skipped).
+ *
+ * Extracted so callers can re-evaluate after `pendingTasks.drain()` (KEEP-395
+ * Bug 2 hardening): drained orphan-node failures land in `results` while
+ * drain awaits them, but the original computation ran before drain and
+ * missed them. Calling this once after drain is the authoritative answer.
+ */
+export function computeFinalSuccess(
+  results: Record<string, ExecutionResult>,
+  skippedTargets: ReadonlySet<string>
+): boolean {
+  for (const [nodeId, r] of Object.entries(results)) {
+    if (!(r.success || skippedTargets.has(nodeId))) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /** Matches path segment like "carts[0]" for array index access (same as template.ts) */
 const ARRAY_ACCESS_PATTERN = /^([^[]+)\[(\d+)\]$/;
 
@@ -1134,6 +1155,15 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
   // end ensures we never finalise before downstream nodes have run.
   const pendingTasks = createPendingTracker();
 
+  // KEEP-395 observability: in a multi-process / multi-pod world the
+  // step-success-tracker is in-process only. If a convergence node executes
+  // on a pod that did not run its predecessors, getSuccessfulSteps returns
+  // undefined and the merge-from-tracker silently degrades to closure
+  // outputs (which may carry the staleness this fix exists to prevent).
+  // Emit a one-time per-execution warning when that happens so prod logs
+  // surface the degradation. Set membership prevents log spam.
+  const warnedDegradationConvergenceIds = new Set<string>();
+
   // Build node and edge maps
   const nodeMap = new Map(nodes.map((n) => [n.id, n]));
   const edgesBySource = buildEdgesBySource(edges);
@@ -1786,7 +1816,27 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
                 executionId,
                 predecessorIds,
                 nodeMap,
-                getTracker: getSuccessfulSteps,
+                getTracker: (execId: string) => {
+                  const tracker = getSuccessfulSteps(execId);
+                  if (
+                    tracker === undefined &&
+                    !warnedDegradationConvergenceIds.has(nodeId)
+                  ) {
+                    warnedDegradationConvergenceIds.add(nodeId);
+                    logSystemError(
+                      ErrorCategory.WORKFLOW_ENGINE,
+                      "[Workflow Executor] convergence-tracker degraded -- in-process tracker has no entries for this execution (likely cross-pod replay); merge-from-tracker fix is silently inert here",
+                      new Error(
+                        `tracker_degraded execution_id=${execId} convergence_node_id=${nodeId}`
+                      ),
+                      {
+                        ...baseLogLabels,
+                        node_id: nodeId,
+                      }
+                    );
+                  }
+                  return tracker;
+                },
                 getNodeName,
               })
             : outputs;
@@ -2052,13 +2102,59 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     // workflow layer and can be truncated by SDK checkpoint resume, leaving
     // an orphaned promise in pendingTasks. Drain catches those so the
     // workflow does not finalise before all scheduled nodes complete.
-    await pendingTasks.drain();
+    //
+    // Drain is bounded by a timeout (default 5min, override via
+    // KH_EXECUTOR_DRAIN_TIMEOUT_MS) to prevent a hung step (most plugin
+    // steps lack AbortSignal) from stalling the workflow indefinitely.
+    if (process.env.DEBUG_DRAIN === "1") {
+      console.log(
+        `[Workflow Executor] drain starting with ${pendingTasks.size()} pending`
+      );
+    }
+    // Snapshot result keys BEFORE drain so we can identify drained-node
+    // failures and re-evaluate finalSuccess after drain (KEEP-395 Bug 2
+    // hardening: orphan failures must flow into finalSuccess, not be silently
+    // accepted as success).
+    const resultKeysBeforeDrain = new Set(Object.keys(results));
+    await pendingTasks.drain({
+      onTimeout: (pendingCount) => {
+        logSystemError(
+          ErrorCategory.WORKFLOW_ENGINE,
+          "[Workflow Executor] drain timed out with pending promises -- workflow may finalise with incomplete state",
+          new Error(
+            `drain_timeout pending=${pendingCount} workflow_id=${workflowId ?? "unknown"} execution_id=${executionId ?? "unknown"}`
+          ),
+          {
+            ...baseLogLabels,
+            pending_count: String(pendingCount),
+          }
+        );
+      },
+    });
 
-    // Branch-aware finalSuccess: exclude nodes on dead (not-taken) condition branches
+    // Branch-aware finalSuccess: exclude nodes on dead (not-taken) condition branches.
+    // KEEP-395 Bug 2 hardening: re-evaluated AFTER drain so any failures from
+    // drained orphan nodes are reflected here. The pre-drain computation (now
+    // unused) only ever saw nodes whose call-stack reached processSettledResults;
+    // drained orphans land in `results` while drain awaits them.
     const allSkippedTargets = collectAllSkippedTargets(conditionDecisions);
-    const finalSuccess = Object.entries(results).every(
-      ([nodeId, r]) => r.success || allSkippedTargets.has(nodeId)
+    const finalSuccess = computeFinalSuccess(results, allSkippedTargets);
+
+    // Surface drained-orphan failures explicitly so prod logs make the
+    // SDK-checkpoint-truncation case visible (otherwise the failure looks
+    // identical to a normal sync-path failure).
+    const drainedNodeIds = Object.keys(results).filter(
+      (id) => !resultKeysBeforeDrain.has(id)
     );
+    const drainedFailures = drainedNodeIds.filter(
+      (id) => !(results[id]?.success || allSkippedTargets.has(id))
+    );
+    if (drainedFailures.length > 0) {
+      console.log(
+        "[Workflow Executor] drained orphan node failures captured:",
+        drainedFailures
+      );
+    }
     const duration = Date.now() - workflowStartTime;
 
     // Diagnostic logging for branching workflow failures
