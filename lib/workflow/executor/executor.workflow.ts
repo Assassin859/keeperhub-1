@@ -40,10 +40,15 @@ import {
   propagateConvergenceSkips,
   signalConvergenceArrival,
 } from "@/lib/workflow/executor/convergence-barrier";
+import { mergeFromTracker } from "@/lib/workflow/executor/convergence-tracker-merge";
 import { enterWorkflowErrorContext } from "@/lib/workflow/executor/error-context";
 import { runBodyNode } from "@/lib/workflow/executor/for-each-body-runner";
+import { createPendingTracker } from "@/lib/workflow/executor/pending-tasks";
 import type { StepContext } from "@/lib/workflow/executor/step-handler";
-import { clearExecution } from "@/lib/workflow/executor/step-success-tracker";
+import {
+  clearExecution,
+  getSuccessfulSteps,
+} from "@/lib/workflow/executor/step-success-tracker";
 import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
 import {
   type ConditionDecision,
@@ -1121,6 +1126,14 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
   const outputs: NodeOutputs = {};
   const results: Record<string, ExecutionResult> = {};
 
+  // KEEP-395 (Bug 2): track every in-flight Promise.allSettled that
+  // schedules executeNode calls, so we can drain orphaned downstream
+  // branches before finalisation. The SDK's checkpoint resume can truncate
+  // the call-stack-await chain inside executeReadyDownstream recursion;
+  // wrapping every settle in `pendingTasks.track(...)` and draining at the
+  // end ensures we never finalise before downstream nodes have run.
+  const pendingTasks = createPendingTracker();
+
   // Build node and edge maps
   const nodeMap = new Map(nodes.map((n) => [n.id, n]));
   const edgesBySource = buildEdgesBySource(edges);
@@ -1289,7 +1302,12 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         ownerId,
         workflowId,
       },
-      runStep: async ({ actionType, processedConfig, scopedOutputs: outputs, stepContext }) =>
+      runStep: async ({
+        actionType,
+        processedConfig,
+        scopedOutputs: outputs,
+        stepContext,
+      }) =>
         await executeActionStep({
           actionType,
           config: processedConfig,
@@ -1584,8 +1602,8 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     );
 
     if (readyIds.length > 0) {
-      const settled = await Promise.allSettled(
-        readyIds.map((id) => executeNode(id, visited))
+      const settled = await pendingTasks.track(
+        Promise.allSettled(readyIds.map((id) => executeNode(id, visited)))
       );
       processSettledResults(settled, readyIds);
     }
@@ -1754,10 +1772,29 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           return;
         }
 
+        // KEEP-395 (Bug 1): for convergence-target nodes (multiple incoming
+        // edges) the closure-captured `outputs` map can carry a stale snapshot
+        // for the LAST predecessor when the SDK replays/rehydrates this
+        // workflow. Merge tracker-recorded outputs over the closure before
+        // template rendering -- the in-process step-success-tracker is
+        // authoritative for completed steps.
+        const predecessorIds = edgesByTarget.get(nodeId) ?? [];
+        const liveOutputs =
+          predecessorIds.length > 1
+            ? mergeFromTracker({
+                outputs,
+                executionId,
+                predecessorIds,
+                nodeMap,
+                getTracker: getSuccessfulSteps,
+                getNodeName,
+              })
+            : outputs;
+
         const processedConfig = processActionConfig(
           config,
           actionType,
-          outputs
+          liveOutputs
         );
 
         // Build step context for logging (stepHandler will handle the logging)
@@ -1780,7 +1817,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         const stepResult = await executeActionStep({
           actionType,
           config: processedConfig,
-          outputs,
+          outputs: liveOutputs,
           context: stepContext,
           nodeMap,
           executionResults: results,
@@ -1920,8 +1957,10 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
                 ...new Set([...preSeedUnblocked, ...unblockedIds]),
               ];
               if (allUnblocked.length > 0) {
-                const settled = await Promise.allSettled(
-                  allUnblocked.map((id) => executeNode(id, visited))
+                const settled = await pendingTasks.track(
+                  Promise.allSettled(
+                    allUnblocked.map((id) => executeNode(id, visited))
+                  )
                 );
                 processSettledResults(settled, allUnblocked);
               }
@@ -2003,10 +2042,17 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     incrementConcurrentExecutions();
 
     const triggerNodeIds = triggerNodes.map((trigger) => trigger.id);
-    const triggerSettled = await Promise.allSettled(
-      triggerNodeIds.map((id) => executeNode(id))
+    const triggerSettled = await pendingTasks.track(
+      Promise.allSettled(triggerNodeIds.map((id) => executeNode(id)))
     );
     processSettledResults(triggerSettled, triggerNodeIds);
+
+    // KEEP-395 (Bug 2): drain any in-flight downstream branches before
+    // finalisation. The recursive executeReadyDownstream chain runs in the
+    // workflow layer and can be truncated by SDK checkpoint resume, leaving
+    // an orphaned promise in pendingTasks. Drain catches those so the
+    // workflow does not finalise before all scheduled nodes complete.
+    await pendingTasks.drain();
 
     // Branch-aware finalSuccess: exclude nodes on dead (not-taken) condition branches
     const allSkippedTargets = collectAllSkippedTargets(conditionDecisions);
