@@ -155,4 +155,65 @@ describe("createSponsoredClient estimateFeesPerGas wiring", () => {
     expect(fees.maxFeePerGas).toBe(BigInt(50_000_000_000));
     expect(fees.maxPriorityFeePerGas).toBe(BigInt(2_000_000_000));
   });
+
+  it("fetches gas price per call rather than caching at client construction", async () => {
+    const { result, args } = await buildSponsoredClient();
+    expect(result).not.toBeNull();
+    const estimateFeesPerGas = args?.userOperation
+      ?.estimateFeesPerGas as EstimateFeesPerGas;
+
+    // Pimlico price changes between userOps. Each call should reflect the
+    // latest value, not whatever was cached at createSponsoredClient time.
+    mockGetUserOperationGasPrice.mockResolvedValueOnce({
+      fast: {
+        maxFeePerGas: BigInt(10_000_000_000),
+        maxPriorityFeePerGas: BigInt(1_000_000_000),
+      },
+    });
+    mockGetUserOperationGasPrice.mockResolvedValueOnce({
+      fast: {
+        maxFeePerGas: BigInt(20_000_000_000),
+        maxPriorityFeePerGas: BigInt(2_000_000_000),
+      },
+    });
+
+    const first = await estimateFeesPerGas();
+    const second = await estimateFeesPerGas();
+
+    expect(first.maxFeePerGas).toBe(BigInt(10_000_000_000));
+    expect(second.maxFeePerGas).toBe(BigInt(20_000_000_000));
+    expect(mockGetUserOperationGasPrice).toHaveBeenCalledTimes(2);
+  });
+
+  // Now that the gas-price fetch happens per userOperation rather than at
+  // client construction, every call is a potential failure point. The
+  // callback must surface the rejection so the bundler treats it as a
+  // userOp failure instead of silently submitting with a stale or
+  // zero-valued fee pair.
+  it("propagates the rejection when Pimlico's gas-price fetch fails", async () => {
+    const { result, args } = await buildSponsoredClient();
+    expect(result).not.toBeNull();
+    const estimateFeesPerGas = args?.userOperation
+      ?.estimateFeesPerGas as EstimateFeesPerGas;
+
+    const pimlicoError = new Error("pimlico 503");
+    mockGetUserOperationGasPrice.mockRejectedValueOnce(pimlicoError);
+
+    await expect(estimateFeesPerGas()).rejects.toBe(pimlicoError);
+
+    // Subsequent successful fetch must still work - the failure must not
+    // poison or cache anything inside the closure.
+    mockGetUserOperationGasPrice.mockResolvedValueOnce({
+      fast: {
+        maxFeePerGas: BigInt(30_000_000_000),
+        maxPriorityFeePerGas: BigInt(3_000_000_000),
+      },
+    });
+
+    const recovered = await estimateFeesPerGas();
+
+    expect(recovered.maxFeePerGas).toBe(BigInt(30_000_000_000));
+    expect(recovered.maxPriorityFeePerGas).toBe(BigInt(3_000_000_000));
+    expect(mockGetUserOperationGasPrice).toHaveBeenCalledTimes(2);
+  });
 });

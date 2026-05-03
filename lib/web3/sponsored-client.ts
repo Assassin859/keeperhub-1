@@ -92,9 +92,6 @@ export async function createSponsoredClient(
       owner: account,
     });
 
-    const gasPrices = await pimlicoClient.getUserOperationGasPrice();
-    const sponsoredFees = clampSponsoredFees(gasPrices.fast);
-
     const smartAccountClient = createSmartAccountClient({
       chain,
       account: smartAccount,
@@ -102,7 +99,12 @@ export async function createSponsoredClient(
       bundlerTransport: http(pimlicoUrl),
       paymaster: pimlicoClient,
       userOperation: {
-        estimateFeesPerGas: async () => sponsoredFees,
+        // Refresh per userOperation rather than caching at client creation
+        // so we always reflect current network conditions.
+        estimateFeesPerGas: async () => {
+          const { fast } = await pimlicoClient.getUserOperationGasPrice();
+          return clampSponsoredFees(fast);
+        },
       },
     });
 
