@@ -15,6 +15,8 @@ import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { rateLimitBypassRule } from "@/lib/admin-auth";
 import { sendInvitationEmail, sendVerificationOTP } from "@/lib/email";
+import { TRUSTED_ORIGINS } from "@/lib/trusted-origins";
+import { isAiGatewayManagedKeysEnabled } from "./ai-gateway/config";
 import { wrapWithSessionTokenHash } from "./auth-session-token-hash";
 import { db } from "./db";
 import {
@@ -487,13 +489,6 @@ export const auth = betterAuth({
     // Use secure cookies in production (HTTPS only)
     useSecureCookies: process.env.NODE_ENV === "production",
   },
-  trustedOrigins: [
-    "http://localhost:3000",
-    // start custom keeperhub code //
-    "http://127.0.0.1:*", // CLI browser auth callback (dynamic port)
-    // end keeperhub code //
-    "https://app-staging.keeperhub.com",
-    "https://*.keeperhub.com",
-  ],
+  trustedOrigins: [...TRUSTED_ORIGINS],
   plugins,
 });

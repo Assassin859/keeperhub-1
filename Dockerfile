@@ -45,6 +45,7 @@ COPY next.config.ts tsconfig.json package.json drizzle.config.ts ./
 COPY instrumentation.ts instrumentation-client.ts ./
 COPY sentry.server.config.ts sentry.edge.config.ts ./
 COPY postcss.config.mjs components.json ./
+COPY proxy.ts ./
 
 # Stage 2.5: Builder (runs Next.js build, only needed for runner stage)
 FROM source AS builder
