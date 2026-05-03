@@ -2064,17 +2064,10 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         // bookkeeping tripped. Emit a structured warn (no Sentry) and a
         // dedicated counter so we can alert on rate without one Sentry
         // event per recovered run.
-        console.warn(
-          "[Workflow Executor] Reconciled spurious max-retries error using step-success-tracker",
-          {
-            ...baseLogLabels,
-            node_id: nodeId,
-            error: errorMessage,
-          }
-        );
         getMetricsCollector().incrementCounter(
           "workflow.executor.spurious_recovery.total",
           {
+            source: "in_catch",
             ...(workflowId ? { [LabelKeys.WORKFLOW_ID]: workflowId } : {}),
             ...(organizationId ? { [LabelKeys.ORG_ID]: organizationId } : {}),
             ...(organizationPlan ? { [LabelKeys.PLAN]: organizationPlan } : {}),

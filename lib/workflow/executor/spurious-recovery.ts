@@ -1,5 +1,6 @@
 import "server-only";
 
+import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
 import type { ExecutionResult } from "@/lib/workflow/executor/final-success";
 import { getCompletedStepOutput } from "@/lib/workflow/executor/get-completed-step-output";
@@ -26,7 +27,12 @@ function isSpuriousError(message: string): boolean {
  * pattern. For each candidate, queries the step-success-tracker first (fast
  * path) and then `workflow_execution_logs` (cross-process fallback). When a
  * success record exists, overrides the failed result entry in-place and
- * increments the `workflow.executor.spurious_recovery.total` counter.
+ * increments the `workflow.executor.spurious_recovery.total` counter with
+ * source="post_drain".
+ *
+ * Each candidate lookup is individually wrapped in try/catch. A DB error on one
+ * candidate logs a structured warning, increments an error counter, and skips
+ * to the next candidate. A single transient failure cannot abort the whole pass.
  *
  * Mutates `results` in-place (same contract as the rest of the executor).
  */
@@ -44,7 +50,9 @@ export async function reconcileSpuriousFailures(params: {
     return;
   }
 
-  const metricsLabels: Record<string, string> = {};
+  const metricsLabels: Record<string, string> = {
+    source: "post_drain",
+  };
   if (workflowId) {
     metricsLabels.workflow_id = workflowId;
   }
@@ -65,18 +73,36 @@ export async function reconcileSpuriousFailures(params: {
       continue;
     }
 
-    const completed = await getCompletedStepOutput(executionId, nodeId);
-    if (completed === null) {
-      continue;
+    try {
+      const completed = await getCompletedStepOutput(executionId, nodeId);
+      if (completed === null) {
+        continue;
+      }
+
+      result.success = true;
+      result.data = completed.output;
+      result.error = undefined;
+
+      getMetricsCollector().incrementCounter(
+        "workflow.executor.spurious_recovery.total",
+        metricsLabels
+      );
+    } catch (err: unknown) {
+      getMetricsCollector().incrementCounter(
+        "workflow.executor.spurious_recovery.error.total",
+        { execution_id: executionId, node_id: nodeId }
+      );
+      logSystemError(
+        ErrorCategory.WORKFLOW_ENGINE,
+        "[reconcileSpuriousFailures] DB lookup failed for candidate node; skipping",
+        err instanceof Error ? err : new Error(String(err)),
+        {
+          execution_id: executionId,
+          node_id: nodeId,
+          db_error_class:
+            err instanceof Error ? err.constructor.name : "unknown",
+        }
+      );
     }
-
-    result.success = true;
-    result.data = completed.output;
-    result.error = undefined;
-
-    getMetricsCollector().incrementCounter(
-      "workflow.executor.spurious_recovery.total",
-      metricsLabels
-    );
   }
 }
