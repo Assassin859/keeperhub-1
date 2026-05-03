@@ -43,7 +43,10 @@ import {
 import { enterWorkflowErrorContext } from "@/lib/workflow/executor/error-context";
 import { runBodyNode } from "@/lib/workflow/executor/for-each-body-runner";
 import type { StepContext } from "@/lib/workflow/executor/step-handler";
-import { clearExecution } from "@/lib/workflow/executor/step-success-tracker";
+import {
+  clearExecution,
+  getSuccessfulSteps,
+} from "@/lib/workflow/executor/step-success-tracker";
 import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
 import {
   type ConditionDecision,
@@ -103,6 +106,24 @@ type NodeOutputs = Record<string, { label: string; data: unknown }>;
 
 /** Matches path segment like "carts[0]" for array index access (same as template.ts) */
 const ARRAY_ACCESS_PATTERN = /^([^[]+)\[(\d+)\]$/;
+
+/**
+ * KEEP-398: SDK error shapes that indicate a spurious step-completion failure.
+ *
+ * The Workflow DevKit produces three distinct messages for the same underlying
+ * lost-completion-event situation, depending on which code path the framework
+ * takes when it re-fires the step on resume:
+ *   1. "Step ... exceeded max retries (N retries)" -- pre-check path
+ *   2. "Step ... failed after N retries: ..."      -- catch path
+ *   3. "Step did not record completion ..."        -- direct timeout path
+ *
+ * Exported so the unit test in tests/unit/executor-spurious-max-retries.test.ts
+ * exercises the production patterns rather than redefining them locally
+ * (a rename here would otherwise silently leave the test green).
+ */
+export const EXCEEDED_MAX_RETRIES_REGEX = /exceeded max retries/i;
+export const FAILED_AFTER_RETRIES_REGEX = /failed after.*retries/i;
+export const NO_STEP_COMPLETION_REGEX = /Step did not record completion/i;
 
 export type WorkflowExecutionInput = {
   nodes: WorkflowNode[];
@@ -1945,6 +1966,60 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         }
       }
     } catch (error) {
+      const errorMessage = await getErrorMessageAsync(error);
+
+      // KEEP-398: Reconcile spurious max-retries / step-completion errors using
+      // the in-process step-success-tracker. The Workflow DevKit framework's
+      // post-step "step_completed" event is occasionally lost under heavy
+      // fan-in (e.g. many parallel reads converging into a code/run-code
+      // combine). When that happens, useStep re-fires the step on resume and
+      // -- with runCodeStep.maxRetries=0 -- the framework throws
+      // "Step ... exceeded max retries" / "Step ... failed after N retries"
+      // even though the step body returned successfully and recorded its
+      // output via recordStepSuccess.
+      const isSpuriousMaxRetries =
+        EXCEEDED_MAX_RETRIES_REGEX.test(errorMessage) ||
+        FAILED_AFTER_RETRIES_REGEX.test(errorMessage) ||
+        NO_STEP_COMPLETION_REGEX.test(errorMessage);
+      const recordedOutput = executionId
+        ? getSuccessfulSteps(executionId)?.get(nodeId)
+        : undefined;
+      if (isSpuriousMaxRetries && recordedOutput !== undefined) {
+        // Recovered execution: the step body succeeded, only the SDK's
+        // bookkeeping tripped. Emit a structured warn (no Sentry) and a
+        // dedicated counter so we can alert on rate without one Sentry
+        // event per recovered run.
+        console.warn(
+          "[Workflow Executor] Reconciled spurious max-retries error using step-success-tracker",
+          {
+            ...baseLogLabels,
+            node_id: nodeId,
+            error: errorMessage,
+          }
+        );
+        getMetricsCollector().incrementCounter(
+          "workflow.executor.spurious_recovery.total",
+          {
+            ...(workflowId ? { [LabelKeys.WORKFLOW_ID]: workflowId } : {}),
+            ...(organizationId ? { [LabelKeys.ORG_ID]: organizationId } : {}),
+            ...(organizationPlan ? { [LabelKeys.PLAN]: organizationPlan } : {}),
+          }
+        );
+        const reconciledResult: ExecutionResult = {
+          success: true,
+          data: recordedOutput,
+        };
+        results[nodeId] = reconciledResult;
+        const reconciledSanitizedNodeId = nodeId.replace(/[^a-zA-Z0-9]/g, "_");
+        outputs[reconciledSanitizedNodeId] = {
+          label: getNodeName(node),
+          data: recordedOutput,
+        };
+        const nextNodes = edgesBySource.get(nodeId) ?? [];
+        await executeReadyDownstream(nodeId, nextNodes, visited);
+        return;
+      }
+
       logSystemError(
         ErrorCategory.WORKFLOW_ENGINE,
         "[Workflow Executor] Error executing node:",
@@ -1954,7 +2029,6 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           node_id: nodeId,
         }
       );
-      const errorMessage = await getErrorMessageAsync(error);
       const errorResult = {
         success: false,
         error: errorMessage,
