@@ -1,5 +1,13 @@
 import "server-only";
 
+import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { getMetricsCollector } from "@/lib/metrics";
+import {
+  fetchCompletedStepOutputStep,
+  fetchCompletedStepOutputsBatchStep,
+} from "@/lib/workflow/executor/get-completed-step-output.step";
+import { getSuccessfulSteps } from "@/lib/workflow/executor/step-success-tracker";
+
 /**
  * Kill-switch: set KH_EXECUTOR_AUTHORITY_DB_FALLBACK=false to disable DB-backed
  * step authority and revert to tracker-only behaviour. Use as an ops emergency
@@ -10,13 +18,20 @@ import "server-only";
 const DB_FALLBACK_ENABLED =
   process.env.KH_EXECUTOR_AUTHORITY_DB_FALLBACK !== "false";
 
-import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { getMetricsCollector } from "@/lib/metrics";
-import {
-  fetchCompletedStepOutputStep,
-  fetchCompletedStepOutputsBatchStep,
-} from "@/lib/workflow/executor/get-completed-step-output.step";
-import { getSuccessfulSteps } from "@/lib/workflow/executor/step-success-tracker";
+/**
+ * Returns true when the error is a PostgreSQL statement timeout (SQLSTATE 57014).
+ * Drizzle wraps the driver error in DrizzleQueryError with the original on
+ * error.cause, so we check both levels.
+ */
+function isStatementTimeout(err: unknown): boolean {
+  const candidates = [err, (err as { cause?: unknown })?.cause];
+  return candidates.some(
+    (e) =>
+      e !== null &&
+      typeof e === "object" &&
+      (e as { code?: unknown }).code === "57014"
+  );
+}
 
 export type CompletedStepOutput = {
   output: unknown;
@@ -123,6 +138,7 @@ export function getCompletedStepOutput(
     },
     (err: unknown) => {
       inflightQueries.delete(cacheKey);
+      const outcome = isStatementTimeout(err) ? "timeout" : "error";
       logSystemError(
         ErrorCategory.WORKFLOW_ENGINE,
         "[getCompletedStepOutput] DB fallback query failed; returning null",
@@ -136,7 +152,7 @@ export function getCompletedStepOutput(
       );
       getMetricsCollector().incrementCounter(
         "workflow.executor.tracker_db_fallback.total",
-        { source: "single", outcome: "error" }
+        { source: "single", outcome }
       );
       return null;
     }
@@ -223,9 +239,10 @@ export async function getCompletedStepOutputs(
       );
     }
   } catch (err: unknown) {
+    const outcome = isStatementTimeout(err) ? "timeout" : "error";
     getMetricsCollector().incrementCounter(
       "workflow.executor.tracker_db_fallback.total",
-      { source: "convergence", outcome: "error" }
+      { source: "convergence", outcome }
     );
     logSystemError(
       ErrorCategory.WORKFLOW_ENGINE,
