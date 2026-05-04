@@ -308,16 +308,19 @@ function buildConfigFieldsFromAction(
   }
 
   if (action.payable) {
-    // Native value is opt-in: most payable functions are payable only to support
-    // multicall composition (e.g. Uniswap swaps where the dominant case is
-    // ERC20-to-ERC20 with no msg.value). Required: true would break that path
-    // by forcing users to type "0" on every config.
+    // ETH Value is required only when it is the action's sole meaningful input
+    // (e.g. WETH.deposit() takes no args - the native value IS the action).
+    // For payable functions that also take arguments, the native value is
+    // opt-in (most are payable purely for multicall composition - Uniswap
+    // swaps default to ERC20-to-ERC20 with no msg.value, NFT position
+    // mint/burn/collect rarely send ETH, etc.).
+    const isOnlyInput = action.inputs.length === 0;
     fields.push({
       key: "ethValue",
       label: "ETH Value",
       type: "protocol-eth-value",
       placeholder: "0.0",
-      required: false,
+      required: isOnlyInput,
     });
   }
 

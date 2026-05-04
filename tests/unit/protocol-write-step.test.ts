@@ -397,16 +397,6 @@ describe("protocolWriteStep", () => {
     // Uniswap swap). Drop the value rather than let writeContractCore surface
     // the opaque "function is not payable" error.
     describe("KEEP-393 stale ethValue guard", () => {
-      const NONPAYABLE_ABI = JSON.stringify([
-        {
-          type: "function",
-          name: "exactInputSingle",
-          stateMutability: "nonpayable",
-          inputs: [],
-          outputs: [],
-        },
-      ]);
-
       const PAYABLE_ABI = JSON.stringify([
         {
           type: "function",
@@ -417,40 +407,40 @@ describe("protocolWriteStep", () => {
         },
       ]);
 
+      // Uses compound.supply (nonpayable upstream) rather than a Uniswap swap:
+      // post-KEEP-408 the Uniswap swap functions are correctly typed as
+      // payable, so resolveEthValue would no longer drop the value there
+      // (and the KEEP-408 preflight would reject the stale ethValue with a
+      // user-facing error before this guard runs). The KEEP-393 mechanism
+      // still matters for any payable -> nonpayable action reconfiguration,
+      // which compound.supply demonstrates.
       it("drops ethValue when the resolved function is nonpayable and logs the drop", async () => {
-        mockResolveProtocolMeta.mockReturnValue({
-          protocolSlug: "uniswap",
-          contractKey: "swapRouter",
-          functionName: "exactInputSingle",
-          actionType: "write",
-        });
-        mockGetProtocol.mockReturnValue({
-          name: "Uniswap V3",
-          slug: "uniswap",
-          contracts: {
-            swapRouter: {
-              label: "SwapRouter02",
-              userSpecifiedAddress: false,
-              addresses: {
-                "11155111": "0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E",
-              },
-            },
+        const COMPOUND_SUPPLY_NONPAYABLE_ABI = JSON.stringify([
+          {
+            type: "function",
+            name: "supply",
+            stateMutability: "nonpayable",
+            inputs: [],
+            outputs: [],
           },
-          actions: [],
+        ]);
+        mockResolveProtocolMeta.mockReturnValue(COMPOUND_SUPPLY_META);
+        mockGetProtocol.mockReturnValue(COMPOUND_PROTOCOL);
+        mockResolveAbi.mockResolvedValue({
+          abi: COMPOUND_SUPPLY_NONPAYABLE_ABI,
         });
-        mockResolveAbi.mockResolvedValue({ abi: NONPAYABLE_ABI });
         mockWriteContractCore.mockResolvedValue({
           success: true,
-          transactionHash: "0xswap",
+          transactionHash: "0xsupply",
           transactionLink: "",
           gasUsed: "150000",
         });
 
         await protocolWriteStep(
           makeInput({
-            network: "11155111",
+            network: "8453",
             ethValue: "0.04",
-            _actionType: "uniswap/swap-exact-input",
+            _actionType: "compound/supply",
           })
         );
 
@@ -462,13 +452,13 @@ describe("protocolWriteStep", () => {
           .calls[0];
         expect(category).toBe("configuration");
         expect(message).toContain("Dropped ethValue");
-        expect(message).toContain("exactInputSingle");
+        expect(message).toContain("supply");
         expect(message).toContain("0.04");
         expect(labels).toMatchObject({
           plugin_name: "protocol",
           action_name: "protocol-write",
-          protocol_slug: "uniswap",
-          function_name: "exactInputSingle",
+          protocol_slug: "compound",
+          function_name: "supply",
           state_mutability: "nonpayable",
         });
       });
@@ -799,6 +789,9 @@ describe("protocolWriteStep", () => {
       ["zero", "0"],
       ["zero with decimals", "0.0"],
       ["zero with many decimals", "0.0000"],
+      // Forms a regex would false-positive but parseEther correctly sees as zero:
+      ["leading-zero zero", "00"],
+      ["leading dot zero", ".0"],
     ])("treats ethValue %s as no native value and skips the WETH check", async (_label, ethValue) => {
       setupUniswapSwap();
 

@@ -1,6 +1,7 @@
 import "server-only";
 import "@/protocols";
 
+import { ethers } from "ethers";
 import {
   type WriteContractCoreInput,
   type WriteContractResult,
@@ -34,8 +35,6 @@ const UNISWAP_PAYABLE_SWAP_FUNCTIONS: ReadonlySet<string> = new Set([
   "exactOutputSingle",
 ]);
 
-const ZERO_ETH_VALUE_PATTERN = /^0(\.0+)?$/;
-
 type PreflightResult =
   | { ok: true }
   | { ok: false; error: string };
@@ -62,11 +61,14 @@ function resolveEthValue(
   }
 
   // Drop ethValue when the resolved function is positively non-payable. Form
-  // state can retain stale ethValue from a previous configuration (e.g. a
-  // WETH.deposit action reconfigured into a Uniswap swap), and the value
-  // cannot reach the contract anyway. If the function is missing from the
-  // ABI or its mutability is unknown, pass the value through and let
-  // writeContractCore surface the existing payable/not-found errors.
+  // state can retain stale ethValue from a previous payable configuration
+  // when the user reconfigures the action to a non-payable target (e.g. a
+  // WETH.deposit action reconfigured into Compound.supply). Letting the
+  // value through would either revert on-chain with an opaque "function is
+  // not payable" or, worse, get masked by RPC simulation. If the function is
+  // missing from the ABI or its mutability is unknown, pass the value
+  // through and let writeContractCore's existing payable/not-found errors
+  // surface.
   const fn = findAbiFunction(parsedAbi as AbiItem[], functionName);
   if (fn?.stateMutability && fn.stateMutability !== "payable") {
     logUserError(
@@ -91,10 +93,13 @@ function resolveEthValue(
 // address. Setting ETH Value with any other tokenIn strands the ETH in the
 // router (the contract has no way to refund it without an explicit refundETH
 // in a multicall, which we don't expose). Catch this before the tx is sent.
+//
+// Runs before ABI resolution: it only needs `network`, raw `ethValue`, and
+// raw `tokenIn`, so a misconfigured swap fails fast without paying for an
+// Etherscan ABI fetch on the user-specified-address path.
 function checkUniswapNativeEthPreflight(
   input: ProtocolWriteInput,
-  meta: ProtocolMeta,
-  ethValue: string | undefined
+  meta: ProtocolMeta
 ): PreflightResult {
   const isUniswapSwap =
     meta.protocolSlug === "uniswap" &&
@@ -102,11 +107,27 @@ function checkUniswapNativeEthPreflight(
   if (!isUniswapSwap) {
     return { ok: true };
   }
-  if (!ethValue) {
+
+  const rawEthValue = input.ethValue;
+  if (typeof rawEthValue !== "string" || rawEthValue.trim() === "") {
     return { ok: true };
   }
-  const trimmed = ethValue.trim();
-  if (trimmed === "" || ZERO_ETH_VALUE_PATTERN.test(trimmed)) {
+
+  // Use parseEther for the zero check rather than a regex: the regex would
+  // false-positive on inputs like "00", ".0", or "0.0e0" by treating them as
+  // non-zero, even though the downstream parseEther sees them as zero (or
+  // throws). Letting parseEther decide makes the preflight semantics match
+  // what actually reaches the contract.
+  let parsedEthValue: bigint;
+  try {
+    parsedEthValue = ethers.parseEther(rawEthValue.trim());
+  } catch {
+    // Malformed value - let writeContractCore's existing parseEther guard
+    // produce the canonical "Invalid payable value" error rather than
+    // shadowing it with a misleading WETH-address error.
+    return { ok: true };
+  }
+  if (parsedEthValue === BigInt(0)) {
     return { ok: true };
   }
 
@@ -221,6 +242,13 @@ export async function protocolWriteStep(
       };
     }
 
+    // Run cheap protocol-specific preflights before any network I/O so a
+    // misconfigured action fails fast (no Etherscan ABI fetch, no RPC).
+    const preflight = checkUniswapNativeEthPreflight(input, meta);
+    if (!preflight.ok) {
+      return { success: false, error: preflight.error };
+    }
+
     // 4. Resolve ABI (from definition or auto-fetch from explorer)
     let resolvedAbi: string;
     try {
@@ -247,11 +275,6 @@ export async function protocolWriteStep(
       meta.functionName,
       meta.protocolSlug
     );
-
-    const preflight = checkUniswapNativeEthPreflight(input, meta, ethValue);
-    if (!preflight.ok) {
-      return { success: false, error: preflight.error };
-    }
 
     const coreInput: WriteContractCoreInput = {
       contractAddress,
