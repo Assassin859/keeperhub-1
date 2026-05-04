@@ -18,12 +18,23 @@
  * Required env:
  *   COALITION_DEPLOYER_PK   Hex private key with Base Sepolia ETH
  *   RPC_URL                 (optional) JSON-RPC URL; defaults to https://sepolia.base.org
+ *   COALITION_BUILD_DIR     (optional) Where to find solc-compiled .bin/.abi
+ *                           artifacts for Coalition.sol and TestToken.sol.
+ *                           Defaults to /tmp/coalition-build.
+ *
+ * Prerequisite: compile the contracts with solc before running. From repo root:
+ *   solc --bin --abi --optimize --base-path . --include-path node_modules \
+ *     -o /tmp/coalition-build \
+ *     plugins/coalition/contracts/Coalition.sol \
+ *     plugins/coalition/contracts/TestToken.sol
  *
  * Run:
  *   node scripts/coalition-e2e.mjs
  */
 import { readFileSync, writeFileSync } from "node:fs";
-import { ethers } from "../node_modules/ethers/lib.esm/index.js";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { ethers } from "ethers";
 
 // Default to publicnode (multi-region) which is more consistent than the
 // public sepolia.base.org load balancer.
@@ -34,12 +45,21 @@ if (!PK) {
   process.exit(1);
 }
 
-const ADDRESSES_PATH =
-  "/home/philix/Documents/GitHub/keeperhub/.worktrees/coalition-plugin/plugins/coalition/contracts/addresses.ts";
-const COALITION_BIN_PATH = "/tmp/coalition-build/Coalition_sol_Coalition.bin";
-const COALITION_ABI_PATH = "/tmp/coalition-build/Coalition_sol_Coalition.abi";
-const TT_BIN_PATH = "/tmp/coalition-build/TestToken_sol_TestToken.bin";
-const TT_ABI_PATH = "/tmp/coalition-build/TestToken_sol_TestToken.abi";
+// Resolve paths relative to this script so the e2e runs from any clone.
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(SCRIPT_DIR, "..");
+const ADDRESSES_PATH = resolve(
+  REPO_ROOT,
+  "plugins/coalition/contracts/addresses.ts"
+);
+
+// Build artifacts: regenerate via the solc command in scripts/deploy-coalition.ts.
+// Override COALITION_BUILD_DIR if you produce them elsewhere.
+const BUILD_DIR = process.env.COALITION_BUILD_DIR || "/tmp/coalition-build";
+const COALITION_BIN_PATH = `${BUILD_DIR}/Coalition_sol_Coalition.bin`;
+const COALITION_ABI_PATH = `${BUILD_DIR}/Coalition_sol_Coalition.abi`;
+const TT_BIN_PATH = `${BUILD_DIR}/TestToken_sol_TestToken.bin`;
+const TT_ABI_PATH = `${BUILD_DIR}/TestToken_sol_TestToken.abi`;
 
 // ---- Load ABI + bytecode (use solc JSON output, not the TS const) ----
 const COALITION_ABI = JSON.parse(readFileSync(COALITION_ABI_PATH, "utf8"));
