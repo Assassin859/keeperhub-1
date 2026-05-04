@@ -234,9 +234,49 @@ export async function proposeCore(
         const transactionLink = await adapter.getTransactionUrl(
           sponsored.transactionHash
         );
+
+        // Sponsored bundlers do not return logs in the receipt they hand back.
+        // Refetch via the RPC manager to access the Proposed event for coalitionId.
+        let fullReceipt: ethers.TransactionReceipt | null = null;
+        try {
+          fullReceipt = await rpcManager.executeWithFailover(
+            (rpcProvider) =>
+              rpcProvider.getTransactionReceipt(sponsored.transactionHash),
+            "read"
+          );
+        } catch (error) {
+          logUserError(
+            ErrorCategory.NETWORK_RPC,
+            "[Coalition propose] Failed to refetch sponsored receipt for event parsing",
+            error,
+            { plugin_name: "coalition", action_name: "propose" }
+          );
+          return {
+            success: false,
+            error: `Sponsored tx ${sponsored.transactionHash} confirmed but receipt could not be refetched: ${getErrorMessage(error)}`,
+          };
+        }
+
+        if (!fullReceipt) {
+          return {
+            success: false,
+            error: `Sponsored tx ${sponsored.transactionHash} confirmed but provider returned null receipt`,
+          };
+        }
+
+        const proposedArgs = parseCoalitionEvent(fullReceipt.logs, "Proposed");
+        if (!proposedArgs) {
+          return {
+            success: false,
+            error:
+              "Sponsored Coalition.propose tx confirmed but Proposed event was not emitted; investigate via the tx hash",
+          };
+        }
+
+        const coalitionId = String(proposedArgs.id ?? proposedArgs[0]);
         return {
           success: true,
-          coalitionId: "",
+          coalitionId,
           transactionHash: sponsored.transactionHash,
           transactionLink,
           gasUsed: sponsored.gasUsed,

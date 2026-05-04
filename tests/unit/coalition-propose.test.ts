@@ -110,12 +110,17 @@ vi.mock("@/lib/web3/transaction-manager", () => ({
   ) => fn({}),
 }));
 
+type SponsoredResult = { transactionHash: string; gasUsed: string } | null;
+const isGasSponsorshipEnabledMock = vi.fn<[], boolean>(() => false);
+const executeSponsoredContractTransactionMock = vi.fn<[unknown], Promise<SponsoredResult>>(
+  async () => null
+);
 vi.mock("@/lib/web3/sponsorship-feature-flag", () => ({
-  isGasSponsorshipEnabled: () => false,
+  isGasSponsorshipEnabled: () => isGasSponsorshipEnabledMock(),
 }));
-
 vi.mock("@/lib/web3/sponsored-transaction-manager", () => ({
-  executeSponsoredContractTransaction: vi.fn(async () => null),
+  executeSponsoredContractTransaction: (args: unknown) =>
+    executeSponsoredContractTransactionMock(args),
 }));
 
 vi.mock("@/lib/web3/gas-defaults", () => ({
@@ -143,6 +148,10 @@ beforeEach(() => {
   readContractMock.mockReset();
   executeContractCallMock.mockReset();
   mockReceiptForRefetch = null;
+  isGasSponsorshipEnabledMock.mockReset();
+  isGasSponsorshipEnabledMock.mockReturnValue(false);
+  executeSponsoredContractTransactionMock.mockReset();
+  executeSponsoredContractTransactionMock.mockResolvedValue(null);
 });
 
 describe("coalition propose", () => {
@@ -259,5 +268,80 @@ describe("coalition propose", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+
+  it("sponsored path refetches receipt and returns coalitionId", async () => {
+    const { ethers } = await import("ethers");
+    const { COALITION_ABI } = await import(
+      "../../plugins/coalition/contracts/coalition-abi"
+    );
+    const iface = new ethers.Interface(
+      // biome-ignore lint/suspicious/noExplicitAny: ABI constant satisfies InterfaceAbi at runtime
+      COALITION_ABI as any
+    );
+    const log = iface.encodeEventLog("Proposed", [
+      BigInt(7),
+      `0x${"ab".repeat(32)}`,
+      [
+        "0x0000000000000000000000000000000000000001",
+        "0x0000000000000000000000000000000000000002",
+      ],
+      "0x000000000000000000000000000000000000bbbb",
+      BigInt(1000),
+      BigInt(1800000000),
+    ]);
+
+    isGasSponsorshipEnabledMock.mockReturnValue(true);
+    executeSponsoredContractTransactionMock.mockResolvedValueOnce({
+      transactionHash: "0xsponsored",
+      gasUsed: "50000",
+    });
+    mockReceiptForRefetch = { logs: [{ topics: log.topics, data: log.data }] };
+
+    const result = await proposeCore({
+      network: "base-sepolia",
+      participants: VALID_PARTICIPANTS,
+      termsHash: VALID_TERMS_HASH,
+      deadlineUnix: VALID_DEADLINE,
+      stakeToken: VALID_STAKE_TOKEN,
+      stakePerParty: VALID_STAKE_PER_PARTY,
+      _context: { organizationId: "org_1" },
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+    expect(result.coalitionId).toBe("7");
+    expect(result.transactionHash).toBe("0xsponsored");
+    expect(executeContractCallMock).not.toHaveBeenCalled();
+  });
+
+  it("sponsored path fails loudly when receipt has no Proposed event", async () => {
+    isGasSponsorshipEnabledMock.mockReturnValue(true);
+    executeSponsoredContractTransactionMock.mockResolvedValueOnce({
+      transactionHash: "0xsponsored",
+      gasUsed: "50000",
+    });
+    // Receipt comes back with no logs - simulates a confirmed tx that
+    // somehow did not emit Proposed (shouldn't happen, but we surface it
+    // rather than returning a corrupt empty coalitionId).
+    mockReceiptForRefetch = { logs: [] };
+
+    const result = await proposeCore({
+      network: "base-sepolia",
+      participants: VALID_PARTICIPANTS,
+      termsHash: VALID_TERMS_HASH,
+      deadlineUnix: VALID_DEADLINE,
+      stakeToken: VALID_STAKE_TOKEN,
+      stakePerParty: VALID_STAKE_PER_PARTY,
+      _context: { organizationId: "org_1" },
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      return;
+    }
+    expect(result.error).toMatch(/Proposed event/i);
   });
 });
