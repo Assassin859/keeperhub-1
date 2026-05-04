@@ -113,6 +113,12 @@ jobs:
       - name: Install events deps
         working-directory: keeperhub-events
         run: pnpm install --frozen-lockfile
+      - name: Ensure keeperhub-network exists
+        # docker-compose.yml declares keeperhub-network as external, so
+        # a fresh CI runner needs the network created before any compose
+        # command runs (`compose up` validates external networks even
+        # for inactive profiles). `|| true` keeps it idempotent.
+        run: docker network create keeperhub-network 2>/dev/null || true
       - name: Start integration test infrastructure
         # Bring up only the services events tests need (anvil, localstack,
         # redis). --wait blocks until healthchecks pass. Excludes test-app /
