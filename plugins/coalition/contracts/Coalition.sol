@@ -8,6 +8,13 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 /// @title Coalition
 /// @notice Multi-party on-chain commitments with stake escrow and slashing.
 /// @dev v1 design notes:
+///  - `stakeToken` MUST be a standard ERC-20. Fee-on-transfer, deflationary,
+///    and rebasing tokens are unsupported: `sign` credits the full
+///    `stakePerParty` to bookkeeping without checking the actually-received
+///    balance, so any short-receipt token leaves slash/dissolve/expire
+///    unable to transfer the bookkept amount and reverts on the final
+///    refunds. This is a known v1 limitation; see the project tracker for
+///    the contract-change ticket that adds a balance-delta require.
 ///  - `recordBreach`, `slash`, and `expire` are anyone-callable; off-chain
 ///    arbitration is expected to gate breach evidence in production deployments.
 ///  - `dissolve` is restricted to participants to prevent griefing.

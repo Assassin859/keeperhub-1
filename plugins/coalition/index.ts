@@ -81,8 +81,10 @@ const coalitionPlugin: IntegrationPlugin = {
           key: "stakeToken",
           label: "Stake Token Address",
           type: "template-input",
-          placeholder: "0x... (ERC-20)",
+          placeholder: "0x... (standard ERC-20 only)",
           example: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+          helpTip:
+            "Use a standard ERC-20 token. Fee-on-transfer, deflationary, or rebasing tokens are not supported: the contract credits the full stake amount on sign() without verifying the received balance, so any short-receipt token will leave slash/dissolve/expire unable to refund all participants.",
           required: true,
         },
         {
