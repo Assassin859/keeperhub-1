@@ -11,6 +11,7 @@ import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 import { TEMPLATE_SPECS } from "@/lib/safe/condition-templates";
 import { isSafeSupportedChain } from "@/lib/safe/contracts";
+import { formatPeriod, formatTokenAmount } from "@/lib/safe/format-allowance";
 import { getNativeUsdPrice, weiToUsd } from "@/lib/safe/price-oracle";
 import {
   PROTOCOL_CATALOG,
@@ -304,8 +305,21 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     if (directRulesInput.length > 0) {
-      const directGas =
-        BigInt(directRulesInput.length) * GAS_SCOPE_TARGET;
+      // ERC-20 transfer/approve get scopeFunction with a per-parameter
+      // condition (counterparty pinned + amount within allowance), which is
+      // pricier than the bare scopeTarget used for native sends. Sum each
+      // rule under its kind-specific cost so the wizard preview matches
+      // what the install actually pays.
+      let directGas = BigInt(0);
+      for (const rule of directRulesInput) {
+        if (rule.kind === "erc20-transfer") {
+          directGas += GAS_DIRECT_RULE_TRANSFER;
+        } else if (rule.kind === "erc20-approve") {
+          directGas += GAS_DIRECT_RULE_APPROVE;
+        } else {
+          directGas += GAS_DIRECT_RULE_NATIVE;
+        }
+      }
       operations.push({
         label: `Scope ${directRulesInput.length} direct rule${directRulesInput.length === 1 ? "" : "s"}`,
         detail: directRulesInput
@@ -315,7 +329,7 @@ export async function POST(request: Request): Promise<NextResponse> {
                 ? r.counterparty
                 : (r.tokenAddress ?? "?");
             const truncated = `${target.slice(0, 6)}...${target.slice(-4)}`;
-            return `${r.kind} on ${truncated} (${r.tokenSymbol}, cap ${r.amountHuman} every ${r.periodSeconds}s)`;
+            return `${r.kind} on ${truncated} (${r.tokenSymbol}, cap ${r.amountHuman} ${formatPeriod(r.periodSeconds)})`;
           })
           .join("; "),
         gasUnits: directGas.toString(),
@@ -327,10 +341,11 @@ export async function POST(request: Request): Promise<NextResponse> {
       operations.push({
         label: `Set ${tokenAllowances.length} token allowance${tokenAllowances.length === 1 ? "" : "s"}`,
         detail: tokenAllowances
-          .map(
-            (a) =>
-              `${a.tokenSymbol} (${a.tokenAddress.slice(0, 6)}...${a.tokenAddress.slice(-4)}): cap ${a.maxRefillWei} wei every ${a.periodSeconds}s`
-          )
+          .map((a) => {
+            const cap = formatTokenAmount(a.maxRefillWei, a.tokenDecimals);
+            const truncated = `${a.tokenAddress.slice(0, 6)}...${a.tokenAddress.slice(-4)}`;
+            return `${a.tokenSymbol} (${truncated}): cap ${cap} ${a.tokenSymbol} ${formatPeriod(a.periodSeconds)}`;
+          })
           .join("; "),
         gasUnits: (
           BigInt(tokenAllowances.length) * GAS_SET_ALLOWANCE

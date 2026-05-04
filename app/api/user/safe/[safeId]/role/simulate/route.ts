@@ -1,13 +1,19 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { ethers } from "ethers";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { db } from "@/lib/db";
-import { chains } from "@/lib/db/schema";
+import {
+  chains,
+  safeRoleAllowances,
+  safeRoleProtocols,
+  safeRoles,
+} from "@/lib/db/schema";
 import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 import { getSafeForOrg, validateSafeAdmin } from "@/lib/safe/auth";
 import { TEMPLATE_SPECS } from "@/lib/safe/condition-templates";
+import { formatPeriod, formatTokenAmount } from "@/lib/safe/format-allowance";
 import { getNativeUsdPrice, weiToUsd } from "@/lib/safe/price-oracle";
 import {
   PROTOCOL_CATALOG,
@@ -198,40 +204,102 @@ export async function POST(
       );
     }
 
+    // If a role is already installed for this Safe, switch to update mode:
+    // skip the one-shot install operations (deploy / enable / assign /
+    // setDefault) and only show the diff against current state. Otherwise
+    // emit the full install plan.
+    const existingRoleRow = await db
+      .select({
+        id: safeRoles.id,
+        rolesModifierAddress: safeRoles.rolesModifierAddress,
+        status: safeRoles.status,
+      })
+      .from(safeRoles)
+      .where(
+        and(
+          eq(safeRoles.safeWalletId, safe.id),
+          eq(safeRoles.roleType, "automation")
+        )
+      )
+      .limit(1);
+    const isUpdate =
+      existingRoleRow[0] !== undefined &&
+      existingRoleRow[0].status === "active";
+
     const operations: OperationSummary[] = [];
     let totalGas = BigInt(0);
 
-    operations.push({
-      label: "Deploy Zodiac Roles modifier",
-      detail:
-        "Deploys a fresh Roles proxy owned by the Safe via the canonical ModuleProxyFactory.",
-      gasUnits: GAS_DEPLOY_MODULE.toString(),
-    });
-    totalGas += GAS_DEPLOY_MODULE;
+    if (!isUpdate) {
+      operations.push({
+        label: "Deploy Zodiac Roles modifier",
+        detail:
+          "Deploys a fresh Roles proxy owned by the Safe via the canonical ModuleProxyFactory.",
+        gasUnits: GAS_DEPLOY_MODULE.toString(),
+      });
+      totalGas += GAS_DEPLOY_MODULE;
 
-    operations.push({
-      label: "Enable module on Safe",
-      detail:
-        "safe.enableModule(rolesModifier) authorises the modifier to call execTransactionFromModule.",
-      gasUnits: GAS_ENABLE_MODULE.toString(),
-    });
-    totalGas += GAS_ENABLE_MODULE;
+      operations.push({
+        label: "Enable module on Safe",
+        detail:
+          "safe.enableModule(rolesModifier) authorises the modifier to call execTransactionFromModule.",
+        gasUnits: GAS_ENABLE_MODULE.toString(),
+      });
+      totalGas += GAS_ENABLE_MODULE;
 
-    operations.push({
-      label: "Assign automation role to Turnkey EOA",
-      detail: "rolesModifier.assignRoles(delegate, [roleKey], [true])",
-      gasUnits: GAS_ASSIGN_ROLES.toString(),
-    });
-    totalGas += GAS_ASSIGN_ROLES;
+      operations.push({
+        label: "Assign automation role to Turnkey EOA",
+        detail: "rolesModifier.assignRoles(delegate, [roleKey], [true])",
+        gasUnits: GAS_ASSIGN_ROLES.toString(),
+      });
+      totalGas += GAS_ASSIGN_ROLES;
 
-    operations.push({
-      label: "Set default role for delegate",
-      detail: "rolesModifier.setDefaultRole(delegate, roleKey)",
-      gasUnits: GAS_SET_DEFAULT_ROLE.toString(),
-    });
-    totalGas += GAS_SET_DEFAULT_ROLE;
+      operations.push({
+        label: "Set default role for delegate",
+        detail: "rolesModifier.setDefaultRole(delegate, roleKey)",
+        gasUnits: GAS_SET_DEFAULT_ROLE.toString(),
+      });
+      totalGas += GAS_SET_DEFAULT_ROLE;
+    }
+
+    // Determine which protocols are NEW vs already on chain. In install
+    // mode, "new" = every desired protocol. In update mode, "new" = the
+    // delta against the cached protocol rows so we don't double-count the
+    // gas for ones that are already installed.
+    let alreadyAppliedSlugs = new Set<string>();
+    let alreadyAppliedAllowanceKeys = new Set<string>();
+    if (isUpdate && existingRoleRow[0]) {
+      const existingProtocols = await db
+        .select({
+          protocolSlug: safeRoleProtocols.protocolSlug,
+          status: safeRoleProtocols.status,
+        })
+        .from(safeRoleProtocols)
+        .where(eq(safeRoleProtocols.roleId, existingRoleRow[0].id));
+      alreadyAppliedSlugs = new Set(
+        existingProtocols
+          .filter((p) => p.status === "allowed")
+          .map((p) => p.protocolSlug)
+      );
+      const existingAllowances = await db
+        .select({
+          protocolSlug: safeRoleAllowances.protocolSlug,
+          tokenAddress: safeRoleAllowances.tokenAddress,
+        })
+        .from(safeRoleAllowances)
+        .where(eq(safeRoleAllowances.roleId, existingRoleRow[0].id));
+      // Structural key: `<slug>|<lowercaseAddress>`. Matches the predicate
+      // used below in `newOrChangedAllowances.filter`. The orchestrator's
+      // diff path keys by the on-chain `tokenAllowanceKey` hash; this
+      // route stays tuple-based to avoid recomputing the role key.
+      alreadyAppliedAllowanceKeys = new Set(
+        existingAllowances.map(
+          (a) => `${a.protocolSlug}|${a.tokenAddress.toLowerCase()}`
+        )
+      );
+    }
 
     const applied: string[] = [];
+    const newlyApplied: string[] = [];
     let totalFunctionScopings = 0;
     let totalTargetScopings = 0;
     for (const p of protocolInputs) {
@@ -246,6 +314,13 @@ export async function POST(
         continue;
       }
       applied.push(p.slug);
+      // Skip gas accounting for protocols already on chain. The orchestrator's
+      // diff path will emit zero or near-zero calls for these because the SDK's
+      // callsPlannedForApplyRole sees them as no-ops.
+      if (alreadyAppliedSlugs.has(p.slug)) {
+        continue;
+      }
+      newlyApplied.push(p.slug);
       if (catalog.enforcementLevel === "contract-allowlist") {
         const targets = getProtocolTargets(
           p.slug as ProtocolSlug,
@@ -265,8 +340,11 @@ export async function POST(
         totalFunctionScopings > 0
           ? `~${totalTargetScopings} target allowlistings + ~${totalFunctionScopings} function scopings with parameter conditions (recipient, token allowlist, amount within allowance).`
           : `~${totalTargetScopings} target-level allowlistings (no per-function conditions on these protocols).`;
+      const label = isUpdate
+        ? `Scope ${newlyApplied.length} new protocol${newlyApplied.length === 1 ? "" : "s"}`
+        : `Scope ${newlyApplied.length} protocol${newlyApplied.length === 1 ? "" : "s"}`;
       operations.push({
-        label: `Scope ${applied.length} protocol${applied.length === 1 ? "" : "s"}`,
+        label,
         detail: scopeDetail,
         gasUnits: (
           BigInt(totalTargetScopings) * GAS_SCOPE_TARGET +
@@ -278,20 +356,40 @@ export async function POST(
         BigInt(totalFunctionScopings) * GAS_SCOPE_FUNCTION;
     }
 
-    if (tokenAllowances.length > 0) {
+    // Allowance accounting: in update mode show only the buckets that need a
+    // new setAllowance call (added or changed). Buckets already on chain at
+    // the same cap+period get zero gas.
+    const newOrChangedAllowances = tokenAllowances.filter((a) => {
+      if (!isUpdate) {
+        return true;
+      }
+      // The diff path keys allowances by tokenAllowanceKey, but the simulate
+      // route doesn't have the roleKey in scope. Fall back to a structural
+      // match by (protocolSlug, tokenAddress) -- if the bucket exists in DB
+      // we conservatively skip it; the orchestrator does the precise diff
+      // at execution time.
+      return !alreadyAppliedAllowanceKeys.has(
+        `${a.protocolSlug}|${a.tokenAddress.toLowerCase()}`
+      );
+    });
+    if (newOrChangedAllowances.length > 0) {
+      const label = isUpdate
+        ? `Set ${newOrChangedAllowances.length} new token allowance${newOrChangedAllowances.length === 1 ? "" : "s"}`
+        : `Set ${newOrChangedAllowances.length} token allowance${newOrChangedAllowances.length === 1 ? "" : "s"}`;
       operations.push({
-        label: `Set ${tokenAllowances.length} token allowance${tokenAllowances.length === 1 ? "" : "s"}`,
-        detail: tokenAllowances
-          .map(
-            (a) =>
-              `${a.tokenSymbol} (${a.tokenAddress.slice(0, 6)}...${a.tokenAddress.slice(-4)}): cap ${a.maxRefillWei} wei every ${a.periodSeconds}s`
-          )
+        label,
+        detail: newOrChangedAllowances
+          .map((a) => {
+            const cap = formatTokenAmount(a.maxRefillWei, a.tokenDecimals);
+            const truncated = `${a.tokenAddress.slice(0, 6)}...${a.tokenAddress.slice(-4)}`;
+            return `${a.tokenSymbol} (${truncated}): cap ${cap} ${a.tokenSymbol} ${formatPeriod(a.periodSeconds)}`;
+          })
           .join("; "),
         gasUnits: (
-          BigInt(tokenAllowances.length) * GAS_SET_ALLOWANCE
+          BigInt(newOrChangedAllowances.length) * GAS_SET_ALLOWANCE
         ).toString(),
       });
-      totalGas += BigInt(tokenAllowances.length) * GAS_SET_ALLOWANCE;
+      totalGas += BigInt(newOrChangedAllowances.length) * GAS_SET_ALLOWANCE;
     }
 
     totalGas += GAS_OUTER_WRAPPER;

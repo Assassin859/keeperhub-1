@@ -5,10 +5,8 @@ import { getSafeForOrg, validateSafeAdmin } from "@/lib/safe/auth";
 import { PROTOCOL_CATALOG } from "@/lib/safe/protocol-registry";
 import {
   type DirectRuleInput,
-  getSafeRole,
+  getSafeRoleWithBackfill,
   installRolesWithInitialConfig,
-  listRoleAllowances,
-  listRoleProtocols,
   type ProtocolInput,
 } from "@/lib/safe/roles-orchestrator";
 
@@ -179,7 +177,7 @@ export async function GET(
       );
     }
 
-    const role = await getSafeRole(safe.id);
+    const { role, protocols, allowances } = await getSafeRoleWithBackfill(safe);
     if (!role) {
       return NextResponse.json({
         installed: false,
@@ -188,11 +186,6 @@ export async function GET(
         allowances: [],
       });
     }
-
-    const [protocols, allowances] = await Promise.all([
-      listRoleProtocols(role.id),
-      listRoleAllowances(role.id),
-    ]);
 
     return NextResponse.json({
       installed: true,
