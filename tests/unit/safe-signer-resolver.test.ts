@@ -29,6 +29,14 @@ vi.mock("@/lib/db/schema", () => ({
     organizationId: "organizationId",
     chainId: "chainId",
   },
+  safeRoles: {
+    rolesModifierAddress: "rolesModifierAddress",
+    roleKey: "roleKey",
+    delegateAddress: "delegateAddress",
+    status: "status",
+    safeWalletId: "safeWalletId",
+    roleType: "roleType",
+  },
 }));
 
 vi.mock("drizzle-orm", () => ({
@@ -46,6 +54,37 @@ vi.mock("@/lib/para/wallet-helpers", () => ({
 
 vi.mock("@/lib/address-utils", () => ({
   normalizeAddressForStorage: (addr: string) => addr.toLowerCase(),
+}));
+
+// The signer-resolver pulls these in for the chain-state probe + reconcile
+// fallback. Tests want to stay DB-only so we stub them to "no modules on
+// chain" and a no-op reconcile -- the routing behaviour we're asserting
+// here is purely the DB-based decision.
+vi.mock("@/lib/rpc/rpc-config", () => ({
+  getRpcUrlByChainId: () => "http://stub",
+}));
+vi.mock("@/lib/rpc/provider-factory", () => ({
+  getRpcProviderFromUrls: async () => ({ getProvider: () => ({}) }),
+}));
+vi.mock("@/lib/safe/zodiac-roles", () => ({
+  readEnabledSafeModules: async () => [],
+  findRolesModifierForSafe: async () => null,
+}));
+vi.mock("@/lib/safe/zodiac-contracts", () => ({
+  orgAutomationRoleKey: () => "0xrole",
+}));
+vi.mock("@/lib/safe/roles-orchestrator", () => ({
+  reconcileSafeRoleFromChain: async () => ({
+    success: true,
+    installed: false,
+    reason: "no-roles-modifier",
+  }),
+}));
+vi.mock("@/lib/logging", () => ({
+  ErrorCategory: { TRANSACTION: "transaction" },
+  logSystemError: () => {
+    // swallow logs in tests
+  },
 }));
 
 // Import after mocks
@@ -99,20 +138,52 @@ describe("resolveSignerMode", () => {
   });
 
   it("returns safe mode when Safe is deployed and toggle is on", async () => {
-    selectLimitMock.mockResolvedValue([
-      {
-        id: "safe-1",
-        safeAddress: SAFE,
-        status: "deployed",
-        isSigningActive: true,
-      },
-    ]);
+    // First .limit() call (safeWallets) -> the deployed Safe.
+    // Second .limit() call (safeRoles) -> empty: no DB role row.
+    // Chain probe is mocked to return no modules, so signer-resolver
+    // falls through to plain `safe` mode.
+    selectLimitMock
+      .mockResolvedValueOnce([
+        {
+          id: "safe-1",
+          safeAddress: SAFE,
+          status: "deployed",
+          isSigningActive: true,
+        },
+      ])
+      .mockResolvedValueOnce([]);
     const mode = await resolveSignerMode(ORG_ID, CHAIN_ID);
     expect(mode.kind).toBe("safe");
     if (mode.kind === "safe") {
       expect(mode.ownerAddress).toBe(OWNER.toLowerCase());
       expect(mode.safeAddress).toBe(SAFE);
       expect(mode.safeWalletId).toBe("safe-1");
+    }
+  });
+
+  it("returns safe-role mode when DB has the role row", async () => {
+    selectLimitMock
+      .mockResolvedValueOnce([
+        {
+          id: "safe-1",
+          safeAddress: SAFE,
+          status: "deployed",
+          isSigningActive: true,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          rolesModifierAddress: "0xMOD",
+          roleKey: "0xkey",
+          delegateAddress: "0xdelegate",
+          status: "active",
+        },
+      ]);
+    const mode = await resolveSignerMode(ORG_ID, CHAIN_ID);
+    expect(mode.kind).toBe("safe-role");
+    if (mode.kind === "safe-role") {
+      expect(mode.rolesModifierAddress).toBe("0xMOD");
+      expect(mode.roleKey).toBe("0xkey");
     }
   });
 });

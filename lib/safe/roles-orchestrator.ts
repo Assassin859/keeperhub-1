@@ -6,13 +6,14 @@ import { ethers } from "ethers";
 // biome-ignore lint/style/useImportType: rolesAbi is used as a value for Interface
 import {
   callsPlannedForApplyRole,
+  c as conditions,
   encodeCalls,
   type Permission,
   type Role,
   rolesAbi,
 } from "zodiac-roles-sdk";
 import { normalizeAddressForStorage } from "@/lib/address-utils";
-import { getTokenInfo } from "@/lib/contracts/tokens";
+import { getChainTokens, getTokenInfo } from "@/lib/contracts/tokens";
 import { db } from "@/lib/db";
 import {
   type SafeRole,
@@ -38,7 +39,11 @@ import {
   type TemplateSlug,
 } from "@/lib/safe/condition-templates";
 import { getSafeContracts } from "@/lib/safe/contracts";
-import { PROTOCOL_CATALOG } from "@/lib/safe/protocol-registry";
+import { resolveDefaultTokensForProtocol } from "@/lib/safe/protocol-default-tokens";
+import {
+  PROTOCOL_CATALOG,
+  type ProtocolSlug,
+} from "@/lib/safe/protocol-registry";
 import { buildDesiredRole } from "@/lib/safe/simulate";
 import {
   getModuleProxyFactoryAddress,
@@ -51,8 +56,12 @@ import {
   buildMultiSendCalldata,
   buildRolesSetUpCalldata,
   buildSetAllowanceCalldata,
+  findRolesModifierForSafe,
   type MultiSendCall,
+  type OnChainAllowance,
   parseModuleProxyCreationEvent,
+  readEnabledSafeModules,
+  readRoleAllowance,
 } from "@/lib/safe/zodiac-roles";
 import { generateId } from "@/lib/utils/id";
 import {
@@ -122,6 +131,98 @@ export type DirectRuleInput = {
 
 /** Synthetic protocol slug for direct rules in safe_role_allowances. */
 export const DIRECT_RULE_PROTOCOL_SLUG = "direct" as const;
+
+/**
+ * 4-byte function selectors for the ERC-20 methods we scope under direct
+ * rules. Stored verbatim on `safe_role_protocols.allowedSelectors` so the
+ * audit panel can show "transfer(address,uint256)" alongside the rule.
+ */
+const ERC20_TRANSFER_SELECTOR = "0xa9059cbb" as const;
+const ERC20_APPROVE_SELECTOR = "0x095ea7b3" as const;
+
+/** Function signatures matching the selectors above. The signature form is
+ * what the SDK's permission planner needs to decompose calldata into the
+ * (recipient, amount) tuple our condition matches against. */
+const ERC20_TRANSFER_SIGNATURE = "transfer(address,uint256)" as const;
+const ERC20_APPROVE_SIGNATURE = "approve(address,uint256)" as const;
+
+export function directRuleSelector(
+  kind: DirectRuleInput["kind"]
+): `0x${string}` | null {
+  if (kind === "erc20-transfer") {
+    return ERC20_TRANSFER_SELECTOR;
+  }
+  if (kind === "erc20-approve") {
+    return ERC20_APPROVE_SELECTOR;
+  }
+  return null;
+}
+
+function directRuleSignature(kind: DirectRuleInput["kind"]): string | null {
+  if (kind === "erc20-transfer") {
+    return ERC20_TRANSFER_SIGNATURE;
+  }
+  if (kind === "erc20-approve") {
+    return ERC20_APPROVE_SIGNATURE;
+  }
+  return null;
+}
+
+/**
+ * Build the on-chain `Permission` for a direct rule.
+ *
+ * - For ERC-20 transfer/approve we emit a `FunctionPermission` scoped to the
+ *   token contract, the function signature, and a `matches` condition that
+ *   pins the first parameter (recipient/spender) to the configured
+ *   counterparty and binds the second parameter (amount) to the per-token
+ *   allowance bucket. This means a role holder cannot redirect transfers /
+ *   approvals to a different address even though they hold the role key.
+ *
+ * - For native ETH transfers we still emit a target-only `TargetPermission`
+ *   with `send: true`. The Roles modifier doesn't expose a value cap on raw
+ *   sends; tightening this needs a transaction guard which is out of scope
+ *   here. The wizard banner makes the limitation explicit.
+ *
+ * Returns `null` for malformed rules so the caller can drop them without
+ * tripping the SDK's planner.
+ */
+export function buildDirectRulePermission(
+  rule: DirectRuleInput,
+  allowanceKey: `0x${string}` | null
+): Permission | null {
+  if (!ethers.isAddress(rule.counterparty)) {
+    return null;
+  }
+  const counterparty = ethers.getAddress(rule.counterparty) as `0x${string}`;
+
+  if (rule.kind === "native-transfer") {
+    return {
+      targetAddress: counterparty,
+      send: true,
+      delegatecall: false,
+    } as unknown as Permission;
+  }
+
+  if (!(rule.tokenAddress && ethers.isAddress(rule.tokenAddress))) {
+    return null;
+  }
+  const signature = directRuleSignature(rule.kind);
+  if (!(signature && allowanceKey)) {
+    return null;
+  }
+  const tokenAddress = ethers.getAddress(rule.tokenAddress) as `0x${string}`;
+
+  return {
+    targetAddress: tokenAddress,
+    signature,
+    condition: conditions.matches([
+      conditions.eq(counterparty),
+      conditions.withinAllowance(allowanceKey),
+    ]),
+    send: false,
+    delegatecall: false,
+  } as unknown as Permission;
+}
 
 export type InstallRoleInput = {
   organizationId: string;
@@ -535,23 +636,26 @@ export async function installRolesWithInitialConfig(
       allowedTokenSymbols,
     });
 
-    // Direct rules: scope each rule's counterparty (or the ERC20 token
-    // contract for transfer/approve) at target level. The on-chain bucket
-    // for ERC20 rules is set further below in the per-allowance loop.
+    // Direct rules: ERC-20 transfer/approve get a FunctionPermission with a
+    // `matches` condition that pins the recipient/spender argument to the
+    // configured counterparty and binds the amount argument to the per-token
+    // allowance bucket. Native transfers stay as a target-only allowlist.
+    // The on-chain allowance bucket for ERC-20 direct rules is created in
+    // the per-allowance loop further below using the same allowanceKey.
     const directRulePermissions: Permission[] = [];
     for (const rule of directRules) {
-      const target =
-        rule.kind === "native-transfer"
-          ? rule.counterparty
-          : (rule.tokenAddress ?? "");
-      if (!ethers.isAddress(target)) {
-        continue;
+      const allowanceKey =
+        rule.kind === "native-transfer" || !rule.tokenAddress
+          ? null
+          : (tokenAllowanceKey(
+              roleKey,
+              DIRECT_RULE_PROTOCOL_SLUG,
+              normalizeAddressForStorage(rule.tokenAddress)
+            ) as `0x${string}`);
+      const permission = buildDirectRulePermission(rule, allowanceKey);
+      if (permission) {
+        directRulePermissions.push(permission);
       }
-      directRulePermissions.push({
-        targetAddress: ethers.getAddress(target) as `0x${string}`,
-        send: rule.kind === "native-transfer",
-        delegatecall: false,
-      } as unknown as Permission);
     }
 
     const desiredRole: Role = buildDesiredRole({
@@ -697,75 +801,169 @@ export async function installRolesWithInitialConfig(
       throw new Error(configResult.error ?? "Role configuration tx reverted");
     }
 
-    // Persist the caches
-    const [roleRow] = await db
-      .insert(safeRoles)
-      .values({
-        safeWalletId: safe.id,
-        roleType: ROLE_TYPE_AUTOMATION,
-        roleKey,
-        rolesModifierAddress: normalizeAddressForStorage(rolesModifierAddress),
-        delegateAddress: ownerAddress,
-        installedTxHash: deployResult.txHash ?? configResult.txHash ?? null,
-        lastReconciledAt: new Date(),
-        status: "active",
-      })
-      .returning();
-
-    // Only persist protocols the orchestrator actually applied on-chain.
-    // Skipped ones (template pending or defi-kit rejected the token set) are
-    // surfaced back to the UI via the `skippedProtocols` field on the
-    // response so the admin can retry when templates ship.
-    const protocolRows: SafeRoleProtocol[] = [];
-    for (const slug of appliedProtocols) {
-      const catalog = PROTOCOL_CATALOG[slug as keyof typeof PROTOCOL_CATALOG];
-      if (!catalog) {
-        continue;
-      }
-      const [row] = await db
-        .insert(safeRoleProtocols)
+    // Persist the caches atomically. Pre-fix this was three sequential
+    // db.insert calls; if any one threw (FK timing, duplicate-key on retry,
+    // connection blip) the on-chain state was already ahead of the DB and
+    // there was no recovery path. Wrap in db.transaction + upserts so a
+    // partial failure rolls back and a retry of installRolesWithInitialConfig
+    // converges on the same DB state instead of throwing on the unique key.
+    const installedTxHash = deployResult.txHash ?? configResult.txHash ?? null;
+    const lastAppliedTxHash = configResult.txHash ?? null;
+    const persistResult = await db.transaction(async (tx) => {
+      const [roleRow] = await tx
+        .insert(safeRoles)
         .values({
-          roleId: roleRow.id,
-          protocolSlug: slug,
-          templateSlug: catalog.templateSlug,
-          allowedTokenSymbols,
-          targetAddresses: [],
-          allowedSelectors: [],
-          status: "allowed",
-          lastAppliedTxHash: configResult.txHash ?? null,
-        })
-        .returning();
-      protocolRows.push(row);
-    }
-
-    const allowanceRows: SafeRoleAllowance[] = [];
-    for (const a of allowanceRowsInput) {
-      const [row] = await db
-        .insert(safeRoleAllowances)
-        .values({
-          roleId: roleRow.id,
-          protocolSlug: a.protocolSlug,
-          allowanceKey: a.allowanceKey,
-          tokenAddress: a.tokenAddress,
-          tokenSymbol: a.tokenSymbol,
-          tokenDecimals: a.tokenDecimals,
-          maxRefillWei: a.maxRefillWei,
-          refillWei: a.refillWei,
-          periodSeconds: a.periodSeconds,
-          lastChainBalanceWei: a.maxRefillWei,
-          lastChainTimestamp: new Date(Number(nowSec) * 1000),
+          safeWalletId: safe.id,
+          roleType: ROLE_TYPE_AUTOMATION,
+          roleKey,
+          rolesModifierAddress:
+            normalizeAddressForStorage(rolesModifierAddress),
+          delegateAddress: ownerAddress,
+          installedTxHash,
           lastReconciledAt: new Date(),
-          lastAppliedTxHash: configResult.txHash ?? null,
+          status: "active",
+        })
+        .onConflictDoUpdate({
+          target: [safeRoles.safeWalletId, safeRoles.roleType],
+          set: {
+            roleKey,
+            rolesModifierAddress:
+              normalizeAddressForStorage(rolesModifierAddress),
+            delegateAddress: ownerAddress,
+            installedTxHash,
+            lastReconciledAt: new Date(),
+            status: "active",
+            updatedAt: new Date(),
+          },
         })
         .returning();
-      allowanceRows.push(row);
-    }
+
+      // Only persist protocols the orchestrator actually applied on-chain.
+      // Skipped ones (template pending or defi-kit rejected the token set)
+      // are surfaced back to the UI via the `skippedProtocols` field on the
+      // response so the admin can retry when templates ship.
+      const protocolRows: SafeRoleProtocol[] = [];
+      for (const slug of appliedProtocols) {
+        const catalog = PROTOCOL_CATALOG[slug as keyof typeof PROTOCOL_CATALOG];
+        if (!catalog) {
+          continue;
+        }
+        const [row] = await tx
+          .insert(safeRoleProtocols)
+          .values({
+            roleId: roleRow.id,
+            protocolSlug: slug,
+            templateSlug: catalog.templateSlug,
+            allowedTokenSymbols,
+            targetAddresses: [],
+            allowedSelectors: [],
+            status: "allowed",
+            lastAppliedTxHash,
+          })
+          .onConflictDoUpdate({
+            target: [safeRoleProtocols.roleId, safeRoleProtocols.protocolSlug],
+            set: {
+              templateSlug: catalog.templateSlug,
+              allowedTokenSymbols,
+              status: "allowed",
+              lastAppliedTxHash,
+              lastUpdatedAt: new Date(),
+            },
+          })
+          .returning();
+        protocolRows.push(row);
+      }
+
+      // Direct rules: persist a synthetic protocol row with the actual
+      // selectors so the audit panel can show what's allowed.
+      for (const rule of directRules) {
+        if (rule.kind === "native-transfer") {
+          continue;
+        }
+        const selector = directRuleSelector(rule.kind);
+        if (!selector) {
+          continue;
+        }
+        const [row] = await tx
+          .insert(safeRoleProtocols)
+          .values({
+            roleId: roleRow.id,
+            protocolSlug: DIRECT_RULE_PROTOCOL_SLUG,
+            templateSlug: "direct",
+            allowedTokenSymbols,
+            targetAddresses: [],
+            allowedSelectors: [selector],
+            status: "allowed",
+            lastAppliedTxHash,
+          })
+          .onConflictDoUpdate({
+            target: [safeRoleProtocols.roleId, safeRoleProtocols.protocolSlug],
+            set: {
+              templateSlug: "direct",
+              allowedTokenSymbols,
+              allowedSelectors: [selector],
+              status: "allowed",
+              lastAppliedTxHash,
+              lastUpdatedAt: new Date(),
+            },
+          })
+          .returning();
+        if (row && !protocolRows.some((p) => p.id === row.id)) {
+          protocolRows.push(row);
+        }
+      }
+
+      const allowanceRows: SafeRoleAllowance[] = [];
+      for (const a of allowanceRowsInput) {
+        const [row] = await tx
+          .insert(safeRoleAllowances)
+          .values({
+            roleId: roleRow.id,
+            protocolSlug: a.protocolSlug,
+            allowanceKey: a.allowanceKey,
+            tokenAddress: a.tokenAddress,
+            tokenSymbol: a.tokenSymbol,
+            tokenDecimals: a.tokenDecimals,
+            maxRefillWei: a.maxRefillWei,
+            refillWei: a.refillWei,
+            periodSeconds: a.periodSeconds,
+            lastChainBalanceWei: a.maxRefillWei,
+            lastChainTimestamp: new Date(Number(nowSec) * 1000),
+            lastReconciledAt: new Date(),
+            lastAppliedTxHash,
+          })
+          .onConflictDoUpdate({
+            target: [
+              safeRoleAllowances.roleId,
+              safeRoleAllowances.allowanceKey,
+            ],
+            set: {
+              protocolSlug: a.protocolSlug,
+              tokenAddress: a.tokenAddress,
+              tokenSymbol: a.tokenSymbol,
+              tokenDecimals: a.tokenDecimals,
+              maxRefillWei: a.maxRefillWei,
+              refillWei: a.refillWei,
+              periodSeconds: a.periodSeconds,
+              lastChainBalanceWei: a.maxRefillWei,
+              lastChainTimestamp: new Date(Number(nowSec) * 1000),
+              lastReconciledAt: new Date(),
+              lastAppliedTxHash,
+              lastUpdatedAt: new Date(),
+            },
+          })
+          .returning();
+        allowanceRows.push(row);
+      }
+
+      return { roleRow, protocolRows, allowanceRows };
+    });
 
     return {
       success: true,
-      role: roleRow,
-      protocols: protocolRows,
-      allowances: allowanceRows,
+      role: persistResult.roleRow,
+      protocols: persistResult.protocolRows,
+      allowances: persistResult.allowanceRows,
       applied: appliedProtocols,
       skipped: skippedProtocols,
       alreadyInstalled: false,
@@ -774,6 +972,574 @@ export async function installRolesWithInitialConfig(
     logSystemError(
       ErrorCategory.TRANSACTION,
       `[Safe] Zodiac Roles install failed for org=${organizationId} chain=${chainId}`,
+      error,
+      {
+        component: "safe-roles-orchestrator",
+        chain_id: chainId.toString(),
+      }
+    );
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Update: diff current vs desired Role state and apply only what changed
+// ---------------------------------------------------------------------------
+
+export type UpdateRoleInput = {
+  organizationId: string;
+  chainId: number;
+  /** Full desired protocol config; not a delta. */
+  protocols: ProtocolInput[];
+  /** Full desired direct rules; not a delta. */
+  directRules?: DirectRuleInput[];
+};
+
+export type UpdateRoleResult =
+  | {
+      success: true;
+      role: SafeRole;
+      protocols: SafeRoleProtocol[];
+      allowances: SafeRoleAllowance[];
+      applied: string[];
+      skipped: string[];
+      noChanges: boolean;
+      addedProtocols: number;
+      removedProtocols: number;
+      addedAllowances: number;
+      changedAllowances: number;
+      revokedAllowances: number;
+    }
+  | { success: false; error: string };
+
+/**
+ * Diff two flattened allowance sets keyed by `allowanceKey`. The on-chain
+ * Modifier doesn't expose a deleteAllowance call, so revocation is modeled
+ * as `setAllowance(key, 0, 0, 0, 0, now)` -- effectively a permanently
+ * empty bucket that no condition can satisfy.
+ */
+function diffAllowances(
+  current: SafeRoleAllowance[],
+  desired: Array<FlattenedAllowance & { allowanceKey: `0x${string}` }>,
+  nowSec: bigint
+): {
+  setCalls: MultiSendCall[];
+  added: number;
+  changed: number;
+  revoked: number;
+} {
+  const desiredByKey = new Map<
+    string,
+    FlattenedAllowance & { allowanceKey: `0x${string}` }
+  >();
+  for (const d of desired) {
+    desiredByKey.set(d.allowanceKey.toLowerCase(), d);
+  }
+  const currentByKey = new Map<string, SafeRoleAllowance>();
+  for (const c of current) {
+    currentByKey.set(c.allowanceKey.toLowerCase(), c);
+  }
+
+  let added = 0;
+  let changed = 0;
+  let revoked = 0;
+  const setCalls: MultiSendCall[] = [];
+
+  for (const [keyLower, d] of desiredByKey.entries()) {
+    const existing = currentByKey.get(keyLower);
+    const maxRefill = BigInt(d.maxRefillWei);
+    const refill = BigInt(d.refillWei);
+    if (
+      existing &&
+      existing.maxRefillWei === d.maxRefillWei &&
+      existing.refillWei === d.refillWei &&
+      existing.periodSeconds === d.periodSeconds
+    ) {
+      // Unchanged bucket -- skip.
+      continue;
+    }
+    setCalls.push({
+      to: "ROLES_MODIFIER_PLACEHOLDER",
+      data: buildSetAllowanceCalldata({
+        allowanceKey: d.allowanceKey,
+        balance: maxRefill,
+        maxRefill,
+        refill,
+        period: BigInt(d.periodSeconds),
+        timestamp: nowSec,
+      }),
+      value: BigInt(0),
+      operation: 0,
+    });
+    if (existing) {
+      changed += 1;
+    } else {
+      added += 1;
+    }
+  }
+
+  for (const [keyLower, existing] of currentByKey.entries()) {
+    if (desiredByKey.has(keyLower)) {
+      continue;
+    }
+    setCalls.push({
+      to: "ROLES_MODIFIER_PLACEHOLDER",
+      data: buildSetAllowanceCalldata({
+        allowanceKey: existing.allowanceKey as `0x${string}`,
+        balance: BigInt(0),
+        maxRefill: BigInt(0),
+        refill: BigInt(0),
+        period: BigInt(0),
+        timestamp: nowSec,
+      }),
+      value: BigInt(0),
+      operation: 0,
+    });
+    revoked += 1;
+  }
+
+  return { setCalls, added, changed, revoked };
+}
+
+/**
+ * Update an already-installed Role to a new desired state.
+ *
+ * Computes the minimal diff between what's currently configured (DB cache,
+ * refreshed from chain via `reconcileSafeRoleFromChain` first) and the
+ * desired protocols + direct rules. Submits exactly one Safe transaction
+ * wrapping a MultiSend of the diff calls (`scopeTarget`, `scopeFunction`,
+ * `revokeFunction`, `setAllowance`). On success, persists the DB delta in
+ * a single `db.transaction` so partial failures don't leave a half-updated
+ * cache.
+ *
+ * Constraints in this revision:
+ * - Direct rule REMOVAL is not supported via this path (we don't persist
+ *   counterparties, so the diff can't tell that a rule was dropped). Use
+ *   the per-allowance Revoke button on the role card to remove an ERC-20
+ *   direct rule's bucket. New direct rules in the input are added; existing
+ *   ones may produce idempotent re-scope calls (cost: a small amount of
+ *   gas, no correctness issue because scopeFunction is idempotent for the
+ *   same conditions).
+ */
+export async function updateRolesConfig(
+  input: UpdateRoleInput
+): Promise<UpdateRoleResult> {
+  const {
+    organizationId,
+    chainId,
+    protocols: protocolInputs,
+    directRules = [],
+  } = input;
+
+  const safe = await findSafeForOrg(organizationId, chainId);
+  if (!safe) {
+    return { success: false, error: "No Safe deployed on this chain" };
+  }
+  if (safe.status !== "deployed") {
+    return {
+      success: false,
+      error: `Safe is not yet deployed (status: ${safe.status})`,
+    };
+  }
+
+  // Refresh DB from chain before diffing so we're not editing against a
+  // stale cache. The reconcile is idempotent and creates the role row if
+  // it's missing (silent-write recovery path).
+  const reconciled = await reconcileSafeRoleFromChain(safe);
+  if (!reconciled.success) {
+    return {
+      success: false,
+      error: `Reconcile before update failed: ${reconciled.error}`,
+    };
+  }
+  if (!reconciled.installed) {
+    return {
+      success: false,
+      error:
+        "No Roles modifier is enabled on this Safe. Run install before updating.",
+    };
+  }
+
+  const role = reconciled.role;
+  const currentProtocolRows = reconciled.protocols;
+  const currentAllowanceRows = reconciled.allowances;
+
+  const ownerWallet = await getOrganizationWallet(organizationId);
+  const ownerAddress = normalizeAddressForStorage(ownerWallet.walletAddress);
+  const safeAddress = safe.safeAddress as `0x${string}`;
+  const rolesModifierAddress = role.rolesModifierAddress as `0x${string}`;
+  const multiSendAddress = getSafeContracts(chainId).multiSendCallOnly;
+  const roleKey = role.roleKey as `0x${string}`;
+
+  const rpcUrl = getRpcUrlByChainId(chainId, "primary");
+  const rpcManager = await getRpcProviderFromUrls(rpcUrl, undefined, chainId);
+  await initializeWalletSigner(organizationId, rpcUrl, chainId);
+
+  const context: TransactionContext = {
+    organizationId,
+    executionId: `safe-roles-update-${generateId()}`,
+    chainId,
+    rpcUrl,
+    triggerType: "manual",
+    rpcManager,
+  };
+
+  try {
+    // ----- Build DESIRED state -----
+    const {
+      protocolSlugs: desiredSlugs,
+      allowedTokenSymbols: desiredTokenSymbols,
+      allowances: desiredAllowancesFlat,
+    } = flattenInstallInput(protocolInputs, directRules);
+
+    const {
+      permissions: desiredProtocolPermissions,
+      applied: appliedProtocols,
+      skipped: skippedProtocols,
+    } = await buildPermissionsForProtocols({
+      chainId,
+      safeAddress,
+      protocols: desiredSlugs,
+      allowedTokenSymbols: desiredTokenSymbols,
+    });
+
+    const desiredDirectRulePermissions: Permission[] = [];
+    for (const rule of directRules) {
+      const allowanceKey =
+        rule.kind === "native-transfer" || !rule.tokenAddress
+          ? null
+          : (tokenAllowanceKey(
+              roleKey,
+              DIRECT_RULE_PROTOCOL_SLUG,
+              normalizeAddressForStorage(rule.tokenAddress)
+            ) as `0x${string}`);
+      const permission = buildDirectRulePermission(rule, allowanceKey);
+      if (permission) {
+        desiredDirectRulePermissions.push(permission);
+      }
+    }
+    const desiredPermissions: Permission[] = [
+      ...desiredProtocolPermissions,
+      ...desiredDirectRulePermissions,
+    ];
+    const desiredRole: Role = buildDesiredRole({
+      roleKey,
+      delegate: ownerAddress as `0x${string}`,
+      permissions: desiredPermissions,
+    });
+
+    // ----- Reconstruct CURRENT state from DB cache -----
+    // Only protocols can be reconstructed faithfully (templateSlug + tokens
+    // are deterministic). Direct rule conditions aren't stored, so the diff
+    // will treat them as new -- the modifier's idempotent scopeFunction
+    // call absorbs the no-op gas hit.
+    const activeCurrentProtocols = currentProtocolRows.filter(
+      (p) =>
+        p.status === "allowed" && p.protocolSlug !== DIRECT_RULE_PROTOCOL_SLUG
+    );
+    const currentSlugs = activeCurrentProtocols.map((p) => p.protocolSlug);
+    const currentTokenSymbols = Array.from(
+      new Set(activeCurrentProtocols.flatMap((p) => p.allowedTokenSymbols))
+    );
+    const { permissions: currentPermissions } =
+      await buildPermissionsForProtocols({
+        chainId,
+        safeAddress,
+        protocols: currentSlugs,
+        allowedTokenSymbols: currentTokenSymbols,
+      });
+    const currentRole: Role = buildDesiredRole({
+      roleKey,
+      delegate: ownerAddress as `0x${string}`,
+      permissions: currentPermissions,
+    });
+
+    // ----- Diff scope calls (SDK) -----
+    const scopeCalls = callsPlannedForApplyRole(currentRole, desiredRole);
+    const encodedScopeCalls = encodeCalls(scopeCalls, rolesModifierAddress);
+
+    // ----- Diff allowance buckets (manual) -----
+    const nowSec = BigInt(Math.floor(Date.now() / 1000));
+    const desiredAllowancesWithKeys = desiredAllowancesFlat.map((a) => ({
+      ...a,
+      allowanceKey: tokenAllowanceKey(
+        roleKey,
+        a.protocolSlug,
+        a.tokenAddress
+      ) as `0x${string}`,
+    }));
+    const allowanceDiff = diffAllowances(
+      currentAllowanceRows,
+      desiredAllowancesWithKeys,
+      nowSec
+    );
+
+    if (encodedScopeCalls.length === 0 && allowanceDiff.setCalls.length === 0) {
+      return {
+        success: true,
+        role,
+        protocols: currentProtocolRows,
+        allowances: currentAllowanceRows,
+        applied: appliedProtocols,
+        skipped: skippedProtocols,
+        noChanges: true,
+        addedProtocols: 0,
+        removedProtocols: 0,
+        addedAllowances: 0,
+        changedAllowances: 0,
+        revokedAllowances: 0,
+      };
+    }
+
+    // ----- Wrap in MultiSend → Safe.execTransaction -----
+    const multiSendCalls: MultiSendCall[] = [];
+    for (const call of encodedScopeCalls) {
+      multiSendCalls.push({
+        to: call.to,
+        data: call.data,
+        value: BigInt(0),
+        operation: 0,
+      });
+    }
+    for (const call of allowanceDiff.setCalls) {
+      multiSendCalls.push({
+        to: rolesModifierAddress,
+        data: call.data,
+        value: BigInt(0),
+        operation: 0,
+      });
+    }
+
+    const multiSendCalldata = buildMultiSendCalldata(multiSendCalls);
+    const outerCalldata = buildExecTransactionCalldata({
+      to: multiSendAddress,
+      data: multiSendCalldata,
+      value: BigInt(0),
+      operation: 1,
+      ownerAddress,
+    });
+
+    const updateResult = await withNonceSession(
+      context,
+      ownerAddress,
+      (session) =>
+        executeTransaction(
+          context,
+          ownerAddress,
+          () => ({
+            to: safeAddress,
+            data: outerCalldata,
+            value: BigInt(0),
+            chainId,
+          }),
+          session
+        )
+    );
+
+    if (!(updateResult.success && updateResult.receipt)) {
+      throw new Error(updateResult.error ?? "Role update tx reverted");
+    }
+
+    const updateTxHash = updateResult.txHash ?? null;
+
+    // ----- Persist DB delta in one transaction -----
+    const persistResult = await db.transaction(async (tx) => {
+      const desiredSlugSet = new Set(appliedProtocols);
+      const directRuleNeeded = directRules.some(
+        (r) => directRuleSelector(r.kind) !== null
+      );
+
+      // Mark removed protocols as revoked (preserves audit trail).
+      const removedSlugs: string[] = [];
+      for (const p of activeCurrentProtocols) {
+        if (!desiredSlugSet.has(p.protocolSlug)) {
+          removedSlugs.push(p.protocolSlug);
+          await tx
+            .update(safeRoleProtocols)
+            .set({ status: "revoked", lastUpdatedAt: new Date() })
+            .where(eq(safeRoleProtocols.id, p.id));
+        }
+      }
+      // Direct rule synthetic protocol row: revoke if no direct rules now.
+      if (!directRuleNeeded) {
+        for (const p of currentProtocolRows) {
+          if (
+            p.protocolSlug === DIRECT_RULE_PROTOCOL_SLUG &&
+            p.status === "allowed"
+          ) {
+            await tx
+              .update(safeRoleProtocols)
+              .set({ status: "revoked", lastUpdatedAt: new Date() })
+              .where(eq(safeRoleProtocols.id, p.id));
+          }
+        }
+      }
+
+      // Upsert applied protocols.
+      const protocolRows: SafeRoleProtocol[] = [];
+      for (const slug of appliedProtocols) {
+        const catalog = PROTOCOL_CATALOG[slug as keyof typeof PROTOCOL_CATALOG];
+        if (!catalog) {
+          continue;
+        }
+        const [row] = await tx
+          .insert(safeRoleProtocols)
+          .values({
+            roleId: role.id,
+            protocolSlug: slug,
+            templateSlug: catalog.templateSlug,
+            allowedTokenSymbols: desiredTokenSymbols,
+            targetAddresses: [],
+            allowedSelectors: [],
+            status: "allowed",
+            lastAppliedTxHash: updateTxHash,
+          })
+          .onConflictDoUpdate({
+            target: [safeRoleProtocols.roleId, safeRoleProtocols.protocolSlug],
+            set: {
+              templateSlug: catalog.templateSlug,
+              allowedTokenSymbols: desiredTokenSymbols,
+              status: "allowed",
+              lastAppliedTxHash: updateTxHash,
+              lastUpdatedAt: new Date(),
+            },
+          })
+          .returning();
+        protocolRows.push(row);
+      }
+
+      // Direct rule synthetic protocol row.
+      if (directRuleNeeded) {
+        const selectors: string[] = Array.from(
+          new Set(
+            directRules
+              .map((r) => directRuleSelector(r.kind))
+              .filter((s): s is `0x${string}` => s !== null)
+          )
+        );
+        await tx
+          .insert(safeRoleProtocols)
+          .values({
+            roleId: role.id,
+            protocolSlug: DIRECT_RULE_PROTOCOL_SLUG,
+            templateSlug: "direct",
+            allowedTokenSymbols: desiredTokenSymbols,
+            targetAddresses: [],
+            allowedSelectors: selectors,
+            status: "allowed",
+            lastAppliedTxHash: updateTxHash,
+          })
+          .onConflictDoUpdate({
+            target: [safeRoleProtocols.roleId, safeRoleProtocols.protocolSlug],
+            set: {
+              templateSlug: "direct",
+              allowedTokenSymbols: desiredTokenSymbols,
+              allowedSelectors: selectors,
+              status: "allowed",
+              lastAppliedTxHash: updateTxHash,
+              lastUpdatedAt: new Date(),
+            },
+          });
+      }
+
+      // Upsert allowances. For each desired bucket, write the row. For
+      // each chain-revoked bucket, drop the DB row to mirror the on-chain
+      // zeroing (keeping it would mislead the UI).
+      const allowanceRows: SafeRoleAllowance[] = [];
+      const desiredKeySet = new Set(
+        desiredAllowancesWithKeys.map((d) => d.allowanceKey.toLowerCase())
+      );
+      for (const a of desiredAllowancesWithKeys) {
+        const [row] = await tx
+          .insert(safeRoleAllowances)
+          .values({
+            roleId: role.id,
+            protocolSlug: a.protocolSlug,
+            allowanceKey: a.allowanceKey,
+            tokenAddress: a.tokenAddress,
+            tokenSymbol: a.tokenSymbol,
+            tokenDecimals: a.tokenDecimals,
+            maxRefillWei: a.maxRefillWei,
+            refillWei: a.refillWei,
+            periodSeconds: a.periodSeconds,
+            lastChainBalanceWei: a.maxRefillWei,
+            lastChainTimestamp: new Date(Number(nowSec) * 1000),
+            lastReconciledAt: new Date(),
+            lastAppliedTxHash: updateTxHash,
+          })
+          .onConflictDoUpdate({
+            target: [
+              safeRoleAllowances.roleId,
+              safeRoleAllowances.allowanceKey,
+            ],
+            set: {
+              protocolSlug: a.protocolSlug,
+              tokenAddress: a.tokenAddress,
+              tokenSymbol: a.tokenSymbol,
+              tokenDecimals: a.tokenDecimals,
+              maxRefillWei: a.maxRefillWei,
+              refillWei: a.refillWei,
+              periodSeconds: a.periodSeconds,
+              lastChainBalanceWei: a.maxRefillWei,
+              lastChainTimestamp: new Date(Number(nowSec) * 1000),
+              lastReconciledAt: new Date(),
+              lastAppliedTxHash: updateTxHash,
+              lastUpdatedAt: new Date(),
+            },
+          })
+          .returning();
+        allowanceRows.push(row);
+      }
+      for (const c of currentAllowanceRows) {
+        if (!desiredKeySet.has(c.allowanceKey.toLowerCase())) {
+          await tx
+            .delete(safeRoleAllowances)
+            .where(eq(safeRoleAllowances.id, c.id));
+        }
+      }
+
+      const refreshedAllowances = await tx
+        .select()
+        .from(safeRoleAllowances)
+        .where(eq(safeRoleAllowances.roleId, role.id));
+      const refreshedProtocols = await tx
+        .select()
+        .from(safeRoleProtocols)
+        .where(eq(safeRoleProtocols.roleId, role.id));
+
+      return {
+        protocolRows: refreshedProtocols,
+        allowanceRows: refreshedAllowances,
+        removedSlugs,
+      };
+    });
+
+    return {
+      success: true,
+      role,
+      protocols: persistResult.protocolRows,
+      allowances: persistResult.allowanceRows,
+      applied: appliedProtocols,
+      skipped: skippedProtocols,
+      noChanges: false,
+      addedProtocols:
+        appliedProtocols.length - persistResult.removedSlugs.length > 0
+          ? appliedProtocols.filter(
+              (s) => !activeCurrentProtocols.some((p) => p.protocolSlug === s)
+            ).length
+          : 0,
+      removedProtocols: persistResult.removedSlugs.length,
+      addedAllowances: allowanceDiff.added,
+      changedAllowances: allowanceDiff.changed,
+      revokedAllowances: allowanceDiff.revoked,
+    };
+  } catch (error) {
+    logSystemError(
+      ErrorCategory.TRANSACTION,
+      `[Safe] Zodiac Roles update failed for org=${organizationId} chain=${chainId}`,
       error,
       {
         component: "safe-roles-orchestrator",
@@ -1099,6 +1865,135 @@ export async function getSafeRole(
   return await findRoleForSafe(safeWalletId);
 }
 
+/**
+ * Cheap RPC probe that answers "does this Safe currently have a Roles
+ * modifier enabled on chain?" in one paginated module read. Used by the
+ * GET-time backfill to decide whether to spend a full reconcile pass on a
+ * Safe whose DB cache says "uninstalled."
+ *
+ * Returns null if the Safe's modules can't be read (RPC outage, chain not
+ * configured) or no enabled module declares this Safe as its avatar.
+ */
+async function probeRolesModifierOnChain(
+  safe: SafeWallet
+): Promise<string | null> {
+  try {
+    const rpcUrl = getRpcUrlByChainId(safe.chainId, "primary");
+    const rpcManager = await getRpcProviderFromUrls(
+      rpcUrl,
+      undefined,
+      safe.chainId
+    );
+    const provider = rpcManager.getProvider();
+    const modules = await readEnabledSafeModules(provider, safe.safeAddress);
+    if (modules.length === 0) {
+      return null;
+    }
+    return await findRolesModifierForSafe(provider, safe.safeAddress, modules);
+  } catch (error) {
+    logSystemError(
+      ErrorCategory.TRANSACTION,
+      `[Safe] probe Roles modifier failed for safe=${safe.id}`,
+      error,
+      {
+        component: "safe-roles-orchestrator",
+        chain_id: safe.chainId.toString(),
+      }
+    );
+    return null;
+  }
+}
+
+/**
+ * Load a Safe's role plus its protocols and allowances. Wraps the raw
+ * read with two recovery paths so the UI never hides on-chain state behind
+ * a stale or empty DB cache:
+ *
+ * 1. **Empty cache, existing role row** -- DB has a `safe_roles` row but no
+ *    protocols / allowances. Run `reconcileSafeRoleFromChain` to rehydrate
+ *    from the modifier's `allowances(...)` view.
+ *
+ * 2. **No DB role row at all** -- the silent-write bug case, or any case
+ *    where someone enabled a Roles modifier on the Safe outside the wizard.
+ *    A cheap one-RPC probe asks "is there a Roles modifier on chain?" If
+ *    yes, run a full reconcile which inserts the role row + protocols +
+ *    allowances. The reconcile is idempotent via the
+ *    `(safeWalletId, roleType)` unique index, so concurrent calls cannot
+ *    produce duplicate rows.
+ *
+ * Reconcile is best-effort: if any RPC step fails we return whatever's in
+ * the DB so the page still renders, and the user can retry from the
+ * explicit Sync button on the role card.
+ */
+export async function getSafeRoleWithBackfill(safe: SafeWallet): Promise<{
+  role: SafeRole | null;
+  protocols: SafeRoleProtocol[];
+  allowances: SafeRoleAllowance[];
+}> {
+  const role = await findRoleForSafe(safe.id);
+
+  // Case 2: no DB role row. Probe chain; reconcile if a modifier is enabled.
+  if (!role) {
+    const onChainModifier = await probeRolesModifierOnChain(safe);
+    if (!onChainModifier) {
+      return { role: null, protocols: [], allowances: [] };
+    }
+    try {
+      const reconciled = await reconcileSafeRoleFromChain(safe);
+      if (reconciled.success && reconciled.installed) {
+        return {
+          role: reconciled.role,
+          protocols: reconciled.protocols,
+          allowances: reconciled.allowances,
+        };
+      }
+    } catch (error) {
+      logSystemError(
+        ErrorCategory.TRANSACTION,
+        `[Safe] auto-backfill reconcile (no-role-row) failed for safe=${safe.id}`,
+        error,
+        {
+          component: "safe-roles-orchestrator",
+          chain_id: safe.chainId.toString(),
+        }
+      );
+    }
+    return { role: null, protocols: [], allowances: [] };
+  }
+
+  const [protocols, allowances] = await Promise.all([
+    listRoleProtocols(role.id),
+    listRoleAllowances(role.id),
+  ]);
+
+  if (protocols.length > 0 || allowances.length > 0) {
+    return { role, protocols, allowances };
+  }
+
+  // Case 1: empty cache, existing role row. Rehydrate from chain.
+  try {
+    const reconciled = await reconcileSafeRoleFromChain(safe);
+    if (reconciled.success && reconciled.installed) {
+      return {
+        role: reconciled.role,
+        protocols: reconciled.protocols,
+        allowances: reconciled.allowances,
+      };
+    }
+  } catch (error) {
+    logSystemError(
+      ErrorCategory.TRANSACTION,
+      `[Safe] auto-backfill reconcile failed for safe=${safe.id}`,
+      error,
+      {
+        component: "safe-roles-orchestrator",
+        chain_id: safe.chainId.toString(),
+      }
+    );
+  }
+  return { role, protocols, allowances };
+}
+
 export async function listRoleProtocols(
   roleId: string
 ): Promise<SafeRoleProtocol[]> {
@@ -1115,4 +2010,425 @@ export async function listRoleAllowances(
     .select()
     .from(safeRoleAllowances)
     .where(eq(safeRoleAllowances.roleId, roleId));
+}
+
+// ---------------------------------------------------------------------------
+// Reconcile: rebuild the DB cache from authoritative on-chain Roles state
+// ---------------------------------------------------------------------------
+
+/**
+ * Result of a reconcile pass. Surfaced to the API so the UI can show what
+ * actually changed (e.g. "imported 2 buckets from chain" vs "no drift").
+ */
+export type ReconcileSafeRoleResult =
+  | {
+      success: true;
+      installed: false;
+      reason: "no-roles-modifier";
+    }
+  | {
+      success: true;
+      installed: true;
+      role: SafeRole;
+      protocols: SafeRoleProtocol[];
+      allowances: SafeRoleAllowance[];
+      /** Buckets discovered on chain that the DB did not have */
+      addedAllowances: number;
+      /** Buckets the DB had whose on-chain bytes differ from cached values */
+      updatedAllowances: number;
+      /** Buckets in DB whose on-chain `maxRefill` is now zero */
+      staleAllowances: number;
+    }
+  | { success: false; error: string };
+
+type ReconcileProbe = {
+  protocolSlug: string;
+  templateSlug: string;
+  tokenAddress: string;
+  tokenSymbol: string;
+  tokenDecimals: number;
+};
+
+/**
+ * Build the set of `(protocol, token)` candidates whose on-chain allowance
+ * bucket is worth probing. We union three sources:
+ *
+ *  1. Every chain-supported protocol in the catalog × the protocol's default
+ *     token list. Covers the wizard's most common installs.
+ *  2. The synthetic `direct` slug × every well-known token on this chain.
+ *     Covers ERC-20 direct rules where the admin picked any popular token.
+ *  3. Any allowance row already in the DB. Preserves custom tokens an admin
+ *     entered manually that are absent from the registry.
+ *
+ * The probe set is bounded (a handful of dozen entries) so a reconcile fits
+ * in well under a second of RPC time even on mainnet.
+ */
+function buildReconcileProbeSet(
+  chainId: number,
+  existingAllowances: SafeRoleAllowance[]
+): ReconcileProbe[] {
+  const seen = new Set<string>();
+  const probes: ReconcileProbe[] = [];
+
+  const push = (probe: ReconcileProbe): void => {
+    const key = `${probe.protocolSlug}|${probe.tokenAddress.toLowerCase()}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    probes.push(probe);
+  };
+
+  // (1) catalog × per-protocol default tokens
+  for (const slug of Object.keys(PROTOCOL_CATALOG)) {
+    const catalog = PROTOCOL_CATALOG[slug as keyof typeof PROTOCOL_CATALOG];
+    if (!catalog?.chainIds.includes(chainId)) {
+      continue;
+    }
+    const defaults = resolveDefaultTokensForProtocol(
+      slug as ProtocolSlug,
+      chainId
+    );
+    for (const token of defaults) {
+      push({
+        protocolSlug: slug,
+        templateSlug: catalog.templateSlug,
+        tokenAddress: normalizeAddressForStorage(token.address),
+        tokenSymbol: token.symbol,
+        tokenDecimals: token.decimals,
+      });
+    }
+  }
+
+  // (2) direct rules × every chain token in the registry
+  for (const token of getChainTokens(chainId)) {
+    push({
+      protocolSlug: DIRECT_RULE_PROTOCOL_SLUG,
+      templateSlug: "direct",
+      tokenAddress: normalizeAddressForStorage(token.address),
+      tokenSymbol: token.symbol,
+      tokenDecimals: token.decimals,
+    });
+  }
+
+  // (3) anything already in DB (preserves custom tokens not in the registry)
+  for (const allowance of existingAllowances) {
+    push({
+      protocolSlug: allowance.protocolSlug,
+      templateSlug:
+        allowance.protocolSlug === DIRECT_RULE_PROTOCOL_SLUG
+          ? "direct"
+          : (PROTOCOL_CATALOG[
+              allowance.protocolSlug as keyof typeof PROTOCOL_CATALOG
+            ]?.templateSlug ?? "unknown"),
+      tokenAddress: allowance.tokenAddress,
+      tokenSymbol: allowance.tokenSymbol,
+      tokenDecimals: allowance.tokenDecimals,
+    });
+  }
+
+  return probes;
+}
+
+/**
+ * Reconcile the DB cache with on-chain Roles modifier state for one Safe.
+ *
+ * Recovers from the silent-write bug where the orchestrator's on-chain tx
+ * confirmed but the DB writes after the receipt failed (FK timing, dropped
+ * connection, etc). Probes a bounded set of candidate `(protocol, token)`
+ * allowance buckets via RPC and upserts every bucket the modifier reports
+ * with a non-zero `maxRefill`. Buckets whose on-chain `maxRefill` is now
+ * zero get their cache columns refreshed (`lastChainBalanceWei = "0"`,
+ * `lastReconciledAt = now`) but the row is preserved for audit.
+ *
+ * If the Safe no longer has any Roles modifier enabled, the existing
+ * `safeRoles` row (if any) is marked `revoked` and the function returns
+ * `installed: false`.
+ */
+export async function reconcileSafeRoleFromChain(
+  safe: SafeWallet
+): Promise<ReconcileSafeRoleResult> {
+  try {
+    const rpcUrl = getRpcUrlByChainId(safe.chainId, "primary");
+    const rpcManager = await getRpcProviderFromUrls(
+      rpcUrl,
+      undefined,
+      safe.chainId
+    );
+    const provider = rpcManager.getProvider();
+
+    const enabledModules = await readEnabledSafeModules(
+      provider,
+      safe.safeAddress
+    );
+    const rolesModifierAddress = await findRolesModifierForSafe(
+      provider,
+      safe.safeAddress,
+      enabledModules
+    );
+
+    if (!rolesModifierAddress) {
+      const existingRole = await findRoleForSafe(safe.id);
+      if (existingRole && existingRole.status !== "revoked") {
+        await db
+          .update(safeRoles)
+          .set({ status: "revoked", updatedAt: new Date() })
+          .where(eq(safeRoles.id, existingRole.id));
+      }
+      return { success: true, installed: false, reason: "no-roles-modifier" };
+    }
+
+    const roleKey = orgAutomationRoleKey(
+      safe.organizationId,
+      safe.chainId
+    ) as `0x${string}`;
+    const ownerWallet = await getOrganizationWallet(safe.organizationId);
+    const ownerAddress = normalizeAddressForStorage(ownerWallet.walletAddress);
+
+    const existingRole = await findRoleForSafe(safe.id);
+    const existingAllowances = existingRole
+      ? await listRoleAllowances(existingRole.id)
+      : [];
+
+    const probes = buildReconcileProbeSet(safe.chainId, existingAllowances);
+
+    type ProbeReadResult = {
+      probe: ReconcileProbe;
+      allowanceKey: `0x${string}`;
+      onChain: OnChainAllowance;
+    };
+    const reads: ProbeReadResult[] = [];
+    for (const probe of probes) {
+      const allowanceKey = tokenAllowanceKey(
+        roleKey,
+        probe.protocolSlug,
+        probe.tokenAddress
+      ) as `0x${string}`;
+      try {
+        const onChain = await readRoleAllowance(
+          provider,
+          rolesModifierAddress,
+          allowanceKey
+        );
+        reads.push({ probe, allowanceKey, onChain });
+      } catch (probeError) {
+        logSystemError(
+          ErrorCategory.TRANSACTION,
+          `[Safe] reconcile allowance read failed for safe=${safe.id} key=${allowanceKey}`,
+          probeError,
+          {
+            component: "safe-roles-orchestrator",
+            chain_id: safe.chainId.toString(),
+          }
+        );
+      }
+    }
+
+    const persistResult = await db.transaction(async (tx) => {
+      const [roleRow] = await tx
+        .insert(safeRoles)
+        .values({
+          safeWalletId: safe.id,
+          roleType: ROLE_TYPE_AUTOMATION,
+          roleKey,
+          rolesModifierAddress:
+            normalizeAddressForStorage(rolesModifierAddress),
+          delegateAddress: ownerAddress,
+          installedTxHash: existingRole?.installedTxHash ?? null,
+          lastReconciledAt: new Date(),
+          status: "active",
+        })
+        .onConflictDoUpdate({
+          target: [safeRoles.safeWalletId, safeRoles.roleType],
+          set: {
+            roleKey,
+            rolesModifierAddress:
+              normalizeAddressForStorage(rolesModifierAddress),
+            delegateAddress: ownerAddress,
+            lastReconciledAt: new Date(),
+            status: "active",
+            updatedAt: new Date(),
+          },
+        })
+        .returning();
+
+      const cachedByKey = new Map<string, SafeRoleAllowance>();
+      for (const row of existingAllowances) {
+        cachedByKey.set(row.allowanceKey.toLowerCase(), row);
+      }
+
+      const protocolSlugsToWrite = new Set<string>();
+      let addedAllowances = 0;
+      let updatedAllowances = 0;
+      let staleAllowances = 0;
+      const reconciliationTimestamp = new Date();
+
+      for (const { probe, allowanceKey, onChain } of reads) {
+        const existing = cachedByKey.get(allowanceKey.toLowerCase());
+        const onChainExists = onChain.maxRefill > BigInt(0);
+
+        if (!(onChainExists || existing)) {
+          continue;
+        }
+
+        if (onChainExists) {
+          protocolSlugsToWrite.add(probe.protocolSlug);
+        }
+
+        const maxRefillWei = onChain.maxRefill.toString();
+        const refillWei = onChain.refill.toString();
+        const lastChainBalanceWei = onChain.balance.toString();
+        const periodSeconds = Number(onChain.period);
+        const lastChainTimestamp =
+          onChain.timestamp > BigInt(0)
+            ? new Date(Number(onChain.timestamp) * 1000)
+            : reconciliationTimestamp;
+
+        if (!existing) {
+          if (!onChainExists) {
+            continue;
+          }
+          await tx.insert(safeRoleAllowances).values({
+            roleId: roleRow.id,
+            protocolSlug: probe.protocolSlug,
+            allowanceKey,
+            tokenAddress: probe.tokenAddress,
+            tokenSymbol: probe.tokenSymbol,
+            tokenDecimals: probe.tokenDecimals,
+            maxRefillWei,
+            refillWei,
+            periodSeconds,
+            lastChainBalanceWei,
+            lastChainTimestamp,
+            lastReconciledAt: reconciliationTimestamp,
+          });
+          addedAllowances += 1;
+          continue;
+        }
+
+        const driftedConfig =
+          existing.maxRefillWei !== maxRefillWei ||
+          existing.refillWei !== refillWei ||
+          existing.periodSeconds !== periodSeconds;
+        const driftedCache =
+          existing.lastChainBalanceWei !== lastChainBalanceWei;
+
+        if (!onChainExists) {
+          staleAllowances += 1;
+          await tx
+            .update(safeRoleAllowances)
+            .set({
+              lastChainBalanceWei: "0",
+              lastReconciledAt: reconciliationTimestamp,
+              lastUpdatedAt: reconciliationTimestamp,
+            })
+            .where(eq(safeRoleAllowances.id, existing.id));
+          continue;
+        }
+
+        if (driftedConfig || driftedCache) {
+          updatedAllowances += 1;
+          await tx
+            .update(safeRoleAllowances)
+            .set({
+              maxRefillWei,
+              refillWei,
+              periodSeconds,
+              lastChainBalanceWei,
+              lastChainTimestamp,
+              lastReconciledAt: reconciliationTimestamp,
+              lastUpdatedAt: reconciliationTimestamp,
+            })
+            .where(eq(safeRoleAllowances.id, existing.id));
+        } else {
+          await tx
+            .update(safeRoleAllowances)
+            .set({
+              lastReconciledAt: reconciliationTimestamp,
+            })
+            .where(eq(safeRoleAllowances.id, existing.id));
+        }
+      }
+
+      // Upsert protocol rows for every slug that has at least one live
+      // allowance bucket. This is what the wizard installs alongside the
+      // setAllowance call, so seeing buckets implies the protocol was applied.
+      for (const slug of protocolSlugsToWrite) {
+        const isDirect = slug === DIRECT_RULE_PROTOCOL_SLUG;
+        const catalog = isDirect
+          ? null
+          : PROTOCOL_CATALOG[slug as keyof typeof PROTOCOL_CATALOG];
+        const templateSlug = isDirect
+          ? "direct"
+          : (catalog?.templateSlug ?? "unknown");
+        const symbolsForSlug = reads
+          .filter(({ probe }) => probe.protocolSlug === slug)
+          .map(({ probe }) => probe.tokenSymbol);
+        const uniqueSymbols = Array.from(new Set(symbolsForSlug));
+        await tx
+          .insert(safeRoleProtocols)
+          .values({
+            roleId: roleRow.id,
+            protocolSlug: slug,
+            templateSlug,
+            allowedTokenSymbols: uniqueSymbols,
+            targetAddresses: [],
+            allowedSelectors: [],
+            status: "allowed",
+          })
+          .onConflictDoUpdate({
+            target: [safeRoleProtocols.roleId, safeRoleProtocols.protocolSlug],
+            set: {
+              templateSlug,
+              allowedTokenSymbols: uniqueSymbols,
+              status: "allowed",
+              lastUpdatedAt: reconciliationTimestamp,
+            },
+          });
+      }
+
+      const protocolRows = await tx
+        .select()
+        .from(safeRoleProtocols)
+        .where(eq(safeRoleProtocols.roleId, roleRow.id));
+      const allowanceRows = await tx
+        .select()
+        .from(safeRoleAllowances)
+        .where(eq(safeRoleAllowances.roleId, roleRow.id));
+
+      return {
+        roleRow,
+        protocolRows,
+        allowanceRows,
+        addedAllowances,
+        updatedAllowances,
+        staleAllowances,
+      };
+    });
+
+    return {
+      success: true,
+      installed: true,
+      role: persistResult.roleRow,
+      protocols: persistResult.protocolRows,
+      allowances: persistResult.allowanceRows,
+      addedAllowances: persistResult.addedAllowances,
+      updatedAllowances: persistResult.updatedAllowances,
+      staleAllowances: persistResult.staleAllowances,
+    };
+  } catch (error) {
+    logSystemError(
+      ErrorCategory.TRANSACTION,
+      `[Safe] Zodiac Roles reconcile failed for safe=${safe.id} chain=${safe.chainId}`,
+      error,
+      {
+        component: "safe-roles-orchestrator",
+        chain_id: safe.chainId.toString(),
+      }
+    );
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }

@@ -3,11 +3,21 @@ import "server-only";
 import { and, eq } from "drizzle-orm";
 import { normalizeAddressForStorage } from "@/lib/address-utils";
 import { db } from "@/lib/db";
+import type { SafeWallet } from "@/lib/db/schema";
 import { safeRoles, safeWallets } from "@/lib/db/schema";
+import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
   getOrganizationWallet,
   getOrganizationWalletAddress,
 } from "@/lib/para/wallet-helpers";
+import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
+import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
+import { reconcileSafeRoleFromChain } from "@/lib/safe/roles-orchestrator";
+import { orgAutomationRoleKey } from "@/lib/safe/zodiac-contracts";
+import {
+  findRolesModifierForSafe,
+  readEnabledSafeModules,
+} from "@/lib/safe/zodiac-roles";
 
 /**
  * Resolution result: which mode should a workflow write on this (org, chain)
@@ -48,16 +58,95 @@ export type SignerMode =
     };
 
 /**
+ * One-shot chain probe to detect a Roles modifier enabled on a Safe even
+ * when our DB has no `safe_roles` row. Used as a recovery path when the
+ * install's post-tx DB write dropped a row -- the workflow runner should
+ * still route through the modifier rather than silently downgrading to
+ * unscoped owner-signed mode.
+ *
+ * Returns the modifier's address on success, null otherwise. RPC failures
+ * are swallowed: routing falls back to plain `safe` mode and the next
+ * reconcile (or the user-triggered Sync button) repairs the DB later.
+ */
+async function probeRolesModifierFromChain(
+  safe: Pick<SafeWallet, "id" | "chainId" | "safeAddress">
+): Promise<string | null> {
+  try {
+    const rpcUrl = getRpcUrlByChainId(safe.chainId, "primary");
+    const rpcManager = await getRpcProviderFromUrls(
+      rpcUrl,
+      undefined,
+      safe.chainId
+    );
+    const provider = rpcManager.getProvider();
+    const modules = await readEnabledSafeModules(provider, safe.safeAddress);
+    if (modules.length === 0) {
+      return null;
+    }
+    return await findRolesModifierForSafe(provider, safe.safeAddress, modules);
+  } catch (error) {
+    logSystemError(
+      ErrorCategory.TRANSACTION,
+      `[Safe] signer-resolver chain probe failed for safe=${safe.id}`,
+      error,
+      {
+        component: "safe-signer-resolver",
+        chain_id: safe.chainId.toString(),
+      }
+    );
+    return null;
+  }
+}
+
+/**
+ * Kick off a background reconcile that backfills the DB cache. Errors are
+ * logged and swallowed; we don't surface them to the caller because the
+ * routing decision has already been made and the modifier on chain is the
+ * source of truth for enforcement either way.
+ *
+ * Implemented as a normal function rather than `void promise` so the
+ * useless-void lint rule stays happy and the intent reads clearly at the
+ * call site.
+ */
+function backfillRoleInBackground(safe: SafeWallet): void {
+  reconcileSafeRoleFromChain(safe).then(
+    () => {
+      // success path: nothing to do, the DB row is now in place.
+    },
+    (error: unknown) => {
+      logSystemError(
+        ErrorCategory.TRANSACTION,
+        `[Safe] background reconcile after probe failed for safe=${safe.id}`,
+        error,
+        {
+          component: "safe-signer-resolver",
+          chain_id: safe.chainId.toString(),
+        }
+      );
+    }
+  );
+}
+
+/**
  * Decide whether a workflow write on (orgId, chainId) should execute from
- * the Turnkey EOA directly (default) or route through the Safe via
- * owner-signed `safe.execTransaction`.
+ * the Turnkey EOA directly (default) or route through the Safe.
  *
- * Returns `safe` mode only when:
- *   - A safe_wallets row exists for this (org, chain)
- *   - status = "deployed" (never route through a half-deployed Safe)
- *   - is_signing_active = true (admin has explicitly opted in)
+ * Routing is DB-first for speed (a single SQL query in the steady state),
+ * but recovers from cache drift on the way down:
  *
- * Any other state -> `eoa` mode (matches pre-Phase-3 behavior).
+ *   - DB has an active `safe_roles` row -> route through `execTransactionWithRole`.
+ *     The modifier on chain is the source of truth for enforcement -- if our
+ *     row is wrong (e.g. modifier was disabled out-of-band) the tx reverts
+ *     loudly rather than silently bypassing the role.
+ *
+ *   - DB has no role row but Safe is deployed + signing is active -> probe
+ *     chain once. If a Roles modifier is enabled, route through `safe-role`
+ *     using the chain-probed modifier address and fire a background reconcile
+ *     so the DB catches up. Closes the silent-write hole that previously
+ *     downgraded these workflows to unscoped owner-signed `execTransaction`.
+ *
+ *   - Otherwise -> plain `safe` mode (signing on, no role) or `eoa` mode
+ *     (signing off, or no Safe at all).
  */
 export async function resolveSignerMode(
   organizationId: string,
@@ -121,6 +210,40 @@ export async function resolveSignerMode(
       rolesModifierAddress: role.rolesModifierAddress,
       roleKey: role.roleKey,
       delegateAddress: role.delegateAddress,
+    };
+  }
+
+  // No DB role row, but signing is active. The wizard could have installed
+  // a modifier on chain whose post-tx DB write dropped (silent-write hole),
+  // or someone enabled the modifier on safe.global manually. Probe chain
+  // once and route through `safe-role` if a modifier is found.
+  const probedModifier = await probeRolesModifierFromChain({
+    id: safe.id,
+    chainId,
+    safeAddress: safe.safeAddress,
+  });
+  if (probedModifier) {
+    // Backfill the DB so future executions skip the probe. We don't await:
+    // the modifier on chain enforces the role regardless of our cache, so
+    // the routing decision is safe to make before the cache is rehydrated.
+    const safeForReconcile: SafeWallet = {
+      id: safe.id,
+      organizationId,
+      chainId,
+      safeAddress: safe.safeAddress,
+      status: safe.status,
+      isSigningActive: safe.isSigningActive,
+    } as SafeWallet;
+    backfillRoleInBackground(safeForReconcile);
+
+    return {
+      kind: "safe-role",
+      ownerAddress,
+      safeAddress: safe.safeAddress,
+      safeWalletId: safe.id,
+      rolesModifierAddress: normalizeAddressForStorage(probedModifier),
+      roleKey: orgAutomationRoleKey(organizationId, chainId),
+      delegateAddress: ownerAddress,
     };
   }
 

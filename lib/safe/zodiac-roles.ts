@@ -352,3 +352,126 @@ export function buildMultiSendCalldata(calls: MultiSendCall[]): string {
     packMultiSendCalls(calls),
   ]);
 }
+
+// ---------------------------------------------------------------------------
+// Read helpers (RPC view calls used by the on-chain reconciliation path)
+// ---------------------------------------------------------------------------
+
+/**
+ * Sentinel address Safe uses to start a module pagination at the head of the
+ * linked list. See Safe v1.4.1 ModuleManager for the exact behaviour.
+ */
+const SAFE_MODULES_SENTINEL = "0x0000000000000000000000000000000000000001";
+const SAFE_MODULES_PAGE_SIZE = 100;
+
+const SAFE_MODULES_ABI = [
+  "function getModulesPaginated(address start, uint256 pageSize) view returns (address[] modules, address next)",
+] as const;
+
+/**
+ * Read the list of enabled modules on a Safe via the on-chain
+ * `getModulesPaginated` view. Returns checksummed addresses in the order the
+ * Safe iterates them (newest-first). Pagination is followed transparently up
+ * to a generous cap so the caller doesn't see a `next` pointer.
+ */
+export async function readEnabledSafeModules(
+  provider: ethers.Provider,
+  safeAddress: string
+): Promise<string[]> {
+  const contract = new ethers.Contract(safeAddress, SAFE_MODULES_ABI, provider);
+  const collected: string[] = [];
+  const MAX_PAGES = 10;
+  let cursor = SAFE_MODULES_SENTINEL;
+  let pagesFetched = 0;
+  while (pagesFetched < MAX_PAGES) {
+    const [modules, next] = (await contract.getModulesPaginated(
+      cursor,
+      SAFE_MODULES_PAGE_SIZE
+    )) as [string[], string];
+    for (const moduleAddress of modules) {
+      collected.push(ethers.getAddress(moduleAddress));
+    }
+    pagesFetched += 1;
+    if (
+      !next ||
+      next === SAFE_MODULES_SENTINEL ||
+      next === ethers.ZeroAddress
+    ) {
+      break;
+    }
+    cursor = next;
+  }
+  return collected;
+}
+
+const ROLES_AVATAR_ABI = ["function avatar() view returns (address)"] as const;
+
+/**
+ * Best-effort detection of which enabled module on a Safe is its Zodiac
+ * Roles modifier. Roles instances expose `avatar()` returning the Safe's
+ * address; non-Roles modules either don't expose it or return something else.
+ *
+ * Returns the first matching module's checksummed address, or `null` if no
+ * module on the Safe declares this Safe as its avatar.
+ */
+export async function findRolesModifierForSafe(
+  provider: ethers.Provider,
+  safeAddress: string,
+  enabledModules: string[]
+): Promise<string | null> {
+  const safeLower = ethers.getAddress(safeAddress).toLowerCase();
+  for (const moduleAddress of enabledModules) {
+    try {
+      const contract = new ethers.Contract(
+        moduleAddress,
+        ROLES_AVATAR_ABI,
+        provider
+      );
+      const avatar = (await contract.avatar()) as string;
+      if (avatar.toLowerCase() === safeLower) {
+        return ethers.getAddress(moduleAddress);
+      }
+    } catch {
+      // Not a Roles modifier (or not a Zodiac module). Skip.
+    }
+  }
+  return null;
+}
+
+const ROLES_ALLOWANCES_ABI = [
+  "function allowances(bytes32 key) view returns (uint128 refill, uint128 maxRefill, uint64 period, uint128 balance, uint64 timestamp)",
+] as const;
+
+export type OnChainAllowance = {
+  refill: bigint;
+  maxRefill: bigint;
+  period: bigint;
+  balance: bigint;
+  timestamp: bigint;
+};
+
+/**
+ * Read the on-chain allowance tuple for one bucket key. Buckets that were
+ * never set return all zeros; callers should treat `maxRefill === 0n` as
+ * "this bucket doesn't exist on chain."
+ */
+export async function readRoleAllowance(
+  provider: ethers.Provider,
+  rolesModifierAddress: string,
+  allowanceKey: string
+): Promise<OnChainAllowance> {
+  const contract = new ethers.Contract(
+    rolesModifierAddress,
+    ROLES_ALLOWANCES_ABI,
+    provider
+  );
+  const result = (await contract.allowances(allowanceKey)) as [
+    bigint,
+    bigint,
+    bigint,
+    bigint,
+    bigint,
+  ];
+  const [refill, maxRefill, period, balance, timestamp] = result;
+  return { refill, maxRefill, period, balance, timestamp };
+}
