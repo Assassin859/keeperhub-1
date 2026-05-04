@@ -13,6 +13,7 @@ jobs:
       should-deploy: ${{ steps.check.outputs.should-deploy }}
       should-test: ${{ steps.check.outputs.should-test }}
       should-deploy-events: ${{ steps.check.outputs.should-deploy-events }}
+      should-deploy-events-only: ${{ steps.check.outputs.should-deploy-events-only }}
     steps:
       - name: Checkout code (for change detection)
         if: github.event.action == 'synchronize'
@@ -26,6 +27,7 @@ jobs:
           echo "should-deploy=false" >> $GITHUB_OUTPUT
           echo "should-test=false" >> $GITHUB_OUTPUT
           echo "should-deploy-events=false" >> $GITHUB_OUTPUT
+          echo "should-deploy-events-only=false" >> $GITHUB_OUTPUT
 
           HAS_DEPLOY_LABEL="${{ contains(github.event.pull_request.labels.*.name, 'deploy-pr-environment') }}"
           HAS_TEST_LABEL="${{ contains(github.event.pull_request.labels.*.name, 'run-e2e-tests-pr-deploy') }}"
@@ -49,12 +51,12 @@ jobs:
             elif [[ "$ADDED_LABEL" == "run-e2e-tests-pr-deploy" ]]; then
               echo "should-test=true" >> $GITHUB_OUTPUT
             elif [[ "$ADDED_LABEL" == "deploy-pr-events" ]]; then
-              # Events-only re-trigger: only meaningful if deploy-pr-environment
-              # is already present. Re-run full deploy so the events satellite
-              # picks up the freshly-built PR events image.
+              # Events-only path: PR env is already deployed (HAS_DEPLOY_LABEL).
+              # Build a PR-specific events image and only re-run the events
+              # helm upgrade — not the full app stack.
               if [[ "$HAS_DEPLOY_LABEL" == "true" ]]; then
-                echo "should-deploy=true" >> $GITHUB_OUTPUT
                 echo "should-deploy-events=true" >> $GITHUB_OUTPUT
+                echo "should-deploy-events-only=true" >> $GITHUB_OUTPUT
                 if [[ "$HAS_TEST_LABEL" == "true" ]]; then
                   echo "should-test=true" >> $GITHUB_OUTPUT
                 fi
@@ -63,12 +65,11 @@ jobs:
           elif [[ "$ACTION" == "unlabeled" ]]; then
             # Removing deploy-pr-events while the PR env is still deployed
             # should revert the events satellite to the staging event-latest
-            # tag. Set should-deploy=true (re-run the full deploy so the
-            # events template is rendered with the default tag) but leave
-            # should-deploy-events=false (no PR-specific events build).
+            # tag. Run the events-only deploy (no PR build, default tag) —
+            # cheaper than re-running the full app+migrator deploy.
             REMOVED_LABEL="$ADDED_LABEL"
             if [[ "$REMOVED_LABEL" == "deploy-pr-events" && "$HAS_DEPLOY_LABEL" == "true" ]]; then
-              echo "should-deploy=true" >> $GITHUB_OUTPUT
+              echo "should-deploy-events-only=true" >> $GITHUB_OUTPUT
               if [[ "$HAS_TEST_LABEL" == "true" ]]; then
                 echo "should-test=true" >> $GITHUB_OUTPUT
               fi
@@ -554,6 +555,78 @@ jobs:
               repo: context.repo.repo,
               body: comment
             });
+
+  # Events-only redeploy. Triggers when the deploy-pr-events label is added
+  # to (or removed from) a PR that already has deploy-pr-environment. Skips
+  # the full app/scheduler/dispatcher helm path the main `deploy` job runs;
+  # only the event-pr-${PR_NUMBER} satellite moves. EVENTS_IMAGE_TAG resolves
+  # to event-${sha_short} on add (PR build from build-events-image) or
+  # event-latest on remove (revert to staging events).
+  deploy-events-only:
+    needs: [check-labels, build-events-image]
+    if: |
+      !cancelled() &&
+      needs.check-labels.outputs.should-deploy-events-only == 'true' &&
+      (needs.build-events-image.result == 'success' || needs.build-events-image.result == 'skipped')
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      REGION: us-east-1
+      CLUSTER_NAME: ${{ vars.TO_CLUSTER_NAME }}
+      NAMESPACE: pr-${{ github.event.pull_request.number }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.TO_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.TO_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.REGION }}
+
+      - name: Login to AWS ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Extract commit hash
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Configure kubectl
+        run: aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region ${{ env.REGION }}
+
+      - name: Verify PR namespace exists
+        # Sanity check: events-only deploy requires deploy-pr-environment to
+        # have already created the namespace. Fail fast with a clear message
+        # if the user labelled events without ever deploying the env.
+        run: |
+          if ! kubectl get namespace ${{ env.NAMESPACE }} >/dev/null 2>&1; then
+            echo "::error::PR namespace ${{ env.NAMESPACE }} does not exist. Add deploy-pr-environment first."
+            exit 1
+          fi
+
+      - name: Prepare events Helm values
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          EVENTS_IMAGE_TAG: ${{ needs.check-labels.outputs.should-deploy-events == 'true' && format('event-{0}', steps.vars.outputs.sha_short) || 'event-latest' }}
+        run: envsubst < deploy/pr-environment/event-tracker.template.yaml > ${{ github.workspace }}/event-pr-${{ env.PR_NUMBER }}.yaml
+
+      - name: Add Helm repository
+        run: |
+          helm repo add techops-services https://techops-services.github.io/helm-charts
+          helm repo update
+
+      - name: Deploy events satellite
+        run: |
+          set -euo pipefail
+          helm upgrade --install event-pr-${PR_NUMBER} \
+            techops-services/common \
+            -f ${GITHUB_WORKSPACE}/event-pr-${PR_NUMBER}.yaml \
+            --namespace "${NAMESPACE}" --timeout 5m0s --atomic --version 0.2.1
 
   # Remote E2E tests against deployed PR environment
   # Runs when: test label just added (deploy skipped), or deploy just completed with test label present
