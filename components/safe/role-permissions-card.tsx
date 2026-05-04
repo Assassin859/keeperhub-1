@@ -1,8 +1,11 @@
 "use client";
 
-import { ShieldCheck } from "lucide-react";
+import { ethers } from "ethers";
+import { CheckCircle2, RefreshCw, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { AddressWithExplorer } from "@/components/safe/address-with-explorer";
+import { getChainDisplayName } from "@/components/safe/chain-prefixes";
 import {
   type PolicyConfig,
   PolicyWizard,
@@ -21,7 +24,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
-import { truncateAddress } from "@/lib/address-utils";
+import { getTokenInfo } from "@/lib/contracts/tokens";
 
 type RoleSummary = {
   installed: boolean;
@@ -42,6 +45,7 @@ type RoleSummary = {
   }>;
   allowances: Array<{
     id: string;
+    protocolSlug: string;
     tokenAddress: string;
     tokenSymbol: string;
     tokenDecimals: number;
@@ -51,6 +55,39 @@ type RoleSummary = {
     lastChainBalanceWei: string | null;
   }>;
 };
+
+const TRAILING_ZEROS_REGEX = /0+$/;
+const TRAILING_DOT_REGEX = /\.$/;
+
+/**
+ * Convert a wei amount back to human-readable form for the wizard's
+ * `amountHuman` field. Mirrors the formatter the simulate routes use so
+ * the cap shown in the editor matches the cap shown in the install summary.
+ */
+function weiToHuman(amountWei: string, decimals: number): string {
+  try {
+    const big = BigInt(amountWei);
+    if (decimals === 0) {
+      return big.toString();
+    }
+    const divisor = BigInt(10) ** BigInt(decimals);
+    const whole = big / divisor;
+    const fraction = big % divisor;
+    if (fraction === BigInt(0)) {
+      return whole.toString();
+    }
+    const fractionStr = fraction
+      .toString()
+      .padStart(decimals, "0")
+      .replace(TRAILING_ZEROS_REGEX, "");
+    if (fractionStr.length === 0) {
+      return whole.toString();
+    }
+    return `${whole.toString()}.${fractionStr}`.replace(TRAILING_DOT_REGEX, "");
+  } catch {
+    return amountWei;
+  }
+}
 
 // Protocol catalog + SimulationPlan type now live in policy-wizard.tsx.
 
@@ -79,6 +116,8 @@ export function RolePermissionsCard({
   const [role, setRole] = useState<RoleSummary | null>(null);
   const [installing, setInstalling] = useState<boolean>(false);
   const [addingAllowance, setAddingAllowance] = useState<boolean>(false);
+  const [syncing, setSyncing] = useState<boolean>(false);
+  const [editing, setEditing] = useState<boolean>(false);
 
   const loadRole = useCallback(async () => {
     setLoading(true);
@@ -97,6 +136,48 @@ export function RolePermissionsCard({
     }
   }, [safeId]);
 
+  const syncFromChain = useCallback(async (): Promise<void> => {
+    setSyncing(true);
+    try {
+      const res = await fetch(`/api/user/safe/${safeId}/role/reconcile`, {
+        method: "POST",
+      });
+      const data = (await res.json()) as {
+        installed?: boolean;
+        addedAllowances?: number;
+        updatedAllowances?: number;
+        staleAllowances?: number;
+        reason?: string;
+        error?: string;
+      };
+      if (!res.ok) {
+        toast.error(data.error ?? "Sync failed");
+        return;
+      }
+      if (data.installed === false) {
+        toast.warning(
+          "No Zodiac Roles modifier is enabled on this Safe on chain."
+        );
+      } else {
+        const added = data.addedAllowances ?? 0;
+        const updated = data.updatedAllowances ?? 0;
+        const stale = data.staleAllowances ?? 0;
+        if (added + updated + stale === 0) {
+          toast.success("Already in sync with on-chain state");
+        } else {
+          toast.success(
+            `Synced from chain: ${added} added, ${updated} updated, ${stale} cleared`
+          );
+        }
+      }
+      await loadRole();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Sync failed");
+    } finally {
+      setSyncing(false);
+    }
+  }, [safeId, loadRole]);
+
   useEffect(() => {
     loadRole().catch(() => {
       // toast already fired
@@ -114,6 +195,27 @@ export function RolePermissionsCard({
         <h3 className="font-medium text-sm">
           On-chain policies (Zodiac Roles)
         </h3>
+        {isAdmin && (
+          <Button
+            className="ml-auto h-7 gap-1 px-2 text-xs"
+            disabled={syncing}
+            onClick={() => {
+              syncFromChain().catch(() => {
+                // toast already fired
+              });
+            }}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            {syncing ? (
+              <Spinner className="h-3 w-3" />
+            ) : (
+              <RefreshCw className="h-3 w-3" />
+            )}
+            Sync from chain
+          </Button>
+        )}
       </div>
       <p className="mb-4 text-muted-foreground text-xs">
         Workflow transactions on this Safe are enforced on-chain: only the
@@ -142,25 +244,40 @@ export function RolePermissionsCard({
         <div className="space-y-3">
           <div className="rounded-md border bg-muted/20 p-3 text-xs">
             <div className="mb-1 font-medium">Zodiac Roles Modifier</div>
-            <div className="text-muted-foreground">
-              {role.role
-                ? truncateAddress(role.role.rolesModifierAddress)
-                : "-"}
-            </div>
+            {role.role ? (
+              <AddressWithExplorer
+                address={role.role.rolesModifierAddress}
+                chainId={chainId}
+              />
+            ) : (
+              <span className="text-muted-foreground">-</span>
+            )}
             {safeUrl && (
               <a
-                className="mt-2 inline-block text-muted-foreground text-xs underline hover:text-foreground"
+                className="mt-2 block text-muted-foreground text-xs underline hover:text-foreground"
                 href={safeUrl}
                 rel="noopener noreferrer"
                 target="_blank"
               >
-                View on safe.global
+                View Safe on safe.global
               </a>
             )}
           </div>
 
           <div>
-            <div className="mb-2 font-medium text-sm">Enabled protocols</div>
+            <div className="mb-2 flex items-center justify-between">
+              <div className="font-medium text-sm">Enabled protocols</div>
+              {isAdmin && (
+                <EditRoleDialog
+                  chainId={chainId}
+                  editing={editing}
+                  onUpdated={loadRole}
+                  role={role}
+                  safeId={safeId}
+                  setEditing={setEditing}
+                />
+              )}
+            </div>
             <ul className="space-y-1">
               {role.protocols.map((p) => (
                 <li
@@ -315,6 +432,189 @@ function InstallRoleDialog({
   );
 }
 
+type EditRoleDialogProps = {
+  safeId: string;
+  chainId: number;
+  role: RoleSummary;
+  editing: boolean;
+  setEditing: (value: boolean) => void;
+  onUpdated: () => Promise<void>;
+};
+
+/**
+ * Edit-policies dialog. Opens the same `PolicyWizard` used at install time
+ * but pre-filled with the role's current scoped protocols + token caps so
+ * the admin can add/remove protocols and adjust caps without losing what's
+ * already on chain. Submits the FULL desired state to the update endpoint;
+ * the orchestrator computes the diff and submits one Safe transaction.
+ *
+ * Direct rule REMOVAL is intentionally not surfaced here -- the wizard's
+ * direct-rule list starts empty so adding new rules is straightforward,
+ * but existing direct rules can only be removed via the per-allowance
+ * Revoke button. Lifting that limitation requires persisting the
+ * counterparty (a follow-up schema change).
+ */
+function EditRoleDialog({
+  safeId,
+  chainId,
+  role,
+  editing,
+  setEditing,
+  onUpdated,
+}: EditRoleDialogProps): React.ReactElement {
+  const [open, setOpen] = useState<boolean>(false);
+
+  // Group current allowances by protocol slug into the wizard's pre-fill
+  // shape. Direct-rule buckets are excluded -- they're surfaced through
+  // the per-token allowance section, not the protocol grid.
+  const defaultProtocolTokens: Record<
+    string,
+    Array<{
+      tokenAddress: string;
+      tokenSymbol: string;
+      tokenDecimals: number;
+      amountHuman: string;
+      periodSeconds: number;
+    }>
+  > = {};
+  for (const allowance of role.allowances) {
+    if (allowance.protocolSlug === "direct") {
+      continue;
+    }
+    if (!defaultProtocolTokens[allowance.protocolSlug]) {
+      defaultProtocolTokens[allowance.protocolSlug] = [];
+    }
+    defaultProtocolTokens[allowance.protocolSlug].push({
+      tokenAddress: allowance.tokenAddress,
+      tokenSymbol: allowance.tokenSymbol,
+      tokenDecimals: allowance.tokenDecimals,
+      amountHuman: weiToHuman(allowance.maxRefillWei, allowance.tokenDecimals),
+      periodSeconds: allowance.periodSeconds,
+    });
+  }
+
+  const defaultEnabledSlugs = role.protocols
+    .filter((p) => p.protocolSlug !== "direct" && p.status === "allowed")
+    .map((p) => p.protocolSlug);
+
+  const simulate = async (
+    config: PolicyConfig
+  ): Promise<SimulationPlan | null> => {
+    const res = await fetch(`/api/user/safe/${safeId}/role/simulate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(config),
+    });
+    const data = (await res.json()) as SimulationPlan | { error?: string };
+    if (!res.ok || "error" in data) {
+      const message =
+        "error" in data
+          ? (data.error ?? "Simulation failed")
+          : "Simulation failed";
+      throw new Error(message);
+    }
+    return data as SimulationPlan;
+  };
+
+  const handleConfirm = async (config: PolicyConfig): Promise<void> => {
+    setEditing(true);
+    try {
+      const res = await fetch(`/api/user/safe/${safeId}/role/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(config),
+      });
+      const data = (await res.json()) as {
+        success?: boolean;
+        error?: string;
+        noChanges?: boolean;
+        addedProtocols?: number;
+        removedProtocols?: number;
+        addedAllowances?: number;
+        changedAllowances?: number;
+        revokedAllowances?: number;
+      };
+      if (!(res.ok && data.success)) {
+        toast.error(data.error ?? "Update failed");
+        return;
+      }
+      if (data.noChanges) {
+        toast.info("No changes to apply");
+      } else {
+        const parts: string[] = [];
+        if (data.addedProtocols) {
+          parts.push(
+            `+${data.addedProtocols} protocol${data.addedProtocols === 1 ? "" : "s"}`
+          );
+        }
+        if (data.removedProtocols) {
+          parts.push(
+            `-${data.removedProtocols} protocol${data.removedProtocols === 1 ? "" : "s"}`
+          );
+        }
+        if (data.addedAllowances) {
+          parts.push(
+            `+${data.addedAllowances} bucket${data.addedAllowances === 1 ? "" : "s"}`
+          );
+        }
+        if (data.changedAllowances) {
+          parts.push(
+            `${data.changedAllowances} cap change${data.changedAllowances === 1 ? "" : "s"}`
+          );
+        }
+        if (data.revokedAllowances) {
+          parts.push(
+            `-${data.revokedAllowances} bucket${data.revokedAllowances === 1 ? "" : "s"}`
+          );
+        }
+        toast.success(
+          parts.length > 0
+            ? `Updated on chain: ${parts.join(", ")}`
+            : "Updated on chain"
+        );
+      }
+      setOpen(false);
+      await onUpdated();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Update failed");
+    } finally {
+      setEditing(false);
+    }
+  };
+
+  return (
+    <Dialog onOpenChange={setOpen} open={open}>
+      <DialogTrigger asChild>
+        <Button size="sm" type="button" variant="outline">
+          Edit policies
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="flex max-h-[85vh] max-w-2xl flex-col gap-3 overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Edit Zodiac Roles</DialogTitle>
+          <DialogDescription>
+            Add or remove protocols, change token lists, or adjust per-period
+            caps. The diff is computed against the current on-chain state and
+            submitted as a single Safe transaction. Existing direct rules can
+            only be removed via the per-allowance Revoke button.
+          </DialogDescription>
+        </DialogHeader>
+        <PolicyWizard
+          chainId={chainId}
+          confirmLabel="Confirm & update"
+          defaultEnabledSlugs={defaultEnabledSlugs}
+          defaultProtocolTokens={defaultProtocolTokens}
+          mode="edit"
+          onCancel={() => setOpen(false)}
+          onConfirm={handleConfirm}
+          simulate={simulate}
+          submitting={editing}
+        />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 type AddAllowanceProps = {
   safeId: string;
   chainId: number;
@@ -325,6 +625,7 @@ type AddAllowanceProps = {
 
 function AddAllowanceDialog({
   safeId,
+  chainId,
   adding,
   setAdding,
   onAdded,
@@ -336,6 +637,29 @@ function AddAllowanceDialog({
   const [periodSeconds, setPeriodSeconds] = useState<number>(
     PERIOD_PRESETS[1].seconds
   );
+  const [recognizedToken, setRecognizedToken] = useState<{
+    symbol: string;
+    decimals: number;
+  } | null>(null);
+
+  // When the user pastes a known token address for the active chain, fill in
+  // its decimals automatically and surface "Recognized: USDC" so the modal
+  // does not look like it's silently rewriting their input. Fields stay
+  // editable for tokens not in the registry (or for forks/wrapped variants
+  // where the canonical decimals would be wrong).
+  useEffect(() => {
+    if (!ethers.isAddress(tokenAddress)) {
+      setRecognizedToken(null);
+      return;
+    }
+    const info = getTokenInfo(chainId, tokenAddress);
+    if (!info) {
+      setRecognizedToken(null);
+      return;
+    }
+    setRecognizedToken({ symbol: info.symbol, decimals: info.decimals });
+    setDecimals(String(info.decimals));
+  }, [tokenAddress, chainId]);
 
   const handleAdd = async (): Promise<void> => {
     if (!(tokenAddress && amountHuman)) {
@@ -412,6 +736,13 @@ function AddAllowanceDialog({
               placeholder="0x..."
               value={tokenAddress}
             />
+            {recognizedToken && (
+              <div className="mt-1 flex items-center gap-1 text-emerald-500/80 text-xs">
+                <CheckCircle2 className="h-3 w-3" />
+                Recognized {recognizedToken.symbol} ({recognizedToken.decimals}{" "}
+                decimals) on {getChainDisplayName(chainId)}
+              </div>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>

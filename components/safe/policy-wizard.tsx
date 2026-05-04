@@ -125,6 +125,9 @@ type ExplorerInfo = {
 export type PolicyWizardProps = {
   chainId: number;
   defaultEnabledSlugs?: readonly string[];
+  defaultProtocolTokens?: Readonly<Record<string, TokenLimitInput[]>>;
+  defaultDirectRules?: readonly DirectRuleInput[];
+  mode?: "install" | "edit";
   submitting: boolean;
   /**
    * Optional simulator. When provided, the wizard inserts a "Review" step
@@ -157,6 +160,9 @@ function enforcementLabel(level: EnforcementLevel): string {
 export function PolicyWizard({
   chainId,
   defaultEnabledSlugs = [],
+  defaultProtocolTokens,
+  defaultDirectRules,
+  mode = "install",
   submitting,
   simulate,
   onConfirm,
@@ -172,6 +178,17 @@ export function PolicyWizard({
     return listProtocolsForChain(chainId);
   }, [catalog, chainId]);
 
+  const orderedCatalog: ProtocolCatalogEntry[] = useMemo(() => {
+    if (mode !== "edit") {
+      return resolvedCatalog;
+    }
+    return [...resolvedCatalog].sort((a, b) => {
+      const aActive = defaultEnabledSlugs.includes(a.slug) ? 0 : 1;
+      const bActive = defaultEnabledSlugs.includes(b.slug) ? 0 : 1;
+      return aActive - bActive;
+    });
+  }, [mode, resolvedCatalog, defaultEnabledSlugs]);
+
   const explorerInfo = useMemo(
     () => ({
       explorerUrl: explorer?.explorerUrl ?? null,
@@ -180,24 +197,44 @@ export function PolicyWizard({
     [explorer]
   );
 
+  const seedTokensForSlug = useCallback(
+    (slug: string): TokenRowValue[] => {
+      const preset = defaultProtocolTokens?.[slug];
+      if (preset && preset.length > 0) {
+        return preset.map((t) => ({
+          tokenAddress: t.tokenAddress,
+          tokenSymbol: t.tokenSymbol,
+          tokenDecimals: t.tokenDecimals,
+          amountHuman: t.amountHuman,
+          periodSeconds: t.periodSeconds,
+          explorerUrl: buildAddressUrl(
+            explorerInfo.explorerUrl,
+            explorerInfo.addressPath,
+            t.tokenAddress
+          ),
+        }));
+      }
+      return buildSeededTokens(slug as ProtocolSlug, chainId, explorerInfo);
+    },
+    [defaultProtocolTokens, chainId, explorerInfo]
+  );
+
   const [step, setStep] = useState<"configure" | "review">("configure");
   const [states, setStates] = useState<Record<string, ProtocolState>>(() => {
     const init: Record<string, ProtocolState> = {};
     for (const entry of resolvedCatalog) {
       init[entry.slug] = {
         enabled: defaultEnabledSlugs.includes(entry.slug),
-        tokens: buildSeededTokens(
-          entry.slug as ProtocolSlug,
-          chainId,
-          explorerInfo
-        ),
+        tokens: seedTokensForSlug(entry.slug),
       };
     }
     return init;
   });
   const [simulating, setSimulating] = useState<boolean>(false);
   const [simulation, setSimulation] = useState<SimulationPlan | null>(null);
-  const [directRules, setDirectRules] = useState<DirectRuleInput[]>([]);
+  const [directRules, setDirectRules] = useState<DirectRuleInput[]>(() =>
+    defaultDirectRules ? [...defaultDirectRules] : []
+  );
 
   // Re-sync when chain changes (catalog may shrink/grow). Newly-introduced
   // protocols get their default token seed; existing protocols keep
@@ -208,16 +245,12 @@ export function PolicyWizard({
       for (const entry of resolvedCatalog) {
         next[entry.slug] = prev[entry.slug] ?? {
           enabled: defaultEnabledSlugs.includes(entry.slug),
-          tokens: buildSeededTokens(
-            entry.slug as ProtocolSlug,
-            chainId,
-            explorerInfo
-          ),
+          tokens: seedTokensForSlug(entry.slug),
         };
       }
       return next;
     });
-  }, [resolvedCatalog, defaultEnabledSlugs, chainId, explorerInfo]);
+  }, [resolvedCatalog, defaultEnabledSlugs, seedTokensForSlug]);
 
   const targetsFor = useCallback(
     (slug: string): Array<{ address: string; explorerUrl: string | null }> => {
@@ -385,8 +418,8 @@ export function PolicyWizard({
               </li>
               <li>
                 Each protocol owns its own bucket per token. Setting USDC on
-                Aave and on CoW gives each one an independent cap; they do
-                not share.
+                Aave and on CoW gives each one an independent cap; they do not
+                share.
               </li>
               <li>
                 Anything outside the policy reverts on-chain. You can tweak or
@@ -396,19 +429,32 @@ export function PolicyWizard({
           </div>
 
           <div>
-            <Label className="text-xs">Protocols available on this chain</Label>
+            <Label className="text-xs">
+              {mode === "edit"
+                ? "Manage protocols on this Safe"
+                : "Protocols available on this chain"}
+            </Label>
+            {mode === "edit" && (
+              <p className="mt-1 mb-1 text-muted-foreground text-xs">
+                Active protocols are listed first. Use the × on an active row to
+                mark it for removal, or the Add button on a new row to include
+                it. Submitting commits the diff in one Safe transaction.
+              </p>
+            )}
             <ul className="mt-1 max-h-[28rem] space-y-2 overflow-y-auto rounded-md border p-2">
-              {resolvedCatalog.map((entry) => {
+              {orderedCatalog.map((entry) => {
                 const state = states[entry.slug] ?? {
                   enabled: false,
                   tokens: [],
                 };
                 return (
                   <PolicyProtocolCard
+                    alreadyApplied={defaultEnabledSlugs.includes(entry.slug)}
                     catalog={entry}
                     chainId={chainId}
                     enabled={state.enabled}
                     key={entry.slug}
+                    mode={mode}
                     onEnabledChange={(enabled) =>
                       setEnabled(entry.slug, enabled)
                     }
@@ -418,7 +464,7 @@ export function PolicyWizard({
                   />
                 );
               })}
-              {resolvedCatalog.length === 0 && (
+              {orderedCatalog.length === 0 && (
                 <li className="rounded border bg-muted/20 p-3 text-muted-foreground text-xs">
                   No protocols are currently available on chain {chainId}.
                 </li>

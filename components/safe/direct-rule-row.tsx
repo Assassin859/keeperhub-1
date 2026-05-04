@@ -2,7 +2,8 @@
 
 import { ethers } from "ethers";
 import { ChevronDownIcon, ExternalLinkIcon, XIcon } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { AddressSelectPopover } from "@/components/address-book/address-select-popover";
 import type {
   DirectRuleInput,
   DirectRuleKind,
@@ -80,10 +81,42 @@ export function DirectRuleRow({
   onRemove,
 }: DirectRuleRowProps): React.ReactElement {
   const [pickerOpen, setPickerOpen] = useState<boolean>(false);
+  const [counterpartyFocused, setCounterpartyFocused] =
+    useState<boolean>(false);
+  const counterpartyBlurTimer = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
   const meta = ruleKindMeta(value.kind);
   const isNative = value.kind === "native-transfer";
   const counterpartyValid =
     value.counterparty.length === 0 || ethers.isAddress(value.counterparty);
+
+  const handleCounterpartyBookmarkPick = useCallback(
+    (address: string): void => {
+      onChange({ ...value, counterparty: address });
+      setCounterpartyFocused(false);
+    },
+    [onChange, value]
+  );
+
+  const handleCounterpartyBlur = useCallback((): void => {
+    // Defer the close so a click inside the popover/command list still
+    // registers before the popover unmounts. Mirrors the pattern in
+    // SaveAddressBookmark so behavior is consistent across the app.
+    if (counterpartyBlurTimer.current) {
+      clearTimeout(counterpartyBlurTimer.current);
+    }
+    counterpartyBlurTimer.current = setTimeout(() => {
+      const active = document.activeElement;
+      const insidePopover = Boolean(
+        active?.closest('[data-slot="popover-content"]') ||
+          active?.closest('[data-slot="command"]')
+      );
+      if (!insidePopover) {
+        setCounterpartyFocused(false);
+      }
+    }, 200);
+  }, []);
 
   const handleKindChange = (next: string): void => {
     const kind = next as DirectRuleKind;
@@ -127,10 +160,7 @@ export function DirectRuleRow({
 
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           {isNative ? (
-            <div
-              aria-label="Native ETH (no other token applies for this rule kind)"
-              className="flex h-9 w-full items-center justify-between rounded-md border bg-muted/40 px-3 text-muted-foreground text-sm"
-            >
+            <div className="flex h-9 w-full items-center justify-between rounded-md border bg-muted/40 px-3 text-muted-foreground text-sm">
               <span className="font-medium">ETH</span>
               <span className="text-xs">native</span>
             </div>
@@ -187,15 +217,23 @@ export function DirectRuleRow({
           <Label className="text-xs" htmlFor={`direct-rule-cp-${value.kind}`}>
             {meta.counterpartyLabel} address
           </Label>
-          <Input
-            className={counterpartyValid ? undefined : "border-destructive"}
-            id={`direct-rule-cp-${value.kind}`}
-            onChange={(e) =>
-              onChange({ ...value, counterparty: e.target.value })
-            }
-            placeholder="0x..."
-            value={value.counterparty}
-          />
+          <AddressSelectPopover
+            isOpen={counterpartyFocused}
+            onAddressSelect={handleCounterpartyBookmarkPick}
+            onClose={() => setCounterpartyFocused(false)}
+          >
+            <Input
+              className={counterpartyValid ? undefined : "border-destructive"}
+              id={`direct-rule-cp-${value.kind}`}
+              onBlur={handleCounterpartyBlur}
+              onChange={(e) =>
+                onChange({ ...value, counterparty: e.target.value })
+              }
+              onFocus={() => setCounterpartyFocused(true)}
+              placeholder="0x..."
+              value={value.counterparty}
+            />
+          </AddressSelectPopover>
           {!counterpartyValid && (
             <div className="text-destructive text-xs">
               Must be a valid 0x... address
@@ -252,9 +290,10 @@ export function DirectRuleRow({
       {isNative && (
         <div className="flex items-start gap-1 rounded border border-amber-300/40 bg-amber-500/5 p-2 text-amber-600/80 text-xs">
           <span>
-            Native ETH rules scope the recipient at target level. The role
-            allows any value transferred to this address; on-chain value caps
-            are not yet enforced for native transfers.
+            Native ETH rules only allowlist the recipient address; the Zodiac
+            Roles modifier does not enforce per-period value caps on raw ETH
+            sends. ERC-20 rules below pin both the recipient and the per-period
+            amount on chain.
           </span>
           {value.counterparty && counterpartyValid && (
             <a
