@@ -1,15 +1,14 @@
 /**
- * E2E verifying the reconciler detects a workflow config change and
- * restarts the listener with the new config. Without this behaviour, a
- * user editing their workflow would see the old config keep firing
- * forever - the regression that motivated the configHash comparison in
- * KEEP-295 Phase 4.
+ * Integration test for the in-process listener architecture.
  *
- * Requires the `test` docker-compose profile. Skipped when
- * SKIP_INFRA_TESTS=true.
+ * Emits an event on a local chain and asserts the corresponding SQS message
+ * is dispatched. Also asserts the registry holds the workflow after sync.
+ *
+ * Requires the `test` docker-compose profile (test-anvil, test-localstack,
+ * test-redis). Skipped when SKIP_INFRA_TESTS=true.
  */
 
-import type { Message, SQSClient } from "@aws-sdk/client-sqs";
+import type { SQSClient } from "@aws-sdk/client-sqs";
 import type { ethers } from "ethers";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -36,30 +35,31 @@ const SKIP_INFRA_TESTS = process.env.SKIP_INFRA_TESTS === "true";
 const AWS_ENDPOINT = process.env.AWS_ENDPOINT_URL ?? "http://localhost:4567";
 const REDIS_HOST = process.env.REDIS_HOST ?? "localhost";
 const REDIS_PORT = Number(process.env.REDIS_PORT ?? 6380);
-const TEST_QUEUE_NAME = "keeperhub-event-tracker-test-queue-config-change";
-const WORKFLOW_ID = "test-workflow-keep-295-config-change";
-const EMITTED_VALUE = 55n;
+const TEST_QUEUE_NAME = "keeperhub-event-tracker-test-queue-inproc";
+const WORKFLOW_ID = "test-workflow-keep-295-inproc";
+const EMITTED_VALUE = 42n;
 
+interface TypedValue {
+  value: string;
+  type: string;
+}
+interface TriggerData {
+  eventName: string;
+  args: Record<string, TypedValue>;
+  address: string;
+  transactionHash: string;
+}
 interface SqsBody {
   workflowId: string;
-  userId: string;
   triggerType: string;
-  triggerData: {
-    eventName: string;
-    args: Record<string, { value: string; type: string }>;
-    transactionHash: string;
-  };
+  triggerData: TriggerData;
 }
 
-function buildWorkflow(
-  address: string,
-  abi: unknown[],
-  userId: string,
-): unknown {
+function buildWorkflow(address: string, abi: unknown[]): unknown {
   return {
     id: WORKFLOW_ID,
-    name: "Config Change",
-    userId,
+    name: "Phase 4 In-Process",
+    userId: "test-user",
     organizationId: "test-org",
     enabled: true,
     nodes: [
@@ -71,7 +71,7 @@ function buildWorkflow(
           type: "event-trigger",
           label: "Emitted",
           status: "active",
-          description: "Config-change reconciler proof",
+          description: "In-process listener path",
           config: {
             network: String(getAnvilChainId()),
             eventName: "Emitted",
@@ -106,41 +106,23 @@ function buildNetworks(): Record<number, unknown> {
   };
 }
 
-async function waitForUserId(
-  sqsClient: SQSClient,
-  queueUrl: string,
-  expectedUserId: string,
-  timeoutMs: number,
-): Promise<Message | null> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const msg = await pollForMessage(sqsClient, queueUrl, 3_000);
-    if (!msg) {
-      continue;
-    }
-    const body = JSON.parse(msg.Body ?? "{}") as SqsBody;
-    if (body.userId === expectedUserId) {
-      return msg;
-    }
-  }
-  return null;
-}
-
 describe.skipIf(SKIP_INFRA_TESTS)(
-  "event-tracker: reconciler restarts on workflow config change",
+  "event-tracker: on-chain event -> SQS (in-process architecture)",
   () => {
     let fixture: DeployedFixture;
     let wallet: ethers.Wallet;
     let mockApi: MockApiServer;
     let sqsClient: SQSClient;
     let queueUrl: string;
+    // main.ts is imported dynamically after env is set so that env-captured
+    // module-level state (dedup client in listener/dedup-redis) picks up the
+    // test values.
     let synchronizeData: () => Promise<void>;
     let getRegistry: () => {
       size: () => number;
       has: (id: string) => boolean;
       ids: () => string[];
       stopAll: () => Promise<void>;
-      getConfigHash: (id: string) => string | undefined;
     };
 
     beforeAll(async () => {
@@ -154,7 +136,7 @@ describe.skipIf(SKIP_INFRA_TESTS)(
 
       mockApi = await startMockApi();
       mockApi.setResponse("/api/workflows/events", {
-        workflows: [buildWorkflow(fixture.address, fixture.abi, "user-v1")],
+        workflows: [buildWorkflow(fixture.address, fixture.abi)],
         networks: buildNetworks(),
       });
 
@@ -176,6 +158,8 @@ describe.skipIf(SKIP_INFRA_TESTS)(
 
     afterAll(async () => {
       try {
+        // Stop any registered in-process listeners so their provider-manager
+        // subscriptions close cleanly.
         if (getRegistry) {
           await getRegistry().stopAll();
         }
@@ -186,53 +170,46 @@ describe.skipIf(SKIP_INFRA_TESTS)(
       await deleteQueue(sqsClient, queueUrl);
     }, 30_000);
 
-    it("changing userId restarts the listener and the new config takes effect", async () => {
-      // Initial sync: registry picks up userId v1.
+    it("forwards an emitted contract event to SQS via the in-process listener", async () => {
       await synchronizeData();
+
+      // Prove the in-process path was taken: the registry should hold
+      // exactly the one workflow we registered through the mock API.
       const registry = getRegistry();
       expect(registry.size()).toBe(1);
-      const hashV1 = registry.getConfigHash(WORKFLOW_ID);
-      expect(hashV1).toBeDefined();
-
-      // Emit until we see a message tagged with the v1 userId.
-      const emitEvent = fixture.contract.getFunction("emitEvent");
-      let v1Msg: Message | null = null;
-      for (let attempt = 0; attempt < 10 && !v1Msg; attempt++) {
-        const tx = await emitEvent(EMITTED_VALUE);
-        await tx.wait();
-        v1Msg = await waitForUserId(sqsClient, queueUrl, "user-v1", 3_000);
-      }
-      expect(v1Msg).not.toBeNull();
-
-      // Swap the mock API to a new userId. Same workflowId, same contract,
-      // same event - only the user changed. configHash must change because
-      // userId is in the hash input.
-      mockApi.setResponse("/api/workflows/events", {
-        workflows: [buildWorkflow(fixture.address, fixture.abi, "user-v2")],
-        networks: buildNetworks(),
-      });
-
-      // Reconcile again. Reconciler should detect the hash mismatch, call
-      // remove then add, and end up with a new hash for the same id.
-      await synchronizeData();
-      expect(registry.size()).toBe(1);
       expect(registry.has(WORKFLOW_ID)).toBe(true);
-      const hashV2 = registry.getConfigHash(WORKFLOW_ID);
-      expect(hashV2).toBeDefined();
-      expect(hashV2).not.toBe(hashV1);
 
-      // Emit again. The listener should now carry the v2 userId through
-      // into the SQS body.
-      let v2Msg: Message | null = null;
-      for (let attempt = 0; attempt < 10 && !v2Msg; attempt++) {
+      const emitEvent = fixture.contract.getFunction("emitEvent");
+      let received: Awaited<ReturnType<typeof pollForMessage>> = null;
+      const MAX_ATTEMPTS = 10;
+      const PER_ATTEMPT_MS = 3_000;
+      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
         const tx = await emitEvent(EMITTED_VALUE);
         await tx.wait();
-        v2Msg = await waitForUserId(sqsClient, queueUrl, "user-v2", 3_000);
+        received = await pollForMessage(sqsClient, queueUrl, PER_ATTEMPT_MS);
+        if (received) {
+          break;
+        }
       }
-      expect(v2Msg).not.toBeNull();
-      const body = JSON.parse(v2Msg?.Body ?? "{}") as SqsBody;
-      expect(body.userId).toBe("user-v2");
+
+      expect(
+        received,
+        `no SQS message received after ${MAX_ATTEMPTS} emits; in-process listener likely never attached`,
+      ).not.toBeNull();
+
+      const body = JSON.parse(received?.Body ?? "{}") as SqsBody;
       expect(body.workflowId).toBe(WORKFLOW_ID);
-    }, 180_000);
+      expect(body.triggerType).toBe("event");
+      expect(body.triggerData.eventName).toBe("Emitted");
+      expect(body.triggerData.address.toLowerCase()).toBe(
+        fixture.address.toLowerCase(),
+      );
+      expect(body.triggerData.args.value.type).toBe("uint256");
+      expect(body.triggerData.args.value.value).toBe(String(EMITTED_VALUE));
+      expect(body.triggerData.args.sender.type).toBe("address");
+      expect(body.triggerData.args.sender.value.toLowerCase()).toBe(
+        wallet.address.toLowerCase(),
+      );
+    }, 90_000);
   },
 );

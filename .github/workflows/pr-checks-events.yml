@@ -1,0 +1,130 @@
+# Type: standalone | PR checks for the keeperhub-events workspace.
+# Runs only when keeperhub-events/**, this workflow, or docker-compose.yml
+# (which defines the test profile services) change. The events workspace is
+# a separate pnpm workspace from the main app, so the existing
+# setup-node-pnpm action (which installs from the repo root) is not reused.
+name: PR Checks (Events)
+
+on:
+  pull_request:
+    paths:
+      - "keeperhub-events/**"
+      - ".github/workflows/pr-checks-events.yml"
+      - "docker-compose.yml"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - name: Get pnpm store directory
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+      - name: Setup pnpm cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-events-${{ hashFiles('keeperhub-events/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-events-
+      - name: Install events deps
+        working-directory: keeperhub-events
+        run: pnpm install --frozen-lockfile
+      - name: Run lint
+        working-directory: keeperhub-events
+        run: pnpm lint
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - name: Get pnpm store directory
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+      - name: Setup pnpm cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-events-${{ hashFiles('keeperhub-events/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-events-
+      - name: Install events deps
+        working-directory: keeperhub-events
+        run: pnpm install --frozen-lockfile
+      - name: Run typecheck
+        working-directory: keeperhub-events
+        run: pnpm typecheck
+
+  test-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - name: Get pnpm store directory
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+      - name: Setup pnpm cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-events-${{ hashFiles('keeperhub-events/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-events-
+      - name: Install events deps
+        working-directory: keeperhub-events
+        run: pnpm install --frozen-lockfile
+      - name: Run unit tests
+        working-directory: keeperhub-events
+        run: pnpm --filter @techops/events-tracker test:unit
+
+  test-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - name: Get pnpm store directory
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+      - name: Setup pnpm cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-events-${{ hashFiles('keeperhub-events/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-events-
+      - name: Install events deps
+        working-directory: keeperhub-events
+        run: pnpm install --frozen-lockfile
+      - name: Start integration test infrastructure
+        # Bring up only the services events tests need (anvil, localstack,
+        # redis). --wait blocks until healthchecks pass. Excludes test-app /
+        # test-dispatcher / test-executor — heavy main-app stack the events
+        # tests don't touch.
+        run: docker compose --profile test up -d --wait test-anvil test-localstack test-redis
+      - name: Run integration tests
+        working-directory: keeperhub-events
+        run: pnpm --filter @techops/events-tracker test:integration
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker compose --profile test logs --no-color test-anvil test-localstack test-redis
+      - name: Tear down infrastructure
+        if: always()
+        run: docker compose --profile test down -v
