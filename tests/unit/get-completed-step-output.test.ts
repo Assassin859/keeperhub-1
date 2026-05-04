@@ -242,6 +242,82 @@ describe("getCompletedStepOutput", () => {
     });
   });
 
+  describe("statement timeout (SQLSTATE 57014)", () => {
+    function makeTimeoutError(): Error {
+      const e = new Error("canceling statement due to statement timeout");
+      (e as { code?: string }).code = "57014";
+      (e as { severity?: string }).severity = "ERROR";
+      return e;
+    }
+
+    it("returns null on timeout", async () => {
+      mockFetchSingle.mockRejectedValueOnce(makeTimeoutError());
+
+      const result = await getCompletedStepOutput(executionId, nodeId);
+
+      expect(result).toBeNull();
+    });
+
+    it("increments outcome=timeout counter on timeout, not outcome=error", async () => {
+      mockFetchSingle.mockRejectedValueOnce(makeTimeoutError());
+
+      await getCompletedStepOutput(executionId, nodeId);
+
+      expect(mockIncrementCounter).toHaveBeenCalledWith(
+        "workflow.executor.tracker_db_fallback.total",
+        expect.objectContaining({ outcome: "timeout" })
+      );
+      expect(mockIncrementCounter).not.toHaveBeenCalledWith(
+        "workflow.executor.tracker_db_fallback.total",
+        expect.objectContaining({ outcome: "error" })
+      );
+    });
+
+    it("evicts cache on timeout so subsequent call retries the DB", async () => {
+      mockFetchSingle
+        .mockRejectedValueOnce(makeTimeoutError())
+        .mockResolvedValueOnce({ outputRaw: { retried: true } });
+
+      const r1 = await getCompletedStepOutput(executionId, nodeId);
+      expect(r1).toBeNull();
+
+      const r2 = await getCompletedStepOutput(executionId, nodeId);
+      expect(r2?.output).toEqual({ retried: true });
+      expect(mockFetchSingle).toHaveBeenCalledTimes(2);
+    });
+
+    it("wrapping in cause also detected as timeout (DrizzleQueryError pattern)", async () => {
+      const cause = new Error("canceling statement due to statement timeout");
+      (cause as { code?: string }).code = "57014";
+      (cause as { severity?: string }).severity = "ERROR";
+      const wrapper = new Error("DrizzleQueryError");
+      (wrapper as { cause?: unknown }).cause = cause;
+      mockFetchSingle.mockRejectedValueOnce(wrapper);
+
+      await getCompletedStepOutput(executionId, nodeId);
+
+      expect(mockIncrementCounter).toHaveBeenCalledWith(
+        "workflow.executor.tracker_db_fallback.total",
+        expect.objectContaining({ outcome: "timeout" })
+      );
+    });
+
+    it("generic error still increments outcome=error, not outcome=timeout", async () => {
+      mockFetchSingle.mockRejectedValueOnce(new Error("generic DB failure"));
+
+      await getCompletedStepOutput(executionId, nodeId);
+
+      expect(mockIncrementCounter).toHaveBeenCalledWith(
+        "workflow.executor.tracker_db_fallback.total",
+        expect.objectContaining({ outcome: "error" })
+      );
+      expect(mockIncrementCounter).not.toHaveBeenCalledWith(
+        "workflow.executor.tracker_db_fallback.total",
+        expect.objectContaining({ outcome: "timeout" })
+      );
+    });
+  });
+
   describe("kill-switch: KH_EXECUTOR_AUTHORITY_DB_FALLBACK=false skips DB entirely", () => {
     // The kill-switch constant is read at module load time. Runtime env mutation
     // cannot affect it. We use vi.stubEnv + vi.resetModules + dynamic import to
@@ -395,6 +471,53 @@ describe("getCompletedStepOutputs (batch helper)", () => {
       "workflow.executor.tracker_db_fallback.total",
       expect.objectContaining({ outcome: "error" })
     );
+  });
+
+  describe("statement timeout (SQLSTATE 57014) in batch path", () => {
+    function makeTimeoutError(): Error {
+      const e = new Error("canceling statement due to statement timeout");
+      (e as { code?: string }).code = "57014";
+      (e as { severity?: string }).severity = "ERROR";
+      return e;
+    }
+
+    it("returns empty map on batch timeout", async () => {
+      mockFetchBatch.mockRejectedValueOnce(makeTimeoutError());
+
+      const result = await getCompletedStepOutputs(executionId, ["p1", "p2"]);
+
+      expect(result.size).toBe(0);
+    });
+
+    it("increments outcome=timeout counter on batch timeout, not outcome=error", async () => {
+      mockFetchBatch.mockRejectedValueOnce(makeTimeoutError());
+
+      await getCompletedStepOutputs(executionId, ["p1", "p2"]);
+
+      expect(mockIncrementCounter).toHaveBeenCalledWith(
+        "workflow.executor.tracker_db_fallback.total",
+        expect.objectContaining({ outcome: "timeout" })
+      );
+      expect(mockIncrementCounter).not.toHaveBeenCalledWith(
+        "workflow.executor.tracker_db_fallback.total",
+        expect.objectContaining({ outcome: "error" })
+      );
+    });
+
+    it("generic batch error still increments outcome=error, not outcome=timeout", async () => {
+      mockFetchBatch.mockRejectedValueOnce(new Error("generic batch failure"));
+
+      await getCompletedStepOutputs(executionId, ["p1", "p2"]);
+
+      expect(mockIncrementCounter).toHaveBeenCalledWith(
+        "workflow.executor.tracker_db_fallback.total",
+        expect.objectContaining({ outcome: "error" })
+      );
+      expect(mockIncrementCounter).not.toHaveBeenCalledWith(
+        "workflow.executor.tracker_db_fallback.total",
+        expect.objectContaining({ outcome: "timeout" })
+      );
+    });
   });
 
   it("iteration rows are excluded: only non-loop canonical rows are returned", async () => {
