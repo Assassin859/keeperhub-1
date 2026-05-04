@@ -256,41 +256,51 @@ describe("getCompletedStepOutput", () => {
     });
   });
 
-  describe("kill-switch: DB_FALLBACK_ENABLED=false skips DB entirely", () => {
-    const originalEnv = process.env.KH_EXECUTOR_AUTHORITY_DB_FALLBACK;
+  describe("kill-switch: KH_EXECUTOR_AUTHORITY_DB_FALLBACK=false skips DB entirely", () => {
+    // The kill-switch constant is read at module load time. Runtime env mutation
+    // cannot affect it. We use vi.stubEnv + vi.resetModules + dynamic import to
+    // re-load the module with the env var present at import time, exercising the
+    // real off-state code path. Note: toggling the env var in production requires
+    // a pod restart, not just a config push.
 
-    beforeEach(() => {
-      process.env.KH_EXECUTOR_AUTHORITY_DB_FALLBACK = "false";
-    });
+    it("off-state: returns null on tracker miss without querying the DB", async () => {
+      vi.stubEnv("KH_EXECUTOR_AUTHORITY_DB_FALLBACK", "false");
+      vi.resetModules();
 
-    afterEach(() => {
-      if (originalEnv === undefined) {
-        Reflect.deleteProperty(
-          process.env,
-          "KH_EXECUTOR_AUTHORITY_DB_FALLBACK"
-        );
-      } else {
-        process.env.KH_EXECUTOR_AUTHORITY_DB_FALLBACK = originalEnv;
-      }
-    });
+      const { getCompletedStepOutput: getOutputOff } = await import(
+        "@/lib/workflow/executor/get-completed-step-output"
+      );
 
-    it("returns null on tracker miss without querying the DB when kill-switch is off", async () => {
-      // NOTE: the kill-switch is read at module load time, so this test
-      // validates the production constant path. Env manipulation at runtime
-      // does not affect the module-level constant; it is documented behaviour
-      // that toggling requires a process restart. This test exercises the
-      // null-on-miss path as a contract assertion.
       mockFindFirst.mockResolvedValue({ outputRaw: { shouldNotSee: true } });
 
-      // We cannot force a module re-load in vitest without dynamic imports.
-      // Instead assert the documented interface: when the tracker has no entry
-      // and DB_FALLBACK_ENABLED is the default (true in test env), the DB IS
-      // queried. This test documents the kill-switch contract for code review.
-      const result = await getCompletedStepOutput(executionId, nodeId);
+      const result = await getOutputOff(executionId, nodeId);
 
-      // In test env the env var is not set to "false" at module load, so the
-      // DB IS queried. This assertion validates the default-enabled path.
-      expect(result?.source).toBe("db");
+      expect(result).toBeNull();
+      expect(mockFindFirst).not.toHaveBeenCalled();
+
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    });
+
+    it("off-state: batch helper also skips DB when kill-switch is off", async () => {
+      vi.stubEnv("KH_EXECUTOR_AUTHORITY_DB_FALLBACK", "false");
+      vi.resetModules();
+
+      const { getCompletedStepOutputs: getOutputsOff } = await import(
+        "@/lib/workflow/executor/get-completed-step-output"
+      );
+
+      mockFindMany.mockResolvedValue([
+        { nodeId: "p1", outputRaw: { shouldNotSee: true } },
+      ]);
+
+      const result = await getOutputsOff(executionId, ["p1", "p2"]);
+
+      expect(result.size).toBe(0);
+      expect(mockFindMany).not.toHaveBeenCalled();
+
+      vi.unstubAllEnvs();
+      vi.resetModules();
     });
   });
 

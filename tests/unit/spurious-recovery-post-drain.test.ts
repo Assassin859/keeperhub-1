@@ -9,6 +9,12 @@
  *
  * The reconciler is imported as a standalone function so it can be unit-tested
  * without spinning up the full executor.
+ *
+ * DB-error containment is delegated to getCompletedStepOutput, which catches
+ * all DB rejections internally, emits tracker_db_fallback.total{outcome=error},
+ * and returns null. reconcileSpuriousFailures has no outer try/catch; a null
+ * return simply skips the candidate and continues. The error containment test
+ * below verifies this delegation path end-to-end.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
