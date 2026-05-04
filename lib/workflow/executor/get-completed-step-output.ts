@@ -10,7 +10,7 @@ import "server-only";
 const DB_FALLBACK_ENABLED =
   process.env.KH_EXECUTOR_AUTHORITY_DB_FALLBACK !== "false";
 
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflowExecutionLogs } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
@@ -75,7 +75,8 @@ async function queryDb(
       eq(workflowExecutionLogs.nodeId, nodeId),
       eq(workflowExecutionLogs.status, "success"),
       isNull(workflowExecutionLogs.iterationIndex),
-      isNull(workflowExecutionLogs.forEachNodeId)
+      isNull(workflowExecutionLogs.forEachNodeId),
+      isNotNull(workflowExecutionLogs.outputRaw)
     ),
     orderBy: desc(workflowExecutionLogs.completedAt),
     columns: { outputRaw: true },
@@ -213,7 +214,8 @@ export async function getCompletedStepOutputs(
         inArray(workflowExecutionLogs.nodeId, dbNodeIds),
         eq(workflowExecutionLogs.status, "success"),
         isNull(workflowExecutionLogs.iterationIndex),
-        isNull(workflowExecutionLogs.forEachNodeId)
+        isNull(workflowExecutionLogs.forEachNodeId),
+        isNotNull(workflowExecutionLogs.outputRaw)
       ),
       orderBy: desc(workflowExecutionLogs.completedAt),
       columns: { nodeId: true, outputRaw: true },

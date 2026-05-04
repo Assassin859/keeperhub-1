@@ -136,14 +136,18 @@ describe("getCompletedStepOutput", () => {
       expect(result).toBeNull();
     });
 
-    it("returns null when DB returns a row with null outputRaw (not yet completed)", async () => {
-      mockFindFirst.mockResolvedValue({ outputRaw: null });
+    it("treats DB row with null outputRaw as miss (pre-migration backfill safety)", async () => {
+      // Rows written before migration 0066 have output_raw IS NULL. The WHERE
+      // clause now includes isNotNull(outputRaw), so the DB returns no row for
+      // these pre-migration records. The helper returns null (miss), and the
+      // caller falls back to its closure value -- identical to pre-PR behaviour
+      // on cross-process resume. This prevents null from overwriting a real
+      // closure value during the deploy window.
+      mockFindFirst.mockResolvedValue(undefined);
 
       const result = await getCompletedStepOutput(executionId, nodeId);
 
-      expect(result).not.toBeNull();
-      expect(result?.source).toBe("db");
-      expect(result?.output).toBeNull();
+      expect(result).toBeNull();
     });
 
     it("returns raw output, not redacted: apiKey field flows through as-is from output_raw", async () => {
@@ -409,6 +413,20 @@ describe("getCompletedStepOutputs (batch helper)", () => {
 
     expect(mockFindMany).toHaveBeenCalledTimes(1);
     expect(result.get("p1")?.output).toEqual({ canonical: true });
+  });
+
+  it("pre-migration null outputRaw rows are treated as miss in batch path", async () => {
+    // Rows written before migration 0066 have output_raw IS NULL. The WHERE
+    // clause includes isNotNull(outputRaw), so the DB returns no rows for
+    // pre-migration records. The result Map omits the key; the merge consumer
+    // falls back to the closure value, preventing null from overwriting a real
+    // in-process result during the deploy window.
+    mockFindMany.mockResolvedValue([]);
+
+    const result = await getCompletedStepOutputs(executionId, ["p1"]);
+
+    expect(result.has("p1")).toBe(false);
+    expect(result.size).toBe(0);
   });
 
   it("records latency histogram when DB is queried", async () => {
