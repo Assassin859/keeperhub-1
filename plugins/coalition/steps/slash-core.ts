@@ -28,6 +28,7 @@ import {
   coalitionInterface,
   getCoalitionAddress,
   parseCoalitionEvent,
+  shouldUseSponsorship,
 } from "./coalition-core";
 
 export type SlashCoreInput = {
@@ -189,7 +190,7 @@ export async function slashCore(input: SlashCoreInput): Promise<SlashResult> {
     rpcManager,
   };
 
-  if (!usePrivateMempool && isGasSponsorshipEnabled()) {
+  if (shouldUseSponsorship(usePrivateMempool, isGasSponsorshipEnabled())) {
     try {
       const sponsored = await executeSponsoredContractTransaction({
         organizationId,

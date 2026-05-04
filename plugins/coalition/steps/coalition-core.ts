@@ -37,6 +37,30 @@ export const coalitionInterface = new ethers.Interface(
 );
 
 /**
+ * Whether a coalition write should attempt the gas-sponsored path.
+ *
+ * Sponsored execution routes through Pimlico bundlers, which do NOT relay
+ * through Flashbots Protect or any chain's private mempool. Any action that
+ * exposes `usePrivateMempool` must therefore skip sponsorship when the user
+ * opts into private-mempool routing — otherwise the slash (or other
+ * frontrunning-sensitive write) silently falls back to the public mempool
+ * via the bundler, defeating the user's choice.
+ *
+ * Currently only `slash` exposes `usePrivateMempool`. If you add the option
+ * to another action, route its sponsorship gate through this helper so the
+ * constraint stays mechanical instead of relying on each call site to
+ * remember it.
+ *
+ * See `lib/web3/steps/write-contract-core.ts` for the full rationale.
+ */
+export function shouldUseSponsorship(
+  usePrivateMempool: boolean,
+  isSponsorshipEnabled: boolean
+): boolean {
+  return !usePrivateMempool && isSponsorshipEnabled;
+}
+
+/**
  * Parse a single event from a transaction receipt's logs.
  * Returns the event args (typed via ethers.Result) or null if not found.
  */
