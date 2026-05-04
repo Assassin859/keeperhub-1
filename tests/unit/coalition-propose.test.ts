@@ -111,10 +111,10 @@ vi.mock("@/lib/web3/transaction-manager", () => ({
 }));
 
 type SponsoredResult = { transactionHash: string; gasUsed: string } | null;
-const isGasSponsorshipEnabledMock = vi.fn<[], boolean>(() => false);
-const executeSponsoredContractTransactionMock = vi.fn<[unknown], Promise<SponsoredResult>>(
-  async () => null
-);
+const isGasSponsorshipEnabledMock = vi.fn<() => boolean>(() => false);
+const executeSponsoredContractTransactionMock = vi.fn<
+  (args: unknown) => Promise<SponsoredResult>
+>(async () => null);
 vi.mock("@/lib/web3/sponsorship-feature-flag", () => ({
   isGasSponsorshipEnabled: () => isGasSponsorshipEnabledMock(),
 }));
