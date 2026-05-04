@@ -1,13 +1,7 @@
 "use client";
 
-import {
-  ChevronDownIcon,
-  ChevronRightIcon,
-  ExternalLinkIcon,
-} from "lucide-react";
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
   Tooltip,
   TooltipContent,
@@ -19,22 +13,14 @@ import {
   type EnforcementLevel,
   type ProtocolCatalogEntry,
 } from "@/lib/safe/protocol-registry";
+import {
+  type PolicyProtocolCardAction,
+  PolicyProtocolCardActions,
+} from "./policy-protocol-card-actions";
+import { PolicyProtocolCardView } from "./policy-protocol-card-view";
+import { PolicyProtocolTargets } from "./policy-protocol-targets";
 import type { TokenRowValue } from "./policy-token-row";
 import { ProtocolTokenAllowances } from "./protocol-token-allowances";
-
-/**
- * One protocol card inside the policy wizard:
- *   - Checkbox to enable + header row with enforcement-level badge tooltip
- *   - Chevron that collapses the entire body (target contracts + token rows).
- *     Collapsing the chevron NEVER mutates the configured tokens; the parent
- *     keeps them in state so re-expanding shows the same caps.
- *   - <ProtocolTokenAllowances> renders the per-token rows + Add button when
- *     the protocol is enabled, regardless of expansion: collapsing only
- *     hides the UI.
- *
- * The card is fully controlled: the parent owns the enabled/tokens state and
- * updates it through the `onTokensChange` / `onEnabledChange` callbacks.
- */
 
 type TargetLink = {
   address: string;
@@ -49,14 +35,9 @@ type PolicyProtocolCardProps = {
   targets: readonly TargetLink[];
   onEnabledChange: (next: boolean) => void;
   onTokensChange: (next: TokenRowValue[]) => void;
+  mode?: "install" | "edit";
+  alreadyApplied?: boolean;
 };
-
-function truncateAddress(addr: string): string {
-  if (addr.length < 12) {
-    return addr;
-  }
-  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
-}
 
 function EnforcementBadge({
   level,
@@ -78,6 +59,77 @@ function EnforcementBadge({
   );
 }
 
+function computeCardBorderClass(options: {
+  showPendingRemoval: boolean;
+  enabled: boolean;
+}): string {
+  if (options.showPendingRemoval) {
+    return "border-destructive/40 bg-destructive/5";
+  }
+  if (options.enabled) {
+    return "border-primary/40 bg-primary/5";
+  }
+  return "";
+}
+
+function computeCardAction(options: {
+  isEditMode: boolean;
+  showAddNew: boolean;
+  showPendingRemoval: boolean;
+  showActive: boolean;
+  editingInputs: boolean;
+}): PolicyProtocolCardAction {
+  if (!options.isEditMode) {
+    return "none";
+  }
+  if (options.showAddNew) {
+    return "add";
+  }
+  if (options.showPendingRemoval) {
+    return "undo";
+  }
+  if (options.showActive && !options.editingInputs) {
+    return "edit";
+  }
+  return "remove";
+}
+
+function StateBadges({
+  showActive,
+  showPendingRemoval,
+  showNewlyAdded,
+}: {
+  showActive: boolean;
+  showPendingRemoval: boolean;
+  showNewlyAdded: boolean;
+}): React.ReactElement | null {
+  if (showActive) {
+    return (
+      <Badge
+        className="border-emerald-500/40 bg-emerald-500/10 text-[10px] text-emerald-600 dark:text-emerald-400"
+        variant="outline"
+      >
+        Active
+      </Badge>
+    );
+  }
+  if (showPendingRemoval) {
+    return (
+      <Badge className="text-[10px]" variant="destructive">
+        Pending removal
+      </Badge>
+    );
+  }
+  if (showNewlyAdded) {
+    return (
+      <Badge className="border-primary/40 text-[10px]" variant="outline">
+        New
+      </Badge>
+    );
+  }
+  return null;
+}
+
 export function PolicyProtocolCard({
   catalog,
   chainId,
@@ -86,116 +138,118 @@ export function PolicyProtocolCard({
   targets,
   onEnabledChange,
   onTokensChange,
+  mode = "install",
+  alreadyApplied = false,
 }: PolicyProtocolCardProps): React.ReactElement {
-  // Cards expand by default when the protocol starts enabled so the admin
-  // can see the seeded token caps. Collapsing/expanding never touches the
-  // parent's token state; tokens persist through any number of toggles.
   const [expanded, setExpanded] = useState<boolean>(enabled);
+  const [editingInputs, setEditingInputs] = useState<boolean>(false);
 
-  // Newly-enabling a previously-disabled protocol auto-expands it so the
-  // admin sees the rows they're about to configure. Disabling does NOT
-  // auto-collapse: the admin may want to keep the rows visible while
-  // deciding whether to keep them.
   useEffect(() => {
     if (enabled) {
       setExpanded(true);
     }
   }, [enabled]);
 
-  const handleEnabledChange = (next: boolean): void => {
-    onEnabledChange(next);
+  useEffect(() => {
+    if (mode === "edit" && !alreadyApplied && enabled) {
+      setEditingInputs(true);
+      return;
+    }
+    setEditingInputs(false);
+  }, [mode, alreadyApplied, enabled]);
+
+  const isEditMode = mode === "edit";
+  const showActive = isEditMode && alreadyApplied && enabled;
+  const showPendingRemoval = isEditMode && alreadyApplied && !enabled;
+  const showNewlyAdded = isEditMode && !alreadyApplied && enabled;
+  const showAddNew = isEditMode && !alreadyApplied && !enabled;
+
+  const cardBorderClass = computeCardBorderClass({
+    showPendingRemoval,
+    enabled,
+  });
+  const action = computeCardAction({
+    isEditMode,
+    showAddNew,
+    showPendingRemoval,
+    showActive,
+    editingInputs,
+  });
+
+  const handleAction = (): void => {
+    if (action === "add" || action === "undo") {
+      onEnabledChange(true);
+      return;
+    }
+    if (action === "remove") {
+      onEnabledChange(false);
+      return;
+    }
+    if (action === "edit") {
+      setEditingInputs(true);
+    }
   };
 
+  const showViewBody = showActive && !editingInputs;
+  const showInputBody = enabled && !showViewBody && !showPendingRemoval;
+
   return (
-    <li
-      className={`rounded border p-3 text-sm ${
-        enabled ? "border-primary/40 bg-primary/5" : ""
-      }`}
-    >
-      <div className="flex items-start gap-2">
-        <input
-          checked={enabled}
-          className="mt-1"
-          id={`pw-protocol-${catalog.slug}`}
-          onChange={(e) => handleEnabledChange(e.target.checked)}
-          type="checkbox"
-        />
+    <li className={`rounded border p-3 text-sm ${cardBorderClass}`}>
+      <div className="flex items-center gap-2">
+        {!isEditMode && (
+          <input
+            checked={enabled}
+            id={`pw-protocol-${catalog.slug}`}
+            onChange={(e) => onEnabledChange(e.target.checked)}
+            type="checkbox"
+          />
+        )}
         <label
-          className="flex-1 cursor-pointer"
+          className={
+            isEditMode
+              ? "flex min-w-0 flex-1 flex-wrap items-center gap-2"
+              : "flex min-w-0 flex-1 cursor-pointer flex-wrap items-center gap-2"
+          }
           htmlFor={`pw-protocol-${catalog.slug}`}
         >
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">{catalog.label}</span>
-            <EnforcementBadge level={catalog.enforcementLevel} />
-            {catalog.docsUrl && (
-              <a
-                className="inline-flex items-center gap-1 text-muted-foreground text-xs hover:text-foreground"
-                href={catalog.docsUrl}
-                onClick={(e) => e.stopPropagation()}
-                rel="noopener noreferrer"
-                target="_blank"
-              >
-                <ExternalLinkIcon className="h-3 w-3" />
-                docs
-              </a>
-            )}
-          </div>
-          <div className="text-muted-foreground text-xs">
-            {catalog.description}
-          </div>
+          <span className="font-medium">{catalog.label}</span>
+          <EnforcementBadge level={catalog.enforcementLevel} />
+          <StateBadges
+            showActive={showActive}
+            showNewlyAdded={showNewlyAdded}
+            showPendingRemoval={showPendingRemoval}
+          />
         </label>
-        <Button
-          aria-expanded={expanded}
-          aria-label={expanded ? "Hide details" : "Show details"}
-          onClick={() => setExpanded((v) => !v)}
-          size="icon"
-          type="button"
-          variant="ghost"
-        >
-          {expanded ? (
-            <ChevronDownIcon className="h-4 w-4" />
-          ) : (
-            <ChevronRightIcon className="h-4 w-4" />
-          )}
-        </Button>
+        <PolicyProtocolCardActions
+          action={action}
+          docsUrl={catalog.docsUrl}
+          expanded={expanded}
+          onAction={handleAction}
+          onToggleExpanded={() => setExpanded((v) => !v)}
+        />
+      </div>
+      <div className="mt-1 text-muted-foreground text-xs">
+        {catalog.description}
       </div>
 
-      {expanded && enabled && (
+      {expanded && showViewBody && (
         <div className="mt-3">
-          <ProtocolTokenAllowances
+          <PolicyProtocolCardView
             chainId={chainId}
-            onChange={onTokensChange}
+            targets={targets}
             tokens={tokens}
           />
         </div>
       )}
 
-      {expanded && targets.length > 0 && (
-        <div className="mt-3 space-y-2 rounded bg-muted/20 p-2">
-          <div className="text-muted-foreground text-xs">
-            Contracts scoped for this protocol on chain {chainId}
-          </div>
-          <ul className="space-y-1 text-xs">
-            {targets.map((t) => (
-              <li
-                className="flex items-center gap-2 font-mono text-muted-foreground"
-                key={t.address}
-              >
-                <span>{truncateAddress(t.address)}</span>
-                {t.explorerUrl && (
-                  <a
-                    className="inline-flex items-center gap-1 hover:text-foreground"
-                    href={t.explorerUrl}
-                    rel="noopener noreferrer"
-                    target="_blank"
-                  >
-                    <ExternalLinkIcon className="h-3 w-3" />
-                    verify
-                  </a>
-                )}
-              </li>
-            ))}
-          </ul>
+      {expanded && showInputBody && (
+        <div className="mt-3 space-y-3">
+          <ProtocolTokenAllowances
+            chainId={chainId}
+            onChange={onTokensChange}
+            tokens={tokens}
+          />
+          <PolicyProtocolTargets chainId={chainId} targets={targets} />
         </div>
       )}
     </li>

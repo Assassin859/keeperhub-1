@@ -84,3 +84,30 @@ export function getExplorerTxUrl(
   }
   return `${base}/tx/${txHash}`;
 }
+
+/**
+ * Human-readable chain name for UI labels. Lives next to the explorer +
+ * Safe-prefix maps so the same set of supported chains is referenced from
+ * one place. Unknown chains fall back to "chain <id>" so the UI never
+ * shows just a number.
+ */
+const CHAIN_DISPLAY_NAMES: Record<number, string> = {
+  1: "Ethereum",
+  10: "Optimism",
+  8453: "Base",
+  42_161: "Arbitrum One",
+  56: "BNB Smart Chain",
+  137: "Polygon",
+  43_114: "Avalanche",
+  11_155_111: "Sepolia",
+  11_155_420: "Optimism Sepolia",
+  84_532: "Base Sepolia",
+  421_614: "Arbitrum Sepolia",
+  97: "BNB Testnet",
+  80_002: "Polygon Amoy",
+  43_113: "Avalanche Fuji",
+};
+
+export function getChainDisplayName(chainId: number): string {
+  return CHAIN_DISPLAY_NAMES[chainId] ?? `chain ${chainId}`;
+}
