@@ -339,6 +339,12 @@ export const workflowExecutionLogs = pgTable("workflow_execution_logs", {
   input: jsonb("input").$type<any>(),
   // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
   output: jsonb("output").$type<any>(),
+  // output_raw is the executor's authoritative source-of-truth for cross-process resume.
+  // `output` receives redactSensitiveData() for observability/UI display; `output_raw`
+  // stores the unredacted payload so downstream template rendering receives real values
+  // rather than "[REDACTED]" strings when a pod resumes across a process boundary.
+  // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
+  outputRaw: jsonb("output_raw").$type<any>(),
   error: text("error"),
   startedAt: timestamp("started_at").notNull().defaultNow(),
   completedAt: timestamp("completed_at"),

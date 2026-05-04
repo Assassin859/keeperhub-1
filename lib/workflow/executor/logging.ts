@@ -75,12 +75,19 @@ export type LogStepCompleteParams = {
   startTime: number;
   status: "success" | "error";
   output?: unknown;
+  outputRaw?: unknown;
   error?: string;
   executionId?: string;
 };
 
 /**
- * Log the completion of a step execution
+ * Log the completion of a step execution.
+ *
+ * Writes two output columns:
+ *   `output`     -- redacted via redactSensitiveData(), for observability/UI display.
+ *   `output_raw` -- unredacted executor payload; authoritative source-of-truth for
+ *                   cross-process resume so downstream templates receive real values
+ *                   rather than "[REDACTED]" strings.
  */
 export async function logStepCompleteDb(
   params: LogStepCompleteParams
@@ -97,6 +104,7 @@ export async function logStepCompleteDb(
     .set({
       status: params.status,
       output: params.output,
+      outputRaw: params.outputRaw,
       error: params.error,
       completedAt: new Date(),
       duration: duration.toString(),
