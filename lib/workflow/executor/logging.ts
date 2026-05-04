@@ -317,8 +317,9 @@ export type IncrementCompletedStepsParams = {
  * The WHERE clause replaces the pre-read terminal-status guard, eliminating
  * the TOCTOU race against cancellation.
  *
- * Follow-up: audit other jsonb/array updates under lib/workflow/executor/ for
- * atomicity — see KEEP-411 commit message for known open spots.
+ * Returns void; the UPDATE silently affects 0 rows when the execution is
+ * cancelled (or has been deleted). Callers should not depend on the trace
+ * being incremented for late-arriving step completions on cancelled runs.
  */
 export async function incrementCompletedSteps(
   params: IncrementCompletedStepsParams
