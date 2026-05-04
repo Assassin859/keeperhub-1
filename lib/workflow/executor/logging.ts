@@ -4,7 +4,7 @@
  */
 import "server-only";
 
-import { and, eq, inArray, ne } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflowExecutionLogs, workflowExecutions } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
@@ -309,38 +309,28 @@ export type IncrementCompletedStepsParams = {
 };
 
 /**
- * Increment the completed steps counter and update execution trace.
+ * Increment the completed steps counter and append to the execution trace.
  * Called when a step completes (success or error).
+ *
+ * Uses a single atomic UPDATE so concurrent fan-out steps (for-each, parallel
+ * branches) cannot overwrite each other's trace entries or counter increments.
+ * The WHERE clause replaces the pre-read terminal-status guard, eliminating
+ * the TOCTOU race against cancellation.
+ *
+ * Returns void; the UPDATE silently affects 0 rows when the execution is
+ * cancelled (or has been deleted). Callers should not depend on the trace
+ * being incremented for late-arriving step completions on cancelled runs.
  */
 export async function incrementCompletedSteps(
   params: IncrementCompletedStepsParams
 ): Promise<void> {
-  // Fetch current execution to get current values
-  const execution = await db.query.workflowExecutions.findFirst({
-    where: eq(workflowExecutions.id, params.executionId),
-  });
-
-  if (!execution) {
-    return;
-  }
-
-  // Guard: skip if execution was cancelled (runtime continues after cancel)
-  if (TERMINAL_STATUSES.has(execution.status)) {
-    return;
-  }
-
-  const completedSteps =
-    Number.parseInt(execution.completedSteps || "0", 10) + 1;
-  const trace = (execution.executionTrace as string[] | null) || [];
-
   await db
     .update(workflowExecutions)
     .set({
-      completedSteps: completedSteps.toString(),
-      executionTrace: [...trace, params.nodeId],
+      completedSteps: sql`(COALESCE(${workflowExecutions.completedSteps}, '0')::int + 1)::text`,
+      executionTrace: sql`COALESCE(${workflowExecutions.executionTrace}, '[]'::jsonb) || ${JSON.stringify([params.nodeId])}::jsonb`,
       currentNodeId: null,
       currentNodeName: null,
-      // Only update last successful if this step succeeded
       ...(params.success
         ? {
             lastSuccessfulNodeId: params.nodeId,
@@ -348,5 +338,10 @@ export async function incrementCompletedSteps(
           }
         : {}),
     })
-    .where(eq(workflowExecutions.id, params.executionId));
+    .where(
+      and(
+        eq(workflowExecutions.id, params.executionId),
+        ne(workflowExecutions.status, "cancelled")
+      )
+    );
 }
