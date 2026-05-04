@@ -1,5 +1,5 @@
 /**
- * E2E for the SIGTERM/SIGINT graceful-shutdown handlers added in
+ * Integration test for the SIGTERM/SIGINT graceful-shutdown handlers added in
  * `src/index.ts`. Under the in-process architecture (Phase 4+), the parent
  * process owns every listener, so the K8s pod-rotation signal must stop
  * them cleanly rather than relying on OS process teardown.

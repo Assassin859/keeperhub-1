@@ -1,6 +1,9 @@
 # Event Tracker for PR environments
-# Uses pre-built staging image
-# Variables to be replaced: ${PR_NUMBER}, ${ECR_REGISTRY}
+# Default: uses pre-built staging image (event-latest).
+# When the deploy-pr-events label is present on the PR, the deploy
+# workflow sets EVENTS_IMAGE_TAG to event-${sha_short} so the PR env
+# runs PR-specific events code instead of staging events code.
+# Variables to be replaced: ${PR_NUMBER}, ${ECR_REGISTRY}, ${EVENTS_IMAGE_TAG}
 
 replicaCount: 1
 
@@ -18,7 +21,7 @@ ingress:
 
 image:
   repository: ${ECR_REGISTRY}/keeperhub-event-staging
-  tag: event-latest
+  tag: ${EVENTS_IMAGE_TAG}
   pullPolicy: Always
 
 deployment:
