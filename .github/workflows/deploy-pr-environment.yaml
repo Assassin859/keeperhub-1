@@ -216,6 +216,10 @@ jobs:
 
       - name: Build and push events image
         if: steps.check-image.outputs.exists != 'true'
+        # Read from both staging cache (warm start) and PR cache, but only
+        # write to :cache-pr. Prevents PR builds (which may carry broken
+        # or experimental code) from poisoning the staging :cache layer
+        # used by deploy-events.yaml.
         uses: docker/build-push-action@v7
         with:
           context: ./keeperhub-events
@@ -226,7 +230,8 @@ jobs:
             ${{ steps.login-ecr.outputs.registry }}/${{ env.EVENTS_ECR_NAME }}:event-${{ steps.vars.outputs.sha_short }}
           cache-from: |
             type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.EVENTS_ECR_NAME }}:cache
-          cache-to: type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.EVENTS_ECR_NAME }}:cache,mode=max
+            type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.EVENTS_ECR_NAME }}:cache-pr
+          cache-to: type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.EVENTS_ECR_NAME }}:cache-pr,mode=max
 
   deploy:
     needs: [check-labels, build-images, build-events-image]
