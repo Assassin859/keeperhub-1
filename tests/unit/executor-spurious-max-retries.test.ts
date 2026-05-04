@@ -6,7 +6,7 @@ import {
   EXCEEDED_MAX_RETRIES_REGEX,
   FAILED_AFTER_RETRIES_REGEX,
   NO_STEP_COMPLETION_REGEX,
-} from "@/lib/workflow/executor/executor.workflow";
+} from "@/lib/workflow/executor/runner-error-patterns";
 import {
   clearExecution,
   getSuccessfulSteps,

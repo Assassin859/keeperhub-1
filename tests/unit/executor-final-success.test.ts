@@ -15,7 +15,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { computeFinalSuccess } from "@/lib/workflow/executor/executor.workflow";
+import { computeFinalSuccess } from "@/lib/workflow/executor/final-success";
 
 describe("computeFinalSuccess (KEEP-395 Bug 2 finalSuccess race)", () => {
   it("returns true when results is empty", () => {

@@ -4,7 +4,8 @@ import positionManagerAbi from "./abis/uniswap-position-manager.json";
 import quoterAbi from "./abis/uniswap-quoter.json";
 import swapRouterAbi from "./abis/uniswap-swap-router.json";
 
-const UNISWAP_DOCS = "https://developers.uniswap.org/docs/protocols/v3/overview";
+const UNISWAP_DOCS =
+  "https://developers.uniswap.org/docs/protocols/v3/overview";
 
 const FEE_TIER_TIP =
   "Pool fee tier in hundredths of a basis point. Common values: 100 (0.01% - stablecoin pairs), 500 (0.05% - correlated pairs), 3000 (0.3% - most pairs), 10000 (1% - exotic pairs).";
@@ -12,20 +13,20 @@ const FEE_TIER_TIP =
 const SQRT_PRICE_LIMIT_TIP =
   "Square-root price limit encoded as a Q64.96 fixed-point number. Constrains how far the pool price can move during the swap. Set to 0 for no limit (most common). Non-zero values act as a slippage guard at the pool level.";
 
+const TOKEN_IN_TIP =
+  "ERC20 contract address of the token you are spending. To swap native ETH directly, set this to the chain's WETH address and provide the swap amount via the 'ETH Value' field below - SwapRouter02 will wrap msg.value internally and no token approval is needed. For ERC20 input, the SwapRouter02 must have an approval for at least the input amount before this action runs.";
+
 const POSITION_TOKEN_ID_TIP =
   "The NFT token ID representing a Uniswap V3 liquidity position. Each position minted via the NonfungiblePositionManager receives a unique uint256 ID. Find it from the Mint event or via the balanceOf + tokenOfOwnerByIndex pattern.";
 
-// QuoterV2 is declared as `view` in the reduced ABI even though the on-chain
-// contract is `nonpayable`. QuoterV2 uses a revert-to-return pattern (calls
-// pool.swap inside a try/catch), so the true mutability is nonpayable, but
-// every client invokes these via eth_call. Declaring `view` keeps the action
-// classified as a read step - no credentials, no gas, no state change.
-//
-// SwapRouter02 and NonfungiblePositionManager have several `payable` functions
-// upstream (exactInputSingle, exactOutputSingle, burn) to support multicall
-// composition. They are marked `nonpayable` in the reduced ABI because we do
-// not expose the ETH-value path through these actions; callers wrap ETH via
-// the WETH protocol first.
+// QuoterV2 is the one deliberate divergence from upstream mutability in this
+// file. Upstream the quote functions are `nonpayable` (they use a revert-as-
+// return idiom: pool.swap is invoked inside try/catch and the simulated
+// amounts are decoded from the revert data), but every client invokes them
+// via eth_call. Marking them `view` here classifies the action as a read
+// step (no credentials, no gas, no transaction). Solidity's mutability model
+// cannot express "off-chain simulation"; this is the cleanest place to bridge
+// that gap until AbiFunctionOverride supports a stateMutability override.
 
 export default defineAbiProtocol({
   name: "Uniswap V3",
@@ -191,7 +192,11 @@ export default defineAbiProtocol({
           description:
             "Swap an exact amount of input tokens for as many output tokens as possible (single-hop)",
           inputs: {
-            tokenIn: { label: "Input Token Address" },
+            tokenIn: {
+              label: "Input Token Address",
+              helpTip: TOKEN_IN_TIP,
+              docUrl: UNISWAP_DOCS,
+            },
             tokenOut: { label: "Output Token Address" },
             fee: {
               label: "Fee Tier (100, 500, 3000, or 10000)",
@@ -223,7 +228,11 @@ export default defineAbiProtocol({
           description:
             "Swap as few input tokens as possible for an exact amount of output tokens (single-hop)",
           inputs: {
-            tokenIn: { label: "Input Token Address" },
+            tokenIn: {
+              label: "Input Token Address",
+              helpTip: TOKEN_IN_TIP,
+              docUrl: UNISWAP_DOCS,
+            },
             tokenOut: { label: "Output Token Address" },
             fee: {
               label: "Fee Tier (100, 500, 3000, or 10000)",

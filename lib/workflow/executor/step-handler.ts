@@ -7,12 +7,12 @@ import "server-only";
 
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { recordStepMetrics } from "@/lib/metrics/instrumentation/workflow";
-import { recordStepSuccess } from "@/lib/workflow/executor/step-success-tracker";
+import { redactSensitiveData } from "@/lib/utils/redact";
 import {
   runWithWorkflowErrorContext,
   type WorkflowErrorContext,
 } from "@/lib/workflow/executor/error-context";
-import { redactSensitiveData } from "@/lib/utils/redact";
+import { recordStepSuccess } from "@/lib/workflow/executor/step-success-tracker";
 import {
   incrementCompletedSteps,
   logStepCompleteDb,
@@ -108,7 +108,11 @@ async function logStepStart(
 }
 
 /**
- * Log the completion of a step execution
+ * Log the completion of a step execution.
+ *
+ * Writes `output` (redacted) for observability/UI display and `outputRaw`
+ * (unredacted) as the executor's authoritative source-of-truth for
+ * cross-process resume. See output_raw column comment in schema.ts.
  */
 async function logStepComplete(
   logInfo: LogInfo,
@@ -129,6 +133,7 @@ async function logStepComplete(
       startTime: logInfo.startTime,
       status,
       output: redactedOutput,
+      outputRaw: output,
       error,
       executionId,
     });
