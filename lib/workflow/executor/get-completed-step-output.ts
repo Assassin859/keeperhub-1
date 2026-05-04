@@ -10,11 +10,12 @@ import "server-only";
 const DB_FALLBACK_ENABLED =
   process.env.KH_EXECUTOR_AUTHORITY_DB_FALLBACK !== "false";
 
-import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { workflowExecutionLogs } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
+import {
+  fetchCompletedStepOutputStep,
+  fetchCompletedStepOutputsBatchStep,
+} from "@/lib/workflow/executor/get-completed-step-output.step";
 import { getSuccessfulSteps } from "@/lib/workflow/executor/step-success-tracker";
 
 export type CompletedStepOutput = {
@@ -50,43 +51,21 @@ export function clearOutputCache(executionId: string): void {
 }
 
 /**
- * Query `workflow_execution_logs` for a single (executionId, nodeId) success row.
- *
- * Reads `output_raw` (the unredacted executor payload) rather than `output`
- * (which contains redactSensitiveData() substitutions). This ensures downstream
- * template rendering receives real values, not "[REDACTED]" strings, on
- * cross-process / cross-pod resumes.
- *
- * Filters iterationIndex IS NULL to select only canonical convergence rows, not
- * per-iteration rows from for-each loop bodies. This helper is NOT safe to call
- * for nodes inside a for-each body — callers must use a different scoping
- * (e.g. pass iterationIndex explicitly) if that use-case is ever added.
- *
- * orderBy completedAt DESC as defense-in-depth in case multiple canonical rows
- * ever exist for the same (executionId, nodeId) with status='success'.
+ * Query `workflow_execution_logs` for a single (executionId, nodeId) success row
+ * via the "use step" boundary. This keeps Node.js-only modules (postgres, nanoid)
+ * out of the "use workflow" bundle.
  */
 async function queryDb(
   executionId: string,
   nodeId: string
 ): Promise<CompletedStepOutput | null> {
-  const row = await db.query.workflowExecutionLogs.findFirst({
-    where: and(
-      eq(workflowExecutionLogs.executionId, executionId),
-      eq(workflowExecutionLogs.nodeId, nodeId),
-      eq(workflowExecutionLogs.status, "success"),
-      isNull(workflowExecutionLogs.iterationIndex),
-      isNull(workflowExecutionLogs.forEachNodeId),
-      isNotNull(workflowExecutionLogs.outputRaw)
-    ),
-    orderBy: desc(workflowExecutionLogs.completedAt),
-    columns: { outputRaw: true },
-  });
+  const row = await fetchCompletedStepOutputStep(executionId, nodeId);
 
   if (!row) {
     return null;
   }
 
-  return { output: row.outputRaw as unknown, source: "db" };
+  return { output: row.outputRaw, source: "db" };
 }
 
 /**
@@ -208,18 +187,10 @@ export async function getCompletedStepOutputs(
 
   const startMs = Date.now();
   try {
-    const rows = await db.query.workflowExecutionLogs.findMany({
-      where: and(
-        eq(workflowExecutionLogs.executionId, executionId),
-        inArray(workflowExecutionLogs.nodeId, dbNodeIds),
-        eq(workflowExecutionLogs.status, "success"),
-        isNull(workflowExecutionLogs.iterationIndex),
-        isNull(workflowExecutionLogs.forEachNodeId),
-        isNotNull(workflowExecutionLogs.outputRaw)
-      ),
-      orderBy: desc(workflowExecutionLogs.completedAt),
-      columns: { nodeId: true, outputRaw: true },
-    });
+    const rows = await fetchCompletedStepOutputsBatchStep(
+      executionId,
+      dbNodeIds
+    );
 
     getMetricsCollector().recordLatency(
       "workflow.executor.tracker_db_fallback.duration_ms",
@@ -229,7 +200,7 @@ export async function getCompletedStepOutputs(
     for (const row of rows) {
       if (!result.has(row.nodeId)) {
         result.set(row.nodeId, {
-          output: row.outputRaw as unknown,
+          output: row.outputRaw,
           source: "db",
         });
       }

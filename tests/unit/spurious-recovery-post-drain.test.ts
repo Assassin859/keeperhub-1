@@ -21,35 +21,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-const { mockFindFirst, mockFindMany, mockIncrementCounter } = vi.hoisted(
-  () => ({
-    mockFindFirst: vi.fn(),
-    mockFindMany: vi.fn(),
-    mockIncrementCounter: vi.fn(),
-  })
-);
-
-vi.mock("@/lib/db", () => ({
-  db: {
-    query: {
-      workflowExecutionLogs: {
-        findFirst: mockFindFirst,
-        findMany: mockFindMany,
-      },
-    },
-  },
+const { mockFetchSingle, mockIncrementCounter } = vi.hoisted(() => ({
+  mockFetchSingle: vi.fn(),
+  mockIncrementCounter: vi.fn(),
 }));
 
-vi.mock("@/lib/db/schema", () => ({
-  workflowExecutionLogs: {
-    executionId: "execution_id",
-    nodeId: "node_id",
-    status: "status",
-    iterationIndex: "iteration_index",
-    forEachNodeId: "for_each_node_id",
-    completedAt: "completed_at",
-    outputRaw: "output_raw",
-  },
+vi.mock("@/lib/workflow/executor/get-completed-step-output.step", () => ({
+  fetchCompletedStepOutputStep: mockFetchSingle,
+  fetchCompletedStepOutputsBatchStep: vi.fn(),
 }));
 
 vi.mock("@/lib/logging", () => ({
@@ -79,8 +58,7 @@ describe("reconcileSpuriousFailures (KEEP-398 post-drain pass)", () => {
   beforeEach(() => {
     clearOutputCache(executionId);
     clearExecution(executionId);
-    mockFindFirst.mockReset();
-    mockFindMany.mockReset();
+    mockFetchSingle.mockReset();
     mockIncrementCounter.mockReset();
   });
 
@@ -108,7 +86,7 @@ describe("reconcileSpuriousFailures (KEEP-398 post-drain pass)", () => {
         "workflow.executor.spurious_recovery.total",
         expect.objectContaining({ source: "post_drain" })
       );
-      expect(mockFindFirst).not.toHaveBeenCalled();
+      expect(mockFetchSingle).not.toHaveBeenCalled();
     });
 
     it("overrides for 'failed after N retries' shape", async () => {
@@ -144,7 +122,7 @@ describe("reconcileSpuriousFailures (KEEP-398 post-drain pass)", () => {
 
   describe("prod KEEP-398 repro: tracker empty, DB has success row", () => {
     it("overrides failed result from DB when tracker is empty but DB row exists", async () => {
-      mockFindFirst.mockResolvedValue({ outputRaw: { mergedFromDb: true } });
+      mockFetchSingle.mockResolvedValue({ outputRaw: { mergedFromDb: true } });
 
       const results: Record<string, ExecutionResult> = {
         [nodeId]: {
@@ -164,7 +142,7 @@ describe("reconcileSpuriousFailures (KEEP-398 post-drain pass)", () => {
     });
 
     it("increments spurious_recovery.total exactly once per recovered node", async () => {
-      mockFindFirst.mockResolvedValue({ outputRaw: { x: 1 } });
+      mockFetchSingle.mockResolvedValue({ outputRaw: { x: 1 } });
 
       const results: Record<string, ExecutionResult> = {
         [nodeId]: {
@@ -184,7 +162,7 @@ describe("reconcileSpuriousFailures (KEEP-398 post-drain pass)", () => {
 
     it("recovers multiple failed nodes in the same pass", async () => {
       const nodeB = "combine-node-2";
-      mockFindFirst.mockResolvedValue({ outputRaw: { db: true } });
+      mockFetchSingle.mockResolvedValue({ outputRaw: { db: true } });
 
       const results: Record<string, ExecutionResult> = {
         [nodeId]: {
@@ -217,7 +195,7 @@ describe("reconcileSpuriousFailures (KEEP-398 post-drain pass)", () => {
       // The rejection is caught inside getCompletedStepOutput which evicts the
       // cache, increments tracker_db_fallback.total{outcome=error}, and returns
       // null -- so reconcileSpuriousFailures skips nodeId and proceeds to nodeB.
-      mockFindFirst
+      mockFetchSingle
         .mockRejectedValueOnce(new Error("Pool exhausted"))
         .mockResolvedValueOnce({ outputRaw: { recovered: true } });
 
@@ -253,7 +231,7 @@ describe("reconcileSpuriousFailures (KEEP-398 post-drain pass)", () => {
 
   describe("negative: failed entry stands when no success evidence exists", () => {
     it("does not override when DB has no success row for the node", async () => {
-      mockFindFirst.mockResolvedValue(undefined);
+      mockFetchSingle.mockResolvedValue(null);
 
       const results: Record<string, ExecutionResult> = {
         [nodeId]: {
@@ -272,7 +250,7 @@ describe("reconcileSpuriousFailures (KEEP-398 post-drain pass)", () => {
     });
 
     it("does not override for unrelated errors even when DB has a success row", async () => {
-      mockFindFirst.mockResolvedValue({ outputRaw: { ok: true } });
+      mockFetchSingle.mockResolvedValue({ outputRaw: { ok: true } });
 
       const results: Record<string, ExecutionResult> = {
         [nodeId]: {
@@ -302,7 +280,7 @@ describe("reconcileSpuriousFailures (KEEP-398 post-drain pass)", () => {
 
       expect(results[nodeId].success).toBe(true);
       expect(results[nodeId].data).toEqual({ alreadyGood: true });
-      expect(mockFindFirst).not.toHaveBeenCalled();
+      expect(mockFetchSingle).not.toHaveBeenCalled();
       expect(mockIncrementCounter).not.toHaveBeenCalled();
     });
 
@@ -317,7 +295,7 @@ describe("reconcileSpuriousFailures (KEEP-398 post-drain pass)", () => {
       await reconcileSpuriousFailures({ executionId: undefined, results });
 
       expect(results[nodeId].success).toBe(false);
-      expect(mockFindFirst).not.toHaveBeenCalled();
+      expect(mockFetchSingle).not.toHaveBeenCalled();
       expect(mockIncrementCounter).not.toHaveBeenCalled();
     });
 

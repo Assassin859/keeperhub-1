@@ -9,42 +9,24 @@
  * convergence merge to simulate the prod cross-process boundary.
  *
  * The batch helper `getCompletedStepOutputs` is used internally; tests mock
- * `findMany` accordingly.
+ * `fetchCompletedStepOutputsBatchStep` accordingly.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-const { mockFindMany, mockIncrementCounter, mockRecordLatency } = vi.hoisted(
+const { mockFetchBatch, mockIncrementCounter, mockRecordLatency } = vi.hoisted(
   () => ({
-    mockFindMany: vi.fn(),
+    mockFetchBatch: vi.fn(),
     mockIncrementCounter: vi.fn(),
     mockRecordLatency: vi.fn(),
   })
 );
 
-vi.mock("@/lib/db", () => ({
-  db: {
-    query: {
-      workflowExecutionLogs: {
-        findFirst: vi.fn(),
-        findMany: mockFindMany,
-      },
-    },
-  },
-}));
-
-vi.mock("@/lib/db/schema", () => ({
-  workflowExecutionLogs: {
-    executionId: "execution_id",
-    nodeId: "node_id",
-    status: "status",
-    iterationIndex: "iteration_index",
-    forEachNodeId: "for_each_node_id",
-    completedAt: "completed_at",
-    outputRaw: "output_raw",
-  },
+vi.mock("@/lib/workflow/executor/get-completed-step-output.step", () => ({
+  fetchCompletedStepOutputStep: vi.fn(),
+  fetchCompletedStepOutputsBatchStep: mockFetchBatch,
 }));
 
 vi.mock("@/lib/logging", () => ({
@@ -92,7 +74,7 @@ describe("mergeFromAuthority (KEEP-395 cross-process DB fallback)", () => {
   beforeEach(() => {
     clearOutputCache(executionId);
     clearExecution(executionId);
-    mockFindMany.mockReset();
+    mockFetchBatch.mockReset();
     mockIncrementCounter.mockReset();
     mockRecordLatency.mockReset();
   });
@@ -114,7 +96,7 @@ describe("mergeFromAuthority (KEEP-395 cross-process DB fallback)", () => {
     });
 
     expect(result).toBe(outputs);
-    expect(mockFindMany).not.toHaveBeenCalled();
+    expect(mockFetchBatch).not.toHaveBeenCalled();
   });
 
   it("returns original outputs unchanged when predecessorIds is empty", async () => {
@@ -129,7 +111,7 @@ describe("mergeFromAuthority (KEEP-395 cross-process DB fallback)", () => {
     });
 
     expect(result).toBe(outputs);
-    expect(mockFindMany).not.toHaveBeenCalled();
+    expect(mockFetchBatch).not.toHaveBeenCalled();
   });
 
   describe("fast path: tracker hit (same process)", () => {
@@ -149,7 +131,7 @@ describe("mergeFromAuthority (KEEP-395 cross-process DB fallback)", () => {
       });
 
       expect(result.predA.data).toEqual({ rate: 4.5 });
-      expect(mockFindMany).not.toHaveBeenCalled();
+      expect(mockFetchBatch).not.toHaveBeenCalled();
     });
   });
 
@@ -162,7 +144,7 @@ describe("mergeFromAuthority (KEEP-395 cross-process DB fallback)", () => {
         predIds.map((id) => [id, { label: id, data: null }])
       );
 
-      mockFindMany.mockResolvedValue(
+      mockFetchBatch.mockResolvedValue(
         predIds.map((nodeId) => ({
           nodeId,
           outputRaw: { value: "result-for-db" },
@@ -177,7 +159,7 @@ describe("mergeFromAuthority (KEEP-395 cross-process DB fallback)", () => {
         getNodeName,
       });
 
-      expect(mockFindMany).toHaveBeenCalledTimes(1);
+      expect(mockFetchBatch).toHaveBeenCalledTimes(1);
       for (const id of predIds) {
         expect(result[id].data).toEqual({ value: "result-for-db" });
         expect(result[id].data).not.toBeNull();
@@ -185,7 +167,7 @@ describe("mergeFromAuthority (KEEP-395 cross-process DB fallback)", () => {
     });
 
     it("stale closure null is overridden by DB output for the missing predecessor", async () => {
-      mockFindMany.mockResolvedValue([
+      mockFetchBatch.mockResolvedValue([
         { nodeId: "sparkPosOut", outputRaw: { sparkPos: 1234 } },
         { nodeId: "otherPred", outputRaw: { ok: true } },
       ]);
@@ -215,7 +197,7 @@ describe("mergeFromAuthority (KEEP-395 cross-process DB fallback)", () => {
 
       recordStepSuccess(executionId, "pA", { fromTracker: true });
 
-      mockFindMany.mockResolvedValue([
+      mockFetchBatch.mockResolvedValue([
         { nodeId: "pB", outputRaw: { fromDb: true } },
         { nodeId: "pC", outputRaw: { fromDb: true } },
       ]);
@@ -237,13 +219,13 @@ describe("mergeFromAuthority (KEEP-395 cross-process DB fallback)", () => {
       expect(result.pA.data).toEqual({ fromTracker: true });
       expect(result.pB.data).toEqual({ fromDb: true });
       expect(result.pC.data).toEqual({ fromDb: true });
-      expect(mockFindMany).toHaveBeenCalledTimes(1);
+      expect(mockFetchBatch).toHaveBeenCalledTimes(1);
     });
 
     it("output_raw flows through unredacted: apiKey field is preserved", async () => {
       const rawOutput = { apiKey: "0xSECRET", amount: 500 };
 
-      mockFindMany.mockResolvedValue([
+      mockFetchBatch.mockResolvedValue([
         { nodeId: "predA", outputRaw: rawOutput },
       ]);
 
@@ -267,7 +249,7 @@ describe("mergeFromAuthority (KEEP-395 cross-process DB fallback)", () => {
 
   describe("negative: DB also has no success row", () => {
     it("closure value stands when both tracker and DB miss", async () => {
-      mockFindMany.mockResolvedValue([]);
+      mockFetchBatch.mockResolvedValue([]);
 
       const closureValue = { staleButOnlyValue: true };
       const outputs: NodeOutputs = {
@@ -286,7 +268,7 @@ describe("mergeFromAuthority (KEEP-395 cross-process DB fallback)", () => {
     });
 
     it("returns original outputs object (identity) when no merge occurred", async () => {
-      mockFindMany.mockResolvedValue([]);
+      mockFetchBatch.mockResolvedValue([]);
 
       const outputs: NodeOutputs = {
         pred: { label: "P", data: null },
@@ -309,7 +291,7 @@ describe("mergeFromAuthority (KEEP-395 cross-process DB fallback)", () => {
       const rawId = "node-with-dashes.and.dots";
       const sanitized = "node_with_dashes_and_dots";
 
-      mockFindMany.mockResolvedValue([
+      mockFetchBatch.mockResolvedValue([
         { nodeId: rawId, outputRaw: { dbResult: true } },
       ]);
 
