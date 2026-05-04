@@ -3,6 +3,7 @@
   "description": "Plugin allowlist - only plugins listed here will be enabled",
   "plugins": [
     "code",
+    "coalition",
     "discord",
     "math",
     "protocol",

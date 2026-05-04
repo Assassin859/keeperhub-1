@@ -1,0 +1,190 @@
+/**
+ * Hand-curated ABI for Coalition.sol.
+ * Keep this in sync with plugins/coalition/contracts/Coalition.sol.
+ * This file is the source of truth for plugin runtime; the .sol file is
+ * documentation. Foundry/Hardhat are not part of this PR.
+ */
+export const COALITION_ABI = [
+  {
+    type: "function",
+    name: "propose",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "participants", type: "address[]" },
+      { name: "termsHash", type: "bytes32" },
+      { name: "deadline", type: "uint256" },
+      { name: "stakeToken", type: "address" },
+      { name: "stakePerParty", type: "uint256" },
+    ],
+    outputs: [{ name: "id", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "sign",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "id", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "activate",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "id", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "recordBreach",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "id", type: "uint256" },
+      { name: "party", type: "address" },
+      { name: "evidenceHash", type: "bytes32" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "slash",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "id", type: "uint256" },
+      { name: "party", type: "address" },
+    ],
+    outputs: [{ name: "amountRedistributed", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "dissolve",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "id", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "expire",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "id", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "getCoalition",
+    stateMutability: "view",
+    inputs: [{ name: "id", type: "uint256" }],
+    outputs: [
+      { name: "termsHash", type: "bytes32" },
+      { name: "participants", type: "address[]" },
+      { name: "stakeToken", type: "address" },
+      { name: "stakePerParty", type: "uint256" },
+      { name: "deadline", type: "uint256" },
+      { name: "signedCount", type: "uint8" },
+      { name: "breachedCount", type: "uint8" },
+      { name: "slashedCount", type: "uint8" },
+      { name: "state", type: "uint8" },
+    ],
+  },
+  {
+    type: "function",
+    name: "isSigned",
+    stateMutability: "view",
+    inputs: [
+      { name: "id", type: "uint256" },
+      { name: "party", type: "address" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
+    type: "function",
+    name: "isBreached",
+    stateMutability: "view",
+    inputs: [
+      { name: "id", type: "uint256" },
+      { name: "party", type: "address" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
+    type: "function",
+    name: "isSlashed",
+    stateMutability: "view",
+    inputs: [
+      { name: "id", type: "uint256" },
+      { name: "party", type: "address" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
+    type: "event",
+    name: "Proposed",
+    inputs: [
+      { name: "id", type: "uint256", indexed: true },
+      { name: "termsHash", type: "bytes32", indexed: false },
+      { name: "participants", type: "address[]", indexed: false },
+      { name: "stakeToken", type: "address", indexed: false },
+      { name: "stakePerParty", type: "uint256", indexed: false },
+      { name: "deadline", type: "uint256", indexed: false },
+    ],
+    anonymous: false,
+  },
+  {
+    type: "event",
+    name: "Signed",
+    inputs: [
+      { name: "id", type: "uint256", indexed: true },
+      { name: "participant", type: "address", indexed: true },
+    ],
+    anonymous: false,
+  },
+  {
+    type: "event",
+    name: "Activated",
+    inputs: [{ name: "id", type: "uint256", indexed: true }],
+    anonymous: false,
+  },
+  {
+    type: "event",
+    name: "Breach",
+    inputs: [
+      { name: "id", type: "uint256", indexed: true },
+      { name: "party", type: "address", indexed: true },
+      { name: "evidenceHash", type: "bytes32", indexed: false },
+    ],
+    anonymous: false,
+  },
+  {
+    type: "event",
+    name: "Slashed",
+    inputs: [
+      { name: "id", type: "uint256", indexed: true },
+      { name: "party", type: "address", indexed: true },
+      { name: "amountRedistributed", type: "uint256", indexed: false },
+    ],
+    anonymous: false,
+  },
+  {
+    type: "event",
+    name: "Dissolved",
+    inputs: [{ name: "id", type: "uint256", indexed: true }],
+    anonymous: false,
+  },
+  {
+    type: "event",
+    name: "Expired",
+    inputs: [{ name: "id", type: "uint256", indexed: true }],
+    anonymous: false,
+  },
+  { type: "error", name: "InvalidParticipantCount", inputs: [] },
+  { type: "error", name: "DeadlineInPast", inputs: [] },
+  { type: "error", name: "DuplicateParticipant", inputs: [] },
+  { type: "error", name: "ZeroStake", inputs: [] },
+  { type: "error", name: "CoalitionNotProposed", inputs: [] },
+  { type: "error", name: "CoalitionNotActive", inputs: [] },
+  { type: "error", name: "NotParticipant", inputs: [] },
+  { type: "error", name: "AlreadySigned", inputs: [] },
+  { type: "error", name: "NotAllSigned", inputs: [] },
+  { type: "error", name: "PartyNotBreached", inputs: [] },
+  { type: "error", name: "PartyAlreadyBreached", inputs: [] },
+  { type: "error", name: "PartyAlreadySlashed", inputs: [] },
+  { type: "error", name: "DeadlineNotReached", inputs: [] },
+] as const;
