@@ -230,10 +230,13 @@ jobs:
 
   deploy:
     needs: [check-labels, build-images, build-events-image]
-    # Run when the deploy label is set, build-images succeeded, and the
-    # optional events build either succeeded or was skipped (label absent).
-    # !cancelled() prevents the default "needed job skipped -> skip me" rule
-    # from blocking deploy when build-events-image is intentionally skipped.
+    # Cannot use the `success()` shorthand here because GHA evaluates it
+    # as false whenever ANY needed job is skipped. build-events-image is
+    # skipped on purpose for PRs without the deploy-pr-events label, so
+    # success() would also skip the deploy job. We need an explicit
+    # per-need result check that treats skipped as acceptable for the
+    # optional events build only. !cancelled() restores the default skip
+    # behaviour for cancelled upstream runs.
     if: |
       !cancelled() &&
       needs.check-labels.outputs.should-deploy == 'true' &&
