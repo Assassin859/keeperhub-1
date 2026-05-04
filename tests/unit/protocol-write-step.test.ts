@@ -397,16 +397,6 @@ describe("protocolWriteStep", () => {
     // Uniswap swap). Drop the value rather than let writeContractCore surface
     // the opaque "function is not payable" error.
     describe("KEEP-393 stale ethValue guard", () => {
-      const NONPAYABLE_ABI = JSON.stringify([
-        {
-          type: "function",
-          name: "exactInputSingle",
-          stateMutability: "nonpayable",
-          inputs: [],
-          outputs: [],
-        },
-      ]);
-
       const PAYABLE_ABI = JSON.stringify([
         {
           type: "function",
@@ -417,40 +407,40 @@ describe("protocolWriteStep", () => {
         },
       ]);
 
+      // Uses compound.supply (nonpayable upstream) rather than a Uniswap swap:
+      // post-KEEP-408 the Uniswap swap functions are correctly typed as
+      // payable, so resolveEthValue would no longer drop the value there
+      // (and the KEEP-408 preflight would reject the stale ethValue with a
+      // user-facing error before this guard runs). The KEEP-393 mechanism
+      // still matters for any payable -> nonpayable action reconfiguration,
+      // which compound.supply demonstrates.
       it("drops ethValue when the resolved function is nonpayable and logs the drop", async () => {
-        mockResolveProtocolMeta.mockReturnValue({
-          protocolSlug: "uniswap",
-          contractKey: "swapRouter",
-          functionName: "exactInputSingle",
-          actionType: "write",
-        });
-        mockGetProtocol.mockReturnValue({
-          name: "Uniswap V3",
-          slug: "uniswap",
-          contracts: {
-            swapRouter: {
-              label: "SwapRouter02",
-              userSpecifiedAddress: false,
-              addresses: {
-                "11155111": "0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E",
-              },
-            },
+        const COMPOUND_SUPPLY_NONPAYABLE_ABI = JSON.stringify([
+          {
+            type: "function",
+            name: "supply",
+            stateMutability: "nonpayable",
+            inputs: [],
+            outputs: [],
           },
-          actions: [],
+        ]);
+        mockResolveProtocolMeta.mockReturnValue(COMPOUND_SUPPLY_META);
+        mockGetProtocol.mockReturnValue(COMPOUND_PROTOCOL);
+        mockResolveAbi.mockResolvedValue({
+          abi: COMPOUND_SUPPLY_NONPAYABLE_ABI,
         });
-        mockResolveAbi.mockResolvedValue({ abi: NONPAYABLE_ABI });
         mockWriteContractCore.mockResolvedValue({
           success: true,
-          transactionHash: "0xswap",
+          transactionHash: "0xsupply",
           transactionLink: "",
           gasUsed: "150000",
         });
 
         await protocolWriteStep(
           makeInput({
-            network: "11155111",
+            network: "8453",
             ethValue: "0.04",
-            _actionType: "uniswap/swap-exact-input",
+            _actionType: "compound/supply",
           })
         );
 
@@ -462,13 +452,13 @@ describe("protocolWriteStep", () => {
           .calls[0];
         expect(category).toBe("configuration");
         expect(message).toContain("Dropped ethValue");
-        expect(message).toContain("exactInputSingle");
+        expect(message).toContain("supply");
         expect(message).toContain("0.04");
         expect(labels).toMatchObject({
           plugin_name: "protocol",
           action_name: "protocol-write",
-          protocol_slug: "uniswap",
-          function_name: "exactInputSingle",
+          protocol_slug: "compound",
+          function_name: "supply",
           state_mutability: "nonpayable",
         });
       });
@@ -648,6 +638,261 @@ describe("protocolWriteStep", () => {
 
       const coreCall = (mockWriteContractCore as Mock).mock.calls[0][0];
       expect(coreCall._context).toBeUndefined();
+    });
+  });
+
+  // KEEP-408: Uniswap swap functions are payable upstream so SwapRouter02 can
+  // wrap msg.value when tokenIn is the chain's WETH. Sending ETH with any
+  // other tokenIn strands the ETH in the router. Preflight enforces this
+  // before the tx is sent.
+  describe("KEEP-408 Uniswap native-ETH preflight", () => {
+    const WETH_SEPOLIA = "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14";
+
+    const PAYABLE_SWAP_ABI = JSON.stringify([
+      {
+        type: "function",
+        name: "exactInputSingle",
+        stateMutability: "payable",
+        inputs: [],
+        outputs: [],
+      },
+    ]);
+
+    const UNISWAP_PROTOCOL = {
+      name: "Uniswap V3",
+      slug: "uniswap",
+      contracts: {
+        swapRouter: {
+          label: "SwapRouter02",
+          userSpecifiedAddress: false,
+          addresses: {
+            "11155111": "0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E",
+          },
+        },
+      },
+      actions: [],
+    };
+
+    const WRAPPED_PROTOCOL = {
+      name: "Wrapped",
+      slug: "wrapped",
+      contracts: {
+        weth: {
+          label: "WETH",
+          userSpecifiedAddress: false,
+          addresses: {
+            "11155111": WETH_SEPOLIA,
+          },
+        },
+      },
+      actions: [],
+    };
+
+    function setupUniswapSwap(): void {
+      mockResolveProtocolMeta.mockReturnValue({
+        protocolSlug: "uniswap",
+        contractKey: "swapRouter",
+        functionName: "exactInputSingle",
+        actionType: "write",
+      });
+      mockGetProtocol.mockImplementation((slug: string) => {
+        if (slug === "uniswap") {
+          return UNISWAP_PROTOCOL;
+        }
+        if (slug === "wrapped") {
+          return WRAPPED_PROTOCOL;
+        }
+        return undefined;
+      });
+      mockResolveAbi.mockResolvedValue({ abi: PAYABLE_SWAP_ABI });
+      mockWriteContractCore.mockResolvedValue({
+        success: true,
+        transactionHash: "0xswap",
+        transactionLink: "",
+        gasUsed: "150000",
+      });
+    }
+
+    it("rejects when ethValue is set but tokenIn is not WETH", async () => {
+      setupUniswapSwap();
+
+      const result = await protocolWriteStep(
+        makeInput({
+          network: "11155111",
+          ethValue: "0.1",
+          tokenIn: "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          _actionType: "uniswap/swap-exact-input",
+        })
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain("Input Token");
+        expect(result.error).toContain(WETH_SEPOLIA);
+        expect(result.error).toContain("stranded");
+      }
+      expect(mockWriteContractCore).not.toHaveBeenCalled();
+    });
+
+    it("allows native ETH swap when tokenIn matches the chain WETH", async () => {
+      setupUniswapSwap();
+
+      const result = await protocolWriteStep(
+        makeInput({
+          network: "11155111",
+          ethValue: "0.1",
+          tokenIn: WETH_SEPOLIA,
+          _actionType: "uniswap/swap-exact-input",
+        })
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockWriteContractCore).toHaveBeenCalledTimes(1);
+      const coreCall = (mockWriteContractCore as Mock).mock.calls[0][0];
+      expect(coreCall.ethValue).toBe("0.1");
+    });
+
+    it("allows native ETH swap when tokenIn matches WETH with different case", async () => {
+      setupUniswapSwap();
+
+      const result = await protocolWriteStep(
+        makeInput({
+          network: "11155111",
+          ethValue: "0.1",
+          tokenIn: WETH_SEPOLIA.toLowerCase(),
+          _actionType: "uniswap/swap-exact-input",
+        })
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockWriteContractCore).toHaveBeenCalledTimes(1);
+    });
+
+    it("allows ERC20-to-ERC20 swap (no ethValue) regardless of tokenIn", async () => {
+      setupUniswapSwap();
+
+      const result = await protocolWriteStep(
+        makeInput({
+          network: "11155111",
+          tokenIn: "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          _actionType: "uniswap/swap-exact-input",
+        })
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockWriteContractCore).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ["empty string", ""],
+      ["whitespace only", "   "],
+      ["zero", "0"],
+      ["zero with decimals", "0.0"],
+      ["zero with many decimals", "0.0000"],
+      // Forms a regex would false-positive but parseEther correctly sees as zero:
+      ["leading-zero zero", "00"],
+      ["leading dot zero", ".0"],
+    ])("treats ethValue %s as no native value and skips the WETH check", async (_label, ethValue) => {
+      setupUniswapSwap();
+
+      const result = await protocolWriteStep(
+        makeInput({
+          network: "11155111",
+          ethValue,
+          tokenIn: "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          _actionType: "uniswap/swap-exact-input",
+        })
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockWriteContractCore).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects when ethValue is set but tokenIn is missing", async () => {
+      setupUniswapSwap();
+
+      const result = await protocolWriteStep(
+        makeInput({
+          network: "11155111",
+          ethValue: "0.1",
+          tokenIn: undefined,
+          _actionType: "uniswap/swap-exact-input",
+        })
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain("Input Token Address is missing");
+      }
+      expect(mockWriteContractCore).not.toHaveBeenCalled();
+    });
+
+    it("rejects when WETH address for chain is not registered", async () => {
+      mockResolveProtocolMeta.mockReturnValue({
+        protocolSlug: "uniswap",
+        contractKey: "swapRouter",
+        functionName: "exactInputSingle",
+        actionType: "write",
+      });
+      mockGetProtocol.mockImplementation((slug: string) => {
+        if (slug === "uniswap") {
+          return UNISWAP_PROTOCOL;
+        }
+        return undefined;
+      });
+      mockResolveAbi.mockResolvedValue({ abi: PAYABLE_SWAP_ABI });
+
+      const result = await protocolWriteStep(
+        makeInput({
+          network: "11155111",
+          ethValue: "0.1",
+          tokenIn: WETH_SEPOLIA,
+          _actionType: "uniswap/swap-exact-input",
+        })
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain("WETH address for chain");
+      }
+      expect(mockWriteContractCore).not.toHaveBeenCalled();
+    });
+
+    it("does not interfere with non-Uniswap payable functions (e.g. WETH.deposit)", async () => {
+      mockResolveProtocolMeta.mockReturnValue({
+        protocolSlug: "wrapped",
+        contractKey: "weth",
+        functionName: "deposit",
+        actionType: "write",
+      });
+      mockGetProtocol.mockReturnValue(WRAPPED_PROTOCOL);
+      mockResolveAbi.mockResolvedValue({
+        abi: JSON.stringify([
+          {
+            type: "function",
+            name: "deposit",
+            stateMutability: "payable",
+            inputs: [],
+            outputs: [],
+          },
+        ]),
+      });
+      mockWriteContractCore.mockResolvedValue({
+        success: true,
+        transactionHash: "0xdep",
+        transactionLink: "",
+        gasUsed: "50000",
+      });
+
+      const result = await protocolWriteStep(
+        makeInput({
+          network: "11155111",
+          ethValue: "0.5",
+          _actionType: "wrapped/deposit",
+        })
+      );
+
+      expect(result.success).toBe(true);
     });
   });
 
