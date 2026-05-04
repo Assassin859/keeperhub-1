@@ -57,4 +57,4 @@ RUN chown -R events:events /app
 USER events
 
 ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["node", "dist/index.js"]
+CMD ["node", "--enable-source-maps", "dist/index.js"]
