@@ -63,7 +63,14 @@ export type SignResult =
       approvalTransactionHash?: string;
       wasAlreadySigned: boolean;
     }
-  | { success: false; error: string };
+  | {
+      success: false;
+      error: string;
+      // Approval may have already landed when the subsequent sign() failed.
+      // Surface the hash so the user knows the on-chain allowance is set
+      // and replays of `sign` will skip approve.
+      approvalTransactionHash?: string;
+    };
 
 type RawCoalitionForSign = {
   stakeToken: string;
@@ -309,6 +316,7 @@ export async function signCore(input: SignCoreInput): Promise<SignResult> {
       return {
         success: false,
         error: formatContractError(error, coalitionInterface),
+        approvalTransactionHash: approvalHash,
       };
     }
   });

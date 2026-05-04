@@ -247,4 +247,35 @@ describe("coalition sign", () => {
     }
     expect(result.error).toMatch(/proposed/i);
   });
+
+  it("surfaces approvalTransactionHash when sign tx fails after approve", async () => {
+    readContractMock
+      .mockResolvedValueOnce(makeCoalition(1)) // getCoalition
+      .mockResolvedValueOnce(false) // isSigned -> not yet signed
+      .mockResolvedValueOnce(BigInt(0)); // allowance -> insufficient
+
+    executeContractCallMock
+      .mockResolvedValueOnce({
+        hash: "0xapproval",
+        gasUsed: BigInt(50000),
+        effectiveGasPrice: BigInt(1000000000),
+        logs: [],
+      })
+      .mockRejectedValueOnce(new Error("nonce too low"));
+
+    const result = await signCore({
+      network: "base-sepolia",
+      coalitionId: "1",
+      _context: { organizationId: "org_1" },
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      return;
+    }
+    // The user paid for approval; the hash must come back so they don't
+    // double-pay on retry and so the workflow audit trail captures it.
+    expect(result.approvalTransactionHash).toBe("0xapproval");
+    expect(result.error).toMatch(/nonce too low/i);
+  });
 });
