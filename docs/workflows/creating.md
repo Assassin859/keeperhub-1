@@ -90,8 +90,8 @@ For trigger nodes, you'll also configure specific settings based on the trigger 
 | Schedule | `"Schedule"` | `scheduleCron` |
 | Manual | `"Manual"` | (none) |
 | Webhook | `"Webhook"` | optional `webhookSchema` |
-| Contract Event| `"Event"` | `network`, `contractAddress`, `contractABI`, `eventName` |
-| New Block | `"Block"` | `network`, `blockInterval` |
+| Event | `"Event"` | `network`, `contractAddress`, `contractABI`, `eventName` |
+| Block | `"Block"` | `network`, `blockInterval` |
 
 > **Note for API users:** The `triggerType` must match the Pascal_Case string exactly (e.g., `"Schedule"`, not `"cron"`).
 
@@ -166,7 +166,7 @@ When creating edges via the API that originate from branching nodes, you **must*
 | Node type | `sourceHandle` values | When to use |
 |-----------|---------------------|-------------|
 | **Condition** | `"true"`, `"false"` | Required on all outgoing edges |
-| **For Each** | `"loop"`, `"done"` | Required on all outgoing edges |
+| **For Each** | `"loop"`, `"done"` | Required on all outgoing edges. `"done"` must target a Collect node; `"loop"` may not. |
 | All others | (none) | Omit entirely |
 
 ## Template Syntax Reference
@@ -176,7 +176,7 @@ KeeperHub uses a powerful template syntax to reference outputs from upstream nod
 **Features:**
 - **Dot notation** for nested fields: `{{@http-1:Fetch Data.data.price}}`
 - **Array indexing**: `{{@query-1:Get Users.items[0].id}}`
-- **Built-in variables**: Access system state like `{{@__builtin__:Builtin.unixTimestamp}}` or `{{@__builtin__:Builtin.workflowId}}`
+- **Built-in variables**: Access system state with `{{@__system:System.unixTimestamp}}`, `{{@__system:System.unixTimestampMs}}`, or `{{@__system:System.isoTimestamp}}`
 
 **Example usage in a Condition node:**
 To check if a balance from a previous "Check Balance" node (ID: `check-balance`) is greater than 1000:

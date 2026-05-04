@@ -96,23 +96,22 @@ POST /api/workflows/create
       "id": "trigger",
       "type": "trigger",
       "data": {
-        "type": "trigger",
         "label": "Schedule Trigger",
-        "config": { "triggerType": "Schedule", "scheduleCron": "*/30 * * * *" },
-        "status": "idle"
-      },
-      "position": { "x": 120, "y": 80 }
+        "config": { "triggerType": "Schedule", "scheduleCron": "*/30 * * * *" }
+      }
     },
     {
       "id": "supply-aave",
       "type": "action",
       "data": {
-        "type": "web3/supply-aave-v3",
         "label": "Supply Aave",
-        "config": { "network": "8453", "asset": "USDC", "amount": "100" },
-        "status": "idle"
-      },
-      "position": { "x": 120, "y": 240 }
+        "config": {
+          "actionType": "web3/supply-aave-v3",
+          "network": "8453",
+          "asset": "USDC",
+          "amount": "100"
+        }
+      }
     }
   ],
   "edges": [
@@ -125,7 +124,7 @@ POST /api/workflows/create
 }
 ```
 
-> **Note on Node Format:** When creating workflows programmatically, each node must have its payload wrapped in a `data` object containing `type`, `label`, `config`, and `status: "idle"`. The outer `type` determines the node category (e.g. `trigger`, `action`), while `data.type` determines the specific action plugin slug. The `position` object is required for visual rendering.
+> **Note on Node Format:** For action nodes, set the outer `type` to `"action"` and place the plugin slug in `config.actionType`. The `data` object contains `label` and `config`; `status` and `position` are optional and auto-assigned by the API if omitted. Trigger nodes use outer `type: "trigger"` with `config.triggerType` set to the Pascal_Case trigger name.
 
 The `projectId` field is optional. If provided, the workflow is assigned to the specified [project](/api/projects).
 
@@ -337,7 +336,8 @@ Returns the complete registry of available workflow actions, triggers, and templ
     "Condition": {
       "actionType": "Condition",
       "label": "Condition",
-      "requiredFields": { "rules": "array" }
+      "requiredFields": { "condition": "string (JS expression)" },
+      "optionalFields": { "conditionConfig": "object (visual builder state)" }
     }
   },
   "triggers": {
@@ -349,7 +349,8 @@ Returns the complete registry of available workflow actions, triggers, and templ
 }
 ```
 
-> **Note on Action Types:** The keys in the `actions` object determine the `data.type` value used when creating workflow nodes. 
+> **Note on Action Types:** The keys in the `actions` object are the values to use in `config.actionType` when creating workflow nodes.
 > - **Plugin actions** use a `{pluginType}/{slug}` format (e.g., `"web3/check-balance"`, `"aave-v3/supply"`).
-> - **System actions** use Pascal Case with spaces (e.g., `"Condition"`, `"For Each"`, `"HTTP Request"`).
-> - **Triggers** are found under the `triggers` object and correspond to the `triggerType` config value.
+> - **System actions** use Pascal Case with spaces (e.g., `"Condition"`, `"For Each"`, `"HTTP Request"`). System actions do not have a `requiresCredentials` field.
+> - **Triggers** are listed under the `triggers` key (not `actions`) and their values map to `config.triggerType` on trigger nodes.
+> - The endpoint self-documents the correct node and edge shapes under the `workflowStructure` and `edgeStructure` keys — use these as the source of truth for programmatic workflow generation.
