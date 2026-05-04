@@ -1,6 +1,7 @@
 import "server-only";
 import "@/protocols";
 
+import { ethers } from "ethers";
 import {
   type WriteContractCoreInput,
   type WriteContractResult,
@@ -29,6 +30,15 @@ type ProtocolWriteInput = StepInput & {
   [key: string]: unknown;
 };
 
+const UNISWAP_PAYABLE_SWAP_FUNCTIONS: ReadonlySet<string> = new Set([
+  "exactInputSingle",
+  "exactOutputSingle",
+]);
+
+type PreflightResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
 function resolveEthValue(
   rawEthValue: unknown,
   abi: string,
@@ -51,11 +61,14 @@ function resolveEthValue(
   }
 
   // Drop ethValue when the resolved function is positively non-payable. Form
-  // state can retain stale ethValue from a previous configuration (e.g. a
-  // WETH.deposit action reconfigured into a Uniswap swap), and the value
-  // cannot reach the contract anyway. If the function is missing from the
-  // ABI or its mutability is unknown, pass the value through and let
-  // writeContractCore surface the existing payable/not-found errors.
+  // state can retain stale ethValue from a previous payable configuration
+  // when the user reconfigures the action to a non-payable target (e.g. a
+  // WETH.deposit action reconfigured into Compound.supply). Letting the
+  // value through would either revert on-chain with an opaque "function is
+  // not payable" or, worse, get masked by RPC simulation. If the function is
+  // missing from the ABI or its mutability is unknown, pass the value
+  // through and let writeContractCore's existing payable/not-found errors
+  // surface.
   const fn = findAbiFunction(parsedAbi as AbiItem[], functionName);
   if (fn?.stateMutability && fn.stateMutability !== "payable") {
     logUserError(
@@ -73,6 +86,77 @@ function resolveEthValue(
     return undefined;
   }
   return trimmed;
+}
+
+// KEEP-408: Uniswap swap functions are `payable` so SwapRouter02 can wrap
+// msg.value into WETH internally - but only when tokenIn IS the chain's WETH
+// address. Setting ETH Value with any other tokenIn strands the ETH in the
+// router (the contract has no way to refund it without an explicit refundETH
+// in a multicall, which we don't expose). Catch this before the tx is sent.
+//
+// Runs before ABI resolution: it only needs `network`, raw `ethValue`, and
+// raw `tokenIn`, so a misconfigured swap fails fast without paying for an
+// Etherscan ABI fetch on the user-specified-address path.
+function checkUniswapNativeEthPreflight(
+  input: ProtocolWriteInput,
+  meta: ProtocolMeta
+): PreflightResult {
+  const isUniswapSwap =
+    meta.protocolSlug === "uniswap" &&
+    UNISWAP_PAYABLE_SWAP_FUNCTIONS.has(meta.functionName);
+  if (!isUniswapSwap) {
+    return { ok: true };
+  }
+
+  const rawEthValue = input.ethValue;
+  if (typeof rawEthValue !== "string" || rawEthValue.trim() === "") {
+    return { ok: true };
+  }
+
+  // Use parseEther for the zero check rather than a regex: the regex would
+  // false-positive on inputs like "00", ".0", or "0.0e0" by treating them as
+  // non-zero, even though the downstream parseEther sees them as zero (or
+  // throws). Letting parseEther decide makes the preflight semantics match
+  // what actually reaches the contract.
+  let parsedEthValue: bigint;
+  try {
+    parsedEthValue = ethers.parseEther(rawEthValue.trim());
+  } catch {
+    // Malformed value - let writeContractCore's existing parseEther guard
+    // produce the canonical "Invalid payable value" error rather than
+    // shadowing it with a misleading WETH-address error.
+    return { ok: true };
+  }
+  if (parsedEthValue === BigInt(0)) {
+    return { ok: true };
+  }
+
+  const wrapped = getProtocol("wrapped");
+  const wethAddress = wrapped?.contracts.weth?.addresses[input.network];
+  if (!wethAddress) {
+    return {
+      ok: false,
+      error: `ETH Value is set but the WETH address for chain "${input.network}" is not registered. Cannot verify that this swap accepts native ETH; remove ETH Value or add WETH for this chain in protocols/wrapped.ts.`,
+    };
+  }
+
+  const tokenIn = input.tokenIn;
+  if (typeof tokenIn !== "string" || tokenIn.trim() === "") {
+    return {
+      ok: false,
+      error:
+        "ETH Value is set but Input Token Address is missing. To swap native ETH, set Input Token to the WETH address for this chain.",
+    };
+  }
+
+  if (tokenIn.trim().toLowerCase() !== wethAddress.toLowerCase()) {
+    return {
+      ok: false,
+      error: `ETH Value is set but Input Token (${tokenIn}) is not the WETH address for chain "${input.network}" (${wethAddress}). To swap native ETH, set Input Token to the WETH address; otherwise the ETH would be stranded in SwapRouter02.`,
+    };
+  }
+
+  return { ok: true };
 }
 
 function buildFunctionArgs(
@@ -156,6 +240,13 @@ export async function protocolWriteStep(
           ? `Missing contract address for "${meta.contractKey}" in protocol "${meta.protocolSlug}"`
           : `Protocol "${meta.protocolSlug}" contract "${meta.contractKey}" is not deployed on network "${input.network}"`,
       };
+    }
+
+    // Run cheap protocol-specific preflights before any network I/O so a
+    // misconfigured action fails fast (no Etherscan ABI fetch, no RPC).
+    const preflight = checkUniswapNativeEthPreflight(input, meta);
+    if (!preflight.ok) {
+      return { success: false, error: preflight.error };
     }
 
     // 4. Resolve ABI (from definition or auto-fetch from explorer)

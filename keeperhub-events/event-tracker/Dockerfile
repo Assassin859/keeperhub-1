@@ -21,27 +21,27 @@ RUN --mount=type=cache,id=pnpm-events,target=/root/.local/share/pnpm/store \
     pnpm deploy --legacy --filter @techops/events-tracker --prod /app/deploy
 
 # ==============================================================================
-# Build stage - install all dependencies for type checking
+# Build stage - install all dependencies, type check, and bundle
 # ==============================================================================
 FROM base AS build
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
-COPY event-tracker/package.json event-tracker/tsconfig.json ./event-tracker/
+COPY event-tracker/package.json event-tracker/tsconfig.json event-tracker/tsup.config.ts ./event-tracker/
 COPY event-tracker/src/ ./event-tracker/src/
 COPY event-tracker/lib/ ./event-tracker/lib/
 
 RUN --mount=type=cache,id=pnpm-events,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile --filter @techops/events-tracker
 
-RUN pnpm --filter @techops/events-tracker typecheck
+RUN pnpm --filter @techops/events-tracker typecheck && \
+    pnpm --filter @techops/events-tracker build
 
 # ==============================================================================
 # Runtime stage - minimal production image
 # ==============================================================================
 FROM node:22-alpine AS runtime
 
-RUN apk add --no-cache tini && \
-    npm install -g tsx
+RUN apk add --no-cache tini
 
 RUN addgroup -g 1001 -S events && \
     adduser -S events -u 1001
@@ -49,15 +49,12 @@ RUN addgroup -g 1001 -S events && \
 WORKDIR /app
 
 COPY --from=deps /app/deploy/node_modules ./node_modules
-COPY --from=build /app/event-tracker/src ./src
-COPY --from=build /app/event-tracker/lib ./lib
+COPY --from=build /app/event-tracker/dist ./dist
 COPY --from=build /app/event-tracker/package.json ./package.json
-COPY --from=build /app/event-tracker/tsconfig.json ./tsconfig.json
-COPY --from=build /app/tsconfig.base.json ./tsconfig.base.json
 
 RUN chown -R events:events /app
 
 USER events
 
 ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["tsx", "src/index.ts"]
+CMD ["node", "--enable-source-maps", "dist/index.js"]
