@@ -2,7 +2,7 @@ name: Deploy PR Environment
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     branches:
       - staging
 
@@ -58,6 +58,19 @@ jobs:
                 if [[ "$HAS_TEST_LABEL" == "true" ]]; then
                   echo "should-test=true" >> $GITHUB_OUTPUT
                 fi
+              fi
+            fi
+          elif [[ "$ACTION" == "unlabeled" ]]; then
+            # Removing deploy-pr-events while the PR env is still deployed
+            # should revert the events satellite to the staging event-latest
+            # tag. Set should-deploy=true (re-run the full deploy so the
+            # events template is rendered with the default tag) but leave
+            # should-deploy-events=false (no PR-specific events build).
+            REMOVED_LABEL="$ADDED_LABEL"
+            if [[ "$REMOVED_LABEL" == "deploy-pr-events" && "$HAS_DEPLOY_LABEL" == "true" ]]; then
+              echo "should-deploy=true" >> $GITHUB_OUTPUT
+              if [[ "$HAS_TEST_LABEL" == "true" ]]; then
+                echo "should-test=true" >> $GITHUB_OUTPUT
               fi
             fi
           elif [[ "$ACTION" == "synchronize" || "$ACTION" == "opened" || "$ACTION" == "reopened" ]]; then
