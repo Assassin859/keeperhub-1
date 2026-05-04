@@ -1,0 +1,134 @@
+/**
+ * Superfluid forwarder address verification.
+ *
+ * One-shot CLI: confirms CFAv1Forwarder and GDAv1Forwarder are deployed
+ * (have non-empty bytecode) at their pinned addresses on every chain
+ * Superfluid is shipped on. Run before opening the PR; paste the table
+ * output into the PR description.
+ *
+ * Interpreting failures: a row with a network error (HTTP 401/429/5xx,
+ * DNS, timeout) means the public RPC is unreachable -- retry or swap the
+ * URL in the CHAINS array below. A row showing FAIL with no error message
+ * means the address actually has empty bytecode on that chain (a real
+ * deployment miss to investigate).
+ *
+ * Usage: pnpm tsx scripts/verify-superfluid-addresses.ts
+ */
+
+import { JsonRpcProvider } from "ethers";
+import {
+  CFA_FORWARDER_ADDRESS,
+  GDA_FORWARDER_ADDRESS,
+  SUPERFLUID_CHAIN_IDS,
+} from "@/protocols/superfluid";
+
+type ForwarderName = "CFAv1Forwarder" | "GDAv1Forwarder";
+
+const FORWARDERS: Record<ForwarderName, string> = {
+  CFAv1Forwarder: CFA_FORWARDER_ADDRESS,
+  GDAv1Forwarder: GDA_FORWARDER_ADDRESS,
+};
+
+// RPC + display metadata per chain. The chain set itself is sourced from the
+// protocol module so adding/removing a chain happens in exactly one place;
+// any chain ID present in SUPERFLUID_CHAIN_IDS but missing here will surface
+// as an "unknown chain" entry below.
+const CHAIN_RPC: Record<string, { name: string; rpc: string }> = {
+  "1": { name: "Ethereum Mainnet", rpc: "https://rpc.ankr.com/eth" },
+  "10": { name: "Optimism", rpc: "https://mainnet.optimism.io" },
+  "137": { name: "Polygon", rpc: "https://rpc.ankr.com/polygon" },
+  "8453": { name: "Base", rpc: "https://mainnet.base.org" },
+  "42161": { name: "Arbitrum One", rpc: "https://arb1.arbitrum.io/rpc" },
+  "11155111": {
+    name: "Sepolia",
+    rpc: "https://ethereum-sepolia-rpc.publicnode.com",
+  },
+};
+
+const CHAINS: Array<{ id: number; name: string; rpc: string }> =
+  SUPERFLUID_CHAIN_IDS.map((id) => {
+    const meta = CHAIN_RPC[id];
+    return {
+      id: Number(id),
+      name: meta?.name ?? `Unknown chain ${id}`,
+      rpc: meta?.rpc ?? "",
+    };
+  });
+
+type CheckResult = {
+  chainName: string;
+  chainId: number;
+  forwarder: ForwarderName;
+  address: string;
+  deployed: boolean;
+  error?: string;
+};
+
+async function checkOne(
+  chain: { id: number; name: string; rpc: string },
+  forwarder: ForwarderName
+): Promise<CheckResult> {
+  const address = FORWARDERS[forwarder];
+  try {
+    const provider = new JsonRpcProvider(chain.rpc, chain.id);
+    const code = await provider.getCode(address);
+    return {
+      chainName: chain.name,
+      chainId: chain.id,
+      forwarder,
+      address,
+      deployed: code !== "0x",
+    };
+  } catch (error) {
+    return {
+      chainName: chain.name,
+      chainId: chain.id,
+      forwarder,
+      address,
+      deployed: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function printMarkdownTable(results: CheckResult[]): void {
+  console.log("");
+  console.log("| Chain | Chain ID | Contract | Address | Status |");
+  console.log("|---|---|---|---|---|");
+  for (const r of results) {
+    const status = r.deployed ? "OK" : `FAIL${r.error ? ` (${r.error})` : ""}`;
+    console.log(
+      `| ${r.chainName} | ${r.chainId} | ${r.forwarder} | \`${r.address}\` | ${status} |`
+    );
+  }
+  console.log("");
+}
+
+async function main(): Promise<void> {
+  console.error("Verifying Superfluid forwarder deployments...");
+
+  const tasks: Array<Promise<CheckResult>> = [];
+  for (const chain of CHAINS) {
+    for (const fwd of Object.keys(FORWARDERS) as ForwarderName[]) {
+      tasks.push(checkOne(chain, fwd));
+    }
+  }
+
+  const results = await Promise.all(tasks);
+  printMarkdownTable(results);
+
+  const failed = results.filter((r) => !r.deployed);
+  if (failed.length > 0) {
+    console.error(
+      `FAILED: ${failed.length} of ${results.length} checks did not find deployed bytecode.`
+    );
+    process.exit(1);
+  }
+
+  console.error(`All ${results.length} forwarder deployments verified.`);
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
