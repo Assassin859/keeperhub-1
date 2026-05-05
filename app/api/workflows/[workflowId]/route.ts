@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { revalidateTag } from "next/cache";
 import { NextResponse } from "next/server";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
@@ -493,6 +493,19 @@ export async function PATCH(
           { status: 422 }
         );
       }
+    }
+
+    // Bump listingVersion when a listed (or about-to-be-listed) workflow has
+    // its schema-defining fields changed via this route. Keeps per-workflow
+    // MCP consumers in sync without a dedicated version endpoint.
+    if (
+      willBeListed &&
+      (body.nodes !== undefined ||
+        body.edges !== undefined ||
+        body.inputSchema !== undefined ||
+        body.outputMapping !== undefined)
+    ) {
+      updateData.listingVersion = sql`${workflows.listingVersion} + 1`;
     }
 
     let updatedWorkflow: typeof workflows.$inferSelect;
