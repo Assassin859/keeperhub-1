@@ -61,12 +61,12 @@ function ensureMcpAcceptHeader(request: Request): Request {
 
   const headers = new Headers(request.headers);
   headers.set("accept", parts.join(", "));
+  // Body is not forwarded here. POST callers always supply parsedBody to the
+  // SDK transport separately, and GET has no body. Re-attaching request.body
+  // would fail on POST because the early body parse has already consumed it.
   return new Request(request.url, {
     method: request.method,
     headers,
-    body: request.body,
-    // @ts-expect-error -- duplex is required for streaming bodies in Node
-    duplex: "half",
   });
 }
 
@@ -411,6 +411,15 @@ export async function POST(request: Request): Promise<Response> {
 
   const sessionId = request.headers.get("mcp-session-id");
 
+  // The early body parse above consumed request.body, so every transport
+  // call from here on must hand the parsed value through parsedBody.
+  if (!bodyParsed) {
+    return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    });
+  }
+
   if (sessionId) {
     const resolved = await resolveSession(sessionId, organizationId, request);
     if (!resolved.ok) {
@@ -420,18 +429,10 @@ export async function POST(request: Request): Promise<Response> {
       });
     }
     const response = await resolved.transport.handleRequest(
-      ensureMcpAcceptHeader(request)
+      ensureMcpAcceptHeader(request),
+      { parsedBody: body }
     );
     return withRenewedSessionHeader(response, resolved.renewedSessionId);
-  }
-
-  // No session ID: must be an initialize request.
-  // Body was already parsed above; pass parsedBody to the SDK transport.
-  if (!bodyParsed) {
-    return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json", ...CORS_HEADERS },
-    });
   }
 
   if (!isInitializeRequestBody(body)) {

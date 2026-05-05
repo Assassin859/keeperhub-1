@@ -4,9 +4,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Hoisted mocks — must be declared before any imports that use them.
 // ---------------------------------------------------------------------------
 
-const { mockAuthenticate } = vi.hoisted(() => ({
-  mockAuthenticate: vi.fn(),
-}));
+const { mockAuthenticate, mockGetSession, mockTouchSession } = vi.hoisted(
+  () => ({
+    mockAuthenticate: vi.fn(),
+    mockGetSession: vi.fn(),
+    mockTouchSession: vi.fn(),
+  })
+);
 
 // Stub server-only so the route module can be imported in a test environment.
 vi.mock("server-only", () => ({}));
@@ -42,10 +46,10 @@ vi.mock("@/lib/mcp/session-token", () => ({
 
 vi.mock("@/lib/mcp/sessions", () => ({
   deleteSession: vi.fn(),
-  getSession: vi.fn().mockReturnValue(null),
+  getSession: mockGetSession,
   setSession: vi.fn(),
   startCleanupInterval: vi.fn(),
-  touchSession: vi.fn(),
+  touchSession: mockTouchSession,
 }));
 
 vi.mock("@/lib/mcp/event-store", () => ({
@@ -164,6 +168,67 @@ describe("POST /mcp — anonymous initialize", () => {
     const response = await POST(request);
 
     expect(response.status).toBe(401);
+  });
+});
+
+describe("POST /mcp — authed session-resume forwards parsedBody", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAuthenticate.mockResolvedValue({
+      authenticated: true,
+      organizationId: "org-1",
+      apiKeyId: "key-1",
+      scope: undefined,
+    });
+  });
+
+  it("passes the parsed body through to transport.handleRequest, not the consumed stream", async () => {
+    const handleRequest = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 200 }));
+    mockGetSession.mockReturnValue({
+      organizationId: "org-1",
+      transport: { handleRequest },
+    });
+
+    const parsed = {
+      jsonrpc: "2.0",
+      id: 11,
+      method: "tools/list",
+      params: {},
+    };
+    const request = makeRequest(
+      "POST",
+      { "mcp-session-id": "session-abc" },
+      JSON.stringify(parsed)
+    );
+    const response = await POST(request);
+
+    expect(response.status).toBe(200);
+    expect(handleRequest).toHaveBeenCalledTimes(1);
+    const [, options] = handleRequest.mock.calls[0] as [
+      Request,
+      { parsedBody: unknown },
+    ];
+    expect(options).toEqual({ parsedBody: parsed });
+  });
+
+  it("returns 400 when an authed POST has a malformed body (cannot reach transport)", async () => {
+    const handleRequest = vi.fn();
+    mockGetSession.mockReturnValue({
+      organizationId: "org-1",
+      transport: { handleRequest },
+    });
+
+    const request = makeRequest(
+      "POST",
+      { "mcp-session-id": "session-abc" },
+      "{ not json"
+    );
+    const response = await POST(request);
+
+    expect(response.status).toBe(400);
+    expect(handleRequest).not.toHaveBeenCalled();
   });
 });
 
