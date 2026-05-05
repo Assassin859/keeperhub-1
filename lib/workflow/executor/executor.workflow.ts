@@ -47,7 +47,10 @@ import {
   type ExecutionResult,
 } from "@/lib/workflow/executor/final-success";
 import { runBodyNode } from "@/lib/workflow/executor/for-each-body-runner";
-import { clearOutputCache } from "@/lib/workflow/executor/get-completed-step-output";
+import {
+  clearOutputCache,
+  getCompletedStepOutput,
+} from "@/lib/workflow/executor/get-completed-step-output";
 import { createPendingTracker } from "@/lib/workflow/executor/pending-tasks";
 import {
   EXCEEDED_MAX_RETRIES_REGEX,
@@ -2044,21 +2047,31 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       const errorMessage = await getErrorMessageAsync(error);
 
       // KEEP-398: Reconcile spurious max-retries / step-completion errors using
-      // the in-process step-success-tracker. The Workflow DevKit framework's
-      // post-step "step_completed" event is occasionally lost under heavy
-      // fan-in (e.g. many parallel reads converging into a code/run-code
-      // combine). When that happens, useStep re-fires the step on resume and
-      // -- with runCodeStep.maxRetries=0 -- the framework throws
+      // the step-success authority (in-process tracker fast-path with DB
+      // fallback). The Workflow DevKit framework's post-step "step_completed"
+      // event is occasionally lost under heavy fan-in (e.g. many parallel
+      // reads converging into a code/run-code combine). When that happens,
+      // useStep re-fires the step on resume and -- with
+      // runCodeStep.maxRetries=0 -- the framework throws
       // "Step ... exceeded max retries" / "Step ... failed after N retries"
       // even though the step body returned successfully and recorded its
       // output via recordStepSuccess.
+      //
+      // KEEP-431: Use getCompletedStepOutput (tracker + DB) instead of
+      // getSuccessfulSteps (tracker only) so cross-pod recovery works in
+      // catch as well as post-drain. The tracker is process-local; on the
+      // x402 / call_workflow path the SDK frequently resumes on a fresh pod
+      // whose tracker is empty, leaving the in-catch branch unable to
+      // recover and forcing reliance on post-drain. Reading the DB-backed
+      // authority here makes the recovery uniform across both paths.
       const isSpuriousMaxRetries =
         EXCEEDED_MAX_RETRIES_REGEX.test(errorMessage) ||
         FAILED_AFTER_RETRIES_REGEX.test(errorMessage) ||
         NO_STEP_COMPLETION_REGEX.test(errorMessage);
-      const recordedOutput = executionId
-        ? getSuccessfulSteps(executionId)?.get(nodeId)
-        : undefined;
+      const recordedOutput =
+        isSpuriousMaxRetries && executionId
+          ? (await getCompletedStepOutput(executionId, nodeId))?.output
+          : undefined;
       if (isSpuriousMaxRetries && recordedOutput !== undefined) {
         // Recovered execution: the step body succeeded, only the SDK's
         // bookkeeping tripped. Emit a structured warn (no Sentry) and a

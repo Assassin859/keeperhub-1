@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
 import { findFirstWriteActionNode } from "@/lib/mcp/calldata";
@@ -61,6 +61,7 @@ const LISTING_COLUMNS = {
   workflowType: workflows.workflowType,
   category: workflows.category,
   chain: workflows.chain,
+  listingVersion: workflows.listingVersion,
 };
 
 type ListingRow = {
@@ -79,6 +80,7 @@ type ListingRow = {
   workflowType: "read" | "write";
   category: string | null;
   chain: string | null;
+  listingVersion: number;
 };
 
 function isSlugConflict(err: unknown): boolean {
@@ -137,6 +139,17 @@ export async function listWorkflow(
   }
   if (metadata.workflowType !== undefined) {
     updateSet.workflowType = metadata.workflowType as "read" | "write";
+  }
+
+  // Bump listingVersion whenever we are transitioning to listed OR whenever
+  // any of the schema-defining fields changes on an already-listed workflow.
+  const isSchemaTouched =
+    metadata.inputSchema !== undefined ||
+    metadata.outputMapping !== undefined ||
+    metadata.workflowType !== undefined;
+  if (!current.isListed || isSchemaTouched) {
+    // biome-ignore lint/suspicious/noExplicitAny: Drizzle sql template tag produces a typed SQL expression that satisfies the column type at runtime
+    (updateSet as any).listingVersion = sql`${workflows.listingVersion} + 1`;
   }
 
   // A write workflow must contain at least one node whose actionType matches
@@ -271,6 +284,16 @@ export async function updateWorkflowListing(
   if (patch.priceUsdcPerCall !== undefined) {
     // Only reachable when isListed === false (price-change-while-listed guard above)
     updateSet.priceUsdcPerCall = patch.priceUsdcPerCall;
+  }
+
+  // Bump listingVersion when schema-defining fields change on a listed workflow
+  // so per-workflow MCP consumers can detect stale tool definitions.
+  const isUpdateSchemaTouched =
+    patch.inputSchema !== undefined ||
+    patch.outputMapping !== undefined ||
+    patch.workflowType !== undefined;
+  if (current.isListed && isUpdateSchemaTouched) {
+    updateSet.listingVersion = sql`${workflows.listingVersion} + 1`;
   }
 
   // Same write-workflow guard as listWorkflow: only validate when the row is

@@ -3,10 +3,10 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { type ApiKeyAuthResult, authenticateApiKey } from "@/lib/api-key-auth";
 import { McpEventStore } from "@/lib/mcp/event-store";
+import { getWorkflowListing } from "@/lib/mcp/listing";
 import { logMcpEvent } from "@/lib/mcp/logging";
 import { authenticateOAuthToken } from "@/lib/mcp/oauth-auth";
 import { checkMcpRateLimit } from "@/lib/mcp/rate-limit";
-import { createMcpServer } from "@/lib/mcp/server";
 import {
   createSessionToken,
   verifySessionToken,
@@ -20,6 +20,7 @@ import {
   startCleanupInterval,
   touchSession,
 } from "@/lib/mcp/sessions";
+import { createWorkflowMcpServer } from "@/lib/mcp/workflow-server";
 
 export const dynamic = "force-dynamic";
 
@@ -31,17 +32,10 @@ const CORS_HEADERS = {
   "Access-Control-Expose-Headers": "Mcp-Session-Id, WWW-Authenticate",
 } as const;
 
-// Start the local-cache cleanup interval once per process lifetime.
 startCleanupInterval();
 
 const TRAILING_SLASH = /\/$/;
 
-/**
- * Ensure the request carries the Accept header the MCP SDK requires.
- * Some MCP clients (e.g. Claude Code) omit `text/event-stream` from Accept,
- * which causes the SDK to return 406 even when `enableJsonResponse` is true.
- * We patch the header here so the transport's strict check passes.
- */
 function ensureMcpAcceptHeader(request: Request): Request {
   const accept = request.headers.get("accept") ?? "";
   const hasJson = accept.includes("application/json");
@@ -61,12 +55,12 @@ function ensureMcpAcceptHeader(request: Request): Request {
 
   const headers = new Headers(request.headers);
   headers.set("accept", parts.join(", "));
-  // Body is not forwarded here. POST callers always supply parsedBody to the
-  // SDK transport separately, and GET has no body. Re-attaching request.body
-  // would fail on POST because the early body parse has already consumed it.
   return new Request(request.url, {
     method: request.method,
     headers,
+    body: request.body,
+    // @ts-expect-error -- duplex is required for streaming bodies in Node
+    duplex: "half",
   });
 }
 
@@ -79,16 +73,6 @@ function getBaseUrl(request: Request): string {
   return `${url.protocol}//${url.host}`;
 }
 
-// RFC 9728 / MCP 2025-06-18 require a WWW-Authenticate header on 401 responses
-// so clients can discover the Protected Resource Metadata document. Without it,
-// strict MCP clients (e.g. Claude Desktop) report "Couldn't reach the MCP server"
-// because they cannot locate the authorization server.
-//
-// Per RFC 6750 §3, Bearer challenges include error + error_description when a
-// token is missing/invalid. The MCP host on claude.ai appears to require these
-// parameters during its discovery validation; omitting them causes the connect
-// flow to halt at `start_error` before DCR ever runs. We match Linear, Sentry,
-// and Notion's challenge shape.
 function unauthorizedResponse(request: Request): Response {
   const baseUrl = getBaseUrl(request);
   const resourceMetadataUrl = `${baseUrl}/.well-known/oauth-protected-resource`;
@@ -98,9 +82,6 @@ function unauthorizedResponse(request: Request): Response {
     'error="invalid_token"',
     'error_description="Missing or invalid access token"',
   ].join(", ");
-  // RFC 6749 §5.2 error response. Match Linear/Notion/Sentry's body shape so
-  // any OAuth 2.1 parser (including Anthropic's connector validator) can read
-  // the error consistently with the WWW-Authenticate challenge.
   const body = {
     error: "invalid_token",
     error_description: "Missing or invalid access token",
@@ -134,13 +115,12 @@ async function authenticate(request: Request): Promise<ApiKeyAuthResult> {
     };
   }
 
-  // Fall back to API key auth to get a consistent error format for non-OAuth tokens.
   return await authenticateApiKey(request);
 }
 
 function isInitializeRequestBody(body: unknown): boolean {
   if (Array.isArray(body)) {
-    return body.length > 0 && body.every((item) => isInitializeRequest(item));
+    return body.some((item) => isInitializeRequest(item));
   }
   return isInitializeRequest(body);
 }
@@ -178,13 +158,12 @@ function buildSession(
   apiKeyId: string,
   scope: string | undefined,
   baseUrl: string,
-  authHeader: string
+  authHeader: string,
+  slug: string,
+  listing: Parameters<typeof createWorkflowMcpServer>[0]["listing"]
 ): BuiltSession {
   const eventStore = new McpEventStore();
 
-  // Passing () => sessionId as the generator ensures the transport uses the
-  // provided session ID both for fresh sessions and for reconstructed
-  // cross-pod sessions, so it validates incoming Mcp-Session-Id headers correctly.
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: () => sessionId,
     eventStore,
@@ -197,7 +176,13 @@ function buildSession(
     enableJsonResponse: true,
   });
 
-  const server = createMcpServer(baseUrl, authHeader, scope);
+  const server = createWorkflowMcpServer({
+    slug,
+    listing,
+    baseUrl,
+    authHeader,
+    scope,
+  });
 
   const entry: SessionEntry = {
     transport,
@@ -241,9 +226,10 @@ type ResolveSessionResult = ResolveSessionOk | ResolveSessionError;
 async function resolveSession(
   sessionId: string,
   organizationId: string,
-  request: Request
+  request: Request,
+  slug: string,
+  listing: Parameters<typeof createWorkflowMcpServer>[0]["listing"]
 ): Promise<ResolveSessionResult> {
-  // Fast path: same-pod cache hit.
   const cached = getSession(sessionId);
   if (cached) {
     if (cached.organizationId !== organizationId) {
@@ -253,9 +239,6 @@ async function resolveSession(
     return { ok: true, transport: cached.transport };
   }
 
-  // Slow path: verify JWT and reconstruct transport+server (different pod or restart).
-  // Accept expired-but-valid-signature JWTs so sessions survive pod restarts
-  // and idle periods within the 24h sliding window.
   const result = await verifySessionTokenDetailed(sessionId);
 
   if (!result.payload) {
@@ -279,8 +262,6 @@ async function resolveSession(
   });
 
   const baseUrl = getBaseUrl(request);
-  // Re-derive the auth header from the current request so tool calls in this
-  // reconstructed session use the caller's credentials.
   const authHeader = request.headers.get("authorization") ?? "";
   const { transport, entry } = buildSession(
     sessionId,
@@ -288,16 +269,13 @@ async function resolveSession(
     result.payload.key,
     result.payload.scope,
     baseUrl,
-    authHeader
+    authHeader,
+    slug,
+    listing
   );
 
   await entry.server.connect(transport);
 
-  // The SDK's transport tracks an `_initialized` flag that is only set when it
-  // processes an actual `initialize` JSON-RPC message.  Reconstructed sessions
-  // skip that step, so the flag stays false and every subsequent request is
-  // rejected with "Server not initialized".  The valid JWT proves the client
-  // already completed initialization, so we mark both fields directly.
   const reconstructed = transport as unknown as {
     _initialized: boolean;
     sessionId: string;
@@ -305,11 +283,8 @@ async function resolveSession(
   reconstructed._initialized = true;
   reconstructed.sessionId = sessionId;
 
-  // Cache locally for subsequent same-pod requests.
   setSession(sessionId, entry);
 
-  // If the JWT was expired, mint a fresh one with a new 24h window (sliding renewal).
-  // The client adopts the new session ID from the Mcp-Session-Id response header.
   let renewedSessionId: string | undefined;
   if (result.expired) {
     renewedSessionId = await createSessionToken({
@@ -319,7 +294,6 @@ async function resolveSession(
       original_iat: result.payload.original_iat ?? result.payload.iat,
     });
 
-    // Cache under the renewed ID so the client's next request hits the fast path.
     setSession(renewedSessionId, entry);
     deleteSession(sessionId);
 
@@ -350,59 +324,39 @@ function withRenewedSessionHeader(
   });
 }
 
-export async function POST(request: Request): Promise<Response> {
-  // Parse body early so we can inspect it before the auth check.
-  // A body that won't parse falls through to the existing 401 path.
-  let body: unknown;
-  let bodyParsed = false;
-  try {
-    body = await request.json();
-    bodyParsed = true;
-  } catch {
-    // Leave bodyParsed = false; handled below after auth check.
+async function resolveListing(slug: string): Promise<
+  | {
+      ok: true;
+      listing: Parameters<typeof createWorkflowMcpServer>[0]["listing"];
+    }
+  | { ok: false; response: Response }
+> {
+  const result = await getWorkflowListing(slug);
+  if (!(result.ok && result.listing.isListed)) {
+    return {
+      ok: false,
+      response: new Response(JSON.stringify({ error: "Workflow not found" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+      }),
+    };
   }
+  return { ok: true, listing: result.listing };
+}
+
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ slug: string }> }
+): Promise<Response> {
+  const { slug } = await params;
+
+  const listingResult = await resolveListing(slug);
+  if (!listingResult.ok) {
+    return listingResult.response;
+  }
+  const { listing } = listingResult;
 
   const auth = await authenticate(request);
-
-  // Anonymous initialize: let unauthenticated callers learn the server
-  // identity and auth requirements without touching the SDK.
-  if (!auth.authenticated && bodyParsed && isInitializeRequestBody(body)) {
-    const baseUrl = getBaseUrl(request);
-    const resourceMetadataUrl = `${baseUrl}/.well-known/oauth-protected-resource`;
-    const rawId = Array.isArray(body)
-      ? undefined
-      : (body as Record<string, unknown>).id;
-    // JSON-RPC 2.0 ids are string | number | null. Reflecting any other
-    // shape — or an unbounded-length string — lets a caller force the
-    // server to serialize an arbitrary value back into the response body.
-    const requestId =
-      (typeof rawId === "string" && rawId.length <= 256) ||
-      typeof rawId === "number"
-        ? rawId
-        : null;
-    const anonInitResult = {
-      jsonrpc: "2.0",
-      id: requestId,
-      result: {
-        protocolVersion: "2025-06-18",
-        capabilities: {},
-        serverInfo: { name: "keeperhub", version: "1.0.0" },
-        authentication: {
-          required: true,
-          resource_metadata: resourceMetadataUrl,
-        },
-      },
-    };
-    return new Response(JSON.stringify(anonInitResult), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/json",
-        "Cache-Control": "no-store",
-        ...CORS_HEADERS,
-      },
-    });
-  }
-
   if (!auth.authenticated) {
     const reason = auth.error ?? "Unauthorized";
     logMcpEvent("mcp.auth.failed", { reason });
@@ -425,17 +379,14 @@ export async function POST(request: Request): Promise<Response> {
 
   const sessionId = request.headers.get("mcp-session-id");
 
-  // The early body parse above consumed request.body, so every transport
-  // call from here on must hand the parsed value through parsedBody.
-  if (!bodyParsed) {
-    return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json", ...CORS_HEADERS },
-    });
-  }
-
   if (sessionId) {
-    const resolved = await resolveSession(sessionId, organizationId, request);
+    const resolved = await resolveSession(
+      sessionId,
+      organizationId,
+      request,
+      slug,
+      listing
+    );
     if (!resolved.ok) {
       return new Response(sessionErrorBody(resolved.code), {
         status: 404,
@@ -443,10 +394,19 @@ export async function POST(request: Request): Promise<Response> {
       });
     }
     const response = await resolved.transport.handleRequest(
-      ensureMcpAcceptHeader(request),
-      { parsedBody: body }
+      ensureMcpAcceptHeader(request)
     );
     return withRenewedSessionHeader(response, resolved.renewedSessionId);
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    });
   }
 
   if (!isInitializeRequestBody(body)) {
@@ -472,11 +432,8 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const apiKeyId = auth.apiKeyId;
-  // OAuth tokens carry a scope string; API keys have full access (undefined scope).
   const scope = auth.scope;
 
-  // Mint the JWT that becomes the Mcp-Session-Id returned to the client.
-  // Any pod can verify and reconstruct state from this token on future requests.
   const newSessionId = await createSessionToken({
     org: organizationId,
     key: apiKeyId,
@@ -491,7 +448,9 @@ export async function POST(request: Request): Promise<Response> {
     apiKeyId,
     scope,
     baseUrl,
-    authHeader
+    authHeader,
+    slug,
+    listing
   );
 
   await entry.server.connect(transport);
@@ -501,34 +460,15 @@ export async function POST(request: Request): Promise<Response> {
   });
 }
 
-export async function GET(request: Request): Promise<Response> {
-  // Anonymous health probe: no session header means the caller is just
-  // checking reachability (e.g. ERC-8004 indexer). Return minimal
-  // server-info without touching auth or the SDK.
-  const sessionId = request.headers.get("mcp-session-id");
-  if (!sessionId) {
-    const baseUrl = getBaseUrl(request);
-    const resourceMetadataUrl = `${baseUrl}/.well-known/oauth-protected-resource`;
-    return new Response(
-      JSON.stringify({
-        name: "keeperhub",
-        version: "1.0.0",
-        protocol: "mcp",
-        status: "ok",
-        authentication: {
-          required: true,
-          resource_metadata: resourceMetadataUrl,
-        },
-      }),
-      {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json",
-          "Cache-Control": "no-store",
-          ...CORS_HEADERS,
-        },
-      }
-    );
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ slug: string }> }
+): Promise<Response> {
+  const { slug } = await params;
+
+  const listingResult = await resolveListing(slug);
+  if (!listingResult.ok) {
+    return listingResult.response;
   }
 
   const auth = await authenticate(request);
@@ -544,8 +484,25 @@ export async function GET(request: Request): Promise<Response> {
     });
   }
 
+  const sessionId = request.headers.get("mcp-session-id");
+  if (!sessionId) {
+    return new Response(
+      JSON.stringify({ error: "Missing mcp-session-id header" }),
+      {
+        status: 400,
+        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+      }
+    );
+  }
+
   const organizationId = auth.organizationId ?? "";
-  const resolved = await resolveSession(sessionId, organizationId, request);
+  const resolved = await resolveSession(
+    sessionId,
+    organizationId,
+    request,
+    slug,
+    listingResult.listing
+  );
   if (!resolved.ok) {
     return new Response(sessionErrorBody(resolved.code), {
       status: 404,
@@ -559,7 +516,17 @@ export async function GET(request: Request): Promise<Response> {
   return withRenewedSessionHeader(response, resolved.renewedSessionId);
 }
 
-export async function DELETE(request: Request): Promise<Response> {
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ slug: string }> }
+): Promise<Response> {
+  const { slug } = await params;
+
+  const listingResult = await resolveListing(slug);
+  if (!listingResult.ok) {
+    return listingResult.response;
+  }
+
   const auth = await authenticate(request);
   if (!auth.authenticated) {
     const reason = auth.error ?? "Unauthorized";
@@ -586,8 +553,6 @@ export async function DELETE(request: Request): Promise<Response> {
 
   const organizationId = auth.organizationId ?? "";
 
-  // Verify ownership via JWT before touching anything in the local cache.
-  // Accept expired JWTs so clients can clean up old sessions.
   const payload = await verifySessionToken(sessionId, { allowExpired: true });
   if (!payload || payload.org !== organizationId) {
     return new Response(sessionErrorBody("session_not_found"), {
@@ -596,7 +561,6 @@ export async function DELETE(request: Request): Promise<Response> {
     });
   }
 
-  // Close and evict from local cache if present on this pod.
   const cached = getSession(sessionId);
   if (cached) {
     await cached.server.close();
