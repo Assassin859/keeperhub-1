@@ -81,7 +81,7 @@ export function getClientIp(request: Request): string {
 // stale threshold. Inline cleanup on the request path can't fix this leak
 // because it only fires when the same key comes back; entries leak when an
 // org/IP makes requests once and never returns.
-export function cleanupStaleRateLimitEntries(): void {
+export function cleanupExpiredRateLimitEntries(): void {
   const cutoff = Date.now() - maxWindowMs * STALE_THRESHOLD_MULTIPLIER;
   for (const [key, timestamps] of requestLog) {
     const newest = timestamps.at(-1);
@@ -102,7 +102,7 @@ export function startRateLimitCleanupInterval(): void {
     clearInterval(cleanupTimer);
   }
   cleanupTimer = setInterval(
-    cleanupStaleRateLimitEntries,
+    cleanupExpiredRateLimitEntries,
     CLEANUP_INTERVAL_MS
   );
   if (

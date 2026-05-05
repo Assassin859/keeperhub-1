@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   checkIpRateLimit,
   checkMcpRateLimit,
-  cleanupStaleRateLimitEntries,
+  cleanupExpiredRateLimitEntries,
   getRateLimitStats,
   LIMIT,
   resetRateLimitState,
@@ -25,13 +25,13 @@ describe("mcp/rate-limit", () => {
     vi.useRealTimers();
   });
 
-  describe("cleanupStaleRateLimitEntries", () => {
+  describe("cleanupExpiredRateLimitEntries", () => {
     it("removes organisation entries whose newest timestamp is past the stale threshold", () => {
       checkMcpRateLimit("org-a");
       expect(getRateLimitStats().organizationCount).toBe(1);
 
       vi.setSystemTime(Date.now() + STALE_AFTER_MS + 1);
-      cleanupStaleRateLimitEntries();
+      cleanupExpiredRateLimitEntries();
 
       expect(getRateLimitStats().organizationCount).toBe(0);
     });
@@ -41,7 +41,7 @@ describe("mcp/rate-limit", () => {
       expect(getRateLimitStats().ipCount).toBe(1);
 
       vi.setSystemTime(Date.now() + STALE_AFTER_MS + 1);
-      cleanupStaleRateLimitEntries();
+      cleanupExpiredRateLimitEntries();
 
       expect(getRateLimitStats().ipCount).toBe(0);
     });
@@ -52,7 +52,7 @@ describe("mcp/rate-limit", () => {
 
       // Half-way through the stale window
       vi.setSystemTime(Date.now() + STALE_AFTER_MS / 2);
-      cleanupStaleRateLimitEntries();
+      cleanupExpiredRateLimitEntries();
 
       const stats = getRateLimitStats();
       expect(stats.organizationCount).toBe(1);
@@ -69,7 +69,7 @@ describe("mcp/rate-limit", () => {
       expect(blocked.allowed).toBe(false);
 
       // Cleanup must NOT drop an entry whose newest timestamp is `now`.
-      cleanupStaleRateLimitEntries();
+      cleanupExpiredRateLimitEntries();
       expect(getRateLimitStats().organizationCount).toBe(1);
 
       // And the block must persist.
@@ -87,12 +87,12 @@ describe("mcp/rate-limit", () => {
       // caller's window -- entries must NOT be dropped or the next request
       // would see an empty array and forget the prior burst.
       vi.setSystemTime(Date.now() + 6 * WINDOW_MS);
-      cleanupStaleRateLimitEntries();
+      cleanupExpiredRateLimitEntries();
       expect(getRateLimitStats().ipCount).toBe(1);
 
       // Past 5x the largest window (10min * 5 = 50min) -- now safe to drop.
       vi.setSystemTime(Date.now() + 60 * WINDOW_MS);
-      cleanupStaleRateLimitEntries();
+      cleanupExpiredRateLimitEntries();
       expect(getRateLimitStats().ipCount).toBe(0);
     });
 
@@ -105,7 +105,7 @@ describe("mcp/rate-limit", () => {
       expect(getRateLimitStats().organizationCount).toBe(2);
 
       // With cleanup: only the recently-active key remains.
-      cleanupStaleRateLimitEntries();
+      cleanupExpiredRateLimitEntries();
       expect(getRateLimitStats().organizationCount).toBe(1);
     });
   });
