@@ -239,6 +239,8 @@ export const workflows = pgTable(
       .notNull(),
     category: text("category"),
     chain: text("chain"),
+    // v1.11: per-workflow MCP server versioning (incremented on listing schema changes)
+    listingVersion: integer("listing_version").notNull().default(1),
   },
   (table) => [
     // INFRA-02: globally unique listed slug so external callers can invoke by slug alone
@@ -762,6 +764,7 @@ export type ListedWorkflowView = Pick<
   | "workflowType"
   | "category"
   | "chain"
+  | "listingVersion"
 >;
 export type Integration = typeof integrations.$inferSelect;
 export type NewIntegration = typeof integrations.$inferInsert;
