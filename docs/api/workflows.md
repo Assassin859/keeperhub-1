@@ -129,7 +129,7 @@ POST /api/workflows/create
 >
 > The server normalizes the request before persisting it, so the saved node will also include an inner `data.type` field set to the kind discriminator (`"trigger"` or `"action"`). You do not need to send `data.type` yourself; if you do, it must match the outer `type`. As a convenience, sending the plugin slug at the outer `type` (for example `"type": "aave-v3/supply"`) is also accepted, and the server rewrites it into `config.actionType` during normalization.
 
-The `projectId` field is optional. If provided, the workflow is assigned to the specified [project](/api/projects).
+`name`, `nodes`, and `edges` are required. `description`, `projectId`, `tagId`, and `enabled` are optional. `projectId` assigns the workflow to a [project](/api/projects); `tagId` assigns it to an organization tag for categorization; `enabled` (boolean) controls whether the workflow is active on creation.
 
 ### Response
 
