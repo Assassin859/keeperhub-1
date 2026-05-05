@@ -93,6 +93,24 @@ function makeRequest(
   });
 }
 
+async function expectOAuthChallenge(response: Response): Promise<void> {
+  // biome-ignore lint/suspicious/noMisplacedAssertion: helper called exclusively from inside test() blocks
+  expect(response.status).toBe(401);
+  const challenge = response.headers.get("WWW-Authenticate") ?? "";
+  // biome-ignore lint/suspicious/noMisplacedAssertion: helper called exclusively from inside test() blocks
+  expect(challenge).toContain('Bearer realm="OAuth"');
+  // biome-ignore lint/suspicious/noMisplacedAssertion: helper called exclusively from inside test() blocks
+  expect(challenge).toContain("resource_metadata=");
+  // biome-ignore lint/suspicious/noMisplacedAssertion: helper called exclusively from inside test() blocks
+  expect(challenge).toContain('error="invalid_token"');
+  const json = (await response.json()) as Record<string, unknown>;
+  // biome-ignore lint/suspicious/noMisplacedAssertion: helper called exclusively from inside test() blocks
+  expect(json).toEqual({
+    error: "invalid_token",
+    error_description: "Missing or invalid access token",
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -114,11 +132,11 @@ describe("GET /mcp — anonymous health probe", () => {
     expect(json.authentication.required).toBe(true);
   });
 
-  it("returns 401 when mcp-session-id is present but no auth token is provided", async () => {
+  it("returns the OAuth challenge when mcp-session-id is present but no auth", async () => {
     const request = makeRequest("GET", { "mcp-session-id": "some-session-id" });
     const response = await GET(request);
 
-    expect(response.status).toBe(401);
+    await expectOAuthChallenge(response);
   });
 });
 
@@ -151,7 +169,7 @@ describe("POST /mcp — anonymous initialize", () => {
     expect(json.result.authentication.required).toBe(true);
   });
 
-  it("returns 401 for tools/list with no auth (only initialize is anon-allowed)", async () => {
+  it("returns the OAuth challenge for tools/list with no auth", async () => {
     const body = JSON.stringify({
       jsonrpc: "2.0",
       id: 8,
@@ -160,14 +178,53 @@ describe("POST /mcp — anonymous initialize", () => {
     const request = makeRequest("POST", {}, body);
     const response = await POST(request);
 
-    expect(response.status).toBe(401);
+    await expectOAuthChallenge(response);
   });
 
-  it("returns 401 for malformed JSON body with no auth (no 500)", async () => {
+  it("returns the OAuth challenge for malformed JSON, with no parser leak", async () => {
     const request = makeRequest("POST", {}, "{ not valid json");
     const response = await POST(request);
 
-    expect(response.status).toBe(401);
+    await expectOAuthChallenge(response);
+  });
+
+  it("coerces non-scalar JSON-RPC ids to null", async () => {
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      id: { evil: "object" },
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "test-client", version: "0.0.1" },
+      },
+    });
+    const request = makeRequest("POST", {}, body);
+    const response = await POST(request);
+
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(json.id).toBeNull();
+  });
+
+  it("rejects a batch with mixed methods (only all-initialize batches are anon-allowed)", async () => {
+    const body = JSON.stringify([
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "test-client", version: "0.0.1" },
+        },
+      },
+      { jsonrpc: "2.0", id: 2, method: "tools/call" },
+    ]);
+    const request = makeRequest("POST", {}, body);
+    const response = await POST(request);
+
+    await expectOAuthChallenge(response);
   });
 });
 
@@ -238,12 +295,12 @@ describe("DELETE /mcp — always requires auth", () => {
     mockAuthenticate.mockResolvedValue(UNAUTHENTICATED);
   });
 
-  it("returns 401 when no auth token is provided", async () => {
+  it("returns the OAuth challenge when no auth token is provided", async () => {
     const request = makeRequest("DELETE", {
       "mcp-session-id": "some-session-id",
     });
     const response = await DELETE(request);
 
-    expect(response.status).toBe(401);
+    await expectOAuthChallenge(response);
   });
 });

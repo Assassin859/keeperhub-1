@@ -140,7 +140,7 @@ async function authenticate(request: Request): Promise<ApiKeyAuthResult> {
 
 function isInitializeRequestBody(body: unknown): boolean {
   if (Array.isArray(body)) {
-    return body.some((item) => isInitializeRequest(item));
+    return body.length > 0 && body.every((item) => isInitializeRequest(item));
   }
   return isInitializeRequest(body);
 }
@@ -369,7 +369,14 @@ export async function POST(request: Request): Promise<Response> {
   if (!auth.authenticated && bodyParsed && isInitializeRequestBody(body)) {
     const baseUrl = getBaseUrl(request);
     const resourceMetadataUrl = `${baseUrl}/.well-known/oauth-protected-resource`;
-    const requestId = (body as Record<string, unknown>).id ?? null;
+    const rawId = Array.isArray(body)
+      ? undefined
+      : (body as Record<string, unknown>).id;
+    // JSON-RPC 2.0 ids are string | number | null. Reflecting any other
+    // shape lets a caller force the server to serialize an arbitrary value
+    // back into the response body.
+    const requestId =
+      typeof rawId === "string" || typeof rawId === "number" ? rawId : null;
     const anonInitResult = {
       jsonrpc: "2.0",
       id: requestId,
@@ -385,7 +392,11 @@ export async function POST(request: Request): Promise<Response> {
     };
     return new Response(JSON.stringify(anonInitResult), {
       status: 200,
-      headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+        ...CORS_HEADERS,
+      },
     });
   }
 
@@ -508,7 +519,11 @@ export async function GET(request: Request): Promise<Response> {
       }),
       {
         status: 200,
-        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+          ...CORS_HEADERS,
+        },
       }
     );
   }
