@@ -351,7 +351,44 @@ function withRenewedSessionHeader(
 }
 
 export async function POST(request: Request): Promise<Response> {
+  // Parse body early so we can inspect it before the auth check.
+  // A body that won't parse falls through to the existing 401 path.
+  let body: unknown;
+  let bodyParsed = false;
+  try {
+    body = await request.json();
+    bodyParsed = true;
+  } catch {
+    // Leave bodyParsed = false; handled below after auth check.
+  }
+
   const auth = await authenticate(request);
+
+  // Anonymous initialize: let unauthenticated callers learn the server
+  // identity and auth requirements without touching the SDK.
+  if (!auth.authenticated && bodyParsed && isInitializeRequestBody(body)) {
+    const baseUrl = getBaseUrl(request);
+    const resourceMetadataUrl = `${baseUrl}/.well-known/oauth-protected-resource`;
+    const requestId = (body as Record<string, unknown>).id ?? null;
+    const anonInitResult = {
+      jsonrpc: "2.0",
+      id: requestId,
+      result: {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        serverInfo: { name: "keeperhub", version: "1.0.0" },
+        authentication: {
+          required: true,
+          resource_metadata: resourceMetadataUrl,
+        },
+      },
+    };
+    return new Response(JSON.stringify(anonInitResult), {
+      status: 200,
+      headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    });
+  }
+
   if (!auth.authenticated) {
     const reason = auth.error ?? "Unauthorized";
     logMcpEvent("mcp.auth.failed", { reason });
@@ -389,12 +426,8 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   // No session ID: must be an initialize request.
-  // Pre-parse body because request.json() consumes the stream.
-  // We pass parsedBody to handleRequest so the SDK does not re-read it.
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
+  // Body was already parsed above; pass parsedBody to the SDK transport.
+  if (!bodyParsed) {
     return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
       status: 400,
       headers: { "Content-Type": "application/json", ...CORS_HEADERS },
@@ -454,6 +487,31 @@ export async function POST(request: Request): Promise<Response> {
 }
 
 export async function GET(request: Request): Promise<Response> {
+  // Anonymous health probe: no session header means the caller is just
+  // checking reachability (e.g. ERC-8004 indexer). Return minimal
+  // server-info without touching auth or the SDK.
+  const sessionId = request.headers.get("mcp-session-id");
+  if (!sessionId) {
+    const baseUrl = getBaseUrl(request);
+    const resourceMetadataUrl = `${baseUrl}/.well-known/oauth-protected-resource`;
+    return new Response(
+      JSON.stringify({
+        name: "keeperhub",
+        version: "1.0.0",
+        protocol: "mcp",
+        status: "ok",
+        authentication: {
+          required: true,
+          resource_metadata: resourceMetadataUrl,
+        },
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+      }
+    );
+  }
+
   const auth = await authenticate(request);
   if (!auth.authenticated) {
     const reason = auth.error ?? "Unauthorized";
@@ -465,17 +523,6 @@ export async function GET(request: Request): Promise<Response> {
       status: auth.statusCode,
       headers: { "Content-Type": "application/json", ...CORS_HEADERS },
     });
-  }
-
-  const sessionId = request.headers.get("mcp-session-id");
-  if (!sessionId) {
-    return new Response(
-      JSON.stringify({ error: "Missing mcp-session-id header" }),
-      {
-        status: 400,
-        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
-      }
-    );
   }
 
   const organizationId = auth.organizationId ?? "";
