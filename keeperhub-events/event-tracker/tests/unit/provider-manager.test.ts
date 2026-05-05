@@ -243,6 +243,45 @@ describe("ChainProviderManager", () => {
         expect(factoryBundle.created[0].destroyed).toBe(true);
       });
 
+      it("retries createProvider on the next call after a probe failure", async () => {
+        // The reconciler runs synchronizeData every 30s. A transient
+        // probe failure must NOT permanently disable the chain - the
+        // next call to getOrCreateProvider must kick off a fresh
+        // factory call rather than re-returning the cached rejected
+        // promise.
+        factoryBundle.setNextSubscribeFailure(new Error("transient"));
+        await expect(
+          manager.getOrCreateProvider(CHAIN_A, "ws://a"),
+        ).rejects.toThrow();
+        expect(factoryBundle.created).toHaveLength(1);
+
+        // Second attempt: probe failure no longer armed; the call
+        // should produce a fresh factory invocation and succeed.
+        await expect(
+          manager.getOrCreateProvider(CHAIN_A, "ws://a"),
+        ).resolves.toBeDefined();
+        expect(factoryBundle.created).toHaveLength(2);
+        expect(manager.isHealthy(CHAIN_A)).toBe(true);
+      });
+
+      it("records lastCreateError after a probe failure and clears it on success", async () => {
+        factoryBundle.setNextSubscribeFailure(
+          new Error('unsupported operation (operation="eth_subscribe")'),
+        );
+        await expect(
+          manager.getOrCreateProvider(CHAIN_A, "ws://a"),
+        ).rejects.toThrow();
+        // Failure is observable through health surface so /healthz can
+        // report *why* a chain is degraded.
+        expect(manager.getHealth(CHAIN_A)?.lastCreateError).toMatch(
+          /eth_subscribe/,
+        );
+
+        // Subsequent successful retry clears the marker.
+        await manager.getOrCreateProvider(CHAIN_A, "ws://a");
+        expect(manager.getHealth(CHAIN_A)?.lastCreateError).toBeNull();
+      });
+
       it("survives an eth_unsubscribe failure (probe succeeded)", async () => {
         // Plant the unsubscribe failure synchronously after the factory
         // returns the mock but before createProvider awaits the probe.
@@ -648,6 +687,7 @@ describe("ChainProviderManager", () => {
         reconnecting: false,
         lastBlockAt: null,
         subscriberCount: 1,
+        lastCreateError: null,
       });
     });
 
