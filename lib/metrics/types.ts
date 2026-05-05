@@ -140,6 +140,15 @@ export const MetricNames = {
   SPONSORSHIP_GAS_USED_TOTAL: "sponsorship.gas_used.total",
   SPONSORSHIP_GAS_COST_USD_MICRO_TOTAL: "sponsorship.gas_cost_usd_micro.total",
 
+  // Billing lifecycle counters (API-process, emitted from webhook handler)
+  BILLING_SUBSCRIPTION_CREATED: "billing.subscription.created",
+  BILLING_SUBSCRIPTION_UPDATED: "billing.subscription.updated",
+  BILLING_SUBSCRIPTION_CANCELED: "billing.subscription.canceled",
+  BILLING_SUBSCRIPTION_PLAN_CHANGED: "billing.subscription.plan_changed",
+  BILLING_INVOICE_PAID: "billing.invoice.paid",
+  BILLING_INVOICE_FAILED: "billing.invoice.failed",
+  BILLING_OVERAGE_CHARGED: "billing.overage.charged",
+
   // Saturation metrics
   DB_POOL_UTILIZATION: "db.pool.utilization",
   DB_QUERY_SLOW_COUNT: "db.query.slow_count",
@@ -171,6 +180,8 @@ export const LabelKeys = {
   ERROR_CATEGORY: "error_category",
   ERROR_CONTEXT: "error_context",
   IS_USER_ERROR: "is_user_error",
+  BILLING_STATUS: "billing_status",
+  TIER: "tier",
 } as const;
 
 /**
@@ -182,3 +193,17 @@ export type TriggerType = "manual" | "webhook" | "scheduled";
  * Execution status values
  */
 export type ExecutionStatus = "success" | "failure" | "timeout" | "cancelled";
+
+/**
+ * Subscription billing status values reported as the `billing_status` label.
+ * Mirrors organization_subscriptions.status, plus "none" for orgs that have
+ * no subscription row (legacy / pre-billing).
+ */
+export type BillingStatus =
+  | "active"
+  | "trialing"
+  | "past_due"
+  | "canceled"
+  | "unpaid"
+  | "paused"
+  | "none";

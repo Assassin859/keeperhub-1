@@ -124,7 +124,33 @@ Gauge metrics tracking user and organization statistics.
 | `org.members_by_role` | Organization members by role | `role` | DB |
 | `org.invitations.pending` | Pending organization invitations | - | DB |
 | `org.with_workflows` | Organizations with at least one workflow | - | DB |
-| `org.info` | Info gauge with one series per org | `org_name`, `slug` | DB |
+| `org.info` | Info gauge with one series per org | `org_name`, `slug`, `plan`, `billing_status` | DB |
+
+### Billing Metrics
+
+Billing-aware observability layered onto the org model. Plan distribution, per-org execution volume vs plan limits, MRR, and subscription lifecycle counters.
+
+**Cardinality control:** per-org execution gauges (`org.executions.30d`, `org.executions.month`, `org.plan_usage_ratio`) emit one series per *paid* org (pro/business/enterprise). Free-tier orgs are aggregated into a single series with `org_slug="_free"` to keep Prometheus storage bounded.
+
+| Metric Name | Description | Labels | Source |
+|-------------|-------------|--------|--------|
+| `org.total_by_plan` | Org count grouped by plan and billing status | `plan`, `billing_status` | DB |
+| `org.executions.30d` | Workflow executions per org in the last 30 days | `org_slug`, `plan` | DB |
+| `org.executions.month` | Workflow executions per org since start of current calendar month | `org_slug`, `plan` | DB |
+| `org.plan_usage_ratio` | Current-month executions / monthly plan limit (0 when unlimited) | `org_slug`, `plan` | DB |
+| `mrr.usd_cents` | Approximate MRR in USD cents per plan (PLANS table * current tier) | `plan` | DB |
+| `mrr.usd_cents.total` | Approximate total MRR across all plans | - | DB |
+| `billing.subscription.created` | Subscriptions created (paid plan attached after checkout) | `plan`, `tier` | API |
+| `billing.subscription.updated` | Subscription update events from the billing provider | `plan` | API |
+| `billing.subscription.canceled` | Subscriptions canceled (provider-side or downgraded to free) | `plan`, `tier` | API |
+| `billing.subscription.plan_changed` | Plan changes labeled by direction | `from_plan`, `to_plan`, `direction` (`upgrade` / `downgrade` / `tier_change`) | API |
+| `billing.invoice.paid` | Invoices paid via the billing provider | `plan` | API |
+| `billing.invoice.failed` | Invoice payment failures (`past_due` / `payment_failed`) | `plan` | API |
+| `billing.overage.charged` | Overage charges issued for plan limit excess | `plan` | API |
+
+**Billing status values** (`billing_status` label): `active`, `trialing`, `past_due`, `canceled`, `unpaid`, `paused`, `none` (orgs without a subscription row).
+
+**MRR caveat:** `mrr.usd_cents` is computed from `lib/billing/plans.ts` × the org's current `(plan, tier)` tuple, summed across subscriptions in `active`, `trialing`, or `past_due` status. Stripe Dashboard remains the source of truth for accounting; this gauge exists for trend visibility only.
 
 ### Workflow Definition Metrics
 
@@ -187,6 +213,12 @@ Gauge metrics tracking user and organization statistics.
 | `verified` | User email verified status (info gauge) | `true`, `false` |
 | `org_name` | Organization name (info gauge) | `Acme Corp` |
 | `slug` | Organization slug (info gauge) | `acme-corp` |
+| `org_slug` | Organization slug for billing gauges (`_free` aggregates free-tier orgs, `_anonymous` for personal workflows) | `acme-corp`, `_free`, `_anonymous` |
+| `plan` | Subscription plan | `free`, `pro`, `business`, `enterprise` |
+| `tier` | Plan tier (none for free/enterprise) | `25k`, `50k`, `100k`, `250k`, `500k`, `1m`, `none` |
+| `billing_status` | Subscription status | `active`, `trialing`, `past_due`, `canceled`, `unpaid`, `paused`, `none` |
+| `from_plan` / `to_plan` | Plan change source/target | `pro`, `business` |
+| `direction` | Plan change direction | `upgrade`, `downgrade`, `tier_change` |
 
 ---
 

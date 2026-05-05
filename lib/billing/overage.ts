@@ -6,6 +6,8 @@ import {
   organizationSubscriptions,
   overageBillingRecords,
 } from "@/lib/db/schema";
+import { getMetricsCollector } from "@/lib/metrics";
+import { MetricNames } from "@/lib/metrics/types";
 import { getPlanLimits, PLANS, parsePlanName, parseTierKey } from "./plans";
 import { getBillingProvider } from "./providers";
 
@@ -131,6 +133,11 @@ export async function billOverageForOrg(
         providerInvoiceItemId: invoiceItemId,
       })
       .where(eq(overageBillingRecords.id, record.id));
+
+    getMetricsCollector().incrementCounter(
+      MetricNames.BILLING_OVERAGE_CHARGED,
+      { plan }
+    );
 
     return { billed: true, overageCount, totalChargeCents };
   } catch (error) {
