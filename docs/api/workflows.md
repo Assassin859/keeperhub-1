@@ -330,6 +330,8 @@ Returns the complete registry of available workflow actions, triggers, and templ
     "web3/check-balance": {
       "actionType": "web3/check-balance",
       "label": "Check Balance",
+      "category": "web3",
+      "integration": "web3",
       "requiredFields": { "network": "string (chain ID)", "address": "string" },
       "optionalFields": {},
       "outputFields": { "balance": "..." },
@@ -338,16 +340,31 @@ Returns the complete registry of available workflow actions, triggers, and templ
     "Condition": {
       "actionType": "Condition",
       "label": "Condition",
+      "category": "System",
       "requiredFields": { "condition": "string (JS expression)" },
-      "optionalFields": { "conditionConfig": "object (visual builder state)" }
+      "optionalFields": { "conditionConfig": "object (visual builder state)" },
+      "sourceHandles": ["true", "false"]
     }
   },
   "triggers": {
-    "Schedule": { "triggerType": "Schedule", "configSchema": { "scheduleCron": "string" } },
-    "Manual": { "triggerType": "Manual" }
+    "Schedule": {
+      "triggerType": "Schedule",
+      "label": "Schedule",
+      "requiredFields": { "scheduleCron": "string" },
+      "optionalFields": { "scheduleTimezone": "string" }
+    },
+    "Manual": { "triggerType": "Manual", "label": "Manual", "requiredFields": {} }
   },
   "chains": [...],
-  "templateSyntax": { "pattern": "{{@nodeId:Label.field}}" }
+  "platform": { "wallet": {...}, "proxyContracts": {...}, "abiHandling": {...} },
+  "templateSyntax": { "pattern": "{{@nodeId:Label.field}}" },
+  "builtinVariables": {
+    "nodeId": "__system",
+    "nodeLabel": "System",
+    "variables": { "unixTimestamp": {...}, "unixTimestampMs": {...}, "isoTimestamp": {...} }
+  },
+  "workflowStructure": { "nodeStructure": {...}, "edgeStructure": {...} },
+  "tips": ["actionType must match exactly", "..."]
 }
 ```
 
