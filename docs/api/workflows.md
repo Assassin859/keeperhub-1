@@ -104,12 +104,13 @@ POST /api/workflows/create
       "id": "supply-aave",
       "type": "action",
       "data": {
-        "label": "Supply Aave",
+        "label": "Supply USDC to Aave",
         "config": {
-          "actionType": "web3/supply-aave-v3",
+          "actionType": "aave-v3/supply",
           "network": "8453",
-          "asset": "USDC",
-          "amount": "100"
+          "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+          "amount": "100000000",
+          "onBehalfOf": "0x0000000000000000000000000000000000000000"
         }
       }
     }
@@ -126,7 +127,7 @@ POST /api/workflows/create
 
 > **Note on Node Format:** For action nodes, set the outer `type` to `"action"` and place the plugin slug in `config.actionType`. The `data` object contains `label` and `config`; `status` and `position` are optional and auto-assigned by the API if omitted. Trigger nodes use outer `type: "trigger"` with `config.triggerType` set to the Pascal-case trigger name.
 >
-> The server normalizes the request before persisting it, so the saved node will also include an inner `data.type` field set to the kind discriminator (`"trigger"` or `"action"`). You do not need to send `data.type` yourself; if you do, it must match the outer `type`. As a convenience, sending the plugin slug at the outer `type` (for example `"type": "web3/supply-aave-v3"`) is also accepted, and the server rewrites it into `config.actionType` during normalization.
+> The server normalizes the request before persisting it, so the saved node will also include an inner `data.type` field set to the kind discriminator (`"trigger"` or `"action"`). You do not need to send `data.type` yourself; if you do, it must match the outer `type`. As a convenience, sending the plugin slug at the outer `type` (for example `"type": "aave-v3/supply"`) is also accepted, and the server rewrites it into `config.actionType` during normalization.
 
 The `projectId` field is optional. If provided, the workflow is assigned to the specified [project](/api/projects).
 
