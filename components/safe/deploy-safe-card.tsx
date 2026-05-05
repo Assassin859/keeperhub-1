@@ -182,6 +182,7 @@ function DeployedSafeRow({
         <RolePermissionsCard
           chainId={safe.chainId}
           isAdmin={isAdmin}
+          safeAddress={safe.safeAddress}
           safeId={safe.id}
         />
       )}

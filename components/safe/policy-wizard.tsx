@@ -4,6 +4,8 @@ import { ethers } from "ethers";
 import { AlertTriangleIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { AddressWithExplorer } from "@/components/safe/address-with-explorer";
+import { getChainDisplayName } from "@/components/safe/chain-prefixes";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
@@ -93,6 +95,7 @@ export type DirectRuleInput = {
   tokenAddress: string | null;
   tokenSymbol: string;
   tokenDecimals: number;
+  tokenLogoUrl?: string | null;
   counterparty: string;
   amountHuman: string;
   periodSeconds: number;
@@ -128,6 +131,7 @@ export type PolicyWizardProps = {
   defaultProtocolTokens?: Readonly<Record<string, TokenLimitInput[]>>;
   defaultDirectRules?: readonly DirectRuleInput[];
   mode?: "install" | "edit";
+  safeAddress?: string;
   submitting: boolean;
   /**
    * Optional simulator. When provided, the wizard inserts a "Review" step
@@ -163,6 +167,7 @@ export function PolicyWizard({
   defaultProtocolTokens,
   defaultDirectRules,
   mode = "install",
+  safeAddress,
   submitting,
   simulate,
   onConfirm,
@@ -397,33 +402,35 @@ export function PolicyWizard({
     <div className="flex flex-col gap-3">
       {step === "configure" && (
         <>
+          {safeAddress && (
+            <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/20 px-3 py-2 text-xs">
+              <span className="font-medium">Safe being managed</span>
+              <AddressWithExplorer address={safeAddress} chainId={chainId} />
+              <span className="text-muted-foreground">
+                on {getChainDisplayName(chainId)}
+              </span>
+            </div>
+          )}
+
           <div className="rounded-md border border-amber-300/40 bg-amber-500/10 p-3 text-xs">
             <div className="mb-1 font-medium">How this works</div>
             <ul className="list-inside list-disc space-y-1 text-muted-foreground">
               <li>
-                A Zodiac Roles Modifier is installed on your Safe. Workflows can
-                only call the protocols and functions you enable below.
+                Workflows on this Safe can only call the protocols you enable
+                below. Anything else reverts on chain.
               </li>
               <li>
-                For each protocol, pick the tokens it may spend, the amount per
-                period, and the rotation (daily, weekly, monthly). Each cap is
-                enforced on-chain per call.
+                For each protocol, pick which tokens it can spend, the cap per
+                period, and how often the cap refills.
               </li>
               <li>
-                Protocols marked {enforcementLabel("per-parameter")} have full
-                per-parameter conditions from our audited preset. Protocols
-                marked {enforcementLabel("contract-allowlist")} are allowlisted
-                at the contract level only -- per-token caps still apply, but
-                any function on the listed contracts can be called.
+                {enforcementLabel("per-parameter")} pins specific function
+                arguments on chain. {enforcementLabel("contract-allowlist")}{" "}
+                only restricts which contracts the role can call.
               </li>
               <li>
-                Each protocol owns its own bucket per token. Setting USDC on
-                Aave and on CoW gives each one an independent cap; they do not
-                share.
-              </li>
-              <li>
-                Anything outside the policy reverts on-chain. You can tweak or
-                revoke anytime from the Safe card.
+                Each protocol gets its own cap per token. Two protocols holding
+                USDC each have an independent allowance, never shared.
               </li>
             </ul>
           </div>
@@ -436,9 +443,9 @@ export function PolicyWizard({
             </Label>
             {mode === "edit" && (
               <p className="mt-1 mb-1 text-muted-foreground text-xs">
-                Active protocols are listed first. Use the × on an active row to
-                mark it for removal, or the Add button on a new row to include
-                it. Submitting commits the diff in one Safe transaction.
+                Active protocols are listed first. Click × on a protocol to
+                remove it, or Add to enable a new one. Your changes apply in one
+                Safe transaction when you confirm.
               </p>
             )}
             <ul className="mt-1 max-h-[28rem] space-y-2 overflow-y-auto rounded-md border p-2">
@@ -476,6 +483,7 @@ export function PolicyWizard({
             chainId={chainId}
             onChange={setDirectRules}
             rules={directRules}
+            safeAddress={safeAddress}
           />
         </>
       )}

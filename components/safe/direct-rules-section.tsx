@@ -1,5 +1,6 @@
 "use client";
 
+import { AddressWithExplorer } from "@/components/safe/address-with-explorer";
 import type { DirectRuleInput } from "@/components/safe/policy-wizard";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -11,6 +12,7 @@ const DEFAULT_PERIOD_SECONDS = POLICY_PERIOD_OPTIONS[1].seconds;
 type DirectRulesSectionProps = {
   rules: DirectRuleInput[];
   chainId: number;
+  safeAddress?: string;
   onChange: (next: DirectRuleInput[]) => void;
 };
 
@@ -29,6 +31,7 @@ function makeBlankRule(): DirectRuleInput {
 export function DirectRulesSection({
   rules,
   chainId,
+  safeAddress,
   onChange,
 }: DirectRulesSectionProps): React.ReactElement {
   const updateAt = (index: number, next: DirectRuleInput): void => {
@@ -50,10 +53,23 @@ export function DirectRulesSection({
   return (
     <div className="space-y-2">
       <Label className="text-xs">Direct transfers and approvals</Label>
-      <div className="text-muted-foreground text-xs">
-        Rules outside any protocol. Use these to allow workflows to send tokens,
-        send native ETH, or approve a contract directly. Each rule scopes a
-        specific recipient or spender; nothing else passes.
+      <div className="space-y-1 text-muted-foreground text-xs">
+        <p>
+          Each rule below authorises one specific transfer, approval, or native
+          ETH send from this Safe through automated workflows. The Safe address
+          being scoped:
+        </p>
+        {safeAddress && (
+          <div>
+            <AddressWithExplorer address={safeAddress} chainId={chainId} />
+          </div>
+        )}
+        <p>
+          For each rule you pick a token, a recipient or spender, and a
+          per-period cap. Workflows on this Safe can call only those functions
+          for that exact counterparty up to the cap. Anything else reverts on
+          chain.
+        </p>
       </div>
       <ul className="space-y-2">
         {rules.map((rule, idx) => (

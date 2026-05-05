@@ -2,6 +2,7 @@
 
 import { ethers } from "ethers";
 import { ChevronDownIcon, ExternalLinkIcon, XIcon } from "lucide-react";
+import Image from "next/image";
 import { useCallback, useRef, useState } from "react";
 import { AddressSelectPopover } from "@/components/address-book/address-select-popover";
 import type {
@@ -49,20 +50,22 @@ const RULE_KIND_OPTIONS: ReadonlyArray<{
     value: "erc20-transfer",
     label: "ERC20 transfer",
     counterpartyLabel: "Recipient",
-    description: "token.transfer(recipient, amount)",
+    description:
+      "Workflows can send the chosen token from the Safe to this recipient, up to the cap per period.",
   },
   {
     value: "erc20-approve",
     label: "ERC20 approve",
     counterpartyLabel: "Spender",
-    description: "token.approve(spender, amount)",
+    description:
+      "Workflows can call approve so this spender contract can pull the chosen token from the Safe, up to the cap per period.",
   },
   {
     value: "native-transfer",
     label: "Native ETH transfer",
     counterpartyLabel: "Recipient",
     description:
-      "Native value transfer to a specific recipient. Target-only on chain (no value cap).",
+      "Workflows can send native ETH from the Safe to this recipient. The Roles modifier allowlists the recipient but does not cap the amount on chain.",
   },
 ];
 
@@ -139,6 +142,7 @@ export function DirectRuleRow({
       tokenAddress: picked.tokenAddress,
       tokenSymbol: picked.tokenSymbol,
       tokenDecimals: picked.tokenDecimals,
+      tokenLogoUrl: picked.logoUrl ?? null,
     });
   };
 
@@ -173,22 +177,31 @@ export function DirectRuleRow({
                       ? `Change token (currently ${value.tokenSymbol})`
                       : "Pick a token"
                   }
-                  className="flex h-9 w-full items-center justify-between rounded-md border bg-background px-3 text-sm hover:border-primary focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="flex h-9 w-full items-center gap-2 rounded-md border bg-background px-3 text-sm hover:border-primary focus:outline-none focus:ring-2 focus:ring-ring"
                   onClick={() => setPickerOpen(true)}
                   type="button"
                 >
+                  {value.tokenLogoUrl && (
+                    <Image
+                      alt={value.tokenSymbol || "token"}
+                      className="h-5 w-5 shrink-0 rounded-full bg-muted"
+                      height={20}
+                      src={value.tokenLogoUrl}
+                      width={20}
+                    />
+                  )}
                   <span
                     className={
                       value.tokenSymbol
-                        ? "font-medium"
-                        : "text-muted-foreground"
+                        ? "flex-1 text-left font-medium"
+                        : "flex-1 text-left text-muted-foreground"
                     }
                   >
                     {value.tokenSymbol || "Pick a token"}
                   </span>
                   <ChevronDownIcon
                     aria-hidden="true"
-                    className="ml-2 h-4 w-4 text-muted-foreground"
+                    className="h-4 w-4 shrink-0 text-muted-foreground"
                   />
                 </button>
               </TooltipTrigger>

@@ -1,6 +1,7 @@
 "use client";
 
 import { ExternalLinkIcon } from "lucide-react";
+import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -271,9 +272,19 @@ export function TokenPicker({
                   onClick={() => handlePickExisting(t)}
                   type="button"
                 >
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted font-medium text-xs">
-                    {t.tokenSymbol.slice(0, 3)}
-                  </div>
+                  {t.logoUrl ? (
+                    <Image
+                      alt={t.tokenSymbol}
+                      className="h-8 w-8 shrink-0 rounded-full bg-muted"
+                      height={32}
+                      src={t.logoUrl}
+                      width={32}
+                    />
+                  ) : (
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted font-medium text-xs">
+                      {t.tokenSymbol.slice(0, 3)}
+                    </div>
+                  )}
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="font-medium">{t.tokenSymbol}</span>
