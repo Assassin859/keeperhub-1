@@ -4,13 +4,13 @@ import {
   checkMcpRateLimit,
   cleanupStaleRateLimitEntries,
   getRateLimitStats,
+  LIMIT,
   resetRateLimitState,
   stopRateLimitCleanupInterval,
+  WINDOW_MS,
 } from "@/lib/mcp/rate-limit";
 
-const MINUTE_MS = 60_000;
-const STALE_AFTER_MS = 5 * MINUTE_MS;
-const MCP_LIMIT = 120;
+const STALE_AFTER_MS = 5 * WINDOW_MS;
 
 describe("mcp/rate-limit", () => {
   beforeEach(() => {
@@ -37,7 +37,7 @@ describe("mcp/rate-limit", () => {
     });
 
     it("removes IP entries whose newest timestamp is past the stale threshold", () => {
-      checkIpRateLimit("1.2.3.4", 10, MINUTE_MS);
+      checkIpRateLimit("1.2.3.4", 10, WINDOW_MS);
       expect(getRateLimitStats().ipCount).toBe(1);
 
       vi.setSystemTime(Date.now() + STALE_AFTER_MS + 1);
@@ -48,7 +48,7 @@ describe("mcp/rate-limit", () => {
 
     it("preserves entries with activity inside the stale threshold", () => {
       checkMcpRateLimit("org-active");
-      checkIpRateLimit("9.9.9.9", 10, MINUTE_MS);
+      checkIpRateLimit("9.9.9.9", 10, WINDOW_MS);
 
       // Half-way through the stale window
       vi.setSystemTime(Date.now() + STALE_AFTER_MS / 2);
@@ -60,7 +60,7 @@ describe("mcp/rate-limit", () => {
     });
 
     it("does not break rate-limit decisions when called against an at-limit entry", () => {
-      const allowed = Array.from({ length: MCP_LIMIT }, () =>
+      const allowed = Array.from({ length: LIMIT }, () =>
         checkMcpRateLimit("org-busy")
       );
       expect(allowed.every((r) => r.allowed)).toBe(true);
@@ -78,7 +78,7 @@ describe("mcp/rate-limit", () => {
     });
 
     it("self-tunes the stale threshold to the largest IP window seen across callers", () => {
-      const TEN_MINUTE_WINDOW_MS = 10 * MINUTE_MS;
+      const TEN_MINUTE_WINDOW_MS = 10 * WINDOW_MS;
 
       checkIpRateLimit("ip-long-window", 5, TEN_MINUTE_WINDOW_MS);
       expect(getRateLimitStats().ipCount).toBe(1);
@@ -86,12 +86,12 @@ describe("mcp/rate-limit", () => {
       // Past the default 5x60s threshold, but well inside the 10-minute
       // caller's window -- entries must NOT be dropped or the next request
       // would see an empty array and forget the prior burst.
-      vi.setSystemTime(Date.now() + 6 * MINUTE_MS);
+      vi.setSystemTime(Date.now() + 6 * WINDOW_MS);
       cleanupStaleRateLimitEntries();
       expect(getRateLimitStats().ipCount).toBe(1);
 
       // Past 5x the largest window (10min * 5 = 50min) -- now safe to drop.
-      vi.setSystemTime(Date.now() + 60 * MINUTE_MS);
+      vi.setSystemTime(Date.now() + 60 * WINDOW_MS);
       cleanupStaleRateLimitEntries();
       expect(getRateLimitStats().ipCount).toBe(0);
     });

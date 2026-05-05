@@ -2,8 +2,8 @@
 // Effective limit is LIMIT * num_replicas. Replace with Redis-backed solution
 // when replica count grows.
 
-const WINDOW_MS = 60_000; // 1 minute
-const LIMIT = 120; // requests per window (higher than execute endpoint; MCP sessions are chatty)
+export const WINDOW_MS = 60_000; // 1 minute
+export const LIMIT = 120; // requests per window (higher than execute endpoint; MCP sessions are chatty)
 
 // Stale-entry sweep: anything whose newest timestamp is older than
 // (STALE_THRESHOLD_MULTIPLIER * maxWindowMs) can never affect a rate-limit
