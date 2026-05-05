@@ -14,8 +14,8 @@ import {
 } from "@/lib/workflow/executor/step-success-tracker";
 
 /**
- * KEEP-398: Reconcile spurious max-retries / step-completion-tracker errors
- * via the in-process step-success-tracker.
+ * KEEP-398 / KEEP-431: Reconcile spurious max-retries / step-completion-tracker
+ * errors via the step-success authority.
  *
  * Background:
  *   The Workflow DevKit's post-step "step_completed" event is occasionally
@@ -25,18 +25,18 @@ import {
  *   even though the step body returned successfully and recorded its output
  *   via recordStepSuccess (called from step-handler.ts).
  *
- *   The executor.workflow.ts catch block now consults getSuccessfulSteps:
- *   when the error message matches the spurious shape AND a recorded output
- *   exists for the failing node, the executor treats it as success and
- *   continues downstream.
+ *   The executor.workflow.ts catch block now consults getCompletedStepOutput
+ *   (tracker fast-path with DB fallback): when the error message matches the
+ *   spurious shape AND a recorded success exists for the failing node, the
+ *   executor treats it as success and continues downstream.
  *
- * These tests cover the predicate logic (regex shape) and the tracker
- * round-trip used by the recovery path. A full executeWorkflow integration
- * test is intentionally out of scope: the executor module imports plugin
- * registries, metrics, logging, AsyncLocalStorage error contexts, and a
- * dynamically generated step-registry, all of which would require
- * >200 lines of mocking. The pure-logic and tracker behaviour fully
- * exercise the new branch in the catch block.
+ * These tests cover the predicate logic (regex shape) and the tracker fast
+ * path round-trip used by the recovery decision. The DB-fallback path is
+ * covered by cross-process-tracker-simulation.test.ts. A full executeWorkflow
+ * integration test is intentionally out of scope: the executor module imports
+ * plugin registries, metrics, logging, AsyncLocalStorage error contexts, and
+ * a dynamically generated step-registry, all of which would require >200
+ * lines of mocking.
  *
  * The regex constants are imported from the production module (not redefined
  * here) so any rename or pattern change in executor.workflow.ts breaks this
