@@ -83,16 +83,12 @@ export function getClientIp(request: Request): string {
 // org/IP makes requests once and never returns.
 export function cleanupExpiredRateLimitEntries(): void {
   const cutoff = Date.now() - maxWindowMs * STALE_THRESHOLD_MULTIPLIER;
-  for (const [key, timestamps] of requestLog) {
-    const newest = timestamps.at(-1);
-    if (newest === undefined || newest <= cutoff) {
-      requestLog.delete(key);
-    }
-  }
-  for (const [key, timestamps] of ipRequestLog) {
-    const newest = timestamps.at(-1);
-    if (newest === undefined || newest <= cutoff) {
-      ipRequestLog.delete(key);
+  for (const map of [requestLog, ipRequestLog]) {
+    for (const [key, timestamps] of map) {
+      const newest = timestamps.at(-1);
+      if (newest === undefined || newest <= cutoff) {
+        map.delete(key);
+      }
     }
   }
 }
