@@ -431,14 +431,18 @@ export async function transferTokenCore(
     const contract = new ethers.Contract(tokenAddress, ERC20_ABI, signer);
 
     try {
-      // Get token decimals, symbol, and balance via failover
+      const tokenHolderAddress =
+        signerMode.kind === "safe-role" || signerMode.kind === "safe"
+          ? signerMode.safeAddress
+          : signerAddress;
+
       const [decimals, symbol, balance] =
         await rpcManager.executeWithFailover((p) => {
           const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, p);
           return Promise.all([
             tokenContract.decimals() as Promise<bigint>,
             tokenContract.symbol() as Promise<string>,
-            tokenContract.balanceOf(signerAddress) as Promise<bigint>,
+            tokenContract.balanceOf(tokenHolderAddress) as Promise<bigint>,
           ]);
         });
 
