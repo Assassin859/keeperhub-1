@@ -85,15 +85,15 @@ Click any node to open the configuration panel on the right side of the screen.
 
 For trigger nodes, you'll also configure specific settings based on the trigger type. When creating workflows programmatically via the API, use the exact `triggerType` and config keys shown below:
 
-| Trigger Label | `triggerType` value | Required config key |
-|---------------|-------------------|-------------------|
-| Schedule | `"Schedule"` | `scheduleCron` |
-| Manual | `"Manual"` | (none) |
-| Webhook | `"Webhook"` | optional `webhookSchema` |
-| Event | `"Event"` | `network`, `contractAddress`, `contractABI`, `eventName` |
-| Block | `"Block"` | `network`, `blockInterval` |
+| Trigger Label | `triggerType` value | Required config keys | Optional config keys |
+|---------------|---------------------|----------------------|----------------------|
+| Manual   | `"Manual"`   | (none) | (none) |
+| Schedule | `"Schedule"` | `scheduleCron` | `scheduleTimezone` |
+| Webhook  | `"Webhook"`  | (none) | `webhookSchema`, `webhookMockRequest` |
+| Event    | `"Event"`    | `network`, `contractAddress`, `contractABI`, `eventName` | (none) |
+| Block    | `"Block"`    | `network`, `blockInterval` | (none) |
 
-> **Note for API users:** The `triggerType` must match the Pascal_Case string exactly (e.g., `"Schedule"`, not `"cron"`).
+> **Note for API users:** The `triggerType` must match the Pascal-case string exactly (e.g., `"Schedule"`, not `"cron"`). The canonical list, including any future additions, is returned under the `triggers` map of [`GET /api/mcp/schemas`](/api/workflows#list-action-schemas).
 
 ### Condition Configuration
 
