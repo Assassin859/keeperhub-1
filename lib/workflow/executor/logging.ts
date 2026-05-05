@@ -4,7 +4,7 @@
  */
 import "server-only";
 
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflowExecutionLogs, workflowExecutions } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
@@ -166,6 +166,18 @@ export async function logWorkflowCompleteDb(
   // spurious SDK error - the workflow really is incomplete. Keep 'error'
   // and close the orphaned rows below so the UI doesn't show stuck
   // spinners.
+  //
+  // KEEP-431: Aggregate by nodeId rather than counting raw rows. Under
+  // cross-pod SDK checkpoint resume, a step that already succeeded on pod A
+  // can be re-fired on pod B, leaving an orphan 'running' or 'error' row
+  // from the interrupted retry while the original success row is intact.
+  // Treat a node as succeeded if it has at least one success row -- only
+  // flag the workflow as failed when a node has no success row at all.
+  // This is the difference between "step really is incomplete" (no success
+  // row anywhere) and "framework retry was interrupted after the body
+  // already recorded success" (success row exists, orphan running/error
+  // row from the retry). Critical for x402/call_workflow paid callers who
+  // hit large fan-in workflows where the cross-pod resume is the norm.
   let resolvedStatus: "success" | "error" = params.status;
   let resolvedError: string | undefined = params.error;
 
@@ -179,18 +191,29 @@ export async function logWorkflowCompleteDb(
     );
 
     try {
-      const unresolvedLogs = await db.query.workflowExecutionLogs.findMany({
-        where: and(
-          eq(workflowExecutionLogs.executionId, params.executionId),
-          inArray(workflowExecutionLogs.status, ["error", "running"])
-        ),
-        columns: { id: true, status: true },
+      const allLogs = await db.query.workflowExecutionLogs.findMany({
+        where: eq(workflowExecutionLogs.executionId, params.executionId),
+        columns: { nodeId: true, status: true },
       });
 
-      const hasErrorLog = unresolvedLogs.some((l) => l.status === "error");
-      const hasRunningLog = unresolvedLogs.some((l) => l.status === "running");
+      // Per-nodeId aggregate: a node "succeeded" if any of its rows is success.
+      const nodeSucceeded = new Map<string, boolean>();
+      for (const log of allLogs) {
+        if (log.status === "success") {
+          nodeSucceeded.set(log.nodeId, true);
+        } else if (!nodeSucceeded.has(log.nodeId)) {
+          nodeSucceeded.set(log.nodeId, false);
+        }
+      }
 
-      if (!(hasErrorLog || hasRunningLog)) {
+      const trulyFailedNodes: string[] = [];
+      for (const [nodeId, succeeded] of nodeSucceeded) {
+        if (!succeeded) {
+          trulyFailedNodes.push(nodeId);
+        }
+      }
+
+      if (trulyFailedNodes.length === 0) {
         logSystemError(
           ErrorCategory.WORKFLOW_ENGINE,
           "[Workflow Logging] No node-level errors found, overriding spurious SDK error to success",
