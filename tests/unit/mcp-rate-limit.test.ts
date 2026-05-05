@@ -2,59 +2,57 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   checkIpRateLimit,
   checkMcpRateLimit,
-  cleanupStaleRateLimitEntries,
+  cleanupExpiredRateLimitEntries,
   getRateLimitStats,
+  LIMIT,
+  resetRateLimitState,
   stopRateLimitCleanupInterval,
+  WINDOW_MS,
 } from "@/lib/mcp/rate-limit";
 
-const MINUTE_MS = 60_000;
-const STALE_AFTER_MS = 5 * MINUTE_MS;
-const ONE_DAY_MS = 24 * 60 * MINUTE_MS;
-const MCP_LIMIT = 120;
+const STALE_AFTER_MS = 5 * WINDOW_MS;
 
 describe("mcp/rate-limit", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    resetRateLimitState();
   });
 
   afterEach(() => {
     stopRateLimitCleanupInterval();
-    // Module-scoped maps persist between tests; advance well past the stale
-    // window and run cleanup so the next test starts from an empty slate.
-    vi.setSystemTime(Date.now() + ONE_DAY_MS);
-    cleanupStaleRateLimitEntries();
+    resetRateLimitState();
     vi.useRealTimers();
   });
 
-  describe("cleanupStaleRateLimitEntries", () => {
+  describe("cleanupExpiredRateLimitEntries", () => {
     it("removes organisation entries whose newest timestamp is past the stale threshold", () => {
       checkMcpRateLimit("org-a");
       expect(getRateLimitStats().organizationCount).toBe(1);
 
       vi.setSystemTime(Date.now() + STALE_AFTER_MS + 1);
-      cleanupStaleRateLimitEntries();
+      cleanupExpiredRateLimitEntries();
 
       expect(getRateLimitStats().organizationCount).toBe(0);
     });
 
     it("removes IP entries whose newest timestamp is past the stale threshold", () => {
-      checkIpRateLimit("1.2.3.4", 10, MINUTE_MS);
+      checkIpRateLimit("1.2.3.4", 10, WINDOW_MS);
       expect(getRateLimitStats().ipCount).toBe(1);
 
       vi.setSystemTime(Date.now() + STALE_AFTER_MS + 1);
-      cleanupStaleRateLimitEntries();
+      cleanupExpiredRateLimitEntries();
 
       expect(getRateLimitStats().ipCount).toBe(0);
     });
 
     it("preserves entries with activity inside the stale threshold", () => {
       checkMcpRateLimit("org-active");
-      checkIpRateLimit("9.9.9.9", 10, MINUTE_MS);
+      checkIpRateLimit("9.9.9.9", 10, WINDOW_MS);
 
       // Half-way through the stale window
       vi.setSystemTime(Date.now() + STALE_AFTER_MS / 2);
-      cleanupStaleRateLimitEntries();
+      cleanupExpiredRateLimitEntries();
 
       const stats = getRateLimitStats();
       expect(stats.organizationCount).toBe(1);
@@ -62,7 +60,7 @@ describe("mcp/rate-limit", () => {
     });
 
     it("does not break rate-limit decisions when called against an at-limit entry", () => {
-      const allowed = Array.from({ length: MCP_LIMIT }, () =>
+      const allowed = Array.from({ length: LIMIT }, () =>
         checkMcpRateLimit("org-busy")
       );
       expect(allowed.every((r) => r.allowed)).toBe(true);
@@ -71,7 +69,7 @@ describe("mcp/rate-limit", () => {
       expect(blocked.allowed).toBe(false);
 
       // Cleanup must NOT drop an entry whose newest timestamp is `now`.
-      cleanupStaleRateLimitEntries();
+      cleanupExpiredRateLimitEntries();
       expect(getRateLimitStats().organizationCount).toBe(1);
 
       // And the block must persist.
@@ -79,7 +77,26 @@ describe("mcp/rate-limit", () => {
       expect(stillBlocked.allowed).toBe(false);
     });
 
-    it("reproduces the leak case: idle keys accumulate without cleanup, are released after cleanup (KEEP-419)", () => {
+    it("self-tunes the stale threshold to the largest IP window seen across callers", () => {
+      const TEN_MINUTE_WINDOW_MS = 10 * WINDOW_MS;
+
+      checkIpRateLimit("ip-long-window", 5, TEN_MINUTE_WINDOW_MS);
+      expect(getRateLimitStats().ipCount).toBe(1);
+
+      // Past the default 5x60s threshold, but well inside the 10-minute
+      // caller's window -- entries must NOT be dropped or the next request
+      // would see an empty array and forget the prior burst.
+      vi.setSystemTime(Date.now() + 6 * WINDOW_MS);
+      cleanupExpiredRateLimitEntries();
+      expect(getRateLimitStats().ipCount).toBe(1);
+
+      // Past 5x the largest window (10min * 5 = 50min) -- now safe to drop.
+      vi.setSystemTime(Date.now() + 60 * WINDOW_MS);
+      cleanupExpiredRateLimitEntries();
+      expect(getRateLimitStats().ipCount).toBe(0);
+    });
+
+    it("reproduces the leak case: idle keys accumulate without cleanup, are released after cleanup", () => {
       checkMcpRateLimit("org-a");
       vi.setSystemTime(Date.now() + STALE_AFTER_MS + 1);
 
@@ -88,7 +105,7 @@ describe("mcp/rate-limit", () => {
       expect(getRateLimitStats().organizationCount).toBe(2);
 
       // With cleanup: only the recently-active key remains.
-      cleanupStaleRateLimitEntries();
+      cleanupExpiredRateLimitEntries();
       expect(getRateLimitStats().organizationCount).toBe(1);
     });
   });
