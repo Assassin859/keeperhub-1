@@ -32,16 +32,28 @@ export async function GET(_request: Request): Promise<NextResponse> {
         "Web3 workflow automation platform. Build and deploy on-chain automations through a visual builder. Workflows are callable by AI agents via MCP.",
       image: "https://app.keeperhub.com/keeperhub_logo.png",
       services: [
-        { name: "mcp", endpoint: "https://app.keeperhub.com/mcp" },
+        {
+          name: "mcp",
+          endpoint: "https://app.keeperhub.com/mcp",
+          version: "2025-06-18",
+        },
         {
           name: "workflows",
           endpoint: "https://app.keeperhub.com/api/mcp/workflows",
         },
         { name: "web", endpoint: "https://app.keeperhub.com" },
         { name: "ens", endpoint: "keeperhub.eth" },
+        {
+          name: "agentWallet",
+          endpoint: "eip155:1:0xc300b53616532fdb0116bce916c9307377362b51",
+        },
       ],
+      supportedTrust: ["reputation"],
       x402Support: true,
       active: true,
+      updatedAt: registration
+        ? Math.floor(registration.registeredAt.getTime() / 1000)
+        : Math.floor(Date.now() / 1000),
       registrations: registration
         ? [
             {
