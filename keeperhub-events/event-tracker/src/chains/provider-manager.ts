@@ -65,6 +65,14 @@ export interface ChainHealth {
   reconnecting: boolean;
   lastBlockAt: number | null;
   subscriberCount: number;
+  /**
+   * If the most recent `createProvider` attempt rejected, the error
+   * message captured at rejection time. Cleared on the next successful
+   * provider creation. Surfaces probe failures and other setup errors
+   * through `/healthz` so an operator can see *why* a chain is
+   * disconnected, not just that it is.
+   */
+  lastCreateError: string | null;
 }
 
 export interface SubscribeOptions {
@@ -104,6 +112,12 @@ interface ChainEntry {
   heartbeatTimer: ReturnType<typeof setInterval> | null;
   isReconnecting: boolean;
   lastBlockAt: number | null;
+  /**
+   * Populated when `createProvider` rejects (most often the
+   * subscription probe). Cleared on the next successful creation.
+   * Surfaced through `getAllHealth` for `/healthz` consumers.
+   */
+  lastCreateError: string | null;
   disconnectHandlers: Set<DisconnectHandler>;
 }
 
@@ -165,7 +179,22 @@ export class ChainProviderManager {
     // Two concurrent callers must receive the same provider instance, not
     // race to create separate ones.
     if (!entry.readyPromise) {
-      entry.readyPromise = this.createProvider(entry);
+      const created = this.createProvider(entry);
+      entry.readyPromise = created;
+      // Clear the cached promise on rejection so the next caller (the
+      // reconciler runs every 30s in main.ts:70) retries from scratch.
+      // Without this a transient probe failure or RPC hiccup permanently
+      // disables the chain until pod restart - the same rejected promise
+      // would be returned to every subsequent getOrCreateProvider call.
+      // The check guards against clobbering a fresh attempt that another
+      // caller may have already kicked off.
+      created.catch((err: unknown) => {
+        entry.lastCreateError =
+          err instanceof Error ? err.message : String(err);
+        if (entry.readyPromise === created) {
+          entry.readyPromise = null;
+        }
+      });
     }
     return entry.readyPromise;
   }
@@ -268,6 +297,7 @@ export class ChainProviderManager {
       reconnecting: entry.isReconnecting,
       lastBlockAt: entry.lastBlockAt,
       subscriberCount: entry.subscribers.size,
+      lastCreateError: entry.lastCreateError,
     };
   }
 
@@ -281,6 +311,7 @@ export class ChainProviderManager {
         reconnecting: entry.isReconnecting,
         lastBlockAt: entry.lastBlockAt,
         subscriberCount: entry.subscribers.size,
+        lastCreateError: entry.lastCreateError,
       });
     }
     return out;
@@ -349,6 +380,7 @@ export class ChainProviderManager {
       heartbeatTimer: null,
       isReconnecting: false,
       lastBlockAt: null,
+      lastCreateError: null,
       disconnectHandlers: new Set(),
     };
     this.chains.set(chainId, entry);
@@ -360,11 +392,65 @@ export class ChainProviderManager {
   ): Promise<ethers.WebSocketProvider> {
     const provider = this.factory(entry.wssUrl);
     await provider.ready;
+    await this.probeSubscriptionSupport(provider, entry);
     entry.provider = provider;
+    // Clear the prior failure marker now that we have a working provider.
+    // Without this, a chain that recovered after a probe failure would
+    // still report `lastCreateError` indefinitely.
+    entry.lastCreateError = null;
     this.attachErrorListener(entry);
     // Heartbeat is subscriber-scoped (started on first subscribe, stopped
     // on last unsubscribe) to avoid wasted pings on an idle chain.
     return provider;
+  }
+
+  /**
+   * Confirm the connected RPC accepts `eth_subscribe`. Once the manager
+   * calls `provider.on("block", ...)`, ethers' SocketSubscriber.start()
+   * fires `eth_subscribe(["newHeads"])` and stores the resulting promise
+   * on a private field with no `.catch`. An RPC that rejects subscriptions
+   * (-32601 method not available, common on lightweight or HTTP-only RPCs
+   * accidentally pasted into the WSS column) lets the rejection escape to
+   * `process.unhandledRejection`, which crashes the pod.
+   *
+   * Probing here moves the failure into an awaited path: the rejection
+   * propagates out of `createProvider`, gets caught by `registry.add`,
+   * and the listener is logged-and-skipped instead of taking down every
+   * other listener in the pod.
+   *
+   * On success we immediately `eth_unsubscribe` so the upcoming
+   * `provider.on("block", ...)` opens a fresh subscription that ethers
+   * actually routes messages through. An unsubscribe failure is
+   * non-fatal: the orphaned subscription is cleaned up when the provider
+   * is destroyed (next reconnect or shutdown).
+   */
+  private async probeSubscriptionSupport(
+    provider: ethers.WebSocketProvider,
+    entry: ChainEntry,
+  ): Promise<void> {
+    let filterId: unknown;
+    try {
+      filterId = await provider.send("eth_subscribe", ["newHeads"]);
+    } catch (err) {
+      try {
+        await provider.destroy();
+      } catch {
+        // Best-effort: the failed provider is already unusable; if
+        // destroy throws (e.g. socket already closed) there is nothing
+        // to do but proceed to the throw below.
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `chain ${entry.chainId} (${entry.wssUrl}): RPC does not support eth_subscribe: ${message}`,
+      );
+    }
+    try {
+      await provider.send("eth_unsubscribe", [filterId]);
+    } catch (err) {
+      logger.warn(
+        `[ChainProviderManager] chain=${entry.chainId} probe eth_unsubscribe failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   private attachBlockListener(entry: ChainEntry): void {
@@ -528,6 +614,11 @@ export class ChainProviderManager {
           logger.warn(
             `[ChainProviderManager] chain=${entry.chainId} reconnect attempt ${attempt} failed: ${String(err)}`,
           );
+          // Surface the most recent attempt error through /healthz so an
+          // operator can see *why* the chain is stuck reconnecting, not
+          // just that it is. Cleared on the next successful reconnect.
+          entry.lastCreateError =
+            err instanceof Error ? err.message : String(err);
           delay = Math.min(delay * 2, MAX_RECONNECT_DELAY_MS);
         }
       }
@@ -587,7 +678,17 @@ export class ChainProviderManager {
       return;
     }
 
+    // Same probe as createProvider: confirm the rebuilt connection still
+    // accepts eth_subscribe before any .on("block") call exposes us to
+    // ethers' uncaught-rejection path. A failure here propagates out and
+    // the reconnect loop counts it as a failed attempt, falling back on
+    // exponential backoff.
+    await this.probeSubscriptionSupport(provider, entry);
+
     entry.provider = provider;
+    // Successful reconnect clears any prior failure marker so /healthz
+    // stops reporting a stale error on a now-healthy chain.
+    entry.lastCreateError = null;
 
     this.attachErrorListener(entry);
     // Block listener and heartbeat only if this chain has subscribers.
