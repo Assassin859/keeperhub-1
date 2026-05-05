@@ -96,7 +96,7 @@ describe("mcp/rate-limit", () => {
       expect(getRateLimitStats().ipCount).toBe(0);
     });
 
-    it("reproduces the leak case: idle keys accumulate without cleanup, are released after cleanup (KEEP-419)", () => {
+    it("reproduces the leak case: idle keys accumulate without cleanup, are released after cleanup", () => {
       checkMcpRateLimit("org-a");
       vi.setSystemTime(Date.now() + STALE_AFTER_MS + 1);
 
