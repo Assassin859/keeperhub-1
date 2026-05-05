@@ -4,26 +4,24 @@ import {
   checkMcpRateLimit,
   cleanupStaleRateLimitEntries,
   getRateLimitStats,
+  resetRateLimitState,
   stopRateLimitCleanupInterval,
 } from "@/lib/mcp/rate-limit";
 
 const MINUTE_MS = 60_000;
 const STALE_AFTER_MS = 5 * MINUTE_MS;
-const ONE_DAY_MS = 24 * 60 * MINUTE_MS;
 const MCP_LIMIT = 120;
 
 describe("mcp/rate-limit", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    resetRateLimitState();
   });
 
   afterEach(() => {
     stopRateLimitCleanupInterval();
-    // Module-scoped maps persist between tests; advance well past the stale
-    // window and run cleanup so the next test starts from an empty slate.
-    vi.setSystemTime(Date.now() + ONE_DAY_MS);
-    cleanupStaleRateLimitEntries();
+    resetRateLimitState();
     vi.useRealTimers();
   });
 
@@ -77,6 +75,25 @@ describe("mcp/rate-limit", () => {
       // And the block must persist.
       const stillBlocked = checkMcpRateLimit("org-busy");
       expect(stillBlocked.allowed).toBe(false);
+    });
+
+    it("self-tunes the stale threshold to the largest IP window seen across callers", () => {
+      const TEN_MINUTE_WINDOW_MS = 10 * MINUTE_MS;
+
+      checkIpRateLimit("ip-long-window", 5, TEN_MINUTE_WINDOW_MS);
+      expect(getRateLimitStats().ipCount).toBe(1);
+
+      // Past the default 5x60s threshold, but well inside the 10-minute
+      // caller's window -- entries must NOT be dropped or the next request
+      // would see an empty array and forget the prior burst.
+      vi.setSystemTime(Date.now() + 6 * MINUTE_MS);
+      cleanupStaleRateLimitEntries();
+      expect(getRateLimitStats().ipCount).toBe(1);
+
+      // Past 5x the largest window (10min * 5 = 50min) -- now safe to drop.
+      vi.setSystemTime(Date.now() + 60 * MINUTE_MS);
+      cleanupStaleRateLimitEntries();
+      expect(getRateLimitStats().ipCount).toBe(0);
     });
 
     it("reproduces the leak case: idle keys accumulate without cleanup, are released after cleanup (KEEP-419)", () => {
