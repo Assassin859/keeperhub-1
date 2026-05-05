@@ -360,11 +360,61 @@ export class ChainProviderManager {
   ): Promise<ethers.WebSocketProvider> {
     const provider = this.factory(entry.wssUrl);
     await provider.ready;
+    await this.probeSubscriptionSupport(provider, entry);
     entry.provider = provider;
     this.attachErrorListener(entry);
     // Heartbeat is subscriber-scoped (started on first subscribe, stopped
     // on last unsubscribe) to avoid wasted pings on an idle chain.
     return provider;
+  }
+
+  /**
+   * Confirm the connected RPC accepts `eth_subscribe`. Once the manager
+   * calls `provider.on("block", ...)`, ethers' SocketSubscriber.start()
+   * fires `eth_subscribe(["newHeads"])` and stores the resulting promise
+   * on a private field with no `.catch`. An RPC that rejects subscriptions
+   * (-32601 method not available, common on lightweight or HTTP-only RPCs
+   * accidentally pasted into the WSS column) lets the rejection escape to
+   * `process.unhandledRejection`, which crashes the pod.
+   *
+   * Probing here moves the failure into an awaited path: the rejection
+   * propagates out of `createProvider`, gets caught by `registry.add`,
+   * and the listener is logged-and-skipped instead of taking down every
+   * other listener in the pod.
+   *
+   * On success we immediately `eth_unsubscribe` so the upcoming
+   * `provider.on("block", ...)` opens a fresh subscription that ethers
+   * actually routes messages through. An unsubscribe failure is
+   * non-fatal: the orphaned subscription is cleaned up when the provider
+   * is destroyed (next reconnect or shutdown).
+   */
+  private async probeSubscriptionSupport(
+    provider: ethers.WebSocketProvider,
+    entry: ChainEntry,
+  ): Promise<void> {
+    let filterId: unknown;
+    try {
+      filterId = await provider.send("eth_subscribe", ["newHeads"]);
+    } catch (err) {
+      try {
+        await provider.destroy();
+      } catch {
+        // Best-effort: the failed provider is already unusable; if
+        // destroy throws (e.g. socket already closed) there is nothing
+        // to do but proceed to the throw below.
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `chain ${entry.chainId} (${entry.wssUrl}): RPC does not support eth_subscribe: ${message}`,
+      );
+    }
+    try {
+      await provider.send("eth_unsubscribe", [filterId]);
+    } catch (err) {
+      logger.warn(
+        `[ChainProviderManager] chain=${entry.chainId} probe eth_unsubscribe failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   private attachBlockListener(entry: ChainEntry): void {
@@ -586,6 +636,13 @@ export class ChainProviderManager {
       }
       return;
     }
+
+    // Same probe as createProvider: confirm the rebuilt connection still
+    // accepts eth_subscribe before any .on("block") call exposes us to
+    // ethers' uncaught-rejection path. A failure here propagates out and
+    // the reconnect loop counts it as a failed attempt, falling back on
+    // exponential backoff.
+    await this.probeSubscriptionSupport(provider, entry);
 
     entry.provider = provider;
 
