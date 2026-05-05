@@ -101,6 +101,11 @@ export function startRateLimitCleanupInterval(): void {
   if (cleanupTimer !== null) {
     clearInterval(cleanupTimer);
   }
+  // Run a sweep immediately so a re-init (HMR, error-recovery path, etc.)
+  // doesn't have to wait CLEANUP_INTERVAL_MS to clean entries left over
+  // from before the restart. At server boot the maps are empty so this is
+  // a cheap no-op.
+  cleanupExpiredRateLimitEntries();
   cleanupTimer = setInterval(
     cleanupExpiredRateLimitEntries,
     CLEANUP_INTERVAL_MS
