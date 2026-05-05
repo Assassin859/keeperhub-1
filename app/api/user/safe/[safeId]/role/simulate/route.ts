@@ -21,6 +21,7 @@ import {
 } from "@/lib/safe/protocol-registry";
 import { getProtocolTargets } from "@/lib/safe/protocol-targets";
 import {
+  type DirectRuleInput,
   flattenInstallInput,
   type ProtocolInput,
 } from "@/lib/safe/roles-orchestrator";
@@ -59,6 +60,16 @@ type TokenLimitBody = {
   periodSeconds?: number;
 };
 
+type DirectRuleBody = {
+  kind?: "erc20-transfer" | "erc20-approve" | "native-transfer";
+  tokenAddress?: string | null;
+  tokenSymbol?: string;
+  tokenDecimals?: number;
+  counterparty?: string;
+  amountHuman?: string;
+  periodSeconds?: number;
+};
+
 type SimulateBody = {
   protocols?: Array<
     | string
@@ -67,6 +78,7 @@ type SimulateBody = {
         tokens?: TokenLimitBody[];
       }
   >;
+  directRules?: DirectRuleBody[];
   allowedTokenSymbols?: string[];
   allowances?: Array<{
     tokenAddress?: string;
@@ -191,11 +203,39 @@ export async function POST(
 
     const body = (await request.json()) as SimulateBody;
     const { protocols: protocolInputs, skipped } = normaliseBody(body);
+    const directRulesInput: DirectRuleInput[] = [];
+    for (const rule of body.directRules ?? []) {
+      if (
+        !(
+          rule.kind &&
+          rule.counterparty &&
+          rule.amountHuman &&
+          rule.tokenSymbol
+        )
+      ) {
+        continue;
+      }
+      if (
+        typeof rule.tokenDecimals !== "number" ||
+        typeof rule.periodSeconds !== "number"
+      ) {
+        continue;
+      }
+      directRulesInput.push({
+        kind: rule.kind,
+        tokenAddress: rule.tokenAddress ?? null,
+        tokenSymbol: rule.tokenSymbol,
+        tokenDecimals: rule.tokenDecimals,
+        counterparty: rule.counterparty,
+        amountHuman: rule.amountHuman,
+        periodSeconds: rule.periodSeconds,
+      });
+    }
 
     let tokenAllowances: ReturnType<typeof flattenInstallInput>["allowances"] =
       [];
     try {
-      const flattened = flattenInstallInput(protocolInputs);
+      const flattened = flattenInstallInput(protocolInputs, directRulesInput);
       tokenAllowances = flattened.allowances;
     } catch (err) {
       return NextResponse.json(
@@ -333,6 +373,32 @@ export async function POST(
         totalTargetScopings += approxTargets;
         totalFunctionScopings += approxTargets * approxFunctionsPerTarget;
       }
+    }
+
+    if (directRulesInput.length > 0) {
+      let directGas = BigInt(0);
+      for (const rule of directRulesInput) {
+        if (rule.kind === "native-transfer") {
+          directGas += GAS_SCOPE_TARGET;
+        } else {
+          directGas += GAS_SCOPE_FUNCTION;
+        }
+      }
+      operations.push({
+        label: `Scope ${directRulesInput.length} direct rule${directRulesInput.length === 1 ? "" : "s"}`,
+        detail: directRulesInput
+          .map((r) => {
+            const target =
+              r.kind === "native-transfer"
+                ? r.counterparty
+                : (r.tokenAddress ?? "?");
+            const truncated = `${target.slice(0, 6)}...${target.slice(-4)}`;
+            return `${r.kind} on ${truncated} (${r.tokenSymbol}, cap ${r.amountHuman} every ${r.periodSeconds}s)`;
+          })
+          .join("; "),
+        gasUnits: directGas.toString(),
+      });
+      totalGas += directGas;
     }
 
     if (totalTargetScopings > 0 || totalFunctionScopings > 0) {

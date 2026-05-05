@@ -463,6 +463,13 @@
       "when": 1777495079076,
       "tag": "0065_glossy_speed",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1777934035191,
+      "tag": "0066_safe_role_direct_rules",
+      "breakpoints": true
     }
   ]
 }

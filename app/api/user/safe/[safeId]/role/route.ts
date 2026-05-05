@@ -177,13 +177,15 @@ export async function GET(
       );
     }
 
-    const { role, protocols, allowances } = await getSafeRoleWithBackfill(safe);
+    const { role, protocols, allowances, directRules } =
+      await getSafeRoleWithBackfill(safe);
     if (!role) {
       return NextResponse.json({
         installed: false,
         role: null,
         protocols: [],
         allowances: [],
+        directRules: [],
       });
     }
 
@@ -224,6 +226,18 @@ export async function GET(
         lastChainTimestamp: a.lastChainTimestamp,
         lastReconciledAt: a.lastReconciledAt,
         lastUpdatedAt: a.lastUpdatedAt,
+      })),
+      directRules: directRules.map((r) => ({
+        id: r.id,
+        kind: r.kind,
+        tokenAddress: r.tokenAddress,
+        tokenSymbol: r.tokenSymbol,
+        tokenDecimals: r.tokenDecimals,
+        counterparty: r.counterparty,
+        amountHuman: r.amountHuman,
+        periodSeconds: r.periodSeconds,
+        status: r.status,
+        lastUpdatedAt: r.lastUpdatedAt,
       })),
     });
   } catch (error) {

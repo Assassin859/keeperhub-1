@@ -2,8 +2,13 @@ import "server-only";
 
 import { and, eq } from "drizzle-orm";
 import { ethers } from "ethers";
-// biome-ignore lint/style/useImportType: SDK values, not just types
-// biome-ignore lint/style/useImportType: rolesAbi is used as a value for Interface
+import {
+  type ChainId,
+  type Condition,
+  fetchRole,
+  Operator,
+  ParameterType,
+} from "zodiac-roles-deployments";
 import {
   callsPlannedForApplyRole,
   c as conditions,
@@ -18,9 +23,11 @@ import { db } from "@/lib/db";
 import {
   type SafeRole,
   type SafeRoleAllowance,
+  type SafeRoleDirectRule,
   type SafeRoleProtocol,
   type SafeWallet,
   safeRoleAllowances,
+  safeRoleDirectRules,
   safeRoleProtocols,
   safeRoles,
   safeWallets,
@@ -215,10 +222,10 @@ export function buildDirectRulePermission(
   return {
     targetAddress: tokenAddress,
     signature,
-    condition: conditions.matches([
-      conditions.eq(counterparty),
-      conditions.withinAllowance(allowanceKey),
-    ]),
+    condition: conditions.calldataMatches(
+      [conditions.eq(counterparty), conditions.withinAllowance(allowanceKey)],
+      ["address", "uint256"]
+    ),
     send: false,
     delegatecall: false,
   } as unknown as Permission;
@@ -408,6 +415,8 @@ function defaultSaltNonce(options: {
  */
 const HUMAN_AMOUNT_REGEX = /^\d+(\.\d+)?$/;
 const LEADING_ZEROS_REGEX = /^0+/;
+const TRAILING_ZEROS_REGEX = /0+$/;
+const TRAILING_DOT_REGEX = /\.$/;
 
 /**
  * Convert "100.5" + decimals=6 into BigInt(100500000). Rejects malformed
@@ -913,6 +922,49 @@ export async function installRolesWithInitialConfig(
         }
       }
 
+      for (const rule of directRules) {
+        if (!rule.counterparty) {
+          continue;
+        }
+        const normalizedCounterparty = ethers.isAddress(rule.counterparty)
+          ? ethers.getAddress(rule.counterparty)
+          : rule.counterparty;
+        const normalizedTokenAddress = rule.tokenAddress
+          ? normalizeAddressForStorage(rule.tokenAddress)
+          : null;
+        await tx
+          .insert(safeRoleDirectRules)
+          .values({
+            roleId: roleRow.id,
+            kind: rule.kind,
+            tokenAddress: normalizedTokenAddress,
+            tokenSymbol: rule.tokenSymbol,
+            tokenDecimals: rule.tokenDecimals,
+            counterparty: normalizedCounterparty,
+            amountHuman: rule.amountHuman,
+            periodSeconds: rule.periodSeconds,
+            status: "allowed",
+            lastAppliedTxHash,
+          })
+          .onConflictDoUpdate({
+            target: [
+              safeRoleDirectRules.roleId,
+              safeRoleDirectRules.kind,
+              safeRoleDirectRules.tokenAddress,
+              safeRoleDirectRules.counterparty,
+            ],
+            set: {
+              tokenSymbol: rule.tokenSymbol,
+              tokenDecimals: rule.tokenDecimals,
+              amountHuman: rule.amountHuman,
+              periodSeconds: rule.periodSeconds,
+              status: "allowed",
+              lastAppliedTxHash,
+              lastUpdatedAt: new Date(),
+            },
+          });
+      }
+
       const allowanceRows: SafeRoleAllowance[] = [];
       for (const a of allowanceRowsInput) {
         const [row] = await tx
@@ -1244,17 +1296,56 @@ export async function updateRolesConfig(
     const currentTokenSymbols = Array.from(
       new Set(activeCurrentProtocols.flatMap((p) => p.allowedTokenSymbols))
     );
-    const { permissions: currentPermissions } =
+    const { permissions: currentProtocolPermissions } =
       await buildPermissionsForProtocols({
         chainId,
         safeAddress,
         protocols: currentSlugs,
         allowedTokenSymbols: currentTokenSymbols,
       });
+
+    // Pull current direct rules out of the dedicated table and rebuild
+    // their Permission[] so the SDK diff can correctly revoke any rule
+    // the admin removed in the wizard. Without this the diff only sees
+    // ADDs and lingering scopes stay on chain forever.
+    const currentDirectRuleRows = await listRoleDirectRules(role.id);
+    const currentDirectRulePermissions: Permission[] = [];
+    for (const stored of currentDirectRuleRows) {
+      if (stored.status !== "allowed") {
+        continue;
+      }
+      const allowanceKey =
+        stored.kind === "native-transfer" || !stored.tokenAddress
+          ? null
+          : (tokenAllowanceKey(
+              roleKey,
+              DIRECT_RULE_PROTOCOL_SLUG,
+              normalizeAddressForStorage(stored.tokenAddress)
+            ) as `0x${string}`);
+      const permission = buildDirectRulePermission(
+        {
+          kind: stored.kind as DirectRuleInput["kind"],
+          tokenAddress: stored.tokenAddress,
+          tokenSymbol: stored.tokenSymbol,
+          tokenDecimals: stored.tokenDecimals,
+          counterparty: stored.counterparty,
+          amountHuman: stored.amountHuman,
+          periodSeconds: stored.periodSeconds,
+        },
+        allowanceKey
+      );
+      if (permission) {
+        currentDirectRulePermissions.push(permission);
+      }
+    }
+
     const currentRole: Role = buildDesiredRole({
       roleKey,
       delegate: ownerAddress as `0x${string}`,
-      permissions: currentPermissions,
+      permissions: [
+        ...currentProtocolPermissions,
+        ...currentDirectRulePermissions,
+      ],
     });
 
     // ----- Diff scope calls (SDK) -----
@@ -1443,6 +1534,68 @@ export async function updateRolesConfig(
               lastUpdatedAt: new Date(),
             },
           });
+      }
+
+      // Per-rule direct rule rows: upsert each desired rule, then delete
+      // any DB row for this role that's not in the desired set (the
+      // user removed it through the wizard).
+      const desiredRuleKeys = new Set<string>();
+      for (const rule of directRules) {
+        if (!rule.counterparty) {
+          continue;
+        }
+        const normalizedCounterparty = ethers.isAddress(rule.counterparty)
+          ? ethers.getAddress(rule.counterparty)
+          : rule.counterparty;
+        const normalizedTokenAddress = rule.tokenAddress
+          ? normalizeAddressForStorage(rule.tokenAddress)
+          : null;
+        desiredRuleKeys.add(
+          `${rule.kind}|${normalizedTokenAddress ?? ""}|${normalizedCounterparty}`
+        );
+        await tx
+          .insert(safeRoleDirectRules)
+          .values({
+            roleId: role.id,
+            kind: rule.kind,
+            tokenAddress: normalizedTokenAddress,
+            tokenSymbol: rule.tokenSymbol,
+            tokenDecimals: rule.tokenDecimals,
+            counterparty: normalizedCounterparty,
+            amountHuman: rule.amountHuman,
+            periodSeconds: rule.periodSeconds,
+            status: "allowed",
+            lastAppliedTxHash: updateTxHash,
+          })
+          .onConflictDoUpdate({
+            target: [
+              safeRoleDirectRules.roleId,
+              safeRoleDirectRules.kind,
+              safeRoleDirectRules.tokenAddress,
+              safeRoleDirectRules.counterparty,
+            ],
+            set: {
+              tokenSymbol: rule.tokenSymbol,
+              tokenDecimals: rule.tokenDecimals,
+              amountHuman: rule.amountHuman,
+              periodSeconds: rule.periodSeconds,
+              status: "allowed",
+              lastAppliedTxHash: updateTxHash,
+              lastUpdatedAt: new Date(),
+            },
+          });
+      }
+      const existingRuleRows = await tx
+        .select()
+        .from(safeRoleDirectRules)
+        .where(eq(safeRoleDirectRules.roleId, role.id));
+      for (const existing of existingRuleRows) {
+        const key = `${existing.kind}|${existing.tokenAddress ?? ""}|${existing.counterparty}`;
+        if (!desiredRuleKeys.has(key)) {
+          await tx
+            .delete(safeRoleDirectRules)
+            .where(eq(safeRoleDirectRules.id, existing.id));
+        }
       }
 
       // Upsert allowances. For each desired bucket, write the row. For
@@ -1929,22 +2082,24 @@ export async function getSafeRoleWithBackfill(safe: SafeWallet): Promise<{
   role: SafeRole | null;
   protocols: SafeRoleProtocol[];
   allowances: SafeRoleAllowance[];
+  directRules: SafeRoleDirectRule[];
 }> {
   const role = await findRoleForSafe(safe.id);
 
-  // Case 2: no DB role row. Probe chain; reconcile if a modifier is enabled.
   if (!role) {
     const onChainModifier = await probeRolesModifierOnChain(safe);
     if (!onChainModifier) {
-      return { role: null, protocols: [], allowances: [] };
+      return { role: null, protocols: [], allowances: [], directRules: [] };
     }
     try {
       const reconciled = await reconcileSafeRoleFromChain(safe);
       if (reconciled.success && reconciled.installed) {
+        const directRules = await listRoleDirectRules(reconciled.role.id);
         return {
           role: reconciled.role,
           protocols: reconciled.protocols,
           allowances: reconciled.allowances,
+          directRules,
         };
       }
     } catch (error) {
@@ -1958,26 +2113,28 @@ export async function getSafeRoleWithBackfill(safe: SafeWallet): Promise<{
         }
       );
     }
-    return { role: null, protocols: [], allowances: [] };
+    return { role: null, protocols: [], allowances: [], directRules: [] };
   }
 
-  const [protocols, allowances] = await Promise.all([
+  const [protocols, allowances, directRules] = await Promise.all([
     listRoleProtocols(role.id),
     listRoleAllowances(role.id),
+    listRoleDirectRules(role.id),
   ]);
 
   if (protocols.length > 0 || allowances.length > 0) {
-    return { role, protocols, allowances };
+    return { role, protocols, allowances, directRules };
   }
 
-  // Case 1: empty cache, existing role row. Rehydrate from chain.
   try {
     const reconciled = await reconcileSafeRoleFromChain(safe);
     if (reconciled.success && reconciled.installed) {
+      const refreshed = await listRoleDirectRules(role.id);
       return {
         role: reconciled.role,
         protocols: reconciled.protocols,
         allowances: reconciled.allowances,
+        directRules: refreshed,
       };
     }
   } catch (error) {
@@ -1991,7 +2148,7 @@ export async function getSafeRoleWithBackfill(safe: SafeWallet): Promise<{
       }
     );
   }
-  return { role, protocols, allowances };
+  return { role, protocols, allowances, directRules };
 }
 
 export async function listRoleProtocols(
@@ -2010,6 +2167,148 @@ export async function listRoleAllowances(
     .select()
     .from(safeRoleAllowances)
     .where(eq(safeRoleAllowances.roleId, roleId));
+}
+
+export async function listRoleDirectRules(
+  roleId: string
+): Promise<SafeRoleDirectRule[]> {
+  return await db
+    .select()
+    .from(safeRoleDirectRules)
+    .where(eq(safeRoleDirectRules.roleId, roleId));
+}
+
+const ERC20_TRANSFER_SELECTOR_LOWER = "0xa9059cbb" as const;
+const ERC20_APPROVE_SELECTOR_LOWER = "0x095ea7b3" as const;
+
+function findEqualToAddressInTree(condition: Condition): string | null {
+  if (
+    condition.operator === Operator.EqualTo &&
+    condition.paramType === ParameterType.Static &&
+    condition.compValue
+  ) {
+    const hex = condition.compValue.slice(-40);
+    if (hex.length === 40) {
+      try {
+        return ethers.getAddress(`0x${hex}`);
+      } catch {
+        return null;
+      }
+    }
+  }
+  for (const child of condition.children ?? []) {
+    const found = findEqualToAddressInTree(child);
+    if (found) {
+      return found;
+    }
+  }
+  return null;
+}
+
+function humanFromWei(wei: string, decimals: number): string {
+  try {
+    const big = BigInt(wei);
+    if (decimals === 0) {
+      return big.toString();
+    }
+    const divisor = BigInt(10) ** BigInt(decimals);
+    const whole = big / divisor;
+    const fraction = big % divisor;
+    if (fraction === BigInt(0)) {
+      return whole.toString();
+    }
+    const fractionStr = fraction
+      .toString()
+      .padStart(decimals, "0")
+      .replace(TRAILING_ZEROS_REGEX, "");
+    return `${whole}.${fractionStr}`.replace(TRAILING_DOT_REGEX, "");
+  } catch {
+    return wei;
+  }
+}
+
+type ExtractedDirectRule = {
+  kind: "erc20-transfer" | "erc20-approve";
+  tokenAddress: string;
+  tokenSymbol: string;
+  tokenDecimals: number;
+  counterparty: string;
+  amountHuman: string;
+  periodSeconds: number;
+};
+
+async function extractDirectRulesFromChain(
+  chainId: number,
+  modifierAddress: string,
+  roleKey: string,
+  knownAllowances: SafeRoleAllowance[]
+): Promise<ExtractedDirectRule[]> {
+  let role: Awaited<ReturnType<typeof fetchRole>>;
+  try {
+    role = await fetchRole({
+      chainId: chainId as ChainId,
+      address: modifierAddress as `0x${string}`,
+      roleKey: roleKey as `0x${string}`,
+    });
+  } catch (error) {
+    logSystemError(
+      ErrorCategory.TRANSACTION,
+      `[Safe] subgraph fetchRole failed for chain=${chainId} modifier=${modifierAddress}`,
+      error,
+      { component: "safe-roles-orchestrator", chain_id: chainId.toString() }
+    );
+    return [];
+  }
+  if (!role) {
+    return [];
+  }
+
+  const allowanceByToken = new Map<string, SafeRoleAllowance>();
+  for (const a of knownAllowances) {
+    if (a.protocolSlug === DIRECT_RULE_PROTOCOL_SLUG) {
+      allowanceByToken.set(a.tokenAddress.toLowerCase(), a);
+    }
+  }
+
+  const extracted: ExtractedDirectRule[] = [];
+  for (const target of role.targets) {
+    const tokenAddressLower = target.address.toLowerCase();
+    for (const fn of target.functions) {
+      const selector = fn.selector.toLowerCase();
+      const isTransfer = selector === ERC20_TRANSFER_SELECTOR_LOWER;
+      const isApprove = selector === ERC20_APPROVE_SELECTOR_LOWER;
+      if (!(isTransfer || isApprove)) {
+        continue;
+      }
+      if (!fn.condition) {
+        continue;
+      }
+      const counterparty = findEqualToAddressInTree(fn.condition);
+      if (!counterparty) {
+        continue;
+      }
+      const allowance = allowanceByToken.get(tokenAddressLower);
+      const tokenInfo = getTokenInfo(chainId, tokenAddressLower);
+      const tokenSymbol =
+        allowance?.tokenSymbol ?? tokenInfo?.symbol ?? "UNKNOWN";
+      const tokenDecimals =
+        allowance?.tokenDecimals ?? tokenInfo?.decimals ?? 18;
+      const periodSeconds = allowance?.periodSeconds ?? 0;
+      const amountHuman = allowance
+        ? humanFromWei(allowance.maxRefillWei, tokenDecimals)
+        : "0";
+      extracted.push({
+        kind: isTransfer ? "erc20-transfer" : "erc20-approve",
+        tokenAddress: ethers.getAddress(target.address),
+        tokenSymbol,
+        tokenDecimals,
+        counterparty,
+        amountHuman,
+        periodSeconds,
+      });
+    }
+  }
+  return extracted;
 }
 
 // ---------------------------------------------------------------------------
@@ -2405,6 +2704,55 @@ export async function reconcileSafeRoleFromChain(
         staleAllowances,
       };
     });
+
+    // Pull per-rule details (kind + counterparty) from the Zodiac subgraph
+    // and upsert them so the Direct rules section in the UI shows concrete
+    // recipient/spender info, not just bucket caps. Best-effort: subgraph
+    // outages or chains without a Roles subgraph just skip this step.
+    const extractedDirectRules = await extractDirectRulesFromChain(
+      safe.chainId,
+      rolesModifierAddress,
+      roleKey,
+      persistResult.allowanceRows
+    );
+    if (extractedDirectRules.length > 0) {
+      await db.transaction(async (tx) => {
+        for (const rule of extractedDirectRules) {
+          const normalizedTokenAddress = normalizeAddressForStorage(
+            rule.tokenAddress
+          );
+          await tx
+            .insert(safeRoleDirectRules)
+            .values({
+              roleId: persistResult.roleRow.id,
+              kind: rule.kind,
+              tokenAddress: normalizedTokenAddress,
+              tokenSymbol: rule.tokenSymbol,
+              tokenDecimals: rule.tokenDecimals,
+              counterparty: rule.counterparty,
+              amountHuman: rule.amountHuman,
+              periodSeconds: rule.periodSeconds,
+              status: "allowed",
+            })
+            .onConflictDoUpdate({
+              target: [
+                safeRoleDirectRules.roleId,
+                safeRoleDirectRules.kind,
+                safeRoleDirectRules.tokenAddress,
+                safeRoleDirectRules.counterparty,
+              ],
+              set: {
+                tokenSymbol: rule.tokenSymbol,
+                tokenDecimals: rule.tokenDecimals,
+                amountHuman: rule.amountHuman,
+                periodSeconds: rule.periodSeconds,
+                status: "allowed",
+                lastUpdatedAt: new Date(),
+              },
+            });
+        }
+      });
+    }
 
     return {
       success: true,

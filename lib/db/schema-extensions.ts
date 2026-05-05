@@ -299,6 +299,53 @@ export type SafeRoleAllowance = typeof safeRoleAllowances.$inferSelect;
 export type NewSafeRoleAllowance = typeof safeRoleAllowances.$inferInsert;
 
 /**
+ * Safe Role Direct Rules table
+ *
+ * Records each direct rule (ERC-20 transfer / approve / native ETH send)
+ * configured on a role's "direct" synthetic protocol. Direct rules share
+ * allowance buckets in `safe_role_allowances` keyed by token, but the
+ * counterparty + kind that scope the rule on chain only live here. Used
+ * by the wizard's edit flow to pre-fill existing rules and by the role
+ * card to render per-rule details (recipient/spender, kind).
+ */
+export const safeRoleDirectRules = pgTable(
+  "safe_role_direct_rules",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    roleId: text("role_id")
+      .notNull()
+      .references(() => safeRoles.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    /** Token contract for ERC-20 rules; null for native-transfer */
+    tokenAddress: text("token_address"),
+    tokenSymbol: text("token_symbol").notNull(),
+    tokenDecimals: integer("token_decimals").notNull(),
+    /** Recipient (transfer/native) or spender (approve), checksummed */
+    counterparty: text("counterparty").notNull(),
+    amountHuman: text("amount_human").notNull(),
+    periodSeconds: integer("period_seconds").notNull(),
+    status: text("status").notNull().default("allowed"),
+    lastAppliedTxHash: text("last_applied_tx_hash"),
+    lastUpdatedAt: timestamp("last_updated_at").notNull().defaultNow(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("safe_role_direct_rules_role_kind_token_cp_unique").on(
+      table.roleId,
+      table.kind,
+      table.tokenAddress,
+      table.counterparty
+    ),
+    index("idx_safe_role_direct_rules_role").on(table.roleId),
+  ]
+);
+
+export type SafeRoleDirectRule = typeof safeRoleDirectRules.$inferSelect;
+export type NewSafeRoleDirectRule = typeof safeRoleDirectRules.$inferInsert;
+
+/**
  * Key Export Verification Codes table
  *
  * Single-use OTP codes for private key export.
