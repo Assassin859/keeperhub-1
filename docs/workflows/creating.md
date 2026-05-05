@@ -166,8 +166,10 @@ When creating edges via the API that originate from branching nodes, you **must*
 | Node type | `sourceHandle` values | When to use |
 |-----------|---------------------|-------------|
 | **Condition** | `"true"`, `"false"` | Required on all outgoing edges |
-| **For Each** | `"loop"`, `"done"` | Required on all outgoing edges. `"done"` must target a Collect node; `"loop"` may not. |
+| **For Each** | `"loop"`, `"done"` | Required on all outgoing edges |
 | All others | (none) | Omit entirely |
+
+The visual canvas additionally enforces two For Each connection conventions: the `"done"` handle is intended to terminate at a **Collect** node that aggregates iteration results, and the `"loop"` handle is intended to enter the loop body (not a Collect node). The API does not currently reject edges that violate these conventions, but workflows that follow them produce predictable executor behavior.
 
 ## Template Syntax Reference
 
