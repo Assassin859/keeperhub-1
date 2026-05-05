@@ -370,6 +370,6 @@ Returns the complete registry of available workflow actions, triggers, and templ
 
 > **Note on Action Types:** The keys in the `actions` object are the values to use in `config.actionType` when creating workflow nodes.
 > - **Plugin actions** use a `{pluginType}/{slug}` format (e.g., `"web3/check-balance"`, `"aave-v3/supply"`).
-> - **System actions** use Pascal Case with spaces (e.g., `"Condition"`, `"For Each"`, `"HTTP Request"`). System actions do not have a `requiresCredentials` field.
+> - **System actions** use Pascal-case with spaces between words (e.g., `"Condition"`, `"For Each"`, `"HTTP Request"`). System actions do not have a `requiresCredentials` field.
 > - **Triggers** are listed under the `triggers` key (not `actions`) and their values map to `config.triggerType` on trigger nodes.
 > - The endpoint self-documents the correct node and edge shapes under the `workflowStructure` and `edgeStructure` keys — use these as the source of truth for programmatic workflow generation.
