@@ -81,6 +81,8 @@ const UNAUTHENTICATED: {
   statusCode: number;
 } = { authenticated: false, error: "Unauthorized", statusCode: 401 };
 
+const RESOURCE_METADATA_PATH = /\/\.well-known\/oauth-protected-resource$/;
+
 function makeRequest(
   method: string,
   headers: Record<string, string> = {},
@@ -126,10 +128,16 @@ describe("GET /mcp — anonymous health probe", () => {
     const response = await GET(request);
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
     const json = await response.json();
     expect(json.name).toBe("keeperhub");
+    expect(json.version).toBe("1.0.0");
     expect(json.protocol).toBe("mcp");
+    expect(json.status).toBe("ok");
     expect(json.authentication.required).toBe(true);
+    expect(json.authentication.resource_metadata).toMatch(
+      RESOURCE_METADATA_PATH
+    );
   });
 
   it("returns the OAuth challenge when mcp-session-id is present but no auth", async () => {
@@ -161,12 +169,18 @@ describe("POST /mcp — anonymous initialize", () => {
     const response = await POST(request);
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
     const json = await response.json();
     expect(json.jsonrpc).toBe("2.0");
     expect(json.id).toBe(7);
     expect(json.result.protocolVersion).toBe("2025-06-18");
+    expect(json.result.capabilities).toEqual({});
     expect(json.result.serverInfo.name).toBe("keeperhub");
+    expect(json.result.serverInfo.version).toBe("1.0.0");
     expect(json.result.authentication.required).toBe(true);
+    expect(json.result.authentication.resource_metadata).toMatch(
+      RESOURCE_METADATA_PATH
+    );
   });
 
   it("returns the OAuth challenge for tools/list with no auth", async () => {
@@ -225,6 +239,55 @@ describe("POST /mcp — anonymous initialize", () => {
     const response = await POST(request);
 
     await expectOAuthChallenge(response);
+  });
+
+  it("rejects an empty array body with the OAuth challenge", async () => {
+    const request = makeRequest("POST", {}, JSON.stringify([]));
+    const response = await POST(request);
+
+    await expectOAuthChallenge(response);
+  });
+
+  it("accepts a single-element initialize batch and returns the anon envelope", async () => {
+    const body = JSON.stringify([
+      {
+        jsonrpc: "2.0",
+        id: 9,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "test-client", version: "0.0.1" },
+        },
+      },
+    ]);
+    const request = makeRequest("POST", {}, body);
+    const response = await POST(request);
+
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(json.result.serverInfo.name).toBe("keeperhub");
+    // Array bodies have no top-level id, so the response id is null.
+    expect(json.id).toBeNull();
+  });
+
+  it("coerces an over-length string id to null (response amplification guard)", async () => {
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      id: "x".repeat(257),
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "test-client", version: "0.0.1" },
+      },
+    });
+    const request = makeRequest("POST", {}, body);
+    const response = await POST(request);
+
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(json.id).toBeNull();
   });
 });
 

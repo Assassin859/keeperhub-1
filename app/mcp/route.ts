@@ -373,10 +373,13 @@ export async function POST(request: Request): Promise<Response> {
       ? undefined
       : (body as Record<string, unknown>).id;
     // JSON-RPC 2.0 ids are string | number | null. Reflecting any other
-    // shape lets a caller force the server to serialize an arbitrary value
-    // back into the response body.
+    // shape — or an unbounded-length string — lets a caller force the
+    // server to serialize an arbitrary value back into the response body.
     const requestId =
-      typeof rawId === "string" || typeof rawId === "number" ? rawId : null;
+      (typeof rawId === "string" && rawId.length <= 256) ||
+      typeof rawId === "number"
+        ? rawId
+        : null;
     const anonInitResult = {
       jsonrpc: "2.0",
       id: requestId,
