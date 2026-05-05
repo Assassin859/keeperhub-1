@@ -40,34 +40,67 @@ async function reconcile(
       .filter((id): id is string => typeof id === "string"),
   );
 
+  let removed = 0;
+  let addAttempted = 0;
+  let skippedInvalid = 0;
+  let failed = 0;
+
   // Remove listeners for workflows that are no longer active.
   for (const id of reg.ids()) {
     if (!activeIds.has(id)) {
       logger.log(`[Reconciler] removing listener ${id} (no longer active)`);
       reg.remove(id);
+      removed++;
     }
   }
 
   // Add listeners for active workflows that are not yet registered, and
   // restart listeners whose config has changed since last reconcile.
   for (const workflow of workflows) {
-    const registration = buildRegistration(workflow, networks);
-    if (!registration) {
-      continue;
-    }
-    const existingHash = reg.getConfigHash(registration.workflowId);
-    if (existingHash === registration.configHash) {
-      // Listener already running with the same config; nothing to do.
-      continue;
-    }
-    if (existingHash !== undefined) {
-      logger.log(
-        `[Reconciler] config changed for ${registration.workflowId}; restarting listener`,
+    const workflowId =
+      typeof workflow.id === "string" ? workflow.id : "<unknown>";
+    try {
+      const registration = buildRegistration(workflow, networks);
+      if (!registration) {
+        // Operator-visible signal that a workflow was dropped from the
+        // active set due to invalid config (bad chain, missing fields,
+        // unsupported trigger). Without this log, operators see the
+        // workflow in the source-of-truth but no listener and no hint why.
+        logger.warn(
+          `[Reconciler] skipping workflow ${workflowId}: buildRegistration returned null (invalid config)`,
+        );
+        skippedInvalid++;
+        continue;
+      }
+      const existingHash = reg.getConfigHash(registration.workflowId);
+      if (existingHash === registration.configHash) {
+        // Listener already running with the same config; nothing to do.
+        continue;
+      }
+      if (existingHash !== undefined) {
+        logger.log(
+          `[Reconciler] config changed for ${registration.workflowId}; restarting listener`,
+        );
+        reg.remove(registration.workflowId);
+      }
+      await reg.add(registration);
+      addAttempted++;
+    } catch (err) {
+      // Per-workflow isolation: one poisoned workflow's exception must
+      // not abort the whole reconcile pass. The synchronizeData catch
+      // sees a generic message; this catch records which workflow
+      // tripped so the next log line points at the culprit.
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error(
+        `[Reconciler] workflow ${workflowId} failed during reconcile: ${message}`,
       );
-      reg.remove(registration.workflowId);
+      failed++;
     }
-    await reg.add(registration);
   }
+
+  logger.log(
+    `[Reconciler] pass complete: ${workflows.length} active, +${addAttempted} add-attempted, -${removed} removed, !${skippedInvalid} invalid, !!${failed} failed`,
+  );
 }
 
 async function synchronizeData(): Promise<void> {
