@@ -1,14 +1,30 @@
 import type { ethers } from "ethers";
 import type { AbiEvent, AbiInput } from "./validation";
 
+export type SerializedValue =
+  | string
+  | SerializedValue[]
+  | { [key: string]: SerializedArg };
+
 export interface SerializedArg {
-  value: any;
+  value: SerializedValue;
   type: string;
+}
+
+export interface EventPayload {
+  eventName: string;
+  args: Record<string, SerializedArg>;
+  blockNumber: SerializedArg;
+  transactionHash: string;
+  blockHash: string;
+  address: string;
+  logIndex: SerializedArg;
+  transactionIndex: SerializedArg;
 }
 
 const FIXED_ARRAY_PATTERN = /^(.+)\[(\d+)\]$/;
 
-export function convertBigIntToString(value: any): any {
+export function convertBigIntToString(value: unknown): unknown {
   if (typeof value === "bigint") {
     return value.toString();
   }
@@ -16,7 +32,7 @@ export function convertBigIntToString(value: any): any {
     return value.map((item) => convertBigIntToString(item));
   }
   if (value && typeof value === "object") {
-    const converted: Record<string, any> = {};
+    const converted: Record<string, unknown> = {};
     for (const [key, val] of Object.entries(value)) {
       converted[key] = convertBigIntToString(val);
     }
@@ -25,7 +41,7 @@ export function convertBigIntToString(value: any): any {
   return value;
 }
 
-export function serializePrimitive(value: any): string {
+export function serializePrimitive(value: unknown): string {
   if (typeof value === "bigint") {
     return value.toString();
   }
@@ -39,8 +55,9 @@ export function serializePrimitive(value: any): string {
     return value.toString();
   }
   if (value && typeof value === "object") {
-    if (typeof value.toString === "function") {
-      return value.toString();
+    const maybeStringifiable = value as { toString?: () => string };
+    if (typeof maybeStringifiable.toString === "function") {
+      return maybeStringifiable.toString();
     }
     try {
       return JSON.stringify(value);
@@ -52,7 +69,7 @@ export function serializePrimitive(value: any): string {
 }
 
 export function serializeArg(
-  value: any,
+  value: unknown,
   type: string,
   components: AbiInput[] | null,
 ): SerializedArg {
@@ -102,12 +119,13 @@ export function serializeArg(
       };
     }
     if (value && typeof value === "object") {
+      const obj = value as Record<string, unknown>;
       const tupleValue: Record<string, SerializedArg> = {};
       components.forEach((component, index) => {
         const fieldName = component.name || `field${index}`;
-        let fieldValue: any;
-        if (value[fieldName] !== undefined) {
-          fieldValue = value[fieldName];
+        let fieldValue: unknown;
+        if (obj[fieldName] !== undefined) {
+          fieldValue = obj[fieldName];
         } else if (Array.isArray(value)) {
           fieldValue = value[index];
         } else {
@@ -133,7 +151,7 @@ export function serializeArg(
 }
 
 export function extractEventArgs(
-  parsedLog: any,
+  parsedLog: ethers.LogDescription,
   rawEventsAbi: AbiEvent[],
 ): Record<string, SerializedArg> {
   const args: Record<string, SerializedArg> = {};
@@ -141,7 +159,7 @@ export function extractEventArgs(
 
   if (eventAbi?.inputs) {
     eventAbi.inputs.forEach((input, index) => {
-      const argValue = parsedLog.args[index];
+      const argValue: unknown = parsedLog.args[index];
       const argName = input.name || `arg${index}`;
 
       args[argName] = serializeArg(
@@ -151,7 +169,7 @@ export function extractEventArgs(
       );
     });
   } else {
-    parsedLog.args.forEach((arg: any, index: number) => {
+    parsedLog.args.forEach((arg: unknown, index: number) => {
       args[`arg${index}`] = serializeArg(arg, "unknown", null);
     });
   }
@@ -160,9 +178,9 @@ export function extractEventArgs(
 
 export function buildEventPayload(
   log: ethers.Log,
-  parsedLog: any,
+  parsedLog: ethers.LogDescription,
   args: Record<string, SerializedArg>,
-): any {
+): EventPayload {
   return {
     eventName: parsedLog.name,
     args,

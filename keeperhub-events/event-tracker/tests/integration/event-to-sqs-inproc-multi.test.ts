@@ -1,5 +1,5 @@
 /**
- * E2E verifying two in-process listeners on the same chain + contract +
+ * Integration test verifying two in-process listeners on the same chain + contract +
  * event share one WebSocketProvider and one block subscription, and both
  * receive the same on-chain log via the demux path - the central
  * invariant of the Phase 1-4 refactor.

@@ -16,6 +16,12 @@ export default defineConfig({
       ".pnpm-store",
       ".worktrees",
       "**/.worktrees/**",
+      // keeperhub-events is a separate pnpm workspace with its own
+      // vitest config and dependencies. Without this exclude,
+      // `pnpm test:integration tests/integration` from the main app
+      // picks up keeperhub-events/event-tracker/tests/integration via
+      // positional path filter and fails on missing deps.
+      "keeperhub-events/**",
     ],
     coverage: {
       provider: "v8",

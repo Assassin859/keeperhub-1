@@ -59,6 +59,27 @@ export function buildRegistration(
     return null;
   }
 
+  // The DB column `chains.default_primary_wss` is nullable, but
+  // `NetworkConfig.defaultPrimaryWss` is typed `string`. Treat it as
+  // `string | null | undefined` at runtime: an HTTP URL or empty string
+  // pasted into this column would otherwise reach
+  // `new ethers.WebSocketProvider(...)` and trigger an `eth_subscribe`
+  // rejection that ethers' SocketSubscriber.start() leaves uncaught,
+  // crashing the pod.
+  const wssUrl: unknown = network.defaultPrimaryWss;
+  if (typeof wssUrl !== "string" || wssUrl.length === 0) {
+    logger.warn(
+      `[workflow-mapper] workflow ${workflowId} chain ${chainId} has no defaultPrimaryWss; skipping`,
+    );
+    return null;
+  }
+  if (!(wssUrl.startsWith("wss://") || wssUrl.startsWith("ws://"))) {
+    logger.warn(
+      `[workflow-mapper] workflow ${workflowId} chain ${chainId} defaultPrimaryWss is not a WebSocket URL ("${wssUrl}"); skipping`,
+    );
+    return null;
+  }
+
   const contractAddress =
     typeof config.contractAddress === "string" ? config.contractAddress : null;
   if (!contractAddress) {

@@ -195,6 +195,47 @@ describe("buildRegistration", () => {
     ).toBeNull();
   });
 
+  // The DB column for defaultPrimaryWss is nullable. If it slips through
+  // to provider creation, ethers' SocketSubscriber.start() leaves the
+  // eth_subscribe rejection uncaught and crashes the pod - so reject here.
+  it("returns null when defaultPrimaryWss is null", () => {
+    const networks: NetworksMap = {
+      [CHAIN_ID]: {
+        ...NETWORK,
+        defaultPrimaryWss: null as unknown as string,
+      },
+    };
+    expect(buildRegistration(makeWorkflow(), networks)).toBeNull();
+  });
+
+  it("returns null when defaultPrimaryWss is empty", () => {
+    const networks: NetworksMap = {
+      [CHAIN_ID]: { ...NETWORK, defaultPrimaryWss: "" },
+    };
+    expect(buildRegistration(makeWorkflow(), networks)).toBeNull();
+  });
+
+  it("returns null when defaultPrimaryWss is an HTTP URL", () => {
+    const networks: NetworksMap = {
+      [CHAIN_ID]: {
+        ...NETWORK,
+        defaultPrimaryWss: "https://eth-mainnet.example.com",
+      },
+    };
+    expect(buildRegistration(makeWorkflow(), networks)).toBeNull();
+  });
+
+  it("accepts a wss:// URL", () => {
+    const networks: NetworksMap = {
+      [CHAIN_ID]: {
+        ...NETWORK,
+        defaultPrimaryWss: "wss://eth-mainnet.example.com",
+      },
+    };
+    const reg = buildRegistration(makeWorkflow(), networks);
+    expect(reg?.wssUrl).toBe("wss://eth-mainnet.example.com");
+  });
+
   it("returns null when contractAddress is missing", () => {
     expect(
       buildRegistration(

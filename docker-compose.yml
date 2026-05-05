@@ -455,8 +455,11 @@ services:
     environment:
       - SERVICES=sqs
       - DEBUG=0
-    volumes:
-      - keeperhub_test_localstack_data:/var/lib/localstack
+      # Recent localstack/localstack:latest builds require an auth token
+      # even for community-edition use; without it the container exits 55.
+      # CI passes the team token from GH secrets; local dev needs the var
+      # set in the host shell or .env to use the test profile.
+      - LOCALSTACK_AUTH_TOKEN=${LOCALSTACK_AUTH_TOKEN:-}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
       interval: 10s

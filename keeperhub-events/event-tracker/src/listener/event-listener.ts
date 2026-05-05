@@ -64,8 +64,18 @@ export class EventListener {
     const iface = getInterface(this.opts.eventsAbiStrings);
     const eventFragment = iface.getEvent(this.opts.eventName);
     if (!eventFragment) {
+      // Enumerate the events the ABI does contain so the operator can
+      // see the mismatch in one log line. A blank list means the ABI
+      // has no event fragments at all — typically a wrong-ABI config
+      // rather than a typo'd event name.
+      const availableEvents: string[] = [];
+      iface.forEachEvent((fragment) => {
+        availableEvents.push(fragment.name);
+      });
+      const available =
+        availableEvents.length > 0 ? availableEvents.join(", ") : "(none)";
       throw new Error(
-        `EventListener(${this.opts.workflowId}): event "${this.opts.eventName}" not found in ABI`,
+        `EventListener(${this.opts.workflowId}): event "${this.opts.eventName}" not found in ABI. Available events: ${available}`,
       );
     }
 
