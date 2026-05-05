@@ -4,13 +4,36 @@ import {
   organizationSubscriptions,
   overageBillingRecords,
 } from "@/lib/db/schema";
+import { getMetricsCollector } from "@/lib/metrics";
+import { MetricNames } from "@/lib/metrics/types";
 import { BILLING_ALERTS } from "./constants";
 import { clearAllDebtForOrg, clearDebtForInvoice } from "./execution-debt";
 import { billOverageForOrg } from "./overage";
+import { type PlanName, parsePlanName } from "./plans";
 import { resolveSubscriptionPlan } from "./plans-server";
 import type { BillingProvider, BillingWebhookEvent } from "./provider";
 
 const LOG_PREFIX = "[Billing Handler]";
+
+// Numeric ranking used to label plan changes as upgrade/downgrade. Same-plan
+// tier changes (e.g. Pro 25k -> Pro 50k) are labeled "tier_change" since the
+// dashboard tracks them separately from plan-level moves.
+const PLAN_RANK: Record<PlanName, number> = {
+  free: 0,
+  pro: 1,
+  business: 2,
+  enterprise: 3,
+};
+
+function planChangeDirection(
+  from: PlanName,
+  to: PlanName
+): "upgrade" | "downgrade" | "tier_change" {
+  if (from === to) {
+    return "tier_change";
+  }
+  return PLAN_RANK[to] > PLAN_RANK[from] ? "upgrade" : "downgrade";
+}
 
 type SubscriptionRow = typeof organizationSubscriptions.$inferSelect;
 
@@ -167,6 +190,14 @@ async function handleCheckoutCompleted(
     });
 
   console.info(LOG_PREFIX, "Upserted subscription for org:", organizationId);
+
+  getMetricsCollector().incrementCounter(
+    MetricNames.BILLING_SUBSCRIPTION_CREATED,
+    {
+      plan,
+      tier: tier ?? "none",
+    }
+  );
 }
 
 // Build the DB update payload for a subscription.updated event.
@@ -289,6 +320,27 @@ async function handleSubscriptionUpdated(
         providerSubscriptionId
       )
     );
+
+  const metrics = getMetricsCollector();
+  const newPlanRaw = update.plan;
+  const newPlan: PlanName =
+    typeof newPlanRaw === "string"
+      ? parsePlanName(newPlanRaw, parsePlanName(current.plan))
+      : parsePlanName(current.plan);
+  metrics.incrementCounter(MetricNames.BILLING_SUBSCRIPTION_UPDATED, {
+    plan: newPlan,
+  });
+
+  // Plan change is signaled by priceChanged in buildSubscriptionUpdate
+  // (only present in the update payload when the price differs).
+  if (update.providerPriceId !== undefined) {
+    const fromPlan = parsePlanName(current.plan);
+    metrics.incrementCounter(MetricNames.BILLING_SUBSCRIPTION_PLAN_CHANGED, {
+      from_plan: fromPlan,
+      to_plan: newPlan,
+      direction: planChangeDirection(fromPlan, newPlan),
+    });
+  }
 }
 
 async function handleSubscriptionDeleted(
@@ -337,6 +389,14 @@ async function handleSubscriptionDeleted(
     if (current) {
       await clearAllDebtForOrg(current.organizationId);
     }
+
+    getMetricsCollector().incrementCounter(
+      MetricNames.BILLING_SUBSCRIPTION_CANCELED,
+      {
+        plan: parsePlanName(current?.plan, "free"),
+        tier: current?.tier ?? "none",
+      }
+    );
     return;
   }
 
@@ -370,6 +430,14 @@ async function handleSubscriptionDeleted(
   if (current) {
     await clearAllDebtForOrg(current.organizationId);
   }
+
+  getMetricsCollector().incrementCounter(
+    MetricNames.BILLING_SUBSCRIPTION_CANCELED,
+    {
+      plan: parsePlanName(current?.plan, "free"),
+      tier: current?.tier ?? "none",
+    }
+  );
 }
 
 async function markOverageRecordsPaid(
@@ -421,6 +489,10 @@ async function handleInvoicePaid(
     if (sub && invoiceId) {
       await markOverageRecordsPaid(sub.organizationId, invoiceId);
     }
+
+    getMetricsCollector().incrementCounter(MetricNames.BILLING_INVOICE_PAID, {
+      plan: parsePlanName(sub?.plan, "free"),
+    });
     return;
   }
 
@@ -450,6 +522,10 @@ async function handleInvoicePaid(
       if (invoiceId) {
         await markOverageRecordsPaid(sub.organizationId, invoiceId);
       }
+
+      getMetricsCollector().incrementCounter(MetricNames.BILLING_INVOICE_PAID, {
+        plan: parsePlanName(sub.plan, "free"),
+      });
     }
   }
 }
@@ -473,6 +549,8 @@ async function handleInvoicePaymentFailed(
     providerSubscriptionId
   );
 
+  const sub = await findSubscriptionByProviderId(providerSubscriptionId);
+
   await db
     .update(organizationSubscriptions)
     .set({
@@ -487,6 +565,10 @@ async function handleInvoicePaymentFailed(
         providerSubscriptionId
       )
     );
+
+  getMetricsCollector().incrementCounter(MetricNames.BILLING_INVOICE_FAILED, {
+    plan: parsePlanName(sub?.plan, "free"),
+  });
 }
 
 async function handleInvoiceOverdue(
