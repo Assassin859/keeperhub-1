@@ -60,6 +60,7 @@ export type SavedWorkflow = WorkflowData & {
   score?: number;
   userVote?: VoteDirection | null;
   canVote?: boolean;
+  duplicateCount?: number;
 };
 
 export type VoteResponse = {
@@ -372,34 +373,6 @@ export type IntegrationWithConfig = Integration & {
 export type Organization = {
   id: string;
   name: string;
-};
-
-// AI Gateway types
-export type AiGatewayStatusResponse = {
-  enabled: boolean;
-  signedIn: boolean;
-  isVercelUser: boolean;
-  hasManagedKey: boolean;
-  managedIntegrationId?: string;
-};
-
-export type AiGatewayConsentResponse = {
-  success: boolean;
-  hasManagedKey: boolean;
-  managedIntegrationId?: string;
-  error?: string;
-};
-
-export type VercelTeam = {
-  id: string;
-  name: string;
-  slug: string;
-  avatar?: string;
-  isPersonal: boolean;
-};
-
-export type AiGatewayTeamsResponse = {
-  teams: VercelTeam[];
 };
 
 // Integration API
@@ -784,28 +757,6 @@ export const workflowApi = {
   })(),
 };
 
-// AI Gateway API (User Keys feature)
-export const aiGatewayApi = {
-  // Get status (whether feature is enabled, user has managed key, etc.)
-  getStatus: () => apiCall<AiGatewayStatusResponse>("/api/ai-gateway/status"),
-
-  // Get available Vercel teams
-  getTeams: () => apiCall<AiGatewayTeamsResponse>("/api/ai-gateway/teams"),
-
-  // Grant consent and create managed API key
-  consent: (teamId: string, teamName: string) =>
-    apiCall<AiGatewayConsentResponse>("/api/ai-gateway/consent", {
-      method: "POST",
-      body: JSON.stringify({ teamId, teamName }),
-    }),
-
-  // Revoke consent and delete managed API key
-  revokeConsent: () =>
-    apiCall<AiGatewayConsentResponse>("/api/ai-gateway/consent", {
-      method: "DELETE",
-    }),
-};
-
 export type Tag = {
   id: string;
   name: string;
@@ -885,7 +836,6 @@ export const projectApi = {
 // Export all APIs as a single object
 export const api = {
   ai: aiApi,
-  aiGateway: aiGatewayApi,
   integration: integrationApi,
   organization: organizationApi,
   project: projectApi,

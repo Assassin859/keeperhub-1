@@ -4,7 +4,7 @@ export default defineProtocol({
   name: "Rocket Pool",
   slug: "rocket-pool",
   description:
-    "Decentralized Ethereum liquid staking -- deposit ETH for rETH, monitor exchange rates, and manage staking positions",
+    "Decentralized Ethereum liquid staking: deposit ETH for rETH, monitor exchange rates, and manage staking positions",
   website: "https://rocketpool.net",
   icon: "/protocols/rocket-pool.png",
 

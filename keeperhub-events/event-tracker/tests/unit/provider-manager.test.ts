@@ -20,6 +20,14 @@ class MockProvider {
   public sendCalls: SendCall[] = [];
   public sendResponses: unknown[] = [];
   public blockNumberResponses: Array<number | Error> = [];
+  // When set, eth_subscribe rejects with this error - simulates an RPC
+  // that does not implement subscriptions (the real-world ethers crash
+  // path: -32601 "method not available").
+  public subscribeFailure: Error | null = null;
+  // When set, eth_unsubscribe rejects with this error - lets tests
+  // exercise the non-fatal probe-cleanup path without affecting the
+  // probe's success.
+  public unsubscribeFailure: Error | null = null;
   public destroyed = false;
   private blockHandler: BlockHandler | null = null;
   private errorHandler: ErrorHandler | null = null;
@@ -42,6 +50,20 @@ class MockProvider {
 
   async send(method: string, params: unknown[]): Promise<unknown> {
     this.sendCalls.push({ method, params });
+    if (method === "eth_subscribe") {
+      if (this.subscribeFailure) {
+        throw this.subscribeFailure;
+      }
+      // Synthetic filterId; the manager round-trips it through
+      // eth_unsubscribe but does not otherwise inspect it.
+      return "0xprobe";
+    }
+    if (method === "eth_unsubscribe") {
+      if (this.unsubscribeFailure) {
+        throw this.unsubscribeFailure;
+      }
+      return true;
+    }
     if (method === "eth_blockNumber") {
       if (this.blockNumberResponses.length === 0) {
         return 0x1234;
@@ -92,22 +114,33 @@ function makeFactory(): {
   factory: ProviderFactory;
   created: MockProvider[];
   setPersistentFailure: (err: Error | null) => void;
+  setNextSubscribeFailure: (err: Error | null) => void;
 } {
   const created: MockProvider[] = [];
   let persistentFailure: Error | null = null;
+  let nextSubscribeFailure: Error | null = null;
   const factory: ProviderFactory = (_wssUrl: string) => {
     if (persistentFailure) {
       throw persistentFailure;
     }
     const mock = new MockProvider();
+    if (nextSubscribeFailure) {
+      // One-shot: failure must be re-armed for each provider that should
+      // fail, otherwise reconnect's fresh provider would inherit it.
+      mock.subscribeFailure = nextSubscribeFailure;
+      nextSubscribeFailure = null;
+    }
     created.push(mock);
     return mock as unknown as ethers.WebSocketProvider;
   };
   return {
     factory,
     created,
-    setPersistentFailure: (err) => {
+    setPersistentFailure: (err: Error | null) => {
       persistentFailure = err;
+    },
+    setNextSubscribeFailure: (err: Error | null) => {
+      nextSubscribeFailure = err;
     },
   };
 }
@@ -173,6 +206,161 @@ describe("ChainProviderManager", () => {
       await expect(
         manager.getOrCreateProvider(CHAIN_A, "ws://different"),
       ).rejects.toThrow(/already registered/);
+    });
+
+    // Probe is the gate that prevents ethers' uncaught eth_subscribe
+    // rejection from reaching process.unhandledRejection and crashing
+    // the pod. These tests lock in the contract.
+    describe("eth_subscribe probe", () => {
+      it("sends eth_subscribe([newHeads]) and unsubscribes immediately", async () => {
+        await manager.getOrCreateProvider(CHAIN_A, "ws://a");
+        const provider = factoryBundle.created[0];
+        const subscribe = provider.sendCalls.find(
+          (c) => c.method === "eth_subscribe",
+        );
+        const unsubscribe = provider.sendCalls.find(
+          (c) => c.method === "eth_unsubscribe",
+        );
+        expect(subscribe?.params).toEqual(["newHeads"]);
+        expect(unsubscribe?.params).toEqual(["0xprobe"]);
+      });
+
+      it("throws when eth_subscribe is not supported", async () => {
+        const err = new Error(
+          'unsupported operation (operation="eth_subscribe", code=-32601)',
+        );
+        factoryBundle.setNextSubscribeFailure(err);
+        await expect(
+          manager.getOrCreateProvider(CHAIN_A, "ws://a"),
+        ).rejects.toThrow(/RPC does not support eth_subscribe/);
+      });
+
+      it("destroys the provider when the probe fails", async () => {
+        factoryBundle.setNextSubscribeFailure(new Error("boom"));
+        await expect(
+          manager.getOrCreateProvider(CHAIN_A, "ws://a"),
+        ).rejects.toThrow();
+        expect(factoryBundle.created[0].destroyed).toBe(true);
+      });
+
+      it("retries createProvider on the next call after a probe failure", async () => {
+        // The reconciler runs synchronizeData every 30s. A transient
+        // probe failure must NOT permanently disable the chain - the
+        // next call to getOrCreateProvider must kick off a fresh
+        // factory call rather than re-returning the cached rejected
+        // promise.
+        factoryBundle.setNextSubscribeFailure(new Error("transient"));
+        await expect(
+          manager.getOrCreateProvider(CHAIN_A, "ws://a"),
+        ).rejects.toThrow();
+        expect(factoryBundle.created).toHaveLength(1);
+
+        // Second attempt: probe failure no longer armed; the call
+        // should produce a fresh factory invocation and succeed.
+        await expect(
+          manager.getOrCreateProvider(CHAIN_A, "ws://a"),
+        ).resolves.toBeDefined();
+        expect(factoryBundle.created).toHaveLength(2);
+        expect(manager.isHealthy(CHAIN_A)).toBe(true);
+      });
+
+      it("records lastCreateError after a probe failure and clears it on success", async () => {
+        factoryBundle.setNextSubscribeFailure(
+          new Error('unsupported operation (operation="eth_subscribe")'),
+        );
+        await expect(
+          manager.getOrCreateProvider(CHAIN_A, "ws://a"),
+        ).rejects.toThrow();
+        // Failure is observable through health surface so /healthz can
+        // report *why* a chain is degraded.
+        expect(manager.getHealth(CHAIN_A)?.lastCreateError).toMatch(
+          /eth_subscribe/,
+        );
+
+        // Subsequent successful retry clears the marker.
+        await manager.getOrCreateProvider(CHAIN_A, "ws://a");
+        expect(manager.getHealth(CHAIN_A)?.lastCreateError).toBeNull();
+      });
+
+      it("survives an eth_unsubscribe failure (probe succeeded)", async () => {
+        // Plant the unsubscribe failure synchronously after the factory
+        // returns the mock but before createProvider awaits the probe.
+        // The factory exposes a hook for subscribe failures only, so we
+        // wrap the factory to set unsubscribeFailure on the new mock.
+        const inner = factoryBundle.factory;
+        const wrapped: ProviderFactory = (wssUrl: string) => {
+          const p = inner(wssUrl) as unknown as MockProvider;
+          p.unsubscribeFailure = new Error("rpc unstable");
+          return p as unknown as ethers.WebSocketProvider;
+        };
+        const localManager = new ChainProviderManager({
+          factory: wrapped,
+          onPermanentFailure,
+        });
+        await expect(
+          localManager.getOrCreateProvider(CHAIN_A, "ws://a"),
+        ).resolves.toBeDefined();
+        await localManager.destroy();
+      });
+    });
+
+    // Fallback URL is opt-in via the optional third parameter on
+    // getOrCreateProvider / SubscribeOptions. When the primary fails at
+    // factory + ready + probe, the manager walks to the fallback before
+    // surfacing failure. Reconnect uses the same walk, so a primary that
+    // recovers is preferred on the next reconnect.
+    describe("fallback wssUrl", () => {
+      it("uses the primary when it works and never invokes the fallback", async () => {
+        await manager.getOrCreateProvider(CHAIN_A, "ws://primary", "ws://fb");
+        expect(factoryBundle.created).toHaveLength(1);
+        expect(manager.getHealth(CHAIN_A)?.wssUrl).toBe("ws://primary");
+        expect(manager.getHealth(CHAIN_A)?.fallbackWssUrl).toBe("ws://fb");
+      });
+
+      it("falls through to the fallback when the primary probe fails", async () => {
+        // One-shot: only the first provider created (i.e. the one for the
+        // primary URL) gets the subscribe failure. The fallback's fresh
+        // provider has no failure armed, so its probe succeeds.
+        factoryBundle.setNextSubscribeFailure(
+          new Error('unsupported operation (operation="eth_subscribe")'),
+        );
+        await manager.getOrCreateProvider(CHAIN_A, "ws://primary", "ws://fb");
+        expect(factoryBundle.created).toHaveLength(2);
+        // Failed primary provider is destroyed before we move on so the
+        // socket does not leak across the failover.
+        expect(factoryBundle.created[0].destroyed).toBe(true);
+        expect(factoryBundle.created[1].destroyed).toBe(false);
+        // Health surface reflects the active URL, not the configured
+        // primary, so operators can see failover at a glance.
+        expect(manager.getHealth(CHAIN_A)?.wssUrl).toBe("ws://fb");
+      });
+
+      it("aggregates errors from both URLs when both fail", async () => {
+        // Persistent failure makes every factory call throw. Both primary
+        // and fallback fail before the call resolves, and the surfaced
+        // error must mention both URLs so operators can debug.
+        factoryBundle.setPersistentFailure(new Error("connect refused"));
+        await expect(
+          manager.getOrCreateProvider(CHAIN_A, "ws://primary", "ws://fb"),
+        ).rejects.toThrow(/ws:\/\/primary.*ws:\/\/fb/s);
+      });
+
+      it("rejects a mismatched fallback for a known chainId", async () => {
+        // The primary+fallback tuple is the entry's identity. A second
+        // caller with a different fallback would silently inherit the
+        // first caller's failover URL, so we throw instead.
+        await manager.getOrCreateProvider(CHAIN_A, "ws://primary", "ws://fb");
+        await expect(
+          manager.getOrCreateProvider(CHAIN_A, "ws://primary", "ws://other"),
+        ).rejects.toThrow(/already registered/);
+      });
+
+      it("works without a fallback (single-URL backwards compatibility)", async () => {
+        // Existing call sites that pass no fallback still work and report
+        // null in the fallback health field.
+        await manager.getOrCreateProvider(CHAIN_A, "ws://primary");
+        expect(manager.getHealth(CHAIN_A)?.fallbackWssUrl).toBeNull();
+      });
     });
   });
 
@@ -250,9 +438,13 @@ describe("ChainProviderManager", () => {
       provider.sendResponses = [[]];
       await provider.emitBlock(100);
 
-      expect(provider.sendCalls).toHaveLength(1);
-      expect(provider.sendCalls[0].method).toBe("eth_getLogs");
-      const filter = provider.sendCalls[0].params[0] as {
+      // createProvider runs an eth_subscribe / eth_unsubscribe probe
+      // before any block dispatch; filter to the demux path under test.
+      const getLogsCalls = provider.sendCalls.filter(
+        (c) => c.method === "eth_getLogs",
+      );
+      expect(getLogsCalls).toHaveLength(1);
+      const filter = getLogsCalls[0].params[0] as {
         address: string[];
         topics: string[][];
         fromBlock: string;
@@ -550,10 +742,12 @@ describe("ChainProviderManager", () => {
       expect(h).toEqual({
         chainId: CHAIN_A,
         wssUrl: "ws://a",
+        fallbackWssUrl: null,
         connected: true,
         reconnecting: false,
         lastBlockAt: null,
         subscriberCount: 1,
+        lastCreateError: null,
       });
     });
 
@@ -913,6 +1107,113 @@ describe("ChainProviderManager", () => {
       expect(factoryBundle.created).toHaveLength(3);
       expect(manager.isHealthy(CHAIN_A)).toBe(true);
       expect(manager.subscriberCount(CHAIN_A)).toBe(1);
+    });
+
+    it("treats a probe failure on reconnect as a failed attempt and retries", async () => {
+      // The probe runs on every fresh provider, including those built
+      // by reconnect. If the new provider's RPC stops supporting
+      // eth_subscribe (transient or persistent), the probe failure
+      // must surface to reconnectLoop so backoff and the
+      // permanent-failure guardrail still fire.
+      await manager.subscribeToLogs({
+        chainId: CHAIN_A,
+        wssUrl: "ws://a",
+        address: ADDR_A,
+        topic0: TOPIC_EMITTED,
+        handler: vi.fn(),
+      });
+
+      // Drop the connection. The next factory call returns a new
+      // mock whose probe fails - reconnect should treat that as a
+      // failed attempt rather than installing a half-working provider.
+      factoryBundle.setNextSubscribeFailure(
+        new Error('unsupported operation (operation="eth_subscribe")'),
+      );
+      factoryBundle.created[0].emitError(new Error("drop"));
+
+      await vi.advanceTimersByTimeAsync(1_500);
+      expect(factoryBundle.created).toHaveLength(2);
+      // Probe failed, so the new provider was not installed.
+      expect(manager.isHealthy(CHAIN_A)).toBe(false);
+      // Subsequent reconnect attempt (probe re-armed false by default,
+      // so factory returns a healthy mock) recovers.
+      await vi.advanceTimersByTimeAsync(2_500);
+      expect(manager.isHealthy(CHAIN_A)).toBe(true);
+    });
+
+    it("walks to the fallback URL when the primary fails on reconnect", async () => {
+      // Reconnect runs the same primary-then-fallback walk as the
+      // initial createProvider. With one armed probe failure, the
+      // reconnect's primary attempt fails and openProvider falls
+      // through to the fallback. The active URL surfaces through
+      // getHealth so operators can see failover via /healthz mid-incident.
+      await manager.subscribeToLogs({
+        chainId: CHAIN_A,
+        wssUrl: "ws://primary",
+        fallbackWssUrl: "ws://fb",
+        address: ADDR_A,
+        topic0: TOPIC_EMITTED,
+        handler: vi.fn(),
+      });
+      expect(factoryBundle.created).toHaveLength(1);
+      expect(manager.getHealth(CHAIN_A)?.wssUrl).toBe("ws://primary");
+
+      // Arm a one-shot probe failure. The reconnect's primary attempt
+      // gets it; the fallback attempt that follows has no failure armed.
+      factoryBundle.setNextSubscribeFailure(
+        new Error('unsupported operation (operation="eth_subscribe")'),
+      );
+      factoryBundle.created[0].emitError(new Error("wss dropped"));
+      await vi.advanceTimersByTimeAsync(1_500);
+
+      // openProvider tore down the failed primary attempt before
+      // moving on, then created a fresh mock for the fallback.
+      // Initial + primary attempt + fallback attempt = 3 providers.
+      expect(factoryBundle.created).toHaveLength(3);
+      expect(factoryBundle.created[1].destroyed).toBe(true);
+      expect(factoryBundle.created[2].destroyed).toBe(false);
+      expect(manager.isHealthy(CHAIN_A)).toBe(true);
+      expect(manager.getHealth(CHAIN_A)?.wssUrl).toBe("ws://fb");
+      // Block listener and heartbeat must be re-attached on the
+      // fallback provider; otherwise events would be silently dropped
+      // after failover.
+      expect(factoryBundle.created[2].hasBlockHandler()).toBe(true);
+      expect(factoryBundle.created[2].hasErrorHandler()).toBe(true);
+    });
+
+    it("flips back to the primary on the next reconnect once the primary recovers", async () => {
+      // Running on the fallback is a degraded state, not a sticky one.
+      // When the primary recovers, the next reconnect's primary-first
+      // walk picks it up. Without this, a transient primary blip would
+      // strand the chain on the fallback until process restart.
+      await manager.subscribeToLogs({
+        chainId: CHAIN_A,
+        wssUrl: "ws://primary",
+        fallbackWssUrl: "ws://fb",
+        address: ADDR_A,
+        topic0: TOPIC_EMITTED,
+        handler: vi.fn(),
+      });
+
+      // First reconnect: primary fails, manager runs on fallback.
+      factoryBundle.setNextSubscribeFailure(new Error("transient"));
+      factoryBundle.created[0].emitError(new Error("drop"));
+      await vi.advanceTimersByTimeAsync(1_500);
+      expect(manager.getHealth(CHAIN_A)?.wssUrl).toBe("ws://fb");
+      const fallbackProvider = factoryBundle.created.at(-1);
+      const createdBeforeSecond = factoryBundle.created.length;
+
+      // Second reconnect: nothing armed, so the primary attempt
+      // succeeds and openProvider returns on the first URL it tries.
+      // The fallback URL is never even hit.
+      fallbackProvider?.emitError(new Error("drop 2"));
+      await vi.advanceTimersByTimeAsync(1_500);
+
+      // Exactly one new provider for the recovered primary - no
+      // wasted fallback factory call.
+      expect(factoryBundle.created.length - createdBeforeSecond).toBe(1);
+      expect(manager.isHealthy(CHAIN_A)).toBe(true);
+      expect(manager.getHealth(CHAIN_A)?.wssUrl).toBe("ws://primary");
     });
   });
 

@@ -24,6 +24,14 @@ function getDatabaseUrl(): string {
 
 const databaseUrl = getDatabaseUrl();
 
+// Phase 45 BFCACHE-05: dual-mode webServer driven by NEXT_BUILD_MODE.
+// `dev` (default) spawns `pnpm dev`. `production` spawns `pnpm build && pnpm start`
+// — bumps webServer.timeout to 4 minutes to accommodate the build, and disables
+// reuseExistingServer so a stale `pnpm start` from a previous run does not
+// shadow the fresh build (45-RESEARCH.md Pitfall 3).
+const nextBuildMode = process.env.NEXT_BUILD_MODE ?? "dev";
+const isProdMode = nextBuildMode === "production";
+
 // Set DATABASE_URL for tests that need direct DB access (e.g., OTP retrieval)
 process.env.DATABASE_URL = databaseUrl;
 
@@ -96,9 +104,9 @@ export default defineConfig({
     isDeployedEnv || process.env.CI
       ? undefined
       : {
-          command: "pnpm dev",
+          command: isProdMode ? "pnpm build && pnpm start" : "pnpm dev",
           url: "http://localhost:3000",
-          reuseExistingServer: true,
-          timeout: 120_000,
+          reuseExistingServer: !isProdMode,
+          timeout: isProdMode ? 240_000 : 120_000,
         },
 });

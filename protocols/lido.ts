@@ -4,7 +4,7 @@ export default defineProtocol({
   name: "Lido",
   slug: "lido",
   description:
-    "Liquid staking for Ethereum -- wrap stETH to wstETH, unwrap back, and query exchange rates",
+    "Liquid staking for Ethereum: wrap stETH to wstETH, unwrap back, and query exchange rates",
   website: "https://lido.fi",
   icon: "/protocols/lido.png",
 

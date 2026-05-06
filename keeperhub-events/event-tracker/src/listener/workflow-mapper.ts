@@ -59,6 +59,46 @@ export function buildRegistration(
     return null;
   }
 
+  // The DB column `chains.default_primary_wss` is nullable, but
+  // `NetworkConfig.defaultPrimaryWss` is typed `string`. Treat it as
+  // `string | null | undefined` at runtime: an HTTP URL or empty string
+  // pasted into this column would otherwise reach
+  // `new ethers.WebSocketProvider(...)` and trigger an `eth_subscribe`
+  // rejection that ethers' SocketSubscriber.start() leaves uncaught,
+  // crashing the pod.
+  const wssUrl: unknown = network.defaultPrimaryWss;
+  if (typeof wssUrl !== "string" || wssUrl.length === 0) {
+    logger.warn(
+      `[workflow-mapper] workflow ${workflowId} chain ${chainId} has no defaultPrimaryWss; skipping`,
+    );
+    return null;
+  }
+  if (!(wssUrl.startsWith("wss://") || wssUrl.startsWith("ws://"))) {
+    logger.warn(
+      `[workflow-mapper] workflow ${workflowId} chain ${chainId} defaultPrimaryWss is not a WebSocket URL ("${wssUrl}"); skipping`,
+    );
+    return null;
+  }
+
+  // Fallback is optional. Same nullable-DB-column caveat as primary: the
+  // type says `string` but rows can be null/empty. A bad fallback (wrong
+  // scheme, empty) is logged and dropped rather than failing the whole
+  // workflow; the listener still runs on primary alone.
+  const rawFallbackWssUrl: unknown = network.defaultFallbackWss;
+  let fallbackWssUrl: string | undefined;
+  if (typeof rawFallbackWssUrl === "string" && rawFallbackWssUrl.length > 0) {
+    if (
+      rawFallbackWssUrl.startsWith("wss://") ||
+      rawFallbackWssUrl.startsWith("ws://")
+    ) {
+      fallbackWssUrl = rawFallbackWssUrl;
+    } else {
+      logger.warn(
+        `[workflow-mapper] workflow ${workflowId} chain ${chainId} defaultFallbackWss is not a WebSocket URL ("${rawFallbackWssUrl}"); ignoring fallback`,
+      );
+    }
+  }
+
   const contractAddress =
     typeof config.contractAddress === "string" ? config.contractAddress : null;
   if (!contractAddress) {
@@ -119,7 +159,8 @@ export function buildRegistration(
     userId,
     workflowName,
     chainId,
-    wssUrl: network.defaultPrimaryWss,
+    wssUrl,
+    fallbackWssUrl,
     contractAddress,
     eventName,
     eventsAbiStrings,
@@ -146,6 +187,7 @@ export function hashRegistration(
   const canonical = JSON.stringify({
     chainId: reg.chainId,
     wssUrl: reg.wssUrl,
+    fallbackWssUrl: reg.fallbackWssUrl ?? null,
     contractAddress: reg.contractAddress,
     eventName: reg.eventName,
     eventsAbiStrings: reg.eventsAbiStrings,

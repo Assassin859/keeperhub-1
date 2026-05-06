@@ -113,8 +113,8 @@ export function EarningsKpiCards(): ReactNode {
   // Revenue arrives on Base (x402/USDC) or Tempo (MPP/USDC.e) depending on
   // which protocol the calling agent used. Showing the split inline prevents
   // creators from treating a zero on one chain as a bug.
-  const revenueChainSplit = `Base ${perChain.base.grossRevenue} -- Tempo ${perChain.tempo.grossRevenue}`;
-  const invocationChainSplit = `Base ${perChain.base.invocationCount.toLocaleString()} -- Tempo ${perChain.tempo.invocationCount.toLocaleString()}`;
+  const revenueChainSplit = `Base ${perChain.base.grossRevenue} · Tempo ${perChain.tempo.grossRevenue}`;
+  const invocationChainSplit = `Base ${perChain.base.invocationCount.toLocaleString()} · Tempo ${perChain.tempo.invocationCount.toLocaleString()}`;
 
   return (
     <div className="space-y-4">

@@ -142,7 +142,6 @@ export async function simulatePolicyChange(options: {
 
   const gasConfig = await getGasStrategy().getGasConfig(
     provider,
-    "manual",
     unitsGas,
     chainId
   );

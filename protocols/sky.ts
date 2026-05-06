@@ -5,7 +5,7 @@ export default defineProtocol({
   name: "Sky",
   slug: "sky",
   description:
-    "Sky Protocol (formerly MakerDAO) -- USDS savings, token management, and DAI/MKR migration",
+    "Sky Protocol (formerly MakerDAO): USDS savings, token management, and DAI/MKR migration",
   website: "https://sky.money",
   icon: "/protocols/sky.png",
 

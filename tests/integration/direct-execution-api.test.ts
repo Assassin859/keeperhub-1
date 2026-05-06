@@ -65,6 +65,15 @@ vi.mock("@/app/api/execute/_lib/wallet-check", () => ({
   requireWallet: vi.fn().mockResolvedValue(null),
 }));
 
+vi.mock("@/lib/billing/execution-guard", () => ({
+  enforceExecutionLimit: vi
+    .fn()
+    .mockResolvedValue({ blocked: false, limitResult: null }),
+  EXECUTION_LIMIT_ERROR: "Monthly execution limit exceeded",
+  EXECUTION_DEBT_ERROR:
+    "Executions suspended due to unpaid overage invoice. Please update your payment method.",
+}));
+
 vi.mock("@/lib/utils", () => ({
   getErrorMessage: (err: unknown) =>
     err instanceof Error ? err.message : String(err),
@@ -484,6 +493,74 @@ describe("Direct Execution API", () => {
       const data = await response.json();
       expect(data.error).toBe("Daily spending cap exceeded");
     });
+
+    it("returns 400 with priorityFeeGwei field when value is non-numeric", async () => {
+      setupPassingGuards();
+
+      const response = await contractCallPOST(
+        postRequest("/contract-call", {
+          ...validReadBody,
+          priorityFeeGwei: "abc",
+        })
+      );
+
+      expect(response.status).toBe(400);
+      const data = await response.json();
+      expect(data.field).toBe("priorityFeeGwei");
+      expect(data.error).toBe("Invalid field value");
+    });
+
+    it("returns 400 with priorityFeeGwei field when value is empty string", async () => {
+      setupPassingGuards();
+
+      const response = await contractCallPOST(
+        postRequest("/contract-call", {
+          ...validReadBody,
+          priorityFeeGwei: "",
+        })
+      );
+
+      expect(response.status).toBe(400);
+      const data = await response.json();
+      expect(data.field).toBe("priorityFeeGwei");
+      expect(data.error).toBe("Invalid field type");
+    });
+
+    it("returns 400 with priorityFeeGwei field when value is non-positive", async () => {
+      setupPassingGuards();
+
+      const response = await contractCallPOST(
+        postRequest("/contract-call", {
+          ...validReadBody,
+          priorityFeeGwei: "-1",
+        })
+      );
+
+      expect(response.status).toBe(400);
+      const data = await response.json();
+      expect(data.field).toBe("priorityFeeGwei");
+    });
+
+    it("forwards priorityFeeGwei to writeContractCore for write calls", async () => {
+      setupPassingGuards();
+      mocks.writeContractCore.mockResolvedValue({
+        success: true,
+        transactionHash: "0xwrite",
+        transactionLink: "https://etherscan.io/tx/0xwrite",
+      });
+
+      const response = await contractCallPOST(
+        postRequest("/contract-call", {
+          ...validWriteBody,
+          priorityFeeGwei: "5",
+        })
+      );
+
+      expect(response.status).toBe(202);
+      expect(mocks.writeContractCore).toHaveBeenCalledWith(
+        expect.objectContaining({ priorityFeeGwei: "5" })
+      );
+    });
   });
 
   // ==========================================================================
@@ -687,6 +764,22 @@ describe("Direct Execution API", () => {
       expect(data.transactionLink).toBe("https://etherscan.io/tx/0xabc");
       expect(data.createdAt).toBe(now.toISOString());
       expect(data.completedAt).toBe(now.toISOString());
+    });
+
+    it("route exports GET only -- non-GET methods are intentionally 405 (Next.js auto-handler)", async () => {
+      // Locks in the route's GET-only design. If a future change adds POST
+      // (e.g. to "fix" 405s reported from upstream), this test forces the
+      // change to be deliberate. The 405s users see are not a server bug --
+      // a non-GET request is reaching the route from somewhere upstream.
+      const routeModule = await import(
+        "@/app/api/execute/[executionId]/status/route"
+      );
+
+      expect(typeof routeModule.GET).toBe("function");
+      expect(routeModule).not.toHaveProperty("POST");
+      expect(routeModule).not.toHaveProperty("PUT");
+      expect(routeModule).not.toHaveProperty("PATCH");
+      expect(routeModule).not.toHaveProperty("DELETE");
     });
   });
 

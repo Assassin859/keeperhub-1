@@ -25,10 +25,7 @@
  *   hmacSecret in logSystemError metadata, and NEVER forward error.message
  *   to the client.
  */
-import {
-  TurnkeyActivityError,
-  TurnkeyRequestError,
-} from "@turnkey/sdk-server";
+import { TurnkeyActivityError, TurnkeyRequestError } from "@turnkey/sdk-server";
 import { provisionAgenticWallet } from "@/lib/agentic-wallet/provision";
 import { incrementAndCheck } from "@/lib/agentic-wallet/rate-limit";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
@@ -39,8 +36,7 @@ export const dynamic = "force-dynamic";
 const RATE_LIMIT_MAX = 5;
 
 function getPeerIp(request: Request): string | null {
-  // Vercel populates NextRequest.ip at runtime; tests/dev fall back to
-  // X-Real-IP which the ingress sets to the true TCP peer.
+  // The ingress sets X-Real-IP to the true TCP peer.
   const ip = (request as unknown as { ip?: string }).ip;
   return ip ?? request.headers.get("x-real-ip");
 }

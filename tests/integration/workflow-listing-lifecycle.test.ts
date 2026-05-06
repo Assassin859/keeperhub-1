@@ -24,6 +24,7 @@ type WorkflowRow = {
   category: string | null;
   chain: string | null;
   workflowType: "read" | "write";
+  nodes: unknown[];
   createdAt: Date;
   updatedAt: Date;
 };
@@ -83,12 +84,18 @@ vi.mock("@/lib/db/schema", () => ({
     category: "category",
     chain: "chain",
     workflowType: "workflowType",
+    nodes: "nodes",
     createdAt: "createdAt",
     updatedAt: "updatedAt",
   },
 }));
 
-const { listWorkflow, unlistWorkflow, getWorkflowListing } = await import("@/lib/mcp/listing");
+const {
+  listWorkflow,
+  unlistWorkflow,
+  getWorkflowListing,
+  updateWorkflowListing,
+} = await import("@/lib/mcp/listing");
 
 const WORKFLOW_ID = "wf-test-001";
 const ORG_ID = "org-test-001";
@@ -105,18 +112,23 @@ describe("workflow listing lifecycle", () => {
       priceUsdcPerCall: null,
       name: "Test Workflow",
       description: null,
-      inputSchema: null,
+      // Listed workflows must declare an inputSchema (enforced by listWorkflow).
+      // An empty object is fine for zero-input workflows.
+      inputSchema: { type: "object" },
       outputMapping: null,
       category: null,
       chain: null,
       workflowType: "read",
+      nodes: [],
       createdAt: new Date("2026-01-01"),
       updatedAt: new Date("2026-01-01"),
     };
   });
 
   it("list: sets isListed=true, assigns listedSlug, sets listedAt", async () => {
-    const result = await listWorkflow(WORKFLOW_ID, ORG_ID, { slug: "my-test-workflow" });
+    const result = await listWorkflow(WORKFLOW_ID, ORG_ID, {
+      slug: "my-test-workflow",
+    });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.listing.isListed).toBe(true);
@@ -133,7 +145,9 @@ describe("workflow listing lifecycle", () => {
     if (!result.ok) return;
     expect(result.listing.isListed).toBe(false);
     expect(result.listing.listedSlug).toBe("my-test-workflow");
-    expect(result.listing.listedAt?.getTime()).toBe(listingTimestamp?.getTime());
+    expect(result.listing.listedAt?.getTime()).toBe(
+      listingTimestamp?.getTime()
+    );
   });
 
   it("getWorkflowListing: returns NOT_FOUND for unlisted workflow even when listedSlug is preserved (sticky-slug)", async () => {
@@ -155,6 +169,236 @@ describe("workflow listing lifecycle", () => {
     expect(unlistedRead.ok).toBe(false);
     if (unlistedRead.ok) return;
     expect(unlistedRead.error).toBe("NOT_FOUND");
+  });
+
+  it("list: rejects workflowType='write' when no node has a write actionType", async () => {
+    workflowState.nodes = [
+      {
+        id: "read-1",
+        data: {
+          actionType: "web3/read-contract",
+          config: { contractAddress: "0xabc" },
+        },
+      },
+    ];
+
+    const result = await listWorkflow(WORKFLOW_ID, ORG_ID, {
+      slug: "broken-write",
+      workflowType: "write",
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBe("MISSING_WRITE_ACTION");
+    expect(workflowState.isListed).toBe(false);
+  });
+
+  it("list: succeeds when workflowType='write' and a web3/write-contract node exists", async () => {
+    workflowState.nodes = [
+      {
+        id: "write-1",
+        data: {
+          actionType: "web3/write-contract",
+          config: {
+            contractAddress: "0xabc",
+            network: "16602",
+            abi: "[]",
+            abiFunction: "transfer",
+          },
+        },
+      },
+    ];
+
+    const result = await listWorkflow(WORKFLOW_ID, ORG_ID, {
+      slug: "good-write",
+      workflowType: "write",
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.listing.isListed).toBe(true);
+    expect(result.listing.workflowType).toBe("write");
+  });
+
+  it("update on a LISTED write workflow with no write node returns MISSING_WRITE_ACTION", async () => {
+    // Listed write workflow whose nodes were swapped out for read-only after
+    // listing -- updateWorkflowListing must catch the broken state.
+    workflowState.isListed = true;
+    workflowState.listedSlug = "live-write";
+    workflowState.workflowType = "write";
+    workflowState.nodes = [
+      {
+        id: "read-1",
+        data: {
+          actionType: "web3/read-contract",
+          config: { contractAddress: "0xabc" },
+        },
+      },
+    ];
+
+    const result = await updateWorkflowListing(WORKFLOW_ID, ORG_ID, {
+      category: "test",
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBe("MISSING_WRITE_ACTION");
+  });
+
+  it("update on an UNLISTED draft skips the MISSING_WRITE_ACTION guard", async () => {
+    // Drafts can be saved with workflow_type=write while still under construction.
+    // The guard only fires on listed rows.
+    workflowState.isListed = false;
+    workflowState.workflowType = "write";
+    workflowState.nodes = [];
+
+    const result = await updateWorkflowListing(WORKFLOW_ID, ORG_ID, {
+      category: "test",
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("list: rejects INPUT_SCHEMA_REQUIRED when neither row nor metadata declares inputSchema", async () => {
+    workflowState.inputSchema = null;
+
+    const result = await listWorkflow(WORKFLOW_ID, ORG_ID, {
+      slug: "no-schema",
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBe("INPUT_SCHEMA_REQUIRED");
+    expect(workflowState.isListed).toBe(false);
+  });
+
+  it("list: accepts inputSchema supplied via metadata even when row is null", async () => {
+    workflowState.inputSchema = null;
+
+    const result = await listWorkflow(WORKFLOW_ID, ORG_ID, {
+      slug: "schema-via-metadata",
+      inputSchema: { type: "object" },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.listing.isListed).toBe(true);
+    expect(result.listing.inputSchema).toEqual({ type: "object" });
+  });
+
+  it("list: rejects INVALID_TEMPLATE_LITERALS when a node config has a bare @-literal", async () => {
+    workflowState.nodes = [
+      {
+        id: "read-1",
+        type: "action",
+        data: {
+          label: "Trapped autocomplete",
+          type: "action",
+          config: {
+            actionType: "web3/read-contract",
+            address: "@40",
+            backup: 'fallback: "@trigger-2"',
+          },
+        },
+      },
+    ];
+
+    const result = await listWorkflow(WORKFLOW_ID, ORG_ID, {
+      slug: "trapped-autocomplete",
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBe("INVALID_TEMPLATE_LITERALS");
+    // details.literals surfaces the offending tokens so the route can return
+    // them in the 422 body for debuggability.
+    expect(result.details?.literals).toEqual(
+      expect.arrayContaining(["@40", "@trigger-2"])
+    );
+    expect(workflowState.isListed).toBe(false);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // updateWorkflowListing defense-in-depth: refuses to apply curator metadata
+  // changes if the listed workflow's nodes/schema were corrupted out-of-band.
+  // ──────────────────────────────────────────────────────────────────────
+
+  it("updateWorkflowListing: rejects INVALID_TEMPLATE_LITERALS when listed workflow has bare-@ in nodes", async () => {
+    // Out-of-band corruption: a script or admin tool persisted bad nodes
+    // bypassing the workflows-PATCH gate. The curator PATCH must refuse to
+    // re-emphasize the broken listing via metadata changes.
+    workflowState.isListed = true;
+    workflowState.listedSlug = "live-wf";
+    workflowState.listedAt = new Date();
+    workflowState.nodes = [
+      {
+        id: "read-1",
+        type: "action",
+        data: {
+          type: "action",
+          config: { actionType: "web3/read-contract", address: "@40" },
+        },
+      },
+    ];
+
+    const result = await updateWorkflowListing(WORKFLOW_ID, ORG_ID, {
+      category: "defi",
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBe("INVALID_TEMPLATE_LITERALS");
+    expect(result.details?.literals).toContain("@40");
+  });
+
+  it("updateWorkflowListing: rejects INPUT_SCHEMA_REQUIRED when listed workflow has null inputSchema", async () => {
+    workflowState.isListed = true;
+    workflowState.listedSlug = "live-wf";
+    workflowState.listedAt = new Date();
+    workflowState.inputSchema = null;
+
+    const result = await updateWorkflowListing(WORKFLOW_ID, ORG_ID, {
+      category: "defi",
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBe("INPUT_SCHEMA_REQUIRED");
+  });
+
+  it("updateWorkflowListing: accepts schema supplied via patch even when row is null", async () => {
+    workflowState.isListed = true;
+    workflowState.listedSlug = "live-wf";
+    workflowState.listedAt = new Date();
+    workflowState.inputSchema = null;
+
+    const result = await updateWorkflowListing(WORKFLOW_ID, ORG_ID, {
+      inputSchema: { type: "object" },
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("updateWorkflowListing: skips defense-in-depth gates on unlisted draft", async () => {
+    // Drafts can be in any state — only listed rows trigger the validators.
+    workflowState.isListed = false;
+    workflowState.inputSchema = null;
+    workflowState.nodes = [
+      {
+        id: "read-1",
+        type: "action",
+        data: {
+          type: "action",
+          config: { actionType: "web3/read-contract", address: "@40" },
+        },
+      },
+    ];
+
+    const result = await updateWorkflowListing(WORKFLOW_ID, ORG_ID, {
+      category: "defi",
+    });
+
+    expect(result.ok).toBe(true);
   });
 
   it("relist: preserves listedSlug, refreshes listedAt, isListed=true", async () => {

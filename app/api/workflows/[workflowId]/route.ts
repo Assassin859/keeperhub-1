@@ -1,13 +1,20 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
+import { revalidateTag } from "next/cache";
 import { NextResponse } from "next/server";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { projects, publicTags, tags, workflowExecutions, workflowPublicTags, workflows } from "@/lib/db/schema";
+import { findFirstWriteActionNode } from "@/lib/mcp/calldata";
+import {
+  findBareAtLiterals,
+  isInputSchemaPresent,
+} from "@/lib/mcp/listing-validators";
 import { syncWorkflowSchedule } from "@/lib/schedule-service";
 import { sanitizeDescription } from "@/lib/sanitize-description";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
+import { isReservedSlug } from "@/lib/workflow/reserved-slugs";
 async function fetchWorkflowPublicTags(
   workflowId: string
 ): Promise<Array<{ id: string; name: string; slug: string }>> {
@@ -233,6 +240,17 @@ async function handlePostUpdateSideEffects(
       .where(eq(workflowPublicTags.workflowId, workflowId));
   }
 
+  // Marketplace leaderboard caches tags + isListed for 60s. Drop the cache
+  // whenever a change might have flipped a row in or out of the listed set,
+  // or rewritten the tag column on a still-listed row.
+  if (
+    body.isListed !== undefined ||
+    body.visibility !== undefined ||
+    body.priceUsdcPerCall !== undefined
+  ) {
+    revalidateTag("marketplace", "max");
+  }
+
   if (body.nodes !== undefined) {
     const syncResult = await syncWorkflowSchedule(
       workflowId,
@@ -337,6 +355,22 @@ export async function PATCH(
       }
     }
 
+    // Reserved-slug guard (HUB-11): reject listed slugs that collide with reserved
+    // path segments under /hub/tags/[tag]. Applies only to non-null new values.
+    if (
+      body.listedSlug !== undefined &&
+      body.listedSlug !== null &&
+      typeof body.listedSlug === "string" &&
+      isReservedSlug(body.listedSlug)
+    ) {
+      return NextResponse.json(
+        {
+          error: `"${body.listedSlug}" is a reserved word and cannot be used.`,
+        },
+        { status: 400 }
+      );
+    }
+
     // Slug immutability: reject changes to listedSlug when workflow is already listed
     if (
       body.listedSlug !== undefined &&
@@ -355,6 +389,123 @@ export async function PATCH(
     // Set listedAt server-side on first listing (never from client, never cleared on unlist)
     if (body.isListed === true && existingWorkflow.listedAt === null) {
       updateData.listedAt = new Date();
+    }
+
+    // Re-run the publish-time gates from /listing/route.ts when this PATCH
+    // either (a) edits a workflow that's already listed or (b) is the act of
+    // listing it. This route is a backdoor around the dedicated listing
+    // curator route — without these checks an author could publish a clean
+    // workflow via /listing then PATCH `nodes` here to introduce a bare-@
+    // literal, leaving a broken listing live in the bazaar.
+    //
+    // Field-touched-only semantics: stay backwards-compatible with workflows
+    // listed before the gates existed by only validating the field the PATCH
+    // actually changes. Legacy listings with null inputSchema continue to
+    // work until the next edit that touches THAT field. The exception is a
+    // fresh isListed=true transition through this route, which validates the
+    // full final state (effectively a publish event).
+    //
+    // Unlist-and-clean-up bypass: a PATCH that explicitly sets isListed=false
+    // is leaving the listed surface — the bazaar will never see the
+    // post-patch state, so there's no value in blocking the user from fixing
+    // a corrupted workflow on the way out. Skip the gates in that case.
+    //
+    // The 422 messages here intentionally diverge from the listing curator's
+    // (app/api/mcp/workflows/[slug]/listing/route.ts:mapListingError) — they
+    // include "or unlist the workflow before saving these changes" as
+    // context-aware UX guidance. The curator-publish path has no such
+    // option, so its messages don't mention unlisting.
+    const isTransitioningToUnlisted =
+      body.isListed === false && existingWorkflow.isListed === true;
+    const isTransitioningToListed =
+      body.isListed === true && existingWorkflow.isListed !== true;
+    const willBeListed =
+      !isTransitioningToUnlisted &&
+      (isTransitioningToListed || existingWorkflow.isListed === true);
+
+    if (willBeListed) {
+      const checkNodes =
+        updateData.nodes !== undefined || isTransitioningToListed;
+      const finalNodes =
+        updateData.nodes !== undefined
+          ? updateData.nodes
+          : existingWorkflow.nodes;
+      const checkSchema =
+        updateData.inputSchema !== undefined || isTransitioningToListed;
+      const finalSchema =
+        updateData.inputSchema !== undefined
+          ? updateData.inputSchema
+          : existingWorkflow.inputSchema;
+
+      // Gate ordering matches the publish path (lib/mcp/listing.ts::listWorkflow):
+      // write-action -> bare-@ -> input-schema. Same DB state therefore yields
+      // the same error code regardless of which gate-bearing route the caller
+      // hits, which keeps client-side error handling consistent.
+      //
+      // workflowType is curator-only — it's not in `buildUpdateData`'s field
+      // allowlist (lines 156-170 above), so a body's `workflowType` is silently
+      // dropped at the persistence layer. We read it directly from
+      // `existingWorkflow.workflowType` (no fallback chain) so the gate truly
+      // reflects what will be persisted. Type changes flow through
+      // updateWorkflowListing (lib/mcp/listing.ts), which is unconditionally
+      // strict.
+      // `finalNodes` is `unknown` (updateData.nodes is unknown after the
+      // generic Record cast). Both code paths actually hold an array — the
+      // body branch went through `sanitizeWorkflowData`, the existing branch
+      // is `nodes` declared `$type<any[]>` in lib/db/schema.ts. The cast is
+      // honest and matches how lib/mcp/listing.ts:151 calls the same function.
+      if (
+        checkNodes &&
+        existingWorkflow.workflowType === "write" &&
+        findFirstWriteActionNode(finalNodes as unknown[]) === undefined
+      ) {
+        return NextResponse.json(
+          {
+            error: "MISSING_WRITE_ACTION",
+            message:
+              "Workflows listed as workflowType='write' must contain at least one write-contract or protocol-write action node. Add the action back, or unlist the workflow before saving these changes.",
+          },
+          { status: 422 }
+        );
+      }
+
+      if (checkNodes) {
+        const literals = findBareAtLiterals(finalNodes);
+        if (literals.length > 0) {
+          return NextResponse.json(
+            {
+              error: "INVALID_TEMPLATE_LITERALS",
+              message:
+                "Listed workflow contains a bare `@<word>` literal in a node config field outside a `{{...}}` template wrapper. Replace it with a `{{@nodeId:Label.field}}` reference, or unlist the workflow before saving these changes.",
+              literals,
+            },
+            { status: 422 }
+          );
+        }
+      }
+      if (checkSchema && !isInputSchemaPresent(finalSchema)) {
+        return NextResponse.json(
+          {
+            error: "INPUT_SCHEMA_REQUIRED",
+            message:
+              'Listed workflows must declare an `inputSchema`. Set it to a JSON-schema-shaped object — `{"type": "object"}` is fine for workflows that take no inputs — or unlist the workflow before saving these changes.',
+          },
+          { status: 422 }
+        );
+      }
+    }
+
+    // Bump listingVersion when a listed (or about-to-be-listed) workflow has
+    // its schema-defining fields changed via this route. Keeps per-workflow
+    // MCP consumers in sync without a dedicated version endpoint.
+    if (
+      willBeListed &&
+      (body.nodes !== undefined ||
+        body.edges !== undefined ||
+        body.inputSchema !== undefined ||
+        body.outputMapping !== undefined)
+    ) {
+      updateData.listingVersion = sql`${workflows.listingVersion} + 1`;
     }
 
     let updatedWorkflow: typeof workflows.$inferSelect;

@@ -4,7 +4,7 @@ import { customAlphabet } from "nanoid";
 const nanoid = customAlphabet("0123456789abcdefghijklmnopqrstuvwxyz", 21);
 
 /**
- * Generate a unique lowercase ID suitable for database records and Vercel project names
+ * Generate a unique lowercase ID suitable for database records and external resource names.
  */
 export function generateId(): string {
   return nanoid();

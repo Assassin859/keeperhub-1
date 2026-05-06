@@ -1,10 +1,11 @@
 import { defineProtocol } from "@/lib/protocol-registry";
+import aaveV3PoolAbi from "./abis/aave-v3-pool.json";
 
 export default defineProtocol({
   name: "Aave V3",
   slug: "aave-v3",
   description:
-    "Aave V3 lending and borrowing protocol -- supply, borrow, repay, and monitor account health",
+    "Aave V3 lending and borrowing protocol: supply, borrow, repay, and monitor account health",
   website: "https://aave.com",
   icon: "/protocols/aave.png",
 
@@ -23,7 +24,14 @@ export default defineProtocol({
         // Sepolia Testnet
         "11155111": "0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951",
       },
-      // Proxy contract -- ABI auto-resolved via abi-cache
+      // Aave V3 Pool is a custom upgradeable proxy
+      // (InitializableImmutableAdminUpgradeabilityProxy). Etherscan's
+      // getsourcecode does not flag it as a proxy and getabi returns the
+      // proxy's own ABI (admin/implementation/upgradeTo), so the
+      // auto-resolver fails to find pool functions on mainnet.
+      // Embed the implementation ABI inline so resolveAbi short-circuits
+      // via the "definition" source. KEEP-396.
+      abi: JSON.stringify(aaveV3PoolAbi),
     },
     poolDataProvider: {
       label: "Aave V3 Pool Data Provider",

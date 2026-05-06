@@ -5,7 +5,7 @@ import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { buildExecTransactionCalldata } from "@/lib/safe/allowance-module";
 import { buildExecTransactionWithRoleCalldata } from "@/lib/safe/zodiac-roles";
 import type { TransactionReceipt } from "@/lib/web3/chain-adapter/types";
-import { getGasStrategy, type TriggerType } from "@/lib/web3/gas-strategy";
+import { getGasStrategy } from "@/lib/web3/gas-strategy";
 import { getNonceManager, type NonceSession } from "@/lib/web3/nonce-manager";
 
 /**
@@ -32,7 +32,11 @@ export type ExecuteAsSafeRequest = {
 
 export type ExecuteAsSafeOptions = {
   chainId: number;
-  triggerType: TriggerType;
+  /**
+   * Retained for back-compat with safe-routing call sites that still pass it;
+   * no longer consumed by gasStrategy.getGasConfig (post-staging refactor).
+   */
+  triggerType?: string;
   workflowId?: string;
   rpcManager?: RpcProviderManager;
 };
@@ -82,7 +86,6 @@ export async function executeContractCallAsSafe(
 
   const gasConfig = await gasStrategy.getGasConfig(
     provider,
-    options.triggerType,
     estimatedGas,
     options.chainId
   );
@@ -195,7 +198,6 @@ export async function executeContractCallAsRole(
 
   const gasConfig = await gasStrategy.getGasConfig(
     provider,
-    options.triggerType,
     estimatedGas,
     options.chainId
   );
@@ -284,7 +286,6 @@ export async function executeNativeTransferAsRole(
 
   const gasConfig = await gasStrategy.getGasConfig(
     provider,
-    options.triggerType,
     estimatedGas,
     options.chainId
   );
@@ -374,7 +375,6 @@ export async function executeNativeTransferAsSafe(
 
   const gasConfig = await gasStrategy.getGasConfig(
     provider,
-    options.triggerType,
     estimatedGas,
     options.chainId
   );

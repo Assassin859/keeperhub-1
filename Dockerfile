@@ -45,6 +45,7 @@ COPY next.config.ts tsconfig.json package.json drizzle.config.ts ./
 COPY instrumentation.ts instrumentation-client.ts ./
 COPY sentry.server.config.ts sentry.edge.config.ts ./
 COPY postcss.config.mjs components.json ./
+COPY proxy.ts ./
 
 # Stage 2.5: Builder (runs Next.js build, only needed for runner stage)
 FROM source AS builder
@@ -79,8 +80,10 @@ ENV INCLUDE_TEST_ENDPOINTS=$INCLUDE_TEST_ENDPOINTS
 
 # Build the application with Turbopack (source maps generated but not uploaded).
 # Cache mount persists .next/cache across builds on the same BuildKit instance,
-# enabling Turbopack's incremental compilation.
-RUN --mount=type=cache,target=/app/.next/cache pnpm build
+# enabling Turbopack's incremental compilation. sharing=locked serialises
+# concurrent builders to prevent racing on Next.js cache writes when bake runs
+# multiple targets that share this stage.
+RUN --mount=type=cache,target=/app/.next/cache,sharing=locked pnpm build
 
 # Stage 2.5b: Sentry source map upload (side-effect only, not consumed by other stages)
 FROM builder AS sentry-upload

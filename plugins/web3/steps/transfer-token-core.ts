@@ -58,7 +58,6 @@ export type TransferTokenCoreInput = {
   strict?: boolean;
   _context?: {
     executionId?: string;
-    triggerType?: string;
     organizationId?: string;
   };
 };
@@ -326,7 +325,6 @@ export async function transferTokenCore(
     workflowId,
     chainId,
     rpcUrl,
-    triggerType: _context.triggerType as TransactionContext["triggerType"],
     rpcManager,
   };
 
@@ -485,7 +483,6 @@ export async function transferTokenCore(
           session,
           {
             chainId,
-            triggerType: txContext.triggerType ?? "manual",
             workflowId,
             rpcManager,
           }
@@ -504,7 +501,6 @@ export async function transferTokenCore(
           session,
           {
             chainId,
-            triggerType: txContext.triggerType ?? "manual",
             workflowId,
             rpcManager,
           }
@@ -520,7 +516,6 @@ export async function transferTokenCore(
           },
           session,
           {
-            triggerType: txContext.triggerType ?? "manual",
             gasOverrides: { multiplierOverride, gasLimitOverride },
             workflowId,
             rpcManager,

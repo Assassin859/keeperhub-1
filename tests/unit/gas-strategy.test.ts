@@ -51,7 +51,6 @@ import {
   getGasStrategy,
   resetGasStrategy,
   TransactionStuckError,
-  type TriggerType,
 } from "@/lib/web3/gas-strategy";
 
 // Helper to create mock provider
@@ -132,7 +131,6 @@ describe("AdaptiveGasStrategy", () => {
 
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "manual",
         BigInt(21_000),
         1
       );
@@ -153,7 +151,6 @@ describe("AdaptiveGasStrategy", () => {
 
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "scheduled", // Non time-sensitive
         BigInt(100_000),
         1
       );
@@ -161,80 +158,73 @@ describe("AdaptiveGasStrategy", () => {
       // With 2.0 multiplier, 100000 becomes 200000
       expect(config.gasLimit).toBe(BigInt(200_000));
     });
-
-    it("should use conservative multiplier for time-sensitive triggers", async () => {
-      const strategy = new AdaptiveGasStrategy({
-        gasLimitMultiplier: 2.0,
-        gasLimitMultiplierConservative: 2.5,
-      });
-      const provider = createMockProvider();
-
-      const config = await strategy.getGasConfig(
-        provider as unknown as import("ethers").Provider,
-        "event", // Time-sensitive
-        BigInt(100_000),
-        1
-      );
-
-      // With 2.5 conservative multiplier, 100000 becomes 250000
-      expect(config.gasLimit).toBe(BigInt(250_000));
-    });
   });
 
-  describe("trigger type handling", () => {
-    const triggerTypes: TriggerType[] = [
-      "event",
-      "webhook",
-      "scheduled",
-      "manual",
-    ];
-
-    it.each(
-      triggerTypes
-    )("should handle %s trigger type", async (triggerType) => {
+  describe("trigger-type independence (KEEP-384)", () => {
+    // Strategy must be a pure function of chain state, never of trigger type.
+    // The previous trigger-type branching produced inconsistent behavior:
+    // a workflow run via webhook would pay different fees than the same
+    // workflow run manually, and on near-zero base-fee chains it could
+    // produce maxPriorityFeePerGas > maxFeePerGas (invalid EIP-1559).
+    it("should produce a valid EIP-1559 fee pair on near-zero base-fee chains", async () => {
       const strategy = new AdaptiveGasStrategy();
-      const provider = createMockProvider();
+
+      // Sepolia-like quiet network: maxFeePerGas well below the chain's
+      // priority floor (0.1 gwei). Pre-fix, conservative path produced
+      // maxFeePerGas ~1.2M wei vs maxPriorityFeePerGas 100M wei — invalid.
+      const provider = createMockProvider({
+        maxFeePerGas: BigInt(1_023_481), // ~0.001 gwei
+        maxPriorityFeePerGas: BigInt(0), // Network priority hint near zero
+        feeHistory: {
+          // Volatile base fees so we hit the conservative path
+          baseFeePerGas: [
+            "0x174876e800",
+            "0x2e90edd000",
+            "0x4a817c8000",
+            "0x174876e800",
+            "0x5d21dba000",
+            "0x174876e800",
+            "0x2e90edd000",
+            "0x4a817c8000",
+            "0x174876e800",
+            "0x5d21dba000",
+            "0x2e90edd000",
+          ],
+          reward: new Array(10).fill(["0x3b9aca00"]),
+        },
+      });
 
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        triggerType,
         BigInt(21_000),
-        1
+        11_155_111 // Sepolia (minPriorityFeeGwei: 0.1)
       );
 
-      expect(config.gasLimit).toBeGreaterThan(BigInt(0));
-      expect(config.maxFeePerGas).toBeGreaterThan(BigInt(0));
+      expect(config.maxFeePerGas).toBeGreaterThanOrEqual(
+        config.maxPriorityFeePerGas
+      );
     });
 
-    it("should use conservative fees for event triggers", async () => {
+    it("should produce identical configs for different chain states across runs", async () => {
+      // Two runs on the same chain at the same network state must yield
+      // identical gas configs. Trigger type used to be an input that
+      // changed the answer; this verifies that's no longer the case.
       const strategy = new AdaptiveGasStrategy();
-      const provider = createMockProvider();
 
-      // Event trigger should NOT call fee history (goes straight to conservative)
-      const config = await strategy.getGasConfig(
-        provider as unknown as import("ethers").Provider,
-        "event",
+      const cfg1 = await strategy.getGasConfig(
+        createMockProvider() as unknown as import("ethers").Provider,
+        BigInt(21_000),
+        1
+      );
+      const cfg2 = await strategy.getGasConfig(
+        createMockProvider() as unknown as import("ethers").Provider,
         BigInt(21_000),
         1
       );
 
-      // Should call getFeeData for conservative estimate
-      expect(provider.getFeeData).toHaveBeenCalled();
-      expect(config.maxFeePerGas).toBeGreaterThan(BigInt(0));
-    });
-
-    it("should use conservative fees for webhook triggers", async () => {
-      const strategy = new AdaptiveGasStrategy();
-      const provider = createMockProvider();
-
-      await strategy.getGasConfig(
-        provider as unknown as import("ethers").Provider,
-        "webhook",
-        BigInt(21_000),
-        1
-      );
-
-      expect(provider.getFeeData).toHaveBeenCalled();
+      expect(cfg1.gasLimit).toBe(cfg2.gasLimit);
+      expect(cfg1.maxFeePerGas).toBe(cfg2.maxFeePerGas);
+      expect(cfg1.maxPriorityFeePerGas).toBe(cfg2.maxPriorityFeePerGas);
     });
   });
 
@@ -277,7 +267,6 @@ describe("AdaptiveGasStrategy", () => {
 
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "scheduled", // Would normally use optimized
         BigInt(21_000),
         1
       );
@@ -287,7 +276,7 @@ describe("AdaptiveGasStrategy", () => {
       expect(config.maxFeePerGas).toBeGreaterThan(BigInt(0));
     });
 
-    it("should use optimized fees for low volatility scheduled triggers", async () => {
+    it("should use optimized fees for low volatility", async () => {
       const strategy = new AdaptiveGasStrategy();
 
       // Low volatility: stable base fees
@@ -323,7 +312,6 @@ describe("AdaptiveGasStrategy", () => {
 
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "scheduled",
         BigInt(21_000),
         1
       );
@@ -341,7 +329,6 @@ describe("AdaptiveGasStrategy", () => {
 
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "manual",
         BigInt(21_000),
         1 // Ethereum mainnet
       );
@@ -356,12 +343,10 @@ describe("AdaptiveGasStrategy", () => {
       // Arbitrum uses 1.5x multiplier (L2 estimates are more accurate)
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "scheduled",
         BigInt(100_000),
         42_161 // Arbitrum One
       );
 
-      // Arbitrum uses 1.5x for non-conservative
       expect(config.gasLimit).toBe(BigInt(150_000));
     });
 
@@ -371,7 +356,6 @@ describe("AdaptiveGasStrategy", () => {
 
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "scheduled",
         BigInt(100_000),
         8453 // Base
       );
@@ -384,17 +368,32 @@ describe("AdaptiveGasStrategy", () => {
       const strategy = new AdaptiveGasStrategy();
       const provider = createMockProvider({
         maxPriorityFeePerGas: BigInt(1e9), // 1 gwei - below Polygon minimum
+        // Force volatile path so priority floor is exercised via conservative
+        feeHistory: {
+          baseFeePerGas: [
+            "0x174876e800",
+            "0x2e90edd000",
+            "0x4a817c8000",
+            "0x174876e800",
+            "0x5d21dba000",
+            "0x174876e800",
+            "0x2e90edd000",
+            "0x4a817c8000",
+            "0x174876e800",
+            "0x5d21dba000",
+            "0x2e90edd000",
+          ],
+          reward: new Array(10).fill(["0x3b9aca00"]),
+        },
       });
 
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "event",
         BigInt(21_000),
         137 // Polygon
       );
 
       // Polygon has 30 gwei minimum priority fee
-      // Conservative path adds 20%, so should clamp to at least 30 gwei
       expect(config.maxPriorityFeePerGas).toBeGreaterThanOrEqual(BigInt(30e9));
     });
 
@@ -406,7 +405,6 @@ describe("AdaptiveGasStrategy", () => {
 
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "scheduled",
         BigInt(100_000),
         999_999 // Unknown chain
       );
@@ -414,41 +412,137 @@ describe("AdaptiveGasStrategy", () => {
       // Should use default 2.0x multiplier
       expect(config.gasLimit).toBe(BigInt(200_000));
     });
+
+    it("should bypass priority-fee clamp when caller passes priorityFeeOverride", async () => {
+      const strategy = new AdaptiveGasStrategy();
+      // Provider returns a low tip the chain config would normally clamp up.
+      const provider = createMockProvider({
+        maxPriorityFeePerGas: BigInt(0.5e9),
+      });
+
+      const config = await strategy.getGasConfig(
+        provider as unknown as import("ethers").Provider,
+        BigInt(21_000),
+        1, // Ethereum mainnet (min floor 0.5 gwei)
+        undefined, // gasLimitMultiplierOverride
+        undefined, // gasLimitOverride
+        undefined, // rpcManager
+        BigInt(5e9) // priorityFeeOverride: 5 gwei -- well above any clamp
+      );
+
+      expect(config.maxPriorityFeePerGas).toBe(BigInt(5e9));
+      expect(config.maxFeePerGas).toBeGreaterThanOrEqual(BigInt(5e9));
+    });
+
+    // Both 0G chains share a hardcoded floor of 4 gwei
+    // (gasLimitMultiplier=2.0, minPriorityFeeGwei=4.0). Mainnet (16661)
+    // mirrors Galileo (16602) defensively until mainnet has measurable
+    // tx volume to sample independently.
+    it.each([
+      { chainId: 16_602, name: "0G Galileo" },
+      { chainId: 16_661, name: "0G Mainnet" },
+    ])("should enforce $name ($chainId) 4 gwei priority floor", async ({
+      chainId,
+    }) => {
+      const strategy = new AdaptiveGasStrategy();
+      // Provider returns 1.5 gwei tip -- well below 0G's 4 gwei inclusion
+      // threshold. Force volatile path so the conservative branch + clamp
+      // is exercised.
+      const provider = createMockProvider({
+        maxPriorityFeePerGas: BigInt(1.5e9),
+        feeHistory: {
+          baseFeePerGas: [
+            "0x174876e800",
+            "0x2e90edd000",
+            "0x4a817c8000",
+            "0x174876e800",
+            "0x5d21dba000",
+            "0x174876e800",
+            "0x2e90edd000",
+            "0x4a817c8000",
+            "0x174876e800",
+            "0x5d21dba000",
+            "0x2e90edd000",
+          ],
+          reward: new Array(10).fill(["0x3b9aca00"]),
+        },
+      });
+
+      const config = await strategy.getGasConfig(
+        provider as unknown as import("ethers").Provider,
+        BigInt(21_000),
+        chainId
+      );
+
+      expect(config.maxPriorityFeePerGas).toBeGreaterThanOrEqual(BigInt(4e9));
+      expect(config.gasLimit).toBe(BigInt(42_000));
+    });
   });
 
   describe("priority fee clamping", () => {
     it("should clamp priority fee to minimum", async () => {
       const strategy = new AdaptiveGasStrategy({
-        minPriorityFeeGwei: 1.0, // 1 gwei minimum
+        minPriorityFeeGwei: 1.0,
       });
 
       const provider = createMockProvider({
-        maxPriorityFeePerGas: BigInt(0.01e9), // Very low priority fee
+        maxPriorityFeePerGas: BigInt(0.01e9), // Very low
+        feeHistory: {
+          // Volatile fee history → conservative path
+          baseFeePerGas: [
+            "0x174876e800",
+            "0x2e90edd000",
+            "0x4a817c8000",
+            "0x174876e800",
+            "0x5d21dba000",
+            "0x174876e800",
+            "0x2e90edd000",
+            "0x4a817c8000",
+            "0x174876e800",
+            "0x5d21dba000",
+            "0x2e90edd000",
+          ],
+          reward: new Array(10).fill(["0x3b9aca00"]),
+        },
       });
 
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "event",
         BigInt(21_000),
         1
       );
 
-      // Should be clamped to at least minimum (accounting for chain config)
+      // Should be clamped to at least minimum (chain config takes precedence)
       expect(config.maxPriorityFeePerGas).toBeGreaterThanOrEqual(BigInt(0.5e9));
     });
 
     it("should clamp priority fee to maximum", async () => {
       const strategy = new AdaptiveGasStrategy({
-        maxPriorityFeeGwei: 100, // 100 gwei maximum
+        maxPriorityFeeGwei: 100,
       });
 
       const provider = createMockProvider({
         maxPriorityFeePerGas: BigInt(500e9), // 500 gwei - way too high
+        feeHistory: {
+          baseFeePerGas: [
+            "0x174876e800",
+            "0x2e90edd000",
+            "0x4a817c8000",
+            "0x174876e800",
+            "0x5d21dba000",
+            "0x174876e800",
+            "0x2e90edd000",
+            "0x4a817c8000",
+            "0x174876e800",
+            "0x5d21dba000",
+            "0x2e90edd000",
+          ],
+          reward: new Array(10).fill(["0x3b9aca00"]),
+        },
       });
 
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "event",
         BigInt(21_000),
         1
       );
@@ -463,9 +557,22 @@ describe("AdaptiveGasStrategy", () => {
       const strategy = new AdaptiveGasStrategy();
 
       const provider = createMockProvider({
-        maxFeePerGas: undefined,
-        maxPriorityFeePerGas: undefined,
-        gasPrice: BigInt(50e9), // 50 gwei legacy gas price
+        feeHistory: {
+          baseFeePerGas: [
+            "0x174876e800",
+            "0x2e90edd000",
+            "0x4a817c8000",
+            "0x174876e800",
+            "0x5d21dba000",
+            "0x174876e800",
+            "0x2e90edd000",
+            "0x4a817c8000",
+            "0x174876e800",
+            "0x5d21dba000",
+            "0x2e90edd000",
+          ],
+          reward: new Array(10).fill(["0x3b9aca00"]),
+        },
       });
 
       // Override getFeeData to return legacy format
@@ -477,7 +584,6 @@ describe("AdaptiveGasStrategy", () => {
 
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "event",
         BigInt(21_000),
         1
       );
@@ -485,6 +591,10 @@ describe("AdaptiveGasStrategy", () => {
       // Should derive EIP-1559 params from legacy gas price
       expect(config.maxFeePerGas).toBeGreaterThan(BigInt(0));
       expect(config.maxPriorityFeePerGas).toBeGreaterThan(BigInt(0));
+      // Legacy fallback must also satisfy the EIP-1559 invariant
+      expect(config.maxFeePerGas).toBeGreaterThanOrEqual(
+        config.maxPriorityFeePerGas
+      );
     });
   });
 
@@ -498,7 +608,6 @@ describe("AdaptiveGasStrategy", () => {
 
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "scheduled", // Would normally use optimized path
         BigInt(21_000),
         1
       );
@@ -549,7 +658,6 @@ describe("AdaptiveGasStrategy", () => {
 
       await strategy.getGasConfig(
         stableProvider as unknown as import("ethers").Provider,
-        "scheduled",
         BigInt(21_000),
         1
       );
@@ -568,7 +676,6 @@ describe("AdaptiveGasStrategy", () => {
 
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "manual",
         BigInt(100_000),
         1,
         3.0
@@ -576,25 +683,6 @@ describe("AdaptiveGasStrategy", () => {
 
       // Override 3.0x should take precedence over default 2.0x
       expect(config.gasLimit).toBe(BigInt(300_000));
-    });
-
-    it("should use override multiplier even for time-sensitive triggers", async () => {
-      const strategy = new AdaptiveGasStrategy({
-        gasLimitMultiplier: 2.0,
-        gasLimitMultiplierConservative: 2.5,
-      });
-      const provider = createMockProvider();
-
-      const config = await strategy.getGasConfig(
-        provider as unknown as import("ethers").Provider,
-        "event",
-        BigInt(100_000),
-        1,
-        4.0
-      );
-
-      // Override 4.0x should take precedence over conservative 2.5x
-      expect(config.gasLimit).toBe(BigInt(400_000));
     });
 
     it("should ignore override when zero", async () => {
@@ -605,7 +693,6 @@ describe("AdaptiveGasStrategy", () => {
 
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "scheduled",
         BigInt(100_000),
         1,
         0
@@ -623,7 +710,6 @@ describe("AdaptiveGasStrategy", () => {
 
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "scheduled",
         BigInt(100_000),
         1,
         -1.5
@@ -641,7 +727,6 @@ describe("AdaptiveGasStrategy", () => {
 
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "scheduled",
         BigInt(100_000),
         1,
         undefined
@@ -659,7 +744,6 @@ describe("AdaptiveGasStrategy", () => {
 
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "manual",
         BigInt(100_000),
         1,
         50.0
@@ -677,7 +761,6 @@ describe("AdaptiveGasStrategy", () => {
 
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "scheduled",
         BigInt(100_000),
         1,
         Number.NaN
@@ -695,7 +778,6 @@ describe("AdaptiveGasStrategy", () => {
 
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "scheduled",
         BigInt(100_000),
         1,
         0.5
@@ -717,7 +799,6 @@ describe("AdaptiveGasStrategy", () => {
 
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "manual",
         BigInt(100_000),
         1,
         undefined,
@@ -736,7 +817,6 @@ describe("AdaptiveGasStrategy", () => {
 
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "manual",
         BigInt(100_000),
         1,
         5.0,
@@ -755,7 +835,6 @@ describe("AdaptiveGasStrategy", () => {
 
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "scheduled",
         BigInt(100_000),
         1,
         undefined,
@@ -774,7 +853,6 @@ describe("AdaptiveGasStrategy", () => {
 
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "scheduled",
         BigInt(100_000),
         1,
         undefined,
@@ -785,32 +863,12 @@ describe("AdaptiveGasStrategy", () => {
       expect(config.gasLimit).toBe(BigInt(200_000));
     });
 
-    it("should work with absolute override for time-sensitive triggers", async () => {
-      const strategy = new AdaptiveGasStrategy({
-        gasLimitMultiplierConservative: 2.5,
-      });
-      const provider = createMockProvider();
-
-      const config = await strategy.getGasConfig(
-        provider as unknown as import("ethers").Provider,
-        "event",
-        BigInt(100_000),
-        1,
-        undefined,
-        BigInt(150_000)
-      );
-
-      // Absolute override bypasses trigger-type-based multiplier selection
-      expect(config.gasLimit).toBe(BigInt(150_000));
-    });
-
     it("should still calculate fees normally when using absolute gas limit", async () => {
       const strategy = new AdaptiveGasStrategy();
       const provider = createMockProvider();
 
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "manual",
         BigInt(100_000),
         1,
         undefined,
@@ -834,7 +892,6 @@ describe("AdaptiveGasStrategy", () => {
       const largeEstimate = BigInt("5000000"); // 5M gas
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "scheduled",
         largeEstimate,
         1
       );
@@ -850,7 +907,6 @@ describe("AdaptiveGasStrategy", () => {
 
       const config = await strategy.getGasConfig(
         provider as unknown as import("ethers").Provider,
-        "scheduled",
         BigInt(100_000),
         42_161 // Arbitrum uses 1.5x
       );

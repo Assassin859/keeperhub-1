@@ -110,6 +110,18 @@ target "workflow-runner" {
   context    = "."
   dockerfile = "Dockerfile"
   target     = "workflow-runner"
+  # Args mirror "app" so BuildKit deduplicates the shared "builder" stage
+  # across targets and runs `pnpm build` once. Divergent args here cause
+  # parallel builder invocations that race on the .next/cache mount.
+  args = {
+    NEXT_PUBLIC_AUTH_PROVIDERS    = NEXT_PUBLIC_AUTH_PROVIDERS
+    NEXT_PUBLIC_GITHUB_CLIENT_ID = NEXT_PUBLIC_GITHUB_CLIENT_ID
+    NEXT_PUBLIC_GOOGLE_CLIENT_ID = NEXT_PUBLIC_GOOGLE_CLIENT_ID
+    NEXT_PUBLIC_BILLING_ENABLED  = NEXT_PUBLIC_BILLING_ENABLED
+    NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED = NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED
+    NEXT_PUBLIC_SENTRY_DSN       = NEXT_PUBLIC_SENTRY_DSN
+    INCLUDE_TEST_ENDPOINTS       = INCLUDE_TEST_ENDPOINTS
+  }
   tags = compact([
     "${ECR_REGISTRY}/${ECR_REPO}:workflow-runner-${IMAGE_TAG}",
     "${ECR_REGISTRY}/${ECR_REPO}:workflow-runner-latest",

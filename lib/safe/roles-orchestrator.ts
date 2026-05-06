@@ -635,7 +635,6 @@ export async function installRolesWithInitialConfig(
     executionId: `safe-roles-install-${generateId()}`,
     chainId,
     rpcUrl,
-    triggerType: "manual",
     rpcManager,
   };
 
@@ -1291,7 +1290,6 @@ export async function updateRolesConfig(
     executionId: `safe-roles-update-${generateId()}`,
     chainId,
     rpcUrl,
-    triggerType: "manual",
     rpcManager,
   };
 
@@ -1845,7 +1843,6 @@ export async function setRoleTokenAllowance(
     executionId: `safe-roles-allowance-set-${generateId()}`,
     chainId,
     rpcUrl,
-    triggerType: "manual",
     rpcManager,
   };
 
@@ -1992,7 +1989,6 @@ export async function revokeRoleTokenAllowance(input: {
     executionId: `safe-roles-allowance-revoke-${generateId()}`,
     chainId,
     rpcUrl,
-    triggerType: "manual",
     rpcManager,
   };
 

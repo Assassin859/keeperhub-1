@@ -4,7 +4,7 @@ export default defineProtocol({
   name: "CoW Swap",
   slug: "cowswap",
   description:
-    "CoW Protocol -- batch auction DEX for MEV-protected trades, order pre-signing, and conditional orders",
+    "CoW Protocol: batch auction DEX for MEV-protected trades, order pre-signing, and conditional orders",
   website: "https://cow.fi",
   icon: "/protocols/cowswap.png",
 

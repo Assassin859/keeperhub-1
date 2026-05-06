@@ -25,7 +25,26 @@ const versionedBodySchema = z
   .object({ version: z.unknown() })
   .passthrough();
 
+const MAX_IMPORT_BYTES = 1_048_576; // 1 MB — locked by CONTEXT.md (D-04)
+
 export async function POST(request: Request): Promise<NextResponse> {
+  // SEC-02: Reject oversized payloads BEFORE parsing the body. Content-Length
+  // is advisory (a hostile client may omit it), so this is a fast-fail path,
+  // not the only defense. The Zod .max() caps in workflowExportV1Schema are
+  // the ultimate backstop.
+  const contentLengthHeader = request.headers.get("content-length");
+  if (contentLengthHeader !== null) {
+    const contentLength = Number.parseInt(contentLengthHeader, 10);
+    if (Number.isFinite(contentLength) && contentLength > MAX_IMPORT_BYTES) {
+      return NextResponse.json(
+        {
+          error: `Import too large: ${contentLength} bytes > ${MAX_IMPORT_BYTES} bytes`,
+        },
+        { status: 413 }
+      );
+    }
+  }
+
   let authContext: DualAuthContext | null = null;
   try {
     authContext = await getDualAuthContext(request);

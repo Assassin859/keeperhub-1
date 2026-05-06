@@ -2,6 +2,7 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 import { resolveAbi } from "@/lib/abi/cache";
+import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import { getErrorMessage } from "@/lib/utils";
 import { readContractCore } from "@/plugins/web3/steps/read-contract-core";
@@ -150,6 +151,11 @@ export async function POST(request: Request): Promise<NextResponse> {
       { error: "Rate limit exceeded" },
       { status: 429, headers: { "Retry-After": String(rateLimit.retryAfter) } }
     );
+  }
+
+  const executionGuard = await enforceExecutionLimit(apiKeyCtx.organizationId);
+  if (executionGuard.blocked) {
+    return executionGuard.response;
   }
 
   let body: Record<string, unknown>;

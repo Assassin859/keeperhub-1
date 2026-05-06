@@ -1,4 +1,4 @@
-import { isNotNull, relations } from "drizzle-orm";
+import { isNotNull, relations, sql } from "drizzle-orm";
 import {
   boolean,
   index,
@@ -239,6 +239,8 @@ export const workflows = pgTable(
       .notNull(),
     category: text("category"),
     chain: text("chain"),
+    // v1.11: per-workflow MCP server versioning (incremented on listing schema changes)
+    listingVersion: integer("listing_version").notNull().default(1),
   },
   (table) => [
     // INFRA-02: globally unique listed slug so external callers can invoke by slug alone
@@ -249,25 +251,40 @@ export const workflows = pgTable(
 );
 
 // Integrations table for storing user credentials
-export const integrations = pgTable("integrations", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => generateId()),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id),
-  organizationId: text("organization_id").references(() => organization.id, {
-    onDelete: "cascade",
-  }),
-  name: text("name").notNull(),
-  type: text("type").notNull().$type<IntegrationType>(),
-  // biome-ignore lint/suspicious/noExplicitAny: JSONB type - encrypted credentials stored as JSON
-  config: jsonb("config").notNull().$type<any>(),
-  // Whether this integration was created via OAuth (managed by app) vs manual entry
-  isManaged: boolean("is_managed").default(false),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+export const integrations = pgTable(
+  "integrations",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    organizationId: text("organization_id").references(() => organization.id, {
+      onDelete: "cascade",
+    }),
+    name: text("name").notNull(),
+    type: text("type").notNull().$type<IntegrationType>(),
+    // biome-ignore lint/suspicious/noExplicitAny: JSONB type - encrypted credentials stored as JSON
+    config: jsonb("config").notNull().$type<any>(),
+    // Whether this integration was created via OAuth (managed by app) vs manual entry
+    isManaged: boolean("is_managed").default(false),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    // At most one web3 integration row per org. Today the only web3 row is
+    // the cosmetic KeeperHub-wallet entry; the broader rule is enforced
+    // here so any future web3 write hits the same guard. Closes the race
+    // in ensureWalletIntegration where two concurrent /api/integrations
+    // GETs could both pass the existence check and both insert.
+    uniqueIndex("idx_integrations_org_web3")
+      .on(table.organizationId)
+      .where(
+        sql`${table.type} = 'web3' AND ${table.organizationId} IS NOT NULL`
+      ),
+  ]
+);
 
 // Workflow executions table to track workflow runs
 export const workflowExecutions = pgTable(
@@ -324,6 +341,12 @@ export const workflowExecutionLogs = pgTable("workflow_execution_logs", {
   input: jsonb("input").$type<any>(),
   // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
   output: jsonb("output").$type<any>(),
+  // output_raw is the executor's authoritative source-of-truth for cross-process resume.
+  // `output` receives redactSensitiveData() for observability/UI display; `output_raw`
+  // stores the unredacted payload so downstream template rendering receives real values
+  // rather than "[REDACTED]" strings when a pod resumes across a process boundary.
+  // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
+  outputRaw: jsonb("output_raw").$type<any>(),
   error: text("error"),
   startedAt: timestamp("started_at").notNull().defaultNow(),
   completedAt: timestamp("completed_at"),
@@ -756,6 +779,7 @@ export type ListedWorkflowView = Pick<
   | "workflowType"
   | "category"
   | "chain"
+  | "listingVersion"
 >;
 export type Integration = typeof integrations.$inferSelect;
 export type NewIntegration = typeof integrations.$inferInsert;

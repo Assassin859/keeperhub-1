@@ -6,6 +6,8 @@ import {
   organizationSubscriptions,
   overageBillingRecords,
 } from "@/lib/db/schema";
+import { getMetricsCollector } from "@/lib/metrics";
+import { MetricNames } from "@/lib/metrics/types";
 import { getPlanLimits, PLANS, parsePlanName, parseTierKey } from "./plans";
 import { getBillingProvider } from "./providers";
 
@@ -64,14 +66,26 @@ export async function billOverageForOrg(
     return { billed: false, reason: "already billed for this period" };
   }
 
-  // Count executions for the period
+  // Count executions for the period (workflow + direct executions both count
+  // toward the monthly tier; mirror lib/billing/plans-server.ts#checkExecutionLimit)
   const result = await db.execute<{ count: number }>(
-    sql`SELECT COUNT(*)::int as count
-        FROM workflow_executions we
-        JOIN workflows w ON we.workflow_id = w.id
-        WHERE w.organization_id = ${organizationId}
-        AND we.started_at >= ${periodStart.toISOString()}
-        AND we.started_at < ${periodEnd.toISOString()}`
+    sql`SELECT
+          (
+            SELECT COUNT(*)
+              FROM workflow_executions we
+              JOIN workflows w ON we.workflow_id = w.id
+             WHERE w.organization_id = ${organizationId}
+               AND we.started_at >= ${periodStart.toISOString()}
+               AND we.started_at <  ${periodEnd.toISOString()}
+          )
+          +
+          (
+            SELECT COUNT(*)
+              FROM direct_executions de
+             WHERE de.organization_id = ${organizationId}
+               AND de.created_at >= ${periodStart.toISOString()}
+               AND de.created_at <  ${periodEnd.toISOString()}
+          ) AS count`
   );
 
   const totalExecutions = result[0]?.count ?? 0;
@@ -131,6 +145,11 @@ export async function billOverageForOrg(
         providerInvoiceItemId: invoiceItemId,
       })
       .where(eq(overageBillingRecords.id, record.id));
+
+    getMetricsCollector().incrementCounter(
+      MetricNames.BILLING_OVERAGE_CHARGED,
+      { plan }
+    );
 
     return { billed: true, overageCount, totalChargeCents };
   } catch (error) {

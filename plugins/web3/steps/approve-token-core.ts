@@ -55,7 +55,6 @@ export type ApproveTokenCoreInput = {
   strict?: boolean;
   _context?: {
     executionId?: string;
-    triggerType?: string;
     organizationId?: string;
   };
 };
@@ -218,7 +217,6 @@ export async function approveTokenCore(
     workflowId,
     chainId,
     rpcUrl,
-    triggerType: _context.triggerType as TransactionContext["triggerType"],
     rpcManager,
   };
 
@@ -378,7 +376,6 @@ export async function approveTokenCore(
           session,
           {
             chainId,
-            triggerType: txContext.triggerType ?? "manual",
             workflowId,
             rpcManager,
           }
@@ -397,7 +394,6 @@ export async function approveTokenCore(
           session,
           {
             chainId,
-            triggerType: txContext.triggerType ?? "manual",
             workflowId,
             rpcManager,
           }
@@ -413,7 +409,6 @@ export async function approveTokenCore(
           },
           session,
           {
-            triggerType: txContext.triggerType ?? "manual",
             gasOverrides: { multiplierOverride, gasLimitOverride },
             workflowId,
             rpcManager,

@@ -1,5 +1,4 @@
 import os from "node:os";
-import { syncModule } from "../lib/sync/redis";
 import { logger } from "../lib/utils/logger";
 import { chainProviderManager } from "./chains/provider-manager";
 import {
@@ -13,10 +12,8 @@ let healthServer: HealthServerHandle | null = null;
 
 // Fatal-error handlers: an uncaught exception or unhandled rejection inside a
 // listener callback is almost always a bug that leaves the process in an
-// indeterminate state. Log and exit so K8s restarts the pod. Under the fork
-// model the blast radius was one child; under the in-process model the blast
-// radius is the whole pod, which makes these handlers load-bearing for the
-// Phase 4+ path.
+// indeterminate state. Log and exit so K8s restarts the pod. Blast radius is
+// the whole pod, which makes these handlers load-bearing.
 process.on("uncaughtException", (err: Error) => {
   logger.error(`[Fatal] uncaughtException: ${err.message}\n${err.stack ?? ""}`);
   process.exit(1);
@@ -28,11 +25,9 @@ process.on("unhandledRejection", (reason: unknown) => {
   process.exit(1);
 });
 
-// Graceful shutdown: K8s sends SIGTERM on pod rotation. Under the fork model
-// `child-handler.ts` handles this per-child; under the in-process model the
-// parent owns every listener, so we must stop them here. No-op for fork-mode
-// pods because the registry is only lazily constructed when the feature flag
-// is on. Best-effort - if stopAll throws we still exit so K8s can restart.
+// Graceful shutdown: K8s sends SIGTERM on pod rotation. The pod owns every
+// listener, so we must stop them here. Best-effort - if stopAll throws we
+// still exit so K8s can restart.
 async function shutdown(signal: string): Promise<void> {
   logger.log(`[Shutdown] received ${signal}; stopping listeners`);
   try {
@@ -70,10 +65,6 @@ const initialize = async (): Promise<void> => {
   logger.log(`[Health] /healthz listening on :${healthServer.port}`);
 
   try {
-    await syncModule.removeAllContainers();
-    logger.log("Cleared stale Redis state from previous deploys");
-
-    await syncModule.registerContainer();
     await synchronizeData();
 
     setInterval(synchronizeData, 30_000);

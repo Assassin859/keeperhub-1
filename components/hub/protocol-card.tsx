@@ -162,9 +162,7 @@ export function ProtocolCard({
       </CardHeader>
 
       <CardContent className="flex-1 pb-2 pt-0">
-        <p className="text-muted-foreground text-xs">
-          {protocol.description.replace(/ -- /g, ". ")}
-        </p>
+        <p className="text-muted-foreground text-xs">{protocol.description}</p>
       </CardContent>
 
       <div className="px-6 pb-2">

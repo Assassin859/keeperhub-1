@@ -1,3 +1,5 @@
+# Must remain 1: there is no cross-pod coordination, so 2+ replicas would
+# subscribe to every chain WSS twice and dispatch duplicate SQS messages.
 replicaCount: 1
 
 service:
@@ -89,7 +91,7 @@ livenessProbe:
     command:
       - /bin/sh
       - -c
-      - "pgrep -f 'src/index.ts' || exit 1"
+      - "pgrep -f 'dist/index.js' || exit 1"
 readinessProbe:
   initialDelaySeconds: 10
   periodSeconds: 10
@@ -97,4 +99,4 @@ readinessProbe:
     command:
       - /bin/sh
       - -c
-      - "pgrep -f 'src/index.ts' || exit 1"
+      - "pgrep -f 'dist/index.js' || exit 1"

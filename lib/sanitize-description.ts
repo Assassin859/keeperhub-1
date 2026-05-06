@@ -13,7 +13,19 @@ const INSTRUCTION_PATTERNS = [
   /\boverride (?:previous |prior |all )?instructions?\b/gi,
 ] as const;
 
-export function sanitizeDescription(raw: string): string {
+// Default cap mirrors the legacy behaviour for callers that don't pass an
+// option (workflow GET, MCP catalog, OpenAPI). Surfaces that need to render
+// the full description in a modal/page can pass a higher cap (or 0 to skip).
+const DEFAULT_MAX_LENGTH = 200;
+
+type SanitizeOptions = {
+  maxLength?: number;
+};
+
+export function sanitizeDescription(
+  raw: string,
+  options?: SanitizeOptions
+): string {
   if (!raw) {
     return "";
   }
@@ -63,9 +75,9 @@ export function sanitizeDescription(raw: string): string {
     result = result.charAt(0).toUpperCase() + result.slice(1);
   }
 
-  // Cap at 200 characters
-  if (result.length > 200) {
-    result = result.slice(0, 200);
+  const maxLength = options?.maxLength ?? DEFAULT_MAX_LENGTH;
+  if (maxLength > 0 && result.length > maxLength) {
+    result = result.slice(0, maxLength);
   }
 
   return result;

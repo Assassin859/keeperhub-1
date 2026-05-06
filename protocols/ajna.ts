@@ -4,7 +4,7 @@ export default defineProtocol({
   name: "Ajna",
   slug: "ajna",
   description:
-    "Ajna permissionless lending protocol -- liquidation and vault keeper operations on Base",
+    "Ajna permissionless lending protocol: liquidation and vault keeper operations on Base",
   website: "https://www.ajna.finance",
   icon: "/protocols/ajna.png",
 

@@ -109,9 +109,6 @@ importers:
       '@vercel/og':
         specifier: ^0.11.1
         version: 0.11.1
-      '@vercel/sdk':
-        specifier: ^1.19.26
-        version: 1.19.28(@cfworker/json-schema@4.1.1)
       '@workflow/world-postgres':
         specifier: 4.1.0-beta.51
         version: 4.1.0-beta.51(@electric-sql/pglite@0.3.15)(@opentelemetry/api@1.9.1)(@prisma/client@7.4.2(prisma@7.4.2(@types/react@19.2.14)(magicast@0.5.2)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(typescript@5.9.3))(typescript@5.9.3))(@types/pg@8.20.0)(kysely@0.28.14)(mysql2@3.15.3)(postgres@3.4.9)(prisma@7.4.2(@types/react@19.2.14)(magicast@0.5.2)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(typescript@5.9.3))(typescript@5.9.3)
@@ -5022,10 +5019,6 @@ packages:
   '@vercel/queue@0.1.4':
     resolution: {integrity: sha512-wo+jCycmCX078vQSbkX+RcLvySONDCK0f9aQp5UMKQD1+B+xKt3YVbIYbZukvoHQpbm5nnk6If+ADSeK/PmCgQ==}
     engines: {node: '>=20.0.0'}
-
-  '@vercel/sdk@1.19.28':
-    resolution: {integrity: sha512-iaxaVvBNKCYfe2hwzfi9DLNzwaKr//S4QNJH5BIfOY0IMDmbZNPX/ax2lAFJRIwtF9Lk/4MeIh0wCm0Hsdw72A==}
-    hasBin: true
 
   '@vitest/coverage-v8@4.1.2':
     resolution: {integrity: sha512-sPK//PHO+kAkScb8XITeB1bf7fsk85Km7+rt4eeuRR3VS1/crD47cmV5wicisJmjNdfeokTZwjMk4Mj2d58Mgg==}
@@ -14987,14 +14980,6 @@ snapshots:
       minimatch: 10.2.4
       mixpart: 0.0.5
       picocolors: 1.1.1
-
-  '@vercel/sdk@1.19.28(@cfworker/json-schema@4.1.1)':
-    dependencies:
-      '@modelcontextprotocol/sdk': 1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6)
-      zod: 4.3.6
-    transitivePeerDependencies:
-      - '@cfworker/json-schema'
-      - supports-color
 
   '@vitest/coverage-v8@4.1.2(vitest@4.1.2(@opentelemetry/api@1.9.1)(@types/node@24.12.2)(jsdom@27.4.0(@noble/hashes@2.0.1)(bufferutil@4.1.0)(utf-8-validate@5.0.10))(vite@7.3.0(@types/node@24.12.2)(jiti@2.6.1)(lightningcss@1.32.0)(terser@5.46.1)(tsx@4.21.0)(yaml@2.8.3)))':
     dependencies:

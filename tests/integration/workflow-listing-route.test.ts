@@ -69,6 +69,13 @@ vi.mock("@/lib/sanitize-description", () => ({
   sanitizeDescription: vi.fn((raw: string) => `SANITIZED:${raw}`),
 }));
 
+// PATCH route now calls revalidateTag("marketplace", "max") on listing
+// transitions; stub it so tests don't hit the real Next 16 cache layer
+// (which throws outside a request context).
+vi.mock("next/cache", () => ({
+  revalidateTag: vi.fn(),
+}));
+
 import { GET, PATCH } from "@/app/api/workflows/[workflowId]/route";
 
 const SANITIZED_PREFIX_RE = /^SANITIZED:/;
@@ -131,12 +138,21 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
   });
 
   it("LIST-01: PATCH with isListed=true sets listedAt server-side when listedAt is null", async () => {
-    const existing = makeWorkflow({ isListed: false, listedAt: null });
+    // Transitioning to listed via this route triggers the publish-time gates,
+    // so the existing row must already have a valid inputSchema (or the PATCH
+    // body must supply one). Use an existing valid schema here — listing-flow
+    // tests cover the gate failures directly.
+    const existing = makeWorkflow({
+      isListed: false,
+      listedAt: null,
+      inputSchema: { type: "object" },
+    });
     mockWorkflowsFindFirst.mockResolvedValue(existing);
 
     const updated = makeWorkflow({
       isListed: true,
       listedAt: new Date("2026-03-30T00:00:00Z"),
+      inputSchema: { type: "object" },
     });
     mockUpdateReturning.mockResolvedValue([updated]);
 
@@ -256,6 +272,374 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
     expect(data.listedSlug).toBe("my-workflow");
     expect(data.listedAt).not.toBeNull();
     expect(data.priceUsdcPerCall).toBe("2.00");
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Edit-while-listed re-validation
+  // ──────────────────────────────────────────────────────────────────────
+
+  const badNode = {
+    id: "read-1",
+    type: "action",
+    data: {
+      type: "action",
+      config: { actionType: "web3/read-contract", address: "@40" },
+    },
+  };
+  const goodNode = {
+    id: "read-1",
+    type: "action",
+    data: {
+      type: "action",
+      config: { actionType: "web3/read-contract", address: "0xabc" },
+    },
+  };
+
+  it("LIST-VALIDATE bare-@ on listed: rejects with 422 INVALID_TEMPLATE_LITERALS", async () => {
+    const existing = makeWorkflow({
+      isListed: true,
+      listedSlug: "live-wf",
+      listedAt: new Date(),
+      inputSchema: { type: "object" },
+      nodes: [goodNode],
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+
+    const response = await PATCH(
+      createRequest("PATCH", { nodes: [badNode], edges: [] }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(422);
+    const data = await response.json();
+    expect(data.error).toBe("INVALID_TEMPLATE_LITERALS");
+    expect(data.literals).toContain("@40");
+    expect(mockUpdateReturning).not.toHaveBeenCalled();
+  });
+
+  it("LIST-VALIDATE bare-@ on unlisted: PATCH succeeds (gate only fires when listed)", async () => {
+    const existing = makeWorkflow({
+      isListed: false,
+      nodes: [goodNode],
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+    mockUpdateReturning.mockResolvedValue([
+      makeWorkflow({ isListed: false, nodes: [badNode] }),
+    ]);
+
+    const response = await PATCH(
+      createRequest("PATCH", { nodes: [badNode], edges: [] }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("LIST-VALIDATE null inputSchema on listed: rejects with 422 INPUT_SCHEMA_REQUIRED", async () => {
+    const existing = makeWorkflow({
+      isListed: true,
+      listedSlug: "live-wf",
+      listedAt: new Date(),
+      inputSchema: { type: "object" },
+      nodes: [goodNode],
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+
+    const response = await PATCH(
+      createRequest("PATCH", { inputSchema: null }),
+      {
+        params: mockParams,
+      }
+    );
+
+    expect(response.status).toBe(422);
+    const data = await response.json();
+    expect(data.error).toBe("INPUT_SCHEMA_REQUIRED");
+    expect(mockUpdateReturning).not.toHaveBeenCalled();
+  });
+
+  it("LIST-VALIDATE transition to listed with bare-@ in existing nodes: rejects", async () => {
+    // Backdoor: workflow was created with bare-@ in a node (out-of-band) and
+    // the user now PATCHes isListed=true here. The transition-to-listed branch
+    // validates the full final state, not just patched fields.
+    const existing = makeWorkflow({
+      isListed: false,
+      inputSchema: { type: "object" },
+      nodes: [badNode],
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+
+    const response = await PATCH(createRequest("PATCH", { isListed: true }), {
+      params: mockParams,
+    });
+
+    expect(response.status).toBe(422);
+    const data = await response.json();
+    expect(data.error).toBe("INVALID_TEMPLATE_LITERALS");
+  });
+
+  it("LIST-VALIDATE transition to listed with null existing inputSchema: rejects", async () => {
+    const existing = makeWorkflow({
+      isListed: false,
+      inputSchema: null,
+      nodes: [goodNode],
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+
+    const response = await PATCH(createRequest("PATCH", { isListed: true }), {
+      params: mockParams,
+    });
+
+    expect(response.status).toBe(422);
+    const data = await response.json();
+    expect(data.error).toBe("INPUT_SCHEMA_REQUIRED");
+  });
+
+  it("LIST-VALIDATE unlist+cleanup: PATCH {isListed: false, nodes: [bad]} on listed workflow succeeds", async () => {
+    // The workflow is leaving the listed surface in this same PATCH — the
+    // bazaar will never see the post-patch state, so blocking the user from
+    // unlisting+cleaning-up in one shot is unnecessary friction. The gate
+    // explicitly skips when body.isListed === false on a currently-listed row.
+    const existing = makeWorkflow({
+      isListed: true,
+      listedSlug: "live-wf",
+      listedAt: new Date(),
+      inputSchema: { type: "object" },
+      nodes: [goodNode],
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+    mockUpdateReturning.mockResolvedValue([
+      makeWorkflow({
+        isListed: false,
+        listedSlug: "live-wf",
+        listedAt: new Date(),
+        inputSchema: { type: "object" },
+        nodes: [badNode],
+      }),
+    ]);
+
+    const response = await PATCH(
+      createRequest("PATCH", { isListed: false, nodes: [badNode], edges: [] }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("LIST-VALIDATE unlist+null-schema: PATCH {isListed: false, inputSchema: null} on listed workflow succeeds", async () => {
+    const existing = makeWorkflow({
+      isListed: true,
+      listedSlug: "live-wf",
+      listedAt: new Date(),
+      inputSchema: { type: "object" },
+      nodes: [goodNode],
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+    mockUpdateReturning.mockResolvedValue([
+      makeWorkflow({ isListed: false, inputSchema: null }),
+    ]);
+
+    const response = await PATCH(
+      createRequest("PATCH", { isListed: false, inputSchema: null }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("LIST-VALIDATE write-action removed on listed write workflow: rejects MISSING_WRITE_ACTION", async () => {
+    // Third publish-time gate: an author can publish a write workflow then
+    // PATCH `nodes` here to remove the only write-action node, leaving the
+    // listing live but executing nothing meaningful. Same backdoor class as
+    // bare-@ on listed.
+    const writeNode = {
+      id: "write-1",
+      type: "action",
+      data: {
+        type: "action",
+        config: {
+          actionType: "web3/write-contract",
+          contractAddress: "0xabc",
+          network: "1",
+          abi: "[]",
+          abiFunction: "transfer",
+        },
+      },
+    };
+    const existing = makeWorkflow({
+      isListed: true,
+      listedSlug: "live-write",
+      listedAt: new Date(),
+      inputSchema: { type: "object" },
+      workflowType: "write",
+      nodes: [writeNode],
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+
+    const response = await PATCH(
+      createRequest("PATCH", { nodes: [goodNode], edges: [] }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(422);
+    const data = await response.json();
+    expect(data.error).toBe("MISSING_WRITE_ACTION");
+    expect(mockUpdateReturning).not.toHaveBeenCalled();
+  });
+
+  it("LIST-VALIDATE inputSchema as array: rejects INPUT_SCHEMA_REQUIRED", async () => {
+    // Edge case: arrays are objects per typeof but not valid JSON-schema
+    // shapes. isInputSchemaPresent rejects them.
+    const existing = makeWorkflow({
+      isListed: true,
+      listedSlug: "live-wf",
+      listedAt: new Date(),
+      inputSchema: { type: "object" },
+      nodes: [goodNode],
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+
+    const response = await PATCH(createRequest("PATCH", { inputSchema: [] }), {
+      params: mockParams,
+    });
+
+    expect(response.status).toBe(422);
+    const data = await response.json();
+    expect(data.error).toBe("INPUT_SCHEMA_REQUIRED");
+  });
+
+  it("LIST-VALIDATE messaging-skip on listed: PATCH adding @everyone in discord/* node still succeeds", async () => {
+    // The findBareAtLiterals validator skips action types in the messaging
+    // skip-list (discord/*, slack/*, telegram/*, email/*, ai/*, ai-gateway/*,
+    // code/*). A PATCH that adds a Discord node with @everyone in the message
+    // body must not 422 — same skip semantics as the publish path.
+    const discordNode = {
+      id: "discord-1",
+      type: "action",
+      data: {
+        type: "action",
+        config: {
+          actionType: "discord/send-message",
+          content: "Alert @here token spiked, @user1 please review",
+        },
+      },
+    };
+    const existing = makeWorkflow({
+      isListed: true,
+      listedSlug: "live-wf",
+      listedAt: new Date(),
+      inputSchema: { type: "object" },
+      nodes: [goodNode],
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+    mockUpdateReturning.mockResolvedValue([
+      makeWorkflow({
+        isListed: true,
+        listedSlug: "live-wf",
+        listedAt: new Date(),
+        inputSchema: { type: "object" },
+        nodes: [discordNode],
+      }),
+    ]);
+
+    const response = await PATCH(
+      createRequest("PATCH", { nodes: [discordNode], edges: [] }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("LIST-VALIDATE transition to listed write workflow with read-only nodes: rejects MISSING_WRITE_ACTION", async () => {
+    // Covers the isTransitioningToListed branch of the write-action gate —
+    // the previous PATCH-route tests only exercised the already-listed branch.
+    // This is also the only realistic way to reach the gate via this route
+    // since workflowType isn't editable here (curator-only).
+    const existing = makeWorkflow({
+      isListed: false,
+      listedAt: null,
+      workflowType: "write",
+      inputSchema: { type: "object" },
+      nodes: [goodNode], // read-only node, no write-action
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+
+    const response = await PATCH(createRequest("PATCH", { isListed: true }), {
+      params: mockParams,
+    });
+
+    expect(response.status).toBe(422);
+    const data = await response.json();
+    expect(data.error).toBe("MISSING_WRITE_ACTION");
+    expect(mockUpdateReturning).not.toHaveBeenCalled();
+  });
+
+  it("LIST-VALIDATE legacy write: PATCH only-description on listed write workflow with no write nodes still succeeds", async () => {
+    // Backwards-compat for legacy listings: a workflowType=write row that
+    // somehow exists with only read-only nodes (e.g. predates the publish
+    // gate, or was corrupted out-of-band) should keep accepting metadata
+    // edits via the workflows-PATCH route as long as the patch doesn't
+    // touch nodes. The curator path (updateWorkflowListing) is stricter
+    // and would reject — that's the documented asymmetry.
+    const existing = makeWorkflow({
+      isListed: true,
+      listedSlug: "legacy-write",
+      listedAt: new Date(),
+      workflowType: "write",
+      inputSchema: { type: "object" },
+      nodes: [goodNode], // read-only, no write-action
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+    mockUpdateReturning.mockResolvedValue([
+      makeWorkflow({
+        isListed: true,
+        listedSlug: "legacy-write",
+        listedAt: new Date(),
+        workflowType: "write",
+        inputSchema: { type: "object" },
+        nodes: [goodNode],
+        description: "updated text",
+      }),
+    ]);
+
+    const response = await PATCH(
+      createRequest("PATCH", { description: "updated text" }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("LIST-VALIDATE legacy: PATCH on listed workflow with null inputSchema, not touching nodes or schema, still succeeds", async () => {
+    // Backwards-compat: workflows listed before the gates existed have null
+    // inputSchema. They should keep working until the next PATCH that touches
+    // nodes or schema. PATCH that only changes other fields (e.g. description)
+    // must not retroactively reject them.
+    const existing = makeWorkflow({
+      isListed: true,
+      listedSlug: "legacy",
+      listedAt: new Date(),
+      inputSchema: null,
+      nodes: [goodNode],
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+    mockUpdateReturning.mockResolvedValue([
+      makeWorkflow({
+        isListed: true,
+        listedSlug: "legacy",
+        listedAt: new Date(),
+        inputSchema: null,
+        nodes: [goodNode],
+        description: "updated text",
+      }),
+    ]);
+
+    const response = await PATCH(
+      createRequest("PATCH", { description: "updated text" }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
   });
 });
 

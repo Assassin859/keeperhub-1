@@ -439,9 +439,11 @@ function renderAbiFunctionSelect(
   disabled?: boolean
 ) {
   const abiField = field.abiField || "abi";
-  const abiValue = (config[abiField] as string | undefined) || "";
+  const rawAbi = config[abiField];
+  const abiValue = typeof rawAbi === "string" ? rawAbi : "";
+  const rawValue = config[field.key];
   const value =
-    (config[field.key] as string | undefined) || field.defaultValue || "";
+    (typeof rawValue === "string" ? rawValue : "") || field.defaultValue || "";
 
   return (
     <div className="space-y-2" key={field.key}>
@@ -472,10 +474,13 @@ function renderAbiFunctionArgs(
 ) {
   const abiField = field.abiField || "abi";
   const functionField = field.abiFunctionField || "abiFunction";
-  const abiValue = (config[abiField] as string | undefined) || "";
-  const functionValue = (config[functionField] as string | undefined) || "";
+  const rawAbi = config[abiField];
+  const abiValue = typeof rawAbi === "string" ? rawAbi : "";
+  const rawFunction = config[functionField];
+  const functionValue = typeof rawFunction === "string" ? rawFunction : "";
+  const rawValue = config[field.key];
   const value =
-    (config[field.key] as string | undefined) || field.defaultValue || "";
+    (typeof rawValue === "string" ? rawValue : "") || field.defaultValue || "";
 
   return (
     <div className="space-y-2" key={field.key}>

@@ -16,14 +16,9 @@ import type { DedupStore } from "./dedup";
 import { formatError } from "./format-error";
 
 /**
- * EventListener encapsulates a single workflow's contract-event listener
- * running in-process (no child_process.fork). It registers with
- * ChainProviderManager's shared block-subscription + demux, so many
- * listeners on the same chain share one WSS connection.
- *
- * Phase 3 scope: standalone class + unit tests. Phase 4 wires the
- * ListenerRegistry into `main.ts` behind the ENABLE_INPROC_LISTENERS
- * feature flag.
+ * EventListener encapsulates a single workflow's contract-event listener.
+ * Registers with ChainProviderManager's shared block-subscription + demux,
+ * so many listeners on the same chain share one WSS connection.
  */
 
 const DEFAULT_JITTER_MS = 10_000;
@@ -34,6 +29,7 @@ export interface EventListenerOptions {
   workflowName: string;
   chainId: number;
   wssUrl: string;
+  fallbackWssUrl?: string;
   contractAddress: string;
   eventName: string;
   eventsAbiStrings: string[];
@@ -45,9 +41,8 @@ export interface EventListenerOptions {
   providerManager: ChainProviderManager;
 
   /**
-   * Maximum jitter applied before forwarding a matched event to SQS. Keeps
-   * parity with the existing `evm-chain.ts:processEventLog` behaviour which
-   * spreads downstream load when many events fire simultaneously. Tests
+   * Maximum jitter applied before forwarding a matched event to SQS.
+   * Spreads downstream load when many events fire simultaneously. Tests
    * should pass 0 to keep runs deterministic.
    */
   jitterMs?: number;
@@ -70,14 +65,25 @@ export class EventListener {
     const iface = getInterface(this.opts.eventsAbiStrings);
     const eventFragment = iface.getEvent(this.opts.eventName);
     if (!eventFragment) {
+      // Enumerate the events the ABI does contain so the operator can
+      // see the mismatch in one log line. A blank list means the ABI
+      // has no event fragments at all — typically a wrong-ABI config
+      // rather than a typo'd event name.
+      const availableEvents: string[] = [];
+      iface.forEachEvent((fragment) => {
+        availableEvents.push(fragment.name);
+      });
+      const available =
+        availableEvents.length > 0 ? availableEvents.join(", ") : "(none)";
       throw new Error(
-        `EventListener(${this.opts.workflowId}): event "${this.opts.eventName}" not found in ABI`,
+        `EventListener(${this.opts.workflowId}): event "${this.opts.eventName}" not found in ABI. Available events: ${available}`,
       );
     }
 
     this.unsubscribe = await this.opts.providerManager.subscribeToLogs({
       chainId: this.opts.chainId,
       wssUrl: this.opts.wssUrl,
+      fallbackWssUrl: this.opts.fallbackWssUrl,
       address: this.opts.contractAddress,
       topic0: eventFragment.topicHash,
       handler: (log) => this.onLog(log),

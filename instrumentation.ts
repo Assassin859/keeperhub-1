@@ -90,6 +90,15 @@ export async function register() {
       console.log("[Metrics] Prometheus dual-write collector initialized");
     }
 
+    // Periodic sweep of stale entries in the in-process MCP/IP rate-limit
+    // maps. Inline cleanup on the request path can't reach keys that never
+    // come back, so without this the maps grow unbounded with one-shot
+    // organisations or IPs. See KEEP-419.
+    const { startRateLimitCleanupInterval } = await import(
+      "@/lib/mcp/rate-limit"
+    );
+    startRateLimitCleanupInterval();
+
     // Initialize Workflow Postgres World (pg-boss queue polling)
     if (process.env.WORKFLOW_TARGET_WORLD === "@workflow/world-postgres") {
       const rawUrl =

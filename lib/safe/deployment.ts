@@ -146,7 +146,6 @@ export async function deployOrgSafe(
     executionId,
     chainId,
     rpcUrl,
-    triggerType: "manual",
     rpcManager,
   };
 

@@ -4,7 +4,7 @@ export default defineProtocol({
   name: "Curve",
   slug: "curve",
   description:
-    "Curve Finance -- stableswap pools, token exchanges, liquidity management, and CRV token operations",
+    "Curve Finance: stableswap pools, token exchanges, liquidity management, and CRV token operations",
   website: "https://curve.fi",
   icon: "/protocols/curve.png",
 

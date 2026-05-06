@@ -83,11 +83,17 @@ Click any node to open the configuration panel on the right side of the screen.
 
 ### Trigger Configuration
 
-For trigger nodes, you'll also configure:
-- **Schedule**: Interval for scheduled triggers (every 5 minutes, hourly, etc.)
-- **Webhook URL**: Provided URL for webhook triggers
-- **Event Filter**: Event signature for event triggers
-- **Block Interval**: Network and block interval for block triggers (e.g., every 10 blocks on Ethereum)
+For trigger nodes, you'll also configure specific settings based on the trigger type. When creating workflows programmatically via the API, use the exact `triggerType` and config keys shown below:
+
+| Trigger Label | `triggerType` value | Required config keys | Optional config keys |
+|---------------|---------------------|----------------------|----------------------|
+| Manual   | `"Manual"`   | (none) | (none) |
+| Schedule | `"Schedule"` | `scheduleCron` | `scheduleTimezone` |
+| Webhook  | `"Webhook"`  | (none) | `webhookSchema`, `webhookMockRequest` |
+| Event    | `"Event"`    | `network`, `contractAddress`, `contractABI`, `eventName` | (none) |
+| Block    | `"Block"`    | `network`, `blockInterval` | (none) |
+
+> **Note for API users:** The `triggerType` must match the Pascal-case string exactly (e.g., `"Schedule"`, not `"cron"`). The canonical list, including any future additions, is returned under the `triggers` map of [`GET /api/mcp/schemas`](/api/workflows#list-action-schemas).
 
 ### Condition Configuration
 
@@ -148,10 +154,35 @@ Expression mode also supports JavaScript methods, array indexing, and property a
 
 Condition nodes have two output handles:
 
-- **true**: downstream nodes connected here execute when the condition passes
-- **false**: downstream nodes connected here execute when the condition fails
+- **true**: downstream nodes connected here execute when the condition passes (API `sourceHandle: "true"`)
+- **false**: downstream nodes connected here execute when the condition fails (API `sourceHandle: "false"`)
 
 Connect different branches to each handle to create if/else logic in a single node.
+
+### Programmatic Edge Creation (sourceHandle)
+
+When creating edges via the API that originate from branching nodes, you **must** specify the `sourceHandle` to indicate which path the edge follows:
+
+| Node type | `sourceHandle` values | When to use |
+|-----------|---------------------|-------------|
+| **Condition** | `"true"`, `"false"` | Required on all outgoing edges |
+| **For Each** | `"loop"`, `"done"` | Required on all outgoing edges |
+| All others | (none) | Omit entirely |
+
+The visual canvas additionally enforces two For Each connection conventions: the `"done"` handle is intended to terminate at a **Collect** node that aggregates iteration results, and the `"loop"` handle is intended to enter the loop body (not a Collect node). The API does not currently reject edges that violate these conventions, but workflows that follow them produce predictable executor behavior.
+
+## Template Syntax Reference
+
+KeeperHub uses a powerful template syntax to reference outputs from upstream nodes dynamically. The pattern is `{{@nodeId:Label.field}}`.
+
+**Features:**
+- **Dot notation** for nested fields: `{{@http-1:Fetch Data.data.price}}`
+- **Array indexing**: `{{@query-1:Get Users.items[0].id}}`
+- **Built-in variables**: Access system state with `{{@__system:System.unixTimestamp}}`, `{{@__system:System.unixTimestampMs}}`, or `{{@__system:System.isoTimestamp}}`
+
+**Example usage in a Condition node:**
+To check if a balance from a previous "Check Balance" node (ID: `check-balance`) is greater than 1000:
+`{{@check-balance:Check Balance.balance}} > 1000`
 
 ## Managing Connections
 

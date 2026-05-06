@@ -4,7 +4,7 @@ export default defineProtocol({
   name: "Aerodrome",
   slug: "aerodrome",
   description:
-    "Aerodrome Finance -- the leading DEX on Base with volatile/stable pools, ve(3,3) voting, and gauge-based emissions",
+    "Aerodrome Finance: the leading DEX on Base with volatile/stable pools, ve(3,3) voting, and gauge-based emissions",
   website: "https://aerodrome.finance",
   icon: "/protocols/aerodrome.png",
 

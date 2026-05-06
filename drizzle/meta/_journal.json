@@ -460,8 +460,36 @@
     {
       "idx": 65,
       "version": "7",
+      "when": 1777680000000,
+      "tag": "0065_keep_384_web3_integration_unique",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1777760000000,
+      "tag": "0066_keep_395_output_raw_column",
+      "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1777760000001,
+      "tag": "0067_keep_395_exec_logs_success_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1777760000002,
+      "tag": "0068_listing_version",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
       "when": 1778099230727,
-      "tag": "0065_safe_wallet_integration",
+      "tag": "0069_safe_wallet_integration",
       "breakpoints": true
     }
   ]

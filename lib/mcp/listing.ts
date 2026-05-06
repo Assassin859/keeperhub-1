@@ -1,16 +1,31 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
+import { findFirstWriteActionNode } from "@/lib/mcp/calldata";
+import {
+  findBareAtLiterals,
+  isInputSchemaPresent,
+} from "@/lib/mcp/listing-validators";
 
 export type ListingErrorCode =
   | "NOT_FOUND"
   | "SLUG_CONFLICT"
   | "PRICE_CHANGE_WHILE_LISTED"
-  | "INVALID_INPUT";
+  | "INVALID_INPUT"
+  | "MISSING_WRITE_ACTION"
+  | "INVALID_TEMPLATE_LITERALS"
+  | "INPUT_SCHEMA_REQUIRED";
+
+export interface ListingErrorDetails {
+  // Bare-@ literals found in node configs at publish time, surfaced so the
+  // author can locate the offending field without spelunking. Capped at
+  // MAX_FINDINGS by the validator.
+  literals?: string[];
+}
 
 export type ListingResult<T> =
   | { ok: true; listing: T }
-  | { ok: false; error: ListingErrorCode };
+  | { ok: false; error: ListingErrorCode; details?: ListingErrorDetails };
 
 export interface ListWorkflowMetadata {
   slug?: string;
@@ -46,6 +61,7 @@ const LISTING_COLUMNS = {
   workflowType: workflows.workflowType,
   category: workflows.category,
   chain: workflows.chain,
+  listingVersion: workflows.listingVersion,
 };
 
 type ListingRow = {
@@ -64,6 +80,7 @@ type ListingRow = {
   workflowType: "read" | "write";
   category: string | null;
   chain: string | null;
+  listingVersion: number;
 };
 
 function isSlugConflict(err: unknown): boolean {
@@ -79,7 +96,9 @@ export async function listWorkflow(
   const existing = await db
     .select()
     .from(workflows)
-    .where(and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId)))
+    .where(
+      and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId))
+    )
     .limit(1);
 
   if (existing.length === 0) {
@@ -122,11 +141,62 @@ export async function listWorkflow(
     updateSet.workflowType = metadata.workflowType as "read" | "write";
   }
 
+  // Bump listingVersion whenever we are transitioning to listed OR whenever
+  // any of the schema-defining fields changes on an already-listed workflow.
+  const isSchemaTouched =
+    metadata.inputSchema !== undefined ||
+    metadata.outputMapping !== undefined ||
+    metadata.workflowType !== undefined;
+  if (!current.isListed || isSchemaTouched) {
+    // biome-ignore lint/suspicious/noExplicitAny: Drizzle sql template tag produces a typed SQL expression that satisfies the column type at runtime
+    (updateSet as any).listingVersion = sql`${workflows.listingVersion} + 1`;
+  }
+
+  // A write workflow must contain at least one node whose actionType matches
+  // the calldata matcher; otherwise call_workflow would later fail at runtime
+  // with "No write action node found in workflow". Reject at publish time so
+  // the listing can never reach search results in a broken state.
+  const resolvedWorkflowType: "read" | "write" =
+    (updateSet.workflowType as "read" | "write" | undefined) ??
+    current.workflowType;
+  if (
+    resolvedWorkflowType === "write" &&
+    findFirstWriteActionNode(current.nodes) === undefined
+  ) {
+    return { ok: false, error: "MISSING_WRITE_ACTION" };
+  }
+
+  // Reject bare-@ literals in node configs. These are the trapped state of the
+  // editor's `@` autocomplete (user typed `@40` and dismissed the picker before
+  // it wrapped the reference into `{{@nodeId:Label.field}}`). The executor only
+  // resolves wrapped templates, so an unwrapped `@40` would silently flow
+  // through as a literal at runtime. Surface the offending literals so the
+  // author can locate the field without spelunking.
+  const bareLiterals = findBareAtLiterals(current.nodes);
+  if (bareLiterals.length > 0) {
+    return {
+      ok: false,
+      error: "INVALID_TEMPLATE_LITERALS",
+      details: { literals: bareLiterals },
+    };
+  }
+
+  // Listed workflows must declare an inputSchema. Bazaar consumers (agentcash,
+  // x402scan, the OpenAPI spec) need a JSON-schema-shaped object to render and
+  // validate inputs; an empty `{type: "object"}` is fine for zero-input
+  // workflows. Allowing null at publish time leaves the listing unrenderable.
+  const finalInputSchema = updateSet.inputSchema ?? current.inputSchema;
+  if (!isInputSchemaPresent(finalInputSchema)) {
+    return { ok: false, error: "INPUT_SCHEMA_REQUIRED" };
+  }
+
   try {
     const [result] = await db
       .update(workflows)
       .set(updateSet)
-      .where(and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId)))
+      .where(
+        and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId))
+      )
       .returning();
     if (!result) {
       return { ok: false, error: "NOT_FOUND" };
@@ -147,7 +217,9 @@ export async function unlistWorkflow(
   const existing = await db
     .select()
     .from(workflows)
-    .where(and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId)))
+    .where(
+      and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId))
+    )
     .limit(1);
 
   if (existing.length === 0) {
@@ -157,7 +229,9 @@ export async function unlistWorkflow(
   const [result] = await db
     .update(workflows)
     .set({ isListed: false, updatedAt: new Date() })
-    .where(and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId)))
+    .where(
+      and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId))
+    )
     .returning();
 
   if (!result) {
@@ -175,7 +249,9 @@ export async function updateWorkflowListing(
   const existing = await db
     .select()
     .from(workflows)
-    .where(and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId)))
+    .where(
+      and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId))
+    )
     .limit(1);
 
   if (existing.length === 0) {
@@ -210,11 +286,69 @@ export async function updateWorkflowListing(
     updateSet.priceUsdcPerCall = patch.priceUsdcPerCall;
   }
 
+  // Bump listingVersion when schema-defining fields change on a listed workflow
+  // so per-workflow MCP consumers can detect stale tool definitions.
+  const isUpdateSchemaTouched =
+    patch.inputSchema !== undefined ||
+    patch.outputMapping !== undefined ||
+    patch.workflowType !== undefined;
+  if (current.isListed && isUpdateSchemaTouched) {
+    updateSet.listingVersion = sql`${workflows.listingVersion} + 1`;
+  }
+
+  // Same write-workflow guard as listWorkflow: only validate when the row is
+  // (or is becoming) listed AND resolves to write. An unlisted draft is allowed
+  // to be in a read state with a "write" type still set, but a listed write
+  // must have a matching action node.
+  const resolvedWorkflowType: "read" | "write" =
+    (patch.workflowType as "read" | "write" | undefined) ??
+    current.workflowType;
+  if (
+    current.isListed === true &&
+    resolvedWorkflowType === "write" &&
+    findFirstWriteActionNode(current.nodes) === undefined
+  ) {
+    return { ok: false, error: "MISSING_WRITE_ACTION" };
+  }
+
+  // Defense in depth: if the listed workflow's nodes were corrupted via an
+  // out-of-band path (e.g. a script or an admin tool that bypassed the
+  // /api/workflows/[workflowId] PATCH gate), refuse to apply curator-side
+  // metadata changes that would re-emphasize a broken listing. Same gate as
+  // the publish path. Only runs when the row is (or stays) listed.
+  //
+  // Asymmetry note: the workflows-PATCH route uses field-touched-only
+  // semantics (only validates a field when the PATCH actually changes it,
+  // for backwards-compat with legacy listings). This curator path is
+  // intentionally STRICTER — every metadata change re-checks the full state
+  // unconditionally. Rationale: a corrupted listing should not receive
+  // metadata refreshes (category/chain/price etc.) that re-emphasize it on
+  // the bazaar surface. Authors of legacy null-inputSchema or bad-nodes
+  // listings must self-heal via the workflow editor before metadata edits
+  // land here.
+  if (current.isListed === true) {
+    const literals = findBareAtLiterals(current.nodes);
+    if (literals.length > 0) {
+      return {
+        ok: false,
+        error: "INVALID_TEMPLATE_LITERALS",
+        details: { literals },
+      };
+    }
+    const finalInputSchema =
+      patch.inputSchema === undefined ? current.inputSchema : patch.inputSchema;
+    if (!isInputSchemaPresent(finalInputSchema)) {
+      return { ok: false, error: "INPUT_SCHEMA_REQUIRED" };
+    }
+  }
+
   try {
     const [result] = await db
       .update(workflows)
       .set(updateSet)
-      .where(and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId)))
+      .where(
+        and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId))
+      )
       .returning();
 
     if (!result) {
@@ -239,9 +373,7 @@ export async function getWorkflowListing(
   const rows = await db
     .select(LISTING_COLUMNS)
     .from(workflows)
-    .where(
-      and(eq(workflows.listedSlug, slug), eq(workflows.isListed, true))
-    )
+    .where(and(eq(workflows.listedSlug, slug), eq(workflows.isListed, true)))
     .limit(1);
 
   if (rows.length === 0) {

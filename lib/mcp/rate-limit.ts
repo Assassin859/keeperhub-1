@@ -2,11 +2,22 @@
 // Effective limit is LIMIT * num_replicas. Replace with Redis-backed solution
 // when replica count grows.
 
-const WINDOW_MS = 60_000; // 1 minute
-const LIMIT = 120; // requests per window (higher than execute endpoint; MCP sessions are chatty)
+export const WINDOW_MS = 60_000; // 1 minute
+export const LIMIT = 120; // requests per window (higher than execute endpoint; MCP sessions are chatty)
+
+// Stale-entry sweep: anything whose newest timestamp is older than
+// (STALE_THRESHOLD_MULTIPLIER * maxWindowMs) can never affect a rate-limit
+// decision and exists only as map-key overhead. The largest window is
+// tracked dynamically so future callers with longer windows are safe by
+// construction -- no caller can introduce a window that races the sweep.
+const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+const STALE_THRESHOLD_MULTIPLIER = 5;
 
 const requestLog = new Map<string, number[]>();
 const ipRequestLog = new Map<string, number[]>();
+
+let maxWindowMs = WINDOW_MS;
+let cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
 export type RateLimitResult =
   | { allowed: true }
@@ -37,6 +48,9 @@ export function checkIpRateLimit(
   limit: number,
   windowMs: number
 ): RateLimitResult {
+  if (windowMs > maxWindowMs) {
+    maxWindowMs = windowMs;
+  }
   const now = Date.now();
   const windowStart = now - windowMs;
 
@@ -61,4 +75,69 @@ export function getClientIp(request: Request): string {
     request.headers.get("x-real-ip") ??
     "unknown"
   );
+}
+
+// Walk both maps and drop entries whose newest timestamp is older than the
+// stale threshold. Inline cleanup on the request path can't fix this leak
+// because it only fires when the same key comes back; entries leak when an
+// org/IP makes requests once and never returns.
+export function cleanupExpiredRateLimitEntries(): void {
+  const cutoff = Date.now() - maxWindowMs * STALE_THRESHOLD_MULTIPLIER;
+  for (const map of [requestLog, ipRequestLog]) {
+    for (const [key, timestamps] of map) {
+      const newest = timestamps.at(-1);
+      if (newest === undefined || newest <= cutoff) {
+        map.delete(key);
+      }
+    }
+  }
+}
+
+export function startRateLimitCleanupInterval(): void {
+  if (cleanupTimer !== null) {
+    clearInterval(cleanupTimer);
+  }
+  // Run a sweep immediately so a re-init (HMR, error-recovery path, etc.)
+  // doesn't have to wait CLEANUP_INTERVAL_MS to clean entries left over
+  // from before the restart. At server boot the maps are empty so this is
+  // a cheap no-op.
+  cleanupExpiredRateLimitEntries();
+  cleanupTimer = setInterval(
+    cleanupExpiredRateLimitEntries,
+    CLEANUP_INTERVAL_MS
+  );
+  if (
+    cleanupTimer !== null &&
+    typeof cleanupTimer === "object" &&
+    "unref" in cleanupTimer
+  ) {
+    cleanupTimer.unref();
+  }
+}
+
+export function stopRateLimitCleanupInterval(): void {
+  if (cleanupTimer !== null) {
+    clearInterval(cleanupTimer);
+    cleanupTimer = null;
+  }
+}
+
+// Tracked-entry counts. Useful for /healthz or memory observability.
+export function getRateLimitStats(): {
+  organizationCount: number;
+  ipCount: number;
+} {
+  return {
+    organizationCount: requestLog.size,
+    ipCount: ipRequestLog.size,
+  };
+}
+
+// Test-only: clears all in-process state (maps + tracked window). Tests need
+// this because `maxWindowMs` is module-scoped and can otherwise leak between
+// cases that exercise different window sizes.
+export function resetRateLimitState(): void {
+  requestLog.clear();
+  ipRequestLog.clear();
+  maxWindowMs = WINDOW_MS;
 }

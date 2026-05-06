@@ -222,7 +222,7 @@ export default defineProtocol({
   name: "Yearn V3",
   slug: "yearn",
   description:
-    "Yearn V3 yield vaults -- fully ERC-4626 compliant yield aggregators with automated strategy management",
+    "Yearn V3 yield vaults: fully ERC-4626 compliant yield aggregators with automated strategy management",
   website: "https://yearn.fi",
   icon: "/protocols/yearn.png",
 

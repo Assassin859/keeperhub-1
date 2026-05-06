@@ -33,38 +33,14 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { signOut, useSession } from "@/lib/auth-client";
 import { isBillingEnabled } from "@/lib/billing/feature-flag";
+import {
+  hasNotificationType,
+  useNotificationStatus,
+} from "@/lib/hooks/use-notifications";
 import { useActiveMember, useOrganization } from "@/lib/hooks/use-organization";
 
 export const UserMenu = (): React.ReactElement => {
   const { data: session, isPending } = useSession();
-  const { open: openOverlay } = useOverlay();
-  const [orgModalOpen, setOrgModalOpen] = useState(false);
-  const { organization } = useOrganization();
-  const { isOwner } = useActiveMember();
-  const router = useRouter();
-  const showBilling = isOwner && isBillingEnabled();
-
-  const handleLogout = async () => {
-    await signOut();
-    // Full page refresh to clear all React/jotai state
-    window.location.href = "/";
-  };
-
-  const getUserInitials = () => {
-    if (session?.user?.name) {
-      return session.user.name
-        .split(" ")
-        .map((n) => n[0])
-        .join("")
-        .toUpperCase()
-        .slice(0, 2);
-    }
-    if (session?.user?.email) {
-      return session.user.email.slice(0, 2).toUpperCase();
-    }
-    return "U";
-  };
-
   const signInInProgress = isSingleProviderSignInInitiated();
 
   // Check if user is anonymous
@@ -85,7 +61,11 @@ export const UserMenu = (): React.ReactElement => {
     );
   }
 
-  // Show Sign In button if user is anonymous, not logged in, or email not verified
+  // NAV-04: only mount the authenticated dropdown when the user is signed in
+  // and verified. The dropdown depends on `useOrganization` and
+  // `useActiveMember`, which auto-fire protected fetches as soon as they are
+  // called. Routing anonymous users through a separate sign-in surface keeps
+  // the network log clean on initial load.
   if (isAnonymousUser || !isEmailVerified) {
     return (
       <div className="flex items-center gap-2">
@@ -102,12 +82,60 @@ export const UserMenu = (): React.ReactElement => {
     );
   }
 
+  return <AuthenticatedUserMenu />;
+};
+
+const AuthenticatedUserMenu = (): React.ReactElement => {
+  const { data: session } = useSession();
+  const { open: openOverlay } = useOverlay();
+  const [orgModalOpen, setOrgModalOpen] = useState(false);
+  const { organization } = useOrganization();
+  const { isOwner } = useActiveMember();
+  const router = useRouter();
+  const showBilling = isOwner && isBillingEnabled();
+  const { status: notificationStatus, refresh: refreshNotifications } =
+    useNotificationStatus(isOwner ? organization?.id : null);
+  const showAvatarDot = notificationStatus.unreadCount > 0;
+  const showBillingDot = hasNotificationType(
+    notificationStatus,
+    "billing_limit_reached"
+  );
+
+  const handleDropdownOpenChange = (open: boolean): void => {
+    if (open) {
+      refreshNotifications().catch(() => undefined);
+    }
+  };
+
+  const handleLogout = async (): Promise<void> => {
+    await signOut();
+    // Full page refresh to clear all React/jotai state
+    window.location.href = "/";
+  };
+
+  const getUserInitials = (): string => {
+    if (session?.user?.name) {
+      return session.user.name
+        .split(" ")
+        .map((n) => n[0])
+        .join("")
+        .toUpperCase()
+        .slice(0, 2);
+    }
+    if (session?.user?.email) {
+      return session.user.email.slice(0, 2).toUpperCase();
+    }
+    return "U";
+  };
+
   return (
     <>
-      <DropdownMenu>
+      <DropdownMenu onOpenChange={handleDropdownOpenChange}>
         <DropdownMenuTrigger asChild>
           <Button
-            aria-label="User menu"
+            aria-label={
+              showAvatarDot ? "User menu, unread notifications" : "User menu"
+            }
             className="relative h-9 w-9 rounded-full border p-0"
             data-testid="user-menu"
             variant="ghost"
@@ -119,6 +147,13 @@ export const UserMenu = (): React.ReactElement => {
               />
               <AvatarFallback>{getUserInitials()}</AvatarFallback>
             </Avatar>
+            {showAvatarDot && (
+              <span
+                aria-hidden="true"
+                className="absolute top-0 right-0 size-2.5 rounded-full bg-destructive ring-2 ring-background"
+                data-testid="user-menu-notification-dot"
+              />
+            )}
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
@@ -157,7 +192,14 @@ export const UserMenu = (): React.ReactElement => {
           {showBilling && (
             <DropdownMenuItem onClick={() => router.push("/billing")}>
               <CreditCard className="size-4" />
-              <span>Billing</span>
+              <span className="flex-1">Billing</span>
+              {showBillingDot && (
+                <span
+                  aria-hidden="true"
+                  className="size-2 rounded-full bg-destructive"
+                  data-testid="billing-notification-dot"
+                />
+              )}
             </DropdownMenuItem>
           )}
           <DropdownMenuItem onClick={() => openOverlay(ProjectsAndTagsOverlay)}>

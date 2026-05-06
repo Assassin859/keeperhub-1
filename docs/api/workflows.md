@@ -90,11 +90,46 @@ POST /api/workflows/create
 {
   "name": "New Workflow",
   "description": "Optional description",
-  "projectId": "proj_123"
+  "projectId": "proj_123",
+  "nodes": [
+    {
+      "id": "trigger",
+      "type": "trigger",
+      "data": {
+        "label": "Schedule Trigger",
+        "config": { "triggerType": "Schedule", "scheduleCron": "*/30 * * * *" }
+      }
+    },
+    {
+      "id": "supply-aave",
+      "type": "action",
+      "data": {
+        "label": "Supply USDC to Aave",
+        "config": {
+          "actionType": "aave-v3/supply",
+          "network": "8453",
+          "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+          "amount": "100000000",
+          "onBehalfOf": "0x0000000000000000000000000000000000000000"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "trigger->supply-aave",
+      "source": "trigger",
+      "target": "supply-aave"
+    }
+  ]
 }
 ```
 
-The `projectId` field is optional. If provided, the workflow is assigned to the specified [project](/api/projects).
+> **Note on Node Format:** For action nodes, set the outer `type` to `"action"` and place the plugin slug in `config.actionType`. The `data` object contains `label` and `config`; `status` and `position` are optional and auto-assigned by the API if omitted. Trigger nodes use outer `type: "trigger"` with `config.triggerType` set to the Pascal-case trigger name.
+>
+> The server normalizes the request before persisting it, so the saved node will also include an inner `data.type` field set to the kind discriminator (`"trigger"` or `"action"`). You do not need to send `data.type` yourself; if you do, it must match the outer `type`. As a convenience, sending the plugin slug at the outer `type` (for example `"type": "aave-v3/supply"`) is also accepted, and the server rewrites it into `config.actionType` during normalization.
+
+`name`, `nodes`, and `edges` are required. `description`, `projectId`, `tagId`, and `enabled` are optional. `projectId` assigns the workflow to a [project](/api/projects); `tagId` assigns it to an organization tag for categorization; `enabled` (boolean) controls whether the workflow is active on creation.
 
 ### Response
 
@@ -139,6 +174,8 @@ DELETE /api/workflows/{workflowId}?force=true
 ```http
 POST /api/workflow/{workflowId}/execute
 ```
+
+> **Note:** This endpoint uses singular `/workflow/` in the path, unlike other endpoints which use plural `/workflows/`.
 
 Manually trigger a workflow execution.
 
@@ -276,3 +313,64 @@ POST /api/hub/featured
 ```
 
 Mark a workflow as featured in the hub. Requires internal service authentication (`hub` service). Accepts optional `category`, `protocol`, and `featuredOrder` fields alongside the `workflowId`.
+
+## List Action Schemas
+
+```http
+GET /api/mcp/schemas
+```
+
+Returns the complete registry of available workflow actions, triggers, and templates. Essential for programmatic workflow generation to discover valid action configurations.
+
+### Response Structure
+
+```json
+{
+  "version": "1.0.0",
+  "actions": {
+    "web3/check-balance": {
+      "actionType": "web3/check-balance",
+      "label": "Check Balance",
+      "category": "web3",
+      "integration": "web3",
+      "requiredFields": { "network": "string (chain ID)", "address": "string" },
+      "optionalFields": {},
+      "outputFields": { "balance": "..." },
+      "requiresCredentials": false
+    },
+    "Condition": {
+      "actionType": "Condition",
+      "label": "Condition",
+      "category": "System",
+      "requiredFields": { "condition": "string (JS expression)" },
+      "optionalFields": { "conditionConfig": "object (visual builder state)" },
+      "sourceHandles": ["true", "false"]
+    }
+  },
+  "triggers": {
+    "Schedule": {
+      "triggerType": "Schedule",
+      "label": "Schedule",
+      "requiredFields": { "scheduleCron": "string" },
+      "optionalFields": { "scheduleTimezone": "string" }
+    },
+    "Manual": { "triggerType": "Manual", "label": "Manual", "requiredFields": {} }
+  },
+  "chains": [...],
+  "platform": { "wallet": {...}, "proxyContracts": {...}, "abiHandling": {...} },
+  "templateSyntax": { "pattern": "{{@nodeId:Label.field}}" },
+  "builtinVariables": {
+    "nodeId": "__system",
+    "nodeLabel": "System",
+    "variables": { "unixTimestamp": {...}, "unixTimestampMs": {...}, "isoTimestamp": {...} }
+  },
+  "workflowStructure": { "nodeStructure": {...}, "edgeStructure": {...} },
+  "tips": ["actionType must match exactly", "..."]
+}
+```
+
+> **Note on Action Types:** The keys in the `actions` object are the values to use in `config.actionType` when creating workflow nodes.
+> - **Plugin actions** use a `{pluginType}/{slug}` format (e.g., `"web3/check-balance"`, `"aave-v3/supply"`).
+> - **System actions** use Pascal-case with spaces between words (e.g., `"Condition"`, `"For Each"`, `"HTTP Request"`). System actions do not have a `requiresCredentials` field.
+> - **Triggers** are listed under the `triggers` key (not `actions`) and their values map to `config.triggerType` on trigger nodes.
+> - The endpoint self-documents the correct node and edge shapes under the `workflowStructure` and `edgeStructure` keys — use these as the source of truth for programmatic workflow generation.

@@ -142,6 +142,12 @@ env:
   FROM_ADDRESS:
     type: kv
     value: "noreply@keeperhub.com"
+  # Billing guard. Read by keeperhub-executor/billing-guard.ts to gate
+  # SQS-triggered runs (schedule / block / event) on the monthly tier.
+  # Must mirror NEXT_PUBLIC_BILLING_ENABLED in deploy/keeperhub/prod/values.yaml.
+  NEXT_PUBLIC_BILLING_ENABLED:
+    type: kv
+    value: "true"
   # Gas credit caps per plan (cents, server-only)
   GAS_CREDITS_FREE_CENTS:
     type: kv

@@ -1,10 +1,16 @@
 /**
  * Adaptive Gas Strategy for KeeperHub Web3 Operations
  *
- * Provides intelligent gas estimation based on:
- * - Network volatility (coefficient of variation of recent base fees)
- * - Trigger type (event/webhook = time-sensitive, scheduled = cost-optimized)
+ * Strategy is purely a function of observable chain state — NEVER trigger type:
+ * - Network volatility (coefficient of variation of recent base fees) selects
+ *   between conservative (high-buffer) and percentile-optimized fee paths.
  * - Chain-specific configurations (from database with hardcoded fallbacks)
+ *   provide minimum priority-fee floors and gas-limit multipliers.
+ *
+ * Two workflows hitting the same contract on the same chain at the same moment
+ * receive the same gas config regardless of how they were triggered (manual,
+ * scheduled, webhook, event). This eliminates the manual-vs-webhook divergence
+ * that surfaced in KEEP-384.
  *
  * @see docs/keeperhub/KEEP-1240/gas.md for full specification
  */
@@ -37,8 +43,6 @@ async function runRpc<T>(
   return await fn(provider as ethers.JsonRpcProvider);
 }
 
-export type TriggerType = "event" | "webhook" | "scheduled" | "manual";
-
 export type GasConfig = {
   gasLimit: bigint;
   maxFeePerGas: bigint;
@@ -54,9 +58,9 @@ export type VolatilityMetrics = {
 };
 
 export type GasStrategyConfig = {
-  // Gas limit multipliers
+  // Gas limit multiplier (uniform — was previously bumped for "time-sensitive"
+  // triggers; that branching is gone, see file header).
   gasLimitMultiplier: number;
-  gasLimitMultiplierConservative: number;
 
   // Volatility thresholds
   volatilityThreshold: number;
@@ -80,7 +84,6 @@ const MAX_GAS_LIMIT_MULTIPLIER_OVERRIDE = 10;
 
 const DEFAULT_CONFIG: GasStrategyConfig = {
   gasLimitMultiplier: 2.0,
-  gasLimitMultiplierConservative: 2.5,
   volatilityThreshold: 0.3,
   percentileLowVolatility: 60,
   percentileHighVolatility: 80,
@@ -256,16 +259,19 @@ export class AdaptiveGasStrategy {
   }
 
   /**
-   * Get gas configuration for a transaction
+   * Get gas configuration for a transaction.
+   *
+   * Strategy is determined by chain state alone (volatility + chain config).
+   * Trigger type is intentionally not an input — see file header.
    */
   async getGasConfig(
     provider: ethers.Provider,
-    triggerType: TriggerType,
     estimatedGas: bigint,
     chainId: number,
     gasLimitMultiplierOverride?: number,
     gasLimitOverride?: bigint,
-    rpcManager?: RpcProviderManager
+    rpcManager?: RpcProviderManager,
+    priorityFeeOverride?: bigint
   ): Promise<GasConfig> {
     // Apply chain-specific overrides (from DB with hardcoded fallback)
     const chainConfig = await this.getChainConfig(chainId);
@@ -273,7 +279,6 @@ export class AdaptiveGasStrategy {
     // Calculate gas limit with safety margin
     const gasLimit = this.calculateGasLimit(
       estimatedGas,
-      triggerType,
       chainConfig,
       gasLimitMultiplierOverride,
       gasLimitOverride
@@ -282,10 +287,29 @@ export class AdaptiveGasStrategy {
     // Get fee configuration based on strategy
     const feeConfig = await this.calculateFees(
       provider,
-      triggerType,
       chainConfig,
       rpcManager
     );
+
+    // Caller-supplied priority fee override (e.g. when the network's mempool
+    // requires a tip above the configured chain floor). Bypasses clampPriorityFee.
+    // Preserve the base-fee component of maxFeePerGas (computed maxFeePerGas
+    // minus computed priority) and rebuild it with the override so the EIP-1559
+    // invariant maxFeePerGas >= maxPriorityFeePerGas is maintained.
+    if (priorityFeeOverride !== undefined && priorityFeeOverride > BigInt(0)) {
+      const baseComponent =
+        feeConfig.maxFeePerGas > feeConfig.maxPriorityFeePerGas
+          ? feeConfig.maxFeePerGas - feeConfig.maxPriorityFeePerGas
+          : BigInt(0);
+      console.log(
+        `[GasStrategy] Priority fee override: ${ethers.formatUnits(priorityFeeOverride, "gwei")} gwei (clamp bypassed)`
+      );
+      return {
+        gasLimit,
+        maxFeePerGas: baseComponent + priorityFeeOverride,
+        maxPriorityFeePerGas: priorityFeeOverride,
+      };
+    }
 
     return {
       gasLimit,
@@ -296,7 +320,6 @@ export class AdaptiveGasStrategy {
 
   private calculateGasLimit(
     estimatedGas: bigint,
-    triggerType: TriggerType,
     chainConfig: ChainGasConfig,
     gasLimitMultiplierOverride?: number,
     gasLimitOverride?: bigint
@@ -316,8 +339,6 @@ export class AdaptiveGasStrategy {
         MAX_GAS_LIMIT_MULTIPLIER_OVERRIDE
       );
       console.log(`[GasStrategy] Using override multiplier: ${multiplier}x`);
-    } else if (this.isTimeSensitive(triggerType)) {
-      multiplier = chainConfig.gasLimitMultiplierConservative;
     } else {
       multiplier = chainConfig.gasLimitMultiplier;
     }
@@ -329,16 +350,10 @@ export class AdaptiveGasStrategy {
 
   private async calculateFees(
     provider: ethers.Provider,
-    triggerType: TriggerType,
     chainConfig: ChainGasConfig,
     rpcManager?: RpcProviderManager
   ): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }> {
-    // Time-sensitive triggers always use conservative strategy
-    if (this.isTimeSensitive(triggerType)) {
-      return this.getConservativeFees(provider, chainConfig, rpcManager);
-    }
-
-    // Check volatility for scheduled/manual triggers
+    // Strategy is volatility-driven only — trigger type is intentionally not consulted.
     const volatility = await measureVolatility(
       provider,
       this.config.volatilitySampleBlocks,
@@ -378,7 +393,12 @@ export class AdaptiveGasStrategy {
       chainConfig
     );
 
-    const maxFeePerGas = (feeData.maxFeePerGas * BigInt(120)) / BigInt(100);
+    // Why "+ maxPriorityFeePerGas": EIP-1559 requires maxFeePerGas >= maxPriorityFeePerGas.
+    // On low-base-fee chains (Sepolia/Arbitrum/Base in quiet windows), feeData.maxFeePerGas
+    // can sit below the chain's clamped priority floor. Adding priority unconditionally
+    // mirrors getOptimizedFees and preserves the invariant. KEEP-384.
+    const networkBuffer = (feeData.maxFeePerGas * BigInt(120)) / BigInt(100);
+    const maxFeePerGas = networkBuffer + maxPriorityFeePerGas;
 
     return { maxFeePerGas, maxPriorityFeePerGas };
   }
@@ -446,10 +466,6 @@ export class AdaptiveGasStrategy {
     return fee;
   }
 
-  private isTimeSensitive(triggerType: TriggerType): boolean {
-    return triggerType === "event" || triggerType === "webhook";
-  }
-
   /**
    * Get chain-specific gas configuration.
    * Fetches from database first, falls back to hardcoded defaults.
@@ -495,56 +511,68 @@ export class AdaptiveGasStrategy {
       // Ethereum mainnet
       1: {
         gasLimitMultiplier: 2.0,
-        gasLimitMultiplierConservative: 2.5,
         minPriorityFeeGwei: 0.5,
       },
       // Sepolia testnet
       11155111: {
         gasLimitMultiplier: 2.0,
-        gasLimitMultiplierConservative: 2.5,
         minPriorityFeeGwei: 0.1,
       },
       // Arbitrum One
       42161: {
         gasLimitMultiplier: 1.5, // L2 estimates are more accurate
-        gasLimitMultiplierConservative: 2.0,
         minPriorityFeeGwei: 0.01,
         maxPriorityFeeGwei: 10,
       },
       // Arbitrum Sepolia
       421614: {
         gasLimitMultiplier: 1.5,
-        gasLimitMultiplierConservative: 2.0,
         minPriorityFeeGwei: 0.01,
         maxPriorityFeeGwei: 10,
       },
       // Base
       8453: {
         gasLimitMultiplier: 1.5,
-        gasLimitMultiplierConservative: 2.0,
         minPriorityFeeGwei: 0.001,
         maxPriorityFeeGwei: 5,
       },
       // Base Sepolia
       84532: {
         gasLimitMultiplier: 1.5,
-        gasLimitMultiplierConservative: 2.0,
         minPriorityFeeGwei: 0.001,
         maxPriorityFeeGwei: 5,
       },
       // Polygon
       137: {
         gasLimitMultiplier: 2.0,
-        gasLimitMultiplierConservative: 2.5,
         minPriorityFeeGwei: 30, // Polygon has higher base priority fees
         maxPriorityFeeGwei: 1000,
       },
       // Polygon Amoy testnet
       80002: {
         gasLimitMultiplier: 2.0,
-        gasLimitMultiplierConservative: 2.5,
         minPriorityFeeGwei: 30,
         maxPriorityFeeGwei: 1000,
+      },
+      // 0G Galileo testnet. The mempool admits tips at 2 gwei (matching the
+      // node's "needed 2 gwei" floor) but validators only include txs paying
+      // >= ~4 gwei. Validated 2026-05-01: sampled 10k recent blocks (400 txs);
+      // 77% paid exactly 4.0 gwei, 91% paid >= 4.0, eth_maxPriorityFeePerGas
+      // returns 4.0. A 2 gwei tip clears mempool admission then sits unmined
+      // indefinitely. If 0G validator policy shifts (mempool floor != inclusion
+      // floor is the trap), re-sample and adjust this entry.
+      16602: {
+        gasLimitMultiplier: 2.0,
+        minPriorityFeeGwei: 4.0,
+        maxPriorityFeeGwei: 500,
+      },
+      // 0G Mainnet -- mirrors Galileo's tip-cap requirement (same client/protocol).
+      // If mainnet's actual floor differs, narrow this entry; defensive default
+      // until we have mainnet-specific signal.
+      16661: {
+        gasLimitMultiplier: 2.0,
+        minPriorityFeeGwei: 4.0,
+        maxPriorityFeeGwei: 500,
       },
     };
 

@@ -276,11 +276,73 @@ const orgWithWorkflows = getOrCreateGauge(
 );
 
 // Organization info gauge (DB-sourced, one series per org)
+// Includes plan + billing_status so the Organization Directory table panel
+// in Grafana can show those columns directly off this gauge without an
+// extra Prometheus join.
 const orgInfo = getOrCreateGauge(
   dbRegistry,
   "keeperhub_org_info",
-  "Organization info with name and slug labels",
-  ["org_name", "slug"]
+  "Organization info with name, slug, plan, and billing_status labels",
+  ["org_name", "slug", "plan", "billing_status"]
+);
+
+// Billing-aware org metrics (DB-sourced)
+//
+// Org count broken down by (plan, billing_status). One series per
+// (plan, billing_status) combination — bounded cardinality (4 plans x
+// ~7 statuses).
+const orgTotalByPlan = getOrCreateGauge(
+  dbRegistry,
+  "keeperhub_org_total_by_plan",
+  "Organizations grouped by plan and billing status",
+  ["plan", "billing_status"]
+);
+
+// Per-org execution counts (rolling 30-day window). Cardinality control:
+// paid orgs (pro/business/enterprise) emit individual series; free-tier
+// orgs aggregate into a single series with org_slug="_free".
+const orgExecutions30d = getOrCreateGauge(
+  dbRegistry,
+  "keeperhub_org_executions_30d",
+  'Workflow executions per org in the last 30 days (paid orgs individually; free orgs aggregated under org_slug="_free")',
+  ["org_slug", "plan"]
+);
+
+// Per-org execution counts (current calendar month, used for plan limit
+// pressure). Same cardinality rules as orgExecutions30d.
+const orgExecutionsMonth = getOrCreateGauge(
+  dbRegistry,
+  "keeperhub_org_executions_month",
+  "Workflow executions per org since start of the current calendar month",
+  ["org_slug", "plan"]
+);
+
+// Plan usage ratio: current-month executions / monthly limit. 0 when the
+// plan is unlimited (enterprise) or when there is no usage. Drives the
+// "approaching plan limit" alert and the dashboard heatmap.
+const orgPlanUsageRatio = getOrCreateGauge(
+  dbRegistry,
+  "keeperhub_org_plan_usage_ratio",
+  "Current-month executions divided by the org's plan monthly limit (0 = no pressure or unlimited)",
+  ["org_slug", "plan"]
+);
+
+// Directional MRR per plan in USD cents. Computed from PLANS[plan].tiers
+// monthlyPrice × current (plan, tier) of every active/trialing/past_due
+// subscription. Stripe Dashboard remains the source of truth for actual
+// revenue accounting; this gauge is for trend/observability only.
+const mrrUsdCents = getOrCreateGauge(
+  dbRegistry,
+  "keeperhub_mrr_usd_cents",
+  "Approximate MRR in USD cents per plan (PLANS table * current tier)",
+  ["plan"]
+);
+
+const mrrUsdCentsTotal = getOrCreateGauge(
+  dbRegistry,
+  "keeperhub_mrr_usd_cents_total",
+  "Approximate total MRR in USD cents across all plans",
+  []
 );
 
 // Workflow definition metrics (DB-sourced)
@@ -609,6 +671,63 @@ const sponsorshipGasCostUsdMicro = getOrCreateCounter(
   SPONSORSHIP_LABELS
 );
 
+// Billing lifecycle counters (API-process, emitted from the webhook handler
+// in lib/billing/handle-billing-event.ts). These give Grafana time-series
+// for subscription churn, invoice failure rate, and overage events without
+// reading Stripe directly.
+const BILLING_LIFECYCLE_LABELS = ["plan", "tier"];
+const BILLING_INVOICE_LABELS = ["plan"];
+const BILLING_PLAN_CHANGE_LABELS = ["from_plan", "to_plan", "direction"];
+
+const billingSubscriptionCreated = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_billing_subscription_created_total",
+  "Subscriptions created (paid plan attached after checkout)",
+  BILLING_LIFECYCLE_LABELS
+);
+
+const billingSubscriptionUpdated = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_billing_subscription_updated_total",
+  "Subscription update events received from the billing provider",
+  BILLING_INVOICE_LABELS
+);
+
+const billingSubscriptionCanceled = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_billing_subscription_canceled_total",
+  "Subscriptions canceled (provider-side or downgraded to free)",
+  BILLING_LIFECYCLE_LABELS
+);
+
+const billingSubscriptionPlanChanged = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_billing_subscription_plan_changed_total",
+  "Subscription plan changes (upgrade/downgrade), labeled by direction",
+  BILLING_PLAN_CHANGE_LABELS
+);
+
+const billingInvoicePaid = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_billing_invoice_paid_total",
+  "Invoices paid via the billing provider",
+  BILLING_INVOICE_LABELS
+);
+
+const billingInvoiceFailed = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_billing_invoice_failed_total",
+  "Invoice payment failures (past_due / payment_failed)",
+  BILLING_INVOICE_LABELS
+);
+
+const billingOverageCharged = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_billing_overage_charged_total",
+  "Overage charges issued for plan limit excess",
+  BILLING_INVOICE_LABELS
+);
+
 // Traffic counters
 const pluginInvocations = getOrCreateCounter(
   apiRegistry,
@@ -760,13 +879,28 @@ const errorLabelAllowlist: Record<string, string[]> = {
 };
 
 /**
- * Filter labels to only include allowed ones for a specific metric
+ * Filter labels to only include allowed ones for a specific metric.
+ *
+ * Precedence: a metric in `errorLabelAllowlist` uses that legacy allowlist;
+ * otherwise the counter's own declared `labelNames` are used as the allowlist.
+ * Either way, unknown labels are silently dropped before reaching prom-client.
+ *
+ * This prevents callers from accidentally exploding the labelset with
+ * high-cardinality fields (contract addresses, transaction hashes, raw error
+ * messages, etc.) and -- critically -- prevents prom-client from throwing
+ * "Added label X is not included in initial labelset" out of metric code,
+ * which would otherwise bubble up through `logUserError` and break the
+ * user-facing API call that emitted the log.
  */
 function filterLabelsForMetric(
   metricName: string,
+  counter: Counter,
   labels: Record<string, string>
 ): Record<string, string> {
-  const allowed = errorLabelAllowlist[metricName];
+  const allowed =
+    errorLabelAllowlist[metricName] ??
+    (counter as Counter & { labelNames?: string[] }).labelNames;
+
   if (!allowed) {
     return labels;
   }
@@ -808,6 +942,14 @@ const counterMap: Record<string, Counter> = {
   "sponsorship.transactions.total": sponsorshipTransactions,
   "sponsorship.gas_used.total": sponsorshipGasUsed,
   "sponsorship.gas_cost_usd_micro.total": sponsorshipGasCostUsdMicro,
+  // Billing lifecycle counters
+  "billing.subscription.created": billingSubscriptionCreated,
+  "billing.subscription.updated": billingSubscriptionUpdated,
+  "billing.subscription.canceled": billingSubscriptionCanceled,
+  "billing.subscription.plan_changed": billingSubscriptionPlanChanged,
+  "billing.invoice.paid": billingInvoicePaid,
+  "billing.invoice.failed": billingInvoiceFailed,
+  "billing.overage.charged": billingOverageCharged,
 };
 
 const errorCounterMap: Record<string, Counter> = {
@@ -933,8 +1075,15 @@ function recordErrorCounter(
   } else {
     sanitized.error_type = "UnknownError";
   }
-  const errorLabels = filterLabelsForMetric(name, sanitized);
-  counter.inc(errorLabels);
+  const errorLabels = filterLabelsForMetric(name, counter, sanitized);
+  try {
+    counter.inc(errorLabels);
+  } catch (err) {
+    // Defense-in-depth: if filtering missed something or prom-client rejects
+    // the label set for any other reason, never let metrics break the
+    // user-facing operation that called us.
+    console.warn(`[Prometheus] Failed to record error counter ${name}:`, err);
+  }
 }
 
 /**
@@ -995,6 +1144,7 @@ export async function updateDbMetrics(): Promise<void> {
       getUserListFromDb,
       getOrgListFromDb,
       getVoteStatsFromDb,
+      getBillingStatsFromDb,
     } = await import("../db-metrics");
     const [
       workflowStats,
@@ -1009,6 +1159,7 @@ export async function updateDbMetrics(): Promise<void> {
       userList,
       orgList,
       voteStats,
+      billingStats,
     ] = await Promise.all([
       getWorkflowStatsFromDb(),
       getStepStatsFromDb(),
@@ -1022,6 +1173,7 @@ export async function updateDbMetrics(): Promise<void> {
       getUserListFromDb(),
       getOrgListFromDb(),
       getVoteStatsFromDb(),
+      getBillingStatsFromDb(),
     ]);
 
     // Update workflow execution counts by status (gauges - point-in-time snapshots)
@@ -1143,11 +1295,49 @@ export async function updateDbMetrics(): Promise<void> {
     orgInvitationsPending.set(orgStats.invitationsPending);
     orgWithWorkflows.set(orgStats.withWorkflows);
 
-    // Update org info gauge (one series per org)
+    // Update org info gauge (one series per org). plan + billing_status are
+    // populated from the LEFT JOIN on organization_subscriptions in
+    // getOrgListFromDb so the Organization Directory table panel can render
+    // both columns from this single gauge.
     orgInfo.reset();
     for (const org of orgList) {
-      orgInfo.set({ org_name: org.name, slug: org.slug }, 1);
+      orgInfo.set(
+        {
+          org_name: org.name,
+          slug: org.slug,
+          plan: org.plan,
+          billing_status: org.billingStatus,
+        },
+        1
+      );
     }
+
+    // Update billing-aware metrics
+    orgTotalByPlan.reset();
+    for (const [plan, byStatus] of Object.entries(billingStats.orgsByPlan)) {
+      for (const [billingStatus, orgCount] of Object.entries(byStatus)) {
+        orgTotalByPlan.set({ plan, billing_status: billingStatus }, orgCount);
+      }
+    }
+
+    orgExecutions30d.reset();
+    orgExecutionsMonth.reset();
+    orgPlanUsageRatio.reset();
+    for (const row of billingStats.orgsExecutions) {
+      const labels = { org_slug: row.orgSlug, plan: row.plan };
+      orgExecutions30d.set(labels, row.exec30d);
+      orgExecutionsMonth.set(labels, row.execMonth);
+      // Unlimited plan (enterprise) -> ratio 0 to avoid alerting noise.
+      // Limit of 0 is treated the same way to avoid divide-by-zero.
+      const ratio = row.monthlyLimit > 0 ? row.execMonth / row.monthlyLimit : 0;
+      orgPlanUsageRatio.set(labels, ratio);
+    }
+
+    mrrUsdCents.reset();
+    for (const [plan, cents] of Object.entries(billingStats.mrrCentsByPlan)) {
+      mrrUsdCents.set({ plan }, cents);
+    }
+    mrrUsdCentsTotal.set(billingStats.mrrCentsTotal);
 
     // Update workflow definition metrics from DB
     workflowTotal.set(workflowDefStats.total);

@@ -1,7 +1,6 @@
 import type { ethers } from "ethers";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import type { NonceSession } from "../nonce-manager";
-import type { TriggerType } from "../transaction-manager";
 
 export type TransactionReceipt = {
   hash: string;
@@ -13,6 +12,9 @@ export type TransactionReceipt = {
 export type GasOverrides = {
   multiplierOverride?: number;
   gasLimitOverride?: bigint;
+  // Caller-supplied maxPriorityFeePerGas (in wei). When set, the gas strategy
+  // skips its chain min/max priority-fee clamp and uses this value directly.
+  priorityFeeOverride?: bigint;
 };
 
 export type SendTransactionRequest = {
@@ -79,7 +81,6 @@ export interface ChainAdapter {
 }
 
 export type TransactionOptions = {
-  triggerType: TriggerType;
   gasOverrides: GasOverrides;
   workflowId?: string;
   rpcManager?: RpcProviderManager;

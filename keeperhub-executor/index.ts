@@ -28,7 +28,7 @@ import {
   ReceiveMessageCommand,
   SQSClient,
 } from "@aws-sdk/client-sqs";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import {
@@ -39,6 +39,7 @@ import {
 import { generateId } from "../lib/utils/id";
 import type { WorkflowNode } from "../lib/workflow/store";
 import { executeViaApi } from "./api-execute";
+import { checkExecutionLimitForExecutor } from "./billing-guard";
 import { CONFIG } from "./config";
 import { resolveDispatchTarget } from "./execution-mode";
 import { executeInProcess } from "./in-process";
@@ -236,6 +237,17 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     }
   }
 
+  const billingResult = await checkExecutionLimitForExecutor(
+    db,
+    workflow.organizationId
+  );
+  if (!billingResult.allowed) {
+    console.warn(
+      `[Executor] Billing guard blocked ${triggerType} trigger for workflow ${workflowId}: org=${workflow.organizationId} plan=${billingResult.plan} used=${billingResult.used} limit=${billingResult.limit} effectiveLimit=${billingResult.effectiveLimit} debt=${billingResult.debtExecutions} reason=${billingResult.reason}`
+    );
+    return;
+  }
+
   const executionId = generateId();
   const input = buildInput(message);
   const userId = "userId" in message ? message.userId : workflow.userId;
@@ -256,14 +268,39 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     `[Executor] Dispatch target: ${target} (mode: ${CONFIG.executionMode})`
   );
 
-  await dispatchExecution({
-    target,
-    workflowId,
-    executionId,
-    input,
-    triggerType,
-    scheduleId: getScheduleId(message),
-  });
+  try {
+    await dispatchExecution({
+      target,
+      workflowId,
+      executionId,
+      input,
+      triggerType,
+      scheduleId: getScheduleId(message),
+    });
+  } catch (error) {
+    // Don't leak the inserted row as 'pending' if dispatch fails. The
+    // k8s-job target updates the row internally; this outer guard covers
+    // api / in-process / future targets uniformly. The status='pending'
+    // filter prevents overwriting a status the runtime already set if
+    // the failure happened after the workflow started running.
+    await db
+      .update(workflowExecutions)
+      .set({
+        status: "error",
+        error:
+          error instanceof Error
+            ? `Dispatch failed: ${error.message}`
+            : "Dispatch failed",
+        completedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(workflowExecutions.id, executionId),
+          eq(workflowExecutions.status, "pending")
+        )
+      );
+    throw error;
+  }
 }
 
 async function processMessage(message: Message): Promise<void> {

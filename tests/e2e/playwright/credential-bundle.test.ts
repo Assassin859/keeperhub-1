@@ -295,7 +295,7 @@ async function safeCleanup(handle: CleanupHandle | null): Promise<void> {
 test.describe("Credential resolution in workflow step bundles", () => {
   for (const commsCase of COMMS_CASES) {
     test(`${commsCase.integrationType} step receives credentials via PLUGIN_CREDENTIAL_MAP, not the lossy fallback`, async ({
-      page,
+      apiRequest,
     }) => {
       const { userId, organizationId } = await lookupUserAndOrg(
         PERSISTENT_TEST_USER_EMAIL
@@ -325,7 +325,7 @@ test.describe("Credential resolution in workflow step bundles", () => {
       const cleanup: CleanupHandle = { workflowId, integrationId };
 
       try {
-        const response = await page.request.post(
+        const response = await apiRequest.post(
           `/api/workflow/${workflowId}/execute`,
           { data: {} }
         );

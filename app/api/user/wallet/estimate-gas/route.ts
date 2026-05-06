@@ -139,7 +139,6 @@ export async function POST(request: Request) {
 
     const gasConfig = await getGasStrategy().getGasConfig(
       rpcManager.getProvider(),
-      "manual",
       estimatedGas,
       chainId
     );
