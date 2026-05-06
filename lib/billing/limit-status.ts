@@ -53,20 +53,28 @@ async function getCurrentMonthUsage(organizationId: string): Promise<number> {
 export async function isBillingLimitReached(
   organizationId: string
 ): Promise<boolean> {
-  const sub = await getOrgSubscription(organizationId);
-  const plan = parsePlanName(sub?.plan);
-  const tier = parseTierKey(sub?.tier);
-  const limits = getPlanLimits(plan, tier, sub?.planOverrides);
+  try {
+    const sub = await getOrgSubscription(organizationId);
+    const plan = parsePlanName(sub?.plan);
+    const tier = parseTierKey(sub?.tier);
+    const limits = getPlanLimits(plan, tier, sub?.planOverrides);
 
-  if (limits.maxExecutionsPerMonth < 0) {
+    if (limits.maxExecutionsPerMonth < 0) {
+      return false;
+    }
+
+    const enabledWorkflows = await countEnabledWorkflows(organizationId);
+    if (enabledWorkflows === 0) {
+      return false;
+    }
+
+    const used = await getCurrentMonthUsage(organizationId);
+    return used >= limits.maxExecutionsPerMonth;
+  } catch (error) {
+    console.warn(
+      "[limit-status] isBillingLimitReached failed; treating as not-reached",
+      error
+    );
     return false;
   }
-
-  const enabledWorkflows = await countEnabledWorkflows(organizationId);
-  if (enabledWorkflows === 0) {
-    return false;
-  }
-
-  const used = await getCurrentMonthUsage(organizationId);
-  return used >= limits.maxExecutionsPerMonth;
 }

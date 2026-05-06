@@ -1,12 +1,7 @@
 import { NextResponse } from "next/server";
 import { isBillingEnabled } from "@/lib/billing/feature-flag";
 import { isBillingLimitReached } from "@/lib/billing/limit-status";
-import { ErrorCategory, logSystemError } from "@/lib/logging";
-import {
-  auditFromAuth,
-  type OrganizationAuthContext,
-  resolveOrganizationId,
-} from "@/lib/middleware/auth-helpers";
+import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 
 export type NotificationType = "billing_limit_reached";
 
@@ -15,17 +10,18 @@ type NotificationStatusResponse = {
   types: NotificationType[];
 };
 
+const EMPTY_RESPONSE: NotificationStatusResponse = {
+  unreadCount: 0,
+  types: [],
+};
+
 export async function GET(
   request: Request
-): Promise<NextResponse<NotificationStatusResponse | { error: string }>> {
-  let authContext: OrganizationAuthContext | null = null;
+): Promise<NextResponse<NotificationStatusResponse>> {
   try {
-    authContext = await resolveOrganizationId(request);
+    const authContext = await resolveOrganizationId(request);
     if ("error" in authContext) {
-      return NextResponse.json(
-        { error: authContext.error },
-        { status: authContext.status }
-      );
+      return NextResponse.json(EMPTY_RESPONSE);
     }
     const { organizationId } = authContext;
 
@@ -37,19 +33,10 @@ export async function GET(
 
     return NextResponse.json({ unreadCount: types.length, types });
   } catch (error) {
-    logSystemError(
-      ErrorCategory.EXTERNAL_SERVICE,
-      "[Notifications] Status query error",
-      error,
-      {
-        endpoint: "/api/notifications/status",
-        operation: "get",
-        ...auditFromAuth(authContext),
-      }
+    console.warn(
+      "[notifications-status] degraded; returning empty response",
+      error
     );
-    return NextResponse.json(
-      { error: "Failed to fetch notifications" },
-      { status: 500 }
-    );
+    return NextResponse.json(EMPTY_RESPONSE);
   }
 }
