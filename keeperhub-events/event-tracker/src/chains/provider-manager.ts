@@ -1,4 +1,5 @@
 import { ethers } from "ethers";
+import { WebSocket } from "ws";
 import { logger } from "../../lib/utils/logger";
 
 /**
@@ -164,8 +165,30 @@ interface ChainEntry {
   disconnectHandlers: Set<DisconnectHandler>;
 }
 
+/**
+ * Wrap socket construction so we can attach an EventEmitter-style `error`
+ * listener synchronously, before ethers' WebSocketProvider has had a
+ * chance to assign its own `onerror`. Without this, an early ws-layer
+ * error (DNS NXDOMAIN, ECONNREFUSED, non-WS server returning HTTP 200)
+ * fires on a listenerless EventEmitter, gets re-thrown synchronously,
+ * escapes openProvider's try/catch as `uncaughtException`, and `index.ts`
+ * exits the pod - which would crashloop the whole event-tracker on a
+ * misconfigured WSS URL even when a healthy fallback is configured.
+ *
+ * The listener is a no-op: failures still reject `provider.ready` via
+ * ethers' onerror (assigned shortly after we return), and that rejection
+ * is what openProvider catches to walk to the fallback. We just need
+ * *some* error listener to be on the ws by the time the connection
+ * attempt resolves.
+ */
 const defaultFactory: ProviderFactory = (wssUrl) =>
-  new ethers.WebSocketProvider(wssUrl);
+  new ethers.WebSocketProvider(() => {
+    const socket = new WebSocket(wssUrl);
+    socket.on("error", () => {
+      // intentionally empty - see comment on defaultFactory
+    });
+    return socket;
+  });
 
 const defaultOnPermanentFailure = (chainId: number): void => {
   logger.error(
