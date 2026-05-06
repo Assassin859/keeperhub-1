@@ -32,11 +32,6 @@ export type ExecuteAsSafeRequest = {
 
 export type ExecuteAsSafeOptions = {
   chainId: number;
-  /**
-   * Retained for back-compat with safe-routing call sites that still pass it;
-   * no longer consumed by gasStrategy.getGasConfig (post-staging refactor).
-   */
-  triggerType?: string;
   workflowId?: string;
   rpcManager?: RpcProviderManager;
 };

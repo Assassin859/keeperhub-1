@@ -1,10 +1,3 @@
-CREATE TABLE "agentic_wallet_daily_spend" (
-	"sub_org_id" text NOT NULL,
-	"day_utc" date NOT NULL,
-	"spent_micros" bigint DEFAULT 0 NOT NULL,
-	CONSTRAINT "agentic_wallet_daily_spend_sub_org_id_day_utc_pk" PRIMARY KEY("sub_org_id","day_utc")
-);
---> statement-breakpoint
 CREATE TABLE "safe_role_allowances" (
 	"id" text PRIMARY KEY NOT NULL,
 	"role_id" text NOT NULL,
@@ -89,17 +82,12 @@ CREATE TABLE "safe_wallets" (
 	"updated_at" timestamp DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-DROP INDEX "idx_agentic_wallet_hmac_secrets_sub_org";--> statement-breakpoint
-ALTER TABLE "organization_subscriptions" ADD COLUMN "plan_overrides" jsonb;--> statement-breakpoint
-ALTER TABLE "wallet_locks" ADD COLUMN "expires_at" timestamp with time zone DEFAULT now() NOT NULL;--> statement-breakpoint
-ALTER TABLE "agentic_wallet_daily_spend" ADD CONSTRAINT "agentic_wallet_daily_spend_sub_org_id_agentic_wallets_sub_org_id_fk" FOREIGN KEY ("sub_org_id") REFERENCES "public"."agentic_wallets"("sub_org_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "safe_role_allowances" ADD CONSTRAINT "safe_role_allowances_role_id_safe_roles_id_fk" FOREIGN KEY ("role_id") REFERENCES "public"."safe_roles"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "safe_role_direct_rules" ADD CONSTRAINT "safe_role_direct_rules_role_id_safe_roles_id_fk" FOREIGN KEY ("role_id") REFERENCES "public"."safe_roles"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "safe_role_protocols" ADD CONSTRAINT "safe_role_protocols_role_id_safe_roles_id_fk" FOREIGN KEY ("role_id") REFERENCES "public"."safe_roles"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "safe_roles" ADD CONSTRAINT "safe_roles_safe_wallet_id_safe_wallets_id_fk" FOREIGN KEY ("safe_wallet_id") REFERENCES "public"."safe_wallets"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "safe_wallets" ADD CONSTRAINT "safe_wallets_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "safe_wallets" ADD CONSTRAINT "safe_wallets_owner_wallet_id_para_wallets_id_fk" FOREIGN KEY ("owner_wallet_id") REFERENCES "public"."para_wallets"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
-CREATE INDEX "idx_agentic_wallet_daily_spend_day" ON "agentic_wallet_daily_spend" USING btree ("day_utc");--> statement-breakpoint
 CREATE UNIQUE INDEX "safe_role_allowances_role_key_unique" ON "safe_role_allowances" USING btree ("role_id","allowance_key");--> statement-breakpoint
 CREATE INDEX "idx_safe_role_allowances_role" ON "safe_role_allowances" USING btree ("role_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "safe_role_direct_rules_role_kind_token_cp_unique" ON "safe_role_direct_rules" USING btree ("role_id","kind","token_address","counterparty");--> statement-breakpoint
