@@ -1,8 +1,15 @@
 "use client";
 
-import type { KeyboardEvent } from "react";
+import { Copy } from "lucide-react";
+import type { KeyboardEvent, MouseEvent } from "react";
+import { toast } from "sonner";
 import { MarketplaceListingOverlay } from "@/components/overlays/marketplace-listing-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { MarketplaceLeaderboardRow } from "@/lib/marketplace/leaderboard-query";
 
 type MarketplaceRowProps = {
@@ -71,10 +78,22 @@ export function MarketplaceRow({
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLElement>): void => {
+    if (e.target !== e.currentTarget) {
+      return;
+    }
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       openModal();
     }
+  };
+
+  const copySlug = async (e: MouseEvent<HTMLButtonElement>): Promise<void> => {
+    e.stopPropagation();
+    if (!row.listedSlug) {
+      return;
+    }
+    await navigator.clipboard.writeText(row.listedSlug);
+    toast.success(`Copied ${row.listedSlug}`);
   };
 
   return (
@@ -93,8 +112,31 @@ export function MarketplaceRow({
       </span>
 
       <div className="pointer-events-none relative z-[2] min-w-0">
-        <div className="truncate font-semibold text-foreground text-sm">
-          {row.displayName}
+        <div className="flex items-center gap-1.5">
+          <span className="truncate font-semibold text-foreground text-sm">
+            {row.displayName}
+          </span>
+          {row.listedSlug ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  aria-label={`Copy slug ${row.listedSlug}`}
+                  className="pointer-events-auto inline-flex shrink-0 items-center justify-center rounded p-0.5 text-muted-foreground opacity-30 transition-all hover:bg-foreground/10 hover:text-foreground hover:opacity-100 group-hover:opacity-60 motion-reduce:transition-none focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  onClick={copySlug}
+                  type="button"
+                >
+                  <Copy className="size-3" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent
+                className="font-mono text-xs"
+                side="right"
+                sideOffset={4}
+              >
+                {row.listedSlug}
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
         </div>
         {row.description ? (
           // Single-line preview: right-edge fadeout mask signals "there's
