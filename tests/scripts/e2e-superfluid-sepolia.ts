@@ -22,7 +22,7 @@
  *
  * Optional env vars:
  *   SUPERFLUID_E2E_RECEIVER_KEY    second wallet key; connect-pool step is SKIPPED if absent
- *   SUPERFLUID_E2E_RPC_URL         default: https://ethereum-sepolia-rpc.publicnode.com
+ *   SUPERFLUID_E2E_RPC_URL         default: PUBLIC_RPCS.SEPOLIA from lib/rpc/rpc-config.ts
  *   SUPERFLUID_E2E_WRAP_AMOUNT     wei to wrap (default: 100000000)
  *   SUPERFLUID_E2E_FLOW_RATE       wei/sec flow rate (default: 1000000)
  *
@@ -32,6 +32,7 @@
  */
 
 import { Contract, ethers, JsonRpcProvider, Wallet } from "ethers";
+import { PUBLIC_RPCS } from "@/lib/rpc/rpc-config";
 import {
   CFA_FORWARDER_ADDRESS,
   GDA_FORWARDER_ADDRESS,
@@ -39,7 +40,7 @@ import {
 
 const SEPOLIA_CHAIN_ID = 11155111;
 
-const DEFAULT_RPC = "https://ethereum-sepolia-rpc.publicnode.com";
+const DEFAULT_RPC = PUBLIC_RPCS.SEPOLIA;
 const DEFAULT_CFA_FORWARDER = CFA_FORWARDER_ADDRESS;
 const DEFAULT_GDA_FORWARDER = GDA_FORWARDER_ADDRESS;
 const DEFAULT_SUPER_TOKEN = "0xb598E6C621618a9f63788816ffb50Ee2862D443B";

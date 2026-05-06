@@ -7,15 +7,17 @@
  * output into the PR description.
  *
  * Interpreting failures: a row with a network error (HTTP 401/429/5xx,
- * DNS, timeout) means the public RPC is unreachable -- retry or swap the
- * URL in the CHAINS array below. A row showing FAIL with no error message
- * means the address actually has empty bytecode on that chain (a real
- * deployment miss to investigate).
+ * DNS, timeout) means the public RPC is unreachable -- retry, or update
+ * PUBLIC_RPCS in lib/rpc/rpc-config.ts (the single source of truth for
+ * chain RPC URLs). A row showing FAIL with no error message means the
+ * address actually has empty bytecode on that chain (a real deployment
+ * miss to investigate).
  *
- * Usage: pnpm tsx scripts/verify-superfluid-addresses.ts
+ * Usage: pnpm tsx tests/scripts/verify-superfluid-addresses.ts
  */
 
 import { JsonRpcProvider } from "ethers";
+import { PUBLIC_RPCS } from "@/lib/rpc/rpc-config";
 import {
   CFA_FORWARDER_ADDRESS,
   GDA_FORWARDER_ADDRESS,
@@ -29,25 +31,22 @@ const FORWARDERS: Record<ForwarderName, string> = {
   GDAv1Forwarder: GDA_FORWARDER_ADDRESS,
 };
 
-// RPC + display metadata per chain. The chain set itself is sourced from the
-// protocol module so adding/removing a chain happens in exactly one place;
-// any chain ID present in SUPERFLUID_CHAIN_IDS but missing here will surface
-// as an "unknown chain" entry below.
-const CHAIN_RPC: Record<string, { name: string; rpc: string }> = {
-  "1": { name: "Ethereum Mainnet", rpc: "https://rpc.ankr.com/eth" },
-  "10": { name: "Optimism", rpc: "https://mainnet.optimism.io" },
-  "137": { name: "Polygon", rpc: "https://rpc.ankr.com/polygon" },
-  "8453": { name: "Base", rpc: "https://mainnet.base.org" },
-  "42161": { name: "Arbitrum One", rpc: "https://arb1.arbitrum.io/rpc" },
-  "11155111": {
-    name: "Sepolia",
-    rpc: "https://ethereum-sepolia-rpc.publicnode.com",
-  },
+// Chain ID -> { display name, public RPC URL }. RPCs come from
+// lib/rpc/rpc-config.ts so updating the URL in one place benefits every
+// caller (seed-chains.ts, the runtime resolver, and this script). Display
+// names are local because the lib intentionally only carries URLs.
+const CHAIN_META: Record<string, { name: string; rpc: string }> = {
+  "1": { name: "Ethereum Mainnet", rpc: PUBLIC_RPCS.ETH_MAINNET },
+  "10": { name: "Optimism", rpc: PUBLIC_RPCS.OPTIMISM_MAINNET },
+  "137": { name: "Polygon", rpc: PUBLIC_RPCS.POLYGON_MAINNET },
+  "8453": { name: "Base", rpc: PUBLIC_RPCS.BASE_MAINNET },
+  "42161": { name: "Arbitrum One", rpc: PUBLIC_RPCS.ARBITRUM_MAINNET },
+  "11155111": { name: "Sepolia", rpc: PUBLIC_RPCS.SEPOLIA },
 };
 
-const CHAINS: Array<{ id: number; name: string; rpc: string }> =
+const CHAINS: { id: number; name: string; rpc: string }[] =
   SUPERFLUID_CHAIN_IDS.map((id) => {
-    const meta = CHAIN_RPC[id];
+    const meta = CHAIN_META[id];
     return {
       id: Number(id),
       name: meta?.name ?? `Unknown chain ${id}`,
@@ -107,7 +106,7 @@ function printMarkdownTable(results: CheckResult[]): void {
 async function main(): Promise<void> {
   console.error("Verifying Superfluid forwarder deployments...");
 
-  const tasks: Array<Promise<CheckResult>> = [];
+  const tasks: Promise<CheckResult>[] = [];
   for (const chain of CHAINS) {
     for (const fwd of Object.keys(FORWARDERS) as ForwarderName[]) {
       tasks.push(checkOne(chain, fwd));

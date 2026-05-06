@@ -24,7 +24,8 @@
  *   ETH_AMOUNT        SepETH to send, in ether units (default "0.005")
  *                     Pass "0" to skip the ETH transfer.
  *   FUSDC_AMOUNT      fUSDC to mint, in token units (default "0" = skip)
- *   RPC_URL           Sepolia RPC (default ethereum-sepolia-rpc.publicnode.com)
+ *   RPC_URL           Sepolia RPC (default PUBLIC_RPCS.SEPOLIA from
+ *                     lib/rpc/rpc-config.ts -- the single source of truth)
  *   FUSDC_ADDRESS     override fUSDC address (default 0xe72f...20Db)
  *
  * The fUSDC underlying on Sepolia ships with a permissive
@@ -34,6 +35,7 @@
  */
 
 import { ethers } from "ethers";
+import { PUBLIC_RPCS } from "@/lib/rpc/rpc-config";
 
 const HEX_KEY_RE = /^(0x)?[0-9a-fA-F]{64}$/;
 
@@ -41,8 +43,7 @@ const FUNDER_PK = normalizePk(requireEnv("FUNDER_PK"));
 const TARGET = requireEnv("TARGET");
 const ETH_AMOUNT = process.env.ETH_AMOUNT ?? "0.005";
 const FUSDC_AMOUNT = process.env.FUSDC_AMOUNT ?? "0";
-const RPC_URL =
-  process.env.RPC_URL ?? "https://ethereum-sepolia-rpc.publicnode.com";
+const RPC_URL = process.env.RPC_URL ?? PUBLIC_RPCS.SEPOLIA;
 const FUSDC_ADDRESS =
   process.env.FUSDC_ADDRESS ?? "0xe72f289584eDA2bE69Cfe487f4638F09bAc920Db";
 
