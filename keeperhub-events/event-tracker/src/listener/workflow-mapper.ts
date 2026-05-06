@@ -80,6 +80,25 @@ export function buildRegistration(
     return null;
   }
 
+  // Fallback is optional. Same nullable-DB-column caveat as primary: the
+  // type says `string` but rows can be null/empty. A bad fallback (wrong
+  // scheme, empty) is logged and dropped rather than failing the whole
+  // workflow; the listener still runs on primary alone.
+  const rawFallbackWssUrl: unknown = network.defaultFallbackWss;
+  let fallbackWssUrl: string | undefined;
+  if (typeof rawFallbackWssUrl === "string" && rawFallbackWssUrl.length > 0) {
+    if (
+      rawFallbackWssUrl.startsWith("wss://") ||
+      rawFallbackWssUrl.startsWith("ws://")
+    ) {
+      fallbackWssUrl = rawFallbackWssUrl;
+    } else {
+      logger.warn(
+        `[workflow-mapper] workflow ${workflowId} chain ${chainId} defaultFallbackWss is not a WebSocket URL ("${rawFallbackWssUrl}"); ignoring fallback`,
+      );
+    }
+  }
+
   const contractAddress =
     typeof config.contractAddress === "string" ? config.contractAddress : null;
   if (!contractAddress) {
@@ -140,7 +159,8 @@ export function buildRegistration(
     userId,
     workflowName,
     chainId,
-    wssUrl: network.defaultPrimaryWss,
+    wssUrl,
+    fallbackWssUrl,
     contractAddress,
     eventName,
     eventsAbiStrings,
@@ -167,6 +187,7 @@ export function hashRegistration(
   const canonical = JSON.stringify({
     chainId: reg.chainId,
     wssUrl: reg.wssUrl,
+    fallbackWssUrl: reg.fallbackWssUrl ?? null,
     contractAddress: reg.contractAddress,
     eventName: reg.eventName,
     eventsAbiStrings: reg.eventsAbiStrings,

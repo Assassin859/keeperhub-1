@@ -43,6 +43,11 @@ export const PUBLIC_RPCS = {
   POLYGON_AMOY_FALLBACK: "https://polygon-amoy-bor-rpc.publicnode.com",
   ARBITRUM_MAINNET: "https://arb1.arbitrum.io/rpc",
   ARBITRUM_MAINNET_FALLBACK: "https://rpc.ankr.com/arbitrum",
+  // Optimism is not in CHAIN_CONFIG (no keeperhub-supported feature has
+  // needed it yet), but Superfluid runs there and the verify script
+  // imports this entry. Add a CHAIN_CONFIG entry alongside if/when
+  // keeperhub adds Optimism as a registered chain.
+  OPTIMISM_MAINNET: "https://mainnet.optimism.io",
   ARBITRUM_SEPOLIA: "https://sepolia-rollup.arbitrum.io/rpc",
   ARBITRUM_SEPOLIA_FALLBACK: "https://arbitrum-sepolia-rpc.publicnode.com",
   AVAX_MAINNET: "https://api.avax.network/ext/bc/C/rpc",
@@ -459,7 +464,9 @@ export function getPrivateRpcUrl(
 export function getUsePrivateMempoolRpc(
   options: GetPrivateMempoolOptions
 ): boolean {
-  return options.rpcConfig[options.jsonKey]?.isPrivateMempoolRpcEnabled ?? false;
+  return (
+    options.rpcConfig[options.jsonKey]?.isPrivateMempoolRpcEnabled ?? false
+  );
 }
 
 /**

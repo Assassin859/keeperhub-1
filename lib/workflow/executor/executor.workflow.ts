@@ -547,20 +547,54 @@ function hasNestedDataShape(
     typeof data === "object" &&
     data !== null &&
     "data" in data &&
-    typeof (data as Record<string, unknown>).data === "object"
+    typeof (data as Record<string, unknown>).data === "object" &&
+    (data as Record<string, unknown>).data !== null
+  );
+}
+
+// KEEP-442: code/run-code wraps the user's return value in `.result` (the
+// step output is `{ success, result, logs }`). Without this fallback, a
+// downstream string field referencing `{{@prep:Prep.url}}` (where `prep`
+// is a code/run-code that returned `{ url }`) resolves to "" because
+// `data.url` is undefined and the existing `.data` fallback only matches
+// the HTTP-style wrapper shape.
+function hasNestedResultShape(
+  data: unknown
+): data is Record<string, unknown> & { result: object } {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    "result" in data &&
+    typeof (data as Record<string, unknown>).result === "object" &&
+    (data as Record<string, unknown>).result !== null
   );
 }
 
 /**
- * Resolve from output.data, or from output.data.data when step wraps body in .data (e.g. HTTP).
+ * Resolve a field path from output data, transparently unwrapping common
+ * step-result wrappers when the path doesn't match at the top level:
+ *   - `{ data: ... }` (HTTP-style result)
+ *   - `{ result: ... }` (code/run-code wrapper -- KEEP-442)
  */
-function resolveFromOutputData(data: unknown, fieldPath: string): unknown {
+export function resolveFromOutputData(
+  data: unknown,
+  fieldPath: string
+): unknown {
   const fromTop = fieldPath ? resolveConfigFieldPath(data, fieldPath) : data;
   if (fromTop !== undefined && fromTop !== null) {
     return fromTop;
   }
   if (hasNestedDataShape(data)) {
     const inner = data.data;
+    const fromInner = fieldPath
+      ? resolveConfigFieldPath(inner, fieldPath)
+      : inner;
+    if (fromInner !== undefined && fromInner !== null) {
+      return fromInner;
+    }
+  }
+  if (hasNestedResultShape(data)) {
+    const inner = data.result;
     return fieldPath ? resolveConfigFieldPath(inner, fieldPath) : inner;
   }
   return;
@@ -631,7 +665,7 @@ function replaceConfigTemplate(
  * Process template variables in config.
  * Recurses into nested objects; supports array paths like data.recipes[0].
  */
-function processTemplates(
+export function processTemplates(
   config: Record<string, unknown>,
   outputs: NodeOutputs
 ): Record<string, unknown> {

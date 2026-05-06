@@ -79,6 +79,7 @@ describe("buildRegistration", () => {
       workflowName: "Test Workflow",
       chainId: CHAIN_ID,
       wssUrl: "ws://localhost:8546",
+      fallbackWssUrl: "ws://localhost:8546",
       contractAddress: "0x1111111111111111111111111111111111111111",
       eventName: "Transfer",
     });
@@ -149,6 +150,21 @@ describe("buildRegistration", () => {
     it("changes when userId changes", () => {
       const a = buildRegistration(makeWorkflow(), NETWORKS);
       const b = buildRegistration(makeWorkflow({ userId: "user-2" }), NETWORKS);
+      expect(a?.configHash).not.toBe(b?.configHash);
+    });
+
+    it("changes when fallbackWssUrl changes", () => {
+      // Switching fallback providers is a real config change: the
+      // reconciler must restart the listener so the new URL becomes the
+      // entry's identity in the provider manager.
+      const a = buildRegistration(makeWorkflow(), NETWORKS);
+      const networksB: NetworksMap = {
+        [CHAIN_ID]: {
+          ...NETWORK,
+          defaultFallbackWss: "wss://different-fallback.example.com",
+        },
+      };
+      const b = buildRegistration(makeWorkflow(), networksB);
       expect(a?.configHash).not.toBe(b?.configHash);
     });
 
@@ -234,6 +250,54 @@ describe("buildRegistration", () => {
     };
     const reg = buildRegistration(makeWorkflow(), networks);
     expect(reg?.wssUrl).toBe("wss://eth-mainnet.example.com");
+  });
+
+  // defaultFallbackWss has the same nullable-DB-column issue as the
+  // primary, but a bad fallback should NOT fail the whole workflow - the
+  // listener can still run on primary alone.
+  describe("defaultFallbackWss handling", () => {
+    it("includes fallbackWssUrl when valid", () => {
+      const networks: NetworksMap = {
+        [CHAIN_ID]: {
+          ...NETWORK,
+          defaultPrimaryWss: "wss://primary.example.com",
+          defaultFallbackWss: "wss://fallback.example.com",
+        },
+      };
+      const reg = buildRegistration(makeWorkflow(), networks);
+      expect(reg?.fallbackWssUrl).toBe("wss://fallback.example.com");
+    });
+
+    it("drops a null fallback (workflow still runs on primary)", () => {
+      const networks: NetworksMap = {
+        [CHAIN_ID]: {
+          ...NETWORK,
+          defaultFallbackWss: null as unknown as string,
+        },
+      };
+      const reg = buildRegistration(makeWorkflow(), networks);
+      expect(reg).not.toBeNull();
+      expect(reg?.fallbackWssUrl).toBeUndefined();
+    });
+
+    it("drops an empty fallback", () => {
+      const networks: NetworksMap = {
+        [CHAIN_ID]: { ...NETWORK, defaultFallbackWss: "" },
+      };
+      const reg = buildRegistration(makeWorkflow(), networks);
+      expect(reg?.fallbackWssUrl).toBeUndefined();
+    });
+
+    it("drops a fallback with the wrong scheme", () => {
+      const networks: NetworksMap = {
+        [CHAIN_ID]: {
+          ...NETWORK,
+          defaultFallbackWss: "https://eth-mainnet.example.com",
+        },
+      };
+      const reg = buildRegistration(makeWorkflow(), networks);
+      expect(reg?.fallbackWssUrl).toBeUndefined();
+    });
   });
 
   it("returns null when contractAddress is missing", () => {
