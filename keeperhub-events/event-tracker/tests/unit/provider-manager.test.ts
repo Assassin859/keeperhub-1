@@ -1140,6 +1140,81 @@ describe("ChainProviderManager", () => {
       await vi.advanceTimersByTimeAsync(2_500);
       expect(manager.isHealthy(CHAIN_A)).toBe(true);
     });
+
+    it("walks to the fallback URL when the primary fails on reconnect", async () => {
+      // Reconnect runs the same primary-then-fallback walk as the
+      // initial createProvider. With one armed probe failure, the
+      // reconnect's primary attempt fails and openProvider falls
+      // through to the fallback. The active URL surfaces through
+      // getHealth so operators can see failover via /healthz mid-incident.
+      await manager.subscribeToLogs({
+        chainId: CHAIN_A,
+        wssUrl: "ws://primary",
+        fallbackWssUrl: "ws://fb",
+        address: ADDR_A,
+        topic0: TOPIC_EMITTED,
+        handler: vi.fn(),
+      });
+      expect(factoryBundle.created).toHaveLength(1);
+      expect(manager.getHealth(CHAIN_A)?.wssUrl).toBe("ws://primary");
+
+      // Arm a one-shot probe failure. The reconnect's primary attempt
+      // gets it; the fallback attempt that follows has no failure armed.
+      factoryBundle.setNextSubscribeFailure(
+        new Error('unsupported operation (operation="eth_subscribe")'),
+      );
+      factoryBundle.created[0].emitError(new Error("wss dropped"));
+      await vi.advanceTimersByTimeAsync(1_500);
+
+      // openProvider tore down the failed primary attempt before
+      // moving on, then created a fresh mock for the fallback.
+      // Initial + primary attempt + fallback attempt = 3 providers.
+      expect(factoryBundle.created).toHaveLength(3);
+      expect(factoryBundle.created[1].destroyed).toBe(true);
+      expect(factoryBundle.created[2].destroyed).toBe(false);
+      expect(manager.isHealthy(CHAIN_A)).toBe(true);
+      expect(manager.getHealth(CHAIN_A)?.wssUrl).toBe("ws://fb");
+      // Block listener and heartbeat must be re-attached on the
+      // fallback provider; otherwise events would be silently dropped
+      // after failover.
+      expect(factoryBundle.created[2].hasBlockHandler()).toBe(true);
+      expect(factoryBundle.created[2].hasErrorHandler()).toBe(true);
+    });
+
+    it("flips back to the primary on the next reconnect once the primary recovers", async () => {
+      // Running on the fallback is a degraded state, not a sticky one.
+      // When the primary recovers, the next reconnect's primary-first
+      // walk picks it up. Without this, a transient primary blip would
+      // strand the chain on the fallback until process restart.
+      await manager.subscribeToLogs({
+        chainId: CHAIN_A,
+        wssUrl: "ws://primary",
+        fallbackWssUrl: "ws://fb",
+        address: ADDR_A,
+        topic0: TOPIC_EMITTED,
+        handler: vi.fn(),
+      });
+
+      // First reconnect: primary fails, manager runs on fallback.
+      factoryBundle.setNextSubscribeFailure(new Error("transient"));
+      factoryBundle.created[0].emitError(new Error("drop"));
+      await vi.advanceTimersByTimeAsync(1_500);
+      expect(manager.getHealth(CHAIN_A)?.wssUrl).toBe("ws://fb");
+      const fallbackProvider = factoryBundle.created.at(-1);
+      const createdBeforeSecond = factoryBundle.created.length;
+
+      // Second reconnect: nothing armed, so the primary attempt
+      // succeeds and openProvider returns on the first URL it tries.
+      // The fallback URL is never even hit.
+      fallbackProvider?.emitError(new Error("drop 2"));
+      await vi.advanceTimersByTimeAsync(1_500);
+
+      // Exactly one new provider for the recovered primary - no
+      // wasted fallback factory call.
+      expect(factoryBundle.created.length - createdBeforeSecond).toBe(1);
+      expect(manager.isHealthy(CHAIN_A)).toBe(true);
+      expect(manager.getHealth(CHAIN_A)?.wssUrl).toBe("ws://primary");
+    });
   });
 
   describe("heartbeat", () => {

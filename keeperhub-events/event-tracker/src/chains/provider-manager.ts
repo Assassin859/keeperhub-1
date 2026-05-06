@@ -71,8 +71,10 @@ export interface ChainHealth {
   chainId: number;
   /**
    * The URL the live provider was opened against, or the configured
-   * primary if no provider is currently connected. May be the configured
-   * fallback if the primary failed at the most recent (re)connect.
+   * primary if no provider is currently connected. Equals the configured
+   * fallback when the most recent successful (re)connect landed on it;
+   * resets to the configured primary during a mid-reconnect window
+   * because `reconnect()` clears `activeWssUrl` before re-attempting.
    */
   wssUrl: string;
   /**
