@@ -15,8 +15,8 @@ import { db } from "@/lib/db";
 import { overageBillingRecords } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
-  type OrganizationAuthContext,
   auditFromAuth,
+  type OrganizationAuthContext,
   resolveOrganizationId,
 } from "@/lib/middleware/auth-helpers";
 
@@ -50,11 +50,21 @@ export async function GET(request: Request): Promise<NextResponse> {
       Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)
     );
     const usageResult = await db.execute<{ count: number }>(
-      sql`SELECT COUNT(*)::int as count
-          FROM workflow_executions we
-          JOIN workflows w ON we.workflow_id = w.id
-          WHERE w.organization_id = ${activeOrgId}
-          AND we.started_at >= ${startOfMonth.toISOString()}`
+      sql`SELECT
+            (
+              SELECT COUNT(*)
+                FROM workflow_executions we
+                JOIN workflows w ON we.workflow_id = w.id
+               WHERE w.organization_id = ${activeOrgId}
+                 AND we.started_at >= ${startOfMonth.toISOString()}
+            )
+            +
+            (
+              SELECT COUNT(*)
+                FROM direct_executions de
+               WHERE de.organization_id = ${activeOrgId}
+                 AND de.created_at >= ${startOfMonth.toISOString()}
+            ) AS count`
     );
     const executionsUsed = usageResult[0]?.count ?? 0;
 
