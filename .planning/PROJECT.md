@@ -137,9 +137,39 @@ Users can build and deploy Web3 automation workflows through a visual builder wi
 - ✓ CI `test-unit-sandbox-remote` job enforces INT-04 (same unit suite passes against both backends) -- Phase 37
 - ✓ Retirement PR scaffold + 11-secret rotation runbook delivered as operator artifacts -- Phase 39
 
+### Validated (v1.11)
+
+- ✓ `/hub` consolidated into a tabbed shell (Protocols default / Workflows / Marketplace) with Radix Tabs + `?tab=` URL contract via `router.replace`; hero rewritten to "Hub" -- Phase 44
+- ✓ Marketplace tab is a server-component popularity-sorted leaderboard with Drizzle GROUP-BY join wrapped in `unstable_cache(300s)`, cursor pagination LIMIT 50, privacy-whitelisted SELECT (zero leaks of `creatorWalletAddress`/`payerAddress`/`amountUsdc`/`userId`/`organizationId`) -- Phase 44
+- ✓ Marketplace sort dropdown shows Popular (default) + Newest only; earnings sort EXPLICITLY ABSENT (deferred to v1.11.x or v1.12) -- Phase 44
+- ✓ MCP API + tool symmetry: `GET /api/mcp/workflows?sort=popular|recent` and `search_workflows` MCP tool gain matching `sort` param; tool count unchanged -- Phase 44
+- ✓ Anonymous + auto-anonymous Use-template OAuth round-trip via `pending_template` HttpOnly cookie + `PendingTemplateRunner` (NO localStorage) -- Phase 43
+- ✓ Deep-link `/hub/tags/[tag]` route with `generateStaticParams` + tag-specific `generateMetadata` + sitemap enumeration + reserved-slug validator (`tags`, `protocol`, `marketplace`, `auth`, `api`, `admin`, `_next`, `og`, `well-known`) -- Phase 43
+- ✓ Cards/List view toggle persisted in `hub_view` cookie (server-readable, NO localStorage, zero hydration mismatch); sidebar Sort + Tags reorganization with `useTransition` + `router.push` scroll preservation -- Phase 43
+- ✓ Single `WorkflowIOOverlay` (Radix Tabs) replaces split import/export overlays; shared `SignInPromptOverlay` + `useAuthPrompt` hook -- Phase 42
+- ✓ Logged-out left-nav with `requireAuth: boolean` per item + `useSession().isPending` first-paint skeleton + `usePersistedNavState` versioning -- Phase 42
+- ✓ Import schema hardened (`.passthrough()` -> `.strict()`, `.max()` caps on free-text, https-only webhook URLs, `Content-Length` 413 guard, code-step gate) -- Phase 42
+- ✓ Root-layout dev-only `<Script>` (`app/layout.tsx`) supersedes per-page bfcache workaround; detection via `performance.getEntriesByType('navigation')[0]?.type === 'back_forward'`, JSX-gated on `NODE_ENV === 'development'` for full prod DCE -- Phase 45
+- ✓ Dual-mode Playwright suite (`pnpm test:e2e:bfcache:{dev,prod}`) + replacement unit test + ADR `specs/architecture/back-forward-hydration.md` -- Phase 45
+
 ### Active
 
 _No active milestone — next via `/gsd-new-milestone`._
+
+## Completed Milestone: v1.11 Marketplace Discovery & Hub UX (shipped 2026-05-01)
+
+4 phases (42-45), 42 plans, 3 days. Made listed workflows discoverable across the platform, modernized Hub UX so logged-out users can browse, consolidated workflow import/export into one modal, and shipped the login-gated Use-template CTA.
+
+- **Phase 42 — Foundations:** single `WorkflowIOOverlay` + shared `SignInPromptOverlay` + logged-out left-nav + hardened import schema (KEEP-368, KEEP-297). 9/10 plans complete; Plan 42-10 manual UAT deferred — primitives ride downstream Phase 43/44 verification.
+- **Phase 43 — Hub UX:** green Use-template CTA + anonymous OAuth round-trip via `pending_template` cookie, `/hub/tags/[tag]` deep-link with `generateMetadata` + sitemap, Cards/List view toggle in `hub_view` cookie, sidebar Sort+Tags reorg (KEEP-326). UAT GREEN 15/15.
+- **Phase 44 — Tabbed Hub:** `/hub` consolidated into Protocols/Workflows/Marketplace tabs with `?tab=` URL contract; Marketplace tab is a popularity-sorted leaderboard with privacy-whitelisted SELECT; MCP API + `search_workflows` tool gain `?sort=popular|recent`; composite `(workflow_id, settled_at)` index reviewed via EXPLAIN and intentionally not added (KEEP-303). UAT GREEN.
+- **Phase 45 — Bfcache Fix:** root-layout dev-only `<Script>` supersedes per-page workaround; dual-mode Playwright + ADR. UAT GREEN.
+
+Audit verdict `tech_debt` accepted (`v1.11-MILESTONE-AUDIT.md`): Phase 42 manual UAT (42-10) and Phase 43 retrospective `VERIFICATION.md` remain as documentation tracking debt — phases ARE functionally shipped via downstream verification.
+
+Archived at [milestones/v1.11-ROADMAP.md](milestones/v1.11-ROADMAP.md). Git tag `v1.11` created locally (not pushed to origin).
+
+Deferred / parked: MARKET-FUTURE-01..04 (earnings sort, time-window filters, materialized stats, per-row vote), HUB-FUTURE-02 (per-tag OG images), MARKET-10 SUPERSEDED by HUBV2-08, cross-tab unified search wiring, Marketplace tags column, cross-browser CI runs, upstream Next.js bfcache PR.
 
 ## Completed Milestone: v1.9 Code Sandbox Hardening (Minimal) (shipped 2026-04-23)
 
@@ -312,4 +342,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-23 -- v1.9 milestone started (Code Sandbox Hardening), v1.8 shipped*
+*Last updated: 2026-05-06 -- v1.11 milestone closed (Marketplace Discovery & Hub UX, shipped 2026-05-01); between milestones — next via `/gsd-new-milestone`.*
