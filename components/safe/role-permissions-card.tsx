@@ -112,10 +112,17 @@ function resolveDirectRuleLogo(
   return tokenLogoMap[`sym:${rule.tokenSymbol.toLowerCase()}`] ?? null;
 }
 
+const NATIVE_TOKEN_SENTINEL = "0x0000000000000000000000000000000000000000";
+
 function findDirectAllowance<
   A extends { protocolSlug: string; tokenAddress: string },
->(rule: { tokenAddress: string | null }, allowances: A[]): A | null {
-  const tokenAddrLower = rule.tokenAddress?.toLowerCase();
+>(
+  rule: { kind: string; tokenAddress: string | null },
+  allowances: A[]
+): A | null {
+  const tokenAddrLower =
+    rule.tokenAddress?.toLowerCase() ??
+    (rule.kind === "native-transfer" ? NATIVE_TOKEN_SENTINEL : null);
   if (!tokenAddrLower) {
     return null;
   }

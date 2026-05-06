@@ -142,6 +142,16 @@ export type DirectRuleInput = {
 export const DIRECT_RULE_PROTOCOL_SLUG = "direct" as const;
 
 /**
+ * Sentinel "address" stored in `safe_role_allowances.tokenAddress` for
+ * native-transfer rules. The token_address column is NOT NULL; we use the
+ * zero address (matches every wallet/UI's convention for native asset) so
+ * the bucket row schema stays uniform without a migration. UI code should
+ * treat this value as "native ETH" and skip token-info lookups.
+ */
+export const NATIVE_TOKEN_SENTINEL =
+  "0x0000000000000000000000000000000000000000" as const;
+
+/**
  * 4-byte function selectors for the ERC-20 methods we scope under direct
  * rules. Stored verbatim on `safe_role_protocols.allowedSelectors` so the
  * audit panel can show "transfer(address,uint256)" alongside the rule.
@@ -205,6 +215,17 @@ export function buildDirectRulePermission(
   const counterparty = ethers.getAddress(rule.counterparty) as `0x${string}`;
 
   if (rule.kind === "native-transfer") {
+    // Per-period value cap for native sends uses the modifier's
+    // EtherWithinAllowance operator. Without an allowanceKey we fall back to
+    // a target-only permission (no cap on value sent to the counterparty).
+    if (allowanceKey) {
+      return {
+        targetAddress: counterparty,
+        send: true,
+        delegatecall: false,
+        etherWithinAllowance: allowanceKey,
+      } as unknown as Permission;
+    }
     return {
       targetAddress: counterparty,
       send: true,
@@ -530,17 +551,21 @@ export function flattenInstallInput(
     }
   }
 
-  // Direct rules: only ERC20 ones contribute to safe_role_allowances. Native
-  // transfers are scoped at the recipient target only (no on-chain value cap
-  // until a transaction guard ships). Each direct rule gets its own bucket
-  // via the per-rule allowance key (kind + counterparty).
+  // Direct rules emit one allowance bucket per rule. ERC-20 rules use
+  // c.calldataMatches([eq(counterparty), withinAllowance(key)]); native
+  // rules use the modifier's EtherWithinAllowance operator on the target
+  // permission. Each rule's bucket key folds in (kind, counterparty) so
+  // separate rules never share a cap.
   for (const rule of directRules) {
-    if (rule.kind === "native-transfer" || !rule.tokenAddress) {
+    if (rule.kind !== "native-transfer" && !rule.tokenAddress) {
       continue;
     }
-    symbols.add(rule.tokenSymbol);
-    const addr = normalizeAddressForStorage(rule.tokenAddress);
+    const isNative = rule.kind === "native-transfer";
+    const addr = isNative
+      ? NATIVE_TOKEN_SENTINEL
+      : normalizeAddressForStorage(rule.tokenAddress as string);
     const amount = humanToWei(rule.amountHuman, rule.tokenDecimals);
+    symbols.add(rule.tokenSymbol);
     allowances.push({
       protocolSlug: DIRECT_RULE_PROTOCOL_SLUG,
       tokenAddress: addr,

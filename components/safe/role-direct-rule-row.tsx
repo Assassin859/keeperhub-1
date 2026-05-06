@@ -93,13 +93,13 @@ export function RoleDirectRuleRow({
 }: Props): React.ReactElement {
   const isNative = rule.kind === "native-transfer";
   let usageText: string;
-  if (isNative) {
-    usageText = "no on-chain value cap";
-  } else if (allowance) {
+  if (allowance) {
     const remaining = allowance.lastChainBalanceWei ?? allowance.maxRefillWei;
     const remainingHuman = formatWei(remaining, allowance.tokenDecimals);
     const capHuman = formatWei(allowance.maxRefillWei, allowance.tokenDecimals);
     usageText = `${remainingHuman} / ${capHuman} ${rule.tokenSymbol} left`;
+  } else if (isNative) {
+    usageText = `cap ${rule.amountHuman} ${rule.tokenSymbol}`;
   } else {
     usageText = `cap ${rule.amountHuman} ${rule.tokenSymbol}`;
   }
