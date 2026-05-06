@@ -59,7 +59,7 @@ vi.mock("@/lib/db/schema", () => ({
   organizationWallets: { _table: "para_wallets" },
 }));
 
-const { verifyWorkflowBinding } = await import(
+const { verifyWorkflowBinding, KNOWN_DATA_CHAIN_IDS } = await import(
   "@/lib/agentic-wallet/workflow-binding"
 );
 
@@ -291,10 +291,10 @@ describe("verifyWorkflowBinding", () => {
     });
 
     it("rejects an unrecognised wf.chain tag (defensive — no silent widening)", async () => {
-      // wf.chain is a non-null string we cannot normalise. Treat as
-      // mismatch rather than falling through to permissive null branch,
-      // so a typo or future chain stored as "ethereum" can never pass
-      // a stolen-HMAC attacker's request through.
+      // wf.chain is a non-null string we cannot classify (slug form, not in
+      // the data-chain whitelist, not a payment chain). Treat as mismatch
+      // rather than falling through to permissive null branch, so a typo or
+      // future chain stored as "ethereum" / "9999" can never pass through.
       queueWorkflow({ chain: "ethereum" });
       const rBase = await verifyWorkflowBinding(SLUG, "base", CREATOR, "50000");
       expect(rBase).toMatchObject({
@@ -303,9 +303,210 @@ describe("verifyWorkflowBinding", () => {
         code: "CHAIN_MISMATCH",
       });
 
-      queueWorkflow({ chain: "1" });
+      queueWorkflow({ chain: "9999" });
       const rTempo = await verifyWorkflowBinding(SLUG, "tempo", "", "0");
       expect(rTempo).toMatchObject({
+        ok: false,
+        status: 403,
+        code: "CHAIN_MISMATCH",
+      });
+    });
+  });
+
+  // KEEP-432 (Fix-pack-5): listings whose chain identifies a data chain
+  // (Ethereum, Optimism, Polygon, Arbitrum) have no inherent payment-chain
+  // preference. Either Base x402 or Tempo MPP must be accepted, otherwise
+  // priced cross-chain-data workflows are unreachable from the wallet.
+  describe("data-chain listings (KEEP-432)", () => {
+    it("accepts Base payment for an Ethereum-data listing (chain=1)", async () => {
+      queueWorkflow({ chain: "1" });
+      queueWallet({});
+      const r = await verifyWorkflowBinding(SLUG, "base", CREATOR, "50000");
+      expect(r.ok).toBe(true);
+    });
+
+    it("accepts Tempo payment for an Ethereum-data listing (chain=1)", async () => {
+      queueWorkflow({ chain: "1" });
+      queueWallet({});
+      const r = await verifyWorkflowBinding(SLUG, "tempo", "", "0");
+      expect(r.ok).toBe(true);
+    });
+
+    it("accepts either payment chain for every whitelisted data-chain listing", async () => {
+      // Sourced directly from production to eliminate manual-sync drift —
+      // adding a chain id to KNOWN_DATA_CHAIN_IDS now extends test coverage
+      // automatically. Skip "1" because it's covered by the explicit
+      // Ethereum tests above.
+      for (const dataChain of KNOWN_DATA_CHAIN_IDS) {
+        if (dataChain === "1") {
+          continue;
+        }
+
+        queueWorkflow({ chain: dataChain });
+        queueWallet({});
+        const rBase = await verifyWorkflowBinding(
+          SLUG,
+          "base",
+          CREATOR,
+          "50000"
+        );
+        expect(rBase.ok).toBe(true);
+
+        queueWorkflow({ chain: dataChain });
+        queueWallet({});
+        const rTempo = await verifyWorkflowBinding(SLUG, "tempo", "", "0");
+        expect(rTempo.ok).toBe(true);
+      }
+    });
+
+    it("still enforces payTo equality on the Base path for a data-chain listing", async () => {
+      queueWorkflow({ chain: "1" });
+      queueWallet({});
+      const r = await verifyWorkflowBinding(SLUG, "base", ATTACKER, "50000");
+      expect(r).toMatchObject({
+        ok: false,
+        status: 403,
+        code: "PAYTO_MISMATCH",
+      });
+    });
+
+    it("still enforces amount equality on the Base path for a data-chain listing", async () => {
+      queueWorkflow({ chain: "1" });
+      queueWallet({});
+      const r = await verifyWorkflowBinding(SLUG, "base", CREATOR, "100000");
+      expect(r).toMatchObject({
+        ok: false,
+        status: 403,
+        code: "AMOUNT_MISMATCH",
+      });
+    });
+
+    it("rejects non-integer amount on Base for a data-chain listing", async () => {
+      queueWorkflow({ chain: "1" });
+      queueWallet({});
+      const r = await verifyWorkflowBinding(SLUG, "base", CREATOR, "abc");
+      expect(r).toMatchObject({
+        ok: false,
+        status: 403,
+        code: "AMOUNT_MISMATCH",
+      });
+    });
+
+    it("compares payTo case-insensitively on a data-chain listing", async () => {
+      queueWorkflow({ chain: "1" });
+      queueWallet({ walletAddress: CREATOR.toUpperCase() });
+      const r = await verifyWorkflowBinding(
+        SLUG,
+        "base",
+        CREATOR.toLowerCase(),
+        "50000"
+      );
+      expect(r.ok).toBe(true);
+    });
+
+    it("returns 403 WORKFLOW_NOT_PAYABLE for a data-chain listing without an active wallet", async () => {
+      queueWorkflow({ chain: "1" });
+      queueWallet(null);
+      const r = await verifyWorkflowBinding(SLUG, "base", CREATOR, "50000");
+      expect(r).toMatchObject({
+        ok: false,
+        status: 403,
+        code: "WORKFLOW_NOT_PAYABLE",
+      });
+    });
+  });
+
+  // KEEP-432 negative-set integrity: lock in the strict-decimal classifier
+  // semantics so a future producer change (hex serialisation, leading-zero
+  // normalisation, etc.) can't silently break existing listings or widen
+  // acceptance to a chain that was meant to reject.
+  describe("classifier strictness (KEEP-432 negative set)", () => {
+    it("rejects whitespace-only wf.chain as unrecognised", async () => {
+      // " " is truthy so reaches classifyChainTag, then trims to "" which
+      // doesn't match any known tag.
+      queueWorkflow({ chain: "   " });
+      const r = await verifyWorkflowBinding(SLUG, "base", CREATOR, "50000");
+      expect(r).toMatchObject({
+        ok: false,
+        status: 403,
+        code: "CHAIN_MISMATCH",
+      });
+    });
+
+    it("rejects leading-zero numeric ids ('08453', '01')", async () => {
+      queueWorkflow({ chain: "08453" });
+      const r1 = await verifyWorkflowBinding(SLUG, "base", CREATOR, "50000");
+      expect(r1).toMatchObject({ ok: false, code: "CHAIN_MISMATCH" });
+
+      queueWorkflow({ chain: "01" });
+      const r2 = await verifyWorkflowBinding(SLUG, "base", CREATOR, "50000");
+      expect(r2).toMatchObject({ ok: false, code: "CHAIN_MISMATCH" });
+    });
+
+    it("rejects 0x-prefixed hex chain ids", async () => {
+      queueWorkflow({ chain: "0x1" });
+      const r1 = await verifyWorkflowBinding(SLUG, "base", CREATOR, "50000");
+      expect(r1).toMatchObject({ ok: false, code: "CHAIN_MISMATCH" });
+
+      queueWorkflow({ chain: "0x2105" }); // 8453 in hex
+      const r2 = await verifyWorkflowBinding(SLUG, "base", CREATOR, "50000");
+      expect(r2).toMatchObject({ ok: false, code: "CHAIN_MISMATCH" });
+    });
+
+    it("rejects float / decimal chain forms ('8453.0')", async () => {
+      queueWorkflow({ chain: "8453.0" });
+      const r = await verifyWorkflowBinding(SLUG, "base", CREATOR, "50000");
+      expect(r).toMatchObject({ ok: false, code: "CHAIN_MISMATCH" });
+    });
+
+    it("rejects testnet ids that aren't on the mainnet whitelist", async () => {
+      // Mainnet-only by intent. If KeeperHub starts supporting testnet
+      // listings, extend KNOWN_DATA_CHAIN_IDS and update this test.
+      const testnetIds = [
+        "11155111", // Sepolia
+        "421614", // Arbitrum Sepolia
+        "80002", // Polygon Amoy
+        "43113", // Avalanche Fuji
+        "9746", // Plasma testnet
+        "16602", // 0G Galileo testnet
+      ];
+      for (const t of testnetIds) {
+        queueWorkflow({ chain: t });
+        const r = await verifyWorkflowBinding(SLUG, "base", CREATOR, "50000");
+        expect(r).toMatchObject({ ok: false, code: "CHAIN_MISMATCH" });
+      }
+    });
+  });
+
+  // KEEP-432 symmetric cross-chain-proof tests: the original Fix-pack-3 N-1
+  // defence is bidirectional. The KEEP-391 test suite covers Base-pinned +
+  // tempo-caller; these cover the inverse so a future code change that
+  // flips the equality direction is caught.
+  describe("payment-chain pin is symmetric (KEEP-432)", () => {
+    it("rejects tempo-pinned listing with base caller", async () => {
+      queueWorkflow({ chain: "tempo" });
+      const r = await verifyWorkflowBinding(SLUG, "base", CREATOR, "50000");
+      expect(r).toMatchObject({
+        ok: false,
+        status: 403,
+        code: "CHAIN_MISMATCH",
+      });
+    });
+
+    it("rejects Tempo-mainnet-id listing with base caller", async () => {
+      queueWorkflow({ chain: "4217" });
+      const r = await verifyWorkflowBinding(SLUG, "base", CREATOR, "50000");
+      expect(r).toMatchObject({
+        ok: false,
+        status: 403,
+        code: "CHAIN_MISMATCH",
+      });
+    });
+
+    it("rejects Tempo-testnet-id listing with base caller", async () => {
+      queueWorkflow({ chain: "4218" });
+      const r = await verifyWorkflowBinding(SLUG, "base", CREATOR, "50000");
+      expect(r).toMatchObject({
         ok: false,
         status: 403,
         code: "CHAIN_MISMATCH",
