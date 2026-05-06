@@ -33,6 +33,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { signOut, useSession } from "@/lib/auth-client";
 import { isBillingEnabled } from "@/lib/billing/feature-flag";
+import {
+  hasNotificationType,
+  useNotificationStatus,
+} from "@/lib/hooks/use-notifications";
 import { useActiveMember, useOrganization } from "@/lib/hooks/use-organization";
 
 export const UserMenu = (): React.ReactElement => {
@@ -89,6 +93,19 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
   const { isOwner } = useActiveMember();
   const router = useRouter();
   const showBilling = isOwner && isBillingEnabled();
+  const { status: notificationStatus, refresh: refreshNotifications } =
+    useNotificationStatus(organization?.id);
+  const showAvatarDot = notificationStatus.unreadCount > 0;
+  const showBillingDot = hasNotificationType(
+    notificationStatus,
+    "billing_limit_reached"
+  );
+
+  const handleDropdownOpenChange = (open: boolean): void => {
+    if (open) {
+      refreshNotifications().catch(() => undefined);
+    }
+  };
 
   const handleLogout = async (): Promise<void> => {
     await signOut();
@@ -113,10 +130,12 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
 
   return (
     <>
-      <DropdownMenu>
+      <DropdownMenu onOpenChange={handleDropdownOpenChange}>
         <DropdownMenuTrigger asChild>
           <Button
-            aria-label="User menu"
+            aria-label={
+              showAvatarDot ? "User menu, unread notifications" : "User menu"
+            }
             className="relative h-9 w-9 rounded-full border p-0"
             data-testid="user-menu"
             variant="ghost"
@@ -128,6 +147,13 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
               />
               <AvatarFallback>{getUserInitials()}</AvatarFallback>
             </Avatar>
+            {showAvatarDot && (
+              <span
+                aria-hidden="true"
+                className="absolute top-0 right-0 size-2.5 rounded-full bg-destructive ring-2 ring-background"
+                data-testid="user-menu-notification-dot"
+              />
+            )}
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
@@ -166,7 +192,14 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
           {showBilling && (
             <DropdownMenuItem onClick={() => router.push("/billing")}>
               <CreditCard className="size-4" />
-              <span>Billing</span>
+              <span className="flex-1">Billing</span>
+              {showBillingDot && (
+                <span
+                  aria-hidden="true"
+                  className="size-2 rounded-full bg-destructive"
+                  data-testid="billing-notification-dot"
+                />
+              )}
             </DropdownMenuItem>
           )}
           <DropdownMenuItem onClick={() => openOverlay(ProjectsAndTagsOverlay)}>
