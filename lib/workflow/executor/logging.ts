@@ -4,12 +4,229 @@
  */
 import "server-only";
 
-import { and, eq, ne, sql } from "drizzle-orm";
+import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflowExecutionLogs, workflowExecutions } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { getMetricsCollector } from "@/lib/metrics";
+import {
+  EXCEEDED_MAX_RETRIES_REGEX,
+  FAILED_AFTER_RETRIES_REGEX,
+  NO_STEP_COMPLETION_REGEX,
+} from "@/lib/workflow/executor/runner-error-patterns";
 
 const TERMINAL_STATUSES = new Set(["cancelled"]);
+
+/**
+ * KEEP-431 follow-up: matches the same SDK spurious error shapes that the
+ * post-drain reconciler in executor.workflow.ts uses (runner-error-patterns).
+ * Used to gate self-healing so a genuine error message is never overridden.
+ */
+function isSpuriousWorkflowError(error: string | null | undefined): boolean {
+  if (!error) {
+    return false;
+  }
+  return (
+    EXCEEDED_MAX_RETRIES_REGEX.test(error) ||
+    FAILED_AFTER_RETRIES_REGEX.test(error) ||
+    NO_STEP_COMPLETION_REGEX.test(error)
+  );
+}
+
+/**
+ * Per-nodeId aggregate over workflow_execution_logs rows (top-level steps only).
+ *
+ * KEEP-431: A node can have multiple log rows (e.g. a cross-pod retry from the
+ * SDK's "use step" boundary inserts a fresh row each time logStepStartDb runs).
+ * Treat the node as succeeded if ANY of its rows is success -- only flag a
+ * node as truly failed when no row succeeded for it.
+ *
+ * Filters out forEach iteration rows (`iteration_index` and `for_each_node_id`
+ * are non-null on those). Iteration rows are scoped to a parent forEach node;
+ * we only aggregate top-level steps here so we don't accidentally treat a
+ * succeeded forEach with one failed iteration as fully succeeded. The forEach
+ * runner is responsible for surfacing iteration failures via the parent node's
+ * own success/error status.
+ *
+ * Returns the list of node IDs that have at least one log row but no success
+ * row. Empty list means every observed node has at least one success row, so
+ * the workflow body succeeded as a whole even if the SDK reported an error
+ * via a spurious max-retries throw.
+ */
+async function listTrulyFailedNodes(executionId: string): Promise<string[]> {
+  const allLogs = await db.query.workflowExecutionLogs.findMany({
+    where: and(
+      eq(workflowExecutionLogs.executionId, executionId),
+      isNull(workflowExecutionLogs.iterationIndex),
+      isNull(workflowExecutionLogs.forEachNodeId)
+    ),
+    columns: { nodeId: true, status: true },
+  });
+
+  const nodeSucceeded = new Map<string, boolean>();
+  for (const log of allLogs) {
+    if (log.status === "success") {
+      nodeSucceeded.set(log.nodeId, true);
+    } else if (!nodeSucceeded.has(log.nodeId)) {
+      nodeSucceeded.set(log.nodeId, false);
+    }
+  }
+
+  const trulyFailedNodes: string[] = [];
+  for (const [nodeId, succeeded] of nodeSucceeded) {
+    if (!succeeded) {
+      trulyFailedNodes.push(nodeId);
+    }
+  }
+  return trulyFailedNodes;
+}
+
+/**
+ * KEEP-431 follow-up: self-healing reconciliation when a step's success commit
+ * lands AFTER the workflow has already been finalized to a spurious error.
+ *
+ * Cross-pod race scenario this closes:
+ *   - Process A runs the step body, awaits logStepCompleteDb (DB UPDATE in flight)
+ *   - Process B (workflow resume on a fresh pod) catches "exceeded max retries"
+ *     and finalizes workflow_executions to status='error' before Process A's
+ *     UPDATE commits (~100ms gap observed in prod execution joc7il55352vuya0ww9tl)
+ *   - Process B's logWorkflowCompleteDb reconciliation reads stale state
+ *     (combine row still 'running'), keeps status='error'
+ *
+ * When Process A's logStepCompleteDb finally commits, this hook fires and:
+ *   - Reads workflow_executions to confirm it's parked in spurious-error state
+ *   - Re-runs the per-nodeId aggregate (which now includes the just-committed
+ *     success row) to check if every node has a success row
+ *   - If yes, CAS-flips workflow_executions.status to success and clears error
+ *   - The CAS WHERE clause guards against double-flip and against flipping a
+ *     genuinely cancelled execution
+ *
+ * Idempotent: subsequent late commits see status != 'error' and no-op.
+ * Safe: only fires when error matches the spurious-pattern regex, so a real
+ * step error message is never overridden.
+ */
+async function selfHealWorkflowAfterLateStepCommit(
+  executionId: string
+): Promise<void> {
+  const execution = await db.query.workflowExecutions.findFirst({
+    where: eq(workflowExecutions.id, executionId),
+    columns: {
+      status: true,
+      error: true,
+      completedAt: true,
+      startedAt: true,
+    },
+  });
+
+  // Each early-exit emits a `noop_early_exit` counter with a `reason` label so
+  // SRE can see how often the gate is exercised vs how often it actually flips.
+  // The `flipped` and `noop_status_changed` counters below cover the cases
+  // that progressed past all guards.
+  const emitEarlyExit = (reason: string): void => {
+    getMetricsCollector().incrementCounter(
+      "workflow.executor.self_heal_late_commit.total",
+      { outcome: "noop_early_exit", reason }
+    );
+  };
+
+  if (!execution) {
+    emitEarlyExit("execution_missing");
+    return;
+  }
+  // Only fire after the workflow has been finalized -- if it's still running,
+  // logWorkflowCompleteDb will handle reconciliation when it fires later.
+  if (execution.completedAt === null) {
+    emitEarlyExit("not_finalized");
+    return;
+  }
+  if (execution.status !== "error") {
+    emitEarlyExit("status_not_error");
+    return;
+  }
+  if (!isSpuriousWorkflowError(execution.error)) {
+    emitEarlyExit("error_not_spurious");
+    return;
+  }
+
+  const trulyFailedNodes = await listTrulyFailedNodes(executionId);
+  if (trulyFailedNodes.length > 0) {
+    emitEarlyExit("real_failures_present");
+    return;
+  }
+
+  const startMs = execution.startedAt
+    ? execution.startedAt.getTime()
+    : Date.now();
+  const newDuration = (Date.now() - startMs).toString();
+
+  // CAS UPDATE: only flip if status is still 'error' (the state we just observed).
+  // Drizzle's update returns the affected row count -- we use it to drive metrics.
+  const result = await db
+    .update(workflowExecutions)
+    .set({
+      status: "success",
+      error: null,
+      completedAt: new Date(),
+      duration: newDuration,
+      currentNodeId: null,
+      currentNodeName: null,
+    })
+    .where(
+      and(
+        eq(workflowExecutions.id, executionId),
+        eq(workflowExecutions.status, "error")
+      )
+    );
+
+  // pg driver returns rowCount on the underlying QueryResult; Drizzle exposes
+  // it as result.rowCount on the awaited UPDATE.
+  const flipped =
+    (result as unknown as { rowCount?: number }).rowCount === undefined
+      ? true
+      : (result as unknown as { rowCount: number }).rowCount > 0;
+
+  if (flipped) {
+    // Also clear the stale STEP_INCOMPLETE_ERROR that closeOrphanedRunningLogs
+    // may have written onto the (now successful) row when the workflow was
+    // first finalized to error. Leaving it on a status='success' row produces
+    // the paradoxical "success-with-error" UI state KEEP-431 documented.
+    try {
+      await db
+        .update(workflowExecutionLogs)
+        .set({ error: null })
+        .where(
+          and(
+            eq(workflowExecutionLogs.executionId, executionId),
+            eq(workflowExecutionLogs.status, "success")
+          )
+        );
+    } catch (clearError) {
+      logSystemError(
+        ErrorCategory.WORKFLOW_ENGINE,
+        "[Workflow Logging] Failed to clear stale errors on success rows after self-heal",
+        clearError,
+        { execution_id: executionId }
+      );
+    }
+
+    getMetricsCollector().incrementCounter(
+      "workflow.executor.self_heal_late_commit.total",
+      { outcome: "flipped" }
+    );
+
+    logSystemError(
+      ErrorCategory.WORKFLOW_ENGINE,
+      "[Workflow Logging] Self-healed workflow status from spurious error to success after late step commit",
+      execution.error ?? "unknown",
+      { execution_id: executionId }
+    );
+  } else {
+    getMetricsCollector().incrementCounter(
+      "workflow.executor.self_heal_late_commit.total",
+      { outcome: "noop_status_changed" }
+    );
+  }
+}
 
 /**
  * Check if an execution has been cancelled (or otherwise terminated).
@@ -88,6 +305,13 @@ export type LogStepCompleteParams = {
  *   `output_raw` -- unredacted executor payload; authoritative source-of-truth for
  *                   cross-process resume so downstream templates receive real values
  *                   rather than "[REDACTED]" strings.
+ *
+ * KEEP-431 follow-up: when status='success', the error column is explicitly
+ * set to null (rather than skipped via undefined) so that any stale
+ * STEP_INCOMPLETE_ERROR previously written by closeOrphanedRunningLogs is
+ * cleared. After a successful UPDATE, this function also triggers
+ * self-healing reconciliation in case the workflow has already been
+ * finalized to a spurious error before this commit landed.
  */
 export async function logStepCompleteDb(
   params: LogStepCompleteParams
@@ -98,6 +322,11 @@ export async function logStepCompleteDb(
   }
 
   const duration = Date.now() - params.startTime;
+  // On success rows, force-clear the error column. Drizzle treats undefined
+  // as "skip in UPDATE", which would leave a stale STEP_INCOMPLETE_ERROR
+  // attached if closeOrphanedRunningLogs wrote one before this commit.
+  const errorValue: string | null =
+    params.status === "success" ? null : (params.error ?? null);
 
   await db
     .update(workflowExecutionLogs)
@@ -105,11 +334,27 @@ export async function logStepCompleteDb(
       status: params.status,
       output: params.output,
       outputRaw: params.outputRaw,
-      error: params.error,
+      error: errorValue,
       completedAt: new Date(),
       duration: duration.toString(),
     })
     .where(eq(workflowExecutionLogs.id, params.logId));
+
+  // KEEP-431 follow-up: self-heal a spurious-error workflow if this commit
+  // arrived after the workflow was finalized. Wrap in try/catch so a
+  // self-heal failure never breaks step logging.
+  if (params.status === "success" && params.executionId) {
+    try {
+      await selfHealWorkflowAfterLateStepCommit(params.executionId);
+    } catch (healError) {
+      logSystemError(
+        ErrorCategory.WORKFLOW_ENGINE,
+        "[Workflow Logging] Self-heal after late step commit threw; ignoring",
+        healError,
+        { execution_id: params.executionId }
+      );
+    }
+  }
 }
 
 export type LogWorkflowCompleteParams = {
@@ -191,27 +436,7 @@ export async function logWorkflowCompleteDb(
     );
 
     try {
-      const allLogs = await db.query.workflowExecutionLogs.findMany({
-        where: eq(workflowExecutionLogs.executionId, params.executionId),
-        columns: { nodeId: true, status: true },
-      });
-
-      // Per-nodeId aggregate: a node "succeeded" if any of its rows is success.
-      const nodeSucceeded = new Map<string, boolean>();
-      for (const log of allLogs) {
-        if (log.status === "success") {
-          nodeSucceeded.set(log.nodeId, true);
-        } else if (!nodeSucceeded.has(log.nodeId)) {
-          nodeSucceeded.set(log.nodeId, false);
-        }
-      }
-
-      const trulyFailedNodes: string[] = [];
-      for (const [nodeId, succeeded] of nodeSucceeded) {
-        if (!succeeded) {
-          trulyFailedNodes.push(nodeId);
-        }
-      }
+      const trulyFailedNodes = await listTrulyFailedNodes(params.executionId);
 
       if (trulyFailedNodes.length === 0) {
         logSystemError(
@@ -262,7 +487,14 @@ export async function logWorkflowCompleteDb(
     .where(
       and(
         eq(workflowExecutions.id, params.executionId),
-        ne(workflowExecutions.status, "cancelled")
+        ne(workflowExecutions.status, "cancelled"),
+        // KEEP-431 follow-up: defense in depth. If selfHealWorkflowAfterLateStepCommit
+        // already CAS-flipped status to 'success', a stray late call to
+        // logWorkflowCompleteDb (e.g. a duplicate triggerStep _workflowComplete from
+        // an executor catch path) must not overwrite the healed state with another
+        // 'error'. Excluding the 'success' state from the WHERE makes this UPDATE
+        // a no-op once self-heal has won the race.
+        ne(workflowExecutions.status, "success")
       )
     );
 }
