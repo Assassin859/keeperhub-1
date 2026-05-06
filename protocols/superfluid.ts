@@ -7,7 +7,7 @@ import { defineProtocol } from "@/lib/protocol-registry";
  * Adding a chain: append its ID here. Both forwarders pick it up automatically
  * via sameOnAllChains() because the addresses are deliberately constant across
  * every chain Superfluid supports. To ship a new chain, also add an entry to
- * scripts/verify-superfluid-addresses.ts so the bytecode check covers it.
+ * tests/scripts/verify-superfluid-addresses.ts so the bytecode check covers it.
  */
 export const SUPERFLUID_CHAIN_IDS = [
   "1", // Ethereum Mainnet
