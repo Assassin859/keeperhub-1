@@ -286,11 +286,6 @@ export const safeRoleAllowances = pgTable(
       table.roleId,
       table.allowanceKey
     ),
-    uniqueIndex("safe_role_allowances_role_protocol_token_unique").on(
-      table.roleId,
-      table.protocolSlug,
-      table.tokenAddress
-    ),
     index("idx_safe_role_allowances_role").on(table.roleId),
   ]
 );

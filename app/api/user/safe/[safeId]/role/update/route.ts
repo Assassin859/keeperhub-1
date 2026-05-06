@@ -190,6 +190,7 @@ export async function POST(
       })),
       applied: result.applied,
       skipped: [...result.skipped, ...skipped],
+      skippedDirectRules: result.skippedDirectRules,
     });
   } catch (error) {
     return apiError(error, "Failed to update Zodiac Roles configuration");

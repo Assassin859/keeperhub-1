@@ -18,7 +18,7 @@ import {
   rolesAbi,
 } from "zodiac-roles-sdk";
 import { normalizeAddressForStorage } from "@/lib/address-utils";
-import { getChainTokens, getTokenInfo } from "@/lib/contracts/tokens";
+import { getTokenInfo } from "@/lib/contracts/tokens";
 import { db } from "@/lib/db";
 import {
   type SafeRole,
@@ -53,6 +53,7 @@ import {
 } from "@/lib/safe/protocol-registry";
 import { buildDesiredRole } from "@/lib/safe/simulate";
 import {
+  directRuleAllowanceKey,
   getModuleProxyFactoryAddress,
   getRolesSingletonAddress,
   orgAutomationRoleKey,
@@ -246,6 +247,12 @@ export type InstallRoleResult =
       allowances: SafeRoleAllowance[];
       applied: string[];
       skipped: string[];
+      /**
+       * Direct rules that the orchestrator could not turn into a Permission
+       * (malformed counterparty, missing token address, etc). The wizard
+       * surfaces these to the admin so a silently dropped rule is visible.
+       */
+      skippedDirectRules: string[];
       alreadyInstalled: boolean;
     }
   | { success: false; error: string };
@@ -448,7 +455,41 @@ export type FlattenedAllowance = {
   maxRefillWei: string;
   refillWei: string;
   periodSeconds: number;
+  /**
+   * When set, this row originated from a direct rule. The orchestrator
+   * derives the on-chain allowance key from `(kind, counterparty)` so two
+   * direct rules on the same token (e.g. approve + transfer) get
+   * independent buckets that match what the wizard's per-rule cap implies.
+   */
+  directRule?: {
+    kind: DirectRuleInput["kind"];
+    counterparty: string;
+  };
 };
+
+/**
+ * Resolve the on-chain allowance key for a flattened row. Direct rules use
+ * a per-rule key (kind + counterparty) so two direct rules on the same
+ * token get independent buckets; protocol presets use the per-protocol key.
+ */
+function resolveAllowanceKey(
+  roleKey: string,
+  row: Pick<FlattenedAllowance, "protocolSlug" | "tokenAddress" | "directRule">
+): `0x${string}` {
+  if (row.directRule) {
+    return directRuleAllowanceKey(
+      roleKey,
+      row.directRule.kind,
+      row.directRule.counterparty,
+      row.tokenAddress
+    ) as `0x${string}`;
+  }
+  return tokenAllowanceKey(
+    roleKey,
+    row.protocolSlug,
+    row.tokenAddress
+  ) as `0x${string}`;
+}
 
 /**
  * Flatten per-protocol token configuration. No cross-protocol aggregation:
@@ -490,7 +531,8 @@ export function flattenInstallInput(
 
   // Direct rules: only ERC20 ones contribute to safe_role_allowances. Native
   // transfers are scoped at the recipient target only (no on-chain value cap
-  // until a transaction guard ships).
+  // until a transaction guard ships). Each direct rule gets its own bucket
+  // via the per-rule allowance key (kind + counterparty).
   for (const rule of directRules) {
     if (rule.kind === "native-transfer" || !rule.tokenAddress) {
       continue;
@@ -506,6 +548,10 @@ export function flattenInstallInput(
       maxRefillWei: amount.toString(),
       refillWei: amount.toString(),
       periodSeconds: rule.periodSeconds,
+      directRule: {
+        kind: rule.kind,
+        counterparty: rule.counterparty,
+      },
     });
   }
 
@@ -562,6 +608,7 @@ export async function installRolesWithInitialConfig(
       allowances: allowanceRows,
       applied: protocolRows.map((r) => r.protocolSlug),
       skipped: [],
+      skippedDirectRules: [],
       alreadyInstalled: true,
     };
   }
@@ -652,18 +699,24 @@ export async function installRolesWithInitialConfig(
     // The on-chain allowance bucket for ERC-20 direct rules is created in
     // the per-allowance loop further below using the same allowanceKey.
     const directRulePermissions: Permission[] = [];
+    const skippedDirectRules: string[] = [];
     for (const rule of directRules) {
       const allowanceKey =
         rule.kind === "native-transfer" || !rule.tokenAddress
           ? null
-          : (tokenAllowanceKey(
+          : (directRuleAllowanceKey(
               roleKey,
-              DIRECT_RULE_PROTOCOL_SLUG,
+              rule.kind,
+              rule.counterparty,
               normalizeAddressForStorage(rule.tokenAddress)
             ) as `0x${string}`);
       const permission = buildDirectRulePermission(rule, allowanceKey);
       if (permission) {
         directRulePermissions.push(permission);
+      } else {
+        skippedDirectRules.push(
+          `${rule.kind} ${rule.tokenSymbol} -> ${rule.counterparty}`
+        );
       }
     }
 
@@ -742,11 +795,11 @@ export async function installRolesWithInitialConfig(
     }> = [];
     for (const a of tokenAllowances) {
       const normalizedToken = normalizeAddressForStorage(a.tokenAddress);
-      const allowanceKey = tokenAllowanceKey(
-        roleKey,
-        a.protocolSlug,
-        normalizedToken
-      ) as `0x${string}`;
+      const allowanceKey = resolveAllowanceKey(roleKey, {
+        protocolSlug: a.protocolSlug,
+        tokenAddress: normalizedToken,
+        directRule: a.directRule,
+      });
       const { symbol, decimals } = resolveTokenMetadata(
         chainId,
         normalizedToken,
@@ -1018,6 +1071,7 @@ export async function installRolesWithInitialConfig(
       allowances: persistResult.allowanceRows,
       applied: appliedProtocols,
       skipped: skippedProtocols,
+      skippedDirectRules,
       alreadyInstalled: false,
     };
   } catch (error) {
@@ -1058,6 +1112,8 @@ export type UpdateRoleResult =
       allowances: SafeRoleAllowance[];
       applied: string[];
       skipped: string[];
+      /** See InstallRoleResult.skippedDirectRules. */
+      skippedDirectRules: string[];
       noChanges: boolean;
       addedProtocols: number;
       removedProtocols: number;
@@ -1259,18 +1315,24 @@ export async function updateRolesConfig(
     });
 
     const desiredDirectRulePermissions: Permission[] = [];
+    const skippedDirectRules: string[] = [];
     for (const rule of directRules) {
       const allowanceKey =
         rule.kind === "native-transfer" || !rule.tokenAddress
           ? null
-          : (tokenAllowanceKey(
+          : (directRuleAllowanceKey(
               roleKey,
-              DIRECT_RULE_PROTOCOL_SLUG,
+              rule.kind,
+              rule.counterparty,
               normalizeAddressForStorage(rule.tokenAddress)
             ) as `0x${string}`);
       const permission = buildDirectRulePermission(rule, allowanceKey);
       if (permission) {
         desiredDirectRulePermissions.push(permission);
+      } else {
+        skippedDirectRules.push(
+          `${rule.kind} ${rule.tokenSymbol} -> ${rule.counterparty}`
+        );
       }
     }
     const desiredPermissions: Permission[] = [
@@ -1317,9 +1379,10 @@ export async function updateRolesConfig(
       const allowanceKey =
         stored.kind === "native-transfer" || !stored.tokenAddress
           ? null
-          : (tokenAllowanceKey(
+          : (directRuleAllowanceKey(
               roleKey,
-              DIRECT_RULE_PROTOCOL_SLUG,
+              stored.kind,
+              stored.counterparty,
               normalizeAddressForStorage(stored.tokenAddress)
             ) as `0x${string}`);
       const permission = buildDirectRulePermission(
@@ -1356,11 +1419,7 @@ export async function updateRolesConfig(
     const nowSec = BigInt(Math.floor(Date.now() / 1000));
     const desiredAllowancesWithKeys = desiredAllowancesFlat.map((a) => ({
       ...a,
-      allowanceKey: tokenAllowanceKey(
-        roleKey,
-        a.protocolSlug,
-        a.tokenAddress
-      ) as `0x${string}`,
+      allowanceKey: resolveAllowanceKey(roleKey, a),
     }));
     const allowanceDiff = diffAllowances(
       currentAllowanceRows,
@@ -1376,6 +1435,7 @@ export async function updateRolesConfig(
         allowances: currentAllowanceRows,
         applied: appliedProtocols,
         skipped: skippedProtocols,
+        skippedDirectRules,
         noChanges: true,
         addedProtocols: 0,
         removedProtocols: 0,
@@ -1677,6 +1737,7 @@ export async function updateRolesConfig(
       allowances: persistResult.allowanceRows,
       applied: appliedProtocols,
       skipped: skippedProtocols,
+      skippedDirectRules,
       noChanges: false,
       addedProtocols:
         appliedProtocols.length - persistResult.removedSlugs.length > 0
@@ -1842,13 +1903,10 @@ export async function setRoleTokenAllowance(
         lastAppliedTxHash: result.txHash ?? null,
       })
       .onConflictDoUpdate({
-        target: [
-          safeRoleAllowances.roleId,
-          safeRoleAllowances.protocolSlug,
-          safeRoleAllowances.tokenAddress,
-        ],
+        target: [safeRoleAllowances.roleId, safeRoleAllowances.allowanceKey],
         set: {
-          allowanceKey,
+          protocolSlug: input.protocolSlug,
+          tokenAddress: normalizedToken,
           maxRefillWei: input.maxRefillWei,
           refillWei: input.refillWei,
           periodSeconds: input.periodSeconds,
@@ -2346,6 +2404,7 @@ type ReconcileProbe = {
   tokenAddress: string;
   tokenSymbol: string;
   tokenDecimals: number;
+  allowanceKey: `0x${string}`;
 };
 
 /**
@@ -2364,13 +2423,15 @@ type ReconcileProbe = {
  */
 function buildReconcileProbeSet(
   chainId: number,
-  existingAllowances: SafeRoleAllowance[]
+  roleKey: string,
+  existingAllowances: SafeRoleAllowance[],
+  existingDirectRules: SafeRoleDirectRule[]
 ): ReconcileProbe[] {
   const seen = new Set<string>();
   const probes: ReconcileProbe[] = [];
 
   const push = (probe: ReconcileProbe): void => {
-    const key = `${probe.protocolSlug}|${probe.tokenAddress.toLowerCase()}`;
+    const key = probe.allowanceKey.toLowerCase();
     if (seen.has(key)) {
       return;
     }
@@ -2389,28 +2450,49 @@ function buildReconcileProbeSet(
       chainId
     );
     for (const token of defaults) {
+      const tokenAddress = normalizeAddressForStorage(token.address);
       push({
         protocolSlug: slug,
         templateSlug: catalog.templateSlug,
-        tokenAddress: normalizeAddressForStorage(token.address),
+        tokenAddress,
         tokenSymbol: token.symbol,
         tokenDecimals: token.decimals,
+        allowanceKey: tokenAllowanceKey(
+          roleKey,
+          slug,
+          tokenAddress
+        ) as `0x${string}`,
       });
     }
   }
 
-  // (2) direct rules × every chain token in the registry
-  for (const token of getChainTokens(chainId)) {
+  // (2) per-direct-rule buckets. Each row in safe_role_direct_rules has its
+  // own bucket via directRuleAllowanceKey(kind, counterparty, token); we
+  // can't probe the synthetic (direct, token) shape because it does not
+  // correspond to any on-chain key.
+  for (const rule of existingDirectRules) {
+    if (!rule.tokenAddress) {
+      continue;
+    }
+    const tokenAddress = normalizeAddressForStorage(rule.tokenAddress);
     push({
       protocolSlug: DIRECT_RULE_PROTOCOL_SLUG,
       templateSlug: "direct",
-      tokenAddress: normalizeAddressForStorage(token.address),
-      tokenSymbol: token.symbol,
-      tokenDecimals: token.decimals,
+      tokenAddress,
+      tokenSymbol: rule.tokenSymbol,
+      tokenDecimals: rule.tokenDecimals,
+      allowanceKey: directRuleAllowanceKey(
+        roleKey,
+        rule.kind,
+        rule.counterparty,
+        tokenAddress
+      ) as `0x${string}`,
     });
   }
 
-  // (3) anything already in DB (preserves custom tokens not in the registry)
+  // (3) anything already in DB (preserves custom tokens not in the registry).
+  // Reuse the stored allowanceKey directly so direct-rule rows keep their
+  // per-rule key without us needing kind/counterparty here.
   for (const allowance of existingAllowances) {
     push({
       protocolSlug: allowance.protocolSlug,
@@ -2423,6 +2505,7 @@ function buildReconcileProbeSet(
       tokenAddress: allowance.tokenAddress,
       tokenSymbol: allowance.tokenSymbol,
       tokenDecimals: allowance.tokenDecimals,
+      allowanceKey: allowance.allowanceKey as `0x${string}`,
     });
   }
 
@@ -2488,8 +2571,16 @@ export async function reconcileSafeRoleFromChain(
     const existingAllowances = existingRole
       ? await listRoleAllowances(existingRole.id)
       : [];
+    const existingDirectRules = existingRole
+      ? await listRoleDirectRules(existingRole.id)
+      : [];
 
-    const probes = buildReconcileProbeSet(safe.chainId, existingAllowances);
+    const probes = buildReconcileProbeSet(
+      safe.chainId,
+      roleKey,
+      existingAllowances,
+      existingDirectRules
+    );
 
     type ProbeReadResult = {
       probe: ReconcileProbe;
@@ -2498,11 +2589,7 @@ export async function reconcileSafeRoleFromChain(
     };
     const reads: ProbeReadResult[] = [];
     for (const probe of probes) {
-      const allowanceKey = tokenAllowanceKey(
-        roleKey,
-        probe.protocolSlug,
-        probe.tokenAddress
-      ) as `0x${string}`;
+      const { allowanceKey } = probe;
       try {
         const onChain = await readRoleAllowance(
           provider,

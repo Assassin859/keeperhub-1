@@ -87,3 +87,27 @@ export function tokenAllowanceKey(
   );
   return ethers.keccak256(encoded);
 }
+
+/**
+ * Direct-rule allowance key. Direct rules differ from protocol presets in
+ * that two rules can target the same `(roleKey, "direct", token)` triple
+ * but represent independent buckets — e.g. an `erc20-approve` to spender A
+ * and an `erc20-transfer` to recipient B should not share a weekly cap.
+ *
+ * Including `kind` and `counterparty` in the digest gives each direct rule
+ * its own on-chain allowance bucket so the wizard's per-rule cap matches
+ * what the modifier actually enforces.
+ */
+export function directRuleAllowanceKey(
+  roleKey: string,
+  kind: string,
+  counterparty: string,
+  tokenAddress: string
+): string {
+  const ruleDigest = ethers.id(`direct:${kind}:${counterparty.toLowerCase()}`);
+  const encoded = ethers.solidityPacked(
+    ["bytes32", "bytes32", "address"],
+    [roleKey, ruleDigest, ethers.getAddress(tokenAddress)]
+  );
+  return ethers.keccak256(encoded);
+}
