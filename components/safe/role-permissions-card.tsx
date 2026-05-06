@@ -9,7 +9,11 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AddressWithExplorer } from "@/components/safe/address-with-explorer";
-import { RoleDirectRuleRow } from "@/components/safe/role-direct-rule-row";
+import { RoleDirectRuleEditDialog } from "@/components/safe/role-direct-rule-edit-dialog";
+import {
+  type RoleDirectRule,
+  RoleDirectRuleRow,
+} from "@/components/safe/role-direct-rule-row";
 import { RoleEditDialog } from "@/components/safe/role-edit-dialog";
 import { RoleInstallDialog } from "@/components/safe/role-install-dialog";
 import { RoleProtocolGroup } from "@/components/safe/role-protocol-group";
@@ -140,6 +144,8 @@ export function RolePermissionsCard({
   const [protocolsOpen, setProtocolsOpen] = useState<boolean>(true);
   const [directRulesOpen, setDirectRulesOpen] = useState<boolean>(true);
   const [tokenLogoMap, setTokenLogoMap] = useState<Record<string, string>>({});
+  const [editingDirectRule, setEditingDirectRule] =
+    useState<RoleDirectRule | null>(null);
 
   useEffect(() => {
     fetchTokenLogoMap(chainId).then(setTokenLogoMap, () => {
@@ -358,6 +364,9 @@ export function RolePermissionsCard({
                         allowance={findDirectAllowance(rule, role.allowances)}
                         chainId={chainId}
                         key={rule.id}
+                        onEdit={
+                          isAdmin ? () => setEditingDirectRule(rule) : undefined
+                        }
                         rule={rule}
                         tokenLogoUrl={resolveDirectRuleLogo(rule, tokenLogoMap)}
                       />
@@ -366,6 +375,25 @@ export function RolePermissionsCard({
                 </div>
               )}
             </section>
+          )}
+
+          {editingDirectRule && (
+            <RoleDirectRuleEditDialog
+              allDirectRules={role.directRules ?? []}
+              allowances={role.allowances}
+              onOpenChange={(o) => {
+                if (!o) {
+                  setEditingDirectRule(null);
+                }
+              }}
+              onUpdated={async () => {
+                await loadRole();
+              }}
+              open={true}
+              protocols={role.protocols}
+              rule={editingDirectRule}
+              safeId={safeId}
+            />
           )}
 
           <details

@@ -1,9 +1,11 @@
 "use client";
 
+import { Pencil } from "lucide-react";
 import Image from "next/image";
 import { AddressWithExplorer } from "@/components/safe/address-with-explorer";
 import { POLICY_PERIOD_OPTIONS } from "@/components/safe/policy-token-row";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { getTokenInfo } from "@/lib/contracts/tokens";
 
 export type RoleDirectRule = {
@@ -34,6 +36,8 @@ type Props = {
   allowance?: RoleDirectRuleAllowance | null;
   /** Optional logo URL for the token, sourced from supported tokens. */
   tokenLogoUrl?: string | null;
+  /** Callback to open the per-rule edit dialog; only rendered when set. */
+  onEdit?: () => void;
 };
 
 function kindLabel(kind: string): string {
@@ -85,6 +89,7 @@ export function RoleDirectRuleRow({
   chainId,
   allowance,
   tokenLogoUrl,
+  onEdit,
 }: Props): React.ReactElement {
   const isNative = rule.kind === "native-transfer";
   let usageText: string;
@@ -105,7 +110,7 @@ export function RoleDirectRuleRow({
   const logoUrl = tokenLogoUrl ?? tokenInfo?.logoUrl ?? null;
 
   return (
-    <li className="space-y-1.5 rounded border bg-muted/20 px-3 py-2 text-sm">
+    <li className="relative space-y-1.5 rounded border bg-muted/20 px-3 py-2 pr-10 text-sm">
       <div className="flex flex-wrap items-center gap-2">
         <Badge className="text-[10px]" variant="outline">
           {kindLabel(rule.kind)}
@@ -132,6 +137,18 @@ export function RoleDirectRuleRow({
         <span>{counterpartyRole(rule.kind)}</span>
         <AddressWithExplorer address={rule.counterparty} chainId={chainId} />
       </div>
+      {onEdit && (
+        <Button
+          aria-label="Edit rule"
+          className="absolute top-1.5 right-1.5 h-7 w-7 p-0 text-muted-foreground"
+          onClick={onEdit}
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </Button>
+      )}
     </li>
   );
 }
