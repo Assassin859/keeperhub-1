@@ -28,7 +28,11 @@ import {
 } from "@/lib/safe/execute-as-safe";
 import { resolveSignerMode } from "@/lib/safe/signer-resolver";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
-import { formatContractError } from "@/lib/web3/decode-revert-error";
+import {
+  classifyRevert,
+  formatContractError,
+  type RevertKind,
+} from "@/lib/web3/decode-revert-error";
 import { resolveGasLimitOverrides } from "@/lib/web3/gas-defaults";
 import { isSponsorshipSupported } from "@/lib/web3/pimlico-config";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
@@ -71,7 +75,16 @@ export type ApproveTokenResult =
       spender: string;
       symbol: string;
     }
-  | { success: false; error: string };
+  | {
+      success: false;
+      error: string;
+      /**
+       * Structured classification of the revert when one was emitted.
+       * Omitted when the failure is pre-flight (validation, RPC) or when
+       * the revert payload was empty / unrecognised.
+       */
+      rejection?: RevertKind;
+    };
 
 /**
  * Core approve token logic
@@ -443,6 +456,7 @@ export async function approveTokenCore(
           chain_id: String(chainId),
         }
       );
+      const rejection = classifyRevert(error, contract.interface);
       return {
         success: false,
         error: formatContractError(
@@ -450,6 +464,7 @@ export async function approveTokenCore(
           contract.interface,
           "Token approval failed"
         ),
+        ...(rejection.kind !== "unknown" ? { rejection } : {}),
       };
     }
   });

@@ -32,7 +32,11 @@ import {
 } from "@/lib/safe/execute-as-safe";
 import { resolveSignerMode } from "@/lib/safe/signer-resolver";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
-import { formatContractError } from "@/lib/web3/decode-revert-error";
+import {
+  classifyRevert,
+  formatContractError,
+  type RevertKind,
+} from "@/lib/web3/decode-revert-error";
 import { resolveGasLimitOverrides } from "@/lib/web3/gas-defaults";
 import { isSponsorshipSupported } from "@/lib/web3/pimlico-config";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
@@ -74,7 +78,7 @@ export type TransferTokenResult =
       symbol: string;
       recipient: string;
     }
-  | { success: false; error: string };
+  | { success: false; error: string; rejection?: RevertKind };
 
 /**
  * Parse token config from input and return a single token address.
@@ -550,6 +554,7 @@ export async function transferTokenCore(
           chain_id: String(chainId),
         }
       );
+      const rejection = classifyRevert(error, contract.interface);
       return {
         success: false,
         error: formatContractError(
@@ -557,6 +562,7 @@ export async function transferTokenCore(
           contract.interface,
           "Token transfer failed"
         ),
+        ...(rejection.kind !== "unknown" ? { rejection } : {}),
       };
     }
   });

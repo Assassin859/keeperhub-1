@@ -31,7 +31,11 @@ import {
 } from "@/lib/safe/execute-as-safe";
 import { resolveSignerMode } from "@/lib/safe/signer-resolver";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
-import { formatContractError } from "@/lib/web3/decode-revert-error";
+import {
+  classifyRevert,
+  formatContractError,
+  type RevertKind,
+} from "@/lib/web3/decode-revert-error";
 import {
   parsePriorityFeeGwei,
   resolveGasLimitOverrides,
@@ -79,7 +83,7 @@ export type WriteContractResult =
       effectiveGasPrice: string;
       result?: unknown;
     }
-  | { success: false; error: string };
+  | { success: false; error: string; rejection?: RevertKind };
 
 /**
  * Core write contract logic
@@ -475,9 +479,11 @@ export async function writeContractCore(
           chain_id: String(chainId),
         }
       );
+      const rejection = classifyRevert(error, contractInterface);
       return {
         success: false,
         error: formatContractError(error, contractInterface),
+        ...(rejection.kind !== "unknown" ? { rejection } : {}),
       };
     }
   });

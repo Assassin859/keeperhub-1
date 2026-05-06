@@ -154,3 +154,204 @@ function extractRevertData(error: unknown): string | undefined {
 
   return;
 }
+
+// ---------------------------------------------------------------------------
+// Optional classification layer
+//
+// Adds a structured `kind` tag to revert decoding so callers (workflow logs,
+// step results, UI) can show a friendly section like "Kind: AllowanceExceeded"
+// alongside the existing string message. Existing decoders are untouched —
+// nothing here changes the output of `decodeRevertReason` or
+// `formatContractError`. Use `classifyRevert` opt-in.
+// ---------------------------------------------------------------------------
+
+/**
+ * Zodiac Roles modifier custom errors. Kept in a separate Interface from the
+ * common-OZ list so adding them doesn't change `decodeRevertReason`'s output
+ * for callers that don't opt into classification.
+ */
+const ROLE_ERROR_FRAGMENTS: string[] = [
+  "error ConditionViolation(uint8 status, bytes32 paramOrAllowanceKey)",
+  "error UnauthorizedAccount(address account)",
+  "error UnacceptableMultiSendOffset()",
+  "error AlreadyAssigned()",
+  "error InvalidArrayConfiguration()",
+];
+
+const ROLE_ERRORS_INTERFACE = new ethers.Interface(ROLE_ERROR_FRAGMENTS);
+
+/**
+ * Friendly labels for the modifier's `Status` enum (see
+ * zodiac-modifier-roles ConditionFlat.sol). Index = enum value.
+ */
+const ROLES_STATUS_LABELS: readonly string[] = [
+  "Ok",
+  "DelegateCallNotAllowed",
+  "TargetAddressNotAllowed",
+  "FunctionNotAllowed",
+  "SendNotAllowed",
+  "OrViolation",
+  "NorViolation",
+  "ParameterNotAllowed",
+  "ParameterLessThanAllowed",
+  "ParameterGreaterThanAllowed",
+  "ParameterNotAMatch",
+  "NotEveryArrayElementPasses",
+  "NoArrayElementPasses",
+  "ParameterNotSubsetOfAllowed",
+  "BitmaskOverflow",
+  "BitmaskNotAllowed",
+  "CustomConditionViolation",
+  "AllowanceExceeded",
+  "CallAllowanceExceeded",
+  "EtherAllowanceExceeded",
+];
+
+export type RevertKind =
+  | {
+      kind: "role-condition-violation";
+      /** Modifier status enum label, e.g. "AllowanceExceeded" */
+      status: string;
+      statusCode: number;
+      /** Allowance bucket key or parameter hash (interpretation depends on status) */
+      paramOrKey: string;
+    }
+  | { kind: "role-not-authorized"; account?: string }
+  | { kind: "erc20-insufficient-balance"; balance: string; needed: string }
+  | { kind: "erc20-insufficient-allowance"; allowance: string; needed: string }
+  | { kind: "ownable-unauthorized"; account?: string }
+  | {
+      kind: "access-control-unauthorized";
+      account?: string;
+      neededRole?: string;
+    }
+  | { kind: "paused" }
+  | { kind: "reentrancy" }
+  | { kind: "string-revert"; reason: string }
+  | { kind: "contract-custom"; name: string }
+  | { kind: "unknown" };
+
+function classifyRoleError(
+  decoded: ethers.ErrorDescription
+): RevertKind | null {
+  if (decoded.name === "ConditionViolation") {
+    const statusCode = Number(decoded.args[0]);
+    const status = ROLES_STATUS_LABELS[statusCode] ?? `Status${statusCode}`;
+    const paramOrKey = String(decoded.args[1]);
+    return { kind: "role-condition-violation", status, statusCode, paramOrKey };
+  }
+  if (decoded.name === "UnauthorizedAccount") {
+    return { kind: "role-not-authorized", account: String(decoded.args[0]) };
+  }
+  return null;
+}
+
+function classifyCommonError(
+  decoded: ethers.ErrorDescription
+): RevertKind | null {
+  switch (decoded.name) {
+    case "ERC20InsufficientBalance":
+      return {
+        kind: "erc20-insufficient-balance",
+        balance: String(decoded.args[1]),
+        needed: String(decoded.args[2]),
+      };
+    case "ERC20InsufficientAllowance":
+      return {
+        kind: "erc20-insufficient-allowance",
+        allowance: String(decoded.args[1]),
+        needed: String(decoded.args[2]),
+      };
+    case "OwnableUnauthorizedAccount":
+      return { kind: "ownable-unauthorized", account: String(decoded.args[0]) };
+    case "AccessControlUnauthorizedAccount":
+      return {
+        kind: "access-control-unauthorized",
+        account: String(decoded.args[0]),
+        neededRole: String(decoded.args[1]),
+      };
+    case "EnforcedPause":
+    case "ExpectedPause":
+      return { kind: "paused" };
+    case "ReentrancyGuardReentrantCall":
+      return { kind: "reentrancy" };
+    case "NotAuthorized":
+      return { kind: "role-not-authorized" };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Classify a revert into a structured `kind` for UI / logs.
+ *
+ * Tries: contract ABI -> Roles modifier errors -> common OZ errors ->
+ * string `Error(string)` revert. Returns `{ kind: "unknown" }` if nothing
+ * matches; the caller can still fall back to the raw error message via
+ * `formatContractError`.
+ *
+ * Side-effect free; does not throw.
+ */
+export function classifyRevert(
+  error: unknown,
+  contractInterface?: ethers.Interface
+): RevertKind {
+  const revertData = extractRevertData(error);
+  if (!revertData || revertData === "0x") {
+    return { kind: "unknown" };
+  }
+
+  if (contractInterface) {
+    try {
+      const decoded = contractInterface.parseError(revertData);
+      if (decoded) {
+        const common = classifyCommonError(decoded);
+        if (common) {
+          return common;
+        }
+        return { kind: "contract-custom", name: decoded.name };
+      }
+    } catch {
+      // not in this ABI
+    }
+  }
+
+  try {
+    const decoded = ROLE_ERRORS_INTERFACE.parseError(revertData);
+    if (decoded) {
+      const role = classifyRoleError(decoded);
+      if (role) {
+        return role;
+      }
+    }
+  } catch {
+    // not a Roles modifier error
+  }
+
+  try {
+    const decoded = COMMON_ERRORS_INTERFACE.parseError(revertData);
+    if (decoded) {
+      const common = classifyCommonError(decoded);
+      if (common) {
+        return common;
+      }
+      return { kind: "contract-custom", name: decoded.name };
+    }
+  } catch {
+    // not a known common error
+  }
+
+  try {
+    const reason = ethers.AbiCoder.defaultAbiCoder().decode(
+      ["string"],
+      ethers.dataSlice(revertData, 4)
+    );
+    if (reason[0]) {
+      return { kind: "string-revert", reason: String(reason[0]) };
+    }
+  } catch {
+    // not a string revert
+  }
+
+  return { kind: "unknown" };
+}
