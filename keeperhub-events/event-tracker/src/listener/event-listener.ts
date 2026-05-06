@@ -29,6 +29,7 @@ export interface EventListenerOptions {
   workflowName: string;
   chainId: number;
   wssUrl: string;
+  fallbackWssUrl?: string;
   contractAddress: string;
   eventName: string;
   eventsAbiStrings: string[];
@@ -82,6 +83,7 @@ export class EventListener {
     this.unsubscribe = await this.opts.providerManager.subscribeToLogs({
       chainId: this.opts.chainId,
       wssUrl: this.opts.wssUrl,
+      fallbackWssUrl: this.opts.fallbackWssUrl,
       address: this.opts.contractAddress,
       topic0: eventFragment.topicHash,
       handler: (log) => this.onLog(log),

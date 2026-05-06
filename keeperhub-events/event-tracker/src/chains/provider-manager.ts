@@ -39,6 +39,15 @@ const HEARTBEAT_TIMEOUT_MS = 10_000;
 const INITIAL_RECONNECT_DELAY_MS = 1_000;
 const MAX_RECONNECT_DELAY_MS = 60_000;
 const MAX_RECONNECT_ATTEMPTS = 10;
+/**
+ * Cap on `eth_subscribe(["newHeads"])` round-trip during the probe in
+ * `probeSubscriptionSupport`. An upstream that accepts the WS handshake
+ * but never answers the JSON-RPC frame (silent backend, broken proxy) would
+ * otherwise block `createProvider` forever. 10 s matches the heartbeat
+ * timeout in `startHeartbeat` so the two reachability gates fail at the
+ * same scale.
+ */
+const PROBE_TIMEOUT_MS = 10_000;
 
 export type LogHandler = (log: ethers.Log) => void | Promise<void>;
 export type Unsubscribe = () => void;
@@ -60,7 +69,17 @@ export type DisconnectHandler = (ev: DisconnectEvent) => void | Promise<void>;
 
 export interface ChainHealth {
   chainId: number;
+  /**
+   * The URL the live provider was opened against, or the configured
+   * primary if no provider is currently connected. May be the configured
+   * fallback if the primary failed at the most recent (re)connect.
+   */
   wssUrl: string;
+  /**
+   * Configured fallback URL, or null if none. Surfaced so operators can
+   * see whether failover capacity exists for this chain.
+   */
+  fallbackWssUrl: string | null;
   connected: boolean;
   reconnecting: boolean;
   lastBlockAt: number | null;
@@ -78,6 +97,11 @@ export interface ChainHealth {
 export interface SubscribeOptions {
   chainId: number;
   wssUrl: string;
+  /**
+   * Optional secondary URL tried when the primary fails at provider
+   * creation or reconnect. See `ChainEntry.fallbackWssUrl`.
+   */
+  fallbackWssUrl?: string;
   address: string;
   topic0: string;
   handler: LogHandler;
@@ -96,7 +120,24 @@ interface Subscriber {
 
 interface ChainEntry {
   chainId: number;
+  /**
+   * Configured primary URL; immutable once the entry is created. Each
+   * (re)connect attempt tries this first.
+   */
   wssUrl: string;
+  /**
+   * Configured fallback URL, immutable once the entry is created. Tried
+   * only when the primary attempt fails (factory throws, `provider.ready`
+   * rejects, or `eth_subscribe` probe rejects). Reconnects always start
+   * over from primary so a primary that recovers is preferred.
+   */
+  fallbackWssUrl: string | null;
+  /**
+   * Which URL the live provider was created from. Equal to `wssUrl` on
+   * the common path, equal to `fallbackWssUrl` when the primary failed
+   * at the last (re)connect, null when no provider is live.
+   */
+  activeWssUrl: string | null;
   provider: ethers.WebSocketProvider | null;
   readyPromise: Promise<ethers.WebSocketProvider> | null;
   /**
@@ -160,8 +201,9 @@ export class ChainProviderManager {
   async getOrCreateProvider(
     chainId: number,
     wssUrl: string,
+    fallbackWssUrl?: string,
   ): Promise<ethers.WebSocketProvider> {
-    const entry = this.ensureEntry(chainId, wssUrl);
+    const entry = this.ensureEntry(chainId, wssUrl, fallbackWssUrl);
 
     // If a reconnect loop is live, wait for it to settle before checking
     // the provider. Without this, a new subscriber arriving while the
@@ -200,8 +242,16 @@ export class ChainProviderManager {
   }
 
   async subscribeToLogs(opts: SubscribeOptions): Promise<Unsubscribe> {
-    const entry = this.ensureEntry(opts.chainId, opts.wssUrl);
-    await this.getOrCreateProvider(opts.chainId, opts.wssUrl);
+    const entry = this.ensureEntry(
+      opts.chainId,
+      opts.wssUrl,
+      opts.fallbackWssUrl,
+    );
+    await this.getOrCreateProvider(
+      opts.chainId,
+      opts.wssUrl,
+      opts.fallbackWssUrl,
+    );
 
     const subscriber: Subscriber = {
       address: opts.address.toLowerCase(),
@@ -290,31 +340,31 @@ export class ChainProviderManager {
     if (!entry) {
       return null;
     }
+    return this.toHealth(entry);
+  }
+
+  getAllHealth(): ChainHealth[] {
+    const out: ChainHealth[] = [];
+    for (const entry of this.chains.values()) {
+      out.push(this.toHealth(entry));
+    }
+    return out;
+  }
+
+  private toHealth(entry: ChainEntry): ChainHealth {
     return {
       chainId: entry.chainId,
-      wssUrl: entry.wssUrl,
+      // Active URL when a provider is live, primary otherwise. Lets
+      // operators see whether failover kicked in without exposing a
+      // stale "active" value when nothing is connected.
+      wssUrl: entry.activeWssUrl ?? entry.wssUrl,
+      fallbackWssUrl: entry.fallbackWssUrl,
       connected: entry.provider != null && !entry.isReconnecting,
       reconnecting: entry.isReconnecting,
       lastBlockAt: entry.lastBlockAt,
       subscriberCount: entry.subscribers.size,
       lastCreateError: entry.lastCreateError,
     };
-  }
-
-  getAllHealth(): ChainHealth[] {
-    const out: ChainHealth[] = [];
-    for (const entry of this.chains.values()) {
-      out.push({
-        chainId: entry.chainId,
-        wssUrl: entry.wssUrl,
-        connected: entry.provider != null && !entry.isReconnecting,
-        reconnecting: entry.isReconnecting,
-        lastBlockAt: entry.lastBlockAt,
-        subscriberCount: entry.subscribers.size,
-        lastCreateError: entry.lastCreateError,
-      });
-    }
-    return out;
   }
 
   async destroy(): Promise<void> {
@@ -346,6 +396,7 @@ export class ChainProviderManager {
       entry.subscribers.clear();
       entry.disconnectHandlers.clear();
       entry.provider = null;
+      entry.activeWssUrl = null;
       entry.readyPromise = null;
     }
     this.chains.clear();
@@ -358,12 +409,20 @@ export class ChainProviderManager {
     }
   }
 
-  private ensureEntry(chainId: number, wssUrl: string): ChainEntry {
+  private ensureEntry(
+    chainId: number,
+    wssUrl: string,
+    fallbackWssUrl?: string,
+  ): ChainEntry {
+    const fallback = fallbackWssUrl ?? null;
     const existing = this.chains.get(chainId);
     if (existing) {
-      if (existing.wssUrl !== wssUrl) {
+      // Identity is the (primary, fallback) tuple. Two callers must agree
+      // on both; otherwise the second caller would silently inherit the
+      // first caller's failover behaviour.
+      if (existing.wssUrl !== wssUrl || existing.fallbackWssUrl !== fallback) {
         throw new Error(
-          `chainId ${chainId} already registered with wssUrl ${existing.wssUrl}; refusing to reuse for ${wssUrl}`,
+          `chainId ${chainId} already registered with wssUrl=${existing.wssUrl} fallbackWssUrl=${existing.fallbackWssUrl}; refusing to reuse for wssUrl=${wssUrl} fallbackWssUrl=${fallback}`,
         );
       }
       return existing;
@@ -371,6 +430,8 @@ export class ChainProviderManager {
     const entry: ChainEntry = {
       chainId,
       wssUrl,
+      fallbackWssUrl: fallback,
+      activeWssUrl: null,
       provider: null,
       readyPromise: null,
       reconnectPromise: null,
@@ -387,13 +448,66 @@ export class ChainProviderManager {
     return entry;
   }
 
+  /**
+   * Ordered list of URLs to try at (re)connect time: primary first,
+   * fallback (if configured) second. Returned fresh on every call so a
+   * caller can iterate without mutating entry state.
+   */
+  private candidateUrls(entry: ChainEntry): string[] {
+    return entry.fallbackWssUrl
+      ? [entry.wssUrl, entry.fallbackWssUrl]
+      : [entry.wssUrl];
+  }
+
+  /**
+   * Walk the candidate URL list in order, returning the first
+   * `(provider, urlUsed)` pair that satisfies factory + ready + probe.
+   * On failure of one URL the partially-constructed provider is
+   * destroyed best-effort before moving on, so we do not leak sockets
+   * across attempts. If every URL fails, throws an aggregate error
+   * containing each URL's failure message.
+   */
+  private async openProvider(
+    entry: ChainEntry,
+  ): Promise<{ provider: ethers.WebSocketProvider; urlUsed: string }> {
+    const urls = this.candidateUrls(entry);
+    const failures: string[] = [];
+    for (const url of urls) {
+      let provider: ethers.WebSocketProvider | null = null;
+      try {
+        provider = this.factory(url);
+        await provider.ready;
+        await this.probeSubscriptionSupport(provider, entry, url);
+        return { provider, urlUsed: url };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        failures.push(`${url}: ${message}`);
+        if (provider) {
+          try {
+            await provider.destroy();
+          } catch {
+            // Best-effort: socket may already be gone (probe failure
+            // already destroys), and we are about to throw or move on.
+          }
+        }
+      }
+    }
+    throw new Error(
+      `chain ${entry.chainId}: all ${urls.length} WSS URL(s) failed:\n  ${failures.join("\n  ")}`,
+    );
+  }
+
   private async createProvider(
     entry: ChainEntry,
   ): Promise<ethers.WebSocketProvider> {
-    const provider = this.factory(entry.wssUrl);
-    await provider.ready;
-    await this.probeSubscriptionSupport(provider, entry);
+    const { provider, urlUsed } = await this.openProvider(entry);
     entry.provider = provider;
+    entry.activeWssUrl = urlUsed;
+    if (urlUsed !== entry.wssUrl) {
+      logger.warn(
+        `[ChainProviderManager] chain=${entry.chainId} primary failed; running on fallback ${urlUsed}`,
+      );
+    }
     // Clear the prior failure marker now that we have a working provider.
     // Without this, a chain that recovered after a probe failure would
     // still report `lastCreateError` indefinitely.
@@ -427,21 +541,44 @@ export class ChainProviderManager {
   private async probeSubscriptionSupport(
     provider: ethers.WebSocketProvider,
     entry: ChainEntry,
+    urlUsed: string,
   ): Promise<void> {
     let filterId: unknown;
     try {
-      filterId = await provider.send("eth_subscribe", ["newHeads"]);
-    } catch (err) {
+      // Race the RPC call against an explicit timeout. ethers does not
+      // give us an externally controllable timeout on `provider.send`,
+      // and an upstream that accepts the WS handshake but never answers
+      // the JSON-RPC frame would otherwise hang createProvider for the
+      // life of the socket. The Node 20 native timer doesn't need clearing
+      // because the race winner discards the loser's result, but we still
+      // clear it explicitly so the timeout doesn't keep the event loop
+      // alive after a fast probe.
+      let timeoutHandle: NodeJS.Timeout | null = null;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `eth_subscribe probe timed out after ${PROBE_TIMEOUT_MS}ms`,
+              ),
+            ),
+          PROBE_TIMEOUT_MS,
+        );
+      });
       try {
-        await provider.destroy();
-      } catch {
-        // Best-effort: the failed provider is already unusable; if
-        // destroy throws (e.g. socket already closed) there is nothing
-        // to do but proceed to the throw below.
+        filterId = await Promise.race([
+          provider.send("eth_subscribe", ["newHeads"]),
+          timeoutPromise,
+        ]);
+      } finally {
+        if (timeoutHandle) {
+          clearTimeout(timeoutHandle);
+        }
       }
+    } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       throw new Error(
-        `chain ${entry.chainId} (${entry.wssUrl}): RPC does not support eth_subscribe: ${message}`,
+        `chain ${entry.chainId} (${urlUsed}): RPC does not support eth_subscribe: ${message}`,
       );
     }
     try {
@@ -654,21 +791,23 @@ export class ChainProviderManager {
       }
     }
     entry.provider = null;
+    entry.activeWssUrl = null;
     entry.readyPromise = null;
 
     if (this.isDestroyed) {
       return;
     }
 
-    // Re-create. Any throw here propagates to the loop which handles
-    // backoff.
-    const provider = this.factory(entry.wssUrl);
-    await provider.ready;
+    // Re-create using the same primary-then-fallback walk as
+    // createProvider. Each (re)connect tries primary first so a primary
+    // that recovers is preferred. Any throw here propagates to the loop
+    // which handles backoff.
+    const { provider, urlUsed } = await this.openProvider(entry);
 
-    // Destroy may have run while we were waiting for `ready`. If so, the
-    // entry we are about to populate is no longer in `this.chains` and
-    // attaching listeners would leak a provider that never gets
-    // destroyed by the second pass.
+    // Destroy may have run while we were waiting for `ready` / probe. If
+    // so, the entry we are about to populate is no longer in
+    // `this.chains` and attaching listeners would leak a provider that
+    // never gets destroyed by the second pass.
     if (this.isDestroyed) {
       try {
         await provider.destroy();
@@ -678,14 +817,13 @@ export class ChainProviderManager {
       return;
     }
 
-    // Same probe as createProvider: confirm the rebuilt connection still
-    // accepts eth_subscribe before any .on("block") call exposes us to
-    // ethers' uncaught-rejection path. A failure here propagates out and
-    // the reconnect loop counts it as a failed attempt, falling back on
-    // exponential backoff.
-    await this.probeSubscriptionSupport(provider, entry);
-
     entry.provider = provider;
+    entry.activeWssUrl = urlUsed;
+    if (urlUsed !== entry.wssUrl) {
+      logger.warn(
+        `[ChainProviderManager] chain=${entry.chainId} reconnected on fallback ${urlUsed}`,
+      );
+    }
     // Successful reconnect clears any prior failure marker so /healthz
     // stops reporting a stale error on a now-healthy chain.
     entry.lastCreateError = null;

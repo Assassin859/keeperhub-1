@@ -26,6 +26,13 @@ export interface WorkflowRegistration {
   workflowName: string;
   chainId: number;
   wssUrl: string;
+  /**
+   * Optional secondary WSS endpoint. If primary is unreachable or rejects
+   * `eth_subscribe`, ChainProviderManager falls through to this URL before
+   * giving up. Populated from `chains.default_fallback_wss` when it parses
+   * as a valid `ws://` / `wss://` URL.
+   */
+  fallbackWssUrl?: string;
   contractAddress: string;
   eventName: string;
   eventsAbiStrings: string[];
