@@ -35,12 +35,12 @@ Understanding the user/org/wallet model helps interpret metrics correctly:
 | Entity | Description | Expected Relationships |
 |--------|-------------|------------------------|
 | **User** | Registered or anonymous account | Each registered user auto-gets a personal org |
-| **Organization** | Multi-tenant container for workflows/credentials | Each org auto-gets a Para wallet |
-| **Para Wallet** | MPC wallet for blockchain signing | 1:1 with organizations |
+| **Organization** | Multi-tenant container for workflows/credentials | Each org auto-gets a Turnkey wallet |
+| **Wallet** | Turnkey-backed signer for blockchain operations | 1:1 with organizations |
 | **Anonymous User** | Trial user without org | Can run workflows, but no chain operations |
 
 **Key metric relationships:**
-- `org.total` ≈ `sum(wallet.total)` (1:1 org-to-wallet; wallets split across `para` / `turnkey` providers)
+- `org.total` ≈ `wallet.total` (1:1 org-to-wallet)
 - `user.total` ≥ `org.total` (users can share orgs via invites)
 - `user.anonymous` = users without orgs (trial mode)
 - Web3 steps (`transfer-funds`, `write-contract`) require org + wallet
@@ -183,8 +183,7 @@ Billing-aware observability layered onto the org model. Plan distribution, per-o
 | `apikey.total` | Total API keys | - | DB |
 | `chain.total` | Total blockchain networks configured | - | DB |
 | `chain.enabled` | Enabled blockchain networks | - | DB |
-| `wallet.total` | Total active org wallets by provider | `provider` (`para`, `turnkey`) | DB |
-| `para_wallet.total` | [Deprecated] Total active org wallets (all providers). Use `wallet.total` instead. | - | DB |
+| `wallet.total` | Total active org wallets | - | DB |
 | `session.active` | Active (non-expired) sessions | - | DB |
 
 ---
@@ -274,7 +273,7 @@ The following tables are queried:
 - `workflow_schedules` - schedule counts, enabled status, last run status
 - `api_keys` - API key count
 - `chains` - blockchain network count
-- `para_wallets` - Active org wallet count (split by provider: `para`, `turnkey`)
+- `organization_wallets` - Active org wallet count
 
 ### Multi-Pod Aggregation (Important)
 
@@ -310,7 +309,7 @@ sum by (status) (keeperhub_workflow_executions_total{...})
 | Workflow | `workflow_total`, `workflow_by_visibility`, `workflow_anonymous_total`, `workflow_executions_total`, `workflow_execution_errors_total`, `workflow_queue_depth`, `workflow_concurrent_count` |
 | Schedule | `schedule_total`, `schedule_enabled_total`, `schedule_by_last_status` |
 | Integration | `integration_total`, `integration_managed_total`, `integration_by_type` |
-| Infrastructure | `apikey_total`, `wallet_total`, `para_wallet_total`, `chain_total`, `chain_enabled_total`, `session_active_total` |
+| Infrastructure | `apikey_total`, `wallet_total`, `chain_total`, `chain_enabled_total`, `session_active_total` |
 
 **Why this happens:** Each pod queries the same PostgreSQL database and reports the same gauge value. With 2 pods reporting 21 users each, `sum()` returns 42 while `max()` correctly returns 21.
 
@@ -472,7 +471,6 @@ Prometheus metrics are prefixed with `keeperhub_` and use snake_case:
 | `chain.total` | `keeperhub_chain_total` | gauge |
 | `chain.enabled` | `keeperhub_chain_enabled_total` | gauge |
 | `wallet.total` | `keeperhub_wallet_total` | gauge |
-| `para_wallet.total` | `keeperhub_para_wallet_total` | gauge (deprecated) |
 | `session.active` | `keeperhub_session_active_total` | gauge |
 | `api.webhook.latency_ms` | `keeperhub_api_webhook_latency_ms` | histogram |
 | `api.status.latency_ms` | `keeperhub_api_status_latency_ms` | histogram |

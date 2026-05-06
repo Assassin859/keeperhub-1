@@ -380,7 +380,7 @@ export {
   type WalletApprovalRequest,
   walletApprovalRequests,
 } from "./schema-agentic-wallets";
-// KeeperHub: Para Wallets, Organization API Keys, and Organization Tokens (imported from KeeperHub schema extensions)
+// KeeperHub: Organization Wallets, Organization API Keys, and Organization Tokens (imported from KeeperHub schema extensions)
 // Note: Using relative path instead of @/ alias for drizzle-kit compatibility
 export {
   type BillingEvent,
@@ -403,7 +403,6 @@ export {
   type NewOrganizationSubscription,
   type NewOrganizationToken,
   type NewOrganizationWallet,
-  type NewParaWallet,
   type NewPublicTag,
   type NewSupportedToken,
   type NewWorkflowPublicTag,
@@ -419,10 +418,8 @@ export {
   organizationTokens,
   organizationWallets,
   overageBillingRecords,
-  type ParaWallet,
   type PendingTransaction,
   type PublicTag,
-  paraWallets,
   pendingTransactions,
   publicTags,
   type SupportedToken,
@@ -772,7 +769,7 @@ export type WorkflowExecution = typeof workflowExecutions.$inferSelect;
 export type NewWorkflowExecution = typeof workflowExecutions.$inferInsert;
 export type WorkflowExecutionLog = typeof workflowExecutionLogs.$inferSelect;
 export type NewWorkflowExecutionLog = typeof workflowExecutionLogs.$inferInsert;
-// ParaWallet types are exported from ./schema-extensions
+// OrganizationWallet types are exported from ./schema-extensions
 export type ApiKey = typeof apiKeys.$inferSelect;
 export type NewApiKey = typeof apiKeys.$inferInsert;
 export type BetaAccessRequest = typeof betaAccessRequests.$inferSelect;

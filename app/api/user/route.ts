@@ -9,7 +9,7 @@ import {
   type DualAuthContext,
   getDualAuthContext,
 } from "@/lib/middleware/auth-helpers";
-import { getUserWallet } from "@/lib/para/wallet-helpers";
+import { getOrganizationWallet } from "@/lib/web3/wallet-helpers";
 
 export async function GET(request: Request): Promise<NextResponse> {
   let authContext: DualAuthContext | null = null;
@@ -22,7 +22,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       );
     }
 
-    const { userId } = authContext;
+    const { userId, organizationId } = authContext;
     if (!userId) {
       return NextResponse.json(
         { error: "Auth context missing user. Please recreate the API key." },
@@ -53,11 +53,13 @@ export async function GET(request: Request): Promise<NextResponse> {
     });
 
     let walletAddress: string | null = null;
-    try {
-      const wallet = await getUserWallet(userId);
-      walletAddress = wallet.walletAddress;
-    } catch {
-      walletAddress = null;
+    if (organizationId) {
+      try {
+        const wallet = await getOrganizationWallet(organizationId);
+        walletAddress = wallet.walletAddress;
+      } catch {
+        walletAddress = null;
+      }
     }
 
     return NextResponse.json({

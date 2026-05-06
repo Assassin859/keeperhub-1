@@ -132,16 +132,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     // Delete used code (single-use)
     await db.delete(keyExportCodes).where(eq(keyExportCodes.id, storedCode.id));
 
-    // Fetch Turnkey wallet and export
     const wallets = await db
       .select()
       .from(organizationWallets)
-      .where(
-        and(
-          eq(organizationWallets.organizationId, activeOrgId),
-          eq(organizationWallets.provider, "turnkey")
-        )
-      )
+      .where(eq(organizationWallets.organizationId, activeOrgId))
       .limit(1);
 
     if (wallets.length === 0) {

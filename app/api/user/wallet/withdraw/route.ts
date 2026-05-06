@@ -8,16 +8,16 @@ import { db } from "@/lib/db";
 import { chains } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
-import {
-  getOrganizationWalletAddress,
-  initializeWalletSigner,
-} from "@/lib/para/wallet-helpers";
 import { getGasStrategy } from "@/lib/web3/gas-strategy";
 import { getNonceManager } from "@/lib/web3/nonce-manager";
 import {
   type TransactionContext,
   withNonceSession,
 } from "@/lib/web3/transaction-manager";
+import {
+  getOrganizationWalletAddress,
+  initializeWalletSigner,
+} from "@/lib/web3/wallet-helpers";
 
 const ERC20_TRANSFER_ABI = [
   "function transfer(address to, uint256 amount) returns (bool)",
@@ -183,10 +183,7 @@ export async function POST(request: Request) {
 
     const chainId = Number.parseInt(String(rawChainId), 10);
     if (Number.isNaN(chainId)) {
-      return NextResponse.json(
-        { error: "Invalid chainId" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Invalid chainId" }, { status: 400 });
     }
 
     // Validate recipient address
@@ -244,11 +241,15 @@ export async function POST(request: Request) {
         const nonceManager = getNonceManager();
         const gasStrategy = getGasStrategy();
 
-        // Initialize Para signer
+        // Initialize wallet signer
         console.log(
           `[Withdraw] Initializing signer for org ${organizationId} on chain ${chain.name}`
         );
-        const signer = await initializeWalletSigner(organizationId, rpcUrl, chainId);
+        const signer = await initializeWalletSigner(
+          organizationId,
+          rpcUrl,
+          chainId
+        );
         const provider = signer.provider;
 
         if (!provider) {

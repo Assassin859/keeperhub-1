@@ -38,7 +38,7 @@ vi.mock("@/lib/logging", () => ({
   logUserError: vi.fn(),
 }));
 
-vi.mock("@/lib/para/wallet-helpers", () => ({
+vi.mock("@/lib/web3/wallet-helpers", () => ({
   initializeWalletSigner: vi.fn(),
 }));
 

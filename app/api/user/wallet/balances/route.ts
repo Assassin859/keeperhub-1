@@ -12,9 +12,9 @@ import {
 } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
-import { getOrganizationWallet } from "@/lib/para/wallet-helpers";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import { formatWeiToBalance } from "@/lib/wallet/fetch-balances";
+import { getOrganizationWallet } from "@/lib/web3/wallet-helpers";
 
 const NATIVE_DECIMALS = 18;
 
@@ -123,10 +123,7 @@ export async function GET(request: Request) {
       db.select().from(explorerConfigs),
     ]);
 
-    const supportedTokensByChain = new Map<
-      number,
-      typeof allSupportedTokens
-    >();
+    const supportedTokensByChain = new Map<number, typeof allSupportedTokens>();
     for (const token of allSupportedTokens) {
       const existing = supportedTokensByChain.get(token.chainId) ?? [];
       existing.push(token);

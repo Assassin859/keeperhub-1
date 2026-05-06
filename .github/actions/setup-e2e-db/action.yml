@@ -5,12 +5,6 @@ inputs:
   database_url:
     description: 'PostgreSQL connection string'
     required: true
-  test_para_user_share:
-    description: 'TEST_PARA_USER_SHARE secret for wallet seeding'
-    required: true
-  wallet_encryption_key:
-    description: 'WALLET_ENCRYPTION_KEY secret for wallet seeding'
-    required: true
   chain_rpc_config:
     description: 'CHAIN_RPC_CONFIG for RPC endpoint resolution'
     required: false
@@ -37,11 +31,3 @@ runs:
         DATABASE_URL: ${{ inputs.database_url }}
         CHAIN_RPC_CONFIG: ${{ inputs.chain_rpc_config }}
       run: pnpm db:seed
-
-    - name: Seed test wallet
-      shell: bash
-      env:
-        DATABASE_URL: ${{ inputs.database_url }}
-        TEST_PARA_USER_SHARE: ${{ inputs.test_para_user_share }}
-        WALLET_ENCRYPTION_KEY: ${{ inputs.wallet_encryption_key }}
-      run: pnpm db:seed-test-wallet

@@ -8,8 +8,8 @@ import { db } from "@/lib/db";
 import { chains, organizationTokens, supportedTokens } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
-import { organizationHasWallet } from "@/lib/para/wallet-helpers";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
+import { organizationHasWallet } from "@/lib/web3/wallet-helpers";
 
 /**
  * GET /api/user/wallet/tokens

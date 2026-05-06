@@ -393,7 +393,6 @@ jobs:
           IMAGE_TAG: ${{ steps.vars.outputs.sha_short }}
           DB_PASSWORD: ${{ steps.db-password.outputs.password }}
           SERVICE_ACCOUNT_ROLE_ARN: ${{ vars.TO_SERVICE_ACCOUNT_ROLE_ARN }}
-          TEST_PARA_USER_SHARE: ${{ secrets.TEST_PARA_USER_SHARE }}
           # PR-specific events image tag if deploy-pr-events label was set
           # (build-events-image job ran). Otherwise stays on the staging
           # event-latest tag.
@@ -736,9 +735,6 @@ jobs:
           --exclude '**/write-contract-workflow.test.ts'
         env:
           KEEPERHUB_URL: ${{ env.KEEPERHUB_URL }}
-          WALLET_ENCRYPTION_KEY: ${{ secrets.TEST_WALLET_ENCRYPTION_KEY }}
-          PARA_API_KEY: ${{ secrets.TEST_PARA_API_KEY }}
-          PARA_ENVIRONMENT: beta
           WORKFLOW_TARGET_WORLD: "@workflow/world-postgres"
           AWS_ACCESS_KEY_ID: test
           AWS_SECRET_ACCESS_KEY: test

@@ -13,7 +13,7 @@ import {
   accounts,
   member,
   organization,
-  paraWallets,
+  organizationWallets,
   users,
   workflows,
 } from "../../lib/db/schema";
@@ -141,8 +141,8 @@ async function ensureWallet(
 ): Promise<void> {
   const existing = await db
     .select()
-    .from(paraWallets)
-    .where(eq(paraWallets.organizationId, orgId))
+    .from(organizationWallets)
+    .where(eq(organizationWallets.organizationId, orgId))
     .limit(1);
 
   if (existing.length > 0) {
@@ -150,11 +150,10 @@ async function ensureWallet(
     return;
   }
 
-  await db.insert(paraWallets).values({
+  await db.insert(organizationWallets).values({
     id: generateId(),
     userId,
     organizationId: orgId,
-    provider: "turnkey",
     email: TEST_USER_EMAIL,
     walletAddress: TEST_WALLET_ADDRESS,
     turnkeySubOrgId: "test-sub-org",

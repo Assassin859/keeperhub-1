@@ -153,9 +153,6 @@ env:
   HOSTNAME:
     type: kv
     value: "0.0.0.0"
-  PARA_ENVIRONMENT:
-    type: kv
-    value: "beta"
   WORKFLOW_TARGET_WORLD:
     type: kv
     value: "@workflow/world-postgres"
@@ -213,10 +210,6 @@ env:
   AI_MODEL:
     type: kv
     value: "gpt-4o"
-  PARA_API_KEY:
-    type: parameterStore
-    name: para-api-key
-    parameter_name: /eks/techops-staging/keeperhub/para-api-key
   TURNKEY_API_PUBLIC_KEY:
     type: parameterStore
     name: turnkey-api-public-key

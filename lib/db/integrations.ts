@@ -6,7 +6,7 @@ import { truncateAddress } from "@/lib/address-utils";
 import {
   getOrganizationWallet,
   organizationHasWallet,
-} from "@/lib/para/wallet-helpers";
+} from "@/lib/web3/wallet-helpers";
 import {
   findActionById,
   getIntegration as getPluginDefinition,
@@ -346,7 +346,11 @@ export async function ensureWalletIntegration(
   // app/api/user/wallet/route.ts).
   try {
     await createIntegration(
-      buildWalletIntegrationPayload(userId, organizationId, wallet.walletAddress)
+      buildWalletIntegrationPayload(
+        userId,
+        organizationId,
+        wallet.walletAddress
+      )
     );
   } catch (err) {
     if (!isUniqueViolation(err)) {

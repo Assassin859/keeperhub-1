@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/postgres-js";
 import { organizationWallets } from "../lib/db/schema";
 
@@ -15,12 +15,7 @@ export async function assertTurnkeyEnvForActiveWallets(db: Db): Promise<void> {
   const rows = await db
     .select({ id: organizationWallets.id })
     .from(organizationWallets)
-    .where(
-      and(
-        eq(organizationWallets.provider, "turnkey"),
-        eq(organizationWallets.isActive, true)
-      )
-    )
+    .where(eq(organizationWallets.isActive, true))
     .limit(1);
 
   if (rows.length === 0) {

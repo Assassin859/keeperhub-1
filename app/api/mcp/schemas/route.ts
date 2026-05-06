@@ -1,11 +1,12 @@
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-
-import { BUILTIN_NODE_ID, BUILTIN_NODE_LABEL } from "@/lib/workflow/editor/builtin-variables";
-
 import { db } from "@/lib/db";
 import { chains, explorerConfigs } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import {
+  BUILTIN_NODE_ID,
+  BUILTIN_NODE_LABEL,
+} from "@/lib/workflow/editor/builtin-variables";
 import {
   type ActionConfigFieldBase,
   computeActionId,
@@ -366,10 +367,10 @@ function derivePlatformCapabilities(plugins: IntegrationPlugin[]) {
   return {
     wallet: web3Plugin
       ? {
-          provider: "Para",
-          features: ["mpc", "non-custodial", "hosted"],
+          provider: "Turnkey",
+          features: ["secure-enclave", "non-custodial", "hosted"],
           description:
-            "Para MPC wallet - keys are split between user and Para, neither party can sign alone",
+            "Turnkey wallet backed by hardware secure enclaves; KeeperHub signs transactions on the user's behalf via the Turnkey API",
         }
       : null,
     proxyContracts: hasAbiAutoFetch
