@@ -1,4 +1,6 @@
+import { headers } from "next/headers";
 import { NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
 import { isBillingEnabled } from "@/lib/billing/feature-flag";
 import { isBillingLimitReached } from "@/lib/billing/limit-status";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
@@ -27,8 +29,14 @@ export async function GET(
 
     const types: NotificationType[] = [];
 
-    if (isBillingEnabled() && (await isBillingLimitReached(organizationId))) {
-      types.push("billing_limit_reached");
+    if (isBillingEnabled()) {
+      const activeMember = await auth.api.getActiveMember({
+        headers: await headers(),
+      });
+      const isOwner = activeMember?.role === "owner";
+      if (isOwner && (await isBillingLimitReached(organizationId))) {
+        types.push("billing_limit_reached");
+      }
     }
 
     return NextResponse.json({ unreadCount: types.length, types });

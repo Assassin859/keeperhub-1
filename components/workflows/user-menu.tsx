@@ -94,7 +94,7 @@ const AuthenticatedUserMenu = (): React.ReactElement => {
   const router = useRouter();
   const showBilling = isOwner && isBillingEnabled();
   const { status: notificationStatus, refresh: refreshNotifications } =
-    useNotificationStatus(organization?.id);
+    useNotificationStatus(isOwner ? organization?.id : null);
   const showAvatarDot = notificationStatus.unreadCount > 0;
   const showBillingDot = hasNotificationType(
     notificationStatus,
