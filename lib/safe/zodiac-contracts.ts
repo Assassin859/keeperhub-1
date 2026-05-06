@@ -29,11 +29,46 @@ const CANONICAL_ADDRESSES: ZodiacContractAddresses = {
 
 /**
  * Per-chain overrides for chains that do not use the canonical Zodiac
- * deployment. Populated empty for launch; every supported Safe chain
- * (Ethereum, Optimism, Base, Arbitrum + their Sepolia testnets) uses the
- * canonical addresses.
+ * deployment. Populated empty today; if a chain ever ships Roles v2 at a
+ * non-canonical address, add the override here.
  */
 const CHAIN_OVERRIDES: Record<number, Partial<ZodiacContractAddresses>> = {};
+
+/**
+ * Chains where Roles v2 is verified to exist at the canonical CREATE2
+ * addresses (singleton + ModuleProxyFactory both have bytecode on chain).
+ *
+ * Verified 2026-05-06 via direct `eth_getCode` probes against:
+ *   - rolesSingleton:      0x9646fDAD06d3e24444381f44362a3B0eB343D337
+ *   - moduleProxyFactory:  0x000000000000aDdB49795b0f9bA5BC298cDda236
+ *
+ * Avalanche Fuji (43113) is INTENTIONALLY excluded: the ModuleProxyFactory
+ * is deployed there, but the Roles singleton at the canonical address
+ * returns `0x` (no bytecode). Any install attempt would deploy a proxy
+ * pointing at an empty implementation and revert. Re-add 43113 once the
+ * singleton is deployed (re-run the eth_getCode probe to confirm).
+ */
+const ROLES_SUPPORTED_CHAIN_IDS: ReadonlySet<number> = new Set([
+  // mainnets
+  1, // Ethereum
+  10, // Optimism
+  56, // BNB Smart Chain
+  137, // Polygon
+  8453, // Base
+  42_161, // Arbitrum One
+  43_114, // Avalanche C-Chain
+  // testnets
+  97, // BSC testnet
+  80_002, // Polygon Amoy
+  84_532, // Base Sepolia
+  421_614, // Arbitrum Sepolia
+  11_155_111, // Sepolia
+  11_155_420, // Optimism Sepolia
+]);
+
+export function isRolesSupportedChain(chainId: number): boolean {
+  return ROLES_SUPPORTED_CHAIN_IDS.has(chainId);
+}
 
 export function getZodiacContracts(chainId: number): ZodiacContractAddresses {
   const overrides = CHAIN_OVERRIDES[chainId] ?? {};

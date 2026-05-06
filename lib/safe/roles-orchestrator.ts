@@ -56,6 +56,7 @@ import {
   directRuleAllowanceKey,
   getModuleProxyFactoryAddress,
   getRolesSingletonAddress,
+  isRolesSupportedChain,
   orgAutomationRoleKey,
   tokenAllowanceKey,
 } from "@/lib/safe/zodiac-contracts";
@@ -571,6 +572,14 @@ export async function installRolesWithInitialConfig(
     protocols: protocolInputs,
     directRules = [],
   } = input;
+
+  if (!isRolesSupportedChain(chainId)) {
+    return {
+      success: false,
+      error: `Zodiac Roles is not deployed on chain ${chainId} yet. Safe transactions on this chain still work via the owner-signed path; switch to a supported chain to install policies.`,
+    };
+  }
+
   const {
     protocolSlugs: protocols,
     allowedTokenSymbols,
