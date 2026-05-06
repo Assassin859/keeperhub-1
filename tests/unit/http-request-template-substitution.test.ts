@@ -94,6 +94,44 @@ describe("KEEP-442: HTTP Request template substitution from run-code outputs", (
       };
       expect(resolveFromOutputData(data, "url")).toBe("FROM_DATA");
     });
+
+    // Documents the intentional fall-through behavior when both wrappers exist
+    // but the path is missing inside .data: continue searching .result rather
+    // than stopping. Useful for hypothetical step outputs that carry both
+    // wrappers; safe today because no shipping step does.
+    it("falls through from .data to .result when the path is absent inside .data", () => {
+      const data = {
+        success: true,
+        data: { other: "x" },
+        result: { url: "FROM_RESULT" },
+      };
+      expect(resolveFromOutputData(data, "url")).toBe("FROM_RESULT");
+    });
+
+    it("ignores .data when the wrapper value is null (still tries .result)", () => {
+      const data = {
+        success: true,
+        data: null,
+        result: { url: "FROM_RESULT" },
+      };
+      expect(resolveFromOutputData(data, "url")).toBe("FROM_RESULT");
+    });
+
+    it("ignores a null .result wrapper (does not throw)", () => {
+      const data = { success: true, result: null };
+      expect(resolveFromOutputData(data, "url")).toBe(undefined);
+    });
+
+    // Pre-existing behavior we are pinning, not changing: a primitive
+    // result (e.g. `return "https://x"` from code/run-code) is rejected by
+    // hasNestedResultShape because the fallback can only walk into objects.
+    // The whole-output reference (no field path) returns the wrapper
+    // because top-level lookup succeeds.
+    it("does not unwrap a primitive .result; whole-output ref still works", () => {
+      const data = { success: true, result: "https://primitive", logs: [] };
+      expect(resolveFromOutputData(data, "anything")).toBe(undefined);
+      expect(resolveFromOutputData(data, "")).toEqual(data);
+    });
   });
 
   describe("processTemplates -- HTTP Request fields with run-code upstream", () => {

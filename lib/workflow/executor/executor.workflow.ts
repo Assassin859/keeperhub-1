@@ -547,7 +547,8 @@ function hasNestedDataShape(
     typeof data === "object" &&
     data !== null &&
     "data" in data &&
-    typeof (data as Record<string, unknown>).data === "object"
+    typeof (data as Record<string, unknown>).data === "object" &&
+    (data as Record<string, unknown>).data !== null
   );
 }
 
