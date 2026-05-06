@@ -48,7 +48,7 @@ function EnforcementBadge({
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Badge className="cursor-help text-[10px]" variant={variant}>
+        <Badge className="text-[10px]" variant={variant}>
           {ENFORCEMENT_LEVEL_LABELS[level]}
         </Badge>
       </TooltipTrigger>
@@ -192,6 +192,7 @@ export function PolicyProtocolCard({
 
   const showViewBody = showActive && !editingInputs;
   const showInputBody = enabled && !showViewBody && !showPendingRemoval;
+  const showPreviewBody = !(showViewBody || showInputBody);
 
   return (
     <li className={`rounded border p-3 text-sm ${cardBorderClass}`}>
@@ -250,6 +251,23 @@ export function PolicyProtocolCard({
             tokens={tokens}
           />
           <PolicyProtocolTargets chainId={chainId} targets={targets} />
+        </div>
+      )}
+
+      {expanded && showPreviewBody && (
+        <div className="mt-3 space-y-2">
+          <PolicyProtocolTargets chainId={chainId} targets={targets} />
+          {showAddNew && (
+            <div className="text-muted-foreground text-xs">
+              Click Add to enable this protocol and configure token caps.
+            </div>
+          )}
+          {showPendingRemoval && (
+            <div className="text-muted-foreground text-xs">
+              This protocol will be removed when you confirm. Click Undo to keep
+              it.
+            </div>
+          )}
         </div>
       )}
     </li>
