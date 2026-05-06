@@ -5,7 +5,6 @@ import { toast } from "sonner";
 import { AccountSettings } from "@/components/settings/account-settings";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { AppearanceSection } from "@/components/settings/appearance-section";
 import { ChangePasswordSection } from "@/components/settings/change-password-section";
 import { DeactivateAccountSection } from "@/components/settings/delete-account-section";
 import { api } from "@/lib/api-client";
@@ -92,7 +91,6 @@ export function SettingsOverlay({ overlayId }: SettingsOverlayProps) {
           <TabsList className="mb-4 w-full">
             <TabsTrigger value="account">Account</TabsTrigger>
             <TabsTrigger value="security">Security</TabsTrigger>
-            <TabsTrigger value="appearance">Appearance</TabsTrigger>
           </TabsList>
 
           <TabsContent className="space-y-6" value="account">
@@ -107,10 +105,6 @@ export function SettingsOverlay({ overlayId }: SettingsOverlayProps) {
 
           <TabsContent value="security">
             <ChangePasswordSection providerId={providerId} />
-          </TabsContent>
-
-          <TabsContent value="appearance">
-            <AppearanceSection />
           </TabsContent>
         </Tabs>
       )}
