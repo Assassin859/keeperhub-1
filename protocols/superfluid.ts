@@ -183,6 +183,16 @@ const GDA_FORWARDER_ABI = JSON.stringify([
     ],
     outputs: [{ name: "", type: "bool" }],
   },
+  {
+    type: "function",
+    name: "getNetFlow",
+    stateMutability: "view",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "account", type: "address" },
+    ],
+    outputs: [{ name: "", type: "int96" }],
+  },
 ]);
 
 const SUPER_TOKEN_ABI = JSON.stringify([
@@ -352,7 +362,6 @@ export default defineProtocol({
           name: "flowRate",
           type: "int96",
           label: "Flow Rate (wei/sec)",
-          decimals: 18,
         },
         {
           name: "deposit",
@@ -369,10 +378,10 @@ export default defineProtocol({
       ],
     },
     {
-      slug: "get-net-flow",
-      label: "Read Net Flow Rate of an Address",
+      slug: "get-cfa-net-flow",
+      label: "Read CFA Net Flow Rate of an Address",
       description:
-        "Read an address's net flow rate for a SuperToken (positive = net receiver, negative = net sender)",
+        "Read an address's net flow rate from CFA streams only (positive = net receiver, negative = net sender). Excludes GDA pool distributions -- use get-net-flow for the combined CFA+GDA reading.",
       type: "read",
       contract: "cfaForwarder",
       function: "getAccountFlowrate",
@@ -384,8 +393,27 @@ export default defineProtocol({
         {
           name: "flowRate",
           type: "int96",
+          label: "CFA Net Flow Rate (wei/sec, signed)",
+        },
+      ],
+    },
+    {
+      slug: "get-net-flow",
+      label: "Read Net Flow Rate of an Address",
+      description:
+        "Read an address's net flow rate for a SuperToken, combining CFA streams and GDA pool distributions (positive = net receiver, negative = net sender). Use get-cfa-net-flow if you need CFA-only.",
+      type: "read",
+      contract: "gdaForwarder",
+      function: "getNetFlow",
+      inputs: [
+        { name: "token", type: "address", label: "SuperToken Address" },
+        { name: "account", type: "address", label: "Account Address" },
+      ],
+      outputs: [
+        {
+          name: "flowRate",
+          type: "int96",
           label: "Net Flow Rate (wei/sec, signed)",
-          decimals: 18,
         },
       ],
     },
@@ -401,13 +429,20 @@ export default defineProtocol({
         { name: "token", type: "address", label: "SuperToken Address" },
         { name: "admin", type: "address", label: "Pool Admin Address" },
         {
-          name: "config",
-          type: "tuple",
-          label: "Pool Config",
-          components: [
-            { name: "transferabilityForUnitsOwner", type: "bool" },
-            { name: "distributionFromAnyAddress", type: "bool" },
-          ],
+          name: "transferabilityForUnitsOwner",
+          type: "bool",
+          label: "Transferability For Units Owner",
+          default: "false",
+          helpTip:
+            "If true, members can transfer their pool units to other addresses. Most pools leave this false.",
+        },
+        {
+          name: "distributionFromAnyAddress",
+          type: "bool",
+          label: "Distribution From Any Address",
+          default: "false",
+          helpTip:
+            "If true, any address can call distribute/distributeFlow into this pool. If false, only the pool admin can. Most pools leave this false.",
         },
       ],
     },

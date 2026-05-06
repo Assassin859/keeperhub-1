@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { reshapeArgsForAbi } from "@/lib/abi/struct-args";
 import superfluidProtocol, {
   CFA_FORWARDER_ADDRESS,
   GDA_FORWARDER_ADDRESS,
@@ -7,6 +8,8 @@ import superfluidProtocol, {
 
 const ADDRESS_REGEX = /^0x[0-9a-fA-F]{40}$/;
 const KEBAB_CASE_REGEX = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
+const CFA_MENTION_REGEX = /CFA/;
+const GDA_MENTION_REGEX = /GDA/;
 const EXPECTED_CHAINS: string[] = [...SUPERFLUID_CHAIN_IDS];
 
 const CFA_FORWARDER = CFA_FORWARDER_ADDRESS;
@@ -148,7 +151,7 @@ describe("Superfluid protocol", () => {
       expect(action?.function).toBe("getFlowInfo");
     });
 
-    it("declares the four expected outputs with decimals on rate/deposit", () => {
+    it("declares the four expected outputs, decimals only on token-amount fields", () => {
       const action = findAction("get-flow");
       const outputs = action?.outputs ?? [];
       expect(outputs.map((o) => o.name)).toEqual([
@@ -157,26 +160,59 @@ describe("Superfluid protocol", () => {
         "deposit",
         "owedDeposit",
       ]);
-      expect(outputs.find((o) => o.name === "flowRate")?.decimals).toBe(18);
+      expect(
+        outputs.find((o) => o.name === "flowRate")?.decimals
+      ).toBeUndefined();
       expect(outputs.find((o) => o.name === "deposit")?.decimals).toBe(18);
+      expect(outputs.find((o) => o.name === "owedDeposit")?.decimals).toBe(18);
     });
   });
 
-  describe("get-net-flow action", () => {
+  describe("get-cfa-net-flow action", () => {
     it("is declared as a read action against cfaForwarder.getAccountFlowrate", () => {
-      const action = findAction("get-net-flow");
+      const action = findAction("get-cfa-net-flow");
       expect(action).toBeDefined();
       expect(action?.type).toBe("read");
       expect(action?.contract).toBe("cfaForwarder");
       expect(action?.function).toBe("getAccountFlowrate");
     });
 
-    it("returns flowRate as int96 with decimals: 18", () => {
+    it("returns flowRate as int96 without decimals (rate, not token amount)", () => {
+      const action = findAction("get-cfa-net-flow");
+      const out = action?.outputs?.[0];
+      expect(out?.name).toBe("flowRate");
+      expect(out?.type).toBe("int96");
+      expect(out?.decimals).toBeUndefined();
+    });
+
+    it("description points users to get-net-flow for combined readings", () => {
+      const action = findAction("get-cfa-net-flow");
+      expect(action?.description).toContain("get-net-flow");
+    });
+  });
+
+  describe("get-net-flow action", () => {
+    it("is declared as a read action against gdaForwarder.getNetFlow", () => {
+      const action = findAction("get-net-flow");
+      expect(action).toBeDefined();
+      expect(action?.type).toBe("read");
+      expect(action?.contract).toBe("gdaForwarder");
+      expect(action?.function).toBe("getNetFlow");
+    });
+
+    it("returns flowRate as int96 without decimals (rate, not token amount)", () => {
       const action = findAction("get-net-flow");
       const out = action?.outputs?.[0];
       expect(out?.name).toBe("flowRate");
       expect(out?.type).toBe("int96");
-      expect(out?.decimals).toBe(18);
+      expect(out?.decimals).toBeUndefined();
+    });
+
+    it("description signals it covers both CFA and GDA flows", () => {
+      const action = findAction("get-net-flow");
+      const desc = action?.description ?? "";
+      expect(desc).toMatch(CFA_MENTION_REGEX);
+      expect(desc).toMatch(GDA_MENTION_REGEX);
     });
   });
 
@@ -194,7 +230,7 @@ describe("Superfluid protocol", () => {
       expect([...unique][0]).toBe(GDA_FORWARDER);
     });
 
-    it("ships an inline ABI with the 5 expected functions", () => {
+    it("ships an inline ABI with the 6 expected functions", () => {
       const contract = superfluidProtocol.contracts.gdaForwarder;
       const abi = JSON.parse(contract.abi as string) as Array<{
         type: string;
@@ -210,6 +246,7 @@ describe("Superfluid protocol", () => {
           "createPool",
           "distribute",
           "distributeFlow",
+          "getNetFlow",
           "updateMemberUnits",
         ].sort()
       );
@@ -239,7 +276,7 @@ describe("Superfluid protocol", () => {
   });
 
   describe("GDA actions", () => {
-    it("declares the five expected GDA action slugs", () => {
+    it("declares the six expected GDA action slugs", () => {
       const slugs = superfluidProtocol.actions
         .filter((a) => a.contract === "gdaForwarder")
         .map((a) => a.slug)
@@ -250,18 +287,63 @@ describe("Superfluid protocol", () => {
           "create-pool",
           "distribute",
           "distribute-flow",
+          "get-net-flow",
           "update-member-units",
         ].sort()
       );
     });
 
-    it("create-pool declares the config tuple input via components", () => {
+    it("create-pool flattens the PoolConfig tuple into two top-level bool inputs", () => {
       const action = findAction("create-pool");
-      const config = action?.inputs.find((i) => i.name === "config");
-      expect(config?.type).toBe("tuple");
-      expect(config?.components?.map((c) => c.name)).toEqual([
+      const inputNames = action?.inputs.map((i) => i.name);
+      expect(inputNames).toEqual([
+        "token",
+        "admin",
         "transferabilityForUnitsOwner",
         "distributionFromAnyAddress",
+      ]);
+      const transferability = action?.inputs.find(
+        (i) => i.name === "transferabilityForUnitsOwner"
+      );
+      const distribution = action?.inputs.find(
+        (i) => i.name === "distributionFromAnyAddress"
+      );
+      expect(transferability?.type).toBe("bool");
+      expect(distribution?.type).toBe("bool");
+    });
+
+    it("create-pool flat args reshape into the (bool,bool) tuple expected by the ABI", () => {
+      const contract = superfluidProtocol.contracts.gdaForwarder;
+      const abi = JSON.parse(contract.abi as string) as Array<{
+        type: string;
+        name?: string;
+        inputs?: Array<{
+          name: string;
+          type: string;
+          components?: Array<{ name: string; type: string }>;
+        }>;
+      }>;
+      const createPoolAbi = abi.find(
+        (f) => f.type === "function" && f.name === "createPool"
+      );
+      expect(createPoolAbi).toBeDefined();
+
+      const flatArgs = [
+        "0x0000000000000000000000000000000000000001",
+        "0x0000000000000000000000000000000000000002",
+        true,
+        false,
+      ];
+      const reshaped = reshapeArgsForAbi(flatArgs, {
+        inputs: createPoolAbi?.inputs,
+      });
+      expect(reshaped).toEqual([
+        "0x0000000000000000000000000000000000000001",
+        "0x0000000000000000000000000000000000000002",
+        {
+          transferabilityForUnitsOwner: true,
+          distributionFromAnyAddress: false,
+        },
       ]);
     });
 
@@ -362,8 +444,8 @@ describe("Superfluid protocol", () => {
   });
 
   describe("overall integrity", () => {
-    it("declares 15 actions in total", () => {
-      expect(superfluidProtocol.actions).toHaveLength(15);
+    it("declares 16 actions in total", () => {
+      expect(superfluidProtocol.actions).toHaveLength(16);
     });
 
     it("every action slug is unique kebab-case", () => {
