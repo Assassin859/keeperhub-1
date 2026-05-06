@@ -26,6 +26,7 @@ import {
   type TierKey,
 } from "@/lib/billing/plans";
 import { cn } from "@/lib/utils";
+import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
 import type { GasCreditCapsMap } from "./pricing-table/types";
 
 type ChangeDirection = "upgrade" | "downgrade" | "same";
@@ -195,14 +196,20 @@ function buildFeatureChanges(
   currentExecs: number,
   newExecs: number
 ): FeatureChange[] {
-  const candidates = [
+  const candidates: (FeatureChange | null)[] = [
     compareExecutions(currentExecs, newExecs),
-    compareSimpleNumeric(
-      "Gas credits",
-      currentFeatures.gasCreditsCents,
-      newFeatures.gasCreditsCents,
-      (v) => `$${(v / 100).toFixed(0)}/mo`
-    ),
+  ];
+  if (isGasSponsorshipEnabled()) {
+    candidates.push(
+      compareSimpleNumeric(
+        "Gas credits",
+        currentFeatures.gasCreditsCents,
+        newFeatures.gasCreditsCents,
+        (v) => `$${(v / 100).toFixed(0)}/mo`
+      )
+    );
+  }
+  candidates.push(
     compareSimpleNumeric(
       "Log retention",
       currentFeatures.logRetentionDays,
@@ -211,8 +218,8 @@ function buildFeatureChanges(
     ),
     compareApiAccess(currentFeatures, newFeatures),
     compareSupport(currentFeatures, newFeatures),
-    compareSla(currentFeatures.sla, newFeatures.sla),
-  ];
+    compareSla(currentFeatures.sla, newFeatures.sla)
+  );
   return candidates.filter((c): c is FeatureChange => c !== null);
 }
 
