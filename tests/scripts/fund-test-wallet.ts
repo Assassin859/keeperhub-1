@@ -7,12 +7,16 @@
  * workflow fixtures (create-pool, wrap, etc.) against a PR deploy.
  *
  * Usage:
+ *   FUNDER_PK=0xabc... \
  *   TARGET=0x42d92e...63ef \
  *   ETH_AMOUNT=0.005 \
  *   FUSDC_AMOUNT=5 \
  *   pnpm tsx tests/scripts/fund-test-wallet.ts
  *
  * Required env:
+ *   FUNDER_PK         hex private key, 0x-prefixed (or unprefixed; both are
+ *                     accepted). Source it from your secrets manager or a
+ *                     gitignored .envrc -- never check it in.
  *   TARGET            recipient address (the workflow wallet -- get it via
  *                     GET /api/user/wallet on the deploy)
  *
@@ -20,10 +24,6 @@
  *   ETH_AMOUNT        SepETH to send, in ether units (default "0.005")
  *                     Pass "0" to skip the ETH transfer.
  *   FUSDC_AMOUNT      fUSDC to mint, in token units (default "0" = skip)
- *   FUNDER_PK_PATH    file containing PK = <hex> (default reads
- *                     ../../../.secrets/WEB3.txt relative to this script,
- *                     i.e. TechOps/.secrets/WEB3.txt assuming the standard
- *                     mega-repo layout)
  *   RPC_URL           Sepolia RPC (default ethereum-sepolia-rpc.publicnode.com)
  *   FUSDC_ADDRESS     override fUSDC address (default 0xe72f...20Db)
  *
@@ -31,16 +31,13 @@
  * mint(address, uint256) -- per the e2e script's documented quirk -- so
  * any caller can drop tokens into any address. Don't assume real USDC
  * behaves like this.
- *
- * Don't echo PKs in CI logs; this script reads from disk and never
- * prints the key.
  */
 
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { ethers } from "ethers";
 
+const HEX_KEY_RE = /^(0x)?[0-9a-fA-F]{64}$/;
+
+const FUNDER_PK = normalizePk(requireEnv("FUNDER_PK"));
 const TARGET = requireEnv("TARGET");
 const ETH_AMOUNT = process.env.ETH_AMOUNT ?? "0.005";
 const FUSDC_AMOUNT = process.env.FUSDC_AMOUNT ?? "0";
@@ -48,8 +45,6 @@ const RPC_URL =
   process.env.RPC_URL ?? "https://ethereum-sepolia-rpc.publicnode.com";
 const FUSDC_ADDRESS =
   process.env.FUSDC_ADDRESS ?? "0xe72f289584eDA2bE69Cfe487f4638F09bAc920Db";
-
-const PK_LINE_RE = /^PK\s*=\s*([0-9a-fA-F]{64})\s*$/m;
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -60,26 +55,15 @@ function requireEnv(name: string): string {
   return v;
 }
 
-function defaultFunderPath(): string {
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  // tests/scripts/ -> ../../ keeperhub root -> ../ TechOps root -> .secrets/WEB3.txt
-  return path.resolve(here, "../../../.secrets/WEB3.txt");
-}
-
-function loadFunderKey(): string {
-  const p = process.env.FUNDER_PK_PATH ?? defaultFunderPath();
-  if (!fs.existsSync(p)) {
-    console.error(`Funder key file not found: ${p}`);
-    console.error("Set FUNDER_PK_PATH or place WEB3.txt at the default path.");
+function normalizePk(raw: string): string {
+  const trimmed = raw.trim();
+  if (!HEX_KEY_RE.test(trimmed)) {
+    console.error(
+      "FUNDER_PK must be a 64-character hex string (with or without 0x prefix)"
+    );
     process.exit(1);
   }
-  const raw = fs.readFileSync(p, "utf-8");
-  const match = raw.match(PK_LINE_RE);
-  if (!match) {
-    console.error(`Could not find "PK = <64 hex chars>" line in ${p}`);
-    process.exit(1);
-  }
-  return `0x${match[1]}`;
+  return trimmed.startsWith("0x") ? trimmed : `0x${trimmed}`;
 }
 
 const FUSDC_MINT_ABI = [
@@ -94,7 +78,7 @@ async function main(): Promise<void> {
   }
 
   const provider = new ethers.JsonRpcProvider(RPC_URL);
-  const funder = new ethers.Wallet(loadFunderKey(), provider);
+  const funder = new ethers.Wallet(FUNDER_PK, provider);
   console.log(`Funder: ${funder.address}`);
   console.log(`Target: ${TARGET}`);
 
