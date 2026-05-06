@@ -8,6 +8,7 @@ import {
   parseTierKey,
 } from "../lib/billing/plans";
 import {
+  directExecutions,
   executionDebt,
   organizationSubscriptions,
   workflowExecutions,
@@ -110,7 +111,7 @@ export async function checkExecutionLimitForExecutor(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)
   );
 
-  const [{ count }] = await db
+  const [workflowCountRow] = await db
     .select({ count: sql<number>`COUNT(*)::int` })
     .from(workflowExecutions)
     .innerJoin(workflows, eq(workflows.id, workflowExecutions.workflowId))
@@ -121,7 +122,17 @@ export async function checkExecutionLimitForExecutor(
       )
     );
 
-  const used = count ?? 0;
+  const [directCountRow] = await db
+    .select({ count: sql<number>`COUNT(*)::int` })
+    .from(directExecutions)
+    .where(
+      and(
+        eq(directExecutions.organizationId, organizationId),
+        sql`${directExecutions.createdAt} >= ${startOfMonth.toISOString()}`
+      )
+    );
+
+  const used = (workflowCountRow?.count ?? 0) + (directCountRow?.count ?? 0);
 
   if (used < limits.maxExecutionsPerMonth) {
     return { allowed: true, reason: "within_limit" };
