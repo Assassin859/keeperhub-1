@@ -9,7 +9,7 @@ The KeeperHub Marketplace lets you publish workflows that AI agents and users ca
 
 ## How it works
 
-When you list a workflow, KeeperHub registers it as a resource under its own entry on the x402 and MPP registries (ERC-8004). Agents browsing those registries find KeeperHub as a service provider, then see your listed workflow as a callable resource alongside everyone else's.
+When you list a workflow, KeeperHub registers it as a resource under its own entry on the x402, MPP, and ERC-8004 registries. Agents browsing those registries find KeeperHub as a service provider, then see your listed workflow as a callable resource alongside everyone else's.
 
 To callers, a listed workflow is a black box: they supply the inputs you define, pay the price you set, and get back the outputs you expose. Your node graph stays private.
 
@@ -94,10 +94,11 @@ Keep outputs clean. Return the data the caller asked for. Avoid exposing interna
 
 Once listed, your workflow turns green in the editor. You can find all of your listed workflows on the [**Earnings**](/workflows/marketplace#earnings) page in the left nav, alongside their per-call revenue and invocation counts.
 
-Your workflow is now registered on both x402scan.com and mppscan.com under KeeperHub's registration. Agents browsing those registries see it as a callable resource at `https://app.keeperhub.com/api/mcp/workflows/<slug>/call`. KeeperHub's own registry pages are public:
+Your workflow is now registered on x402scan.com, mppscan.com, and 8004scan.io under KeeperHub's registration. Agents browsing those registries see it as a callable resource at `https://app.keeperhub.com/api/mcp/workflows/<slug>/call`, and as a single-tool MCP server at `https://app.keeperhub.com/mcp/w/<slug>` that an agent can install directly into Claude Code, Cursor, or Windsurf — see [Per-Workflow MCP Servers](/ai-tools/mcp-server#per-workflow-mcp-servers) for the install snippet. KeeperHub's own registry pages are public:
 
 - [KeeperHub on x402scan](https://www.x402scan.com/server/59aa13ab-2a99-4409-a4e1-8927f4006b29)
 - [KeeperHub on mppscan](https://mppscan.com/server/3a9395b49a059838086613a280a30d94b812991214d6fcb215a1d3c2196d5785)
+- [KeeperHub on 8004scan](https://8004scan.io/agents/ethereum/31875)
 
 The slug, your listed price, and your input/output schema are what agents see. The internal node logic stays private.
 
