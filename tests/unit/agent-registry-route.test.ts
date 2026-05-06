@@ -69,24 +69,33 @@ describe("GET /api/agent-registry", () => {
     expect(json.image).toBe("https://app.keeperhub.com/keeperhub_logo.png");
   });
 
-  it("Test 4: returns services array with mcp, web, ens, workflows, and agentWallet entries", async () => {
+  it("Test 4: returns services array with MCP, A2A, web, ens, workflows, and agentWallet entries", async () => {
     setupDbMock([]);
     const { GET } = await import("@/app/api/agent-registry/route");
     const request = new Request("http://localhost:3000/api/agent-registry");
     const response = await GET(request);
     const json = await response.json();
     expect(Array.isArray(json.services)).toBe(true);
-    expect(json.services).toHaveLength(5);
+    expect(json.services).toHaveLength(6);
     const serviceNames = json.services.map((s: { name: string }) => s.name);
-    expect(serviceNames).toContain("mcp");
+    expect(serviceNames).toContain("MCP");
+    expect(serviceNames).toContain("A2A");
     expect(serviceNames).toContain("workflows");
     expect(serviceNames).toContain("web");
     expect(serviceNames).toContain("ens");
     expect(serviceNames).toContain("agentWallet");
     const mcpService = json.services.find(
-      (s: { name: string; endpoint: string }) => s.name === "mcp"
+      (s: { name: string; endpoint: string }) => s.name === "MCP"
     );
-    expect(mcpService?.endpoint).toBe("https://app.keeperhub.com/mcp");
+    expect(mcpService?.endpoint).toBe(
+      "https://app.keeperhub.com/.well-known/mcp.json"
+    );
+    const a2aService = json.services.find(
+      (s: { name: string; endpoint: string }) => s.name === "A2A"
+    );
+    expect(a2aService?.endpoint).toBe(
+      "https://app.keeperhub.com/.well-known/agent-card.json"
+    );
     const webService = json.services.find(
       (s: { name: string; endpoint: string }) => s.name === "web"
     );
@@ -103,16 +112,36 @@ describe("GET /api/agent-registry", () => {
     );
   });
 
-  it("Test 4a: mcp service has version 2025-06-18", async () => {
+  it("Test 4a: MCP service has version 2025-06-18 and inlines tool list", async () => {
     setupDbMock([]);
     const { GET } = await import("@/app/api/agent-registry/route");
     const request = new Request("http://localhost:3000/api/agent-registry");
     const response = await GET(request);
     const json = await response.json();
     const mcpService = json.services.find(
-      (s: { name: string; version?: string }) => s.name === "mcp"
+      (s: {
+        name: string;
+        version?: string;
+        mcpTools?: string[];
+      }) => s.name === "MCP"
     );
     expect(mcpService?.version).toBe("2025-06-18");
+    expect(Array.isArray(mcpService?.mcpTools)).toBe(true);
+    expect(mcpService?.mcpTools?.length ?? 0).toBeGreaterThan(0);
+    expect(mcpService?.mcpTools).toContain("list_workflows");
+    expect(mcpService?.mcpTools).toContain("call_workflow");
+  });
+
+  it("Test 4e: A2A service has version 0.3.0", async () => {
+    setupDbMock([]);
+    const { GET } = await import("@/app/api/agent-registry/route");
+    const request = new Request("http://localhost:3000/api/agent-registry");
+    const response = await GET(request);
+    const json = await response.json();
+    const a2aService = json.services.find(
+      (s: { name: string; version?: string }) => s.name === "A2A"
+    );
+    expect(a2aService?.version).toBe("0.3.0");
   });
 
   it("Test 4b: top-level supportedTrust equals [reputation]", async () => {
