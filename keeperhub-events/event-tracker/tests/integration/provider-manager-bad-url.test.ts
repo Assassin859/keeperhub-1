@@ -70,4 +70,24 @@ describe("ChainProviderManager (real ws): bad-URL safety", () => {
 
     expect(capturedExceptions).toEqual([]);
   });
+
+  it("rejects cleanly when the host does not resolve (DNS NXDOMAIN)", async () => {
+    // Different failure mode than ECONNREFUSED: the .invalid TLD is
+    // reserved per RFC 6761 and guaranteed to never resolve, so this
+    // exercises the dns.lookup error path (`getaddrinfo ENOTFOUND`).
+    // That was the original failure mode I hit during KEEP-434 manual
+    // verification - the error came from `node:dns` rather than
+    // `ws.ClientRequest`, but the same EventEmitter-throw rule made it
+    // crash the pod. The fix's defensive listener covers both because
+    // ws emits 'error' on the WebSocket regardless of which network
+    // layer surfaced the failure.
+    await expect(
+      manager.getOrCreateProvider(
+        31_339,
+        "wss://does-not-exist-keep434.invalid/",
+      ),
+    ).rejects.toThrow(/does-not-exist-keep434\.invalid/);
+
+    expect(capturedExceptions).toEqual([]);
+  });
 });
