@@ -1,16 +1,19 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.11
-milestone_name: Marketplace Discovery & Hub UX
-status: executing
-last_updated: "2026-05-01T04:15:00.000Z"
-last_activity: 2026-05-01
+milestone: none-active
+milestone_name: —
+status: between_milestones
+last_updated: "2026-05-06T00:00:00.000Z"
+last_activity: 2026-05-06
+last_shipped_milestone: v1.11
+last_shipped_milestone_name: Marketplace Discovery & Hub UX
+last_shipped_date: 2026-05-01
 progress:
   total_phases: 4
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 42
   completed_plans: 42
-  percent: 95
+  percent: 100
 ---
 
 # Project State
@@ -18,17 +21,17 @@ progress:
 ## Project Reference
 
 - **Core value:** Users can build and deploy Web3 automation workflows through a visual builder without writing code.
-- **Current focus:** Phase 42 — Foundations & Shared Primitives (last remaining v1.11 phase)
+- **Current focus:** Between milestones — v1.11 closed 2026-05-06; next via `/gsd-new-milestone`.
 
 ## Current Position
 
-Phase: 42 (Foundations & Shared Primitives) — NEXT (not started)
+Phase: — (no active milestone)
 Plan: —
 
-- **Phase:** 42 — Foundations & Shared Primitives (next; not started)
+- **Phase:** —
 - **Plan:** —
-- **Status:** Phase 44 SHIPPED (UAT GREEN, 2026-05-01); Phase 45 shipped; Phase 43 shipped
-- **Last activity:** 2026-05-01 — Phase 44 close-out (44-12 UAT)
+- **Status:** v1.11 milestone closed 2026-05-06 — 4/4 phases shipped, archived to `.planning/milestones/v1.11-{ROADMAP,REQUIREMENTS}.md`, git tag `v1.11` created locally (not pushed). Audit verdict `tech_debt` accepted: Phase 42 manual UAT (42-10) and Phase 43 retrospective VERIFICATION.md remain as documentation tracking debt.
+- **Last activity:** 2026-05-06 — v1.11 milestone close finalization
 
 ## Performance Metrics
 
@@ -84,9 +87,7 @@ Plan: —
 
 ### Todos
 
-- /gsd-plan-phase 42 — Foundations & Shared Primitives
-- /gsd-plan-phase 43 — Hub UX Overhaul (apply `/frontend-design:frontend-design`)
-- /gsd-plan-phase 44 — Marketplace Ladder (apply `/frontend-design:frontend-design`)
+- Run `/gsd-new-milestone` to start the next milestone cycle.
 
 ### Blockers
 
@@ -95,8 +96,24 @@ Plan: —
 ## Session Continuity
 
 - Roadmap file: `.planning/ROADMAP.md`
-- Requirements file: `.planning/REQUIREMENTS.md`
-- Research summary: `.planning/research/SUMMARY.md`
-- Last completed: Plan 44-12 (Phase 44 local UAT gate — automated gates GREEN, 11/11 manual cases human-verified live in real Chrome via MCP, Phase-43 regression sweep PASS by construction; Phase 44 SHIPPED)
-- Stopped at: 44-12 complete (commit `86f0b6c7`)
-- Next command: `/gsd-plan-phase 42 — Foundations & Shared Primitives` (last remaining v1.11 phase: MODAL-01..08, SEC-01..06, NAV-01..08, plus deferred HUB-07 + HUB-15 + HUB-22)
+- Requirements file: — (will be created by `/gsd-new-milestone`)
+- Last shipped milestone: v1.11 (archived at `.planning/milestones/v1.11-{ROADMAP,REQUIREMENTS}.md`)
+- Last completed: v1.11 milestone close finalization (2026-05-06)
+- Stopped at: clean state — between milestones
+- Next command: `/gsd-new-milestone` to define v1.12
+
+## Deferred Items
+
+Items acknowledged and deferred at v1.11 milestone close (2026-05-06) per `v1.11-MILESTONE-AUDIT.md` (status: `tech_debt`):
+
+| Category | Item | Status |
+|----------|------|--------|
+| documentation | Phase 42 plan 42-10 manual UAT | deferred — primitives shipped, downstream Phase 43/44 verification provides implicit pass |
+| documentation | Phase 43 VERIFICATION.md (retrospective) | deferred — phase shipped 2026-05-01 (UAT GREEN 15/15 per ROADMAP), 14 SUMMARY.md files exist |
+| tracking | MODAL-01..08, SEC-01..06, NAV-01..08 unticked in archive | deferred — see closure note in `milestones/v1.11-REQUIREMENTS.md` |
+| tracking | HUB-07, HUB-15, HUB-18..22 unticked in archive | deferred — Phase 43 shipped, REQ-IDs not retroactively ticked |
+| lint | Repo-wide Biome baseline drift to ~263 errors | pre-existing; Phase 44+45 introduced zero new errors. Recommend dedicated lint-cleanup phase before next major PRs |
+| feature | MARKET-FUTURE-01..04 | deferred — see `milestones/v1.11-REQUIREMENTS.md` § Future Requirements |
+| feature | HUB-FUTURE-02 (per-tag OG image generation) | deferred |
+| testing | Cross-browser CI runs (Firefox + WebKit) | deferred — Chromium-only by default; opt-in via local invocation |
+| upstream | Next.js bfcache hydration race upstream issue/PR | deferred per Phase 45 ADR |

@@ -39,6 +39,7 @@ import {
 import { generateId } from "../lib/utils/id";
 import type { WorkflowNode } from "../lib/workflow/store";
 import { executeViaApi } from "./api-execute";
+import { checkExecutionLimitForExecutor } from "./billing-guard";
 import { CONFIG } from "./config";
 import { resolveDispatchTarget } from "./execution-mode";
 import { executeInProcess } from "./in-process";
@@ -234,6 +235,17 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     if (!valid) {
       return;
     }
+  }
+
+  const billingResult = await checkExecutionLimitForExecutor(
+    db,
+    workflow.organizationId
+  );
+  if (!billingResult.allowed) {
+    console.warn(
+      `[Executor] Billing guard blocked ${triggerType} trigger for workflow ${workflowId}: org=${workflow.organizationId} plan=${billingResult.plan} used=${billingResult.used} limit=${billingResult.limit} effectiveLimit=${billingResult.effectiveLimit} debt=${billingResult.debtExecutions} reason=${billingResult.reason}`
+    );
+    return;
   }
 
   const executionId = generateId();

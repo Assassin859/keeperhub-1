@@ -106,9 +106,8 @@ const RootLayout = async ({ children }: RootLayoutProps) => {
         <KeeperHubExtensionLoader />
         <ThemeProvider
           attribute="class"
-          defaultTheme="dark"
           disableTransitionOnChange
-          enableSystem
+          forcedTheme="dark"
         >
           <Provider>
             <AuthProvider>

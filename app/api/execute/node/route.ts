@@ -2,6 +2,7 @@ import "server-only";
 
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { db } from "@/lib/db";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import { integrations } from "@/lib/db/schema";
@@ -379,6 +380,11 @@ export async function POST(request: Request): Promise<NextResponse> {
       { error: "Rate limit exceeded" },
       { status: 429, headers: { "Retry-After": String(rateLimit.retryAfter) } }
     );
+  }
+
+  const executionGuard = await enforceExecutionLimit(apiKeyCtx.organizationId);
+  if (executionGuard.blocked) {
+    return executionGuard.response;
   }
 
   let body: unknown;

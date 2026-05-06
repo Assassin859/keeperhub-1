@@ -34,6 +34,50 @@ Install the [Claude Code Plugin](/ai-tools/claude-code-plugin) for additional sk
 
 The [`kh` CLI](https://github.com/KeeperHub/cli) can run a local MCP server over stdio via `kh serve --mcp`. This is deprecated in favor of the remote endpoint above and will be removed in a future release.
 
+## Per-Workflow MCP Servers
+
+In addition to the aggregate server at `/mcp`, every listed marketplace workflow is also reachable as its own narrow MCP server at `/mcp/w/<slug>`. The aggregate server exposes the generic `call_workflow(slug, inputs)` dispatcher; the per-workflow form registers a single tool named after the workflow's listed slug, with the workflow's actual input schema and description.
+
+This matters because LLMs select tools from `tools/list` in a single decision step. A typed, named tool with a real input schema is picked in one turn. A generic dispatcher requires a multi-turn discover-then-call dance, costs more tokens, and has lower selection accuracy.
+
+### Install
+
+```bash
+claude mcp add --transport http my-workflow https://app.keeperhub.com/mcp/w/<slug> \
+  --header "Authorization: Bearer kh_your_key_here"
+```
+
+Replace `<slug>` with the workflow's listed slug (visible on its marketplace page) and `my-workflow` with whatever name you want the server to appear under. The same Bearer-token rules apply — any valid `kh_` API key or OAuth token works.
+
+### What the agent sees
+
+After install, the AI's tool inventory gains exactly one tool: the workflow itself, with its real name as `title`, the workflow's description, and the listed input schema. There is no `search_workflows` step and no `call_workflow` indirection. The LLM picks the tool by name and shape.
+
+### Cross-organization calls
+
+Any valid bearer can call any listed workflow regardless of which organization owns the workflow. Listed workflows are open to all callers by design. Unlisted slugs return 404.
+
+### Paid workflows
+
+Paid listings return an HTTP 402 with an x402 challenge. The MCP transport surfaces this as a tool error with the full challenge body in the response text. To autopay, install the [agentic wallet](/ai-tools/agentic-wallet) — its PreToolUse safety hook intercepts the 402, evaluates the price against your safety thresholds, signs the payment, and retries.
+
+### Compared to the aggregate server
+
+| | Aggregate `keeperhub` MCP | Per-workflow MCP |
+|---|---|---|
+| URL | `https://app.keeperhub.com/mcp` | `https://app.keeperhub.com/mcp/w/<slug>` |
+| Tools | Workflow CRUD, execution, search, `call_workflow`, integrations, templates | Exactly one — the workflow itself |
+| Input typing | `call_workflow(slug, inputs: object)` | Workflow's real `inputSchema` |
+| Best for | Building, browsing, executing arbitrary workflows in your org | Calling one specific listed workflow |
+| Auth | OAuth or `kh_` token | Same |
+| Org scoping | Calls scoped to your org | Cross-org calls allowed for listed workflows |
+
+### Removing
+
+```bash
+claude mcp remove my-workflow
+```
+
 ## Authentication
 
 The MCP endpoint supports two authentication methods:
