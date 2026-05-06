@@ -301,6 +301,8 @@ max by (role) (keeperhub_org_members_by_role{...})
 sum by (status) (keeperhub_workflow_executions_total{...})
 ```
 
+`keeperhub_workflow_executions_total` and `keeperhub_workflow_execution_errors_total` are also labeled by `org_slug` so dashboards/alerts can scope to managed clients. Personal/anonymous workflows are emitted under `org_slug="_anonymous"` so the sum across `org_slug` for a given status equals the unfiltered per-status total.
+
 **Metrics requiring `max()` aggregation:**
 
 | Category | Metrics |
