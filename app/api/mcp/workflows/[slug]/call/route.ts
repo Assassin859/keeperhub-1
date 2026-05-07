@@ -321,16 +321,42 @@ async function handlePaidWorkflow(
             : executionId;
         }
 
+        // recordPayment + the KEEP-449 billable flip run in one transaction
+        // so the workflow_payments row and the workflow_executions.billable
+        // bit can never disagree. If the flip fails after recordPayment
+        // succeeds, the whole transaction rolls back and the caller sees an
+        // error -- preferable to silently over-billing the owner one quota
+        // credit and leaving an exempt payment row dangling.
+        //
+        // Marketplace-paid calls at or above FREE_MARKETPLACE_BILLING_THRESHOLD_USDC
+        // are exempt from the owner's monthly execution quota. The flip is
+        // tied to actual payment receipt, so owner-initiated runs, scheduled
+        // runs, block/event triggers etc. never reach this branch and stay
+        // billable=TRUE (the column default).
         try {
-          await recordPayment({
-            workflowId: workflow.id,
-            paymentHash,
-            executionId,
-            amountUsdc: workflow.priceUsdcPerCall ?? "0",
-            payerAddress: meta.payerAddress,
-            creatorWalletAddress,
-            protocol: meta.protocol,
-            chain: meta.chain,
+          await db.transaction(async (tx) => {
+            await recordPayment(
+              {
+                workflowId: workflow.id,
+                paymentHash,
+                executionId,
+                amountUsdc: workflow.priceUsdcPerCall ?? "0",
+                payerAddress: meta.payerAddress,
+                creatorWalletAddress,
+                protocol: meta.protocol,
+                chain: meta.chain,
+              },
+              tx
+            );
+
+            if (
+              priceQualifiesForMarketplaceExemption(workflow.priceUsdcPerCall)
+            ) {
+              await tx
+                .update(workflowExecutions)
+                .set({ billable: false })
+                .where(eq(workflowExecutions.id, executionId));
+            }
           });
         } catch (err) {
           await db
@@ -344,19 +370,6 @@ async function handlePaidWorkflow(
             })
             .where(eq(workflowExecutions.id, executionId));
           throw err;
-        }
-
-        // KEEP-449: marketplace-paid calls at or above the threshold are
-        // exempt from the owner's monthly execution quota. The flip lives
-        // here (after recordPayment succeeds) so the exemption is tied to
-        // actual payment receipt, not just to the workflow's listing state.
-        // Owner-initiated runs, scheduled runs, block/event triggers, etc.
-        // never reach this branch and stay billable=TRUE (the column default).
-        if (priceQualifiesForMarketplaceExemption(workflow.priceUsdcPerCall)) {
-          await db
-            .update(workflowExecutions)
-            .set({ billable: false })
-            .where(eq(workflowExecutions.id, executionId));
         }
 
         await startExecutionInBackground(workflow, body, executionId);
