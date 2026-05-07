@@ -20,8 +20,11 @@ import {
 } from "@/lib/agentic-wallet/policy";
 
 describe("BASELINE_POLICIES", () => {
-  it("contains exactly 6 entries (3 eth.tx.* + 3 eth.eip_712.* per Phase 37)", () => {
-    expect(BASELINE_POLICIES.length).toBe(6);
+  it("contains exactly 8 entries (5 eth.tx.* + 3 eth.eip_712.*)", () => {
+    // 3 original eth.tx.* policies (block-erc20-approve, block-erc20-transfer,
+    // allowlist-outbound) + 2 new ERC-8004 eth.tx.* policies (chain-binding,
+    // selector) + 3 original eth.eip_712.* policies = 8.
+    expect(BASELINE_POLICIES.length).toBe(8);
   });
 
   it("entry 0 blocks ERC-20 approvals over 100 USDC (selector 0x095ea7b3)", () => {
@@ -150,7 +153,10 @@ describe("applyBaselinePolicies (HI-04)", () => {
       async (_input: PolicyCreateInput): Promise<PolicyCreateResult> => {
         counter += 1;
         return {
-          activity: { id: `act_${counter}`, status: "ACTIVITY_STATUS_COMPLETED" },
+          activity: {
+            id: `act_${counter}`,
+            status: "ACTIVITY_STATUS_COMPLETED",
+          },
           policyId: `policy_${counter}`,
         };
       }
@@ -253,7 +259,10 @@ describe("applyBaselinePolicies (HI-04)", () => {
       async (_input: PolicyCreateInput): Promise<PolicyCreateResult> => {
         counter += 1;
         return {
-          activity: { id: `act_${counter}`, status: "ACTIVITY_STATUS_COMPLETED" },
+          activity: {
+            id: `act_${counter}`,
+            status: "ACTIVITY_STATUS_COMPLETED",
+          },
           policyId: `policy_${counter}`,
         };
       }
@@ -280,8 +289,8 @@ describe("applyBaselinePolicies (HI-04)", () => {
 });
 
 describe("BASELINE_POLICIES — EIP-712 coverage (Phase 37)", () => {
-  it("contains 6 entries (3 eth.tx.* + 3 eth.eip_712.*)", () => {
-    expect(BASELINE_POLICIES.length).toBe(6);
+  it("contains 8 entries (5 eth.tx.* + 3 eth.eip_712.*)", () => {
+    expect(BASELINE_POLICIES.length).toBe(8);
   });
 
   it("block-erc20-unlimited-approve threshold is > 100 USDC, not 2^32", () => {
@@ -326,5 +335,68 @@ describe("BASELINE_POLICIES — EIP-712 coverage (Phase 37)", () => {
     expect(p?.condition).toContain("8453");
     expect(p?.condition).toContain("4217");
     expect(p?.condition).toContain("4218");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ERC-8004 (2026-05): the outbound contract allowlist now includes the
+// ReputationRegistry on Ethereum mainnet for giveFeedback() calls. Two new
+// policies bind contracts to chains and restrict ReputationRegistry to a
+// single function selector.
+// ---------------------------------------------------------------------------
+
+const ERC_8004_REPUTATION_REGISTRY_LC =
+  "0x8004baa17c55a88189ae136b182e5fda19de9b63";
+const GIVE_FEEDBACK_SELECTOR = "0x3c036a7e";
+
+describe("BASELINE_POLICIES — ERC-8004 coverage", () => {
+  it("allowlist-outbound-contracts includes the ReputationRegistry", () => {
+    const p = BASELINE_POLICIES.find(
+      (x) => x.policyName === "allowlist-outbound-contracts"
+    );
+    expect(p).toBeDefined();
+    expect(p?.condition.toLowerCase()).toContain(
+      ERC_8004_REPUTATION_REGISTRY_LC
+    );
+  });
+
+  it("includes allowlist-tx-chain-binding gating signTransaction", () => {
+    const p = BASELINE_POLICIES.find(
+      (x) => x.policyName === "allowlist-tx-chain-binding"
+    );
+    expect(p).toBeDefined();
+    expect(p?.condition).toContain("ACTIVITY_TYPE_SIGN_TRANSACTION_V2");
+    // Each contract bound to its native chain id.
+    expect(p?.condition).toContain("8453"); // Base mainnet for USDC_BASE
+    expect(p?.condition).toContain("4217"); // Tempo mainnet for USDC_TEMPO
+    expect(p?.condition).toContain("4218"); // Tempo testnet for USDC_TEMPO
+    // Ethereum mainnet (chain id 1) for the ReputationRegistry.
+    expect(p?.condition).toContain("eth.tx.chain_id == 1");
+    expect(p?.condition.toLowerCase()).toContain(
+      ERC_8004_REPUTATION_REGISTRY_LC
+    );
+    expect(p?.effect).toBe("EFFECT_DENY");
+  });
+
+  it("includes allowlist-erc8004-selector restricting to giveFeedback()", () => {
+    const p = BASELINE_POLICIES.find(
+      (x) => x.policyName === "allowlist-erc8004-selector"
+    );
+    expect(p).toBeDefined();
+    expect(p?.condition.toLowerCase()).toContain(
+      ERC_8004_REPUTATION_REGISTRY_LC
+    );
+    expect(p?.condition).toContain(GIVE_FEEDBACK_SELECTOR);
+    // Inverted match: the policy DENIES if function_signature != giveFeedback.
+    expect(p?.condition).toContain("function_signature !=");
+    expect(p?.effect).toBe("EFFECT_DENY");
+  });
+});
+
+describe("FACILITATOR_ALLOWLIST — ERC-8004", () => {
+  it("includes the ReputationRegistry contract", () => {
+    expect(
+      FACILITATOR_ALLOWLIST.map((a) => a.toLowerCase())
+    ).toContain(ERC_8004_REPUTATION_REGISTRY_LC);
   });
 });

@@ -484,6 +484,13 @@
       "when": 1777760000002,
       "tag": "0068_listing_version",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1777760000003,
+      "tag": "0069_add_feedback_table",
+      "breakpoints": true
     }
   ]
 }
