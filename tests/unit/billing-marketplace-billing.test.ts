@@ -15,7 +15,7 @@ describe("marketplace-billing", () => {
 
   describe("billableWorkflowRawSql", () => {
     it("excludes listed workflows priced at or above the threshold (uses w. alias)", () => {
-      const { sql } = dialect.sqlToQuery(billableWorkflowRawSql);
+      const { sql } = dialect.sqlToQuery(billableWorkflowRawSql());
       const normalized = sql.replace(/\s+/g, " ").toLowerCase();
 
       expect(normalized).toContain("not (");
@@ -28,7 +28,7 @@ describe("marketplace-billing", () => {
 
   describe("billableWorkflowFilter", () => {
     it("excludes listed workflows priced at or above the threshold (uses workflows table)", () => {
-      const { sql } = dialect.sqlToQuery(billableWorkflowFilter);
+      const { sql } = dialect.sqlToQuery(billableWorkflowFilter());
       const normalized = sql.replace(/\s+/g, " ").toLowerCase();
 
       expect(normalized).toContain("not (");

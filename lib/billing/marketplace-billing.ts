@@ -19,21 +19,29 @@ export const FREE_MARKETPLACE_BILLING_THRESHOLD_USDC = "0.05";
  *
  * Evaluates TRUE for rows that should count toward billing, FALSE for
  * Marketplace-listed workflows priced at or above the free-billing threshold.
+ *
+ * Built lazily so that simply importing this module does not require
+ * `drizzle-orm`'s `sql` export to be present (some unit tests partially mock
+ * the module).
  */
-export const billableWorkflowRawSql: SQL = sql`
-  NOT (
-    w.is_listed = TRUE
-    AND COALESCE(w.price_usdc_per_call::numeric, 0) >= ${sql.raw(FREE_MARKETPLACE_BILLING_THRESHOLD_USDC)}::numeric
-  )
-`;
+export function billableWorkflowRawSql(): SQL {
+  return sql`
+    NOT (
+      w.is_listed = TRUE
+      AND COALESCE(w.price_usdc_per_call::numeric, 0) >= ${sql.raw(FREE_MARKETPLACE_BILLING_THRESHOLD_USDC)}::numeric
+    )
+  `;
+}
 
 /**
  * Drizzle query-builder fragment equivalent to {@link billableWorkflowRawSql}.
  * Use inside `and(...)` when querying workflows via the typed builder.
  */
-export const billableWorkflowFilter: SQL = sql`
-  NOT (
-    ${workflows.isListed} = TRUE
-    AND COALESCE(${workflows.priceUsdcPerCall}::numeric, 0) >= ${sql.raw(FREE_MARKETPLACE_BILLING_THRESHOLD_USDC)}::numeric
-  )
-`;
+export function billableWorkflowFilter(): SQL {
+  return sql`
+    NOT (
+      ${workflows.isListed} = TRUE
+      AND COALESCE(${workflows.priceUsdcPerCall}::numeric, 0) >= ${sql.raw(FREE_MARKETPLACE_BILLING_THRESHOLD_USDC)}::numeric
+    )
+  `;
+}
