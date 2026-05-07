@@ -4,6 +4,11 @@
  * Pure functions extracted from index.ts so they can be unit-tested in
  * isolation. index.ts is now only the entry point: it composes these
  * functions, registers signal handlers, and runs the polling loop.
+ *
+ * Note: importing this module triggers SQS client instantiation as a
+ * side effect (via lib/sqs-client.js, which calls `new SQSClient(...)` at
+ * module load). The functions below are pure, but the import is not.
+ * Tests must mock "../lib/sqs-client.js" to avoid contacting AWS.
  */
 
 import { SendMessageCommand } from "@aws-sdk/client-sqs";
@@ -22,9 +27,6 @@ export type DispatchResult = {
   errors: number;
 };
 
-/**
- * Fetch enabled schedules from KeeperHub API.
- */
 export async function fetchSchedules(): Promise<Schedule[]> {
   const response = await fetch(`${KEEPERHUB_URL}/api/internal/schedules`, {
     method: "GET",
@@ -69,9 +71,6 @@ export function shouldTriggerNow(
   }
 }
 
-/**
- * Send a schedule trigger message to the SQS queue.
- */
 export async function sendToQueue(message: ScheduleMessage): Promise<void> {
   const command = new SendMessageCommand({
     QueueUrl: SQS_QUEUE_URL,

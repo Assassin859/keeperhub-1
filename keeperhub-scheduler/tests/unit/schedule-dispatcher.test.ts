@@ -1,4 +1,9 @@
 import {
+  SendMessageCommand,
+  type SendMessageCommandOutput,
+} from "@aws-sdk/client-sqs";
+import { CronExpressionParser } from "cron-parser";
+import {
   type MockInstance,
   afterEach,
   beforeEach,
@@ -27,6 +32,11 @@ import {
 
 const mockedSqsSend = vi.mocked(sqs.send);
 
+// `sqs.send` is overloaded per-command and infers a wide return union;
+// concrete output for SendMessageCommand is the only one the dispatcher
+// uses, so type the mock resolution to that rather than `as never`.
+const sqsOkResponse = {} as SendMessageCommandOutput;
+
 // Silence the dispatcher's console output -- every dispatch run logs
 // half a dozen lines per schedule. Restore in afterEach so test failures
 // keep their stack traces visible.
@@ -47,6 +57,7 @@ afterEach(() => {
   consoleLogSpy.mockRestore();
   consoleErrorSpy.mockRestore();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("shouldTriggerNow", () => {
@@ -115,6 +126,25 @@ describe("shouldTriggerNow", () => {
     expect(shouldTriggerNow("not a cron", "UTC", now)).toBe(false);
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       expect.stringContaining("Invalid cron expression: not a cron"),
+      expect.anything(),
+    );
+  });
+
+  it("returns false and logs when interval.prev() throws at runtime", () => {
+    // cron-parser can throw on prev() for expressions that parse but have
+    // no past occurrence in the supported range. Mock the parser to force
+    // that branch so the test does not depend on which exact expressions
+    // trigger that condition in the current cron-parser version.
+    vi.spyOn(CronExpressionParser, "parse").mockReturnValueOnce({
+      prev: () => {
+        throw new Error("Out of the timespan range");
+      },
+    } as never);
+
+    const now = new Date("2024-01-15T09:00:00Z");
+    expect(shouldTriggerNow("0 9 * * *", "UTC", now)).toBe(false);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Invalid cron expression: 0 9 * * *"),
       expect.anything(),
     );
   });
@@ -190,6 +220,18 @@ describe("fetchSchedules", () => {
     );
   });
 
+  it("propagates fetch network errors to the caller", async () => {
+    // fetch itself rejecting (DNS failure, TLS error, socket reset) is a
+    // distinct branch from the non-2xx path -- no `response` object exists
+    // to inspect, so the error reaches the caller unwrapped.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new Error("ECONNREFUSED")),
+    );
+
+    await expect(fetchSchedules()).rejects.toThrow("ECONNREFUSED");
+  });
+
   it("calls fetch with the schedules path and X-Service-Key header", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -210,8 +252,8 @@ describe("fetchSchedules", () => {
 });
 
 describe("sendToQueue", () => {
-  it("sends one SQS message with the correct body and attributes", async () => {
-    mockedSqsSend.mockResolvedValue({} as never);
+  it("sends one SendMessageCommand with the correct body and attributes", async () => {
+    mockedSqsSend.mockResolvedValue(sqsOkResponse);
 
     await sendToQueue({
       workflowId: "wf-1",
@@ -221,28 +263,23 @@ describe("sendToQueue", () => {
     });
 
     expect(mockedSqsSend).toHaveBeenCalledOnce();
-    const command = mockedSqsSend.mock.calls[0][0] as {
-      input: {
-        QueueUrl: string;
-        MessageBody: string;
-        MessageAttributes: Record<
-          string,
-          { DataType: string; StringValue: string }
-        >;
-      };
-    };
-    expect(command.input.QueueUrl).toBeTruthy();
-    expect(JSON.parse(command.input.MessageBody)).toEqual({
+    const command = mockedSqsSend.mock.calls[0][0];
+    // instanceof check is the public API contract; .input is the documented
+    // public field on AWS SDK v3 commands.
+    expect(command).toBeInstanceOf(SendMessageCommand);
+    const { input } = command as SendMessageCommand;
+    expect(input.QueueUrl).toBeTruthy();
+    expect(JSON.parse(input.MessageBody ?? "")).toEqual({
       workflowId: "wf-1",
       scheduleId: "sched-1",
       triggerTime: "2024-01-15T09:00:00.000Z",
       triggerType: "schedule",
     });
-    expect(command.input.MessageAttributes.TriggerType).toEqual({
+    expect(input.MessageAttributes?.TriggerType).toEqual({
       DataType: "String",
       StringValue: "schedule",
     });
-    expect(command.input.MessageAttributes.WorkflowId).toEqual({
+    expect(input.MessageAttributes?.WorkflowId).toEqual({
       DataType: "String",
       StringValue: "wf-1",
     });
@@ -294,7 +331,7 @@ describe("dispatch", () => {
     expect(mockedSqsSend).not.toHaveBeenCalled();
   });
 
-  it("triggers a matching schedule and counts it once", async () => {
+  it("triggers a matching schedule, counts it once, and logs the trigger", async () => {
     stubFetch([
       {
         id: "sched-1",
@@ -303,12 +340,20 @@ describe("dispatch", () => {
         timezone: "UTC",
       },
     ]);
-    mockedSqsSend.mockResolvedValue({} as never);
+    mockedSqsSend.mockResolvedValue(sqsOkResponse);
 
     const result = await dispatch();
 
     expect(result).toEqual({ evaluated: 1, triggered: 1, errors: 0 });
     expect(mockedSqsSend).toHaveBeenCalledOnce();
+    // Logging is the primary operational signal for stuck workflows;
+    // pin that the trigger line includes the workflow id and cron, so a
+    // future "drop the logs" refactor surfaces as a test failure.
+    const triggerLog = consoleLogSpy.mock.calls.find((call) =>
+      String(call[0]).includes("Triggering workflow wf-1"),
+    );
+    expect(triggerLog).toBeDefined();
+    expect(String(triggerLog?.[0])).toContain("0 9 * * *");
   });
 
   it("does not enqueue a schedule that is not due", async () => {
@@ -344,7 +389,7 @@ describe("dispatch", () => {
     ]);
     mockedSqsSend
       .mockRejectedValueOnce(new Error("SQS down"))
-      .mockResolvedValueOnce({} as never);
+      .mockResolvedValueOnce(sqsOkResponse);
 
     const result = await dispatch();
 
@@ -352,10 +397,44 @@ describe("dispatch", () => {
     expect(mockedSqsSend).toHaveBeenCalledTimes(2);
   });
 
-  it("treats a malformed cron as not-due rather than as an error", async () => {
+  it("counts every failure when SQS is down for the whole batch", async () => {
+    // No successful triggers -- distinct from the partial-failure case
+    // because triggered=0 means the result tuple is (evaluated, 0, N).
+    stubFetch([
+      {
+        id: "s1",
+        workflowId: "wf-1",
+        cronExpression: "0 9 * * *",
+        timezone: "UTC",
+      },
+      {
+        id: "s2",
+        workflowId: "wf-2",
+        cronExpression: "0 9 * * *",
+        timezone: "UTC",
+      },
+      {
+        id: "s3",
+        workflowId: "wf-3",
+        cronExpression: "0 9 * * *",
+        timezone: "UTC",
+      },
+    ]);
+    mockedSqsSend.mockRejectedValue(new Error("SQS down for the whole batch"));
+
+    const result = await dispatch();
+
+    expect(result).toEqual({ evaluated: 3, triggered: 0, errors: 3 });
+    expect(mockedSqsSend).toHaveBeenCalledTimes(3);
+  });
+
+  it("pins current behavior: malformed cron is silently skipped, not counted as an error", async () => {
     // shouldTriggerNow logs the parse failure and returns false; dispatch
-    // sees that as "not due" and does not increment errors. Pinned so a
-    // future change here is a deliberate decision, not an accident.
+    // sees that as "not due" and does not increment errors. This is the
+    // current behavior -- pinned so a future change is a deliberate
+    // decision, not an accident. Worth revisiting whether silent skip is
+    // the desired prod behavior (a misconfigured workflow never fires
+    // and only shows up in logs).
     stubFetch([
       {
         id: "sched-1",
@@ -393,12 +472,48 @@ describe("dispatch", () => {
       },
     ]);
     mockedSqsSend
-      .mockResolvedValueOnce({} as never)
+      .mockResolvedValueOnce(sqsOkResponse)
       .mockRejectedValueOnce(new Error("SQS down"));
 
     const result = await dispatch();
 
     expect(result).toEqual({ evaluated: 3, triggered: 1, errors: 1 });
+    expect(mockedSqsSend).toHaveBeenCalledTimes(2);
+  });
+
+  it("captures `now` once per pass (clock advance mid-batch does not change evaluation)", async () => {
+    // dispatch() does `const now = new Date()` once before the loop. If
+    // a future refactor moves `new Date()` into the loop body, schedules
+    // late in a slow batch could fall outside the trigger window. Pin the
+    // current behavior: advance the wall clock by 2 minutes between
+    // sends -- both schedules still trigger because they are evaluated
+    // against the original `now` snapshot.
+    stubFetch([
+      {
+        id: "s1",
+        workflowId: "wf-1",
+        cronExpression: "0 9 * * *",
+        timezone: "UTC",
+      },
+      {
+        id: "s2",
+        workflowId: "wf-2",
+        cronExpression: "0 9 * * *",
+        timezone: "UTC",
+      },
+    ]);
+    mockedSqsSend
+      .mockImplementationOnce(async () => {
+        // Jump past the matching minute. If `now` were re-read per
+        // iteration, sched-2 would no longer be due.
+        vi.setSystemTime(new Date("2024-01-15T09:02:30Z"));
+        return sqsOkResponse;
+      })
+      .mockResolvedValueOnce(sqsOkResponse);
+
+    const result = await dispatch();
+
+    expect(result).toEqual({ evaluated: 2, triggered: 2, errors: 0 });
     expect(mockedSqsSend).toHaveBeenCalledTimes(2);
   });
 
