@@ -433,6 +433,7 @@ export {
   workflowPublicTags,
   workflowRatings,
 } from "./schema-extensions";
+export { feedback, feedbackStatus } from "./schema-feedback";
 export {
   type McpOauthAuthCode,
   type McpOauthClient,
