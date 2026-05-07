@@ -1,5 +1,5 @@
 import { asc, eq } from "drizzle-orm";
-import { Box } from "lucide-react";
+import { Box, X } from "lucide-react";
 import Link from "next/link";
 import { MarketplaceRow } from "@/components/hub/marketplace-row";
 import {
@@ -14,6 +14,7 @@ import {
   fetchMarketplaceLeaderboard,
   type MarketplaceSort,
 } from "@/lib/marketplace/leaderboard-query";
+import { readOwnerParam } from "@/lib/marketplace/read-search-params";
 
 const VALID_SORTS: readonly MarketplaceSort[] = [
   "popular",
@@ -83,16 +84,20 @@ export async function HubMarketplaceTab({
   const sort = readSort(searchParams.sort);
   const cursor = readCursor(searchParams.cursor);
   const tagSlug = readTag(searchParams.tag);
+  const ownerName = readOwnerParam(searchParams.owner);
   const [{ rows, total }, tags] = await Promise.all([
-    fetchMarketplaceLeaderboard(sort, cursor, query, tagSlug),
+    fetchMarketplaceLeaderboard(sort, cursor, query, tagSlug, ownerName),
     fetchMarketplaceTags(),
   ]);
 
   const hasQuery = query.trim().length > 0;
-  const hasFilter = hasQuery || tagSlug !== null;
+  const hasFilter = hasQuery || tagSlug !== null || ownerName !== null;
   const emptyHeading = (() => {
     if (hasQuery) {
       return `No marketplace services match “${query}”.`;
+    }
+    if (ownerName !== null) {
+      return `No marketplace services listed by ${ownerName}.`;
     }
     if (hasFilter) {
       return "No marketplace services match this filter.";
@@ -100,8 +105,23 @@ export async function HubMarketplaceTab({
     return "No paid services listed yet.";
   })();
   // Clear-filters target preserves sort (sort is a view choice, not a
-  // filter) and tab. Drops q, tag, cursor.
+  // filter) and tab. Drops q, tag, cursor, owner.
   const clearFiltersHref = `/hub?tab=marketplace&sort=${sort}`;
+  // Owner-only clear: drops owner + cursor (cursor was paged against the
+  // owner-filtered set). Preserves q, tag, sort so a search/tag pair
+  // survives clearing just the owner pill.
+  const clearOwnerHref = (() => {
+    const params = new URLSearchParams();
+    params.set("tab", "marketplace");
+    params.set("sort", sort);
+    if (query.trim() !== "") {
+      params.set("q", query.trim());
+    }
+    if (tagSlug !== null) {
+      params.set("tag", tagSlug);
+    }
+    return `/hub?${params.toString()}`;
+  })();
 
   return (
     // Top spacer mirrors the height of the Workflows tab's view-toggle row
@@ -113,6 +133,20 @@ export async function HubMarketplaceTab({
       <section aria-label="Marketplace results" className="flex gap-6">
         <MarketplaceSidebar active={sort} activeTagSlug={tagSlug} tags={tags} />
         <div className="min-w-0 flex-1">
+          {ownerName !== null && (
+            <div className="mb-3 flex items-center gap-2 text-xs">
+              <span className="text-muted-foreground">Filtered by owner:</span>
+              <Link
+                aria-label={`Clear owner filter ${ownerName}`}
+                className="inline-flex items-center gap-1.5 rounded-full bg-foreground/10 px-2.5 py-1 font-medium text-foreground transition-colors hover:bg-foreground/15 motion-reduce:transition-none"
+                href={clearOwnerHref}
+                scroll={false}
+              >
+                <span className="max-w-[16rem] truncate">{ownerName}</span>
+                <X aria-hidden="true" className="size-3" />
+              </Link>
+            </div>
+          )}
           {rows.length === 0 ? (
             <section
               aria-label="No marketplace results"

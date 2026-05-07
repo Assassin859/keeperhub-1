@@ -1,7 +1,8 @@
 "use client";
 
 import { Copy } from "lucide-react";
-import type { KeyboardEvent, MouseEvent } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { type KeyboardEvent, type MouseEvent, useTransition } from "react";
 import { toast } from "sonner";
 import { MarketplaceListingOverlay } from "@/components/overlays/marketplace-listing-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
@@ -60,8 +61,13 @@ export function MarketplaceRow({
   rank,
 }: MarketplaceRowProps): React.ReactElement {
   const { open } = useOverlay();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [, startTransition] = useTransition();
   const badge = chainBadge(row.chain);
   const price = priceLabel(row.priceUsdcPerCall);
+  const ownerName = row.organizationName;
+  const isOwnerClickable = ownerName !== null && ownerName.trim() !== "";
 
   const openModal = (): void => {
     open(MarketplaceListingOverlay, {
@@ -94,6 +100,27 @@ export function MarketplaceRow({
     }
     await navigator.clipboard.writeText(row.listedSlug);
     toast.success(`Copied ${row.listedSlug}`);
+  };
+
+  // Owner click: filter the marketplace to that organization. Mirrors the
+  // sort writer's pattern in marketplace-sidebar.tsx — pin tab=marketplace,
+  // set owner, drop cursor (cursor was paged against the unfiltered set).
+  // Also drop q + tag so the filter lands on a clean owner-only view; the
+  // active-owner pill in _marketplace-tab.tsx provides the clear affordance.
+  const filterByOwner = (e: MouseEvent<HTMLButtonElement>): void => {
+    e.stopPropagation();
+    if (!isOwnerClickable) {
+      return;
+    }
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", "marketplace");
+    params.set("owner", ownerName);
+    params.delete("cursor");
+    params.delete("q");
+    params.delete("tag");
+    startTransition(() => {
+      router.replace(`/hub?${params.toString()}`, { scroll: false });
+    });
   };
 
   return (
@@ -161,9 +188,24 @@ export function MarketplaceRow({
         ))}
       </div>
 
-      <span className="pointer-events-none relative z-[2] hidden max-w-full truncate justify-self-end text-muted-foreground text-xs md:inline">
-        {row.organizationName ?? "Anonymous"}
-      </span>
+      {isOwnerClickable ? (
+        <button
+          aria-label={`Filter marketplace by ${ownerName}`}
+          // pointer-events-auto + stopPropagation lift this out of the
+          // row's ::before click overlay (the same trick the copy-slug
+          // button uses); without it the row's openModal would fire
+          // alongside the owner filter.
+          className="pointer-events-auto relative z-[2] hidden max-w-full truncate justify-self-end rounded text-right text-muted-foreground text-xs transition-colors hover:text-foreground hover:underline focus-visible:text-foreground focus-visible:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring motion-reduce:transition-none md:inline-block"
+          onClick={filterByOwner}
+          type="button"
+        >
+          {ownerName}
+        </button>
+      ) : (
+        <span className="pointer-events-none relative z-[2] hidden max-w-full truncate justify-self-end text-muted-foreground text-xs md:inline">
+          Anonymous
+        </span>
+      )}
 
       <span className="pointer-events-none relative z-[2] justify-self-end font-semibold text-foreground text-sm tabular-nums">
         {callCountLabel(row.callCount)}
