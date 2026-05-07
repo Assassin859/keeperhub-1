@@ -321,10 +321,18 @@ export const workflowExecutions = pgTable(
     runId: text("run_id"),
     /**
      * Whether this execution counts toward the owner organisation's monthly
-     * execution quota and overage billing. Snapshotted at insert time by a
-     * BEFORE INSERT trigger from the workflow's `is_listed` and
-     * `price_usdc_per_call` (see migration 0070), so later listing changes do
-     * not retroactively rewrite an org's billable usage.
+     * execution quota and overage billing.
+     *
+     * Defaults to TRUE on every insert. The marketplace call route is the
+     * only path that ever flips a row to FALSE, and only after recordPayment
+     * succeeds and the recorded price is at or above
+     * FREE_MARKETPLACE_BILLING_THRESHOLD_USDC. Owner-initiated runs (manual
+     * Run, scheduled, block, event, webhook) and direct API calls always
+     * stay TRUE.
+     *
+     * See drizzle/0070_workflow_executions_billable.sql,
+     * lib/billing/marketplace-billing.ts, and
+     * app/api/mcp/workflows/[slug]/call/route.ts.
      */
     billable: boolean("billable").notNull().default(true),
   },
