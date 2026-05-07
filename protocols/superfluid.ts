@@ -559,7 +559,7 @@ export default defineProtocol({
       slug: "grant-flow-operator",
       label: "Grant Flow-Operator Permissions",
       description:
-        "Authorize another address to manage your flows of this SuperToken up to a wei/sec allowance",
+        "Authorize another address to manage your flows of a SuperToken up to a wei/sec allowance",
       type: "write",
       contract: "cfaForwarder",
       function: "updateFlowOperatorPermissions",

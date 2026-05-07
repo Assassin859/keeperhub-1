@@ -38,6 +38,9 @@ const RPC_URL = process.env.INTEGRATION_TEST_RPC_URL;
 const CHAIN_ID = "11155111";
 const SEPOLIA_CHAIN_ID = 11_155_111;
 const TEST_ADDRESS = "0x0000000000000000000000000000000000000001";
+// Distinct from TEST_ADDRESS: estimateGas runs with `from: TEST_ADDRESS`,
+// and Superfluid's CFA rejects sender == flowOperator (self-grant).
+const TEST_OPERATOR = "0x0000000000000000000000000000000000000002";
 
 // fUSDCx on Sepolia. The forwarders validate the token argument against the
 // Superfluid host registry and revert for unknown addresses, so reads need
@@ -343,7 +346,11 @@ describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
     // "tolerate any revert" pattern hid a routing bug because the SuperToken's
     // proxy reverts on the Sepolia fUSDCx test token. The CFAv1Forwarder is
     // the canonical entry point and works for any registered SuperToken.
-    const TEST_OPERATOR = "0x0000000000000000000000000000000000000002";
+    //
+    // Note: this on-chain test is gated on INTEGRATION_TEST_RPC_URL and
+    // skipped in CI. The CI-side regression guard for the routing change
+    // lives in tests/unit/superfluid-protocol.test.ts ("grant-flow-operator
+    // action" describe block, asserting `contract === "cfaForwarder"`).
     const msg = await estimateGasError("grant-flow-operator", {
       token: SEPOLIA_FUSDCX,
       flowOperator: TEST_OPERATOR,
