@@ -99,10 +99,13 @@ export function FlyoutPanel({
       style={{ left: leftOffset, width: FLYOUT_WIDTH }}
     >
       <div className="flex h-full flex-col">
-        <div className="flex items-center justify-between border-b px-3 py-2">
-          <span className="font-medium text-sm">{title}</span>
+        <div className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
+          <span aria-hidden="true" className="size-6 shrink-0" />
+          <span className="min-w-0 flex-1 truncate text-center font-medium text-sm">
+            {title}
+          </span>
           <button
-            className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="size-6 shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             onClick={onCollapse}
             title="Collapse"
             type="button"
