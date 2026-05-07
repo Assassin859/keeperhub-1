@@ -54,7 +54,7 @@ export function getButtonLabel(
   if (planName === "enterprise") {
     return "Talk to us";
   }
-  return "Change plan";
+  return "Choose plan";
 }
 
 export function getExecutionsDisplay(

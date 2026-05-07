@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -46,13 +46,17 @@ export function OutputMappingSelector({
     value?.field ?? ""
   );
 
-  // Auto-select the last action node when no mapping exists
+  // Auto-select the last action node when no mapping exists. Runs in an effect
+  // so we don't update the parent's state during this component's render.
   const [autoSelected, setAutoSelected] = useState(false);
-  if (!autoSelected && !value && actionNodes.length > 0) {
-    const lastNode = actionNodes[actionNodes.length - 1];
-    onChange({ nodeId: lastNode.id, field: "" });
+  const lastActionNodeId = actionNodes.at(-1)?.id;
+  useEffect(() => {
+    if (autoSelected || value || !lastActionNodeId) {
+      return;
+    }
+    onChange({ nodeId: lastActionNodeId, field: "" });
     setAutoSelected(true);
-  }
+  }, [autoSelected, value, lastActionNodeId, onChange]);
 
   if (actionNodes.length === 0) {
     return (

@@ -5,9 +5,9 @@ argument-hint: <protocol-name-or-spec-file>
 
 <objective>
 Add a new KeeperHub protocol plugin. $ARGUMENTS is either:
-- A protocol name (e.g., "Aave", "Uniswap V3") -- pipeline will gather contract details
-- A file path ending in `.md` (e.g., `specs/my-protocol.md`) -- pipeline reads spec file for details
-- Empty -- pipeline will ask user what protocol to add
+- A protocol name (e.g., "Aave", "Uniswap V3"). Pipeline will gather contract details.
+- A file path ending in `.md` (e.g., `specs/my-protocol.md`). Pipeline reads spec file for details.
+- Empty. Pipeline will ask user what protocol to add.
 
 This command invokes the Orchestrator agent which runs the full Blueprint pipeline: DECOMPOSE -> RESEARCH -> IMPLEMENT -> VERIFY -> PR. The pipeline produces a complete, lint-clean, type-safe protocol definition in `protocols/` with tests and documentation.
 </objective>
@@ -36,7 +36,7 @@ Protocol Task: Add protocol "$ARGUMENTS" to KeeperHub
 
 Domain Reference: .claude/agents/protocol-domain.md
 
-Task Type: Protocol plugin creation (Tier 1 -- follows existing pattern)
+Task Type: Protocol plugin creation (Tier 1, follows existing pattern)
 
 Definition strategy:
 - DEFAULT: use `defineAbiProtocol()` with a reduced ABI at `protocols/abis/{slug}.json`. All new protocols use this pattern unless explicitly blocked.
@@ -44,17 +44,21 @@ Definition strategy:
 - For ERC-4626 vaults: keep using `defineProtocol()` + `erc4626VaultActions()` for the vault surface (no ABI-driven helper exists yet).
 
 Required artifacts:
-- protocols/{slug}.ts -- protocol definition using defineAbiProtocol() (or defineProtocol() fallback). Every input with a helpTip SHOULD also have a docUrl pointing to canonical protocol docs (enables click-through tooltips). See <field_tooltips> in protocol-domain.md.
-- protocols/abis/{slug}.json -- reduced ABI JSON file (ABI-driven path only; skip for fallback). Contains ONLY the functions exposed as actions.
-- tests/unit/protocol-{slug}.test.ts -- Vitest unit tests (shape + override integrity)
-- tests/integration/protocol-{slug}-onchain.test.ts -- Vitest on-chain integration tests. REQUIRED for all ABI-driven protocols. Gate on INTEGRATION_TEST_RPC_URL (Sepolia, default) or INTEGRATION_TEST_MAINNET_RPC_URL (mainnet-only protocols). One test per action: reads verify decodable output types, writes verify calldata encodes without ABI errors (business reverts are acceptable). See <test_structure> in protocol-domain.md for the full pattern and env-var matrix.
-- docs/plugins/{slug}.md -- documentation page
-- public/protocols/{slug}.png -- icon (if user provides one)
+- protocols/{slug}.ts: protocol definition using defineAbiProtocol() (or defineProtocol() fallback). Every input with a helpTip SHOULD also have a docUrl pointing to canonical protocol docs (enables click-through tooltips). See <field_tooltips> in protocol-domain.md.
+- protocols/abis/{slug}.json: reduced ABI JSON file (ABI-driven path only; skip for fallback). Contains ONLY the functions exposed as actions.
+- tests/unit/protocol-{slug}.test.ts: Vitest unit tests (shape + override integrity)
+- tests/integration/protocol-{slug}-onchain.test.ts: Vitest on-chain integration tests. REQUIRED for all ABI-driven protocols. Gate on INTEGRATION_TEST_RPC_URL (Sepolia, default) or INTEGRATION_TEST_MAINNET_RPC_URL (mainnet-only protocols). One test per action: reads verify decodable output types, writes verify calldata encodes without ABI errors (business reverts are acceptable). See <test_structure> in protocol-domain.md for the full pattern and env-var matrix.
+- docs/plugins/{slug}.md: documentation page
+- public/protocols/{slug}.png: icon (if user provides one)
 - Example workflows inserted into local DB via postgres MCP (test workflow per read action + up to 8-10 example workflows, scaled to protocol complexity)
 
+User-visible string formatting (HARD RULE):
+- The `description`, `label`, and `helpTip` fields on the protocol and on each action input/output appear in the KeeperHub UI. These strings MUST NOT contain em dashes (`—`) or double-hyphens (`--`). Use periods, colons, semicolons, or restructure the sentence. Hyphens inside compound words (e.g. `pro-rata`, `wei/sec`, `CFA+GDA`) are fine; the rule is specifically about the dash-as-clause-separator pattern.
+- This applies equally to action descriptions, output labels, and any free-form strings in the docs/plugins/{slug}.md page that ship with the protocol.
+
 Required modifications:
-- docs/plugins/_meta.ts -- add nav entry
-- docs/plugins/overview.md -- add to protocols table
+- docs/plugins/_meta.ts: add nav entry
+- docs/plugins/overview.md: add to protocols table
 - (auto-generated) protocols/index.ts
 - (auto-generated) lib/types/integration.ts
 
@@ -64,11 +68,11 @@ Research questions for the Researcher agent:
 - Does any existing ABI-driven protocol serve as a closer pattern than WETH?
 - Does the slug "{slug}" already exist in lib/types/integration.ts or protocols/?
 - Does the protocol have Sepolia testnet deployments? If yes, use INTEGRATION_TEST_RPC_URL. If no, use INTEGRATION_TEST_MAINNET_RPC_URL against chain 1.
-- Which chains in the protocol's contracts have explorer configs? (Only 1, 8453, 84532, 11155111 -- see protocol-domain.md)
-- **Chain scope confirmation (REQUIRED before Builder proceeds):** Compute the intersection of (a) chains where the protocol is deployed and (b) chains KeeperHub supports. Present this list to the user and get explicit confirmation before finalizing the `addresses` map. The chain selector auto-restricts to `Object.keys(contract.addresses)`, so any chain in the map becomes user-selectable -- and any user-selectable chain without a real deployment breaks workflows at runtime.
+- Which chains in the protocol's contracts have explorer configs? (Only 1, 8453, 84532, 11155111. See protocol-domain.md.)
+- **Chain scope confirmation (REQUIRED before Builder proceeds):** Compute the intersection of (a) chains where the protocol is deployed and (b) chains KeeperHub supports. Present this list to the user and get explicit confirmation before finalizing the `addresses` map. The chain selector auto-restricts to `Object.keys(contract.addresses)`, so any chain in the map becomes user-selectable, and any user-selectable chain without a real deployment breaks workflows at runtime.
 - **Docs URL discovery:** For each input that needs a helpTip, identify the most specific canonical docs URL (e.g. "supply" page, "borrow" page) from the protocol's official documentation. Prefer stable URLs (official docs) over blog posts. Pass these in the research report so the Builder can populate `docUrl` on overrides.
 - Are there unnamed ABI parameters (empty "name") that need `arg0`/`arg1` overrides?
-- Does any function require a pre-ABI-encode transform? (Almost always no -- see <encode_transforms> in protocol-domain.md.)
+- Does any function require a pre-ABI-encode transform? (Almost always no. See <encode_transforms> in protocol-domain.md.)
 - Does any read function return a struct/tuple? If so, document the component field names so users know what dotted paths are available (`result.fieldName`).
 
 Success criteria:

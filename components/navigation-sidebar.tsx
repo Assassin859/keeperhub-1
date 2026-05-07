@@ -4,6 +4,7 @@ import {
   BarChart3,
   Bookmark,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   DollarSign,
@@ -227,21 +228,35 @@ function ProjectsPanel({
   );
 }
 
+const UNTAGGED_KEY = "__untagged__";
+
 function TagsPanel({
   projectTags,
+  workflowsByTagId,
   untaggedWorkflows,
-  selectedTagId,
-  onSelectTag,
   activeWorkflowId,
   loading,
 }: {
   projectTags: Tag[];
+  workflowsByTagId: Record<string, WorkflowEntry[]>;
   untaggedWorkflows: WorkflowEntry[];
-  selectedTagId: string | null;
-  onSelectTag: (id: string) => void;
   activeWorkflowId: string | undefined;
   loading: boolean;
 }): React.ReactNode {
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+
+  const toggle = (key: string): void => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-8">
@@ -262,91 +277,82 @@ function TagsPanel({
 
   return (
     <div className="flex flex-col gap-0.5">
-      {projectTags.length > 0 && (
-        <p className="px-2 pt-1 pb-1.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">
-          Tags
-        </p>
-      )}
-      {projectTags.map((tag) => {
-        const isActive = tag.id === selectedTagId;
+      {projectTags.map((tag, index) => {
+        const tagWorkflows = workflowsByTagId[tag.id] ?? [];
+        const isCollapsed = collapsed.has(tag.id);
         return (
-          <button
-            className={cn(
-              "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted",
-              isActive && "bg-muted"
-            )}
-            key={tag.id}
-            onClick={() => onSelectTag(tag.id)}
-            type="button"
-          >
-            <span
-              className="inline-block size-2 shrink-0 rounded-full"
-              style={{ backgroundColor: tag.color }}
-            />
-            <span className="truncate">{tag.name}</span>
-            <span className="ml-auto text-muted-foreground text-xs">
-              {tag.workflowCount}
-            </span>
-          </button>
+          <div className="flex flex-col gap-0.5" key={tag.id}>
+            {index > 0 && <div className="my-1 border-t" />}
+            <button
+              aria-expanded={!isCollapsed}
+              className="flex w-full items-center gap-2 rounded-md px-2 pt-1 pb-1.5 text-left font-medium text-muted-foreground text-xs uppercase tracking-wider transition-colors hover:bg-muted hover:text-foreground"
+              onClick={() => toggle(tag.id)}
+              type="button"
+            >
+              {isCollapsed ? (
+                <ChevronRight className="size-3 shrink-0" />
+              ) : (
+                <ChevronDown className="size-3 shrink-0" />
+              )}
+              <span
+                className="inline-block size-2 shrink-0 rounded-full"
+                style={{ backgroundColor: tag.color }}
+              />
+              <span className="truncate">{tag.name}</span>
+              <span className="ml-auto normal-case tracking-normal">
+                {tag.workflowCount}
+              </span>
+            </button>
+            {!isCollapsed &&
+              tagWorkflows.map((w) => (
+                <WorkflowItem
+                  activeWorkflowId={activeWorkflowId}
+                  key={w.id}
+                  workflow={w}
+                />
+              ))}
+          </div>
         );
       })}
       {untaggedWorkflows.length > 0 && (
         <>
-          {projectTags.length > 0 && (
-            <>
-              <div className="my-1 border-t" />
-              <p className="px-2 pt-1 pb-1.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">
-                Other Workflows
-              </p>
-            </>
-          )}
-          {untaggedWorkflows.map((w) => (
-            <WorkflowItem
-              activeWorkflowId={activeWorkflowId}
-              key={w.id}
-              workflow={w}
-            />
-          ))}
+          {projectTags.length > 0 && <div className="my-1 border-t" />}
+          {(() => {
+            const showHeader = projectTags.length > 0;
+            const isCollapsed = showHeader && collapsed.has(UNTAGGED_KEY);
+            return (
+              <>
+                {showHeader && (
+                  <button
+                    aria-expanded={!isCollapsed}
+                    className="flex w-full items-center gap-2 rounded-md px-2 pt-1 pb-1.5 text-left font-medium text-muted-foreground text-xs uppercase tracking-wider transition-colors hover:bg-muted hover:text-foreground"
+                    onClick={() => toggle(UNTAGGED_KEY)}
+                    type="button"
+                  >
+                    {isCollapsed ? (
+                      <ChevronRight className="size-3 shrink-0" />
+                    ) : (
+                      <ChevronDown className="size-3 shrink-0" />
+                    )}
+                    <span className="truncate">Untagged</span>
+                    <span className="ml-auto normal-case tracking-normal">
+                      {untaggedWorkflows.length}
+                    </span>
+                  </button>
+                )}
+                {!isCollapsed &&
+                  untaggedWorkflows.map((w) => (
+                    <WorkflowItem
+                      activeWorkflowId={activeWorkflowId}
+                      key={w.id}
+                      workflow={w}
+                    />
+                  ))}
+              </>
+            );
+          })()}
         </>
       )}
-    </div>
-  );
-}
-
-function WorkflowsPanel({
-  workflows,
-  activeWorkflowId,
-  loading,
-}: {
-  workflows: WorkflowEntry[];
-  activeWorkflowId: string | undefined;
-  loading: boolean;
-}): React.ReactNode {
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-8">
-        <Loader2 className="size-5 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  if (workflows.length === 0) {
-    return (
-      <p className="py-4 text-center text-muted-foreground text-sm">
-        No workflows
-      </p>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-0.5">
-      {workflows.map((w) => (
-        <WorkflowItem
-          activeWorkflowId={activeWorkflowId}
-          key={w.id}
-          workflow={w}
-        />
-      ))}
     </div>
   );
 }
@@ -363,8 +369,8 @@ function SidebarHeader({
   return (
     <div
       className={cn(
-        "flex items-center overflow-hidden border-b",
-        expanded ? "px-3 py-2" : "relative justify-center pr-0.5 pt-3 pb-2"
+        "flex h-12 shrink-0 items-center overflow-hidden border-b",
+        expanded ? "px-3" : "relative justify-center pr-0.5"
       )}
     >
       <button
@@ -696,7 +702,6 @@ export function NavigationSidebar(): React.ReactNode {
   // Derived data
   const { byProject, ungrouped } = groupWorkflows(visibleWorkflows);
   const selectedProjectId = navState.state.selectedProjectId;
-  const selectedTagId = navState.state.selectedTagId;
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
   const projectWorkflows = byProject[selectedProjectId ?? ""] ?? [];
   const projectTagIds = new Set(
@@ -704,9 +709,6 @@ export function NavigationSidebar(): React.ReactNode {
   );
   const projectTags = tags.filter((t) => projectTagIds.has(t.id));
   const untaggedWorkflows = projectWorkflows.filter((w) => !w.tagId);
-  const tagWorkflows = projectWorkflows.filter((w) =>
-    selectedTagId === "__untagged__" ? !w.tagId : w.tagId === selectedTagId
-  );
 
   // Update tag workflow counts for the project context
   const projectTagsWithCounts = projectTags.map((t) => ({
@@ -714,10 +716,12 @@ export function NavigationSidebar(): React.ReactNode {
     workflowCount: projectWorkflows.filter((w) => w.tagId === t.id).length,
   }));
 
-  const selectedTag =
-    selectedTagId === "__untagged__"
-      ? { name: "Untagged" }
-      : tags.find((t) => t.id === selectedTagId);
+  const projectWorkflowsByTagId: Record<string, WorkflowEntry[]> = {};
+  for (const w of projectWorkflows) {
+    if (w.tagId) {
+      (projectWorkflowsByTagId[w.tagId] ??= []).push(w);
+    }
+  }
 
   const showLabels = currentWidth >= SNAP_THRESHOLD;
   const offsets = computePanelOffsets(currentWidth, navState.state.panels);
@@ -829,21 +833,6 @@ export function NavigationSidebar(): React.ReactNode {
     navState.setSelectedTag(null);
     navState.setPanelState("tags", "open");
     navState.setPanelState("workflows", "closed");
-  }
-
-  function handleSelectTag(id: string): void {
-    if (id === selectedTagId) {
-      // Re-clicking same tag toggles workflows panel
-      if (navState.state.panels.workflows === "closed") {
-        navState.setSelectedTag(id);
-        navState.setPanelState("workflows", "open");
-      } else {
-        navState.setPanelState("workflows", "closed");
-      }
-      return;
-    }
-    navState.setSelectedTag(id);
-    navState.setPanelState("workflows", "open");
   }
 
   // NAV-01: render every nav item for everyone (anonymous, signed-out, signed-in).
@@ -990,11 +979,11 @@ export function NavigationSidebar(): React.ReactNode {
         </div>
       </div>
 
-      {/* Panel 1: Projects */}
+      {/* Panel 1: Workflows (lists projects + ungrouped workflows) */}
       <FlyoutPanel
         accentColor={selectedProject?.color ?? undefined}
         collapsedLabel={
-          selectedProject ? `Projects - ${selectedProject.name}` : "Projects"
+          selectedProject ? `Workflows - ${selectedProject.name}` : "Workflows"
         }
         leftOffset={offsets.projects}
         onCollapse={() => navState.setPanelState("projects", "collapsed")}
@@ -1014,41 +1003,23 @@ export function NavigationSidebar(): React.ReactNode {
         />
       </FlyoutPanel>
 
-      {/* Panel 2: Tags */}
+      {/* Panel 2: Projects (workflows in a project, grouped by tag subheader) */}
       <FlyoutPanel
-        collapsedLabel={selectedTag ? `Tags - ${selectedTag.name}` : "Tags"}
+        collapsedLabel={
+          selectedProject ? `Projects - ${selectedProject.name}` : "Projects"
+        }
         leftOffset={offsets.tags}
         onCollapse={() => navState.setPanelState("tags", "collapsed")}
         onExpand={() => navState.setPanelState("tags", "open")}
         state={navState.state.panels.tags}
-        title={selectedProject?.name ?? "Tags"}
+        title={selectedProject?.name ?? "Projects"}
       >
         <TagsPanel
           activeWorkflowId={workflowId}
           loading={dataLoading}
-          onSelectTag={handleSelectTag}
           projectTags={projectTagsWithCounts}
-          selectedTagId={selectedTagId}
           untaggedWorkflows={untaggedWorkflows}
-        />
-      </FlyoutPanel>
-
-      {/* Panel 3: Workflows */}
-      <FlyoutPanel
-        collapsedLabel={(() => {
-          const wf = tagWorkflows.find((w) => w.id === workflowId);
-          return wf ? `Workflows - ${wf.name}` : "Workflows";
-        })()}
-        leftOffset={offsets.workflows}
-        onCollapse={() => navState.setPanelState("workflows", "collapsed")}
-        onExpand={() => navState.setPanelState("workflows", "open")}
-        state={navState.state.panels.workflows}
-        title={selectedTag?.name ?? "Workflows"}
-      >
-        <WorkflowsPanel
-          activeWorkflowId={workflowId}
-          loading={dataLoading}
-          workflows={tagWorkflows}
+          workflowsByTagId={projectWorkflowsByTagId}
         />
       </FlyoutPanel>
 

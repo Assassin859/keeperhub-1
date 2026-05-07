@@ -70,7 +70,7 @@ function mapListingError(
       {
         error: "INPUT_SCHEMA_REQUIRED",
         message:
-          'Listed workflows must declare an `inputSchema`. Set it to a JSON-schema-shaped object — `{"type": "object"}` is fine for workflows that take no inputs.',
+          'Listed workflows must declare an `inputSchema`. Set it to a JSON-schema-shaped object (`{"type": "object"}` is fine for workflows that take no inputs).',
       },
       { status: 422 }
     );

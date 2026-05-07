@@ -242,7 +242,7 @@ export default defineProtocol({
   name: "Superfluid",
   slug: "superfluid",
   description:
-    "Programmable streaming payments -- open per-second money streams between addresses, distribute pro-rata to pool members, and wrap/unwrap SuperTokens",
+    "Programmable streaming payments: open per-second money streams between addresses, distribute pro-rata to pool members, and wrap/unwrap SuperTokens",
   website: "https://superfluid.org",
   icon: "/protocols/superfluid.png",
 
@@ -382,7 +382,7 @@ export default defineProtocol({
       slug: "get-cfa-net-flow",
       label: "Read CFA Net Flow Rate of an Address",
       description:
-        "Read an address's net flow rate from CFA streams only (positive = net receiver, negative = net sender). Excludes GDA pool distributions -- use get-net-flow for the combined CFA+GDA reading.",
+        "Read an address's net flow rate from CFA streams only (positive = net receiver, negative = net sender). Excludes GDA pool distributions. Use get-net-flow for the combined CFA+GDA reading.",
       type: "read",
       contract: "cfaForwarder",
       function: "getAccountFlowrate",
@@ -422,7 +422,7 @@ export default defineProtocol({
       slug: "create-pool",
       label: "Create Distribution Pool",
       description:
-        "Create a GDA distribution pool with the supplied address as administrator. The new pool address is emitted in the PoolCreated event -- chain a web3.query-events call after this action filtered by the returned tx hash to capture it.",
+        "Create a GDA distribution pool with the supplied address as administrator. The new pool address is emitted in the PoolCreated event. Chain a web3.query-events call after this action filtered by the returned tx hash to capture it.",
       type: "write",
       contract: "gdaForwarder",
       function: "createPool",

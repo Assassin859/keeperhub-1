@@ -210,8 +210,8 @@ export function WorkflowIOOverlay({
               <span className="font-medium text-foreground">{fileName}</span>
               {parsedFile.integrationBindings.length > 0 && (
                 <>
-                  {" "}
-                  -- {parsedFile.integrationBindings.length} integration
+                  {". "}
+                  {parsedFile.integrationBindings.length} integration
                   {parsedFile.integrationBindings.length === 1 ? "" : "s"} need
                   to be reconnected after import.
                 </>

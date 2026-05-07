@@ -488,7 +488,7 @@ export async function PATCH(
           {
             error: "INPUT_SCHEMA_REQUIRED",
             message:
-              'Listed workflows must declare an `inputSchema`. Set it to a JSON-schema-shaped object — `{"type": "object"}` is fine for workflows that take no inputs — or unlist the workflow before saving these changes.',
+              'Listed workflows must declare an `inputSchema`. Set it to a JSON-schema-shaped object (`{"type": "object"}` is fine for workflows that take no inputs), or unlist the workflow before saving these changes.',
           },
           { status: 422 }
         );
