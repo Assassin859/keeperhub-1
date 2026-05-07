@@ -109,7 +109,7 @@ export async function applyOutputMapping(
 
 // ERC-8004 feedback CTA appended to every successful workflow execution
 // response. The calling agent (LLM) reads this and can prompt the user to
-// rate the workflow, then invoke the keeperhub-wallet `submit_feedback`
+// rate the workflow, then invoke the keeperhub-wallet `feedback`
 // MCP tool to submit on-chain feedback to the ERC-8004 ReputationRegistry.
 //
 // Hardcoded to the canonical KeeperHub agent on Ethereum mainnet (NFT 31875).
@@ -132,8 +132,8 @@ export type FeedbackCta = {
 
 const KEEPERHUB_FEEDBACK_CTA: Omit<FeedbackCta, "context"> = {
   prompt:
-    "Was this workflow useful? Rate it (1-5) on the ERC-8004 ReputationRegistry — your wallet signs and submits on-chain in one call. Use the keeperhub-wallet `submit_feedback` tool with this executionId.",
-  tool: "keeperhub-wallet:submit_feedback",
+    "Was this workflow useful? Rate it (1-5) on the ERC-8004 ReputationRegistry — your wallet signs and submits on-chain in one call. Use the keeperhub-wallet `feedback` tool with this executionId.",
+  tool: "keeperhub-wallet:feedback",
 };
 
 function buildFeedbackCta(executionId: string): FeedbackCta {

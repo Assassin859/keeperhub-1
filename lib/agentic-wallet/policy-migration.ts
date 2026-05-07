@@ -109,14 +109,16 @@ export async function reconcileBaselinePolicies(args: {
       actions.push({ action: "noop", policyName: baseline.policyName });
       continue;
     }
-    // Replace (delete + create). Order matters: create FIRST so we never
-    // leave the sub-org without coverage between calls. If create succeeds
-    // but delete fails, we have a duplicate policy under the same name --
-    // Turnkey's listPolicies will surface both, and a re-run picks the
-    // first match arbitrarily. To avoid that pile-up, delete first ONLY
-    // when the create-first path is impossible (it isn't here -- Turnkey
-    // permits multiple policies with the same name, so create-first is
-    // safe). Net: brief duplicate, never a gap.
+    // Replace (delete + create). Turnkey rejects duplicate policy names
+    // ("policy label must be unique") on the v1 createPolicy API, so we
+    // CANNOT create-before-delete. We accept a brief coverage gap between
+    // delete and create. If create fails after delete succeeds, the caller
+    // MUST retry -- the throw propagates out of this function so the
+    // operator script surfaces it.
+    await client.deletePolicy({
+      organizationId: subOrgId,
+      policyId: existing.policyId,
+    });
     const created = (await client.createPolicy({
       organizationId: subOrgId,
       policyName: baseline.policyName,
@@ -125,10 +127,6 @@ export async function reconcileBaselinePolicies(args: {
       consensus: "true",
       notes: baseline.notes,
     })) as unknown as { policyId?: string };
-    await client.deletePolicy({
-      organizationId: subOrgId,
-      policyId: existing.policyId,
-    });
     actions.push({
       action: "replace",
       policyName: baseline.policyName,
