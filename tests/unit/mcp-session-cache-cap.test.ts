@@ -167,4 +167,64 @@ describe("mcp/sessions cache caps", () => {
     expect(sessions.getSessionStats().maxPerKey).toBe(7);
     expect(sessions.getSessionStats().maxTotal).toBe(42);
   });
+
+  it("re-setting an existing sessionId closes the previous transport and server", async () => {
+    const sessions = await loadSessions({ perKey: 5, total: 100 });
+    sessions.resetSessionCacheForTesting();
+
+    const oldSpies: CloseSpies = {
+      transportClose: vi.fn(() => Promise.resolve()),
+      serverClose: vi.fn(() => Promise.resolve()),
+    };
+    sessions.setSession("s1", makeEntry("org-a", "key-A", oldSpies));
+    sessions.setSession("s1", makeEntry("org-a", "key-A"));
+
+    expect(oldSpies.transportClose).toHaveBeenCalledTimes(1);
+    expect(oldSpies.serverClose).toHaveBeenCalledTimes(1);
+    expect(sessions.getSession("s1")).toBeDefined();
+    expect(sessions.getSessionStats().size).toBe(1);
+    expect(sessions.getSessionStats().keyCount).toBe(1);
+  });
+
+  it("cleanupExpiredSessions removes entries from sessionsByKey too", async () => {
+    const sessions = await loadSessions({ perKey: 5, total: 100 });
+    sessions.resetSessionCacheForTesting();
+
+    sessions.setSession("s1", makeEntry("org-a", "key-A"));
+    sessions.setSession("s2", makeEntry("org-b", "key-B"));
+
+    // Force both entries past TTL by mutating the stored references directly.
+    const expiredAt = Date.now() - sessions.SESSION_TTL_MS - 1;
+    const s1 = sessions.getSession("s1");
+    const s2 = sessions.getSession("s2");
+    if (s1 !== undefined) {
+      s1.lastActivity = expiredAt;
+    }
+    if (s2 !== undefined) {
+      s2.lastActivity = expiredAt;
+    }
+
+    sessions.cleanupExpiredSessions();
+
+    expect(sessions.getSession("s1")).toBeUndefined();
+    expect(sessions.getSession("s2")).toBeUndefined();
+    expect(sessions.getSessionStats().size).toBe(0);
+    expect(sessions.getSessionStats().keyCount).toBe(0);
+  });
+
+  it("per-key eviction does not cascade into a global eviction", async () => {
+    // Both caps simultaneously satisfied, then a third add for the same
+    // key should drop only s1 (per-key) and leave s2 (global) intact.
+    const sessions = await loadSessions({ perKey: 2, total: 2 });
+    sessions.resetSessionCacheForTesting();
+
+    sessions.setSession("s1", makeEntry("org-a", "key-A"));
+    sessions.setSession("s2", makeEntry("org-a", "key-A"));
+    sessions.setSession("s3", makeEntry("org-a", "key-A"));
+
+    expect(sessions.getSession("s1")).toBeUndefined();
+    expect(sessions.getSession("s2")).toBeDefined();
+    expect(sessions.getSession("s3")).toBeDefined();
+    expect(sessions.getSessionStats().size).toBe(2);
+  });
 });

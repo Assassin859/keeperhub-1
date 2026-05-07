@@ -48,6 +48,20 @@ export function getSession(sessionId: string): SessionEntry | undefined {
 }
 
 export function setSession(sessionId: string, entry: SessionEntry): void {
+  // Close any prior entry under the same sessionId before we overwrite, so
+  // the old transport and server are released instead of leaked. In
+  // production same sessionId implies same apiKeyId (both derive from the
+  // JWT), but if they ever diverge, also drop the orphan from the old
+  // key's bucket.
+  const previousEntry = localCache.get(sessionId);
+  if (previousEntry !== undefined && previousEntry !== entry) {
+    previousEntry.server.close().catch(() => undefined);
+    previousEntry.transport.close().catch(() => undefined);
+    if (previousEntry.apiKeyId !== entry.apiKeyId) {
+      removeFromKeyBucket(previousEntry.apiKeyId, sessionId);
+    }
+  }
+
   const existingBucket = sessionsByKey.get(entry.apiKeyId);
   if (
     existingBucket !== undefined &&
@@ -131,6 +145,7 @@ function evict(sessionId: string, reason: "per_key_cap" | "global_cap"): void {
   logMcpEvent("mcp.session.evicted", {
     sessionId,
     orgId: entry.organizationId,
+    apiKeyId: entry.apiKeyId,
     reason,
   });
 }
