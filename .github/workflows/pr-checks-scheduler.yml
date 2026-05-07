@@ -12,9 +12,26 @@ on:
       - ".github/workflows/pr-checks-scheduler.yml"
       - ".github/actions/setup-scheduler-deps/**"
 
+# Cancel superseded runs on new pushes to the same PR branch. PR checks
+# are advisory; the latest commit is the only one that matters. Mirrors
+# the convention in deploy-scheduler.yaml (which uses
+# cancel-in-progress: false because deploys must not interrupt themselves).
+concurrency:
+  group: pr-checks-scheduler-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Default GHA token grants more than this workflow needs. Restrict to
+# read-only contents access; no job here writes to the repo, comments on
+# the PR, or pushes packages.
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
+    # Local runs complete in <30s; 5min cap surfaces hangs (network,
+    # registry stalls) without burning the default 6h GHA budget.
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-scheduler-deps
@@ -24,6 +41,7 @@ jobs:
 
   typecheck:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-scheduler-deps
@@ -33,6 +51,7 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-scheduler-deps
@@ -44,6 +63,7 @@ jobs:
 
   test-unit:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-scheduler-deps
