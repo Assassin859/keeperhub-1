@@ -230,7 +230,7 @@ describe("buildCallCompletionResponse (KEEP-265)", () => {
       // KeeperHub's own ERC-8004 agent (NFT 31875 on Ethereum mainnet).
       feedback: {
         prompt: expect.stringContaining("ERC-8004"),
-        tool: "keeperhub-wallet:submit_feedback",
+        tool: "keeperhub-wallet:feedback",
         context: {
           executionId: "exec-success",
           agent: {

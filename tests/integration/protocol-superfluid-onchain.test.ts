@@ -38,6 +38,9 @@ const RPC_URL = process.env.INTEGRATION_TEST_RPC_URL;
 const CHAIN_ID = "11155111";
 const SEPOLIA_CHAIN_ID = 11_155_111;
 const TEST_ADDRESS = "0x0000000000000000000000000000000000000001";
+// Distinct from TEST_ADDRESS: estimateGas runs with `from: TEST_ADDRESS`,
+// and Superfluid's CFA rejects sender == flowOperator (self-grant).
+const TEST_OPERATOR = "0x0000000000000000000000000000000000000002";
 
 // fUSDCx on Sepolia. The forwarders validate the token argument against the
 // Superfluid host registry and revert for unknown addresses, so reads need
@@ -337,17 +340,24 @@ describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
     expect(msg).not.toMatch(ENCODING_ERROR_RE);
   }, 15_000);
 
-  it("grant-flow-operator: encodes (address, uint8, int96) against superToken.updateFlowOperatorPermissions", async () => {
-    const msg = await estimateGasError(
-      "grant-flow-operator",
-      {
-        flowOperator: TEST_ADDRESS,
-        permissions: DUMMY_PERMISSIONS_ALL,
-        flowRateAllowance: DUMMY_FLOW_RATE,
-      },
-      SEPOLIA_FUSDCX
-    );
-    expect(msg).not.toMatch(ENCODING_ERROR_RE);
+  it("grant-flow-operator: simulates successfully against cfaForwarder.updateFlowOperatorPermissions", async () => {
+    // KEEP-456: routed through the CFAv1Forwarder, not the SuperToken proxy.
+    // Asserts the call actually simulates (estimateGas returns) -- the previous
+    // "tolerate any revert" pattern hid a routing bug because the SuperToken's
+    // proxy reverts on the Sepolia fUSDCx test token. The CFAv1Forwarder is
+    // the canonical entry point and works for any registered SuperToken.
+    //
+    // Note: this on-chain test is gated on INTEGRATION_TEST_RPC_URL and
+    // skipped in CI. The CI-side regression guard for the routing change
+    // lives in tests/unit/superfluid-protocol.test.ts ("grant-flow-operator
+    // action" describe block, asserting `contract === "cfaForwarder"`).
+    const msg = await estimateGasError("grant-flow-operator", {
+      token: SEPOLIA_FUSDCX,
+      flowOperator: TEST_OPERATOR,
+      permissions: DUMMY_PERMISSIONS_ALL,
+      flowRateAllowance: DUMMY_FLOW_RATE,
+    });
+    expect(msg).toBe("");
   }, 15_000);
 
   // -- Coverage check ------------------------------------------------------
