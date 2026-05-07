@@ -1,224 +1,418 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  type MockInstance,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
-// Mock dependencies before importing the module
-vi.mock("@aws-sdk/client-sqs", () => ({
-  SQSClient: vi.fn().mockImplementation(() => ({
+// Mock the sqs-client module so importing dispatch.ts does not instantiate
+// a real SQS client. The mock object's `send` is replaced per-test via
+// vi.mocked(sqs.send) so each test can choose its own behavior.
+vi.mock("../../lib/sqs-client.js", () => ({
+  sqs: {
     send: vi.fn(),
-  })),
-  SendMessageCommand: vi.fn().mockImplementation((input) => input),
+  },
 }));
 
-vi.mock("drizzle-orm/postgres-js", () => ({
-  drizzle: vi.fn().mockReturnValue({
-    select: vi.fn(),
-  }),
-}));
+import { sqs } from "../../lib/sqs-client.js";
+import {
+  dispatch,
+  fetchSchedules,
+  sendToQueue,
+  shouldTriggerNow,
+} from "../../schedule-dispatcher/dispatch.js";
 
-vi.mock("postgres", () => ({
-  default: vi.fn().mockReturnValue({
-    end: vi.fn(),
-  }),
-}));
+const mockedSqsSend = vi.mocked(sqs.send);
 
-// Test the shouldTriggerNow logic directly
-describe("schedule-dispatcher", () => {
-  describe("shouldTriggerNow logic", () => {
-    beforeEach(() => {
-      vi.useFakeTimers();
+// Silence the dispatcher's console output -- every dispatch run logs
+// half a dozen lines per schedule. Restore in afterEach so test failures
+// keep their stack traces visible.
+let consoleLogSpy: MockInstance;
+let consoleErrorSpy: MockInstance;
+
+beforeEach(() => {
+  consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {
+    /* swallow */
+  });
+  consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {
+    /* swallow */
+  });
+  mockedSqsSend.mockReset();
+});
+
+afterEach(() => {
+  consoleLogSpy.mockRestore();
+  consoleErrorSpy.mockRestore();
+  vi.unstubAllGlobals();
+});
+
+describe("shouldTriggerNow", () => {
+  it("returns true when prev() is within the current minute", () => {
+    // 9:00:01 UTC -- prev() of "0 9 * * *" returns 9:00:00, diff=1s.
+    const now = new Date("2024-01-15T09:00:01Z");
+    expect(shouldTriggerNow("0 9 * * *", "UTC", now)).toBe(true);
+  });
+
+  it("returns true at 30 seconds into the matching minute", () => {
+    const now = new Date("2024-01-15T09:00:30Z");
+    expect(shouldTriggerNow("0 9 * * *", "UTC", now)).toBe(true);
+  });
+
+  it("returns false at 60 seconds (window is exclusive)", () => {
+    // At 9:01:00, diff from 9:00:00 is exactly 60_000ms -- not < 60_000.
+    const now = new Date("2024-01-15T09:01:00Z");
+    expect(shouldTriggerNow("0 9 * * *", "UTC", now)).toBe(false);
+  });
+
+  it("returns false outside the matching minute", () => {
+    const now = new Date("2024-01-15T08:30:00Z");
+    expect(shouldTriggerNow("0 9 * * *", "UTC", now)).toBe(false);
+  });
+
+  it("matches at every minute for '* * * * *'", () => {
+    const at = (s: string): Date => new Date(s);
+    expect(
+      shouldTriggerNow("* * * * *", "UTC", at("2024-01-15T14:37:01Z")),
+    ).toBe(true);
+    expect(
+      shouldTriggerNow("* * * * *", "UTC", at("2024-01-15T03:00:30Z")),
+    ).toBe(true);
+  });
+
+  it("matches an hourly cron at the top of the hour", () => {
+    expect(
+      shouldTriggerNow("0 * * * *", "UTC", new Date("2024-01-15T14:00:01Z")),
+    ).toBe(true);
+    expect(
+      shouldTriggerNow("0 * * * *", "UTC", new Date("2024-01-15T14:30:00Z")),
+    ).toBe(false);
+  });
+
+  it("respects the timezone parameter (NY 9am = 14:00 UTC in January)", () => {
+    // EST is UTC-5 in January, so 9 AM NY == 14:00 UTC.
+    expect(
+      shouldTriggerNow(
+        "0 9 * * *",
+        "America/New_York",
+        new Date("2024-01-15T14:00:01Z"),
+      ),
+    ).toBe(true);
+    // 9 AM UTC is not 9 AM NY -- should not trigger.
+    expect(
+      shouldTriggerNow(
+        "0 9 * * *",
+        "America/New_York",
+        new Date("2024-01-15T09:00:00Z"),
+      ),
+    ).toBe(false);
+  });
+
+  it("returns false and logs on an invalid cron expression", () => {
+    const now = new Date("2024-01-15T09:00:00Z");
+    expect(shouldTriggerNow("not a cron", "UTC", now)).toBe(false);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Invalid cron expression: not a cron"),
+      expect.anything(),
+    );
+  });
+
+  it("respects day-of-week constraints", () => {
+    // 2024-01-15 is a Monday at 9:00:01.
+    const monday = new Date("2024-01-15T09:00:01Z");
+    expect(shouldTriggerNow("0 9 * * 1", "UTC", monday)).toBe(true);
+    // Tuesday-only cron should not match on Monday.
+    expect(shouldTriggerNow("0 9 * * 2", "UTC", monday)).toBe(false);
+  });
+
+  it("respects step values", () => {
+    // Every 15 minutes -- triggers at :00, :15, :30, :45 (+1s).
+    expect(
+      shouldTriggerNow("*/15 * * * *", "UTC", new Date("2024-01-15T09:00:01Z")),
+    ).toBe(true);
+    expect(
+      shouldTriggerNow("*/15 * * * *", "UTC", new Date("2024-01-15T09:15:01Z")),
+    ).toBe(true);
+    // :10 is mid-window -- prev() returns :00, diff is ~10min -> false.
+    expect(
+      shouldTriggerNow("*/15 * * * *", "UTC", new Date("2024-01-15T09:10:01Z")),
+    ).toBe(false);
+  });
+});
+
+describe("fetchSchedules", () => {
+  it("returns the schedules array on a 200 response", async () => {
+    const schedules = [
+      {
+        id: "s1",
+        workflowId: "w1",
+        cronExpression: "* * * * *",
+        timezone: "UTC",
+      },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ schedules }),
+      }),
+    );
+
+    await expect(fetchSchedules()).resolves.toEqual(schedules);
+  });
+
+  it("returns an empty array when the API returns no schedules", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ schedules: [] }),
+      }),
+    );
+
+    await expect(fetchSchedules()).resolves.toEqual([]);
+  });
+
+  it("throws including the status and body on a non-2xx response", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 503,
+        text: async () => "service unavailable",
+      }),
+    );
+
+    await expect(fetchSchedules()).rejects.toThrow(
+      /Failed to fetch schedules: 503 service unavailable/,
+    );
+  });
+
+  it("calls fetch with the schedules path and X-Service-Key header", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ schedules: [] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchSchedules();
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toMatch(/\/api\/internal\/schedules$/);
+    expect(init).toMatchObject({
+      method: "GET",
+      headers: expect.objectContaining({ "X-Service-Key": expect.any(String) }),
+    });
+  });
+});
+
+describe("sendToQueue", () => {
+  it("sends one SQS message with the correct body and attributes", async () => {
+    mockedSqsSend.mockResolvedValue({} as never);
+
+    await sendToQueue({
+      workflowId: "wf-1",
+      scheduleId: "sched-1",
+      triggerTime: "2024-01-15T09:00:00.000Z",
+      triggerType: "schedule",
     });
 
-    afterEach(() => {
-      vi.useRealTimers();
+    expect(mockedSqsSend).toHaveBeenCalledOnce();
+    const command = mockedSqsSend.mock.calls[0][0] as {
+      input: {
+        QueueUrl: string;
+        MessageBody: string;
+        MessageAttributes: Record<
+          string,
+          { DataType: string; StringValue: string }
+        >;
+      };
+    };
+    expect(command.input.QueueUrl).toBeTruthy();
+    expect(JSON.parse(command.input.MessageBody)).toEqual({
+      workflowId: "wf-1",
+      scheduleId: "sched-1",
+      triggerTime: "2024-01-15T09:00:00.000Z",
+      triggerType: "schedule",
     });
-
-    // Recreate the shouldTriggerNow logic for testing
-    // This matches the logic in schedule-dispatcher.ts
-    function shouldTriggerNow(
-      cronExpression: string,
-      timezone: string,
-      now: Date,
-    ): boolean {
-      const { CronExpressionParser } = require("cron-parser");
-      try {
-        // Parse with current time
-        const interval = CronExpressionParser.parse(cronExpression, {
-          currentDate: now,
-          tz: timezone,
-        });
-
-        // Get the previous occurrence from the current time
-        const prev = interval.prev().toDate();
-        const diffMs = now.getTime() - prev.getTime();
-
-        // The prev() returns the most recent match before/at currentDate
-        // If we're exactly at 9:00:00, prev() returns the previous 9:00 (yesterday)
-        // So we need to check if we're within 60 seconds of a match
-        // But the actual check is: is the previous match within the current minute?
-        return diffMs >= 0 && diffMs < 60_000;
-      } catch {
-        return false;
-      }
-    }
-
-    // The actual behavior: prev() goes to BEFORE currentDate
-    // So at exactly 9:00:00, it returns 9:00 from the previous occurrence (yesterday for daily)
-    // The dispatcher logic checks if the diff is < 60 seconds
-    // This means we need to test 1 second AFTER the cron time to catch it within the window
-
-    it("returns true when cron matches current minute", () => {
-      // Set time to 9:00:01 AM - prev() returns 9:00:00 which is 1 second ago
-      // This is within the 60 second window
-      const now = new Date("2024-01-15T09:00:01Z");
-      vi.setSystemTime(now);
-
-      const result = shouldTriggerNow("0 9 * * *", "UTC", now);
-      expect(result).toBe(true);
+    expect(command.input.MessageAttributes.TriggerType).toEqual({
+      DataType: "String",
+      StringValue: "schedule",
     });
-
-    it("returns true when within the same minute", () => {
-      // Set time to 9:00:30 (30 seconds into the minute)
-      const now = new Date("2024-01-15T09:00:30Z");
-      vi.setSystemTime(now);
-
-      const result = shouldTriggerNow("0 9 * * *", "UTC", now);
-      expect(result).toBe(true);
-    });
-
-    it("returns false when cron does not match current minute", () => {
-      // Set time to 8:30 AM
-      const now = new Date("2024-01-15T08:30:00Z");
-      vi.setSystemTime(now);
-
-      const result = shouldTriggerNow("0 9 * * *", "UTC", now);
-      expect(result).toBe(false);
-    });
-
-    it("returns true for every-minute cron at any time", () => {
-      // At 14:37:01, prev() returns 14:37:00 which is 1 second ago
-      const now = new Date("2024-01-15T14:37:01Z");
-      vi.setSystemTime(now);
-
-      const result = shouldTriggerNow("* * * * *", "UTC", now);
-      expect(result).toBe(true);
-    });
-
-    it("returns true for hourly cron at the start of each hour", () => {
-      // At 14:00:01, prev() returns 14:00:00 which is 1 second ago
-      const now = new Date("2024-01-15T14:00:01Z");
-      vi.setSystemTime(now);
-
-      const result = shouldTriggerNow("0 * * * *", "UTC", now);
-      expect(result).toBe(true);
-    });
-
-    it("returns false for hourly cron at minute 30", () => {
-      const now = new Date("2024-01-15T14:30:00Z");
-      vi.setSystemTime(now);
-
-      const result = shouldTriggerNow("0 * * * *", "UTC", now);
-      expect(result).toBe(false);
-    });
-
-    it("handles timezone correctly - New York 9am", () => {
-      // 9:00 AM EST = 2:00 PM UTC (January, EST is UTC-5)
-      // At 14:00:01 UTC, prev() returns 14:00:00 UTC (9:00 AM EST) which is 1 second ago
-      const now = new Date("2024-01-15T14:00:01Z");
-      vi.setSystemTime(now);
-
-      const result = shouldTriggerNow("0 9 * * *", "America/New_York", now);
-      expect(result).toBe(true);
-    });
-
-    it("handles timezone correctly - New York 9am not triggered at wrong UTC time", () => {
-      // 9:00 AM UTC != 9:00 AM EST
-      const now = new Date("2024-01-15T09:00:00Z");
-      vi.setSystemTime(now);
-
-      const result = shouldTriggerNow("0 9 * * *", "America/New_York", now);
-      expect(result).toBe(false);
-    });
-
-    it("returns false for invalid cron expression", () => {
-      const now = new Date("2024-01-15T09:00:00Z");
-      vi.setSystemTime(now);
-
-      const result = shouldTriggerNow("invalid cron", "UTC", now);
-      expect(result).toBe(false);
-    });
-
-    it("handles day-of-week constraints", () => {
-      // 2024-01-15 is a Monday, at 9:00:01
-      const monday = new Date("2024-01-15T09:00:01Z");
-      vi.setSystemTime(monday);
-
-      // Every Monday at 9am - should trigger (prev returns 9:00:00 today)
-      expect(shouldTriggerNow("0 9 * * 1", "UTC", monday)).toBe(true);
-
-      // Every Tuesday at 9am - should not trigger on Monday
-      // prev() returns last Tuesday's 9am which is days ago
-      expect(shouldTriggerNow("0 9 * * 2", "UTC", monday)).toBe(false);
-    });
-
-    it("handles weekday range", () => {
-      // 2024-01-15 is a Monday at 9:00:01
-      const monday = new Date("2024-01-15T09:00:01Z");
-      vi.setSystemTime(monday);
-
-      // Weekdays at 9am (Mon-Fri) - should trigger
-      expect(shouldTriggerNow("0 9 * * 1-5", "UTC", monday)).toBe(true);
-
-      // Saturday 2024-01-20 at 9:00:01
-      // prev() returns Friday's 9am which is > 60 seconds ago
-      const saturday = new Date("2024-01-20T09:00:01Z");
-      expect(shouldTriggerNow("0 9 * * 1-5", "UTC", saturday)).toBe(false);
-    });
-
-    it("handles step values", () => {
-      // Every 15 minutes - should trigger at :00, :15, :30, :45
-      // Add 1 second so prev() returns the current minute
-      const at00 = new Date("2024-01-15T09:00:01Z");
-      const at15 = new Date("2024-01-15T09:15:01Z");
-      const at30 = new Date("2024-01-15T09:30:01Z");
-      const at10 = new Date("2024-01-15T09:10:01Z"); // prev() returns 09:00, which is 10+ minutes ago
-
-      expect(shouldTriggerNow("*/15 * * * *", "UTC", at00)).toBe(true);
-      expect(shouldTriggerNow("*/15 * * * *", "UTC", at15)).toBe(true);
-      expect(shouldTriggerNow("*/15 * * * *", "UTC", at30)).toBe(true);
-      expect(shouldTriggerNow("*/15 * * * *", "UTC", at10)).toBe(false);
+    expect(command.input.MessageAttributes.WorkflowId).toEqual({
+      DataType: "String",
+      StringValue: "wf-1",
     });
   });
 
-  describe("message structure", () => {
-    it("creates correct SQS message format", () => {
-      const message = {
-        workflowId: "wf_123",
-        scheduleId: "sched_456",
-        triggerTime: "2024-01-15T09:00:00.000Z",
-        triggerType: "schedule" as const,
-      };
+  it("propagates errors from sqs.send", async () => {
+    mockedSqsSend.mockRejectedValue(new Error("SQS unavailable"));
 
-      expect(message).toEqual({
-        workflowId: "wf_123",
-        scheduleId: "sched_456",
+    await expect(
+      sendToQueue({
+        workflowId: "wf-1",
+        scheduleId: "sched-1",
         triggerTime: "2024-01-15T09:00:00.000Z",
         triggerType: "schedule",
-      });
-    });
+      }),
+    ).rejects.toThrow("SQS unavailable");
+  });
+});
 
-    it("includes required message attributes", () => {
-      const messageAttributes = {
-        TriggerType: {
-          DataType: "String",
-          StringValue: "schedule",
-        },
-        WorkflowId: {
-          DataType: "String",
-          StringValue: "wf_123",
-        },
-      };
+describe("dispatch", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    // 9:00:01 UTC -- inside the matching minute for "0 9 * * *".
+    vi.setSystemTime(new Date("2024-01-15T09:00:01Z"));
+  });
 
-      expect(messageAttributes.TriggerType.StringValue).toBe("schedule");
-      expect(messageAttributes.WorkflowId.StringValue).toBe("wf_123");
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function stubFetch(schedules: unknown[]): void {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ schedules }),
+      }),
+    );
+  }
+
+  it("returns zero counts when no schedules are returned", async () => {
+    stubFetch([]);
+
+    await expect(dispatch()).resolves.toEqual({
+      evaluated: 0,
+      triggered: 0,
+      errors: 0,
     });
+    expect(mockedSqsSend).not.toHaveBeenCalled();
+  });
+
+  it("triggers a matching schedule and counts it once", async () => {
+    stubFetch([
+      {
+        id: "sched-1",
+        workflowId: "wf-1",
+        cronExpression: "0 9 * * *",
+        timezone: "UTC",
+      },
+    ]);
+    mockedSqsSend.mockResolvedValue({} as never);
+
+    const result = await dispatch();
+
+    expect(result).toEqual({ evaluated: 1, triggered: 1, errors: 0 });
+    expect(mockedSqsSend).toHaveBeenCalledOnce();
+  });
+
+  it("does not enqueue a schedule that is not due", async () => {
+    stubFetch([
+      {
+        id: "sched-1",
+        workflowId: "wf-1",
+        cronExpression: "0 10 * * *",
+        timezone: "UTC",
+      },
+    ]);
+
+    const result = await dispatch();
+
+    expect(result).toEqual({ evaluated: 1, triggered: 0, errors: 0 });
+    expect(mockedSqsSend).not.toHaveBeenCalled();
+  });
+
+  it("counts SQS failures as errors but keeps processing", async () => {
+    stubFetch([
+      {
+        id: "sched-1",
+        workflowId: "wf-1",
+        cronExpression: "0 9 * * *",
+        timezone: "UTC",
+      },
+      {
+        id: "sched-2",
+        workflowId: "wf-2",
+        cronExpression: "0 9 * * *",
+        timezone: "UTC",
+      },
+    ]);
+    mockedSqsSend
+      .mockRejectedValueOnce(new Error("SQS down"))
+      .mockResolvedValueOnce({} as never);
+
+    const result = await dispatch();
+
+    expect(result).toEqual({ evaluated: 2, triggered: 1, errors: 1 });
+    expect(mockedSqsSend).toHaveBeenCalledTimes(2);
+  });
+
+  it("treats a malformed cron as not-due rather than as an error", async () => {
+    // shouldTriggerNow logs the parse failure and returns false; dispatch
+    // sees that as "not due" and does not increment errors. Pinned so a
+    // future change here is a deliberate decision, not an accident.
+    stubFetch([
+      {
+        id: "sched-1",
+        workflowId: "wf-1",
+        cronExpression: "this is not cron",
+        timezone: "UTC",
+      },
+    ]);
+
+    const result = await dispatch();
+
+    expect(result).toEqual({ evaluated: 1, triggered: 0, errors: 0 });
+    expect(mockedSqsSend).not.toHaveBeenCalled();
+  });
+
+  it("processes a mixed batch (due, not-due, due-but-sqs-fails)", async () => {
+    stubFetch([
+      {
+        id: "s-ok",
+        workflowId: "wf-ok",
+        cronExpression: "0 9 * * *",
+        timezone: "UTC",
+      },
+      {
+        id: "s-skip",
+        workflowId: "wf-skip",
+        cronExpression: "0 10 * * *",
+        timezone: "UTC",
+      },
+      {
+        id: "s-fail",
+        workflowId: "wf-fail",
+        cronExpression: "0 9 * * *",
+        timezone: "UTC",
+      },
+    ]);
+    mockedSqsSend
+      .mockResolvedValueOnce({} as never)
+      .mockRejectedValueOnce(new Error("SQS down"));
+
+    const result = await dispatch();
+
+    expect(result).toEqual({ evaluated: 3, triggered: 1, errors: 1 });
+    expect(mockedSqsSend).toHaveBeenCalledTimes(2);
+  });
+
+  it("propagates fetchSchedules failures to the caller", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: async () => "boom",
+      }),
+    );
+
+    await expect(dispatch()).rejects.toThrow(/Failed to fetch schedules: 500/);
+    expect(mockedSqsSend).not.toHaveBeenCalled();
   });
 });
