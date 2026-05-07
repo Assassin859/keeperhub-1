@@ -11,7 +11,7 @@ import { KEEPERHUB_URL, SERVICE_API_KEY } from "./config.js";
  */
 export async function apiRequest<T>(
   path: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
 ): Promise<T> {
   const response = await fetch(`${KEEPERHUB_URL}${path}`, {
     ...options,
@@ -24,7 +24,9 @@ export async function apiRequest<T>(
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`API ${options.method || "GET"} ${path} failed: ${response.status} ${text}`);
+    throw new Error(
+      `API ${options.method || "GET"} ${path} failed: ${response.status} ${text}`,
+    );
   }
 
   return response.json() as Promise<T>;

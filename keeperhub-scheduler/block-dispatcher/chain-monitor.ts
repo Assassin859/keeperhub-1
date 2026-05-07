@@ -12,8 +12,8 @@
  */
 
 import { ethers } from "ethers";
-import { enqueueBlockTrigger } from "./sqs-enqueue.js";
 import type { BlockWorkflow, ChainConfig } from "../lib/types.js";
+import { enqueueBlockTrigger } from "./sqs-enqueue.js";
 
 const MAX_RECONNECT_ATTEMPTS = 10;
 const BASE_DELAY_MS = 1000;
@@ -126,7 +126,9 @@ export class ChainMonitor {
   }
 
   isAlive(): boolean {
-    return this.isRunning && (this.hasActiveSubscription || this.isReconnecting);
+    return (
+      this.isRunning && (this.hasActiveSubscription || this.isReconnecting)
+    );
   }
 
   getStatus(): {
@@ -183,12 +185,12 @@ export class ChainMonitor {
 
   private async connect(): Promise<void> {
     const urls = [this.primaryWss, this.fallbackWss].filter(
-      (url): url is string => url !== null && url !== ""
+      (url): url is string => url !== null && url !== "",
     );
 
     if (urls.length === 0) {
       throw new Error(
-        `No WSS URLs configured for chain ${this.chainName} (${this.chainId})`
+        `No WSS URLs configured for chain ${this.chainName} (${this.chainId})`,
       );
     }
 
@@ -220,7 +222,7 @@ export class ChainMonitor {
           new Promise<number>((_, reject) => {
             setTimeout(
               () => reject(new Error("Connection timeout")),
-              CONNECT_TIMEOUT_MS
+              CONNECT_TIMEOUT_MS,
             );
           }),
         ])) as number;
@@ -228,7 +230,7 @@ export class ChainMonitor {
         this.provider = provider;
         this.currentUrlIndex = index;
         console.log(
-          `[BlockMonitor:${this.chainName}] Connected to ${label} WSS (block: ${blockNumber})`
+          `[BlockMonitor:${this.chainName}] Connected to ${label} WSS (block: ${blockNumber})`,
         );
         return;
       } catch (error) {
@@ -239,7 +241,7 @@ export class ChainMonitor {
         }
         console.warn(
           `[BlockMonitor:${this.chainName}] Failed to connect to ${label} WSS:`,
-          error instanceof Error ? error.message : error
+          error instanceof Error ? error.message : error,
         );
         if (index === urls.length - 1) {
           throw error;
@@ -251,7 +253,7 @@ export class ChainMonitor {
   }
 
   private attachConnectErrorListener(
-    provider: ethers.WebSocketProvider
+    provider: ethers.WebSocketProvider,
   ): Promise<never> {
     const ws = provider.websocket as unknown as {
       on?: (event: string, cb: (err: Error) => void) => void;
@@ -261,7 +263,7 @@ export class ChainMonitor {
       ws?.on?.("error", (err: Error) => {
         const message = err?.message ?? String(err);
         console.warn(
-          `[BlockMonitor:${this.chainName}] WebSocket error during connect: ${message}`
+          `[BlockMonitor:${this.chainName}] WebSocket error during connect: ${message}`,
         );
         reject(new Error(`WebSocket error: ${message}`));
       });
@@ -277,9 +279,7 @@ export class ChainMonitor {
       return;
     }
 
-    console.log(
-      `[BlockMonitor:${this.chainName}] Subscribing to block events`
-    );
+    console.log(`[BlockMonitor:${this.chainName}] Subscribing to block events`);
 
     // ethers v6 provider.on() is async - it sends eth_subscribe over the
     // WebSocket and waits for the subscription ID. Must be awaited or the
@@ -288,15 +288,13 @@ export class ChainMonitor {
       this.onBlock(blockNumber).catch((error: unknown) => {
         console.error(
           `[BlockMonitor:${this.chainName}] Error processing block ${blockNumber}:`,
-          error instanceof Error ? error.message : error
+          error instanceof Error ? error.message : error,
         );
       });
     });
 
     this.hasActiveSubscription = true;
-    console.log(
-      `[BlockMonitor:${this.chainName}] Block subscription active`
-    );
+    console.log(`[BlockMonitor:${this.chainName}] Block subscription active`);
 
     // Handle WebSocket close for reconnection - store reference for cleanup
     const ws = this.provider.websocket as unknown as {
@@ -345,10 +343,7 @@ export class ChainMonitor {
       const next = this.pendingBlock;
       this.pendingBlock = null;
 
-      if (
-        this.lastProcessedBlock !== null &&
-        next <= this.lastProcessedBlock
-      ) {
+      if (this.lastProcessedBlock !== null && next <= this.lastProcessedBlock) {
         continue;
       }
 
@@ -364,7 +359,7 @@ export class ChainMonitor {
   private async processBlockRange(blockNumber: number): Promise<void> {
     if (this.lastProcessedBlock === null) {
       console.log(
-        `[BlockMonitor:${this.chainName}] First block received: ${blockNumber}, tracking ${this.workflows.length} workflow(s): ${this.workflows.map((wf) => `${wf.id}(interval=${wf.blockInterval})`).join(", ")}`
+        `[BlockMonitor:${this.chainName}] First block received: ${blockNumber}, tracking ${this.workflows.length} workflow(s): ${this.workflows.map((wf) => `${wf.id}(interval=${wf.blockInterval})`).join(", ")}`,
       );
     }
 
@@ -377,11 +372,11 @@ export class ChainMonitor {
 
     if (gap > MAX_BACKFILL_BLOCKS) {
       console.warn(
-        `[BlockMonitor:${this.chainName}] Gap too large (${gap} blocks), skipping backfill. Resuming from block ${blockNumber}`
+        `[BlockMonitor:${this.chainName}] Gap too large (${gap} blocks), skipping backfill. Resuming from block ${blockNumber}`,
       );
     } else if (fromBlock < blockNumber) {
       console.log(
-        `[BlockMonitor:${this.chainName}] Gap detected: last=${this.lastProcessedBlock}, received=${blockNumber}, backfilling ${gap} block(s)`
+        `[BlockMonitor:${this.chainName}] Gap detected: last=${this.lastProcessedBlock}, received=${blockNumber}, backfilling ${gap} block(s)`,
       );
 
       for (let bn = fromBlock; bn < blockNumber; bn++) {
@@ -397,7 +392,7 @@ export class ChainMonitor {
     const now = Date.now();
     if (now - this.lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
       console.log(
-        `[BlockMonitor:${this.chainName}] Heartbeat: block=${blockNumber}, received=${this.blocksReceived}, matched=${this.blocksMatched}, workflows=${this.workflows.length}`
+        `[BlockMonitor:${this.chainName}] Heartbeat: block=${blockNumber}, received=${this.blocksReceived}, matched=${this.blocksMatched}, workflows=${this.workflows.length}`,
       );
       this.lastHeartbeat = now;
     }
@@ -405,7 +400,7 @@ export class ChainMonitor {
 
   private async processBlockNumber(blockNumber: number): Promise<void> {
     const matchingWorkflows = this.workflows.filter(
-      (wf) => blockNumber > 0 && blockNumber % wf.blockInterval === 0
+      (wf) => blockNumber > 0 && blockNumber % wf.blockInterval === 0,
     );
 
     if (matchingWorkflows.length === 0) {
@@ -422,13 +417,13 @@ export class ChainMonitor {
     const nowSeconds = Math.floor(Date.now() / 1000);
     if (nowSeconds - block.timestamp > STALE_BLOCK_THRESHOLD_S) {
       console.warn(
-        `[BlockMonitor:${this.chainName}] Block ${blockNumber} timestamp is ${nowSeconds - block.timestamp}s behind wall clock`
+        `[BlockMonitor:${this.chainName}] Block ${blockNumber} timestamp is ${nowSeconds - block.timestamp}s behind wall clock`,
       );
     }
 
     this.blocksMatched++;
     console.log(
-      `[BlockMonitor:${this.chainName}] Block ${blockNumber} matched ${matchingWorkflows.length} workflow(s): ${matchingWorkflows.map((wf) => `${wf.id}(interval=${wf.blockInterval})`).join(", ")}`
+      `[BlockMonitor:${this.chainName}] Block ${blockNumber} matched ${matchingWorkflows.length} workflow(s): ${matchingWorkflows.map((wf) => `${wf.id}(interval=${wf.blockInterval})`).join(", ")}`,
     );
 
     const results = await Promise.allSettled(
@@ -443,15 +438,15 @@ export class ChainMonitor {
             blockTimestamp: block.timestamp,
             parentHash: block.parentHash,
           },
-        })
-      )
+        }),
+      ),
     );
 
     for (const [index, result] of results.entries()) {
       if (result.status === "rejected") {
         console.error(
           `[BlockMonitor:${this.chainName}] Failed to enqueue workflow ${matchingWorkflows[index].id}:`,
-          result.reason
+          result.reason,
         );
       }
     }
@@ -480,7 +475,7 @@ export class ChainMonitor {
         if (attempt === 1) {
           console.warn(
             `[BlockMonitor:${this.chainName}] Failed to fetch block ${blockNumber} after 2 attempts:`,
-            error instanceof Error ? error.message : error
+            error instanceof Error ? error.message : error,
           );
         }
       }
@@ -504,7 +499,7 @@ export class ChainMonitor {
 
     if (!ws?.ping || !ws?.on) {
       console.warn(
-        `[BlockMonitor:${this.chainName}] WebSocket does not support ping/pong, skipping keepalive`
+        `[BlockMonitor:${this.chainName}] WebSocket does not support ping/pong, skipping keepalive`,
       );
       return;
     }
@@ -526,7 +521,7 @@ export class ChainMonitor {
         ws.ping!();
       } catch {
         console.warn(
-          `[BlockMonitor:${this.chainName}] Failed to send ping, triggering reconnect`
+          `[BlockMonitor:${this.chainName}] Failed to send ping, triggering reconnect`,
         );
         this.handleDisconnect();
         return;
@@ -535,14 +530,14 @@ export class ChainMonitor {
       // If no pong arrives within timeout, connection is dead
       this.pongTimer = setTimeout(() => {
         console.warn(
-          `[BlockMonitor:${this.chainName}] Pong timeout (${PONG_TIMEOUT_MS}ms), triggering reconnect`
+          `[BlockMonitor:${this.chainName}] Pong timeout (${PONG_TIMEOUT_MS}ms), triggering reconnect`,
         );
         this.handleDisconnect();
       }, PONG_TIMEOUT_MS);
     }, PING_INTERVAL_MS);
 
     console.log(
-      `[BlockMonitor:${this.chainName}] Ping/pong keepalive started (interval=${PING_INTERVAL_MS}ms, timeout=${PONG_TIMEOUT_MS}ms)`
+      `[BlockMonitor:${this.chainName}] Ping/pong keepalive started (interval=${PING_INTERVAL_MS}ms, timeout=${PONG_TIMEOUT_MS}ms)`,
     );
   }
 
@@ -562,7 +557,7 @@ export class ChainMonitor {
     this.noBlockTimer = setTimeout(() => {
       if (this.isRunning) {
         console.warn(
-          `[BlockMonitor:${this.chainName}] No blocks received in ${NO_BLOCK_TIMEOUT_MS / 1000}s, triggering reconnect`
+          `[BlockMonitor:${this.chainName}] No blocks received in ${NO_BLOCK_TIMEOUT_MS / 1000}s, triggering reconnect`,
         );
         this.handleDisconnect();
       }
@@ -639,13 +634,13 @@ export class ChainMonitor {
         new Promise<never>((_, reject) => {
           setTimeout(
             () => reject(new Error("Primary probe timeout")),
-            PRIMARY_PROBE_TIMEOUT_MS
+            PRIMARY_PROBE_TIMEOUT_MS,
           );
         }),
       ]);
 
       console.log(
-        `[BlockMonitor:${this.chainName}] Primary recovered, switching back from fallback`
+        `[BlockMonitor:${this.chainName}] Primary recovered, switching back from fallback`,
       );
       await probeProvider.removeAllListeners();
       await probeProvider.destroy().catch(() => {
@@ -655,7 +650,7 @@ export class ChainMonitor {
     } catch (error) {
       const reason = summarizeProbeError(error);
       console.warn(
-        `[BlockMonitor:${this.chainName}] Primary probe failed: ${reason}`
+        `[BlockMonitor:${this.chainName}] Primary probe failed: ${reason}`,
       );
       if (probeProvider) {
         await probeProvider.removeAllListeners();
@@ -681,7 +676,7 @@ export class ChainMonitor {
     this.reconnectWithBackoff().catch((error: unknown) => {
       console.error(
         `[BlockMonitor:${this.chainName}] Reconnect loop failed:`,
-        error instanceof Error ? error.message : error
+        error instanceof Error ? error.message : error,
       );
       this.isReconnecting = false;
     });
@@ -693,7 +688,7 @@ export class ChainMonitor {
     while (this.isRunning) {
       if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
         console.error(
-          `[BlockMonitor:${this.chainName}] Max reconnect attempts (${MAX_RECONNECT_ATTEMPTS}) reached, stopping monitor`
+          `[BlockMonitor:${this.chainName}] Max reconnect attempts (${MAX_RECONNECT_ATTEMPTS}) reached, stopping monitor`,
         );
         this.isRunning = false;
         this.isReconnecting = false;
@@ -703,11 +698,11 @@ export class ChainMonitor {
       this.reconnectAttempts++;
       const delay = Math.min(
         BASE_DELAY_MS * 2 ** (this.reconnectAttempts - 1),
-        MAX_DELAY_MS
+        MAX_DELAY_MS,
       );
 
       console.log(
-        `[BlockMonitor:${this.chainName}] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`
+        `[BlockMonitor:${this.chainName}] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`,
       );
 
       await new Promise<void>((resolve) => {
@@ -730,7 +725,7 @@ export class ChainMonitor {
       } catch (error) {
         console.warn(
           `[BlockMonitor:${this.chainName}] Reconnect attempt ${this.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS} failed:`,
-          error instanceof Error ? error.message : error
+          error instanceof Error ? error.message : error,
         );
         // Clean up the provider if connect succeeded but subscribe failed
         await this.destroyProvider();
