@@ -1,5 +1,6 @@
 "use client";
 
+import { Pencil } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -23,12 +24,15 @@ type Props = {
   safeId: string;
   isAdmin: boolean;
   onRevoked: () => Promise<void>;
+  /** Optional pencil-edit callback. When provided, a pencil button shows on
+   * row hover so admins can open the per-allowance edit modal. */
+  onEdit?: () => void;
 };
 
 function periodLabel(seconds: number): string {
   const match = POLICY_PERIOD_OPTIONS.find((o) => o.seconds === seconds);
   if (match) {
-    return match.label.toLowerCase();
+    return match.label;
   }
   return `${seconds}s`;
 }
@@ -54,6 +58,7 @@ export function RoleAllowanceRow({
   safeId,
   isAdmin,
   onRevoked,
+  onEdit,
 }: Props): React.ReactElement {
   const [revoking, setRevoking] = useState<boolean>(false);
 
@@ -82,8 +87,10 @@ export function RoleAllowanceRow({
   const remainingHuman = formatWei(remaining, allowance.tokenDecimals);
   const capHuman = formatWei(allowance.maxRefillWei, allowance.tokenDecimals);
 
+  const showEditButton = isAdmin && onEdit !== undefined;
+
   return (
-    <li className="flex items-center justify-between gap-3 rounded border bg-muted/20 px-3 py-2 text-sm">
+    <li className="group flex items-center justify-between gap-3 rounded border bg-muted/20 px-3 py-2 text-sm">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="font-medium">{allowance.tokenSymbol}</span>
@@ -92,9 +99,21 @@ export function RoleAllowanceRow({
           </span>
         </div>
         <div className="text-muted-foreground text-xs">
-          refills {periodLabel(allowance.periodSeconds)}
+          Refills {periodLabel(allowance.periodSeconds)}
         </div>
       </div>
+      {showEditButton && (
+        <Button
+          aria-label={`Edit ${allowance.tokenSymbol} allowance`}
+          className="h-7 w-7 p-0 text-muted-foreground opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
+          onClick={onEdit}
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </Button>
+      )}
       {isAdmin && (
         <Button
           aria-label={`Revoke ${allowance.tokenSymbol} allowance`}

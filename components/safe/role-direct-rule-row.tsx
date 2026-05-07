@@ -55,14 +55,14 @@ function kindLabel(kind: string): string {
 
 function counterpartyRole(kind: string): string {
   if (kind === "erc20-approve") {
-    return "spender";
+    return "Spender";
   }
-  return "recipient";
+  return "Recipient";
 }
 
 function periodLabel(seconds: number): string {
   const match = POLICY_PERIOD_OPTIONS.find((o) => o.seconds === seconds);
-  return match?.label.toLowerCase() ?? `${seconds}s`;
+  return match?.label ?? `${seconds}s`;
 }
 
 function formatWei(amount: string, decimals: number): string {
@@ -110,7 +110,7 @@ export function RoleDirectRuleRow({
   const logoUrl = tokenLogoUrl ?? tokenInfo?.logoUrl ?? null;
 
   return (
-    <li className="relative space-y-1.5 rounded border bg-muted/20 px-3 py-2 pr-10 text-sm">
+    <li className="group relative space-y-1.5 rounded border bg-muted/20 px-3 py-2 pr-10 text-sm">
       <div className="flex flex-wrap items-center gap-2">
         <Badge className="text-[10px]" variant="outline">
           {kindLabel(rule.kind)}
@@ -130,7 +130,7 @@ export function RoleDirectRuleRow({
         )}
         <span className="font-medium">{rule.tokenSymbol}</span>
         <span className="text-muted-foreground text-xs">
-          {usageText} · refills {periodLabel(rule.periodSeconds)}
+          {usageText} · Refills {periodLabel(rule.periodSeconds)}
         </span>
       </div>
       <div className="flex items-center gap-2 text-muted-foreground text-xs">
@@ -140,7 +140,7 @@ export function RoleDirectRuleRow({
       {onEdit && (
         <Button
           aria-label="Edit rule"
-          className="absolute top-1.5 right-1.5 h-7 w-7 p-0 text-muted-foreground"
+          className="absolute top-1.5 right-1.5 h-7 w-7 p-0 text-muted-foreground opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
           onClick={onEdit}
           size="sm"
           type="button"

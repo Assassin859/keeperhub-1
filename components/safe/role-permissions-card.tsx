@@ -9,6 +9,7 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AddressWithExplorer } from "@/components/safe/address-with-explorer";
+import { RoleAllowanceEditDialog } from "@/components/safe/role-allowance-edit-dialog";
 import { RoleDirectRuleEditDialog } from "@/components/safe/role-direct-rule-edit-dialog";
 import {
   type RoleDirectRule,
@@ -67,6 +68,13 @@ type Props = {
   isAdmin: boolean;
   safeAddress?: string;
   safeUrl?: string | null;
+  /**
+   * Drop the outer card wrapper + "On-chain policies" header when the parent
+   * surface already announces the Safe (e.g. the account-detail overlay
+   * titled "Safe · Ethereum"). The Refresh-from-chain action moves to the
+   * top of the inner content so admin actions are still reachable.
+   */
+  bare?: boolean;
 };
 
 type SupportedTokensResponse = {
@@ -141,6 +149,7 @@ export function RolePermissionsCard({
   isAdmin,
   safeAddress,
   safeUrl,
+  bare = false,
 }: Props): React.ReactElement | null {
   const [loading, setLoading] = useState<boolean>(true);
   const [role, setRole] = useState<RoleSummary | null>(null);
@@ -153,6 +162,12 @@ export function RolePermissionsCard({
   const [tokenLogoMap, setTokenLogoMap] = useState<Record<string, string>>({});
   const [editingDirectRule, setEditingDirectRule] =
     useState<RoleDirectRule | null>(null);
+  // Per-allowance edit modal target. Each protocol allowance bucket is its
+  // own policy; clicking the row's pencil sets this and we render the
+  // dedicated edit dialog scoped to that single bucket.
+  const [editingAllowanceId, setEditingAllowanceId] = useState<string | null>(
+    null
+  );
 
   useEffect(() => {
     fetchTokenLogoMap(chainId).then(setTokenLogoMap, () => {
@@ -233,39 +248,65 @@ export function RolePermissionsCard({
       (p) => p.status === "allowed" && p.protocolSlug !== "direct"
     ) ?? [];
   const directRules = role?.directRules ?? [];
+  const editingAllowance = editingAllowanceId
+    ? (role?.allowances.find((a) => a.id === editingAllowanceId) ?? null)
+    : null;
+
+  const headerBar = (
+    <div className="mb-3 flex items-center gap-2">
+      {!bare && (
+        <>
+          <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+          <h3 className="font-medium text-sm">On-chain policies</h3>
+        </>
+      )}
+      {role?.installed && isAdmin && (
+        <Button
+          className="ml-auto h-7 gap-1 px-2 text-xs"
+          disabled={syncing}
+          onClick={() => {
+            syncFromChain().catch(() => {
+              // toast already fired
+            });
+          }}
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
+          {syncing ? (
+            <Spinner className="h-3 w-3" />
+          ) : (
+            <RefreshCw className="h-3 w-3" />
+          )}
+          Refresh from chain
+        </Button>
+      )}
+    </div>
+  );
+
+  const blurb = !bare && (
+    <p className="mb-4 text-muted-foreground text-xs">
+      Workflow transactions on this Safe can only execute the policies below.
+      Anything else reverts on chain. Owner calls via safe.global bypass these
+      rules.
+    </p>
+  );
+
+  const Wrapper = ({
+    children,
+  }: {
+    children: React.ReactNode;
+  }): React.ReactElement =>
+    bare ? (
+      <div>{children}</div>
+    ) : (
+      <div className="rounded-lg border bg-card p-4">{children}</div>
+    );
 
   return (
-    <div className="rounded-lg border bg-card p-4">
-      <div className="mb-3 flex items-center gap-2">
-        <ShieldCheck className="h-4 w-4 text-muted-foreground" />
-        <h3 className="font-medium text-sm">On-chain policies</h3>
-        {isAdmin && (
-          <Button
-            className="ml-auto h-7 gap-1 px-2 text-xs"
-            disabled={syncing}
-            onClick={() => {
-              syncFromChain().catch(() => {
-                // toast already fired
-              });
-            }}
-            size="sm"
-            type="button"
-            variant="ghost"
-          >
-            {syncing ? (
-              <Spinner className="h-3 w-3" />
-            ) : (
-              <RefreshCw className="h-3 w-3" />
-            )}
-            Refresh from chain
-          </Button>
-        )}
-      </div>
-      <p className="mb-4 text-muted-foreground text-xs">
-        Workflow transactions on this Safe can only execute the policies below.
-        Anything else reverts on chain. Owner calls via safe.global bypass these
-        rules.
-      </p>
+    <Wrapper>
+      {headerBar}
+      {blurb}
 
       {loading && (
         <div className="flex items-center justify-center py-4">
@@ -327,6 +368,9 @@ export function RolePermissionsCard({
                       isAdmin={isAdmin}
                       key={protocol.id}
                       onAllowanceRevoked={loadRole}
+                      onEditAllowance={
+                        isAdmin ? setEditingAllowanceId : undefined
+                      }
                       protocolSlug={protocol.protocolSlug}
                       safeId={safeId}
                     />
@@ -372,7 +416,9 @@ export function RolePermissionsCard({
                         chainId={chainId}
                         key={rule.id}
                         onEdit={
-                          isAdmin ? () => setEditingDirectRule(rule) : undefined
+                          isAdmin
+                            ? () => setEditingDirectRule(rule)
+                            : undefined
                         }
                         rule={rule}
                         tokenLogoUrl={resolveDirectRuleLogo(rule, tokenLogoMap)}
@@ -399,6 +445,25 @@ export function RolePermissionsCard({
               open={true}
               protocols={role.protocols}
               rule={editingDirectRule}
+              safeId={safeId}
+            />
+          )}
+
+          {editingAllowance && (
+            <RoleAllowanceEditDialog
+              allAllowances={role.allowances}
+              allowance={editingAllowance}
+              directRules={role.directRules ?? []}
+              onOpenChange={(o) => {
+                if (!o) {
+                  setEditingAllowanceId(null);
+                }
+              }}
+              onUpdated={async () => {
+                await loadRole();
+              }}
+              open={true}
+              protocols={role.protocols}
               safeId={safeId}
             />
           )}
@@ -449,6 +514,6 @@ export function RolePermissionsCard({
           </details>
         </div>
       )}
-    </div>
+    </Wrapper>
   );
 }

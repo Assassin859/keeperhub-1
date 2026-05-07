@@ -146,6 +146,12 @@ export type PolicyWizardProps = {
   explorer?: ExplorerInfo;
   /** Optional override for the protocol catalog (testing hook). */
   catalog?: readonly ProtocolCatalogEntry[];
+  /**
+   * Notified whenever the wizard transitions between its internal
+   * "configure" and "review" sub-steps. Lets a host modal sync an outer
+   * stepper bar without duplicating state.
+   */
+  onStepChange?: (step: "configure" | "review") => void;
 };
 
 const HUMAN_AMOUNT_REGEX = /^\d+(\.\d+)?$/;
@@ -175,6 +181,7 @@ export function PolicyWizard({
   confirmLabel = "Confirm",
   explorer,
   catalog,
+  onStepChange,
 }: PolicyWizardProps): React.ReactElement {
   const resolvedCatalog: ProtocolCatalogEntry[] = useMemo(() => {
     if (catalog) {
@@ -374,6 +381,7 @@ export function PolicyWizard({
       if (plan) {
         setSimulation(plan);
         setStep("review");
+        onStepChange?.("review");
       } else {
         await onConfirm(config);
       }
@@ -388,6 +396,7 @@ export function PolicyWizard({
 
   const handleBack = (): void => {
     setStep("configure");
+    onStepChange?.("configure");
   };
 
   const handleConfirm = async (): Promise<void> => {

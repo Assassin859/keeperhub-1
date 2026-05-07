@@ -1,13 +1,23 @@
 "use client";
 
-import { ChevronLeftIcon } from "lucide-react";
+import { Plus, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Overlay } from "@/components/overlays/overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
-import { DeploySafeCard } from "@/components/safe/deploy-safe-card";
+import { AccountDetailOverlay } from "@/components/overlays/wallet/account-detail/account-detail-overlay";
+import {
+  AccountRow,
+  type WalletAccountKind,
+} from "@/components/overlays/wallet/account-row";
+import {
+  getChainOrderIndex,
+  getDisplayChainName,
+} from "@/components/overlays/wallet/chain-utils";
+import { NoWalletSection } from "@/components/overlays/wallet/no-wallet-section";
+import { DeploySafeFlow } from "@/components/safe/deploy-safe-card";
+import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSession } from "@/lib/auth-client";
 import { useActiveMember } from "@/lib/hooks/use-organization";
 import { ErrorCategory, logUserError } from "@/lib/logging";
@@ -20,22 +30,63 @@ import type {
 } from "@/lib/wallet/types";
 import { useWalletBalances } from "@/lib/wallet/use-wallet-balances";
 import { useInvalidateWalletInfo } from "@/lib/wallet/use-wallet-info";
-import { BalancesTab } from "./wallet/balances-tab";
-import { ManageTab } from "./wallet/manage-tab";
-import { NoWalletSection } from "./wallet/no-wallet-section";
 import { type WithdrawableAsset, WithdrawModal } from "./withdraw-modal";
 
-type WalletTab = "balances" | "manage" | "safe";
+type SafeRow = {
+  id: string;
+  chainId: number;
+  safeAddress: string;
+  status: string;
+  isSigningActive: boolean;
+};
+
+type SafeListResponse = {
+  safes?: SafeRow[];
+};
 
 type WalletOverlayProps = {
   overlayId: string;
-  initialTab?: WalletTab;
 };
 
-export function WalletOverlay({
+function DeploySafeOverlay({
   overlayId,
-  initialTab = "balances",
-}: WalletOverlayProps) {
+  isOwner,
+  onChanged,
+}: {
+  overlayId: string;
+  isOwner: boolean;
+  onChanged: () => void;
+}): React.ReactElement {
+  const { pop } = useOverlay();
+  const close = (): void => {
+    onChanged();
+    pop();
+  };
+
+  return (
+    <Overlay overlayId={overlayId} title="Deploy a Safe">
+      <div className="space-y-4">
+        <div className="flex items-center gap-2">
+          <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+          <h3 className="font-medium text-sm">Safe smart account</h3>
+        </div>
+        <p className="text-muted-foreground text-xs">
+          Deploy a Safe smart wallet on-chain per network. Safes can hold funds
+          and sign workflow transactions independently from the Turnkey EOA.
+        </p>
+        {isOwner ? (
+          <DeploySafeFlow onCancel={close} onComplete={close} />
+        ) : (
+          <p className="text-muted-foreground text-xs">
+            Only the organization owner can deploy a Safe.
+          </p>
+        )}
+      </div>
+    </Overlay>
+  );
+}
+
+export function WalletOverlay({ overlayId }: WalletOverlayProps) {
   const { closeAll, push } = useOverlay();
   const { data: session } = useSession();
   const { isAdmin } = useActiveMember();
@@ -46,8 +97,7 @@ export function WalletOverlay({
   const [chains, setChains] = useState<ChainData[]>([]);
   const [tokens, setTokens] = useState<TokenData[]>([]);
   const [supportedTokens, setSupportedTokens] = useState<SupportedToken[]>([]);
-  const [refreshing, setRefreshing] = useState(false);
-  const [activeTab, setActiveTab] = useState<WalletTab>(initialTab);
+  const [safes, setSafes] = useState<SafeRow[]>([]);
 
   const {
     balances,
@@ -64,8 +114,7 @@ export function WalletOverlay({
       const evmChains = data.filter((chain) => chain.chainType === "evm");
       setChains(evmChains);
       return evmChains;
-    } catch (error) {
-      console.error("Failed to fetch chains:", error);
+    } catch {
       return [];
     }
   }, []);
@@ -74,10 +123,9 @@ export function WalletOverlay({
     try {
       const response = await fetch("/api/user/wallet/tokens");
       const data = await response.json();
-      setTokens(data.tokens || []);
-      return data.tokens || [];
-    } catch (error) {
-      console.error("Failed to fetch tokens:", error);
+      setTokens(data.tokens ?? []);
+      return data.tokens ?? [];
+    } catch {
       return [];
     }
   }, []);
@@ -88,11 +136,25 @@ export function WalletOverlay({
     try {
       const response = await fetch("/api/supported-tokens");
       const data = await response.json();
-      const tokenList = data.tokens || [];
+      const tokenList = data.tokens ?? [];
       setSupportedTokens(tokenList);
       return tokenList;
-    } catch (error) {
-      console.error("Failed to fetch supported tokens:", error);
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const fetchSafes = useCallback(async (): Promise<SafeRow[]> => {
+    try {
+      const response = await fetch("/api/user/safe");
+      if (!response.ok) {
+        return [];
+      }
+      const data = (await response.json()) as SafeListResponse;
+      const rows = (data.safes ?? []).filter((s) => s.status === "deployed");
+      setSafes(rows);
+      return rows;
+    } catch {
       return [];
     }
   }, []);
@@ -100,7 +162,6 @@ export function WalletOverlay({
   const loadWallet = useCallback(async () => {
     setWalletLoading(true);
     try {
-      // Phase 1: Fetch wallet data first (fast - just address + email)
       const walletResponse = await fetch("/api/user/wallet");
       const data = await walletResponse.json();
 
@@ -110,21 +171,16 @@ export function WalletOverlay({
         return;
       }
 
-      // Show wallet info immediately
       setWalletData(data);
       setWalletLoading(false);
 
-      // Phase 2: Fetch chains/tokens metadata in parallel. The chain list is
-      // used for explorer links and the manage tab; tokens / supportedTokens
-      // power the manage UI. Balances are fetched server-side below.
       const [chainList] = await Promise.all([
         fetchChains(),
         fetchTokens(),
         fetchSupportedTokensData(),
+        fetchSafes(),
       ]);
 
-      // Phase 3: Fetch native + tracked + supported balances from the
-      // server-side endpoint (provider URLs never reach the browser).
       if (data.walletAddress && chainList.length > 0) {
         fetchBalances(data.walletAddress, chainList);
       }
@@ -138,16 +194,13 @@ export function WalletOverlay({
       setWalletData({ hasWallet: false });
       setWalletLoading(false);
     }
-  }, [fetchChains, fetchTokens, fetchSupportedTokensData, fetchBalances]);
-
-  const handleRefresh = useCallback(async () => {
-    if (!(walletData?.walletAddress && chains.length > 0)) {
-      return;
-    }
-    setRefreshing(true);
-    await fetchBalances(walletData.walletAddress, chains);
-    setRefreshing(false);
-  }, [walletData?.walletAddress, chains, fetchBalances]);
+  }, [
+    fetchChains,
+    fetchTokens,
+    fetchSupportedTokensData,
+    fetchSafes,
+    fetchBalances,
+  ]);
 
   const handleAddToken = async (
     chainId: number,
@@ -158,12 +211,10 @@ export function WalletOverlay({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ chainId, tokenAddress }),
     });
-
     const data = await response.json();
     if (!response.ok) {
-      throw new Error(data.error || "Failed to add token");
+      throw new Error(data.error ?? "Failed to add token");
     }
-
     toast.success(`Added ${data.token.symbol} to tracked tokens`);
     await loadWallet();
   };
@@ -178,12 +229,10 @@ export function WalletOverlay({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tokenId }),
       });
-
       if (!response.ok) {
         const data = await response.json();
-        throw new Error(data.error || "Failed to remove token");
+        throw new Error(data.error ?? "Failed to remove token");
       }
-
       toast.success(`Removed ${symbol} from tracked tokens`);
       await loadWallet();
     } catch (error) {
@@ -199,12 +248,10 @@ export function WalletOverlay({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email }),
     });
-
     const data: { error?: string } = await response.json();
     if (!response.ok) {
       throw new Error(data.error ?? "Failed to create wallet");
     }
-
     toast.success("Wallet created successfully!");
     await loadWallet();
     invalidateWalletInfo();
@@ -255,13 +302,11 @@ export function WalletOverlay({
       if (!walletData?.walletAddress) {
         return;
       }
-
       const assets = buildAssets();
       if (assets.length === 0) {
         toast.error("No assets available for withdrawal");
         return;
       }
-
       const initialIndex = findAssetIndex(assets, chainId, tokenAddress);
       push(WithdrawModal, {
         assets,
@@ -272,26 +317,72 @@ export function WalletOverlay({
     [walletData?.walletAddress, buildAssets, findAssetIndex, push]
   );
 
-  // Re-fetch wallet when session changes (e.g., user signs in)
   const sessionUserId = session?.user?.id;
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionUserId is intentionally included to trigger re-fetch on sign-in
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionUserId triggers re-fetch on sign-in
   useEffect(() => {
     loadWallet();
   }, [loadWallet, sessionUserId]);
 
-  const description = walletData?.hasWallet
-    ? "View your organization's wallet address and balances across different chains"
-    : "Create a wallet for your organization to use in workflows";
+  const openAccountDetail = (account: WalletAccountKind): void => {
+    if (!walletData?.walletAddress) {
+      return;
+    }
+    push(AccountDetailOverlay, {
+      account,
+      balances,
+      canExportKey: !!walletData.canExportKey,
+      chains,
+      email: walletData.email,
+      isAdmin,
+      isLoadingBalances,
+      isOwner: !!walletData.isOwner,
+      onAddToken: handleAddToken,
+      onRemoveToken: handleRemoveToken,
+      onSigningChange: () => {
+        loadWallet();
+      },
+      onWithdraw: handleWithdraw,
+      supportedTokenBalances,
+      tokenBalances,
+    });
+  };
+
+  const openDeploySafe = (): void => {
+    push(DeploySafeOverlay, {
+      isOwner: !!walletData?.isOwner,
+      onChanged: loadWallet,
+    });
+  };
+
+  const turnkeyAccount: WalletAccountKind | null = walletData?.walletAddress
+    ? { kind: "turnkey", address: walletData.walletAddress }
+    : null;
+
+  const safeAccounts: WalletAccountKind[] = safes
+    .slice()
+    .sort((a, b) => getChainOrderIndex(a.chainId) - getChainOrderIndex(b.chainId))
+    .map((s) => {
+      const chain = chains.find((c) => c.chainId === s.chainId);
+      const baseName = chain?.name ?? `Chain ${s.chainId}`;
+      return {
+        address: s.safeAddress,
+        chainId: s.chainId,
+        chainName: getDisplayChainName(baseName),
+        isSigningActive: s.isSigningActive,
+        kind: "safe",
+        safeId: s.id,
+      };
+    });
 
   return (
     <Overlay
       actions={[{ label: "Done", onClick: closeAll }]}
+      // Match the detail overlay's locked height so the slide-in transition
+      // doesn't pop the parent's height around when stacked.
+      className="min-h-[80vh] max-h-[80vh]"
       overlayId={overlayId}
       title="Organization Wallet"
     >
-      <p className="-mt-2 mb-4 text-muted-foreground text-sm">{description}</p>
-
       {walletLoading && (
         <div className="flex items-center justify-center py-8">
           <Spinner />
@@ -299,53 +390,41 @@ export function WalletOverlay({
       )}
 
       {!walletLoading && walletData?.hasWallet && (
-        <Tabs
-          className="w-full"
-          onValueChange={(value) => setActiveTab(value as WalletTab)}
-          value={activeTab}
-        >
-          <TabsList className="w-full">
-            <TabsTrigger value="balances">Balances</TabsTrigger>
-            <TabsTrigger value="manage">Manage</TabsTrigger>
-          </TabsList>
-          <TabsContent className="mt-4" value="balances">
-            <BalancesTab
-              balances={balances}
-              chains={chains}
-              isAdmin={isAdmin}
-              isLoadingBalances={isLoadingBalances}
-              onAddToken={handleAddToken}
-              onRefresh={handleRefresh}
-              onRemoveToken={handleRemoveToken}
-              onWithdraw={handleWithdraw}
-              refreshing={refreshing}
-              supportedTokenBalances={supportedTokenBalances}
-              tokenBalances={tokenBalances}
-            />
-          </TabsContent>
-          <TabsContent className="mt-4 space-y-4" value="manage">
-            {walletData.email && walletData.walletAddress && (
-              <ManageTab
-                canExportKey={!!walletData.canExportKey}
-                email={walletData.email}
-                isOwner={!!walletData.isOwner}
-                onOpenSafeView={() => setActiveTab("safe")}
-                walletAddress={walletData.walletAddress}
+        <div className="space-y-4">
+          <p className="text-muted-foreground text-sm">
+            Pick an account to manage. Click an entry to view its assets,
+            policies, and settings.
+          </p>
+
+          <div className="space-y-2">
+            {turnkeyAccount && (
+              <AccountRow
+                account={turnkeyAccount}
+                onClick={() => openAccountDetail(turnkeyAccount)}
+                subtitle="Multi-chain"
               />
             )}
-          </TabsContent>
-          <TabsContent className="mt-4 space-y-4" value="safe">
-            <button
-              className="inline-flex items-center gap-1 text-muted-foreground text-sm hover:text-foreground"
-              onClick={() => setActiveTab("manage")}
+            {safeAccounts.map((acc) => (
+              <AccountRow
+                account={acc}
+                key={acc.kind === "safe" ? acc.safeId : acc.address}
+                onClick={() => openAccountDetail(acc)}
+              />
+            ))}
+          </div>
+
+          {isAdmin && (
+            <Button
+              className="w-full justify-center gap-2"
+              onClick={openDeploySafe}
               type="button"
+              variant="outline"
             >
-              <ChevronLeftIcon aria-hidden="true" className="h-4 w-4" />
-              Back to Manage
-            </button>
-            <DeploySafeCard isAdmin={!!walletData.isOwner} />
-          </TabsContent>
-        </Tabs>
+              <Plus className="h-4 w-4" />
+              Deploy a Safe
+            </Button>
+          )}
+        </div>
       )}
 
       {!(walletLoading || walletData?.hasWallet) && (

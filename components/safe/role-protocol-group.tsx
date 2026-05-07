@@ -9,6 +9,9 @@ type Props = {
   safeId: string;
   isAdmin: boolean;
   onAllowanceRevoked: () => Promise<void>;
+  /** Per-allowance edit click; opens the focused per-policy edit modal in
+   *  the parent. Pass undefined to hide the pencil. */
+  onEditAllowance?: (allowanceId: string) => void;
 };
 
 export function RoleProtocolGroup({
@@ -17,6 +20,7 @@ export function RoleProtocolGroup({
   safeId,
   isAdmin,
   onAllowanceRevoked,
+  onEditAllowance,
 }: Props): React.ReactElement {
   const catalog =
     PROTOCOL_CATALOG[protocolSlug as keyof typeof PROTOCOL_CATALOG];
@@ -38,6 +42,11 @@ export function RoleProtocolGroup({
               allowance={allowance}
               isAdmin={isAdmin}
               key={allowance.id}
+              onEdit={
+                onEditAllowance
+                  ? () => onEditAllowance(allowance.id)
+                  : undefined
+              }
               onRevoked={onAllowanceRevoked}
               safeId={safeId}
             />
