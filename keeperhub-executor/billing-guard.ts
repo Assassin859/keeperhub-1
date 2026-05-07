@@ -118,7 +118,8 @@ export async function checkExecutionLimitForExecutor(
     .where(
       and(
         eq(workflows.organizationId, organizationId),
-        sql`${workflowExecutions.startedAt} >= ${startOfMonth.toISOString()}`
+        sql`${workflowExecutions.startedAt} >= ${startOfMonth.toISOString()}`,
+        eq(workflowExecutions.billable, true)
       )
     );
 

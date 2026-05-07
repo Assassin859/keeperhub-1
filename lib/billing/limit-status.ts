@@ -37,6 +37,7 @@ async function getCurrentMonthUsage(organizationId: string): Promise<number> {
              WHERE w.organization_id = ${organizationId}
                AND we.started_at >= ${startOfMonth}
                AND we.status <> 'blocked_billing'
+               AND we.billable = TRUE
           )
           +
           (
