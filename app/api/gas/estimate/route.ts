@@ -155,8 +155,13 @@ function estimateWriteContract(
     provider
   );
 
-  const fn = contract[config.abiFunction];
-  if (typeof fn !== "function") {
+  // Use getFunction() so ABI names that collide with BaseContract built-ins
+  // (e.g. getAddress, attach, connect, queryFilter) resolve to the ABI fragment
+  // instead of the inherited method (which lacks `.estimateGas`).
+  let fn: ethers.BaseContractMethod;
+  try {
+    fn = contract.getFunction(config.abiFunction);
+  } catch {
     return badRequest(`Function '${config.abiFunction}' not found in ABI`);
   }
 

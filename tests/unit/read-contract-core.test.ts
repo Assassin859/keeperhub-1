@@ -58,6 +58,14 @@ const mockStaticCall = vi.fn();
 
 vi.mock("ethers", async () => {
   const actual = await vi.importActual<typeof import("ethers")>("ethers");
+  function buildAbiFunction(): {
+    (...args: unknown[]): unknown;
+    staticCall: (...args: unknown[]) => unknown;
+  } {
+    const fn = (...args: unknown[]) => mockContractFunction(...args);
+    fn.staticCall = (...args: unknown[]) => mockStaticCall(...args);
+    return fn;
+  }
   return {
     ...actual,
     ethers: {
@@ -69,11 +77,13 @@ vi.mock("ethers", async () => {
           return new Proxy(
             {},
             {
-              get(_target: object, _prop: string | symbol): unknown {
-                const fn = (...args: unknown[]) =>
-                  mockContractFunction(...args);
-                fn.staticCall = (...args: unknown[]) => mockStaticCall(...args);
-                return fn;
+              get(_target: object, prop: string | symbol): unknown {
+                // Production code now calls contract.getFunction(name) to avoid
+                // BaseContract proxy collisions. Honour that surface.
+                if (prop === "getFunction") {
+                  return (_name: string) => buildAbiFunction();
+                }
+                return buildAbiFunction();
               },
             }
           );
