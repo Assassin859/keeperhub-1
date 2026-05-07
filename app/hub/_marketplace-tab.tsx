@@ -136,8 +136,10 @@ export async function HubMarketplaceTab({
           {ownerName !== null && (
             // Absolutely positioned into the always-reserved top spacer
             // (mb-4 h-9 above) so toggling the owner filter doesn't shift
-            // the table down. -52px = -(spacer h-9 36px + mb-4 16px).
-            <div className="-top-[52px] absolute right-0 left-0 flex items-center gap-2 text-xs">
+            // the table down. -top-9 (-36px) sits the pill near the bottom
+            // of the spacer so the visible gap to the table matches the
+            // pre-overlay mb-3 layout (~12px between pill and table top).
+            <div className="-top-9 absolute right-0 left-0 flex items-center gap-2 text-xs">
               <span className="text-muted-foreground">Filtered by owner:</span>
               <Link
                 aria-label={`Clear owner filter ${ownerName}`}
