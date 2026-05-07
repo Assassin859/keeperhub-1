@@ -44,7 +44,7 @@ describe("Superfluid protocol", () => {
       }
     });
 
-    it("ships an inline ABI containing the 5 expected functions", () => {
+    it("ships an inline ABI containing the 6 expected functions", () => {
       const contract = superfluidProtocol.contracts.cfaForwarder;
       expect(contract.abi).toBeTruthy();
       const abi = JSON.parse(contract.abi as string) as Array<{
@@ -62,6 +62,7 @@ describe("Superfluid protocol", () => {
           "getAccountFlowrate",
           "getFlowInfo",
           "updateFlow",
+          "updateFlowOperatorPermissions",
         ].sort()
       );
     });
@@ -367,7 +368,7 @@ describe("Superfluid protocol", () => {
       expect(contract.userSpecifiedAddress).toBe(true);
     });
 
-    it("ships an inline ABI with the 5 expected functions", () => {
+    it("ships an inline ABI with the 4 expected functions", () => {
       const contract = superfluidProtocol.contracts.superToken;
       const abi = JSON.parse(contract.abi as string) as Array<{
         type: string;
@@ -378,19 +379,13 @@ describe("Superfluid protocol", () => {
         .map((f) => f.name)
         .sort();
       expect(fnNames).toEqual(
-        [
-          "balanceOf",
-          "downgrade",
-          "getUnderlyingToken",
-          "updateFlowOperatorPermissions",
-          "upgrade",
-        ].sort()
+        ["balanceOf", "downgrade", "getUnderlyingToken", "upgrade"].sort()
       );
     });
   });
 
   describe("SuperToken actions", () => {
-    it("declares the five expected SuperToken action slugs", () => {
+    it("declares the four expected SuperToken action slugs", () => {
       const slugs = superfluidProtocol.actions
         .filter((a) => a.contract === "superToken")
         .map((a) => a.slug)
@@ -399,7 +394,6 @@ describe("Superfluid protocol", () => {
         [
           "get-super-token-balance",
           "get-underlying-token",
-          "grant-flow-operator",
           "unwrap",
           "wrap",
         ].sort()
@@ -419,16 +413,6 @@ describe("Superfluid protocol", () => {
       expect(action?.function).toBe("downgrade");
     });
 
-    it("grant-flow-operator includes the bitmap helpTip on permissions", () => {
-      const action = findAction("grant-flow-operator");
-      const perms = action?.inputs.find((i) => i.name === "permissions");
-      expect(perms?.type).toBe("uint8");
-      expect(perms?.helpTip).toContain("1");
-      expect(perms?.helpTip).toContain("2");
-      expect(perms?.helpTip).toContain("4");
-      expect(perms?.helpTip).toContain("7");
-    });
-
     it("get-super-token-balance returns balance with decimals: 18", () => {
       const action = findAction("get-super-token-balance");
       expect(action?.type).toBe("read");
@@ -440,6 +424,38 @@ describe("Superfluid protocol", () => {
       expect(action?.type).toBe("read");
       expect(action?.inputs).toEqual([]);
       expect(action?.outputs?.[0]?.type).toBe("address");
+    });
+  });
+
+  describe("grant-flow-operator action", () => {
+    // KEEP-456: routes through CFAv1Forwarder, not the SuperToken proxy.
+    // Test pins the routing so the bug can't regress silently.
+    it("is declared as a write action against cfaForwarder.updateFlowOperatorPermissions", () => {
+      const action = findAction("grant-flow-operator");
+      expect(action).toBeDefined();
+      expect(action?.type).toBe("write");
+      expect(action?.contract).toBe("cfaForwarder");
+      expect(action?.function).toBe("updateFlowOperatorPermissions");
+    });
+
+    it("takes token, flowOperator, permissions, flowRateAllowance in that order", () => {
+      const action = findAction("grant-flow-operator");
+      expect(action?.inputs.map((i) => i.name)).toEqual([
+        "token",
+        "flowOperator",
+        "permissions",
+        "flowRateAllowance",
+      ]);
+    });
+
+    it("includes the bitmap helpTip on permissions", () => {
+      const action = findAction("grant-flow-operator");
+      const perms = action?.inputs.find((i) => i.name === "permissions");
+      expect(perms?.type).toBe("uint8");
+      expect(perms?.helpTip).toContain("1");
+      expect(perms?.helpTip).toContain("2");
+      expect(perms?.helpTip).toContain("4");
+      expect(perms?.helpTip).toContain("7");
     });
   });
 

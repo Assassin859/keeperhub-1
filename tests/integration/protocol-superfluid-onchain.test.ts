@@ -337,17 +337,20 @@ describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
     expect(msg).not.toMatch(ENCODING_ERROR_RE);
   }, 15_000);
 
-  it("grant-flow-operator: encodes (address, uint8, int96) against superToken.updateFlowOperatorPermissions", async () => {
-    const msg = await estimateGasError(
-      "grant-flow-operator",
-      {
-        flowOperator: TEST_ADDRESS,
-        permissions: DUMMY_PERMISSIONS_ALL,
-        flowRateAllowance: DUMMY_FLOW_RATE,
-      },
-      SEPOLIA_FUSDCX
-    );
-    expect(msg).not.toMatch(ENCODING_ERROR_RE);
+  it("grant-flow-operator: simulates successfully against cfaForwarder.updateFlowOperatorPermissions", async () => {
+    // KEEP-456: routed through the CFAv1Forwarder, not the SuperToken proxy.
+    // Asserts the call actually simulates (estimateGas returns) -- the previous
+    // "tolerate any revert" pattern hid a routing bug because the SuperToken's
+    // proxy reverts on the Sepolia fUSDCx test token. The CFAv1Forwarder is
+    // the canonical entry point and works for any registered SuperToken.
+    const TEST_OPERATOR = "0x0000000000000000000000000000000000000002";
+    const msg = await estimateGasError("grant-flow-operator", {
+      token: SEPOLIA_FUSDCX,
+      flowOperator: TEST_OPERATOR,
+      permissions: DUMMY_PERMISSIONS_ALL,
+      flowRateAllowance: DUMMY_FLOW_RATE,
+    });
+    expect(msg).toBe("");
   }, 15_000);
 
   // -- Coverage check ------------------------------------------------------

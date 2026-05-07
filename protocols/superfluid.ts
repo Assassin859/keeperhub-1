@@ -104,6 +104,18 @@ const CFA_FORWARDER_ABI = JSON.stringify([
     ],
     outputs: [{ name: "flowRate", type: "int96" }],
   },
+  {
+    type: "function",
+    name: "updateFlowOperatorPermissions",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "flowOperator", type: "address" },
+      { name: "permissions", type: "uint8" },
+      { name: "flowRateAllowance", type: "int96" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
 ]);
 
 /**
@@ -223,17 +235,6 @@ const SUPER_TOKEN_ABI = JSON.stringify([
     stateMutability: "view",
     inputs: [],
     outputs: [{ name: "", type: "address" }],
-  },
-  {
-    type: "function",
-    name: "updateFlowOperatorPermissions",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "flowOperator", type: "address" },
-      { name: "permissions", type: "uint8" },
-      { name: "flowRateAllowance", type: "int96" },
-    ],
-    outputs: [{ name: "", type: "bool" }],
   },
 ]);
 
@@ -560,9 +561,10 @@ export default defineProtocol({
       description:
         "Authorize another address to manage your flows of this SuperToken up to a wei/sec allowance",
       type: "write",
-      contract: "superToken",
+      contract: "cfaForwarder",
       function: "updateFlowOperatorPermissions",
       inputs: [
+        { name: "token", type: "address", label: "SuperToken Address" },
         {
           name: "flowOperator",
           type: "address",
