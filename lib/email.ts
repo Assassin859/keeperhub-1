@@ -140,7 +140,7 @@ export async function sendVerificationOTP(
   const { email, otp, type } = data;
 
   const logoUrl =
-    "https://raw.githubusercontent.com/KeeperHub/keeperhub/staging/public/keeperhub_logo.png";
+    "https://raw.githubusercontent.com/KeeperHub/keeperhub/staging/public/keeperhub_logo_email.png";
 
   const subjectMap = {
     "sign-in": "Your KeeperHub sign-in code",
@@ -260,7 +260,7 @@ export async function sendOAuthPasswordResetEmail(
   const { email, providerName } = data;
 
   const logoUrl =
-    "https://raw.githubusercontent.com/KeeperHub/keeperhub/staging/public/keeperhub_logo.png";
+    "https://raw.githubusercontent.com/KeeperHub/keeperhub/staging/public/keeperhub_logo_email.png";
 
   const subject = "Password Reset Request - KeeperHub";
 
@@ -350,7 +350,7 @@ export async function sendInvitationEmail(
     data;
 
   const logoUrl =
-    "https://raw.githubusercontent.com/KeeperHub/keeperhub/staging/public/keeperhub_logo.png";
+    "https://raw.githubusercontent.com/KeeperHub/keeperhub/staging/public/keeperhub_logo_email.png";
 
   const subject = `You've been invited to join ${organizationName} on KeeperHub`;
 
