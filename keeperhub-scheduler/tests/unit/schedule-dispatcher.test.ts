@@ -72,6 +72,22 @@ describe("shouldTriggerNow", () => {
     expect(shouldTriggerNow("0 9 * * *", "UTC", now)).toBe(true);
   });
 
+  it("triggers at the exact occurrence boundary (now == cron firing time)", () => {
+    // Regression: cron-parser's prev() is strict, so without an epsilon
+    // on currentDate a tick landing at exactly 09:00:00.000 with cron
+    // "0 9 * * *" returns yesterday's 9am and the schedule is skipped.
+    const now = new Date("2024-01-15T09:00:00.000Z");
+    expect(shouldTriggerNow("0 9 * * *", "UTC", now)).toBe(true);
+  });
+
+  it("triggers at the exact minute boundary for an every-minute cron", () => {
+    // Same boundary case as above but for "* * * * *" -- the dispatcher's
+    // 60s setInterval can land on minute boundaries depending on startup
+    // alignment. Without the epsilon, every such tick was missed.
+    const now = new Date("2024-01-15T09:01:00.000Z");
+    expect(shouldTriggerNow("* * * * *", "UTC", now)).toBe(true);
+  });
+
   it("returns false at 60 seconds (window is exclusive)", () => {
     // At 9:01:00, diff from 9:00:00 is exactly 60_000ms -- not < 60_000.
     const now = new Date("2024-01-15T09:01:00Z");

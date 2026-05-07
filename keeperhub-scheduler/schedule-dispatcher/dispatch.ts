@@ -56,8 +56,13 @@ export function shouldTriggerNow(
   now: Date,
 ): boolean {
   try {
+    // cron-parser's prev() is strict — at exactly 09:00:00.000 with cron
+    // `0 9 * * *`, prev() returns yesterday's 9am rather than today's, so
+    // a dispatch tick that happens to land on a minute boundary skips the
+    // schedule. Bump currentDate by 1ms so an occurrence at exactly `now`
+    // is treated as in the past.
     const interval = CronExpressionParser.parse(cronExpression, {
-      currentDate: now,
+      currentDate: new Date(now.getTime() + 1),
       tz: timezone,
     });
 
