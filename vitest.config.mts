@@ -22,6 +22,17 @@ export default defineConfig({
       // picks up keeperhub-events/event-tracker/tests/integration via
       // positional path filter and fails on missing deps.
       "keeperhub-events/**",
+      // keeperhub-scheduler has its own package, vitest config, and
+      // pnpm-lock. Tests there are run by pr-checks-scheduler.yml; the
+      // main app's vitest must not pick them up (the chain-monitor test
+      // imports from ../../block-dispatcher/* which only resolves when
+      // run from within keeperhub-scheduler/).
+      "keeperhub-scheduler/**",
+      // .planning/ contains hackathon archives with frozen forks of the
+      // codebase + their stale test snapshots. Including them in vitest
+      // means any change to a baseline (like BASELINE_POLICIES) breaks
+      // archived test files that no longer match the live source.
+      ".planning/**",
     ],
     coverage: {
       provider: "v8",

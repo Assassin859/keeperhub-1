@@ -166,7 +166,7 @@ export async function submitContractCallAndConfirm(
   let tx: ethers.TransactionResponse;
   try {
     tx = await withRpcMetrics(primaryCtx, () =>
-      contract[method](...args, overrides)
+      contract.getFunction(method)(...args, overrides)
     );
   } catch (primaryError) {
     if (isNonRetryableError(primaryError)) {
@@ -206,7 +206,7 @@ export async function submitContractCallAndConfirm(
       reconnectedSigner
     ) as typeof contract;
     tx = await withRpcMetrics(fallbackCtx, () =>
-      reconnectedContract[method](...args, overrides)
+      reconnectedContract.getFunction(method)(...args, overrides)
     );
   }
 
@@ -388,12 +388,12 @@ export async function executeContractTransaction(
     const estimatedGas = context.rpcManager
       ? await context.rpcManager.executeWithFailover(
           (rpcProvider) =>
-            (contract.connect(rpcProvider) as typeof contract)[
-              method
-            ].estimateGas(...args, { from: walletAddress }),
+            (contract.connect(rpcProvider) as typeof contract)
+              .getFunction(method)
+              .estimateGas(...args, { from: walletAddress }),
           "preflight"
         )
-      : await contract[method].estimateGas(...args);
+      : await contract.getFunction(method).estimateGas(...args);
 
     const gasConfig = await gasStrategy.getGasConfig(
       provider as ethers.Provider,
@@ -404,7 +404,7 @@ export async function executeContractTransaction(
       context.rpcManager
     );
 
-    const tx = await contract[method](...args, {
+    const tx = await contract.getFunction(method)(...args, {
       nonce,
       gasLimit: gasConfig.gasLimit,
       maxFeePerGas: gasConfig.maxFeePerGas,
