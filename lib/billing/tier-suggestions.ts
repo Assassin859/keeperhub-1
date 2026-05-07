@@ -2,6 +2,7 @@ import "server-only";
 
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { billableWorkflowRawSql } from "./marketplace-billing";
 import {
   getPlanLimits,
   PLANS,
@@ -59,6 +60,7 @@ export async function getUpgradeSuggestion(
               JOIN workflows w ON we.workflow_id = w.id
              WHERE w.organization_id = ${organizationId}
                AND we.started_at >= ${startOfMonth.toISOString()}
+               AND ${billableWorkflowRawSql}
           )
           +
           (

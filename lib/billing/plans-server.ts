@@ -4,6 +4,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { organizationSubscriptions } from "@/lib/db/schema";
 import { getActiveDebtExecutions } from "./execution-debt";
+import { billableWorkflowRawSql } from "./marketplace-billing";
 import {
   type BillingInterval,
   getPlanLimits,
@@ -260,6 +261,7 @@ export async function checkExecutionLimit(
               JOIN workflows w ON we.workflow_id = w.id
              WHERE w.organization_id = ${organizationId}
                AND we.started_at >= ${startOfMonth.toISOString()}
+               AND ${billableWorkflowRawSql}
           )
           +
           (

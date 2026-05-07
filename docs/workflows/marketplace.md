@@ -115,6 +115,18 @@ You can see your earnings breakdown on the **Earnings** page in KeeperHub:
 
 Earnings are broken down by payment network (Base via x402, Tempo via MPP).
 
+### Execution quota
+
+Calls to a workflow you've listed at **$0.05 USDC per call or higher** don't count toward your organization's monthly execution limit. Marketplace revenue covers the cost on KeeperHub's side, so charging your plan's quota on top would be double-counting.
+
+Listings priced below $0.05 still count toward your monthly executions, just like any private workflow. The floor exists to keep the rule fair: without it, an owner could publish at $0 and self-call to bypass their plan limit.
+
+A few things follow from this:
+
+- **Delisting is retroactive.** If you unpublish a workflow mid-month, every call to it earlier that month is added back to your usage immediately. If you're close to your limit, double-check the Earnings page before unpublishing.
+- **The threshold is a hard cutoff.** A listing priced at $0.049 gives no quota relief; one at $0.05 is fully exempt.
+- **Direct API and private workflows are unaffected.** Direct executions and runs of any workflow you haven't listed always count toward your quota.
+
 ### Receiving revenue on two chains
 
 After a caller pays, the USDC (on Base) or USDC.e (on Tempo) lands directly in your organization's creator wallet. The split between them is just a function of which agents called your workflow. There's nothing to configure, and a zero balance on one chain isn't a problem.
@@ -202,7 +214,7 @@ Your slug, on the other hand, is public. x402scan.com and mppscan.com index it u
 
 Reliability is on you. Callers are only charged on successful execution, but repeat failures cost you trust (and revenue, since agents stop calling you). Watch the Earnings page after any workflow change.
 
-Calls run inside your KeeperHub organization. Whichever connected wallets, integrations, and execution credits the workflow uses are charged to your org, not the caller's.
+Calls run inside your KeeperHub organization. Connected wallets and integrations the workflow uses are billed to your org, not the caller's. Executions of listings priced at $0.05 USDC or higher are exempt from your monthly execution quota — see [Execution quota](#execution-quota).
 
 ## Reference implementation
 

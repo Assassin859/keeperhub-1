@@ -3,6 +3,7 @@ import "server-only";
 import { and, count, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
+import { billableWorkflowRawSql } from "./marketplace-billing";
 import { getPlanLimits, parsePlanName, parseTierKey } from "./plans";
 import { getOrgSubscription } from "./plans-server";
 
@@ -37,6 +38,7 @@ async function getCurrentMonthUsage(organizationId: string): Promise<number> {
              WHERE w.organization_id = ${organizationId}
                AND we.started_at >= ${startOfMonth}
                AND we.status <> 'blocked_billing'
+               AND ${billableWorkflowRawSql}
           )
           +
           (
