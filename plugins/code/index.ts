@@ -6,7 +6,7 @@ const codePlugin: IntegrationPlugin = {
   type: "code",
   label: "Code",
   description:
-    "Execute custom JavaScript code server-side in a sandboxed VM. Code can make outbound HTTP requests via fetch (subject to the configured timeout). Not a security boundary -- intended for authenticated team members only.",
+    "Execute custom JavaScript code server-side in a sandboxed VM. Code can make outbound HTTP requests via fetch (subject to the configured timeout). Not a security boundary; intended for authenticated team members only.",
 
   icon: CodeIcon,
 

@@ -44,22 +44,22 @@ const DEFAULT_TAB: HubTabValue = "protocols";
 // surfacing all three tabs in the description.
 const TAB_METADATA: Record<HubTabValue | "default", TabMetadata> = {
   default: {
-    title: "Hub — KeeperHub",
+    title: "Hub · KeeperHub",
     description:
       "Browse protocols, fork community workflows, and discover paid services on the marketplace.",
   },
   protocols: {
-    title: "Protocols — Hub | KeeperHub",
+    title: "Protocols · Hub | KeeperHub",
     description:
-      "Browse Web3 protocols KeeperHub workflows can interact with — Aave, Uniswap, Compound, and more.",
+      "Browse Web3 protocols KeeperHub workflows can interact with: Aave, Uniswap, Compound, and more.",
   },
   workflows: {
-    title: "Workflows — Hub | KeeperHub",
+    title: "Workflows · Hub | KeeperHub",
     description:
       "Browse community workflow templates. Fork any template to your organisation in one click.",
   },
   marketplace: {
-    title: "Marketplace — Hub | KeeperHub",
+    title: "Marketplace · Hub | KeeperHub",
     description:
       "Discover paid services. Listed workflows ranked by call count, callable by humans and AI agents.",
   },
