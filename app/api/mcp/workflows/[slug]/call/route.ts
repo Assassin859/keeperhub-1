@@ -3,7 +3,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { start } from "workflow/api";
 import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
-import { FREE_MARKETPLACE_BILLING_THRESHOLD_USDC } from "@/lib/billing/marketplace-billing";
+import { priceQualifiesForMarketplaceExemption } from "@/lib/billing/marketplace-billing";
 import { db } from "@/lib/db";
 import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
 import { tags, workflowExecutions, workflows } from "@/lib/db/schema";
@@ -352,8 +352,7 @@ async function handlePaidWorkflow(
         // actual payment receipt, not just to the workflow's listing state.
         // Owner-initiated runs, scheduled runs, block/event triggers, etc.
         // never reach this branch and stay billable=TRUE (the column default).
-        const priceUsdc = Number(workflow.priceUsdcPerCall ?? 0);
-        if (priceUsdc >= Number(FREE_MARKETPLACE_BILLING_THRESHOLD_USDC)) {
+        if (priceQualifiesForMarketplaceExemption(workflow.priceUsdcPerCall)) {
           await db
             .update(workflowExecutions)
             .set({ billable: false })
