@@ -115,15 +115,16 @@ describe("reconcileBaselinePolicies", () => {
     expect(client.createPolicy).toHaveBeenCalledTimes(1);
     expect(client.deletePolicy).toHaveBeenCalledTimes(1);
 
-    // Order: create must happen BEFORE delete in invocation history so the
-    // sub-org never has zero coverage of this policy slot. We sort by call
-    // index via mock invocationCallOrder.
+    // Order: delete must happen BEFORE create -- Turnkey rejects duplicate
+    // policy names ("policy label must be unique"), so we cannot
+    // create-before-delete. We accept a brief coverage gap and the
+    // operator-side retry contract.
     const createOrder = client.createPolicy.mock.invocationCallOrder[0];
     const deleteOrder = client.deletePolicy.mock.invocationCallOrder[0];
     expect(createOrder).toBeDefined();
     expect(deleteOrder).toBeDefined();
     if (createOrder !== undefined && deleteOrder !== undefined) {
-      expect(createOrder).toBeLessThan(deleteOrder);
+      expect(deleteOrder).toBeLessThan(createOrder);
     }
   });
 
