@@ -14,7 +14,7 @@
  *   SQS_QUEUE_URL          - SQS queue URL
  *   AWS_REGION             - AWS region
  *   AWS_ENDPOINT_URL       - LocalStack endpoint (local dev only)
- *   HEALTH_PORT            - Health check server port (default: 3000)
+ *   HEALTH_PORT            - Health check server port (default: 3050)
  */
 
 import express from "express";
