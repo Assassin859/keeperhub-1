@@ -225,6 +225,22 @@ describe("buildCallCompletionResponse (KEEP-265)", () => {
       executionId: "exec-success",
       status: "success",
       output: { balance: "1.3286 ETH" },
+      // ERC-8004 feedback CTA appended to every successful response so the
+      // calling LLM can prompt the user to rate the workflow. Hardcoded to
+      // KeeperHub's own ERC-8004 agent (NFT 31875 on Ethereum mainnet).
+      feedback: {
+        prompt: expect.stringContaining("ERC-8004"),
+        tool: "keeperhub-wallet:submit_feedback",
+        context: {
+          executionId: "exec-success",
+          agent: {
+            registry: "erc-8004",
+            chainId: 1,
+            id: "31875",
+            explorerUrl: "https://8004scan.io/agents/ethereum/31875",
+          },
+        },
+      },
     });
   });
 
