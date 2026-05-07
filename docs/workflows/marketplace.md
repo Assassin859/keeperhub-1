@@ -117,14 +117,13 @@ Earnings are broken down by payment network (Base via x402, Tempo via MPP).
 
 ### Execution quota
 
-Calls to a workflow you've listed at **$0.05 USDC per call or higher** don't count toward your organization's monthly execution limit. Marketplace revenue covers the cost on KeeperHub's side, so charging your plan's quota on top would be double-counting.
+When a Marketplace caller pays for one of your listed workflows at **$0.05 USDC per call or higher**, that execution does not count toward your organization's monthly execution limit. Marketplace revenue covers the cost on KeeperHub's side, so charging your plan's quota on top would be double-counting.
 
-Listings priced below $0.05 still count toward your monthly executions, just like any private workflow. The floor exists to keep the rule fair: without it, an owner could publish at $0 and self-call to bypass their plan limit.
+The exemption is gated on actual payment receipt, not on listing state alone. So:
 
-A few things follow from this:
-
-- **The exemption is snapshotted at call time.** Each execution is stamped as billable or exempt at the moment it runs, based on the listing state then. Changing the price or unpublishing afterward only affects future calls; past calls stay where they were.
-- **The threshold is a hard cutoff.** A listing priced at $0.049 gives no quota relief; one at $0.05 is fully exempt.
+- **Only paid Marketplace calls qualify.** When you click Run in the editor, or the workflow fires from a schedule, block trigger, event, webhook, or direct API call, no payment is recorded and the run counts toward your quota normally, even if the workflow is listed at the threshold price. The exemption is for revenue you actually received, not for the act of listing.
+- **The price floor is a hard cutoff.** A listing priced at $0.049 gives no quota relief; one at $0.05 is fully exempt. The floor prevents an owner from publishing at $0 (or near it) and self-calling through the marketplace to accumulate free executions.
+- **The exemption is locked in per call.** Once a paid call is recorded as exempt, raising or lowering the listing price afterward does not change the verdict for past calls. Future calls are evaluated against the price in effect at their moment of payment.
 - **Direct API and private workflows are unaffected.** Direct executions and runs of any workflow you haven't listed always count toward your quota.
 
 ### Receiving revenue on two chains

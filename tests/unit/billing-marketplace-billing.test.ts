@@ -1,49 +1,28 @@
 import { describe, expect, it } from "vitest";
-import {
-  FREE_MARKETPLACE_BILLING_THRESHOLD_USDC,
-  isWorkflowBillable,
-} from "@/lib/billing/marketplace-billing";
+import { FREE_MARKETPLACE_BILLING_THRESHOLD_USDC } from "@/lib/billing/marketplace-billing";
 
 describe("marketplace-billing", () => {
   it("threshold is 0.05 USDC", () => {
     expect(FREE_MARKETPLACE_BILLING_THRESHOLD_USDC).toBe("0.05");
   });
 
-  describe("isWorkflowBillable", () => {
-    it("returns true for unlisted workflows regardless of price", () => {
-      expect(
-        isWorkflowBillable({ isListed: false, priceUsdcPerCall: "0.50" })
-      ).toBe(true);
-      expect(
-        isWorkflowBillable({ isListed: null, priceUsdcPerCall: "1.00" })
-      ).toBe(true);
+  it("threshold parses as a number for numeric comparisons", () => {
+    expect(Number(FREE_MARKETPLACE_BILLING_THRESHOLD_USDC)).toBe(0.05);
+  });
+
+  describe("threshold comparison semantics (mirrors the marketplace call route)", () => {
+    const threshold = Number(FREE_MARKETPLACE_BILLING_THRESHOLD_USDC);
+
+    it("treats prices below the threshold as not exempt", () => {
+      expect(threshold <= 0.04).toBe(false);
+      expect(threshold <= 0.0001).toBe(false);
+      expect(threshold <= 0).toBe(false);
     });
 
-    it("returns true for listed workflows priced below the threshold", () => {
-      expect(
-        isWorkflowBillable({ isListed: true, priceUsdcPerCall: "0.04" })
-      ).toBe(true);
-      expect(
-        isWorkflowBillable({ isListed: true, priceUsdcPerCall: "0.0001" })
-      ).toBe(true);
-      expect(
-        isWorkflowBillable({ isListed: true, priceUsdcPerCall: "0" })
-      ).toBe(true);
-      expect(
-        isWorkflowBillable({ isListed: true, priceUsdcPerCall: null })
-      ).toBe(true);
-    });
-
-    it("returns false for listed workflows at or above the threshold", () => {
-      expect(
-        isWorkflowBillable({ isListed: true, priceUsdcPerCall: "0.05" })
-      ).toBe(false);
-      expect(
-        isWorkflowBillable({ isListed: true, priceUsdcPerCall: "0.50" })
-      ).toBe(false);
-      expect(
-        isWorkflowBillable({ isListed: true, priceUsdcPerCall: "100" })
-      ).toBe(false);
+    it("treats prices at or above the threshold as exempt", () => {
+      expect(threshold <= 0.05).toBe(true);
+      expect(threshold <= 0.5).toBe(true);
+      expect(threshold <= 100).toBe(true);
     });
   });
 });

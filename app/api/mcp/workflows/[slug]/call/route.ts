@@ -3,6 +3,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { start } from "workflow/api";
 import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
+import { FREE_MARKETPLACE_BILLING_THRESHOLD_USDC } from "@/lib/billing/marketplace-billing";
 import { db } from "@/lib/db";
 import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
 import { tags, workflowExecutions, workflows } from "@/lib/db/schema";
@@ -14,15 +15,18 @@ import {
   gatePayment,
   type PaymentMeta,
 } from "@/lib/payments/router";
-import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
-import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 import { buildCallCompletionResponse } from "@/lib/payments/x402/execution-wait";
 import {
   hashPaymentSignature,
   recordPayment,
   resolveCreatorWallet,
 } from "@/lib/payments/x402/payment-gate";
-import { CALL_ROUTE_COLUMNS, type CallRouteWorkflow } from "@/lib/payments/x402/types";
+import {
+  CALL_ROUTE_COLUMNS,
+  type CallRouteWorkflow,
+} from "@/lib/payments/x402/types";
+import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
+import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -340,6 +344,20 @@ async function handlePaidWorkflow(
             })
             .where(eq(workflowExecutions.id, executionId));
           throw err;
+        }
+
+        // KEEP-449: marketplace-paid calls at or above the threshold are
+        // exempt from the owner's monthly execution quota. The flip lives
+        // here (after recordPayment succeeds) so the exemption is tied to
+        // actual payment receipt, not just to the workflow's listing state.
+        // Owner-initiated runs, scheduled runs, block/event triggers, etc.
+        // never reach this branch and stay billable=TRUE (the column default).
+        const priceUsdc = Number(workflow.priceUsdcPerCall ?? 0);
+        if (priceUsdc >= Number(FREE_MARKETPLACE_BILLING_THRESHOLD_USDC)) {
+          await db
+            .update(workflowExecutions)
+            .set({ billable: false })
+            .where(eq(workflowExecutions.id, executionId));
         }
 
         await startExecutionInBackground(workflow, body, executionId);
