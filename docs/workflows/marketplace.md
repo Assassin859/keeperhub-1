@@ -214,7 +214,7 @@ Your slug, on the other hand, is public. x402scan.com and mppscan.com index it u
 
 Reliability is on you. Callers are only charged on successful execution, but repeat failures cost you trust (and revenue, since agents stop calling you). Watch the Earnings page after any workflow change.
 
-Calls run inside your KeeperHub organization. Connected wallets and integrations the workflow uses are billed to your org, not the caller's. Executions of listings priced at $0.05 USDC or higher are exempt from your monthly execution quota — see [Execution quota](#execution-quota).
+Calls run inside your KeeperHub organization. Connected wallets and integrations the workflow uses are billed to your org, not the caller's. Executions of listings priced at $0.05 USDC or higher are exempt from your monthly execution quota; see [Execution quota](#execution-quota) above.
 
 ## Reference implementation
 
