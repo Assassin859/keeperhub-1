@@ -1,7 +1,7 @@
 "use client";
 
 import { ethers } from "ethers";
-import { AlertTriangleIcon } from "lucide-react";
+import { AlertTriangleIcon, InfoIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { AddressWithExplorer } from "@/components/safe/address-with-explorer";
@@ -9,6 +9,11 @@ import { getChainDisplayName } from "@/components/safe/chain-prefixes";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { buildAddressUrl } from "@/lib/build-explorer-url";
 import {
   defaultAmountForSymbol,
@@ -421,35 +426,48 @@ export function PolicyWizard({
             </div>
           )}
 
-          <div className="rounded-md border border-amber-300/40 bg-amber-500/10 p-3 text-xs">
-            <div className="mb-1 font-medium">How this works</div>
-            <ul className="list-inside list-disc space-y-1 text-muted-foreground">
-              <li>
-                Workflows on this Safe can only call the protocols you enable
-                below. Anything else reverts on chain.
-              </li>
-              <li>
-                For each protocol, pick which tokens it can spend, the cap per
-                period, and how often the cap refills.
-              </li>
-              <li>
-                {enforcementLabel("per-parameter")} pins specific function
-                arguments on chain. {enforcementLabel("contract-allowlist")}{" "}
-                only restricts which contracts the role can call.
-              </li>
-              <li>
-                Each protocol gets its own cap per token. Two protocols holding
-                USDC each have an independent allowance, never shared.
-              </li>
-            </ul>
-          </div>
-
           <div>
-            <Label className="text-xs">
-              {mode === "edit"
-                ? "Manage protocols on this Safe"
-                : "Protocols available on this chain"}
-            </Label>
+            <div className="flex items-center gap-1.5">
+              <Label className="text-xs">
+                {mode === "edit"
+                  ? "Manage protocols on this Safe"
+                  : "Protocols available on this chain"}
+              </Label>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    aria-label="How protocol policies work"
+                    className="text-muted-foreground transition-colors hover:text-foreground"
+                    type="button"
+                  >
+                    <InfoIcon className="h-3.5 w-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs" side="right">
+                  <ul className="list-inside list-disc space-y-1">
+                    <li>
+                      Workflows on this Safe can only call the protocols you
+                      enable. Anything else reverts on chain.
+                    </li>
+                    <li>
+                      Per protocol, pick tokens it can spend, the cap per
+                      period, and how often it refills.
+                    </li>
+                    <li>
+                      {enforcementLabel("per-parameter")} pins specific function
+                      arguments on chain.{" "}
+                      {enforcementLabel("contract-allowlist")} only restricts
+                      which contracts the role can call.
+                    </li>
+                    <li>
+                      Each protocol has its own cap per token. Two protocols
+                      holding USDC each have independent allowances, never
+                      shared.
+                    </li>
+                  </ul>
+                </TooltipContent>
+              </Tooltip>
+            </div>
             {mode === "edit" && (
               <p className="mt-1 mb-1 text-muted-foreground text-xs">
                 Active protocols are listed first. Click × on a protocol to
@@ -501,8 +519,15 @@ export function PolicyWizard({
         <div className="space-y-3 text-sm">
           <div className="rounded-md border bg-muted/20 p-3">
             <div className="mb-1 font-medium">Target</div>
-            <div className="text-muted-foreground text-xs">
-              {simulation.safe.chainName} - {simulation.safe.safeAddress}
+            <div className="space-y-0.5 text-muted-foreground text-xs">
+              <div>
+                <span className="text-foreground">Network:</span>{" "}
+                {getChainDisplayName(chainId)}
+              </div>
+              <div>
+                <span className="text-foreground">Address:</span>{" "}
+                {simulation.safe.safeAddress}
+              </div>
             </div>
           </div>
 
@@ -546,7 +571,7 @@ export function PolicyWizard({
           <div className="rounded-md border bg-muted/20 p-3">
             <div className="mb-1 font-medium">Estimated total cost</div>
             <div className="font-mono text-xs">
-              {simulation.plan.totalGasUnits} gas -{" "}
+              {simulation.plan.totalGasUnits} gas ·{" "}
               {simulation.plan.totalCostNative} native
               {simulation.plan.totalCostUsd !== null && (
                 <span> (~${simulation.plan.totalCostUsd.toFixed(2)})</span>

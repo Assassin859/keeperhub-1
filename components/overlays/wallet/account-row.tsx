@@ -44,20 +44,19 @@ export function AccountRow({
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <div className="flex items-center gap-2">
-          <span className="truncate font-medium text-sm">{title}</span>
-          {!isTurnkey && account.isSigningActive && (
-            <span className="rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-600 dark:text-emerald-400">
-              Active signer
-            </span>
-          )}
-        </div>
+        <span className="truncate font-medium text-sm">{title}</span>
         <div className="flex items-center gap-2 font-mono text-muted-foreground text-xs">
           <span>{addressLine}</span>
           {subtitle && <span className="font-sans">·</span>}
           {subtitle && <span className="font-sans">{subtitle}</span>}
         </div>
       </div>
+
+      {!isTurnkey && account.isSigningActive && (
+        <span className="shrink-0 rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-600 dark:text-emerald-400">
+          Active signer
+        </span>
+      )}
 
       <ChevronRight
         aria-hidden="true"
