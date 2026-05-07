@@ -28,6 +28,7 @@ type Args = {
   baseUrl: string;
   sessions: number;
   revisit: boolean;
+  delayMs: number;
 };
 
 type SessionResult = {
@@ -66,6 +67,12 @@ function parseArgs(argv: string[]): Args {
     baseUrl: process.env.BASE_URL ?? "https://app-staging.keeperhub.com",
     sessions: 10,
     revisit: false,
+    // The MCP session JWT has no jti/nonce: two initialize calls from the
+    // same (org, key, scope) within the same second mint a byte-identical
+    // JWT and collapse into one localCache entry. Default delay 1100ms
+    // forces each call into a distinct iat second so the probe actually
+    // exercises the per-key cap.
+    delayMs: 1100,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
@@ -75,17 +82,52 @@ function parseArgs(argv: string[]): Args {
     } else if (flag === "--sessions" && argv[i + 1] !== undefined) {
       args.sessions = Number.parseInt(argv[i + 1] as string, 10);
       i += 1;
+    } else if (flag === "--delay-ms" && argv[i + 1] !== undefined) {
+      args.delayMs = Number.parseInt(argv[i + 1] as string, 10);
+      i += 1;
     } else if (flag === "--revisit") {
       args.revisit = true;
     } else if (flag === "--help" || flag === "-h") {
       process.stdout.write(
         "Usage: KEEPERHUB_API_KEY=kh_... tsx scripts/probe-mcp-cap.ts " +
-          "[--base-url URL] [--sessions N] [--revisit]\n"
+          "[--base-url URL] [--sessions N] [--delay-ms MS] [--revisit]\n"
       );
       process.exit(0);
     }
   }
   return args;
+}
+
+function buildHeaders(
+  apiKey: string,
+  sessionId: string | null
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    accept: ACCEPT,
+    authorization: `Bearer ${apiKey}`,
+    "content-type": "application/json",
+  };
+  if (sessionId !== null) {
+    headers["mcp-session-id"] = sessionId;
+  }
+  // Cloudflare Access service-token credentials, when the deployment sits
+  // behind CF Access AND the protected app's policy accepts service tokens
+  // for this path. Both must be set; either alone is ignored.
+  const cfId = process.env.CF_ACCESS_CLIENT_ID;
+  const cfSecret = process.env.CF_ACCESS_CLIENT_SECRET;
+  if (cfId !== undefined && cfSecret !== undefined) {
+    headers["cf-access-client-id"] = cfId;
+    headers["cf-access-client-secret"] = cfSecret;
+  }
+  // CF Access user-session JWT (e.g. extracted from a browser cookie). Use
+  // when the path's CF Access policy requires user identity instead of a
+  // service token. Treated as an alternative or supplement to the service
+  // token above.
+  const cfAuthCookie = process.env.CF_AUTHORIZATION;
+  if (cfAuthCookie !== undefined) {
+    headers.cookie = `CF_Authorization=${cfAuthCookie}`;
+  }
+  return headers;
 }
 
 function percentile(values: number[], p: number): number {
@@ -109,11 +151,7 @@ async function openSession(
   try {
     const res = await fetch(`${baseUrl}/mcp`, {
       method: "POST",
-      headers: {
-        accept: ACCEPT,
-        authorization: `Bearer ${apiKey}`,
-        "content-type": "application/json",
-      },
+      headers: buildHeaders(apiKey, null),
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 1,
@@ -160,12 +198,7 @@ async function listTools(
   try {
     const res = await fetch(`${baseUrl}/mcp`, {
       method: "POST",
-      headers: {
-        accept: ACCEPT,
-        authorization: `Bearer ${apiKey}`,
-        "content-type": "application/json",
-        "mcp-session-id": sessionId,
-      },
+      headers: buildHeaders(apiKey, sessionId),
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 2,
@@ -213,6 +246,9 @@ async function main(): Promise<void> {
 
   const sessionResults: SessionResult[] = [];
   for (let i = 0; i < args.sessions; i += 1) {
+    if (i > 0 && args.delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, args.delayMs));
+    }
     const r = await openSession(args.baseUrl, apiKey, i);
     sessionResults.push(r);
     process.stderr.write(
