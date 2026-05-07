@@ -72,7 +72,7 @@ export async function generateMetadata({
 
   const { tag, workflowsCount } = loaded;
   const title = `${tag.name} templates · KeeperHub Hub`;
-  const description = `Browse community-built workflow templates tagged "${tag.name}" — copy and customize for your own automations.`;
+  const description = `Browse community-built workflow templates tagged "${tag.name}". Copy and customize for your own automations.`;
   const canonicalPath = `/hub/tags/${tag.slug}`;
 
   return {
@@ -91,7 +91,7 @@ export async function generateMetadata({
           url: `${baseUrl}/api/og/hub`,
           width: 1200,
           height: 630,
-          alt: `KeeperHub Workflow Hub — ${tag.name}`,
+          alt: `KeeperHub Workflow Hub · ${tag.name}`,
         },
       ],
     },

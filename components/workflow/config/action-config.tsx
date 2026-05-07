@@ -527,7 +527,7 @@ function CollectFields() {
       <div className="rounded-lg border bg-muted/30 p-3">
         <p className="text-muted-foreground text-sm">
           Place this node after a For Each loop to gather iteration outputs into
-          a single array. The Collect node marks the end of the loop body --
+          a single array. The Collect node marks the end of the loop body;
           nodes connected after Collect run once with the aggregated results.
         </p>
       </div>
@@ -535,12 +535,12 @@ function CollectFields() {
         <p className="font-medium text-sm">Available outputs</p>
         <ul className="list-disc space-y-1 pl-4 text-muted-foreground text-sm">
           <li>
-            <code className="text-xs">Collect.results</code> -- Array of
+            <code className="text-xs">Collect.results</code>: Array of
             outputs, one entry per iteration (from the last body node before
             Collect)
           </li>
           <li>
-            <code className="text-xs">Collect.count</code> -- Number of
+            <code className="text-xs">Collect.count</code>: Number of
             completed iterations
           </li>
         </ul>

@@ -8,6 +8,8 @@ const {
   mockDbSelect,
   mockDbInsert,
   mockDbUpdate,
+  mockDbUpdateSet,
+  mockDbTransaction,
   mockHashPaymentSignature,
   mockHashMppCredential,
   mockRecordPayment,
@@ -26,6 +28,8 @@ const {
   mockDbSelect: vi.fn(),
   mockDbInsert: vi.fn(),
   mockDbUpdate: vi.fn(),
+  mockDbUpdateSet: vi.fn(),
+  mockDbTransaction: vi.fn(),
   mockHashPaymentSignature: vi.fn(),
   mockHashMppCredential: vi.fn(),
   mockRecordPayment: vi.fn(),
@@ -51,6 +55,7 @@ vi.mock("@/lib/db", () => ({
     select: mockDbSelect,
     insert: mockDbInsert,
     update: mockDbUpdate,
+    transaction: mockDbTransaction,
   },
 }));
 
@@ -234,12 +239,29 @@ describe("POST /api/mcp/workflows/[slug]/call", () => {
     mockBuildCallCompletionResponse.mockImplementation((executionId: string) =>
       Promise.resolve({ executionId, status: "running" })
     );
-    // Default no-op update chain: db.update(table).set(values).where(filter)
-    mockDbUpdate.mockReturnValue({
-      set: vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue(undefined),
-      }),
+    // Default no-op update chain: db.update(table).set(values).where(filter).
+    // mockDbUpdateSet captures the values argument so tests can assert on it
+    // (used for the KEEP-449 billable=false flip and the status=error path).
+    mockDbUpdateSet.mockReset();
+    mockDbUpdateSet.mockReturnValue({
+      where: vi.fn().mockResolvedValue(undefined),
     });
+    mockDbUpdate.mockReturnValue({ set: mockDbUpdateSet });
+    // db.transaction(cb) calls cb with a tx that exposes the same insert /
+    // update mocks, so all of recordPayment + the billable flip route through
+    // the same spies the tests already inspect.
+    mockDbTransaction.mockImplementation(
+      async (
+        cb: (tx: {
+          insert: typeof mockDbInsert;
+          update: typeof mockDbUpdate;
+        }) => Promise<unknown>
+      ) =>
+        cb({
+          insert: mockDbInsert,
+          update: mockDbUpdate,
+        })
+    );
     // Default: caller is authenticated. Tests that exercise the unauthenticated
     // path must explicitly override these to return { authenticated: false }.
     mockAuthenticateOAuthToken.mockResolvedValue({
@@ -658,5 +680,79 @@ describe("POST /api/mcp/workflows/[slug]/call", () => {
     const response = await POST(request, { params });
     expect(response.status).toBe(402);
     expect(mockGatePayment).toHaveBeenCalled();
+  });
+
+  // ---------------------------------------------------------------------------
+  // KEEP-449: marketplace-paid calls at or above the threshold ($0.05 USDC) are
+  // exempt from the owner's monthly execution quota. The flip is performed by
+  // an UPDATE on workflow_executions inside the same transaction as
+  // recordPayment, so the workflow_payments row and billable bit can never
+  // disagree.
+  // ---------------------------------------------------------------------------
+
+  it("Test 17 (KEEP-449): paid call at or above the threshold flips billable=false", async () => {
+    setupDbSelectWorkflow(LISTED_WORKFLOW); // priceUsdcPerCall = "1.50"
+    setupDbInsertExecution("exec-paid-above");
+    makePassThroughGatePayment();
+    const { POST } = await import("@/app/api/mcp/workflows/[slug]/call/route");
+    const request = makeRequest("test-workflow", {
+      paymentSignature: "sig-above",
+    });
+    const params = Promise.resolve({ slug: "test-workflow" });
+    const response = await POST(request, { params });
+    expect(response.status).toBe(200);
+    expect(mockRecordPayment).toHaveBeenCalled();
+    expect(mockDbTransaction).toHaveBeenCalledTimes(1);
+    expect(mockDbUpdateSet).toHaveBeenCalledWith({ billable: false });
+  });
+
+  it("Test 18 (KEEP-449): paid call below the threshold leaves billable at default (true)", async () => {
+    const cheapWorkflow = { ...LISTED_WORKFLOW, priceUsdcPerCall: "0.04" };
+    setupDbSelectWorkflow(cheapWorkflow);
+    setupDbInsertExecution("exec-paid-below");
+    makePassThroughGatePayment();
+    const { POST } = await import("@/app/api/mcp/workflows/[slug]/call/route");
+    const request = makeRequest("test-workflow", {
+      paymentSignature: "sig-below",
+    });
+    const params = Promise.resolve({ slug: "test-workflow" });
+    const response = await POST(request, { params });
+    expect(response.status).toBe(200);
+    expect(mockRecordPayment).toHaveBeenCalled();
+    expect(mockDbTransaction).toHaveBeenCalledTimes(1);
+    expect(mockDbUpdateSet).not.toHaveBeenCalledWith({ billable: false });
+  });
+
+  it("Test 19 (KEEP-449): paid call exactly at the threshold flips billable=false", async () => {
+    const thresholdWorkflow = {
+      ...LISTED_WORKFLOW,
+      priceUsdcPerCall: "0.05",
+    };
+    setupDbSelectWorkflow(thresholdWorkflow);
+    setupDbInsertExecution("exec-paid-threshold");
+    makePassThroughGatePayment();
+    const { POST } = await import("@/app/api/mcp/workflows/[slug]/call/route");
+    const request = makeRequest("test-workflow", {
+      paymentSignature: "sig-threshold",
+    });
+    const params = Promise.resolve({ slug: "test-workflow" });
+    const response = await POST(request, { params });
+    expect(response.status).toBe(200);
+    expect(mockDbUpdateSet).toHaveBeenCalledWith({ billable: false });
+  });
+
+  it("Test 20 (KEEP-449): free workflow path never flips billable", async () => {
+    setupDbSelectWorkflow(FREE_WORKFLOW); // price = "0"
+    setupDbInsertExecution("exec-free-keep449");
+    const { POST } = await import("@/app/api/mcp/workflows/[slug]/call/route");
+    const request = makeRequest("test-workflow");
+    const params = Promise.resolve({ slug: "test-workflow" });
+    const response = await POST(request, { params });
+    expect(response.status).toBe(200);
+    // Free path bypasses gatePayment entirely, so neither recordPayment nor
+    // the transaction wrapper run.
+    expect(mockGatePayment).not.toHaveBeenCalled();
+    expect(mockDbTransaction).not.toHaveBeenCalled();
+    expect(mockDbUpdateSet).not.toHaveBeenCalledWith({ billable: false });
   });
 });

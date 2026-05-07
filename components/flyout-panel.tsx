@@ -46,7 +46,7 @@ export function FlyoutPanel({
       <Tooltip>
         <TooltipTrigger asChild>
           <button
-            className="pointer-events-auto fixed top-[calc(60px+var(--app-banner-height,0px))] bottom-0 z-30 flex items-start justify-center border-r bg-background pt-3 transition-[left] duration-200 ease-out hover:bg-muted/50"
+            className="group pointer-events-auto fixed top-[calc(60px+var(--app-banner-height,0px))] bottom-0 z-30 flex items-start justify-center border-r bg-background pt-3 transition-[left,background-color,color] duration-200 ease-out hover:bg-card"
             data-flyout
             onClick={onExpand}
             style={{ left: leftOffset, width: STRIP_WIDTH }}
@@ -59,20 +59,20 @@ export function FlyoutPanel({
               />
             )}
             <div className="flex flex-col items-center gap-1.5">
-              <ChevronRight className="size-3.5 text-muted-foreground" />
+              <ChevronRight className="size-3.5 text-muted-foreground transition-colors group-hover:text-foreground" />
               <div
                 className="flex items-start gap-0.5 whitespace-nowrap"
                 style={{ writingMode: "vertical-lr" }}
               >
-                <span className="font-medium text-foreground/70 text-[10px] uppercase tracking-wider">
+                <span className="font-medium text-foreground/70 text-[10px] uppercase tracking-wider transition-colors group-hover:text-foreground">
                   {category}
                 </span>
                 {selection && (
                   <>
-                    <span className="text-muted-foreground/40 text-[10px]">
+                    <span className="text-muted-foreground/40 text-[10px] transition-colors group-hover:text-muted-foreground">
                       /
                     </span>
-                    <span className="max-h-[100px] overflow-hidden text-muted-foreground text-[11px]">
+                    <span className="max-h-[100px] overflow-hidden text-muted-foreground text-[11px] transition-colors group-hover:text-foreground">
                       {selection}
                     </span>
                   </>
@@ -99,10 +99,13 @@ export function FlyoutPanel({
       style={{ left: leftOffset, width: FLYOUT_WIDTH }}
     >
       <div className="flex h-full flex-col">
-        <div className="flex items-center justify-between border-b px-3 py-2">
-          <span className="font-medium text-sm">{title}</span>
+        <div className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
+          <span aria-hidden="true" className="size-6 shrink-0" />
+          <span className="min-w-0 flex-1 truncate text-center font-medium text-sm">
+            {title}
+          </span>
           <button
-            className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="size-6 shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             onClick={onCollapse}
             title="Collapse"
             type="button"
