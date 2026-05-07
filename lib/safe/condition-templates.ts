@@ -14,10 +14,6 @@
  * a new template function + slug.
  */
 
-import { allow as allowArb } from "defi-kit/arb1";
-import { allow as allowBase } from "defi-kit/base";
-import { allow as allowEth } from "defi-kit/eth";
-import { allow as allowOpt } from "defi-kit/oeth";
 import type { PermissionSet } from "zodiac-roles-sdk";
 
 export type HexAddress = `0x${string}`;
@@ -28,25 +24,39 @@ const CHAIN_BASE = 8453;
 const CHAIN_ARB = 42_161;
 
 /**
- * Select the per-chain `allow` namespace. defi-kit ships one module per
- * chain subpath (`defi-kit/eth`, `defi-kit/base`, ...); each exposes the
- * protocols available on that chain.
+ * Per-chain `defi-kit` modules are loaded lazily. `defi-kit/{chain}.mjs`
+ * builds its `allow` namespace at module-load time by recursively walking
+ * the eth-sdk-client SDK with `mapSdk`. The SDK contains cycles (or at
+ * least depth that exceeds Node's default stack), so a static import
+ * triggers a `RangeError: Maximum call stack size exceeded` during
+ * Next.js's page-data collection step. Loading on demand keeps the SDKs
+ * out of every route's import graph and only pays the cost when a
+ * template build actually needs them (install/update on Safe role
+ * management endpoints).
  */
-// biome-ignore lint/suspicious/noExplicitAny: defi-kit's per-chain `allow` types diverge by chain; unifying them erases preset signatures
-function allowForChain(chainId: number): any {
+// biome-ignore lint/suspicious/noExplicitAny: defi-kit's per-chain allow types diverge by chain; unifying them erases preset signatures
+const ALLOW_CACHE = new Map<number, any>();
+
+// biome-ignore lint/suspicious/noExplicitAny: see ALLOW_CACHE
+async function allowForChain(chainId: number): Promise<any> {
+  const cached = ALLOW_CACHE.get(chainId);
+  if (cached) {
+    return cached;
+  }
+  let mod: { allow: unknown };
   if (chainId === CHAIN_ETH) {
-    return allowEth;
+    mod = await import("defi-kit/eth");
+  } else if (chainId === CHAIN_OPT) {
+    mod = await import("defi-kit/oeth");
+  } else if (chainId === CHAIN_BASE) {
+    mod = await import("defi-kit/base");
+  } else if (chainId === CHAIN_ARB) {
+    mod = await import("defi-kit/arb1");
+  } else {
+    throw new Error(`defi-kit does not have presets for chain ${chainId}`);
   }
-  if (chainId === CHAIN_OPT) {
-    return allowOpt;
-  }
-  if (chainId === CHAIN_BASE) {
-    return allowBase;
-  }
-  if (chainId === CHAIN_ARB) {
-    return allowArb;
-  }
-  throw new Error(`defi-kit does not have presets for chain ${chainId}`);
+  ALLOW_CACHE.set(chainId, mod.allow);
+  return mod.allow;
 }
 
 export type TemplateInput = {
@@ -67,7 +77,7 @@ export type TemplateInput = {
 export async function buildAaveV3Template(
   input: TemplateInput
 ): Promise<PermissionSet> {
-  const allow = allowForChain(input.chainId);
+  const allow = await allowForChain(input.chainId);
   const aave = allow.aave_v3;
   if (!aave) {
     throw new Error(`Aave V3 not supported on chain ${input.chainId}`);
@@ -83,7 +93,7 @@ export async function buildAaveV3Template(
 export async function buildCowswapTemplate(
   input: TemplateInput
 ): Promise<PermissionSet> {
-  const allow = allowForChain(input.chainId);
+  const allow = await allowForChain(input.chainId);
   const cow = allow.cowswap;
   if (!cow) {
     throw new Error(`CoW Protocol not supported on chain ${input.chainId}`);
@@ -100,7 +110,7 @@ export async function buildCowswapTemplate(
 export async function buildUniswapV3Template(
   input: TemplateInput
 ): Promise<PermissionSet> {
-  const allow = allowForChain(input.chainId);
+  const allow = await allowForChain(input.chainId);
   const uni = allow.uniswap_v3;
   if (!uni) {
     throw new Error(`Uniswap V3 not supported on chain ${input.chainId}`);
@@ -116,7 +126,7 @@ export async function buildUniswapV3Template(
 export async function buildCompoundV3Template(
   input: TemplateInput
 ): Promise<PermissionSet> {
-  const allow = allowForChain(input.chainId);
+  const allow = await allowForChain(input.chainId);
   const comet = allow.compound_v3;
   if (!comet) {
     throw new Error(`Compound V3 not supported on chain ${input.chainId}`);
@@ -132,7 +142,7 @@ export async function buildCompoundV3Template(
 export async function buildSparkTemplate(
   input: TemplateInput
 ): Promise<PermissionSet> {
-  const allow = allowForChain(input.chainId);
+  const allow = await allowForChain(input.chainId);
   const spark = allow.spark;
   if (!spark) {
     throw new Error(`Spark not supported on chain ${input.chainId}`);
@@ -148,7 +158,7 @@ export async function buildSparkTemplate(
 export async function buildLidoTemplate(
   input: TemplateInput
 ): Promise<PermissionSet> {
-  const allow = allowForChain(input.chainId);
+  const allow = await allowForChain(input.chainId);
   const lido = allow.lido;
   if (!lido) {
     throw new Error(`Lido not supported on chain ${input.chainId}`);
@@ -161,7 +171,7 @@ export async function buildLidoTemplate(
 export async function buildRocketPoolTemplate(
   input: TemplateInput
 ): Promise<PermissionSet> {
-  const allow = allowForChain(input.chainId);
+  const allow = await allowForChain(input.chainId);
   const rp = allow.rocket_pool;
   if (!rp) {
     throw new Error(`Rocket Pool not supported on chain ${input.chainId}`);
@@ -174,7 +184,7 @@ export async function buildRocketPoolTemplate(
 export async function buildBalancerV2Template(
   input: TemplateInput
 ): Promise<PermissionSet> {
-  const allow = allowForChain(input.chainId);
+  const allow = await allowForChain(input.chainId);
   const balancer = allow.balancer_v2;
   if (!balancer) {
     throw new Error(`Balancer V2 not supported on chain ${input.chainId}`);

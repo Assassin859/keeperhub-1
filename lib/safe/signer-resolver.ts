@@ -12,7 +12,12 @@ import {
 } from "@/lib/para/wallet-helpers";
 import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
-import { reconcileSafeRoleFromChain } from "@/lib/safe/roles-orchestrator";
+// reconcileSafeRoleFromChain is dynamically imported below to keep the
+// roles-orchestrator (and its defi-kit transitive dep, which proxies the
+// entire SDK at module load) out of the import graph for routes that only
+// need the signer-mode resolution. Static imports here pull defi-kit into
+// every API route that does a workflow write, which trips a recursive
+// mapSdk overflow during Next.js page-data collection.
 import { orgAutomationRoleKey } from "@/lib/safe/zodiac-contracts";
 import {
   findRolesModifierForSafe,
@@ -109,22 +114,24 @@ async function probeRolesModifierFromChain(
  * call site.
  */
 function backfillRoleInBackground(safe: SafeWallet): void {
-  reconcileSafeRoleFromChain(safe).then(
-    () => {
-      // success path: nothing to do, the DB row is now in place.
-    },
-    (error: unknown) => {
-      logSystemError(
-        ErrorCategory.TRANSACTION,
-        `[Safe] background reconcile after probe failed for safe=${safe.id}`,
-        error,
-        {
-          component: "safe-signer-resolver",
-          chain_id: safe.chainId.toString(),
-        }
-      );
-    }
-  );
+  import("@/lib/safe/roles-orchestrator")
+    .then(({ reconcileSafeRoleFromChain }) => reconcileSafeRoleFromChain(safe))
+    .then(
+      () => {
+        // success path: nothing to do, the DB row is now in place.
+      },
+      (error: unknown) => {
+        logSystemError(
+          ErrorCategory.TRANSACTION,
+          `[Safe] background reconcile after probe failed for safe=${safe.id}`,
+          error,
+          {
+            component: "safe-signer-resolver",
+            chain_id: safe.chainId.toString(),
+          }
+        );
+      }
+    );
 }
 
 /**
