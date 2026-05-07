@@ -4,6 +4,7 @@ import {
   BarChart3,
   Bookmark,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   DollarSign,
@@ -227,6 +228,8 @@ function ProjectsPanel({
   );
 }
 
+const UNTAGGED_KEY = "__untagged__";
+
 function TagsPanel({
   projectTags,
   workflowsByTagId,
@@ -240,6 +243,20 @@ function TagsPanel({
   activeWorkflowId: string | undefined;
   loading: boolean;
 }): React.ReactNode {
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+
+  const toggle = (key: string): void => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-8">
@@ -262,10 +279,21 @@ function TagsPanel({
     <div className="flex flex-col gap-0.5">
       {projectTags.map((tag, index) => {
         const tagWorkflows = workflowsByTagId[tag.id] ?? [];
+        const isCollapsed = collapsed.has(tag.id);
         return (
           <div className="flex flex-col gap-0.5" key={tag.id}>
             {index > 0 && <div className="my-1 border-t" />}
-            <p className="flex items-center gap-2 px-2 pt-1 pb-1.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">
+            <button
+              aria-expanded={!isCollapsed}
+              className="flex w-full items-center gap-2 rounded-md px-2 pt-1 pb-1.5 text-left font-medium text-muted-foreground text-xs uppercase tracking-wider transition-colors hover:bg-muted hover:text-foreground"
+              onClick={() => toggle(tag.id)}
+              type="button"
+            >
+              {isCollapsed ? (
+                <ChevronRight className="size-3 shrink-0" />
+              ) : (
+                <ChevronDown className="size-3 shrink-0" />
+              )}
               <span
                 className="inline-block size-2 shrink-0 rounded-full"
                 style={{ backgroundColor: tag.color }}
@@ -274,34 +302,55 @@ function TagsPanel({
               <span className="ml-auto normal-case tracking-normal">
                 {tag.workflowCount}
               </span>
-            </p>
-            {tagWorkflows.map((w) => (
-              <WorkflowItem
-                activeWorkflowId={activeWorkflowId}
-                key={w.id}
-                workflow={w}
-              />
-            ))}
+            </button>
+            {!isCollapsed &&
+              tagWorkflows.map((w) => (
+                <WorkflowItem
+                  activeWorkflowId={activeWorkflowId}
+                  key={w.id}
+                  workflow={w}
+                />
+              ))}
           </div>
         );
       })}
       {untaggedWorkflows.length > 0 && (
         <>
-          {projectTags.length > 0 && (
-            <>
-              <div className="my-1 border-t" />
-              <p className="px-2 pt-1 pb-1.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">
-                Untagged
-              </p>
-            </>
-          )}
-          {untaggedWorkflows.map((w) => (
-            <WorkflowItem
-              activeWorkflowId={activeWorkflowId}
-              key={w.id}
-              workflow={w}
-            />
-          ))}
+          {projectTags.length > 0 && <div className="my-1 border-t" />}
+          {(() => {
+            const showHeader = projectTags.length > 0;
+            const isCollapsed = showHeader && collapsed.has(UNTAGGED_KEY);
+            return (
+              <>
+                {showHeader && (
+                  <button
+                    aria-expanded={!isCollapsed}
+                    className="flex w-full items-center gap-2 rounded-md px-2 pt-1 pb-1.5 text-left font-medium text-muted-foreground text-xs uppercase tracking-wider transition-colors hover:bg-muted hover:text-foreground"
+                    onClick={() => toggle(UNTAGGED_KEY)}
+                    type="button"
+                  >
+                    {isCollapsed ? (
+                      <ChevronRight className="size-3 shrink-0" />
+                    ) : (
+                      <ChevronDown className="size-3 shrink-0" />
+                    )}
+                    <span className="truncate">Untagged</span>
+                    <span className="ml-auto normal-case tracking-normal">
+                      {untaggedWorkflows.length}
+                    </span>
+                  </button>
+                )}
+                {!isCollapsed &&
+                  untaggedWorkflows.map((w) => (
+                    <WorkflowItem
+                      activeWorkflowId={activeWorkflowId}
+                      key={w.id}
+                      workflow={w}
+                    />
+                  ))}
+              </>
+            );
+          })()}
         </>
       )}
     </div>

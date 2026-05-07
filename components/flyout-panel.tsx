@@ -46,7 +46,7 @@ export function FlyoutPanel({
       <Tooltip>
         <TooltipTrigger asChild>
           <button
-            className="pointer-events-auto fixed top-[calc(60px+var(--app-banner-height,0px))] bottom-0 z-30 flex items-start justify-center border-r bg-background pt-3 transition-[left] duration-200 ease-out hover:bg-muted/50"
+            className="group pointer-events-auto fixed top-[calc(60px+var(--app-banner-height,0px))] bottom-0 z-30 flex items-start justify-center border-r bg-background pt-3 transition-[left,background-color,color] duration-200 ease-out hover:bg-card"
             data-flyout
             onClick={onExpand}
             style={{ left: leftOffset, width: STRIP_WIDTH }}
@@ -59,20 +59,20 @@ export function FlyoutPanel({
               />
             )}
             <div className="flex flex-col items-center gap-1.5">
-              <ChevronRight className="size-3.5 text-muted-foreground" />
+              <ChevronRight className="size-3.5 text-muted-foreground transition-colors group-hover:text-foreground" />
               <div
                 className="flex items-start gap-0.5 whitespace-nowrap"
                 style={{ writingMode: "vertical-lr" }}
               >
-                <span className="font-medium text-foreground/70 text-[10px] uppercase tracking-wider">
+                <span className="font-medium text-foreground/70 text-[10px] uppercase tracking-wider transition-colors group-hover:text-foreground">
                   {category}
                 </span>
                 {selection && (
                   <>
-                    <span className="text-muted-foreground/40 text-[10px]">
+                    <span className="text-muted-foreground/40 text-[10px] transition-colors group-hover:text-muted-foreground">
                       /
                     </span>
-                    <span className="max-h-[100px] overflow-hidden text-muted-foreground text-[11px]">
+                    <span className="max-h-[100px] overflow-hidden text-muted-foreground text-[11px] transition-colors group-hover:text-foreground">
                       {selection}
                     </span>
                   </>
