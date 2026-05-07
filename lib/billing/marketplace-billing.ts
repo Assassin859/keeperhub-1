@@ -1,6 +1,3 @@
-import { type SQL, sql } from "drizzle-orm";
-import { workflows } from "../db/schema";
-
 /**
  * Minimum price (USDC per call) at which a Marketplace-listed workflow's
  * executions stop counting toward the owner's monthly execution quota and
@@ -9,39 +6,29 @@ import { workflows } from "../db/schema";
  * Why a floor exists: without one, an owner could list a workflow at $0 (or
  * an irrationally low price), self-call it, and run unlimited "free"
  * executions while bypassing their plan limit.
+ *
+ * The actual gate runs in Postgres: a BEFORE INSERT trigger on
+ * `workflow_executions` snapshots `billable = NOT (is_listed AND price >=
+ * threshold)` at insert time so future listing changes cannot retroactively
+ * shift past rows in or out of billable usage. See
+ * drizzle/0070_workflow_executions_billable.sql for the trigger definition;
+ * it is the source of truth for the threshold at insert time. This constant
+ * is exposed for UI copy and documentation only.
  */
 export const FREE_MARKETPLACE_BILLING_THRESHOLD_USDC = "0.05";
 
 /**
- * Raw-SQL fragment for use inside `db.execute(sql\`...\`)` queries that count
- * workflow_executions for billing. The surrounding query MUST alias the
- * workflows table as `w` (matching the existing usage queries).
- *
- * Evaluates TRUE for rows that should count toward billing, FALSE for
- * Marketplace-listed workflows priced at or above the free-billing threshold.
- *
- * Built lazily so that simply importing this module does not require
- * `drizzle-orm`'s `sql` export to be present (some unit tests partially mock
- * the module).
+ * Pure helper mirroring the Postgres trigger logic for use in unit tests
+ * and any non-DB caller that needs to predict whether an execution would be
+ * billable. Production code should rely on the stamped `billable` column.
  */
-export function billableWorkflowRawSql(): SQL {
-  return sql`
-    NOT (
-      w.is_listed = TRUE
-      AND COALESCE(w.price_usdc_per_call::numeric, 0) >= ${sql.raw(FREE_MARKETPLACE_BILLING_THRESHOLD_USDC)}::numeric
-    )
-  `;
-}
-
-/**
- * Drizzle query-builder fragment equivalent to {@link billableWorkflowRawSql}.
- * Use inside `and(...)` when querying workflows via the typed builder.
- */
-export function billableWorkflowFilter(): SQL {
-  return sql`
-    NOT (
-      ${workflows.isListed} = TRUE
-      AND COALESCE(${workflows.priceUsdcPerCall}::numeric, 0) >= ${sql.raw(FREE_MARKETPLACE_BILLING_THRESHOLD_USDC)}::numeric
-    )
-  `;
+export function isWorkflowBillable(workflow: {
+  isListed: boolean | null;
+  priceUsdcPerCall: string | null;
+}): boolean {
+  if (workflow.isListed !== true) {
+    return true;
+  }
+  const price = Number(workflow.priceUsdcPerCall ?? 0);
+  return price < Number(FREE_MARKETPLACE_BILLING_THRESHOLD_USDC);
 }

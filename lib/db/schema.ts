@@ -319,6 +319,14 @@ export const workflowExecutions = pgTable(
     lastSuccessfulNodeName: text("last_successful_node_name"),
     executionTrace: jsonb("execution_trace").$type<string[]>(),
     runId: text("run_id"),
+    /**
+     * Whether this execution counts toward the owner organisation's monthly
+     * execution quota and overage billing. Snapshotted at insert time by a
+     * BEFORE INSERT trigger from the workflow's `is_listed` and
+     * `price_usdc_per_call` (see migration 0070), so later listing changes do
+     * not retroactively rewrite an org's billable usage.
+     */
+    billable: boolean("billable").notNull().default(true),
   },
   (table) => [index("idx_workflow_executions_status").on(table.status)]
 );

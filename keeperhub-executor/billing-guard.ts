@@ -1,6 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { billableWorkflowFilter } from "../lib/billing/marketplace-billing";
 import {
   getPlanLimits,
   PLANS,
@@ -120,7 +119,7 @@ export async function checkExecutionLimitForExecutor(
       and(
         eq(workflows.organizationId, organizationId),
         sql`${workflowExecutions.startedAt} >= ${startOfMonth.toISOString()}`,
-        billableWorkflowFilter()
+        eq(workflowExecutions.billable, true)
       )
     );
 

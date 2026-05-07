@@ -8,7 +8,6 @@ import {
 } from "@/lib/db/schema";
 import { getMetricsCollector } from "@/lib/metrics";
 import { MetricNames } from "@/lib/metrics/types";
-import { billableWorkflowRawSql } from "./marketplace-billing";
 import { getPlanLimits, PLANS, parsePlanName, parseTierKey } from "./plans";
 import { getBillingProvider } from "./providers";
 
@@ -78,7 +77,7 @@ export async function billOverageForOrg(
              WHERE w.organization_id = ${organizationId}
                AND we.started_at >= ${periodStart.toISOString()}
                AND we.started_at <  ${periodEnd.toISOString()}
-               AND ${billableWorkflowRawSql()}
+               AND we.billable = TRUE
           )
           +
           (

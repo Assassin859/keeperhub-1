@@ -123,7 +123,7 @@ Listings priced below $0.05 still count toward your monthly executions, just lik
 
 A few things follow from this:
 
-- **Delisting is retroactive.** If you unpublish a workflow mid-month, every call to it earlier that month is added back to your usage immediately. If you're close to your limit, double-check the Earnings page before unpublishing.
+- **The exemption is snapshotted at call time.** Each execution is stamped as billable or exempt at the moment it runs, based on the listing state then. Changing the price or unpublishing afterward only affects future calls; past calls stay where they were.
 - **The threshold is a hard cutoff.** A listing priced at $0.049 gives no quota relief; one at $0.05 is fully exempt.
 - **Direct API and private workflows are unaffected.** Direct executions and runs of any workflow you haven't listed always count toward your quota.
 

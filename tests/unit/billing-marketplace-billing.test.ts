@@ -1,41 +1,49 @@
-import { PgDialect } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
 import {
-  billableWorkflowFilter,
-  billableWorkflowRawSql,
   FREE_MARKETPLACE_BILLING_THRESHOLD_USDC,
+  isWorkflowBillable,
 } from "@/lib/billing/marketplace-billing";
-
-const dialect = new PgDialect();
 
 describe("marketplace-billing", () => {
   it("threshold is 0.05 USDC", () => {
     expect(FREE_MARKETPLACE_BILLING_THRESHOLD_USDC).toBe("0.05");
   });
 
-  describe("billableWorkflowRawSql", () => {
-    it("excludes listed workflows priced at or above the threshold (uses w. alias)", () => {
-      const { sql } = dialect.sqlToQuery(billableWorkflowRawSql());
-      const normalized = sql.replace(/\s+/g, " ").toLowerCase();
-
-      expect(normalized).toContain("not (");
-      expect(normalized).toContain("w.is_listed = true");
-      expect(normalized).toContain(
-        "coalesce(w.price_usdc_per_call::numeric, 0) >= 0.05::numeric"
-      );
+  describe("isWorkflowBillable", () => {
+    it("returns true for unlisted workflows regardless of price", () => {
+      expect(
+        isWorkflowBillable({ isListed: false, priceUsdcPerCall: "0.50" })
+      ).toBe(true);
+      expect(
+        isWorkflowBillable({ isListed: null, priceUsdcPerCall: "1.00" })
+      ).toBe(true);
     });
-  });
 
-  describe("billableWorkflowFilter", () => {
-    it("excludes listed workflows priced at or above the threshold (uses workflows table)", () => {
-      const { sql } = dialect.sqlToQuery(billableWorkflowFilter());
-      const normalized = sql.replace(/\s+/g, " ").toLowerCase();
+    it("returns true for listed workflows priced below the threshold", () => {
+      expect(
+        isWorkflowBillable({ isListed: true, priceUsdcPerCall: "0.04" })
+      ).toBe(true);
+      expect(
+        isWorkflowBillable({ isListed: true, priceUsdcPerCall: "0.0001" })
+      ).toBe(true);
+      expect(
+        isWorkflowBillable({ isListed: true, priceUsdcPerCall: "0" })
+      ).toBe(true);
+      expect(
+        isWorkflowBillable({ isListed: true, priceUsdcPerCall: null })
+      ).toBe(true);
+    });
 
-      expect(normalized).toContain("not (");
-      expect(normalized).toContain('"workflows"."is_listed" = true');
-      expect(normalized).toContain(
-        'coalesce("workflows"."price_usdc_per_call"::numeric, 0) >= 0.05::numeric'
-      );
+    it("returns false for listed workflows at or above the threshold", () => {
+      expect(
+        isWorkflowBillable({ isListed: true, priceUsdcPerCall: "0.05" })
+      ).toBe(false);
+      expect(
+        isWorkflowBillable({ isListed: true, priceUsdcPerCall: "0.50" })
+      ).toBe(false);
+      expect(
+        isWorkflowBillable({ isListed: true, priceUsdcPerCall: "100" })
+      ).toBe(false);
     });
   });
 });
