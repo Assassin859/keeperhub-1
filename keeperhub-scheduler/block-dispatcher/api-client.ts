@@ -19,11 +19,15 @@ type GroupedWorkflows = Map<
 
 export async function fetchBlockWorkflows(): Promise<GroupedWorkflows> {
   const data = await apiRequest<FetchBlockWorkflowsResponse>(
-    "/api/internal/block-workflows?active=true"
+    "/api/internal/block-workflows?active=true",
   );
 
   console.log(
-    `[APIClient] Fetched ${data.workflows.length} workflow(s), ${Object.keys(data.networks).length} network(s) available: ${Object.entries(data.networks).map(([id, n]) => `${n.name}(${id})`).join(", ") || "none"}`
+    `[APIClient] Fetched ${data.workflows.length} workflow(s), ${Object.keys(data.networks).length} network(s) available: ${
+      Object.entries(data.networks)
+        .map(([id, n]) => `${n.name}(${id})`)
+        .join(", ") || "none"
+    }`,
   );
 
   const grouped: GroupedWorkflows = new Map();
@@ -35,7 +39,7 @@ export async function fetchBlockWorkflows(): Promise<GroupedWorkflows> {
 
     if (!network) {
       console.warn(
-        `[APIClient] Workflow ${workflow.id} (${workflow.name}): SKIPPED — no network configured in trigger node`
+        `[APIClient] Workflow ${workflow.id} (${workflow.name}): SKIPPED — no network configured in trigger node`,
       );
       continue;
     }
@@ -46,13 +50,13 @@ export async function fetchBlockWorkflows(): Promise<GroupedWorkflows> {
 
     if (!chainData) {
       console.warn(
-        `[APIClient] Workflow ${workflow.id} (${workflow.name}): SKIPPED — network ${chainId} not found in available networks`
+        `[APIClient] Workflow ${workflow.id} (${workflow.name}): SKIPPED — network ${chainId} not found in available networks`,
       );
       continue;
     }
 
     console.log(
-      `[APIClient] Workflow ${workflow.id} (${workflow.name}): chainId=${chainId} (${chainData.name}), blockInterval=${blockInterval}, primaryWss=${chainData.defaultPrimaryWss ? "yes" : "NO"}, fallbackWss=${chainData.defaultFallbackWss ? "yes" : "NO"}`
+      `[APIClient] Workflow ${workflow.id} (${workflow.name}): chainId=${chainId} (${chainData.name}), blockInterval=${blockInterval}, primaryWss=${chainData.defaultPrimaryWss ? "yes" : "NO"}, fallbackWss=${chainData.defaultFallbackWss ? "yes" : "NO"}`,
     );
 
     const blockWorkflow: BlockWorkflow = {

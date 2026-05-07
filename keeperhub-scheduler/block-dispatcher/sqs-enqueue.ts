@@ -5,15 +5,15 @@
  */
 
 import { SendMessageCommand } from "@aws-sdk/client-sqs";
-import { sqs } from "../lib/sqs-client.js";
 import { SQS_QUEUE_URL } from "../lib/config.js";
+import { sqs } from "../lib/sqs-client.js";
 import type { BlockMessage } from "../lib/types.js";
 
 export async function enqueueBlockTrigger(
-  message: BlockMessage
+  message: BlockMessage,
 ): Promise<void> {
   console.log(
-    `[SQS] Enqueuing block trigger: workflow=${message.workflowId}, block=${message.triggerData.blockNumber}`
+    `[SQS] Enqueuing block trigger: workflow=${message.workflowId}, block=${message.triggerData.blockNumber}`,
   );
   await sqs.send(
     new SendMessageCommand({
@@ -29,6 +29,6 @@ export async function enqueueBlockTrigger(
           StringValue: message.workflowId,
         },
       },
-    })
+    }),
   );
 }

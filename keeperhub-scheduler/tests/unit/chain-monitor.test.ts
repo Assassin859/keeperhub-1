@@ -1,21 +1,15 @@
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ChainMonitor } from "../../keeperhub-scheduler/block-dispatcher/chain-monitor.js";
-import type {
-  BlockWorkflow,
-  ChainConfig,
-} from "../../keeperhub-scheduler/lib/types.js";
+import { ChainMonitor } from "../../block-dispatcher/chain-monitor.js";
+import type { BlockWorkflow, ChainConfig } from "../../lib/types.js";
 
 // ---------------------------------------------------------------------------
 // Mock SQS enqueue - prevent real AWS calls
 // ---------------------------------------------------------------------------
 
-vi.mock(
-  "../../keeperhub-scheduler/block-dispatcher/sqs-enqueue.js",
-  () => ({
-    enqueueBlockTrigger: vi.fn().mockResolvedValue(undefined),
-  })
-);
+vi.mock("../../block-dispatcher/sqs-enqueue.js", () => ({
+  enqueueBlockTrigger: vi.fn().mockResolvedValue(undefined),
+}));
 
 // ---------------------------------------------------------------------------
 // Mock WebSocket that supports ping/pong and close events
@@ -58,9 +52,7 @@ class MockProvider {
     return 100;
   }
 
-  async getBlock(
-    blockNumber: number
-  ): Promise<{
+  async getBlock(blockNumber: number): Promise<{
     hash: string;
     timestamp: number;
     parentHash: string;
@@ -101,7 +93,8 @@ class MockProvider {
 // ---------------------------------------------------------------------------
 
 let providerInstances: MockProvider[] = [];
-let providerFactory: (url: string) => MockProvider = (url) => new MockProvider(url);
+let providerFactory: (url: string) => MockProvider = (url) =>
+  new MockProvider(url);
 
 vi.mock("ethers", () => ({
   ethers: {
@@ -109,6 +102,7 @@ vi.mock("ethers", () => ({
       constructor(url: string) {
         const instance = providerFactory(url);
         providerInstances.push(instance);
+        // biome-ignore lint/correctness/noConstructorReturn: intentional mock idiom -- `new` honors object returns from constructors, used here to substitute the factory-built instance
         return instance;
       }
     },
@@ -236,7 +230,7 @@ describe("ChainMonitor", () => {
       // Verify the on() was called - provider has block listeners
       // Emit a block to confirm the listener was wired up
       const { enqueueBlockTrigger } = await import(
-        "../../keeperhub-scheduler/block-dispatcher/sqs-enqueue.js"
+        "../../block-dispatcher/sqs-enqueue.js"
       );
       provider.emitBlock(10);
       await vi.advanceTimersByTimeAsync(0);
@@ -245,7 +239,7 @@ describe("ChainMonitor", () => {
         expect.objectContaining({
           workflowId: "wf-1",
           triggerData: expect.objectContaining({ blockNumber: 10 }),
-        })
+        }),
       );
     });
 
@@ -258,7 +252,7 @@ describe("ChainMonitor", () => {
       await monitor.start();
 
       const { enqueueBlockTrigger } = await import(
-        "../../keeperhub-scheduler/block-dispatcher/sqs-enqueue.js"
+        "../../block-dispatcher/sqs-enqueue.js"
       );
       const provider = latestProvider();
 
@@ -288,7 +282,7 @@ describe("ChainMonitor", () => {
       await monitor.start();
 
       const { enqueueBlockTrigger } = await import(
-        "../../keeperhub-scheduler/block-dispatcher/sqs-enqueue.js"
+        "../../block-dispatcher/sqs-enqueue.js"
       );
       const provider = latestProvider();
 
@@ -379,7 +373,7 @@ describe("ChainMonitor", () => {
 
       // Old provider's close handler should have been removed
       expect(firstProvider.websocket.listenerCount("close")).toBeLessThan(
-        closeListenerCount
+        closeListenerCount,
       );
     });
 
@@ -392,7 +386,7 @@ describe("ChainMonitor", () => {
       await monitor.start();
 
       const { enqueueBlockTrigger } = await import(
-        "../../keeperhub-scheduler/block-dispatcher/sqs-enqueue.js"
+        "../../block-dispatcher/sqs-enqueue.js"
       );
 
       // First provider delivers a matching block
@@ -492,7 +486,7 @@ describe("ChainMonitor", () => {
         monitor.hasConfigChanged({
           ...chain,
           defaultPrimaryWss: "wss://new-primary.test",
-        })
+        }),
       ).toBe(true);
     });
 
@@ -556,7 +550,7 @@ describe("ChainMonitor", () => {
           setTimeout(() => {
             instance.websocket.emit(
               "error",
-              new Error("Unexpected server response: 429")
+              new Error("Unexpected server response: 429"),
             );
           }, 0);
         }
@@ -591,7 +585,7 @@ describe("ChainMonitor", () => {
           setTimeout(() => {
             instance.websocket.emit(
               "error",
-              new Error("Unexpected server response: 429")
+              new Error("Unexpected server response: 429"),
             );
           }, 0);
         }
@@ -671,7 +665,7 @@ describe("ChainMonitor", () => {
       // Find the most recent provider matching the primary URL — that is the
       // one we are now connected on.
       const primaryProviders = providerInstances.filter(
-        (p) => p.url === "wss://primary.test"
+        (p) => p.url === "wss://primary.test",
       );
       expect(primaryProviders.length).toBeGreaterThanOrEqual(2);
       expect(lastConnectedUrl).toBe("wss://primary.test");
@@ -707,7 +701,7 @@ describe("ChainMonitor", () => {
       expect(monitor.isAlive()).toBe(true);
       // At least one warn was the probe-failure summary
       const probeWarn = warnSpy.mock.calls.find(([msg]) =>
-        String(msg).includes("Primary probe failed")
+        String(msg).includes("Primary probe failed"),
       );
       expect(probeWarn).toBeDefined();
       // The summary should be tight: contain "HTTP 429" and not run for hundreds of chars

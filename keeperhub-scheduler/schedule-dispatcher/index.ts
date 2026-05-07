@@ -18,12 +18,12 @@
 import { SendMessageCommand } from "@aws-sdk/client-sqs";
 import { CronExpressionParser } from "cron-parser";
 import express from "express";
-import { sqs } from "../lib/sqs-client.js";
 import {
   KEEPERHUB_URL,
   SERVICE_API_KEY,
   SQS_QUEUE_URL,
 } from "../lib/config.js";
+import { sqs } from "../lib/sqs-client.js";
 import type { Schedule, ScheduleMessage } from "../lib/types.js";
 
 /**
@@ -39,7 +39,7 @@ async function fetchSchedules(): Promise<Schedule[]> {
 
   if (!response.ok) {
     throw new Error(
-      `Failed to fetch schedules: ${response.status} ${await response.text()}`
+      `Failed to fetch schedules: ${response.status} ${await response.text()}`,
     );
   }
 
@@ -53,7 +53,7 @@ async function fetchSchedules(): Promise<Schedule[]> {
 function shouldTriggerNow(
   cronExpression: string,
   timezone: string,
-  now: Date
+  now: Date,
 ): boolean {
   try {
     const interval = CronExpressionParser.parse(cronExpression, {
@@ -107,7 +107,7 @@ async function dispatch(): Promise<{
 }> {
   const runId = crypto.randomUUID().slice(0, 8);
   console.log(
-    `[${runId}] Starting dispatch run at ${new Date().toISOString()}`
+    `[${runId}] Starting dispatch run at ${new Date().toISOString()}`,
   );
 
   // Fetch all enabled schedules via API
@@ -124,13 +124,13 @@ async function dispatch(): Promise<{
       const shouldTrigger = shouldTriggerNow(
         schedule.cronExpression,
         schedule.timezone,
-        now
+        now,
       );
 
       if (shouldTrigger) {
         console.log(
           `[${runId}] Triggering workflow ${schedule.workflowId} ` +
-            `(cron: ${schedule.cronExpression}, tz: ${schedule.timezone})`
+            `(cron: ${schedule.cronExpression}, tz: ${schedule.timezone})`,
         );
 
         await sendToQueue({
@@ -145,14 +145,14 @@ async function dispatch(): Promise<{
     } catch (error) {
       console.error(
         `[${runId}] Error processing schedule ${schedule.id}:`,
-        error
+        error,
       );
       errors += 1;
     }
   }
 
   console.log(
-    `[${runId}] Dispatch complete: evaluated=${schedules.length}, triggered=${triggered}, errors=${errors}`
+    `[${runId}] Dispatch complete: evaluated=${schedules.length}, triggered=${triggered}, errors=${errors}`,
   );
 
   return {
@@ -175,7 +175,7 @@ process.on("unhandledRejection", (reason: unknown) => {
 process.on("uncaughtException", (error: Error) => {
   console.error(
     `[Dispatcher] Uncaught exception: ${error.message}`,
-    error.stack ?? ""
+    error.stack ?? "",
   );
   process.exit(1);
 });
@@ -200,7 +200,7 @@ async function main() {
 
   const healthServer = healthApp.listen(HEALTH_PORT, () => {
     console.log(
-      `[Dispatcher] Health check server listening on port ${HEALTH_PORT}`
+      `[Dispatcher] Health check server listening on port ${HEALTH_PORT}`,
     );
   });
 

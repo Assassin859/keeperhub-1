@@ -36,7 +36,7 @@ describe("schedule-dispatcher", () => {
     function shouldTriggerNow(
       cronExpression: string,
       timezone: string,
-      now: Date
+      now: Date,
     ): boolean {
       const { CronExpressionParser } = require("cron-parser");
       try {
