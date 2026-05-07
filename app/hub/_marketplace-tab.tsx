@@ -132,9 +132,12 @@ export async function HubMarketplaceTab({
       <div aria-hidden="true" className="mb-4 h-9" />
       <section aria-label="Marketplace results" className="flex gap-6">
         <MarketplaceSidebar active={sort} activeTagSlug={tagSlug} tags={tags} />
-        <div className="min-w-0 flex-1">
+        <div className="relative min-w-0 flex-1">
           {ownerName !== null && (
-            <div className="mb-3 flex items-center gap-2 text-xs">
+            // Absolutely positioned into the always-reserved top spacer
+            // (mb-4 h-9 above) so toggling the owner filter doesn't shift
+            // the table down. -52px = -(spacer h-9 36px + mb-4 16px).
+            <div className="-top-[52px] absolute right-0 left-0 flex items-center gap-2 text-xs">
               <span className="text-muted-foreground">Filtered by owner:</span>
               <Link
                 aria-label={`Clear owner filter ${ownerName}`}
