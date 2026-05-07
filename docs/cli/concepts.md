@@ -31,6 +31,26 @@ Run `kh auth login` to authenticate via browser OAuth. For headless environments
 
 Run `kh auth status` to see which method is active and whether your token is valid.
 
+## Gated Environments (Cloudflare Access)
+
+Hosts behind Cloudflare Access (PR previews, staging) require additional credentials on every request. The CLI sends them as headers from two sources:
+
+1. **Environment variables** (precedence: env > hosts.yml):
+   - `CF_ACCESS_CLIENT_ID` + `CF_ACCESS_CLIENT_SECRET` -- service-token pair, sent as `CF-Access-Client-Id` / `CF-Access-Client-Secret`. Both must be set; partial values are ignored.
+   - `CF_AUTHORIZATION` -- the `cf_authorization` JWT minted by `cloudflared access login`, sent as `Cookie: CF_Authorization=<value>`.
+2. **Per-host `headers:` map in `hosts.yml`** -- arbitrary headers attached to every request to that host:
+
+   ```yaml
+   hosts:
+     app-pr-1234.keeperhub.com:
+       token: kh_prte_...
+       headers:
+         CF-Access-Client-Id: <id>
+         CF-Access-Client-Secret: <secret>
+   ```
+
+Use env vars in CI; use `hosts.yml` for stable per-environment config that follows your machine.
+
 ## Output Formats
 
 By default, most commands render a human-readable table. Use these flags for machine-readable output:
