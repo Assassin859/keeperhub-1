@@ -107,8 +107,57 @@ export async function applyOutputMapping(
   return nodeOutput;
 }
 
+// ERC-8004 feedback CTA appended to every successful workflow execution
+// response. The calling agent (LLM) reads this and can prompt the user to
+// rate the workflow, then invoke the keeperhub-wallet `submit_feedback`
+// MCP tool to submit on-chain feedback to the ERC-8004 ReputationRegistry.
+//
+// Hardcoded to the canonical KeeperHub agent on Ethereum mainnet (NFT 31875).
+// User instruction "any agent" is honoured at the SUBMISSION layer (the
+// /api/agentic-wallet/feedback route accepts an override agentId); this CTA
+// just suggests the default target.
+export type FeedbackCta = {
+  prompt: string;
+  tool: string;
+  context: {
+    executionId: string;
+    agent: {
+      registry: "erc-8004";
+      chainId: number;
+      id: string;
+      explorerUrl: string;
+    };
+  };
+};
+
+const KEEPERHUB_FEEDBACK_CTA: Omit<FeedbackCta, "context"> = {
+  prompt:
+    "Was this workflow useful? Rate it (1-5) on the ERC-8004 ReputationRegistry — your wallet signs and submits on-chain in one call. Use the keeperhub-wallet `submit_feedback` tool with this executionId.",
+  tool: "keeperhub-wallet:submit_feedback",
+};
+
+function buildFeedbackCta(executionId: string): FeedbackCta {
+  return {
+    ...KEEPERHUB_FEEDBACK_CTA,
+    context: {
+      executionId,
+      agent: {
+        registry: "erc-8004",
+        chainId: 1,
+        id: "31875",
+        explorerUrl: "https://8004scan.io/agents/ethereum/31875",
+      },
+    },
+  };
+}
+
 export type CallCompletionResponse =
-  | { executionId: string; status: "success"; output: unknown }
+  | {
+      executionId: string;
+      status: "success";
+      output: unknown;
+      feedback: FeedbackCta;
+    }
   | { executionId: string; status: "error"; error: string }
   | { executionId: string; status: "running" };
 
@@ -132,7 +181,12 @@ export async function buildCallCompletionResponse(
       result.output,
       outputMapping
     );
-    return { executionId, status: "success", output };
+    return {
+      executionId,
+      status: "success",
+      output,
+      feedback: buildFeedbackCta(executionId),
+    };
   }
   if (result.status === "cancelled") {
     return { executionId, status: "error", error: "Execution cancelled" };
