@@ -23,7 +23,16 @@ import { ethers } from "ethers";
 
 const DEFAULT_AGENT_ID = "31875";
 const DEFAULT_REGISTRY = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432";
-const DEFAULT_RPC = "https://chain.techops.services/eth-mainnet";
+// Public RPC that doesn't require auth headers. The repo's primary RPC
+// (chain.techops.services) sits behind Cloudflare Access and isn't reachable
+// from the GHA runner, so we fall back to a public endpoint for the drift read.
+const DEFAULT_RPC = "https://eth.llamarpc.com";
+
+function envOrDefault(key: string, fallback: string): string {
+  const value = process.env[key];
+  // GHA passes ${{ secrets.X }} as "" when X is unset, so treat empty as missing.
+  return value && value.length > 0 ? value : fallback;
+}
 const PINATA_PIN_FILE_URL = "https://api.pinata.cloud/pinning/pinFileToIPFS";
 const CARD_PATH = join(process.cwd(), "data/agent-registry.json");
 
@@ -88,9 +97,9 @@ export async function pinAgentCard(): Promise<void> {
     throw new Error("PINATA_JWT environment variable is required");
   }
 
-  const agentId = process.env.AGENT_ID ?? DEFAULT_AGENT_ID;
-  const registry = process.env.IDENTITY_REGISTRY_ADDRESS ?? DEFAULT_REGISTRY;
-  const rpcUrl = process.env.CHAIN_ETH_MAINNET_PRIMARY_RPC ?? DEFAULT_RPC;
+  const agentId = envOrDefault("AGENT_ID", DEFAULT_AGENT_ID);
+  const registry = envOrDefault("IDENTITY_REGISTRY_ADDRESS", DEFAULT_REGISTRY);
+  const rpcUrl = envOrDefault("CHAIN_ETH_MAINNET_PRIMARY_RPC", DEFAULT_RPC);
 
   const bytes = readFileSync(CARD_PATH);
   console.log(`[pin] Pinning ${CARD_PATH} (${bytes.length} bytes) to Pinata...`);
