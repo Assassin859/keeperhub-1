@@ -742,7 +742,7 @@ export function ConfigurationOverlay({ overlayId }: ConfigurationOverlayProps) {
                 <div className="space-y-2">
                   <Label htmlFor="description">Description</Label>
                   <Textarea
-                    className="max-h-64 resize-y"
+                    className="max-h-64 resize-y bg-transparent dark:bg-transparent"
                     disabled={isGenerating || !isOwner}
                     id="description"
                     onChange={(e) => handleUpdateDescription(e.target.value)}
