@@ -3,7 +3,7 @@ import { getEarningsSummary } from "@/lib/earnings/queries";
 import { requireOrganization } from "@/lib/middleware/require-org";
 
 const DEFAULT_PAGE = 1;
-const DEFAULT_PAGE_SIZE = 10;
+const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 50;
 
 /**

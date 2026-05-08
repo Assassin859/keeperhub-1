@@ -49,7 +49,7 @@ export function useEarnings(): UseEarningsReturn {
     try {
       const params = new URLSearchParams({
         page: String(page),
-        pageSize: "10",
+        pageSize: "20",
       });
 
       const res = await fetch(`/api/earnings?${params.toString()}`, { signal });
