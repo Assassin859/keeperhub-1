@@ -60,7 +60,7 @@ async function validateApiKey(
           code: "wrong_key_type",
           expected: "wfb_*",
           received: "kh_*",
-          hint: "Generate a webhook key at /settings/api-keys and pass it as `Authorization: Bearer wfb_...`.",
+          hint: "Generate a webhook key from the user menu > API Keys > Webhook tab, then pass it as `Authorization: Bearer wfb_...`.",
         },
       };
     }
