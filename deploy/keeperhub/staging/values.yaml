@@ -135,13 +135,6 @@ env:
   LOG_LEVEL:
     type: kv
     value: "info"
-  # KEEP-1182 verification (temporary): log pendingTasks drain size at
-  # workflow-end so we can confirm parallel For Each iteration recovery
-  # actually fires under the durable SDK runtime. Remove once the fix is
-  # validated on staging.
-  DEBUG_DRAIN:
-    type: kv
-    value: "1"
   METRICS_COLLECTOR:
     type: kv
     value: "prometheus"

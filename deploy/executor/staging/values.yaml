@@ -91,13 +91,6 @@ env:
   EXECUTION_MODE:
     type: kv
     value: "isolated"
-  # KEEP-1182 verification (temporary): forwarded to spawned workflow-runner
-  # pods via runner-env.ts allowlist so the drain log fires for SQS-triggered
-  # (cron / schedule / event / block) executions, not just manual UI runs.
-  # Remove once parallel For Each iteration recovery is validated on staging.
-  DEBUG_DRAIN:
-    type: kv
-    value: "1"
   METRICS_COLLECTOR:
     type: kv
     value: "prometheus"
