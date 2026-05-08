@@ -332,6 +332,21 @@ export function evaluateConditionExpression(
         }
       );
 
+      // KEEP-468: any `{{...}}` token left after stored-format substitution
+      // is either display-format (`{{Label.field}}`) or legacy `{{$nodeId}}`,
+      // neither of which is supported in condition expressions. Without this
+      // check the leftover token feeds into the JS evaluator below and surfaces
+      // as a misleading "Unexpected token '{'" syntax error. Fail closed
+      // explicitly with a clear message that points the author at the right
+      // grammar.
+      const leftoverTemplateMatches =
+        transformedExpression.match(/\{\{[^}]+\}\}/g);
+      if (leftoverTemplateMatches && leftoverTemplateMatches.length > 0) {
+        throw new Error(
+          `Condition contains unresolved template reference(s): ${[...new Set(leftoverTemplateMatches)].join(", ")}. Use stored format \`{{@nodeId:Label.field}}\` for condition references.`
+        );
+      }
+
       // Validate the transformed expression before evaluation
       // KEEP-1284: Throw error when validation fails instead of silently returning false
       const validation = validateConditionExpression(transformedExpression);
@@ -839,6 +854,20 @@ export function resolveDisplayTemplate(
   displayRef: string,
   outputs: NodeOutputs
 ): unknown {
+  const checked = resolveDisplayTemplateChecked(displayRef, outputs);
+  return checked.found ? (checked.value ?? null) : null;
+}
+
+/**
+ * Discriminated variant of `resolveDisplayTemplate`. Same back-compat
+ * trade-off as `resolveTemplateToRawValueChecked`: legitimate `null`
+ * upstream values must not look like an unresolved reference to strict-mode
+ * callers.
+ */
+export function resolveDisplayTemplateChecked(
+  displayRef: string,
+  outputs: NodeOutputs
+): RawValueResolution {
   const dotIndex = displayRef.indexOf(".");
   const label =
     dotIndex === -1 ? displayRef : displayRef.substring(0, dotIndex);
@@ -846,14 +875,14 @@ export function resolveDisplayTemplate(
 
   const entry = findOutputByLabel(label, outputs);
   if (!entry) {
-    return null;
+    return { found: false, reason: "no-node" };
   }
 
   if (entry.data === null || entry.data === undefined) {
-    return null;
+    return { found: false, reason: "no-data" };
   }
 
-  return resolveFromOutputData(entry.data, fieldPath) ?? null;
+  return resolveFromOutputDataChecked(entry.data, fieldPath);
 }
 
 /**
@@ -883,29 +912,36 @@ export function extractTemplateParameters(
     rest: string
   ): string => {
     paramIndex++;
-    const value = resolveTemplateToRawValue(nodeId, rest, outputs);
-    if (value === null || value === undefined) {
+    const checked = resolveTemplateToRawValueChecked(nodeId, rest, outputs);
+    if (checked.found) {
+      // Legitimate values pass through, including upstream `null` (KEEP-468
+      // edge case: a SQL column that genuinely returned NULL must not
+      // false-trigger the strict gate).
+      paramValues.push(checked.value);
+    } else {
       recordUnresolved(tracker, {
         token: match,
-        reason: "no-path",
-        detail: `Reference for node "${nodeId.trim()}" did not resolve.`,
+        reason: checked.reason,
+        detail: `Reference for node "${nodeId.trim()}" did not resolve (${checked.reason}).`,
       });
+      paramValues.push(null);
     }
-    paramValues.push(value);
     return `$${paramIndex}`;
   };
 
   const replaceDisplay = (match: string, displayRef: string): string => {
     paramIndex++;
-    const value = resolveDisplayTemplate(displayRef, outputs);
-    if (value === null || value === undefined) {
+    const checked = resolveDisplayTemplateChecked(displayRef, outputs);
+    if (checked.found) {
+      paramValues.push(checked.value);
+    } else {
       recordUnresolved(tracker, {
         token: match,
-        reason: "no-path",
-        detail: `Display reference "${displayRef}" did not resolve.`,
+        reason: checked.reason,
+        detail: `Display reference "${displayRef}" did not resolve (${checked.reason}).`,
       });
+      paramValues.push(null);
     }
-    paramValues.push(value);
     return `$${paramIndex}`;
   };
 
@@ -950,6 +986,122 @@ export function resolveTemplateToRawValue(
   rest: string,
   outputs: NodeOutputs
 ): unknown {
+  const checked = resolveTemplateToRawValueChecked(nodeId, rest, outputs);
+  return checked.found ? (checked.value ?? null) : null;
+}
+
+/**
+ * Discriminated variant of `resolveTemplateToRawValue`. Lets the SQL
+ * parameterizer (and any other strict-mode caller) distinguish "the
+ * reference truly did not resolve" from "the reference resolved cleanly to
+ * a legitimate null upstream value." The unwrapped helper above collapses
+ * both cases to `null` for back-compat with For Each and tests.
+ *
+ * - `{ found: true, value }`   — node + path located. `value` may be `null`.
+ * - `{ found: false, reason }` — `no-node`, `no-data`, or `no-path`.
+ */
+type RawValueResolution =
+  | { found: true; value: unknown }
+  | { found: false; reason: "no-node" | "no-data" | "no-path" };
+
+/**
+ * Walk a field path while preserving the difference between "the leaf key
+ * exists and is null" and "the leaf key doesn't exist." The discriminator is
+ * `'key' in obj`, which is true for properties whose value is null/undefined
+ * but false when the property is absent. `resolveFromOutputData` collapses
+ * both to `undefined`, which is fine for string substitution but loses the
+ * signal strict-mode callers need.
+ */
+function resolveStrictPath(
+  data: unknown,
+  fieldPath: string
+): RawValueResolution {
+  if (!fieldPath) {
+    return { found: true, value: data };
+  }
+  if (data === null || data === undefined) {
+    return { found: false, reason: "no-path" };
+  }
+  let current: unknown = data;
+  for (const part of fieldPath.split(".")) {
+    const trimmed = part.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const arrayMatch = trimmed.match(ARRAY_ACCESS_PATTERN);
+    if (arrayMatch) {
+      const [, key, indexStr] = arrayMatch;
+      if (
+        current === null ||
+        current === undefined ||
+        typeof current !== "object"
+      ) {
+        return { found: false, reason: "no-path" };
+      }
+      const obj = current as Record<string, unknown>;
+      if (!(key in obj)) {
+        return { found: false, reason: "no-path" };
+      }
+      const arr = obj[key];
+      if (!Array.isArray(arr)) {
+        return { found: false, reason: "no-path" };
+      }
+      const idx = Number.parseInt(indexStr, 10);
+      if (idx < 0 || idx >= arr.length) {
+        return { found: false, reason: "no-path" };
+      }
+      current = arr[idx];
+      continue;
+    }
+    if (
+      current === null ||
+      current === undefined ||
+      typeof current !== "object"
+    ) {
+      return { found: false, reason: "no-path" };
+    }
+    const obj = current as Record<string, unknown>;
+    if (!(trimmed in obj)) {
+      return { found: false, reason: "no-path" };
+    }
+    current = obj[trimmed];
+  }
+  return { found: true, value: current };
+}
+
+/**
+ * Strict-mode field-path resolution that mirrors `resolveFromOutputData`'s
+ * three-shape lookup (top-level → `.data` wrapper → `.result` wrapper). The
+ * shapes are tried in order; the first one whose path exists wins.
+ */
+function resolveFromOutputDataChecked(
+  data: unknown,
+  fieldPath: string
+): RawValueResolution {
+  const top = resolveStrictPath(data, fieldPath);
+  if (top.found) {
+    return top;
+  }
+  if (hasNestedDataShape(data)) {
+    const inner = resolveStrictPath(data.data, fieldPath);
+    if (inner.found) {
+      return inner;
+    }
+  }
+  if (hasNestedResultShape(data)) {
+    const inner = resolveStrictPath(data.result, fieldPath);
+    if (inner.found) {
+      return inner;
+    }
+  }
+  return { found: false, reason: "no-path" };
+}
+
+export function resolveTemplateToRawValueChecked(
+  nodeId: string,
+  rest: string,
+  outputs: NodeOutputs
+): RawValueResolution {
   const trimmedNodeId = nodeId.trim();
   const sanitizedNodeId = trimmedNodeId.replace(/[^a-zA-Z0-9]/g, "_");
   const output = outputs[sanitizedNodeId] ?? outputs[trimmedNodeId];
@@ -960,15 +1112,15 @@ export function resolveTemplateToRawValue(
   const resolvedOutput = output ?? findOutputByLabelFallback(rest, outputs);
 
   if (!resolvedOutput) {
-    return null;
+    return { found: false, reason: "no-node" };
   }
 
   const data = resolvedOutput.data;
   if (data === null || data === undefined) {
-    return null;
+    return { found: false, reason: "no-data" };
   }
 
-  return resolveFromOutputData(data, fieldPath) ?? null;
+  return resolveFromOutputDataChecked(data, fieldPath);
 }
 
 /**
