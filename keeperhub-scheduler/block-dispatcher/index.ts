@@ -139,8 +139,9 @@ class BlockMonitorService {
         await existing.stop();
         await this.startNewMonitor(chainId, chain, workflows);
       } else if (!existing.isAlive()) {
+        const status = existing.getStatus();
         console.warn(
-          `[BlockMonitorService] Monitor for ${chain.name} (${chainId}) is dead, restarting`,
+          `[BlockMonitorService] Monitor for ${chain.name} (${chainId}) is dead, restarting (lastBlock=${status.lastBlock}, blocksReceived=${status.blocksReceived}, hasSubscription=${status.hasSubscription}, reconnecting=${status.reconnecting})`,
         );
         await existing.stop();
         this.monitors.delete(chainId);
