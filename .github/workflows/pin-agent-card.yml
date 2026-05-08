@@ -39,5 +39,4 @@ jobs:
       - name: Pin agent-registry.json to Pinata
         env:
           PINATA_JWT: ${{ secrets.PINATA_JWT }}
-          CHAIN_ETH_MAINNET_PRIMARY_RPC: ${{ secrets.CHAIN_ETH_MAINNET_PRIMARY_RPC }}
         run: pnpm tsx scripts/pin-agent-card.ts

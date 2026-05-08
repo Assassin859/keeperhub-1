@@ -24,7 +24,7 @@ import { ethers } from "ethers";
 
 const DEFAULT_AGENT_ID = "31875";
 const DEFAULT_REGISTRY = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432";
-const DEFAULT_RPC = "https://chain.techops.services/eth-mainnet";
+const DEFAULT_RPC = "https://eth.llamarpc.com";
 
 // Conservative floor for setAgentURI gas. The call is a single SSTORE plus a
 // string write; on mainnet at typical gas prices this is ~$1-3, but we want to
