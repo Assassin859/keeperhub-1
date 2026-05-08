@@ -1144,11 +1144,13 @@ export const PanelInner = () => {
                     <Label className="ml-1" htmlFor="description">
                       Description
                     </Label>
-                    <Input
+                    <Textarea
+                      className="max-h-64 resize-y"
                       disabled={isGenerating || !isOwner}
                       id="description"
                       onChange={(e) => handleUpdateDescription(e.target.value)}
                       placeholder="Optional description"
+                      rows={3}
                       value={selectedNode.data.description || ""}
                     />
                   </div>
