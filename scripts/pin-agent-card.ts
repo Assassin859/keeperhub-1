@@ -12,7 +12,9 @@
  * Optional env:
  *   AGENT_ID                       - default 31875
  *   IDENTITY_REGISTRY_ADDRESS      - default 0x8004A169FB4a3325136EB29fA0ceB6D2e539a432
- *   CHAIN_ETH_MAINNET_PRIMARY_RPC  - default https://chain.techops.services/eth-mainnet
+ *   CHAIN_ETH_MAINNET_PRIMARY_RPC  - if set, used as the only RPC; otherwise
+ *                                    the script tries a list of public RPCs
+ *                                    in sequence and uses the first that works
  *
  * Run: pnpm tsx scripts/pin-agent-card.ts
  */
@@ -23,10 +25,17 @@ import { ethers } from "ethers";
 
 const DEFAULT_AGENT_ID = "31875";
 const DEFAULT_REGISTRY = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432";
-// Public RPC that doesn't require auth headers. The repo's primary RPC
-// (chain.techops.services) sits behind Cloudflare Access and isn't reachable
-// from the GHA runner, so we fall back to a public endpoint for the drift read.
-const DEFAULT_RPC = "https://eth.llamarpc.com";
+
+// Public mainnet RPCs tried in order. CDN-fronted endpoints regularly serve
+// Cloudflare challenge pages to GHA runner IPs, so we try a list and accept
+// the first that responds. All entries verified against eth_call /
+// tokenURI(31875) on 2026-05-08.
+const FALLBACK_RPCS: readonly string[] = [
+  "https://ethereum-rpc.publicnode.com",
+  "https://1rpc.io/eth",
+  "https://eth.drpc.org",
+  "https://eth.llamarpc.com",
+] as const;
 
 function envOrDefault(key: string, fallback: string): string {
   const value = process.env[key];
@@ -77,18 +86,31 @@ async function pinToPinata(jwt: string, bytes: Buffer): Promise<PinataResponse> 
 }
 
 async function readOnchainAgentURI(
-  rpcUrl: string,
+  rpcUrls: readonly string[],
   registry: string,
   agentId: string
-): Promise<string> {
-  const provider = new ethers.JsonRpcProvider(rpcUrl);
-  const contract = new ethers.Contract(
-    registry,
-    TOKEN_URI_ABI as unknown as ethers.InterfaceAbi,
-    provider
-  );
-  const result = (await contract.tokenURI(agentId)) as string;
-  return result;
+): Promise<string | null> {
+  for (const rpcUrl of rpcUrls) {
+    try {
+      // staticNetwork avoids the eth_chainId roundtrip that 403'd against
+      // CDN-fronted RPCs returning a Cloudflare challenge instead of JSON-RPC.
+      const provider = new ethers.JsonRpcProvider(rpcUrl, 1, {
+        staticNetwork: true,
+      });
+      const contract = new ethers.Contract(
+        registry,
+        TOKEN_URI_ABI as unknown as ethers.InterfaceAbi,
+        provider
+      );
+      const result = (await contract.tokenURI(agentId)) as string;
+      console.log(`[pin] Drift check via ${rpcUrl}`);
+      return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[pin] RPC ${rpcUrl} unavailable: ${message.split("\n")[0]}`);
+    }
+  }
+  return null;
 }
 
 export async function pinAgentCard(): Promise<void> {
@@ -99,7 +121,9 @@ export async function pinAgentCard(): Promise<void> {
 
   const agentId = envOrDefault("AGENT_ID", DEFAULT_AGENT_ID);
   const registry = envOrDefault("IDENTITY_REGISTRY_ADDRESS", DEFAULT_REGISTRY);
-  const rpcUrl = envOrDefault("CHAIN_ETH_MAINNET_PRIMARY_RPC", DEFAULT_RPC);
+  const customRpc = process.env.CHAIN_ETH_MAINNET_PRIMARY_RPC;
+  const rpcUrls: readonly string[] =
+    customRpc && customRpc.length > 0 ? [customRpc] : FALLBACK_RPCS;
 
   const bytes = readFileSync(CARD_PATH);
   console.log(`[pin] Pinning ${CARD_PATH} (${bytes.length} bytes) to Pinata...`);
@@ -109,7 +133,23 @@ export async function pinAgentCard(): Promise<void> {
   console.log(`[pin] Pinned: ${newUri}`);
   console.log(`[pin] Gateway: https://gateway.pinata.cloud/ipfs/${pinned.IpfsHash}`);
 
-  const currentUri = await readOnchainAgentURI(rpcUrl, registry, agentId);
+  // Drift check is best-effort: pinning is the primary success criterion. If
+  // every public RPC is rate-limited or behind a CF challenge, log a warning
+  // and exit cleanly -- the operator can still run update-agent-uri locally.
+  const currentUri = await readOnchainAgentURI(rpcUrls, registry, agentId);
+  if (currentUri === null) {
+    console.warn(
+      "[pin] Could not read on-chain agentURI from any public RPC; skipping drift check."
+    );
+    console.warn(
+      `[pin] Pinned CID is ${newUri}. To update on-chain manually, run locally:`
+    );
+    console.warn(
+      `  REGISTRATION_PRIVATE_KEY=<owner-key> NEW_AGENT_URI="${newUri}" pnpm update-agent-uri`
+    );
+    return;
+  }
+
   console.log(`[pin] On-chain agentURI for agent ${agentId}: ${currentUri}`);
 
   if (currentUri === newUri) {
