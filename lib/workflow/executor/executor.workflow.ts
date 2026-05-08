@@ -1502,16 +1502,25 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       const firstBodyNodes = bodyEdgesBySource.get(forEachNodeId) ?? [];
       const iterationMeta = { iterationIndex: index, forEachNodeId };
 
+      // Parallel For Each iterations are vulnerable to the same SDK
+      // checkpoint-resume truncation that KEEP-395 fixed for the main
+      // DAG. Without a strong reference, an iteration's recurseInto chain
+      // (e.g., decode-network -> HTTP Request) can be severed after the
+      // first step's checkpoint, leaving the downstream step unscheduled.
+      // pendingTasks.track holds each iteration body's promise so the
+      // workflow-end drain catches orphaned continuations.
       for (const bodyNodeId of firstBodyNodes) {
-        await executeBodyNode(
-          bodyNodeId,
-          bodyVisited,
-          scopedOutputs,
-          bodyResults,
-          bodyEdgesBySource,
-          collectNodeId,
-          iterationMeta,
-          bodyEdgesBySourceHandle
+        await pendingTasks.track(
+          executeBodyNode(
+            bodyNodeId,
+            bodyVisited,
+            scopedOutputs,
+            bodyResults,
+            bodyEdgesBySource,
+            collectNodeId,
+            iterationMeta,
+            bodyEdgesBySourceHandle
+          )
         );
       }
 
