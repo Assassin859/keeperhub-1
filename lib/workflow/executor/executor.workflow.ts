@@ -67,6 +67,7 @@ import {
   assertResolved,
   createTracker,
   recordUnresolved,
+  TemplateResolutionError,
   type TemplateResolutionTracker,
 } from "@/lib/workflow/executor/template-resolution";
 import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
@@ -2481,6 +2482,37 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         error: errorMessage,
       };
       results[nodeId] = errorResult;
+
+      // KEEP-468: TemplateResolutionError aborts before executeActionStep runs,
+      // so withStepLogging never writes a workflow_execution_logs row for the
+      // failing node. Without that row, listTrulyFailedNodes inside
+      // logWorkflowCompleteDb concludes "no node failed" and CAS-flips the
+      // workflow status from 'error' to 'success' as a spurious-SDK reconcile.
+      // Route through triggerStep's step boundary (DB access is forbidden in
+      // the workflow body) to persist a failure log so the run panel surfaces
+      // it AND the reconciler keeps status='error'. Wrapped in try/catch:
+      // a logging failure must never block the workflow from aborting.
+      if (error instanceof TemplateResolutionError && executionId) {
+        try {
+          await triggerStep({
+            triggerData: {},
+            _recordStepFailure: {
+              executionId,
+              nodeId,
+              nodeName: getNodeName(node),
+              nodeType: node.data.type,
+              error: errorMessage,
+            },
+          });
+        } catch (logError) {
+          logSystemError(
+            ErrorCategory.WORKFLOW_ENGINE,
+            "[Workflow Executor] Failed to record TemplateResolutionError step log",
+            logError,
+            { ...baseLogLabels, node_id: nodeId }
+          );
+        }
+      }
 
       // Store null output so downstream templates resolve to null rather than
       // being undefined (same pattern as disabled nodes).

@@ -1,9 +1,18 @@
 /**
  * Trigger step - handles trigger execution with proper logging
  * Also handles workflow completion when called with _workflowComplete
+ * KEEP-468: also handles per-node failure logging via _recordStepFailure
+ * for errors raised inside the workflow body (e.g. TemplateResolutionError)
+ * before executeActionStep ever runs. Routes the DB write through this
+ * step's "use step" boundary because the workflow body forbids Node.js
+ * modules (the postgres driver, nanoid, etc.).
  */
 import "server-only";
 
+import {
+  logStepCompleteDb,
+  logStepStartDb,
+} from "@/lib/workflow/executor/logging";
 import {
   logWorkflowComplete,
   type StepInput,
@@ -25,6 +34,18 @@ export type TriggerInput = StepInput & {
     error?: string;
     startTime: number;
   };
+  /**
+   * KEEP-468: If set, write a workflow_execution_logs row for a node that
+   * failed before its step could run (e.g. TemplateResolutionError raised
+   * inside processActionConfig). No trigger execution occurs.
+   */
+  _recordStepFailure?: {
+    executionId: string;
+    nodeId: string;
+    nodeName: string;
+    nodeType: string;
+    error: string;
+  };
 };
 
 /**
@@ -38,9 +59,37 @@ function executeTrigger(input: TriggerInput): TriggerResult {
 }
 
 /**
+ * Persist a single workflow_execution_logs row marked failed for a node
+ * that aborted before its step ran. Mirrors the start+complete pair
+ * withStepLogging would have written.
+ */
+async function recordStepFailure(
+  failure: NonNullable<TriggerInput["_recordStepFailure"]>
+): Promise<void> {
+  const start = await logStepStartDb({
+    executionId: failure.executionId,
+    nodeId: failure.nodeId,
+    nodeName: failure.nodeName,
+    nodeType: failure.nodeType,
+    input: undefined,
+  });
+  if (!start.logId) {
+    return;
+  }
+  await logStepCompleteDb({
+    logId: start.logId,
+    startTime: start.startTime,
+    status: "error",
+    error: failure.error,
+    executionId: failure.executionId,
+  });
+}
+
+/**
  * Trigger Step
  * Executes a trigger and logs it properly
  * Also handles workflow completion when called with _workflowComplete
+ * Also handles per-node failure logging when called with _recordStepFailure
  */
 export async function triggerStep(input: TriggerInput): Promise<TriggerResult> {
   "use step";
@@ -48,6 +97,12 @@ export async function triggerStep(input: TriggerInput): Promise<TriggerResult> {
   // If this is a completion-only call, just log workflow completion
   if (input._workflowComplete) {
     await logWorkflowComplete(input._workflowComplete);
+    return { success: true, data: {} };
+  }
+
+  // KEEP-468: per-node failure log for pre-step aborts (e.g. template resolution)
+  if (input._recordStepFailure) {
+    await recordStepFailure(input._recordStepFailure);
     return { success: true, data: {} };
   }
 
