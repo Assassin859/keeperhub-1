@@ -246,4 +246,79 @@ describe("createPendingTracker (KEEP-395 Bug 2)", () => {
     expect(completed).toEqual(["trigger", "A", "B"]);
     expect(tracker.size()).toBe(0);
   });
+
+  it("simulates parallel For Each iterations: drain rescues truncated body recursion", async () => {
+    // For Each parallel iteration drop: when a For Each runs in parallel
+    // mode, multiple iteration body chains are in flight at once.
+    // After each body's first step (e.g. decode-network), the SDK can
+    // truncate the await chain before the iteration's recurseInto schedules
+    // the next step (e.g. HTTP Request). Without pendingTasks.track around
+    // each iteration body, those orphaned downstream steps are silently
+    // dropped and the workflow finalises with status "success" missing the
+    // dropped body work.
+    //
+    // Faithful shape:
+    //   ForEach (parallel, 4 items)
+    //     -> body: stepA (decode-network) -> stepB (HTTP Request)
+    //
+    // The simulator models all 4 iterations as truncated -- their stepA
+    // completes synchronously and their stepB is scheduled but the
+    // iteration body returns before stepB settles. Wrapping each
+    // iteration body in tracker.track means the orphaned stepB promises
+    // remain reachable via the tracker, and the workflow-end drain forces
+    // them to complete before finalisation.
+    const tracker = createPendingTracker();
+
+    const completed: string[] = [];
+    const stepBResolvers = [
+      deferred<void>(),
+      deferred<void>(),
+      deferred<void>(),
+      deferred<void>(),
+    ];
+
+    const runIteration = (index: number): Promise<void> => {
+      // stepA always resolves synchronously (analog of decode-network).
+      completed.push(`stepA-${index}`);
+      // stepB is the recurseInto target. The iteration schedules it but
+      // does NOT await it inside the body -- this models the SDK
+      // checkpoint-resume severing the await chain. Without a strong
+      // reference held by the tracker, the stepB promise is orphaned.
+      const stepB: Promise<void> = (async () => {
+        await stepBResolvers[index].promise;
+        completed.push(`stepB-${index}`);
+      })();
+      tracker.track(stepB);
+      return Promise.resolve();
+    };
+
+    // Mirror the executor: each iteration body promise is itself wrapped
+    // in tracker.track (the production fix in handleForEachExecution).
+    const settled = await Promise.allSettled(
+      [0, 1, 2, 3].map((i) => tracker.track(runIteration(i)))
+    );
+    expect(settled).toHaveLength(4);
+    // All iteration bodies returned; only stepA has run for each.
+    expect(completed).toEqual(["stepA-0", "stepA-1", "stepA-2", "stepA-3"]);
+
+    // Workflow-end drain: tracker holds strong refs to the orphaned stepB
+    // promises. Without it, the workflow would finalise with stepB
+    // unscheduled for every iteration.
+    const drainPromise = tracker.drain();
+
+    // Resolve the orphaned stepB promises -- in production these are
+    // backed by real "use step" calls that complete asynchronously.
+    for (const r of stepBResolvers) {
+      r.resolve();
+    }
+
+    await drainPromise;
+
+    // All four iterations completed both steps via the drain.
+    expect(completed).toContain("stepB-0");
+    expect(completed).toContain("stepB-1");
+    expect(completed).toContain("stepB-2");
+    expect(completed).toContain("stepB-3");
+    expect(tracker.size()).toBe(0);
+  });
 });
