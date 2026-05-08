@@ -25,6 +25,9 @@ COPY docs/ ./content/
 # Build the application
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
+# Tell pnpm it's running non-interactively so v11+ doesn't abort on its
+# pre-script deps-status check (ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY).
+ENV CI=true
 
 RUN corepack enable pnpm && pnpm run build
 
