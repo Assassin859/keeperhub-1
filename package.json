@@ -25,6 +25,8 @@
     "db:setup": "pnpm db:migrate && pnpm db:setup-workflow && pnpm db:seed",
     "db:setup-workflow": "workflow-postgres-setup",
     "discover-plugins": "tsx scripts/discover-plugins.ts",
+    "pin-agent-card": "tsx scripts/pin-agent-card.ts",
+    "update-agent-uri": "tsx scripts/update-agent-uri.ts",
     "create-plugin": "tsx scripts/create-plugin.ts",
     "analyze-steps": "tsx scripts/analyze-steps.ts",
     "profile-step": "tsx scripts/profile-step.ts",
