@@ -599,7 +599,8 @@ describe.skipIf(shouldSkip)("Webhook API E2E", () => {
 
         expect(response.status).toBe(401);
         const body = await response.json();
-        expect(body.error).toBe("Invalid API key format");
+        expect(body.error).toContain("wfb_");
+        expect(body.code).toBe("invalid_key_format");
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") {
           console.warn("API request timed out - server may be slow");

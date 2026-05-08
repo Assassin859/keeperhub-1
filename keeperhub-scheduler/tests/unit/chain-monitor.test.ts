@@ -468,6 +468,67 @@ describe("ChainMonitor", () => {
       await monitor.stop();
       expect(monitor.isAlive()).toBe(false);
     });
+
+    it("returns false when subscription has gone silent for >10 minutes", async () => {
+      // Reproduces the prod zombie state: subscription is set up but the
+      // upstream WSS never delivers blocks. The in-monitor no-block timer
+      // failed to fire; the reconciler must catch this via isAlive() so it
+      // can tear down and start a fresh monitor.
+      //
+      // Disable the in-monitor no-block timer for this test so the staleness
+      // path is exercised on its own. (In prod, the timer was demonstrably
+      // not firing — that is the failure mode this fallback exists for.)
+      vi.stubEnv("NO_BLOCK_TIMEOUT_MS", String(60 * 60_000));
+
+      const monitor = new ChainMonitor({
+        chain: makeChain(),
+        workflows: [makeWorkflow()],
+      });
+
+      await monitor.start();
+      expect(monitor.isAlive()).toBe(true);
+
+      // Advance 9 minutes — still under the 10-min staleness threshold.
+      await vi.advanceTimersByTimeAsync(9 * 60_000);
+      expect(monitor.isAlive()).toBe(true);
+
+      // Cross the threshold. No blocks have been received since subscribe.
+      await vi.advanceTimersByTimeAsync(2 * 60_000);
+      expect(monitor.isAlive()).toBe(false);
+    });
+
+    it("stays alive when blocks are arriving regularly", async () => {
+      const monitor = new ChainMonitor({
+        chain: makeChain(),
+        workflows: [makeWorkflow({ blockInterval: 1 })],
+      });
+
+      await monitor.start();
+      const provider = latestProvider();
+
+      // Emit a block every 5 minutes for 30 minutes — well past the 10-min
+      // staleness threshold, but each block resets lastBlockReceivedAt.
+      for (const blockNumber of [101, 102, 103, 104, 105, 106]) {
+        await vi.advanceTimersByTimeAsync(5 * 60_000);
+        provider.emitBlock(blockNumber);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(monitor.isAlive()).toBe(true);
+      }
+    });
+
+    it("does not reap a freshly-subscribed monitor that has yet to receive its first block", async () => {
+      // Edge case: a monitor that just (re)connected but hasn't seen its
+      // first block yet must not be reaped before the staleness window.
+      const monitor = new ChainMonitor({
+        chain: makeChain(),
+        workflows: [makeWorkflow()],
+      });
+
+      await monitor.start();
+      // Without resetting lastBlockReceivedAt at subscribe time, isAlive()
+      // would compute a stale gap immediately. Sanity check the seed.
+      expect(monitor.isAlive()).toBe(true);
+    });
   });
 
   // -------------------------------------------------------------------------
