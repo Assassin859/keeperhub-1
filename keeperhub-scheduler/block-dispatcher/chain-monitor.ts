@@ -21,7 +21,22 @@ const MAX_DELAY_MS = 30_000;
 const CONNECT_TIMEOUT_MS = 15_000;
 const PING_INTERVAL_MS = 30_000;
 const PONG_TIMEOUT_MS = 5_000;
-const NO_BLOCK_TIMEOUT_MS = 5 * 60_000; // 5 minutes
+const NO_BLOCK_TIMEOUT_DEFAULT_MS = 5 * 60_000; // 5 minutes
+// Overridable so tests can exercise the staleness path in isolation from the
+// in-monitor no-block timer. Read on each resetNoBlockTimer() call so the
+// override applies even when set after module load.
+function getNoBlockTimeoutMs(): number {
+  return Number(process.env.NO_BLOCK_TIMEOUT_MS) || NO_BLOCK_TIMEOUT_DEFAULT_MS;
+}
+// Reconciler-level staleness threshold. Backstop for the in-monitor no-block
+// timer above:
+// observed in prod that the timer can fail to fire after a reconnect (root
+// cause unconfirmed; suspected ethers v6 subscription + upstream WSS half-open
+// state). When that happens, the monitor reports hasActiveSubscription=true
+// indefinitely and the reconciler never restarts it. Treating "no blocks for
+// N minutes" as not-alive lets the reconciler tear down and restart the
+// monitor regardless of why the in-monitor timer failed.
+const STALE_SUBSCRIPTION_MS = 10 * 60_000; // 10 minutes
 const STALE_BLOCK_THRESHOLD_S = 120; // warn if block timestamp >2 min behind
 const HEARTBEAT_INTERVAL_MS = 60_000;
 const MAX_BACKFILL_BLOCKS = 100;
@@ -66,6 +81,7 @@ export class ChainMonitor {
   private pendingBlock: number | null = null;
   private reconnectAttempts = 0;
   private lastProcessedBlock: number | null = null;
+  private lastBlockReceivedAt: number | null = null;
   private blocksReceived = 0;
   private blocksMatched = 0;
   private lastHeartbeat = Date.now();
@@ -126,9 +142,26 @@ export class ChainMonitor {
   }
 
   isAlive(): boolean {
-    return (
-      this.isRunning && (this.hasActiveSubscription || this.isReconnecting)
-    );
+    if (!this.isRunning) {
+      return false;
+    }
+    if (this.isReconnecting) {
+      return true;
+    }
+    if (!this.hasActiveSubscription) {
+      return false;
+    }
+    // Subscription is set up, but the upstream WSS may have gone silent
+    // (zombie subscription). Treat as not-alive once the gap since the last
+    // block exceeds STALE_SUBSCRIPTION_MS so the BlockMonitorService
+    // reconciler tears it down and starts a fresh monitor.
+    if (
+      this.lastBlockReceivedAt !== null &&
+      Date.now() - this.lastBlockReceivedAt > STALE_SUBSCRIPTION_MS
+    ) {
+      return false;
+    }
+    return true;
   }
 
   getStatus(): {
@@ -294,6 +327,10 @@ export class ChainMonitor {
     });
 
     this.hasActiveSubscription = true;
+    // Seed the staleness clock so a freshly-subscribed monitor isn't reaped
+    // by isAlive() before the first block arrives. Real blocks will refresh
+    // this in onBlock().
+    this.lastBlockReceivedAt = Date.now();
     console.log(`[BlockMonitor:${this.chainName}] Block subscription active`);
 
     // Handle WebSocket close for reconnection - store reference for cleanup
@@ -315,6 +352,7 @@ export class ChainMonitor {
   // ---------------------------------------------------------------------------
 
   private async onBlock(blockNumber: number): Promise<void> {
+    this.lastBlockReceivedAt = Date.now();
     this.resetNoBlockTimer();
 
     // Deduplicate — ethers may fire the same block from both polling and newHeads
@@ -554,14 +592,15 @@ export class ChainMonitor {
 
   private resetNoBlockTimer(): void {
     this.stopNoBlockTimer();
+    const timeoutMs = getNoBlockTimeoutMs();
     this.noBlockTimer = setTimeout(() => {
       if (this.isRunning) {
         console.warn(
-          `[BlockMonitor:${this.chainName}] No blocks received in ${NO_BLOCK_TIMEOUT_MS / 1000}s, triggering reconnect`,
+          `[BlockMonitor:${this.chainName}] No blocks received in ${timeoutMs / 1000}s, triggering reconnect`,
         );
         this.handleDisconnect();
       }
-    }, NO_BLOCK_TIMEOUT_MS);
+    }, timeoutMs);
   }
 
   private stopNoBlockTimer(): void {
