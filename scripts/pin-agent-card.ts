@@ -26,14 +26,14 @@ import { ethers } from "ethers";
 const DEFAULT_AGENT_ID = "31875";
 const DEFAULT_REGISTRY = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432";
 
-// Public mainnet RPCs tried in order. CDN-fronted endpoints (llamarpc, others)
-// regularly serve Cloudflare challenge pages to GHA runner IPs, so we try a
-// list and accept the first that responds. publicnode is the most reliable
-// from datacenter ranges in our experience; the rest are backups.
+// Public mainnet RPCs tried in order. CDN-fronted endpoints regularly serve
+// Cloudflare challenge pages to GHA runner IPs, so we try a list and accept
+// the first that responds. All entries verified against eth_call /
+// tokenURI(31875) on 2026-05-08.
 const FALLBACK_RPCS: readonly string[] = [
   "https://ethereum-rpc.publicnode.com",
   "https://1rpc.io/eth",
-  "https://rpc.ankr.com/eth",
+  "https://eth.drpc.org",
   "https://eth.llamarpc.com",
 ] as const;
 
