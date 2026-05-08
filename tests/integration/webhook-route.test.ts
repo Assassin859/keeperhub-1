@@ -231,7 +231,7 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
       expect(data.error).toBe("Missing Authorization header");
     });
 
-    it("should return 401 for non-wfb key format", async () => {
+    it("should return 401 with wrong_key_type hint when a kh_ org key is used", async () => {
       mockWorkflowsFindFirst.mockResolvedValue(webhookWorkflow);
 
       const response = await POST(
@@ -240,7 +240,26 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
       );
       expect(response.status).toBe(401);
       const data = await response.json();
-      expect(data.error).toBe("Invalid API key format");
+      expect(data.error).toContain("wfb_");
+      expect(data.error).toContain("kh_");
+      expect(data.code).toBe("wrong_key_type");
+      expect(data.expected).toBe("wfb_*");
+      expect(data.received).toBe("kh_*");
+      expect(typeof data.hint).toBe("string");
+    });
+
+    it("should return 401 with expected prefix when key has unknown prefix", async () => {
+      mockWorkflowsFindFirst.mockResolvedValue(webhookWorkflow);
+
+      const response = await POST(
+        createWebhookRequest("totally_unknown_key"),
+        createContext(WORKFLOW_ID)
+      );
+      expect(response.status).toBe(401);
+      const data = await response.json();
+      expect(data.error).toContain("wfb_");
+      expect(data.code).toBe("invalid_key_format");
+      expect(data.expected).toBe("wfb_*");
     });
 
     it("should return 401 when key not found in database", async () => {
