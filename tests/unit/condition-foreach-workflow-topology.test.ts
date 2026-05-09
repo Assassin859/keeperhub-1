@@ -233,7 +233,11 @@ const EXPR_CAN_CAST =
 describe("For Each body: 7 chained conditions with real web3 values", () => {
   describe("body identification", () => {
     it("collects 20 body nodes with correct boundary", () => {
-      expect(body.collectNodeId).toBe(COLLECT_ID);
+      // Canonical handle wiring: Collect sits on the For Each's `done`
+      // sourceHandle, so the body subgraph (loop-handle reachable nodes)
+      // doesn't include it.
+      expect(body.doneCollectNodeId).toBe(COLLECT_ID);
+      expect(body.collectNodeId).toBeUndefined();
       expect(body.bodyNodeIds).toHaveLength(20);
       expect(body.bodyNodeIds).not.toContain(FE_ID);
       expect(body.bodyNodeIds).not.toContain(COLLECT_ID);
