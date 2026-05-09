@@ -1166,6 +1166,45 @@ export function identifyLoopBody(
 }
 
 /**
+ * Decision about how a For Each should hand control off after its iteration
+ * loop completes. Three shapes:
+ *
+ *   - `aggregate-collect`: a Collect node receives `{ results, count }` and
+ *      the chain past it runs. Used for both the canonical done-handle
+ *      Collect and the legacy in-body Collect; the canonical one wins when
+ *      both are present.
+ *   - `done-targets`: the For Each's done-handle wires to one or more
+ *      non-Collect nodes; they run as ordinary post-loop steps with no
+ *      aggregation injection.
+ *   - `none`: fire-and-forget loop, nothing to dispatch.
+ */
+export type IterationContinuation =
+  | { kind: "aggregate-collect"; collectNodeId: string }
+  | { kind: "done-targets"; targets: string[] }
+  | { kind: "none" };
+
+/**
+ * Pick the post-iteration continuation given the For Each's `LoopBodyInfo`.
+ * Pure function so the routing priority is testable in isolation from the
+ * surrounding step-firing / output-writing side effects.
+ */
+export function planIterationContinuation(
+  body: Pick<
+    LoopBodyInfo,
+    "collectNodeId" | "doneCollectNodeId" | "doneEntryNodeIds"
+  >
+): IterationContinuation {
+  const aggregate = body.doneCollectNodeId ?? body.collectNodeId;
+  if (aggregate) {
+    return { kind: "aggregate-collect", collectNodeId: aggregate };
+  }
+  if (body.doneEntryNodeIds.length > 0) {
+    return { kind: "done-targets", targets: body.doneEntryNodeIds };
+  }
+  return { kind: "none" };
+}
+
+/**
  * Resolve a template string to its raw array value.
  * Accepts {{@nodeId:Label.field}} syntax or a JSON array literal.
  */
@@ -1593,11 +1632,14 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       edgesBySourceHandle
     );
 
-    // The Collect that receives `{ results, count }` after iterations.
-    // Canonical wiring puts it on the For Each's `done` handle; legacy
-    // graphs leave it in the body chain. If both exist, the canonical
-    // done-handle Collect wins so user intent is unambiguous.
-    const aggregateCollectNodeId = doneCollectNodeId ?? collectNodeId;
+    // Routing priority for the post-iteration continuation. Extracted as a
+    // pure function so the canonical-vs-legacy precedence is testable in
+    // isolation. See `planIterationContinuation` above.
+    const continuation = planIterationContinuation({
+      collectNodeId,
+      doneCollectNodeId,
+      doneEntryNodeIds,
+    });
     // Source for the iteration-capture pass below. Iteration output is
     // whichever body node feeds INTO this Collect (legacy in-body Collect),
     // or — for the canonical done-handle pattern — the natural end of the
@@ -1735,18 +1777,16 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     }
 
     // 6. Route the iteration aggregate to the post-loop continuation.
-    //
-    //   a. Canonical: a `done`-handle Collect receives `{ results, count }`,
-    //      then the chain past it runs.
-    //   b. Legacy: an in-body Collect plays the same role (no done handle).
-    //   c. Mixed (transitional): both exist. The canonical done-handle
-    //      Collect wins; the in-body Collect is marked visited so the
-    //      parent flow doesn't re-execute it, but we don't fire its step.
-    //   d. Non-Collect done targets: dispatch them as ordinary post-loop
-    //      steps (no aggregation injection — they can still reference the
-    //      For Each via templates if they need iteration metadata).
-    //   e. None of the above: fire-and-forget loop, nothing to do here.
-    if (aggregateCollectNodeId) {
+    // Routing priority is encoded in `planIterationContinuation`:
+    //   aggregate-collect: fire the Collect step with `{ results, count }`,
+    //                      write its output, mark it visited, and dispatch
+    //                      its downstream via continueAfterCollect.
+    //   done-targets:      no Collect on done; dispatch the targets as
+    //                      ordinary post-loop steps via continueWithDoneTargets
+    //                      (no aggregation injection).
+    //   none:              fire-and-forget loop, nothing to do here.
+    if (continuation.kind === "aggregate-collect") {
+      const aggregateCollectNodeId = continuation.collectNodeId;
       const collectData = {
         results: iterationResults,
         count: iterationResults.length,
@@ -1800,11 +1840,11 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       if (continueAfterCollect) {
         await continueAfterCollect(aggregateCollectNodeId);
       }
-    } else if (doneEntryNodeIds.length > 0 && continueWithDoneTargets) {
-      // No Collect on the done chain — dispatch the targets directly as
-      // ordinary post-loop steps. Mark the For Each visited so the
-      // dispatcher doesn't loop back.
-      await continueWithDoneTargets(forEachNodeId, doneEntryNodeIds);
+    } else if (
+      continuation.kind === "done-targets" &&
+      continueWithDoneTargets
+    ) {
+      await continueWithDoneTargets(forEachNodeId, continuation.targets);
     }
 
     return {

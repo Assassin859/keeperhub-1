@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import { buildEdgesBySourceHandle } from "@/lib/workflow/editor/edge-handle-utils";
-import { identifyLoopBody } from "@/lib/workflow/executor/executor.workflow";
+import {
+  identifyLoopBody,
+  planIterationContinuation,
+} from "@/lib/workflow/executor/executor.workflow";
 import type { WorkflowNode } from "@/lib/workflow/store";
 
 type EdgeSpec = {
@@ -361,5 +364,132 @@ describe("identifyLoopBody — legacy mode preserved (KEEP-520)", () => {
     expect(result.bodyNodeIds).toContain("b");
     expect(result.bodyNodeIds).toContain("c-inner");
     expect(result.bodyNodeIds).not.toContain("c-outer");
+  });
+});
+
+describe("identifyLoopBody — multiple done-handle Collect targets (KEEP-520)", () => {
+  it("first done-Collect wins; later ones stay in doneEntryNodeIds but are not promoted", () => {
+    // Two Collect nodes wired to the For Each's done handle. The executor
+    // picks the first one as the canonical aggregation target; the second
+    // remains in doneEntryNodeIds (so it is not lost from the graph) but
+    // is NOT recorded as doneCollectNodeId. The "first wins" rule pins
+    // deterministic behavior in this admittedly-unusual graph shape.
+    const nodes = [
+      action("fe", "For Each"),
+      action("body-1", "HTTP Request"),
+      action("first-done", "Collect"),
+      action("second-done", "Collect"),
+    ];
+    const { edgesBySource, edgesBySourceHandle } = buildEdgeMaps([
+      { source: "fe", target: "body-1", sourceHandle: "loop" },
+      { source: "fe", target: "first-done", sourceHandle: "done" },
+      { source: "fe", target: "second-done", sourceHandle: "done" },
+    ]);
+
+    const result = identifyLoopBody(
+      "fe",
+      edgesBySource,
+      buildNodeMap(nodes),
+      edgesBySourceHandle
+    );
+
+    expect(result.doneCollectNodeId).toBe("first-done");
+    expect(result.doneEntryNodeIds).toEqual(["first-done", "second-done"]);
+    expect(result.collectNodeId).toBeUndefined();
+  });
+
+  it("done-handle non-Collect first, Collect second: Collect is promoted as doneCollectNodeId", () => {
+    // The "first whose actionType is Collect" rule means a non-Collect
+    // node ahead of the Collect in done-handle order does NOT block the
+    // Collect from being recognized.
+    const nodes = [
+      action("fe", "For Each"),
+      action("body-1", "HTTP Request"),
+      action("non-collect-first", "HTTP Request"),
+      action("collect-second", "Collect"),
+    ];
+    const { edgesBySource, edgesBySourceHandle } = buildEdgeMaps([
+      { source: "fe", target: "body-1", sourceHandle: "loop" },
+      { source: "fe", target: "non-collect-first", sourceHandle: "done" },
+      { source: "fe", target: "collect-second", sourceHandle: "done" },
+    ]);
+
+    const result = identifyLoopBody(
+      "fe",
+      edgesBySource,
+      buildNodeMap(nodes),
+      edgesBySourceHandle
+    );
+
+    expect(result.doneCollectNodeId).toBe("collect-second");
+    expect(result.doneEntryNodeIds).toEqual([
+      "non-collect-first",
+      "collect-second",
+    ]);
+  });
+});
+
+describe("planIterationContinuation (KEEP-520 routing priority)", () => {
+  it("aggregate-collect: done-handle Collect wins over an in-body Collect", () => {
+    const result = planIterationContinuation({
+      collectNodeId: "in-body",
+      doneCollectNodeId: "done",
+      doneEntryNodeIds: ["done", "after-done"],
+    });
+    expect(result).toEqual({
+      kind: "aggregate-collect",
+      collectNodeId: "done",
+    });
+  });
+
+  it("aggregate-collect: legacy in-body Collect when no done-handle Collect", () => {
+    const result = planIterationContinuation({
+      collectNodeId: "in-body",
+      doneCollectNodeId: undefined,
+      doneEntryNodeIds: [],
+    });
+    expect(result).toEqual({
+      kind: "aggregate-collect",
+      collectNodeId: "in-body",
+    });
+  });
+
+  it("done-targets: non-Collect targets on done handle, no Collect anywhere", () => {
+    const result = planIterationContinuation({
+      collectNodeId: undefined,
+      doneCollectNodeId: undefined,
+      doneEntryNodeIds: ["post-loop-step", "another-step"],
+    });
+    expect(result).toEqual({
+      kind: "done-targets",
+      targets: ["post-loop-step", "another-step"],
+    });
+  });
+
+  it("none: fire-and-forget loop with no continuation wiring", () => {
+    const result = planIterationContinuation({
+      collectNodeId: undefined,
+      doneCollectNodeId: undefined,
+      doneEntryNodeIds: [],
+    });
+    expect(result).toEqual({ kind: "none" });
+  });
+
+  it("aggregate-collect priority is deterministic when only an in-body Collect exists alongside non-Collect done targets", () => {
+    // Edge case: a workflow that has both a legacy in-body Collect AND
+    // non-Collect nodes on the done handle. The aggregate-collect path
+    // wins because the in-body Collect needs to receive `{ results, count }`;
+    // the done-handle non-Collect targets remain unreachable here (a
+    // structural mistake the editor should warn about, but the executor
+    // stays deterministic).
+    const result = planIterationContinuation({
+      collectNodeId: "in-body",
+      doneCollectNodeId: undefined,
+      doneEntryNodeIds: ["stray-done-target"],
+    });
+    expect(result).toEqual({
+      kind: "aggregate-collect",
+      collectNodeId: "in-body",
+    });
   });
 });
