@@ -908,7 +908,26 @@ function findOutputByLabelFallback(
 
 export type LoopBodyInfo = {
   bodyNodeIds: string[];
+  /**
+   * In-body Collect node found via depth-0 boundary BFS. Set in legacy graphs
+   * (Collect placed in the body chain) and may also be set for transitional
+   * graphs that have BOTH an in-body Collect and a done-handle Collect; in the
+   * latter case the executor prefers `doneCollectNodeId`.
+   */
   collectNodeId: string | undefined;
+  /**
+   * Entry points for the For Each's `done` sourceHandle. These run once after
+   * the iteration loop completes (JS-equivalent: the line after `for (...) {}`).
+   * Non-Collect targets execute as ordinary steps; a Collect target receives
+   * the aggregated `{ results, count }` payload.
+   */
+  doneEntryNodeIds: string[];
+  /**
+   * If the canonical `done`-handle wiring routes to a Collect node, this is
+   * its node ID. The executor prefers this over `collectNodeId` so workflows
+   * that wire both are unambiguous.
+   */
+  doneCollectNodeId: string | undefined;
   bodyEdgesBySource: Map<string, string[]>;
   bodyEdgesBySourceHandle: EdgesBySourceHandle;
 };
@@ -965,11 +984,53 @@ function computeNextDepth(
 }
 
 /**
- * Identify the loop body subgraph between a For Each node and its paired
- * Collect node. Uses BFS with depth tracking so nested For Each / Collect
- * pairs are correctly skipped.
+ * Pick the next-target list for a node visited inside a For Each body BFS.
+ *
+ * For nested For Each nodes that themselves expose `loop`/`done` handles, the
+ * outer body resumes at the inner `done` chain (the inner loop body is the
+ * inner For Each's own concern, not the outer's). For every other node — and
+ * for legacy nested For Each nodes with no sourceHandle on their outgoing
+ * edges — fall through to the handle-agnostic `edgesBySource` map; the depth
+ * counter handles the legacy in-body Collect boundary case.
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: BFS with depth tracking requires multiple condition branches
+function nextBodyTargets(
+  nodeId: string,
+  isForEach: boolean,
+  edgesBySource: Map<string, string[]>,
+  edgesBySourceHandle: EdgesBySourceHandle | undefined
+): string[] {
+  if (isForEach) {
+    const handles = edgesBySourceHandle?.get(nodeId);
+    const loopTargets = handles?.get("loop") ?? [];
+    const doneTargets = handles?.get("done") ?? [];
+    if (loopTargets.length > 0 || doneTargets.length > 0) {
+      return doneTargets;
+    }
+  }
+  return edgesBySource.get(nodeId) ?? [];
+}
+
+/**
+ * Identify the loop body subgraph between a For Each node and its paired
+ * Collect node.
+ *
+ * Two modes:
+ *
+ * 1. **Handle-aware** (canonical): the For Each has at least one outgoing
+ *    edge with a `loop` or `done` sourceHandle. Body BFS seeds from the
+ *    `loop` targets only; `done` targets become `doneEntryNodeIds` and run
+ *    once the iteration loop finishes. If the first done target is a Collect
+ *    node, it is recorded as `doneCollectNodeId` (the executor will hand it
+ *    the aggregated `{ results, count }` payload).
+ *
+ * 2. **Legacy**: the For Each has no sourceHandle on any outgoing edge. Body
+ *    BFS seeds from every outgoing edge (current pre-handle behavior) and
+ *    terminates at the first depth-0 Collect, which becomes `collectNodeId`.
+ *
+ * In both modes the BFS uses depth tracking so nested For Each / Collect
+ * pairs are correctly stepped over.
+ */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: BFS with depth tracking + handle-aware seeding requires multiple condition branches
 export function identifyLoopBody(
   forEachNodeId: string,
   edgesBySource: Map<string, string[]>,
@@ -982,16 +1043,25 @@ export function identifyLoopBody(
   let collectNodeId: string | undefined;
   const visited = new Set<string>();
 
-  // Seed queue with direct children of the For Each node
-  const initialTargets = edgesBySource.get(forEachNodeId) ?? [];
-  for (const targetId of initialTargets) {
+  // Determine seeding strategy. Handle-aware mode kicks in as soon as any
+  // outgoing edge from this For Each carries a sourceHandle, so a workflow
+  // can opt in incrementally without changing legacy edges elsewhere.
+  const handleMap = edgesBySourceHandle?.get(forEachNodeId);
+  const loopTargets = handleMap?.get("loop") ?? [];
+  const doneTargets = handleMap?.get("done") ?? [];
+  const isHandleAware = loopTargets.length > 0 || doneTargets.length > 0;
+  const seedTargets = isHandleAware
+    ? loopTargets
+    : (edgesBySource.get(forEachNodeId) ?? []);
+
+  for (const targetId of seedTargets) {
     if (!bodyEdgesBySource.has(forEachNodeId)) {
       bodyEdgesBySource.set(forEachNodeId, []);
     }
     bodyEdgesBySource.get(forEachNodeId)!.push(targetId);
   }
 
-  const queue: Array<{ nodeId: string; depth: number }> = initialTargets.map(
+  const queue: Array<{ nodeId: string; depth: number }> = seedTargets.map(
     (id) => ({ nodeId: id, depth: 0 })
   );
 
@@ -1016,22 +1086,31 @@ export function identifyLoopBody(
     const isCollect = node.data.type === "action" && actionType === "Collect";
     const isForEach = node.data.type === "action" && actionType === "For Each";
 
-    // Collect at depth 0 is OUR boundary
+    // Collect at depth 0 is the legacy in-body boundary. In handle-aware
+    // graphs this still terminates the body BFS; the executor decides at
+    // post-iteration time whether to fire the in-body Collect (legacy) or
+    // the done-handle Collect (canonical).
     if (isCollect && depth === 0) {
       if (collectNodeId && collectNodeId !== nodeId) {
         throw new Error(
-          "For Each node has multiple Collect nodes at the same nesting level. " +
-            "Each For Each must have exactly one Collect boundary."
+          "For Each node has multiple in-body Collect nodes at the same " +
+            "nesting level. Wire the Collect to the For Each's `done` " +
+            "sourceHandle (canonical) or keep exactly one in-body Collect."
         );
       }
       collectNodeId = nodeId;
-      continue; // Don't traverse past our Collect
+      continue;
     }
 
     bodyNodeIds.push(nodeId);
 
     const nextDepth = computeNextDepth(isForEach, isCollect, depth);
-    const nextIds = edgesBySource.get(nodeId) ?? [];
+    const nextIds = nextBodyTargets(
+      nodeId,
+      isForEach,
+      edgesBySource,
+      edgesBySourceHandle
+    );
     for (const nextId of nextIds) {
       if (!bodyEdgesBySource.has(nodeId)) {
         bodyEdgesBySource.set(nodeId, []);
@@ -1061,9 +1140,26 @@ export function identifyLoopBody(
     }
   }
 
+  // Resolve the canonical post-loop Collect: the first `done`-handle target
+  // whose actionType is Collect. Non-Collect done targets remain in
+  // `doneEntryNodeIds` and run as ordinary steps after the iteration loop.
+  let doneCollectNodeId: string | undefined;
+  for (const targetId of doneTargets) {
+    const target = nodeMap.get(targetId);
+    if (
+      target?.data.type === "action" &&
+      target.data.config?.actionType === "Collect"
+    ) {
+      doneCollectNodeId = targetId;
+      break;
+    }
+  }
+
   return {
     bodyNodeIds,
     collectNodeId,
+    doneEntryNodeIds: doneTargets,
+    doneCollectNodeId,
     bodyEdgesBySource,
     bodyEdgesBySourceHandle,
   };
@@ -1411,6 +1507,20 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
               );
             }
           },
+          continueWithDoneTargets: async (_fromNodeId, targets) => {
+            for (const next of targets) {
+              await executeBodyNode(
+                next,
+                bodyVisited,
+                scopedOutputs,
+                bodyResults,
+                bodyEdgesBySource,
+                collectNodeId,
+                iterationMeta,
+                bodyHandleMap
+              );
+            }
+          },
         });
       },
     });
@@ -1429,7 +1539,19 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     currentResults: Record<string, ExecutionResult>;
     currentVisited: Set<string>;
     currentEdgesBySource: Map<string, string[]>;
+    /**
+     * Dispatch downstream of a Collect node once iterations finish. Used for
+     * both the canonical `done`-handle Collect and legacy in-body Collect.
+     */
     continueAfterCollect?: (collectNodeId: string) => Promise<void>;
+    /**
+     * Dispatch the For Each's `done`-handle targets directly when none of
+     * them is a Collect (i.e. the post-loop chain is just ordinary steps).
+     */
+    continueWithDoneTargets?: (
+      fromNodeId: string,
+      targets: string[]
+    ) => Promise<void>;
   }): Promise<{
     arrayLength: number;
     maxIterations: number;
@@ -1444,6 +1566,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       currentVisited,
       currentEdgesBySource,
       continueAfterCollect,
+      continueWithDoneTargets,
     } = params;
 
     // 1. Resolve array
@@ -1459,6 +1582,8 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     const {
       bodyNodeIds,
       collectNodeId,
+      doneEntryNodeIds,
+      doneCollectNodeId,
       bodyEdgesBySource,
       bodyEdgesBySourceHandle,
     } = identifyLoopBody(
@@ -1467,6 +1592,17 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       nodeMap,
       edgesBySourceHandle
     );
+
+    // The Collect that receives `{ results, count }` after iterations.
+    // Canonical wiring puts it on the For Each's `done` handle; legacy
+    // graphs leave it in the body chain. If both exist, the canonical
+    // done-handle Collect wins so user intent is unambiguous.
+    const aggregateCollectNodeId = doneCollectNodeId ?? collectNodeId;
+    // Source for the iteration-capture pass below. Iteration output is
+    // whichever body node feeds INTO this Collect (legacy in-body Collect),
+    // or — for the canonical done-handle pattern — the natural end of the
+    // body chain (handled by the existing fallback).
+    const captureCollectNodeId = collectNodeId;
 
     const sanitizedForEachId = forEachNodeId.replace(/[^a-zA-Z0-9]/g, "_");
 
@@ -1537,15 +1673,18 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       }
 
       // Capture output from the last body node(s) that produced data.
-      // First check nodes directly before Collect; if those were skipped
-      // (e.g., a Condition that evaluated false), fall back to the last
-      // body node that actually produced output.
+      // Two sources:
+      //   1. If a legacy in-body Collect terminates the body, prefer the
+      //      nodes that fed into it (closest to the loop's "result").
+      //   2. Canonical done-handle wiring: the body chain has no in-body
+      //      Collect, so we just pick the last body node that produced
+      //      output.
+      // The Condition-skipped fallback below covers either mode.
       let iterationOutput: unknown;
-      if (collectNodeId) {
-        // Primary: nodes whose edges target Collect
+      if (captureCollectNodeId) {
         for (const bodyNodeId of bodyNodeIds) {
           const targets = bodyEdgesBySource.get(bodyNodeId) ?? [];
-          if (targets.includes(collectNodeId)) {
+          if (targets.includes(captureCollectNodeId)) {
             const sanitizedBodyId = bodyNodeId.replace(/[^a-zA-Z0-9]/g, "_");
             const output = scopedOutputs[sanitizedBodyId];
             if (output?.data !== undefined) {
@@ -1553,15 +1692,16 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
             }
           }
         }
+      }
 
-        // Fallback: last body node with output (handles skipped Conditions)
-        if (iterationOutput === undefined) {
-          for (const bodyNodeId of bodyNodeIds) {
-            const sanitizedBodyId = bodyNodeId.replace(/[^a-zA-Z0-9]/g, "_");
-            const output = scopedOutputs[sanitizedBodyId];
-            if (output?.data !== undefined) {
-              iterationOutput = output.data;
-            }
+      // Fallback: last body node with output (handles skipped Conditions
+      // and the canonical done-handle pattern with no in-body Collect).
+      if (iterationOutput === undefined) {
+        for (const bodyNodeId of bodyNodeIds) {
+          const sanitizedBodyId = bodyNodeId.replace(/[^a-zA-Z0-9]/g, "_");
+          const output = scopedOutputs[sanitizedBodyId];
+          if (output?.data !== undefined) {
+            iterationOutput = output.data;
           }
         }
       }
@@ -1594,17 +1734,30 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       currentVisited.add(bodyNodeId);
     }
 
-    // 6. Store Collect output and continue downstream (only when Collect exists)
-    if (collectNodeId) {
+    // 6. Route the iteration aggregate to the post-loop continuation.
+    //
+    //   a. Canonical: a `done`-handle Collect receives `{ results, count }`,
+    //      then the chain past it runs.
+    //   b. Legacy: an in-body Collect plays the same role (no done handle).
+    //   c. Mixed (transitional): both exist. The canonical done-handle
+    //      Collect wins; the in-body Collect is marked visited so the
+    //      parent flow doesn't re-execute it, but we don't fire its step.
+    //   d. Non-Collect done targets: dispatch them as ordinary post-loop
+    //      steps (no aggregation injection — they can still reference the
+    //      For Each via templates if they need iteration metadata).
+    //   e. None of the above: fire-and-forget loop, nothing to do here.
+    if (aggregateCollectNodeId) {
       const collectData = {
         results: iterationResults,
         count: iterationResults.length,
       };
-      const sanitizedCollectId = collectNodeId.replace(/[^a-zA-Z0-9]/g, "_");
-      const collectNode = nodeMap.get(collectNodeId);
+      const sanitizedCollectId = aggregateCollectNodeId.replace(
+        /[^a-zA-Z0-9]/g,
+        "_"
+      );
+      const collectNode = nodeMap.get(aggregateCollectNodeId);
       const collectLabel = collectNode ? getNodeName(collectNode) : "Collect";
 
-      // Execute Collect step for logging / observability
       const collectAction = SYSTEM_ACTIONS.Collect;
       if (collectAction) {
         const mod = await collectAction.importer();
@@ -1612,7 +1765,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           ...collectData,
           _context: {
             executionId,
-            nodeId: collectNodeId,
+            nodeId: aggregateCollectNodeId,
             nodeName: collectLabel,
             nodeType: "Collect",
             forEachNodeId,
@@ -1628,12 +1781,30 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         label: collectLabel,
         data: collectData,
       };
-      currentResults[collectNodeId] = { success: true, data: collectData };
-      currentVisited.add(collectNodeId);
+      currentResults[aggregateCollectNodeId] = {
+        success: true,
+        data: collectData,
+      };
+      currentVisited.add(aggregateCollectNodeId);
+
+      // Skip the legacy in-body Collect in mixed wiring: don't re-fire it,
+      // but mark it visited so the parent DAG dispatcher leaves it alone.
+      if (
+        doneCollectNodeId &&
+        collectNodeId &&
+        collectNodeId !== doneCollectNodeId
+      ) {
+        currentVisited.add(collectNodeId);
+      }
 
       if (continueAfterCollect) {
-        await continueAfterCollect(collectNodeId);
+        await continueAfterCollect(aggregateCollectNodeId);
       }
+    } else if (doneEntryNodeIds.length > 0 && continueWithDoneTargets) {
+      // No Collect on the done chain — dispatch the targets directly as
+      // ordinary post-loop steps. Mark the For Each visited so the
+      // dispatcher doesn't loop back.
+      await continueWithDoneTargets(forEachNodeId, doneEntryNodeIds);
     }
 
     return {
@@ -2000,6 +2171,9 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
             continueAfterCollect: async (collectId) => {
               const nextNodes = edgesBySource.get(collectId) ?? [];
               await executeReadyDownstream(collectId, nextNodes, visited);
+            },
+            continueWithDoneTargets: async (fromNodeId, targets) => {
+              await executeReadyDownstream(fromNodeId, targets, visited);
             },
           });
 
