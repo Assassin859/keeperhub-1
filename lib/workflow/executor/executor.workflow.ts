@@ -63,6 +63,13 @@ import {
   clearExecution,
   getSuccessfulSteps,
 } from "@/lib/workflow/executor/step-success-tracker";
+import {
+  assertResolved,
+  createTracker,
+  recordUnresolved,
+  TemplateResolutionError,
+  type TemplateResolutionTracker,
+} from "@/lib/workflow/executor/template-resolution";
 import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
 import {
   type ConditionDecision,
@@ -324,6 +331,21 @@ export function evaluateConditionExpression(
           return varName;
         }
       );
+
+      // KEEP-468: any `{{...}}` token left after stored-format substitution
+      // is either display-format (`{{Label.field}}`) or legacy `{{$nodeId}}`,
+      // neither of which is supported in condition expressions. Without this
+      // check the leftover token feeds into the JS evaluator below and surfaces
+      // as a misleading "Unexpected token '{'" syntax error. Fail closed
+      // explicitly with a clear message that points the author at the right
+      // grammar.
+      const leftoverTemplateMatches =
+        transformedExpression.match(/\{\{[^}]+\}\}/g);
+      if (leftoverTemplateMatches && leftoverTemplateMatches.length > 0) {
+        throw new Error(
+          `Condition contains unresolved template reference(s): ${[...new Set(leftoverTemplateMatches)].join(", ")}. Use stored format \`{{@nodeId:Label.field}}\` for condition references.`
+        );
+      }
 
       // Validate the transformed expression before evaluation
       // KEEP-1284: Throw error when validation fails instead of silently returning false
@@ -604,7 +626,8 @@ function replaceConfigTemplate(
   match: string,
   nodeId: string,
   rest: string,
-  outputs: NodeOutputs
+  outputs: NodeOutputs,
+  tracker?: TemplateResolutionTracker
 ): string {
   const trimmedNodeId = nodeId.trim();
   const sanitizedNodeId = trimmedNodeId.replace(/[^a-zA-Z0-9]/g, "_");
@@ -624,6 +647,11 @@ function replaceConfigTemplate(
 
   if (!output) {
     console.log("[Template] No output for node, returning empty string");
+    recordUnresolved(tracker, {
+      token: match,
+      reason: "no-node",
+      detail: `Node "${trimmedNodeId}" has no output yet.`,
+    });
     return "";
   }
   const data = output.data;
@@ -631,6 +659,11 @@ function replaceConfigTemplate(
     console.log(
       "[Template] Output data is null/undefined, returning empty string"
     );
+    recordUnresolved(tracker, {
+      token: match,
+      reason: "no-data",
+      detail: `Node "${trimmedNodeId}" produced no data.`,
+    });
     return "";
   }
 
@@ -650,6 +683,11 @@ function replaceConfigTemplate(
       "[Template] Path not found, returning empty string. fieldPath:",
       fieldPath
     );
+    recordUnresolved(tracker, {
+      token: match,
+      reason: "no-path",
+      detail: `Field "${fieldPath || "(whole output)"}" not found on node "${trimmedNodeId}".`,
+    });
     return "";
   }
 
@@ -664,10 +702,15 @@ function replaceConfigTemplate(
 /**
  * Process template variables in config.
  * Recurses into nested objects; supports array paths like data.recipes[0].
+ *
+ * KEEP-468: optional `tracker` records every reference that fell through to
+ * the empty-string or literal-pass-through path so the caller can fail
+ * closed in strict mode.
  */
 export function processTemplates(
   config: Record<string, unknown>,
-  outputs: NodeOutputs
+  outputs: NodeOutputs,
+  tracker?: TemplateResolutionTracker
 ): Record<string, unknown> {
   const processed: Record<string, unknown> = {};
   const storedPattern = /\{\{@([^:]+):([^}]+)\}\}/g;
@@ -678,11 +721,16 @@ export function processTemplates(
   for (const [key, value] of Object.entries(config)) {
     if (typeof value === "string") {
       let result = value.replace(storedPattern, (m, nodeId, rest) =>
-        replaceConfigTemplate(m, nodeId, rest, outputs)
+        replaceConfigTemplate(m, nodeId, rest, outputs, tracker)
       );
       result = result.replace(displayPattern, (full, displayRef) => {
         const resolved = resolveDisplayTemplate(displayRef, outputs);
         if (resolved === null || resolved === undefined) {
+          recordUnresolved(tracker, {
+            token: full,
+            reason: "no-path",
+            detail: `Display reference "${displayRef}" did not resolve.`,
+          });
           return full;
         }
         return formatConfigValue(resolved);
@@ -695,7 +743,8 @@ export function processTemplates(
     ) {
       processed[key] = processTemplates(
         value as Record<string, unknown>,
-        outputs
+        outputs,
+        tracker
       );
     } else {
       processed[key] = value;
@@ -732,7 +781,11 @@ function formatCodeValue(value: unknown): string {
  * Handles both stored format {{@nodeId:Label.field}} and display format
  * {{Label.field}} (fallback).
  */
-function processCodeTemplates(code: string, outputs: NodeOutputs): string {
+export function processCodeTemplates(
+  code: string,
+  outputs: NodeOutputs,
+  tracker?: TemplateResolutionTracker
+): string {
   const storedPattern = /\{\{@([^:]+):([^}]+)\}\}/g;
   const displayPattern = /\{\{([^@}][^}]*)\}\}/g;
 
@@ -743,23 +796,49 @@ function processCodeTemplates(code: string, outputs: NodeOutputs): string {
       const sanitizedNodeId = trimmedNodeId.replace(/[^a-zA-Z0-9]/g, "_");
       const output = outputs[sanitizedNodeId] ?? outputs[trimmedNodeId];
       if (!output) {
+        recordUnresolved(tracker, {
+          token: full,
+          reason: "no-node",
+          detail: `Node "${trimmedNodeId}" has no output yet.`,
+        });
         return full;
       }
       const { data } = output;
       if (data === null || data === undefined) {
+        recordUnresolved(tracker, {
+          token: full,
+          reason: "no-data",
+          detail: `Node "${trimmedNodeId}" produced no data.`,
+        });
         return "null";
       }
       const fieldPath = rest.includes(".")
         ? rest.substring(rest.indexOf(".") + 1).trim()
         : "";
       const resolved = resolveFromOutputData(data, fieldPath);
-      return formatCodeValue(resolved ?? null);
+      if (resolved === undefined || resolved === null) {
+        recordUnresolved(tracker, {
+          token: full,
+          reason: "no-path",
+          detail: `Field "${fieldPath || "(whole output)"}" not found on node "${trimmedNodeId}".`,
+        });
+        return "null";
+      }
+      return formatCodeValue(resolved);
     }
   );
 
-  result = result.replace(displayPattern, (_full, displayRef: string) => {
+  result = result.replace(displayPattern, (full, displayRef: string) => {
     const resolved = resolveDisplayTemplate(displayRef, outputs);
-    return formatCodeValue(resolved ?? null);
+    if (resolved === undefined || resolved === null) {
+      recordUnresolved(tracker, {
+        token: full,
+        reason: "no-path",
+        detail: `Display reference "${displayRef}" did not resolve.`,
+      });
+      return "null";
+    }
+    return formatCodeValue(resolved);
   });
 
   return result;
@@ -775,6 +854,20 @@ export function resolveDisplayTemplate(
   displayRef: string,
   outputs: NodeOutputs
 ): unknown {
+  const checked = resolveDisplayTemplateChecked(displayRef, outputs);
+  return checked.found ? (checked.value ?? null) : null;
+}
+
+/**
+ * Discriminated variant of `resolveDisplayTemplate`. Same back-compat
+ * trade-off as `resolveTemplateToRawValueChecked`: legitimate `null`
+ * upstream values must not look like an unresolved reference to strict-mode
+ * callers.
+ */
+export function resolveDisplayTemplateChecked(
+  displayRef: string,
+  outputs: NodeOutputs
+): RawValueResolution {
   const dotIndex = displayRef.indexOf(".");
   const label =
     dotIndex === -1 ? displayRef : displayRef.substring(0, dotIndex);
@@ -782,14 +875,14 @@ export function resolveDisplayTemplate(
 
   const entry = findOutputByLabel(label, outputs);
   if (!entry) {
-    return null;
+    return { found: false, reason: "no-node" };
   }
 
   if (entry.data === null || entry.data === undefined) {
-    return null;
+    return { found: false, reason: "no-data" };
   }
 
-  return resolveFromOutputData(entry.data, fieldPath) ?? null;
+  return resolveFromOutputDataChecked(entry.data, fieldPath);
 }
 
 /**
@@ -807,24 +900,48 @@ export function resolveDisplayTemplate(
  */
 export function extractTemplateParameters(
   query: string,
-  outputs: NodeOutputs
+  outputs: NodeOutputs,
+  tracker?: TemplateResolutionTracker
 ): { parameterizedQuery: string; paramValues: unknown[] } {
   const paramValues: unknown[] = [];
   let paramIndex = 0;
 
   const replaceStored = (
-    _match: string,
+    match: string,
     nodeId: string,
     rest: string
   ): string => {
     paramIndex++;
-    paramValues.push(resolveTemplateToRawValue(nodeId, rest, outputs));
+    const checked = resolveTemplateToRawValueChecked(nodeId, rest, outputs);
+    if (checked.found) {
+      // Legitimate values pass through, including upstream `null` (KEEP-468
+      // edge case: a SQL column that genuinely returned NULL must not
+      // false-trigger the strict gate).
+      paramValues.push(checked.value);
+    } else {
+      recordUnresolved(tracker, {
+        token: match,
+        reason: checked.reason,
+        detail: `Reference for node "${nodeId.trim()}" did not resolve (${checked.reason}).`,
+      });
+      paramValues.push(null);
+    }
     return `$${paramIndex}`;
   };
 
-  const replaceDisplay = (_match: string, displayRef: string): string => {
+  const replaceDisplay = (match: string, displayRef: string): string => {
     paramIndex++;
-    paramValues.push(resolveDisplayTemplate(displayRef, outputs));
+    const checked = resolveDisplayTemplateChecked(displayRef, outputs);
+    if (checked.found) {
+      paramValues.push(checked.value);
+    } else {
+      recordUnresolved(tracker, {
+        token: match,
+        reason: checked.reason,
+        detail: `Display reference "${displayRef}" did not resolve (${checked.reason}).`,
+      });
+      paramValues.push(null);
+    }
     return `$${paramIndex}`;
   };
 
@@ -869,6 +986,122 @@ export function resolveTemplateToRawValue(
   rest: string,
   outputs: NodeOutputs
 ): unknown {
+  const checked = resolveTemplateToRawValueChecked(nodeId, rest, outputs);
+  return checked.found ? (checked.value ?? null) : null;
+}
+
+/**
+ * Discriminated variant of `resolveTemplateToRawValue`. Lets the SQL
+ * parameterizer (and any other strict-mode caller) distinguish "the
+ * reference truly did not resolve" from "the reference resolved cleanly to
+ * a legitimate null upstream value." The unwrapped helper above collapses
+ * both cases to `null` for back-compat with For Each and tests.
+ *
+ * - `{ found: true, value }`   — node + path located. `value` may be `null`.
+ * - `{ found: false, reason }` — `no-node`, `no-data`, or `no-path`.
+ */
+type RawValueResolution =
+  | { found: true; value: unknown }
+  | { found: false; reason: "no-node" | "no-data" | "no-path" };
+
+/**
+ * Walk a field path while preserving the difference between "the leaf key
+ * exists and is null" and "the leaf key doesn't exist." The discriminator is
+ * `'key' in obj`, which is true for properties whose value is null/undefined
+ * but false when the property is absent. `resolveFromOutputData` collapses
+ * both to `undefined`, which is fine for string substitution but loses the
+ * signal strict-mode callers need.
+ */
+function resolveStrictPath(
+  data: unknown,
+  fieldPath: string
+): RawValueResolution {
+  if (!fieldPath) {
+    return { found: true, value: data };
+  }
+  if (data === null || data === undefined) {
+    return { found: false, reason: "no-path" };
+  }
+  let current: unknown = data;
+  for (const part of fieldPath.split(".")) {
+    const trimmed = part.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const arrayMatch = trimmed.match(ARRAY_ACCESS_PATTERN);
+    if (arrayMatch) {
+      const [, key, indexStr] = arrayMatch;
+      if (
+        current === null ||
+        current === undefined ||
+        typeof current !== "object"
+      ) {
+        return { found: false, reason: "no-path" };
+      }
+      const obj = current as Record<string, unknown>;
+      if (!(key in obj)) {
+        return { found: false, reason: "no-path" };
+      }
+      const arr = obj[key];
+      if (!Array.isArray(arr)) {
+        return { found: false, reason: "no-path" };
+      }
+      const idx = Number.parseInt(indexStr, 10);
+      if (idx < 0 || idx >= arr.length) {
+        return { found: false, reason: "no-path" };
+      }
+      current = arr[idx];
+      continue;
+    }
+    if (
+      current === null ||
+      current === undefined ||
+      typeof current !== "object"
+    ) {
+      return { found: false, reason: "no-path" };
+    }
+    const obj = current as Record<string, unknown>;
+    if (!(trimmed in obj)) {
+      return { found: false, reason: "no-path" };
+    }
+    current = obj[trimmed];
+  }
+  return { found: true, value: current };
+}
+
+/**
+ * Strict-mode field-path resolution that mirrors `resolveFromOutputData`'s
+ * three-shape lookup (top-level → `.data` wrapper → `.result` wrapper). The
+ * shapes are tried in order; the first one whose path exists wins.
+ */
+function resolveFromOutputDataChecked(
+  data: unknown,
+  fieldPath: string
+): RawValueResolution {
+  const top = resolveStrictPath(data, fieldPath);
+  if (top.found) {
+    return top;
+  }
+  if (hasNestedDataShape(data)) {
+    const inner = resolveStrictPath(data.data, fieldPath);
+    if (inner.found) {
+      return inner;
+    }
+  }
+  if (hasNestedResultShape(data)) {
+    const inner = resolveStrictPath(data.result, fieldPath);
+    if (inner.found) {
+      return inner;
+    }
+  }
+  return { found: false, reason: "no-path" };
+}
+
+export function resolveTemplateToRawValueChecked(
+  nodeId: string,
+  rest: string,
+  outputs: NodeOutputs
+): RawValueResolution {
   const trimmedNodeId = nodeId.trim();
   const sanitizedNodeId = trimmedNodeId.replace(/[^a-zA-Z0-9]/g, "_");
   const output = outputs[sanitizedNodeId] ?? outputs[trimmedNodeId];
@@ -879,15 +1112,15 @@ export function resolveTemplateToRawValue(
   const resolvedOutput = output ?? findOutputByLabelFallback(rest, outputs);
 
   if (!resolvedOutput) {
-    return null;
+    return { found: false, reason: "no-node" };
   }
 
   const data = resolvedOutput.data;
   if (data === null || data === undefined) {
-    return null;
+    return { found: false, reason: "no-data" };
   }
 
-  return resolveFromOutputData(data, fieldPath) ?? null;
+  return resolveFromOutputDataChecked(data, fieldPath);
 }
 
 /**
@@ -1405,7 +1638,8 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
   function processActionConfig(
     config: Record<string, unknown>,
     actionType: string,
-    currentOutputs: NodeOutputs
+    currentOutputs: NodeOutputs,
+    assertContext?: { nodeId?: string; nodeLabel?: string }
   ): Record<string, unknown> {
     const configWithoutSpecial = { ...config };
     const originalCondition = config.condition;
@@ -1421,9 +1655,16 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       configWithoutSpecial.code = undefined;
     }
 
+    // KEEP-468: collect every unresolved reference so we can fail closed
+    // before the step runs. Tracker entries cover empty-string substitutions
+    // (no-node / no-data / no-path); the post-scan inside `assertResolved`
+    // catches the displayPattern literal-passthrough path.
+    const tracker = createTracker();
+
     const processedConfig = processTemplates(
       configWithoutSpecial,
-      currentOutputs
+      currentOutputs,
+      tracker
     );
 
     if (originalCondition !== undefined) {
@@ -1439,7 +1680,8 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     ) {
       const { parameterizedQuery, paramValues } = extractTemplateParameters(
         originalDbQuery,
-        currentOutputs
+        currentOutputs,
+        tracker
       );
       processedConfig.dbQuery = parameterizedQuery;
       processedConfig._dbParams = paramValues;
@@ -1451,8 +1693,18 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     }
 
     if (actionType === "code/run-code" && typeof originalCode === "string") {
-      processedConfig.code = processCodeTemplates(originalCode, currentOutputs);
+      processedConfig.code = processCodeTemplates(
+        originalCode,
+        currentOutputs,
+        tracker
+      );
     }
+
+    assertResolved(tracker, processedConfig, {
+      nodeId: assertContext?.nodeId,
+      nodeLabel: assertContext?.nodeLabel,
+      actionType,
+    });
 
     return processedConfig;
   }
@@ -2108,7 +2360,8 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         const processedConfig = processActionConfig(
           config,
           actionType,
-          liveOutputs
+          liveOutputs,
+          { nodeId: node.id, nodeLabel: getNodeName(node) }
         );
 
         // Build step context for logging (stepHandler will handle the logging)
@@ -2196,10 +2449,19 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         if (currentActionType === "For Each") {
           // For Each: iterate over array, execute body subgraph per element,
           // store results on Collect, then continue from Collect downstream.
+          // KEEP-468: same strict-mode treatment as action steps so an
+          // unresolved array reference cannot iterate zero times silently.
+          const forEachTracker = createTracker();
           const forEachConfig = processTemplates(
             node.data.config ?? {},
-            outputs
+            outputs,
+            forEachTracker
           );
+          assertResolved(forEachTracker, forEachConfig, {
+            nodeId: node.id,
+            nodeLabel: getNodeName(node),
+            actionType: "For Each",
+          });
           const iterationSummary = await handleForEachExecution({
             forEachNodeId: nodeId,
             forEachNode: node,
@@ -2372,6 +2634,37 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         error: errorMessage,
       };
       results[nodeId] = errorResult;
+
+      // KEEP-468: TemplateResolutionError aborts before executeActionStep runs,
+      // so withStepLogging never writes a workflow_execution_logs row for the
+      // failing node. Without that row, listTrulyFailedNodes inside
+      // logWorkflowCompleteDb concludes "no node failed" and CAS-flips the
+      // workflow status from 'error' to 'success' as a spurious-SDK reconcile.
+      // Route through triggerStep's step boundary (DB access is forbidden in
+      // the workflow body) to persist a failure log so the run panel surfaces
+      // it AND the reconciler keeps status='error'. Wrapped in try/catch:
+      // a logging failure must never block the workflow from aborting.
+      if (error instanceof TemplateResolutionError && executionId) {
+        try {
+          await triggerStep({
+            triggerData: {},
+            _recordStepFailure: {
+              executionId,
+              nodeId,
+              nodeName: getNodeName(node),
+              nodeType: node.data.type,
+              error: errorMessage,
+            },
+          });
+        } catch (logError) {
+          logSystemError(
+            ErrorCategory.WORKFLOW_ENGINE,
+            "[Workflow Executor] Failed to record TemplateResolutionError step log",
+            logError,
+            { ...baseLogLabels, node_id: nodeId }
+          );
+        }
+      }
 
       // Store null output so downstream templates resolve to null rather than
       // being undefined (same pattern as disabled nodes).

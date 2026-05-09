@@ -2,7 +2,16 @@
  * Template processing utilities for workflow node outputs
  * Supports syntax like {{nodeName.field}} or {{nodeName.nested.field}}
  * New format: {{@nodeId:DisplayName.field}} for ID-based references with display names
+ *
+ * KEEP-468: resolvers accept an optional tracker so callers can detect
+ * unresolved references and fail closed. Tracker shape is shared with
+ * `lib/workflow/executor/template-resolution.ts`.
  */
+
+import {
+  recordUnresolved,
+  type TemplateResolutionTracker,
+} from "@/lib/workflow/executor/template-resolution";
 
 // Regex constants for performance
 const TEMPLATE_PATTERN = /\{\{([^}]+)\}\}/g;
@@ -52,7 +61,8 @@ export type NodeOutputs = {
 function processNewFormatReference(
   trimmed: string,
   nodeOutputs: NodeOutputs,
-  match: string
+  match: string,
+  tracker?: TemplateResolutionTracker
 ): string {
   const withoutAt = trimmed.substring(1);
   const colonIndex = withoutAt.indexOf(":");
@@ -71,14 +81,34 @@ function processNewFormatReference(
     if (nodeOutput) {
       return formatValue(nodeOutput.data);
     }
+    recordUnresolved(tracker, {
+      token: match,
+      reason: "no-node",
+      detail: `Node "${nodeId}" has no output yet.`,
+    });
     return "";
   }
 
-  const value = resolveFieldPath(nodeOutputs[nodeId]?.data, fieldPath);
+  const nodeOutput = nodeOutputs[nodeId];
+  if (!nodeOutput) {
+    recordUnresolved(tracker, {
+      token: match,
+      reason: "no-node",
+      detail: `Node "${nodeId}" has no output yet.`,
+    });
+    return "";
+  }
+
+  const value = resolveFieldPath(nodeOutput.data, fieldPath);
   if (value !== undefined && value !== null) {
     return formatValue(value);
   }
 
+  recordUnresolved(tracker, {
+    token: match,
+    reason: "no-path",
+    detail: `Field "${fieldPath}" not found on node "${nodeId}".`,
+  });
   return "";
 }
 
@@ -86,7 +116,8 @@ function processNewFormatReference(
 function processLegacyDollarReference(
   trimmed: string,
   nodeOutputs: NodeOutputs,
-  _match: string
+  match: string,
+  tracker?: TemplateResolutionTracker
 ): string {
   const withoutDollar = trimmed.substring(1);
 
@@ -95,6 +126,11 @@ function processLegacyDollarReference(
     if (nodeOutput) {
       return formatValue(nodeOutput.data);
     }
+    recordUnresolved(tracker, {
+      token: match,
+      reason: "no-node",
+      detail: `Node "${withoutDollar}" has no output yet.`,
+    });
     return "";
   }
 
@@ -103,6 +139,11 @@ function processLegacyDollarReference(
     return formatValue(value);
   }
 
+  recordUnresolved(tracker, {
+    token: match,
+    reason: "no-path",
+    detail: `Reference "${withoutDollar}" did not resolve.`,
+  });
   return "";
 }
 
@@ -110,13 +151,19 @@ function processLegacyDollarReference(
 function processLegacyLabelReference(
   trimmed: string,
   nodeOutputs: NodeOutputs,
-  _match: string
+  match: string,
+  tracker?: TemplateResolutionTracker
 ): string {
   if (!(trimmed.includes(".") || trimmed.includes("["))) {
     const nodeOutput = findNodeOutputByLabel(trimmed, nodeOutputs);
     if (nodeOutput) {
       return formatValue(nodeOutput.data);
     }
+    recordUnresolved(tracker, {
+      token: match,
+      reason: "no-node",
+      detail: `No node matched label "${trimmed}".`,
+    });
     return "";
   }
 
@@ -125,6 +172,11 @@ function processLegacyLabelReference(
     return formatValue(value);
   }
 
+  recordUnresolved(tracker, {
+    token: match,
+    reason: "no-path",
+    detail: `Reference "${trimmed}" did not resolve.`,
+  });
   return "";
 }
 
@@ -139,7 +191,8 @@ function processLegacyLabelReference(
  */
 export function processTemplate(
   template: string,
-  nodeOutputs: NodeOutputs
+  nodeOutputs: NodeOutputs,
+  tracker?: TemplateResolutionTracker
 ): string {
   if (!template || typeof template !== "string") {
     return template;
@@ -148,16 +201,13 @@ export function processTemplate(
   return template.replace(TEMPLATE_PATTERN, (match, expression) => {
     const trimmed = expression.trim();
 
-    let result: string;
     if (trimmed.startsWith("@")) {
-      result = processNewFormatReference(trimmed, nodeOutputs, match);
-    } else if (trimmed.startsWith("$")) {
-      result = processLegacyDollarReference(trimmed, nodeOutputs, match);
-    } else {
-      result = processLegacyLabelReference(trimmed, nodeOutputs, match);
+      return processNewFormatReference(trimmed, nodeOutputs, match, tracker);
     }
-
-    return result;
+    if (trimmed.startsWith("$")) {
+      return processLegacyDollarReference(trimmed, nodeOutputs, match, tracker);
+    }
+    return processLegacyLabelReference(trimmed, nodeOutputs, match, tracker);
   });
 }
 
@@ -166,13 +216,14 @@ export function processTemplate(
  */
 export function processConfigTemplates(
   config: Record<string, unknown>,
-  nodeOutputs: NodeOutputs
+  nodeOutputs: NodeOutputs,
+  tracker?: TemplateResolutionTracker
 ): Record<string, unknown> {
   const processed: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(config)) {
     if (typeof value === "string") {
-      processed[key] = processTemplate(value, nodeOutputs);
+      processed[key] = processTemplate(value, nodeOutputs, tracker);
     } else if (
       typeof value === "object" &&
       value !== null &&
@@ -180,7 +231,8 @@ export function processConfigTemplates(
     ) {
       processed[key] = processConfigTemplates(
         value as Record<string, unknown>,
-        nodeOutputs
+        nodeOutputs,
+        tracker
       );
     } else {
       processed[key] = value;
