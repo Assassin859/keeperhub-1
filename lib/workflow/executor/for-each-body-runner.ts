@@ -37,10 +37,7 @@ export type BodyExecutionResult = {
   error?: string;
 };
 
-export type BodyNodeOutputs = Record<
-  string,
-  { label: string; data: unknown }
->;
+export type BodyNodeOutputs = Record<string, { label: string; data: unknown }>;
 
 /** Metadata about the active iteration; threaded into the step context. */
 export type IterationMeta = {
@@ -87,7 +84,8 @@ export type RunBodyContext = {
   processConfig: (
     config: Record<string, unknown>,
     actionType: string,
-    outputs: BodyNodeOutputs
+    outputs: BodyNodeOutputs,
+    assertContext?: { nodeId?: string; nodeLabel?: string }
   ) => Record<string, unknown>;
   /** Resolve a friendly node label for logging / output keys. */
   getNodeName: (node: WorkflowNode) => string;
@@ -180,7 +178,8 @@ export async function runBodyNode(
     const processedConfig = ctx.processConfig(
       config,
       actionType,
-      ctx.scopedOutputs
+      ctx.scopedOutputs,
+      { nodeId: node.id, nodeLabel: ctx.getNodeName(node) }
     );
 
     const stepContext: StepContext = {
@@ -242,7 +241,8 @@ export async function runBodyNode(
     }
 
     if (actionType === "Condition") {
-      const conditionValue = (result.data as { condition?: boolean })?.condition;
+      const conditionValue = (result.data as { condition?: boolean })
+        ?.condition;
       const conditionTargets = resolveBodyConditionTargets(
         conditionValue === true,
         nodeId,

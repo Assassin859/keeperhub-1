@@ -21,6 +21,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { earningsDataAtom, earningsLoadingAtom } from "@/lib/atoms/earnings";
+import { EARNINGS_PAGE_SIZE } from "@/lib/earnings/constants";
 import type {
   SettlementStatus,
   WorkflowEarningsRow,
@@ -153,7 +154,7 @@ export function WorkflowEarningsTable({
   const loading = useAtomValue(earningsLoadingAtom);
 
   const total = data?.total ?? 0;
-  const pageSize = data?.pageSize ?? 10;
+  const pageSize = data?.pageSize ?? EARNINGS_PAGE_SIZE;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   const rangeStart = total === 0 ? 0 : (page - 1) * pageSize + 1;
