@@ -1667,13 +1667,6 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       tracker
     );
 
-    if (originalCondition !== undefined) {
-      processedConfig.condition = originalCondition;
-    }
-    if (originalConditionConfig !== undefined) {
-      processedConfig.conditionConfig = originalConditionConfig;
-    }
-
     if (
       actionType === "Database Query" &&
       typeof originalDbQuery === "string"
@@ -1700,11 +1693,25 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       );
     }
 
+    // KEEP-468 hotfix: scan + assert BEFORE re-attaching condition fields.
+    // Condition expressions own their template resolution path
+    // (`evaluateConditionExpression`, which has its own leftover-token gate
+    // since b3d5d9eb), so the action-level scan must not see those tokens —
+    // otherwise every Condition node downstream of For Each / a Code step
+    // false-flags `{{@nodeId:Label.field}}` as a leftover literal and the
+    // workflow body cannot run.
     assertResolved(tracker, processedConfig, {
       nodeId: assertContext?.nodeId,
       nodeLabel: assertContext?.nodeLabel,
       actionType,
     });
+
+    if (originalCondition !== undefined) {
+      processedConfig.condition = originalCondition;
+    }
+    if (originalConditionConfig !== undefined) {
+      processedConfig.conditionConfig = originalConditionConfig;
+    }
 
     return processedConfig;
   }
