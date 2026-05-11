@@ -2,6 +2,7 @@
 
 import { ChevronRight, InfoIcon, ShieldCheck, Wallet } from "lucide-react";
 import { getExplorerAddressUrl } from "@/components/safe/chain-prefixes";
+import { SafeSigningToggle } from "@/components/safe/safe-signing-toggle";
 import {
   Tooltip,
   TooltipContent,
@@ -25,6 +26,10 @@ type AccountRowProps = {
   /** Native asset balance for the wallet's primary chain (Safe) or "Multi-chain" (Turnkey). */
   subtitle?: string;
   onClick: () => void;
+  /** Whether the current member can flip the signing toggle on a Safe row. */
+  isAdmin?: boolean;
+  /** Fired after a Safe's signing toggle PATCH succeeds; parent updates state. */
+  onSigningChange?: (safeId: string, next: boolean) => void;
 };
 
 const TURNKEY_DEFAULT_EXPLORER_CHAIN = 1;
@@ -38,6 +43,8 @@ export function AccountRow({
   account,
   subtitle,
   onClick,
+  isAdmin = false,
+  onSigningChange,
 }: AccountRowProps): React.ReactElement {
   const isTurnkey = account.kind === "turnkey";
   const Icon = isTurnkey ? Wallet : ShieldCheck;
@@ -116,10 +123,40 @@ export function AccountRow({
         </div>
       </div>
 
-      {!isTurnkey && account.isSigningActive && (
-        <span className="shrink-0 rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-600 dark:text-emerald-400">
-          Active signer
-        </span>
+      {isTurnkey && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              aria-label="What does Signer mean?"
+              className="shrink-0 rounded border border-muted-foreground/30 bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted/60"
+              onClick={stop}
+              onKeyDown={stop}
+              type="button"
+            >
+              Signer
+            </button>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-xs" side="bottom">
+            The key that signs every workflow transaction. Always your Turnkey
+            EOA, owner of every Safe. Also signs directly on chains where you
+            haven't deployed a Safe yet.
+          </TooltipContent>
+        </Tooltip>
+      )}
+      {!isTurnkey && (
+        // Don't let clicks on the inline toggle bubble to the row's onClick
+        // (which would open the detail overlay).
+        // biome-ignore lint/a11y/useKeyWithClickEvents: the Switch handles its own keyboard interaction
+        <div className="shrink-0" onClick={stop} onKeyDown={stop}>
+          <SafeSigningToggle
+            chainLabel={account.chainName}
+            compact
+            isActive={account.isSigningActive}
+            isAdmin={isAdmin}
+            onChange={(next) => onSigningChange?.(account.safeId, next)}
+            safeId={account.safeId}
+          />
+        </div>
       )}
 
       <ChevronRight

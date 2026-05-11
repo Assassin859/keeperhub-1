@@ -5,11 +5,30 @@ import { toast } from "sonner";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 type PatchResponse = {
   success?: boolean;
   safe?: { isSigningActive: boolean };
   error?: string;
+};
+
+type SafeSigningToggleProps = {
+  safeId: string;
+  chainLabel: string;
+  isActive: boolean;
+  isAdmin: boolean;
+  onChange: (next: boolean) => void;
+  /**
+   * Compact inline variant: just `[Sender label + spinner + Switch]` for use
+   * directly in the wallet account row. Default `false` renders the bordered
+   * card with the longer explanation, suitable for a settings panel.
+   */
+  compact?: boolean;
 };
 
 export function SafeSigningToggle({
@@ -18,13 +37,8 @@ export function SafeSigningToggle({
   isActive,
   isAdmin,
   onChange,
-}: {
-  safeId: string;
-  chainLabel: string;
-  isActive: boolean;
-  isAdmin: boolean;
-  onChange: (next: boolean) => void;
-}): React.ReactElement {
+  compact = false,
+}: SafeSigningToggleProps): React.ReactElement {
   const [submitting, setSubmitting] = useState<boolean>(false);
   const inputId = `safe-signing-${safeId}`;
 
@@ -55,6 +69,39 @@ export function SafeSigningToggle({
       setSubmitting(false);
     }
   };
+
+  if (compact) {
+    const labelColor = isActive
+      ? "text-emerald-600 dark:text-emerald-400"
+      : "text-muted-foreground";
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {submitting && <Spinner className="h-3 w-3" />}
+            <Label
+              className={`font-medium text-[10px] uppercase tracking-wide ${labelColor}`}
+              htmlFor={inputId}
+            >
+              Sender
+            </Label>
+            <Switch
+              checked={isActive}
+              className="data-[state=checked]:bg-emerald-500"
+              disabled={!isAdmin || submitting}
+              id={inputId}
+              onCheckedChange={handleChange}
+            />
+          </div>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs" side="bottom">
+          {isActive
+            ? `Workflows on ${chainLabel} execute from the Safe. Flip off to route through the Turnkey EOA.`
+            : `Workflows on ${chainLabel} currently execute from the Turnkey EOA. Flip on to route through the Safe (its address becomes msg.sender at the target).`}
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
 
   return (
     <div className="flex items-start justify-between gap-3 rounded-md border bg-muted/20 p-3">

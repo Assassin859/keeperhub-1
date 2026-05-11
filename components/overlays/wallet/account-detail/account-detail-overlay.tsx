@@ -126,9 +126,7 @@ export function AccountDetailOverlay({
             account={account}
             canExportKey={canExportKey}
             email={email}
-            isAdmin={isAdmin}
             isOwner={isOwner}
-            onSigningChange={onSigningChange}
           />
         </TabsContent>
       </Tabs>

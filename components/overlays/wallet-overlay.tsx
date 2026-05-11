@@ -407,8 +407,16 @@ export function WalletOverlay({ overlayId }: WalletOverlayProps) {
             {safeAccounts.map((acc) => (
               <AccountRow
                 account={acc}
+                isAdmin={isAdmin}
                 key={acc.kind === "safe" ? acc.safeId : acc.address}
                 onClick={() => openAccountDetail(acc)}
+                onSigningChange={(safeId, next) => {
+                  setSafes((current) =>
+                    current.map((s) =>
+                      s.id === safeId ? { ...s, isSigningActive: next } : s
+                    )
+                  );
+                }}
               />
             ))}
           </div>
