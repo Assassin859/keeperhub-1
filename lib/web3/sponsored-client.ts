@@ -1,139 +1,67 @@
 import "server-only";
-import { eq } from "drizzle-orm";
-import { createSmartAccountClient } from "permissionless";
-import { to7702SimpleSmartAccount } from "permissionless/accounts";
-import { createPimlicoClient } from "permissionless/clients/pimlico";
-import type { Address, LocalAccount, PublicClient } from "viem";
-import { createPublicClient, defineChain, http } from "viem";
-import { entryPoint08Address } from "viem/account-abstraction";
+import { and, eq } from "drizzle-orm";
+import type { Address } from "viem";
 import { db } from "@/lib/db";
-import { chains } from "@/lib/db/schema";
-import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { createParaViemAccount } from "@/lib/para/viem-account-adapter";
-import { recordDelegationIfNeeded } from "@/lib/web3/eip7702-delegation";
-import {
-  getPimlicoUrl,
-  isSponsorshipSupported,
-} from "@/lib/web3/pimlico-config";
-import { clampSponsoredFees } from "@/lib/web3/sponsored-fee-clamp";
+import { organizationWallets } from "@/lib/db/schema-extensions";
+import { isSponsorshipSupported } from "@/lib/web3/turnkey-sponsorship-config";
 
-const LOG_PREFIX = "[Sponsorship]";
-
-type SponsoredClientResult = {
-  // biome-ignore lint/suspicious/noExplicitAny: SmartAccountClient generic signature is deeply nested across permissionless.js types
-  smartAccountClient: any;
-  smartAccount: { isDeployed: () => Promise<boolean> };
-  account: LocalAccount;
-  publicClient: PublicClient;
+/**
+ * Sponsorship preflight: resolves the organization's active wallet and
+ * returns the Turnkey identifiers needed by the sponsored transaction
+ * manager.
+ *
+ * Returns null when sponsorship cannot be set up so callers fall back
+ * to direct signing. Reasons for null:
+ *   - chain is not in the Turnkey Gas Station allowlist
+ *   - the org's active wallet is not a Turnkey wallet (legacy Para wallet)
+ *   - the wallet row is missing required Turnkey identifiers
+ *
+ * This file intentionally does NOT call Turnkey itself -- it only assembles
+ * the parameters the manager will pass to ethSendTransaction. Keeping the
+ * preflight DB read separate from the API call lets the manager stay
+ * agnostic of how the wallet was provisioned.
+ */
+export type SponsoredClientResult = {
+  subOrgId: string;
   walletAddress: Address;
   chainId: number;
 };
 
-/**
- * Creates a sponsored smart account client for an organization.
- *
- * This:
- * 1. Creates a viem account backed by Para MPC signing
- * 2. Creates a Pimlico-sponsored smart account client with EIP-7702 support
- *
- * Returns the smart account client plus the account/publicClient needed for
- * callers to manually sign EIP-7702 authorization on first transaction.
- *
- * Returns null if sponsorship cannot be set up (unsupported chain, etc).
- * Callers should fall back to direct signing.
- */
 export async function createSponsoredClient(
   organizationId: string,
-  chainId: number,
-  rpcUrl: string
+  chainId: number
 ): Promise<SponsoredClientResult | null> {
   if (!isSponsorshipSupported(chainId)) {
     return null;
   }
 
-  try {
-    const { account, walletRecord } =
-      await createParaViemAccount(organizationId);
-    const walletAddress = walletRecord.walletAddress as Address;
-    const chainRecord = await db.query.chains.findFirst({
-      where: eq(chains.chainId, chainId),
-    });
+  const rows = await db
+    .select({
+      provider: organizationWallets.provider,
+      walletAddress: organizationWallets.walletAddress,
+      turnkeySubOrgId: organizationWallets.turnkeySubOrgId,
+    })
+    .from(organizationWallets)
+    .where(
+      and(
+        eq(organizationWallets.organizationId, organizationId),
+        eq(organizationWallets.isActive, true)
+      )
+    )
+    .limit(1);
 
-    const chainName = chainRecord?.name ?? `Chain ${chainId}`;
-    const chainSymbol = chainRecord?.symbol ?? "ETH";
-
-    const chain = defineChain({
-      id: chainId,
-      name: chainName,
-      nativeCurrency: { name: chainSymbol, symbol: chainSymbol, decimals: 18 },
-      rpcUrls: {
-        default: { http: [rpcUrl] },
-      },
-    });
-
-    const publicClient = createPublicClient({
-      chain,
-      transport: http(rpcUrl),
-    });
-
-    const pimlicoUrl = getPimlicoUrl(chainId);
-
-    const pimlicoClient = createPimlicoClient({
-      chain,
-      transport: http(pimlicoUrl),
-      entryPoint: {
-        address: entryPoint08Address,
-        version: "0.8",
-      },
-    });
-
-    const smartAccount = await to7702SimpleSmartAccount({
-      client: publicClient,
-      owner: account,
-    });
-
-    const gasPrices = await pimlicoClient.getUserOperationGasPrice();
-    const sponsoredFees = clampSponsoredFees(gasPrices.fast);
-
-    const smartAccountClient = createSmartAccountClient({
-      chain,
-      account: smartAccount,
-      client: publicClient,
-      bundlerTransport: http(pimlicoUrl),
-      paymaster: pimlicoClient,
-      userOperation: {
-        estimateFeesPerGas: async () => sponsoredFees,
-      },
-    });
-
-    // Record delegation in DB if first time (non-blocking)
-    recordDelegationIfNeeded(
-      organizationId,
-      chainId,
-      rpcUrl,
-      walletAddress
-    ).catch((error: unknown) => {
-      logSystemError(
-        ErrorCategory.TRANSACTION,
-        `${LOG_PREFIX} Failed to record delegation`,
-        error
-      );
-    });
-
-    return {
-      smartAccountClient,
-      smartAccount,
-      account,
-      publicClient,
-      walletAddress,
-      chainId,
-    };
-  } catch (error) {
-    logSystemError(
-      ErrorCategory.TRANSACTION,
-      `${LOG_PREFIX} Failed to create sponsored client`,
-      error
-    );
+  const wallet = rows[0];
+  if (!wallet) {
     return null;
   }
+
+  if (wallet.provider !== "turnkey" || wallet.turnkeySubOrgId === null) {
+    return null;
+  }
+
+  return {
+    subOrgId: wallet.turnkeySubOrgId,
+    walletAddress: wallet.walletAddress as Address,
+    chainId,
+  };
 }
