@@ -343,7 +343,9 @@ export function WalletOverlay({ overlayId }: WalletOverlayProps) {
       },
       onWithdraw: handleWithdraw,
       supportedTokenBalances,
+      supportedTokens,
       tokenBalances,
+      tokens,
     });
   };
 

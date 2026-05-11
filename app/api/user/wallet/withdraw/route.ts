@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { ethers } from "ethers";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
@@ -6,12 +6,17 @@ import { apiError } from "@/lib/api-error";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { chains } from "@/lib/db/schema";
+import { safeWallets } from "@/lib/db/schema-extensions";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
 import {
   getOrganizationWalletAddress,
   initializeWalletSigner,
 } from "@/lib/para/wallet-helpers";
+import {
+  executeContractCallAsSafe,
+  executeNativeTransferAsSafe,
+} from "@/lib/safe/execute-as-safe";
 import { getGasStrategy } from "@/lib/web3/gas-strategy";
 import { getNonceManager } from "@/lib/web3/nonce-manager";
 import {
@@ -148,14 +153,16 @@ export async function POST(request: Request) {
     const { organizationId } = validation;
 
     // 2. Parse request body
-    const body = await request.json();
-    const {
-      chainId: rawChainId,
-      tokenAddress,
-      amount,
-      recipient,
-      fromMax,
-    } = body;
+    const body = (await request.json()) as {
+      chainId?: number | string;
+      tokenAddress?: string;
+      amount?: string;
+      recipient?: string;
+      fromMax?: boolean;
+      safeId?: string;
+    };
+    const { chainId: rawChainId, tokenAddress, amount, fromMax, safeId } = body;
+    const recipient = body.recipient;
 
     if (!(rawChainId && recipient)) {
       return NextResponse.json(
@@ -163,6 +170,10 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
+    // After the guard above, recipient is non-null for the rest of the
+    // handler. TypeScript can't narrow through destructuring, so re-bind
+    // to a const with the narrowed type.
+    const recipientAddr: string = recipient;
 
     // fromMax is only valid for native transfers: for ERC20, token gas is
     // paid in the native asset, so sending the full token balance has no
@@ -183,23 +194,24 @@ export async function POST(request: Request) {
 
     const chainId = Number.parseInt(String(rawChainId), 10);
     if (Number.isNaN(chainId)) {
-      return NextResponse.json(
-        { error: "Invalid chainId" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Invalid chainId" }, { status: 400 });
     }
 
     // Validate recipient address
-    if (!ethers.isAddress(recipient)) {
+    if (!ethers.isAddress(recipientAddr)) {
       return NextResponse.json(
         { error: "Invalid recipient address" },
         { status: 400 }
       );
     }
 
-    // Validate amount (skipped when fromMax: server computes the value)
+    // Validate amount (skipped when fromMax: server computes the value).
+    // The guard above ensures amount is set when fromMax is false; bind to
+    // a non-optional alias so downstream `parseEther`/`parseUnits` calls
+    // type-check without per-site assertions.
+    const amountStr: string = amount ?? "";
     if (!fromMax) {
-      const parsedAmount = Number.parseFloat(amount);
+      const parsedAmount = Number.parseFloat(amountStr);
       if (Number.isNaN(parsedAmount) || parsedAmount <= 0) {
         return NextResponse.json({ error: "Invalid amount" }, { status: 400 });
       }
@@ -248,12 +260,108 @@ export async function POST(request: Request) {
         console.log(
           `[Withdraw] Initializing signer for org ${organizationId} on chain ${chain.name}`
         );
-        const signer = await initializeWalletSigner(organizationId, rpcUrl, chainId);
+        const signer = await initializeWalletSigner(
+          organizationId,
+          rpcUrl,
+          chainId
+        );
         const provider = signer.provider;
 
         if (!provider) {
           throw new Error("Signer has no provider");
         }
+
+        // ------------------------------------------------------------------
+        // Safe-routed withdraw. When `safeId` is supplied the funds belong
+        // to the Safe at `safe.safeAddress`, not the Turnkey EOA. The EOA
+        // is still the owner (threshold-1) so it can always sign
+        // `safe.execTransaction` regardless of the signing toggle. The
+        // executeContractCallAsSafe / executeNativeTransferAsSafe helpers
+        // handle nonce + gas internally against the same NonceSession.
+        // ------------------------------------------------------------------
+        if (safeId) {
+          const safeRows = await db
+            .select()
+            .from(safeWallets)
+            .where(
+              and(
+                eq(safeWallets.id, safeId),
+                eq(safeWallets.organizationId, organizationId)
+              )
+            )
+            .limit(1);
+          const safe = safeRows[0];
+          if (!safe) {
+            throw new Error("Safe not found for this organization");
+          }
+          if (safe.chainId !== chainId) {
+            throw new Error("Safe is on a different chain than the request");
+          }
+          if (safe.status !== "deployed") {
+            throw new Error("Safe is not deployed");
+          }
+
+          let safeAmountWei: bigint;
+          if (tokenAddress) {
+            const erc20 = new ethers.Contract(
+              tokenAddress,
+              ERC20_TRANSFER_ABI,
+              provider
+            );
+            const decimalsResult = (await erc20.decimals()) as bigint;
+            const decimals = Number(decimalsResult);
+            if (!amount) {
+              throw new Error("Missing amount for ERC20 Safe withdraw");
+            }
+            safeAmountWei = ethers.parseUnits(amountStr, decimals);
+          } else if (fromMax) {
+            safeAmountWei = await provider.getBalance(safe.safeAddress);
+            if (safeAmountWei === BigInt(0)) {
+              throw new Error("Safe has no native balance to withdraw");
+            }
+          } else if (amount) {
+            safeAmountWei = ethers.parseEther(amountStr);
+          } else {
+            throw new Error("Missing amount for native Safe withdraw");
+          }
+
+          const safeReceipt = tokenAddress
+            ? await executeContractCallAsSafe(
+                signer,
+                {
+                  safeAddress: safe.safeAddress,
+                  ownerAddress: walletAddress,
+                  contractAddress: tokenAddress,
+                  abi: ERC20_TRANSFER_ABI,
+                  functionKey: "transfer",
+                  args: [recipientAddr, safeAmountWei],
+                },
+                session,
+                { chainId }
+              )
+            : await executeNativeTransferAsSafe(
+                signer,
+                {
+                  safeAddress: safe.safeAddress,
+                  ownerAddress: walletAddress,
+                  to: recipientAddr,
+                  amount: safeAmountWei,
+                },
+                session,
+                { chainId }
+              );
+
+          console.log(
+            `[Withdraw] Safe-routed transaction confirmed: ${safeReceipt.hash}`
+          );
+          return { txHash: safeReceipt.hash };
+        }
+
+        // ------------------------------------------------------------------
+        // Default path: signed directly by the Turnkey EOA, funds drawn
+        // from the EOA's own balance. The existing nonce/gas math below
+        // applies to this branch only.
+        // ------------------------------------------------------------------
 
         // Get nonce from session
         const nonce = nonceManager.getNextNonce(session);
@@ -271,16 +379,16 @@ export async function POST(request: Request) {
           );
           const decimalsResult: bigint = await contract.decimals();
           const decimals = Number(decimalsResult);
-          amountWei = ethers.parseUnits(amount, decimals);
+          amountWei = ethers.parseUnits(amountStr, decimals);
           estimatedGas = await contract.transfer.estimateGas(
-            recipient,
+            recipientAddr,
             amountWei
           );
         } else {
-          amountWei = fromMax ? BigInt(1) : ethers.parseEther(amount);
+          amountWei = fromMax ? BigInt(1) : ethers.parseEther(amountStr);
           estimatedGas = await provider.estimateGas({
             from: walletAddress,
-            to: recipient,
+            to: recipientAddr,
             value: amountWei,
           });
         }
@@ -353,13 +461,13 @@ export async function POST(request: Request) {
               signer,
               tokenAddress,
               amountWei,
-              recipient,
+              recipientAddr,
               transferOptions
             )
           : await executeNativeTransfer(
               signer,
               amountWei,
-              recipient,
+              recipientAddr,
               transferOptions
             );
 
