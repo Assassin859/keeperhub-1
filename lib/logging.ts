@@ -269,3 +269,45 @@ export function logSystemError(
     extra: fullLabels,
   });
 }
+
+/**
+ * Log a system-level warning with forensic context but no alert.
+ *
+ * Use for events in system-owned code that need ALS context (org/owner ids)
+ * and Sentry forensics, but are NOT operational failures. Examples:
+ * - Pre-reconciliation notes where the final classification is not yet known
+ * - Recovery events (spurious SDK error overridden back to success)
+ * - Expected fallbacks worth recording for debugging
+ *
+ * Differs from logSystemError:
+ *   - console.warn instead of console.error
+ *   - Sentry captured at level=warning (does not page oncall)
+ *   - Emits NO Prometheus metric (so it cannot trip system-error alerts)
+ *
+ * Differs from logUserError:
+ *   - is_user_error=false (caller is system code, not user input)
+ *   - Emits no metric (logUserError emits a user-error counter)
+ */
+export function logSystemWarn(
+  category: ErrorCategory,
+  message: string,
+  error: unknown,
+  labels?: Record<string, string>
+): void {
+  const context = extractContext(message);
+  const fullLabels = mergeLabels(labels);
+
+  const tag = buildLogTag(fullLabels);
+  console.warn(`${message}${tag}`, error);
+
+  const sentryError = error instanceof Error ? error : new Error(String(error));
+  captureException(sentryError, {
+    level: "warning",
+    tags: {
+      error_category: category,
+      error_context: context,
+      is_user_error: "false",
+    },
+    extra: fullLabels,
+  });
+}
