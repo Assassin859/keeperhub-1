@@ -9,6 +9,7 @@ import {
   earningsLoadingAtom,
 } from "@/lib/atoms/earnings";
 import { authClient } from "@/lib/auth-client";
+import { EARNINGS_PAGE_SIZE } from "@/lib/earnings/constants";
 import type { EarningsSummary } from "@/lib/earnings/types";
 
 type UseEarningsReturn = {
@@ -49,7 +50,7 @@ export function useEarnings(): UseEarningsReturn {
     try {
       const params = new URLSearchParams({
         page: String(page),
-        pageSize: "10",
+        pageSize: String(EARNINGS_PAGE_SIZE),
       });
 
       const res = await fetch(`/api/earnings?${params.toString()}`, { signal });

@@ -63,6 +63,13 @@ import {
   clearExecution,
   getSuccessfulSteps,
 } from "@/lib/workflow/executor/step-success-tracker";
+import {
+  assertResolved,
+  createTracker,
+  recordUnresolved,
+  TemplateResolutionError,
+  type TemplateResolutionTracker,
+} from "@/lib/workflow/executor/template-resolution";
 import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
 import {
   type ConditionDecision,
@@ -325,6 +332,21 @@ export function evaluateConditionExpression(
         }
       );
 
+      // KEEP-468: any `{{...}}` token left after stored-format substitution
+      // is either display-format (`{{Label.field}}`) or legacy `{{$nodeId}}`,
+      // neither of which is supported in condition expressions. Without this
+      // check the leftover token feeds into the JS evaluator below and surfaces
+      // as a misleading "Unexpected token '{'" syntax error. Fail closed
+      // explicitly with a clear message that points the author at the right
+      // grammar.
+      const leftoverTemplateMatches =
+        transformedExpression.match(/\{\{[^}]+\}\}/g);
+      if (leftoverTemplateMatches && leftoverTemplateMatches.length > 0) {
+        throw new Error(
+          `Condition contains unresolved template reference(s): ${[...new Set(leftoverTemplateMatches)].join(", ")}. Use stored format \`{{@nodeId:Label.field}}\` for condition references.`
+        );
+      }
+
       // Validate the transformed expression before evaluation
       // KEEP-1284: Throw error when validation fails instead of silently returning false
       const validation = validateConditionExpression(transformedExpression);
@@ -547,20 +569,54 @@ function hasNestedDataShape(
     typeof data === "object" &&
     data !== null &&
     "data" in data &&
-    typeof (data as Record<string, unknown>).data === "object"
+    typeof (data as Record<string, unknown>).data === "object" &&
+    (data as Record<string, unknown>).data !== null
+  );
+}
+
+// KEEP-442: code/run-code wraps the user's return value in `.result` (the
+// step output is `{ success, result, logs }`). Without this fallback, a
+// downstream string field referencing `{{@prep:Prep.url}}` (where `prep`
+// is a code/run-code that returned `{ url }`) resolves to "" because
+// `data.url` is undefined and the existing `.data` fallback only matches
+// the HTTP-style wrapper shape.
+function hasNestedResultShape(
+  data: unknown
+): data is Record<string, unknown> & { result: object } {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    "result" in data &&
+    typeof (data as Record<string, unknown>).result === "object" &&
+    (data as Record<string, unknown>).result !== null
   );
 }
 
 /**
- * Resolve from output.data, or from output.data.data when step wraps body in .data (e.g. HTTP).
+ * Resolve a field path from output data, transparently unwrapping common
+ * step-result wrappers when the path doesn't match at the top level:
+ *   - `{ data: ... }` (HTTP-style result)
+ *   - `{ result: ... }` (code/run-code wrapper -- KEEP-442)
  */
-function resolveFromOutputData(data: unknown, fieldPath: string): unknown {
+export function resolveFromOutputData(
+  data: unknown,
+  fieldPath: string
+): unknown {
   const fromTop = fieldPath ? resolveConfigFieldPath(data, fieldPath) : data;
   if (fromTop !== undefined && fromTop !== null) {
     return fromTop;
   }
   if (hasNestedDataShape(data)) {
     const inner = data.data;
+    const fromInner = fieldPath
+      ? resolveConfigFieldPath(inner, fieldPath)
+      : inner;
+    if (fromInner !== undefined && fromInner !== null) {
+      return fromInner;
+    }
+  }
+  if (hasNestedResultShape(data)) {
+    const inner = data.result;
     return fieldPath ? resolveConfigFieldPath(inner, fieldPath) : inner;
   }
   return;
@@ -570,7 +626,8 @@ function replaceConfigTemplate(
   match: string,
   nodeId: string,
   rest: string,
-  outputs: NodeOutputs
+  outputs: NodeOutputs,
+  tracker?: TemplateResolutionTracker
 ): string {
   const trimmedNodeId = nodeId.trim();
   const sanitizedNodeId = trimmedNodeId.replace(/[^a-zA-Z0-9]/g, "_");
@@ -590,6 +647,11 @@ function replaceConfigTemplate(
 
   if (!output) {
     console.log("[Template] No output for node, returning empty string");
+    recordUnresolved(tracker, {
+      token: match,
+      reason: "no-node",
+      detail: `Node "${trimmedNodeId}" has no output yet.`,
+    });
     return "";
   }
   const data = output.data;
@@ -597,6 +659,11 @@ function replaceConfigTemplate(
     console.log(
       "[Template] Output data is null/undefined, returning empty string"
     );
+    recordUnresolved(tracker, {
+      token: match,
+      reason: "no-data",
+      detail: `Node "${trimmedNodeId}" produced no data.`,
+    });
     return "";
   }
 
@@ -616,6 +683,11 @@ function replaceConfigTemplate(
       "[Template] Path not found, returning empty string. fieldPath:",
       fieldPath
     );
+    recordUnresolved(tracker, {
+      token: match,
+      reason: "no-path",
+      detail: `Field "${fieldPath || "(whole output)"}" not found on node "${trimmedNodeId}".`,
+    });
     return "";
   }
 
@@ -630,10 +702,15 @@ function replaceConfigTemplate(
 /**
  * Process template variables in config.
  * Recurses into nested objects; supports array paths like data.recipes[0].
+ *
+ * KEEP-468: optional `tracker` records every reference that fell through to
+ * the empty-string or literal-pass-through path so the caller can fail
+ * closed in strict mode.
  */
-function processTemplates(
+export function processTemplates(
   config: Record<string, unknown>,
-  outputs: NodeOutputs
+  outputs: NodeOutputs,
+  tracker?: TemplateResolutionTracker
 ): Record<string, unknown> {
   const processed: Record<string, unknown> = {};
   const storedPattern = /\{\{@([^:]+):([^}]+)\}\}/g;
@@ -644,11 +721,16 @@ function processTemplates(
   for (const [key, value] of Object.entries(config)) {
     if (typeof value === "string") {
       let result = value.replace(storedPattern, (m, nodeId, rest) =>
-        replaceConfigTemplate(m, nodeId, rest, outputs)
+        replaceConfigTemplate(m, nodeId, rest, outputs, tracker)
       );
       result = result.replace(displayPattern, (full, displayRef) => {
         const resolved = resolveDisplayTemplate(displayRef, outputs);
         if (resolved === null || resolved === undefined) {
+          recordUnresolved(tracker, {
+            token: full,
+            reason: "no-path",
+            detail: `Display reference "${displayRef}" did not resolve.`,
+          });
           return full;
         }
         return formatConfigValue(resolved);
@@ -661,7 +743,8 @@ function processTemplates(
     ) {
       processed[key] = processTemplates(
         value as Record<string, unknown>,
-        outputs
+        outputs,
+        tracker
       );
     } else {
       processed[key] = value;
@@ -698,7 +781,11 @@ function formatCodeValue(value: unknown): string {
  * Handles both stored format {{@nodeId:Label.field}} and display format
  * {{Label.field}} (fallback).
  */
-function processCodeTemplates(code: string, outputs: NodeOutputs): string {
+export function processCodeTemplates(
+  code: string,
+  outputs: NodeOutputs,
+  tracker?: TemplateResolutionTracker
+): string {
   const storedPattern = /\{\{@([^:]+):([^}]+)\}\}/g;
   const displayPattern = /\{\{([^@}][^}]*)\}\}/g;
 
@@ -709,23 +796,49 @@ function processCodeTemplates(code: string, outputs: NodeOutputs): string {
       const sanitizedNodeId = trimmedNodeId.replace(/[^a-zA-Z0-9]/g, "_");
       const output = outputs[sanitizedNodeId] ?? outputs[trimmedNodeId];
       if (!output) {
+        recordUnresolved(tracker, {
+          token: full,
+          reason: "no-node",
+          detail: `Node "${trimmedNodeId}" has no output yet.`,
+        });
         return full;
       }
       const { data } = output;
       if (data === null || data === undefined) {
+        recordUnresolved(tracker, {
+          token: full,
+          reason: "no-data",
+          detail: `Node "${trimmedNodeId}" produced no data.`,
+        });
         return "null";
       }
       const fieldPath = rest.includes(".")
         ? rest.substring(rest.indexOf(".") + 1).trim()
         : "";
       const resolved = resolveFromOutputData(data, fieldPath);
-      return formatCodeValue(resolved ?? null);
+      if (resolved === undefined || resolved === null) {
+        recordUnresolved(tracker, {
+          token: full,
+          reason: "no-path",
+          detail: `Field "${fieldPath || "(whole output)"}" not found on node "${trimmedNodeId}".`,
+        });
+        return "null";
+      }
+      return formatCodeValue(resolved);
     }
   );
 
-  result = result.replace(displayPattern, (_full, displayRef: string) => {
+  result = result.replace(displayPattern, (full, displayRef: string) => {
     const resolved = resolveDisplayTemplate(displayRef, outputs);
-    return formatCodeValue(resolved ?? null);
+    if (resolved === undefined || resolved === null) {
+      recordUnresolved(tracker, {
+        token: full,
+        reason: "no-path",
+        detail: `Display reference "${displayRef}" did not resolve.`,
+      });
+      return "null";
+    }
+    return formatCodeValue(resolved);
   });
 
   return result;
@@ -741,6 +854,20 @@ export function resolveDisplayTemplate(
   displayRef: string,
   outputs: NodeOutputs
 ): unknown {
+  const checked = resolveDisplayTemplateChecked(displayRef, outputs);
+  return checked.found ? (checked.value ?? null) : null;
+}
+
+/**
+ * Discriminated variant of `resolveDisplayTemplate`. Same back-compat
+ * trade-off as `resolveTemplateToRawValueChecked`: legitimate `null`
+ * upstream values must not look like an unresolved reference to strict-mode
+ * callers.
+ */
+export function resolveDisplayTemplateChecked(
+  displayRef: string,
+  outputs: NodeOutputs
+): RawValueResolution {
   const dotIndex = displayRef.indexOf(".");
   const label =
     dotIndex === -1 ? displayRef : displayRef.substring(0, dotIndex);
@@ -748,14 +875,14 @@ export function resolveDisplayTemplate(
 
   const entry = findOutputByLabel(label, outputs);
   if (!entry) {
-    return null;
+    return { found: false, reason: "no-node" };
   }
 
   if (entry.data === null || entry.data === undefined) {
-    return null;
+    return { found: false, reason: "no-data" };
   }
 
-  return resolveFromOutputData(entry.data, fieldPath) ?? null;
+  return resolveFromOutputDataChecked(entry.data, fieldPath);
 }
 
 /**
@@ -773,24 +900,48 @@ export function resolveDisplayTemplate(
  */
 export function extractTemplateParameters(
   query: string,
-  outputs: NodeOutputs
+  outputs: NodeOutputs,
+  tracker?: TemplateResolutionTracker
 ): { parameterizedQuery: string; paramValues: unknown[] } {
   const paramValues: unknown[] = [];
   let paramIndex = 0;
 
   const replaceStored = (
-    _match: string,
+    match: string,
     nodeId: string,
     rest: string
   ): string => {
     paramIndex++;
-    paramValues.push(resolveTemplateToRawValue(nodeId, rest, outputs));
+    const checked = resolveTemplateToRawValueChecked(nodeId, rest, outputs);
+    if (checked.found) {
+      // Legitimate values pass through, including upstream `null` (KEEP-468
+      // edge case: a SQL column that genuinely returned NULL must not
+      // false-trigger the strict gate).
+      paramValues.push(checked.value);
+    } else {
+      recordUnresolved(tracker, {
+        token: match,
+        reason: checked.reason,
+        detail: `Reference for node "${nodeId.trim()}" did not resolve (${checked.reason}).`,
+      });
+      paramValues.push(null);
+    }
     return `$${paramIndex}`;
   };
 
-  const replaceDisplay = (_match: string, displayRef: string): string => {
+  const replaceDisplay = (match: string, displayRef: string): string => {
     paramIndex++;
-    paramValues.push(resolveDisplayTemplate(displayRef, outputs));
+    const checked = resolveDisplayTemplateChecked(displayRef, outputs);
+    if (checked.found) {
+      paramValues.push(checked.value);
+    } else {
+      recordUnresolved(tracker, {
+        token: match,
+        reason: checked.reason,
+        detail: `Display reference "${displayRef}" did not resolve (${checked.reason}).`,
+      });
+      paramValues.push(null);
+    }
     return `$${paramIndex}`;
   };
 
@@ -835,6 +986,122 @@ export function resolveTemplateToRawValue(
   rest: string,
   outputs: NodeOutputs
 ): unknown {
+  const checked = resolveTemplateToRawValueChecked(nodeId, rest, outputs);
+  return checked.found ? (checked.value ?? null) : null;
+}
+
+/**
+ * Discriminated variant of `resolveTemplateToRawValue`. Lets the SQL
+ * parameterizer (and any other strict-mode caller) distinguish "the
+ * reference truly did not resolve" from "the reference resolved cleanly to
+ * a legitimate null upstream value." The unwrapped helper above collapses
+ * both cases to `null` for back-compat with For Each and tests.
+ *
+ * - `{ found: true, value }`   — node + path located. `value` may be `null`.
+ * - `{ found: false, reason }` — `no-node`, `no-data`, or `no-path`.
+ */
+type RawValueResolution =
+  | { found: true; value: unknown }
+  | { found: false; reason: "no-node" | "no-data" | "no-path" };
+
+/**
+ * Walk a field path while preserving the difference between "the leaf key
+ * exists and is null" and "the leaf key doesn't exist." The discriminator is
+ * `'key' in obj`, which is true for properties whose value is null/undefined
+ * but false when the property is absent. `resolveFromOutputData` collapses
+ * both to `undefined`, which is fine for string substitution but loses the
+ * signal strict-mode callers need.
+ */
+function resolveStrictPath(
+  data: unknown,
+  fieldPath: string
+): RawValueResolution {
+  if (!fieldPath) {
+    return { found: true, value: data };
+  }
+  if (data === null || data === undefined) {
+    return { found: false, reason: "no-path" };
+  }
+  let current: unknown = data;
+  for (const part of fieldPath.split(".")) {
+    const trimmed = part.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const arrayMatch = trimmed.match(ARRAY_ACCESS_PATTERN);
+    if (arrayMatch) {
+      const [, key, indexStr] = arrayMatch;
+      if (
+        current === null ||
+        current === undefined ||
+        typeof current !== "object"
+      ) {
+        return { found: false, reason: "no-path" };
+      }
+      const obj = current as Record<string, unknown>;
+      if (!(key in obj)) {
+        return { found: false, reason: "no-path" };
+      }
+      const arr = obj[key];
+      if (!Array.isArray(arr)) {
+        return { found: false, reason: "no-path" };
+      }
+      const idx = Number.parseInt(indexStr, 10);
+      if (idx < 0 || idx >= arr.length) {
+        return { found: false, reason: "no-path" };
+      }
+      current = arr[idx];
+      continue;
+    }
+    if (
+      current === null ||
+      current === undefined ||
+      typeof current !== "object"
+    ) {
+      return { found: false, reason: "no-path" };
+    }
+    const obj = current as Record<string, unknown>;
+    if (!(trimmed in obj)) {
+      return { found: false, reason: "no-path" };
+    }
+    current = obj[trimmed];
+  }
+  return { found: true, value: current };
+}
+
+/**
+ * Strict-mode field-path resolution that mirrors `resolveFromOutputData`'s
+ * three-shape lookup (top-level → `.data` wrapper → `.result` wrapper). The
+ * shapes are tried in order; the first one whose path exists wins.
+ */
+function resolveFromOutputDataChecked(
+  data: unknown,
+  fieldPath: string
+): RawValueResolution {
+  const top = resolveStrictPath(data, fieldPath);
+  if (top.found) {
+    return top;
+  }
+  if (hasNestedDataShape(data)) {
+    const inner = resolveStrictPath(data.data, fieldPath);
+    if (inner.found) {
+      return inner;
+    }
+  }
+  if (hasNestedResultShape(data)) {
+    const inner = resolveStrictPath(data.result, fieldPath);
+    if (inner.found) {
+      return inner;
+    }
+  }
+  return { found: false, reason: "no-path" };
+}
+
+export function resolveTemplateToRawValueChecked(
+  nodeId: string,
+  rest: string,
+  outputs: NodeOutputs
+): RawValueResolution {
   const trimmedNodeId = nodeId.trim();
   const sanitizedNodeId = trimmedNodeId.replace(/[^a-zA-Z0-9]/g, "_");
   const output = outputs[sanitizedNodeId] ?? outputs[trimmedNodeId];
@@ -845,15 +1112,15 @@ export function resolveTemplateToRawValue(
   const resolvedOutput = output ?? findOutputByLabelFallback(rest, outputs);
 
   if (!resolvedOutput) {
-    return null;
+    return { found: false, reason: "no-node" };
   }
 
   const data = resolvedOutput.data;
   if (data === null || data === undefined) {
-    return null;
+    return { found: false, reason: "no-data" };
   }
 
-  return resolveFromOutputData(data, fieldPath) ?? null;
+  return resolveFromOutputDataChecked(data, fieldPath);
 }
 
 /**
@@ -874,7 +1141,26 @@ function findOutputByLabelFallback(
 
 export type LoopBodyInfo = {
   bodyNodeIds: string[];
+  /**
+   * In-body Collect node found via depth-0 boundary BFS. Set in legacy graphs
+   * (Collect placed in the body chain) and may also be set for transitional
+   * graphs that have BOTH an in-body Collect and a done-handle Collect; in the
+   * latter case the executor prefers `doneCollectNodeId`.
+   */
   collectNodeId: string | undefined;
+  /**
+   * Entry points for the For Each's `done` sourceHandle. These run once after
+   * the iteration loop completes (JS-equivalent: the line after `for (...) {}`).
+   * Non-Collect targets execute as ordinary steps; a Collect target receives
+   * the aggregated `{ results, count }` payload.
+   */
+  doneEntryNodeIds: string[];
+  /**
+   * If the canonical `done`-handle wiring routes to a Collect node, this is
+   * its node ID. The executor prefers this over `collectNodeId` so workflows
+   * that wire both are unambiguous.
+   */
+  doneCollectNodeId: string | undefined;
   bodyEdgesBySource: Map<string, string[]>;
   bodyEdgesBySourceHandle: EdgesBySourceHandle;
 };
@@ -931,11 +1217,53 @@ function computeNextDepth(
 }
 
 /**
- * Identify the loop body subgraph between a For Each node and its paired
- * Collect node. Uses BFS with depth tracking so nested For Each / Collect
- * pairs are correctly skipped.
+ * Pick the next-target list for a node visited inside a For Each body BFS.
+ *
+ * For nested For Each nodes that themselves expose `loop`/`done` handles, the
+ * outer body resumes at the inner `done` chain (the inner loop body is the
+ * inner For Each's own concern, not the outer's). For every other node — and
+ * for legacy nested For Each nodes with no sourceHandle on their outgoing
+ * edges — fall through to the handle-agnostic `edgesBySource` map; the depth
+ * counter handles the legacy in-body Collect boundary case.
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: BFS with depth tracking requires multiple condition branches
+function nextBodyTargets(
+  nodeId: string,
+  isForEach: boolean,
+  edgesBySource: Map<string, string[]>,
+  edgesBySourceHandle: EdgesBySourceHandle | undefined
+): string[] {
+  if (isForEach) {
+    const handles = edgesBySourceHandle?.get(nodeId);
+    const loopTargets = handles?.get("loop") ?? [];
+    const doneTargets = handles?.get("done") ?? [];
+    if (loopTargets.length > 0 || doneTargets.length > 0) {
+      return doneTargets;
+    }
+  }
+  return edgesBySource.get(nodeId) ?? [];
+}
+
+/**
+ * Identify the loop body subgraph between a For Each node and its paired
+ * Collect node.
+ *
+ * Two modes:
+ *
+ * 1. **Handle-aware** (canonical): the For Each has at least one outgoing
+ *    edge with a `loop` or `done` sourceHandle. Body BFS seeds from the
+ *    `loop` targets only; `done` targets become `doneEntryNodeIds` and run
+ *    once the iteration loop finishes. If the first done target is a Collect
+ *    node, it is recorded as `doneCollectNodeId` (the executor will hand it
+ *    the aggregated `{ results, count }` payload).
+ *
+ * 2. **Legacy**: the For Each has no sourceHandle on any outgoing edge. Body
+ *    BFS seeds from every outgoing edge (current pre-handle behavior) and
+ *    terminates at the first depth-0 Collect, which becomes `collectNodeId`.
+ *
+ * In both modes the BFS uses depth tracking so nested For Each / Collect
+ * pairs are correctly stepped over.
+ */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: BFS with depth tracking + handle-aware seeding requires multiple condition branches
 export function identifyLoopBody(
   forEachNodeId: string,
   edgesBySource: Map<string, string[]>,
@@ -948,16 +1276,25 @@ export function identifyLoopBody(
   let collectNodeId: string | undefined;
   const visited = new Set<string>();
 
-  // Seed queue with direct children of the For Each node
-  const initialTargets = edgesBySource.get(forEachNodeId) ?? [];
-  for (const targetId of initialTargets) {
+  // Determine seeding strategy. Handle-aware mode kicks in as soon as any
+  // outgoing edge from this For Each carries a sourceHandle, so a workflow
+  // can opt in incrementally without changing legacy edges elsewhere.
+  const handleMap = edgesBySourceHandle?.get(forEachNodeId);
+  const loopTargets = handleMap?.get("loop") ?? [];
+  const doneTargets = handleMap?.get("done") ?? [];
+  const isHandleAware = loopTargets.length > 0 || doneTargets.length > 0;
+  const seedTargets = isHandleAware
+    ? loopTargets
+    : (edgesBySource.get(forEachNodeId) ?? []);
+
+  for (const targetId of seedTargets) {
     if (!bodyEdgesBySource.has(forEachNodeId)) {
       bodyEdgesBySource.set(forEachNodeId, []);
     }
     bodyEdgesBySource.get(forEachNodeId)!.push(targetId);
   }
 
-  const queue: Array<{ nodeId: string; depth: number }> = initialTargets.map(
+  const queue: Array<{ nodeId: string; depth: number }> = seedTargets.map(
     (id) => ({ nodeId: id, depth: 0 })
   );
 
@@ -982,22 +1319,31 @@ export function identifyLoopBody(
     const isCollect = node.data.type === "action" && actionType === "Collect";
     const isForEach = node.data.type === "action" && actionType === "For Each";
 
-    // Collect at depth 0 is OUR boundary
+    // Collect at depth 0 is the legacy in-body boundary. In handle-aware
+    // graphs this still terminates the body BFS; the executor decides at
+    // post-iteration time whether to fire the in-body Collect (legacy) or
+    // the done-handle Collect (canonical).
     if (isCollect && depth === 0) {
       if (collectNodeId && collectNodeId !== nodeId) {
         throw new Error(
-          "For Each node has multiple Collect nodes at the same nesting level. " +
-            "Each For Each must have exactly one Collect boundary."
+          "For Each node has multiple in-body Collect nodes at the same " +
+            "nesting level. Wire the Collect to the For Each's `done` " +
+            "sourceHandle (canonical) or keep exactly one in-body Collect."
         );
       }
       collectNodeId = nodeId;
-      continue; // Don't traverse past our Collect
+      continue;
     }
 
     bodyNodeIds.push(nodeId);
 
     const nextDepth = computeNextDepth(isForEach, isCollect, depth);
-    const nextIds = edgesBySource.get(nodeId) ?? [];
+    const nextIds = nextBodyTargets(
+      nodeId,
+      isForEach,
+      edgesBySource,
+      edgesBySourceHandle
+    );
     for (const nextId of nextIds) {
       if (!bodyEdgesBySource.has(nodeId)) {
         bodyEdgesBySource.set(nodeId, []);
@@ -1027,12 +1373,68 @@ export function identifyLoopBody(
     }
   }
 
+  // Resolve the canonical post-loop Collect: the first `done`-handle target
+  // whose actionType is Collect. Non-Collect done targets remain in
+  // `doneEntryNodeIds` and run as ordinary steps after the iteration loop.
+  let doneCollectNodeId: string | undefined;
+  for (const targetId of doneTargets) {
+    const target = nodeMap.get(targetId);
+    if (
+      target?.data.type === "action" &&
+      target.data.config?.actionType === "Collect"
+    ) {
+      doneCollectNodeId = targetId;
+      break;
+    }
+  }
+
   return {
     bodyNodeIds,
     collectNodeId,
+    doneEntryNodeIds: doneTargets,
+    doneCollectNodeId,
     bodyEdgesBySource,
     bodyEdgesBySourceHandle,
   };
+}
+
+/**
+ * Decision about how a For Each should hand control off after its iteration
+ * loop completes. Three shapes:
+ *
+ *   - `aggregate-collect`: a Collect node receives `{ results, count }` and
+ *      the chain past it runs. Used for both the canonical done-handle
+ *      Collect and the legacy in-body Collect; the canonical one wins when
+ *      both are present.
+ *   - `done-targets`: the For Each's done-handle wires to one or more
+ *      non-Collect nodes; they run as ordinary post-loop steps with no
+ *      aggregation injection.
+ *   - `none`: fire-and-forget loop, nothing to dispatch.
+ */
+export type IterationContinuation =
+  | { kind: "aggregate-collect"; collectNodeId: string }
+  | { kind: "done-targets"; targets: string[] }
+  | { kind: "none" };
+
+/**
+ * Pick the post-iteration continuation given the For Each's `LoopBodyInfo`.
+ * Pure function so the routing priority is testable in isolation from the
+ * surrounding step-firing / output-writing side effects.
+ */
+export function planIterationContinuation(
+  body: Pick<
+    LoopBodyInfo,
+    "collectNodeId" | "doneCollectNodeId" | "doneEntryNodeIds"
+  >
+): IterationContinuation {
+  const aggregate = body.doneCollectNodeId ?? body.collectNodeId;
+  if (aggregate) {
+    return { kind: "aggregate-collect", collectNodeId: aggregate };
+  }
+  if (body.doneEntryNodeIds.length > 0) {
+    return { kind: "done-targets", targets: body.doneEntryNodeIds };
+  }
+  return { kind: "none" };
 }
 
 /**
@@ -1236,7 +1638,8 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
   function processActionConfig(
     config: Record<string, unknown>,
     actionType: string,
-    currentOutputs: NodeOutputs
+    currentOutputs: NodeOutputs,
+    assertContext?: { nodeId?: string; nodeLabel?: string }
   ): Record<string, unknown> {
     const configWithoutSpecial = { ...config };
     const originalCondition = config.condition;
@@ -1252,17 +1655,17 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       configWithoutSpecial.code = undefined;
     }
 
+    // KEEP-468: collect every unresolved reference so we can fail closed
+    // before the step runs. Tracker entries cover empty-string substitutions
+    // (no-node / no-data / no-path); the post-scan inside `assertResolved`
+    // catches the displayPattern literal-passthrough path.
+    const tracker = createTracker();
+
     const processedConfig = processTemplates(
       configWithoutSpecial,
-      currentOutputs
+      currentOutputs,
+      tracker
     );
-
-    if (originalCondition !== undefined) {
-      processedConfig.condition = originalCondition;
-    }
-    if (originalConditionConfig !== undefined) {
-      processedConfig.conditionConfig = originalConditionConfig;
-    }
 
     if (
       actionType === "Database Query" &&
@@ -1270,7 +1673,8 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     ) {
       const { parameterizedQuery, paramValues } = extractTemplateParameters(
         originalDbQuery,
-        currentOutputs
+        currentOutputs,
+        tracker
       );
       processedConfig.dbQuery = parameterizedQuery;
       processedConfig._dbParams = paramValues;
@@ -1282,7 +1686,31 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     }
 
     if (actionType === "code/run-code" && typeof originalCode === "string") {
-      processedConfig.code = processCodeTemplates(originalCode, currentOutputs);
+      processedConfig.code = processCodeTemplates(
+        originalCode,
+        currentOutputs,
+        tracker
+      );
+    }
+
+    // KEEP-468 hotfix: scan + assert BEFORE re-attaching condition fields.
+    // Condition expressions own their template resolution path
+    // (`evaluateConditionExpression`, which has its own leftover-token gate
+    // since b3d5d9eb), so the action-level scan must not see those tokens —
+    // otherwise every Condition node downstream of For Each / a Code step
+    // false-flags `{{@nodeId:Label.field}}` as a leftover literal and the
+    // workflow body cannot run.
+    assertResolved(tracker, processedConfig, {
+      nodeId: assertContext?.nodeId,
+      nodeLabel: assertContext?.nodeLabel,
+      actionType,
+    });
+
+    if (originalCondition !== undefined) {
+      processedConfig.condition = originalCondition;
+    }
+    if (originalConditionConfig !== undefined) {
+      processedConfig.conditionConfig = originalConditionConfig;
     }
 
     return processedConfig;
@@ -1377,6 +1805,20 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
               );
             }
           },
+          continueWithDoneTargets: async (_fromNodeId, targets) => {
+            for (const next of targets) {
+              await executeBodyNode(
+                next,
+                bodyVisited,
+                scopedOutputs,
+                bodyResults,
+                bodyEdgesBySource,
+                collectNodeId,
+                iterationMeta,
+                bodyHandleMap
+              );
+            }
+          },
         });
       },
     });
@@ -1395,7 +1837,19 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     currentResults: Record<string, ExecutionResult>;
     currentVisited: Set<string>;
     currentEdgesBySource: Map<string, string[]>;
+    /**
+     * Dispatch downstream of a Collect node once iterations finish. Used for
+     * both the canonical `done`-handle Collect and legacy in-body Collect.
+     */
     continueAfterCollect?: (collectNodeId: string) => Promise<void>;
+    /**
+     * Dispatch the For Each's `done`-handle targets directly when none of
+     * them is a Collect (i.e. the post-loop chain is just ordinary steps).
+     */
+    continueWithDoneTargets?: (
+      fromNodeId: string,
+      targets: string[]
+    ) => Promise<void>;
   }): Promise<{
     arrayLength: number;
     maxIterations: number;
@@ -1410,6 +1864,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       currentVisited,
       currentEdgesBySource,
       continueAfterCollect,
+      continueWithDoneTargets,
     } = params;
 
     // 1. Resolve array
@@ -1425,6 +1880,8 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     const {
       bodyNodeIds,
       collectNodeId,
+      doneEntryNodeIds,
+      doneCollectNodeId,
       bodyEdgesBySource,
       bodyEdgesBySourceHandle,
     } = identifyLoopBody(
@@ -1433,6 +1890,20 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       nodeMap,
       edgesBySourceHandle
     );
+
+    // Routing priority for the post-iteration continuation. Extracted as a
+    // pure function so the canonical-vs-legacy precedence is testable in
+    // isolation. See `planIterationContinuation` above.
+    const continuation = planIterationContinuation({
+      collectNodeId,
+      doneCollectNodeId,
+      doneEntryNodeIds,
+    });
+    // Source for the iteration-capture pass below. Iteration output is
+    // whichever body node feeds INTO this Collect (legacy in-body Collect),
+    // or — for the canonical done-handle pattern — the natural end of the
+    // body chain (handled by the existing fallback).
+    const captureCollectNodeId = collectNodeId;
 
     const sanitizedForEachId = forEachNodeId.replace(/[^a-zA-Z0-9]/g, "_");
 
@@ -1468,16 +1939,25 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       const firstBodyNodes = bodyEdgesBySource.get(forEachNodeId) ?? [];
       const iterationMeta = { iterationIndex: index, forEachNodeId };
 
+      // Parallel For Each iterations are vulnerable to the same SDK
+      // checkpoint-resume truncation that KEEP-395 fixed for the main
+      // DAG. Without a strong reference, an iteration's recurseInto chain
+      // (e.g., decode-network -> HTTP Request) can be severed after the
+      // first step's checkpoint, leaving the downstream step unscheduled.
+      // pendingTasks.track holds each iteration body's promise so the
+      // workflow-end drain catches orphaned continuations.
       for (const bodyNodeId of firstBodyNodes) {
-        await executeBodyNode(
-          bodyNodeId,
-          bodyVisited,
-          scopedOutputs,
-          bodyResults,
-          bodyEdgesBySource,
-          collectNodeId,
-          iterationMeta,
-          bodyEdgesBySourceHandle
+        await pendingTasks.track(
+          executeBodyNode(
+            bodyNodeId,
+            bodyVisited,
+            scopedOutputs,
+            bodyResults,
+            bodyEdgesBySource,
+            collectNodeId,
+            iterationMeta,
+            bodyEdgesBySourceHandle
+          )
         );
       }
 
@@ -1494,15 +1974,18 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       }
 
       // Capture output from the last body node(s) that produced data.
-      // First check nodes directly before Collect; if those were skipped
-      // (e.g., a Condition that evaluated false), fall back to the last
-      // body node that actually produced output.
+      // Two sources:
+      //   1. If a legacy in-body Collect terminates the body, prefer the
+      //      nodes that fed into it (closest to the loop's "result").
+      //   2. Canonical done-handle wiring: the body chain has no in-body
+      //      Collect, so we just pick the last body node that produced
+      //      output.
+      // The Condition-skipped fallback below covers either mode.
       let iterationOutput: unknown;
-      if (collectNodeId) {
-        // Primary: nodes whose edges target Collect
+      if (captureCollectNodeId) {
         for (const bodyNodeId of bodyNodeIds) {
           const targets = bodyEdgesBySource.get(bodyNodeId) ?? [];
-          if (targets.includes(collectNodeId)) {
+          if (targets.includes(captureCollectNodeId)) {
             const sanitizedBodyId = bodyNodeId.replace(/[^a-zA-Z0-9]/g, "_");
             const output = scopedOutputs[sanitizedBodyId];
             if (output?.data !== undefined) {
@@ -1510,15 +1993,16 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
             }
           }
         }
+      }
 
-        // Fallback: last body node with output (handles skipped Conditions)
-        if (iterationOutput === undefined) {
-          for (const bodyNodeId of bodyNodeIds) {
-            const sanitizedBodyId = bodyNodeId.replace(/[^a-zA-Z0-9]/g, "_");
-            const output = scopedOutputs[sanitizedBodyId];
-            if (output?.data !== undefined) {
-              iterationOutput = output.data;
-            }
+      // Fallback: last body node with output (handles skipped Conditions
+      // and the canonical done-handle pattern with no in-body Collect).
+      if (iterationOutput === undefined) {
+        for (const bodyNodeId of bodyNodeIds) {
+          const sanitizedBodyId = bodyNodeId.replace(/[^a-zA-Z0-9]/g, "_");
+          const output = scopedOutputs[sanitizedBodyId];
+          if (output?.data !== undefined) {
+            iterationOutput = output.data;
           }
         }
       }
@@ -1551,17 +2035,28 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       currentVisited.add(bodyNodeId);
     }
 
-    // 6. Store Collect output and continue downstream (only when Collect exists)
-    if (collectNodeId) {
+    // 6. Route the iteration aggregate to the post-loop continuation.
+    // Routing priority is encoded in `planIterationContinuation`:
+    //   aggregate-collect: fire the Collect step with `{ results, count }`,
+    //                      write its output, mark it visited, and dispatch
+    //                      its downstream via continueAfterCollect.
+    //   done-targets:      no Collect on done; dispatch the targets as
+    //                      ordinary post-loop steps via continueWithDoneTargets
+    //                      (no aggregation injection).
+    //   none:              fire-and-forget loop, nothing to do here.
+    if (continuation.kind === "aggregate-collect") {
+      const aggregateCollectNodeId = continuation.collectNodeId;
       const collectData = {
         results: iterationResults,
         count: iterationResults.length,
       };
-      const sanitizedCollectId = collectNodeId.replace(/[^a-zA-Z0-9]/g, "_");
-      const collectNode = nodeMap.get(collectNodeId);
+      const sanitizedCollectId = aggregateCollectNodeId.replace(
+        /[^a-zA-Z0-9]/g,
+        "_"
+      );
+      const collectNode = nodeMap.get(aggregateCollectNodeId);
       const collectLabel = collectNode ? getNodeName(collectNode) : "Collect";
 
-      // Execute Collect step for logging / observability
       const collectAction = SYSTEM_ACTIONS.Collect;
       if (collectAction) {
         const mod = await collectAction.importer();
@@ -1569,7 +2064,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           ...collectData,
           _context: {
             executionId,
-            nodeId: collectNodeId,
+            nodeId: aggregateCollectNodeId,
             nodeName: collectLabel,
             nodeType: "Collect",
             forEachNodeId,
@@ -1585,12 +2080,30 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         label: collectLabel,
         data: collectData,
       };
-      currentResults[collectNodeId] = { success: true, data: collectData };
-      currentVisited.add(collectNodeId);
+      currentResults[aggregateCollectNodeId] = {
+        success: true,
+        data: collectData,
+      };
+      currentVisited.add(aggregateCollectNodeId);
+
+      // Skip the legacy in-body Collect in mixed wiring: don't re-fire it,
+      // but mark it visited so the parent DAG dispatcher leaves it alone.
+      if (
+        doneCollectNodeId &&
+        collectNodeId &&
+        collectNodeId !== doneCollectNodeId
+      ) {
+        currentVisited.add(collectNodeId);
+      }
 
       if (continueAfterCollect) {
-        await continueAfterCollect(collectNodeId);
+        await continueAfterCollect(aggregateCollectNodeId);
       }
+    } else if (
+      continuation.kind === "done-targets" &&
+      continueWithDoneTargets
+    ) {
+      await continueWithDoneTargets(forEachNodeId, continuation.targets);
     }
 
     return {
@@ -1854,7 +2367,8 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         const processedConfig = processActionConfig(
           config,
           actionType,
-          liveOutputs
+          liveOutputs,
+          { nodeId: node.id, nodeLabel: getNodeName(node) }
         );
 
         // Build step context for logging (stepHandler will handle the logging)
@@ -1942,10 +2456,19 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         if (currentActionType === "For Each") {
           // For Each: iterate over array, execute body subgraph per element,
           // store results on Collect, then continue from Collect downstream.
+          // KEEP-468: same strict-mode treatment as action steps so an
+          // unresolved array reference cannot iterate zero times silently.
+          const forEachTracker = createTracker();
           const forEachConfig = processTemplates(
             node.data.config ?? {},
-            outputs
+            outputs,
+            forEachTracker
           );
+          assertResolved(forEachTracker, forEachConfig, {
+            nodeId: node.id,
+            nodeLabel: getNodeName(node),
+            actionType: "For Each",
+          });
           const iterationSummary = await handleForEachExecution({
             forEachNodeId: nodeId,
             forEachNode: node,
@@ -1957,6 +2480,9 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
             continueAfterCollect: async (collectId) => {
               const nextNodes = edgesBySource.get(collectId) ?? [];
               await executeReadyDownstream(collectId, nextNodes, visited);
+            },
+            continueWithDoneTargets: async (fromNodeId, targets) => {
+              await executeReadyDownstream(fromNodeId, targets, visited);
             },
           });
 
@@ -2115,6 +2641,37 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         error: errorMessage,
       };
       results[nodeId] = errorResult;
+
+      // KEEP-468: TemplateResolutionError aborts before executeActionStep runs,
+      // so withStepLogging never writes a workflow_execution_logs row for the
+      // failing node. Without that row, listTrulyFailedNodes inside
+      // logWorkflowCompleteDb concludes "no node failed" and CAS-flips the
+      // workflow status from 'error' to 'success' as a spurious-SDK reconcile.
+      // Route through triggerStep's step boundary (DB access is forbidden in
+      // the workflow body) to persist a failure log so the run panel surfaces
+      // it AND the reconciler keeps status='error'. Wrapped in try/catch:
+      // a logging failure must never block the workflow from aborting.
+      if (error instanceof TemplateResolutionError && executionId) {
+        try {
+          await triggerStep({
+            triggerData: {},
+            _recordStepFailure: {
+              executionId,
+              nodeId,
+              nodeName: getNodeName(node),
+              nodeType: node.data.type,
+              error: errorMessage,
+            },
+          });
+        } catch (logError) {
+          logSystemError(
+            ErrorCategory.WORKFLOW_ENGINE,
+            "[Workflow Executor] Failed to record TemplateResolutionError step log",
+            logError,
+            { ...baseLogLabels, node_id: nodeId }
+          );
+        }
+      }
 
       // Store null output so downstream templates resolve to null rather than
       // being undefined (same pattern as disabled nodes).

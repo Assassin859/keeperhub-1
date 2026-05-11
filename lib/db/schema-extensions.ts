@@ -5,7 +5,7 @@
  * These are extensions to the base workflow-builder schema.
  *
  * Tables defined here:
- * - organizationWallets: Stores wallet information for Web3 operations (aliased as paraWallets)
+ * - organizationWallets: Stores wallet information for Web3 operations
  * - organizationApiKeys: Stores organization-scoped API keys for MCP server authentication
  * - organizationTokens: Tracks ERC20 tokens per organization/chain for balance display
  * - supportedTokens: System-wide default tokens (stablecoins) available on each chain

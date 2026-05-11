@@ -182,6 +182,9 @@ jobs:
         with:
           database_url: postgresql://postgres:postgres@localhost:5432/keeperhub_test
           chain_rpc_config: ${{ secrets.CHAIN_RPC_CONFIG }}
+          turnkey_api_public_key: ${{ secrets.TURNKEY_API_PUBLIC_KEY }}
+          turnkey_api_private_key: ${{ secrets.TURNKEY_API_PRIVATE_KEY }}
+          turnkey_organization_id: ${{ secrets.TURNKEY_ORGANIZATION_ID }}
 
       - name: Start application
         uses: ./.github/actions/start-app
@@ -270,6 +273,9 @@ jobs:
         with:
           database_url: postgresql://postgres:postgres@localhost:5432/keeperhub_test
           chain_rpc_config: ${{ secrets.CHAIN_RPC_CONFIG }}
+          turnkey_api_public_key: ${{ secrets.TURNKEY_API_PUBLIC_KEY }}
+          turnkey_api_private_key: ${{ secrets.TURNKEY_API_PRIVATE_KEY }}
+          turnkey_organization_id: ${{ secrets.TURNKEY_ORGANIZATION_ID }}
 
       - name: Start application
         uses: ./.github/actions/start-app

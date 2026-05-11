@@ -134,7 +134,7 @@ export function WorkflowIssuesOverlay({
                     {missing.integrationLabel}
                   </span>
                   <span className="text-muted-foreground">
-                    {" — "}
+                    {": "}
                     {missing.nodeNames.length > 3
                       ? `${missing.nodeNames.slice(0, 3).join(", ")} +${missing.nodeNames.length - 3} more`
                       : missing.nodeNames.join(", ")}

@@ -94,12 +94,14 @@ function getOrCreateGauge(
 // All metrics are GAUGES (point-in-time snapshots). Use max() aggregation across pods.
 // For rate/delta queries, use PromQL delta() function: max(delta(metric[1h]))
 
-// Workflow execution counts by status
+// Workflow execution counts by status and org_slug. Personal/anonymous
+// workflows are emitted under org_slug="_anonymous" so the sum across
+// org_slug for a given status equals the global per-status total.
 const workflowExecutionsTotal = getOrCreateGauge(
   dbRegistry,
   "keeperhub_workflow_executions_total",
-  "Total workflow executions by status (all-time)",
-  ["status"]
+  "Total workflow executions by status, broken down by org_slug (all-time)",
+  ["status", "org_slug"]
 );
 
 // Workflow errors total (convenience gauge for alerting). Labeled by org_slug
@@ -1165,24 +1167,16 @@ export async function updateDbMetrics(): Promise<void> {
       getBillingStatsFromDb(),
     ]);
 
-    // Update workflow execution counts by status (gauges - point-in-time snapshots)
-    workflowExecutionsTotal.set(
-      { status: "success" },
-      workflowStats.totalSuccess
-    );
-    workflowExecutionsTotal.set({ status: "error" }, workflowStats.totalError);
-    workflowExecutionsTotal.set(
-      { status: "running" },
-      workflowStats.totalRunning
-    );
-    workflowExecutionsTotal.set(
-      { status: "pending" },
-      workflowStats.totalPending
-    );
-    workflowExecutionsTotal.set(
-      { status: "cancelled" },
-      workflowStats.totalCancelled
-    );
+    // Update workflow execution counts per (status, org_slug). Reset before
+    // populating so series for orgs that no longer have executions in a given
+    // status clear out instead of going stale.
+    workflowExecutionsTotal.reset();
+    for (const row of workflowStats.executionsByStatusAndOrgSlug) {
+      workflowExecutionsTotal.set(
+        { status: row.status, org_slug: row.orgSlug },
+        row.count
+      );
+    }
 
     // Update workflow errors total per org_slug (convenience gauge for
     // alerting). Reset before populating so series for orgs that no longer

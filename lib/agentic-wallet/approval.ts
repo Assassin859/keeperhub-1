@@ -76,17 +76,17 @@ export function deriveApprovalBinding(
   if (!challenge || typeof challenge !== "object" || Array.isArray(challenge)) {
     return null;
   }
-  const c = challenge as Record<string, unknown>;
+  const challengeFields = challenge as Record<string, unknown>;
 
   const recipient =
     chain === "base"
-      ? String(c.payTo ?? "")
-      : String(c.payTo ?? c.recipient ?? "");
+      ? String(challengeFields.payTo ?? "")
+      : String(challengeFields.payTo ?? challengeFields.recipient ?? "");
   if (!recipient) {
     return null;
   }
 
-  const rawAmount = c.amount;
+  const rawAmount = challengeFields.amount;
   if (rawAmount === undefined || rawAmount === null) {
     return null;
   }

@@ -4,17 +4,37 @@
  * GUARD-06 baseline policies applied ONCE at sub-org creation time.
  * Plan 33-02 (/sign) must NOT call createPolicy or updatePolicy.
  *
- * Phase 37: the eth.tx.* policies fire on signTransaction activities (not
- * exercised by /sign today, kept for future-proofing). The eth.eip_712.*
- * policies fire on signRawPayload + PAYLOAD_ENCODING_EIP712 (the current
- * /sign codepath). Server-side payTo + chainId checks in /sign route are
- * defence-in-depth on top of these.
+ * Phase 37: the eth.tx.* policies fire on signTransaction activities. The
+ * eth.eip_712.* policies fire on signRawPayload + PAYLOAD_ENCODING_EIP712
+ * (the x402/MPP USDC payment path). Server-side payTo + chainId checks in
+ * /sign route are defence-in-depth on top of these.
+ *
+ * ERC-8004 update (2026-05): signTransaction is now exercised by the
+ * /api/agentic-wallet/sign-tx + /api/agentic-wallet/feedback routes for
+ * giveFeedback() calls on the ERC-8004 ReputationRegistry on Ethereum
+ * mainnet. Three new gates were added: outbound contract allowlist now
+ * includes the ReputationRegistry; chain-binding ties each allowed
+ * contract to its native chain id (USDC<->Base/Tempo, ReputationRegistry
+ * <->Ethereum); selector allowlist limits ReputationRegistry interactions
+ * to giveFeedback() only.
+ *
+ * Gas sponsorship (TODO): Today the user wallet pays gas natively for
+ * giveFeedback (~$3-10 per feedback at current Ethereum gas). Both
+ * existing payment paths are gasless from the user's perspective (Base:
+ * EIP-3009 meta-tx, Tempo: MPP sponsor). Future work: sponsor giveFeedback
+ * via either Pimlico (current sponsored-tx infra in lib/web3/pimlico-config.ts)
+ * or Turnkey's native sponsorship. Keeping the policy strict so that
+ * sponsorship can be layered on without policy widening.
  */
 import type { Turnkey } from "@turnkey/sdk-server";
 
-// USDC contract addresses — CONTEXT Resolution #2 (locked 2026-04-21).
-// Single source of truth lives in ./constants.
+// USDC contract addresses + ERC-8004 ReputationRegistry — single source of
+// truth lives in ./constants.
 import {
+  ERC_8004_REPUTATION_REGISTRY_ADDRESS,
+  ERC_8004_REPUTATION_REGISTRY_LC,
+  ETHEREUM_MAINNET_CHAIN_ID,
+  GIVE_FEEDBACK_SELECTOR,
   USDC_BASE_ADDRESS,
   USDC_BASE_LC,
   USDC_TEMPO_ADDRESS,
@@ -24,6 +44,7 @@ import {
 export const FACILITATOR_ALLOWLIST: readonly string[] = [
   USDC_BASE_ADDRESS,
   USDC_TEMPO_ADDRESS,
+  ERC_8004_REPUTATION_REGISTRY_ADDRESS,
 ] as const;
 
 export type BaselinePolicy = {
@@ -60,8 +81,34 @@ export const BASELINE_POLICIES: readonly BaselinePolicy[] = [
   {
     policyName: "allowlist-outbound-contracts",
     effect: "EFFECT_DENY",
-    condition: `!(eth.tx.to in ['${USDC_BASE_LC}', '${USDC_TEMPO_LC}'])`,
-    notes: "GUARD-06: only permit outbound calls to allowlisted USDC contracts",
+    condition: `!(eth.tx.to in ['${USDC_BASE_LC}', '${USDC_TEMPO_LC}', '${ERC_8004_REPUTATION_REGISTRY_LC}'])`,
+    notes:
+      "GUARD-06: only permit outbound calls to allowlisted USDC contracts and the ERC-8004 ReputationRegistry",
+  },
+  // ERC-8004 chain binding (signTransaction). The eth.tx.* condition keys
+  // populate only on ACTIVITY_TYPE_SIGN_TRANSACTION_V2; we gate that
+  // activity discriminator explicitly so unrelated signRawPayload paths do
+  // not incidentally fail this rule. Each allowed contract is bound to its
+  // native chain id so a stolen HMAC cannot replay a USDC payment shape on
+  // Ethereum or, conversely, sign feedback on Base.
+  {
+    policyName: "allowlist-tx-chain-binding",
+    effect: "EFFECT_DENY",
+    condition: `activity.type == 'ACTIVITY_TYPE_SIGN_TRANSACTION_V2' && !((eth.tx.to == '${USDC_BASE_LC}' && eth.tx.chain_id == 8453) || (eth.tx.to == '${USDC_TEMPO_LC}' && (eth.tx.chain_id == 4217 || eth.tx.chain_id == 4218)) || (eth.tx.to == '${ERC_8004_REPUTATION_REGISTRY_LC}' && eth.tx.chain_id == ${ETHEREUM_MAINNET_CHAIN_ID}))`,
+    notes:
+      "GUARD-06 (signTransaction): bind each allowed contract to its native chain id (USDC<->Base/Tempo, ReputationRegistry<->Ethereum)",
+  },
+  // ERC-8004 selector allowlist. Restricts ReputationRegistry interactions
+  // to giveFeedback() — no register, no revokeFeedback, no appendResponse.
+  // This narrows the policy hole to the single function we need; the
+  // agentId argument is intentionally NOT constrained (users can rate any
+  // agent).
+  {
+    policyName: "allowlist-erc8004-selector",
+    effect: "EFFECT_DENY",
+    condition: `eth.tx.to == '${ERC_8004_REPUTATION_REGISTRY_LC}' && eth.tx.function_signature != '${GIVE_FEEDBACK_SELECTOR}'`,
+    notes:
+      "GUARD-06 (ERC-8004): only permit giveFeedback() on the ReputationRegistry",
   },
   // Phase 37 fix #1 (revised): eth.tx.* fields are NOT populated for
   // signRawPayload with PAYLOAD_ENCODING_EIP712. The three policies below are

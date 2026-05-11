@@ -65,6 +65,15 @@ vi.mock("@/app/api/execute/_lib/wallet-check", () => ({
   requireWallet: vi.fn().mockResolvedValue(null),
 }));
 
+vi.mock("@/lib/billing/execution-guard", () => ({
+  enforceExecutionLimit: vi
+    .fn()
+    .mockResolvedValue({ blocked: false, limitResult: null }),
+  EXECUTION_LIMIT_ERROR: "Monthly execution limit exceeded",
+  EXECUTION_DEBT_ERROR:
+    "Executions suspended due to unpaid overage invoice. Please update your payment method.",
+}));
+
 vi.mock("@/lib/utils", () => ({
   getErrorMessage: (err: unknown) =>
     err instanceof Error ? err.message : String(err),

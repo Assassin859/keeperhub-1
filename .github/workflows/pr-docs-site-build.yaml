@@ -1,0 +1,26 @@
+# Type: orchestrator | Calls build-docs-image.yml for PR validation
+# Validates that the docs-site image builds on every PR that touches
+# docs-site/, docs/, or this workflow. Prod deploys still happen via
+# deploy-docs.yaml on push to prod (which calls the same reusable with
+# push: true).
+name: PR Docs Site Build
+
+on:
+  pull_request:
+    paths:
+      - 'docs-site/**'
+      - 'docs/**'
+      - '.github/workflows/build-docs-image.yml'
+      - '.github/workflows/pr-docs-site-build.yaml'
+
+# Cancel an in-progress build when a new commit lands on the same PR.
+# Docs builds are stateless and only the latest commit's result matters.
+concurrency:
+  group: pr-docs-site-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-docs-image.yml
+    with:
+      push: false

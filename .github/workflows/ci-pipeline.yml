@@ -96,3 +96,13 @@ jobs:
     if: ${{ github.ref_name == 'prod' && !failure() && !cancelled() }}
     uses: ./.github/workflows/docs-sync.yml
     secrets: inherit
+
+  # Pin the ERC-8004 agent registry JSON to IPFS (Pinata) on every prod deploy.
+  # Same content -> same CID, so this is a no-op when nothing changed. When the
+  # JSON drifts, the job logs the new ipfs://<cid> + the manual command to run
+  # locally to update the on-chain agentURI. Never sends a tx itself.
+  pin-agent-card:
+    needs: [deploy-ready]
+    if: ${{ github.ref_name == 'prod' && !failure() && !cancelled() }}
+    uses: ./.github/workflows/pin-agent-card.yml
+    secrets: inherit

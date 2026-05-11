@@ -1,6 +1,7 @@
 import "server-only";
 
 import { NextResponse } from "next/server";
+import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import { transferFundsCore } from "@/plugins/web3/steps/transfer-funds-core";
 import { transferTokenCore } from "@/plugins/web3/steps/transfer-token-core";
@@ -33,6 +34,12 @@ export async function POST(request: Request): Promise<NextResponse> {
       { error: "Rate limit exceeded" },
       { status: 429, headers: { "Retry-After": String(rateLimit.retryAfter) } }
     );
+  }
+
+  // 2.5 Plan execution-limit guard
+  const executionGuard = await enforceExecutionLimit(apiKeyCtx.organizationId);
+  if (executionGuard.blocked) {
+    return executionGuard.response;
   }
 
   // 3. Parse body

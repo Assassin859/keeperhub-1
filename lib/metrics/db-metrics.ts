@@ -49,7 +49,7 @@ const WORKFLOW_DURATION_BUCKETS = [
 const STEP_DURATION_BUCKETS = [50, 100, 250, 500, 1000, 2000, 5000];
 
 export type WorkflowStats = {
-  // Total executions by status
+  // Total executions by status (sum across all orgs)
   totalSuccess: number;
   totalError: number;
   totalRunning: number;
@@ -59,6 +59,15 @@ export type WorkflowStats = {
   // Error count per org slug. Personal/anonymous workflows are bucketed
   // under ANONYMOUS_ORG_SLUG so the sum across this map matches totalError.
   errorByOrgSlug: Record<string, number>;
+
+  // Per-(status, org_slug) execution counts. Personal/anonymous workflows
+  // are bucketed under ANONYMOUS_ORG_SLUG so the sum of counts for a given
+  // status across all orgs matches the corresponding total* above.
+  executionsByStatusAndOrgSlug: Array<{
+    status: string;
+    orgSlug: string;
+    count: number;
+  }>;
 
   // Duration histogram data (count of executions in each bucket)
   durationBuckets: number[];
@@ -74,15 +83,6 @@ export type WorkflowStats = {
  */
 export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
   try {
-    // Query execution counts by status
-    const statusCounts = await db
-      .select({
-        status: workflowExecutions.status,
-        count: count(),
-      })
-      .from(workflowExecutions)
-      .groupBy(workflowExecutions.status);
-
     const stats: WorkflowStats = {
       totalSuccess: 0,
       totalError: 0,
@@ -90,55 +90,59 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
       totalPending: 0,
       totalCancelled: 0,
       errorByOrgSlug: {},
+      executionsByStatusAndOrgSlug: [],
       durationBuckets: new Array(WORKFLOW_DURATION_BUCKETS.length + 1).fill(0),
       durationSum: 0,
       durationCount: 0,
     };
 
-    for (const row of statusCounts) {
-      switch (row.status) {
-        case "success":
-          stats.totalSuccess = row.count;
-          break;
-        case "error":
-          stats.totalError = row.count;
-          break;
-        case "running":
-          stats.totalRunning = row.count;
-          break;
-        case "pending":
-          stats.totalPending = row.count;
-          break;
-        case "cancelled":
-          stats.totalCancelled = row.count;
-          break;
-        default:
-          // Ignore unknown status values
-          break;
-      }
-    }
-
-    // Per-org error breakdown: JOIN workflows + organization, LEFT JOIN so
-    // anonymous workflows still contribute (under ANONYMOUS_ORG_SLUG).
-    // GROUP BY uses the column reference (not the COALESCE expression):
-    // Drizzle would otherwise bind ANONYMOUS_ORG_SLUG as separate parameters
-    // in SELECT and GROUP BY clauses, and Postgres rejects the query because
-    // the two COALESCE expressions are not textually identical. Postgres
-    // groups all NULL slugs into one group (NULLs are equal in GROUP BY),
-    // and the SELECT-side COALESCE renders that group as ANONYMOUS_ORG_SLUG.
-    const errorByOrg = await db
+    // Per-(status, org_slug) execution breakdown: JOIN workflows + organization,
+    // LEFT JOIN so anonymous workflows still contribute (under ANONYMOUS_ORG_SLUG).
+    // GROUP BY uses the organization.slug column reference (not the COALESCE
+    // expression): Drizzle would otherwise bind ANONYMOUS_ORG_SLUG as separate
+    // parameters in SELECT and GROUP BY clauses, and Postgres rejects the query
+    // because the two COALESCE expressions are not textually identical. Postgres
+    // groups all NULL slugs into one group (NULLs are equal in GROUP BY), and
+    // the SELECT-side COALESCE renders that group as ANONYMOUS_ORG_SLUG.
+    const breakdown = await db
       .select({
+        status: workflowExecutions.status,
         orgSlug: sql<string>`COALESCE(${organization.slug}, ${ANONYMOUS_ORG_SLUG})`,
         count: count(),
       })
       .from(workflowExecutions)
       .innerJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
       .leftJoin(organization, eq(workflows.organizationId, organization.id))
-      .where(eq(workflowExecutions.status, "error"))
-      .groupBy(organization.slug);
+      .groupBy(workflowExecutions.status, organization.slug);
 
-    for (const row of errorByOrg) {
-      stats.errorByOrgSlug[row.orgSlug] = Number(row.count) || 0;
+    for (const row of breakdown) {
+      const c = Number(row.count) || 0;
+      stats.executionsByStatusAndOrgSlug.push({
+        status: row.status,
+        orgSlug: row.orgSlug,
+        count: c,
+      });
+      switch (row.status) {
+        case "success":
+          stats.totalSuccess += c;
+          break;
+        case "error":
+          stats.totalError += c;
+          stats.errorByOrgSlug[row.orgSlug] = c;
+          break;
+        case "running":
+          stats.totalRunning += c;
+          break;
+        case "pending":
+          stats.totalPending += c;
+          break;
+        case "cancelled":
+          stats.totalCancelled += c;
+          break;
+        default:
+          // Ignore unknown status values
+          break;
+      }
     }
 
     // Query duration histogram data for completed executions
@@ -193,6 +197,7 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
       totalPending: 0,
       totalCancelled: 0,
       errorByOrgSlug: {},
+      executionsByStatusAndOrgSlug: [],
       durationBuckets: new Array(WORKFLOW_DURATION_BUCKETS.length + 1).fill(0),
       durationSum: 0,
       durationCount: 0,

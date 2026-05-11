@@ -9,7 +9,7 @@ The KeeperHub Marketplace lets you publish workflows that AI agents and users ca
 
 ## How it works
 
-When you list a workflow, KeeperHub registers it as a resource under its own entry on the x402 and MPP registries (ERC-8004). Agents browsing those registries find KeeperHub as a service provider, then see your listed workflow as a callable resource alongside everyone else's.
+When you list a workflow, KeeperHub registers it as a resource under its own entry on the x402, MPP, and ERC-8004 registries. Agents browsing those registries find KeeperHub as a service provider, then see your listed workflow as a callable resource alongside everyone else's.
 
 To callers, a listed workflow is a black box: they supply the inputs you define, pay the price you set, and get back the outputs you expose. Your node graph stays private.
 
@@ -94,10 +94,11 @@ Keep outputs clean. Return the data the caller asked for. Avoid exposing interna
 
 Once listed, your workflow turns green in the editor. You can find all of your listed workflows on the [**Earnings**](/workflows/marketplace#earnings) page in the left nav, alongside their per-call revenue and invocation counts.
 
-Your workflow is now registered on both x402scan.com and mppscan.com under KeeperHub's registration. Agents browsing those registries see it as a callable resource at `https://app.keeperhub.com/api/mcp/workflows/<slug>/call`. KeeperHub's own registry pages are public:
+Your workflow is now registered on x402scan.com, mppscan.com, and 8004scan.io under KeeperHub's registration. Agents browsing those registries see it as a callable resource at `https://app.keeperhub.com/api/mcp/workflows/<slug>/call`, and as a single-tool MCP server at `https://app.keeperhub.com/mcp/w/<slug>` that an agent can install directly into Claude Code, Cursor, or Windsurf — see [Per-Workflow MCP Servers](/ai-tools/mcp-server#per-workflow-mcp-servers) for the install snippet. KeeperHub's own registry pages are public:
 
 - [KeeperHub on x402scan](https://www.x402scan.com/server/59aa13ab-2a99-4409-a4e1-8927f4006b29)
 - [KeeperHub on mppscan](https://mppscan.com/server/3a9395b49a059838086613a280a30d94b812991214d6fcb215a1d3c2196d5785)
+- [KeeperHub on 8004scan](https://8004scan.io/agents/ethereum/31875)
 
 The slug, your listed price, and your input/output schema are what agents see. The internal node logic stays private.
 
@@ -113,6 +114,17 @@ You can see your earnings breakdown on the **Earnings** page in KeeperHub:
 - Your earnings (70%).
 
 Earnings are broken down by payment network (Base via x402, Tempo via MPP).
+
+### Execution quota
+
+When a Marketplace caller pays for one of your listed workflows at **$0.05 USDC per call or higher**, that execution does not count toward your organization's monthly execution limit. Marketplace revenue covers the cost on KeeperHub's side, so charging your plan's quota on top would be double-counting.
+
+The exemption is gated on actual payment receipt, not on listing state alone. So:
+
+- **Only paid Marketplace calls qualify.** When you click Run in the editor, or the workflow fires from a schedule, block trigger, event, webhook, or direct API call, no payment is recorded and the run counts toward your quota normally, even if the workflow is listed at the threshold price. The exemption is for revenue you actually received, not for the act of listing.
+- **The price floor is a hard cutoff.** A listing priced at $0.049 gives no quota relief; one at $0.05 is fully exempt. The floor prevents an owner from publishing at $0 (or near it) and self-calling through the marketplace to accumulate free executions.
+- **The exemption is locked in per call.** Once a paid call is recorded as exempt, raising or lowering the listing price afterward does not change the verdict for past calls. Future calls are evaluated against the price in effect at their moment of payment.
+- **Direct API and private workflows are unaffected.** Direct executions and runs of any workflow you haven't listed always count toward your quota.
 
 ### Receiving revenue on two chains
 
@@ -201,7 +213,7 @@ Your slug, on the other hand, is public. x402scan.com and mppscan.com index it u
 
 Reliability is on you. Callers are only charged on successful execution, but repeat failures cost you trust (and revenue, since agents stop calling you). Watch the Earnings page after any workflow change.
 
-Calls run inside your KeeperHub organization. Whichever connected wallets, integrations, and execution credits the workflow uses are charged to your org, not the caller's.
+Calls run inside your KeeperHub organization. Connected wallets and integrations the workflow uses are billed to your org, not the caller's. Executions of listings priced at $0.05 USDC or higher are exempt from your monthly execution quota; see [Execution quota](#execution-quota) above.
 
 ## Reference implementation
 

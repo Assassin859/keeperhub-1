@@ -8,9 +8,11 @@
 // lib/hooks/use-persisted-nav-state.ts. See plan 42-04 SUMMARY for context;
 // plan 42-06's executor should NOT remove these exports.
 //
-// Phase 43 plan 43-08: VERSION bumped from 2 -> 3 and the panel-state shape
-// gains a `sort` field (HUB-23, HUB-25). Existing v2 snapshots are discarded
-// on hydration so the user gets the new sidebar Sort + Tags layout.
+// KEEP-450: VERSION bumped from 3 -> 4 when the navigation cascade was
+// flattened (Tags as subheaders inside the Projects panel; the third-level
+// Workflows panel was removed). Existing v3 snapshots are discarded on
+// hydration so stale `panels.workflows` / `selectedTagId` cannot leak into
+// the new layout.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -40,9 +42,9 @@ describe("usePersistedNavState (NAV-07 + HUB-25)", () => {
     expect(result.panels.sort).toBe("closed");
   });
 
-  it("returns parsed state when localStorage version matches VERSION = 3", () => {
+  it("returns parsed state when localStorage version matches VERSION = 4", () => {
     const stored = {
-      version: 3,
+      version: 4,
       sidebar: false,
       panels: {
         projects: "open" as const,
@@ -56,7 +58,7 @@ describe("usePersistedNavState (NAV-07 + HUB-25)", () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
 
     const result = loadState();
-    expect(result.version).toBe(3);
+    expect(result.version).toBe(4);
     expect(result.sidebar).toBe(false);
     expect(result.selectedProjectId).toBe("p-1");
     expect(result.panels.projects).toBe("open");
@@ -86,7 +88,7 @@ describe("usePersistedNavState (NAV-07 + HUB-25)", () => {
     expect(reread).toEqual(DEFAULT_STATE);
   });
 
-  it("discards localStorage when the version is not 3", () => {
+  it("discards localStorage when the version is not 4", () => {
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
@@ -104,25 +106,32 @@ describe("usePersistedNavState (NAV-07 + HUB-25)", () => {
     expect(result.selectedProjectId).toBeNull();
   });
 
-  it("discards stored version=2 (Phase 42 snapshot) and returns DEFAULT_STATE", () => {
-    // HUB-25: v2 snapshots predate the panels.sort field; they MUST be
-    // discarded on hydration so the new sidebar Sort + Tags layout owns
-    // first paint.
+  it("discards stored version=3 snapshot and returns DEFAULT_STATE", () => {
+    // KEEP-450: v3 snapshots predate the navigation cascade flatten (Tags
+    // moved to subheaders inside the Projects panel; Workflows panel
+    // removed). They MUST be discarded so stale `panels.workflows` /
+    // `selectedTagId` cannot leak into the new layout.
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
-        version: 2,
+        version: 3,
         sidebar: true,
-        panels: { projects: "closed", tags: "closed", workflows: "closed" },
+        panels: {
+          projects: "closed",
+          tags: "closed",
+          workflows: "open",
+          sort: "closed",
+        },
         selectedProjectId: null,
-        selectedTagId: null,
+        selectedTagId: "stale-tag-id",
       })
     );
 
     const result = loadState();
     expect(result).toEqual(DEFAULT_STATE);
     expect(result.version).toBe(VERSION);
-    expect(result.panels.sort).toBe("closed");
+    expect(result.panels.workflows).toBe("closed");
+    expect(result.selectedTagId).toBeNull();
   });
 
   it("writes the version field on persist", () => {
@@ -137,7 +146,7 @@ describe("usePersistedNavState (NAV-07 + HUB-25)", () => {
       return;
     }
     const parsed = JSON.parse(raw);
-    expect(parsed.version).toBe(3);
+    expect(parsed.version).toBe(4);
     expect(parsed.sidebar).toBe(false);
     expect(parsed.panels.sort).toBe("closed");
   });

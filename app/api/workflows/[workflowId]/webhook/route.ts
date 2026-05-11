@@ -20,11 +20,18 @@ import { apiKeys, workflowExecutions, workflows } from "@/lib/db/schema";
 import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
 import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
+type ValidateApiKeyResult = {
+  valid: boolean;
+  error?: string;
+  statusCode?: number;
+  errorBody?: Record<string, unknown>;
+};
+
 // Validate API key and return the user ID if valid
 async function validateApiKey(
   authHeader: string | null,
   workflowUserId: string
-): Promise<{ valid: boolean; error?: string; statusCode?: number }> {
+): Promise<ValidateApiKeyResult> {
   if (!authHeader) {
     return {
       valid: false,
@@ -39,7 +46,34 @@ async function validateApiKey(
     : authHeader;
 
   if (!key?.startsWith("wfb_")) {
-    return { valid: false, error: "Invalid API key format", statusCode: 401 };
+    // Builders frequently paste their org-scoped kh_* key here because the
+    // rest of the API accepts it. Surface the prefix mismatch explicitly so
+    // they don't have to discover via Discord that this endpoint expects a
+    // user webhook key (KEEP-469).
+    if (key?.startsWith("kh_")) {
+      return {
+        valid: false,
+        statusCode: 401,
+        error:
+          "Wrong API key type. This endpoint requires a user webhook key (wfb_*). The kh_* prefix is an org API key for /api/execute/* and /mcp.",
+        errorBody: {
+          code: "wrong_key_type",
+          expected: "wfb_*",
+          received: "kh_*",
+          hint: "Generate a webhook key from the user menu > API Keys > Webhook tab, then pass it as `Authorization: Bearer wfb_...`.",
+        },
+      };
+    }
+    return {
+      valid: false,
+      statusCode: 401,
+      error:
+        "Invalid API key format. Expected a user webhook key starting with wfb_.",
+      errorBody: {
+        code: "invalid_key_format",
+        expected: "wfb_*",
+      },
+    };
   }
 
   // Hash the key to compare with stored hash
@@ -89,7 +123,8 @@ function failResponse(
   workflowId: string,
   timer: () => number,
   statusCode: number,
-  message: string
+  message: string,
+  extraBody?: Record<string, unknown>
 ): NextResponse {
   recordWebhookMetrics({
     workflowId,
@@ -98,7 +133,7 @@ function failResponse(
     error: message,
   });
   return NextResponse.json(
-    { error: message },
+    { error: message, ...extraBody },
     { status: statusCode, headers: corsHeaders }
   );
 }
@@ -195,8 +230,9 @@ export async function POST(
       return failResponse(
         workflowId,
         timer,
-        apiKeyValidation.statusCode || 401,
-        apiKeyValidation.error ?? "Invalid API key"
+        apiKeyValidation.statusCode ?? 401,
+        apiKeyValidation.error ?? "Invalid API key",
+        apiKeyValidation.errorBody
       );
     }
 

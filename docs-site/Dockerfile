@@ -5,9 +5,13 @@ FROM base AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
-# Copy package files
-COPY docs-site/package.json ./
-RUN corepack enable pnpm && pnpm install
+# Copy package files. Both package.json AND pnpm-lock.yaml are required so
+# the install resolves to the exact versions the lockfile pins. Without the
+# lockfile, pnpm floats every range fresh on each build, which has caused
+# transparent registry-side dep regressions to break the docs build with
+# Server Components prerender errors.
+COPY docs-site/package.json docs-site/pnpm-lock.yaml ./
+RUN corepack enable pnpm && pnpm install --frozen-lockfile
 
 # Rebuild the source code only when needed
 FROM base AS builder
@@ -25,6 +29,9 @@ COPY docs/ ./content/
 # Build the application
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
+# Tell pnpm it's running non-interactively so v11+ doesn't abort on its
+# pre-script deps-status check (ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY).
+ENV CI=true
 
 RUN corepack enable pnpm && pnpm run build
 

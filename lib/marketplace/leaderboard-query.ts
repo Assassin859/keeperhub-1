@@ -72,7 +72,8 @@ async function runLeaderboardQuery(
   sort: MarketplaceSort,
   cursor: CursorPayload | null,
   query: string,
-  tagSlug: string | null
+  tagSlug: string | null,
+  ownerName: string | null
 ): Promise<MarketplaceLeaderboardResult> {
   // PUBLIC COLUMN WHITELIST -- see MARKET-04. Adding fields here requires
   // re-reading MARKET-04 + MARKET-13 first. NEVER add private columns:
@@ -102,14 +103,31 @@ async function runLeaderboardQuery(
         )
       : undefined;
 
-  // Free-text filter on the public display name. Case-insensitive, simple
-  // substring match; no full-text indexing yet — fine at v1.11 scale. Escape
-  // LIKE metacharacters so a user typing `_` or `%` doesn't get unexpected
-  // wildcard semantics.
-  const queryFilter =
-    query === ""
+  // Free-text filter spanning the public display name and the joined
+  // organization name (the marketplace's two human-facing labels). A user
+  // typing "keeperhub" finds rows whose name or owner contains the term.
+  // Case-insensitive, simple substring match; no full-text indexing yet —
+  // fine at v1.11 scale. Escape LIKE metacharacters so a user typing `_` or
+  // `%` doesn't get unexpected wildcard semantics.
+  const queryFilter = (() => {
+    if (query === "") {
+      return undefined;
+    }
+    const pattern = `%${escapeLikePattern(query)}%`;
+    return or(
+      ilike(workflows.name, pattern),
+      ilike(organization.name, pattern)
+    );
+  })();
+
+  // Owner filter — exact case-insensitive match on the joined organization
+  // name. Used by the clickable owner cell so clicking "KeeperHub" returns
+  // only that org's listings, not "KeeperHub Demo" too. The COUNT query
+  // below applies the same filter for an accurate "Showing N of TOTAL".
+  const ownerFilter =
+    ownerName === null
       ? undefined
-      : ilike(workflows.name, `%${escapeLikePattern(query)}%`);
+      : sql`lower(${organization.name}) = lower(${ownerName})`;
 
   // Tag filter — restrict to workflows linked to the given public tag slug.
   // Resolved via a sub-select on workflow_public_tags + public_tags (slug is
@@ -128,7 +146,13 @@ async function runLeaderboardQuery(
       )
     : undefined;
 
-  const whereClause = and(baseFilter, cursorFilter, queryFilter, tagFilter);
+  const whereClause = and(
+    baseFilter,
+    cursorFilter,
+    queryFilter,
+    tagFilter,
+    ownerFilter
+  );
 
   const orderClause = (() => {
     if (sort === "newest") {
@@ -145,10 +169,7 @@ async function runLeaderboardQuery(
     if (sort === "owner") {
       // Owner sort: A→Z by joined organization name; anonymous (null)
       // listings sink to the bottom so named providers lead. Tiebreak by id.
-      return [
-        sql`${organization.name} asc nulls last`,
-        desc(workflows.id),
-      ];
+      return [sql`${organization.name} asc nulls last`, desc(workflows.id)];
     }
     return [desc(callCountExpr), desc(workflows.id)];
   })();
@@ -185,9 +206,10 @@ async function runLeaderboardQuery(
   // workflows.is_listed has an index path; the optional ILIKE adds a
   // small linear scan over the listed subset.
   const totalRow = await db
-    .select({ value: sql<number>`count(*)::int` })
+    .select({ value: sql<number>`count(distinct ${workflows.id})::int` })
     .from(workflows)
-    .where(and(baseFilter, queryFilter, tagFilter));
+    .leftJoin(organization, eq(organization.id, workflows.organizationId))
+    .where(and(baseFilter, queryFilter, tagFilter, ownerFilter));
   const total = totalRow[0]?.value ?? 0;
 
   const hasMore = rows.length > PAGE_LIMIT;
@@ -248,10 +270,11 @@ async function fetchUncached(
   sort: MarketplaceSort,
   cursorRaw: string | null,
   query: string,
-  tagSlug: string | null
+  tagSlug: string | null,
+  ownerName: string | null
 ): Promise<MarketplaceLeaderboardResult> {
   const cursor = decodeCursor(cursorRaw);
-  return await runLeaderboardQuery(sort, cursor, query, tagSlug);
+  return await runLeaderboardQuery(sort, cursor, query, tagSlug, ownerName);
 }
 
 // Bypass unstable_cache in dev so editor changes (schema, sort columns,

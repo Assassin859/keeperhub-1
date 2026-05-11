@@ -289,16 +289,29 @@ max(keeperhub_user_total{cluster="prod", namespace="keeperhub"})
 sum(keeperhub_user_total{cluster="prod", namespace="keeperhub"})
 ```
 
-**For labeled gauges, use `max by (label)`:**
+**For labeled gauges where the label is a *replication* dimension (same value across pods), use `max by (label)`:**
 
 ```promql
 # CORRECT
-max by (status) (keeperhub_workflow_executions_total{...})
 max by (role) (keeperhub_org_members_by_role{...})
+```
 
-# WRONG
+**For labeled gauges where the label is a *partition* dimension (different values per series that should be summed), combine `max` (to dedupe across pods) with `sum` (to aggregate across partitions):**
+
+```promql
+# CORRECT - sum across org_slug, dedupe across pods
+sum by (status) (
+  max by (status, org_slug) (keeperhub_workflow_executions_total{...})
+)
+
+# WRONG - returns max-across-orgs, NOT total
+max by (status) (keeperhub_workflow_executions_total{...})
+
+# WRONG - double-counts across pods
 sum by (status) (keeperhub_workflow_executions_total{...})
 ```
+
+`keeperhub_workflow_executions_total` and `keeperhub_workflow_execution_errors_total` are labeled by `org_slug` so dashboards/alerts can scope to managed clients. Personal/anonymous workflows are emitted under `org_slug="_anonymous"` so the sum across `org_slug` for a given status equals the unfiltered per-status total. To filter to managed clients, add `org_slug=~"techops-services|ajna"` (or the inverse `!~` for user workflows).
 
 **Metrics requiring `max()` aggregation:**
 
@@ -330,22 +343,30 @@ For rate and change-over-time queries on DB-sourced gauges, use PromQL's `delta(
 **PromQL examples:**
 
 ```promql
-# Point-in-time snapshots (use max() for multi-pod)
-max(keeperhub_workflow_executions_total{status="error"})
-max(keeperhub_workflow_execution_errors_total)
+# Total errors across all orgs (sum across org_slug, dedupe across pods)
+sum(max by (org_slug) (keeperhub_workflow_execution_errors_total))
 
-# Errors added in the last hour
-max(delta(keeperhub_workflow_execution_errors_total[1h]))
+# Total successful executions across all orgs
+sum(max by (status, org_slug) (keeperhub_workflow_executions_total{status="success"}))
 
-# Errors per minute (rate)
-max(delta(keeperhub_workflow_execution_errors_total[1h])) / 60
+# Errors added in the last hour, summed across orgs
+sum(max by (org_slug) (delta(keeperhub_workflow_execution_errors_total[1h])))
 
-# Executions in last 30 minutes by status
-max by (status) (delta(keeperhub_workflow_executions_total[30m]))
+# Executions in last 30 minutes by status, summed across orgs
+sum by (status) (
+  max by (status, org_slug) (delta(keeperhub_workflow_executions_total[30m]))
+)
 
-# Error rate percentage over last hour
-100 * max(delta(keeperhub_workflow_execution_errors_total[1h]))
-    / clamp_min(max(delta(keeperhub_workflow_executions_total[1h])), 1)
+# Error rate over last hour, scoped to managed orgs
+100 * sum(max by (org_slug) (
+        delta(keeperhub_workflow_execution_errors_total{org_slug=~"techops-services|ajna"}[1h])
+      ))
+    / clamp_min(
+        sum(max by (status, org_slug) (
+          delta(keeperhub_workflow_executions_total{org_slug=~"techops-services|ajna"}[1h])
+        )),
+        1
+      )
 ```
 
 **delta() vs offset:**

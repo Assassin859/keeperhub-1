@@ -1,9 +1,9 @@
 import { type NextRequest, NextResponse } from "next/server";
+import { EARNINGS_PAGE_SIZE } from "@/lib/earnings/constants";
 import { getEarningsSummary } from "@/lib/earnings/queries";
 import { requireOrganization } from "@/lib/middleware/require-org";
 
 const DEFAULT_PAGE = 1;
-const DEFAULT_PAGE_SIZE = 10;
 const MAX_PAGE_SIZE = 50;
 
 /**
@@ -47,7 +47,7 @@ export const GET = requireOrganization(
     );
     const pageSize = parseIntParam(
       url.searchParams.get("pageSize"),
-      DEFAULT_PAGE_SIZE,
+      EARNINGS_PAGE_SIZE,
       1,
       MAX_PAGE_SIZE
     );

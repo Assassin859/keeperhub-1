@@ -305,7 +305,7 @@ env:
   # Billing (Stripe)
   NEXT_PUBLIC_BILLING_ENABLED:
     type: kv
-    value: "false"
+    value: "true"
   NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED:
     type: kv
     value: "false"
