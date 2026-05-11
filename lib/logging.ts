@@ -271,30 +271,30 @@ export function logSystemError(
 }
 
 /**
- * Log a system-level warning with forensic context but no alert.
+ * Log a system-level warning. Emits a Sentry event at warning level and a
+ * console.warn line. Does NOT emit a Prometheus metric and does NOT page.
  *
  * Use for events in system-owned code that need ALS context (org/owner ids)
- * and Sentry forensics, but are NOT operational failures. Examples:
+ * for later investigation but are NOT operational failures. Examples:
  * - Pre-reconciliation notes where the final classification is not yet known
  * - Recovery events (spurious SDK error overridden back to success)
  * - Expected fallbacks worth recording for debugging
  *
- * Differs from logSystemError:
- *   - console.warn instead of console.error
- *   - Sentry captured at level=warning (does not page oncall)
- *   - Emits NO Prometheus metric (so it cannot trip system-error alerts)
+ * Side effects (compare to siblings):
  *
- * Differs from logUserError:
- *   - Emits no metric (logUserError emits a user-error counter)
- *   - No is_user_error Sentry tag (see below)
+ * |                        | console     | Sentry          | Metric    |
+ * | ---------------------- | ----------- | --------------- | --------- |
+ * | logSystemError         | error       | error event     | counter+1 |
+ * | logSystemWarn (this)   | warn        | warning event   | none      |
+ * | logUserError           | warn        | warning event   | counter+1 |
  *
  * Sentry tag policy:
- *   - is_user_error is intentionally NOT set. At the call site for a
- *     logSystemWarn we typically do not yet know whether the underlying
- *     failure is user-caused or engine-caused -- forcing it to "false"
+ *   - is_user_error is intentionally NOT set. At the call sites where this
+ *     helper fires we typically do not yet know whether the underlying
+ *     failure is user-caused or engine-caused -- forcing the tag to "false"
  *     would let alerts filtering `is_user_error:false` match these events
  *     and re-trip the same dashboards we are trying to keep quiet. The
- *     event's `level=warning` is the canonical filter for these.
+ *     event's `level=warning` is the canonical filter.
  */
 export function logSystemWarn(
   category: ErrorCategory,
