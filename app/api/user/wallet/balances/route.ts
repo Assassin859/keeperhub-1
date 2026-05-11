@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { ethers } from "ethers";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
@@ -139,11 +139,21 @@ export async function GET(request: Request) {
         (safeChainId === null || chain.chainId === safeChainId)
     );
 
-    // Get tracked tokens for this organization
+    // Get tracked tokens scoped to the requested wallet view: when
+    // safeId is set, only rows tagged to that Safe; otherwise org-level
+    // rows tracked under the Turnkey EOA (safe_wallet_id IS NULL).
+    const tokenScopeCondition = safeIdParam
+      ? eq(organizationTokens.safeWalletId, safeIdParam)
+      : isNull(organizationTokens.safeWalletId);
     const trackedTokens = await db
       .select()
       .from(organizationTokens)
-      .where(eq(organizationTokens.organizationId, activeOrgId));
+      .where(
+        and(
+          eq(organizationTokens.organizationId, activeOrgId),
+          tokenScopeCondition
+        )
+      );
 
     // Group tokens by chainId
     const tokensByChain = new Map<number, typeof trackedTokens>();

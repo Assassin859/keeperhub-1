@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
 import { Overlay } from "@/components/overlays/overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import type { WalletAccountKind } from "@/components/overlays/wallet/account-row";
@@ -181,6 +182,82 @@ export function AccountDetailOverlay({
 
   const withdrawHandler = isSafe ? safeWithdraw : onWithdraw;
 
+  // Safe-scoped Add token: POSTs `safeId` so the row is tagged to this
+  // Safe instead of the org/EOA, then refetches the Safe balances so the
+  // newly tracked token appears with its balance in the Assets tab.
+  const safeAddToken = useCallback(
+    async (chainId: number, tokenAddress: string): Promise<void> => {
+      if (account.kind !== "safe") {
+        return;
+      }
+      const res = await fetch("/api/user/wallet/tokens", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chainId,
+          tokenAddress,
+          safeId: account.safeId,
+        }),
+      });
+      const data = (await res.json()) as {
+        token?: { symbol: string };
+        error?: string;
+      };
+      if (!(res.ok && data.token)) {
+        throw new Error(data.error ?? "Failed to add token");
+      }
+      toast.success(`Added ${data.token.symbol} to ${account.chainName}`);
+      const safeChain = chains.find((c) => c.chainId === account.chainId);
+      if (safeChain) {
+        await safeBalances.refreshBalances(
+          account.address,
+          [safeChain],
+          { safeId: account.safeId }
+        );
+      }
+    },
+    [account, chains, safeBalances]
+  );
+
+  // Safe-scoped remove: the existing DELETE already validates the row's
+  // organization_id; the only additional thing we need on the Safe side
+  // is to refresh the Safe balances so the row disappears immediately.
+  const safeRemoveToken = useCallback(
+    async (tokenId: string, symbol: string): Promise<void> => {
+      if (account.kind !== "safe") {
+        return;
+      }
+      try {
+        const res = await fetch("/api/user/wallet/tokens", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tokenId }),
+        });
+        if (!res.ok) {
+          const data = (await res.json()) as { error?: string };
+          throw new Error(data.error ?? "Failed to remove token");
+        }
+        toast.success(`Removed ${symbol} from ${account.chainName}`);
+        const safeChain = chains.find((c) => c.chainId === account.chainId);
+        if (safeChain) {
+          await safeBalances.refreshBalances(
+            account.address,
+            [safeChain],
+            { safeId: account.safeId }
+          );
+        }
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Failed to remove token"
+        );
+      }
+    },
+    [account, chains, safeBalances]
+  );
+
+  const addTokenHandler = isSafe ? safeAddToken : onAddToken;
+  const removeTokenHandler = isSafe ? safeRemoveToken : onRemoveToken;
+
   return (
     <Overlay
       actions={[{ label: "Back", onClick: pop, variant: "outline" }]}
@@ -208,8 +285,8 @@ export function AccountDetailOverlay({
             chains={chains}
             isAdmin={isAdmin}
             isLoadingBalances={assetsLoading}
-            onAddToken={onAddToken}
-            onRemoveToken={onRemoveToken}
+            onAddToken={addTokenHandler}
+            onRemoveToken={removeTokenHandler}
             onWithdraw={withdrawHandler}
             supportedTokenBalances={assetsSupportedTokenBalances}
             tokenBalances={assetsTokenBalances}

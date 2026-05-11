@@ -413,6 +413,15 @@ export const organizationTokens = pgTable(
     organizationId: text("organization_id")
       .notNull()
       .references(() => organization.id, { onDelete: "cascade" }),
+    /**
+     * When set, the tracking is scoped to that Safe. The same token may
+     * be tracked independently at the org-level (safeWalletId = null) for
+     * the Turnkey EOA, and per-Safe for as many Safes as the org has. The
+     * unique index below treats NULL as a distinct group via COALESCE.
+     */
+    safeWalletId: text("safe_wallet_id").references(() => safeWallets.id, {
+      onDelete: "cascade",
+    }),
     chainId: integer("chain_id").notNull(),
     tokenAddress: text("token_address").notNull(), // ERC20 contract address
     symbol: text("symbol").notNull(), // Cached token symbol
@@ -423,6 +432,7 @@ export const organizationTokens = pgTable(
   },
   (table) => [
     index("idx_org_tokens_org_chain").on(table.organizationId, table.chainId),
+    index("idx_org_tokens_safe").on(table.safeWalletId),
   ]
 );
 

@@ -389,7 +389,11 @@ export function ChainBalanceItem({
   const isIndependentTokenList = hasIndependentTokenList(balance.chainId);
 
   const chainSupportedTokens = (() => {
-    if (isIndependentTokenList) {
+    // In `bare` mode the parent is a per-Safe view, so the balances feed
+    // only carries this chain's tokens (no Ethereum-mainnet fallback list
+    // exists in the response). Mirror the independent-token-list path so
+    // the row doesn't stall on the "Loading tokens..." placeholder.
+    if (isIndependentTokenList || bare) {
       return supportedTokenBalances.filter(
         (t) => t.chainId === balance.chainId
       );
