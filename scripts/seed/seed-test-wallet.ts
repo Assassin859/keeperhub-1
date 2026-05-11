@@ -1,22 +1,24 @@
 /**
- * Seed script for persistent E2E test account
+ * Seed script for persistent E2E test account (KEEP-529).
  *
- * Seeds a test user (with login credentials) + organization + Para wallet
+ * Seeds a test user (with login credentials) + organization + Turnkey wallet
  * for write-contract E2E tests and Playwright tests.
  * Idempotent: skips records that already exist.
  *
- * The wallet data is hardcoded from the pre-provisioned Para wallet
- * (same wallet used by keeper-app). This avoids calling the Para API
- * at seed time and ensures deterministic wallet addresses across CI runs.
+ * Para has been decommissioned. On first run the script calls Turnkey to
+ * provision a fresh sub-org + wallet for the test user; the resulting EVM
+ * address is non-deterministic (HSM-generated) and is persisted in
+ * `organization_wallets`. Subsequent runs reuse the existing wallet row.
  *
  * Test credentials:
  *   Email:    pr-test-do-not-delete@techops.services
  *   Password: TestPassword123!
  *
  * Environment variables:
- *   DATABASE_URL                - PostgreSQL connection string (required)
- *   TEST_WALLET_ENCRYPTION_KEY  - 32-byte hex key for encrypting user share (required for wallet)
- *   TEST_PARA_USER_SHARE        - Raw Para user share base64 string (required for wallet)
+ *   DATABASE_URL              - PostgreSQL connection string (required)
+ *   TURNKEY_API_PUBLIC_KEY    - parent-org API public key (required for first-time provisioning)
+ *   TURNKEY_API_PRIVATE_KEY   - parent-org API private key (required for first-time provisioning)
+ *   TURNKEY_ORGANIZATION_ID   - parent-org id (required for first-time provisioning)
  *
  * Run with: pnpm db:seed-test-wallet
  */
@@ -30,7 +32,6 @@ import { hashPassword } from "better-auth/crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import { encryptUserShare } from "@/lib/encryption";
 import { getDatabaseUrl } from "../../lib/db/connection-utils";
 import {
   accounts,
@@ -39,16 +40,12 @@ import {
   paraWallets,
   users,
 } from "../../lib/db/schema";
+import { createTurnkeyWallet } from "../../lib/turnkey/turnkey-operations";
 import { generateId } from "../../lib/utils/id";
 
 const TEST_ORG_SLUG = "e2e-test-org";
 const TEST_USER_EMAIL = "pr-test-do-not-delete@techops.services";
 const TEST_PASSWORD = "TestPassword123!";
-
-// Hardcoded wallet data from pre-provisioned Para wallet
-// Same wallet used by keeper-app (KeeperHub Staging partner)
-const TEST_WALLET_ID = "3b1acc96-170f-4148-800b-7bca3e2ee6ad";
-const TEST_WALLET_ADDRESS = "0x4f1089424dcf25b1290631df483a436b320e51a1";
 
 type Db = ReturnType<typeof drizzle>;
 
@@ -168,7 +165,7 @@ async function ensureOrganization(db: Db, userId: string): Promise<string> {
   return orgId;
 }
 
-async function ensureParaWallet(
+async function ensureTurnkeyWallet(
   db: Db,
   userId: string,
   orgId: string
@@ -176,45 +173,59 @@ async function ensureParaWallet(
   const existing = await db
     .select()
     .from(paraWallets)
-    .where(eq(paraWallets.organizationId, orgId))
+    .where(
+      and(eq(paraWallets.organizationId, orgId), eq(paraWallets.isActive, true))
+    )
     .limit(1);
 
   if (existing.length > 0) {
-    console.log(`Wallet already exists: ${existing[0].walletAddress}`);
-    return;
-  }
-
-  const rawUserShare = process.env.TEST_PARA_USER_SHARE;
-  if (!rawUserShare) {
+    const row = existing[0];
+    if (row.provider !== "turnkey") {
+      throw new Error(
+        `Refusing to seed: an active wallet exists for the test org with provider=${row.provider} ` +
+          "(Para is decommissioned). The executor will reject signing with this wallet. " +
+          `Mark the row inactive (UPDATE para_wallets SET is_active=false WHERE id='${row.id}') ` +
+          "and re-run to provision a Turnkey wallet."
+      );
+    }
     console.log(
-      "TEST_PARA_USER_SHARE not set, skipping wallet seed. " +
-        "Wallet-dependent tests will be skipped."
+      `Wallet already exists: ${row.walletAddress} (provider=${row.provider})`
     );
     return;
   }
 
-  if (!process.env.WALLET_ENCRYPTION_KEY) {
-    console.log(
-      "WALLET_ENCRYPTION_KEY not set, skipping wallet seed. " +
-        "Wallet-dependent tests will be skipped."
+  const missing = [
+    "TURNKEY_API_PUBLIC_KEY",
+    "TURNKEY_API_PRIVATE_KEY",
+    "TURNKEY_ORGANIZATION_ID",
+  ].filter((name) => !process.env[name]);
+  if (missing.length > 0) {
+    throw new Error(
+      `Refusing to seed test wallet: missing required Turnkey env var(s): ${missing.join(", ")}. ` +
+        "The persistent E2E test user must own a Turnkey wallet for any signing test to function. " +
+        "Set the variables (e.g. from TechOps/.secrets/staging-turnkey.env in local dev, or the " +
+        "matching secrets in the CI environment) and re-run."
     );
-    return;
   }
 
-  const encryptedShare = encryptUserShare(rawUserShare);
+  console.log("Provisioning Turnkey sub-org and wallet for E2E test user...");
+  const result = await createTurnkeyWallet(TEST_USER_EMAIL, TEST_ORG_SLUG);
 
   await db.insert(paraWallets).values({
     id: generateId(),
     userId,
     organizationId: orgId,
-    provider: "para",
+    provider: "turnkey",
     email: TEST_USER_EMAIL,
-    paraWalletId: TEST_WALLET_ID,
-    walletAddress: TEST_WALLET_ADDRESS,
-    userShare: encryptedShare,
+    walletAddress: result.walletAddress,
+    turnkeySubOrgId: result.subOrgId,
+    turnkeyWalletId: result.walletId,
+    turnkeyPrivateKeyId: result.privateKeyId,
   });
 
-  console.log(`Created wallet: ${TEST_WALLET_ADDRESS}`);
+  console.log(`Created Turnkey wallet: ${result.walletAddress}`);
+  console.log(`  subOrgId:  ${result.subOrgId}`);
+  console.log(`  walletId:  ${result.walletId}`);
 }
 
 function assertNotProduction(): void {
@@ -263,7 +274,7 @@ async function seedTestWallet(): Promise<void> {
     const userId = await ensureUser(db);
     await ensureCredentialAccount(db, userId);
     const orgId = await ensureOrganization(db, userId);
-    await ensureParaWallet(db, userId, orgId);
+    await ensureTurnkeyWallet(db, userId, orgId);
 
     const wallet = await db
       .select()
