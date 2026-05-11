@@ -18,7 +18,6 @@
 export const TESTNET_FUNDER_PK_ENV = "TESTNET_FUNDER_PK";
 
 export type TokenSymbol =
-  | "ETH"
   | "WETH"
   | "USDC"
   | "USDT"
