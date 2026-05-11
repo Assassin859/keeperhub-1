@@ -75,11 +75,11 @@ export async function submitTurnkeySponsoredTransaction(
       organizationId: params.subOrgId,
       from: params.walletAddress,
       sponsor: true,
-      // The SDK v5.2.0 CAIP-2 enum does not include Arbitrum (eip155:42161)
-      // even though it appears in Turnkey's Gas Station docs. Cast through
-      // a wider string type so we can probe Arbitrum at runtime; Turnkey
-      // will reject the activity if it is genuinely unsupported.
-      // biome-ignore lint/suspicious/noExplicitAny: SDK CAIP-2 enum lags Turnkey's actual chain coverage; runtime is authoritative
+      // Turnkey confirmed Arbitrum (eip155:42161) is supported on mainnet,
+      // but the SDK v5.2.0 CAIP-2 enum has not been regenerated yet. Widen
+      // the type until the SDK catches up; remove this cast once the enum
+      // includes 42161.
+      // biome-ignore lint/suspicious/noExplicitAny: SDK CAIP-2 enum lags Turnkey's confirmed chain coverage
       caip2: caip2 as any,
       to: params.to,
       value: params.value === undefined ? undefined : params.value.toString(),

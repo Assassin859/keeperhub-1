@@ -6,14 +6,12 @@ import "server-only";
  * EVM transaction in a single API call -- there is no ERC-4337 bundler or
  * paymaster involved.
  *
- * Mainnet coverage is dictated by the CAIP-2 enum in
- * @turnkey/sdk-server's `v1EthSendTransactionIntent.caip2`. Optimism is
- * absent from Turnkey's Gas Station and was dropped from this allowlist
- * during the Pimlico -> Turnkey migration (KEEP-464). Arbitrum is included
- * per product request but is NOT present in the SDK v5.2.0 enum; the
- * runtime request will fall through with a cast and may be rejected by
- * Turnkey's API. Confirm with Turnkey support before enabling Arbitrum
- * in production.
+ * Mainnet coverage confirmed by Turnkey: Ethereum, Base, Polygon, Arbitrum.
+ * Optimism is absent from Turnkey's Gas Station and was dropped from this
+ * allowlist during the Pimlico -> Turnkey migration (KEEP-464). The SDK
+ * v5.2.0 CAIP-2 enum lags Turnkey's actual coverage and does not yet list
+ * `eip155:42161`, so `toCaip2` widens the type at the call site in
+ * `turnkey-sponsored-tx.ts` until the SDK regenerates.
  */
 export const SUPPORTED_SPONSORSHIP_CHAINS: ReadonlySet<number> = new Set([
   1, // Ethereum Mainnet
@@ -22,7 +20,7 @@ export const SUPPORTED_SPONSORSHIP_CHAINS: ReadonlySet<number> = new Set([
   84_532, // Base Sepolia
   137, // Polygon
   80_002, // Polygon Amoy
-  42_161, // Arbitrum One -- pending Turnkey confirmation, see note above
+  42_161, // Arbitrum One
 ]);
 
 export function isSponsorshipSupported(chainId: number): boolean {
