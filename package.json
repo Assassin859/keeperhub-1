@@ -167,7 +167,7 @@
       "@isaacs/brace-expansion": "^5.0.1",
       "@trpc/server": "^11.8.0",
       "glob": "^11.1.0",
-      "dompurify": "^3.3.2",
+      "dompurify": "^3.4.0",
       "hono": "^4.12.7",
       "lodash": "^4.17.23",
       "@hono/node-server": ">=1.19.10",
