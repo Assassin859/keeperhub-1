@@ -53,7 +53,7 @@ export type WriteContractCoreInput = {
   // Galileo demands >= 2 gwei but the strategy floor is lower).
   priorityFeeGwei?: string;
   // KEEP-137: Route the write transaction through the chain's private mempool
-  // RPC (e.g. Flashbots Protect). Skips ERC-4337 sponsorship -- mutually exclusive.
+  // RPC (e.g. Flashbots Protect). Skips Turnkey-sponsored execution -- mutually exclusive.
   usePrivateMempool?: boolean;
   // When true and usePrivateMempool is true, failing to reach the private RPC
   // does NOT fall back to the public mempool. Ignored when usePrivateMempool is false.
@@ -285,9 +285,9 @@ export async function writeContractCore(
     rpcManager,
   };
 
-  // Try gas-sponsored execution first (ERC-4337 via Pimlico).
+  // Try gas-sponsored execution first via Turnkey Gas Station (KEEP-464).
   // KEEP-137: skip sponsorship when routing through a private mempool --
-  // ERC-4337 bundlers use their own RPC (Pimlico), which bypasses Flashbots Protect.
+  // Turnkey broadcasts via its own infrastructure, which bypasses Flashbots Protect.
   if (!usePrivateMempool && isGasSponsorshipEnabled()) {
     try {
       const sponsoredResult = await executeSponsoredContractTransaction({

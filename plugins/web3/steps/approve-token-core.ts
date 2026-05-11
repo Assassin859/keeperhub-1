@@ -25,7 +25,7 @@ import { generateId } from "@/lib/utils/id";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import { formatContractError } from "@/lib/web3/decode-revert-error";
 import { resolveGasLimitOverrides } from "@/lib/web3/gas-defaults";
-import { isSponsorshipSupported } from "@/lib/web3/pimlico-config";
+import { isSponsorshipSupported } from "@/lib/web3/turnkey-sponsorship-config";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
 import { executeSponsoredContractTransaction } from "@/lib/web3/sponsored-transaction-manager";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
@@ -43,7 +43,7 @@ export type ApproveTokenCoreInput = {
   gasLimitMultiplier?: string;
   tokenAddress?: string;
   // KEEP-137: Route through private mempool (Flashbots Protect). Skips
-  // ERC-4337 sponsorship -- mutually exclusive.
+  // Turnkey-sponsored execution -- mutually exclusive.
   usePrivateMempool?: boolean;
   // Strict mode: when true and usePrivateMempool is true, failing to reach the
   // private RPC does NOT fall back to the public mempool. Ignored otherwise.
@@ -212,9 +212,9 @@ export async function approveTokenCore(
     rpcManager,
   };
 
-  // Try gas-sponsored execution first (ERC-4337 via Pimlico).
+  // Try gas-sponsored execution first via Turnkey Gas Station (KEEP-464).
   // KEEP-137: skip sponsorship when routing through a private mempool --
-  // ERC-4337 bundlers use their own RPC (Pimlico), which bypasses Flashbots Protect.
+  // Turnkey broadcasts via its own infrastructure, which bypasses Flashbots Protect.
   if (
     isSponsorshipSupported(chainId) &&
     !usePrivateMempool &&
