@@ -184,12 +184,19 @@ services:
     working_dir: /app
     ports:
       - "${APP_DEV_PORT:-3000}:3000"
-    # Two-volume layout: bind-mount source for hot reload, but isolate
-    # node_modules per container via an anonymous volume so the baked
-    # image content survives the bind-mount overlay.
+    # Volume layout:
+    #   - source bind-mounted for hot reload
+    #   - anonymous volume on /app/node_modules to preserve the baked
+    #     image content past the source bind-mount overlay
+    #   - anonymous volume on /app/.next so turbopack's filesystem cache
+    #     writes hit container-local storage instead of the bind-mounted
+    #     host fs (turbopack reports "Slow filesystem detected" with
+    #     5s+ benchmarks on the host fs through the bind mount, which
+    #     compounds with the workflow DevKit's per-route bundle work)
     volumes:
       - .:/app
       - /app/node_modules
+      - /app/.next
     env_file:
       - .env
     environment:
@@ -200,11 +207,22 @@ services:
       # Turbopack's bundler, which crashes a 3GB heap on cold compile.
       NODE_OPTIONS: "--max-old-space-size=6144"
       METRICS_COLLECTOR: prometheus
+      # /etc/hosts in this container resolves `localhost` to `::1` first,
+      # but the Next.js dev server only binds IPv4 (0.0.0.0:3000). Node's
+      # fetch() tries IPv6 first and dies with "fetch failed" on connect-
+      # refused before falling back to IPv4. The workflow DevKit's
+      # graphile worker uses fetch() to dispatch /.well-known/workflow/v1/*
+      # routes back into this same Next.js process, so without this override
+      # all workflow runs sit at status=pending until the worker hits its
+      # 5-minute timeout. Pinning to the IPv4 loopback bypasses DNS.
+      WORKFLOW_LOCAL_BASE_URL: "http://127.0.0.1:3000"
     deploy:
       resources:
         limits:
           memory: 8g
-          cpus: "2.0"
+          # Turbopack + workflow DevKit's deferred builder both report
+          # "Available parallelism of 2 is less than needed 4". Bump to 4.
+          cpus: "4.0"
     depends_on:
       db:
         condition: service_healthy
