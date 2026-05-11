@@ -375,7 +375,7 @@ function DeployDialog({
       }}
       open={open}
     >
-      <DialogContent className="flex max-h-[85vh] max-w-2xl flex-col gap-3 overflow-y-auto">
+      <DialogContent className="thin-scrollbar flex max-h-[85vh] max-w-2xl flex-col gap-3 overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{titleByStep[currentStep]}</DialogTitle>
           <DialogDescription>

@@ -358,7 +358,7 @@ export function RolePermissionsCard({
               )}
             </div>
             {protocolsOpen && (
-              <div className="max-h-96 space-y-2 overflow-y-auto pr-1">
+              <div className="thin-scrollbar max-h-96 space-y-2 overflow-y-auto pr-1">
                 {enabledProtocols.length > 0 ? (
                   enabledProtocols.map((protocol) => (
                     <RoleProtocolGroup
@@ -409,16 +409,14 @@ export function RolePermissionsCard({
                     Per-recipient transfers, approvals, and native sends not
                     bound to a protocol preset.
                   </div>
-                  <ul className="max-h-96 space-y-1.5 overflow-y-auto pr-1">
+                  <ul className="thin-scrollbar max-h-96 space-y-1.5 overflow-y-auto pr-1">
                     {directRules.map((rule) => (
                       <RoleDirectRuleRow
                         allowance={findDirectAllowance(rule, role.allowances)}
                         chainId={chainId}
                         key={rule.id}
                         onEdit={
-                          isAdmin
-                            ? () => setEditingDirectRule(rule)
-                            : undefined
+                          isAdmin ? () => setEditingDirectRule(rule) : undefined
                         }
                         rule={rule}
                         tokenLogoUrl={resolveDirectRuleLogo(rule, tokenLogoMap)}

@@ -253,7 +253,7 @@ export function TokenPicker({
             placeholder="Search by symbol, name, or address"
             value={query}
           />
-          <div className="max-h-80 space-y-1 overflow-y-auto rounded-md border p-1">
+          <div className="thin-scrollbar max-h-80 space-y-1 overflow-y-auto rounded-md border p-1">
             {loading && (
               <div className="flex items-center justify-center py-6">
                 <Spinner className="h-5 w-5" />

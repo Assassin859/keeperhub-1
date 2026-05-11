@@ -475,7 +475,7 @@ export function PolicyWizard({
                 Safe transaction when you confirm.
               </p>
             )}
-            <ul className="mt-1 max-h-[28rem] space-y-2 overflow-y-auto rounded-md border p-2">
+            <ul className="thin-scrollbar mt-1 max-h-[28rem] space-y-2 overflow-y-auto rounded-md border p-2">
               {orderedCatalog.map((entry) => {
                 const state = states[entry.slug] ?? {
                   enabled: false,

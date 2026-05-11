@@ -225,7 +225,7 @@ export function RoleEditDialog({
           Manage policies
         </Button>
       </DialogTrigger>
-      <DialogContent className="flex max-h-[85vh] max-w-2xl flex-col gap-3 overflow-y-auto">
+      <DialogContent className="thin-scrollbar flex max-h-[85vh] max-w-2xl flex-col gap-3 overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Manage on-chain policies</DialogTitle>
           <DialogDescription>
