@@ -80,6 +80,49 @@ const TEST_DATA: ProtocolTestData = {
         contractAddress: "FUSDCX",
         amount: amount("FUSDCX", "1"),
       },
+      // GDA pool actions. No pool is provisioned in Phase 1, so the `pool`
+      // address is the zero placeholder -- the seeded workflow loads but
+      // on-chain execution reverts until a pool is created (a setup step
+      // for a future iteration).
+      "create-pool": {
+        token: "FUSDCX",
+        admin: wallet(),
+        // bools transferabilityForUnitsOwner / distributionFromAnyAddress
+        // have `default: "false"` in the protocol def; the resolver picks
+        // those up automatically.
+      },
+      "update-member-units": {
+        pool: "0x0000000000000000000000000000000000000000",
+        member: wallet(),
+        units: "1",
+        userData: "0x",
+      },
+      distribute: {
+        token: "FUSDCX",
+        from: wallet(),
+        pool: "0x0000000000000000000000000000000000000000",
+        amount: amount("FUSDCX", "1"),
+        userData: "0x",
+      },
+      "distribute-flow": {
+        token: "FUSDCX",
+        from: wallet(),
+        pool: "0x0000000000000000000000000000000000000000",
+        flowRate: "1",
+        userData: "0x",
+      },
+      "connect-pool": {
+        pool: "0x0000000000000000000000000000000000000000",
+        userData: "0x",
+      },
+      // CFA flow-operator permissions: grant self full permissions on FUSDCX.
+      // Degenerate (you can already manage your own flows) but legal.
+      "grant-flow-operator": {
+        token: "FUSDCX",
+        flowOperator: wallet(),
+        permissions: "7", // CREATE | UPDATE | DELETE = 1 | 2 | 4
+        flowRateAllowance: "1",
+      },
     },
   },
 };

@@ -138,9 +138,24 @@ function resolveBinding(
   throw new Error(`Unhandled binding shape: ${JSON.stringify(binding)}`);
 }
 
-function defaultForSolidityType(type: string, walletAddress: string): string {
+type DefaultContext = {
+  protocolSlug: string;
+  actionSlug: string;
+  inputName: string;
+};
+
+function defaultForSolidityType(
+  type: string,
+  context: DefaultContext
+): string {
   if (type === "address" || type.startsWith("address")) {
-    return walletAddress;
+    throw new Error(
+      `address-typed input "${context.inputName}" on "${context.protocolSlug}/${context.actionSlug}" ` +
+        "has no binding and no protocol-level default. Add it to TEST_DATA " +
+        "(use wallet(), a token symbol like \"DAI\", contract(\"<key>\"), or " +
+        "a literal 0x address), or give the action's input a `default` " +
+        "in protocols/<slug>.ts."
+    );
   }
   if (type === "bool") {
     return "false";
@@ -275,7 +290,11 @@ function buildProtocolActionNode(
       config[input.name] = input.default;
       continue;
     }
-    config[input.name] = defaultForSolidityType(input.type, walletAddress);
+    config[input.name] = defaultForSolidityType(input.type, {
+      protocolSlug: protocol.slug,
+      actionSlug: action.slug,
+      inputName: input.name,
+    });
   }
 
   return {
