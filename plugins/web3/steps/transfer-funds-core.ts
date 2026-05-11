@@ -27,6 +27,7 @@ import { resolveGasLimitOverrides } from "@/lib/web3/gas-defaults";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
 import { executeSponsoredTransaction } from "@/lib/web3/sponsored-transaction-manager";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
+import { isSponsoredTxRevertError } from "@/lib/web3/turnkey-revert";
 import {
   type TransactionContext,
   withNonceSession,
@@ -224,6 +225,28 @@ export async function transferFundsCore(
         }
       );
     } catch (error) {
+      if (isSponsoredTxRevertError(error)) {
+        // Sponsored tx was broadcast and reverted on-chain. Do NOT fall back
+        // to direct signing -- the underlying call would just revert again
+        // and the user would pay gas twice.
+        logUserError(
+          ErrorCategory.TRANSACTION,
+          "[Transfer Funds] Sponsored transaction reverted on-chain",
+          error,
+          {
+            plugin_name: "web3",
+            action_name: "transfer-funds",
+            chain_id: String(chainId),
+            tx_hash: error.txHash,
+            send_transaction_status_id: error.sendTransactionStatusId,
+            revert_chain_depth: String(error.revertChain.length),
+          }
+        );
+        return {
+          success: false,
+          error: `Transaction reverted: ${error.message}`,
+        };
+      }
       logUserError(
         ErrorCategory.TRANSACTION,
         "[Transfer Funds] Sponsorship attempted but failed, falling back to direct signing",

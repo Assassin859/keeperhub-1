@@ -33,6 +33,7 @@ import { isSponsorshipSupported } from "@/lib/web3/turnkey-sponsorship-config";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
 import { executeSponsoredContractTransaction } from "@/lib/web3/sponsored-transaction-manager";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
+import { isSponsoredTxRevertError } from "@/lib/web3/turnkey-revert";
 import {
   type TransactionContext,
   withNonceSession,
@@ -384,6 +385,25 @@ export async function transferTokenCore(
         }
       );
     } catch (error) {
+      if (isSponsoredTxRevertError(error)) {
+        logUserError(
+          ErrorCategory.TRANSACTION,
+          "[Transfer Token] Sponsored transaction reverted on-chain",
+          error,
+          {
+            plugin_name: "web3",
+            action_name: "transfer-token",
+            chain_id: String(chainId),
+            tx_hash: error.txHash,
+            send_transaction_status_id: error.sendTransactionStatusId,
+            revert_chain_depth: String(error.revertChain.length),
+          }
+        );
+        return {
+          success: false,
+          error: `Transaction reverted: ${error.message}`,
+        };
+      }
       logUserError(
         ErrorCategory.TRANSACTION,
         "[Transfer Token] Sponsorship attempted but failed, falling back to direct signing",

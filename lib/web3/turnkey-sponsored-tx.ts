@@ -2,6 +2,11 @@ import "server-only";
 import type { Hex } from "viem";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getTurnkeyClientForOrg } from "@/lib/turnkey/agentic-wallet";
+import {
+  formatRevertChain,
+  type RevertChainEntry,
+  SponsoredTxRevertError,
+} from "@/lib/web3/turnkey-revert";
 import { toCaip2 } from "@/lib/web3/turnkey-sponsorship-config";
 
 /**
@@ -117,34 +122,12 @@ async function pollForTxHash(
   const deadline = Date.now() + STATUS_POLL_TIMEOUT_MS;
 
   while (Date.now() < deadline) {
+    let response: Awaited<ReturnType<typeof client.getSendTransactionStatus>>;
     try {
-      const response = await client.getSendTransactionStatus({
+      response = await client.getSendTransactionStatus({
         organizationId: subOrgId,
         sendTransactionStatusId,
       });
-
-      if (TERMINAL_FAILURE_STATUSES.has(response.txStatus)) {
-        logSystemError(
-          ErrorCategory.EXTERNAL_SERVICE,
-          "[Turnkey Sponsorship] Transaction terminated with failure status",
-          new Error(response.txError ?? response.txStatus),
-          {
-            service: "turnkey",
-            send_transaction_status_id: sendTransactionStatusId,
-            tx_status: response.txStatus,
-          }
-        );
-        return null;
-      }
-
-      const hash = response.eth?.txHash;
-      if (
-        TERMINAL_SUCCESS_STATUSES.has(response.txStatus) &&
-        hash !== undefined &&
-        hash !== ""
-      ) {
-        return hash as Hex;
-      }
     } catch (error) {
       logSystemError(
         ErrorCategory.EXTERNAL_SERVICE,
@@ -156,6 +139,53 @@ async function pollForTxHash(
         }
       );
       return null;
+    }
+
+    const hash = response.eth?.txHash;
+    const hasFailure =
+      TERMINAL_FAILURE_STATUSES.has(response.txStatus) ||
+      Boolean(response.txError) ||
+      Boolean(response.error);
+
+    if (hasFailure) {
+      // Post-broadcast revert: txHash is set, the underlying call is already
+      // on-chain. Throw a typed error carrying Turnkey's structured revert
+      // chain so callers can surface the real revert reason and skip the
+      // direct-signing fallback (which would just revert again).
+      if (hash !== undefined && hash !== "") {
+        const revertChain = (response.error?.eth?.revertChain ??
+          []) as readonly RevertChainEntry[];
+        const message = response.txError ?? formatRevertChain(revertChain);
+        throw new SponsoredTxRevertError({
+          message,
+          txHash: hash as Hex,
+          sendTransactionStatusId,
+          revertChain,
+        });
+      }
+
+      // Pre-broadcast failure (policy denial, gas-cap exhaustion, simulation
+      // error). Nothing happened on-chain; return null so the caller falls
+      // back to direct signing.
+      logSystemError(
+        ErrorCategory.EXTERNAL_SERVICE,
+        "[Turnkey Sponsorship] Transaction terminated before broadcast",
+        new Error(response.txError ?? response.txStatus),
+        {
+          service: "turnkey",
+          send_transaction_status_id: sendTransactionStatusId,
+          tx_status: response.txStatus,
+        }
+      );
+      return null;
+    }
+
+    if (
+      TERMINAL_SUCCESS_STATUSES.has(response.txStatus) &&
+      hash !== undefined &&
+      hash !== ""
+    ) {
+      return hash as Hex;
     }
 
     await sleep(STATUS_POLL_INTERVAL_MS);
