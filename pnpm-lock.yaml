@@ -18,7 +18,7 @@ overrides:
   '@trpc/server': ^11.8.0
   glob: ^11.1.0
   dompurify: ^3.4.0
-  hono: ^4.12.7
+  hono: ^4.12.18
   lodash: ^4.17.23
   '@hono/node-server': '>=1.19.10'
   file-type: '>=21.3.1'
@@ -174,7 +174,7 @@ importers:
         version: 12.38.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       mppx:
         specifier: ^0.5.12
-        version: 0.5.12(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(express@5.2.1)(hono@4.12.12)(typescript@5.9.3)(viem@2.47.5(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))
+        version: 0.5.12(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(express@5.2.1)(hono@4.12.18)(typescript@5.9.3)(viem@2.47.5(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))
       nanoid:
         specifier: ^5.1.7
         version: 5.1.7
@@ -1591,7 +1591,7 @@ packages:
     resolution: {integrity: sha512-TsQLe4i2gvoTtrHje625ngThGBySOgSK3Xo2XRYOdqGN1teR8+I7vchQC46uLJi8OF62YTYA3AhSpumtkhsaKQ==}
     engines: {node: '>=18.14.1'}
     peerDependencies:
-      hono: ^4.12.7
+      hono: ^4.12.18
 
   '@hpke/chacha20poly1305@1.8.0':
     resolution: {integrity: sha512-FcBfAQ+Y99vMNJP2yrZ9wpL8V0GOwp1+zMyzvc6alasrBygfFjFm1yeUtyADJCu/27C3Lm5mJzx6u7pwg+cX5w==}
@@ -6784,8 +6784,8 @@ packages:
   hmac-drbg@1.0.1:
     resolution: {integrity: sha512-Tti3gMqLdZfhOQY1Mzf/AanLiqh1WTiJgEj26ZuYQ9fbkLomzGchCws4FyrSd4VkpBfiNhaE1On+lOz894jvXg==}
 
-  hono@4.12.12:
-    resolution: {integrity: sha512-p1JfQMKaceuCbpJKAPKVqyqviZdS0eUxH9v82oWo1kb9xjQ5wA6iP3FNVAPDFlz5/p7d45lO+BpSk1tuSZMF4Q==}
+  hono@4.12.18:
+    resolution: {integrity: sha512-RWzP96k/yv0PQfyXnWjs6zot20TqfpfsNXhOnev8d1InAxubW93L11/oNUc3tQqn2G0bSdAOBpX+2uDFHV7kdQ==}
     engines: {node: '>=16.9.0'}
 
   hpagent@1.2.0:
@@ -7510,7 +7510,7 @@ packages:
       '@modelcontextprotocol/sdk': '>=1.25.0'
       elysia: '>=1'
       express: '>=5'
-      hono: ^4.12.7
+      hono: ^4.12.18
       viem: '>=2.47.5'
     peerDependenciesMeta:
       '@modelcontextprotocol/sdk':
@@ -10743,9 +10743,9 @@ snapshots:
     dependencies:
       graphql: 15.10.1
 
-  '@hono/node-server@1.19.13(hono@4.12.12)':
+  '@hono/node-server@1.19.13(hono@4.12.18)':
     dependencies:
-      hono: 4.12.12
+      hono: 4.12.18
 
   '@hpke/chacha20poly1305@1.8.0':
     dependencies:
@@ -11064,7 +11064,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6)':
     dependencies:
-      '@hono/node-server': 1.19.13(hono@4.12.12)
+      '@hono/node-server': 1.19.13(hono@4.12.18)
       ajv: 8.18.0
       ajv-formats: 3.0.1(ajv@8.18.0)
       content-type: 1.0.5
@@ -11074,7 +11074,7 @@ snapshots:
       eventsource-parser: 3.0.6
       express: 5.2.1
       express-rate-limit: 8.3.1(express@5.2.1)
-      hono: 4.12.12
+      hono: 4.12.18
       jose: 6.2.2
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
@@ -11814,13 +11814,13 @@ snapshots:
       '@electric-sql/pglite': 0.3.15
       '@electric-sql/pglite-socket': 0.0.20(@electric-sql/pglite@0.3.15)
       '@electric-sql/pglite-tools': 0.2.20(@electric-sql/pglite@0.3.15)
-      '@hono/node-server': 1.19.13(hono@4.12.12)
+      '@hono/node-server': 1.19.13(hono@4.12.18)
       '@mrleebo/prisma-ast': 0.13.1
       '@prisma/get-platform': 7.2.0
       '@prisma/query-plan-executor': 7.2.0
       foreground-child: 3.3.1
       get-port-please: 3.2.0
-      hono: 4.12.12
+      hono: 4.12.18
       http-status-codes: 2.3.0
       pathe: 2.0.3
       proper-lockfile: 4.1.2
@@ -16895,7 +16895,7 @@ snapshots:
       minimalistic-assert: 1.0.1
       minimalistic-crypto-utils: 1.0.1
 
-  hono@4.12.12: {}
+  hono@4.12.18: {}
 
   hpagent@1.2.0: {}
 
@@ -17510,7 +17510,7 @@ snapshots:
       react: 19.2.4
       react-dom: 19.2.4(react@19.2.4)
 
-  mppx@0.5.12(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(express@5.2.1)(hono@4.12.12)(typescript@5.9.3)(viem@2.47.5(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6)):
+  mppx@0.5.12(@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6))(express@5.2.1)(hono@4.12.18)(typescript@5.9.3)(viem@2.47.5(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6)):
     dependencies:
       incur: 0.3.25
       ox: 0.14.10(typescript@5.9.3)(zod@4.3.6)
@@ -17519,7 +17519,7 @@ snapshots:
     optionalDependencies:
       '@modelcontextprotocol/sdk': 1.29.0(@cfworker/json-schema@4.1.1)(zod@4.3.6)
       express: 5.2.1
-      hono: 4.12.12
+      hono: 4.12.18
     transitivePeerDependencies:
       - typescript
 
