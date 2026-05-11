@@ -63,6 +63,16 @@ export type CreateTestWorkflowOptions = {
   cronExpression?: string;
   timezone?: string;
   actionEndpoint?: string;
+  /**
+   * Inject a fixture's nodes/edges verbatim instead of synthesizing one.
+   * When both `nodes` and `edges` are provided, the synthetic-workflow branch
+   * is bypassed. KEEP-458: used by the protocol-coverage test runner to
+   * insert fixtures from disk.
+   */
+  // biome-ignore lint/suspicious/noExplicitAny: fixture JSON is opaque here
+  nodes?: any[];
+  // biome-ignore lint/suspicious/noExplicitAny: fixture JSON is opaque here
+  edges?: any[];
 };
 
 export type TestWorkflow = {
@@ -173,11 +183,16 @@ export async function createTestWorkflow(
       cronExpression = "0 9 * * *",
       timezone = "UTC",
       actionEndpoint,
+      nodes: fixtureNodes,
+      edges: fixtureEdges,
     } = options;
 
-    // Get workflow structure based on trigger type
-    let workflow: ReturnType<typeof createWebhookWorkflow>;
-    if (triggerType === "schedule") {
+    // KEEP-458: when caller supplies a fixture's nodes/edges, insert them
+    // verbatim and skip the synthetic-workflow branch.
+    let workflow: { nodes: unknown[]; edges: unknown[] };
+    if (fixtureNodes && fixtureEdges) {
+      workflow = { nodes: fixtureNodes, edges: fixtureEdges };
+    } else if (triggerType === "schedule") {
       workflow = createScheduledWorkflow(cronExpression, timezone);
     } else if (triggerType === "manual") {
       workflow = createManualWorkflow(actionEndpoint);

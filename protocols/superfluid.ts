@@ -1,4 +1,88 @@
 import { defineProtocol } from "@/lib/protocol-registry";
+import { amount, type ProtocolTestData, wallet } from "@/lib/test-data/types";
+
+// KEEP-458 protocol-coverage test data. Sepolia uses the canonical fUSDC /
+// fUSDCx pair (matches tests/integration/protocol-superfluid-onchain.test.ts).
+// The test wallet must hold >= 10 fUSDC before setup runs; no public faucet
+// exists for fUSDC, so the funder EOA must pre-transfer it.
+const TEST_DATA: ProtocolTestData = {
+  "11155111": {
+    setup: {
+      minNativeHuman: "0.001",
+      requiredTokens: [{ symbol: "FUSDC", human: "10" }],
+      approvals: [
+        // Wrap requires the SuperToken (FUSDCX) to spend underlying FUSDC.
+        { token: "FUSDC", spender: "FUSDCX", human: "10" },
+      ],
+      protocolSteps: [
+        {
+          protocol: "superfluid",
+          action: "wrap",
+          inputs: {
+            contractAddress: "FUSDCX",
+            amount: amount("FUSDC", "5"),
+          },
+        },
+      ],
+    },
+    actions: {
+      // Reads
+      "get-flow": {
+        token: "FUSDCX",
+        sender: wallet(),
+        receiver: wallet(),
+      },
+      "get-account-flow-rate": {
+        token: "FUSDCX",
+        account: wallet(),
+      },
+      "get-super-token-balance": {
+        token: "FUSDCX",
+        account: wallet(),
+      },
+      "get-underlying-token": { token: "FUSDCX" },
+      "get-cfa-net-flow": {
+        token: "FUSDCX",
+        account: wallet(),
+      },
+      "get-net-flow": {
+        token: "FUSDCX",
+        account: wallet(),
+      },
+      // Writes — self-stream wallet -> wallet is the cheapest provable write
+      // that doesn't need a second funded address.
+      "create-flow": {
+        token: "FUSDCX",
+        sender: wallet(),
+        receiver: wallet(),
+        flowRate: "1",
+        userData: "0x",
+      },
+      "update-flow": {
+        token: "FUSDCX",
+        sender: wallet(),
+        receiver: wallet(),
+        flowRate: "2",
+        userData: "0x",
+      },
+      "delete-flow": {
+        token: "FUSDCX",
+        sender: wallet(),
+        receiver: wallet(),
+        userData: "0x",
+      },
+      // SuperToken is userSpecifiedAddress: pass contractAddress explicitly.
+      wrap: {
+        contractAddress: "FUSDCX",
+        amount: amount("FUSDC", "1"),
+      },
+      unwrap: {
+        contractAddress: "FUSDCX",
+        amount: amount("FUSDCX", "1"),
+      },
+    },
+  },
+};
 
 /**
  * Chain IDs (as strings, matching ProtocolContract.addresses keys) where the
@@ -620,4 +704,6 @@ export default defineProtocol({
       ],
     },
   ],
+
+  testData: TEST_DATA,
 });

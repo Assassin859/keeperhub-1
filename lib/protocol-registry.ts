@@ -84,6 +84,10 @@ export type ProtocolDefinition = {
   contracts: Record<string, ProtocolContract>;
   actions: ProtocolAction[];
   events?: ProtocolEvent[];
+  /** KEEP-458: co-located test inputs per chain. Consumed by the
+   *  protocol-coverage seeder and test runner. Optional; protocols without
+   *  testnet coverage simply omit it. */
+  testData?: import("./test-data/types").ProtocolTestData;
 };
 
 function validateSlug(slug: string, context: string): void {

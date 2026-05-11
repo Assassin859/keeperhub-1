@@ -1,5 +1,63 @@
 import { defineProtocol } from "@/lib/protocol-registry";
+import {
+  amount,
+  contract,
+  type ProtocolTestData,
+  wallet,
+} from "@/lib/test-data/types";
 import aaveV3PoolAbi from "./abis/aave-v3-pool.json";
+
+// KEEP-458 protocol-coverage test data. Co-located with the protocol
+// definition; consumed programmatically by `lib/test-data/build-workflow.ts`.
+// Sepolia uses the Aave V3 testnet DAI reserve. The test wallet must hold
+// >= 100 DAI before setup runs (Aave's Sepolia faucet acquires it manually
+// today; auto-faucet wiring is deferred).
+const TEST_DATA: ProtocolTestData = {
+  "11155111": {
+    setup: {
+      minNativeHuman: "0.001",
+      requiredTokens: [{ symbol: "DAI", human: "100" }],
+      approvals: [{ token: "DAI", spender: contract("pool"), human: "100" }],
+    },
+    actions: {
+      "get-user-account-data": {
+        user: wallet(),
+      },
+      "get-user-reserve-data": {
+        asset: "DAI",
+        user: wallet(),
+      },
+      supply: {
+        asset: "DAI",
+        amount: amount("DAI", "10"),
+        onBehalfOf: wallet(),
+        referralCode: "0",
+      },
+      withdraw: {
+        asset: "DAI",
+        amount: amount("DAI", "1"),
+        to: wallet(),
+      },
+      borrow: {
+        asset: "DAI",
+        amount: amount("DAI", "1"),
+        interestRateMode: "2",
+        referralCode: "0",
+        onBehalfOf: wallet(),
+      },
+      repay: {
+        asset: "DAI",
+        amount: amount("DAI", "1"),
+        interestRateMode: "2",
+        onBehalfOf: wallet(),
+      },
+      "set-collateral": {
+        asset: "DAI",
+        useAsCollateral: "true",
+      },
+    },
+  },
+};
 
 export default defineProtocol({
   name: "Aave V3",
@@ -281,4 +339,6 @@ export default defineProtocol({
       ],
     },
   ],
+
+  testData: TEST_DATA,
 });
