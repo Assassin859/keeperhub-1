@@ -25,6 +25,7 @@ overrides:
   yauzl: '>=3.2.1'
   drizzle-orm: ^0.45.2
   ip-address: ^10.1.1
+  uuid@11: ^11.1.1
 
 importers:
 
@@ -9000,8 +9001,8 @@ packages:
     resolution: {integrity: sha512-8XkAphELsDnEGrDxUOHB3RGvXz6TeuYSGEZBOjtTtPm2lwhGBjLgOzLHB63IUWfBpNucQjND6d3AOudO+H3RWQ==}
     hasBin: true
 
-  uuid@11.1.0:
-    resolution: {integrity: sha512-0/A9rDy9P7cJ+8w1c9WD9V//9Wj15Ce2MPz8Ri6032usz+NfePxx5AcN3bN+r6ZL6jEo066/yNYB3tn4pQEx+A==}
+  uuid@11.1.1:
+    resolution: {integrity: sha512-vIYxrBCC/N/K+Js3qSN88go7kIfNPssr/hHCesKCQNAjmgvYS2oqr69kIufEG+O4+PfezOH4EbIeHCfFov8ZgQ==}
     hasBin: true
 
   uuid@8.3.2:
@@ -10694,7 +10695,7 @@ snapshots:
       elliptic: 6.6.1
       libphonenumber-js: 1.12.40
       node-forge: 1.4.0
-      uuid: 11.1.0
+      uuid: 11.1.1
       xstate: 5.28.0
     transitivePeerDependencies:
       - debug
@@ -10711,7 +10712,7 @@ snapshots:
       '@getpara/core-sdk': 2.20.0
       '@getpara/user-management-client': 2.20.0
       '@getpara/viem-v2-integration': 2.20.0(viem@2.47.5(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6))
-      uuid: 11.1.0
+      uuid: 11.1.1
       ws: 8.20.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
     transitivePeerDependencies:
       - bufferutil
@@ -14051,7 +14052,7 @@ snapshots:
       cross-fetch: 3.2.0
       ethers: 6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
       jwt-decode: 4.0.0
-      uuid: 11.1.0
+      uuid: 11.1.1
       viem: 2.47.5(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6)
     transitivePeerDependencies:
       - '@azure/app-configuration'
@@ -19139,7 +19140,7 @@ snapshots:
 
   uuid@10.0.0: {}
 
-  uuid@11.1.0: {}
+  uuid@11.1.1: {}
 
   uuid@8.3.2: {}
 
