@@ -154,6 +154,21 @@ export const MetricNames = {
   DB_QUERY_SLOW_COUNT: "db.query.slow_count",
   WORKFLOW_QUEUE_DEPTH: "workflow.queue.depth",
   WORKFLOW_CONCURRENT_COUNT: "workflow.concurrent.count",
+
+  // Safe wallet metrics (KEEP-301 wave 2). Cover the hot paths only:
+  //  - safe.deploy.*           CREATE2 deploy through the SafeProxyFactory
+  //  - safe.role_install.*     Roles modifier proxy deploy + initial config
+  //  - safe.tx.*               safe.execTransaction (owner-signed) and
+  //                            rolesModifier.execTransactionWithRole writes
+  //  - safe.withdraw.*         User-initiated withdrawals routed through
+  //                            executeContractCallAsSafe / executeNativeTransferAsSafe
+  SAFE_DEPLOY_DURATION: "safe.deploy.duration_ms",
+  SAFE_DEPLOY_TOTAL: "safe.deploy.total",
+  SAFE_ROLE_INSTALL_DURATION: "safe.role_install.duration_ms",
+  SAFE_ROLE_INSTALL_TOTAL: "safe.role_install.total",
+  SAFE_TX_DURATION: "safe.tx.duration_ms",
+  SAFE_TX_TOTAL: "safe.tx.total",
+  SAFE_WITHDRAW_TOTAL: "safe.withdraw.total",
 } as const;
 
 /**

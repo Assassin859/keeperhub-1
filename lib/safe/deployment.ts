@@ -6,6 +6,7 @@ import { normalizeAddressForStorage } from "@/lib/address-utils";
 import { db } from "@/lib/db";
 import { chains, type SafeWallet, safeWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { startSafeDeployMetrics } from "@/lib/metrics/instrumentation/safe";
 import {
   getOrganizationWallet,
   initializeWalletSigner,
@@ -99,8 +100,10 @@ export async function deployOrgSafe(
   input: DeployOrgSafeInput
 ): Promise<DeployOrgSafeResult> {
   const { organizationId, chainId } = input;
+  const finishMetrics = startSafeDeployMetrics(chainId);
 
   if (!isSafeSupportedChain(chainId)) {
+    finishMetrics("failure");
     return {
       success: false,
       error: `Safe deployment is not supported on chain ${chainId}`,
@@ -109,6 +112,7 @@ export async function deployOrgSafe(
 
   const enabled = await chainIsEnabled(chainId);
   if (!enabled) {
+    finishMetrics("failure");
     return {
       success: false,
       error: `Chain ${chainId} is not enabled for deployment`,
@@ -117,6 +121,7 @@ export async function deployOrgSafe(
 
   const existing = await findExistingSafe(organizationId, chainId);
   if (existing && existing.status === "deployed") {
+    finishMetrics("already_deployed");
     return { success: true, safe: existing, alreadyDeployed: true };
   }
 
@@ -201,8 +206,10 @@ export async function deployOrgSafe(
       })
       .returning();
 
+    finishMetrics("success");
     return { success: true, safe: inserted, alreadyDeployed: false };
   } catch (error) {
+    finishMetrics("failure");
     logSystemError(
       ErrorCategory.TRANSACTION,
       `[Safe] Deployment failed for org=${organizationId}`,

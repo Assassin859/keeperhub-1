@@ -8,6 +8,7 @@ import { db } from "@/lib/db";
 import { chains } from "@/lib/db/schema";
 import { safeWallets } from "@/lib/db/schema-extensions";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { recordSafeWithdraw } from "@/lib/metrics/instrumentation/safe";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
 import {
   getOrganizationWalletAddress,
@@ -325,32 +326,51 @@ export async function POST(request: Request) {
             throw new Error("Missing amount for native Safe withdraw");
           }
 
-          const safeReceipt = tokenAddress
-            ? await executeContractCallAsSafe(
-                signer,
-                {
-                  safeAddress: safe.safeAddress,
-                  ownerAddress: walletAddress,
-                  contractAddress: tokenAddress,
-                  abi: ERC20_TRANSFER_ABI,
-                  functionKey: "transfer",
-                  args: [recipientAddr, safeAmountWei],
-                },
-                session,
-                { chainId }
-              )
-            : await executeNativeTransferAsSafe(
-                signer,
-                {
-                  safeAddress: safe.safeAddress,
-                  ownerAddress: walletAddress,
-                  to: recipientAddr,
-                  amount: safeAmountWei,
-                },
-                session,
-                { chainId }
-              );
-
+          const safeKind: "erc20" | "native" = tokenAddress
+            ? "erc20"
+            : "native";
+          let safeReceipt: Awaited<
+            ReturnType<typeof executeContractCallAsSafe>
+          >;
+          try {
+            safeReceipt = tokenAddress
+              ? await executeContractCallAsSafe(
+                  signer,
+                  {
+                    safeAddress: safe.safeAddress,
+                    ownerAddress: walletAddress,
+                    contractAddress: tokenAddress,
+                    abi: ERC20_TRANSFER_ABI,
+                    functionKey: "transfer",
+                    args: [recipientAddr, safeAmountWei],
+                  },
+                  session,
+                  { chainId }
+                )
+              : await executeNativeTransferAsSafe(
+                  signer,
+                  {
+                    safeAddress: safe.safeAddress,
+                    ownerAddress: walletAddress,
+                    to: recipientAddr,
+                    amount: safeAmountWei,
+                  },
+                  session,
+                  { chainId }
+                );
+          } catch (err) {
+            recordSafeWithdraw({
+              chainId,
+              kind: safeKind,
+              outcome: "failure",
+            });
+            throw err;
+          }
+          recordSafeWithdraw({
+            chainId,
+            kind: safeKind,
+            outcome: "success",
+          });
           console.log(
             `[Withdraw] Safe-routed transaction confirmed: ${safeReceipt.hash}`
           );

@@ -33,6 +33,7 @@ import {
   safeWallets,
 } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { startSafeRoleInstallMetrics } from "@/lib/metrics/instrumentation/safe";
 import {
   getOrganizationWallet,
   initializeWalletSigner,
@@ -672,6 +673,7 @@ export async function installRolesWithInitialConfig(
     rpcManager,
   };
 
+  const finishMetrics = startSafeRoleInstallMetrics(chainId);
   try {
     // Step 1 — deploy the Roles modifier proxy
     const setUpCalldata = buildRolesSetUpCalldata({
@@ -1097,6 +1099,7 @@ export async function installRolesWithInitialConfig(
       return { roleRow, protocolRows, allowanceRows };
     });
 
+    finishMetrics("success");
     return {
       success: true,
       role: persistResult.roleRow,
@@ -1108,6 +1111,7 @@ export async function installRolesWithInitialConfig(
       alreadyInstalled: false,
     };
   } catch (error) {
+    finishMetrics("failure");
     logSystemError(
       ErrorCategory.TRANSACTION,
       `[Safe] Zodiac Roles install failed for org=${organizationId} chain=${chainId}`,
