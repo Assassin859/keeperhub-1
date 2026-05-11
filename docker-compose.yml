@@ -2,18 +2,33 @@
 # KeeperHub Docker Compose
 #
 # Profiles:
-#   dev              - Full development stack (no K8s Jobs, dispatcher runs as cron)
+#   dev              - Full development stack (app + db + localstack + redis +
+#                      workers: dispatcher, executor, reaper, event-tracker,
+#                      block-dispatcher, sandbox). Use when exercising end-to-end
+#                      workflow execution.
+#   dev-min          - Minimal dev stack (app + db + localstack + redis only).
+#                      Workers excluded. Faster boot, less compile contention
+#                      from concurrent worker traffic. Use for UI development,
+#                      route smoke tests, and when running two app containers.
 #   minikube         - Hybrid mode (services in Docker, executor in Minikube)
 #   prod             - Production-ready containers
 #   test             - Isolated E2E test stack (separate DB, ports, volumes)
 #   profile-workflows - Workflow profiling tools (js-sandbox for WASM fuel calibration)
 #
 # Usage:
-#   docker compose --profile dev up -d              # Development (no K8s)
+#   docker compose --profile dev up -d              # Development with workers
+#   docker compose --profile dev-min up -d          # App + infra only
 #   docker compose --profile minikube up -d         # Hybrid mode
 #   docker compose --profile test up -d             # E2E test environment
 #   docker compose --profile profile-workflows up -d # Profiling tools
 #   make hybrid-setup                               # Full hybrid setup
+#
+# Notes:
+#   - The app-dev image bakes node_modules at build time. After a
+#     pnpm-lock.yaml change run: docker compose build app-dev
+#   - APP_DEV_PORT env var lets you run a second app-dev on a different
+#     host port (e.g. APP_DEV_PORT=3001 docker compose up app-dev) so
+#     two worktrees can serve concurrently from this same compose file.
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -37,6 +52,9 @@ x-env-db: &env_db
 
 x-env-db-connection: &env_db_connection
   DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-keeperhub}
+  # Workflow DevKit world. Same in-cluster Postgres as the app DB.
+  # sslmode=disable since the local Postgres image has no SSL configured.
+  WORKFLOW_POSTGRES_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-keeperhub}?sslmode=disable
 
 x-env-aws: &env_aws
   AWS_REGION: *aws_region
@@ -44,6 +62,11 @@ x-env-aws: &env_aws
   AWS_SECRET_ACCESS_KEY: *aws_secret_key
   # Use host.minikube.internal so URLs work from both host and Minikube
   AWS_ENDPOINT_URL: http://host.minikube.internal:4566
+  # AWS IRSA env vars only make sense in EKS pods; clear them here so the
+  # app doesn't try to read /var/run/secrets/.../token (which doesn't exist
+  # in this container).
+  AWS_WEB_IDENTITY_TOKEN_FILE: ""
+  AWS_ROLE_ARN: ""
 
 x-env-sqs: &env_sqs
   SQS_QUEUE_URL: http://host.minikube.internal:4566/000000000000/keeperhub-workflow-queue
@@ -78,6 +101,7 @@ services:
       retries: 5
     profiles:
       - dev
+      - dev-min
       - minikube
       - prod
       - profile-workflows
@@ -109,6 +133,7 @@ services:
       start_period: 15s
     profiles:
       - dev
+      - dev-min
       - minikube
 
   # ===========================================================================
@@ -137,36 +162,61 @@ services:
 
   # Development app with hot reload
   app-dev:
-    image: node:22-alpine
-    container_name: keeperhub-app-dev
+    # Build the `dev` Dockerfile stage instead of starting from a bare
+    # node:alpine and running `pnpm install` at container start. Baking
+    # node_modules into the image:
+    #   - eliminates the 1-3 min runtime install on every container start
+    #   - lets two app-dev containers run concurrently without racing on a
+    #     shared keeperhub_node_modules volume
+    #   - makes start-up deterministic (no partial-install failures like
+    #     missing transitive packages from a half-completed pnpm install)
+    # Rebuild explicitly with `docker compose build app-dev` whenever
+    # pnpm-lock.yaml changes.
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    # container_name intentionally omitted so multiple worktrees can each
+    # run app-dev under their own compose project name (e.g.
+    # keep-470-app-dev-1 vs chore-dev-env-app-dev-1). Combine with
+    # APP_DEV_PORT to give each its own host port.
     hostname: keeperhub
     working_dir: /app
     ports:
-      - "3000:3000"
+      - "${APP_DEV_PORT:-3000}:3000"
+    # Two-volume layout: bind-mount source for hot reload, but isolate
+    # node_modules per container via an anonymous volume so the baked
+    # image content survives the bind-mount overlay.
     volumes:
       - .:/app
-      - keeperhub_node_modules:/app/node_modules
+      - /app/node_modules
     env_file:
       - .env
     environment:
       <<: [*env_db_connection, *env_aws, *env_sqs, *env_service_keys]
       HOSTNAME: "0.0.0.0"
       KEEPERHUB_API_KEY: ${KEEPERHUB_API_KEY:-some-random-api-key}
-      NODE_OPTIONS: "--max-old-space-size=3072"
+      # 6GB heap leaves headroom on top of the 8GB container cap for
+      # Turbopack's bundler, which crashes a 3GB heap on cold compile.
+      NODE_OPTIONS: "--max-old-space-size=6144"
       METRICS_COLLECTOR: prometheus
     deploy:
       resources:
         limits:
-          memory: 4g
+          memory: 8g
           cpus: "2.0"
     depends_on:
       db:
         condition: service_healthy
       localstack:
         condition: service_healthy
-    command: sh -c "npm install -g pnpm && CI=true pnpm install && pnpm dev --hostname 0.0.0.0"
+    # Source is bind-mounted, so a baked Dockerfile CMD would point at
+    # stale files. Re-declare the dev command here so it always reads
+    # the live host source.
+    command: pnpm dev --hostname 0.0.0.0
     profiles:
       - dev
+      - dev-min
       - minikube
 
   # ===========================================================================
@@ -423,6 +473,7 @@ services:
     restart: unless-stopped
     profiles:
       - dev
+      - dev-min
       - minikube
 
   # ===========================================================================
