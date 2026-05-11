@@ -81,6 +81,7 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
+import { logSystemError, logSystemWarn } from "@/lib/logging";
 import { logWorkflowCompleteDb } from "@/lib/workflow/executor/logging";
 
 function getExecUpdate(): UpdateCall | undefined {
@@ -152,6 +153,26 @@ describe("logWorkflowCompleteDb", () => {
         error: undefined,
       })
     );
+
+    // KEEP-532 regression guard: both the pre-reconciliation log and the
+    // spurious-recovery log must route through logSystemWarn (no metric),
+    // not logSystemError (which would re-trip errors.system.workflow_engine.total).
+    expect(logSystemWarn).toHaveBeenCalledTimes(2);
+    expect(logSystemWarn).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.stringContaining("checking node logs for reconciliation"),
+      expect.anything(),
+      expect.objectContaining({ execution_id: "exec_1" })
+    );
+    expect(logSystemWarn).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.stringContaining("overriding spurious SDK error to success"),
+      expect.anything(),
+      expect.objectContaining({ execution_id: "exec_1" })
+    );
+    expect(logSystemError).not.toHaveBeenCalled();
   });
 
   // KEEP-333: If a step started but never recorded completion, the workflow
