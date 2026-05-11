@@ -178,7 +178,8 @@
       "uuid@11": "^11.1.1",
       "postcss": "^8.5.10",
       "effect": "^3.20.0",
-      "follow-redirects": "^1.16.0"
+      "follow-redirects": "^1.16.0",
+      "fast-xml-builder": "~1.1.7"
     }
   }
 }
