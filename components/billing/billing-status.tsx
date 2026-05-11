@@ -476,6 +476,10 @@ function GasCreditsBar({
           style={{ width: `${percent}%` }}
         />
       </div>
+      <p className="text-xs text-muted-foreground">
+        Sponsored networks: Ethereum, Base, Polygon, Arbitrum (+ Sepolia, Base
+        Sepolia, Polygon Amoy testnets).
+      </p>
       {isExhausted && (
         <p className="text-xs text-muted-foreground">
           Gas credits exhausted. Transactions will use your wallet's ETH for
