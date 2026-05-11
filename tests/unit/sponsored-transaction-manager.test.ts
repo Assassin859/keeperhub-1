@@ -24,17 +24,21 @@ vi.mock("@/lib/web3/chainlink-feeds", () => ({
 
 const mockIsSponsorshipSupported = vi.fn();
 
-vi.mock("@/lib/web3/pimlico-config", () => ({
+vi.mock("@/lib/web3/turnkey-sponsorship-config", () => ({
   isSponsorshipSupported: (...args: unknown[]) =>
     mockIsSponsorshipSupported(...args),
 }));
 
-const mockSendTransaction = vi.fn();
 const mockCreateSponsoredClient = vi.fn();
-
 vi.mock("@/lib/web3/sponsored-client", () => ({
   createSponsoredClient: (...args: unknown[]) =>
     mockCreateSponsoredClient(...args),
+}));
+
+const mockSubmitTurnkeySponsoredTransaction = vi.fn();
+vi.mock("@/lib/web3/turnkey-sponsored-tx", () => ({
+  submitTurnkeySponsoredTransaction: (...args: unknown[]) =>
+    mockSubmitTurnkeySponsoredTransaction(...args),
 }));
 
 const mockWaitForTransactionReceipt = vi.fn();
@@ -100,9 +104,14 @@ function setupSuccessfulSponsorship(): void {
     remainingCents: 500,
   });
   mockCreateSponsoredClient.mockResolvedValue({
-    smartAccountClient: { sendTransaction: mockSendTransaction },
+    subOrgId: "suborg-123",
+    walletAddress: "0xwallet",
+    chainId: 11_155_111,
   });
-  mockSendTransaction.mockResolvedValue("0xtxhash");
+  mockSubmitTurnkeySponsoredTransaction.mockResolvedValue({
+    txHash: "0xtxhash",
+    sendTransactionStatusId: "status-1",
+  });
   mockWaitForTransactionReceipt.mockResolvedValue({
     status: "success",
     gasUsed: BigInt(21_000),
@@ -149,13 +158,23 @@ describe("executeSponsoredTransaction", () => {
     expect(mockCreateSponsoredClient).not.toHaveBeenCalled();
   });
 
-  it("returns null when client creation fails", async () => {
+  it("returns null when client preflight fails (non-Turnkey wallet)", async () => {
     mockIsSponsorshipSupported.mockReturnValue(true);
     mockCheckGasCredits.mockResolvedValue({
       allowed: true,
       remainingCents: 500,
     });
     mockCreateSponsoredClient.mockResolvedValue(null);
+
+    const result = await executeSponsoredTransaction(baseTxParams);
+
+    expect(result).toBeNull();
+    expect(mockSubmitTurnkeySponsoredTransaction).not.toHaveBeenCalled();
+  });
+
+  it("returns null when Turnkey rejects the activity", async () => {
+    setupSuccessfulSponsorship();
+    mockSubmitTurnkeySponsoredTransaction.mockResolvedValue(null);
 
     const result = await executeSponsoredTransaction(baseTxParams);
 
@@ -198,20 +217,25 @@ describe("executeSponsoredTransaction", () => {
     );
   });
 
-  it("returns null and logs error when sendTransaction throws", async () => {
-    mockIsSponsorshipSupported.mockReturnValue(true);
-    mockCheckGasCredits.mockResolvedValue({
-      allowed: true,
-      remainingCents: 500,
-    });
-    mockCreateSponsoredClient.mockResolvedValue({
-      smartAccountClient: { sendTransaction: mockSendTransaction },
-    });
-    mockSendTransaction.mockRejectedValue(new Error("bundler rejected"));
+  it("forwards value and data to the Turnkey wrapper", async () => {
+    setupSuccessfulSponsorship();
 
-    const result = await executeSponsoredTransaction(baseTxParams);
+    await executeSponsoredTransaction({
+      ...baseTxParams,
+      value: BigInt(1234),
+      data: "0xdead",
+    });
 
-    expect(result).toBeNull();
+    expect(mockSubmitTurnkeySponsoredTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subOrgId: "suborg-123",
+        walletAddress: "0xwallet",
+        chainId: 11_155_111,
+        to: "0xrecipient",
+        value: BigInt(1234),
+        data: "0xdead",
+      })
+    );
   });
 
   it("still returns result when recordGasUsage fails", async () => {
@@ -300,5 +324,19 @@ describe("executeSponsoredContractTransaction", () => {
     expect(result).not.toBeNull();
     expect(result?.success).toBe(true);
     expect(result?.gasUsed).toBe("21000");
+  });
+
+  it("encodes call data and forwards it to the Turnkey wrapper", async () => {
+    setupSuccessfulSponsorship();
+
+    await executeSponsoredContractTransaction(baseContractParams);
+
+    expect(mockSubmitTurnkeySponsoredTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subOrgId: "suborg-123",
+        to: "0xrecipient",
+        data: "0xencoded",
+      })
+    );
   });
 });

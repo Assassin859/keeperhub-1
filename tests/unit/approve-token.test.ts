@@ -161,7 +161,7 @@ vi.mock("@/lib/web3/transaction-manager", () => ({
 }));
 
 // Mock sponsorship (disabled by default so tests exercise the direct signing path)
-vi.mock("@/lib/web3/pimlico-config", () => ({
+vi.mock("@/lib/web3/turnkey-sponsorship-config", () => ({
   isSponsorshipSupported: () => false,
 }));
 
