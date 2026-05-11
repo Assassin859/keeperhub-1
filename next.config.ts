@@ -307,7 +307,17 @@ const nextConfig = {
 
 const { SENTRY_ORG, SENTRY_PROJECT, SENTRY_RELEASE } = process.env;
 
-export default withSentryConfig(withWorkflow(nextConfig), {
+// Enable the workflow DevKit's deferred builder to avoid the eager
+// builder's per-route esbuild scan of every "use step" file. The eager
+// scan + intermediate bundle takes 2-5 min on first hit per route in
+// dev, making /api/workflow/* effectively unusable on a normal laptop.
+// The deferred builder uses socket-driven lazy discovery and only
+// pre-bundles the well-known /flow, /step, /webhook routes. Requires
+// Next.js >= 16.2.0-canary.48 (we're on 16.2.2). The builder itself
+// branches on phase (development vs build) so this is safe for prod.
+export default withSentryConfig(
+  withWorkflow(nextConfig, { workflows: { lazyDiscovery: true } }),
+  {
   // For all available options, see:
   // https://www.npmjs.com/package/@sentry/webpack-plugin#options
 

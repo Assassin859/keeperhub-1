@@ -104,6 +104,18 @@ const CFA_FORWARDER_ABI = JSON.stringify([
     ],
     outputs: [{ name: "flowRate", type: "int96" }],
   },
+  {
+    type: "function",
+    name: "updateFlowOperatorPermissions",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "flowOperator", type: "address" },
+      { name: "permissions", type: "uint8" },
+      { name: "flowRateAllowance", type: "int96" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
 ]);
 
 /**
@@ -224,24 +236,13 @@ const SUPER_TOKEN_ABI = JSON.stringify([
     inputs: [],
     outputs: [{ name: "", type: "address" }],
   },
-  {
-    type: "function",
-    name: "updateFlowOperatorPermissions",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "flowOperator", type: "address" },
-      { name: "permissions", type: "uint8" },
-      { name: "flowRateAllowance", type: "int96" },
-    ],
-    outputs: [{ name: "", type: "bool" }],
-  },
 ]);
 
 export default defineProtocol({
   name: "Superfluid",
   slug: "superfluid",
   description:
-    "Programmable streaming payments -- open per-second money streams between addresses, distribute pro-rata to pool members, and wrap/unwrap SuperTokens",
+    "Programmable streaming payments: open per-second money streams between addresses, distribute pro-rata to pool members, and wrap/unwrap SuperTokens",
   website: "https://superfluid.org",
   icon: "/protocols/superfluid.png",
 
@@ -381,7 +382,7 @@ export default defineProtocol({
       slug: "get-cfa-net-flow",
       label: "Read CFA Net Flow Rate of an Address",
       description:
-        "Read an address's net flow rate from CFA streams only (positive = net receiver, negative = net sender). Excludes GDA pool distributions -- use get-net-flow for the combined CFA+GDA reading.",
+        "Read an address's net flow rate from CFA streams only (positive = net receiver, negative = net sender). Excludes GDA pool distributions. Use get-net-flow for the combined CFA+GDA reading.",
       type: "read",
       contract: "cfaForwarder",
       function: "getAccountFlowrate",
@@ -421,7 +422,7 @@ export default defineProtocol({
       slug: "create-pool",
       label: "Create Distribution Pool",
       description:
-        "Create a GDA distribution pool with the supplied address as administrator. The new pool address is emitted in the PoolCreated event -- chain a web3.query-events call after this action filtered by the returned tx hash to capture it.",
+        "Create a GDA distribution pool with the supplied address as administrator. The new pool address is emitted in the PoolCreated event. Chain a web3.query-events call after this action filtered by the returned tx hash to capture it.",
       type: "write",
       contract: "gdaForwarder",
       function: "createPool",
@@ -558,11 +559,12 @@ export default defineProtocol({
       slug: "grant-flow-operator",
       label: "Grant Flow-Operator Permissions",
       description:
-        "Authorize another address to manage your flows of this SuperToken up to a wei/sec allowance",
+        "Authorize another address to manage your flows of a SuperToken up to a wei/sec allowance",
       type: "write",
-      contract: "superToken",
+      contract: "cfaForwarder",
       function: "updateFlowOperatorPermissions",
       inputs: [
+        { name: "token", type: "address", label: "SuperToken Address" },
         {
           name: "flowOperator",
           type: "address",

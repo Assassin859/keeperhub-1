@@ -80,7 +80,7 @@ Polls SQS for workflow triggers and executes them.
 | `KEEPERHUB_API_KEY` | Internal service API key | All |
 | `AWS_REGION` | AWS region | All |
 | `SQS_QUEUE_URL` | SQS queue URL for workflow triggers | All |
-| `HEALTH_PORT` | HTTP health check port (default: 3000) | All |
+| `HEALTH_PORT` | HTTP health check port (defaults: 3060 schedule-dispatcher, 3050 block-dispatcher) | All |
 | `RECONCILE_INTERVAL_MS` | How often to refetch block workflows (default: 30000) | Block Dispatcher |
 | `AWS_ENDPOINT_URL` | LocalStack endpoint (local dev only) | All |
 

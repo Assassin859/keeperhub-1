@@ -269,3 +269,52 @@ export function logSystemError(
     extra: fullLabels,
   });
 }
+
+/**
+ * Log a system-level warning. Emits a Sentry event at warning level and a
+ * console.warn line. Does NOT emit a Prometheus metric and does NOT page.
+ *
+ * Use for events in system-owned code that need ALS context (org/owner ids)
+ * for later investigation but are NOT operational failures. Examples:
+ * - Pre-reconciliation notes where the final classification is not yet known
+ * - Recovery events (spurious SDK error overridden back to success)
+ * - Expected fallbacks worth recording for debugging
+ *
+ * Side effects (compare to siblings):
+ *
+ * |                        | console     | Sentry          | Metric    |
+ * | ---------------------- | ----------- | --------------- | --------- |
+ * | logSystemError         | error       | error event     | counter+1 |
+ * | logSystemWarn (this)   | warn        | warning event   | none      |
+ * | logUserError           | warn        | warning event   | counter+1 |
+ *
+ * Sentry tag policy:
+ *   - is_user_error is intentionally NOT set. At the call sites where this
+ *     helper fires we typically do not yet know whether the underlying
+ *     failure is user-caused or engine-caused -- forcing the tag to "false"
+ *     would let alerts filtering `is_user_error:false` match these events
+ *     and re-trip the same dashboards we are trying to keep quiet. The
+ *     event's `level=warning` is the canonical filter.
+ */
+export function logSystemWarn(
+  category: ErrorCategory,
+  message: string,
+  error: unknown,
+  labels?: Record<string, string>
+): void {
+  const context = extractContext(message);
+  const fullLabels = mergeLabels(labels);
+
+  const tag = buildLogTag(fullLabels);
+  console.warn(`${message}${tag}`, error);
+
+  const sentryError = error instanceof Error ? error : new Error(String(error));
+  captureException(sentryError, {
+    level: "warning",
+    tags: {
+      error_category: category,
+      error_context: context,
+    },
+    extra: fullLabels,
+  });
+}

@@ -12,7 +12,7 @@ import type { WorkflowNode } from "@/lib/workflow/store";
 // Top-level regex patterns (biome: useTopLevelRegex)
 // ---------------------------------------------------------------------------
 
-const MULTIPLE_COLLECT_REGEX = /multiple Collect nodes/;
+const MULTIPLE_COLLECT_REGEX = /multiple in-body Collect nodes/;
 const ARRAY_SOURCE_REQUIRED_REGEX = /arraySource is required/;
 const NOT_VALID_TEMPLATE_REGEX = /not a valid template reference/;
 const RESOLVED_TO_NULL_REGEX = /resolved to null/;

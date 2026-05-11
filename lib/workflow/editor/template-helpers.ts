@@ -197,6 +197,24 @@ export function getActionFields(node: WorkflowNode): FieldEntry[] | null {
     }
   }
 
+  if (actionType === "For Each") {
+    return [
+      {
+        field: "currentItem",
+        description: "Current array element (inside loop body)",
+      },
+      { field: "index", description: "Current iteration index (0-based)" },
+      { field: "totalItems", description: "Total number of items in array" },
+    ];
+  }
+
+  if (actionType === "Collect") {
+    return [
+      { field: "results", description: "Array of outputs from each iteration" },
+      { field: "count", description: "Number of completed iterations" },
+    ];
+  }
+
   if (actionType) {
     const action = findActionById(actionType);
     if (action?.outputFields && action.outputFields.length > 0) {

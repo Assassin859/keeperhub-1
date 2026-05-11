@@ -57,6 +57,7 @@ export async function GET(request: Request): Promise<NextResponse> {
                 JOIN workflows w ON we.workflow_id = w.id
                WHERE w.organization_id = ${activeOrgId}
                  AND we.started_at >= ${startOfMonth.toISOString()}
+                 AND we.billable = TRUE
             )
             +
             (

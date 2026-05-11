@@ -77,6 +77,7 @@ export async function billOverageForOrg(
              WHERE w.organization_id = ${organizationId}
                AND we.started_at >= ${periodStart.toISOString()}
                AND we.started_at <  ${periodEnd.toISOString()}
+               AND we.billable = TRUE
           )
           +
           (

@@ -3,6 +3,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { start } from "workflow/api";
 import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
+import { priceQualifiesForMarketplaceExemption } from "@/lib/billing/marketplace-billing";
 import { db } from "@/lib/db";
 import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
 import { tags, workflowExecutions, workflows } from "@/lib/db/schema";
@@ -14,15 +15,18 @@ import {
   gatePayment,
   type PaymentMeta,
 } from "@/lib/payments/router";
-import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
-import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 import { buildCallCompletionResponse } from "@/lib/payments/x402/execution-wait";
 import {
   hashPaymentSignature,
   recordPayment,
   resolveCreatorWallet,
 } from "@/lib/payments/x402/payment-gate";
-import { CALL_ROUTE_COLUMNS, type CallRouteWorkflow } from "@/lib/payments/x402/types";
+import {
+  CALL_ROUTE_COLUMNS,
+  type CallRouteWorkflow,
+} from "@/lib/payments/x402/types";
+import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
+import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -317,16 +321,42 @@ async function handlePaidWorkflow(
             : executionId;
         }
 
+        // recordPayment + the KEEP-449 billable flip run in one transaction
+        // so the workflow_payments row and the workflow_executions.billable
+        // bit can never disagree. If the flip fails after recordPayment
+        // succeeds, the whole transaction rolls back and the caller sees an
+        // error -- preferable to silently over-billing the owner one quota
+        // credit and leaving an exempt payment row dangling.
+        //
+        // Marketplace-paid calls at or above FREE_MARKETPLACE_BILLING_THRESHOLD_USDC
+        // are exempt from the owner's monthly execution quota. The flip is
+        // tied to actual payment receipt, so owner-initiated runs, scheduled
+        // runs, block/event triggers etc. never reach this branch and stay
+        // billable=TRUE (the column default).
         try {
-          await recordPayment({
-            workflowId: workflow.id,
-            paymentHash,
-            executionId,
-            amountUsdc: workflow.priceUsdcPerCall ?? "0",
-            payerAddress: meta.payerAddress,
-            creatorWalletAddress,
-            protocol: meta.protocol,
-            chain: meta.chain,
+          await db.transaction(async (tx) => {
+            await recordPayment(
+              {
+                workflowId: workflow.id,
+                paymentHash,
+                executionId,
+                amountUsdc: workflow.priceUsdcPerCall ?? "0",
+                payerAddress: meta.payerAddress,
+                creatorWalletAddress,
+                protocol: meta.protocol,
+                chain: meta.chain,
+              },
+              tx
+            );
+
+            if (
+              priceQualifiesForMarketplaceExemption(workflow.priceUsdcPerCall)
+            ) {
+              await tx
+                .update(workflowExecutions)
+                .set({ billable: false })
+                .where(eq(workflowExecutions.id, executionId));
+            }
           });
         } catch (err) {
           await db

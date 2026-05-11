@@ -7,7 +7,7 @@ import "server-only";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflowExecutionLogs, workflowExecutions } from "@/lib/db/schema";
-import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { ErrorCategory, logSystemError, logSystemWarn } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
 import {
   EXCEEDED_MAX_RETRIES_REGEX,
@@ -427,8 +427,13 @@ export async function logWorkflowCompleteDb(
   let resolvedError: string | undefined = params.error;
 
   if (params.status === "error") {
-    // Route through unified logger so org/owner ALS context is attached.
-    logSystemError(
+    // KEEP-532: warn, not error -- at this point we do not yet know whether
+    // the failure is user-caused (e.g. user's HTTP step hit a dead URL) or a
+    // real engine fault. logSystemError here unconditionally tripped the
+    // workflow_engine system-error metric on every user-config failure.
+    // Reconciliation below decides the final status; this call is just for
+    // forensic context (ALS org/owner labels attached).
+    logSystemWarn(
       ErrorCategory.WORKFLOW_ENGINE,
       "[Workflow Logging] Execution completed with error, checking node logs for reconciliation",
       params.error ?? "unknown",
@@ -439,7 +444,9 @@ export async function logWorkflowCompleteDb(
       const trulyFailedNodes = await listTrulyFailedNodes(params.executionId);
 
       if (trulyFailedNodes.length === 0) {
-        logSystemError(
+        // KEEP-532: Recovery event -- spurious SDK error overridden to success.
+        // Not an error condition; warn-level keeps it in traces without paging.
+        logSystemWarn(
           ErrorCategory.WORKFLOW_ENGINE,
           "[Workflow Logging] No node-level errors found, overriding spurious SDK error to success",
           params.error ?? "unknown",

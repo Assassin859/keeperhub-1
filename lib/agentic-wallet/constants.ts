@@ -27,3 +27,25 @@ export const ALLOWED_TEMPO_CHAIN_IDS: readonly number[] = [
   TEMPO_MAINNET_CHAIN_ID,
   TEMPO_TESTNET_CHAIN_ID,
 ] as const;
+
+// ERC-8004 Trustless Agents — Ethereum mainnet deployments (2026-01-29 launch).
+// Vanity prefix 0x8004 distinguishes the registries on-chain. Source-of-truth:
+// https://github.com/erc-8004/erc-8004-contracts
+export const ETHEREUM_MAINNET_CHAIN_ID = 1 as const;
+export const ERC_8004_IDENTITY_REGISTRY_ADDRESS =
+  "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432" as const;
+export const ERC_8004_REPUTATION_REGISTRY_ADDRESS =
+  "0x8004BAa17C55a88189AE136b182e5fdA19dE9b63" as const;
+export const ERC_8004_IDENTITY_REGISTRY_LC =
+  ERC_8004_IDENTITY_REGISTRY_ADDRESS.toLowerCase();
+export const ERC_8004_REPUTATION_REGISTRY_LC =
+  ERC_8004_REPUTATION_REGISTRY_ADDRESS.toLowerCase();
+
+// keccak256("giveFeedback(uint256,int128,uint8,string,string,string,string,bytes32)")[0:4]
+export const GIVE_FEEDBACK_SELECTOR = "0x3c036a7e" as const;
+
+// KeeperHub's own ERC-8004 agent NFT id on Ethereum mainnet. Used as the
+// default rated agent when injecting feedback CTAs into workflow execution
+// responses; users can rate any agent id (the Turnkey policy does not
+// constrain the agentId argument).
+export const KEEPERHUB_ERC_8004_AGENT_ID = 31_875 as const;

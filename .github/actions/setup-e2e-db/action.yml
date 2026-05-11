@@ -5,14 +5,20 @@ inputs:
   database_url:
     description: 'PostgreSQL connection string'
     required: true
-  test_para_user_share:
-    description: 'TEST_PARA_USER_SHARE secret for wallet seeding'
-    required: true
-  wallet_encryption_key:
-    description: 'WALLET_ENCRYPTION_KEY secret for wallet seeding'
-    required: true
   chain_rpc_config:
     description: 'CHAIN_RPC_CONFIG for RPC endpoint resolution'
+    required: false
+    default: ''
+  turnkey_api_public_key:
+    description: 'TURNKEY_API_PUBLIC_KEY for the parent org used by createTurnkeyWallet during db:seed-test-wallet'
+    required: false
+    default: ''
+  turnkey_api_private_key:
+    description: 'TURNKEY_API_PRIVATE_KEY for the parent org used by createTurnkeyWallet during db:seed-test-wallet'
+    required: false
+    default: ''
+  turnkey_organization_id:
+    description: 'TURNKEY_ORGANIZATION_ID (parent org) used by createTurnkeyWallet during db:seed-test-wallet'
     required: false
     default: ''
 
@@ -42,6 +48,7 @@ runs:
       shell: bash
       env:
         DATABASE_URL: ${{ inputs.database_url }}
-        TEST_PARA_USER_SHARE: ${{ inputs.test_para_user_share }}
-        WALLET_ENCRYPTION_KEY: ${{ inputs.wallet_encryption_key }}
+        TURNKEY_API_PUBLIC_KEY: ${{ inputs.turnkey_api_public_key }}
+        TURNKEY_API_PRIVATE_KEY: ${{ inputs.turnkey_api_private_key }}
+        TURNKEY_ORGANIZATION_ID: ${{ inputs.turnkey_organization_id }}
       run: pnpm db:seed-test-wallet

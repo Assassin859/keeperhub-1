@@ -319,6 +319,22 @@ export const workflowExecutions = pgTable(
     lastSuccessfulNodeName: text("last_successful_node_name"),
     executionTrace: jsonb("execution_trace").$type<string[]>(),
     runId: text("run_id"),
+    /**
+     * Whether this execution counts toward the owner organisation's monthly
+     * execution quota and overage billing.
+     *
+     * Defaults to TRUE on every insert. The marketplace call route is the
+     * only path that ever flips a row to FALSE, and only after recordPayment
+     * succeeds and the recorded price is at or above
+     * FREE_MARKETPLACE_BILLING_THRESHOLD_USDC. Owner-initiated runs (manual
+     * Run, scheduled, block, event, webhook) and direct API calls always
+     * stay TRUE.
+     *
+     * See drizzle/0070_workflow_executions_billable.sql,
+     * lib/billing/marketplace-billing.ts, and
+     * app/api/mcp/workflows/[slug]/call/route.ts.
+     */
+    billable: boolean("billable").notNull().default(true),
   },
   (table) => [index("idx_workflow_executions_status").on(table.status)]
 );
@@ -448,6 +464,7 @@ export {
   workflowPublicTags,
   workflowRatings,
 } from "./schema-extensions";
+export { feedback, feedbackStatus } from "./schema-feedback";
 export {
   type McpOauthAuthCode,
   type McpOauthClient,

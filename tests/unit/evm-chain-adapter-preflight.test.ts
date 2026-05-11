@@ -30,7 +30,15 @@ const mockSendTx = Object.assign(
 
 vi.mock("ethers", () => {
   function MockContract(): Record<string, unknown> {
-    return { approve: mockSendTx };
+    return {
+      approve: mockSendTx,
+      getFunction: (name: string): unknown => {
+        if (name === "approve") {
+          return mockSendTx;
+        }
+        throw new Error(`unknown function: ${name}`);
+      },
+    };
   }
   return {
     ethers: {

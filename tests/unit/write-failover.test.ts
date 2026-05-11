@@ -260,9 +260,16 @@ describe("submitContractCallAndConfirm", () => {
 
   it("sends contract call on primary and returns result on success", async () => {
     const txResponse = makeMockTxResponse("0xcontract1");
+    const transferFn = vi.fn().mockResolvedValue(txResponse);
     const contract = {
-      transfer: vi.fn().mockResolvedValue(txResponse),
+      transfer: transferFn,
       connect: vi.fn(),
+      getFunction: (name: string): unknown => {
+        if (name === "transfer") {
+          return transferFn;
+        }
+        throw new Error(`unknown function: ${name}`);
+      },
     };
     const signer = { connect: vi.fn() };
 
@@ -284,13 +291,27 @@ describe("submitContractCallAndConfirm", () => {
       code: "SERVER_ERROR",
     });
     const fallbackTx = makeMockTxResponse("0xfallbackContract");
+    const fallbackTransferFn = vi.fn().mockResolvedValue(fallbackTx);
     const reconnectedContract = {
-      transfer: vi.fn().mockResolvedValue(fallbackTx),
+      transfer: fallbackTransferFn,
+      getFunction: (name: string): unknown => {
+        if (name === "transfer") {
+          return fallbackTransferFn;
+        }
+        throw new Error(`unknown function: ${name}`);
+      },
     };
     const reconnectedSigner = {};
+    const primaryTransferFn = vi.fn().mockRejectedValue(error);
     const contract = {
-      transfer: vi.fn().mockRejectedValue(error),
+      transfer: primaryTransferFn,
       connect: vi.fn().mockReturnValue(reconnectedContract),
+      getFunction: (name: string): unknown => {
+        if (name === "transfer") {
+          return primaryTransferFn;
+        }
+        throw new Error(`unknown function: ${name}`);
+      },
     };
     const signer = {
       connect: vi.fn().mockReturnValue(reconnectedSigner),
@@ -337,9 +358,16 @@ describe("submitContractCallAndConfirm", () => {
     const error = Object.assign(new Error("invalid args"), {
       code: "INVALID_ARGUMENT",
     });
+    const approveFn = vi.fn().mockRejectedValue(error);
     const contract = {
-      approve: vi.fn().mockRejectedValue(error),
+      approve: approveFn,
       connect: vi.fn(),
+      getFunction: (name: string): unknown => {
+        if (name === "approve") {
+          return approveFn;
+        }
+        throw new Error(`unknown function: ${name}`);
+      },
     };
     const signer = { connect: vi.fn() };
 

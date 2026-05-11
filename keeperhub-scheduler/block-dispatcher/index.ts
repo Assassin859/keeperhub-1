@@ -14,18 +14,18 @@
  *   SQS_QUEUE_URL          - SQS queue URL
  *   AWS_REGION             - AWS region
  *   AWS_ENDPOINT_URL       - LocalStack endpoint (local dev only)
- *   HEALTH_PORT            - Health check server port (default: 3000)
+ *   HEALTH_PORT            - Health check server port (default: 3050)
  */
 
 import express from "express";
-import { fetchBlockWorkflows } from "./api-client.js";
-import { ChainMonitor } from "./chain-monitor.js";
 import {
   KEEPERHUB_URL,
   RECONCILE_INTERVAL_MS,
   SQS_QUEUE_URL,
 } from "../lib/config.js";
 import type { BlockWorkflow, ChainConfig } from "../lib/types.js";
+import { fetchBlockWorkflows } from "./api-client.js";
+import { ChainMonitor } from "./chain-monitor.js";
 
 class BlockMonitorService {
   private readonly monitors: Map<number, ChainMonitor> = new Map();
@@ -34,7 +34,7 @@ class BlockMonitorService {
 
   async start(): Promise<void> {
     console.log(
-      `[BlockMonitorService] Starting (reconcile every ${RECONCILE_INTERVAL_MS}ms)`
+      `[BlockMonitorService] Starting (reconcile every ${RECONCILE_INTERVAL_MS}ms)`,
     );
 
     await this.reconcile();
@@ -43,7 +43,7 @@ class BlockMonitorService {
       this.reconcile().catch((error: unknown) => {
         console.error(
           "[BlockMonitorService] Reconciliation error:",
-          error instanceof Error ? error.message : error
+          error instanceof Error ? error.message : error,
         );
       });
     }, RECONCILE_INTERVAL_MS);
@@ -59,14 +59,14 @@ class BlockMonitorService {
     }
 
     const stopResults = await Promise.allSettled(
-      [...this.monitors.values()].map((monitor) => monitor.stop())
+      [...this.monitors.values()].map((monitor) => monitor.stop()),
     );
 
     for (const result of stopResults) {
       if (result.status === "rejected") {
         console.error(
           "[BlockMonitorService] Error stopping monitor:",
-          result.reason
+          result.reason,
         );
       }
     }
@@ -97,26 +97,29 @@ class BlockMonitorService {
       await this.syncActiveMonitors(grouped);
 
       const chainNames = [...grouped.entries()]
-        .map(([id, { chain, workflows }]) => `${chain.name}(${id}): ${workflows.length} wf`)
+        .map(
+          ([id, { chain, workflows }]) =>
+            `${chain.name}(${id}): ${workflows.length} wf`,
+        )
         .join(", ");
       console.log(
-        `[BlockMonitorService] Reconciled: ${this.monitors.size} chain(s) monitored [${chainNames}]`
+        `[BlockMonitorService] Reconciled: ${this.monitors.size} chain(s) monitored [${chainNames}]`,
       );
     } catch (error) {
       console.error(
         "[BlockMonitorService] Reconciliation failed:",
-        error instanceof Error ? error.message : error
+        error instanceof Error ? error.message : error,
       );
     }
   }
 
   private async removeStaleMonitors(
-    activeChainIds: Set<number>
+    activeChainIds: Set<number>,
   ): Promise<void> {
     for (const [chainId, monitor] of this.monitors) {
       if (!activeChainIds.has(chainId)) {
         console.log(
-          `[BlockMonitorService] Stopping monitor for chain ${chainId} (no active workflows)`
+          `[BlockMonitorService] Stopping monitor for chain ${chainId} (no active workflows)`,
         );
         await monitor.stop();
         this.monitors.delete(chainId);
@@ -125,7 +128,7 @@ class BlockMonitorService {
   }
 
   private async syncActiveMonitors(
-    grouped: Map<number, { chain: ChainConfig; workflows: BlockWorkflow[] }>
+    grouped: Map<number, { chain: ChainConfig; workflows: BlockWorkflow[] }>,
   ): Promise<void> {
     for (const [chainId, { chain, workflows }] of grouped) {
       const existing = this.monitors.get(chainId);
@@ -136,8 +139,9 @@ class BlockMonitorService {
         await existing.stop();
         await this.startNewMonitor(chainId, chain, workflows);
       } else if (!existing.isAlive()) {
+        const status = existing.getStatus();
         console.warn(
-          `[BlockMonitorService] Monitor for ${chain.name} (${chainId}) is dead, restarting`
+          `[BlockMonitorService] Monitor for ${chain.name} (${chainId}) is dead, restarting (lastBlock=${status.lastBlock}, blocksReceived=${status.blocksReceived}, hasSubscription=${status.hasSubscription}, reconnecting=${status.reconnecting})`,
         );
         await existing.stop();
         this.monitors.delete(chainId);
@@ -151,10 +155,10 @@ class BlockMonitorService {
   private async startNewMonitor(
     chainId: number,
     chain: ChainConfig,
-    workflows: BlockWorkflow[]
+    workflows: BlockWorkflow[],
   ): Promise<void> {
     console.log(
-      `[BlockMonitorService] Starting monitor for ${chain.name} (${chainId}) with ${workflows.length} workflow(s), primaryWss=${chain.defaultPrimaryWss ? "configured" : "MISSING"}, fallbackWss=${chain.defaultFallbackWss ? "configured" : "MISSING"}`
+      `[BlockMonitorService] Starting monitor for ${chain.name} (${chainId}) with ${workflows.length} workflow(s), primaryWss=${chain.defaultPrimaryWss ? "configured" : "MISSING"}, fallbackWss=${chain.defaultFallbackWss ? "configured" : "MISSING"}`,
     );
     const monitor = new ChainMonitor({ chain, workflows });
     this.monitors.set(chainId, monitor);
@@ -163,7 +167,7 @@ class BlockMonitorService {
     } catch (error) {
       console.error(
         `[BlockMonitorService] Failed to start monitor for ${chain.name}:`,
-        error instanceof Error ? error.message : error
+        error instanceof Error ? error.message : error,
       );
       this.monitors.delete(chainId);
     }
@@ -217,13 +221,13 @@ function isRecoverableNetworkError(error: Error): boolean {
 process.on("uncaughtException", (error: Error) => {
   if (isRecoverableNetworkError(error)) {
     console.warn(
-      `[BlockDispatcher] Recoverable network error (continuing): ${error.message}`
+      `[BlockDispatcher] Recoverable network error (continuing): ${error.message}`,
     );
     return;
   }
   console.error(
     `[BlockDispatcher] Uncaught exception: ${error.message}`,
-    error.stack ?? ""
+    error.stack ?? "",
   );
   process.exit(1);
 });
@@ -234,7 +238,7 @@ async function main(): Promise<void> {
   console.log(`[BlockDispatcher] KeeperHub URL: ${KEEPERHUB_URL}`);
   console.log(`[BlockDispatcher] SQS Queue URL: ${SQS_QUEUE_URL}`);
   console.log(
-    `[BlockDispatcher] Reconcile interval: ${RECONCILE_INTERVAL_MS}ms`
+    `[BlockDispatcher] Reconcile interval: ${RECONCILE_INTERVAL_MS}ms`,
   );
 
   const service = new BlockMonitorService();
@@ -256,7 +260,7 @@ async function main(): Promise<void> {
 
   const healthServer = healthApp.listen(HEALTH_PORT, () => {
     console.log(
-      `[BlockDispatcher] Health check server listening on port ${HEALTH_PORT}`
+      `[BlockDispatcher] Health check server listening on port ${HEALTH_PORT}`,
     );
   });
 

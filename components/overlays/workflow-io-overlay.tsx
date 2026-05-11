@@ -160,7 +160,7 @@ export function WorkflowIOOverlay({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Workflow Import / Export</DialogTitle>
           <DialogDescription>
@@ -210,8 +210,8 @@ export function WorkflowIOOverlay({
               <span className="font-medium text-foreground">{fileName}</span>
               {parsedFile.integrationBindings.length > 0 && (
                 <>
-                  {" "}
-                  -- {parsedFile.integrationBindings.length} integration
+                  {". "}
+                  {parsedFile.integrationBindings.length} integration
                   {parsedFile.integrationBindings.length === 1 ? "" : "s"} need
                   to be reconnected after import.
                 </>

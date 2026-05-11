@@ -1,3 +1,0 @@
-ALTER TABLE "organization_tokens" ADD COLUMN "safe_wallet_id" text;--> statement-breakpoint
-ALTER TABLE "organization_tokens" ADD CONSTRAINT "organization_tokens_safe_wallet_id_safe_wallets_id_fk" FOREIGN KEY ("safe_wallet_id") REFERENCES "public"."safe_wallets"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-CREATE INDEX "idx_org_tokens_safe" ON "organization_tokens" USING btree ("safe_wallet_id");

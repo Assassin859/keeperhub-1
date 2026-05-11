@@ -88,13 +88,28 @@ export async function findExistingPayment(
 }
 
 /**
+ * Connection or open transaction used by recordPayment. Using a Pick of
+ * `typeof db` lets the marketplace call route pass either the global
+ * `db` or a Drizzle `tx` from `db.transaction(...)` without dragging in
+ * the full Drizzle generic surface.
+ */
+type PaymentRecorderDb = Pick<typeof db, "insert">;
+
+/**
  * Inserts a new payment record into workflow_payments.
  * On Postgres unique violation (code 23505), returns silently --
  * the idempotency check via findExistingPayment handles the response.
+ *
+ * Accepts an optional connection so the caller can compose this insert
+ * with a sibling write (for example flipping `workflow_executions.billable`
+ * for KEEP-449) inside a single transaction. Defaults to the global db.
  */
-export async function recordPayment(data: NewWorkflowPayment): Promise<void> {
+export async function recordPayment(
+  data: NewWorkflowPayment,
+  conn: PaymentRecorderDb = db
+): Promise<void> {
   try {
-    await db.insert(workflowPayments).values(data);
+    await conn.insert(workflowPayments).values(data);
   } catch (err) {
     const cause = (err as { cause?: { code?: string } }).cause;
     if (cause?.code === "23505") {

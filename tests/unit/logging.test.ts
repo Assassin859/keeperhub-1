@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ErrorCategory, logSystemError, logUserError } from "@/lib/logging";
+import {
+  ErrorCategory,
+  logSystemError,
+  logSystemWarn,
+  logUserError,
+} from "@/lib/logging";
 import { resetMetricsCollector, setMetricsCollector } from "@/lib/metrics";
 import {
   LabelKeys,
@@ -234,6 +239,58 @@ describe("Unified Logging Helpers", () => {
         expect.anything(),
         expect.anything()
       );
+    });
+  });
+
+  describe("logSystemWarn", () => {
+    it("should log as warn and NOT emit any metric", () => {
+      const error = new Error("Spurious SDK error");
+      logSystemWarn(
+        ErrorCategory.WORKFLOW_ENGINE,
+        "[Workflow Logging] Pre-reconciliation",
+        error,
+        { execution_id: "exec-123" }
+      );
+
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("[Workflow Logging] Pre-reconciliation"),
+        error
+      );
+      expect(consoleErrorSpy).not.toHaveBeenCalled();
+
+      // The key invariant: warn helper does not increment ANY metric counter,
+      // so it cannot trip system-error or user-error dashboards.
+      expect(mockCollector.recordError).not.toHaveBeenCalled();
+    });
+
+    it("should handle non-Error error values", () => {
+      logSystemWarn(
+        ErrorCategory.WORKFLOW_ENGINE,
+        "[Test] Warn",
+        "string detail"
+      );
+
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("[Test] Warn"),
+        "string detail"
+      );
+      expect(mockCollector.recordError).not.toHaveBeenCalled();
+    });
+
+    it("should not emit a metric for any error category", () => {
+      // Regression guard against accidentally re-introducing metric emission.
+      const categories = [
+        ErrorCategory.WORKFLOW_ENGINE,
+        ErrorCategory.DATABASE,
+        ErrorCategory.INFRASTRUCTURE,
+        ErrorCategory.UNKNOWN,
+      ];
+
+      for (const category of categories) {
+        vi.clearAllMocks();
+        logSystemWarn(category, "[Test] Warn", new Error("test"));
+        expect(mockCollector.recordError).not.toHaveBeenCalled();
+      }
     });
   });
 

@@ -119,11 +119,10 @@ export class EvmChainAdapter implements ChainAdapter {
       );
     }
 
-    if (typeof contract[request.functionKey] !== "function") {
-      throw new Error(
-        `Function '${request.functionKey}' not found in contract ABI`
-      );
-    }
+    // Use getFunction() so ABI names that collide with BaseContract built-ins
+    // (e.g. getAddress, attach, connect, queryFilter) resolve to the ABI fragment
+    // instead of the inherited method.
+    const fn = contract.getFunction(request.functionKey);
 
     const signerAddress = await signer.getAddress();
     const callOverrides = {
@@ -138,16 +137,12 @@ export class EvmChainAdapter implements ChainAdapter {
           request.abi,
           rpcProvider
         );
-        return readContract[request.functionKey].staticCall(
-          ...request.args,
-          callOverrides
-        );
+        return readContract
+          .getFunction(request.functionKey)
+          .staticCall(...request.args, callOverrides);
       }, "preflight");
     } else {
-      await contract[request.functionKey].staticCall(
-        ...request.args,
-        callOverrides
-      );
+      await fn.staticCall(...request.args, callOverrides);
     }
 
     const nonce = this.nonceManager.getNextNonce(session);
@@ -159,15 +154,11 @@ export class EvmChainAdapter implements ChainAdapter {
             request.abi,
             rpcProvider
           );
-          return readContract[request.functionKey].estimateGas(
-            ...request.args,
-            callOverrides
-          );
+          return readContract
+            .getFunction(request.functionKey)
+            .estimateGas(...request.args, callOverrides);
         }, "preflight")
-      : await contract[request.functionKey].estimateGas(
-          ...request.args,
-          callOverrides
-        );
+      : await fn.estimateGas(...request.args, callOverrides);
 
     const gasConfig = await this.gasStrategy.getGasConfig(
       provider,
@@ -179,7 +170,7 @@ export class EvmChainAdapter implements ChainAdapter {
       options.gasOverrides.priorityFeeOverride
     );
 
-    const tx = await contract[request.functionKey](...request.args, {
+    const tx = await fn(...request.args, {
       nonce,
       gasLimit: gasConfig.gasLimit,
       maxFeePerGas: gasConfig.maxFeePerGas,
@@ -201,15 +192,14 @@ export class EvmChainAdapter implements ChainAdapter {
         provider
       );
 
-      if (typeof contract[request.functionKey] !== "function") {
-        throw new Error(
-          `Function '${request.functionKey}' not found in contract ABI`
-        );
-      }
+      // Use getFunction() so ABI names that collide with BaseContract built-ins
+      // (e.g. getAddress, attach, connect, queryFilter) resolve to the ABI
+      // fragment instead of the inherited method.
+      const fn = contract.getFunction(request.functionKey);
 
       return request.isView
-        ? await contract[request.functionKey](...request.args)
-        : await contract[request.functionKey].staticCall(...request.args);
+        ? await fn(...request.args)
+        : await fn.staticCall(...request.args);
     });
   }
 

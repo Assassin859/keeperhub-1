@@ -15,6 +15,7 @@ import { syncWorkflowSchedule } from "@/lib/schedule-service";
 import { sanitizeDescription } from "@/lib/sanitize-description";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
 import { isReservedSlug } from "@/lib/workflow/reserved-slugs";
+import { findInvalidTemplateTokens } from "@/lib/workflow/validation/template-syntax";
 async function fetchWorkflowPublicTags(
   workflowId: string
 ): Promise<Array<{ id: string; name: string; slug: string }>> {
@@ -306,6 +307,23 @@ export async function PATCH(
           { status: 403 }
         );
       }
+
+      // KEEP-468: parse every `{{...}}` token at save time so grammar typos
+      // (the n8n-style `{{$trigger.input.ts}}`-shaped errors that produced
+      // on-chain corruption during the hackathon) are rejected with line/path
+      // errors instead of running through the editor and failing at runtime.
+      const invalidTemplates = findInvalidTemplateTokens(body.nodes);
+      if (invalidTemplates.length > 0) {
+        return NextResponse.json(
+          {
+            error: "INVALID_TEMPLATE_SYNTAX",
+            message:
+              "Workflow contains template tokens that do not parse. Fix the listed references and save again.",
+            invalidTemplates,
+          },
+          { status: 400 }
+        );
+      }
     }
 
     // Validate visibility value if provided
@@ -488,7 +506,7 @@ export async function PATCH(
           {
             error: "INPUT_SCHEMA_REQUIRED",
             message:
-              'Listed workflows must declare an `inputSchema`. Set it to a JSON-schema-shaped object — `{"type": "object"}` is fine for workflows that take no inputs — or unlist the workflow before saving these changes.',
+              'Listed workflows must declare an `inputSchema`. Set it to a JSON-schema-shaped object (`{"type": "object"}` is fine for workflows that take no inputs), or unlist the workflow before saving these changes.',
           },
           { status: 422 }
         );

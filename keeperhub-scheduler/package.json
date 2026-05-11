@@ -8,7 +8,12 @@
     "dispatcher": "tsx schedule-dispatcher/index.ts",
     "block-dispatcher": "tsx block-dispatcher/index.ts",
     "typecheck": "tsc --noEmit",
-    "build": "tsc"
+    "build": "tsc",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:unit": "vitest run tests/unit"
   },
   "dependencies": {
     "@aws-sdk/client-sqs": "^3.1038.0",
@@ -17,9 +22,12 @@
     "express": "^4.21.2"
   },
   "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
     "@types/express": "^5.0.0",
     "@types/node": "^24.10.0",
     "tsx": "^4.20.6",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vite": "^8.0.9",
+    "vitest": "4.1.2"
   }
 }
