@@ -142,29 +142,34 @@
   }
 }
 
-/* Reusable thin scrollbar matching the design system. The explicit
-   `::-webkit-scrollbar { width }` replaces the OS overlay scrollbar with
-   a fixed-width styled one, so the bar doesn't auto-hide or auto-expand
-   on hover. `scrollbar-gutter: stable` reserves the gutter so toggling
-   overflow doesn't shift content. */
 .thin-scrollbar {
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in oklch, var(--color-muted-foreground) 40%, transparent) transparent;
   scrollbar-gutter: stable;
 }
 .thin-scrollbar::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  width: 12px !important;
+  height: 12px !important;
 }
 .thin-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
+  background: transparent !important;
 }
 .thin-scrollbar::-webkit-scrollbar-thumb {
-  background: color-mix(in oklch, var(--color-muted-foreground) 40%, transparent);
-  border-radius: 9999px;
+  background-color: color-mix(
+    in oklch,
+    var(--color-muted-foreground) 60%,
+    transparent
+  ) !important;
+  background-clip: content-box !important;
+  border: 4px solid transparent !important;
+  border-radius: 9999px !important;
 }
 .thin-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in oklch, var(--color-muted-foreground) 60%, transparent);
+  background-color: color-mix(
+    in oklch,
+    var(--color-muted-foreground) 85%,
+    transparent
+  ) !important;
 }
 
 /* This layer is by next-forge */

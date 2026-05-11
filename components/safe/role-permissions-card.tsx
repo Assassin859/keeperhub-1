@@ -331,7 +331,7 @@ export function RolePermissionsCard({
             <div className="flex items-center justify-between gap-2">
               <button
                 aria-expanded={protocolsOpen}
-                className="-mx-1 flex flex-1 cursor-pointer items-center gap-2 rounded px-1 py-1 text-left font-medium text-sm hover:bg-muted/40"
+                className="flex flex-1 cursor-pointer items-center gap-2 rounded px-1 py-1 text-left font-medium text-sm hover:bg-muted/40"
                 onClick={() => setProtocolsOpen((v) => !v)}
                 type="button"
               >
@@ -358,7 +358,7 @@ export function RolePermissionsCard({
               )}
             </div>
             {protocolsOpen && (
-              <div className="thin-scrollbar max-h-96 space-y-2 overflow-y-auto pr-1">
+              <div className="space-y-2">
                 {enabledProtocols.length > 0 ? (
                   enabledProtocols.map((protocol) => (
                     <RoleProtocolGroup
@@ -389,7 +389,7 @@ export function RolePermissionsCard({
             <section className="space-y-2">
               <button
                 aria-expanded={directRulesOpen}
-                className="-mx-1 flex w-full cursor-pointer items-center gap-2 rounded px-1 py-1 text-left font-medium text-sm hover:bg-muted/40"
+                className="flex w-full cursor-pointer items-center gap-2 rounded px-1 py-1 text-left font-medium text-sm hover:bg-muted/40"
                 onClick={() => setDirectRulesOpen((v) => !v)}
                 type="button"
               >
@@ -409,7 +409,7 @@ export function RolePermissionsCard({
                     Per-recipient transfers, approvals, and native sends not
                     bound to a protocol preset.
                   </div>
-                  <ul className="thin-scrollbar max-h-96 space-y-1.5 overflow-y-auto pr-1">
+                  <ul className="space-y-1.5">
                     {directRules.map((rule) => (
                       <RoleDirectRuleRow
                         allowance={findDirectAllowance(rule, role.allowances)}

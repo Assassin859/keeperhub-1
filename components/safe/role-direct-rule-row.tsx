@@ -110,37 +110,39 @@ export function RoleDirectRuleRow({
   const logoUrl = tokenLogoUrl ?? tokenInfo?.logoUrl ?? null;
 
   return (
-    <li className="group relative space-y-1.5 rounded border bg-muted/20 px-3 py-2 pr-10 text-sm">
-      <div className="flex flex-wrap items-center gap-2">
-        <Badge className="text-[10px]" variant="outline">
-          {kindLabel(rule.kind)}
-        </Badge>
-        {logoUrl ? (
-          <Image
-            alt={rule.tokenSymbol}
-            className="h-5 w-5 shrink-0 rounded-full bg-muted"
-            height={20}
-            src={logoUrl}
-            width={20}
-          />
-        ) : (
-          <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted font-medium text-[9px]">
-            {rule.tokenSymbol.slice(0, 3)}
-          </div>
-        )}
-        <span className="font-medium">{rule.tokenSymbol}</span>
-        <span className="text-muted-foreground text-xs">
-          {usageText} · Refills {periodLabel(rule.periodSeconds)}
-        </span>
-      </div>
-      <div className="flex items-center gap-2 text-muted-foreground text-xs">
-        <span>{counterpartyRole(rule.kind)}</span>
-        <AddressWithExplorer address={rule.counterparty} chainId={chainId} />
+    <li className="group flex items-center gap-1 rounded border bg-muted/20 px-3 py-2 text-sm">
+      <div className="min-w-0 flex-1 space-y-0.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge className="text-[10px]" variant="outline">
+            {kindLabel(rule.kind)}
+          </Badge>
+          {logoUrl ? (
+            <Image
+              alt={rule.tokenSymbol}
+              className="h-5 w-5 shrink-0 rounded-full bg-muted"
+              height={20}
+              src={logoUrl}
+              width={20}
+            />
+          ) : (
+            <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted font-medium text-[9px]">
+              {rule.tokenSymbol.slice(0, 3)}
+            </div>
+          )}
+          <span className="font-medium">{rule.tokenSymbol}</span>
+          <span className="text-muted-foreground text-xs">
+            {usageText} · Refills {periodLabel(rule.periodSeconds)}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 text-muted-foreground text-xs">
+          <span>{counterpartyRole(rule.kind)}</span>
+          <AddressWithExplorer address={rule.counterparty} chainId={chainId} />
+        </div>
       </div>
       {onEdit && (
         <Button
           aria-label="Edit rule"
-          className="absolute top-1.5 right-1.5 h-7 w-7 p-0 text-muted-foreground opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
+          className="h-7 w-0 overflow-hidden p-0 text-muted-foreground opacity-0 transition-all duration-150 focus-visible:w-7 focus-visible:opacity-100 group-hover:w-7 group-hover:opacity-100"
           onClick={onEdit}
           size="sm"
           type="button"
