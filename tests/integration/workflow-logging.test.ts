@@ -8,6 +8,7 @@ vi.mock("@/lib/logging", () => ({
     DATABASE: "database",
   },
   logSystemError: vi.fn(),
+  logSystemWarn: vi.fn(),
 }));
 
 // Hoisted schema stubs so the vi.mock factory can reference them.
