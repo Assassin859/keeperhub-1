@@ -498,6 +498,13 @@
       "when": 1777760000004,
       "tag": "0070_workflow_executions_billable",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1777760000005,
+      "tag": "0071_keep_470_workflow_tx_hash_array",
+      "breakpoints": true
     }
   ]
 }

@@ -773,6 +773,15 @@ async function fetchWorkflowRuns(
       )
     );
 
+  // KEEP-470: gas + network still come from per-log aggregation (no top-level
+  // column exists for them yet). Transaction hashes now come from the
+  // workflow_executions.transaction_hashes column directly - it carries the
+  // full ordered list (one entry per tx-producing step, including For-Each
+  // iterations), already populated atomically with the status='success' flip
+  // by lib/workflow/executor/logging.ts. The legacy MIN aggregate from
+  // workflow_execution_logs was a workaround that picked an arbitrary single
+  // hash per run; multi-tx workflows (approve+swap, fan-outs) silently lost
+  // every hash but one.
   const logSummary = db
     .select({
       executionId: workflowExecutionLogs.executionId,
@@ -785,17 +794,12 @@ async function fetchWorkflowRuns(
         THEN ${logInputField("network")}
         END
       )`.as("network"),
-      transactionHash: sql<string | null>`MIN(
-        CASE WHEN ${logOutputField("transactionHash")} IS NOT NULL
-        THEN ${logOutputField("transactionHash")}
-        END
-      )`.as("transactionHash"),
     })
     .from(workflowExecutionLogs)
     .where(
       and(
         sql`${workflowExecutionLogs.executionId} IN (${scopedExecutionIds})`,
-        sql`(${logOutputField("gasUsed")} IS NOT NULL OR ${logOutputField("transactionHash")} IS NOT NULL)`
+        sql`${logOutputField("gasUsed")} IS NOT NULL`
       )
     )
     .groupBy(workflowExecutionLogs.executionId)
@@ -814,7 +818,7 @@ async function fetchWorkflowRuns(
       completedSteps: workflowExecutions.completedSteps,
       gasUsedWei: logSummary.gasUsedWei,
       network: logSummary.network,
-      transactionHash: logSummary.transactionHash,
+      transactionHashes: workflowExecutions.transactionHashes,
     })
     .from(workflowExecutions)
     .leftJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
@@ -834,7 +838,7 @@ async function fetchWorkflowRuns(
     workflowName: row.workflowName ?? "(Deleted)",
     directType: null,
     network: row.network ?? null,
-    transactionHash: row.transactionHash ?? null,
+    transactionHashes: row.transactionHashes,
     gasUsedWei:
       row.gasUsedWei && row.gasUsedWei !== "0" ? row.gasUsedWei : null,
     totalSteps: row.totalSteps ? Number(row.totalSteps) : null,
@@ -899,7 +903,20 @@ async function fetchDirectRuns(
     workflowName: null,
     directType: row.type as UnifiedRun["directType"],
     network: row.network,
-    transactionHash: row.transactionHash,
+    // Direct executions are genuinely single-tx. Synthesize the entry so
+    // consumers can render workflow + direct runs through the same array
+    // shape; nodeId/nodeName carry sentinel values since direct executions
+    // have no canvas node.
+    transactionHashes: row.transactionHash
+      ? [
+          {
+            hash: row.transactionHash,
+            nodeId: "direct",
+            nodeName: "Direct execution",
+            ...(row.network ? { network: row.network } : {}),
+          },
+        ]
+      : [],
     gasUsedWei: row.gasUsedWei,
     totalSteps: null,
     completedSteps: null,
