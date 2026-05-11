@@ -17,6 +17,21 @@ COPY .npmrc* ./
 RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 
+# Stage: Dev (deps baked; source provided by bind mount at runtime)
+# Used by docker-compose --profile dev to eliminate the runtime
+# `pnpm install` that previously ran in every container start.
+# Two app-dev containers can now run concurrently without racing on a
+# shared node_modules volume.
+FROM node:24-alpine AS dev
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+RUN npm install -g pnpm@9
+COPY --link --from=deps /app/node_modules ./node_modules
+COPY package.json pnpm-lock.yaml* .npmrc* ./
+ENV HOSTNAME=0.0.0.0
+EXPOSE 3000
+CMD ["pnpm", "dev", "--hostname", "0.0.0.0"]
+
 # Stage 2: Source (dependencies + source files, no build)
 FROM node:24-alpine AS source
 WORKDIR /app
