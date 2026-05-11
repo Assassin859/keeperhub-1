@@ -28,6 +28,7 @@ overrides:
   uuid@11: ^11.1.1
   postcss: ^8.5.10
   effect: ^3.20.0
+  follow-redirects: ^1.16.0
 
 importers:
 
@@ -303,7 +304,7 @@ importers:
         version: 5.9.3
       ultracite:
         specifier: 6.5.1
-        version: 6.5.1(effect@3.21.2)(typescript@5.9.3)(valibot@1.2.0(typescript@5.9.3))
+        version: 6.5.1(typescript@5.9.3)(valibot@1.2.0(typescript@5.9.3))
       viem:
         specifier: ^2.47.1
         version: 2.47.5(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6)
@@ -18933,12 +18934,11 @@ snapshots:
     dependencies:
       punycode: 2.3.1
 
-  trpc-cli@0.12.4(@trpc/server@11.15.0(typescript@5.9.3))(effect@3.21.2)(valibot@1.2.0(typescript@5.9.3))(zod@4.3.6):
+  trpc-cli@0.12.4(@trpc/server@11.15.0(typescript@5.9.3))(valibot@1.2.0(typescript@5.9.3))(zod@4.3.6):
     dependencies:
       commander: 14.0.3
     optionalDependencies:
       '@trpc/server': 11.15.0(typescript@5.9.3)
-      effect: 3.21.2
       valibot: 1.2.0(typescript@5.9.3)
       zod: 4.3.6
 
@@ -18998,7 +18998,7 @@ snapshots:
 
   ulid@3.0.2: {}
 
-  ultracite@6.5.1(effect@3.21.2)(typescript@5.9.3)(valibot@1.2.0(typescript@5.9.3)):
+  ultracite@6.5.1(typescript@5.9.3)(valibot@1.2.0(typescript@5.9.3)):
     dependencies:
       '@clack/prompts': 0.11.0
       '@trpc/server': 11.15.0(typescript@5.9.3)
@@ -19007,7 +19007,7 @@ snapshots:
       jsonc-parser: 3.3.1
       nypm: 0.6.5
       picocolors: 1.1.1
-      trpc-cli: 0.12.4(@trpc/server@11.15.0(typescript@5.9.3))(effect@3.21.2)(valibot@1.2.0(typescript@5.9.3))(zod@4.3.6)
+      trpc-cli: 0.12.4(@trpc/server@11.15.0(typescript@5.9.3))(valibot@1.2.0(typescript@5.9.3))(zod@4.3.6)
       zod: 4.3.6
     transitivePeerDependencies:
       - '@orpc/server'
