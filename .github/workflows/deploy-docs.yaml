@@ -1,3 +1,8 @@
+# Type: standalone | Builds and deploys the docs site.
+# The build step lives in the reusable build-docs-image.yml so PR validation
+# (pr-docs-site-build.yaml) can exercise the same Dockerfile + build inputs
+# without pushing to ECR. This file owns the prod deploy: helm upgrade with
+# the freshly built image.
 on:
   push:
     branches:
@@ -5,23 +10,29 @@ on:
     paths:
       - 'docs/**'
       - 'docs-site/**'
+      - '.github/workflows/build-docs-image.yml'
       - '.github/workflows/deploy-docs.yaml'
   workflow_dispatch:
 
 name: deploy-keeperhub-docs
 
 jobs:
-  build-and-deploy-docs:
-    environment: ${{ github.ref == 'refs/heads/prod' && 'prod' || 'staging' }}
+  build:
+    uses: ./.github/workflows/build-docs-image.yml
+    with:
+      push: true
+    secrets: inherit
+
+  deploy:
+    needs: build
     runs-on: ubuntu-latest
+    environment: ${{ github.ref == 'refs/heads/prod' && 'prod' || 'staging' }}
     env:
       HELM_FILE: deploy/docs-site/${{ github.ref == 'refs/heads/prod' && 'prod' || 'staging' }}/values.yaml
       REGION: ${{ vars.TO_REGION }}
       CLUSTER_NAME: ${{ vars.TO_CLUSTER_NAME }}
-      ENVIRONMENT_TAG: ${{ github.ref == 'refs/heads/prod' && 'prod' || 'staging' }}
       NAMESPACE: keeperhub
       SERVICE_NAME: keeperhub-docs
-      AWS_ECR_NAME: keeperhub-docs-${{ github.ref == 'refs/heads/prod' && 'prod' || 'staging' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -35,37 +46,11 @@ jobs:
           aws-secret-access-key: ${{ secrets.TO_AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.REGION }}
 
-      - name: Login to AWS ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Extract commit hash
-        id: vars
-        shell: bash
-        run: |
-          echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-
-      - name: Build, tag, and push docs image to ECR
-        id: build-docs-image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ./docs-site/Dockerfile
-          push: true
-          tags: |
-            ${{ steps.login-ecr.outputs.registry }}/${{ env.AWS_ECR_NAME }}:${{ steps.vars.outputs.sha_short }}
-            ${{ steps.login-ecr.outputs.registry }}/${{ env.AWS_ECR_NAME }}:latest
-          cache-from: type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.AWS_ECR_NAME }}:cache
-          cache-to: type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.AWS_ECR_NAME }}:cache,mode=max
-
       - name: Replace variables in the Helm values file
         id: replace-vars
         env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ steps.vars.outputs.sha_short }}
+          ECR_REGISTRY: ${{ needs.build.outputs.ecr_registry }}
+          IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
         run: |
           sed -i 's|${ECR_REGISTRY}|'"$ECR_REGISTRY"'|g' $HELM_FILE
           sed -i 's|${IMAGE_TAG}|'"$IMAGE_TAG"'|g' $HELM_FILE
