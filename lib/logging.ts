@@ -285,8 +285,16 @@ export function logSystemError(
  *   - Emits NO Prometheus metric (so it cannot trip system-error alerts)
  *
  * Differs from logUserError:
- *   - is_user_error=false (caller is system code, not user input)
  *   - Emits no metric (logUserError emits a user-error counter)
+ *   - No is_user_error Sentry tag (see below)
+ *
+ * Sentry tag policy:
+ *   - is_user_error is intentionally NOT set. At the call site for a
+ *     logSystemWarn we typically do not yet know whether the underlying
+ *     failure is user-caused or engine-caused -- forcing it to "false"
+ *     would let alerts filtering `is_user_error:false` match these events
+ *     and re-trip the same dashboards we are trying to keep quiet. The
+ *     event's `level=warning` is the canonical filter for these.
  */
 export function logSystemWarn(
   category: ErrorCategory,
@@ -306,7 +314,6 @@ export function logSystemWarn(
     tags: {
       error_category: category,
       error_context: context,
-      is_user_error: "false",
     },
     extra: fullLabels,
   });
