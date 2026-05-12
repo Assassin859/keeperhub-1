@@ -95,8 +95,8 @@ export async function ensureNativeGas(
   await tx.wait();
 }
 
-type AbiInput = { name: string; type: string };
-type AbiFunction = {
+export type AbiInput = { name: string; type: string };
+export type AbiFunction = {
   type: string;
   name: string;
   stateMutability?: string;
@@ -112,8 +112,10 @@ type AbiFunction = {
  *   - `amount` / `value` -> amount in wei
  * Throws if any input cannot be resolved, so a malformed FAUCET entry fails
  * loudly at the start of a test session rather than mid-run.
+ *
+ * Exported for unit coverage in tests/unit/faucet-args.test.ts.
  */
-function bindFaucetArgs(
+export function bindFaucetArgs(
   fn: AbiFunction,
   tokenAddress: string,
   recipient: string,
