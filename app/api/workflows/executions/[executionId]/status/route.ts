@@ -136,6 +136,7 @@ export async function GET(
       nodeStatuses,
       progress,
       errorContext,
+      transactionHashes: execution.transactionHashes,
     });
   } catch (error) {
     const { executionId } = await context.params;
