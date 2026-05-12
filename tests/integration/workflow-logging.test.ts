@@ -104,6 +104,7 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
+import { db } from "@/lib/db";
 import { logSystemError, logSystemWarn } from "@/lib/logging";
 import {
   logStepCompleteDb,
@@ -674,6 +675,41 @@ describe("logWorkflowCompleteDb transactionHashes (KEEP-470)", () => {
     }>;
     expect(entries).toHaveLength(1);
     expect(entries[0].hash).toBe("0xreal");
+  });
+
+  // KEEP-470: regression guard for the SQL pushdown of the transactionHash
+  // prune. The functional tests above filter in JS even when the SQL filter
+  // is removed (the mock returns all rows ignoring WHERE), so a typo in the
+  // column name, the wrong operator, or accidental removal of the filter
+  // would silently pass those tests while regressing performance back to
+  // streaming every successful log row through Node.
+  it("pushes the transactionHash IS NOT NULL prune into the SQL WHERE clause", async () => {
+    const executionId = "exec_sql_filter_shape";
+    const findManyMock = vi.mocked(db.query.workflowExecutionLogs.findMany);
+
+    // Trigger the cross-pod fallback path with an empty tracker.
+    allLogs = [];
+    await logWorkflowCompleteDb({
+      executionId,
+      status: "success",
+      startTime: Date.now() - 1000,
+    });
+
+    // listTrulyFailedNodes also hits findMany; discriminate by the
+    // outputRaw column selector unique to loadHashesFromLogs.
+    const loadHashesCall = findManyMock.mock.calls.find(
+      ([opts]) =>
+        (opts as { columns?: { outputRaw?: boolean } } | undefined)?.columns
+          ?.outputRaw === true
+    );
+    expect(loadHashesCall).toBeDefined();
+    const whereJson = JSON.stringify(
+      (loadHashesCall?.[0] as { where?: unknown } | undefined)?.where
+    );
+    // Right column (output_raw, not the double-encoded output) and right
+    // operator (IS NOT NULL, not IS NULL). Catches typos and removals.
+    expect(whereJson).toContain("output_raw");
+    expect(whereJson).toContain("->>'transactionHash' IS NOT NULL");
   });
 });
 
