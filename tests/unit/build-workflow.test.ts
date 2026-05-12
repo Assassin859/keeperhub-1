@@ -16,6 +16,7 @@ import {
   buildActionWorkflow,
   buildSetupWorkflow,
   listCoverageTargets,
+  toWebhookTriggered,
   TRIGGER_TYPES,
 } from "@/lib/test-data/build-workflow";
 
@@ -140,4 +141,65 @@ describe("KEEP-458 build-workflow", () => {
       });
     });
   }
+});
+
+/**
+ * Pinpoint check that the `walletAddress` arg actually propagates through
+ * the builder to the resolved config. A regression where the builder ignored
+ * the parameter (e.g. fell back to a hardcoded constant) would slip past the
+ * bulk per-action assertions above.
+ */
+describe("KEEP-458 wallet address propagation", () => {
+  it("resolves wallet() bindings to the caller-supplied address", () => {
+    const built = buildActionWorkflow({
+      protocolSlug: "aave-v3",
+      actionSlug: "supply",
+      chainId: "11155111",
+      trigger: "Manual",
+      walletAddress: TEST_WALLET,
+    });
+    const actionNode = built.nodes.find((n) => n.type === "action");
+    expect(actionNode?.data?.config?.onBehalfOf).toBe(TEST_WALLET);
+  });
+});
+
+/**
+ * Direct coverage for `toWebhookTriggered`. The function is the load-bearing
+ * fix that lets the test runner fire any-trigger workflows via the
+ * webhook endpoint (which rejects non-Webhook triggers with HTTP 400).
+ * Losing it silently would re-introduce that bug.
+ */
+describe("KEEP-458 toWebhookTriggered", () => {
+  const built = buildActionWorkflow({
+    protocolSlug: "aave-v3",
+    actionSlug: "supply",
+    chainId: "11155111",
+    trigger: "Schedule",
+    walletAddress: TEST_WALLET,
+  });
+  const rewritten = toWebhookTriggered(built);
+
+  it("rewrites the trigger node's config to {triggerType: 'Webhook'}", () => {
+    const trigger = rewritten.nodes.find((n) => n.type === "trigger");
+    expect(trigger?.data?.config).toEqual({ triggerType: "Webhook" });
+  });
+
+  it("updates the _trigger metadata to 'Webhook'", () => {
+    expect(rewritten._trigger).toBe("Webhook");
+  });
+
+  it("leaves action nodes byte-identical to the source", () => {
+    const sourceAction = built.nodes.find((n) => n.type === "action");
+    const rewrittenAction = rewritten.nodes.find((n) => n.type === "action");
+    expect(rewrittenAction).toEqual(sourceAction);
+  });
+
+  it("does not mutate the input workflow", () => {
+    const sourceTrigger = built.nodes.find((n) => n.type === "trigger");
+    expect(sourceTrigger?.data?.config).toEqual({
+      triggerType: "Schedule",
+      cron: "0 0 * * *",
+      timezone: "UTC",
+    });
+  });
 });
