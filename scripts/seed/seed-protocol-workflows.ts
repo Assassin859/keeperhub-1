@@ -81,7 +81,48 @@ type SeedOutcome = "inserted" | "refreshed" | "skipped" | "failed";
 // updatedAt to the same `now` within one statement, but timestamps round to
 // microsecond resolution and can differ by a few ms across statements.
 // 5 seconds is wide enough to absorb that without masking real user edits.
-const USER_EDIT_EPSILON_MS = 5000;
+export const USER_EDIT_EPSILON_MS = 5000;
+
+export type ExistingWorkflowRow = {
+  updatedAt: Date;
+  seededAt: Date | null;
+};
+
+export type SeedAction =
+  | { kind: "insert" }
+  | { kind: "refresh" }
+  | { kind: "skip"; reason: "user-created" | "user-edited"; gapMs?: number };
+
+/**
+ * Decide what to do with a deterministic-ID workflow row given the existing
+ * state. Pure: separates the gating logic from the SQL plumbing in
+ * upsertOne so it can be unit-tested cheaply (no DB stubs).
+ *
+ *   - undefined existing -> insert
+ *   - seededAt null -> skip (user-created; deterministic-ID collision is
+ *     astronomically unlikely, but the null check is free)
+ *   - updatedAt > seededAt + epsilon -> skip (user-edited after last seed)
+ *   - otherwise -> refresh
+ *
+ * Reciprocally: gapMs <= epsilon (including zero and negative gaps from
+ * timestamp rounding or clock skew) is treated as the seeder's own touch.
+ */
+export function decideSeedAction(
+  existing: ExistingWorkflowRow | undefined,
+  epsilonMs: number
+): SeedAction {
+  if (!existing) {
+    return { kind: "insert" };
+  }
+  if (existing.seededAt === null) {
+    return { kind: "skip", reason: "user-created" };
+  }
+  const gapMs = existing.updatedAt.getTime() - existing.seededAt.getTime();
+  if (gapMs > epsilonMs) {
+    return { kind: "skip", reason: "user-edited", gapMs };
+  }
+  return { kind: "refresh" };
+}
 
 async function upsertOne(
   db: ReturnType<typeof drizzle>,
@@ -102,7 +143,17 @@ async function upsertOne(
       .where(eq(workflows.id, id))
       .limit(1);
 
-    if (existing.length === 0) {
+    const action = decideSeedAction(existing[0], USER_EDIT_EPSILON_MS);
+    if (action.kind === "skip") {
+      const detail =
+        action.reason === "user-created"
+          ? "row exists but seededAt is null -- user-created"
+          : `user-edited; updatedAt is ${action.gapMs}ms after seededAt`;
+      console.warn(`  ~ ${idParts.join("/")}: skipped (${detail})`);
+      return "skipped";
+    }
+
+    if (action.kind === "insert") {
       await db.insert(workflows).values({
         id,
         name: workflow.name,
@@ -120,26 +171,6 @@ async function upsertOne(
         seededAt: now,
       });
       return "inserted";
-    }
-
-    const row = existing[0];
-    // A row with the deterministic ID exists. If seededAt is null, it was
-    // user-created (deterministic ID collision is astronomically unlikely
-    // but the null check costs nothing). If seededAt is set and updatedAt
-    // has moved past it, a human edited the row after the last seed. In
-    // either case, leave it alone.
-    if (row.seededAt === null) {
-      console.warn(
-        `  ~ ${idParts.join("/")}: skipped (row exists but seededAt is null -- user-created)`
-      );
-      return "skipped";
-    }
-    const gapMs = row.updatedAt.getTime() - row.seededAt.getTime();
-    if (gapMs > USER_EDIT_EPSILON_MS) {
-      console.warn(
-        `  ~ ${idParts.join("/")}: skipped (user-edited; updatedAt is ${gapMs}ms after seededAt)`
-      );
-      return "skipped";
     }
 
     await db
