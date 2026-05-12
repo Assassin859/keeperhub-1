@@ -10,7 +10,11 @@
  */
 
 import { expect, test } from "vitest";
-import { getProtocol } from "@/lib/protocol-registry";
+import {
+  getProtocol,
+  type ProtocolAction,
+  type ProtocolDefinition,
+} from "@/lib/protocol-registry";
 import {
   buildActionWorkflow,
   toWebhookTriggered,
@@ -26,6 +30,47 @@ import type { SharedCtx } from "./setup";
 
 const TIMEOUT_MS = 120_000;
 
+/**
+ * Planned per-action outcome for a phase: either a real test that should
+ * register, or a documented skip. Pure data -- separated from the vitest
+ * registration in `runPhaseFixtures` so the gating logic can be
+ * unit-tested without spying on vitest internals.
+ *
+ *   - `run` carries the action so the caller can build a workflow for it.
+ *   - `skip` carries the reason (used in the test name and shown by the
+ *     vitest reporter so a green run still surfaces what was skipped).
+ *   - `no-protocol` / `no-actions` cover the early-return branches in
+ *     `runPhaseFixtures` (unknown protocol slug, no actions for phase).
+ */
+export type FixtureCase =
+  | { kind: "run"; action: ProtocolAction }
+  | { kind: "skip"; action: ProtocolAction; reason: string }
+  | { kind: "no-protocol"; protocolSlug: string }
+  | { kind: "no-actions"; protocolSlug: string; phase: "read" | "write" };
+
+export function planPhaseFixtures(
+  protocol: ProtocolDefinition | undefined,
+  protocolSlug: string,
+  chainId: string,
+  phase: "read" | "write"
+): FixtureCase[] {
+  if (!protocol) {
+    return [{ kind: "no-protocol", protocolSlug }];
+  }
+  const actions = protocol.actions.filter((a) => a.type === phase);
+  if (actions.length === 0) {
+    return [{ kind: "no-actions", protocolSlug, phase }];
+  }
+  const skipped = protocol.testData?.[chainId]?.skipped ?? {};
+  return actions.map((action) => {
+    const reason = skipped[action.slug];
+    if (reason) {
+      return { kind: "skip", action, reason };
+    }
+    return { kind: "run", action };
+  });
+}
+
 export function runPhaseFixtures(opts: {
   protocol: string;
   chainId: string;
@@ -33,31 +78,33 @@ export function runPhaseFixtures(opts: {
   ctx: SharedCtx;
 }): void {
   const protocol = getProtocol(opts.protocol);
-  if (!protocol) {
-    test.skip(`protocol ${opts.protocol} not registered`, () => {
-      /* no-op */
-    });
-    return;
-  }
+  const plan = planPhaseFixtures(
+    protocol,
+    opts.protocol,
+    opts.chainId,
+    opts.phase
+  );
 
-  const actions = protocol.actions.filter((a) => a.type === opts.phase);
-  if (actions.length === 0) {
-    test.skip(`no ${opts.phase} actions on ${opts.protocol}`, () => {
-      /* no-op */
-    });
-    return;
-  }
-
-  const skipped = protocol.testData?.[opts.chainId]?.skipped ?? {};
-
-  for (const action of actions) {
-    const skipReason = skipped[action.slug];
-    if (skipReason) {
-      test.skip(`${action.slug} (${skipReason})`, () => {
+  for (const c of plan) {
+    if (c.kind === "no-protocol") {
+      test.skip(`protocol ${c.protocolSlug} not registered`, () => {
+        /* no-op */
+      });
+      continue;
+    }
+    if (c.kind === "no-actions") {
+      test.skip(`no ${c.phase} actions on ${c.protocolSlug}`, () => {
+        /* no-op */
+      });
+      continue;
+    }
+    if (c.kind === "skip") {
+      test.skip(`${c.action.slug} (${c.reason})`, () => {
         /* documented in chainData.skipped */
       });
       continue;
     }
+    const action = c.action;
     test(
       action.slug,
       async () => {
