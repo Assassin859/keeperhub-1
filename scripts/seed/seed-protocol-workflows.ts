@@ -20,7 +20,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { getDatabaseUrl } from "../../lib/db/connection-utils";
 import { member, users, workflows } from "../../lib/db/schema";
-import { paraWallets } from "../../lib/db/schema-extensions";
+import { organizationWallets } from "../../lib/db/schema-extensions";
 import "@/protocols";
 import {
   buildActionWorkflow,
@@ -156,10 +156,10 @@ async function seed(cli: Cli): Promise<void> {
   }
 
   const walletRow = await db
-    .select({ walletAddress: paraWallets.walletAddress })
-    .from(paraWallets)
+    .select({ walletAddress: organizationWallets.walletAddress })
+    .from(organizationWallets)
     .where(
-      and(eq(paraWallets.organizationId, orgId), eq(paraWallets.isActive, true))
+      and(eq(organizationWallets.organizationId, orgId), eq(organizationWallets.isActive, true))
     )
     .limit(1);
   if (!walletRow[0]) {

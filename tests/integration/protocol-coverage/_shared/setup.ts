@@ -13,7 +13,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { getDatabaseUrl } from "@/lib/db/connection-utils";
 import { organization } from "@/lib/db/schema";
-import { paraWallets } from "@/lib/db/schema-extensions";
+import { organizationWallets } from "@/lib/db/schema-extensions";
 import {
   buildSetupWorkflow,
   toWebhookTriggered,
@@ -47,13 +47,13 @@ async function getTestWalletAddress(): Promise<string> {
   try {
     const db = drizzle(client);
     const [row] = await db
-      .select({ walletAddress: paraWallets.walletAddress })
-      .from(paraWallets)
-      .innerJoin(organization, eq(organization.id, paraWallets.organizationId))
+      .select({ walletAddress: organizationWallets.walletAddress })
+      .from(organizationWallets)
+      .innerJoin(organization, eq(organization.id, organizationWallets.organizationId))
       .where(
         and(
           eq(organization.slug, PERSISTENT_TEST_ORG_SLUG),
-          eq(paraWallets.isActive, true)
+          eq(organizationWallets.isActive, true)
         )
       )
       .limit(1);
