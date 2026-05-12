@@ -4,16 +4,21 @@
  */
 import "server-only";
 
-import { and, eq, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { workflowExecutionLogs, workflowExecutions } from "@/lib/db/schema";
-import { ErrorCategory, logSystemError } from "@/lib/logging";
+import {
+  type TransactionHashEntry,
+  workflowExecutionLogs,
+  workflowExecutions,
+} from "@/lib/db/schema";
+import { ErrorCategory, logSystemError, logSystemWarn } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
 import {
   EXCEEDED_MAX_RETRIES_REGEX,
   FAILED_AFTER_RETRIES_REGEX,
   NO_STEP_COMPLETION_REGEX,
 } from "@/lib/workflow/executor/runner-error-patterns";
+import { getTransactionHashes } from "@/lib/workflow/executor/step-success-tracker";
 
 const TERMINAL_STATUSES = new Set(["cancelled"]);
 
@@ -79,6 +84,111 @@ async function listTrulyFailedNodes(executionId: string): Promise<string[]> {
     }
   }
   return trulyFailedNodes;
+}
+
+/**
+ * Cross-pod fallback for TransactionHashEntry reconstruction.
+ *
+ * The in-memory tracker in step-success-tracker.ts is local to the Node
+ * process that ran each step. When the SDK resumes a workflow on a different
+ * pod, the tracker on the finalizing pod is empty. Reconstruct entries from
+ * the durable workflow_execution_logs rows so success terminations can still
+ * persist the full list.
+ *
+ * Ordered by started_at ASC so the array matches submission order even when
+ * an SDK fan-out completes out of submit order. Deduped by hash string so SDK
+ * retries that re-broadcast (same logical step, two distinct hashes) keep the
+ * first-seen entry. nodeId-keyed dedupe would incorrectly collapse legitimate
+ * For-Each iterations that share a nodeId.
+ *
+ * Optional fields are omitted from the entry when not present in output_raw
+ * (or, for iterationIndex, when the log row is for a non-loop node), matching
+ * the in-process harvester's shape so consumers see a uniform JSON regardless
+ * of which path populated the column.
+ *
+ * Returns [] on query failure -- losing the hash list is preferable to
+ * failing the UPDATE that flips status to success.
+ *
+ * The transactionHash IS NOT NULL filter is pushed into Postgres so a workflow
+ * that runs a non-tx step many times (e.g. a For-Each over hundreds of HTTP
+ * calls) does not stream every row back to Node just to discard it in JS.
+ * The JS-side type guard below stays as the authoritative check: SQL only
+ * confirms the key exists in output_raw, not that the value is a 0x string.
+ */
+async function loadHashesFromLogs(
+  executionId: string
+): Promise<TransactionHashEntry[]> {
+  try {
+    const rows = await db.query.workflowExecutionLogs.findMany({
+      where: and(
+        eq(workflowExecutionLogs.executionId, executionId),
+        eq(workflowExecutionLogs.status, "success"),
+        sql`${workflowExecutionLogs.outputRaw}->>'transactionHash' IS NOT NULL`
+      ),
+      columns: {
+        nodeId: true,
+        nodeName: true,
+        iterationIndex: true,
+        outputRaw: true,
+      },
+      orderBy: [asc(workflowExecutionLogs.startedAt)],
+    });
+
+    const seen = new Set<string>();
+    const entries: TransactionHashEntry[] = [];
+    for (const row of rows) {
+      const o = row.outputRaw as {
+        transactionHash?: unknown;
+        chainId?: unknown;
+        network?: unknown;
+      } | null;
+      if (
+        o === null ||
+        typeof o !== "object" ||
+        typeof o.transactionHash !== "string" ||
+        !o.transactionHash.startsWith("0x") ||
+        seen.has(o.transactionHash)
+      ) {
+        continue;
+      }
+      seen.add(o.transactionHash);
+      entries.push({
+        hash: o.transactionHash,
+        nodeId: row.nodeId,
+        nodeName: row.nodeName,
+        ...(typeof o.chainId === "number" && { chainId: o.chainId }),
+        ...(typeof o.network === "string" && { network: o.network }),
+        ...(row.iterationIndex !== null && {
+          iterationIndex: row.iterationIndex,
+        }),
+      });
+    }
+    return entries;
+  } catch (queryError) {
+    logSystemError(
+      ErrorCategory.WORKFLOW_ENGINE,
+      "[Workflow Logging] Failed to load transaction hashes from logs",
+      queryError,
+      { execution_id: executionId }
+    );
+    return [];
+  }
+}
+
+/**
+ * Resolve the TransactionHashEntry list to persist when a workflow finalizes
+ * as success. Prefers the in-memory tracker (populated by withStepLoggingInner
+ * during step execution); falls back to scanning workflow_execution_logs.outputRaw
+ * when the tracker is empty (cross-pod resume case).
+ */
+async function resolveTransactionHashesForSuccess(
+  executionId: string
+): Promise<TransactionHashEntry[]> {
+  const tracked = getTransactionHashes(executionId);
+  if (tracked.length > 0) {
+    return tracked;
+  }
+  return await loadHashesFromLogs(executionId);
 }
 
 /**
@@ -159,6 +269,15 @@ async function selfHealWorkflowAfterLateStepCommit(
     : Date.now();
   const newDuration = (Date.now() - startMs).toString();
 
+  // KEEP-470: when self-heal flips status='error' -> 'success' for a workflow
+  // that finalized before its tx-producing step's success row landed, the
+  // earlier logWorkflowCompleteDb call left transaction_hashes='[]'. Resolve
+  // them now from durable logs so the success terminal state carries the
+  // hashes that ran. Tracker may have been cleared on the originating pod;
+  // loadHashesFromLogs is the durable source of truth at this point.
+  const transactionHashes =
+    await resolveTransactionHashesForSuccess(executionId);
+
   // CAS UPDATE: only flip if status is still 'error' (the state we just observed).
   // Drizzle's update returns the affected row count -- we use it to drive metrics.
   const result = await db
@@ -170,6 +289,7 @@ async function selfHealWorkflowAfterLateStepCommit(
       duration: newDuration,
       currentNodeId: null,
       currentNodeName: null,
+      transactionHashes,
     })
     .where(
       and(
@@ -427,8 +547,13 @@ export async function logWorkflowCompleteDb(
   let resolvedError: string | undefined = params.error;
 
   if (params.status === "error") {
-    // Route through unified logger so org/owner ALS context is attached.
-    logSystemError(
+    // KEEP-532: warn, not error -- at this point we do not yet know whether
+    // the failure is user-caused (e.g. user's HTTP step hit a dead URL) or a
+    // real engine fault. logSystemError here unconditionally tripped the
+    // workflow_engine system-error metric on every user-config failure.
+    // Reconciliation below decides the final status; this call is just for
+    // forensic context (ALS org/owner labels attached).
+    logSystemWarn(
       ErrorCategory.WORKFLOW_ENGINE,
       "[Workflow Logging] Execution completed with error, checking node logs for reconciliation",
       params.error ?? "unknown",
@@ -439,7 +564,9 @@ export async function logWorkflowCompleteDb(
       const trulyFailedNodes = await listTrulyFailedNodes(params.executionId);
 
       if (trulyFailedNodes.length === 0) {
-        logSystemError(
+        // KEEP-532: Recovery event -- spurious SDK error overridden to success.
+        // Not an error condition; warn-level keeps it in traces without paging.
+        logSystemWarn(
           ErrorCategory.WORKFLOW_ENGINE,
           "[Workflow Logging] No node-level errors found, overriding spurious SDK error to success",
           params.error ?? "unknown",
@@ -472,6 +599,18 @@ export async function logWorkflowCompleteDb(
     );
   }
 
+  // KEEP-470: populate transaction_hashes atomically with the status flip.
+  // Only resolve on success; error terminations keep the default '[]'::jsonb.
+  // The UPDATE writes status and hashes in the same statement so no consumer
+  // can observe status='success' with hashes missing for a run that produced
+  // them. The resolver prefers the in-memory tracker but falls back to a
+  // SELECT against workflow_execution_logs for the cross-pod resume case
+  // (tracker on finalizing pod is empty after an SDK checkpoint).
+  const transactionHashes: TransactionHashEntry[] =
+    resolvedStatus === "success"
+      ? await resolveTransactionHashesForSuccess(params.executionId)
+      : [];
+
   await db
     .update(workflowExecutions)
     .set({
@@ -483,6 +622,7 @@ export async function logWorkflowCompleteDb(
       // Clear current step on completion
       currentNodeId: null,
       currentNodeName: null,
+      transactionHashes,
     })
     .where(
       and(
