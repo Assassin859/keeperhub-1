@@ -3,7 +3,15 @@
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { ChevronLeft, ChevronRight, Globe, Plus } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  use,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { NodeConfigPanel } from "@/components/workflow/node-config-panel";
@@ -504,6 +512,52 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
   const lastAutoFixRef = useRef<{ workflowId: string; version: number } | null>(
     null
   );
+
+  // KEEP-542: workflow identity atoms are global Jotai singletons that persist
+  // across navigation. After viewing a hub workflow (isOwner=false,
+  // visibility=public), those values leak into the next workflow page until
+  // loadExistingWorkflow resolves — leaving the persistent toolbar showing
+  // "Use Template" for the user's own workflow, and worse, wiring its
+  // currentWorkflowId to the previously viewed hub template (so clicking
+  // "Use Template" duplicates the hub workflow). useLayoutEffect resets the
+  // identity/content atoms before paint so the toolbar never sees stale state.
+  const previousWorkflowIdRef = useRef<string | null>(null);
+  useLayoutEffect((): (() => void) => {
+    if (previousWorkflowIdRef.current !== workflowId) {
+      previousWorkflowIdRef.current = workflowId;
+      setCurrentWorkflowId(null);
+      setCurrentWorkflowName("");
+      setCurrentWorkflowDescription("");
+      setCurrentWorkflowVisibility("private");
+      setIsWorkflowOwner(true);
+      setNodes([]);
+      setEdges([]);
+      setSelectedNode(null);
+      setWorkflowNotFound(false);
+    }
+    return (): void => {
+      setCurrentWorkflowId(null);
+      setCurrentWorkflowName("");
+      setCurrentWorkflowDescription("");
+      setCurrentWorkflowVisibility("private");
+      setIsWorkflowOwner(true);
+      setNodes([]);
+      setEdges([]);
+      setSelectedNode(null);
+      setWorkflowNotFound(false);
+    };
+  }, [
+    workflowId,
+    setCurrentWorkflowId,
+    setCurrentWorkflowName,
+    setCurrentWorkflowDescription,
+    setCurrentWorkflowVisibility,
+    setIsWorkflowOwner,
+    setNodes,
+    setEdges,
+    setSelectedNode,
+    setWorkflowNotFound,
+  ]);
 
   useEffect(() => {
     const loadWorkflowData = async () => {
