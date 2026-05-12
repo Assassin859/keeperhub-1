@@ -29,6 +29,7 @@ import {
 } from "@/lib/integrations-store";
 import type { IntegrationType } from "@/lib/types/integration";
 import {
+  currentExecutionIdAtom,
   currentWorkflowDescriptionAtom,
   currentWorkflowIdAtom,
   currentWorkflowInputSchemaAtom,
@@ -45,6 +46,7 @@ import {
   edgesAtom,
   hasSidebarBeenShownAtom,
   hasUnsavedChangesAtom,
+  isExecutingAtom,
   isGeneratingAtom,
   isPanelAnimatingAtom,
   isSavingAtom,
@@ -147,7 +149,11 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
   );
   const [edges] = useAtom(edgesAtom);
   const [currentWorkflowId] = useAtom(currentWorkflowIdAtom);
-  const [selectedExecutionId] = useAtom(selectedExecutionIdAtom);
+  const [selectedExecutionId, setSelectedExecutionId] = useAtom(
+    selectedExecutionIdAtom
+  );
+  const [isExecuting, setIsExecuting] = useAtom(isExecutingAtom);
+  const setCurrentExecutionId = useSetAtom(currentExecutionIdAtom);
   const setNodes = useSetAtom(nodesAtom);
   const setEdges = useSetAtom(edgesAtom);
   const setCurrentWorkflowId = useSetAtom(currentWorkflowIdAtom);
@@ -597,6 +603,97 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
     nodes.length,
     generateWorkflowFromAI,
     loadExistingWorkflow,
+  ]);
+
+  // KEEP-323: Rehydrate the Run/Stop button when the page loads while an
+  // execution is still in-flight. The toolbar's polling lives in component
+  // memory, so a refresh mid-run leaves isExecutingAtom at its default
+  // false and the button reverts to "Run". Here we detect a running
+  // execution server-side, restore the atoms, and poll until it ends so
+  // the button transitions back to "Run" automatically.
+  const rehydratedWorkflowIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!currentWorkflowId) {
+      return;
+    }
+    if (isExecuting) {
+      return;
+    }
+    if (rehydratedWorkflowIdRef.current === currentWorkflowId) {
+      return;
+    }
+
+    let cancelled = false;
+    let intervalId: NodeJS.Timeout | null = null;
+
+    const isInFlightStatus = (status: string): boolean =>
+      status === "running" || status === "pending";
+
+    const pollResumedExecution = (executionId: string): void => {
+      const poll = async (): Promise<void> => {
+        try {
+          const statusData = await api.workflow.getExecutionStatus(executionId);
+          if (isInFlightStatus(statusData.status)) {
+            return;
+          }
+          if (intervalId) {
+            clearInterval(intervalId);
+            intervalId = null;
+          }
+          if (executionPollingIntervalRef.current === intervalId) {
+            executionPollingIntervalRef.current = null;
+          }
+          setIsExecuting(false);
+          setCurrentExecutionId(null);
+        } catch (error) {
+          console.error("Failed to poll resumed execution:", error);
+        }
+      };
+
+      poll();
+      intervalId = setInterval(poll, 500);
+      executionPollingIntervalRef.current = intervalId;
+    };
+
+    const rehydrate = async (): Promise<void> => {
+      try {
+        const executions = await api.workflow.getExecutions(currentWorkflowId);
+        if (cancelled) {
+          return;
+        }
+        rehydratedWorkflowIdRef.current = currentWorkflowId;
+        const inFlight = executions.find((execution) =>
+          isInFlightStatus(execution.status)
+        );
+        if (!inFlight) {
+          return;
+        }
+        setCurrentExecutionId(inFlight.id);
+        setIsExecuting(true);
+        setSelectedExecutionId(inFlight.id);
+        pollResumedExecution(inFlight.id);
+      } catch (error) {
+        console.error("Failed to rehydrate execution state:", error);
+      }
+    };
+
+    rehydrate();
+
+    return (): void => {
+      cancelled = true;
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+      if (executionPollingIntervalRef.current === intervalId) {
+        executionPollingIntervalRef.current = null;
+      }
+    };
+  }, [
+    currentWorkflowId,
+    isExecuting,
+    setIsExecuting,
+    setCurrentExecutionId,
+    setSelectedExecutionId,
   ]);
 
   // Auto-fix invalid/missing integrations on workflow load or when integrations change
