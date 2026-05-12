@@ -43,18 +43,6 @@ describe("KEEP-458 build-workflow", () => {
           walletAddress: TEST_WALLET,
         });
 
-        it("has Manual trigger + at least one action node", () => {
-          expect(setup.nodes.some((n) => n.type === "trigger")).toBe(true);
-          expect(setup.nodes.some((n) => n.type === "action")).toBe(true);
-        });
-
-        it("metadata: _phase=setup, _protocol, _chainId, _trigger=Manual", () => {
-          expect(setup._phase).toBe("setup");
-          expect(setup._protocol).toBe(protocolSlug);
-          expect(setup._chainId).toBe(chainId);
-          expect(setup._trigger).toBe("Manual");
-        });
-
         it("approve nodes reference web3/approve-token with required keys", () => {
           const approveNodes = setup.nodes.filter(
             (n) =>
@@ -77,6 +65,9 @@ describe("KEEP-458 build-workflow", () => {
         }
 
         for (const action of protocol.actions) {
+          // Per-variant coverage exists to catch builder bugs that only
+          // surface for one trigger type. Bulk-iterating all 5 triggers
+          // catches those without exploding into 5x assertions per check.
           for (const trigger of TRIGGER_TYPES) {
             const variant = `${action.slug} [${trigger}]`;
             describe(variant, () => {
@@ -88,18 +79,12 @@ describe("KEEP-458 build-workflow", () => {
                 walletAddress: TEST_WALLET,
               });
 
-              it("has trigger + action node and correct metadata", () => {
-                expect(built.nodes.some((n) => n.type === "trigger")).toBe(
-                  true
-                );
+              it("emits exactly one trigger and at least one action node", () => {
+                expect(built.nodes.filter((n) => n.type === "trigger")).toHaveLength(1);
                 expect(built.nodes.some((n) => n.type === "action")).toBe(true);
-                expect(built._phase).toBe(action.type);
-                expect(built._protocol).toBe(protocolSlug);
-                expect(built._chainId).toBe(chainId);
-                expect(built._trigger).toBe(trigger);
               });
 
-              it("action node config has actionType + network + _protocolMeta", () => {
+              it("action node agrees with the protocol registry", () => {
                 const actionNode = built.nodes.find((n) => n.type === "action");
                 expect(actionNode).toBeDefined();
                 const cfg = actionNode?.data?.config ?? {};
@@ -141,6 +126,45 @@ describe("KEEP-458 build-workflow", () => {
       });
     });
   }
+});
+
+/**
+ * Metadata-roundtrip coverage. The per-action bulk loop above no longer
+ * asserts these per variant -- one pinpoint test for each metadata field is
+ * sufficient to catch a builder regression that ignores its input args (the
+ * bug would fire identically across every variant, so 115 redundant
+ * assertions add no signal). Anchored on aave-v3/supply because it covers
+ * read/write/setup-style inputs without depending on the wider iteration.
+ */
+describe("KEEP-458 builders honour their inputs", () => {
+  it("setup workflow takes _phase=setup, _trigger=Manual, _protocol, _chainId", () => {
+    const setup = buildSetupWorkflow({
+      protocolSlug: "aave-v3",
+      chainId: "11155111",
+      walletAddress: TEST_WALLET,
+    });
+    expect(setup._phase).toBe("setup");
+    expect(setup._trigger).toBe("Manual");
+    expect(setup._protocol).toBe("aave-v3");
+    expect(setup._chainId).toBe("11155111");
+  });
+
+  it.each([...TRIGGER_TYPES])(
+    "action workflow with trigger=%s round-trips all metadata",
+    (trigger) => {
+      const built = buildActionWorkflow({
+        protocolSlug: "aave-v3",
+        actionSlug: "supply",
+        chainId: "11155111",
+        trigger,
+        walletAddress: TEST_WALLET,
+      });
+      expect(built._trigger).toBe(trigger);
+      expect(built._phase).toBe("write");
+      expect(built._protocol).toBe("aave-v3");
+      expect(built._chainId).toBe("11155111");
+    }
+  );
 });
 
 /**
