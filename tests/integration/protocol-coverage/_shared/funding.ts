@@ -187,7 +187,12 @@ export async function ensureErc20Acquired(
       `FAUCETS[${chainId}][${symbol}].abi missing function "${faucet.functionName}".`
     );
   }
-  const args = bindFaucetArgs(fn, tokenEntry.address, walletAddress, needed);
+  // Mint the gap, not the full target -- a previous run may have left a
+  // partial balance, and over-minting wastes faucet quota (Aave Sepolia
+  // caps each call at MAX_MINT_AMOUNT). `balance < needed` is guaranteed
+  // by the early-return above, so `gap` is always positive.
+  const gap = needed - balance;
+  const args = bindFaucetArgs(fn, tokenEntry.address, walletAddress, gap);
 
   const contract = new ethers.Contract(faucet.contract, abi, funder);
   const tx = await contract[faucet.functionName](...args);
