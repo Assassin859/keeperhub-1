@@ -6,17 +6,16 @@
  * re-import the module.
  */
 
-import { describe, expect, it } from "vitest";
-import { vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
+import type { StepContext } from "@/lib/workflow/executor/step-handler";
 import {
   clearExecution,
   getTransactionHashes,
   recordTransactionHashIfPresent,
 } from "@/lib/workflow/executor/step-success-tracker";
-import type { StepContext } from "@/lib/workflow/executor/step-handler";
 
 function ctx(overrides: Partial<StepContext> = {}): StepContext {
   return {
@@ -125,11 +124,7 @@ describe("recordTransactionHashIfPresent (KEEP-470)", () => {
     const entries = getTransactionHashes(executionId);
     expect(entries).toHaveLength(3);
     expect(entries.map((e) => e.iterationIndex)).toEqual([0, 1, 2]);
-    expect(entries.map((e) => e.hash)).toEqual([
-      "0xfan0",
-      "0xfan1",
-      "0xfan2",
-    ]);
+    expect(entries.map((e) => e.hash)).toEqual(["0xfan0", "0xfan1", "0xfan2"]);
     // Same nodeId/nodeName across iterations.
     expect(new Set(entries.map((e) => e.nodeId))).toEqual(
       new Set(["transfer-funds-1"])
@@ -198,5 +193,35 @@ describe("recordTransactionHashIfPresent (KEEP-470)", () => {
 
   it("getTransactionHashes returns empty array for unknown executionId", () => {
     expect(getTransactionHashes("never-tracked")).toEqual([]);
+  });
+
+  it("getTransactionHashes returns a defensive copy that callers cannot use to mutate tracker state", () => {
+    const executionId = "exec_defensive_copy";
+    recordTransactionHashIfPresent(ctx({ executionId }), {
+      transactionHash: "0xoriginal",
+      chainId: 1,
+      network: "mainnet",
+    });
+
+    const first = getTransactionHashes(executionId);
+    expect(first).toHaveLength(1);
+
+    // Mutate the returned array: push, splice, reverse, clear.
+    first.push({
+      hash: "0xinjected",
+      nodeId: "evil",
+      nodeName: "Evil",
+    });
+    first.splice(0, first.length);
+
+    // The next read must reflect the tracker's untouched state, not the
+    // mutated view the caller held.
+    const second = getTransactionHashes(executionId);
+    expect(second).toHaveLength(1);
+    expect(second[0].hash).toBe("0xoriginal");
+    // And each call returns a fresh array (different identity).
+    expect(second).not.toBe(first);
+
+    clearExecution(executionId);
   });
 });

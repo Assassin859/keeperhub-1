@@ -88,10 +88,18 @@ export function recordTransactionHashIfPresent(
   txHashEntries.set(context.executionId, list);
 }
 
+/**
+ * Returns a shallow copy of the tracked entries so callers cannot mutate
+ * the internal list. resolveTransactionHashesForSuccess feeds this directly
+ * into a DB UPDATE; without the copy, any future caller that mutates the
+ * returned array (push, splice, reverse) would silently mutate the
+ * tracker's state for the entire process lifetime of that execution.
+ */
 export function getTransactionHashes(
   executionId: string
 ): TransactionHashEntry[] {
-  return txHashEntries.get(executionId) ?? [];
+  const list = txHashEntries.get(executionId);
+  return list === undefined ? [] : [...list];
 }
 
 export function clearExecution(executionId: string): void {
