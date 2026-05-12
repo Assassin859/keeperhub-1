@@ -262,6 +262,21 @@ function buildProtocolActionNode(
     _protocolMeta: buildProtocolMeta(action, protocol.slug),
   };
 
+  // `contractAddress` is the builder's reserved virtual hint for
+  // userSpecifiedAddress contracts (Superfluid SuperTokens). An action
+  // declaring a real input with the same name would silently share the
+  // binding -- catch it loudly here instead.
+  for (const input of action.inputs) {
+    if (input.name === "contractAddress") {
+      throw new Error(
+        `${protocol.slug}/${action.slug} declares an input named "contractAddress", ` +
+          "which the protocol-coverage builder reserves as a virtual hint for " +
+          "userSpecifiedAddress contracts. Rename the input in protocols/" +
+          `${protocol.slug}.ts.`
+      );
+    }
+  }
+
   // Optional virtual `contractAddress` for actions whose contract is
   // userSpecifiedAddress (Superfluid SuperTokens, etc.).
   if (bindings.contractAddress !== undefined) {
