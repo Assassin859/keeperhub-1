@@ -277,46 +277,46 @@ const orgWithWorkflows = getOrCreateGauge(
   []
 );
 
-// Organization info gauge (DB-sourced, one series per org)
-// Includes plan + billing_status so the Organization Directory table panel
-// in Grafana can show those columns directly off this gauge without an
-// extra Prometheus join.
+// Organization info gauge (DB-sourced, one series per org).
+// Includes plan + tier + billing_status so the Organization Directory
+// table panel in Grafana can show those columns directly off this gauge
+// without an extra Prometheus join. tier is "" (empty string) for free
+// and enterprise orgs (no tier system).
 const orgInfo = getOrCreateGauge(
   dbRegistry,
   "keeperhub_org_info",
-  "Organization info with name, slug, plan, and billing_status labels",
-  ["org_name", "slug", "plan", "billing_status"]
+  "Organization info with name, slug, plan, tier, and billing_status labels",
+  ["org_name", "slug", "plan", "tier", "billing_status"]
 );
 
 // Billing-aware org metrics (DB-sourced)
 //
-// Org count broken down by (plan, billing_status). One series per
-// (plan, billing_status) combination — bounded cardinality (4 plans x
-// ~7 statuses).
+// Org count broken down by (plan, tier, billing_status). One series per
+// unique combination. tier="" for free / enterprise.
 const orgTotalByPlan = getOrCreateGauge(
   dbRegistry,
   "keeperhub_org_total_by_plan",
-  "Organizations grouped by plan and billing status",
-  ["plan", "billing_status"]
+  "Organizations grouped by plan, tier, and billing status",
+  ["plan", "tier", "billing_status"]
 );
 
-// Per-org execution counts (rolling 30-day window). Cardinality control:
-// paid orgs (pro/business/enterprise) emit individual series; free-tier
-// orgs aggregate into a single series with org_slug="_free".
+// Per-org execution counts (rolling 30-day window). Keyed only on
+// org_slug so the series identity stays stable when an org changes plan.
+// Join with keeperhub_org_info for plan/billing_status context.
 const orgExecutions30d = getOrCreateGauge(
   dbRegistry,
   "keeperhub_org_executions_30d",
-  'Workflow executions per org in the last 30 days (paid orgs individually; free orgs aggregated under org_slug="_free")',
-  ["org_slug", "plan"]
+  "Workflow executions per org in the last 30 days",
+  ["org_slug"]
 );
 
 // Per-org execution counts (current calendar month, used for plan limit
-// pressure). Same cardinality rules as orgExecutions30d.
+// pressure).
 const orgExecutionsMonth = getOrCreateGauge(
   dbRegistry,
   "keeperhub_org_executions_month",
   "Workflow executions per org since start of the current calendar month",
-  ["org_slug", "plan"]
+  ["org_slug"]
 );
 
 // Plan usage ratio: current-month executions / monthly limit. 0 when the
@@ -326,18 +326,18 @@ const orgPlanUsageRatio = getOrCreateGauge(
   dbRegistry,
   "keeperhub_org_plan_usage_ratio",
   "Current-month executions divided by the org's plan monthly limit (0 = no pressure or unlimited)",
-  ["org_slug", "plan"]
+  ["org_slug"]
 );
 
-// Directional MRR per plan in USD cents. Computed from PLANS[plan].tiers
-// monthlyPrice × current (plan, tier) of every active/trialing/past_due
+// Directional MRR per (plan, tier) in USD cents. Computed from
+// PLANS[plan].tiers[tier].monthlyPrice for every active/trialing/past_due
 // subscription. Stripe Dashboard remains the source of truth for actual
 // revenue accounting; this gauge is for trend/observability only.
 const mrrUsdCents = getOrCreateGauge(
   dbRegistry,
   "keeperhub_mrr_usd_cents",
-  "Approximate MRR in USD cents per plan (PLANS table * current tier)",
-  ["plan"]
+  "Approximate MRR in USD cents per (plan, tier)",
+  ["plan", "tier"]
 );
 
 const mrrUsdCentsTotal = getOrCreateGauge(
@@ -1289,6 +1289,7 @@ export async function updateDbMetrics(): Promise<void> {
           org_name: org.name,
           slug: org.slug,
           plan: org.plan,
+          tier: org.tier ?? "",
           billing_status: org.billingStatus,
         },
         1
@@ -1297,17 +1298,22 @@ export async function updateDbMetrics(): Promise<void> {
 
     // Update billing-aware metrics
     orgTotalByPlan.reset();
-    for (const [plan, byStatus] of Object.entries(billingStats.orgsByPlan)) {
-      for (const [billingStatus, orgCount] of Object.entries(byStatus)) {
-        orgTotalByPlan.set({ plan, billing_status: billingStatus }, orgCount);
-      }
+    for (const entry of billingStats.orgsByPlan) {
+      orgTotalByPlan.set(
+        {
+          plan: entry.plan,
+          tier: entry.tier ?? "",
+          billing_status: entry.billingStatus,
+        },
+        entry.count
+      );
     }
 
     orgExecutions30d.reset();
     orgExecutionsMonth.reset();
     orgPlanUsageRatio.reset();
     for (const row of billingStats.orgsExecutions) {
-      const labels = { org_slug: row.orgSlug, plan: row.plan };
+      const labels = { org_slug: row.orgSlug };
       orgExecutions30d.set(labels, row.exec30d);
       orgExecutionsMonth.set(labels, row.execMonth);
       // Unlimited plan (enterprise) -> ratio 0 to avoid alerting noise.
@@ -1317,8 +1323,8 @@ export async function updateDbMetrics(): Promise<void> {
     }
 
     mrrUsdCents.reset();
-    for (const [plan, cents] of Object.entries(billingStats.mrrCentsByPlan)) {
-      mrrUsdCents.set({ plan }, cents);
+    for (const entry of billingStats.mrrCentsByPlan) {
+      mrrUsdCents.set({ plan: entry.plan, tier: entry.tier ?? "" }, entry.cents);
     }
     mrrUsdCentsTotal.set(billingStats.mrrCentsTotal);
 

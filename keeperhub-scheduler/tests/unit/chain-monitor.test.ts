@@ -732,6 +732,36 @@ describe("ChainMonitor", () => {
       expect(lastConnectedUrl).toBe("wss://primary.test");
     });
 
+    it("recycles the socket after SOCKET_MAX_AGE_MS elapses", async () => {
+      // Health-restart safety net: even when the socket appears healthy
+      // (no close event, blocks still arriving), drop and re-subscribe on a
+      // fixed schedule so a degraded WSS cannot accumulate undetected.
+      // 30s here for the local fast-test path; staging/prod use 1h.
+      vi.stubEnv("SOCKET_MAX_AGE_MS", "30000");
+
+      const monitor = new ChainMonitor({
+        chain: makeChain(),
+        workflows: [makeWorkflow()],
+      });
+
+      await monitor.start();
+      expect(providerInstances).toHaveLength(1);
+      const originalProvider = latestProvider();
+
+      // Just before the recycle window: no new provider yet.
+      await vi.advanceTimersByTimeAsync(29_000);
+      expect(providerInstances).toHaveLength(1);
+
+      // Cross the window plus the first reconnect backoff (1s).
+      await vi.advanceTimersByTimeAsync(2_500);
+
+      expect(providerInstances.length).toBeGreaterThanOrEqual(2);
+      expect(latestProvider()).not.toBe(originalProvider);
+      expect(monitor.isAlive()).toBe(true);
+
+      await monitor.stop();
+    });
+
     it("keeps the fallback connection when probe fails", async () => {
       // Primary always rejects; fallback works. Probe should fail silently
       // (one warn line) and the monitor should remain alive on fallback.

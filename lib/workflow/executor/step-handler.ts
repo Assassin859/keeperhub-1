@@ -12,7 +12,10 @@ import {
   runWithWorkflowErrorContext,
   type WorkflowErrorContext,
 } from "@/lib/workflow/executor/error-context";
-import { recordStepSuccess } from "@/lib/workflow/executor/step-success-tracker";
+import {
+  recordStepSuccess,
+  recordTransactionHashIfPresent,
+} from "@/lib/workflow/executor/step-success-tracker";
 import {
   incrementCompletedSteps,
   logStepCompleteDb,
@@ -301,6 +304,7 @@ async function withStepLoggingInner<TInput extends StepInput, TOutput>(
 
       if (context?.executionId && context.nodeId) {
         recordStepSuccess(context.executionId, context.nodeId, result);
+        recordTransactionHashIfPresent(context, result);
       }
 
       recordStepMetrics({

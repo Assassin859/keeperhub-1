@@ -883,23 +883,21 @@ export async function getEnabledChainNamesFromDb(): Promise<string[]> {
   }
 }
 
-// Bucket label used for aggregating free-tier orgs in per-org execution
-// gauges. Free-tier orgs share a single series to keep Prometheus
-// cardinality bounded. Paid orgs (pro/business/enterprise) are emitted as
-// individual series so each one is filterable in Grafana.
-export const FREE_ORG_AGGREGATE_SLUG = "_free";
-
 // Subscription statuses that count toward MRR — kept inline in the SQL
 // query (active / trialing / past_due). Canceled / unpaid / paused
 // subscriptions do not contribute.
 
 export type BillingStats = {
-  // Org count per (plan, billing_status). Free orgs without a subscription
-  // row are reported under plan="free", billing_status="none".
-  orgsByPlan: Record<PlanName, Record<BillingStatus, number>>;
+  // Org count per (plan, tier, billing_status). One entry per unique
+  // combination. tier is null for free and enterprise (no tier system).
+  orgsByPlan: Array<{
+    plan: PlanName;
+    tier: TierKey | null;
+    billingStatus: BillingStatus;
+    count: number;
+  }>;
 
-  // Per-org execution counts. Paid orgs appear individually with their slug;
-  // all free-tier orgs are aggregated under FREE_ORG_AGGREGATE_SLUG.
+  // Per-org execution counts. One entry per org (free + paid).
   orgsExecutions: Array<{
     orgSlug: string;
     plan: PlanName;
@@ -910,31 +908,24 @@ export type BillingStats = {
     monthlyLimit: number;
   }>;
 
-  // Approximate MRR in USD cents per plan, computed from PLANS[plan].tiers
-  // matched by org's tier. Stripe remains the source of truth for accounting.
-  mrrCentsByPlan: Record<PlanName, number>;
+  // Approximate MRR in USD cents per (plan, tier), computed from
+  // PLANS[plan].tiers[tier].monthlyPrice. Stripe remains the source of
+  // truth for accounting.
+  mrrCentsByPlan: Array<{
+    plan: PlanName;
+    tier: TierKey | null;
+    cents: number;
+  }>;
 
-  // Total MRR in USD cents across all plans (sum of mrrCentsByPlan).
+  // Total MRR in USD cents across all plans and tiers.
   mrrCentsTotal: number;
 };
 
 function emptyBillingStats(): BillingStats {
-  const orgsByPlan: Record<PlanName, Record<BillingStatus, number>> = {
-    free: {} as Record<BillingStatus, number>,
-    pro: {} as Record<BillingStatus, number>,
-    business: {} as Record<BillingStatus, number>,
-    enterprise: {} as Record<BillingStatus, number>,
-  };
-  const mrrCentsByPlan: Record<PlanName, number> = {
-    free: 0,
-    pro: 0,
-    business: 0,
-    enterprise: 0,
-  };
   return {
-    orgsByPlan,
+    orgsByPlan: [],
     orgsExecutions: [],
-    mrrCentsByPlan,
+    mrrCentsByPlan: [],
     mrrCentsTotal: 0,
   };
 }
@@ -954,18 +945,16 @@ function tierMonthlyPriceCents(plan: PlanName, tier: TierKey | null): number {
  * Joins workflow_executions -> workflows -> organization -> organization_subscriptions
  * to produce per-org execution counts (30-day rolling and current-month-to-date),
  * org distribution by plan/billing status, and a directional MRR figure.
- *
- * Free-tier orgs are aggregated into a single FREE_ORG_AGGREGATE_SLUG series
- * for the per-org executions gauge to bound Prometheus cardinality.
  */
 export async function getBillingStatsFromDb(): Promise<BillingStats> {
   try {
-    // Aggregate counts: orgs by (plan, billing_status). LEFT JOIN handles
-    // legacy orgs without a subscription row (mapped to plan="free",
+    // Aggregate counts: orgs by (plan, tier, billing_status). LEFT JOIN
+    // handles legacy orgs without a subscription row (mapped to plan="free",
     // billing_status="none" via fallback in OrgListEntry parsing).
     const orgsByPlanResult = await db
       .select({
         plan: organizationSubscriptions.plan,
+        tier: organizationSubscriptions.tier,
         status: organizationSubscriptions.status,
         count: count(),
       })
@@ -976,6 +965,7 @@ export async function getBillingStatsFromDb(): Promise<BillingStats> {
       )
       .groupBy(
         organizationSubscriptions.plan,
+        organizationSubscriptions.tier,
         organizationSubscriptions.status
       );
 
@@ -1021,29 +1011,32 @@ export async function getBillingStatsFromDb(): Promise<BillingStats> {
 
     const stats = emptyBillingStats();
 
-    // Tally orgs by plan + billing_status
+    // Tally orgs by plan + tier + billing_status
     for (const row of orgsByPlanResult) {
       const plan = parsePlanName(row.plan, "free");
-      const status: BillingStatus =
+      const tier = parseTierKey(row.tier);
+      const billingStatus: BillingStatus =
         row.status === null ? "none" : parseBillingStatus(row.status);
-      const planBucket = stats.orgsByPlan[plan];
-      planBucket[status] = (planBucket[status] ?? 0) + Number(row.count);
+      const count = Number(row.count);
+      const existing = stats.orgsByPlan.find(
+        (e) =>
+          e.plan === plan &&
+          e.tier === tier &&
+          e.billingStatus === billingStatus
+      );
+      if (existing) {
+        existing.count += count;
+      } else {
+        stats.orgsByPlan.push({ plan, tier, billingStatus, count });
+      }
     }
 
-    // Tally per-org executions, bucketing free orgs into a single series
-    let freeExec30d = 0;
-    let freeExecMonth = 0;
+    // Tally per-org executions — one entry per org (free + paid)
     for (const row of execByOrgResult) {
       const plan = parsePlanName(row.plan, "free");
       const tier = parseTierKey(row.tier);
       const exec30d = Number(row.exec30d) || 0;
       const execMonth = Number(row.execMonth) || 0;
-
-      if (plan === "free") {
-        freeExec30d += exec30d;
-        freeExecMonth += execMonth;
-        continue;
-      }
 
       const monthlyLimit = PLANS[plan].features.maxExecutionsPerMonth;
       const tierLimit =
@@ -1061,23 +1054,19 @@ export async function getBillingStatsFromDb(): Promise<BillingStats> {
       });
     }
 
-    // Free aggregate row: plan=free, monthlyLimit from free defaults
-    if (freeExec30d > 0 || freeExecMonth > 0) {
-      stats.orgsExecutions.push({
-        orgSlug: FREE_ORG_AGGREGATE_SLUG,
-        plan: "free",
-        exec30d: freeExec30d,
-        execMonth: freeExecMonth,
-        monthlyLimit: PLANS.free.features.maxExecutionsPerMonth,
-      });
-    }
-
-    // Compute MRR per plan from active subscriptions × tier price
+    // Compute MRR per (plan, tier) from active subscriptions × tier price
     for (const row of mrrSubsResult) {
       const plan = parsePlanName(row.plan, "free");
       const tier = parseTierKey(row.tier);
       const cents = tierMonthlyPriceCents(plan, tier);
-      stats.mrrCentsByPlan[plan] += cents;
+      const existing = stats.mrrCentsByPlan.find(
+        (e) => e.plan === plan && e.tier === tier
+      );
+      if (existing) {
+        existing.cents += cents;
+      } else {
+        stats.mrrCentsByPlan.push({ plan, tier, cents });
+      }
       stats.mrrCentsTotal += cents;
     }
 
