@@ -59,13 +59,13 @@ export function runPhaseFixtures(opts: {
           );
         }
         const built = toWebhookTriggered(
-          buildActionWorkflow(
-            opts.protocol,
-            action.slug,
-            opts.chainId,
-            "Manual",
-            walletAddress
-          )
+          buildActionWorkflow({
+            protocolSlug: opts.protocol,
+            actionSlug: action.slug,
+            chainId: opts.chainId,
+            trigger: "Manual",
+            walletAddress,
+          })
         );
 
         if (!opts.ctx.apiKey) {

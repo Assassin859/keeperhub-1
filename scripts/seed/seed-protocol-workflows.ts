@@ -200,11 +200,11 @@ async function seed(cli: Cli): Promise<void> {
     }
 
     if (!cli.phase || cli.phase === "setup") {
-      const setupWf = buildSetupWorkflow(
+      const setupWf = buildSetupWorkflow({
         protocolSlug,
         chainId,
-        walletAddress
-      );
+        walletAddress,
+      });
       const ok = await insertOne(
         db,
         setupWf,
@@ -225,13 +225,13 @@ async function seed(cli: Cli): Promise<void> {
         continue;
       }
       for (const trigger of triggerFilter) {
-        const wf = buildActionWorkflow(
+        const wf = buildActionWorkflow({
           protocolSlug,
-          action.slug,
+          actionSlug: action.slug,
           chainId,
           trigger,
-          walletAddress
-        );
+          walletAddress,
+        });
         const ok = await insertOne(
           db,
           wf,

@@ -84,7 +84,7 @@ export async function runSetup(opts: {
   await ensureNativeGas(chainId, walletAddress);
 
   const setupWf = toWebhookTriggered(
-    buildSetupWorkflow(protocol, chainId, walletAddress)
+    buildSetupWorkflow({ protocolSlug: protocol, chainId, walletAddress })
   );
 
   if (!ctx.apiKey) {

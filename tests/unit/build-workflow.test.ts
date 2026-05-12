@@ -36,7 +36,11 @@ describe("KEEP-458 build-workflow", () => {
       const protocol = getProtocol(protocolSlug);
 
       describe("setup workflow", () => {
-        const setup = buildSetupWorkflow(protocolSlug, chainId, TEST_WALLET);
+        const setup = buildSetupWorkflow({
+          protocolSlug,
+          chainId,
+          walletAddress: TEST_WALLET,
+        });
 
         it("has Manual trigger + at least one action node", () => {
           expect(setup.nodes.some((n) => n.type === "trigger")).toBe(true);
@@ -75,13 +79,13 @@ describe("KEEP-458 build-workflow", () => {
           for (const trigger of TRIGGER_TYPES) {
             const variant = `${action.slug} [${trigger}]`;
             describe(variant, () => {
-              const built = buildActionWorkflow(
+              const built = buildActionWorkflow({
                 protocolSlug,
-                action.slug,
+                actionSlug: action.slug,
                 chainId,
                 trigger,
-                TEST_WALLET
-              );
+                walletAddress: TEST_WALLET,
+              });
 
               it("has trigger + action node and correct metadata", () => {
                 expect(built.nodes.some((n) => n.type === "trigger")).toBe(

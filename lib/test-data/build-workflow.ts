@@ -378,11 +378,17 @@ function getChainData(
   return protocol.testData?.[chainId];
 }
 
-export function buildSetupWorkflow(
-  protocolSlug: string,
-  chainId: string,
-  walletAddress: string
-): BuiltWorkflow {
+export type BuildSetupOptions = {
+  protocolSlug: string;
+  chainId: string;
+  walletAddress: string;
+};
+
+export function buildSetupWorkflow({
+  protocolSlug,
+  chainId,
+  walletAddress,
+}: BuildSetupOptions): BuiltWorkflow {
   const protocol = getProtocolOrThrow(protocolSlug);
   const chainData = getChainData(protocol, chainId);
   if (!chainData) {
@@ -448,13 +454,21 @@ export function buildSetupWorkflow(
   };
 }
 
-export function buildActionWorkflow(
-  protocolSlug: string,
-  actionSlug: string,
-  chainId: string,
-  trigger: TriggerType,
-  walletAddress: string
-): BuiltWorkflow {
+export type BuildActionOptions = {
+  protocolSlug: string;
+  actionSlug: string;
+  chainId: string;
+  trigger: TriggerType;
+  walletAddress: string;
+};
+
+export function buildActionWorkflow({
+  protocolSlug,
+  actionSlug,
+  chainId,
+  trigger,
+  walletAddress,
+}: BuildActionOptions): BuiltWorkflow {
   const protocol = getProtocolOrThrow(protocolSlug);
   const action = protocol.actions.find((a) => a.slug === actionSlug);
   if (!action) {
@@ -501,24 +515,30 @@ export type BuiltCoverage = {
  *   - Seeder takes every entry (each becomes a row in the workflows table).
  *   - Test runner takes only the Manual variants for execution.
  */
-export function buildAllForProtocol(
-  protocolSlug: string,
-  chainId: string,
-  walletAddress: string
-): BuiltCoverage {
+export type BuildCoverageOptions = {
+  protocolSlug: string;
+  chainId: string;
+  walletAddress: string;
+};
+
+export function buildAllForProtocol({
+  protocolSlug,
+  chainId,
+  walletAddress,
+}: BuildCoverageOptions): BuiltCoverage {
   const protocol = getProtocolOrThrow(protocolSlug);
-  const setup = buildSetupWorkflow(protocolSlug, chainId, walletAddress);
+  const setup = buildSetupWorkflow({ protocolSlug, chainId, walletAddress });
   const reads: BuiltWorkflow[] = [];
   const writes: BuiltWorkflow[] = [];
   for (const action of protocol.actions) {
     for (const trigger of TRIGGER_TYPES) {
-      const wf = buildActionWorkflow(
+      const wf = buildActionWorkflow({
         protocolSlug,
-        action.slug,
+        actionSlug: action.slug,
         chainId,
         trigger,
-        walletAddress
-      );
+        walletAddress,
+      });
       if (action.type === "read") {
         reads.push(wf);
       } else {
