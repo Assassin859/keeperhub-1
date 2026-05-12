@@ -9,50 +9,67 @@ import aaveV3PoolAbi from "./abis/aave-v3-pool.json";
 
 // KEEP-458 protocol-coverage test data. Co-located with the protocol
 // definition; consumed programmatically by `lib/test-data/build-workflow.ts`.
-// Sepolia uses the Aave V3 testnet DAI reserve. The test wallet must hold
-// >= 100 DAI before setup runs (Aave's Sepolia faucet acquires it manually
-// today; auto-faucet wiring is deferred).
+//
+// Sepolia uses the Aave V3 testnet LINK reserve. DAI/USDC/USDT all hit
+// `SUPPLY_CAP_EXCEEDED` (error 51) on Aave Sepolia, verified 2026-05-12
+// via eth_call against Pool.supply(). LINK has headroom and is borrowable.
+// Setup mints LINK via the permissionless Aave faucet, approves the Pool,
+// then supplies 100 LINK so the write coverage (withdraw/borrow/repay/
+// set-collateral) has a real position to operate on.
 const TEST_DATA: ProtocolTestData = {
   "11155111": {
     setup: {
       minNativeHuman: "0.001",
-      requiredTokens: [{ symbol: "DAI", human: "100" }],
-      approvals: [{ token: "DAI", spender: contract("pool"), human: "100" }],
+      // 100 LINK initial supply + 10 LINK per-test supply + buffer.
+      requiredTokens: [{ symbol: "LINK", human: "200" }],
+      approvals: [{ token: "LINK", spender: contract("pool"), human: "200" }],
+      protocolSteps: [
+        {
+          protocol: "aave-v3",
+          action: "supply",
+          inputs: {
+            asset: "LINK",
+            amount: amount("LINK", "100"),
+            onBehalfOf: wallet(),
+            referralCode: "0",
+          },
+        },
+      ],
     },
     actions: {
       "get-user-account-data": {
         user: wallet(),
       },
       "get-user-reserve-data": {
-        asset: "DAI",
+        asset: "LINK",
         user: wallet(),
       },
       supply: {
-        asset: "DAI",
-        amount: amount("DAI", "10"),
+        asset: "LINK",
+        amount: amount("LINK", "10"),
         onBehalfOf: wallet(),
         referralCode: "0",
       },
       withdraw: {
-        asset: "DAI",
-        amount: amount("DAI", "1"),
+        asset: "LINK",
+        amount: amount("LINK", "1"),
         to: wallet(),
       },
       borrow: {
-        asset: "DAI",
-        amount: amount("DAI", "1"),
+        asset: "LINK",
+        amount: amount("LINK", "1"),
         interestRateMode: "2",
         referralCode: "0",
         onBehalfOf: wallet(),
       },
       repay: {
-        asset: "DAI",
-        amount: amount("DAI", "1"),
+        asset: "LINK",
+        amount: amount("LINK", "1"),
         interestRateMode: "2",
         onBehalfOf: wallet(),
       },
       "set-collateral": {
-        asset: "DAI",
+        asset: "LINK",
         useAsCollateral: "true",
       },
     },

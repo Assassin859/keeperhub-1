@@ -14,9 +14,12 @@ import postgres from "postgres";
 import { getDatabaseUrl } from "@/lib/db/connection-utils";
 import { chains } from "@/lib/db/schema";
 import {
+  FAUCETS,
   FUND_NATIVE_AMOUNT_WEI_BY_CHAIN,
   MIN_NATIVE_BALANCE_WEI_BY_CHAIN,
   TESTNET_FUNDER_PK_ENV,
+  TOKEN_REGISTRY,
+  type TokenSymbol,
 } from "@/lib/test-data/chain-test-data";
 
 const ERC20_BALANCE_ABI = [
@@ -82,30 +85,111 @@ export async function ensureNativeGas(
   await tx.wait();
 }
 
+type AbiInput = { name: string; type: string };
+type AbiFunction = {
+  type: string;
+  name: string;
+  stateMutability?: string;
+  inputs: AbiInput[];
+  outputs?: AbiInput[];
+};
+
 /**
- * Assert the wallet holds at least `minHuman` of `token` on `chainId`. Throws
- * with a clear "manual provisioning required" message when it doesn't.
- *
- * Phase 1 does not attempt to acquire ERC20s automatically — see
- * `lib/test-data/chain-test-data.ts::FAUCETS` comment.
+ * Bind a faucet ABI's named inputs to concrete values. Recognises three
+ * conventions (case-insensitive):
+ *   - `token` -> the token's address
+ *   - `to` / `recipient` -> the recipient wallet
+ *   - `amount` / `value` -> amount in wei
+ * Throws if any input cannot be resolved, so a malformed FAUCET entry fails
+ * loudly at the start of a test session rather than mid-run.
  */
-export async function ensureErc20Balance(
-  chainId: string,
-  address: string,
+function bindFaucetArgs(
+  fn: AbiFunction,
   tokenAddress: string,
-  decimals: number,
-  minHuman: string,
-  symbol: string
+  recipient: string,
+  amountWei: bigint
+): unknown[] {
+  return fn.inputs.map((input) => {
+    const name = input.name.toLowerCase();
+    if (name === "token") {
+      return tokenAddress;
+    }
+    if (name === "to" || name === "recipient") {
+      return recipient;
+    }
+    if (name === "amount" || name === "value") {
+      return amountWei;
+    }
+    throw new Error(
+      `FAUCET mint ABI has unsupported input "${input.name}" of type "${input.type}". ` +
+        "Update bindFaucetArgs in tests/integration/protocol-coverage/_shared/funding.ts."
+    );
+  });
+}
+
+/**
+ * Top up the wallet's ERC20 balance via the chain's faucet entry when the
+ * existing balance is short. Returns silently when balance is sufficient.
+ *
+ * Mint is signed by the funder EOA, which pays gas. Anyone can call the
+ * Aave Sepolia faucet (`mint(token, to, amount)`) or FUSDC's permissionless
+ * `mint(to, amount)`, so this works without per-token privileges.
+ *
+ * Throws when no FAUCETS entry exists for (chain, symbol) — that means the
+ * SSOT doesn't know how to acquire this token, and the caller must provision
+ * it manually or extend FAUCETS in `lib/test-data/chain-test-data.ts`.
+ */
+export async function ensureErc20Acquired(
+  chainId: string,
+  walletAddress: string,
+  symbol: TokenSymbol,
+  human: string
 ): Promise<void> {
+  const tokenEntry = TOKEN_REGISTRY[chainId]?.[symbol];
+  if (!tokenEntry) {
+    throw new Error(
+      `TOKEN_REGISTRY missing ${symbol} on chain ${chainId}; cannot acquire.`
+    );
+  }
+  const needed = ethers.parseUnits(human, tokenEntry.decimals);
+
   const rpcUrl = await getChainRpcUrl(chainId);
   const provider = new ethers.JsonRpcProvider(rpcUrl);
-  const token = new ethers.Contract(tokenAddress, ERC20_BALANCE_ABI, provider);
-  const balance: bigint = await token.balanceOf(address);
-  const minWei = ethers.parseUnits(minHuman, decimals);
-  if (balance >= minWei) {
+  const token = new ethers.Contract(
+    tokenEntry.address,
+    ERC20_BALANCE_ABI,
+    provider
+  );
+  const balance: bigint = await token.balanceOf(walletAddress);
+  if (balance >= needed) {
     return;
   }
-  throw new Error(
-    `manual provisioning required: wallet ${address} holds ${ethers.formatUnits(balance, decimals)} ${symbol} on chain ${chainId}; need >= ${minHuman}. Acquire via faucet/transfer then retry.`
-  );
+
+  const faucet = FAUCETS[chainId]?.[symbol];
+  if (!faucet) {
+    throw new Error(
+      `manual provisioning required: wallet ${walletAddress} holds ${ethers.formatUnits(balance, tokenEntry.decimals)} ${symbol} on chain ${chainId}; need >= ${human}. No FAUCETS entry. Acquire via faucet/transfer then retry.`
+    );
+  }
+
+  const funderPk = process.env[TESTNET_FUNDER_PK_ENV];
+  if (!funderPk) {
+    throw new Error(
+      `${TESTNET_FUNDER_PK_ENV} not set; cannot mint ${symbol} on chain ${chainId} via FAUCETS.`
+    );
+  }
+  const funder = new ethers.Wallet(funderPk, provider);
+
+  const abi = JSON.parse(faucet.abi) as AbiFunction[];
+  const fn = abi.find((entry) => entry.name === faucet.functionName);
+  if (!fn) {
+    throw new Error(
+      `FAUCETS[${chainId}][${symbol}].abi missing function "${faucet.functionName}".`
+    );
+  }
+  const args = bindFaucetArgs(fn, tokenEntry.address, walletAddress, needed);
+
+  const contract = new ethers.Contract(faucet.contract, abi, funder);
+  const tx = await contract[faucet.functionName](...args);
+  await tx.wait();
 }

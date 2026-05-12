@@ -14,6 +14,7 @@ import postgres from "postgres";
 import { getDatabaseUrl } from "@/lib/db/connection-utils";
 import { organization } from "@/lib/db/schema";
 import { organizationWallets } from "@/lib/db/schema-extensions";
+import { getProtocol } from "@/lib/protocol-registry";
 import {
   buildSetupWorkflow,
   toWebhookTriggered,
@@ -28,7 +29,7 @@ import {
   PERSISTENT_TEST_USER_EMAIL,
   waitForWorkflowExecution,
 } from "@/tests/utils/db";
-import { ensureNativeGas } from "./funding";
+import { ensureErc20Acquired, ensureNativeGas } from "./funding";
 
 export type SharedCtx = {
   apiKey?: string;
@@ -82,6 +83,20 @@ export async function runSetup(opts: {
   const walletAddress = ctx.walletAddress;
 
   await ensureNativeGas(chainId, walletAddress);
+
+  const protocolDef = getProtocol(protocol);
+  const setupSpec = protocolDef?.testData?.[chainId]?.setup;
+  if (!setupSpec) {
+    throw new Error(`No setup spec for ${protocol} on chain ${chainId}.`);
+  }
+  for (const required of setupSpec.requiredTokens) {
+    await ensureErc20Acquired(
+      chainId,
+      walletAddress,
+      required.symbol,
+      required.human
+    );
+  }
 
   const setupWf = toWebhookTriggered(
     buildSetupWorkflow({ protocolSlug: protocol, chainId, walletAddress })

@@ -3,16 +3,17 @@ import { amount, type ProtocolTestData, wallet } from "@/lib/test-data/types";
 
 // KEEP-458 protocol-coverage test data. Sepolia uses the canonical fUSDC /
 // fUSDCx pair (matches tests/integration/protocol-superfluid-onchain.test.ts).
-// The test wallet must hold >= 10 fUSDC before setup runs; no public faucet
-// exists for fUSDC, so the funder EOA must pre-transfer it.
+// The fUSDC ERC20 exposes a permissionless `mint(to, amount)`; the funder
+// calls it in the TS preflight (FAUCETS entry in chain-test-data.ts).
 const TEST_DATA: ProtocolTestData = {
   "11155111": {
     setup: {
       minNativeHuman: "0.001",
-      requiredTokens: [{ symbol: "FUSDC", human: "10" }],
+      // 10 FUSDC wrapped to FUSDCX in setup + headroom for per-test wraps.
+      requiredTokens: [{ symbol: "FUSDC", human: "20" }],
       approvals: [
         // Wrap requires the SuperToken (FUSDCX) to spend underlying FUSDC.
-        { token: "FUSDC", spender: "FUSDCX", human: "10" },
+        { token: "FUSDC", spender: "FUSDCX", human: "20" },
       ],
       protocolSteps: [
         {
@@ -20,10 +21,20 @@ const TEST_DATA: ProtocolTestData = {
           action: "wrap",
           inputs: {
             contractAddress: "FUSDCX",
-            amount: amount("FUSDC", "5"),
+            amount: amount("FUSDC", "10"),
           },
         },
       ],
+    },
+    // GDA pool actions reference a zero-address placeholder pool (we don't
+    // capture the create-pool tx receipt to extract the deployed address in
+    // Phase 1). Skip on-chain execution; the seeder still surfaces them in
+    // the dashboard for discoverability.
+    skipped: {
+      "update-member-units": "pool dependency; needs real pool address",
+      distribute: "pool dependency; needs real pool address",
+      "distribute-flow": "pool dependency; needs real pool address",
+      "connect-pool": "pool dependency; needs real pool address",
     },
     actions: {
       // Reads
@@ -36,11 +47,12 @@ const TEST_DATA: ProtocolTestData = {
         token: "FUSDCX",
         account: wallet(),
       },
+      // superToken contract is userSpecifiedAddress: pass `contractAddress`.
       "get-super-token-balance": {
-        token: "FUSDCX",
+        contractAddress: "FUSDCX",
         account: wallet(),
       },
-      "get-underlying-token": { token: "FUSDCX" },
+      "get-underlying-token": { contractAddress: "FUSDCX" },
       "get-cfa-net-flow": {
         token: "FUSDCX",
         account: wallet(),
@@ -49,26 +61,30 @@ const TEST_DATA: ProtocolTestData = {
         token: "FUSDCX",
         account: wallet(),
       },
-      // Writes — self-stream wallet -> wallet is the cheapest provable write
-      // that doesn't need a second funded address.
+      // Writes — wallet -> burn address. Superfluid CFA reverts with
+      // CFA_NO_SELF_FLOW (0xa47338ef) when sender == receiver, so self-streams
+      // aren't usable. 0x...dEaD is a stable, contract-free sink: streaming a
+      // few wei/sec there costs only the SuperToken buffer (~14400 wei at
+      // flowRate=1). Sender stays as the test wallet so create/update/delete
+      // operate on the same flow row.
       "create-flow": {
         token: "FUSDCX",
         sender: wallet(),
-        receiver: wallet(),
+        receiver: "0x000000000000000000000000000000000000dEaD",
         flowRate: "1",
         userData: "0x",
       },
       "update-flow": {
         token: "FUSDCX",
         sender: wallet(),
-        receiver: wallet(),
+        receiver: "0x000000000000000000000000000000000000dEaD",
         flowRate: "2",
         userData: "0x",
       },
       "delete-flow": {
         token: "FUSDCX",
         sender: wallet(),
-        receiver: wallet(),
+        receiver: "0x000000000000000000000000000000000000dEaD",
         userData: "0x",
       },
       // SuperToken is userSpecifiedAddress: pass contractAddress explicitly.
@@ -115,11 +131,13 @@ const TEST_DATA: ProtocolTestData = {
         pool: "0x0000000000000000000000000000000000000000",
         userData: "0x",
       },
-      // CFA flow-operator permissions: grant self full permissions on FUSDCX.
-      // Degenerate (you can already manage your own flows) but legal.
+      // CFA flow-operator permissions: grant the burn address full permissions
+      // on FUSDCX. Self-operator (flowOperator == msg.sender) reverts with a
+      // CFA forwarder ACL custom error; using a stable sink address sidesteps
+      // it without affecting any real account.
       "grant-flow-operator": {
         token: "FUSDCX",
-        flowOperator: wallet(),
+        flowOperator: "0x000000000000000000000000000000000000dEaD",
         permissions: "7", // CREATE | UPDATE | DELETE = 1 | 2 | 4
         flowRateAllowance: "1",
       },

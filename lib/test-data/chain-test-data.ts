@@ -23,6 +23,7 @@ export type TokenSymbol =
   | "USDT"
   | "DAI"
   | "USDS"
+  | "LINK"
   | "FUSDC"
   | "FUSDCX";
 
@@ -56,6 +57,14 @@ export const TOKEN_REGISTRY: Record<
       decimals: 18,
       symbol: "WETH",
     },
+    // Aave V3 Sepolia LINK test token. Selected over DAI because Aave's
+    // DAI/USDC/USDT reserves on Sepolia hit `SUPPLY_CAP_EXCEEDED` (error 51);
+    // LINK has headroom and is borrowable. Verified 2026-05-12 via eth_call.
+    LINK: {
+      address: "0xf8Fb3713D459D7C1018BD0A49D19b4C44290EBE5",
+      decimals: 18,
+      symbol: "LINK",
+    },
     // Superfluid fUSDC underlying ERC-20 (from protocol-superfluid-onchain.test.ts:52).
     FUSDC: {
       address: "0xe72f289584eDA2bE69Cfe487f4638F09bAc920Db",
@@ -87,11 +96,58 @@ export type FaucetSpec = {
   abi: string;
 };
 
-/** Phase 1: empty. See FaucetSpec comment for the Phase 2 contract. */
+/**
+ * Faucet registry consumed by `tests/integration/protocol-coverage/_shared/funding.ts`.
+ * The TS preflight calls each faucet from the funder EOA before the setup
+ * workflow runs. Args are bound by input *name* (case-insensitive):
+ *   `token` -> token's address on this chain
+ *   `to` / `recipient` -> the test wallet address
+ *   `amount` / `value` -> requiredTokens[i].human in wei (using token decimals)
+ */
 export const FAUCETS: Record<
   string /* chainId */,
   Partial<Record<TokenSymbol, FaucetSpec>>
-> = {};
+> = {
+  "11155111": {
+    // Aave V3 Sepolia faucet: mints any Aave testnet reserve token.
+    // Verified contract exists at this address (eth_getCode).
+    LINK: {
+      contract: "0xC959483DBa39aa9E78757139af0e9a2EDEb3f42D",
+      functionName: "mint",
+      abi: JSON.stringify([
+        {
+          type: "function",
+          name: "mint",
+          stateMutability: "nonpayable",
+          inputs: [
+            { name: "token", type: "address" },
+            { name: "to", type: "address" },
+            { name: "amount", type: "uint256" },
+          ],
+          outputs: [{ name: "", type: "uint256" }],
+        },
+      ]),
+    },
+    // FUSDC exposes a permissionless `mint(to, amount)` on its own ERC20.
+    // Verified by inspecting bytecode (selector 0x40c10f19 present).
+    FUSDC: {
+      contract: "0xe72f289584eDA2bE69Cfe487f4638F09bAc920Db",
+      functionName: "mint",
+      abi: JSON.stringify([
+        {
+          type: "function",
+          name: "mint",
+          stateMutability: "nonpayable",
+          inputs: [
+            { name: "to", type: "address" },
+            { name: "amount", type: "uint256" },
+          ],
+          outputs: [],
+        },
+      ]),
+    },
+  },
+};
 
 /** Native gas floor below which the funder must top up the test wallet. */
 export const MIN_NATIVE_BALANCE_WEI_BY_CHAIN: Record<string, bigint> = {

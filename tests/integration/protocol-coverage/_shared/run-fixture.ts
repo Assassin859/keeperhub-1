@@ -48,7 +48,16 @@ export function runPhaseFixtures(opts: {
     return;
   }
 
+  const skipped = protocol.testData?.[opts.chainId]?.skipped ?? {};
+
   for (const action of actions) {
+    const skipReason = skipped[action.slug];
+    if (skipReason) {
+      test.skip(`${action.slug} (${skipReason})`, () => {
+        /* documented in chainData.skipped */
+      });
+      continue;
+    }
     test(
       action.slug,
       async () => {

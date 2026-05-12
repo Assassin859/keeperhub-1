@@ -102,6 +102,15 @@ export type ProtocolChainTestData = {
   setup: SetupSpec;
   /** Per-action input bindings keyed by action.slug. */
   actions: Record<string, ActionInputBindings>;
+  /**
+   * Action slugs the test runner should mark as `test.skip` with a reason.
+   * Builders still produce these workflows (so the seeder surfaces them in
+   * the dashboard), but the integration suite skips execution. Use for
+   * actions whose on-chain prerequisites Phase 1 setup doesn't provision
+   * (e.g. Superfluid GDA actions that need a real pool address — the SSOT
+   * binding is a zero placeholder).
+   */
+  skipped?: Record<string, string>;
 };
 
 /** A protocol's test data, keyed by chainId. */
