@@ -10,7 +10,7 @@
  *
  * Usage:
  *   pnpm tsx scripts/seed/seed-protocol-workflows.ts \
- *     [--protocol=<slug>] [--phase=setup|read|write] \
+ *     [--protocol=<slug>] [--chain=<chainId>] [--phase=setup|read|write] \
  *     [--trigger=Manual|Schedule|Webhook|Event|Block] [--user=<email>]
  */
 
@@ -34,6 +34,7 @@ import { getProtocol } from "../../lib/protocol-registry";
 
 type Cli = {
   protocol?: string;
+  chainId?: string;
   phase?: "setup" | "read" | "write";
   trigger?: TriggerType;
   userEmail: string;
@@ -51,6 +52,8 @@ function parseCli(argv: string[]): Cli {
     }
     if (key === "protocol") {
       cli.protocol = value;
+    } else if (key === "chain") {
+      cli.chainId = value;
     } else if (key === "phase") {
       if (value === "setup" || value === "read" || value === "write") {
         cli.phase = value;
@@ -173,11 +176,13 @@ async function seed(cli: Cli): Promise<void> {
   console.log(`Wallet: ${walletAddress}`);
 
   const targets = listCoverageTargets().filter(
-    (t) => !cli.protocol || t.protocolSlug === cli.protocol
+    (t) =>
+      (!cli.protocol || t.protocolSlug === cli.protocol) &&
+      (!cli.chainId || t.chainId === cli.chainId)
   );
   if (targets.length === 0) {
     console.warn(
-      `No coverage targets matched (protocol=${cli.protocol ?? "*"})`
+      `No coverage targets matched (protocol=${cli.protocol ?? "*"}, chain=${cli.chainId ?? "*"})`
     );
     await client.end();
     return;
