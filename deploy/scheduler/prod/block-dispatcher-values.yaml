@@ -71,6 +71,11 @@ env:
   RECONCILE_INTERVAL_MS:
     type: kv
     value: "30000"
+  # Periodic socket recycle: force-reconnect each ChainMonitor's WSS at this
+  # cadence to guard against half-open / silently degraded upstream sockets.
+  SOCKET_MAX_AGE_MS:
+    type: kv
+    value: "3600000"
   # Health check server port
   HEALTH_PORT:
     type: kv
