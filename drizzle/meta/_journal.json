@@ -505,6 +505,13 @@
       "when": 1777760000005,
       "tag": "0071_keep_470_workflow_tx_hash_array",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1778630077869,
+      "tag": "0072_safe_wallet_integration",
+      "breakpoints": true
     }
   ]
 }
