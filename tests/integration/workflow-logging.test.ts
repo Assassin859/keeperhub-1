@@ -8,6 +8,13 @@ vi.mock("@/lib/logging", () => ({
     DATABASE: "database",
   },
   logSystemError: vi.fn(),
+  logSystemWarn: vi.fn(),
+}));
+
+vi.mock("@/lib/metrics", () => ({
+  getMetricsCollector: () => ({
+    incrementCounter: vi.fn(),
+  }),
 }));
 
 // Hoisted schema stubs so the vi.mock factory can reference them.
@@ -52,9 +59,16 @@ type UpdateCall = {
   set: Record<string, unknown>;
 };
 type LogRow = { id?: string; nodeId: string; status: string };
+type ExecutionRow = {
+  status: string;
+  error?: string | null;
+  completedAt?: Date | null;
+  startedAt?: Date | null;
+};
 let allLogs: LogRow[] = [];
 let updateCalls: UpdateCall[] = [];
 let updateShouldThrow = false;
+let mockExecution: ExecutionRow | null = null;
 
 type WhereChain = Promise<void>;
 type SetChain = { where: () => WhereChain };
@@ -82,17 +96,24 @@ vi.mock("@/lib/db", () => ({
       workflowExecutionLogs: {
         findMany: vi.fn(() => Promise.resolve(allLogs)),
       },
+      workflowExecutions: {
+        findFirst: vi.fn(() => Promise.resolve(mockExecution)),
+      },
     },
     update: vi.fn((target: unknown) => buildUpdate(target)),
   },
 }));
 
-import { logWorkflowCompleteDb } from "@/lib/workflow/executor/logging";
+import { logSystemError, logSystemWarn } from "@/lib/logging";
+import {
+  logStepCompleteDb,
+  logWorkflowCompleteDb,
+} from "@/lib/workflow/executor/logging";
+import type { StepContext } from "@/lib/workflow/executor/step-handler";
 import {
   clearExecution,
   recordTransactionHashIfPresent,
 } from "@/lib/workflow/executor/step-success-tracker";
-import type { StepContext } from "@/lib/workflow/executor/step-handler";
 
 function getExecUpdate(): UpdateCall | undefined {
   return updateCalls.find((c) => c.target === workflowExecutionsMock);
@@ -163,6 +184,26 @@ describe("logWorkflowCompleteDb", () => {
         error: undefined,
       })
     );
+
+    // KEEP-532 regression guard: both the pre-reconciliation log and the
+    // spurious-recovery log must route through logSystemWarn (no metric),
+    // not logSystemError (which would re-trip errors.system.workflow_engine.total).
+    expect(logSystemWarn).toHaveBeenCalledTimes(2);
+    expect(logSystemWarn).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.stringContaining("checking node logs for reconciliation"),
+      expect.anything(),
+      expect.objectContaining({ execution_id: "exec_1" })
+    );
+    expect(logSystemWarn).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.stringContaining("overriding spurious SDK error to success"),
+      expect.anything(),
+      expect.objectContaining({ execution_id: "exec_1" })
+    );
+    expect(logSystemError).not.toHaveBeenCalled();
   });
 
   // KEEP-333: If a step started but never recorded completion, the workflow
@@ -522,9 +563,10 @@ describe("logWorkflowCompleteDb transactionHashes (KEEP-470)", () => {
       startTime: Date.now() - 1000,
     });
 
-    const entries = getExecUpdate()?.set.transactionHashes as Array<
-      Record<string, unknown>
-    >;
+    const entries = getExecUpdate()?.set.transactionHashes as Record<
+      string,
+      unknown
+    >[];
     expect(entries).toHaveLength(1);
     expect(entries[0]).toEqual({
       hash: "0xnochain",
@@ -632,5 +674,96 @@ describe("logWorkflowCompleteDb transactionHashes (KEEP-470)", () => {
     }>;
     expect(entries).toHaveLength(1);
     expect(entries[0].hash).toBe("0xreal");
+  });
+});
+
+// KEEP-470: the self-heal path (logStepCompleteDb -> late commit flips a
+// spurious-error workflow to success) must populate transaction_hashes on the
+// same UPDATE. Without this, a cross-pod late commit would leave the row at
+// status=success with transaction_hashes=[] even though the run produced hashes.
+describe("selfHealWorkflowAfterLateStepCommit transactionHashes (KEEP-470)", () => {
+  beforeEach(() => {
+    allLogs = [];
+    updateCalls = [];
+    updateShouldThrow = false;
+    mockExecution = null;
+    vi.clearAllMocks();
+  });
+
+  it("writes transactionHashes when a late step commit flips spurious error to success", async () => {
+    const executionId = "exec_self_heal_with_hashes";
+
+    // Workflow was finalized to a spurious error before this step's commit landed.
+    mockExecution = {
+      status: "error",
+      error: "exceeded max retries",
+      completedAt: new Date(Date.now() - 5000),
+      startedAt: new Date(Date.now() - 30_000),
+    };
+
+    // The durable log rows are the cross-pod source of truth for the hash list.
+    // (Tracker is empty here because logStepCompleteDb is firing on a different
+    // pod than the one that originally ran the step body.)
+    allLogs = [
+      {
+        id: "log_approve",
+        nodeId: "approve-1",
+        nodeName: "Approve",
+        status: "success",
+        iterationIndex: null,
+        outputRaw: {
+          transactionHash: "0xapprove",
+          chainId: 1,
+          network: "mainnet",
+        },
+      },
+      {
+        id: "log_swap",
+        nodeId: "swap-1",
+        nodeName: "Swap",
+        status: "success",
+        iterationIndex: null,
+        outputRaw: {
+          transactionHash: "0xswap",
+          chainId: 1,
+          network: "mainnet",
+        },
+      },
+    ] as unknown as LogRow[];
+
+    await logStepCompleteDb({
+      logId: "log_swap",
+      startTime: Date.now() - 1000,
+      status: "success",
+      outputRaw: {
+        transactionHash: "0xswap",
+        chainId: 1,
+        network: "mainnet",
+      },
+      executionId,
+    });
+
+    // The self-heal UPDATE is the one that flips status to success.
+    const healUpdate = updateCalls.find(
+      (c) => c.target === workflowExecutionsMock && c.set.status === "success"
+    );
+    expect(healUpdate).toBeDefined();
+    expect(healUpdate?.set.transactionHashes).toEqual([
+      {
+        hash: "0xapprove",
+        nodeId: "approve-1",
+        nodeName: "Approve",
+        chainId: 1,
+        network: "mainnet",
+      },
+      {
+        hash: "0xswap",
+        nodeId: "swap-1",
+        nodeName: "Swap",
+        chainId: 1,
+        network: "mainnet",
+      },
+    ]);
+    expect(healUpdate?.set.error).toBeNull();
   });
 });

@@ -108,7 +108,7 @@ Returns real-time execution status with progress tracking.
 | `network` | string (optional) | Network slug (e.g. `mainnet`, `arbitrum`) |
 | `iterationIndex` | number (optional) | 0-based For-Each loop index; present only for entries produced inside a For-Each iteration |
 
-Workflows that produce no on-chain writes return an empty array. For full per-step input, output, error, and timing detail, use the logs endpoint below.
+An empty array carries one of two meanings: the run produced no on-chain writes, or the execution row was finalized before this field began being populated. The two cases are not distinguished at the response level — if the distinction matters for a historical row, the underlying hashes are reconstructable from per-step logs via the endpoint below. For full per-step input, output, error, and timing detail, also use the logs endpoint below.
 
 ## Get Execution Logs
 

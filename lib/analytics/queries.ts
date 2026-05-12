@@ -906,7 +906,9 @@ async function fetchDirectRuns(
     // Direct executions are genuinely single-tx. Synthesize the entry so
     // consumers can render workflow + direct runs through the same array
     // shape; nodeId/nodeName carry sentinel values since direct executions
-    // have no canvas node.
+    // have no canvas node. Consumers must discriminate on `source === "direct"`
+    // rather than the nodeId/nodeName literals -- a workflow node could
+    // theoretically share the same id, and the sentinel is presentational.
     transactionHashes: row.transactionHash
       ? [
           {

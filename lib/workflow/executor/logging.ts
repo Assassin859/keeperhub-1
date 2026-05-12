@@ -11,7 +11,7 @@ import {
   workflowExecutionLogs,
   workflowExecutions,
 } from "@/lib/db/schema";
-import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { ErrorCategory, logSystemError, logSystemWarn } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
 import {
   EXCEEDED_MAX_RETRIES_REGEX,
@@ -108,6 +108,12 @@ async function listTrulyFailedNodes(executionId: string): Promise<string[]> {
  *
  * Returns [] on query failure -- losing the hash list is preferable to
  * failing the UPDATE that flips status to success.
+ *
+ * The transactionHash IS NOT NULL filter is pushed into Postgres so a workflow
+ * that runs a non-tx step many times (e.g. a For-Each over hundreds of HTTP
+ * calls) does not stream every row back to Node just to discard it in JS.
+ * The JS-side type guard below stays as the authoritative check: SQL only
+ * confirms the key exists in output_raw, not that the value is a 0x string.
  */
 async function loadHashesFromLogs(
   executionId: string
@@ -116,7 +122,8 @@ async function loadHashesFromLogs(
     const rows = await db.query.workflowExecutionLogs.findMany({
       where: and(
         eq(workflowExecutionLogs.executionId, executionId),
-        eq(workflowExecutionLogs.status, "success")
+        eq(workflowExecutionLogs.status, "success"),
+        sql`${workflowExecutionLogs.outputRaw}->>'transactionHash' IS NOT NULL`
       ),
       columns: {
         nodeId: true,
@@ -540,8 +547,13 @@ export async function logWorkflowCompleteDb(
   let resolvedError: string | undefined = params.error;
 
   if (params.status === "error") {
-    // Route through unified logger so org/owner ALS context is attached.
-    logSystemError(
+    // KEEP-532: warn, not error -- at this point we do not yet know whether
+    // the failure is user-caused (e.g. user's HTTP step hit a dead URL) or a
+    // real engine fault. logSystemError here unconditionally tripped the
+    // workflow_engine system-error metric on every user-config failure.
+    // Reconciliation below decides the final status; this call is just for
+    // forensic context (ALS org/owner labels attached).
+    logSystemWarn(
       ErrorCategory.WORKFLOW_ENGINE,
       "[Workflow Logging] Execution completed with error, checking node logs for reconciliation",
       params.error ?? "unknown",
@@ -552,7 +564,9 @@ export async function logWorkflowCompleteDb(
       const trulyFailedNodes = await listTrulyFailedNodes(params.executionId);
 
       if (trulyFailedNodes.length === 0) {
-        logSystemError(
+        // KEEP-532: Recovery event -- spurious SDK error overridden to success.
+        // Not an error condition; warn-level keeps it in traces without paging.
+        logSystemWarn(
           ErrorCategory.WORKFLOW_ENGINE,
           "[Workflow Logging] No node-level errors found, overriding spurious SDK error to success",
           params.error ?? "unknown",
