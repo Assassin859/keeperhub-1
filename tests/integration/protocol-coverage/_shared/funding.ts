@@ -26,7 +26,16 @@ const ERC20_BALANCE_ABI = [
   "function balanceOf(address) view returns (uint256)",
 ];
 
+// chains.defaultPrimaryRpc is bootstrap-time data; memoize per process so a
+// test session opening 3+ helpers (ensureNativeGas + one per requiredTokens)
+// makes one Postgres round-trip total instead of one per call.
+const RPC_URL_CACHE = new Map<string, string>();
+
 async function getChainRpcUrl(chainId: string): Promise<string> {
+  const cached = RPC_URL_CACHE.get(chainId);
+  if (cached) {
+    return cached;
+  }
   const client = postgres(getDatabaseUrl(), { max: 1 });
   try {
     const db = drizzle(client);
@@ -38,6 +47,7 @@ async function getChainRpcUrl(chainId: string): Promise<string> {
     if (!row?.rpc) {
       throw new Error(`No RPC URL configured for chain ${chainId} in DB`);
     }
+    RPC_URL_CACHE.set(chainId, row.rpc);
     return row.rpc;
   } finally {
     await client.end();
