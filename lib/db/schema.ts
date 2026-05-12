@@ -287,6 +287,15 @@ export const integrations = pgTable(
 );
 
 // Workflow executions table to track workflow runs
+export type TransactionHashEntry = {
+  hash: string;
+  nodeId: string;
+  nodeName: string;
+  chainId?: number;
+  network?: string;
+  iterationIndex?: number;
+};
+
 export const workflowExecutions = pgTable(
   "workflow_executions",
   {
@@ -319,6 +328,10 @@ export const workflowExecutions = pgTable(
     lastSuccessfulNodeName: text("last_successful_node_name"),
     executionTrace: jsonb("execution_trace").$type<string[]>(),
     runId: text("run_id"),
+    transactionHashes: jsonb("transaction_hashes")
+      .$type<TransactionHashEntry[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     /**
      * Whether this execution counts toward the owner organisation's monthly
      * execution quota and overage billing.

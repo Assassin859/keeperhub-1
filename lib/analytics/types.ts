@@ -5,6 +5,10 @@
  * workflow_executions and direct_executions into a single view.
  */
 
+import type { TransactionHashEntry } from "@/lib/db/schema";
+
+export type { TransactionHashEntry };
+
 export type TimeRange = "1h" | "24h" | "7d" | "30d" | "custom";
 
 export type RunSource = "workflow" | "direct";
@@ -38,7 +42,16 @@ export type UnifiedRun = {
   workflowName: string | null;
   directType: DirectType | null;
   network: string | null;
-  transactionHash: string | null;
+  /**
+   * KEEP-470: Ordered list of on-chain writes the run recorded.
+   *
+   * Workflow runs surface every tx-producing node's hash in submission order;
+   * direct runs surface their single hash as a one-element array (so consumers
+   * can render workflow + direct runs through the same code path). Empty
+   * array means the run produced no on-chain writes (or, for workflows
+   * that finalized before this migration, the column hasn't been backfilled).
+   */
+  transactionHashes: TransactionHashEntry[];
   gasUsedWei: string | null;
   totalSteps: number | null;
   completedSteps: number | null;

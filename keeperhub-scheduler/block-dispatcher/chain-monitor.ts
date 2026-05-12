@@ -48,6 +48,46 @@ function getPrimaryProbeIntervalMs(): number {
   return Number(process.env.PRIMARY_PROBE_INTERVAL_MS) || 5 * 60_000;
 }
 
+// Proactive socket recycle: tear down and re-subscribe any socket that has
+// been continuously connected longer than this. Belt-and-suspenders against
+// half-open WSS state that doesn't surface as a 'close' event.
+const SOCKET_MAX_AGE_DEFAULT_MS = 60 * 60_000; // 1 hour
+function getSocketMaxAgeMs(): number {
+  return Number(process.env.SOCKET_MAX_AGE_MS) || SOCKET_MAX_AGE_DEFAULT_MS;
+}
+
+// destroyProvider awaits ethers v6 cleanup which can hang when the upstream
+// WSS is half-open (the internal eth_unsubscribe never settles). Bound each
+// cleanup step so the reconnect loop cannot get stuck mid-teardown.
+const DESTROY_PROVIDER_TIMEOUT_MS = 3_000;
+
+// If isReconnecting stays true longer than this, treat the monitor as dead
+// so the reconciler can tear it down and start a fresh one. The normal
+// reconnect-with-backoff path (max 10 attempts, max 30s each) completes well
+// under this threshold; only a hung destroy/connect await can exceed it.
+const STUCK_RECONNECT_MS = 5 * 60_000;
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise.finally(() => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }),
+    new Promise<T>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`${label} timeout after ${timeoutMs}ms`)),
+        timeoutMs,
+      );
+    }),
+  ]);
+}
+
 type ChainMonitorConfig = {
   chain: ChainConfig;
   workflows: BlockWorkflow[];
@@ -89,6 +129,8 @@ export class ChainMonitor {
   private pongTimer: ReturnType<typeof setTimeout> | null = null;
   private noBlockTimer: ReturnType<typeof setTimeout> | null = null;
   private primaryProbeTimer: ReturnType<typeof setInterval> | null = null;
+  private socketAgeTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectingStartedAt: number | null = null;
   private currentUrlIndex = 0;
   private hasActiveSubscription = false;
   private wsCloseHandler: (() => void) | null = null;
@@ -122,6 +164,7 @@ export class ChainMonitor {
   async stop(): Promise<void> {
     this.isRunning = false;
     this.isReconnecting = false;
+    this.reconnectingStartedAt = null;
     this.stopTimers();
     await this.destroyProvider();
   }
@@ -146,6 +189,15 @@ export class ChainMonitor {
       return false;
     }
     if (this.isReconnecting) {
+      // Normal reconnect-with-backoff (max ~3 min) is well under
+      // STUCK_RECONNECT_MS. Anything longer indicates destroyProvider() or
+      // connect() got hung mid-await, and the reconciler must intervene.
+      if (
+        this.reconnectingStartedAt !== null &&
+        Date.now() - this.reconnectingStartedAt > STUCK_RECONNECT_MS
+      ) {
+        return false;
+      }
       return true;
     }
     if (!this.hasActiveSubscription) {
@@ -206,11 +258,30 @@ export class ChainMonitor {
         this.wsCloseHandler = null;
       }
 
-      await this.provider.removeAllListeners();
+      // ethers v6 removeAllListeners/destroy fire an internal eth_unsubscribe
+      // over the WSS. On a half-open socket that promise can hang and block
+      // the reconnect loop forever; bound both steps with a hard timeout.
       try {
-        await this.provider.destroy();
-      } catch {
-        // ignore cleanup errors
+        await withTimeout(
+          this.provider.removeAllListeners(),
+          DESTROY_PROVIDER_TIMEOUT_MS,
+          "removeAllListeners",
+        );
+      } catch (error) {
+        console.warn(
+          `[BlockMonitor:${this.chainName}] destroyProvider.removeAllListeners: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      try {
+        await withTimeout(
+          this.provider.destroy(),
+          DESTROY_PROVIDER_TIMEOUT_MS,
+          "destroy",
+        );
+      } catch (error) {
+        console.warn(
+          `[BlockMonitor:${this.chainName}] destroyProvider.destroy: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
       this.provider = null;
     }
@@ -331,6 +402,7 @@ export class ChainMonitor {
     // by isAlive() before the first block arrives. Real blocks will refresh
     // this in onBlock().
     this.lastBlockReceivedAt = Date.now();
+    this.startSocketAgeTimer();
     console.log(`[BlockMonitor:${this.chainName}] Block subscription active`);
 
     // Handle WebSocket close for reconnection - store reference for cleanup
@@ -614,6 +686,37 @@ export class ChainMonitor {
     this.stopPingPong();
     this.stopNoBlockTimer();
     this.stopPrimaryProbe();
+    this.stopSocketAgeTimer();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Periodic socket recycle
+  //
+  // Even when blocks keep arriving, a long-lived WSS can drift into a degraded
+  // state (server-side rate limits, partial routing failures, half-open TCP).
+  // Recycling on a fixed schedule guarantees we exercise the reconnect path
+  // routinely so subtle staleness can't accumulate undetected.
+  // ---------------------------------------------------------------------------
+
+  private startSocketAgeTimer(): void {
+    this.stopSocketAgeTimer();
+    const maxAgeMs = getSocketMaxAgeMs();
+    this.socketAgeTimer = setTimeout(() => {
+      if (!this.isRunning || this.isReconnecting) {
+        return;
+      }
+      console.log(
+        `[BlockMonitor:${this.chainName}] Socket age exceeded ${Math.floor(maxAgeMs / 1000)}s, recycling`,
+      );
+      this.handleDisconnect();
+    }, maxAgeMs);
+  }
+
+  private stopSocketAgeTimer(): void {
+    if (this.socketAgeTimer) {
+      clearTimeout(this.socketAgeTimer);
+      this.socketAgeTimer = null;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -710,6 +813,7 @@ export class ChainMonitor {
     }
 
     this.isReconnecting = true;
+    this.reconnectingStartedAt = Date.now();
     this.stopTimers();
 
     this.reconnectWithBackoff().catch((error: unknown) => {
@@ -718,6 +822,7 @@ export class ChainMonitor {
         error instanceof Error ? error.message : error,
       );
       this.isReconnecting = false;
+      this.reconnectingStartedAt = null;
     });
   }
 
@@ -731,6 +836,7 @@ export class ChainMonitor {
         );
         this.isRunning = false;
         this.isReconnecting = false;
+        this.reconnectingStartedAt = null;
         return;
       }
 
@@ -757,6 +863,7 @@ export class ChainMonitor {
         await this.subscribeToBlocks();
         this.reconnectAttempts = 0;
         this.isReconnecting = false;
+        this.reconnectingStartedAt = null;
         this.startPingPong();
         this.resetNoBlockTimer();
         this.startPrimaryProbe();
