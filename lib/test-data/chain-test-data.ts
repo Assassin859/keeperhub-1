@@ -80,15 +80,7 @@ export const TOKEN_REGISTRY: Record<
   },
 };
 
-/**
- * Faucet contract that mints a testnet token to a recipient.
- * Type kept for Phase 2 expansion; the generator does not consume FAUCETS in
- * Phase 1. ERC20 acquisition is verified-only via the TS preflight in
- * `tests/integration/protocol-coverage/_shared/funding.ts` (manual provisioning
- * required when balances are short). Once a faucet ABI is verified per
- * (chain, token) and added here, the generator will emit `web3/write-contract`
- * setup nodes that call it automatically.
- */
+/** Faucet contract that mints a testnet token to a recipient. */
 export type FaucetSpec = {
   contract: string;
   functionName: string;
