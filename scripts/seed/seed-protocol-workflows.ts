@@ -74,19 +74,36 @@ function deterministicId(parts: string[]): string {
   return `proto-${hash}`;
 }
 
-async function insertOne(
+type SeedOutcome = "inserted" | "refreshed" | "skipped" | "failed";
+
+// Slack between the seeder's last touch and the row's updatedAt on a row
+// the seeder has just written. INSERT and UPDATE stamp seededAt and
+// updatedAt to the same `now` within one statement, but timestamps round to
+// microsecond resolution and can differ by a few ms across statements.
+// 5 seconds is wide enough to absorb that without masking real user edits.
+const USER_EDIT_EPSILON_MS = 5000;
+
+async function upsertOne(
   db: ReturnType<typeof drizzle>,
   workflow: BuiltWorkflow,
   idParts: string[],
   userId: string,
   organizationId: string | null,
   now: Date
-): Promise<boolean> {
+): Promise<SeedOutcome> {
   const id = deterministicId(idParts);
   try {
-    await db
-      .insert(workflows)
-      .values({
+    const existing = await db
+      .select({
+        updatedAt: workflows.updatedAt,
+        seededAt: workflows.seededAt,
+      })
+      .from(workflows)
+      .where(eq(workflows.id, id))
+      .limit(1);
+
+    if (existing.length === 0) {
+      await db.insert(workflows).values({
         id,
         name: workflow.name,
         description: workflow.description,
@@ -100,25 +117,50 @@ async function insertOne(
         enabled: true,
         createdAt: now,
         updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: workflows.id,
-        set: {
-          name: workflow.name,
-          description: workflow.description,
-          // biome-ignore lint/suspicious/noExplicitAny: jsonb
-          nodes: workflow.nodes as any[],
-          // biome-ignore lint/suspicious/noExplicitAny: jsonb
-          edges: workflow.edges as any[],
-          updatedAt: now,
-        },
+        seededAt: now,
       });
-    return true;
+      return "inserted";
+    }
+
+    const row = existing[0];
+    // A row with the deterministic ID exists. If seededAt is null, it was
+    // user-created (deterministic ID collision is astronomically unlikely
+    // but the null check costs nothing). If seededAt is set and updatedAt
+    // has moved past it, a human edited the row after the last seed. In
+    // either case, leave it alone.
+    if (row.seededAt === null) {
+      console.warn(
+        `  ~ ${idParts.join("/")}: skipped (row exists but seededAt is null -- user-created)`
+      );
+      return "skipped";
+    }
+    const gapMs = row.updatedAt.getTime() - row.seededAt.getTime();
+    if (gapMs > USER_EDIT_EPSILON_MS) {
+      console.warn(
+        `  ~ ${idParts.join("/")}: skipped (user-edited; updatedAt is ${gapMs}ms after seededAt)`
+      );
+      return "skipped";
+    }
+
+    await db
+      .update(workflows)
+      .set({
+        name: workflow.name,
+        description: workflow.description,
+        // biome-ignore lint/suspicious/noExplicitAny: jsonb
+        nodes: workflow.nodes as any[],
+        // biome-ignore lint/suspicious/noExplicitAny: jsonb
+        edges: workflow.edges as any[],
+        updatedAt: now,
+        seededAt: now,
+      })
+      .where(eq(workflows.id, id));
+    return "refreshed";
   } catch (err) {
     console.error(
-      `  ! ${idParts.join("/")}: insert failed (${(err as Error).message})`
+      `  ! ${idParts.join("/")}: upsert failed (${(err as Error).message})`
     );
-    return false;
+    return "failed";
   }
 }
 
@@ -193,8 +235,12 @@ async function seed(cli: Cli): Promise<void> {
     : [...TRIGGER_TYPES];
 
   const now = new Date();
-  let inserted = 0;
-  let failed = 0;
+  const tally: Record<SeedOutcome, number> = {
+    inserted: 0,
+    refreshed: 0,
+    skipped: 0,
+    failed: 0,
+  };
 
   for (const target of targets) {
     const { protocolSlug, chainId } = target;
@@ -210,19 +256,16 @@ async function seed(cli: Cli): Promise<void> {
         chainId,
         walletAddress,
       });
-      const ok = await insertOne(
-        db,
-        setupWf,
-        ["setup", protocolSlug, chainId],
-        userId,
-        orgId,
-        now
-      );
-      if (ok) {
-        inserted += 1;
-      } else {
-        failed += 1;
-      }
+      tally[
+        await upsertOne(
+          db,
+          setupWf,
+          ["setup", protocolSlug, chainId],
+          userId,
+          orgId,
+          now
+        )
+      ] += 1;
     }
 
     for (const action of protocol.actions) {
@@ -237,24 +280,23 @@ async function seed(cli: Cli): Promise<void> {
           trigger,
           walletAddress,
         });
-        const ok = await insertOne(
-          db,
-          wf,
-          [action.type, protocolSlug, chainId, action.slug, trigger],
-          userId,
-          orgId,
-          now
-        );
-        if (ok) {
-          inserted += 1;
-        } else {
-          failed += 1;
-        }
+        tally[
+          await upsertOne(
+            db,
+            wf,
+            [action.type, protocolSlug, chainId, action.slug, trigger],
+            userId,
+            orgId,
+            now
+          )
+        ] += 1;
       }
     }
   }
 
-  console.log(`Done. ${inserted} workflow row(s); ${failed} failed.`);
+  console.log(
+    `Done. ${tally.inserted} inserted, ${tally.refreshed} refreshed, ${tally.skipped} skipped (user-edited), ${tally.failed} failed.`
+  );
   await client.end();
 }
 
