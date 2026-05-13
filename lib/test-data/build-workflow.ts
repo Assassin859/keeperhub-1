@@ -529,7 +529,13 @@ export function buildActionWorkflow({
     _chainId: chainId,
     _protocol: protocol.slug,
     _trigger: trigger,
-    _executable: chainData?.enabled !== false,
+    // When chainData is absent the builder has no testData to vet inputs
+    // against (any required address-typed input falls through to
+    // defaultForSolidityType and throws), so the workflow is not executable.
+    // The previous `chainData?.enabled !== false` returned true for missing
+    // chainData because `undefined !== false` -- callers acted on that as
+    // if the workflow were vetted.
+    _executable: chainData !== undefined && chainData.enabled !== false,
   };
 }
 
