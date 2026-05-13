@@ -39,7 +39,7 @@ function chainLabel(chainId: number): string {
  */
 export function startSafeTxMetrics(
   options: SafeTxOptions
-): (outcome: "success" | "failure") => void {
+): (outcome: "success" | "failure" | "nonce-conflict") => void {
   const metrics = getMetricsCollector();
   const timer = createTimer();
   const baseLabels = {
