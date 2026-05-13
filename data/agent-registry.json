@@ -140,18 +140,26 @@
       "endpoint": "eip155:1:0xc300b53616532fdb0116bce916c9307377362b51"
     }
   ],
+  "marketplace": {
+    "model": "multi-creator",
+    "description": "KeeperHub-listed workflows are published by independent creators. Each workflow advertises its own payTo address and per-call price in its 402 PAYMENT-REQUIRED response and at /api/mcp/workflows/<slug>. Per-execution settlement splits between the creator and the platform.",
+    "platformFeePercent": 30,
+    "creatorSharePercent": 70,
+    "platformFeeRecipient": {
+      "base": "eip155:8453:0xc300b53616532fdb0116bce916c9307377362b51",
+      "tempo": "eip155:4217:0xc300b53616532fdb0116bce916c9307377362b51"
+    }
+  },
   "payment": {
     "x402": {
       "supported": true,
       "networks": ["base"],
-      "assets": ["USDC"],
-      "payTo": "eip155:8453:0xc300b53616532fdb0116bce916c9307377362b51"
+      "assets": ["USDC"]
     },
     "mpp": {
       "supported": true,
       "networks": ["tempo"],
-      "assets": ["USDC.e"],
-      "payTo": "eip155:4217:0xc300b53616532fdb0116bce916c9307377362b51"
+      "assets": ["USDC.e"]
     }
   },
   "supportedTrust": ["reputation"],
