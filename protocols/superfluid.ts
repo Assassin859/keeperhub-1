@@ -410,6 +410,24 @@ export default defineProtocol({
     },
   },
 
+  // KEEP-458: the protocol-coverage test runner executes write actions in
+  // the order they appear below (`protocol.actions.filter(type==='write')`
+  // preserves array order, and vitest within a file runs tests sequentially).
+  // Tests share the wallet's on-chain CFA flow + SuperToken balance as a
+  // singleton, so order matters:
+  //   - update-flow MUST follow create-flow (CFA reverts on update of a
+  //     non-existent flow).
+  //   - delete-flow MUST follow create-flow (and is fine after update-flow;
+  //     update doesn't close the flow).
+  //   - wrap / unwrap operate on the SuperToken balance setup provisions
+  //     (10 FUSDC wrapped to 10 FUSDCX), so they are independent of each
+  //     other and of the flow trio.
+  //   - grant-flow-operator is independent.
+  //   - GDA pool actions (create-pool/update-member-units/distribute/
+  //     distribute-flow/connect-pool) are listed in `skipped` above because
+  //     Phase 1 setup doesn't capture the deployed pool address; reordering
+  //     them does not affect on-chain state.
+  // Reordering this array (e.g. alphabetising) will silently break the suite.
   actions: [
     {
       slug: "create-flow",
