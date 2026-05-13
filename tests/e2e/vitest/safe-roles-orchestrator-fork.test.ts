@@ -36,12 +36,21 @@ vi.mock("@/lib/db", () => ({
   db: {
     select: () => ({
       from: () => ({
-        where: () => ({
-          limit: dbSelectMock,
-          orderBy: () => ({
+        where: () => {
+          // Drizzle returns a builder that is also a Promise: tests can do
+          // `await db.select().from(x).where(y)` (list helpers) or
+          // `await db.select().from(x).where(y).limit(1)` (find helpers).
+          const builder = {
             limit: dbSelectMock,
-          }),
-        }),
+            orderBy: () => ({ limit: dbSelectMock }),
+            // biome-ignore lint/suspicious/noThenProperty: drizzle's query builder is intentionally thenable
+            then: (
+              resolve: (v: unknown) => void,
+              reject: (e: unknown) => void
+            ) => Promise.resolve(dbSelectMock()).then(resolve, reject),
+          };
+          return builder;
+        },
       }),
     }),
     insert: () => ({
@@ -82,6 +91,7 @@ vi.mock("@/lib/db", () => ({
 }));
 
 vi.mock("@/lib/db/schema", () => ({
+  chains: {},
   organizationWallets: {},
   safeRoleAllowances: {},
   safeRoleDirectRules: {},
