@@ -35,7 +35,10 @@ const fusdcShape: AbiFunction = {
 
 const TOKEN = "0x1111111111111111111111111111111111111111";
 const RECIPIENT = "0x2222222222222222222222222222222222222222";
-const AMOUNT = 200n * 10n ** 18n;
+// tsconfig.json targets ES2017; BigInt literals (200n) need ES2020+.
+// Compose the value via BigInt() so the file type-checks under the
+// project-wide target.
+const AMOUNT = BigInt(200) * BigInt(10) ** BigInt(18);
 
 describe("bindFaucetArgs", () => {
   it("binds Aave-style mint(token, to, amount) in declaration order", () => {
