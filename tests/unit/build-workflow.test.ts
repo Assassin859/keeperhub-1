@@ -122,6 +122,17 @@ describe("KEEP-458 build-workflow", () => {
                   expect(contractDef.addresses[chainId]).toBeTruthy();
                 }
               });
+
+              it("_executable reflects the chainData enabled flag", () => {
+                // Targets come from listCoverageTargets() so chainData is
+                // guaranteed present; without an explicit enabled:false the
+                // workflow is executable. Catches a regression where the
+                // builder ignored chainData.enabled or hardcoded the flag.
+                const chainData = protocol.testData?.[chainId];
+                expect(chainData).toBeDefined();
+                const expected = chainData?.enabled !== false;
+                expect(built._executable).toBe(expected);
+              });
             });
           }
         }
