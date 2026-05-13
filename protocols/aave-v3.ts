@@ -126,6 +126,17 @@ export default defineProtocol({
     },
   },
 
+  // KEEP-458: the protocol-coverage test runner executes write actions in
+  // the order they appear below (`protocol.actions.filter(type==='write')`
+  // preserves array order, and vitest within a file runs tests sequentially).
+  // Tests share the wallet's on-chain Aave position as a singleton, so order
+  // matters:
+  //   - repay MUST follow borrow (otherwise no open debt -> reverts).
+  //   - withdraw works in any post-setup slot (setup supplies 100 LINK; tests
+  //     only move 1 LINK so health-factor headroom is not a concern).
+  //   - supply auto-enables LINK as collateral on Aave V3 when LTV > 0, so
+  //     borrow does not require set-collateral to run first.
+  // Reordering this array (e.g. alphabetising) will silently break the suite.
   actions: [
     // Supply / Withdraw
 
