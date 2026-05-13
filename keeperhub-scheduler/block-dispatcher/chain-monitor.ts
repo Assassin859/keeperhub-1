@@ -18,54 +18,82 @@ import { enqueueBlockTrigger } from "./sqs-enqueue.js";
 const MAX_RECONNECT_ATTEMPTS = 10;
 const BASE_DELAY_MS = 1000;
 const MAX_DELAY_MS = 30_000;
-const CONNECT_TIMEOUT_MS = 15_000;
-const PING_INTERVAL_MS = 30_000;
-const PONG_TIMEOUT_MS = 5_000;
-const NO_BLOCK_TIMEOUT_DEFAULT_MS = 5 * 60_000; // 5 minutes
-// Overridable so tests can exercise the staleness path in isolation from the
-// in-monitor no-block timer. Read on each resetNoBlockTimer() call so the
-// override applies even when set after module load.
-function getNoBlockTimeoutMs(): number {
-  return Number(process.env.NO_BLOCK_TIMEOUT_MS) || NO_BLOCK_TIMEOUT_DEFAULT_MS;
-}
-// Reconciler-level staleness threshold. Backstop for the in-monitor no-block
-// timer above:
-// observed in prod that the timer can fail to fire after a reconnect (root
-// cause unconfirmed; suspected ethers v6 subscription + upstream WSS half-open
-// state). When that happens, the monitor reports hasActiveSubscription=true
-// indefinitely and the reconciler never restarts it. Treating "no blocks for
-// N minutes" as not-alive lets the reconciler tear down and restart the
-// monitor regardless of why the in-monitor timer failed.
-const STALE_SUBSCRIPTION_MS = 10 * 60_000; // 10 minutes
 const STALE_BLOCK_THRESHOLD_S = 120; // warn if block timestamp >2 min behind
 const HEARTBEAT_INTERVAL_MS = 60_000;
 const MAX_BACKFILL_BLOCKS = 100;
-const PRIMARY_PROBE_TIMEOUT_MS = 5_000;
-// Overridable via env so dev/tests don't wait 5 minutes. Read on each
-// startPrimaryProbe() call so the override applies even when set after
-// module load (e.g. inside a test setup).
-function getPrimaryProbeIntervalMs(): number {
-  return Number(process.env.PRIMARY_PROBE_INTERVAL_MS) || 5 * 60_000;
+
+// ---------------------------------------------------------------------------
+// LIVENESS — single source of truth for all reconnect/teardown timing.
+//
+// Every threshold the monitor uses to decide "is this connection healthy"
+// lives here. Each is overridable through one helper so tests can collapse
+// minute-scale waits into milliseconds without touching the production code,
+// and so ops can tune any value via env without code changes. Keep this the
+// only place these numbers are defined.
+//
+// The three liveness signals this monitor exposes:
+//
+//   1. Transport keepalive       ping/pong       PONG_TIMEOUT_MS
+//   2. Subscription delivery     block-advance   BLOCK_ADVANCE_TIMEOUT_MS
+//   3. Reconciler backstop       isAlive() flips after RECONNECT_STUCK_TIMEOUT_MS
+//                                or MONITOR_RECREATE_TIMEOUT_MS
+//
+// Plus two operational safety nets that are not user-facing liveness signals
+// but live here for the same reason:
+//
+//   CONNECT_TIMEOUT_MS           bound on a single connect() attempt
+//   DESTROY_PROVIDER_TIMEOUT_MS  bound on each ethers v6 teardown step
+//   SOCKET_MAX_AGE_MS            proactive recycle of an apparently-healthy socket
+//   PRIMARY_PROBE_*              fallback-to-primary recovery probe timing
+// ---------------------------------------------------------------------------
+
+const LIVENESS_DEFAULTS = {
+  // How often we send a ws-level ping. Stays at 30s — short enough to detect a
+  // half-open transport within a minute, long enough not to spam the upstream.
+  PING_INTERVAL_MS: 30_000,
+  // How long we wait for a pong before declaring the transport dead and forcing
+  // a reconnect. Bumped from 5s to 30s per oncall ask: the previous 5s was
+  // tight enough to false-positive on bursty CPU or GC pauses on the dispatcher
+  // pod. handleDisconnect is idempotent so overlap with the 30s ping interval
+  // is safe.
+  PONG_TIMEOUT_MS: 30_000,
+  // Subscription-level liveness. If lastProcessedBlock has not *advanced* in
+  // this window, force a reconnect. Was NO_BLOCK_TIMEOUT_MS. Renamed to make
+  // the rule explicit: it is about new-height delivery, not callback fire.
+  BLOCK_ADVANCE_TIMEOUT_MS: 5 * 60_000,
+  // Reconciler-level recreate threshold. If a monitor reports not-alive for
+  // longer than this gap of dead subscription, BlockMonitorService destroys
+  // and recreates it. Was STALE_SUBSCRIPTION_MS. Same purpose.
+  MONITOR_RECREATE_TIMEOUT_MS: 10 * 60_000,
+  // Cap on how long isReconnecting=true is acceptable before the reconciler
+  // treats the monitor as dead. The normal reconnect-with-backoff path (max
+  // 10 attempts, max 30s each) completes well under this; only a hung
+  // destroy/connect await can exceed it.
+  RECONNECT_STUCK_TIMEOUT_MS: 5 * 60_000,
+  // Bound on a single connect() attempt.
+  CONNECT_TIMEOUT_MS: 15_000,
+  // Bound on each ethers v6 teardown step (removeAllListeners, destroy).
+  // ethers fires an internal eth_unsubscribe over the WSS during teardown;
+  // on a half-open socket that promise can hang and block the reconnect loop
+  // forever. Each step is bounded with this timeout.
+  DESTROY_PROVIDER_TIMEOUT_MS: 3_000,
+  // Proactive socket recycle: tear down and re-subscribe a socket that has
+  // been continuously connected longer than this, even when blocks keep
+  // arriving. Belt-and-suspenders against degraded-but-not-dead WSS state.
+  SOCKET_MAX_AGE_MS: 60 * 60_000,
+  // Primary recovery probe (used only while running on the fallback URL).
+  PRIMARY_PROBE_INTERVAL_MS: 5 * 60_000,
+  PRIMARY_PROBE_TIMEOUT_MS: 5_000,
+} as const;
+
+type LivenessKey = keyof typeof LIVENESS_DEFAULTS;
+
+// Read on every call so env overrides take effect even when set after module
+// load (the test suite does this). One helper, one rule, applied uniformly.
+function liveness(key: LivenessKey): number {
+  const override = Number(process.env[key]);
+  return override > 0 ? override : LIVENESS_DEFAULTS[key];
 }
-
-// Proactive socket recycle: tear down and re-subscribe any socket that has
-// been continuously connected longer than this. Belt-and-suspenders against
-// half-open WSS state that doesn't surface as a 'close' event.
-const SOCKET_MAX_AGE_DEFAULT_MS = 60 * 60_000; // 1 hour
-function getSocketMaxAgeMs(): number {
-  return Number(process.env.SOCKET_MAX_AGE_MS) || SOCKET_MAX_AGE_DEFAULT_MS;
-}
-
-// destroyProvider awaits ethers v6 cleanup which can hang when the upstream
-// WSS is half-open (the internal eth_unsubscribe never settles). Bound each
-// cleanup step so the reconnect loop cannot get stuck mid-teardown.
-const DESTROY_PROVIDER_TIMEOUT_MS = 3_000;
-
-// If isReconnecting stays true longer than this, treat the monitor as dead
-// so the reconciler can tear it down and start a fresh one. The normal
-// reconnect-with-backoff path (max 10 attempts, max 30s each) completes well
-// under this threshold; only a hung destroy/connect await can exceed it.
-const STUCK_RECONNECT_MS = 5 * 60_000;
 
 function withTimeout<T>(
   promise: Promise<T>,
@@ -121,7 +149,12 @@ export class ChainMonitor {
   private pendingBlock: number | null = null;
   private reconnectAttempts = 0;
   private lastProcessedBlock: number | null = null;
-  private lastBlockReceivedAt: number | null = null;
+  // Wall-clock ms of the last time lastProcessedBlock *advanced*. Updated
+  // only after dedup, so a stuck upstream replaying the same block(N) does
+  // not falsify liveness. This was previously `lastBlockReceivedAt` and was
+  // updated before dedup — that was the root cause of the silent 7-hour
+  // outage where block-triggered workflows stopped without recovering.
+  private lastBlockAdvanceAt: number | null = null;
   private blocksReceived = 0;
   private blocksMatched = 0;
   private lastHeartbeat = Date.now();
@@ -190,11 +223,12 @@ export class ChainMonitor {
     }
     if (this.isReconnecting) {
       // Normal reconnect-with-backoff (max ~3 min) is well under
-      // STUCK_RECONNECT_MS. Anything longer indicates destroyProvider() or
-      // connect() got hung mid-await, and the reconciler must intervene.
+      // RECONNECT_STUCK_TIMEOUT_MS. Anything longer indicates destroyProvider()
+      // or connect() got hung mid-await, and the reconciler must intervene.
       if (
         this.reconnectingStartedAt !== null &&
-        Date.now() - this.reconnectingStartedAt > STUCK_RECONNECT_MS
+        Date.now() - this.reconnectingStartedAt >
+          liveness("RECONNECT_STUCK_TIMEOUT_MS")
       ) {
         return false;
       }
@@ -204,12 +238,15 @@ export class ChainMonitor {
       return false;
     }
     // Subscription is set up, but the upstream WSS may have gone silent
-    // (zombie subscription). Treat as not-alive once the gap since the last
-    // block exceeds STALE_SUBSCRIPTION_MS so the BlockMonitorService
-    // reconciler tears it down and starts a fresh monitor.
+    // (zombie subscription). Treat as not-alive once block height has not
+    // advanced for MONITOR_RECREATE_TIMEOUT_MS so the BlockMonitorService
+    // reconciler tears it down and starts a fresh monitor. The signal is
+    // height-advance — not callback-fire — because a stuck upstream can
+    // replay the same block(N) forever without us advancing.
     if (
-      this.lastBlockReceivedAt !== null &&
-      Date.now() - this.lastBlockReceivedAt > STALE_SUBSCRIPTION_MS
+      this.lastBlockAdvanceAt !== null &&
+      Date.now() - this.lastBlockAdvanceAt >
+        liveness("MONITOR_RECREATE_TIMEOUT_MS")
     ) {
       return false;
     }
@@ -261,10 +298,11 @@ export class ChainMonitor {
       // ethers v6 removeAllListeners/destroy fire an internal eth_unsubscribe
       // over the WSS. On a half-open socket that promise can hang and block
       // the reconnect loop forever; bound both steps with a hard timeout.
+      const destroyTimeoutMs = liveness("DESTROY_PROVIDER_TIMEOUT_MS");
       try {
         await withTimeout(
           this.provider.removeAllListeners(),
-          DESTROY_PROVIDER_TIMEOUT_MS,
+          destroyTimeoutMs,
           "removeAllListeners",
         );
       } catch (error) {
@@ -273,11 +311,7 @@ export class ChainMonitor {
         );
       }
       try {
-        await withTimeout(
-          this.provider.destroy(),
-          DESTROY_PROVIDER_TIMEOUT_MS,
-          "destroy",
-        );
+        await withTimeout(this.provider.destroy(), destroyTimeoutMs, "destroy");
       } catch (error) {
         console.warn(
           `[BlockMonitor:${this.chainName}] destroyProvider.destroy: ${error instanceof Error ? error.message : String(error)}`,
@@ -326,7 +360,7 @@ export class ChainMonitor {
           new Promise<number>((_, reject) => {
             setTimeout(
               () => reject(new Error("Connection timeout")),
-              CONNECT_TIMEOUT_MS,
+              liveness("CONNECT_TIMEOUT_MS"),
             );
           }),
         ])) as number;
@@ -399,9 +433,13 @@ export class ChainMonitor {
 
     this.hasActiveSubscription = true;
     // Seed the staleness clock so a freshly-subscribed monitor isn't reaped
-    // by isAlive() before the first block arrives. Real blocks will refresh
-    // this in onBlock().
-    this.lastBlockReceivedAt = Date.now();
+    // by isAlive() before the first block arrives. Real height advances
+    // refresh this in processBlockRange().
+    this.lastBlockAdvanceAt = Date.now();
+    // resetNoBlockTimer is called from start/reconnect, but seed it here too
+    // for the same reason — the watchdog needs a baseline from the moment we
+    // are subscribed, not from the previous run.
+    this.resetNoBlockTimer();
     this.startSocketAgeTimer();
     console.log(`[BlockMonitor:${this.chainName}] Block subscription active`);
 
@@ -424,10 +462,12 @@ export class ChainMonitor {
   // ---------------------------------------------------------------------------
 
   private async onBlock(blockNumber: number): Promise<void> {
-    this.lastBlockReceivedAt = Date.now();
-    this.resetNoBlockTimer();
-
-    // Deduplicate — ethers may fire the same block from both polling and newHeads
+    // Deduplicate first — ethers may fire the same block from both polling
+    // and newHeads, and a half-open upstream can replay block(N) forever.
+    // Liveness MUST NOT be reset by repeated/old blocks; the no-block timer
+    // and lastBlockAdvanceAt are updated downstream in processBlockRange,
+    // only when lastProcessedBlock actually advances. (Root-cause fix for
+    // the silent 7-hour outage on prod.)
     if (
       this.lastProcessedBlock !== null &&
       blockNumber <= this.lastProcessedBlock
@@ -496,6 +536,9 @@ export class ChainMonitor {
 
     await this.processBlockNumber(blockNumber);
     this.lastProcessedBlock = blockNumber;
+    // Height genuinely advanced — refresh liveness AFTER the fact.
+    this.lastBlockAdvanceAt = Date.now();
+    this.resetNoBlockTimer();
     this.blocksReceived++;
 
     // Heartbeat log
@@ -622,6 +665,9 @@ export class ChainMonitor {
       }
     });
 
+    const pingIntervalMs = liveness("PING_INTERVAL_MS");
+    const pongTimeoutMs = liveness("PONG_TIMEOUT_MS");
+
     this.pingTimer = setInterval(() => {
       if (!this.isRunning || ws.readyState !== 1) {
         return;
@@ -637,17 +683,22 @@ export class ChainMonitor {
         return;
       }
 
-      // If no pong arrives within timeout, connection is dead
+      // Idempotent: don't stack pong waits if one is already in flight.
+      if (this.pongTimer) {
+        return;
+      }
+      // If no pong arrives within timeout, the transport is dead.
       this.pongTimer = setTimeout(() => {
+        this.pongTimer = null;
         console.warn(
-          `[BlockMonitor:${this.chainName}] Pong timeout (${PONG_TIMEOUT_MS}ms), triggering reconnect`,
+          `[BlockMonitor:${this.chainName}] Pong timeout (${pongTimeoutMs}ms), triggering reconnect`,
         );
         this.handleDisconnect();
-      }, PONG_TIMEOUT_MS);
-    }, PING_INTERVAL_MS);
+      }, pongTimeoutMs);
+    }, pingIntervalMs);
 
     console.log(
-      `[BlockMonitor:${this.chainName}] Ping/pong keepalive started (interval=${PING_INTERVAL_MS}ms, timeout=${PONG_TIMEOUT_MS}ms)`,
+      `[BlockMonitor:${this.chainName}] Ping/pong keepalive started (interval=${pingIntervalMs}ms, timeout=${pongTimeoutMs}ms)`,
     );
   }
 
@@ -664,11 +715,11 @@ export class ChainMonitor {
 
   private resetNoBlockTimer(): void {
     this.stopNoBlockTimer();
-    const timeoutMs = getNoBlockTimeoutMs();
+    const timeoutMs = liveness("BLOCK_ADVANCE_TIMEOUT_MS");
     this.noBlockTimer = setTimeout(() => {
       if (this.isRunning) {
         console.warn(
-          `[BlockMonitor:${this.chainName}] No blocks received in ${timeoutMs / 1000}s, triggering reconnect`,
+          `[BlockMonitor:${this.chainName}] Block height has not advanced in ${timeoutMs / 1000}s, triggering reconnect`,
         );
         this.handleDisconnect();
       }
@@ -700,7 +751,7 @@ export class ChainMonitor {
 
   private startSocketAgeTimer(): void {
     this.stopSocketAgeTimer();
-    const maxAgeMs = getSocketMaxAgeMs();
+    const maxAgeMs = liveness("SOCKET_MAX_AGE_MS");
     this.socketAgeTimer = setTimeout(() => {
       if (!this.isRunning || this.isReconnecting) {
         return;
@@ -740,7 +791,7 @@ export class ChainMonitor {
       this.probePrimary().catch(() => {
         // probePrimary handles its own logging; nothing to do here
       });
-    }, getPrimaryProbeIntervalMs());
+    }, liveness("PRIMARY_PROBE_INTERVAL_MS"));
   }
 
   private stopPrimaryProbe(): void {
@@ -776,7 +827,7 @@ export class ChainMonitor {
         new Promise<never>((_, reject) => {
           setTimeout(
             () => reject(new Error("Primary probe timeout")),
-            PRIMARY_PROBE_TIMEOUT_MS,
+            liveness("PRIMARY_PROBE_TIMEOUT_MS"),
           );
         }),
       ]);

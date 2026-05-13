@@ -225,6 +225,10 @@ export const workflows = pgTable(
     sourceWorkflowId: text("source_workflow_id"), // tracks which public template was duplicated
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    // KEEP-458: last time the row was written by scripts/seed/seed-protocol-workflows.
+    // Null for user-created rows. Lets the seeder detect post-seed user edits
+    // (updatedAt > seededAt + epsilon) without overloading createdAt/updatedAt.
+    seededAt: timestamp("seeded_at"),
     // v1.7: Workflow listing columns (INFRA-01)
     isListed: boolean("is_listed").default(false).notNull(),
     listedSlug: text("listed_slug"),
@@ -316,6 +320,19 @@ export const workflowExecutions = pgTable(
     // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
     output: jsonb("output").$type<any>(),
     error: text("error"),
+    errorCategory: text("error_category").$type<
+      | "validation"
+      | "configuration"
+      | "external_service"
+      | "network_rpc"
+      | "transaction"
+      | "database"
+      | "auth"
+      | "infrastructure"
+      | "workflow_engine"
+      | "unknown"
+    >(),
+    isUserError: boolean("is_user_error"),
     startedAt: timestamp("started_at").notNull().defaultNow(),
     completedAt: timestamp("completed_at"),
     duration: numeric("duration"), // Duration in milliseconds

@@ -37,8 +37,10 @@ import {
   workflows,
 } from "../lib/db/schema";
 import { generateId } from "../lib/utils/id";
+import { getMetricsCollector } from "../lib/metrics";
+import { LabelKeys, MetricNames } from "../lib/metrics/types";
 import type { WorkflowNode } from "../lib/workflow/store";
-import { executeViaApi } from "./api-execute";
+import { type ApiExecuteTriggerType, executeViaApi } from "./api-execute";
 import { checkExecutionLimitForExecutor } from "./billing-guard";
 import { CONFIG } from "./config";
 import { resolveDispatchTarget } from "./execution-mode";
@@ -149,7 +151,7 @@ async function dispatchExecution(params: {
   workflowId: string;
   executionId: string;
   input: Record<string, unknown>;
-  triggerType: string;
+  triggerType: ApiExecuteTriggerType;
   scheduleId?: string;
 }): Promise<void> {
   const { target, workflowId, executionId, input, triggerType, scheduleId } =
@@ -189,7 +191,7 @@ async function dispatchExecution(params: {
       break;
     }
     case "api": {
-      await executeViaApi({ workflowId, executionId, input });
+      await executeViaApi({ workflowId, executionId, input, triggerType });
       break;
     }
     case "in-process": {
@@ -261,6 +263,20 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
   });
 
   console.log(`[Executor] Created execution record: ${executionId}`);
+
+  // Counter for the "zero executions in N min" alert family (KEEP-556).
+  // Increments here for every SQS-triggered run regardless of dispatch target
+  // (k8s-job / in-process / api). The route.ts handler only increments when it
+  // creates the row itself - so manual and webhook flows go through there, and
+  // schedule / block / event go through here, with no double-count when the
+  // executor hands off via process mode and the API uses our pre-existing row.
+  getMetricsCollector().incrementCounter(
+    MetricNames.WORKFLOW_EXECUTIONS_STARTED_TOTAL,
+    {
+      [LabelKeys.TRIGGER_TYPE]: triggerType,
+      [LabelKeys.CHAIN]: workflow.chain ?? "_unknown",
+    }
+  );
 
   const nodes = workflow.nodes as WorkflowNode[];
   const target = resolveDispatchTarget(nodes);
@@ -348,6 +364,26 @@ async function listen(): Promise<void> {
   console.log(`[Executor] Queue URL: ${CONFIG.sqsQueueUrl}`);
   console.log(`[Executor] Runner image: ${CONFIG.runnerImage}`);
   console.log(`[Executor] K8s namespace: ${CONFIG.namespace}`);
+
+  // Wire up Prometheus dual-write. The Next.js app does this in
+  // instrumentation.ts; the executor is a separate tsx-launched process and
+  // never runs Next.js's instrumentation hook, so without this its
+  // getMetricsCollector() calls would only hit the console collector and the
+  // executor's /metrics endpoint would never see the counter series. See
+  // KEEP-556 for the missing-counter symptom this fixes.
+  if (process.env.METRICS_COLLECTOR === "prometheus") {
+    const { prometheusMetricsCollector } = await import(
+      "../lib/metrics/collectors/prometheus"
+    );
+    const { createDualWriteCollector } = await import(
+      "../lib/metrics/collectors/dual"
+    );
+    const { setMetricsCollector } = await import("../lib/metrics");
+    setMetricsCollector(createDualWriteCollector(prometheusMetricsCollector));
+    console.log(
+      "[Executor] Prometheus dual-write metrics collector initialized"
+    );
+  }
 
   await assertTurnkeyEnvForActiveWallets(db);
 
