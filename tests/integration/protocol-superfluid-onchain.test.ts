@@ -61,10 +61,19 @@ const DUMMY_UNITS = "1";
 const DUMMY_PERMISSIONS_ALL = "7"; // create+update+delete bitmap
 const DUMMY_BYTES = "0x";
 
-// Markers we treat as failures: ABI/calldata mistakes the test should catch.
-// Anything else (require(false), insufficient balance, etc.) is a business
-// revert -- expected when calling write ops from an unfunded test address.
-const ENCODING_ERROR_RE = /INVALID_ARGUMENT|could not decode|invalid function/;
+// Markers we treat as failures: ABI/calldata mistakes plus the
+// "contract reverted with no data" pattern. The latter is the KEEP-456
+// failure mode -- routing into a non-existent SuperToken proxy returned a
+// CALL_EXCEPTION with empty revert data, and the previous loose guard
+// silently tolerated it. Anything else (require(false), insufficient
+// balance, CFA_*/GDA_* business reverts, etc.) is fine: writes are called
+// from an unfunded TEST_ADDRESS and naturally revert at the contract layer.
+//
+// `data="0x"` (with the closing quote) is the precise KEEP-456 signature:
+// real reverts have hex content between the quotes (`data="0x08c..."`),
+// so the literal `0x"` only appears when the revert data is empty.
+const DISPATCH_FAILURE_RE =
+  /INVALID_ARGUMENT|could not decode|invalid function|missing revert data|data="0x"/;
 
 function buildCalldata(
   protocol: ProtocolDefinition,
@@ -157,8 +166,10 @@ describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
     return { decoded, contract, action, to };
   }
 
-  // Returns the error message from estimateGas, or "" if it succeeded. The
-  // test then asserts the message doesn't contain ABI-error markers.
+  // Returns the error message from estimateGas, or "" if it succeeded.
+  // Callers either assert the empty string (positive simulation) or assert
+  // the message does not match DISPATCH_FAILURE_RE (any non-routing-error
+  // revert is acceptable).
   async function estimateGasError(
     slug: string,
     inputs: Record<string, string>,
@@ -244,7 +255,7 @@ describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
       flowRate: DUMMY_FLOW_RATE,
       userData: DUMMY_BYTES,
     });
-    expect(msg).not.toMatch(ENCODING_ERROR_RE);
+    expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
   }, 15_000);
 
   it("update-flow: encodes against cfaForwarder.updateFlow", async () => {
@@ -255,7 +266,7 @@ describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
       flowRate: DUMMY_FLOW_RATE,
       userData: DUMMY_BYTES,
     });
-    expect(msg).not.toMatch(ENCODING_ERROR_RE);
+    expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
   }, 15_000);
 
   it("delete-flow: encodes against cfaForwarder.deleteFlow", async () => {
@@ -265,19 +276,23 @@ describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
       receiver: TEST_ADDRESS,
       userData: DUMMY_BYTES,
     });
-    expect(msg).not.toMatch(ENCODING_ERROR_RE);
+    expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
   }, 15_000);
 
   // -- GDA writes ----------------------------------------------------------
 
-  it("create-pool: flat bool inputs reshape into the (bool,bool) PoolConfig tuple", async () => {
+  it("create-pool: simulates successfully against gdaForwarder.createPool", async () => {
+    // GDA createPool only writes pool metadata -- no sender balance, no
+    // pre-existing state required. We can assert positive simulation
+    // success, which (unlike the loose .not.toMatch guard) catches the
+    // class of routing bug KEEP-456 surfaced.
     const msg = await estimateGasError("create-pool", {
       token: SEPOLIA_FUSDCX,
       admin: TEST_ADDRESS,
       transferabilityForUnitsOwner: "false",
       distributionFromAnyAddress: "false",
     });
-    expect(msg).not.toMatch(ENCODING_ERROR_RE);
+    expect(msg).toBe("");
   }, 15_000);
 
   it("update-member-units: encodes against gdaForwarder.updateMemberUnits", async () => {
@@ -287,7 +302,7 @@ describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
       units: DUMMY_UNITS,
       userData: DUMMY_BYTES,
     });
-    expect(msg).not.toMatch(ENCODING_ERROR_RE);
+    expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
   }, 15_000);
 
   it("distribute: encodes against gdaForwarder.distribute", async () => {
@@ -298,7 +313,7 @@ describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
       amount: DUMMY_AMOUNT_WEI,
       userData: DUMMY_BYTES,
     });
-    expect(msg).not.toMatch(ENCODING_ERROR_RE);
+    expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
   }, 15_000);
 
   it("distribute-flow: encodes int96 flowRate against gdaForwarder.distributeFlow", async () => {
@@ -309,15 +324,22 @@ describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
       flowRate: DUMMY_FLOW_RATE,
       userData: DUMMY_BYTES,
     });
-    expect(msg).not.toMatch(ENCODING_ERROR_RE);
+    expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
   }, 15_000);
 
   it("connect-pool: encodes against gdaForwarder.connectPool", async () => {
+    // Not convertible to toBe(""): the GDA host calls into the pool
+    // address during connectPool, and TEST_ADDRESS has no contract code,
+    // so estimateGas reverts with `CallUtils: target revert()`. That is
+    // not a routing/ABI failure (revert data is non-empty), so it does
+    // not match DISPATCH_FAILURE_RE -- which is the assertion we want.
+    // Strengthening to toBe("") would need a real Superfluid pool address
+    // on Sepolia, out of scope for "no on-chain state dependency" tests.
     const msg = await estimateGasError("connect-pool", {
       pool: TEST_ADDRESS,
       userData: DUMMY_BYTES,
     });
-    expect(msg).not.toMatch(ENCODING_ERROR_RE);
+    expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
   }, 15_000);
 
   // -- SuperToken writes (userSpecifiedAddress) ----------------------------
@@ -328,7 +350,7 @@ describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
       { amount: DUMMY_AMOUNT_WEI },
       SEPOLIA_FUSDCX
     );
-    expect(msg).not.toMatch(ENCODING_ERROR_RE);
+    expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
   }, 15_000);
 
   it("unwrap: encodes uint256 amount against superToken.downgrade", async () => {
@@ -337,7 +359,7 @@ describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
       { amount: DUMMY_AMOUNT_WEI },
       SEPOLIA_FUSDCX
     );
-    expect(msg).not.toMatch(ENCODING_ERROR_RE);
+    expect(msg).not.toMatch(DISPATCH_FAILURE_RE);
   }, 15_000);
 
   it("grant-flow-operator: simulates successfully against cfaForwarder.updateFlowOperatorPermissions", async () => {
@@ -386,5 +408,49 @@ describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
     const stale = [...tested].filter((s) => !declared.has(s));
     expect(missing).toEqual([]);
     expect(stale).toEqual([]);
+  });
+});
+
+// Not gated on RPC: validates the regex shape that the on-chain block above
+// relies on to catch routing regressions like KEEP-456 (calling into a
+// non-existent proxy returns no revert data). If someone tightens or relaxes
+// DISPATCH_FAILURE_RE without updating these samples, this fails -- the
+// regex itself is the load-bearing piece of the hardening; the on-chain
+// block can't exercise it without an actual routing bug to reproduce.
+describe("DISPATCH_FAILURE_RE shape", () => {
+  it("matches the `missing revert data` ethers v6 error shape", () => {
+    const sample =
+      'Error: missing revert data (action="estimateGas", data=null, reason=null, transaction={ "data": "0x...", "from": "0x...", "to": "0x..." }, invocation=null, revert=null, code=CALL_EXCEPTION, version=6.16.0)';
+    expect(sample).toMatch(DISPATCH_FAILURE_RE);
+  });
+
+  it('matches CALL_EXCEPTION with empty data="0x" (proxy returned no revert data)', () => {
+    const sample =
+      'Error: execution reverted (action="estimateGas", data="0x", reason=null, transaction={ "to": "0x..." }, code=CALL_EXCEPTION, version=6.16.0)';
+    expect(sample).toMatch(DISPATCH_FAILURE_RE);
+  });
+
+  it('does NOT misfire on `data="0x..."` with actual revert data', () => {
+    // Guards against the obvious regression of writing
+    // `/data="0x/` (no closing quote) which would match every revert.
+    const sample =
+      'Error: execution reverted: "X" (action="estimateGas", data="0x08c379a0deadbeef", code=CALL_EXCEPTION, version=6.16.0)';
+    expect(sample).not.toMatch(DISPATCH_FAILURE_RE);
+  });
+
+  it("matches ABI encoding errors (INVALID_ARGUMENT)", () => {
+    const sample =
+      'Error: invalid BigNumberish value (argument="value", value="abc", code=INVALID_ARGUMENT, version=6.16.0)';
+    expect(sample).toMatch(DISPATCH_FAILURE_RE);
+  });
+
+  it("does NOT match a normal business revert with populated revert data", () => {
+    // Real Sepolia revert from connect-pool against TEST_ADDRESS: the GDA
+    // calls into the "pool" address and gets a real revert string back.
+    // This is the failure mode we want to tolerate -- contract reached,
+    // protocol-level revert with data, not a routing/dispatch bug.
+    const sample =
+      'Error: execution reverted: "CallUtils: target revert()" (action="estimateGas", data="0x08c379a00000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000001a43616c6c5574696c733a20746172676574207265766572742829000000000000", reason="CallUtils: target revert()", code=CALL_EXCEPTION, version=6.16.0)';
+    expect(sample).not.toMatch(DISPATCH_FAILURE_RE);
   });
 });
