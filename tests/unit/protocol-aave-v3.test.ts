@@ -105,6 +105,16 @@ describe("Aave V3 Protocol Definition", () => {
     expect(chains).toContain("10");
   });
 
+  it("uses current Aave V3 PoolDataProvider addresses", () => {
+    expect(aaveV3Def.contracts.poolDataProvider.addresses).toMatchObject({
+      "1": "0x0a16f2FCC0D44FaE41cc54e079281D84A363bECD",
+      "8453": "0x0F43731EB8d45A581f4a36DD74F5f358bc90C73A",
+      "42161": "0x243Aa95cAC2a25651eda86e80bEe66114413c43b",
+      "10": "0x243Aa95cAC2a25651eda86e80bEe66114413c43b",
+      "11155111": "0x3e9708d80f7B3e43118013075F7e95CE3AB31F31",
+    });
+  });
+
   it("getUserAccountData has 6 outputs matching Pool return values", () => {
     const action = aaveV3Def.actions.find(
       (a) => a.slug === "get-user-account-data"
