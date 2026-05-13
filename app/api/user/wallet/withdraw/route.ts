@@ -14,6 +14,7 @@ import {
   getOrganizationWalletAddress,
   initializeWalletSigner,
 } from "@/lib/para/wallet-helpers";
+import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import {
   executeContractCallAsSafe,
   executeNativeTransferAsSafe,
@@ -241,12 +242,16 @@ export async function POST(request: Request) {
     // Generate a unique execution ID for this API call
     const executionId = `withdraw-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 
-    // Build transaction context
+    // Build transaction context. Single-armed RPC manager (no fallback URL)
+    // matches the pattern used in lib/safe/deployment.ts and
+    // lib/safe/roles-orchestrator.ts; broadcast reconcile still works.
+    const rpcManager = await getRpcProviderFromUrls(rpcUrl, undefined, chainId);
     const txContext: TransactionContext = {
       organizationId,
       executionId,
       chainId,
       rpcUrl,
+      rpcManager,
     };
 
     // Execute transaction with nonce management
@@ -345,7 +350,7 @@ export async function POST(request: Request) {
                     args: [recipientAddr, safeAmountWei],
                   },
                   session,
-                  { chainId }
+                  { chainId, rpcManager }
                 )
               : await executeNativeTransferAsSafe(
                   signer,
@@ -356,7 +361,7 @@ export async function POST(request: Request) {
                     amount: safeAmountWei,
                   },
                   session,
-                  { chainId }
+                  { chainId, rpcManager }
                 );
           } catch (err) {
             recordSafeWithdraw({
