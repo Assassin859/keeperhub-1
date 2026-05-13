@@ -32,24 +32,34 @@ export const getOrgSlug = cache(
 );
 
 /**
- * Resolve an organization's display name by id. Cached per request. Same
- * best-effort semantics as `getOrgSlug` - used as a human-readable identifier
- * in error logs alongside `org_id`.
+ * Resolve an organization's slug and display name in a single round-trip.
+ * Cached per request via React `cache()`. Same best-effort semantics as
+ * `getOrgSlug` - a failed lookup yields `{}` rather than throwing, so a
+ * metric label resolution can never break the calling request.
  */
-export const getOrgName = cache(
-  async (orgId: string | null | undefined): Promise<string | undefined> => {
+export const getOrgIdentity = cache(
+  async (
+    orgId: string | null | undefined
+  ): Promise<{ slug?: string; name?: string }> => {
     if (!orgId) {
-      return undefined;
+      return {};
     }
     try {
       const rows = await db
-        .select({ name: organization.name })
+        .select({ slug: organization.slug, name: organization.name })
         .from(organization)
         .where(eq(organization.id, orgId))
         .limit(1);
-      return rows[0]?.name ?? undefined;
+      const row = rows[0];
+      if (!row) {
+        return {};
+      }
+      return {
+        slug: row.slug ?? undefined,
+        name: row.name ?? undefined,
+      };
     } catch {
-      return undefined;
+      return {};
     }
   }
 );

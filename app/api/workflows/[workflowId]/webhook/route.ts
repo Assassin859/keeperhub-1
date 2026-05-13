@@ -17,7 +17,11 @@ import { recordWebhookMetrics } from "@/lib/metrics/instrumentation/api";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { apiKeys, workflowExecutions, workflows } from "@/lib/db/schema";
-import { getOrgName, getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
+import {
+  getOrgIdentity,
+  getOrgPlanLabel,
+  getOrgSlug,
+} from "@/lib/db/org-helpers";
 import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 type ValidateApiKeyResult = {
@@ -268,18 +272,15 @@ export async function POST(
 
     const executionGuard = await enforceExecutionLimit(workflow.organizationId);
     if (executionGuard.blocked) {
-      const [blockedOrgSlug, blockedOrgName] = await Promise.all([
-        getOrgSlug(workflow.organizationId),
-        getOrgName(workflow.organizationId),
-      ]);
+      const blockedOrg = await getOrgIdentity(workflow.organizationId);
       recordWebhookMetrics({
         workflowId,
         durationMs: timer(),
         statusCode: 429,
         error: EXECUTION_LIMIT_ERROR,
         orgId: workflow.organizationId,
-        orgSlug: blockedOrgSlug,
-        orgName: blockedOrgName,
+        orgSlug: blockedOrg.slug,
+        orgName: blockedOrg.name,
       });
       const body = await executionGuard.response.json();
       return NextResponse.json(body, {
