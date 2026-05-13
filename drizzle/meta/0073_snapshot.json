@@ -6183,6 +6183,12 @@
           "notNull": true,
           "default": "now()"
         },
+        "seeded_at": {
+          "name": "seeded_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
         "is_listed": {
           "name": "is_listed",
           "type": "boolean",

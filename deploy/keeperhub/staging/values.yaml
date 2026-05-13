@@ -125,10 +125,14 @@ serviceMonitors:
 
 resources:
   limits:
-    memory: 2Gi
+    # Must exceed NODE_OPTIONS --max-old-space-size by ~1 GiB to leave headroom
+    # for off-heap RSS (Buffers, source maps, native addons, worker threads).
+    # Setting these equal causes the kernel OOM-killer to fire before V8 GCs.
+    # Kept in lockstep with prod so staging is predictive of prod memory behaviour.
+    memory: 4Gi
   requests:
     cpu: 1m
-    memory: 256Mi
+    memory: 2Gi
 
 env:
   <<: *shared_env
@@ -146,7 +150,7 @@ env:
     value: "5000"
   NODE_OPTIONS:
     type: kv
-    value: "--enable-source-maps --trace-warnings --trace-uncaught --trace-exit"
+    value: "--enable-source-maps --max-old-space-size=3072 --trace-warnings --trace-uncaught --trace-exit"
   NODE_ENV:
     type: kv
     value: "development"
