@@ -6,7 +6,10 @@ import "server-only";
 import { safeFetch } from "@/lib/safe-fetch";
 import { getErrorMessage } from "@/lib/utils";
 import { extractTemplateTokens } from "@/lib/utils/template";
-import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
+import {
+  type StepInput,
+  withStepLogging,
+} from "@/lib/workflow/executor/step-handler";
 
 type HttpRequestResult =
   | { success: true; data: unknown; status: number }

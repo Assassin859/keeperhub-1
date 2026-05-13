@@ -220,7 +220,7 @@ describe("writeContractCore signer chain ID", () => {
   });
 
   it("should pass resolved chainId to initializeWalletSigner", async () => {
-    vi.mocked(getChainIdFromNetwork).mockReturnValue(11155111);
+    vi.mocked(getChainIdFromNetwork).mockReturnValue(11_155_111);
 
     await writeContractCore({
       contractAddress: "0x1234567890123456789012345678901234567890",
@@ -233,7 +233,7 @@ describe("writeContractCore signer chain ID", () => {
     expect(initializeWalletSigner).toHaveBeenCalledWith(
       "org-1",
       "https://rpc.example.com",
-      11155111
+      11_155_111
     );
   });
 

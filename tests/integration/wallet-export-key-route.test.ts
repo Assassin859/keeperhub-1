@@ -88,9 +88,9 @@ vi.mock("@/lib/logging", () => ({
   logSystemError: vi.fn(),
 }));
 
+import { __resetRateLimitForTesting } from "@/app/api/user/wallet/export-key/_lib/rate-limit";
 import { POST as requestPost } from "@/app/api/user/wallet/export-key/request/route";
 import { POST as verifyPost } from "@/app/api/user/wallet/export-key/verify/route";
-import { __resetRateLimitForTesting } from "@/app/api/user/wallet/export-key/_lib/rate-limit";
 
 const CREATOR_ID = "user-creator";
 const OTHER_ADMIN_ID = "user-other-admin";

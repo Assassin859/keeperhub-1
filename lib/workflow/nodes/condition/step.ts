@@ -3,7 +3,10 @@
  */
 import "server-only";
 
-import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
+import {
+  type StepInput,
+  withStepLogging,
+} from "@/lib/workflow/executor/step-handler";
 
 export type ConditionInput = StepInput & {
   condition: boolean;

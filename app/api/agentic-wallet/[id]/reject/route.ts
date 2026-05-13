@@ -99,15 +99,10 @@ export async function POST(
     }
     return NextResponse.json({ ok: true, status: "rejected" });
   } catch (error) {
-    logSystemError(
-      ErrorCategory.DATABASE,
-      "[Agentic] /reject failed",
-      error,
-      {
-        endpoint: `/api/agentic-wallet/${id}/reject`,
-        userId,
-      }
-    );
+    logSystemError(ErrorCategory.DATABASE, "[Agentic] /reject failed", error, {
+      endpoint: `/api/agentic-wallet/${id}/reject`,
+      userId,
+    });
     return NextResponse.json({ error: "Reject failed" }, { status: 500 });
   }
 }

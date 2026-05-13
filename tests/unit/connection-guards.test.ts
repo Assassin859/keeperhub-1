@@ -97,7 +97,11 @@ describe("assertHostIsPublic", () => {
 
 describe("extractHostFromConnectionString", () => {
   it.each([
-    ["postgres scheme with IPv4 host", "postgres://u:p@10.0.0.1:5432/db", "10.0.0.1"],
+    [
+      "postgres scheme with IPv4 host",
+      "postgres://u:p@10.0.0.1:5432/db",
+      "10.0.0.1",
+    ],
     [
       "postgresql scheme with hostname",
       "postgresql://user:pass@db.example.com:5432/mydb",

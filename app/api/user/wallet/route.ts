@@ -12,8 +12,8 @@ import {
 import { integrations, organizationWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
-  type DualAuthContext,
   auditFromAuth,
+  type DualAuthContext,
   getDualAuthContext,
 } from "@/lib/middleware/auth-helpers";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
@@ -192,7 +192,11 @@ async function storeTurnkeyWalletAndIntegration(options: {
   });
 
   await createIntegration(
-    buildWalletIntegrationPayload(userId, organizationId, normalizedWalletAddress)
+    buildWalletIntegrationPayload(
+      userId,
+      organizationId,
+      normalizedWalletAddress
+    )
   );
 
   return { walletAddress: normalizedWalletAddress, walletId: turnkeyWalletId };

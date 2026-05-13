@@ -123,10 +123,7 @@ export async function GET(request: Request) {
       db.select().from(explorerConfigs),
     ]);
 
-    const supportedTokensByChain = new Map<
-      number,
-      typeof allSupportedTokens
-    >();
+    const supportedTokensByChain = new Map<number, typeof allSupportedTokens>();
     for (const token of allSupportedTokens) {
       const existing = supportedTokensByChain.get(token.chainId) ?? [];
       existing.push(token);

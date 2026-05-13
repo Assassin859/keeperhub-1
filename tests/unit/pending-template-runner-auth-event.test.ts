@@ -13,7 +13,7 @@
  * All tests run in jsdom so window / sessionStorage / addEventListener are
  * available without mocking.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 // --- Pure logic extracted from pending-template-runner.tsx ---
 // We test the business logic directly since rendering the component requires
@@ -63,9 +63,7 @@ describe("PendingTemplateRunner — inFlight guard logic (commit db2e7ebe)", () 
   //   inFlight.current = true;
   //   try { ... } finally { inFlight.current = false; }
 
-  function makeRunner(
-    onDuplicate: (id: string) => Promise<void>
-  ): {
+  function makeRunner(onDuplicate: (id: string) => Promise<void>): {
     run: (workflowId: string) => Promise<void>;
     inFlight: { current: boolean };
   } {
@@ -175,7 +173,7 @@ describe("PendingTemplateRunner — sessionStorage idempotency guard (HUB-05)", 
   });
 
   it("a flag written more than 30 seconds ago is considered stale", () => {
-    const thirtyOneSecondsAgo = Date.now() - (TTL_MS + 1_000);
+    const thirtyOneSecondsAgo = Date.now() - (TTL_MS + 1000);
     writeFlag("wf_stale", thirtyOneSecondsAgo);
     const flag = readFlag("wf_stale");
     expect(flag).not.toBeNull();

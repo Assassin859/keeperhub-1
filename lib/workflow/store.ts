@@ -1,9 +1,9 @@
 import type { Edge, EdgeChange, Node, NodeChange } from "@xyflow/react";
 import { applyEdgeChanges, applyNodeChanges } from "@xyflow/react";
 import { atom } from "jotai";
+import { api } from "@/lib/api-client";
 import { computeAutoLayout } from "@/lib/workflow/editor/auto-layout";
 import { buildExecutionLogsMap } from "@/lib/workflow/editor/template-helpers";
-import { api } from "@/lib/api-client";
 
 export type WorkflowNodeType = "trigger" | "action" | "add";
 

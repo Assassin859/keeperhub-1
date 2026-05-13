@@ -141,8 +141,7 @@ describe("Workflow Metrics Instrumentation", () => {
         workflowId: "wf_123",
         durationMs: 100,
         success: false,
-        error:
-          'HTTP request failed: safe-fetch: scheme "file:" not allowed',
+        error: 'HTTP request failed: safe-fetch: scheme "file:" not allowed',
       });
 
       expect(mockCollector.recordWarning).toHaveBeenCalled();

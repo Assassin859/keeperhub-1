@@ -22,9 +22,7 @@ const STAGING_API_TOKEN = process.env.STAGING_API_TOKEN ?? "";
 const EXPECTED_SENTINEL = process.env.EXPECTED_SENTINEL ?? "";
 
 const SHOULD_RUN =
-  STAGING_URL !== "" &&
-  STAGING_API_TOKEN !== "" &&
-  EXPECTED_SENTINEL !== "";
+  STAGING_URL !== "" && STAGING_API_TOKEN !== "" && EXPECTED_SENTINEL !== "";
 
 // Small helper wrapping the platform's synchronous code-execution API.
 // Endpoint shape matches lib/api/execute/ — exact path to be confirmed
@@ -40,7 +38,7 @@ type RunCodeApiResponse = {
 };
 
 async function runUserCodeAgainstRemoteSandbox(
-  code: string,
+  code: string
 ): Promise<RunCodeApiResponse> {
   const url = `${STAGING_URL}/api/v1/execute/run-code`;
   const res = await fetch(url, {
@@ -65,7 +63,7 @@ describe.skipIf(!SHOULD_RUN)("Sandbox Escape Matrix (Phase 38 E2E)", () => {
   it("TEST-01: Error.constructor escape cannot read CHILD_ENV_ALLOWLIST-external vars", async () => {
     const outcome = await runUserCodeAgainstRemoteSandbox(
       `const p = Error.constructor("return process")();
-       return JSON.stringify({ keys: Object.keys(p.env), snap: p.env });`,
+       return JSON.stringify({ keys: Object.keys(p.env), snap: p.env });`
     );
     expect(outcome.success).toBe(true);
     const serialized = JSON.stringify(outcome.result ?? {});
@@ -78,7 +76,7 @@ describe.skipIf(!SHOULD_RUN)("Sandbox Escape Matrix (Phase 38 E2E)", () => {
          const p = Error.constructor("return process")();
          const fs = p.mainModule.require("fs");
          return fs.readFileSync("/proc/self/environ", "utf8");
-       } catch (e) { return "READ_FAILED: " + (e && e.message ? e.message : String(e)); }`,
+       } catch (e) { return "READ_FAILED: " + (e && e.message ? e.message : String(e)); }`
     );
     expect(outcome.success).toBe(true);
     assertNoSentinel(String(outcome.result ?? ""));
@@ -92,7 +90,7 @@ describe.skipIf(!SHOULD_RUN)("Sandbox Escape Matrix (Phase 38 E2E)", () => {
          const pid1 = (() => { try { return fs.readFileSync("/proc/1/environ", "utf8"); } catch (e) { return "ENOENT_OR_FAIL"; } })();
          const ppid = (() => { try { return fs.readFileSync("/proc/" + p.ppid + "/environ", "utf8"); } catch (e) { return "ENOENT_OR_FAIL"; } })();
          return { pid1, ppid };
-       } catch (e) { return { pid1: "OUTER_FAIL", ppid: "OUTER_FAIL" }; }`,
+       } catch (e) { return { pid1: "OUTER_FAIL", ppid: "OUTER_FAIL" }; }`
     );
     expect(outcome.success).toBe(true);
     const payload = JSON.stringify(outcome.result ?? {});
@@ -105,7 +103,7 @@ describe.skipIf(!SHOULD_RUN)("Sandbox Escape Matrix (Phase 38 E2E)", () => {
          const p = Error.constructor("return process")();
          const fs = p.mainModule.require("fs");
          return fs.readFileSync("/var/run/secrets/kubernetes.io/serviceaccount/token", "utf8");
-       } catch (e) { return "READ_FAILED: " + (e && e.code ? e.code : (e && e.message ? e.message : String(e))); }`,
+       } catch (e) { return "READ_FAILED: " + (e && e.code ? e.code : (e && e.message ? e.message : String(e))); }`
     );
     expect(outcome.success).toBe(true);
     const result = String(outcome.result ?? "");
@@ -119,7 +117,7 @@ describe.skipIf(!SHOULD_RUN)("Sandbox Escape Matrix (Phase 38 E2E)", () => {
          const p = Error.constructor("return process")();
          const fs = p.mainModule.require("fs");
          return fs.readFileSync("/var/run/secrets/eks.amazonaws.com/serviceaccount/token", "utf8");
-       } catch (e) { return "READ_FAILED: " + (e && e.code ? e.code : (e && e.message ? e.message : String(e))); }`,
+       } catch (e) { return "READ_FAILED: " + (e && e.code ? e.code : (e && e.message ? e.message : String(e))); }`
     );
     expect(outcome.success).toBe(true);
     const result = String(outcome.result ?? "");
@@ -136,5 +134,5 @@ describe.skipIf(SHOULD_RUN)(
     it("is skipped because required env vars are not set", () => {
       expect(SHOULD_RUN).toBe(false);
     });
-  },
+  }
 );

@@ -3,8 +3,8 @@ import { isBillingEnabled } from "@/lib/billing/feature-flag";
 import { getUpgradeSuggestion } from "@/lib/billing/tier-suggestions";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
-  type OrganizationAuthContext,
   auditFromAuth,
+  type OrganizationAuthContext,
   resolveOrganizationId,
 } from "@/lib/middleware/auth-helpers";
 

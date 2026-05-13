@@ -178,8 +178,7 @@ export function useWalletBalances(): UseWalletBalancesReturn {
             loading: false,
             isTestnet: chain.isTestnet,
             explorerUrl: buildExplorerAddressUrl(chain, address),
-            error:
-              error instanceof Error ? error.message : "Failed to fetch",
+            error: error instanceof Error ? error.message : "Failed to fetch",
           }))
         );
       } finally {

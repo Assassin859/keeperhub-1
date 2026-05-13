@@ -183,10 +183,7 @@ export async function POST(request: Request) {
 
     const chainId = Number.parseInt(String(rawChainId), 10);
     if (Number.isNaN(chainId)) {
-      return NextResponse.json(
-        { error: "Invalid chainId" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Invalid chainId" }, { status: 400 });
     }
 
     // Validate recipient address
@@ -248,7 +245,11 @@ export async function POST(request: Request) {
         console.log(
           `[Withdraw] Initializing signer for org ${organizationId} on chain ${chain.name}`
         );
-        const signer = await initializeWalletSigner(organizationId, rpcUrl, chainId);
+        const signer = await initializeWalletSigner(
+          organizationId,
+          rpcUrl,
+          chainId
+        );
         const provider = signer.provider;
 
         if (!provider) {

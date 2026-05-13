@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
+import { buildEdgesBySourceHandle } from "@/lib/workflow/editor/edge-handle-utils";
 import {
   buildEdgesBySource,
   buildEdgesByTarget,
@@ -9,7 +10,6 @@ import {
   propagateConvergenceSkips,
   signalConvergenceArrival,
 } from "@/lib/workflow/executor/convergence-barrier";
-import { buildEdgesBySourceHandle } from "@/lib/workflow/editor/edge-handle-utils";
 
 describe("convergence barrier", () => {
   describe("basic convergence: A -> [B, C, D] -> E", () => {
@@ -304,13 +304,7 @@ describe("convergence barrier", () => {
 
       // Condition=true: X is taken (runs), nodeB is the direct skipped target.
       // Caller pre-seeds condition's skip-arrival at direct skipped targets.
-      signalConvergenceArrival(
-        "Cond",
-        ["nodeB"],
-        targetMap,
-        arrivals,
-        visited
-      );
+      signalConvergenceArrival("Cond", ["nodeB"], targetMap, arrivals, visited);
       const unblocked = propagateConvergenceSkips(
         ["nodeB"],
         sourceMap,
@@ -392,13 +386,7 @@ describe("convergence barrier", () => {
       const arrivals = new Map<string, Set<string>>();
       const visited = new Set<string>();
 
-      signalConvergenceArrival(
-        "Cond",
-        ["nodeB"],
-        targetMap,
-        arrivals,
-        visited
-      );
+      signalConvergenceArrival("Cond", ["nodeB"], targetMap, arrivals, visited);
       propagateConvergenceSkips(
         ["nodeB"],
         sourceMap,

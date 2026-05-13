@@ -41,8 +41,12 @@ describe("buildHaystack", () => {
 
 describe("filterOptionsByQuery", () => {
   const options = [
-    indexOption(opt({ nodeId: "a", nodeName: "Manual", field: "data.triggered" })),
-    indexOption(opt({ nodeId: "b", nodeName: "Manual", field: "data.triggeredAt" })),
+    indexOption(
+      opt({ nodeId: "a", nodeName: "Manual", field: "data.triggered" })
+    ),
+    indexOption(
+      opt({ nodeId: "b", nodeName: "Manual", field: "data.triggeredAt" })
+    ),
     indexOption(opt({ nodeId: "c", nodeName: "FetchUser", field: "data.id" })),
     indexOption(
       opt({

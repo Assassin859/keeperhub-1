@@ -80,7 +80,8 @@ const COMMS_CASES: CommsCase[] = [
     integrationType: "slack",
     integrationLabel: "Slack (e2e bundle test)",
     configKey: "apiKey",
-    buildConfigValue: () => `xoxb-e2e-invalid-${randomBytes(8).toString("hex")}`,
+    buildConfigValue: () =>
+      `xoxb-e2e-invalid-${randomBytes(8).toString("hex")}`,
     actionType: "slack/send-message",
     buildActionConfig: () => ({
       slackChannel: "#nonexistent-e2e-channel",

@@ -149,7 +149,7 @@ describe("Check Balance E2E", () => {
       const provider = await getRpcProviderFromUrls(
         RPC_URLS.ETH_SEPOLIA.primary,
         RPC_URLS.ETH_SEPOLIA.fallback,
-        11155111,
+        11_155_111,
         "Sepolia Testnet"
       );
 

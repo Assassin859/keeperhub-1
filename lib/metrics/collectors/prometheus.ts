@@ -1335,7 +1335,10 @@ export async function updateDbMetrics(): Promise<void> {
 
     mrrUsdCents.reset();
     for (const entry of billingStats.mrrCentsByPlan) {
-      mrrUsdCents.set({ plan: entry.plan, tier: entry.tier ?? "" }, entry.cents);
+      mrrUsdCents.set(
+        { plan: entry.plan, tier: entry.tier ?? "" },
+        entry.cents
+      );
     }
     mrrUsdCentsTotal.set(billingStats.mrrCentsTotal);
 

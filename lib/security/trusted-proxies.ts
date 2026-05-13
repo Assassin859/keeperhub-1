@@ -52,12 +52,12 @@ function cidrMask(prefix: number): number {
   // 32-bit unsigned mask with the top `prefix` bits set. Caller guarantees
   // prefix is in [1, 32]; prefix === 0 is a "match anything" short-circuit
   // handled before we get here.
-  return (0xffffffff << (32 - prefix)) >>> 0;
+  return (0xff_ff_ff_ff << (32 - prefix)) >>> 0;
 }
 
 function isInCidr(ip: string, cidr: string): boolean {
   const [base, prefixStr] = cidr.split("/");
-  if (!base || !prefixStr) {
+  if (!(base && prefixStr)) {
     return false;
   }
   const prefix = Number.parseInt(prefixStr, 10);

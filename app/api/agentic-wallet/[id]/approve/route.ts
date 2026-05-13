@@ -118,15 +118,10 @@ export async function POST(
     }
     return NextResponse.json({ ok: true, status: "approved" });
   } catch (error) {
-    logSystemError(
-      ErrorCategory.DATABASE,
-      "[Agentic] /approve failed",
-      error,
-      {
-        endpoint: `/api/agentic-wallet/${id}/approve`,
-        userId,
-      }
-    );
+    logSystemError(ErrorCategory.DATABASE, "[Agentic] /approve failed", error, {
+      endpoint: `/api/agentic-wallet/${id}/approve`,
+      userId,
+    });
     return NextResponse.json({ error: "Approve failed" }, { status: 500 });
   }
 }

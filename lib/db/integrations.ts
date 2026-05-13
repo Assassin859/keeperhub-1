@@ -346,7 +346,11 @@ export async function ensureWalletIntegration(
   // app/api/user/wallet/route.ts).
   try {
     await createIntegration(
-      buildWalletIntegrationPayload(userId, organizationId, wallet.walletAddress)
+      buildWalletIntegrationPayload(
+        userId,
+        organizationId,
+        wallet.walletAddress
+      )
     );
   } catch (err) {
     if (!isUniqueViolation(err)) {
