@@ -121,9 +121,12 @@ function resolveBinding(
     return parseUnits(binding._native.human, 18).toString();
   }
   if (typeof binding === "string") {
-    // Address-typed inputs treat unrecognised hex as a literal address and
-    // recognised token symbols as their resolved address.
-    if (inputType === "address" || inputType?.startsWith("address")) {
+    // Only resolve TOKEN_REGISTRY symbols on scalar `address` inputs.
+    // `address[]` / `address[N]` need explicit array handling (none of the
+    // Phase 1 protocols expose array inputs) and a string binding against an
+    // array slot is almost certainly a user error -- let it pass through
+    // unchanged so the engine surfaces the type mismatch downstream.
+    if (inputType === "address") {
       if (binding.startsWith("0x")) {
         return binding;
       }
