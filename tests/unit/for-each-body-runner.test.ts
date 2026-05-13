@@ -26,15 +26,16 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { buildEdgesBySource } from "@/lib/workflow/executor/convergence-barrier";
 import { buildEdgesBySourceHandle } from "@/lib/workflow/editor/edge-handle-utils";
+import { buildEdgesBySource } from "@/lib/workflow/executor/convergence-barrier";
 import { identifyLoopBody } from "@/lib/workflow/executor/executor.workflow";
 import {
-  runBodyNode,
   type BodyExecutionResult,
   type BodyNodeOutputs,
   type BodyStepRunner,
   type RunBodyContext,
+  runBodyNode,
+  type SpuriousRecoveryResolver,
 } from "@/lib/workflow/executor/for-each-body-runner";
 import type { StepContext } from "@/lib/workflow/executor/step-handler";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
@@ -93,6 +94,10 @@ type RunIterationOptions = {
   /** Optional override for the step runner (defaults to one that calls
    *  stepResultFor and records calls). */
   stepRunner?: BodyStepRunner;
+  /** KEEP-543: Optional resolver for spurious-max-retries recovery. */
+  resolveSpuriousRecovery?: SpuriousRecoveryResolver;
+  /** KEEP-543: Optional callback fired on successful recovery. */
+  onSpuriousRecovery?: RunBodyContext["onSpuriousRecovery"];
 };
 
 type RunIterationOutcome = {
@@ -152,6 +157,8 @@ async function runIteration(
     scopedOutputs,
     iterationMeta: { iterationIndex, forEachNodeId },
     runStep: options.stepRunner ?? defaultStepRunner,
+    resolveSpuriousRecovery: options.resolveSpuriousRecovery,
+    onSpuriousRecovery: options.onSpuriousRecovery,
     processConfig: (config) => ({ ...config }),
     getNodeName: (n) => n.data.label || n.id,
     getErrorMessageAsync: async (err) =>
@@ -215,7 +222,11 @@ describe("runBodyNode: production-shape Autoline Job Keeper iteration", () => {
       edges,
       forEachNodeId: "for-each",
       stepResultFor: (nodeId) => {
-        if (nodeId === "c-master" || nodeId === "c-workable" || nodeId === "c-line") {
+        if (
+          nodeId === "c-master" ||
+          nodeId === "c-workable" ||
+          nodeId === "c-line"
+        ) {
           return { condition: true };
         }
         if (nodeId === "autoline") {
@@ -540,7 +551,10 @@ describe("runBodyNode: condition routing", () => {
 
 describe("runBodyNode: bodyVisited semantics", () => {
   it("does not re-execute a node already in bodyVisited", async () => {
-    const nodes = [makeForEach("for-each"), makeAction("a", "web3/read-contract")];
+    const nodes = [
+      makeForEach("for-each"),
+      makeAction("a", "web3/read-contract"),
+    ];
     const edges = [edge("for-each", "a", "loop")];
     const nodeMap = new Map(nodes.map((n) => [n.id, n]));
     const edgesBySource = buildEdgesBySource(edges);
@@ -589,10 +603,7 @@ describe("runBodyNode: bodyVisited semantics", () => {
       makeAction("a", "web3/read-contract"),
       makeAction("collect", "Collect"),
     ];
-    const edges = [
-      edge("for-each", "a", "loop"),
-      edge("a", "collect"),
-    ];
+    const edges = [edge("for-each", "a", "loop"), edge("a", "collect")];
 
     const callCount = vi.fn((id: string) => {
       // capture call ids
@@ -622,7 +633,11 @@ describe("runBodyNode: disabled nodes", () => {
   it("skips a disabled node but continues to its downstream targets", async () => {
     const a = makeAction("a", "web3/read-contract");
     a.data.enabled = false;
-    const nodes = [makeForEach("for-each"), a, makeAction("b", "code/run-code")];
+    const nodes = [
+      makeForEach("for-each"),
+      a,
+      makeAction("b", "code/run-code"),
+    ];
     const edges = [edge("for-each", "a", "loop"), edge("a", "b")];
 
     const { visitOrder, scopedOutputs } = await runIteration({
@@ -693,5 +708,218 @@ describe("runBodyNode: step context", () => {
     expect(observed?.nodeType).toBe("web3/read-contract");
     expect(observed?.executionId).toBe("exec-test");
     expect(observed?.organizationId).toBe("org-test");
+  });
+});
+
+// ===========================================================================
+// KEEP-543: Spurious-max-retries recovery inside a For Each iteration
+// ===========================================================================
+
+const SPURIOUS_ERROR_REGEX = /exceeded max retries/;
+
+describe("runBodyNode: KEEP-543 spurious-max-retries recovery", () => {
+  // For Each -> read -> decode (a plain action chain)
+  const baseNodes = [
+    makeForEach("for-each"),
+    makeAction("read", "web3/read-contract", "Read contract"),
+    makeAction("decode", "code/run-code", "Decode"),
+  ];
+  const baseEdges = [edge("for-each", "read", "loop"), edge("read", "decode")];
+
+  it("treats a recovered spurious failure as success and continues downstream", async () => {
+    const recoveredOutput = { result: { ceiling: 999 } };
+
+    const throwingRunner: BodyStepRunner = ({ node }) => {
+      if (node.id === "read") {
+        return Promise.reject(
+          new Error(
+            'Step "step//./plugins/web3/steps/read-contract//readContractStep" exceeded max retries (1 retry)'
+          )
+        );
+      }
+      return Promise.resolve({ decoded: true });
+    };
+
+    const onRecovery = vi.fn();
+    const { bodyResults, scopedOutputs } = await runIteration({
+      nodes: baseNodes,
+      edges: baseEdges,
+      forEachNodeId: "for-each",
+      iterationIndex: 3,
+      stepResultFor: () => undefined,
+      stepRunner: throwingRunner,
+      resolveSpuriousRecovery: ({ nodeId, iterationMeta }) => {
+        if (nodeId === "read" && iterationMeta.iterationIndex === 3) {
+          return Promise.resolve({ output: recoveredOutput });
+        }
+        return Promise.resolve(null);
+      },
+      onSpuriousRecovery: onRecovery,
+    });
+
+    expect(bodyResults.read).toEqual({
+      success: true,
+      data: recoveredOutput,
+    });
+    expect(scopedOutputs.read?.data).toEqual(recoveredOutput);
+
+    // Downstream decode ran on the recovered output.
+    expect(bodyResults.decode).toEqual({
+      success: true,
+      data: { decoded: true },
+    });
+
+    expect(onRecovery).toHaveBeenCalledOnce();
+    expect(onRecovery).toHaveBeenCalledWith({
+      nodeId: "read",
+      iterationMeta: { iterationIndex: 3, forEachNodeId: "for-each" },
+    });
+  });
+
+  it("falls through to standard failure when resolver returns null", async () => {
+    const throwingRunner: BodyStepRunner = ({ node }) => {
+      if (node.id === "read") {
+        return Promise.reject(
+          new Error('Step "..." exceeded max retries (1 retry)')
+        );
+      }
+      return Promise.resolve({ decoded: true });
+    };
+
+    const onRecovery = vi.fn();
+    const { bodyResults } = await runIteration({
+      nodes: baseNodes,
+      edges: baseEdges,
+      forEachNodeId: "for-each",
+      stepResultFor: () => undefined,
+      stepRunner: throwingRunner,
+      resolveSpuriousRecovery: () => Promise.resolve(null),
+      onSpuriousRecovery: onRecovery,
+    });
+
+    expect(bodyResults.read?.success).toBe(false);
+    expect(bodyResults.read?.error).toMatch(SPURIOUS_ERROR_REGEX);
+    expect(bodyResults.decode).toBeUndefined();
+    expect(onRecovery).not.toHaveBeenCalled();
+  });
+
+  it("does not invoke recovery for non-spurious errors", async () => {
+    const realErrorRunner: BodyStepRunner = ({ node }) => {
+      if (node.id === "read") {
+        return Promise.reject(new Error("RPC connection refused"));
+      }
+      return Promise.resolve({ decoded: true });
+    };
+
+    const resolver = vi.fn(() => Promise.resolve({ output: { wrong: true } }));
+    const { bodyResults } = await runIteration({
+      nodes: baseNodes,
+      edges: baseEdges,
+      forEachNodeId: "for-each",
+      stepResultFor: () => undefined,
+      stepRunner: realErrorRunner,
+      resolveSpuriousRecovery: resolver,
+    });
+
+    expect(bodyResults.read?.success).toBe(false);
+    expect(bodyResults.read?.error).toBe("RPC connection refused");
+    expect(resolver).not.toHaveBeenCalled();
+  });
+
+  it("matches FAILED_AFTER_RETRIES_REGEX and NO_STEP_COMPLETION_REGEX patterns", async () => {
+    const messages = [
+      'Step "x" failed after 1 retries: boom',
+      "Step did not record completion in time",
+    ];
+
+    for (const msg of messages) {
+      const runner: BodyStepRunner = ({ node }) => {
+        if (node.id === "read") {
+          return Promise.reject(new Error(msg));
+        }
+        return Promise.resolve(null);
+      };
+
+      const { bodyResults } = await runIteration({
+        nodes: baseNodes,
+        edges: baseEdges,
+        forEachNodeId: "for-each",
+        stepResultFor: () => undefined,
+        stepRunner: runner,
+        resolveSpuriousRecovery: () =>
+          Promise.resolve({ output: { recovered: msg } }),
+      });
+
+      expect(bodyResults.read).toEqual({
+        success: true,
+        data: { recovered: msg },
+      });
+    }
+  });
+
+  it("recovers Condition node and routes via the recovered handle", async () => {
+    const nodes = [
+      makeForEach("for-each"),
+      makeCondition("c-master", "isMaster?"),
+      makeAction("then-true", "web3/read-contract", "True branch"),
+      makeAction("then-false", "discord/send-message", "False branch"),
+    ];
+    const edges = [
+      edge("for-each", "c-master", "loop"),
+      edge("c-master", "then-true", "true"),
+      edge("c-master", "then-false", "false"),
+    ];
+
+    const runner: BodyStepRunner = ({ node }) => {
+      if (node.id === "c-master") {
+        return Promise.reject(
+          new Error('Step "conditionStep" exceeded max retries (1 retry)')
+        );
+      }
+      return Promise.resolve({ ok: true });
+    };
+
+    const { bodyResults } = await runIteration({
+      nodes,
+      edges,
+      forEachNodeId: "for-each",
+      stepResultFor: () => undefined,
+      stepRunner: runner,
+      resolveSpuriousRecovery: () =>
+        Promise.resolve({ output: { condition: true } }),
+    });
+
+    expect(bodyResults["c-master"]).toEqual({
+      success: true,
+      data: { condition: true },
+    });
+    expect(bodyResults["then-true"]).toEqual({
+      success: true,
+      data: { ok: true },
+    });
+    expect(bodyResults["then-false"]).toBeUndefined();
+  });
+
+  it("no-ops when resolveSpuriousRecovery is not provided (defaults match legacy)", async () => {
+    const runner: BodyStepRunner = ({ node }) => {
+      if (node.id === "read") {
+        return Promise.reject(
+          new Error('Step "x" exceeded max retries (1 retry)')
+        );
+      }
+      return Promise.resolve(null);
+    };
+
+    const { bodyResults } = await runIteration({
+      nodes: baseNodes,
+      edges: baseEdges,
+      forEachNodeId: "for-each",
+      stepResultFor: () => undefined,
+      stepRunner: runner,
+      // No resolveSpuriousRecovery passed
+    });
+
+    expect(bodyResults.read?.success).toBe(false);
+    expect(bodyResults.decode).toBeUndefined();
   });
 });

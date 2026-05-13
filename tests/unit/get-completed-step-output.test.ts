@@ -5,17 +5,20 @@ vi.mock("server-only", () => ({}));
 const {
   mockFetchSingle,
   mockFetchBatch,
+  mockFetchSingleAtIteration,
   mockIncrementCounter,
   mockRecordLatency,
 } = vi.hoisted(() => ({
   mockFetchSingle: vi.fn(),
   mockFetchBatch: vi.fn(),
+  mockFetchSingleAtIteration: vi.fn(),
   mockIncrementCounter: vi.fn(),
   mockRecordLatency: vi.fn(),
 }));
 
 vi.mock("@/lib/workflow/executor/get-completed-step-output.step", () => ({
   fetchCompletedStepOutputStep: mockFetchSingle,
+  fetchCompletedStepOutputAtIterationStep: mockFetchSingleAtIteration,
   fetchCompletedStepOutputsBatchStep: mockFetchBatch,
 }));
 
@@ -50,6 +53,7 @@ describe("getCompletedStepOutput", () => {
     clearExecution(executionId);
     mockFetchSingle.mockReset();
     mockFetchBatch.mockReset();
+    mockFetchSingleAtIteration.mockReset();
     mockIncrementCounter.mockReset();
     mockRecordLatency.mockReset();
   });
@@ -387,6 +391,7 @@ describe("getCompletedStepOutputs (batch helper)", () => {
     clearExecution(executionId);
     mockFetchSingle.mockReset();
     mockFetchBatch.mockReset();
+    mockFetchSingleAtIteration.mockReset();
     mockIncrementCounter.mockReset();
     mockRecordLatency.mockReset();
   });
@@ -558,5 +563,159 @@ describe("getCompletedStepOutputs (batch helper)", () => {
       "workflow.executor.tracker_db_fallback.duration_ms",
       expect.any(Number)
     );
+  });
+});
+
+// ===========================================================================
+// KEEP-543: iteration-scoped lookup
+// ===========================================================================
+
+describe("getCompletedStepOutput (iteration-scoped)", () => {
+  const executionId = "exec-iter";
+  const nodeId = "check-debt-ceiling";
+  const forEachNodeId = "for-each-1";
+
+  beforeEach(() => {
+    clearOutputCache(executionId);
+    clearExecution(executionId);
+    mockFetchSingle.mockReset();
+    mockFetchSingleAtIteration.mockReset();
+    mockFetchBatch.mockReset();
+    mockIncrementCounter.mockReset();
+    mockRecordLatency.mockReset();
+  });
+
+  afterEach(() => {
+    clearOutputCache(executionId);
+    clearExecution(executionId);
+  });
+
+  it("returns iteration-scoped tracker hit without hitting the DB", async () => {
+    recordStepSuccess(
+      executionId,
+      nodeId,
+      { ceiling: 100 },
+      {
+        forEachNodeId,
+        iterationIndex: 0,
+      }
+    );
+
+    const result = await getCompletedStepOutput(executionId, nodeId, {
+      forEachNodeId,
+      iterationIndex: 0,
+    });
+
+    expect(result).toEqual({
+      output: { ceiling: 100 },
+      source: "tracker",
+    });
+    expect(mockFetchSingle).not.toHaveBeenCalled();
+    expect(mockFetchSingleAtIteration).not.toHaveBeenCalled();
+  });
+
+  it("falls back to iteration-scoped DB query on tracker miss", async () => {
+    mockFetchSingleAtIteration.mockResolvedValue({
+      outputRaw: { ceiling: 200 },
+    });
+
+    const result = await getCompletedStepOutput(executionId, nodeId, {
+      forEachNodeId,
+      iterationIndex: 1,
+    });
+
+    expect(result).toEqual({
+      output: { ceiling: 200 },
+      source: "db",
+    });
+    expect(mockFetchSingleAtIteration).toHaveBeenCalledWith(
+      executionId,
+      nodeId,
+      forEachNodeId,
+      1
+    );
+    // Top-level query must NOT be called for iteration-scoped lookup
+    expect(mockFetchSingle).not.toHaveBeenCalled();
+  });
+
+  it("returns null when neither tracker nor DB has the iteration row", async () => {
+    mockFetchSingleAtIteration.mockResolvedValue(null);
+
+    const result = await getCompletedStepOutput(executionId, nodeId, {
+      forEachNodeId,
+      iterationIndex: 5,
+    });
+
+    expect(result).toBeNull();
+  });
+
+  it("iteration lookup does not retrieve top-level tracker entry with same nodeId", async () => {
+    recordStepSuccess(executionId, nodeId, { topLevel: true });
+    mockFetchSingleAtIteration.mockResolvedValue(null);
+
+    const result = await getCompletedStepOutput(executionId, nodeId, {
+      forEachNodeId,
+      iterationIndex: 0,
+    });
+
+    expect(result).toBeNull();
+    expect(mockFetchSingleAtIteration).toHaveBeenCalledOnce();
+  });
+
+  it("inflight cache key includes iteration so concurrent iteration lookups do not poison each other", async () => {
+    let resolveIter0:
+      | ((value: { outputRaw: unknown } | null) => void)
+      | undefined;
+    let resolveIter1:
+      | ((value: { outputRaw: unknown } | null) => void)
+      | undefined;
+
+    mockFetchSingleAtIteration.mockImplementation(
+      (
+        _exec: string,
+        _node: string,
+        _fe: string,
+        idx: number
+      ): Promise<{ outputRaw: unknown } | null> => {
+        if (idx === 0) {
+          return new Promise((res) => {
+            resolveIter0 = res;
+          });
+        }
+        return new Promise((res) => {
+          resolveIter1 = res;
+        });
+      }
+    );
+
+    const p0 = getCompletedStepOutput(executionId, nodeId, {
+      forEachNodeId,
+      iterationIndex: 0,
+    });
+    const p1 = getCompletedStepOutput(executionId, nodeId, {
+      forEachNodeId,
+      iterationIndex: 1,
+    });
+
+    expect(resolveIter0).toBeDefined();
+    expect(resolveIter1).toBeDefined();
+    resolveIter0?.({ outputRaw: { iter: 0 } });
+    resolveIter1?.({ outputRaw: { iter: 1 } });
+
+    expect(await p0).toEqual({ output: { iter: 0 }, source: "db" });
+    expect(await p1).toEqual({ output: { iter: 1 }, source: "db" });
+  });
+
+  it("top-level call with no iterationKey still uses the legacy top-level query", async () => {
+    mockFetchSingle.mockResolvedValue({ outputRaw: { topLevel: true } });
+
+    const result = await getCompletedStepOutput(executionId, nodeId);
+
+    expect(result).toEqual({
+      output: { topLevel: true },
+      source: "db",
+    });
+    expect(mockFetchSingle).toHaveBeenCalledWith(executionId, nodeId);
+    expect(mockFetchSingleAtIteration).not.toHaveBeenCalled();
   });
 });
