@@ -153,6 +153,32 @@ export const NATIVE_TOKEN_SENTINEL =
   "0x0000000000000000000000000000000000000000" as const;
 
 /**
+ * User-facing message returned by `updateRolesConfig` when a subgraph
+ * outage prevents safe diffing. Exported so the unit test asserting the
+ * bail path can compare against the exact string we ship.
+ */
+export const SUBGRAPH_OUTAGE_UPDATE_ERROR =
+  "The Zodiac subgraph is currently unreachable, so direct-rule details cannot be verified against on-chain state. Retry once the subgraph is available; the update has been refused to avoid silently removing on-chain direct-rule scopes.";
+
+/**
+ * Pure predicate driving the subgraph-outage bail in `updateRolesConfig`.
+ * Lifted out of the function body so the regression test for review
+ * #923-r2 (HIGH) can exercise it without mocking the entire orchestrator.
+ *
+ * Returns true when the update would touch direct rules in any way
+ * (existing in DB or desired in the input) while the subgraph couldn't
+ * confirm chain state. Both-zero is the only safe-to-proceed case.
+ */
+export function shouldBailOnSubgraphOutage(input: {
+  existingDirectRulesCount: number;
+  desiredDirectRulesCount: number;
+}): boolean {
+  return (
+    input.existingDirectRulesCount > 0 || input.desiredDirectRulesCount > 0
+  );
+}
+
+/**
  * 4-byte function selectors for the ERC-20 methods we scope under direct
  * rules. Stored verbatim on `safe_role_protocols.allowedSelectors` so the
  * audit panel can show "transfer(address,uint256)" alongside the rule.
@@ -515,6 +541,44 @@ function resolveAllowanceKey(
 }
 
 /**
+ * Compute the on-chain allowance key for a direct rule's Permission. For
+ * native-transfer rules we use NATIVE_TOKEN_SENTINEL — matching the
+ * bucket the allowance loop creates and the modifier's
+ * EtherWithinAllowance operator reads from. For ERC-20 rules we lower
+ * the token address through normalizeAddressForStorage. Returns null
+ * only when the rule is malformed (ERC-20 without a token address);
+ * the caller skips emitting a Permission in that case.
+ *
+ * Previously native rules short-circuited to null at every call site,
+ * leaving the modifier with a target-only permission and the value cap
+ * unenforced. The bucket was still being created on chain by the
+ * allowance loop, but no condition pointed at it — silent dead branch
+ * caught by Jacob's review of #923.
+ */
+function buildDirectRuleAllowanceKey(
+  roleKey: string,
+  rule: Pick<DirectRuleInput, "kind" | "counterparty" | "tokenAddress">
+): `0x${string}` | null {
+  if (rule.kind === "native-transfer") {
+    return directRuleAllowanceKey(
+      roleKey,
+      rule.kind,
+      rule.counterparty,
+      NATIVE_TOKEN_SENTINEL
+    ) as `0x${string}`;
+  }
+  if (!rule.tokenAddress) {
+    return null;
+  }
+  return directRuleAllowanceKey(
+    roleKey,
+    rule.kind,
+    rule.counterparty,
+    normalizeAddressForStorage(rule.tokenAddress)
+  ) as `0x${string}`;
+}
+
+/**
  * Flatten per-protocol token configuration. No cross-protocol aggregation:
  * each `(protocolSlug, tokenAddress)` pair becomes its own allowance bucket
  * so two protocols can hold independent caps for the same token.
@@ -736,15 +800,7 @@ export async function installRolesWithInitialConfig(
     const directRulePermissions: Permission[] = [];
     const skippedDirectRules: string[] = [];
     for (const rule of directRules) {
-      const allowanceKey =
-        rule.kind === "native-transfer" || !rule.tokenAddress
-          ? null
-          : (directRuleAllowanceKey(
-              roleKey,
-              rule.kind,
-              rule.counterparty,
-              normalizeAddressForStorage(rule.tokenAddress)
-            ) as `0x${string}`);
+      const allowanceKey = buildDirectRuleAllowanceKey(roleKey, rule);
       const permission = buildDirectRulePermission(rule, allowanceKey);
       if (permission) {
         directRulePermissions.push(permission);
@@ -1312,6 +1368,28 @@ export async function updateRolesConfig(
   const currentProtocolRows = reconciled.protocols;
   const currentAllowanceRows = reconciled.allowances;
 
+  // Subgraph-outage guard: if the Zodiac subgraph was unreachable during the
+  // pre-update reconcile, direct-rule details (kind, counterparty) could not
+  // be re-fetched. Proceeding would build the SDK diff against a possibly
+  // stale set of current direct rules and strip their scope from the modifier
+  // on chain. Bail with an actionable retry message instead. The narrower
+  // case where no direct rules exist on either side is safe — nothing to lose.
+  // See review #923-r2 (HIGH).
+  if (reconciled.subgraphUnreachable) {
+    const existingDirectRules = await listRoleDirectRules(role.id);
+    if (
+      shouldBailOnSubgraphOutage({
+        existingDirectRulesCount: existingDirectRules.length,
+        desiredDirectRulesCount: directRules.length,
+      })
+    ) {
+      return {
+        success: false,
+        error: SUBGRAPH_OUTAGE_UPDATE_ERROR,
+      };
+    }
+  }
+
   const ownerWallet = await getOrganizationWallet(organizationId);
   const ownerAddress = normalizeAddressForStorage(ownerWallet.walletAddress);
   const safeAddress = safe.safeAddress as `0x${string}`;
@@ -1353,15 +1431,7 @@ export async function updateRolesConfig(
     const desiredDirectRulePermissions: Permission[] = [];
     const skippedDirectRules: string[] = [];
     for (const rule of directRules) {
-      const allowanceKey =
-        rule.kind === "native-transfer" || !rule.tokenAddress
-          ? null
-          : (directRuleAllowanceKey(
-              roleKey,
-              rule.kind,
-              rule.counterparty,
-              normalizeAddressForStorage(rule.tokenAddress)
-            ) as `0x${string}`);
+      const allowanceKey = buildDirectRuleAllowanceKey(roleKey, rule);
       const permission = buildDirectRulePermission(rule, allowanceKey);
       if (permission) {
         desiredDirectRulePermissions.push(permission);
@@ -1412,27 +1482,17 @@ export async function updateRolesConfig(
       if (stored.status !== "allowed") {
         continue;
       }
-      const allowanceKey =
-        stored.kind === "native-transfer" || !stored.tokenAddress
-          ? null
-          : (directRuleAllowanceKey(
-              roleKey,
-              stored.kind,
-              stored.counterparty,
-              normalizeAddressForStorage(stored.tokenAddress)
-            ) as `0x${string}`);
-      const permission = buildDirectRulePermission(
-        {
-          kind: stored.kind as DirectRuleInput["kind"],
-          tokenAddress: stored.tokenAddress,
-          tokenSymbol: stored.tokenSymbol,
-          tokenDecimals: stored.tokenDecimals,
-          counterparty: stored.counterparty,
-          amountHuman: stored.amountHuman,
-          periodSeconds: stored.periodSeconds,
-        },
-        allowanceKey
-      );
+      const ruleShape = {
+        kind: stored.kind as DirectRuleInput["kind"],
+        tokenAddress: stored.tokenAddress,
+        tokenSymbol: stored.tokenSymbol,
+        tokenDecimals: stored.tokenDecimals,
+        counterparty: stored.counterparty,
+        amountHuman: stored.amountHuman,
+        periodSeconds: stored.periodSeconds,
+      } satisfies DirectRuleInput;
+      const allowanceKey = buildDirectRuleAllowanceKey(roleKey, ruleShape);
+      const permission = buildDirectRulePermission(ruleShape, allowanceKey);
       if (permission) {
         currentDirectRulePermissions.push(permission);
       }
@@ -2329,12 +2389,25 @@ type ExtractedDirectRule = {
   periodSeconds: number;
 };
 
+/**
+ * Discriminated result so callers can distinguish "subgraph returned no
+ * direct rules" (chain is genuinely empty) from "subgraph could not be
+ * reached" (we don't know what's on chain). The write paths use this to
+ * avoid Jacob's destructive-update scenario: an update that runs reconcile
+ * first, gets empty rules back due to a subgraph outage, then strips the
+ * modifier's direct-rule scope on chain because the diff says "remove
+ * everything we don't know about". See review #923-r2.
+ */
+type ExtractDirectRulesResult =
+  | { ok: true; rules: ExtractedDirectRule[] }
+  | { ok: false; reason: "subgraph_unreachable" | "subgraph_returned_null" };
+
 async function extractDirectRulesFromChain(
   chainId: number,
   modifierAddress: string,
   roleKey: string,
   knownAllowances: SafeRoleAllowance[]
-): Promise<ExtractedDirectRule[]> {
+): Promise<ExtractDirectRulesResult> {
   let role: Awaited<ReturnType<typeof fetchRole>>;
   try {
     role = await fetchRole({
@@ -2349,10 +2422,10 @@ async function extractDirectRulesFromChain(
       error,
       { component: "safe-roles-orchestrator", chain_id: chainId.toString() }
     );
-    return [];
+    return { ok: false, reason: "subgraph_unreachable" };
   }
   if (!role) {
-    return [];
+    return { ok: false, reason: "subgraph_returned_null" };
   }
 
   const allowanceByToken = new Map<string, SafeRoleAllowance>();
@@ -2400,7 +2473,7 @@ async function extractDirectRulesFromChain(
       });
     }
   }
-  return extracted;
+  return { ok: true, rules: extracted };
 }
 
 // ---------------------------------------------------------------------------
@@ -2429,6 +2502,15 @@ export type ReconcileSafeRoleResult =
       updatedAllowances: number;
       /** Buckets in DB whose on-chain `maxRefill` is now zero */
       staleAllowances: number;
+      /**
+       * True if the Zodiac subgraph could not be reached during this
+       * reconcile. Direct-rule details (kind, counterparty) come from the
+       * subgraph, so when this is set the DB direct-rule cache is whatever
+       * was there before this pass (we don't delete on failure). The write
+       * paths use this to refuse updates that would otherwise compute a
+       * diff against stale state. See review #923-r2.
+       */
+      subgraphUnreachable: boolean;
     }
   | { success: false; error: string };
 
@@ -2565,22 +2647,29 @@ export async function reconcileSafeRoleFromChain(
   safe: SafeWallet
 ): Promise<ReconcileSafeRoleResult> {
   try {
+    // Reconcile is a read-only path called from both the workflow-write
+    // backfill (silent-write recovery) and the "Refresh from chain" admin
+    // button. Route every chain read through executeWithFailover so a
+    // transient primary-RPC outage falls back to the chain's fallback URL
+    // rather than failing the reconcile and (in the workflow case)
+    // downgrading the write to the unscoped `safe.execTransaction` path.
+    // See review #923-r2 (MEDIUM).
     const rpcUrl = getRpcUrlByChainId(safe.chainId, "primary");
+    const fallbackRpcUrl = getRpcUrlByChainId(safe.chainId, "fallback");
     const rpcManager = await getRpcProviderFromUrls(
       rpcUrl,
-      undefined,
+      fallbackRpcUrl,
       safe.chainId
     );
-    const provider = rpcManager.getProvider();
 
-    const enabledModules = await readEnabledSafeModules(
-      provider,
-      safe.safeAddress
+    const enabledModules = await rpcManager.executeWithFailover(
+      (rpcProvider) => readEnabledSafeModules(rpcProvider, safe.safeAddress),
+      "preflight"
     );
-    const rolesModifierAddress = await findRolesModifierForSafe(
-      provider,
-      safe.safeAddress,
-      enabledModules
+    const rolesModifierAddress = await rpcManager.executeWithFailover(
+      (rpcProvider) =>
+        findRolesModifierForSafe(rpcProvider, safe.safeAddress, enabledModules),
+      "preflight"
     );
 
     if (!rolesModifierAddress) {
@@ -2625,10 +2714,10 @@ export async function reconcileSafeRoleFromChain(
     for (const probe of probes) {
       const { allowanceKey } = probe;
       try {
-        const onChain = await readRoleAllowance(
-          provider,
-          rolesModifierAddress,
-          allowanceKey
+        const onChain = await rpcManager.executeWithFailover(
+          (rpcProvider) =>
+            readRoleAllowance(rpcProvider, rolesModifierAddress, allowanceKey),
+          "preflight"
         );
         reads.push({ probe, allowanceKey, onChain });
       } catch (probeError) {
@@ -2644,6 +2733,14 @@ export async function reconcileSafeRoleFromChain(
       }
     }
 
+    // delegateAddress: on first install we record the current owner EOA.
+    // On a reconcile of an existing role we preserve the stored value
+    // because chain-side `assignRoles` was bound to whatever the EOA was
+    // at install time; rotating the org wallet must NOT silently rewrite
+    // this column to the new EOA or the DB drifts from chain enforcement.
+    // See review #923-r2 (MEDIUM).
+    const persistedDelegateAddress =
+      existingRole?.delegateAddress ?? ownerAddress;
     const persistResult = await db.transaction(async (tx) => {
       const [roleRow] = await tx
         .insert(safeRoles)
@@ -2653,7 +2750,7 @@ export async function reconcileSafeRoleFromChain(
           roleKey,
           rolesModifierAddress:
             normalizeAddressForStorage(rolesModifierAddress),
-          delegateAddress: ownerAddress,
+          delegateAddress: persistedDelegateAddress,
           installedTxHash: existingRole?.installedTxHash ?? null,
           lastReconciledAt: new Date(),
           status: "active",
@@ -2664,7 +2761,7 @@ export async function reconcileSafeRoleFromChain(
             roleKey,
             rolesModifierAddress:
               normalizeAddressForStorage(rolesModifierAddress),
-            delegateAddress: ownerAddress,
+            // Intentionally NOT overwriting delegateAddress here.
             lastReconciledAt: new Date(),
             status: "active",
             updatedAt: new Date(),
@@ -2830,12 +2927,22 @@ export async function reconcileSafeRoleFromChain(
     // and upsert them so the Direct rules section in the UI shows concrete
     // recipient/spender info, not just bucket caps. Best-effort: subgraph
     // outages or chains without a Roles subgraph just skip this step.
-    const extractedDirectRules = await extractDirectRulesFromChain(
+    const extractResult = await extractDirectRulesFromChain(
       safe.chainId,
       rolesModifierAddress,
       roleKey,
       persistResult.allowanceRows
     );
+    // Treat BOTH failure modes as "subgraph cannot tell us what the
+    // modifier holds": fetch failure (subgraph_unreachable) and a null
+    // response (subgraph_returned_null, e.g. indexer lag where the role
+    // hasn't been observed yet). In either case the on-chain modifier may
+    // still hold direct-rule scopes we don't see; the write paths must
+    // refuse to compute a diff that would silently strip them. The
+    // benign "no direct rules anywhere" case is detected upstream in
+    // updateRolesConfig (existing + desired both empty -> proceed).
+    const subgraphUnreachable = !extractResult.ok;
+    const extractedDirectRules = extractResult.ok ? extractResult.rules : [];
     if (extractedDirectRules.length > 0) {
       await db.transaction(async (tx) => {
         for (const rule of extractedDirectRules) {
@@ -2884,6 +2991,7 @@ export async function reconcileSafeRoleFromChain(
       addedAllowances: persistResult.addedAllowances,
       updatedAllowances: persistResult.updatedAllowances,
       staleAllowances: persistResult.staleAllowances,
+      subgraphUnreachable,
     };
   } catch (error) {
     logSystemError(

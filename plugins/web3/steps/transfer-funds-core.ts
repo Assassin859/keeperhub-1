@@ -10,7 +10,7 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
 import { db } from "@/lib/db";
-import { explorerConfigs, workflowExecutions } from "@/lib/db/schema";
+import { chains, explorerConfigs, workflowExecutions } from "@/lib/db/schema";
 import { getTransactionUrl } from "@/lib/explorer";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import {
@@ -266,6 +266,40 @@ export async function transferFundsCore(
       return {
         success: false,
         error: `Failed to initialize organization wallet: ${getErrorMessage(error)}`,
+      };
+    }
+
+    // Preflight native balance check. Mirrors the ERC-20 preflight in
+    // transfer-token-core: read the funding address' native balance and
+    // short-circuit with a clean message before the orchestrator simulates
+    // and surfaces a cryptic revert. Holder is the Safe in safe / safe-role
+    // mode (funds come from the Safe's balance), otherwise the EOA. An
+    // RPC failure here surfaces as a step error to stay consistent with
+    // transfer-token-core's pattern. See review #923-r3 (MEDIUM).
+    const fundingHolderAddress: string =
+      signerMode.kind === "safe-role" || signerMode.kind === "safe"
+        ? signerMode.safeAddress
+        : walletAddress;
+    const nativeBalance = await rpcManager.executeWithFailover(
+      (p) => p.getBalance(fundingHolderAddress),
+      "preflight"
+    );
+    if (nativeBalance < amountInWei) {
+      const balanceFormatted = ethers.formatEther(nativeBalance);
+      const requestedFormatted = ethers.formatEther(amountInWei);
+      // Look up the chain's native symbol so the error reads "Insufficient
+      // ETH balance" / "Insufficient BNB balance" instead of the chain-
+      // agnostic "native". Looked up lazily because this branch only fires
+      // on the slow / unhappy path.
+      const chainRow = await db
+        .select({ symbol: chains.symbol })
+        .from(chains)
+        .where(eq(chains.chainId, chainId))
+        .limit(1);
+      const nativeSymbol = chainRow[0]?.symbol ?? "native";
+      return {
+        success: false,
+        error: `Insufficient ${nativeSymbol} balance. Have: ${balanceFormatted}, Need: ${requestedFormatted}`,
       };
     }
 

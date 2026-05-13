@@ -88,6 +88,16 @@ export function getModuleProxyFactoryAddress(chainId: number): string {
  * Our convention: keccak256("kh-role:" || orgId || ":" || chainId || ":automation").
  * Using a deterministic derivation means the role key is reproducible if we
  * ever need to re-derive it (e.g. to query on-chain state).
+ *
+ * Collision note (review #923-r1, LOW): `solidityPacked` does not
+ * length-prefix strings, so in principle two distinct `(orgId, chainId)`
+ * pairs could produce identical packed bytes if an orgId contained a `:`.
+ * UUID v4 orgIds (our current format) never contain `:`, so this is safe
+ * today. Hashing orgId before packing would close the speculative gap but
+ * is a BREAKING change for already-deployed Safes — their on-chain
+ * `assignRoles` was bound to keys derived under the current packing, so
+ * a derivation change would orphan every existing role. Migration would
+ * need a coordinated re-assign. Tracked but not fixed here.
  */
 export function orgAutomationRoleKey(
   organizationId: string,
@@ -132,6 +142,14 @@ export function tokenAllowanceKey(
  * Including `kind` and `counterparty` in the digest gives each direct rule
  * its own on-chain allowance bucket so the wizard's per-rule cap matches
  * what the modifier actually enforces.
+ *
+ * IMPORTANT — case sensitivity (review #923-r1, LOW): the `counterparty`
+ * is lowercased before being folded into the digest, while `tokenAddress`
+ * is checksum-normalised via `ethers.getAddress`. Any external caller
+ * reconstructing this key MUST lowercase the counterparty first, otherwise
+ * the same `(role, kind, recipient, token)` tuple produces a different
+ * keccak256 and the modifier read misses the bucket. Pass the address as
+ * literally typed (mixed-case OK) — this function handles the folding.
  */
 export function directRuleAllowanceKey(
   roleKey: string,

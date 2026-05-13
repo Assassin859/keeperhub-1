@@ -380,7 +380,14 @@ export async function readEnabledSafeModules(
 ): Promise<string[]> {
   const contract = new ethers.Contract(safeAddress, SAFE_MODULES_ABI, provider);
   const collected: string[] = [];
-  const MAX_PAGES = 10;
+  // Sentinel-based termination is the real loop guard (Safe returns
+  // `next == 0x1` / `0x0` on the last page). MAX_PAGES is purely belt-and
+  // braces against a malformed Safe whose linked list never terminates;
+  // raised from 10 to 1000 (= 100k modules) so we silently miss nothing
+  // on power-user Safes. Hitting this cap means something is wrong; we
+  // throw rather than truncate so the caller can surface the diagnosis.
+  // See review #923-r2 (LOW).
+  const MAX_PAGES = 1000;
   let cursor = SAFE_MODULES_SENTINEL;
   let pagesFetched = 0;
   while (pagesFetched < MAX_PAGES) {
@@ -397,11 +404,13 @@ export async function readEnabledSafeModules(
       next === SAFE_MODULES_SENTINEL ||
       next === ethers.ZeroAddress
     ) {
-      break;
+      return collected;
     }
     cursor = next;
   }
-  return collected;
+  throw new Error(
+    `readEnabledSafeModules: pagination exceeded ${MAX_PAGES} pages without sentinel for safe ${safeAddress}; refusing to truncate`
+  );
 }
 
 const ROLES_AVATAR_ABI = ["function avatar() view returns (address)"] as const;

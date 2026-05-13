@@ -158,8 +158,8 @@ importers:
         specifier: ^5.5.0
         version: 5.5.0
       defi-kit:
-        specifier: ^2.26.9
-        version: 2.26.10(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)
+        specifier: 2.26.9
+        version: 2.26.9(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)
       dotenv:
         specifier: ^17.4.1
         version: 17.4.1
@@ -322,7 +322,7 @@ importers:
         version: 5.9.3
       ultracite:
         specifier: 6.5.1
-        version: 6.5.1(typescript@5.9.3)(valibot@1.2.0(typescript@5.9.3))
+        version: 6.5.1(effect@3.21.2)(typescript@5.9.3)(valibot@1.2.0(typescript@5.9.3))
       viem:
         specifier: ^2.47.1
         version: 2.47.5(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6)
@@ -6163,8 +6163,8 @@ packages:
     resolution: {integrity: sha512-4tvttepXG1VaYGrRibk5EwJd1t4udunSOVMdLSAL6mId1ix438oPwPZMALY41FCijukO1L0twNcGsdzS7dHgDg==}
     engines: {node: '>=10'}
 
-  defi-kit@2.26.10:
-    resolution: {integrity: sha512-Cn9aoDLkx4jYcSjtvoBnMLM1y44EHfepOya0DiHS1hTmJLvMcGy1HTDoHqap0XlhGhMXkcmNy5TZK9GG/4kVSA==}
+  defi-kit@2.26.9:
+    resolution: {integrity: sha512-X+OQglywgQ5lrQYazqRywy2689opqeJTu6qLJ3ZO+rY4Cq3eRkJlpJrSQ9VGC0jqyFdDvFdYbylkPfNTLwpdAQ==}
 
   define-lazy-prop@2.0.0:
     resolution: {integrity: sha512-Ds09qNh8yw3khSjiJjiUInaGX9xlqZDY7JVryGxdxV7NPeuqQfplOpQ66yJFZut3jLa5zOwkXw1g9EI2uKh4Og==}
@@ -16443,7 +16443,7 @@ snapshots:
 
   defer-to-connect@2.0.1: {}
 
-  defi-kit@2.26.10(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10):
+  defi-kit@2.26.9(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10):
     dependencies:
       '@asteasolutions/zod-to-openapi': 5.5.0(zod@3.25.76)
       '@gnosis-guild/eth-sdk': 0.3.10(ethers@6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typescript@5.9.3)
@@ -19415,11 +19415,12 @@ snapshots:
     dependencies:
       punycode: 2.3.1
 
-  trpc-cli@0.12.4(@trpc/server@11.15.0(typescript@5.9.3))(valibot@1.2.0(typescript@5.9.3))(zod@4.3.6):
+  trpc-cli@0.12.4(@trpc/server@11.15.0(typescript@5.9.3))(effect@3.21.2)(valibot@1.2.0(typescript@5.9.3))(zod@4.3.6):
     dependencies:
       commander: 14.0.3
     optionalDependencies:
       '@trpc/server': 11.15.0(typescript@5.9.3)
+      effect: 3.21.2
       valibot: 1.2.0(typescript@5.9.3)
       zod: 4.3.6
 
@@ -19510,7 +19511,7 @@ snapshots:
 
   ulid@3.0.2: {}
 
-  ultracite@6.5.1(typescript@5.9.3)(valibot@1.2.0(typescript@5.9.3)):
+  ultracite@6.5.1(effect@3.21.2)(typescript@5.9.3)(valibot@1.2.0(typescript@5.9.3)):
     dependencies:
       '@clack/prompts': 0.11.0
       '@trpc/server': 11.15.0(typescript@5.9.3)
@@ -19519,7 +19520,7 @@ snapshots:
       jsonc-parser: 3.3.1
       nypm: 0.6.5
       picocolors: 1.1.1
-      trpc-cli: 0.12.4(@trpc/server@11.15.0(typescript@5.9.3))(valibot@1.2.0(typescript@5.9.3))(zod@4.3.6)
+      trpc-cli: 0.12.4(@trpc/server@11.15.0(typescript@5.9.3))(effect@3.21.2)(valibot@1.2.0(typescript@5.9.3))(zod@4.3.6)
       zod: 4.3.6
     transitivePeerDependencies:
       - '@orpc/server'

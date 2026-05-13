@@ -6,6 +6,8 @@ import {
   buildDirectRulePermission,
   type DirectRuleInput,
   directRuleSelector,
+  SUBGRAPH_OUTAGE_UPDATE_ERROR,
+  shouldBailOnSubgraphOutage,
 } from "@/lib/safe/roles-orchestrator";
 
 const COUNTERPARTY = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
@@ -101,6 +103,21 @@ describe("buildDirectRulePermission", () => {
     expect(checked.condition).toBeUndefined();
   });
 
+  it("attaches etherWithinAllowance when a native rule has an allowance key", () => {
+    // Regression for review #923-r1 (HIGH): native rules at the install site
+    // used to short-circuit to allowanceKey=null, leaving the modifier with a
+    // target-only permission and the value cap unenforced. Once the install
+    // path passes a real key in, this branch must wire it onto the
+    // permission so EtherWithinAllowance gates each send.
+    const permission = buildDirectRulePermission(nativeRule(), ALLOWANCE_KEY);
+    expect(permission).not.toBeNull();
+    const checked = permission as unknown as Record<string, unknown>;
+    expect(checked.targetAddress).toBe(COUNTERPARTY);
+    expect(checked.send).toBe(true);
+    expect(checked.delegatecall).toBe(false);
+    expect(checked.etherWithinAllowance).toBe(ALLOWANCE_KEY);
+  });
+
   it("returns null for an erc20 rule missing an allowance key", () => {
     expect(buildDirectRulePermission(transferRule(), null)).toBeNull();
     expect(buildDirectRulePermission(approveRule(), null)).toBeNull();
@@ -135,5 +152,54 @@ describe("buildDirectRulePermission", () => {
       null
     ) as unknown as Record<string, unknown>;
     expect(native.targetAddress).toBe(COUNTERPARTY);
+  });
+});
+
+describe("shouldBailOnSubgraphOutage", () => {
+  // Regression for review #923-r2 (HIGH): updateRolesConfig must refuse
+  // to proceed when the Zodiac subgraph couldn't confirm chain state AND
+  // the diff would touch direct rules. The only safe-to-proceed case is
+  // "no direct rules existed in DB AND none were submitted in the input".
+
+  it("bails when DB has existing direct rules", () => {
+    expect(
+      shouldBailOnSubgraphOutage({
+        existingDirectRulesCount: 3,
+        desiredDirectRulesCount: 0,
+      })
+    ).toBe(true);
+  });
+
+  it("bails when input submits direct rules", () => {
+    expect(
+      shouldBailOnSubgraphOutage({
+        existingDirectRulesCount: 0,
+        desiredDirectRulesCount: 2,
+      })
+    ).toBe(true);
+  });
+
+  it("bails when both sides have direct rules", () => {
+    expect(
+      shouldBailOnSubgraphOutage({
+        existingDirectRulesCount: 5,
+        desiredDirectRulesCount: 4,
+      })
+    ).toBe(true);
+  });
+
+  it("proceeds only when neither side has direct rules", () => {
+    expect(
+      shouldBailOnSubgraphOutage({
+        existingDirectRulesCount: 0,
+        desiredDirectRulesCount: 0,
+      })
+    ).toBe(false);
+  });
+
+  it("exposes a stable error message constant", () => {
+    expect(SUBGRAPH_OUTAGE_UPDATE_ERROR).toContain("subgraph");
+    expect(SUBGRAPH_OUTAGE_UPDATE_ERROR).toContain("Retry");
+    expect(SUBGRAPH_OUTAGE_UPDATE_ERROR).toContain("refused");
   });
 });
