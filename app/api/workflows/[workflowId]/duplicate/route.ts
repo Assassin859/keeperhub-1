@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
 import { generateId } from "@/lib/utils/id";
 import { remapTemplateRefsInString } from "@/lib/utils/template";
+import { getWorkflowAccess } from "@/lib/workflow/access";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
 // Node type for type-safe node manipulation
 type WorkflowNodeLike = {
@@ -139,10 +140,14 @@ export async function POST(
       );
     }
 
-    const isOwner = userId === sourceWorkflow.userId;
+    const access = await getWorkflowAccess(sourceWorkflow, {
+      userId,
+      organizationId,
+      authMethod: authContext.authMethod,
+    });
 
     // If not owner, check if workflow is public
-    if (!isOwner && sourceWorkflow.visibility !== "public") {
+    if (!access.hasFullAccess && sourceWorkflow.visibility !== "public") {
       return NextResponse.json(
         { error: "Workflow not found" },
         { status: 404 }
@@ -220,7 +225,11 @@ export async function POST(
 
     // If moving an anonymous workflow to an org, delete the original
     // This prevents the old anonymous workflow from being accessible after sign out
-    if (sourceWorkflow.isAnonymous && isOwner && !isAnonymous) {
+    if (
+      sourceWorkflow.isAnonymous &&
+      access.isCreatorWithCurrentAccess &&
+      !isAnonymous
+    ) {
       await db.delete(workflows).where(eq(workflows.id, workflowId));
     }
 

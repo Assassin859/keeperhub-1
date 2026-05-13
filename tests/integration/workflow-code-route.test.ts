@@ -8,10 +8,12 @@ const STRANGER_USER_ID = "user-stranger";
 const ORG_ID = "org-1";
 const OTHER_ORG_ID = "org-2";
 
-const { mockGetDualAuthContext, mockWorkflowsFindFirst } = vi.hoisted(() => ({
-  mockGetDualAuthContext: vi.fn(),
-  mockWorkflowsFindFirst: vi.fn(),
-}));
+const { mockGetDualAuthContext, mockMemberLimit, mockWorkflowsFindFirst } =
+  vi.hoisted(() => ({
+    mockGetDualAuthContext: vi.fn(),
+    mockMemberLimit: vi.fn(),
+    mockWorkflowsFindFirst: vi.fn(),
+  }));
 
 vi.mock("@/lib/middleware/auth-helpers", () => ({
   getDualAuthContext: mockGetDualAuthContext,
@@ -29,6 +31,13 @@ vi.mock("@/lib/middleware/auth-helpers", () => ({
 
 vi.mock("@/lib/db", () => ({
   db: {
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({
+          limit: mockMemberLimit,
+        })),
+      })),
+    })),
     query: {
       workflows: { findFirst: mockWorkflowsFindFirst },
     },
@@ -36,6 +45,7 @@ vi.mock("@/lib/db", () => ({
 }));
 
 vi.mock("@/lib/db/schema", () => ({
+  member: { id: "id", organizationId: "organizationId", userId: "userId" },
   workflows: { id: "id" },
 }));
 
@@ -60,6 +70,7 @@ function buildContext(): { params: Promise<{ workflowId: string }> } {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockMemberLimit.mockResolvedValue([]);
 });
 
 describe("GET /api/workflows/[id]/code", () => {
@@ -103,6 +114,26 @@ describe("GET /api/workflows/[id]/code", () => {
 
     const response = await GET(buildRequest(), buildContext());
     expect(response.status).toBe(200);
+  });
+
+  it("returns 404 when an org workflow creator is no longer a member of that org", async () => {
+    mockGetDualAuthContext.mockResolvedValue({
+      userId: OWNER_USER_ID,
+      organizationId: OTHER_ORG_ID,
+      authMethod: "session",
+    });
+    mockWorkflowsFindFirst.mockResolvedValue({
+      id: WORKFLOW_ID,
+      userId: OWNER_USER_ID,
+      organizationId: ORG_ID,
+      isAnonymous: false,
+      name: "wf",
+      nodes: [],
+      edges: [],
+    });
+
+    const response = await GET(buildRequest(), buildContext());
+    expect(response.status).toBe(404);
   });
 
   it("permits a session user in the workflow's org even if not the owner", async () => {

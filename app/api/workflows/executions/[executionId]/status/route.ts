@@ -6,6 +6,7 @@ import { recordStatusPollMetrics } from "@/lib/metrics/instrumentation/api";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { db } from "@/lib/db";
 import { workflowExecutionLogs, workflowExecutions } from "@/lib/db/schema";
+import { getWorkflowAccess } from "@/lib/workflow/access";
 
 type NodeStatus = {
   nodeId: string;
@@ -68,19 +69,22 @@ export async function GET(
     }
 
     // Verify access: owner or org member
-    const isOwner = userId !== null && execution.workflow.userId === userId;
-    const isSameOrg =
-      !execution.workflow.isAnonymous &&
-      execution.workflow.organizationId &&
-      organizationId === execution.workflow.organizationId;
+    const access = await getWorkflowAccess(execution.workflow, {
+      userId,
+      organizationId,
+      authMethod: authContext.authMethod,
+    });
 
-    if (!(isOwner || isSameOrg)) {
+    if (!access.hasFullAccess) {
       recordStatusPollMetrics({
         executionId,
         durationMs: timer(),
-        statusCode: 403,
+        statusCode: 404,
       });
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      return NextResponse.json(
+        { error: "Execution not found" },
+        { status: 404 }
+      );
     }
 
     // Get logs for all nodes

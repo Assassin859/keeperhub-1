@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { workflowExecutionLogs, workflowExecutions } from "@/lib/db/schema";
 import { redactSensitiveData } from "@/lib/utils/redact";
+import { getWorkflowAccess } from "@/lib/workflow/access";
 
 export async function GET(
   request: Request,
@@ -45,14 +46,17 @@ export async function GET(
     }
 
     // Verify access: owner or org member
-    const isOwner = userId !== null && execution.workflow.userId === userId;
-    const isSameOrg =
-      !execution.workflow.isAnonymous &&
-      execution.workflow.organizationId &&
-      organizationId === execution.workflow.organizationId;
+    const access = await getWorkflowAccess(execution.workflow, {
+      userId,
+      organizationId,
+      authMethod: authContext.authMethod,
+    });
 
-    if (!(isOwner || isSameOrg)) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    if (!access.hasFullAccess) {
+      return NextResponse.json(
+        { error: "Execution not found" },
+        { status: 404 }
+      );
     }
 
     // Get logs
