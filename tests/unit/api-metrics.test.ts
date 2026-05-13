@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resetMetricsCollector, setMetricsCollector } from "@/lib/metrics";
 import { getOrgIdentity } from "@/lib/db/org-helpers";
+import { resetMetricsCollector, setMetricsCollector } from "@/lib/metrics";
 import {
   recordStatusPollMetrics,
   recordWebhookMetrics,
