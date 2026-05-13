@@ -99,8 +99,10 @@ function contractAddressOrThrow(
 /** Resolve a binding to a config value. Token-symbol strings on address-typed
  *  inputs are looked up in TOKEN_REGISTRY; plain strings pass through.
  *  `walletAddress` is the persistent test user's signing wallet for this
- *  environment (looked up from `organization_wallets` by the caller). */
-function resolveBinding(
+ *  environment (looked up from `organization_wallets` by the caller).
+ *
+ *  Exported for unit coverage in tests/unit/build-workflow.test.ts. */
+export function resolveBinding(
   binding: InputBinding,
   inputType: string | undefined,
   protocol: ProtocolDefinition,
@@ -108,6 +110,18 @@ function resolveBinding(
   walletAddress: string
 ): string {
   if (isWalletBinding(binding)) {
+    // Symmetric with the string-token-symbol path below: wallet() only
+    // makes sense on a scalar `address` input. Honouring it on any other
+    // type would silently encode a 0x-prefixed string into a uint/bytes/
+    // bool slot, which the engine would later reject with a far less
+    // actionable error than this one.
+    if (inputType !== "address") {
+      throw new Error(
+        `wallet() binding on a non-address input (type: "${inputType ?? "unknown"}"). ` +
+          "wallet() only resolves on scalar `address` inputs. Use a literal value, " +
+          "amount(symbol, human), or native(human) when the input is non-address."
+      );
+    }
     return walletAddress;
   }
   if (isAmountBinding(binding)) {

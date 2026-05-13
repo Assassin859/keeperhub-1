@@ -16,9 +16,11 @@ import {
   buildActionWorkflow,
   buildSetupWorkflow,
   listCoverageTargets,
+  resolveBinding,
   TRIGGER_TYPES,
   toWebhookTriggered,
 } from "@/lib/test-data/build-workflow";
+import { amount, wallet } from "@/lib/test-data/types";
 
 const HEX_ADDRESS_REGEX = /^0x[0-9a-fA-F]{40}$/;
 // Builder takes the persistent test wallet address as a runtime parameter
@@ -237,5 +239,70 @@ describe("KEEP-458 toWebhookTriggered", () => {
       cron: "0 0 * * *",
       timezone: "UTC",
     });
+  });
+});
+
+/**
+ * Direct coverage for `resolveBinding`'s wallet() gating. wallet() must only
+ * resolve on scalar `address` inputs -- honouring it on a uint/bool/bytes
+ * slot would silently encode a 0x-prefixed string into the wrong ABI type
+ * and the engine would surface a much less actionable error downstream.
+ * This is symmetric with the existing string-token-symbol path, which also
+ * only resolves on `inputType === "address"`.
+ */
+describe("KEEP-458 resolveBinding wallet() gating", () => {
+  const protocol = getProtocol("aave-v3");
+  if (!protocol) {
+    throw new Error("aave-v3 must be registered for this test");
+  }
+
+  it("resolves wallet() on a scalar address input", () => {
+    expect(
+      resolveBinding(wallet(), "address", protocol, "11155111", TEST_WALLET)
+    ).toBe(TEST_WALLET);
+  });
+
+  it("throws when wallet() is bound to a uint256 input", () => {
+    expect(() =>
+      resolveBinding(wallet(), "uint256", protocol, "11155111", TEST_WALLET)
+    ).toThrowError(/wallet\(\) binding on a non-address input/);
+  });
+
+  it("throws when wallet() is bound to a bool input", () => {
+    expect(() =>
+      resolveBinding(wallet(), "bool", protocol, "11155111", TEST_WALLET)
+    ).toThrowError(/non-address input/);
+  });
+
+  it("throws on address[] (array types are not honoured)", () => {
+    // Symmetric with the string-symbol path's exact `=== "address"` check.
+    // Array slots need explicit handling; wallet() on `address[]` is almost
+    // certainly a user error and must fail loud.
+    expect(() =>
+      resolveBinding(wallet(), "address[]", protocol, "11155111", TEST_WALLET)
+    ).toThrowError(/non-address input/);
+  });
+
+  it("throws when inputType is undefined", () => {
+    expect(() =>
+      resolveBinding(wallet(), undefined, protocol, "11155111", TEST_WALLET)
+    ).toThrowError(/non-address input/);
+  });
+
+  it("still resolves non-wallet bindings on non-address inputs", () => {
+    // Sanity-check the gate is wallet-specific: amount() / native() / plain
+    // strings on non-address inputs continue to resolve as before.
+    expect(
+      resolveBinding(
+        amount("DAI", "1"),
+        "uint256",
+        protocol,
+        "11155111",
+        TEST_WALLET
+      )
+    ).toBe("1000000000000000000");
+    expect(
+      resolveBinding("0", "uint16", protocol, "11155111", TEST_WALLET)
+    ).toBe("0");
   });
 });
