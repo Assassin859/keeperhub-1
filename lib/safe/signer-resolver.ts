@@ -84,7 +84,7 @@ async function probeRolesModifierFromChain(
     const fallbackRpcUrl = getRpcUrlByChainId(safe.chainId, "fallback");
     const rpcManager = await getRpcProviderFromUrls(
       primaryRpcUrl,
-      fallbackRpcUrl !== primaryRpcUrl ? fallbackRpcUrl : undefined,
+      fallbackRpcUrl === primaryRpcUrl ? undefined : fallbackRpcUrl,
       safe.chainId
     );
     const modules = await rpcManager.executeWithFailover((provider) =>
