@@ -70,6 +70,45 @@ describe("API Metrics Instrumentation", () => {
         })
       );
     });
+
+    it("should include org labels on failure when provided", () => {
+      recordWebhookMetrics({
+        workflowId: "wf_123",
+        durationMs: 100,
+        statusCode: 429,
+        error: "Execution limit reached",
+        orgId: "org_abc",
+        orgSlug: "acme-corp",
+        orgName: "Acme Corp",
+      });
+
+      expect(mockCollector.recordError).toHaveBeenCalledWith(
+        MetricNames.API_ERRORS_TOTAL,
+        { message: "Execution limit reached" },
+        expect.objectContaining({
+          endpoint: "webhook",
+          status_code: "429",
+          org_id: "org_abc",
+          org_slug: "acme-corp",
+          org_name: "Acme Corp",
+        })
+      );
+    });
+
+    it("should omit org labels on failure when not provided", () => {
+      recordWebhookMetrics({
+        workflowId: "wf_123",
+        durationMs: 100,
+        statusCode: 401,
+        error: "Invalid API key",
+      });
+
+      const labels = (mockCollector.recordError as ReturnType<typeof vi.fn>)
+        .mock.calls[0][2];
+      expect(labels).not.toHaveProperty("org_id");
+      expect(labels).not.toHaveProperty("org_slug");
+      expect(labels).not.toHaveProperty("org_name");
+    });
   });
 
   describe("recordStatusPollMetrics", () => {
