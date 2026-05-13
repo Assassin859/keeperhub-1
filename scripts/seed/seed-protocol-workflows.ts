@@ -330,4 +330,15 @@ async function seed(cli: Cli): Promise<void> {
   }
 }
 
-seed(parseCli(process.argv));
+// Main-guard so `import { decideSeedAction } from ...` in tests/unit doesn't
+// fire seed() at module load (which would try to connect to PG on import and
+// throw an unhandled rejection in the unit test pool). Mirrors the pattern
+// used by scripts/pin-agent-card.ts and scripts/update-agent-uri.ts.
+const isMain =
+  process.argv[1] &&
+  (process.argv[1].endsWith("seed-protocol-workflows.ts") ||
+    process.argv[1].endsWith("seed-protocol-workflows.js"));
+
+if (isMain) {
+  seed(parseCli(process.argv));
+}
