@@ -347,19 +347,17 @@ describe("isNonceConflictError", () => {
     "Already known",
     "RPC error: ALREADY KNOWN",
     "known transaction",
-  ])("matches geth 'already known' family by message: %s", (msg) => {
-    expect(isNonceConflictError(new Error(msg))).toBe(true);
-  });
-
-  it.each([
     "nonce too low",
+    "nonce is too low",
     "nonce has already been used",
     "replacement transaction underpriced",
-  ])("does NOT match bare Error with conflict-y message (no ethers code): %s", (msg) => {
-    // These strings come from nodes but ethers translates them to typed codes.
-    // A bare `Error` without a code should not pretend to be a typed ethers
-    // error - this guards against accidentally classifying user-thrown errors.
-    expect(isNonceConflictError(new Error(msg))).toBe(false);
+    "replacement underpriced",
+    "replacement fee too low",
+    // executeWithFailover-style wrapped messages (both endpoints failed)
+    "RPC failed on both endpoints. Primary: connection refused. Fallback: nonce has already been used",
+    "RPC failed on both endpoints. Primary: timeout. Fallback: replacement fee too low",
+  ])("matches conflict-message by substring: %s", (msg) => {
+    expect(isNonceConflictError(new Error(msg))).toBe(true);
   });
 
   it.each([

@@ -121,18 +121,34 @@ async function reconcile(
 }
 
 /**
- * ethers v6 translates two of the three relevant node error patterns into
- * typed error codes (provider-jsonrpc.ts :: getRpcError):
- *   - "nonce too low" / "transaction nonce is too low" -> NONCE_EXPIRED
- *   - "replacement transaction underpriced"            -> REPLACEMENT_UNDERPRICED
+ * Recognise nonce-conflict errors across two layers:
  *
- * It does NOT translate geth's `ErrAlreadyKnown` ("already known" / "known
- * transaction") - that arrives as SERVER_ERROR with the raw message. Until
- * ethers covers it, we match on the message for that case only.
+ * 1. Direct EthersError thrown from broadcastTransaction. ethers v6 translates
+ *    raw node messages to typed codes in provider-jsonrpc.ts :: getRpcError:
+ *      - "nonce too low" / "transaction nonce is too low" -> NONCE_EXPIRED
+ *      - "replacement transaction underpriced"            -> REPLACEMENT_UNDERPRICED
+ *    These are matched by code via isError(...).
+ *
+ * 2. Wrapped Error thrown by rpcManager.executeWithFailover when both
+ *    endpoints fail. It re-throws a plain Error with the inner error
+ *    messages interpolated as text, dropping the typed code. We fall back
+ *    to substring matching on the message for those cases.
+ *
+ * The substring list covers BOTH raw node phrasings AND the canonical text
+ * ethers picks when it constructs the typed error (e.g. "nonce has already
+ * been used" is ethers' NONCE_EXPIRED message, distinct from the raw node
+ * "nonce too low"). geth's ErrAlreadyKnown is not translated by ethers at
+ * all, so its raw text is included too.
  */
-const ALREADY_KNOWN_PATTERNS: readonly string[] = [
+const NONCE_CONFLICT_MESSAGE_PATTERNS: readonly string[] = [
   "already known",
   "known transaction",
+  "nonce too low",
+  "nonce is too low",
+  "nonce has already been used",
+  "replacement transaction underpriced",
+  "replacement underpriced",
+  "replacement fee too low",
 ];
 
 export function isNonceConflictError(err: unknown): boolean {
@@ -143,7 +159,9 @@ export function isNonceConflictError(err: unknown): boolean {
     return true;
   }
   const msg = errorMessage(err).toLowerCase();
-  return ALREADY_KNOWN_PATTERNS.some((pattern) => msg.includes(pattern));
+  return NONCE_CONFLICT_MESSAGE_PATTERNS.some((pattern) =>
+    msg.includes(pattern)
+  );
 }
 
 function errorMessage(err: unknown): string {
