@@ -134,7 +134,12 @@ export async function executeContractCallAsSafe(
       gasConfig.maxFeePerGas.toString()
     );
 
-    const receipt = await tx.wait();
+    const receipt = options.rpcManager
+      ? await options.rpcManager.executeWithFailover(
+          (p) => p.waitForTransaction(tx.hash),
+          "read"
+        )
+      : await tx.wait();
     if (!receipt) {
       throw new Error("Safe-routed transaction sent but receipt unavailable");
     }
@@ -260,7 +265,12 @@ export async function executeContractCallAsRole(
       gasConfig.maxFeePerGas.toString()
     );
 
-    const receipt = await tx.wait();
+    const receipt = options.rpcManager
+      ? await options.rpcManager.executeWithFailover(
+          (p) => p.waitForTransaction(tx.hash),
+          "read"
+        )
+      : await tx.wait();
     if (!receipt) {
       throw new Error("Role-routed transaction sent but receipt unavailable");
     }
@@ -362,7 +372,12 @@ export async function executeNativeTransferAsRole(
       gasConfig.maxFeePerGas.toString()
     );
 
-    const receipt = await tx.wait();
+    const receipt = options.rpcManager
+      ? await options.rpcManager.executeWithFailover(
+          (p) => p.waitForTransaction(tx.hash),
+          "read"
+        )
+      : await tx.wait();
     if (!receipt) {
       throw new Error(
         "Role-routed native transfer sent but receipt unavailable"
@@ -467,7 +482,12 @@ export async function executeNativeTransferAsSafe(
       gasConfig.maxFeePerGas.toString()
     );
 
-    const receipt = await tx.wait();
+    const receipt = options.rpcManager
+      ? await options.rpcManager.executeWithFailover(
+          (p) => p.waitForTransaction(tx.hash),
+          "read"
+        )
+      : await tx.wait();
     if (!receipt) {
       throw new Error(
         "Safe-routed native transfer sent but receipt unavailable"
