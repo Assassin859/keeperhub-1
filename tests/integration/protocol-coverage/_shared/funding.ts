@@ -28,7 +28,11 @@ const ERC20_BALANCE_ABI = [
 
 // chains.defaultPrimaryRpc is bootstrap-time data; memoize per process so a
 // test session opening 3+ helpers (ensureNativeGas + one per requiredTokens)
-// makes one Postgres round-trip total instead of one per call.
+// pays one Postgres round-trip per chain on the first miss and zero on every
+// subsequent hit. Each miss still opens a short-lived client (closed in the
+// finally below); a module-scope client would shave the connection setup but
+// would have to be torn down by test hooks, which is more coupling than the
+// saved round-trip is worth here.
 const RPC_URL_CACHE = new Map<string, string>();
 
 async function getChainRpcUrl(chainId: string): Promise<string> {
