@@ -29,6 +29,8 @@ import {
   isWalletBinding,
   type ProtocolChainTestData,
   type SetupSpec,
+  type WorkflowEdgeJson,
+  type WorkflowNodeJson,
 } from "./types";
 
 export const TRIGGER_TYPES = [
@@ -55,10 +57,8 @@ const TRANSFER_EVENT_ABI = JSON.stringify([
 export type BuiltWorkflow = {
   name: string;
   description: string;
-  // biome-ignore lint/suspicious/noExplicitAny: workflow JSONB shape
-  nodes: any[];
-  // biome-ignore lint/suspicious/noExplicitAny: workflow JSONB shape
-  edges: any[];
+  nodes: WorkflowNodeJson[];
+  edges: WorkflowEdgeJson[];
   _phase: "setup" | "read" | "write";
   _chainId: string;
   _protocol: string;
@@ -147,15 +147,12 @@ type DefaultContext = {
   inputName: string;
 };
 
-function defaultForSolidityType(
-  type: string,
-  context: DefaultContext
-): string {
+function defaultForSolidityType(type: string, context: DefaultContext): string {
   if (type === "address" || type.startsWith("address")) {
     throw new Error(
       `address-typed input "${context.inputName}" on "${context.protocolSlug}/${context.actionSlug}" ` +
         "has no binding and no protocol-level default. Add it to TEST_DATA " +
-        "(use wallet(), a token symbol like \"DAI\", contract(\"<key>\"), or " +
+        '(use wallet(), a token symbol like "DAI", contract("<key>"), or ' +
         "a literal 0x address), or give the action's input a `default` " +
         "in protocols/<slug>.ts."
     );
@@ -244,7 +241,7 @@ function buildTriggerNode(
   trigger: TriggerType,
   chainId: string,
   id = "trigger-1"
-): Record<string, unknown> {
+): WorkflowNodeJson {
   return {
     id,
     type: "trigger",
@@ -277,7 +274,7 @@ function buildProtocolActionNode(
   nodeId: string,
   xPos: number,
   walletAddress: string
-): Record<string, unknown> {
+): WorkflowNodeJson {
   const config: Record<string, unknown> = {
     actionType: `${protocol.slug}/${action.slug}`,
     network: chainId,
@@ -355,7 +352,7 @@ function buildApproveTokenNode(
   nodeId: string,
   xPos: number,
   walletAddress: string
-): Record<string, unknown> {
+): WorkflowNodeJson {
   const tokenEntry = tokenEntryOrThrow(chainId, approval.token);
   const spenderAddress = resolveBinding(
     approval.spender,
@@ -433,10 +430,8 @@ export function buildSetupWorkflow({
   }
   const spec = chainData.setup;
 
-  const nodes: Record<string, unknown>[] = [
-    buildTriggerNode("Manual", chainId),
-  ];
-  const edges: Record<string, unknown>[] = [];
+  const nodes: WorkflowNodeJson[] = [buildTriggerNode("Manual", chainId)];
+  const edges: WorkflowEdgeJson[] = [];
   let prevId = "trigger-1";
   let x = 350;
   let counter = 1;
@@ -595,9 +590,8 @@ export function buildAllForProtocol({
  * the workflows table for webhook-fired execution. Action nodes are untouched.
  */
 export function toWebhookTriggered(built: BuiltWorkflow): BuiltWorkflow {
-  // biome-ignore lint/suspicious/noExplicitAny: workflow JSONB shape
-  const rewrittenNodes = built.nodes.map((node: any) => {
-    if (node?.type !== "trigger" || node?.data?.type !== "trigger") {
+  const rewrittenNodes = built.nodes.map((node): WorkflowNodeJson => {
+    if (node.type !== "trigger" || node.data.type !== "trigger") {
       return node;
     }
     return {

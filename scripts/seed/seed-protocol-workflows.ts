@@ -160,10 +160,8 @@ async function upsertOne(
         description: workflow.description,
         userId,
         organizationId,
-        // biome-ignore lint/suspicious/noExplicitAny: jsonb
-        nodes: workflow.nodes as any[],
-        // biome-ignore lint/suspicious/noExplicitAny: jsonb
-        edges: workflow.edges as any[],
+        nodes: workflow.nodes,
+        edges: workflow.edges,
         visibility: "private",
         enabled: true,
         createdAt: now,
@@ -178,10 +176,8 @@ async function upsertOne(
       .set({
         name: workflow.name,
         description: workflow.description,
-        // biome-ignore lint/suspicious/noExplicitAny: jsonb
-        nodes: workflow.nodes as any[],
-        // biome-ignore lint/suspicious/noExplicitAny: jsonb
-        edges: workflow.edges as any[],
+        nodes: workflow.nodes,
+        edges: workflow.edges,
         updatedAt: now,
         seededAt: now,
       })

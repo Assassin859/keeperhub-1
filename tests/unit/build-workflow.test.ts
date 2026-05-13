@@ -16,8 +16,8 @@ import {
   buildActionWorkflow,
   buildSetupWorkflow,
   listCoverageTargets,
-  toWebhookTriggered,
   TRIGGER_TYPES,
+  toWebhookTriggered,
 } from "@/lib/test-data/build-workflow";
 
 const HEX_ADDRESS_REGEX = /^0x[0-9a-fA-F]{40}$/;
@@ -50,7 +50,7 @@ describe("KEEP-458 build-workflow", () => {
               n.data?.config?.actionType === "web3/approve-token"
           );
           for (const node of approveNodes) {
-            const cfg = node.data.config;
+            const cfg = node.data.config ?? {};
             expect(cfg.network).toBe(chainId);
             expect(cfg.tokenConfig).toEqual(expect.any(String));
             expect(cfg.spenderAddress).toMatch(HEX_ADDRESS_REGEX);
@@ -80,7 +80,9 @@ describe("KEEP-458 build-workflow", () => {
               });
 
               it("emits exactly one trigger and at least one action node", () => {
-                expect(built.nodes.filter((n) => n.type === "trigger")).toHaveLength(1);
+                expect(
+                  built.nodes.filter((n) => n.type === "trigger")
+                ).toHaveLength(1);
                 expect(built.nodes.some((n) => n.type === "action")).toBe(true);
               });
 
@@ -90,7 +92,7 @@ describe("KEEP-458 build-workflow", () => {
                 const cfg = actionNode?.data?.config ?? {};
                 expect(cfg.actionType).toBe(`${protocolSlug}/${action.slug}`);
                 expect(cfg.network).toBe(chainId);
-                const meta = JSON.parse(cfg._protocolMeta) as {
+                const meta = JSON.parse(cfg._protocolMeta as string) as {
                   protocolSlug: string;
                   contractKey: string;
                   functionName: string;
@@ -149,22 +151,21 @@ describe("KEEP-458 builders honour their inputs", () => {
     expect(setup._chainId).toBe("11155111");
   });
 
-  it.each([...TRIGGER_TYPES])(
-    "action workflow with trigger=%s round-trips all metadata",
-    (trigger) => {
-      const built = buildActionWorkflow({
-        protocolSlug: "aave-v3",
-        actionSlug: "supply",
-        chainId: "11155111",
-        trigger,
-        walletAddress: TEST_WALLET,
-      });
-      expect(built._trigger).toBe(trigger);
-      expect(built._phase).toBe("write");
-      expect(built._protocol).toBe("aave-v3");
-      expect(built._chainId).toBe("11155111");
-    }
-  );
+  it.each([
+    ...TRIGGER_TYPES,
+  ])("action workflow with trigger=%s round-trips all metadata", (trigger) => {
+    const built = buildActionWorkflow({
+      protocolSlug: "aave-v3",
+      actionSlug: "supply",
+      chainId: "11155111",
+      trigger,
+      walletAddress: TEST_WALLET,
+    });
+    expect(built._trigger).toBe(trigger);
+    expect(built._phase).toBe("write");
+    expect(built._protocol).toBe("aave-v3");
+    expect(built._chainId).toBe("11155111");
+  });
 });
 
 /**

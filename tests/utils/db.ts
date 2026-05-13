@@ -14,6 +14,7 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import postgres from "postgres";
+import type { WorkflowEdgeJson, WorkflowNodeJson } from "@/lib/test-data/types";
 import {
   createManualWorkflow,
   createScheduledWorkflow,
@@ -69,10 +70,8 @@ export type CreateTestWorkflowOptions = {
    * caller's shape is used as-is. KEEP-458: the protocol-coverage runner
    * passes builder output from `lib/test-data/build-workflow.ts` here.
    */
-  // biome-ignore lint/suspicious/noExplicitAny: fixture JSON is opaque here
-  nodes?: any[];
-  // biome-ignore lint/suspicious/noExplicitAny: fixture JSON is opaque here
-  edges?: any[];
+  nodes?: WorkflowNodeJson[];
+  edges?: WorkflowEdgeJson[];
 };
 
 export type TestWorkflow = {

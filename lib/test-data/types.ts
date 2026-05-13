@@ -23,6 +23,41 @@
 
 import type { TokenSymbol } from "./chain-test-data";
 
+/**
+ * JSONB-shaped workflow node/edge types for the test-data builder + seeder.
+ * Intentionally narrower than `WorkflowNode` from `lib/workflow/store.ts`,
+ * which is `Node<WorkflowNodeData>` from `@xyflow/react` and pulls a heavy
+ * client-side dependency graph. The builder, seeder, and `tests/utils/db.ts`
+ * fixture path all just write opaque JSONB; declaring the shape here keeps
+ * the test-data plumbing untyped against React Flow while still letting us
+ * drop `noExplicitAny` suppressions across the surface.
+ *
+ * `data.config` is left as `Record<string, unknown>` because each plugin
+ * action carries a different config shape; per-field assertions in tests
+ * narrow at the call site.
+ */
+export type WorkflowNodeJson = {
+  id: string;
+  type?: string;
+  position: { x: number; y: number };
+  data: {
+    label?: string;
+    description?: string;
+    type?: string;
+    config?: Record<string, unknown>;
+    status?: string;
+  };
+};
+
+export type WorkflowEdgeJson = {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle?: string | null;
+  targetHandle?: string | null;
+  label?: string;
+};
+
 export type WalletBinding = { _wallet: true };
 export type AmountBinding = { _amount: { symbol: TokenSymbol; human: string } };
 export type ContractBinding = { _contract: { key: string } };
