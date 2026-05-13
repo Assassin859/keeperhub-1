@@ -8,6 +8,10 @@ import { buildExecTransactionWithRoleCalldata } from "@/lib/safe/zodiac-roles";
 import type { TransactionReceipt } from "@/lib/web3/chain-adapter/types";
 import { getGasStrategy } from "@/lib/web3/gas-strategy";
 import { getNonceManager, type NonceSession } from "@/lib/web3/nonce-manager";
+import {
+  NonceConflictError,
+  submitSignedTransactionWithFailover,
+} from "@/lib/web3/submit-signed";
 
 /**
  * Execute an arbitrary contract call from a deployed Safe's perspective.
@@ -34,7 +38,7 @@ export type ExecuteAsSafeRequest = {
 export type ExecuteAsSafeOptions = {
   chainId: number;
   workflowId?: string;
-  rpcManager?: RpcProviderManager;
+  rpcManager: RpcProviderManager;
 };
 
 /**
@@ -53,6 +57,16 @@ function classifyInnerKind(
     return "native";
   }
   return "contract";
+}
+
+function finishOnError(
+  finishMetrics: (outcome: "success" | "failure" | "nonce-conflict") => void,
+  err: unknown
+): never {
+  finishMetrics(
+    err instanceof NonceConflictError ? "nonce-conflict" : "failure"
+  );
+  throw err;
 }
 
 export async function executeContractCallAsSafe(
@@ -88,21 +102,15 @@ export async function executeContractCallAsSafe(
     const nonceManager = getNonceManager();
     const gasStrategy = getGasStrategy();
 
-    const estimatedGas = options.rpcManager
-      ? await options.rpcManager.executeWithFailover(
-          (rpcProvider) =>
-            rpcProvider.estimateGas({
-              to: request.safeAddress,
-              data: outerCalldata,
-              from: request.ownerAddress,
-            }),
-          "preflight"
-        )
-      : await provider.estimateGas({
+    const estimatedGas = await options.rpcManager.executeWithFailover(
+      (rpcProvider) =>
+        rpcProvider.estimateGas({
           to: request.safeAddress,
           data: outerCalldata,
           from: request.ownerAddress,
-        });
+        }),
+      "preflight"
+    );
 
     const gasConfig = await gasStrategy.getGasConfig(
       provider,
@@ -115,36 +123,40 @@ export async function executeContractCallAsSafe(
 
     const nonce = nonceManager.getNextNonce(session);
 
-    const tx = await signer.sendTransaction({
-      to: request.safeAddress,
-      data: outerCalldata,
-      value: BigInt(0),
-      nonce,
-      gasLimit: gasConfig.gasLimit,
-      maxFeePerGas: gasConfig.maxFeePerGas,
-      maxPriorityFeePerGas: gasConfig.maxPriorityFeePerGas,
-      chainId: options.chainId,
-    });
+    const broadcast = await submitSignedTransactionWithFailover(
+      signer,
+      {
+        to: request.safeAddress,
+        data: outerCalldata,
+        value: BigInt(0),
+        nonce,
+        gasLimit: gasConfig.gasLimit,
+        maxFeePerGas: gasConfig.maxFeePerGas,
+        maxPriorityFeePerGas: gasConfig.maxPriorityFeePerGas,
+        chainId: options.chainId,
+      },
+      options.rpcManager
+    );
 
     await nonceManager.recordTransaction(
       session,
       nonce,
-      tx.hash,
+      broadcast.hash,
       options.workflowId,
       gasConfig.maxFeePerGas.toString()
     );
 
-    const receipt = options.rpcManager
-      ? await options.rpcManager.executeWithFailover(
-          (p) => p.waitForTransaction(tx.hash),
-          "read"
-        )
-      : await tx.wait();
+    const receipt =
+      broadcast.preExistingReceipt ??
+      (await options.rpcManager.executeWithFailover(
+        (p) => p.waitForTransaction(broadcast.hash),
+        "read"
+      ));
     if (!receipt) {
       throw new Error("Safe-routed transaction sent but receipt unavailable");
     }
 
-    await nonceManager.confirmTransaction(tx.hash);
+    await nonceManager.confirmTransaction(broadcast.hash);
     finishMetrics("success");
     return {
       hash: receipt.hash,
@@ -153,8 +165,7 @@ export async function executeContractCallAsSafe(
       blockNumber: receipt.blockNumber,
     };
   } catch (err) {
-    finishMetrics("failure");
-    throw err;
+    finishOnError(finishMetrics, err);
   }
 }
 
@@ -219,21 +230,15 @@ export async function executeContractCallAsRole(
     const nonceManager = getNonceManager();
     const gasStrategy = getGasStrategy();
 
-    const estimatedGas = options.rpcManager
-      ? await options.rpcManager.executeWithFailover(
-          (rpcProvider) =>
-            rpcProvider.estimateGas({
-              to: request.rolesModifierAddress,
-              data: outerCalldata,
-              from: request.delegateAddress,
-            }),
-          "preflight"
-        )
-      : await provider.estimateGas({
+    const estimatedGas = await options.rpcManager.executeWithFailover(
+      (rpcProvider) =>
+        rpcProvider.estimateGas({
           to: request.rolesModifierAddress,
           data: outerCalldata,
           from: request.delegateAddress,
-        });
+        }),
+      "preflight"
+    );
 
     const gasConfig = await gasStrategy.getGasConfig(
       provider,
@@ -246,35 +251,39 @@ export async function executeContractCallAsRole(
 
     const nonce = nonceManager.getNextNonce(session);
 
-    const tx = await signer.sendTransaction({
-      to: request.rolesModifierAddress,
-      data: outerCalldata,
-      value: BigInt(0),
-      nonce,
-      gasLimit: gasConfig.gasLimit,
-      maxFeePerGas: gasConfig.maxFeePerGas,
-      maxPriorityFeePerGas: gasConfig.maxPriorityFeePerGas,
-      chainId: options.chainId,
-    });
+    const broadcast = await submitSignedTransactionWithFailover(
+      signer,
+      {
+        to: request.rolesModifierAddress,
+        data: outerCalldata,
+        value: BigInt(0),
+        nonce,
+        gasLimit: gasConfig.gasLimit,
+        maxFeePerGas: gasConfig.maxFeePerGas,
+        maxPriorityFeePerGas: gasConfig.maxPriorityFeePerGas,
+        chainId: options.chainId,
+      },
+      options.rpcManager
+    );
 
     await nonceManager.recordTransaction(
       session,
       nonce,
-      tx.hash,
+      broadcast.hash,
       options.workflowId,
       gasConfig.maxFeePerGas.toString()
     );
 
-    const receipt = options.rpcManager
-      ? await options.rpcManager.executeWithFailover(
-          (p) => p.waitForTransaction(tx.hash),
-          "read"
-        )
-      : await tx.wait();
+    const receipt =
+      broadcast.preExistingReceipt ??
+      (await options.rpcManager.executeWithFailover(
+        (p) => p.waitForTransaction(broadcast.hash),
+        "read"
+      ));
     if (!receipt) {
       throw new Error("Role-routed transaction sent but receipt unavailable");
     }
-    await nonceManager.confirmTransaction(tx.hash);
+    await nonceManager.confirmTransaction(broadcast.hash);
     finishMetrics("success");
     return {
       hash: receipt.hash,
@@ -283,8 +292,7 @@ export async function executeContractCallAsRole(
       blockNumber: receipt.blockNumber,
     };
   } catch (err) {
-    finishMetrics("failure");
-    throw err;
+    finishOnError(finishMetrics, err);
   }
 }
 
@@ -326,21 +334,15 @@ export async function executeNativeTransferAsRole(
     const nonceManager = getNonceManager();
     const gasStrategy = getGasStrategy();
 
-    const estimatedGas = options.rpcManager
-      ? await options.rpcManager.executeWithFailover(
-          (rpcProvider) =>
-            rpcProvider.estimateGas({
-              to: request.rolesModifierAddress,
-              data: outerCalldata,
-              from: request.delegateAddress,
-            }),
-          "preflight"
-        )
-      : await provider.estimateGas({
+    const estimatedGas = await options.rpcManager.executeWithFailover(
+      (rpcProvider) =>
+        rpcProvider.estimateGas({
           to: request.rolesModifierAddress,
           data: outerCalldata,
           from: request.delegateAddress,
-        });
+        }),
+      "preflight"
+    );
 
     const gasConfig = await gasStrategy.getGasConfig(
       provider,
@@ -353,37 +355,41 @@ export async function executeNativeTransferAsRole(
 
     const nonce = nonceManager.getNextNonce(session);
 
-    const tx = await signer.sendTransaction({
-      to: request.rolesModifierAddress,
-      data: outerCalldata,
-      value: BigInt(0),
-      nonce,
-      gasLimit: gasConfig.gasLimit,
-      maxFeePerGas: gasConfig.maxFeePerGas,
-      maxPriorityFeePerGas: gasConfig.maxPriorityFeePerGas,
-      chainId: options.chainId,
-    });
+    const broadcast = await submitSignedTransactionWithFailover(
+      signer,
+      {
+        to: request.rolesModifierAddress,
+        data: outerCalldata,
+        value: BigInt(0),
+        nonce,
+        gasLimit: gasConfig.gasLimit,
+        maxFeePerGas: gasConfig.maxFeePerGas,
+        maxPriorityFeePerGas: gasConfig.maxPriorityFeePerGas,
+        chainId: options.chainId,
+      },
+      options.rpcManager
+    );
 
     await nonceManager.recordTransaction(
       session,
       nonce,
-      tx.hash,
+      broadcast.hash,
       options.workflowId,
       gasConfig.maxFeePerGas.toString()
     );
 
-    const receipt = options.rpcManager
-      ? await options.rpcManager.executeWithFailover(
-          (p) => p.waitForTransaction(tx.hash),
-          "read"
-        )
-      : await tx.wait();
+    const receipt =
+      broadcast.preExistingReceipt ??
+      (await options.rpcManager.executeWithFailover(
+        (p) => p.waitForTransaction(broadcast.hash),
+        "read"
+      ));
     if (!receipt) {
       throw new Error(
         "Role-routed native transfer sent but receipt unavailable"
       );
     }
-    await nonceManager.confirmTransaction(tx.hash);
+    await nonceManager.confirmTransaction(broadcast.hash);
     finishMetrics("success");
     return {
       hash: receipt.hash,
@@ -392,8 +398,7 @@ export async function executeNativeTransferAsRole(
       blockNumber: receipt.blockNumber,
     };
   } catch (err) {
-    finishMetrics("failure");
-    throw err;
+    finishOnError(finishMetrics, err);
   }
 }
 
@@ -436,21 +441,15 @@ export async function executeNativeTransferAsSafe(
     const nonceManager = getNonceManager();
     const gasStrategy = getGasStrategy();
 
-    const estimatedGas = options.rpcManager
-      ? await options.rpcManager.executeWithFailover(
-          (rpcProvider) =>
-            rpcProvider.estimateGas({
-              to: request.safeAddress,
-              data: outerCalldata,
-              from: request.ownerAddress,
-            }),
-          "preflight"
-        )
-      : await provider.estimateGas({
+    const estimatedGas = await options.rpcManager.executeWithFailover(
+      (rpcProvider) =>
+        rpcProvider.estimateGas({
           to: request.safeAddress,
           data: outerCalldata,
           from: request.ownerAddress,
-        });
+        }),
+      "preflight"
+    );
 
     const gasConfig = await gasStrategy.getGasConfig(
       provider,
@@ -463,38 +462,42 @@ export async function executeNativeTransferAsSafe(
 
     const nonce = nonceManager.getNextNonce(session);
 
-    const tx = await signer.sendTransaction({
-      to: request.safeAddress,
-      data: outerCalldata,
-      value: BigInt(0),
-      nonce,
-      gasLimit: gasConfig.gasLimit,
-      maxFeePerGas: gasConfig.maxFeePerGas,
-      maxPriorityFeePerGas: gasConfig.maxPriorityFeePerGas,
-      chainId: options.chainId,
-    });
+    const broadcast = await submitSignedTransactionWithFailover(
+      signer,
+      {
+        to: request.safeAddress,
+        data: outerCalldata,
+        value: BigInt(0),
+        nonce,
+        gasLimit: gasConfig.gasLimit,
+        maxFeePerGas: gasConfig.maxFeePerGas,
+        maxPriorityFeePerGas: gasConfig.maxPriorityFeePerGas,
+        chainId: options.chainId,
+      },
+      options.rpcManager
+    );
 
     await nonceManager.recordTransaction(
       session,
       nonce,
-      tx.hash,
+      broadcast.hash,
       options.workflowId,
       gasConfig.maxFeePerGas.toString()
     );
 
-    const receipt = options.rpcManager
-      ? await options.rpcManager.executeWithFailover(
-          (p) => p.waitForTransaction(tx.hash),
-          "read"
-        )
-      : await tx.wait();
+    const receipt =
+      broadcast.preExistingReceipt ??
+      (await options.rpcManager.executeWithFailover(
+        (p) => p.waitForTransaction(broadcast.hash),
+        "read"
+      ));
     if (!receipt) {
       throw new Error(
         "Safe-routed native transfer sent but receipt unavailable"
       );
     }
 
-    await nonceManager.confirmTransaction(tx.hash);
+    await nonceManager.confirmTransaction(broadcast.hash);
     finishMetrics("success");
     return {
       hash: receipt.hash,
@@ -503,7 +506,6 @@ export async function executeNativeTransferAsSafe(
       blockNumber: receipt.blockNumber,
     };
   } catch (err) {
-    finishMetrics("failure");
-    throw err;
+    finishOnError(finishMetrics, err);
   }
 }
