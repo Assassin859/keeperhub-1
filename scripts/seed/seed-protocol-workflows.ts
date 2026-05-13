@@ -329,6 +329,9 @@ async function seed(cli: Cli): Promise<void> {
     `Done. ${tally.inserted} inserted, ${tally.refreshed} refreshed, ${tally.skipped} skipped (user-edited), ${tally.failed} failed.`
   );
   await client.end();
+  if (tally.failed > 0) {
+    process.exit(1);
+  }
 }
 
 seed(parseCli(process.argv));
