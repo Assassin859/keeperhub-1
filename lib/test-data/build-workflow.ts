@@ -174,18 +174,37 @@ function defaultForSolidityType(
 
 // --- Trigger nodes -----------------------------------------------------------
 
+// Explicit priority for chains where WETH is missing. Object.values()[0] would
+// rely on the TOKEN_REGISTRY literal's key order (V8 string-key insertion order)
+// and shift silently if someone reshuffles the registry. Listing the fallbacks
+// here makes the choice survive that.
+const EVENT_TRIGGER_TOKEN_PRIORITY: TokenSymbol[] = [
+  "WETH",
+  "USDC",
+  "USDT",
+  "DAI",
+  "USDS",
+  "LINK",
+  "FUSDC",
+  "FUSDCX",
+];
+
 function pickEventContractAddress(chainId: string): string {
-  const weth = TOKEN_REGISTRY[chainId]?.WETH?.address;
-  if (weth) {
-    return weth;
-  }
-  const fallback = Object.values(TOKEN_REGISTRY[chainId] ?? {})[0]?.address;
-  if (!fallback) {
+  const registryForChain = TOKEN_REGISTRY[chainId];
+  if (!registryForChain) {
     throw new Error(
-      `Event trigger contractAddress: chain ${chainId} has no WETH and no fallback token in TOKEN_REGISTRY`
+      `Event trigger contractAddress: chain ${chainId} has no entry in TOKEN_REGISTRY`
     );
   }
-  return fallback;
+  for (const symbol of EVENT_TRIGGER_TOKEN_PRIORITY) {
+    const address = registryForChain[symbol]?.address;
+    if (address) {
+      return address;
+    }
+  }
+  throw new Error(
+    `Event trigger contractAddress: chain ${chainId} has no token in TOKEN_REGISTRY matching ${EVENT_TRIGGER_TOKEN_PRIORITY.join(", ")}`
+  );
 }
 
 function buildTriggerConfig(
