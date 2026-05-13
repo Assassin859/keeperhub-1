@@ -91,6 +91,33 @@ describe("getWorkflowAccess", () => {
     expect(access.isSameOrg).toBe(true);
   });
 
+  it("does not grant session same-org access when the active org context is stale", async () => {
+    mockMemberLimit.mockResolvedValue([]);
+
+    const access = await getWorkflowAccess(ORG_WORKFLOW, {
+      userId: "member-user",
+      organizationId: "org-1",
+      authMethod: "session",
+    });
+
+    expect(access.hasFullAccess).toBe(false);
+    expect(access.isSameOrg).toBe(false);
+    expect(mockMemberLimit).toHaveBeenCalledOnce();
+  });
+
+  it("grants session same-org access when the user is still an org member", async () => {
+    mockMemberLimit.mockResolvedValue([{ id: "member-1" }]);
+
+    const access = await getWorkflowAccess(ORG_WORKFLOW, {
+      userId: "member-user",
+      organizationId: "org-1",
+      authMethod: "session",
+    });
+
+    expect(access.hasFullAccess).toBe(true);
+    expect(access.isSameOrg).toBe(true);
+  });
+
   it("does not grant internal execution access when the org workflow creator is no longer an org member", async () => {
     mockMemberLimit.mockResolvedValue([]);
 

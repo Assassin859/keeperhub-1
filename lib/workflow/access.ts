@@ -65,10 +65,7 @@ export async function getWorkflowAccess(
   };
 
   const isSameOrg =
-    hasSameOrgContext &&
-    (subject.authMethod === "api-key" && userId !== null
-      ? await hasCurrentMembership()
-      : true);
+    hasSameOrgContext && userId !== null && (await hasCurrentMembership());
   const isOrgWorkflowCreatorWithMembership =
     !workflow.isAnonymous &&
     isCreator &&

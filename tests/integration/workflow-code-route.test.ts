@@ -142,6 +142,7 @@ describe("GET /api/workflows/[id]/code", () => {
       organizationId: ORG_ID,
       authMethod: "session",
     });
+    mockMemberLimit.mockResolvedValue([{ id: "member-1" }]);
     mockWorkflowsFindFirst.mockResolvedValue({
       id: WORKFLOW_ID,
       userId: OWNER_USER_ID,
@@ -158,10 +159,11 @@ describe("GET /api/workflows/[id]/code", () => {
 
   it("permits an API-key caller whose org matches the workflow's org", async () => {
     mockGetDualAuthContext.mockResolvedValue({
-      userId: null,
+      userId: OWNER_USER_ID,
       organizationId: ORG_ID,
       authMethod: "api-key",
     });
+    mockMemberLimit.mockResolvedValue([{ id: "member-1" }]);
     mockWorkflowsFindFirst.mockResolvedValue({
       id: WORKFLOW_ID,
       userId: OWNER_USER_ID,
