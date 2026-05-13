@@ -64,10 +64,10 @@ export type CreateTestWorkflowOptions = {
   timezone?: string;
   actionEndpoint?: string;
   /**
-   * Inject a fixture's nodes/edges verbatim instead of synthesizing one.
-   * When both `nodes` and `edges` are provided, the synthetic-workflow branch
-   * is bypassed. KEEP-458: used by the protocol-coverage test runner to
-   * insert fixtures from disk.
+   * Inject programmatically built workflow nodes/edges verbatim, bypassing the
+   * synthetic-workflow branch. When both `nodes` and `edges` are provided, the
+   * caller's shape is used as-is. KEEP-458: the protocol-coverage runner
+   * passes builder output from `lib/test-data/build-workflow.ts` here.
    */
   // biome-ignore lint/suspicious/noExplicitAny: fixture JSON is opaque here
   nodes?: any[];
