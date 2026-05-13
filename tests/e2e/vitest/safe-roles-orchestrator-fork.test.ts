@@ -103,6 +103,54 @@ vi.mock("drizzle-orm", () => ({
   sql: () => ({}),
 }));
 
+// Bypass the real NonceManager (which acquires DB locks via SELECT FOR UPDATE
+// and tracks pending txs in wallet_locks / pending_transactions). For these
+// tests we feed a stub that gives back monotonically-increasing nonces from
+// the chain so the orchestrator's signed-tx path lands real txs on the fork.
+const sessionMock = {
+  walletAddress: "",
+  chainId: SEPOLIA_CHAIN_ID,
+  executionId: "test-exec",
+  currentNonce: 0,
+  startedAt: new Date(),
+};
+const nonceCounter = { current: 0 };
+
+vi.mock("@/lib/web3/nonce-manager", () => ({
+  getNonceManager: () => ({
+    startSession: async (
+      walletAddress: string,
+      _chainId: number,
+      _executionId: string,
+      provider: {
+        getTransactionCount: (addr: string, tag: string) => Promise<number>;
+      }
+    ) => {
+      const onChain = await provider.getTransactionCount(
+        walletAddress,
+        "pending"
+      );
+      nonceCounter.current = onChain;
+      sessionMock.walletAddress = walletAddress;
+      sessionMock.currentNonce = onChain;
+      return {
+        session: sessionMock,
+        validation: { valid: true, warnings: [] },
+      };
+    },
+    endSession: () => Promise.resolve(),
+    getNextNonce: () => {
+      const next = nonceCounter.current;
+      nonceCounter.current += 1;
+      return next;
+    },
+    recordTransaction: () => Promise.resolve(),
+    confirmTransaction: () => Promise.resolve(),
+  }),
+  // The orchestrator imports the NonceSession type; export a stub.
+  NonceManager: class {},
+}));
+
 // Override RPC URL lookup so the orchestrator's internal
 // getRpcProviderFromUrls calls hit our fork instead of public Sepolia.
 vi.mock("@/lib/rpc/rpc-config", async () => {
@@ -141,7 +189,10 @@ vi.mock("@/lib/para/wallet-helpers", () => ({
 // Imports under test (after mocks)
 // ---------------------------------------------------------------------------
 
-import { reconcileSafeRoleFromChain } from "@/lib/safe/roles-orchestrator";
+import {
+  installRolesWithInitialConfig,
+  reconcileSafeRoleFromChain,
+} from "@/lib/safe/roles-orchestrator";
 import {
   deployFreshSafe,
   FORK_URL,
@@ -204,6 +255,71 @@ describe.skipIf(shouldSkip)(
         installed: false,
         reason: "no-roles-modifier",
       });
+    });
+
+    it("(b) install + reconcile round-trip puts a Zodiac Roles modifier on chain and reflects the scope back", {
+      timeout: 180_000,
+    }, async () => {
+      const { safeAddress } = await deployFreshSafe(wallet);
+      const safeRow = {
+        id: "safe-b",
+        organizationId: TEST_ORG_ID,
+        chainId: SEPOLIA_CHAIN_ID,
+        safeAddress,
+        status: "deployed",
+        isSigningActive: true,
+      };
+
+      // Sequenced fixtures. install path reads:
+      //   1. findSafeForOrg   -> safe row
+      //   2. findRoleForSafe  -> [] (no existing role)
+      //   then enters install branch; the DB writes inside the txn are
+      //   captured by dbInsertReturning (returns []) and update/delete
+      //   mocks. Returning [] from the upsert is OK for the install path
+      //   because the orchestrator only uses the returned row downstream.
+      dbSelectMock
+        .mockResolvedValueOnce([safeRow]) // findSafeForOrg
+        .mockResolvedValueOnce([]) // findRoleForSafe
+        .mockResolvedValue([]); // any further select
+
+      // dbInsertReturning needs to return the safe_roles row when the
+      // orchestrator upserts it; without that the result type expects
+      // role.id later. We return a synthetic row that matches what
+      // the orchestrator would have just inserted.
+      dbInsertReturning.mockResolvedValueOnce([
+        {
+          id: "role-b",
+          safeWalletId: "safe-b",
+          roleType: "automation",
+          roleKey: `0x${"00".repeat(31)}01`,
+          rolesModifierAddress: `0x${"00".repeat(20)}`,
+          delegateAddress: getFork().ownerAddress,
+          installedTxHash: null,
+          lastReconciledAt: new Date(),
+          status: "active",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ]);
+
+      const result = await installRolesWithInitialConfig({
+        organizationId: TEST_ORG_ID,
+        chainId: SEPOLIA_CHAIN_ID,
+        protocols: [],
+        directRules: [
+          {
+            kind: "native-transfer",
+            tokenAddress: null,
+            tokenSymbol: "ETH",
+            tokenDecimals: 18,
+            counterparty: "0x000000000000000000000000000000000000dEaD",
+            amountHuman: "1",
+            periodSeconds: 86_400,
+          },
+        ],
+      });
+
+      expect(result.success).toBe(true);
     });
   }
 );
