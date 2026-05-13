@@ -15,7 +15,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { getDatabaseUrl } from "../../lib/db/connection-utils";
@@ -212,10 +212,15 @@ async function seed(cli: Cli): Promise<void> {
   }
   const userId = userRow[0].id;
 
+  // Order by createdAt then id so multi-org test users resolve to the same
+  // organization on every seed run. Without orderBy, Postgres can return any
+  // matching row, which would let the chosen org -- and therefore the wallet
+  // address baked into every seeded workflow -- silently shift between runs.
   const memberRow = await db
     .select({ organizationId: member.organizationId })
     .from(member)
     .where(eq(member.userId, userId))
+    .orderBy(asc(member.createdAt), asc(member.id))
     .limit(1);
   const orgId = memberRow[0]?.organizationId ?? null;
 
