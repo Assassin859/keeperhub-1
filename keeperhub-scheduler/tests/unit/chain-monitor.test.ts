@@ -153,6 +153,10 @@ describe("ChainMonitor", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    // Reset env stubs so per-test overrides (BLOCK_ADVANCE_TIMEOUT_MS,
+    // SILENT_FAILOVER_THRESHOLD, SOCKET_MAX_AGE_MS) do not leak into later
+    // tests and trigger timers earlier than the test under test expects.
+    vi.unstubAllEnvs();
   });
 
   function latestProvider(): MockProvider {
@@ -629,6 +633,71 @@ describe("ChainMonitor", () => {
       expect(providerInstances).toHaveLength(2);
       expect(latestProvider().url).toBe("wss://fallback.test");
       expect(monitor.isAlive()).toBe(true);
+    });
+
+    it("flips to fallback after SILENT_FAILOVER_THRESHOLD silent reconnects on primary", async () => {
+      // Half-open-subscription scenario:
+      //  - primary connects fine (getBlockNumber resolves)
+      //  - eth_subscribe is accepted (provider.on resolves)
+      //  - but newHeads is silent forever (we never call emitBlock on it)
+      // After SILENT_FAILOVER_THRESHOLD BLOCK_ADVANCE_TIMEOUT_MS firings on
+      // primary, the monitor flips to fallback for the next reconnect.
+      vi.stubEnv("BLOCK_ADVANCE_TIMEOUT_MS", "200");
+      vi.stubEnv("SILENT_FAILOVER_THRESHOLD", "2");
+      // Disable the primary-recovery probe so it does not swap us back to
+      // primary mid-test once we are on fallback.
+      vi.stubEnv("PRIMARY_PROBE_INTERVAL_MS", "600000");
+
+      const monitor = new ChainMonitor({
+        chain: makeChain(),
+        workflows: [makeWorkflow()],
+      });
+
+      await monitor.start();
+      expect(latestProvider().url).toBe("wss://primary.test");
+      expect(providerInstances).toHaveLength(1);
+
+      // First silent window: noBlockTimer fires (silentReconnects=1),
+      // reconnect waits 1s backoff, lands back on primary (below threshold).
+      await vi.advanceTimersByTimeAsync(1_400);
+      expect(latestProvider().url).toBe("wss://primary.test");
+      expect(providerInstances.length).toBeGreaterThanOrEqual(2);
+
+      // Second silent window: noBlockTimer fires (silentReconnects=2),
+      // reconnect waits 1s backoff, maybeFlipUrlPreference() flips to
+      // fallback, connect lands on fallback URL.
+      await vi.advanceTimersByTimeAsync(1_400);
+      expect(latestProvider().url).toBe("wss://fallback.test");
+      expect(monitor.isAlive()).toBe(true);
+
+      await monitor.stop();
+    });
+
+    it("does not flip when fallback URL is not configured", async () => {
+      // If only a primary URL is configured, there is nowhere to flip to.
+      // The monitor must keep reconnecting to the same URL without crashing.
+      vi.stubEnv("BLOCK_ADVANCE_TIMEOUT_MS", "200");
+      vi.stubEnv("SILENT_FAILOVER_THRESHOLD", "2");
+      vi.stubEnv("PRIMARY_PROBE_INTERVAL_MS", "600000");
+
+      const monitor = new ChainMonitor({
+        chain: makeChain({ defaultFallbackWss: null }),
+        workflows: [makeWorkflow()],
+      });
+
+      await monitor.start();
+      expect(latestProvider().url).toBe("wss://primary.test");
+
+      // Two silent windows; even past the threshold, still primary.
+      await vi.advanceTimersByTimeAsync(1_400);
+      await vi.advanceTimersByTimeAsync(1_400);
+
+      const urls = providerInstances.map((p) => p.url);
+      for (const url of urls) {
+        expect(url).toBe("wss://primary.test");
+      }
+
+      await monitor.stop();
     });
 
     it("does not propagate ws 'error' as an uncaughtException", async () => {
