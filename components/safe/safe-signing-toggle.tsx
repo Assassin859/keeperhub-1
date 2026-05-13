@@ -96,8 +96,8 @@ export function SafeSigningToggle({
         </TooltipTrigger>
         <TooltipContent className="max-w-xs" side="bottom">
           {isActive
-            ? `Workflows on ${chainLabel} execute from the Safe. Flip off to route through the Turnkey EOA.`
-            : `Workflows on ${chainLabel} currently execute from the Turnkey EOA. Flip on to route through the Safe (its address becomes msg.sender at the target).`}
+            ? `Workflows on ${chainLabel} execute from the Safe; funds and msg.sender both come from the Safe. Flip off to route through the Turnkey EOA instead.`
+            : `Workflows on ${chainLabel} currently execute from the Turnkey EOA; funds come from the EOA's balance and msg.sender is the EOA. Flip on to route through the Safe (its address becomes msg.sender, funds come from the Safe).`}
         </TooltipContent>
       </Tooltip>
     );

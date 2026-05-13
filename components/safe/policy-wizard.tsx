@@ -456,13 +456,20 @@ export function PolicyWizard({
                     <li>
                       {enforcementLabel("per-parameter")} pins specific function
                       arguments on chain.{" "}
-                      {enforcementLabel("contract-allowlist")} only restricts
-                      which contracts the role can call.
+                      {enforcementLabel("contract-allowlist")} allows any
+                      function on the listed contracts; the cap is the only
+                      protection.
                     </li>
                     <li>
                       Each protocol has its own cap per token. Two protocols
                       holding USDC each have independent allowances, never
                       shared.
+                    </li>
+                    <li>
+                      Owner caveat: at threshold 1 your Turnkey EOA can still
+                      sign `safe.execTransaction` directly and bypass these
+                      rules. Treat policies as workflow-scoping, not an absolute
+                      spending boundary.
                     </li>
                   </ul>
                 </TooltipContent>
