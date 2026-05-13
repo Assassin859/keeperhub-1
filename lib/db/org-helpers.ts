@@ -32,6 +32,29 @@ export const getOrgSlug = cache(
 );
 
 /**
+ * Resolve an organization's display name by id. Cached per request. Same
+ * best-effort semantics as `getOrgSlug` - used as a human-readable identifier
+ * in error logs alongside `org_id`.
+ */
+export const getOrgName = cache(
+  async (orgId: string | null | undefined): Promise<string | undefined> => {
+    if (!orgId) {
+      return undefined;
+    }
+    try {
+      const rows = await db
+        .select({ name: organization.name })
+        .from(organization)
+        .where(eq(organization.id, orgId))
+        .limit(1);
+      return rows[0]?.name ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+);
+
+/**
  * Resolve an organization's plan by id. Cached per request. Returns "free"
  * when the org has no subscription row, undefined when the lookup fails or
  * orgId is missing. Used as a low-cardinality label on error metrics so

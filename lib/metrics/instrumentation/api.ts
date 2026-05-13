@@ -8,7 +8,14 @@ import { getMetricsCollector } from "../index";
 import { LabelKeys, MetricNames } from "../types";
 
 /**
- * Record webhook trigger metrics
+ * Record webhook trigger metrics.
+ *
+ * Optional org identifiers (`orgId`, `orgSlug`, `orgName`) are attached as
+ * labels on the emitted `api.errors.total` event. They show up in the console
+ * JSON log (shipped to Loki) so operators can identify which organization
+ * triggered a failure response. `org_id` and `org_name` are dropped from the
+ * Prometheus counter via the metric allowlist to keep cardinality bounded;
+ * `org_slug` is allowlisted and becomes a Prometheus label.
  */
 export function recordWebhookMetrics(options: {
   workflowId: string;
@@ -16,6 +23,9 @@ export function recordWebhookMetrics(options: {
   durationMs: number;
   statusCode: number;
   error?: string;
+  orgId?: string | null;
+  orgSlug?: string;
+  orgName?: string;
 }): void {
   const metrics = getMetricsCollector();
   const success = options.statusCode < 400;
@@ -32,13 +42,24 @@ export function recordWebhookMetrics(options: {
   );
 
   if (!success && options.error) {
+    const errorLabels: Record<string, string> = {
+      [LabelKeys.ENDPOINT]: "webhook",
+      [LabelKeys.STATUS_CODE]: String(options.statusCode),
+    };
+    if (options.orgId) {
+      errorLabels[LabelKeys.ORG_ID] = options.orgId;
+    }
+    if (options.orgSlug) {
+      errorLabels[LabelKeys.ORG_SLUG] = options.orgSlug;
+    }
+    if (options.orgName) {
+      errorLabels[LabelKeys.ORG_NAME] = options.orgName;
+    }
+
     metrics.recordError(
       MetricNames.API_ERRORS_TOTAL,
       { message: options.error },
-      {
-        [LabelKeys.ENDPOINT]: "webhook",
-        [LabelKeys.STATUS_CODE]: String(options.statusCode),
-      }
+      errorLabels
     );
   }
 }
