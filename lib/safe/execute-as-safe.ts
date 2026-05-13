@@ -107,7 +107,10 @@ export async function executeContractCallAsSafe(
     const gasConfig = await gasStrategy.getGasConfig(
       provider,
       estimatedGas,
-      options.chainId
+      options.chainId,
+      undefined,
+      undefined,
+      options.rpcManager
     );
 
     const nonce = nonceManager.getNextNonce(session);
@@ -230,7 +233,10 @@ export async function executeContractCallAsRole(
     const gasConfig = await gasStrategy.getGasConfig(
       provider,
       estimatedGas,
-      options.chainId
+      options.chainId,
+      undefined,
+      undefined,
+      options.rpcManager
     );
 
     const nonce = nonceManager.getNextNonce(session);
@@ -329,7 +335,10 @@ export async function executeNativeTransferAsRole(
     const gasConfig = await gasStrategy.getGasConfig(
       provider,
       estimatedGas,
-      options.chainId
+      options.chainId,
+      undefined,
+      undefined,
+      options.rpcManager
     );
 
     const nonce = nonceManager.getNextNonce(session);
@@ -431,7 +440,10 @@ export async function executeNativeTransferAsSafe(
     const gasConfig = await gasStrategy.getGasConfig(
       provider,
       estimatedGas,
-      options.chainId
+      options.chainId,
+      undefined,
+      undefined,
+      options.rpcManager
     );
 
     const nonce = nonceManager.getNextNonce(session);
