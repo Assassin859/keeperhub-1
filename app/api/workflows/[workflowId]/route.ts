@@ -15,6 +15,10 @@ import { syncWorkflowSchedule } from "@/lib/schedule-service";
 import { sanitizeDescription } from "@/lib/sanitize-description";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
 import { isReservedSlug } from "@/lib/workflow/reserved-slugs";
+import {
+  formatActionConfigValidationResponse,
+  validateWorkflowActionConfigs,
+} from "@/lib/workflow/validation/action-config";
 import { findInvalidTemplateTokens } from "@/lib/workflow/validation/template-syntax";
 async function fetchWorkflowPublicTags(
   workflowId: string
@@ -294,20 +298,7 @@ export async function PATCH(
 
     const body = await request.json();
 
-    // Validate that all integrationIds in nodes belong to the current user
     if (Array.isArray(body.nodes)) {
-      const validation = await validateWorkflowIntegrations(
-        body.nodes,
-        userId || existingWorkflow.userId,
-        organizationId
-      );
-      if (!validation.valid) {
-        return NextResponse.json(
-          { error: "Invalid integration references in workflow" },
-          { status: 403 }
-        );
-      }
-
       // KEEP-468: parse every `{{...}}` token at save time so grammar typos
       // (the n8n-style `{{$trigger.input.ts}}`-shaped errors that produced
       // on-chain corruption during the hackathon) are rejected with line/path
@@ -403,6 +394,32 @@ export async function PATCH(
     }
 
     const updateData = buildUpdateData(body);
+
+    if (Array.isArray(updateData.nodes)) {
+      // Validate the exact shape that will be persisted. The sanitizer moves
+      // misplaced root fields into data.config, including integrationId.
+      const validation = await validateWorkflowIntegrations(
+        updateData.nodes,
+        userId || existingWorkflow.userId,
+        organizationId
+      );
+      if (!validation.valid) {
+        return NextResponse.json(
+          { error: "Invalid integration references in workflow" },
+          { status: 403 }
+        );
+      }
+
+      const actionConfigValidation = validateWorkflowActionConfigs(
+        updateData.nodes
+      );
+      if (!actionConfigValidation.valid) {
+        return NextResponse.json(
+          formatActionConfigValidationResponse(actionConfigValidation),
+          { status: 422 }
+        );
+      }
+    }
 
     // Set listedAt server-side on first listing (never from client, never cleared on unlist)
     if (body.isListed === true && existingWorkflow.listedAt === null) {

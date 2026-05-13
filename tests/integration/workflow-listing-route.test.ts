@@ -5,11 +5,13 @@ const {
   mockWorkflowsFindFirst,
   mockUpdateReturning,
   mockSelectFrom,
+  mockValidateWorkflowIntegrations,
 } = vi.hoisted(() => ({
   mockGetDualAuthContext: vi.fn(),
   mockWorkflowsFindFirst: vi.fn(),
   mockUpdateReturning: vi.fn(),
   mockSelectFrom: vi.fn(),
+  mockValidateWorkflowIntegrations: vi.fn(),
 }));
 
 vi.mock("@/lib/middleware/auth-helpers", () => ({
@@ -58,7 +60,7 @@ vi.mock("@/lib/logging", () => ({
 }));
 
 vi.mock("@/lib/db/integrations", () => ({
-  validateWorkflowIntegrations: vi.fn().mockResolvedValue({ valid: true }),
+  validateWorkflowIntegrations: mockValidateWorkflowIntegrations,
 }));
 
 vi.mock("@/lib/schedule-service", () => ({
@@ -133,6 +135,7 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
       organizationId: "org-123",
       authMethod: "session",
     });
+    mockValidateWorkflowIntegrations.mockResolvedValue({ valid: true });
     // Default: no public tags
     mockSelectFrom.mockResolvedValue([]);
   });
@@ -279,19 +282,28 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
   // ──────────────────────────────────────────────────────────────────────
 
   const badNode = {
-    id: "read-1",
+    id: "webhook-1",
     type: "action",
     data: {
       type: "action",
-      config: { actionType: "web3/read-contract", address: "@40" },
+      config: {
+        actionType: "webhook/send-webhook",
+        webhookUrl: "https://example.com",
+        webhookMethod: "POST",
+        webhookPayload: "@40",
+      },
     },
   };
   const goodNode = {
-    id: "read-1",
+    id: "webhook-1",
     type: "action",
     data: {
       type: "action",
-      config: { actionType: "web3/read-contract", address: "0xabc" },
+      config: {
+        actionType: "webhook/send-webhook",
+        webhookUrl: "https://example.com",
+        webhookMethod: "POST",
+      },
     },
   };
 
@@ -314,6 +326,162 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
     const data = await response.json();
     expect(data.error).toBe("INVALID_TEMPLATE_LITERALS");
     expect(data.literals).toContain("@40");
+    expect(mockUpdateReturning).not.toHaveBeenCalled();
+  });
+
+  it("KEEP-467: PATCH rejects invalid action config before updating workflow", async () => {
+    mockWorkflowsFindFirst.mockResolvedValue(makeWorkflow());
+
+    const response = await PATCH(
+      createRequest("PATCH", {
+        nodes: [
+          {
+            id: "node-1",
+            type: "action",
+            data: {
+              type: "action",
+              config: {
+                actionType: "discord/send-message",
+                Message: "hello",
+              },
+            },
+          },
+        ],
+        edges: [],
+      }),
+      { params: mockParams }
+    );
+
+    const data = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(data.error).toBe("INVALID_ACTION_CONFIG");
+    expect(data.invalidFields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "UNKNOWN_FIELD", field: "Message" }),
+        expect.objectContaining({
+          code: "MISSING_REQUIRED_FIELD",
+          field: "discordMessage",
+        }),
+      ])
+    );
+    expect(mockUpdateReturning).not.toHaveBeenCalled();
+  });
+
+  it("KEEP-467: PATCH rejects unknown action types before updating workflow", async () => {
+    mockWorkflowsFindFirst.mockResolvedValue(makeWorkflow());
+
+    const response = await PATCH(
+      createRequest("PATCH", {
+        nodes: [
+          {
+            id: "node-1",
+            type: "action",
+            data: {
+              type: "action",
+              config: {
+                actionType: "webhook/send",
+                webhookUrl: "https://example.com",
+              },
+            },
+          },
+        ],
+        edges: [],
+      }),
+      { params: mockParams }
+    );
+
+    const data = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(data.invalidFields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "UNKNOWN_ACTION_TYPE" }),
+      ])
+    );
+    expect(mockUpdateReturning).not.toHaveBeenCalled();
+  });
+
+  it("KEEP-467: PATCH rejects invalid typed protocol fields before updating workflow", async () => {
+    mockWorkflowsFindFirst.mockResolvedValue(makeWorkflow());
+
+    const response = await PATCH(
+      createRequest("PATCH", {
+        nodes: [
+          {
+            id: "node-1",
+            type: "action",
+            data: {
+              type: "action",
+              config: {
+                actionType: "aave-v3/supply",
+                network: "1",
+                asset: "{{trigger.walletAddress}}",
+                amount: "1000000000000000000",
+                onBehalfOf: "0x0000000000000000000000000000000000000001",
+              },
+            },
+          },
+        ],
+        edges: [],
+      }),
+      { params: mockParams }
+    );
+
+    const data = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(data.invalidFields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "INVALID_FIELD_TYPE",
+          field: "asset",
+        }),
+      ])
+    );
+    expect(mockUpdateReturning).not.toHaveBeenCalled();
+  });
+
+  it("KEEP-467: PATCH validates integration ownership after sanitizer moves misplaced config fields", async () => {
+    mockWorkflowsFindFirst.mockResolvedValue(makeWorkflow());
+    mockValidateWorkflowIntegrations.mockResolvedValue({
+      valid: false,
+      invalidIds: ["foreign-integration"],
+    });
+
+    const response = await PATCH(
+      createRequest("PATCH", {
+        nodes: [
+          {
+            id: "node-1",
+            type: "action",
+            data: {
+              type: "action",
+              actionType: "discord/send-message",
+              integrationId: "foreign-integration",
+              discordMessage: "hello",
+            },
+          },
+        ],
+        edges: [],
+      }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(403);
+    expect(mockValidateWorkflowIntegrations).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          data: expect.objectContaining({
+            config: expect.objectContaining({
+              integrationId: "foreign-integration",
+            }),
+          }),
+        }),
+      ],
+      "user-123",
+      "org-123"
+    );
     expect(mockUpdateReturning).not.toHaveBeenCalled();
   });
 
@@ -520,7 +688,7 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
         type: "action",
         config: {
           actionType: "discord/send-message",
-          content: "Alert @here token spiked, @user1 please review",
+          discordMessage: "Alert @here token spiked, @user1 please review",
         },
       },
     };
