@@ -69,26 +69,33 @@ export type SignerMode =
  * still route through the modifier rather than silently downgrading to
  * unscoped owner-signed mode.
  *
- * Returns the modifier's address on success, null otherwise. RPC failures
- * are swallowed: routing falls back to plain `safe` mode and the next
+ * Reads are routed through `RpcProviderManager.executeWithFailover` so a
+ * transient primary-RPC outage falls back to the configured secondary
+ * endpoint rather than downgrading the workflow to `safe` mode. Returns
+ * the modifier's address on success, null otherwise. Errors are only
+ * swallowed once *both* primary and fallback have failed; the next
  * reconcile (or the user-triggered Sync button) repairs the DB later.
  */
 async function probeRolesModifierFromChain(
   safe: Pick<SafeWallet, "id" | "chainId" | "safeAddress">
 ): Promise<string | null> {
   try {
-    const rpcUrl = getRpcUrlByChainId(safe.chainId, "primary");
+    const primaryRpcUrl = getRpcUrlByChainId(safe.chainId, "primary");
+    const fallbackRpcUrl = getRpcUrlByChainId(safe.chainId, "fallback");
     const rpcManager = await getRpcProviderFromUrls(
-      rpcUrl,
-      undefined,
+      primaryRpcUrl,
+      fallbackRpcUrl !== primaryRpcUrl ? fallbackRpcUrl : undefined,
       safe.chainId
     );
-    const provider = rpcManager.getProvider();
-    const modules = await readEnabledSafeModules(provider, safe.safeAddress);
+    const modules = await rpcManager.executeWithFailover((provider) =>
+      readEnabledSafeModules(provider, safe.safeAddress)
+    );
     if (modules.length === 0) {
       return null;
     }
-    return await findRolesModifierForSafe(provider, safe.safeAddress, modules);
+    return await rpcManager.executeWithFailover((provider) =>
+      findRolesModifierForSafe(provider, safe.safeAddress, modules)
+    );
   } catch (error) {
     logSystemError(
       ErrorCategory.TRANSACTION,
