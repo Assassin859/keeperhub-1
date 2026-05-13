@@ -1,5 +1,80 @@
 import { defineProtocol } from "@/lib/protocol-registry";
+import {
+  amount,
+  contract,
+  type ProtocolTestData,
+  wallet,
+} from "@/lib/test-data/types";
 import aaveV3PoolAbi from "./abis/aave-v3-pool.json";
+
+// KEEP-458 protocol-coverage test data. Co-located with the protocol
+// definition; consumed programmatically by `lib/test-data/build-workflow.ts`.
+//
+// Sepolia uses the Aave V3 testnet LINK reserve. DAI/USDC/USDT all hit
+// `SUPPLY_CAP_EXCEEDED` (error 51) on Aave Sepolia, verified 2026-05-12
+// via eth_call against Pool.supply(). LINK has headroom and is borrowable.
+// Setup mints LINK via the permissionless Aave faucet, approves the Pool,
+// then supplies 100 LINK so the write coverage (withdraw/borrow/repay/
+// set-collateral) has a real position to operate on.
+const TEST_DATA: ProtocolTestData = {
+  "11155111": {
+    setup: {
+      minNativeHuman: "0.001",
+      // 100 LINK initial supply + 10 LINK per-test supply + buffer.
+      requiredTokens: [{ symbol: "LINK", human: "200" }],
+      approvals: [{ token: "LINK", spender: contract("pool"), human: "200" }],
+      protocolSteps: [
+        {
+          protocol: "aave-v3",
+          action: "supply",
+          inputs: {
+            asset: "LINK",
+            amount: amount("LINK", "100"),
+            onBehalfOf: wallet(),
+            referralCode: "0",
+          },
+        },
+      ],
+    },
+    actions: {
+      "get-user-account-data": {
+        user: wallet(),
+      },
+      "get-user-reserve-data": {
+        asset: "LINK",
+        user: wallet(),
+      },
+      supply: {
+        asset: "LINK",
+        amount: amount("LINK", "10"),
+        onBehalfOf: wallet(),
+        referralCode: "0",
+      },
+      withdraw: {
+        asset: "LINK",
+        amount: amount("LINK", "1"),
+        to: wallet(),
+      },
+      borrow: {
+        asset: "LINK",
+        amount: amount("LINK", "1"),
+        interestRateMode: "2",
+        referralCode: "0",
+        onBehalfOf: wallet(),
+      },
+      repay: {
+        asset: "LINK",
+        amount: amount("LINK", "1"),
+        interestRateMode: "2",
+        onBehalfOf: wallet(),
+      },
+      "set-collateral": {
+        asset: "LINK",
+        useAsCollateral: "true",
+      },
+    },
+  },
+};
 
 export default defineProtocol({
   name: "Aave V3",
@@ -51,6 +126,17 @@ export default defineProtocol({
     },
   },
 
+  // KEEP-458: the protocol-coverage test runner executes write actions in
+  // the order they appear below (`protocol.actions.filter(type==='write')`
+  // preserves array order, and vitest within a file runs tests sequentially).
+  // Tests share the wallet's on-chain Aave position as a singleton, so order
+  // matters:
+  //   - repay MUST follow borrow (otherwise no open debt -> reverts).
+  //   - withdraw works in any post-setup slot (setup supplies 100 LINK; tests
+  //     only move 1 LINK so health-factor headroom is not a concern).
+  //   - supply auto-enables LINK as collateral on Aave V3 when LTV > 0, so
+  //     borrow does not require set-collateral to run first.
+  // Reordering this array (e.g. alphabetising) will silently break the suite.
   actions: [
     // Supply / Withdraw
 
@@ -281,4 +367,6 @@ export default defineProtocol({
       ],
     },
   ],
+
+  testData: TEST_DATA,
 });
