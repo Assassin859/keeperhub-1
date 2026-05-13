@@ -130,7 +130,7 @@ describe("POST /api/workflows/create action config validation", () => {
           baseActionNode({
             actionType: "aave-v3/supply",
             network: "1",
-            asset: "{{trigger.walletAddress}}",
+            asset: "not-an-address",
             amount: "1000000000000000000",
             onBehalfOf: "0x0000000000000000000000000000000000000001",
           }),

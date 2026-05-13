@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { workflows } from "@/lib/db/schema";
+import { getOrgContext } from "@/lib/middleware/org-context";
 import { generateId } from "@/lib/utils/id";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
 import {
@@ -94,11 +95,12 @@ export async function POST(request: Request) {
     // Sanitize nodes/edges: strip React Flow UI state and normalize formats
     const sanitized = sanitizeWorkflowData(rawNodes, rawEdges);
     const { nodes, edges } = sanitized;
+    const orgContext = await getOrgContext();
 
     const integrationValidation = await validateWorkflowIntegrations(
       nodes,
       session.user.id,
-      null
+      orgContext.organization?.id ?? null
     );
     if (!integrationValidation.valid) {
       return NextResponse.json(

@@ -63,11 +63,24 @@ describe("validateWorkflowActionConfigs", () => {
     );
   });
 
-  it("rejects template values in typed protocol address fields", () => {
+  it("allows template values in typed protocol fields", () => {
     const result = validateWorkflowActionConfigs([
       actionNode("aave-v3/supply", {
         network: "1",
         asset: "{{trigger.walletAddress}}",
+        amount: "{{@node-1:Previous.amount}}",
+        onBehalfOf: "{{@node-1:Previous.recipient}}",
+      }),
+    ]);
+
+    expect(result).toEqual({ valid: true, issues: [] });
+  });
+
+  it("rejects invalid literal values in typed protocol address fields", () => {
+    const result = validateWorkflowActionConfigs([
+      actionNode("aave-v3/supply", {
+        network: "1",
+        asset: "not-an-address",
         amount: "1000000000000000000",
         onBehalfOf: "0x0000000000000000000000000000000000000001",
       }),
@@ -84,6 +97,23 @@ describe("validateWorkflowActionConfigs", () => {
         }),
       ])
     );
+  });
+
+  it("accepts JSON-string tuple array protocol fields from the editor", () => {
+    const result = validateWorkflowActionConfigs([
+      actionNode("chainlink/ccip-send", {
+        network: "8453",
+        destinationChainSelector: "16015286601757825753",
+        receiver: "0x0000000000000000000000000000000000000001",
+        data: "0x",
+        tokenAmounts:
+          '[{"token":"0x0000000000000000000000000000000000000002","amount":"1"}]',
+        feeToken: "0x0000000000000000000000000000000000000000",
+        extraArgs: "0x",
+      }),
+    ]);
+
+    expect(result).toEqual({ valid: true, issues: [] });
   });
 
   it("accepts registered actions with valid config", () => {

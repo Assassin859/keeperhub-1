@@ -1,11 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockGetSession, mockValidateWorkflowIntegrations, mockSelect } =
-  vi.hoisted(() => ({
-    mockGetSession: vi.fn(),
-    mockValidateWorkflowIntegrations: vi.fn(),
-    mockSelect: vi.fn(),
-  }));
+const {
+  mockGetSession,
+  mockGetOrgContext,
+  mockValidateWorkflowIntegrations,
+  mockSelect,
+} = vi.hoisted(() => ({
+  mockGetSession: vi.fn(),
+  mockGetOrgContext: vi.fn(),
+  mockValidateWorkflowIntegrations: vi.fn(),
+  mockSelect: vi.fn(),
+}));
 
 vi.mock("@/lib/auth", () => ({
   auth: {
@@ -36,6 +41,10 @@ vi.mock("@/lib/db/integrations", () => ({
   validateWorkflowIntegrations: mockValidateWorkflowIntegrations,
 }));
 
+vi.mock("@/lib/middleware/org-context", () => ({
+  getOrgContext: mockGetOrgContext,
+}));
+
 vi.mock("@/lib/logging", () => ({
   ErrorCategory: { DATABASE: "DATABASE" },
   logSystemError: vi.fn(),
@@ -56,6 +65,9 @@ describe("POST /api/workflows/current action config validation", () => {
     vi.clearAllMocks();
     mockGetSession.mockResolvedValue({
       user: { id: "user-123", email: "user@example.com" },
+    });
+    mockGetOrgContext.mockResolvedValue({
+      organization: { id: "org-123" },
     });
     mockValidateWorkflowIntegrations.mockResolvedValue({ valid: true });
   });
@@ -117,8 +129,40 @@ describe("POST /api/workflows/current action config validation", () => {
         }),
       ],
       "user-123",
-      null
+      "org-123"
     );
     expect(mockSelect).not.toHaveBeenCalled();
+  });
+
+  it("falls back to user-scoped integration validation when there is no active org", async () => {
+    mockGetOrgContext.mockResolvedValue({ organization: null });
+    mockValidateWorkflowIntegrations.mockResolvedValue({
+      valid: false,
+      invalidIds: ["foreign-integration"],
+    });
+
+    const response = await POST(
+      request([
+        {
+          id: "node-1",
+          type: "action",
+          data: {
+            type: "action",
+            config: {
+              actionType: "discord/send-message",
+              integrationId: "foreign-integration",
+              discordMessage: "hello",
+            },
+          },
+        },
+      ])
+    );
+
+    expect(response.status).toBe(403);
+    expect(mockValidateWorkflowIntegrations).toHaveBeenCalledWith(
+      expect.any(Array),
+      "user-123",
+      null
+    );
   });
 });

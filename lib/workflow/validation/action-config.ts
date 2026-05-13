@@ -95,6 +95,17 @@ function valueContainsTemplate(value: unknown): boolean {
   return typeof value === "string" && TEMPLATE_VALUE_PATTERN.test(value);
 }
 
+function isJsonArrayString(value: unknown): boolean {
+  if (typeof value !== "string") {
+    return false;
+  }
+  try {
+    return Array.isArray(JSON.parse(value));
+  } catch {
+    return false;
+  }
+}
+
 function validateStringLike(value: unknown): boolean {
   return typeof value === "string" || typeof value === "number";
 }
@@ -146,12 +157,12 @@ function validateFieldValue(
       return { valid: true };
     case "protocol-address":
       return typeof value === "string" &&
-        !valueContainsTemplate(value) &&
-        ETH_ADDRESS_PATTERN.test(value)
+        (valueContainsTemplate(value) || ETH_ADDRESS_PATTERN.test(value))
         ? { valid: true }
         : { valid: false, expected: "address", received: value };
     case "protocol-uint":
-      return typeof value === "string" && UNSIGNED_INTEGER_PATTERN.test(value)
+      return typeof value === "string" &&
+        (valueContainsTemplate(value) || UNSIGNED_INTEGER_PATTERN.test(value))
         ? { valid: true }
         : {
             valid: false,
@@ -159,7 +170,8 @@ function validateFieldValue(
             received: value,
           };
     case "protocol-int":
-      return typeof value === "string" && INTEGER_PATTERN.test(value)
+      return typeof value === "string" &&
+        (valueContainsTemplate(value) || INTEGER_PATTERN.test(value))
         ? { valid: true }
         : {
             valid: false,
@@ -167,6 +179,9 @@ function validateFieldValue(
             received: value,
           };
     case "protocol-bool":
+      if (valueContainsTemplate(value)) {
+        return { valid: true };
+      }
       return value === true ||
         value === false ||
         value === "true" ||
@@ -175,8 +190,7 @@ function validateFieldValue(
         : { valid: false, expected: "boolean", received: value };
     case "protocol-bytes":
       return typeof value === "string" &&
-        !valueContainsTemplate(value) &&
-        HEX_BYTES_PATTERN.test(value)
+        (valueContainsTemplate(value) || HEX_BYTES_PATTERN.test(value))
         ? { valid: true }
         : {
             valid: false,
@@ -184,11 +198,14 @@ function validateFieldValue(
             received: value,
           };
     case "protocol-eth-value":
-      return typeof value === "string" && DECIMAL_PATTERN.test(value)
+      return typeof value === "string" &&
+        (valueContainsTemplate(value) || DECIMAL_PATTERN.test(value))
         ? { valid: true }
         : { valid: false, expected: "decimal ETH amount", received: value };
     case "protocol-tuple-array":
-      return Array.isArray(value)
+      return Array.isArray(value) ||
+        valueContainsTemplate(value) ||
+        isJsonArrayString(value)
         ? { valid: true }
         : {
             valid: false,
