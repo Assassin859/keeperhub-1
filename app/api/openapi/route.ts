@@ -71,6 +71,9 @@ function buildPathEntry(workflow: DiscoveryWorkflow): Record<string, unknown> {
   }
 
   if (isPaid) {
+    operation["x-x402-price"] = workflow.priceUsdcPerCall;
+    operation["x-x402-protocol"] = "x402";
+    operation["x-x402-network"] = "eip155:8453";
     operation["x-payment-info"] = {
       price: {
         mode: "fixed",
@@ -207,6 +210,24 @@ export async function GET(request: Request): Promise<Response> {
       docs: { homepage: "https://docs.keeperhub.com" },
     },
     servers: [{ url: baseUrl }],
+    components: {
+      securitySchemes: {
+        x402: {
+          type: "apiKey",
+          in: "header",
+          name: "PAYMENT-SIGNATURE",
+          description:
+            "x402 payment signature header for paid workflow calls. Unpaid first calls receive HTTP 402 with payment requirements.",
+        },
+        siwx: {
+          type: "http",
+          scheme: "bearer",
+          bearerFormat: "CAIP-122 SIWX",
+          description:
+            "Sign-In with X identity proof for compatible agent clients. KeeperHub workflow calls primarily use x402 payment discovery today.",
+        },
+      },
+    },
     paths,
   };
 
