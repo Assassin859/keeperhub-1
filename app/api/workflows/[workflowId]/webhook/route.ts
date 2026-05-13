@@ -17,11 +17,7 @@ import { recordWebhookMetrics } from "@/lib/metrics/instrumentation/api";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { apiKeys, workflowExecutions, workflows } from "@/lib/db/schema";
-import {
-  getOrgIdentity,
-  getOrgPlanLabel,
-  getOrgSlug,
-} from "@/lib/db/org-helpers";
+import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
 import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 type ValidateApiKeyResult = {
@@ -123,14 +119,14 @@ const corsHeaders = {
  * metric in one call. Covers the simple-error gates (404, 410, 401, 403, 400,
  * 500). The two 429 variants have custom response bodies and stay inline.
  */
-function failResponse(
+async function failResponse(
   workflowId: string,
   timer: () => number,
   statusCode: number,
   message: string,
   extraBody?: Record<string, unknown>
-): NextResponse {
-  recordWebhookMetrics({
+): Promise<NextResponse> {
+  await recordWebhookMetrics({
     workflowId,
     durationMs: timer(),
     statusCode,
@@ -272,15 +268,12 @@ export async function POST(
 
     const executionGuard = await enforceExecutionLimit(workflow.organizationId);
     if (executionGuard.blocked) {
-      const blockedOrg = await getOrgIdentity(workflow.organizationId);
-      recordWebhookMetrics({
+      await recordWebhookMetrics({
         workflowId,
         durationMs: timer(),
         statusCode: 429,
         error: EXECUTION_LIMIT_ERROR,
-        orgId: workflow.organizationId,
-        orgSlug: blockedOrg.slug,
-        orgName: blockedOrg.name,
+        organizationId: workflow.organizationId,
       });
       const body = await executionGuard.response.json();
       return NextResponse.json(body, {
@@ -291,11 +284,12 @@ export async function POST(
 
     const concurrencyCheck = await checkConcurrencyLimit();
     if (!concurrencyCheck.allowed) {
-      recordWebhookMetrics({
+      await recordWebhookMetrics({
         workflowId,
         durationMs: timer(),
         statusCode: 429,
         error: "Too many concurrent workflow executions",
+        organizationId: workflow.organizationId,
       });
       return NextResponse.json(
         {
@@ -349,7 +343,7 @@ export async function POST(
       organizationPlan
     );
 
-    recordWebhookMetrics({
+    await recordWebhookMetrics({
       workflowId,
       executionId: execution.id,
       durationMs: timer(),
