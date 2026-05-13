@@ -475,10 +475,11 @@ describe("ChainMonitor", () => {
       // failed to fire; the reconciler must catch this via isAlive() so it
       // can tear down and start a fresh monitor.
       //
-      // Disable the in-monitor no-block timer for this test so the staleness
-      // path is exercised on its own. (In prod, the timer was demonstrably
-      // not firing — that is the failure mode this fallback exists for.)
-      vi.stubEnv("NO_BLOCK_TIMEOUT_MS", String(60 * 60_000));
+      // Disable the in-monitor block-advance timer for this test so the
+      // reconciler-level staleness path is exercised on its own. (In prod,
+      // the in-monitor timer was demonstrably not firing — that is the
+      // failure mode this fallback exists for.)
+      vi.stubEnv("BLOCK_ADVANCE_TIMEOUT_MS", String(60 * 60_000));
 
       const monitor = new ChainMonitor({
         chain: makeChain(),
@@ -507,7 +508,7 @@ describe("ChainMonitor", () => {
       const provider = latestProvider();
 
       // Emit a block every 5 minutes for 30 minutes — well past the 10-min
-      // staleness threshold, but each block resets lastBlockReceivedAt.
+      // staleness threshold, but each height advance resets lastBlockAdvanceAt.
       for (const blockNumber of [101, 102, 103, 104, 105, 106]) {
         await vi.advanceTimersByTimeAsync(5 * 60_000);
         provider.emitBlock(blockNumber);
@@ -525,7 +526,7 @@ describe("ChainMonitor", () => {
       });
 
       await monitor.start();
-      // Without resetting lastBlockReceivedAt at subscribe time, isAlive()
+      // Without seeding lastBlockAdvanceAt at subscribe time, isAlive()
       // would compute a stale gap immediately. Sanity check the seed.
       expect(monitor.isAlive()).toBe(true);
     });
@@ -800,6 +801,200 @@ describe("ChainMonitor", () => {
       expect(String(probeWarn?.[0]).length).toBeLessThan(160);
 
       warnSpy.mockRestore();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Liveness signals (KEEP-555)
+  //
+  // Each of the three liveness signals the monitor exposes must be
+  // deterministically reproducible:
+  //
+  //   1. Transport keepalive       ping/pong       PONG_TIMEOUT_MS
+  //   2. Subscription delivery     block-advance   BLOCK_ADVANCE_TIMEOUT_MS
+  //   3. Reconciler backstop       RECONNECT_STUCK_TIMEOUT_MS
+  //
+  // Tests 1-3 exercise each signal in isolation. Test 4 reproduces the
+  // observed prod incident end-to-end: WS close, reconnect succeeds, no
+  // blocks arrive on the new subscription, the dispatcher recovers without
+  // operator intervention.
+  // -------------------------------------------------------------------------
+
+  describe("liveness signals", () => {
+    it("reconnects when no pong arrives within PONG_TIMEOUT_MS (signal 1)", async () => {
+      // Tight ping/pong windows so the test runs in <1s of fake time.
+      vi.stubEnv("PING_INTERVAL_MS", "500");
+      vi.stubEnv("PONG_TIMEOUT_MS", "500");
+
+      // Pin all other reconnect triggers far away so this test fails only if
+      // the pong-timeout path itself fires.
+      vi.stubEnv("BLOCK_ADVANCE_TIMEOUT_MS", String(60 * 60_000));
+      vi.stubEnv("SOCKET_MAX_AGE_MS", String(60 * 60_000));
+
+      // Suppress the auto-pong for the next provider built. Without a pong
+      // response, the watchdog's pongTimer must fire and trigger reconnect.
+      providerFactory = (url: string): MockProvider => {
+        const instance = new MockProvider(url);
+        // Replace ping with a no-op so no pong is ever emitted.
+        instance.websocket.ping = (): void => {
+          // intentionally swallow
+        };
+        return instance;
+      };
+
+      const monitor = new ChainMonitor({
+        chain: makeChain(),
+        workflows: [makeWorkflow()],
+      });
+
+      await monitor.start();
+      expect(providerInstances).toHaveLength(1);
+
+      // After PING_INTERVAL_MS, watchdog sends a ping; no pong arrives;
+      // after PONG_TIMEOUT_MS the watchdog declares the transport dead and
+      // reconnect kicks in. Allow another tick for the first reconnect
+      // backoff (BASE_DELAY_MS = 1000) plus a buffer.
+      await vi.advanceTimersByTimeAsync(500 + 500 + 1_500);
+
+      expect(providerInstances.length).toBeGreaterThanOrEqual(2);
+
+      await monitor.stop();
+    });
+
+    it("does NOT reset liveness when the same block is replayed (signal 2 - root cause)", async () => {
+      // Reproduces the silent 7-hour outage: a half-open upstream replays
+      // block(N) forever. The fix moves `lastBlockAdvanceAt` and the
+      // no-block timer reset to AFTER the dedup check, so replayed blocks
+      // cannot keep the monitor falsely alive.
+      //
+      // Pre-fix: this test fails (replays reset the no-block timer; no
+      // reconnect fires).
+      // Post-fix: reconnect fires within BLOCK_ADVANCE_TIMEOUT_MS.
+      vi.stubEnv("BLOCK_ADVANCE_TIMEOUT_MS", "2000");
+
+      // Keep other reconnect triggers parked.
+      vi.stubEnv("SOCKET_MAX_AGE_MS", String(60 * 60_000));
+      vi.stubEnv("PONG_TIMEOUT_MS", String(60 * 60_000));
+      vi.stubEnv("PING_INTERVAL_MS", String(60 * 60_000));
+
+      const monitor = new ChainMonitor({
+        chain: makeChain(),
+        workflows: [makeWorkflow({ blockInterval: 1 })],
+      });
+
+      await monitor.start();
+      const initialProviderCount = providerInstances.length;
+
+      // First block — height genuinely advances. This is the only call that
+      // should refresh liveness.
+      latestProvider().emitBlock(100);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Spin in tight loops replaying the SAME block. With the bug present,
+      // each replay resets lastBlockAdvanceAt and the no-block timer, so the
+      // monitor stays alive forever and never reconnects.
+      for (let elapsed = 0; elapsed < 1_900; elapsed += 100) {
+        latestProvider().emitBlock(100);
+        await vi.advanceTimersByTimeAsync(100);
+      }
+
+      // Cross the BLOCK_ADVANCE_TIMEOUT_MS threshold plus the 1s reconnect
+      // backoff. Reconnect MUST have fired by now.
+      await vi.advanceTimersByTimeAsync(1_500);
+
+      expect(providerInstances.length).toBeGreaterThan(initialProviderCount);
+
+      await monitor.stop();
+    });
+
+    it("isAlive() flips to false after RECONNECT_STUCK_TIMEOUT_MS (signal 3)", async () => {
+      // Reconciler backstop: if a monitor is stuck in reconnectWithBackoff
+      // (e.g. destroyProvider or connect hangs mid-await), isAlive() must
+      // flip to false so BlockMonitorService can destroy and recreate it.
+      // Previously, isReconnecting=true was a free pass and the monitor
+      // would never be reaped.
+      vi.stubEnv("RECONNECT_STUCK_TIMEOUT_MS", "1000");
+      // Connect attempts must NOT time out within the test window — we need
+      // the reconnect loop to genuinely hang, not bounce on CONNECT_TIMEOUT.
+      vi.stubEnv("CONNECT_TIMEOUT_MS", String(60 * 60_000));
+
+      // First provider connects normally. Subsequent providers (post-close
+      // reconnect attempts) have a getBlockNumber that never resolves.
+      let callCount = 0;
+      providerFactory = (url: string): MockProvider => {
+        callCount++;
+        const instance = new MockProvider(url);
+        if (callCount > 1) {
+          instance.getBlockNumber = (): Promise<number> =>
+            new Promise<number>(() => {
+              // never resolves
+            });
+        }
+        return instance;
+      };
+
+      const monitor = new ChainMonitor({
+        chain: makeChain(),
+        workflows: [makeWorkflow()],
+      });
+
+      await monitor.start();
+      expect(monitor.isAlive()).toBe(true);
+
+      // Trigger a close — reconnect cycle begins but cannot complete because
+      // the second provider's getBlockNumber hangs.
+      latestProvider().websocket.emit("close");
+
+      // Just inside the stuck window — still considered alive.
+      await vi.advanceTimersByTimeAsync(500);
+      expect(monitor.isAlive()).toBe(true);
+
+      // Past the stuck window — reconciler must see this as dead.
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(monitor.isAlive()).toBe(false);
+
+      await monitor.stop();
+    });
+
+    it("recovers from WS close -> reconnect -> dead subscription (incident reproduction)", async () => {
+      // End-to-end reproduction of the prod incident:
+      //   23:46:00  WS closed
+      //   23:46:02  Reconnect succeeded
+      //   ...       No block events ever arrive on the new subscription
+      //
+      // Pre-fix: dispatcher sits with hasActiveSubscription=true forever.
+      // Post-fix: BLOCK_ADVANCE_TIMEOUT_MS fires; reconnect cycle continues.
+      vi.stubEnv("BLOCK_ADVANCE_TIMEOUT_MS", "2000");
+      vi.stubEnv("PING_INTERVAL_MS", String(60 * 60_000));
+      vi.stubEnv("PONG_TIMEOUT_MS", String(60 * 60_000));
+      vi.stubEnv("SOCKET_MAX_AGE_MS", String(60 * 60_000));
+
+      const monitor = new ChainMonitor({
+        chain: makeChain(),
+        workflows: [makeWorkflow()],
+      });
+
+      await monitor.start();
+      expect(providerInstances).toHaveLength(1);
+
+      // 23:46:00 - WS closes mid-stream.
+      latestProvider().websocket.emit("close");
+      // Walk past the 1s reconnect backoff.
+      await vi.advanceTimersByTimeAsync(1_500);
+      // 23:46:02 (in fake time) - reconnect succeeded.
+      expect(providerInstances).toHaveLength(2);
+      expect(monitor.isAlive()).toBe(true);
+
+      // No blocks arrive on the new subscription. The monitor must self-heal.
+      // Walk past BLOCK_ADVANCE_TIMEOUT_MS (2s) + reconnect backoff (1s) +
+      // a buffer.
+      await vi.advanceTimersByTimeAsync(4_000);
+
+      // A further reconnect must have fired - we now have at least three
+      // distinct providers (initial, post-close, post-block-advance-timeout).
+      expect(providerInstances.length).toBeGreaterThanOrEqual(3);
+
+      await monitor.stop();
     });
   });
 });
