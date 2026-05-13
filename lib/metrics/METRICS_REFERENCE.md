@@ -99,6 +99,24 @@ Gauge metrics tracking resource usage and capacity.
 
 ---
 
+## Safe Wallet Metrics
+
+Hot-path observability for the Safe smart-account integration. Emitted from `lib/metrics/instrumentation/safe.ts` and consumed by the Grafana alerts in the infrastructure repo's `keeperhub_metrics_alerts.tf` (section: Safe Wallet Alerts).
+
+| Metric Name | Type | Description | Labels | Fires on |
+|-------------|------|-------------|--------|----------|
+| `safe.deploy.total` | counter | Safe CREATE2 deploys via `SafeProxyFactory` | `chain_id`, `outcome` (`success` / `already_deployed` / `failure`) | `deployOrgSafe` |
+| `safe.deploy.duration_ms` | histogram | Wall-clock duration of the deploy | same | `deployOrgSafe` |
+| `safe.role_install.total` | counter | Zodiac Roles modifier proxy deploys + initial scope writes | `chain_id`, `outcome` | `installRolesWithInitialConfig` |
+| `safe.role_install.duration_ms` | histogram | Wall-clock duration of the install | same | `installRolesWithInitialConfig` |
+| `safe.tx.total` | counter | Safe-routed transactions (both `safe.execTransaction` and `rolesModifier.execTransactionWithRole`) | `chain_id`, `route` (`exec` / `role`), `kind` (`native` / `erc20` / `contract`), `outcome` | `executeContractCallAsSafe`, `executeNativeTransferAsSafe`, `executeContractCallAsRole`, `executeNativeTransferAsRole` |
+| `safe.tx.duration_ms` | histogram | Wall-clock duration of the inner Safe write | same | same |
+| `safe.withdraw.total` | counter | User-initiated Safe withdrawals (separate from workflow-driven Safe writes) | `chain_id`, `kind`, `outcome` | `/api/user/wallet/withdraw` when body carries `safeId` |
+
+`route` distinguishes owner-signed `safe.execTransaction` (`exec`) from Zodiac Roles modifier writes (`role`); `kind` splits native value transfers from ERC-20 transfers/approvals (`erc20`) from arbitrary contract calls (`contract`). The withdraw counter intentionally overlaps with `safe.tx.*` (every withdraw is also one safe.tx) so the user-driven surface can be alerted on independently from workflow traffic.
+
+---
+
 ## 5. USER & ORGANIZATION
 
 Gauge metrics tracking user and organization statistics.
