@@ -80,11 +80,19 @@ const mockDbQuery = {
   },
 };
 
+const mockMemberLimit = vi.fn();
 const mockIncrementCounter = vi.fn();
 
 vi.mock("@/lib/db", () => ({
   db: {
     query: mockDbQuery,
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({
+          limit: mockMemberLimit,
+        })),
+      })),
+    })),
     insert: vi.fn().mockReturnValue({
       values: vi.fn().mockImplementation((v: Record<string, unknown>) => ({
         returning: vi.fn().mockImplementation(() => {
@@ -145,6 +153,7 @@ describe("GET /api/workflows/[workflowId]/download", () => {
     vi.clearAllMocks();
     insertedRows.length = 0;
     mockDbQuery.workflows.findFirst.mockResolvedValue(storedWorkflow);
+    mockMemberLimit.mockResolvedValue([{ id: "member-1" }]);
   });
 
   it("returns a v1 JSON export attachment for the owner", async () => {
@@ -261,6 +270,7 @@ describe("POST /api/workflows/import", () => {
     vi.clearAllMocks();
     insertedRows.length = 0;
     mockDbQuery.workflows.findFirst.mockResolvedValue(storedWorkflow);
+    mockMemberLimit.mockResolvedValue([{ id: "member-1" }]);
   });
 
   it("creates a new workflow row owned by the caller", async () => {

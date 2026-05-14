@@ -13,6 +13,7 @@ import {
 } from "@/lib/mcp/listing-validators";
 import { syncWorkflowSchedule } from "@/lib/schedule-service";
 import { sanitizeDescription } from "@/lib/sanitize-description";
+import { getWorkflowAccess } from "@/lib/workflow/access";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
 import { isReservedSlug } from "@/lib/workflow/reserved-slugs";
 import { findInvalidTemplateTokens } from "@/lib/workflow/validation/template-syntax";
@@ -87,26 +88,24 @@ export async function GET(
       );
     }
 
-    const isOwner = userId === workflow.userId;
-
-    // Check organization membership for private workflows
-    const isSameOrg =
-      !workflow.isAnonymous &&
-      workflow.organizationId &&
-      organizationId === workflow.organizationId;
+    const access = await getWorkflowAccess(workflow, {
+      userId,
+      organizationId,
+      authMethod: authContext.authMethod,
+    });
 
     // Access control:
     // - Public workflows: anyone can view (sanitized)
     // - Private workflows: owner or org member can view
     // - Anonymous workflows: only owner can view
-    if (!isOwner && workflow.visibility !== "public" && !isSameOrg) {
+    if (!access.hasFullAccess && workflow.visibility !== "public") {
       return NextResponse.json(
         { error: "Workflow not found" },
         { status: 404 }
       );
     }
 
-    const hasFullAccess = isOwner || isSameOrg;
+    const hasFullAccess = access.hasFullAccess;
 
     const workflowTags = await fetchWorkflowPublicTags(workflowId);
 
@@ -206,7 +205,8 @@ function isValidVisibility(visibility: unknown): boolean {
 async function validateWorkflowAccess(
   workflowId: string,
   userId: string | null,
-  organizationId: string | null
+  organizationId: string | null,
+  authMethod: "api-key" | "oauth" | "session"
 ): Promise<{
   workflow: typeof workflows.$inferSelect | null;
   hasAccess: boolean;
@@ -219,15 +219,15 @@ async function validateWorkflowAccess(
     return { workflow: null, hasAccess: false };
   }
 
-  const isOwner = userId ? existingWorkflow.userId === userId : false;
-  const isSameOrg =
-    !existingWorkflow.isAnonymous &&
-    existingWorkflow.organizationId &&
-    organizationId === existingWorkflow.organizationId;
+  const access = await getWorkflowAccess(existingWorkflow, {
+    userId,
+    organizationId,
+    authMethod,
+  });
 
   return {
     workflow: existingWorkflow,
-    hasAccess: isOwner || Boolean(isSameOrg),
+    hasAccess: access.hasFullAccess,
   };
 }
 
@@ -283,7 +283,12 @@ export async function PATCH(
 
     const { userId, organizationId } = authContext;
     const { workflow: existingWorkflow, hasAccess } =
-      await validateWorkflowAccess(workflowId, userId, organizationId);
+      await validateWorkflowAccess(
+        workflowId,
+        userId,
+        organizationId,
+        authContext.authMethod
+      );
 
     if (!(existingWorkflow && hasAccess)) {
       return NextResponse.json(
@@ -589,7 +594,8 @@ export async function DELETE(
     const { hasAccess } = await validateWorkflowAccess(
       workflowId,
       userId,
-      organizationId
+      organizationId,
+      authContext.authMethod
     );
 
     if (!hasAccess) {

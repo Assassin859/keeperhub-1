@@ -4,11 +4,13 @@ const {
   mockGetDualAuthContext,
   mockWorkflowsFindFirst,
   mockUpdateReturning,
+  mockMemberLimit,
   mockSelectFrom,
 } = vi.hoisted(() => ({
   mockGetDualAuthContext: vi.fn(),
   mockWorkflowsFindFirst: vi.fn(),
   mockUpdateReturning: vi.fn(),
+  mockMemberLimit: vi.fn(),
   mockSelectFrom: vi.fn(),
 }));
 
@@ -35,6 +37,9 @@ vi.mock("@/lib/db", () => ({
         innerJoin: vi.fn(() => ({
           where: mockSelectFrom,
         })),
+        where: vi.fn(() => ({
+          limit: mockMemberLimit,
+        })),
       })),
     })),
   },
@@ -47,6 +52,7 @@ vi.mock("@/lib/db/schema", () => ({
     publicTagId: "public_tag_id",
   },
   publicTags: { id: "id", name: "name", slug: "slug" },
+  member: { id: "id", organizationId: "organization_id", userId: "user_id" },
   projects: { id: "id", organizationId: "organization_id" },
   tags: { id: "id", organizationId: "organization_id" },
   workflowExecutions: { workflowId: "workflow_id" },
@@ -135,6 +141,7 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
     });
     // Default: no public tags
     mockSelectFrom.mockResolvedValue([]);
+    mockMemberLimit.mockResolvedValue([{ id: "member-1" }]);
   });
 
   it("LIST-01: PATCH with isListed=true sets listedAt server-side when listedAt is null", async () => {
@@ -647,6 +654,7 @@ describe("GET /api/workflows/[workflowId] — description sanitization", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSelectFrom.mockResolvedValue([]);
+    mockMemberLimit.mockResolvedValue([{ id: "member-1" }]);
   });
 
   it("LIST-06 + INFRA-05: non-owner GET on listed workflow receives sanitized description", async () => {
