@@ -84,6 +84,14 @@ const LIVENESS_DEFAULTS = {
   // Primary recovery probe (used only while running on the fallback URL).
   PRIMARY_PROBE_INTERVAL_MS: 5 * 60_000,
   PRIMARY_PROBE_TIMEOUT_MS: 5_000,
+  // After this many consecutive BLOCK_ADVANCE_TIMEOUT_MS firings on the same
+  // URL, flip the URL preference (primary <-> fallback) on the next reconnect.
+  // This catches half-open-subscription upstreams where the WSS connects and
+  // request/response works but eth_subscribe never delivers newHeads — a
+  // failure mode the existing connect-level fallback cannot detect because
+  // getBlockNumber() succeeds on the broken URL. Reset to 0 on a real block
+  // advance, so a recovered URL is fully trusted again.
+  SILENT_FAILOVER_THRESHOLD: 2,
 } as const;
 
 type LivenessKey = keyof typeof LIVENESS_DEFAULTS;
@@ -167,6 +175,11 @@ export class ChainMonitor {
   private currentUrlIndex = 0;
   private hasActiveSubscription = false;
   private wsCloseHandler: (() => void) | null = null;
+  // Consecutive BLOCK_ADVANCE_TIMEOUT_MS firings on the same URL. Reset on a
+  // real height advance in processBlockRange. When this hits
+  // SILENT_FAILOVER_THRESHOLD, the next reconnect flips currentUrlIndex so the
+  // monitor tries the other configured URL (primary <-> fallback).
+  private silentReconnects = 0;
 
   constructor(config: ChainMonitorConfig) {
     this.chainId = config.chain.chainId;
@@ -181,6 +194,7 @@ export class ChainMonitor {
       return;
     }
     this.isRunning = true;
+    this.silentReconnects = 0;
 
     try {
       await this.connect();
@@ -198,6 +212,7 @@ export class ChainMonitor {
     this.isRunning = false;
     this.isReconnecting = false;
     this.reconnectingStartedAt = null;
+    this.silentReconnects = 0;
     this.stopTimers();
     await this.destroyProvider();
   }
@@ -322,21 +337,39 @@ export class ChainMonitor {
   }
 
   private async connect(): Promise<void> {
-    const urls = [this.primaryWss, this.fallbackWss].filter(
-      (url): url is string => url !== null && url !== "",
-    );
+    type Candidate = {
+      url: string;
+      index: 0 | 1;
+      label: "primary" | "fallback";
+    };
+    const candidates: Candidate[] = [];
+    if (this.primaryWss) {
+      candidates.push({ url: this.primaryWss, index: 0, label: "primary" });
+    }
+    if (this.fallbackWss) {
+      candidates.push({ url: this.fallbackWss, index: 1, label: "fallback" });
+    }
 
-    if (urls.length === 0) {
+    if (candidates.length === 0) {
       throw new Error(
         `No WSS URLs configured for chain ${this.chainName} (${this.chainId})`,
       );
     }
 
-    for (const [index, url] of urls.entries()) {
-      const label = index === 0 ? "primary" : "fallback";
+    // Honor currentUrlIndex as the starting preference. It is updated below
+    // when we successfully connect, and also explicitly flipped by
+    // maybeFlipUrlPreference() when SILENT_FAILOVER_THRESHOLD is reached on
+    // the previous URL. The labels "primary"/"fallback" stay stable across
+    // reorderings so logs always identify which physical URL is in use.
+    const ordered =
+      this.currentUrlIndex === 1 && candidates.length === 2
+        ? [candidates[1], candidates[0]]
+        : candidates;
+
+    for (const [iterIdx, candidate] of ordered.entries()) {
       let provider: ethers.WebSocketProvider | null = null;
       try {
-        provider = new ethers.WebSocketProvider(url);
+        provider = new ethers.WebSocketProvider(candidate.url);
 
         // ethers v6 WebSocketProvider does not attach an 'error' listener on
         // the underlying ws. Without one, an HTTP 429 (or any non-101 upgrade
@@ -366,9 +399,9 @@ export class ChainMonitor {
         ])) as number;
 
         this.provider = provider;
-        this.currentUrlIndex = index;
+        this.currentUrlIndex = candidate.index;
         console.log(
-          `[BlockMonitor:${this.chainName}] Connected to ${label} WSS (block: ${blockNumber})`,
+          `[BlockMonitor:${this.chainName}] Connected to ${candidate.label} WSS (block: ${blockNumber})`,
         );
         return;
       } catch (error) {
@@ -378,10 +411,10 @@ export class ChainMonitor {
           await provider.destroy().catch(() => {});
         }
         console.warn(
-          `[BlockMonitor:${this.chainName}] Failed to connect to ${label} WSS:`,
+          `[BlockMonitor:${this.chainName}] Failed to connect to ${candidate.label} WSS:`,
           error instanceof Error ? error.message : error,
         );
-        if (index === urls.length - 1) {
+        if (iterIdx === ordered.length - 1) {
           throw error;
         }
       }
@@ -538,6 +571,10 @@ export class ChainMonitor {
     this.lastProcessedBlock = blockNumber;
     // Height genuinely advanced — refresh liveness AFTER the fact.
     this.lastBlockAdvanceAt = Date.now();
+    // Trust the current URL again: a real height advance means the
+    // subscription is delivering. Without this reset, an old streak of silent
+    // reconnects would still trigger a URL flip on the next disconnect.
+    this.silentReconnects = 0;
     this.resetNoBlockTimer();
     this.blocksReceived++;
 
@@ -718,8 +755,12 @@ export class ChainMonitor {
     const timeoutMs = liveness("BLOCK_ADVANCE_TIMEOUT_MS");
     this.noBlockTimer = setTimeout(() => {
       if (this.isRunning) {
+        // Count this as a silent reconnect on the current URL. Decision to
+        // flip to the other URL is made by reconnectWithBackoff before its
+        // next connect attempt, based on SILENT_FAILOVER_THRESHOLD.
+        this.silentReconnects++;
         console.warn(
-          `[BlockMonitor:${this.chainName}] Block height has not advanced in ${timeoutMs / 1000}s, triggering reconnect`,
+          `[BlockMonitor:${this.chainName}] Block height has not advanced in ${timeoutMs / 1000}s (silent reconnects=${this.silentReconnects}), triggering reconnect`,
         );
         this.handleDisconnect();
       }
@@ -909,6 +950,8 @@ export class ChainMonitor {
         return;
       }
 
+      this.maybeFlipUrlPreference();
+
       try {
         await this.connect();
         await this.subscribeToBlocks();
@@ -928,5 +971,37 @@ export class ChainMonitor {
         await this.destroyProvider();
       }
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // URL preference flip
+  //
+  // Catches the half-open-subscription failure mode: the primary WSS accepts
+  // the upgrade, getBlockNumber() returns, eth_subscribe is acknowledged, but
+  // no newHeads notifications ever arrive. From connect()'s point of view the
+  // URL is healthy, so the existing fallback path never fires. After
+  // SILENT_FAILOVER_THRESHOLD consecutive BLOCK_ADVANCE_TIMEOUT_MS firings on
+  // the same URL, swap the URL preference so the next reconnect lands on the
+  // other configured endpoint. Reset the counter on flip; if the new URL is
+  // also silent, the counter will rebuild and the monitor will alternate
+  // until one of them recovers. The existing primaryProbeTimer handles
+  // swapping back to primary when it recovers.
+  // ---------------------------------------------------------------------------
+
+  private maybeFlipUrlPreference(): void {
+    const threshold = liveness("SILENT_FAILOVER_THRESHOLD");
+    if (this.silentReconnects < threshold) {
+      return;
+    }
+    if (!(this.primaryWss && this.fallbackWss)) {
+      return;
+    }
+    const previousLabel = this.currentUrlIndex === 0 ? "primary" : "fallback";
+    const nextLabel = this.currentUrlIndex === 0 ? "fallback" : "primary";
+    this.currentUrlIndex = this.currentUrlIndex === 0 ? 1 : 0;
+    this.silentReconnects = 0;
+    console.warn(
+      `[BlockMonitor:${this.chainName}] Silent-reconnect threshold (${threshold}) reached on ${previousLabel}, flipping URL preference to ${nextLabel}`,
+    );
   }
 }
