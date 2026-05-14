@@ -105,6 +105,20 @@ describe("getWorkflowAccess", () => {
     expect(mockMemberLimit).toHaveBeenCalledOnce();
   });
 
+  it("does not grant OAuth same-org access when the token org context is stale", async () => {
+    mockMemberLimit.mockResolvedValue([]);
+
+    const access = await getWorkflowAccess(ORG_WORKFLOW, {
+      userId: "member-user",
+      organizationId: "org-1",
+      authMethod: "oauth",
+    });
+
+    expect(access.hasFullAccess).toBe(false);
+    expect(access.isSameOrg).toBe(false);
+    expect(mockMemberLimit).toHaveBeenCalledOnce();
+  });
+
   it("grants session same-org access when the user is still an org member", async () => {
     mockMemberLimit.mockResolvedValue([{ id: "member-1" }]);
 
@@ -116,6 +130,18 @@ describe("getWorkflowAccess", () => {
 
     expect(access.hasFullAccess).toBe(true);
     expect(access.isSameOrg).toBe(true);
+  });
+
+  it("does not grant legacy creatorless API-key access without a user to prove membership", async () => {
+    const access = await getWorkflowAccess(ORG_WORKFLOW, {
+      userId: null,
+      organizationId: "org-1",
+      authMethod: "api-key",
+    });
+
+    expect(access.hasFullAccess).toBe(false);
+    expect(access.isSameOrg).toBe(false);
+    expect(mockMemberLimit).not.toHaveBeenCalled();
   });
 
   it("does not grant internal execution access when the org workflow creator is no longer an org member", async () => {
