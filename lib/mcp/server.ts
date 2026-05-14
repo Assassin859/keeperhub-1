@@ -5,11 +5,11 @@ import {
 import { registerMetaTools, registerTools } from "./tools";
 
 async function fetchJson(
-  baseUrl: string,
+  internalApiBaseUrl: string,
   authHeader: string,
   path: string
 ): Promise<unknown> {
-  const response = await fetch(`${baseUrl}${path}`, {
+  const response = await fetch(`${internalApiBaseUrl}${path}`, {
     headers: {
       "Content-Type": "application/json",
       Authorization: authHeader,
@@ -28,7 +28,7 @@ async function fetchJson(
 
 function registerResources(
   server: McpServer,
-  baseUrl: string,
+  internalApiBaseUrl: string,
   authHeader: string
 ): void {
   server.resource(
@@ -36,7 +36,11 @@ function registerResources(
     "keeperhub://workflows",
     { description: "List all workflows for the authenticated organization" },
     async (_uri) => {
-      const data = await fetchJson(baseUrl, authHeader, "/api/workflows");
+      const data = await fetchJson(
+        internalApiBaseUrl,
+        authHeader,
+        "/api/workflows"
+      );
       return {
         contents: [
           {
@@ -59,7 +63,11 @@ function registerResources(
     { description: "Get a specific workflow by ID" },
     async (_uri, variables) => {
       const id = variables.id;
-      const data = await fetchJson(baseUrl, authHeader, `/api/workflows/${id}`);
+      const data = await fetchJson(
+        internalApiBaseUrl,
+        authHeader,
+        `/api/workflows/${id}`
+      );
       return {
         contents: [
           {
@@ -74,7 +82,7 @@ function registerResources(
 }
 
 export function createMcpServer(
-  baseUrl: string,
+  internalApiBaseUrl: string,
   authHeader: string,
   scope?: string
 ): McpServer {
@@ -83,9 +91,9 @@ export function createMcpServer(
     version: "1.0.0",
   });
 
-  registerTools(server, baseUrl, authHeader, scope);
-  registerMetaTools(server, baseUrl, authHeader, scope);
-  registerResources(server, baseUrl, authHeader);
+  registerTools(server, internalApiBaseUrl, authHeader, scope);
+  registerMetaTools(server, internalApiBaseUrl, authHeader, scope);
+  registerResources(server, internalApiBaseUrl, authHeader);
 
   return server;
 }

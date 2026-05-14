@@ -189,13 +189,13 @@ function buildPaymentRequiredHint(
 }
 
 async function callApi(
-  baseUrl: string,
+  internalApiBaseUrl: string,
   authHeader: string,
   path: string,
   method: string,
   body?: unknown
 ): Promise<ApiResponse> {
-  const url = `${baseUrl}${path}`;
+  const url = `${internalApiBaseUrl}${path}`;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Authorization: authHeader,
@@ -224,7 +224,7 @@ async function callApi(
 
 export function registerTools(
   server: McpServer,
-  baseUrl: string,
+  internalApiBaseUrl: string,
   authHeader: string,
   scope?: string
 ): void {
@@ -257,7 +257,7 @@ export function registerTools(
         }
         const query = params.toString();
         const path = `/api/workflows${query ? `?${query}` : ""}`;
-        const data = await callApi(baseUrl, authHeader, path, "GET");
+        const data = await callApi(internalApiBaseUrl, authHeader, path, "GET");
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
         };
@@ -275,7 +275,7 @@ export function registerTools(
     withScopeCheck("get_workflow", scope, async (args) =>
       withToolLogging("get_workflow", undefined, async () => {
         const data = await callApi(
-          baseUrl,
+          internalApiBaseUrl,
           authHeader,
           `/api/workflows/${args.workflowId}`,
           "GET"
@@ -321,7 +321,7 @@ export function registerTools(
     withScopeCheck("create_workflow", scope, async (args) =>
       withToolLogging("create_workflow", undefined, async () => {
         const data = await callApi(
-          baseUrl,
+          internalApiBaseUrl,
           authHeader,
           "/api/workflows/create",
           "POST",
@@ -379,7 +379,7 @@ export function registerTools(
       withToolLogging("update_workflow", undefined, async () => {
         const { workflowId, ...body } = args;
         const data = await callApi(
-          baseUrl,
+          internalApiBaseUrl,
           authHeader,
           `/api/workflows/${workflowId}`,
           "PATCH",
@@ -402,7 +402,7 @@ export function registerTools(
     withScopeCheck("delete_workflow", scope, async (args) =>
       withToolLogging("delete_workflow", undefined, async () => {
         const data = await callApi(
-          baseUrl,
+          internalApiBaseUrl,
           authHeader,
           `/api/workflows/${args.workflowId}`,
           "DELETE"
@@ -432,7 +432,7 @@ export function registerTools(
     withScopeCheck("execute_workflow", scope, async (args) =>
       withToolLogging("execute_workflow", undefined, async () => {
         const data = await callApi(
-          baseUrl,
+          internalApiBaseUrl,
           authHeader,
           `/api/workflow/${args.workflowId}/execute`,
           "POST",
@@ -461,7 +461,7 @@ export function registerTools(
     withScopeCheck("get_execution_status", scope, async (args) =>
       withToolLogging("get_execution_status", undefined, async () => {
         const data = await callApi(
-          baseUrl,
+          internalApiBaseUrl,
           authHeader,
           `/api/workflows/executions/${args.executionId}/status`,
           "GET"
@@ -483,7 +483,7 @@ export function registerTools(
     withScopeCheck("get_execution_logs", scope, async (args) =>
       withToolLogging("get_execution_logs", undefined, async () => {
         const data = await callApi(
-          baseUrl,
+          internalApiBaseUrl,
           authHeader,
           `/api/workflows/executions/${args.executionId}/logs`,
           "GET"
@@ -521,7 +521,7 @@ export function registerTools(
     withScopeCheck("ai_generate_workflow", scope, async (args) =>
       withToolLogging("ai_generate_workflow", undefined, async () => {
         const data = await callApi(
-          baseUrl,
+          internalApiBaseUrl,
           authHeader,
           "/api/ai/generate",
           "POST",
@@ -571,7 +571,7 @@ export function registerTools(
         }
         const query = params.toString();
         const path = `/api/mcp/schemas${query ? `?${query}` : ""}`;
-        const data = await callApi(baseUrl, authHeader, path, "GET");
+        const data = await callApi(internalApiBaseUrl, authHeader, path, "GET");
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
         };
@@ -594,7 +594,7 @@ export function registerTools(
       withToolLogging("search_plugins", undefined, async () => {
         const params = new URLSearchParams({ category: args.category });
         const data = await callApi(
-          baseUrl,
+          internalApiBaseUrl,
           authHeader,
           `/api/mcp/schemas?${params.toString()}`,
           "GET"
@@ -621,7 +621,7 @@ export function registerTools(
       withToolLogging("get_plugin", undefined, async () => {
         const params = new URLSearchParams({ category: args.pluginType });
         const data = await callApi(
-          baseUrl,
+          internalApiBaseUrl,
           authHeader,
           `/api/mcp/schemas?${params.toString()}`,
           "GET"
@@ -641,7 +641,7 @@ export function registerTools(
     withScopeCheck("list_integrations", scope, async (_args) =>
       withToolLogging("list_integrations", undefined, async () => {
         const data = await callApi(
-          baseUrl,
+          internalApiBaseUrl,
           authHeader,
           "/api/integrations",
           "GET"
@@ -667,7 +667,7 @@ export function registerTools(
     withScopeCheck("get_wallet_integration", scope, async (args) =>
       withToolLogging("get_wallet_integration", undefined, async () => {
         const data = await callApi(
-          baseUrl,
+          internalApiBaseUrl,
           authHeader,
           `/api/integrations/${args.integrationId}`,
           "GET"
@@ -705,7 +705,7 @@ export function registerTools(
         }
         const query = params.toString();
         const path = `/api/workflows/public${query ? `?${query}` : ""}`;
-        const data = await callApi(baseUrl, authHeader, path, "GET");
+        const data = await callApi(internalApiBaseUrl, authHeader, path, "GET");
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
         };
@@ -723,7 +723,7 @@ export function registerTools(
     withScopeCheck("get_template", scope, async (args) =>
       withToolLogging("get_template", undefined, async () => {
         const data = await callApi(
-          baseUrl,
+          internalApiBaseUrl,
           authHeader,
           `/api/workflows/${args.templateId}`,
           "GET"
@@ -749,7 +749,7 @@ export function registerTools(
     withScopeCheck("deploy_template", scope, async (args) =>
       withToolLogging("deploy_template", undefined, async () => {
         const data = await callApi(
-          baseUrl,
+          internalApiBaseUrl,
           authHeader,
           `/api/workflows/${args.templateId}/duplicate`,
           "POST",
@@ -848,7 +848,7 @@ export function registerTools(
     withScopeCheck("execute_transfer", scope, async (args) =>
       withToolLogging("execute_transfer", undefined, async () => {
         const data = await callApi(
-          baseUrl,
+          internalApiBaseUrl,
           authHeader,
           "/api/execute/transfer",
           "POST",
@@ -908,7 +908,7 @@ export function registerTools(
     withScopeCheck("execute_contract_call", scope, async (args) =>
       withToolLogging("execute_contract_call", undefined, async () => {
         const data = await callApi(
-          baseUrl,
+          internalApiBaseUrl,
           authHeader,
           "/api/execute/contract-call",
           "POST",
@@ -977,7 +977,7 @@ export function registerTools(
     withScopeCheck("execute_check_and_execute", scope, async (args) =>
       withToolLogging("execute_check_and_execute", undefined, async () => {
         const data = await callApi(
-          baseUrl,
+          internalApiBaseUrl,
           authHeader,
           "/api/execute/check-and-execute",
           "POST",
@@ -1022,7 +1022,7 @@ export function registerTools(
     withScopeCheck("get_direct_execution_status", scope, async (args) =>
       withToolLogging("get_direct_execution_status", undefined, async () => {
         const data = await callApi(
-          baseUrl,
+          internalApiBaseUrl,
           authHeader,
           `/api/execute/${args.execution_id}/status`,
           "GET"
@@ -1041,7 +1041,7 @@ export function registerTools(
 
 export function registerMetaTools(
   server: McpServer,
-  baseUrl: string,
+  internalApiBaseUrl: string,
   authHeader: string,
   scope?: string
 ): void {
@@ -1077,7 +1077,7 @@ export function registerMetaTools(
         params.set("includeChains", "false");
         const path = `/api/mcp/schemas${params.toString() ? `?${params.toString()}` : ""}`;
         const data = (await callApi(
-          baseUrl,
+          internalApiBaseUrl,
           authHeader,
           path,
           "GET"
@@ -1178,7 +1178,7 @@ export function registerMetaTools(
         const slug = parts.slice(1).join("/");
 
         const data = await callApi(
-          baseUrl,
+          internalApiBaseUrl,
           authHeader,
           `/api/execute/${integration}/${slug}`,
           "POST",
@@ -1240,7 +1240,7 @@ export function registerMetaTools(
         }
         const query = params.toString();
         const path = `/api/mcp/workflows${query ? `?${query}` : ""}`;
-        const data = await callApi(baseUrl, authHeader, path, "GET");
+        const data = await callApi(internalApiBaseUrl, authHeader, path, "GET");
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
         };
@@ -1267,7 +1267,7 @@ export function registerMetaTools(
       withToolLogging("call_workflow", undefined, async () => {
         try {
           const data = await callApi(
-            baseUrl,
+            internalApiBaseUrl,
             authHeader,
             `/api/mcp/workflows/${encodeURIComponent(args.slug)}/call`,
             "POST",
@@ -1333,7 +1333,7 @@ export function registerMetaTools(
       withToolLogging("list_workflow", undefined, async () => {
         const { workflowId, ...metadata } = args;
         const data = await callApi(
-          baseUrl,
+          internalApiBaseUrl,
           authHeader,
           `/api/mcp/workflows/${encodeURIComponent(workflowId)}/listing`,
           "POST",
@@ -1359,7 +1359,7 @@ export function registerMetaTools(
     withScopeCheck("unlist_workflow", scope, async (args) =>
       withToolLogging("unlist_workflow", undefined, async () => {
         const data = await callApi(
-          baseUrl,
+          internalApiBaseUrl,
           authHeader,
           `/api/mcp/workflows/${encodeURIComponent(args.workflowId)}/listing`,
           "DELETE"
@@ -1413,7 +1413,7 @@ export function registerMetaTools(
       withToolLogging("update_workflow_listing", undefined, async () => {
         const { workflowId, ...patch } = args;
         const data = await callApi(
-          baseUrl,
+          internalApiBaseUrl,
           authHeader,
           `/api/mcp/workflows/${encodeURIComponent(workflowId)}/listing`,
           "PATCH",
@@ -1443,7 +1443,7 @@ export function registerMetaTools(
     withScopeCheck("get_workflow_listing", scope, async (args) =>
       withToolLogging("get_workflow_listing", undefined, async () => {
         const data = await callApi(
-          baseUrl,
+          internalApiBaseUrl,
           authHeader,
           `/api/mcp/workflows/${encodeURIComponent(args.slug)}/listing`,
           "GET"
