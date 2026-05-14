@@ -35,9 +35,19 @@ serviceAccount:
 
 podAnnotations:
   reloader.stakater.com/auto: "true"
-  prometheus.io/scrape: "true"
-  prometheus.io/port: "3000"
-  prometheus.io/path: "/metrics"
+
+# Staging Alloy scrapes via ServiceMonitor CRDs, not prometheus.io/* annotations.
+# Same pattern the executor uses (deploy/executor/staging/values.yaml). Without
+# this block, the block-dispatcher /metrics endpoint is unreachable to Alloy
+# even with annotations set, so Grafana panels stay empty.
+serviceMonitors:
+  enabled: true
+  monitors:
+    - name: block-dispatcher-metrics
+      port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
 
 resources:
   limits:
