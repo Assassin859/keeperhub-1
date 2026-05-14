@@ -69,11 +69,14 @@ const DUMMY_BYTES = "0x";
 // balance, CFA_*/GDA_* business reverts, etc.) is fine: writes are called
 // from an unfunded TEST_ADDRESS and naturally revert at the contract layer.
 //
-// `data="0x"` (with the closing quote) is the precise KEEP-456 signature:
-// real reverts have hex content between the quotes (`data="0x08c..."`),
-// so the literal `0x"` only appears when the revert data is empty.
+// `,\s*data="0x"` anchors on the top-level CALL_EXCEPTION field separator,
+// so the pattern only matches the precise empty-revert-data field at the
+// top of the error -- not e.g. a nested transaction's `"data": "0x..."`
+// (which uses JSON `"key": value` with a colon, not `key=value` with =).
+// The closing quote immediately after `0x` is the precise signature:
+// real reverts have hex content between the quotes (`data="0x08c..."`).
 const DISPATCH_FAILURE_RE =
-  /INVALID_ARGUMENT|could not decode|invalid function|missing revert data|data="0x"/;
+  /INVALID_ARGUMENT|could not decode|invalid function|missing revert data|,\s*data="0x"/;
 
 function buildCalldata(
   protocol: ProtocolDefinition,
@@ -476,6 +479,29 @@ describe("DISPATCH_FAILURE_RE shape (synthesized ethers errors)", () => {
       { argument: "value", value: "abc" }
     );
     expect(asMessage(err)).toMatch(DISPATCH_FAILURE_RE);
+  });
+
+  it('does NOT misfire when only the nested transaction.data is "0x"', () => {
+    // Defense-in-depth: confirms the `,\s*data="0x"` anchor distinguishes
+    // top-level CALL_EXCEPTION fields (key=value) from nested JSON
+    // (`"key": value`). If a future ethers version (or a quirky calldata)
+    // ever produced a transaction object whose data was literally "0x"
+    // while the top-level data was populated, the old `data="0x"` pattern
+    // would have false-positived. The anchor prevents that.
+    const err = ethers.makeError(
+      'execution reverted: "X"',
+      "CALL_EXCEPTION",
+      {
+        action: "estimateGas",
+        data: "0x08c379a0deadbeef",
+        reason: "X",
+        // Nested transaction with empty data (hypothetical fallback call):
+        transaction: { data: "0x", to: TEST_ADDRESS },
+        invocation: null,
+        revert: { args: ["X"], name: "Error", signature: "Error(string)" },
+      }
+    );
+    expect(asMessage(err)).not.toMatch(DISPATCH_FAILURE_RE);
   });
 
   it("does NOT match a normal business revert with populated revert data", () => {
