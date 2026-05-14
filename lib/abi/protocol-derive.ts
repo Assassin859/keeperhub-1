@@ -324,6 +324,12 @@ function deriveEvent(
   evt: AbiEventEntry,
   override: AbiEventOverride | undefined
 ): ProtocolEvent {
+  if (evt.anonymous === true) {
+    throw new Error(
+      `Anonymous event "${evt.name}" on contract "${contractKey}" cannot be derived: anonymous events have no topic-0 selector and cannot be matched by name downstream.`
+    );
+  }
+
   const slug = override?.slug ?? camelToKebab(evt.name);
   const label = override?.label ?? camelToTitle(evt.name);
   const description =
