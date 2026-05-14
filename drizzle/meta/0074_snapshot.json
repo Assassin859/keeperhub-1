@@ -5560,6 +5560,18 @@
           "primaryKey": false,
           "notNull": true,
           "default": true
+        },
+        "error_category": {
+          "name": "error_category",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "is_user_error": {
+          "name": "is_user_error",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {

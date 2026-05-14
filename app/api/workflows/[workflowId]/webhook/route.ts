@@ -12,6 +12,8 @@ import {
   enforceExecutionLimit,
 } from "@/lib/billing/execution-guard";
 import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit";
+import { classifyExecutionError } from "@/lib/errors/classify";
+import { recordExecutionErrorFinalized } from "@/lib/errors/finalize-error";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { recordWebhookMetrics } from "@/lib/metrics/instrumentation/api";
 import { db } from "@/lib/db";
@@ -119,14 +121,14 @@ const corsHeaders = {
  * metric in one call. Covers the simple-error gates (404, 410, 401, 403, 400,
  * 500). The two 429 variants have custom response bodies and stay inline.
  */
-function failResponse(
+async function failResponse(
   workflowId: string,
   timer: () => number,
   statusCode: number,
   message: string,
   extraBody?: Record<string, unknown>
-): NextResponse {
-  recordWebhookMetrics({
+): Promise<NextResponse> {
+  await recordWebhookMetrics({
     workflowId,
     durationMs: timer(),
     statusCode,
@@ -182,14 +184,29 @@ async function executeWorkflowBackground(
   } catch (error) {
     logSystemError(ErrorCategory.WORKFLOW_ENGINE, "[Webhook] Error during execution", error, { endpoint: "/api/workflows/[workflowId]/webhook", operation: "executeWorkflow" });
 
-    await db
+    // KEEP-545: classify and increment per-execution counter.
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    const classification = classifyExecutionError(errorMessage);
+
+    const updated = await db
       .update(workflowExecutions)
       .set({
         status: "error",
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: errorMessage,
+        errorCategory: classification.errorCategory,
+        isUserError: classification.isUserError,
         completedAt: new Date(),
       })
-      .where(eq(workflowExecutions.id, executionId));
+      .where(eq(workflowExecutions.id, executionId))
+      .returning({ workflowId: workflowExecutions.workflowId });
+
+    if (updated.length > 0) {
+      await recordExecutionErrorFinalized({
+        workflowId: updated[0].workflowId,
+        errorMessage,
+      });
+    }
   }
 }
 
@@ -268,11 +285,12 @@ export async function POST(
 
     const executionGuard = await enforceExecutionLimit(workflow.organizationId);
     if (executionGuard.blocked) {
-      recordWebhookMetrics({
+      await recordWebhookMetrics({
         workflowId,
         durationMs: timer(),
         statusCode: 429,
         error: EXECUTION_LIMIT_ERROR,
+        organizationId: workflow.organizationId,
       });
       const body = await executionGuard.response.json();
       return NextResponse.json(body, {
@@ -283,11 +301,12 @@ export async function POST(
 
     const concurrencyCheck = await checkConcurrencyLimit();
     if (!concurrencyCheck.allowed) {
-      recordWebhookMetrics({
+      await recordWebhookMetrics({
         workflowId,
         durationMs: timer(),
         statusCode: 429,
         error: "Too many concurrent workflow executions",
+        organizationId: workflow.organizationId,
       });
       return NextResponse.json(
         {
@@ -315,11 +334,12 @@ export async function POST(
 
     console.log("[Webhook] Created execution:", execution.id);
 
-    // Record workflow execution metric in API process (workflow runs in separate context)
+    // Record per-(trigger_type, chain) start of a workflow execution. See KEEP-556.
+    const chainLabel = workflow.chain ?? "_unknown";
     const metrics = getMetricsCollector();
-    metrics.incrementCounter(MetricNames.WORKFLOW_EXECUTIONS_TOTAL, {
+    metrics.incrementCounter(MetricNames.WORKFLOW_EXECUTIONS_STARTED_TOTAL, {
       [LabelKeys.TRIGGER_TYPE]: "webhook",
-      [LabelKeys.WORKFLOW_ID]: workflowId,
+      [LabelKeys.CHAIN]: chainLabel,
     });
 
     // Resolve org slug + plan for log labels (cached per request)
@@ -341,7 +361,7 @@ export async function POST(
       organizationPlan
     );
 
-    recordWebhookMetrics({
+    await recordWebhookMetrics({
       workflowId,
       executionId: execution.id,
       durationMs: timer(),

@@ -516,8 +516,15 @@
     {
       "idx": 73,
       "version": "7",
+      "when": 1777760000007,
+      "tag": "0073_keep545_workflow_executions_error_classification",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
       "when": 1778630077869,
-      "tag": "0073_safe_wallet_integration",
+      "tag": "0074_safe_wallet_integration",
       "breakpoints": true
     }
   ]

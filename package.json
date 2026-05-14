@@ -137,6 +137,7 @@
     "@noble/hashes": "^2.0.1",
     "@playwright/test": "^1.59.1",
     "@sentry/cli": "^2.58.5",
+    "@superfluid-finance/metadata": "^1.6.2",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^24",
     "@types/react": "^19",
