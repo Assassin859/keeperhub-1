@@ -137,9 +137,7 @@ describe("block dispatcher metrics", () => {
       expect(text).toContain(
         'keeperhub_block_dispatcher_workflows_tracked{chain="Ethereum Mainnet"} 4',
       );
-      expect(text).toMatch(
-        /keeperhub_block_dispatcher_chains_monitored\s+3/,
-      );
+      expect(text).toMatch(/keeperhub_block_dispatcher_chains_monitored\s+3/);
     });
   });
 
