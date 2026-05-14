@@ -115,6 +115,42 @@ describe("validateWorkflowActionConfigs", () => {
     );
   });
 
+  it("allows template values in isAddressField template-input fields", () => {
+    const result = validateWorkflowActionConfigs([
+      actionNode("chainlink/ccip-check-bridge-allowance", {
+        network: "1",
+        contractAddress: "{{trigger.tokenAddress}}",
+        owner: "{{trigger.walletAddress}}",
+        spender: "{{@node-1:Previous.router}}",
+      }),
+    ]);
+
+    expect(result).toEqual({ valid: true, issues: [] });
+  });
+
+  it("rejects non-address non-template literals in isAddressField fields", () => {
+    const result = validateWorkflowActionConfigs([
+      actionNode("chainlink/ccip-check-bridge-allowance", {
+        network: "1",
+        contractAddress: "not-an-address",
+        owner: "{{trigger.walletAddress}}",
+        spender: "{{@node-1:Previous.router}}",
+      }),
+    ]);
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "INVALID_FIELD_TYPE",
+          path: "nodes[0].data.config.contractAddress",
+          field: "contractAddress",
+          expected: "address",
+        }),
+      ])
+    );
+  });
+
   it("accepts JSON-string tuple array protocol fields from the editor", () => {
     const result = validateWorkflowActionConfigs([
       actionNode("chainlink/ccip-send", {

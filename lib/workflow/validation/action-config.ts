@@ -221,8 +221,11 @@ function validateFieldValue(
         ? { valid: true }
         : { valid: false, expected: "object or array", received: value };
     default:
-      if (field.isAddressField && valueContainsTemplate(value)) {
-        return { valid: false, expected: "address", received: value };
+      if (field.isAddressField) {
+        return typeof value === "string" &&
+          (valueContainsTemplate(value) || ETH_ADDRESS_PATTERN.test(value))
+          ? { valid: true }
+          : { valid: false, expected: "address", received: value };
       }
       return validateStringLike(value) || typeof value === "boolean"
         ? { valid: true }
