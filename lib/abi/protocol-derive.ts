@@ -36,6 +36,14 @@ export type AbiOutputOverride = {
   decimals?: number;
 };
 
+/**
+ * Override applied to an ABI function. Override keys for `inputs` and
+ * `outputs` are the raw ABI param names (or `arg<index>` / `result` /
+ * `result<index>` defaults if the ABI declares the param unnamed) - NOT
+ * post-rename display names. Renaming via override.inputs.<rawName>.name
+ * changes the resulting input.name (form field key) but does not change
+ * the lookup key for further overrides.
+ */
 export type AbiFunctionOverride = {
   slug?: string;
   label?: string;
@@ -44,6 +52,11 @@ export type AbiFunctionOverride = {
   outputs?: Record<string, AbiOutputOverride>;
 };
 
+/**
+ * Override applied to an ABI event. The lookup key in
+ * AbiDrivenContract.events is the raw event name from the ABI (e.g.
+ * "TokensMinted"), not the kebab-case slug.
+ */
 export type AbiEventOverride = {
   slug?: string;
   label?: string;
