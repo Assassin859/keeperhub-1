@@ -150,16 +150,23 @@ const TEST_DATA: ProtocolTestData = {
  * Superfluid CFAv1 and GDAv1 forwarders are deployed.
  *
  * Adding a chain: append its ID here. Both forwarders pick it up automatically
- * via sameOnAllChains() because the addresses are deliberately constant across
- * every chain Superfluid supports. To ship a new chain, also add an entry to
- * tests/scripts/verify-superfluid-addresses.ts so the bytecode check covers it.
+ * via sameOnAllChains() because Superfluid pins both forwarders to identical
+ * addresses on every chain currently in SUPERFLUID_CHAIN_IDS. This is NOT
+ * universal across all chains Superfluid supports -- Avalanche Fuji (43113)
+ * uses a different CFAv1Forwarder address. The unit test in
+ * tests/unit/superfluid-protocol.test.ts cross-checks every chain here
+ * against @superfluid-finance/metadata and will fail if a chain whose
+ * forwarders deviate is added without replacing sameOnAllChains() with a
+ * per-chain map.
  */
 export const SUPERFLUID_CHAIN_IDS = [
   "1", // Ethereum Mainnet
   "10", // Optimism
+  "56", // BNB Smart Chain
   "137", // Polygon
   "8453", // Base
   "42161", // Arbitrum One
+  "43114", // Avalanche C-Chain
   "11155111", // Sepolia
 ] as const;
 

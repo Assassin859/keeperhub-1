@@ -263,6 +263,9 @@ importers:
       '@sentry/cli':
         specifier: ^2.58.5
         version: 2.58.5
+      '@superfluid-finance/metadata':
+        specifier: ^1.6.2
+        version: 1.6.2
       '@tailwindcss/postcss':
         specifier: ^4
         version: 4.2.2
@@ -313,7 +316,7 @@ importers:
         version: 5.9.3
       ultracite:
         specifier: 6.5.1
-        version: 6.5.1(typescript@5.9.3)(valibot@1.2.0(typescript@5.9.3))
+        version: 6.5.1(effect@3.21.2)(typescript@5.9.3)(valibot@1.2.0(typescript@5.9.3))
       viem:
         specifier: ^2.47.1
         version: 2.47.5(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.3.6)
@@ -4310,6 +4313,9 @@ packages:
 
   '@standard-schema/utils@0.3.0':
     resolution: {integrity: sha512-e7Mew686owMaPJVNNLs55PUvgz371nKgwsc4vxE49zsODpJEnxgxRo2y/OKrqueavXgZNMDVj3DdHFlaSAeU8g==}
+
+  '@superfluid-finance/metadata@1.6.2':
+    resolution: {integrity: sha512-oxKBlzMNl2hX6tF0ot8W4kJ86pmtq3DFaoalsguBuIOGmrp7nGAvQ7nYRmd3WDu+vGwrgQYyBlIKSEuPy8addg==}
 
   '@swc/cli@0.7.10':
     resolution: {integrity: sha512-QQ36Q1VwGTT2YzvMeNe/j1x4DKS277DscNhWc57dIwQn//C+zAgvuSupMB/XkmYqPKQX+8hjn5/cHRJrMvWy0Q==}
@@ -8873,6 +8879,7 @@ packages:
 
   uuid@10.0.0:
     resolution: {integrity: sha512-8XkAphELsDnEGrDxUOHB3RGvXz6TeuYSGEZBOjtTtPm2lwhGBjLgOzLHB63IUWfBpNucQjND6d3AOudO+H3RWQ==}
+    deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
     hasBin: true
 
   uuid@11.1.1:
@@ -8881,10 +8888,12 @@ packages:
 
   uuid@8.3.2:
     resolution: {integrity: sha512-+NYs2QeMWy+GWFOEm9xnn6HCDp0l7QBD7ml8zLUmJ+93Q5NF0NocErnwkTkXVFNiX3/fpC6afS8Dhb/gz7R7eg==}
+    deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
     hasBin: true
 
   uuid@9.0.1:
     resolution: {integrity: sha512-b+1eJOlsR9K8HJpow9Ok3fiWOWSIcIzXodvv0rQjVoOVNpWMpxf1wZNpt4y9h10odCNrqnYp1OBzRktckBe3sA==}
+    deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
     hasBin: true
 
   v0-sdk@0.16.4:
@@ -13670,6 +13679,8 @@ snapshots:
   '@standard-schema/spec@1.1.0': {}
 
   '@standard-schema/utils@0.3.0': {}
+
+  '@superfluid-finance/metadata@1.6.2': {}
 
   '@swc/cli@0.7.10(@swc/core@1.15.3(@swc/helpers@0.5.19))(chokidar@4.0.3)':
     dependencies:
@@ -18721,11 +18732,12 @@ snapshots:
     dependencies:
       punycode: 2.3.1
 
-  trpc-cli@0.12.4(@trpc/server@11.15.0(typescript@5.9.3))(valibot@1.2.0(typescript@5.9.3))(zod@4.3.6):
+  trpc-cli@0.12.4(@trpc/server@11.15.0(typescript@5.9.3))(effect@3.21.2)(valibot@1.2.0(typescript@5.9.3))(zod@4.3.6):
     dependencies:
       commander: 14.0.3
     optionalDependencies:
       '@trpc/server': 11.15.0(typescript@5.9.3)
+      effect: 3.21.2
       valibot: 1.2.0(typescript@5.9.3)
       zod: 4.3.6
 
@@ -18785,7 +18797,7 @@ snapshots:
 
   ulid@3.0.2: {}
 
-  ultracite@6.5.1(typescript@5.9.3)(valibot@1.2.0(typescript@5.9.3)):
+  ultracite@6.5.1(effect@3.21.2)(typescript@5.9.3)(valibot@1.2.0(typescript@5.9.3)):
     dependencies:
       '@clack/prompts': 0.11.0
       '@trpc/server': 11.15.0(typescript@5.9.3)
@@ -18794,7 +18806,7 @@ snapshots:
       jsonc-parser: 3.3.1
       nypm: 0.6.5
       picocolors: 1.1.1
-      trpc-cli: 0.12.4(@trpc/server@11.15.0(typescript@5.9.3))(valibot@1.2.0(typescript@5.9.3))(zod@4.3.6)
+      trpc-cli: 0.12.4(@trpc/server@11.15.0(typescript@5.9.3))(effect@3.21.2)(valibot@1.2.0(typescript@5.9.3))(zod@4.3.6)
       zod: 4.3.6
     transitivePeerDependencies:
       - '@orpc/server'
