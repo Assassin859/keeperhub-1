@@ -2,6 +2,8 @@ import { defineAbiProtocol } from "@/lib/protocol-registry";
 import depositPoolAbi from "./abis/rocket-pool-deposit-pool.json";
 import rethAbi from "./abis/rocket-pool-reth.json";
 
+const ROCKET_POOL_DOCS = "https://docs.rocketpool.net/guides/staking/via-rp";
+
 export default defineAbiProtocol({
   name: "Rocket Pool",
   slug: "rocket-pool",
@@ -33,7 +35,12 @@ export default defineAbiProtocol({
           label: "Get rETH Balance",
           description: "Check the rETH balance of an address",
           inputs: {
-            account: { label: "Wallet Address" },
+            account: {
+              label: "Wallet Address",
+              helpTip:
+                "Address whose rETH balance will be read from the contract.",
+              docUrl: ROCKET_POOL_DOCS,
+            },
           },
           outputs: {
             balance: {
@@ -71,6 +78,9 @@ export default defineAbiProtocol({
             _rethAmount: {
               name: "amount",
               label: "rETH Amount (wei)",
+              helpTip:
+                "Amount of rETH to burn, in wei. The contract returns ETH at the current exchange rate (see Get rETH Exchange Rate).",
+              docUrl: ROCKET_POOL_DOCS,
               decimals: 18,
             },
           },
