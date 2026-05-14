@@ -112,13 +112,13 @@ export default defineProtocol({
       label: "Aave V3 Pool Data Provider",
       addresses: {
         // Ethereum Mainnet
-        "1": "0x7B4EB56E7CD4b454BA8ff71E4518426c03584755",
+        "1": "0x0a16f2FCC0D44FaE41cc54e079281D84A363bECD",
         // Base
-        "8453": "0x2d8A3C5677189723C4cB8873CfC9C8976FDF38Ac",
+        "8453": "0x0F43731EB8d45A581f4a36DD74F5f358bc90C73A",
         // Arbitrum One
-        "42161": "0x69FA688f1Dc47d4B5d8029D5a35FB7a548310654",
+        "42161": "0x243Aa95cAC2a25651eda86e80bEe66114413c43b",
         // Optimism
-        "10": "0x69FA688f1Dc47d4B5d8029D5a35FB7a548310654",
+        "10": "0x243Aa95cAC2a25651eda86e80bEe66114413c43b",
         // Sepolia Testnet
         "11155111": "0x3e9708d80f7B3e43118013075F7e95CE3AB31F31",
       },
