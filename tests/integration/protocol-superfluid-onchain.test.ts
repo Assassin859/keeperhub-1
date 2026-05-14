@@ -328,13 +328,15 @@ describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
   }, 15_000);
 
   it("connect-pool: encodes against gdaForwarder.connectPool", async () => {
-    // Not convertible to toBe(""): the GDA host calls into the pool
-    // address during connectPool, and TEST_ADDRESS has no contract code,
-    // so estimateGas reverts with `CallUtils: target revert()`. That is
-    // not a routing/ABI failure (revert data is non-empty), so it does
-    // not match DISPATCH_FAILURE_RE -- which is the assertion we want.
-    // Strengthening to toBe("") would need a real Superfluid pool address
-    // on Sepolia, out of scope for "no on-chain state dependency" tests.
+    // Not convertible to toBe(""): the GDA host dispatches into the pool
+    // address as a contract call during connectPool, and TEST_ADDRESS has
+    // no deployed code -- so estimateGas reverts with `CallUtils: target
+    // revert()`. That is not a routing/ABI failure (the revert *does*
+    // have data, just from a different source), so it correctly does not
+    // match DISPATCH_FAILURE_RE. Strengthening to toBe("") would need a
+    // deployed contract at the pool address that implements the expected
+    // pool interface (any Superfluid pool would do); out of scope for
+    // "no on-chain state dependency" tests.
     const msg = await estimateGasError("connect-pool", {
       pool: TEST_ADDRESS,
       userData: DUMMY_BYTES,
