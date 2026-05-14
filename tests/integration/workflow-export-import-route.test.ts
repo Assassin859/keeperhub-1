@@ -72,6 +72,22 @@ const storedWorkflow = {
   updatedAt: new Date(),
 };
 
+const validImportActionNode = {
+  id: "action-1",
+  type: "action",
+  position: { x: 200, y: 0 },
+  data: {
+    label: "Send Webhook",
+    type: "action",
+    config: {
+      actionType: "webhook/send-webhook",
+      webhookUrl: "https://example.com/webhook",
+      webhookMethod: "POST",
+    },
+    status: "idle",
+  },
+};
+
 const insertedRows: Record<string, unknown>[] = [];
 
 const mockDbQuery = {
@@ -277,9 +293,10 @@ describe("POST /api/workflows/import", () => {
     const exportPayload = buildWorkflowExportV1({
       name: "imported wf",
       description: "imported description",
-      nodes: storedWorkflow.nodes.filter(
-        (n) => n.data.type !== "add"
-      ) as WorkflowNode[],
+      nodes: [
+        storedWorkflow.nodes[0] as unknown as WorkflowNode,
+        validImportActionNode as unknown as WorkflowNode,
+      ],
       edges: storedWorkflow.edges.slice(0, 1) as WorkflowEdge[],
     });
 
@@ -303,6 +320,43 @@ describe("POST /api/workflows/import", () => {
     expect(insertedRows[0].organizationId).toBe(orgId);
 
     expect(mockIncrementCounter).toHaveBeenCalledWith("workflow.imports.total");
+  });
+
+  it("rejects invalid action configs before importing workflow", async () => {
+    const exportPayload = buildWorkflowExportV1({
+      name: "invalid import",
+      description: null,
+      nodes: [
+        storedWorkflow.nodes[0],
+        {
+          ...validImportActionNode,
+          data: {
+            ...validImportActionNode.data,
+            config: {
+              actionType: "discord/send-message",
+              Message: "hello",
+            },
+          },
+        },
+      ] as WorkflowNode[],
+      edges: storedWorkflow.edges.slice(0, 1) as WorkflowEdge[],
+    });
+
+    const { POST } = await import("@/app/api/workflows/import/route");
+    const request = new Request("http://localhost/api/workflows/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(exportPayload),
+    });
+    const response = await POST(request);
+
+    expect(response.status).toBe(422);
+    const body = await response.json();
+    expect(body.error).toBe("INVALID_ACTION_CONFIG");
+    expect(insertedRows).toHaveLength(0);
+    expect(mockIncrementCounter).not.toHaveBeenCalledWith(
+      "workflow.imports.total"
+    );
   });
 
   it("rejects an unsupported version", async () => {

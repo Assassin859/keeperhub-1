@@ -20,6 +20,10 @@ import {
   workflowExportV1Schema,
 } from "@/lib/workflow/export-schema";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
+import {
+  formatActionConfigValidationResponse,
+  validateWorkflowActionConfigs,
+} from "@/lib/workflow/validation/action-config";
 
 const versionedBodySchema = z
   .object({ version: z.unknown() })
@@ -121,6 +125,16 @@ export async function POST(request: Request): Promise<NextResponse> {
       return NextResponse.json(
         { error: "Invalid integration references in workflow" },
         { status: 403 }
+      );
+    }
+
+    const actionConfigValidation = validateWorkflowActionConfigs(
+      sanitized.nodes
+    );
+    if (!actionConfigValidation.valid) {
+      return NextResponse.json(
+        formatActionConfigValidationResponse(actionConfigValidation),
+        { status: 422 }
       );
     }
 
