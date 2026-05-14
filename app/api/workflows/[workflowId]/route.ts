@@ -15,6 +15,7 @@ import { syncWorkflowSchedule } from "@/lib/schedule-service";
 import { sanitizeDescription } from "@/lib/sanitize-description";
 import { getWorkflowAccess } from "@/lib/workflow/access";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
+import { softDeleteValues } from "@/lib/workflow/soft-delete";
 import { isReservedSlug } from "@/lib/workflow/reserved-slugs";
 import {
   formatActionConfigValidationResponse,
@@ -659,7 +660,7 @@ export async function DELETE(
     // is still hard-deleted on force (only the workflow row must persist), and
     // schedules are removed explicitly -- the ON DELETE CASCADE that used to
     // clean them up no longer fires now that the row is not actually deleted.
-    const softDelete = { deletedAt: new Date(), isListed: false };
+    const softDelete = softDeleteValues();
 
     if (hasExecutions && force) {
       const { workflowExecutionLogs } = await import("@/lib/db/schema");

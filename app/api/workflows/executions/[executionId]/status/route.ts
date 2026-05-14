@@ -75,7 +75,9 @@ export async function GET(
       authMethod: authContext.authMethod,
     });
 
-    if (!access.hasFullAccess) {
+    // KEEP-440: keep this consistent with the execution-history route -- once
+    // the workflow is soft-deleted its execution detail is hidden too.
+    if (!access.hasFullAccess || access.isDeleted) {
       recordStatusPollMetrics({
         executionId,
         durationMs: timer(),

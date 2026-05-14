@@ -9,7 +9,10 @@ import { generateId } from "@/lib/utils/id";
 import { remapTemplateRefsInString } from "@/lib/utils/template";
 import { getWorkflowAccess } from "@/lib/workflow/access";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
-import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
+import {
+  softDeleteValues,
+  workflowNotDeleted,
+} from "@/lib/workflow/soft-delete";
 // Node type for type-safe node manipulation
 type WorkflowNodeLike = {
   id: string;
@@ -245,7 +248,7 @@ export async function POST(
     ) {
       await db
         .update(workflows)
-        .set({ deletedAt: new Date() })
+        .set(softDeleteValues())
         .where(eq(workflows.id, workflowId));
     }
 

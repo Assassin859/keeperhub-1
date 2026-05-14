@@ -21,3 +21,14 @@ export function isWorkflowDeleted(workflow: {
 }): boolean {
   return workflow.deletedAt !== null;
 }
+
+/**
+ * KEEP-440: the column writes that retire a workflow. `deletedAt` records the
+ * soft-delete; `isListed: false` drops it off every marketplace surface (and
+ * is the secondary guard a few read paths still lean on). Every retirement
+ * path -- the delete handler and the duplicate-route anonymous move -- writes
+ * this same shape so a workflow is never left half-retired.
+ */
+export function softDeleteValues(): { deletedAt: Date; isListed: boolean } {
+  return { deletedAt: new Date(), isListed: false };
+}
