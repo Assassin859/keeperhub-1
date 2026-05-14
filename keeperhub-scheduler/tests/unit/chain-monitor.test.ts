@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChainMonitor } from "../../block-dispatcher/chain-monitor.js";
+import { metrics, registry } from "../../lib/metrics.js";
 import type { BlockWorkflow, ChainConfig } from "../../lib/types.js";
 
 // ---------------------------------------------------------------------------
@@ -157,6 +158,9 @@ describe("ChainMonitor", () => {
     // SILENT_FAILOVER_THRESHOLD, SOCKET_MAX_AGE_MS) do not leak into later
     // tests and trigger timers earlier than the test under test expects.
     vi.unstubAllEnvs();
+    // Metrics registry is process-global; reset between tests so per-chain
+    // counters and snapshots from one test don't leak into the next.
+    metrics.resetForTests();
   });
 
   function latestProvider(): MockProvider {
@@ -729,6 +733,58 @@ describe("ChainMonitor", () => {
       });
 
       await expect(monitor.start()).resolves.toBeUndefined();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Metrics integration — verify the monitor actually drives the prom-client
+  // registry at the right lifecycle points. Detailed assertions on the
+  // metrics themselves live in metrics.test.ts; here we only confirm wiring.
+  // -------------------------------------------------------------------------
+
+  describe("metrics integration", () => {
+    it("increments blocks_received_total and updates last_processed_block on advance", async () => {
+      const monitor = new ChainMonitor({
+        chain: makeChain(),
+        workflows: [makeWorkflow({ blockInterval: 1 })],
+      });
+
+      await monitor.start();
+      latestProvider().emitBlock(123);
+      await vi.advanceTimersByTimeAsync(0);
+
+      const text = await registry.metrics();
+      expect(text).toContain(
+        'keeperhub_block_dispatcher_blocks_received_total{chain="TestChain"} 1',
+      );
+      expect(text).toContain(
+        'keeperhub_block_dispatcher_last_processed_block{chain="TestChain"} 123',
+      );
+      expect(text).toContain(
+        'keeperhub_block_dispatcher_has_active_subscription{chain="TestChain"} 1',
+      );
+
+      await monitor.stop();
+    });
+
+    it("records ws_close with reason=upstream_close on a WebSocket close event", async () => {
+      const monitor = new ChainMonitor({
+        chain: makeChain(),
+        workflows: [makeWorkflow()],
+      });
+
+      await monitor.start();
+      latestProvider().websocket.emit("close");
+      // Let handleDisconnect run synchronously through the microtask queue
+      // but don't advance long enough for reconnect-with-backoff to land.
+      await vi.advanceTimersByTimeAsync(10);
+
+      const text = await registry.metrics();
+      expect(text).toContain(
+        'keeperhub_block_dispatcher_ws_closes_total{chain="TestChain",reason="upstream_close"} 1',
+      );
+
+      await monitor.stop();
     });
   });
 

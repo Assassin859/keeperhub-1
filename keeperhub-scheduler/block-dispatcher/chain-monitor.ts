@@ -12,6 +12,7 @@
  */
 
 import { ethers } from "ethers";
+import { metrics } from "../lib/metrics.js";
 import type { BlockWorkflow, ChainConfig } from "../lib/types.js";
 import { enqueueBlockTrigger } from "./sqs-enqueue.js";
 
@@ -195,6 +196,8 @@ export class ChainMonitor {
     }
     this.isRunning = true;
     this.silentReconnects = 0;
+    metrics.setSilentReconnectsCurrent(this.chainName, 0);
+    metrics.setWorkflowsTracked(this.chainName, this.workflows.length);
 
     try {
       await this.connect();
@@ -202,8 +205,10 @@ export class ChainMonitor {
       this.startPingPong();
       this.resetNoBlockTimer();
       this.startPrimaryProbe();
+      metrics.setIsAlive(this.chainName, true);
     } catch (error) {
       this.isRunning = false;
+      metrics.setIsAlive(this.chainName, false);
       throw error;
     }
   }
@@ -215,10 +220,16 @@ export class ChainMonitor {
     this.silentReconnects = 0;
     this.stopTimers();
     await this.destroyProvider();
+    // forgetChain() removes every per-chain gauge labelset, so the chain
+    // disappears entirely from /metrics output. No need to flip individual
+    // gauges to 0 first — that would leave residual labels behind. Counters
+    // and histograms keep their cumulative history.
+    metrics.forgetChain(this.chainName);
   }
 
   updateWorkflows(workflows: BlockWorkflow[]): void {
     this.workflows = workflows;
+    metrics.setWorkflowsTracked(this.chainName, workflows.length);
   }
 
   hasConfigChanged(chain: ChainConfig): boolean {
@@ -400,6 +411,7 @@ export class ChainMonitor {
 
         this.provider = provider;
         this.currentUrlIndex = candidate.index;
+        metrics.setCurrentUrlIndex(this.chainName, candidate.index);
         console.log(
           `[BlockMonitor:${this.chainName}] Connected to ${candidate.label} WSS (block: ${blockNumber})`,
         );
@@ -468,7 +480,11 @@ export class ChainMonitor {
     // Seed the staleness clock so a freshly-subscribed monitor isn't reaped
     // by isAlive() before the first block arrives. Real height advances
     // refresh this in processBlockRange().
-    this.lastBlockAdvanceAt = Date.now();
+    const subscribedAt = Date.now();
+    this.lastBlockAdvanceAt = subscribedAt;
+    metrics.setHasActiveSubscription(this.chainName, true);
+    metrics.setLastBlockAdvanceAt(this.chainName, subscribedAt);
+    metrics.setSubscribedAt(this.chainName, subscribedAt);
     // resetNoBlockTimer is called from start/reconnect, but seed it here too
     // for the same reason — the watchdog needs a baseline from the moment we
     // are subscribed, not from the previous run.
@@ -481,9 +497,11 @@ export class ChainMonitor {
       on?: (event: string, cb: () => void) => void;
     };
     if (ws?.on) {
-      this.wsCloseHandler = () => {
+      this.wsCloseHandler = (): void => {
         console.warn(`[BlockMonitor:${this.chainName}] WebSocket closed`);
         this.hasActiveSubscription = false;
+        metrics.setHasActiveSubscription(this.chainName, false);
+        metrics.recordWsClose(this.chainName, "upstream_close");
         this.handleDisconnect();
       };
       ws.on("close", this.wsCloseHandler);
@@ -570,13 +588,18 @@ export class ChainMonitor {
     await this.processBlockNumber(blockNumber);
     this.lastProcessedBlock = blockNumber;
     // Height genuinely advanced — refresh liveness AFTER the fact.
-    this.lastBlockAdvanceAt = Date.now();
+    const advancedAt = Date.now();
+    this.lastBlockAdvanceAt = advancedAt;
     // Trust the current URL again: a real height advance means the
     // subscription is delivering. Without this reset, an old streak of silent
     // reconnects would still trigger a URL flip on the next disconnect.
     this.silentReconnects = 0;
     this.resetNoBlockTimer();
     this.blocksReceived++;
+    metrics.recordBlockReceived(this.chainName);
+    metrics.setLastProcessedBlock(this.chainName, blockNumber);
+    metrics.setLastBlockAdvanceAt(this.chainName, advancedAt);
+    metrics.setSilentReconnectsCurrent(this.chainName, 0);
 
     // Heartbeat log
     const now = Date.now();
@@ -603,15 +626,18 @@ export class ChainMonitor {
       return;
     }
 
-    // Stale block warning
+    // Stale block warning + lag histogram
     const nowSeconds = Math.floor(Date.now() / 1000);
-    if (nowSeconds - block.timestamp > STALE_BLOCK_THRESHOLD_S) {
+    const lagSeconds = nowSeconds - block.timestamp;
+    metrics.observeBlockLag(this.chainName, lagSeconds);
+    if (lagSeconds > STALE_BLOCK_THRESHOLD_S) {
       console.warn(
-        `[BlockMonitor:${this.chainName}] Block ${blockNumber} timestamp is ${nowSeconds - block.timestamp}s behind wall clock`,
+        `[BlockMonitor:${this.chainName}] Block ${blockNumber} timestamp is ${lagSeconds}s behind wall clock`,
       );
     }
 
     this.blocksMatched++;
+    metrics.recordBlockMatched(this.chainName);
     console.log(
       `[BlockMonitor:${this.chainName}] Block ${blockNumber} matched ${matchingWorkflows.length} workflow(s): ${matchingWorkflows.map((wf) => `${wf.id}(interval=${wf.blockInterval})`).join(", ")}`,
     );
@@ -634,10 +660,13 @@ export class ChainMonitor {
 
     for (const [index, result] of results.entries()) {
       if (result.status === "rejected") {
+        metrics.recordSqsEnqueue(this.chainName, "error");
         console.error(
           `[BlockMonitor:${this.chainName}] Failed to enqueue workflow ${matchingWorkflows[index].id}:`,
           result.reason,
         );
+      } else {
+        metrics.recordSqsEnqueue(this.chainName, "success");
       }
     }
   }
@@ -716,6 +745,7 @@ export class ChainMonitor {
         console.warn(
           `[BlockMonitor:${this.chainName}] Failed to send ping, triggering reconnect`,
         );
+        metrics.recordWsClose(this.chainName, "ping_send_failure");
         this.handleDisconnect();
         return;
       }
@@ -730,6 +760,7 @@ export class ChainMonitor {
         console.warn(
           `[BlockMonitor:${this.chainName}] Pong timeout (${pongTimeoutMs}ms), triggering reconnect`,
         );
+        metrics.recordWsClose(this.chainName, "pong_timeout");
         this.handleDisconnect();
       }, pongTimeoutMs);
     }, pingIntervalMs);
@@ -759,6 +790,11 @@ export class ChainMonitor {
         // flip to the other URL is made by reconnectWithBackoff before its
         // next connect attempt, based on SILENT_FAILOVER_THRESHOLD.
         this.silentReconnects++;
+        metrics.setSilentReconnectsCurrent(
+          this.chainName,
+          this.silentReconnects,
+        );
+        metrics.recordWsClose(this.chainName, "block_advance_timeout");
         console.warn(
           `[BlockMonitor:${this.chainName}] Block height has not advanced in ${timeoutMs / 1000}s (silent reconnects=${this.silentReconnects}), triggering reconnect`,
         );
@@ -800,6 +836,7 @@ export class ChainMonitor {
       console.log(
         `[BlockMonitor:${this.chainName}] Socket age exceeded ${Math.floor(maxAgeMs / 1000)}s, recycling`,
       );
+      metrics.recordWsClose(this.chainName, "socket_age_recycle");
       this.handleDisconnect();
     }, maxAgeMs);
   }
@@ -880,6 +917,8 @@ export class ChainMonitor {
       await probeProvider.destroy().catch(() => {
         // ignore cleanup errors
       });
+      metrics.recordUrlFlip(this.chainName, "to_primary");
+      metrics.recordWsClose(this.chainName, "primary_probe_recovered");
       this.handleDisconnect();
     } catch (error) {
       const reason = summarizeProbeError(error);
@@ -906,6 +945,8 @@ export class ChainMonitor {
 
     this.isReconnecting = true;
     this.reconnectingStartedAt = Date.now();
+    metrics.setIsReconnecting(this.chainName, true);
+    metrics.setHasActiveSubscription(this.chainName, false);
     this.stopTimers();
 
     this.reconnectWithBackoff().catch((error: unknown) => {
@@ -915,10 +956,12 @@ export class ChainMonitor {
       );
       this.isReconnecting = false;
       this.reconnectingStartedAt = null;
+      metrics.setIsReconnecting(this.chainName, false);
     });
   }
 
   private async reconnectWithBackoff(): Promise<void> {
+    const reconnectStartedAt = this.reconnectingStartedAt ?? Date.now();
     await this.destroyProvider();
 
     while (this.isRunning) {
@@ -929,6 +972,9 @@ export class ChainMonitor {
         this.isRunning = false;
         this.isReconnecting = false;
         this.reconnectingStartedAt = null;
+        metrics.recordReconnect(this.chainName, "exhausted");
+        metrics.setIsAlive(this.chainName, false);
+        metrics.setIsReconnecting(this.chainName, false);
         return;
       }
 
@@ -961,6 +1007,13 @@ export class ChainMonitor {
         this.startPingPong();
         this.resetNoBlockTimer();
         this.startPrimaryProbe();
+        metrics.recordReconnect(this.chainName, "success");
+        metrics.observeReconnectDuration(
+          this.chainName,
+          Date.now() - reconnectStartedAt,
+        );
+        metrics.setIsReconnecting(this.chainName, false);
+        metrics.setIsAlive(this.chainName, true);
         return;
       } catch (error) {
         console.warn(
@@ -998,8 +1051,15 @@ export class ChainMonitor {
     }
     const previousLabel = this.currentUrlIndex === 0 ? "primary" : "fallback";
     const nextLabel = this.currentUrlIndex === 0 ? "fallback" : "primary";
-    this.currentUrlIndex = this.currentUrlIndex === 0 ? 1 : 0;
+    const nextIndex: 0 | 1 = this.currentUrlIndex === 0 ? 1 : 0;
+    this.currentUrlIndex = nextIndex;
     this.silentReconnects = 0;
+    metrics.setSilentReconnectsCurrent(this.chainName, 0);
+    metrics.recordUrlFlip(
+      this.chainName,
+      nextIndex === 1 ? "to_fallback" : "to_primary",
+    );
+    metrics.recordWsClose(this.chainName, "silent_failover");
     console.warn(
       `[BlockMonitor:${this.chainName}] Silent-reconnect threshold (${threshold}) reached on ${previousLabel}, flipping URL preference to ${nextLabel}`,
     );
