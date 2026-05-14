@@ -11,6 +11,8 @@ import type {
   ProtocolActionInput,
   ProtocolActionInputComponent,
   ProtocolActionOutput,
+  ProtocolEvent,
+  ProtocolEventInput,
 } from "@/lib/protocol-registry";
 
 // -- Override types ----------------------------------------------------------
@@ -42,6 +44,12 @@ export type AbiFunctionOverride = {
   outputs?: Record<string, AbiOutputOverride>;
 };
 
+export type AbiEventOverride = {
+  slug?: string;
+  label?: string;
+  description?: string;
+};
+
 // -- ABI JSON types (subset of ethers ABI format) ----------------------------
 
 type AbiParam = {
@@ -59,7 +67,17 @@ type AbiFunctionEntry = {
   outputs: AbiParam[];
 };
 
-type AbiEntry = AbiFunctionEntry | { type: string; [key: string]: unknown };
+type AbiEventEntry = {
+  type: "event";
+  name: string;
+  inputs: AbiParam[];
+  anonymous?: boolean;
+};
+
+type AbiEntry =
+  | AbiFunctionEntry
+  | AbiEventEntry
+  | { type: string; [key: string]: unknown };
 
 // -- Helpers -----------------------------------------------------------------
 
@@ -271,6 +289,7 @@ export type AbiDrivenContract = {
   addresses: Record<string, string>;
   userSpecifiedAddress?: boolean;
   overrides?: Record<string, AbiFunctionOverride>;
+  events?: Record<string, AbiEventOverride>;
 };
 
 export type AbiDrivenProtocolInput = {
@@ -298,4 +317,49 @@ export function deriveActionsFromAbi(
   }
 
   return actions;
+}
+
+function deriveEvent(
+  contractKey: string,
+  evt: AbiEventEntry,
+  override: AbiEventOverride | undefined
+): ProtocolEvent {
+  const slug = override?.slug ?? camelToKebab(evt.name);
+  const label = override?.label ?? camelToTitle(evt.name);
+  const description =
+    override?.description ??
+    `Fires when ${evt.name} is emitted by the contract`;
+
+  const inputs: ProtocolEventInput[] = evt.inputs.map((p, i) => ({
+    name: p.name || defaultInputName(i),
+    type: p.type,
+    indexed: p.indexed === true,
+  }));
+
+  return {
+    slug,
+    label,
+    description,
+    eventName: evt.name,
+    contract: contractKey,
+    inputs,
+  };
+}
+
+export function deriveEventsFromAbi(
+  contractKey: string,
+  contract: AbiDrivenContract
+): ProtocolEvent[] {
+  const parsed: AbiEntry[] = JSON.parse(contract.abi);
+  const eventEntries = parsed.filter(
+    (entry): entry is AbiEventEntry => entry.type === "event"
+  );
+
+  const events: ProtocolEvent[] = [];
+  for (const evt of eventEntries) {
+    const override = contract.events?.[evt.name];
+    events.push(deriveEvent(contractKey, evt, override));
+  }
+
+  return events;
 }

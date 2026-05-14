@@ -184,11 +184,13 @@ export function defineProtocol(def: ProtocolDefinition): ProtocolDefinition {
 import {
   type AbiDrivenProtocolInput,
   deriveActionsFromAbi,
+  deriveEventsFromAbi,
 } from "@/lib/abi/protocol-derive";
 
 export type {
   AbiDrivenContract,
   AbiDrivenProtocolInput,
+  AbiEventOverride,
   AbiFunctionOverride,
   AbiInputOverride,
   AbiOutputOverride,
@@ -198,6 +200,7 @@ export function defineAbiProtocol(
   input: AbiDrivenProtocolInput
 ): ProtocolDefinition {
   const actions: ProtocolAction[] = [];
+  const events: ProtocolEvent[] = [];
   const contracts: Record<string, ProtocolContract> = {};
 
   for (const [key, contract] of Object.entries(input.contracts)) {
@@ -211,6 +214,10 @@ export function defineAbiProtocol(
     for (const action of derived) {
       actions.push(action);
     }
+    const derivedEvents = deriveEventsFromAbi(key, contract);
+    for (const evt of derivedEvents) {
+      events.push(evt);
+    }
   }
 
   return defineProtocol({
@@ -221,6 +228,7 @@ export function defineAbiProtocol(
     icon: input.icon,
     contracts,
     actions,
+    ...(events.length > 0 ? { events } : {}),
   });
 }
 

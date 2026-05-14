@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { getProtocol, registerProtocol } from "@/lib/protocol-registry";
+import {
+  getProtocol,
+  protocolActionToPluginAction,
+  registerProtocol,
+} from "@/lib/protocol-registry";
 import rocketPoolDef from "@/protocols/rocket-pool";
 
 const KEBAB_CASE_REGEX = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
@@ -159,6 +163,68 @@ describe("Rocket Pool Protocol Definition", () => {
         `event "${event.slug}" references unknown contract "${event.contract}"`
       ).toBe(true);
     }
+  });
+
+  it("write actions do not surface ABI-derived outputs as UI template suggestions (KEEP-296)", () => {
+    for (const slug of ["burn-reth", "deposit"]) {
+      const action = rocketPoolDef.actions.find((a) => a.slug === slug);
+      expect(action, `action "${slug}" not found`).toBeDefined();
+      if (!action) {
+        continue;
+      }
+      expect(action.type).toBe("write");
+      const pluginAction = protocolActionToPluginAction(rocketPoolDef, action);
+      const outputFieldNames = (pluginAction.outputFields ?? []).map(
+        (f) => f.field
+      );
+      expect(outputFieldNames).toEqual(
+        expect.arrayContaining([
+          "success",
+          "error",
+          "transactionHash",
+          "transactionLink",
+        ])
+      );
+    }
+  });
+
+  it("burn-reth renames the on-chain _rethAmount parameter to 'amount'", () => {
+    const burn = rocketPoolDef.actions.find((a) => a.slug === "burn-reth");
+    expect(burn).toBeDefined();
+    expect(burn?.function).toBe("burn");
+    expect(burn?.inputs).toHaveLength(1);
+    expect(burn?.inputs[0].name).toBe("amount");
+    expect(burn?.inputs[0].type).toBe("uint256");
+  });
+
+  it("deposit is a payable write with no inputs", () => {
+    const deposit = rocketPoolDef.actions.find((a) => a.slug === "deposit");
+    expect(deposit).toBeDefined();
+    expect(deposit?.type).toBe("write");
+    expect(deposit?.payable).toBe(true);
+    expect(deposit?.inputs).toHaveLength(0);
+  });
+
+  it("events derive from the curated ABI with overridden labels and descriptions", () => {
+    const tokensMinted = rocketPoolDef.events?.find(
+      (e) => e.eventName === "TokensMinted"
+    );
+    expect(tokensMinted).toBeDefined();
+    expect(tokensMinted?.slug).toBe("tokens-minted");
+    expect(tokensMinted?.label).toBe("rETH Minted");
+    expect(tokensMinted?.inputs).toHaveLength(4);
+    expect(tokensMinted?.inputs[0]).toEqual({
+      name: "to",
+      type: "address",
+      indexed: true,
+    });
+
+    const depositReceived = rocketPoolDef.events?.find(
+      (e) => e.eventName === "DepositReceived"
+    );
+    expect(depositReceived).toBeDefined();
+    expect(depositReceived?.contract).toBe("depositPool");
+    expect(depositReceived?.inputs).toHaveLength(3);
   });
 
   it("registers in the protocol registry and is retrievable", () => {
