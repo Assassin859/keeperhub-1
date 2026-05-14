@@ -104,9 +104,7 @@ jobs:
       - name: Wait for deployment health check
         if: steps.skip.outputs.skip_deploy != 'true'
         run: |
-          SVC_NAME=$(yq '.service.name' "$HELM_FILE")
-          SVC_PORT=$(yq '.service.port' "$HELM_FILE")
-          HEALTH_URL="http://${SVC_NAME}.${NAMESPACE}.svc.cluster.local:${SVC_PORT}/api/health"
+          HEALTH_URL="http://${SERVICE_NAME}-common.${NAMESPACE}.svc.cluster.local:3000/api/health"
           echo "Checking ${HEALTH_URL} from inside the cluster..."
           kubectl run "health-check-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             --namespace "${NAMESPACE}" \
