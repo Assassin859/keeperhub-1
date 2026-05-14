@@ -415,44 +415,90 @@ describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
 
 // Not gated on RPC: validates the regex shape that the on-chain block above
 // relies on to catch routing regressions like KEEP-456 (calling into a
-// non-existent proxy returns no revert data). If someone tightens or relaxes
-// DISPATCH_FAILURE_RE without updating these samples, this fails -- the
-// regex itself is the load-bearing piece of the hardening; the on-chain
-// block can't exercise it without an actual routing bug to reproduce.
-describe("DISPATCH_FAILURE_RE shape", () => {
-  it("matches the `missing revert data` ethers v6 error shape", () => {
-    const sample =
-      'Error: missing revert data (action="estimateGas", data=null, reason=null, transaction={ "data": "0x...", "from": "0x...", "to": "0x..." }, invocation=null, revert=null, code=CALL_EXCEPTION, version=6.16.0)';
-    expect(sample).toMatch(DISPATCH_FAILURE_RE);
+// non-existent proxy returns no revert data). Each case synthesizes a real
+// ethers error via `ethers.makeError` rather than pinning a hardcoded
+// string -- if ethers changes its error formatting in a future major,
+// these tests fail loudly instead of silently validating a stale shape.
+describe("DISPATCH_FAILURE_RE shape (synthesized ethers errors)", () => {
+  // estimateGasError wraps caught errors with `String(error)`, so the
+  // assertion target is the .toString() of the ethers error, prefixed
+  // with the constructor name (e.g. "Error: ..." or "TypeError: ...").
+  function asMessage(err: Error): string {
+    return String(err);
+  }
+
+  it("matches `missing revert data` (revert: null branch)", () => {
+    const err = ethers.makeError("missing revert data", "CALL_EXCEPTION", {
+      action: "estimateGas",
+      data: null,
+      reason: null,
+      transaction: { data: "0xdeadbeef", from: TEST_ADDRESS, to: TEST_ADDRESS },
+      invocation: null,
+      revert: null,
+    });
+    expect(asMessage(err)).toMatch(DISPATCH_FAILURE_RE);
   });
 
-  it('matches CALL_EXCEPTION with empty data="0x" (proxy returned no revert data)', () => {
-    const sample =
-      'Error: execution reverted (action="estimateGas", data="0x", reason=null, transaction={ "to": "0x..." }, code=CALL_EXCEPTION, version=6.16.0)';
-    expect(sample).toMatch(DISPATCH_FAILURE_RE);
+  it('matches empty revert data="0x" (proxy returned no revert data)', () => {
+    const err = ethers.makeError("execution reverted", "CALL_EXCEPTION", {
+      action: "estimateGas",
+      data: "0x",
+      reason: null,
+      transaction: { to: TEST_ADDRESS },
+      invocation: null,
+      revert: null,
+    });
+    expect(asMessage(err)).toMatch(DISPATCH_FAILURE_RE);
   });
 
-  it('does NOT misfire on `data="0x..."` with actual revert data', () => {
-    // Guards against the obvious regression of writing
-    // `/data="0x/` (no closing quote) which would match every revert.
-    const sample =
-      'Error: execution reverted: "X" (action="estimateGas", data="0x08c379a0deadbeef", code=CALL_EXCEPTION, version=6.16.0)';
-    expect(sample).not.toMatch(DISPATCH_FAILURE_RE);
+  it('does NOT misfire on data="0x..." with actual revert payload', () => {
+    // Guards against the obvious regression of writing `/data="0x/`
+    // (no closing quote), which would match every revert.
+    const err = ethers.makeError(
+      'execution reverted: "X"',
+      "CALL_EXCEPTION",
+      {
+        action: "estimateGas",
+        data: "0x08c379a0deadbeef",
+        reason: "X",
+        transaction: { to: TEST_ADDRESS },
+        invocation: null,
+        revert: { args: ["X"], name: "Error", signature: "Error(string)" },
+      }
+    );
+    expect(asMessage(err)).not.toMatch(DISPATCH_FAILURE_RE);
   });
 
   it("matches ABI encoding errors (INVALID_ARGUMENT)", () => {
-    const sample =
-      'Error: invalid BigNumberish value (argument="value", value="abc", code=INVALID_ARGUMENT, version=6.16.0)';
-    expect(sample).toMatch(DISPATCH_FAILURE_RE);
+    const err = ethers.makeError(
+      "invalid BigNumberish value",
+      "INVALID_ARGUMENT",
+      { argument: "value", value: "abc" }
+    );
+    expect(asMessage(err)).toMatch(DISPATCH_FAILURE_RE);
   });
 
   it("does NOT match a normal business revert with populated revert data", () => {
-    // Real Sepolia revert from connect-pool against TEST_ADDRESS: the GDA
-    // calls into the "pool" address and gets a real revert string back.
-    // This is the failure mode we want to tolerate -- contract reached,
-    // protocol-level revert with data, not a routing/dispatch bug.
-    const sample =
-      'Error: execution reverted: "CallUtils: target revert()" (action="estimateGas", data="0x08c379a00000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000001a43616c6c5574696c733a20746172676574207265766572742829000000000000", reason="CallUtils: target revert()", code=CALL_EXCEPTION, version=6.16.0)';
-    expect(sample).not.toMatch(DISPATCH_FAILURE_RE);
+    // Models the real connect-pool revert against an EOA "pool": the GDA
+    // dispatches into the address and gets `CallUtils: target revert()`.
+    // Contract was reached, revert has data -- tolerate, do not flag as
+    // a routing/dispatch bug.
+    const err = ethers.makeError(
+      'execution reverted: "CallUtils: target revert()"',
+      "CALL_EXCEPTION",
+      {
+        action: "estimateGas",
+        data: "0x08c379a00000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000001a43616c6c5574696c733a20746172676574207265766572742829000000000000",
+        reason: "CallUtils: target revert()",
+        transaction: { to: TEST_ADDRESS },
+        invocation: null,
+        revert: {
+          args: ["CallUtils: target revert()"],
+          name: "Error",
+          signature: "Error(string)",
+        },
+      }
+    );
+    expect(asMessage(err)).not.toMatch(DISPATCH_FAILURE_RE);
   });
 });
