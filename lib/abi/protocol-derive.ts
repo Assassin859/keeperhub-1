@@ -51,6 +51,10 @@ export type AbiFunctionOverride = {
   docUrl?: string;
   inputs?: Record<string, AbiInputOverride>;
   outputs?: Record<string, AbiOutputOverride>;
+  /** Default value for the gas-limit-multiplier field. Mode + value
+   *  match parseGasLimitConfig in lib/web3/gas-defaults.ts. Only meaningful
+   *  on write actions; ignored on reads. */
+  gasLimit?: { mode: "maxGasLimit" | "multiplier"; value: string };
 };
 
 /**
@@ -287,6 +291,10 @@ function deriveAction(
 
   if (docUrl !== undefined) {
     action.docUrl = docUrl;
+  }
+
+  if (override?.gasLimit !== undefined) {
+    action.gasLimitDefault = JSON.stringify(override.gasLimit);
   }
 
   if (outputs.length > 0) {

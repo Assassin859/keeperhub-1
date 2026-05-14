@@ -76,6 +76,10 @@ export type ProtocolAction = {
   /** External documentation URL rendered as a "Docs" link in the action
    *  config panel header. Optional; if absent, no link is shown. */
   docUrl?: string;
+  /** Pre-serialized GasLimitConfig JSON (see lib/web3/gas-defaults.ts)
+   *  fed to the gas-limit-multiplier field as defaultValue. Only set on
+   *  write actions whose override declared a gasLimit; reads ignore it. */
+  gasLimitDefault?: string;
 };
 
 export type ProtocolDefinition = {
@@ -357,6 +361,9 @@ function buildConfigFieldsFromAction(
       type: "gas-limit-multiplier",
       networkField: "network",
       actionSlug: action.slug,
+      ...(action.gasLimitDefault
+        ? { defaultValue: action.gasLimitDefault }
+        : {}),
     });
   }
 
