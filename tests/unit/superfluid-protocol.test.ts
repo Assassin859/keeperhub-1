@@ -533,5 +533,29 @@ describe("Superfluid protocol", () => {
         });
       });
     }
+
+    // Lock in the documented Fuji forwarder-address deviation that
+    // motivates the cross-check above. If the "is not canonical" assertion
+    // ever fails, Superfluid has redeployed Fuji's CFA at the canonical
+    // address -- the trap is gone and Fuji can safely be added to
+    // SUPERFLUID_CHAIN_IDS (and this describe block deleted).
+    describe("Avalanche Fuji (43113) exception", () => {
+      const fuji = sfMetadata.getNetworkByChainId(43_113);
+
+      it("is intentionally excluded from SUPERFLUID_CHAIN_IDS", () => {
+        const ids: readonly string[] = SUPERFLUID_CHAIN_IDS;
+        expect(ids).not.toContain("43113");
+      });
+
+      it("has a non-canonical CFAv1Forwarder address upstream", () => {
+        expect(fuji?.contractsV1.cfaV1Forwarder).not.toBe(
+          CFA_FORWARDER_ADDRESS
+        );
+      });
+
+      it("has the canonical GDAv1Forwarder address (asymmetric deviation)", () => {
+        expect(fuji?.contractsV1.gdaV1Forwarder).toBe(GDA_FORWARDER_ADDRESS);
+      });
+    });
   });
 });
