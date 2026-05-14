@@ -364,3 +364,37 @@ describe("read-contract-core - tuple output decoding", () => {
     expect(tuple[14]).toBe("0");
   });
 });
+
+describe("read-contract-core - missing abiFunction (KEEP-371)", () => {
+  it("returns a descriptive error when abiFunction is missing", async () => {
+    const result = await readContractCore({
+      contractAddress: VALID_ADDRESS,
+      network: "ethereum",
+      abi: JSON.stringify(VIEW_ABI),
+      abiFunction: "",
+      functionArgs: JSON.stringify([VALID_ADDRESS]),
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("abiFunction");
+    }
+  });
+
+  it("does not crash with TypeError when abiFunction is undefined", async () => {
+    // Regression: before the fix, `findAbiFunction(parsedAbi, undefined)`
+    // threw `Cannot read properties of undefined (reading 'indexOf')`.
+    const result = await readContractCore({
+      contractAddress: VALID_ADDRESS,
+      network: "ethereum",
+      abi: JSON.stringify(VIEW_ABI),
+      abiFunction: undefined as unknown as string,
+      functionArgs: JSON.stringify([VALID_ADDRESS]),
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).not.toContain("indexOf");
+    }
+  });
+});

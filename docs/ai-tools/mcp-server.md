@@ -280,7 +280,7 @@ Conditions reference previous node outputs using template syntax: `{{@nodeId:Lab
 |--------|----------------|
 | `web3/check-balance` | `network`, `address` |
 | `web3/check-token-balance` | `network`, `address`, `tokenAddress` |
-| `web3/read-contract` | `network`, `contractAddress`, `functionName` |
+| `web3/read-contract` | `network`, `contractAddress`, `abiFunction` |
 
 ### Write Actions (require wallet integration)
 
@@ -288,11 +288,15 @@ Conditions reference previous node outputs using template syntax: `{{@nodeId:Lab
 |--------|----------------|
 | `web3/transfer-funds` | `network`, `toAddress`, `amount`, `walletId` |
 | `web3/transfer-token` | `network`, `toAddress`, `tokenAddress`, `amount`, `walletId` |
-| `web3/write-contract` | `network`, `contractAddress`, `functionName`, `walletId` |
+| `web3/write-contract` | `network`, `contractAddress`, `abiFunction`, `walletId` |
 
 Get the `walletId` by calling `get_wallet_integration`.
 
 The `network` field accepts chain IDs as strings: `"1"` (Ethereum mainnet), `"11155111"` (Sepolia), `"8453"` (Base), `"42161"` (Arbitrum), `"137"` (Polygon).
+
+### `abiFunction` field
+
+For `web3/read-contract` and `web3/write-contract`, the `abiFunction` field is the function as it appears in the contract's ABI. Pass the plain name for unique functions (`"balanceOf"`) or the full signature for overloaded ones (`"transfer(address,uint256)"`).
 
 ## Error Handling
 
