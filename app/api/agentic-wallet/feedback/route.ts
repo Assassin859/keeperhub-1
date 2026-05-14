@@ -442,9 +442,26 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   let feedbackId: string;
   let feedbackCreatedAt: Date;
   if (existingRow) {
+    // Refresh every input-derived field, not just status/error. The
+    // on-chain feedbackHash below is computed from the current `validated`
+    // input, and `/api/feedback/[id]` later rebuilds the served JSON from
+    // this row -- so a retry with changed value/comment/agentId must
+    // overwrite the stale values or keccak256(servedBytes) won't match the
+    // committed hash. createdAt is intentionally left untouched (it feeds
+    // the hash and the feedbackURI must stay stable).
     await db
       .update(feedback)
-      .set({ status: "pending", error: null })
+      .set({
+        status: "pending",
+        error: null,
+        workflowId: exec.workflowId,
+        agentChainId: validated.agentChainId,
+        agentId: validated.agentId.toString(),
+        value: validated.value.toString(),
+        valueDecimals: validated.valueDecimals,
+        comment: validated.comment ?? null,
+        txChainId: validated.agentChainId,
+      })
       .where(eq(feedback.id, existingRow.id));
     feedbackId = existingRow.id;
     feedbackCreatedAt = existingRow.createdAt;

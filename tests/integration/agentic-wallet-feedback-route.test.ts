@@ -26,6 +26,10 @@
  */
 import { createHash, createHmac } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  ETHEREUM_MAINNET_CHAIN_ID,
+  KEEPERHUB_ERC_8004_AGENT_ID,
+} from "@/lib/agentic-wallet/constants";
 
 const TEST_HMAC_SECRET =
   "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
@@ -252,6 +256,23 @@ const VALID_BODY = {
   comment: "great run",
 };
 
+// The reuse branch must refresh EVERY input-derived field on the stranded
+// row, not just status/error -- otherwise a retry commits an on-chain hash
+// of the new input while /api/feedback/[id] serves the stale persisted JSON.
+// This is the exact update().set(...) payload expected for a retry of
+// VALID_BODY (agentChainId/agentId fall back to the platform defaults).
+const REUSE_SET_PAYLOAD_FOR_VALID_BODY = {
+  status: "pending",
+  error: null,
+  workflowId: TEST_WORKFLOW_ID,
+  agentChainId: ETHEREUM_MAINNET_CHAIN_ID,
+  agentId: KEEPERHUB_ERC_8004_AGENT_ID.toString(),
+  value: "5",
+  valueDecimals: 0,
+  comment: "great run",
+  txChainId: ETHEREUM_MAINNET_CHAIN_ID,
+};
+
 beforeEach(() => {
   mockSelectLimit.mockReset();
   mockInsertReturning.mockReset();
@@ -353,12 +374,13 @@ describe("POST /api/agentic-wallet/feedback -- KEEP-515 retry recovery", () => {
     expect(mockInsertReturning).not.toHaveBeenCalled();
     expect(mockUpdateWhere).toHaveBeenCalled();
     // The KEEP-515 fix: the reuse update().set(...) resets the stranded row
-    // back to "pending" and clears the prior error. A regression that
-    // changed this status transition must fail here.
-    expect(mockUpdateSet).toHaveBeenNthCalledWith(1, {
-      status: "pending",
-      error: null,
-    });
+    // back to "pending", clears the prior error, and refreshes every
+    // input-derived field. A regression that changed this transition must
+    // fail here.
+    expect(mockUpdateSet).toHaveBeenNthCalledWith(
+      1,
+      REUSE_SET_PAYLOAD_FOR_VALID_BODY
+    );
     // Broadcast retried against the reused row.
     expect(mockSignEthereumTransaction).toHaveBeenCalledTimes(1);
     expect(mockBroadcastSignedTransaction).toHaveBeenCalledTimes(1);
@@ -385,12 +407,54 @@ describe("POST /api/agentic-wallet/feedback -- KEEP-515 retry recovery", () => {
     expect(mockInsertReturning).not.toHaveBeenCalled();
     expect(mockUpdateWhere).toHaveBeenCalled();
     // Same reuse transition as the forceBroadcast case -- a plain retry must
-    // reset the stranded row to "pending" / error null, no flag required.
+    // reset the stranded row to "pending" / error null and refresh the
+    // input-derived fields, no flag required.
+    expect(mockUpdateSet).toHaveBeenNthCalledWith(
+      1,
+      REUSE_SET_PAYLOAD_FOR_VALID_BODY
+    );
+    expect(mockBroadcastSignedTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("overwrites stale value/comment/agentId on the reused row when a retry changes them -- the served JSON must match the committed hash", async () => {
+    // The stranded row was created from VALID_BODY (value 5 / "great run"),
+    // but the caller now retries with different content. The on-chain
+    // feedbackHash is computed from THIS request, and /api/feedback/[id]
+    // rebuilds the served JSON from the persisted row -- so the reuse
+    // update().set(...) MUST persist the new values, or the two diverge and
+    // the ERC-8004 hash verification breaks.
+    queueSelects([
+      {
+        id: EXISTING_FEEDBACK_ID,
+        txHash: null,
+        status: "failed",
+        createdAt: EXISTING_CREATED_AT,
+      },
+    ]);
+
+    const res = await callFeedback({
+      executionId: TEST_EXECUTION_ID,
+      value: "1",
+      valueDecimals: 2,
+      comment: "actually a bad run",
+      agentId: "999",
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockInsertReturning).not.toHaveBeenCalled();
+    // The reuse .set(...) carries the NEW input, not the stranded row's
+    // original VALID_BODY values.
     expect(mockUpdateSet).toHaveBeenNthCalledWith(1, {
       status: "pending",
       error: null,
+      workflowId: TEST_WORKFLOW_ID,
+      agentChainId: ETHEREUM_MAINNET_CHAIN_ID,
+      agentId: "999",
+      value: "1",
+      valueDecimals: 2,
+      comment: "actually a bad run",
+      txChainId: ETHEREUM_MAINNET_CHAIN_ID,
     });
-    expect(mockBroadcastSignedTransaction).toHaveBeenCalledTimes(1);
   });
 
   it("leaves the row retryable (status failed, txHash still null) and returns RPC_UPSTREAM when the broadcast fails", async () => {
