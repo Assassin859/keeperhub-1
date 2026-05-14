@@ -388,6 +388,7 @@ function buildConfigFieldsFromAction(
     label: "Protocol Metadata",
     type: "text",
     defaultValue: metaValue,
+    hidden: true,
   });
 
   return fields;
