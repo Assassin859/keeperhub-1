@@ -481,7 +481,7 @@ describe("DISPATCH_FAILURE_RE shape (synthesized ethers errors)", () => {
       action: "estimateGas",
       data: "0x",
       reason: null,
-      transaction: { to: TEST_ADDRESS },
+      transaction: { data: "0xdeadbeef", to: TEST_ADDRESS },
       invocation: null,
       revert: null,
     });
@@ -498,7 +498,7 @@ describe("DISPATCH_FAILURE_RE shape (synthesized ethers errors)", () => {
         action: "estimateGas",
         data: "0x08c379a0deadbeef",
         reason: "X",
-        transaction: { to: TEST_ADDRESS },
+        transaction: { data: "0xdeadbeef", to: TEST_ADDRESS },
         invocation: null,
         revert: { args: ["X"], name: "Error", signature: "Error(string)" },
       }
@@ -550,7 +550,7 @@ describe("DISPATCH_FAILURE_RE shape (synthesized ethers errors)", () => {
         action: "estimateGas",
         data: "0x08c379a00000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000001a43616c6c5574696c733a20746172676574207265766572742829000000000000",
         reason: "CallUtils: target revert()",
-        transaction: { to: TEST_ADDRESS },
+        transaction: { data: "0xdeadbeef", to: TEST_ADDRESS },
         invocation: null,
         revert: {
           args: ["CallUtils: target revert()"],
