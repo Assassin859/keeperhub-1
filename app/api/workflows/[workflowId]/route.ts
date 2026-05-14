@@ -13,8 +13,13 @@ import {
 } from "@/lib/mcp/listing-validators";
 import { syncWorkflowSchedule } from "@/lib/schedule-service";
 import { sanitizeDescription } from "@/lib/sanitize-description";
+import { getWorkflowAccess } from "@/lib/workflow/access";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
 import { isReservedSlug } from "@/lib/workflow/reserved-slugs";
+import {
+  formatActionConfigValidationResponse,
+  validateWorkflowActionConfigs,
+} from "@/lib/workflow/validation/action-config";
 import { findInvalidTemplateTokens } from "@/lib/workflow/validation/template-syntax";
 async function fetchWorkflowPublicTags(
   workflowId: string
@@ -87,26 +92,24 @@ export async function GET(
       );
     }
 
-    const isOwner = userId === workflow.userId;
-
-    // Check organization membership for private workflows
-    const isSameOrg =
-      !workflow.isAnonymous &&
-      workflow.organizationId &&
-      organizationId === workflow.organizationId;
+    const access = await getWorkflowAccess(workflow, {
+      userId,
+      organizationId,
+      authMethod: authContext.authMethod,
+    });
 
     // Access control:
     // - Public workflows: anyone can view (sanitized)
     // - Private workflows: owner or org member can view
     // - Anonymous workflows: only owner can view
-    if (!isOwner && workflow.visibility !== "public" && !isSameOrg) {
+    if (!access.hasFullAccess && workflow.visibility !== "public") {
       return NextResponse.json(
         { error: "Workflow not found" },
         { status: 404 }
       );
     }
 
-    const hasFullAccess = isOwner || isSameOrg;
+    const hasFullAccess = access.hasFullAccess;
 
     const workflowTags = await fetchWorkflowPublicTags(workflowId);
 
@@ -206,7 +209,8 @@ function isValidVisibility(visibility: unknown): boolean {
 async function validateWorkflowAccess(
   workflowId: string,
   userId: string | null,
-  organizationId: string | null
+  organizationId: string | null,
+  authMethod: "api-key" | "oauth" | "session"
 ): Promise<{
   workflow: typeof workflows.$inferSelect | null;
   hasAccess: boolean;
@@ -219,15 +223,15 @@ async function validateWorkflowAccess(
     return { workflow: null, hasAccess: false };
   }
 
-  const isOwner = userId ? existingWorkflow.userId === userId : false;
-  const isSameOrg =
-    !existingWorkflow.isAnonymous &&
-    existingWorkflow.organizationId &&
-    organizationId === existingWorkflow.organizationId;
+  const access = await getWorkflowAccess(existingWorkflow, {
+    userId,
+    organizationId,
+    authMethod,
+  });
 
   return {
     workflow: existingWorkflow,
-    hasAccess: isOwner || Boolean(isSameOrg),
+    hasAccess: access.hasFullAccess,
   };
 }
 
@@ -283,7 +287,12 @@ export async function PATCH(
 
     const { userId, organizationId } = authContext;
     const { workflow: existingWorkflow, hasAccess } =
-      await validateWorkflowAccess(workflowId, userId, organizationId);
+      await validateWorkflowAccess(
+        workflowId,
+        userId,
+        organizationId,
+        authContext.authMethod
+      );
 
     if (!(existingWorkflow && hasAccess)) {
       return NextResponse.json(
@@ -294,20 +303,7 @@ export async function PATCH(
 
     const body = await request.json();
 
-    // Validate that all integrationIds in nodes belong to the current user
     if (Array.isArray(body.nodes)) {
-      const validation = await validateWorkflowIntegrations(
-        body.nodes,
-        userId || existingWorkflow.userId,
-        organizationId
-      );
-      if (!validation.valid) {
-        return NextResponse.json(
-          { error: "Invalid integration references in workflow" },
-          { status: 403 }
-        );
-      }
-
       // KEEP-468: parse every `{{...}}` token at save time so grammar typos
       // (the n8n-style `{{$trigger.input.ts}}`-shaped errors that produced
       // on-chain corruption during the hackathon) are rejected with line/path
@@ -403,6 +399,32 @@ export async function PATCH(
     }
 
     const updateData = buildUpdateData(body);
+
+    if (Array.isArray(updateData.nodes)) {
+      // Validate the exact shape that will be persisted. The sanitizer moves
+      // misplaced root fields into data.config, including integrationId.
+      const validation = await validateWorkflowIntegrations(
+        updateData.nodes,
+        userId || existingWorkflow.userId,
+        organizationId
+      );
+      if (!validation.valid) {
+        return NextResponse.json(
+          { error: "Invalid integration references in workflow" },
+          { status: 403 }
+        );
+      }
+
+      const actionConfigValidation = validateWorkflowActionConfigs(
+        updateData.nodes
+      );
+      if (!actionConfigValidation.valid) {
+        return NextResponse.json(
+          formatActionConfigValidationResponse(actionConfigValidation),
+          { status: 422 }
+        );
+      }
+    }
 
     // Set listedAt server-side on first listing (never from client, never cleared on unlist)
     if (body.isListed === true && existingWorkflow.listedAt === null) {
@@ -589,7 +611,8 @@ export async function DELETE(
     const { hasAccess } = await validateWorkflowAccess(
       workflowId,
       userId,
-      organizationId
+      organizationId,
+      authContext.authMethod
     );
 
     if (!hasAccess) {

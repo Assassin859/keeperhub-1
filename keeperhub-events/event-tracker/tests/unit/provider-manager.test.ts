@@ -14,9 +14,6 @@ interface SendCall {
 }
 
 class MockProvider {
-  // Vitest's vi.fn provides better assertions (toHaveBeenCalledWith) than a plain
-  // Promise.resolve would, and the field is still awaitable.
-  ready: Promise<void> = Promise.resolve();
   public sendCalls: SendCall[] = [];
   public sendResponses: unknown[] = [];
   public blockNumberResponses: Array<number | Error> = [];
@@ -46,6 +43,10 @@ class MockProvider {
     } else if (event === "error" && this.errorHandler === handler) {
       this.errorHandler = null;
     }
+  }
+
+  async getBlockNumber(): Promise<number> {
+    return (await this.send("eth_blockNumber", [])) as number;
   }
 
   async send(method: string, params: unknown[]): Promise<unknown> {
@@ -1229,15 +1230,20 @@ describe("ChainProviderManager", () => {
       // Heartbeat is subscriber-scoped: creating a provider without
       // subscribing leaves it silent. Previously the heartbeat started
       // on provider creation, wasting RPC calls on idle providers.
+      // Baseline after connect so the initial connect probe (a single
+      // getBlockNumber call inside openProvider) is not counted as a ping.
       await manager.getOrCreateProvider(CHAIN_A, "ws://a");
       const provider = factoryBundle.created[0];
+      const pingsBefore = provider.sendCalls.filter(
+        (c) => c.method === "eth_blockNumber",
+      ).length;
 
       await vi.advanceTimersByTimeAsync(60_000);
 
-      const pings = provider.sendCalls.filter(
+      const pingsAfter = provider.sendCalls.filter(
         (c) => c.method === "eth_blockNumber",
       ).length;
-      expect(pings).toBe(0);
+      expect(pingsAfter).toBe(pingsBefore);
     });
 
     it("pings eth_blockNumber periodically once a subscriber is added", async () => {

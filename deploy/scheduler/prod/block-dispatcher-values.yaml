@@ -35,6 +35,9 @@ serviceAccount:
 
 podAnnotations:
   reloader.stakater.com/auto: "true"
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "3000"
+  prometheus.io/path: "/metrics"
 
 resources:
   limits:

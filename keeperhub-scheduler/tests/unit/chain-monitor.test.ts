@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChainMonitor } from "../../block-dispatcher/chain-monitor.js";
+import { metrics, registry } from "../../lib/metrics.js";
 import type { BlockWorkflow, ChainConfig } from "../../lib/types.js";
 
 // ---------------------------------------------------------------------------
@@ -153,6 +154,13 @@ describe("ChainMonitor", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    // Reset env stubs so per-test overrides (BLOCK_ADVANCE_TIMEOUT_MS,
+    // SILENT_FAILOVER_THRESHOLD, SOCKET_MAX_AGE_MS) do not leak into later
+    // tests and trigger timers earlier than the test under test expects.
+    vi.unstubAllEnvs();
+    // Metrics registry is process-global; reset between tests so per-chain
+    // counters and snapshots from one test don't leak into the next.
+    metrics.resetForTests();
   });
 
   function latestProvider(): MockProvider {
@@ -631,6 +639,71 @@ describe("ChainMonitor", () => {
       expect(monitor.isAlive()).toBe(true);
     });
 
+    it("flips to fallback after SILENT_FAILOVER_THRESHOLD silent reconnects on primary", async () => {
+      // Half-open-subscription scenario:
+      //  - primary connects fine (getBlockNumber resolves)
+      //  - eth_subscribe is accepted (provider.on resolves)
+      //  - but newHeads is silent forever (we never call emitBlock on it)
+      // After SILENT_FAILOVER_THRESHOLD BLOCK_ADVANCE_TIMEOUT_MS firings on
+      // primary, the monitor flips to fallback for the next reconnect.
+      vi.stubEnv("BLOCK_ADVANCE_TIMEOUT_MS", "200");
+      vi.stubEnv("SILENT_FAILOVER_THRESHOLD", "2");
+      // Disable the primary-recovery probe so it does not swap us back to
+      // primary mid-test once we are on fallback.
+      vi.stubEnv("PRIMARY_PROBE_INTERVAL_MS", "600000");
+
+      const monitor = new ChainMonitor({
+        chain: makeChain(),
+        workflows: [makeWorkflow()],
+      });
+
+      await monitor.start();
+      expect(latestProvider().url).toBe("wss://primary.test");
+      expect(providerInstances).toHaveLength(1);
+
+      // First silent window: noBlockTimer fires (silentReconnects=1),
+      // reconnect waits 1s backoff, lands back on primary (below threshold).
+      await vi.advanceTimersByTimeAsync(1_400);
+      expect(latestProvider().url).toBe("wss://primary.test");
+      expect(providerInstances.length).toBeGreaterThanOrEqual(2);
+
+      // Second silent window: noBlockTimer fires (silentReconnects=2),
+      // reconnect waits 1s backoff, maybeFlipUrlPreference() flips to
+      // fallback, connect lands on fallback URL.
+      await vi.advanceTimersByTimeAsync(1_400);
+      expect(latestProvider().url).toBe("wss://fallback.test");
+      expect(monitor.isAlive()).toBe(true);
+
+      await monitor.stop();
+    });
+
+    it("does not flip when fallback URL is not configured", async () => {
+      // If only a primary URL is configured, there is nowhere to flip to.
+      // The monitor must keep reconnecting to the same URL without crashing.
+      vi.stubEnv("BLOCK_ADVANCE_TIMEOUT_MS", "200");
+      vi.stubEnv("SILENT_FAILOVER_THRESHOLD", "2");
+      vi.stubEnv("PRIMARY_PROBE_INTERVAL_MS", "600000");
+
+      const monitor = new ChainMonitor({
+        chain: makeChain({ defaultFallbackWss: null }),
+        workflows: [makeWorkflow()],
+      });
+
+      await monitor.start();
+      expect(latestProvider().url).toBe("wss://primary.test");
+
+      // Two silent windows; even past the threshold, still primary.
+      await vi.advanceTimersByTimeAsync(1_400);
+      await vi.advanceTimersByTimeAsync(1_400);
+
+      const urls = providerInstances.map((p) => p.url);
+      for (const url of urls) {
+        expect(url).toBe("wss://primary.test");
+      }
+
+      await monitor.stop();
+    });
+
     it("does not propagate ws 'error' as an uncaughtException", async () => {
       // Sanity check that the listener attached in connect() consumes the
       // error. Without the listener, EventEmitter would re-throw because
@@ -660,6 +733,58 @@ describe("ChainMonitor", () => {
       });
 
       await expect(monitor.start()).resolves.toBeUndefined();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Metrics integration — verify the monitor actually drives the prom-client
+  // registry at the right lifecycle points. Detailed assertions on the
+  // metrics themselves live in metrics.test.ts; here we only confirm wiring.
+  // -------------------------------------------------------------------------
+
+  describe("metrics integration", () => {
+    it("increments blocks_received_total and updates last_processed_block on advance", async () => {
+      const monitor = new ChainMonitor({
+        chain: makeChain(),
+        workflows: [makeWorkflow({ blockInterval: 1 })],
+      });
+
+      await monitor.start();
+      latestProvider().emitBlock(123);
+      await vi.advanceTimersByTimeAsync(0);
+
+      const text = await registry.metrics();
+      expect(text).toContain(
+        'keeperhub_block_dispatcher_blocks_received_total{chain="TestChain"} 1',
+      );
+      expect(text).toContain(
+        'keeperhub_block_dispatcher_last_processed_block{chain="TestChain"} 123',
+      );
+      expect(text).toContain(
+        'keeperhub_block_dispatcher_has_active_subscription{chain="TestChain"} 1',
+      );
+
+      await monitor.stop();
+    });
+
+    it("records ws_close with reason=upstream_close on a WebSocket close event", async () => {
+      const monitor = new ChainMonitor({
+        chain: makeChain(),
+        workflows: [makeWorkflow()],
+      });
+
+      await monitor.start();
+      latestProvider().websocket.emit("close");
+      // Let handleDisconnect run synchronously through the microtask queue
+      // but don't advance long enough for reconnect-with-backoff to land.
+      await vi.advanceTimersByTimeAsync(10);
+
+      const text = await registry.metrics();
+      expect(text).toContain(
+        'keeperhub_block_dispatcher_ws_closes_total{chain="TestChain",reason="upstream_close"} 1',
+      );
+
+      await monitor.stop();
     });
   });
 

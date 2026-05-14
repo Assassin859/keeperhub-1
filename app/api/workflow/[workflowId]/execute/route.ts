@@ -14,6 +14,7 @@ import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
 import { workflowExecutions, workflows } from "@/lib/db/schema";
+import { getWorkflowAccess } from "@/lib/workflow/access";
 import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
@@ -125,6 +126,19 @@ export async function POST(
       }
 
       userId = workflow.userId;
+
+      const access = await getWorkflowAccess(workflow, {
+        userId,
+        organizationId: null,
+        authMethod: "internal",
+      });
+
+      if (!access.hasFullAccess) {
+        return NextResponse.json(
+          { error: "Workflow not found" },
+          { status: 404 }
+        );
+      }
     } else {
       const authContext = await getDualAuthContext(request);
       if ("error" in authContext) {
@@ -145,14 +159,17 @@ export async function POST(
         );
       }
 
-      const isOwner = authContext.authMethod === "session" && workflow.userId === authContext.userId;
-      const isSameOrg =
-        !workflow.isAnonymous &&
-        workflow.organizationId &&
-        authContext.organizationId === workflow.organizationId;
+      const access = await getWorkflowAccess(workflow, {
+        userId: authContext.userId,
+        organizationId: authContext.organizationId,
+        authMethod: authContext.authMethod,
+      });
 
-      if (!(isOwner || isSameOrg)) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      if (!access.hasFullAccess) {
+        return NextResponse.json(
+          { error: "Workflow not found" },
+          { status: 404 }
+        );
       }
 
       userId = authContext.userId ?? workflow.userId;

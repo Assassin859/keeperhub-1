@@ -189,6 +189,48 @@ Billing-aware observability layered onto the org model. Plan distribution, per-o
 
 ---
 
+## 6. BLOCK DISPATCHER
+
+Per-chain liveness, subscription health, and SQS enqueue signals from the block-dispatcher pod (`keeperhub-scheduler/block-dispatcher`). All metrics live in the dispatcher's own in-process Prometheus registry exposed at `:3000/metrics` (separate from the main app's `/api/metrics`). Source code: `keeperhub-scheduler/lib/metrics.ts`.
+
+The dashboard and alert rules for these metrics are defined in `techops-infrastructure/grafana/keeperhub-dashboards/` (separate Terraform PR).
+
+### Gauges
+
+| Metric Name | Description | Labels | Alert-worthy? |
+|-------------|-------------|--------|---------------|
+| `keeperhub_block_dispatcher_seconds_since_last_block` | Wall-clock seconds since this chain's lastProcessedBlock last advanced. THE primary alert signal — fires high when newHeads stops flowing even though the WSS appears alive. Computed at scrape time. | `chain` | YES — page if > 120s |
+| `keeperhub_block_dispatcher_socket_age_seconds` | Wall-clock seconds since the current WSS subscription was established. Resets to 0 on every reconnect. | `chain` | no (debug) |
+| `keeperhub_block_dispatcher_is_alive` | 0/1 mirroring `ChainMonitor.isAlive()`: running && hasSubscription && not stuck-reconnecting && not block-advance-stale. | `chain` | warn if 0 for >2 min |
+| `keeperhub_block_dispatcher_is_reconnecting` | 1 when mid reconnect-with-backoff, 0 otherwise. | `chain` | no (debug) |
+| `keeperhub_block_dispatcher_has_active_subscription` | 1 when eth_subscribe('newHeads') has completed and the callback is wired. | `chain` | no (debug) |
+| `keeperhub_block_dispatcher_current_url_index` | 0 = primary, 1 = fallback. Tracks KEEP-557 silent-subscription failovers and primary-probe recoveries. | `chain` | no (debug) |
+| `keeperhub_block_dispatcher_silent_reconnects_current` | Consecutive BLOCK_ADVANCE_TIMEOUT_MS firings on the current URL with no height advance in between. Resets to 0 on real height advance or URL flip. Early warning for upstream flakiness. | `chain` | warn if >= 1 for >5 min |
+| `keeperhub_block_dispatcher_last_processed_block` | Highest block number this monitor has processed on the chain. | `chain` | no (debug) |
+| `keeperhub_block_dispatcher_workflows_tracked` | Number of block-trigger workflows the monitor is tracking on this chain. | `chain` | no (debug) |
+| `keeperhub_block_dispatcher_chains_monitored` | Total chains the pod is monitoring. | - | warn if 0 |
+
+### Counters
+
+| Metric Name | Description | Labels |
+|-------------|-------------|--------|
+| `keeperhub_block_dispatcher_blocks_received_total` | Blocks processed after dedup (height-advance) per chain. `rate()` gives block delivery rate; flatline means subscription silent. | `chain` |
+| `keeperhub_block_dispatcher_blocks_matched_total` | Blocks that matched at least one workflow's `blockInterval`. `workflow_id` intentionally omitted to keep cardinality bounded. | `chain` |
+| `keeperhub_block_dispatcher_ws_closes_total` | WebSocket closures per chain by trigger reason. | `chain`, `reason` (`upstream_close`, `pong_timeout`, `block_advance_timeout`, `socket_age_recycle`, `silent_failover`, `ping_send_failure`, `primary_probe_recovered`) |
+| `keeperhub_block_dispatcher_reconnects_total` | Reconnect-with-backoff completions. | `chain`, `outcome` (`success`, `exhausted`) |
+| `keeperhub_block_dispatcher_url_flips_total` | Auto-failover URL flips (KEEP-557). | `chain`, `direction` (`to_fallback`, `to_primary`) |
+| `keeperhub_block_dispatcher_sqs_enqueue_total` | Workflow trigger enqueue attempts. Error rate climbing indicates an SQS/IAM/network issue downstream. | `chain`, `outcome` (`success`, `error`) |
+| `keeperhub_block_dispatcher_unhandled_rejections_total` | Process-level unhandled promise rejections absorbed by the safety-net handler. Most common source: ethers v6 destroyProvider eth_unsubscribe cancellation. | - |
+
+### Histograms
+
+| Metric Name | Description | Labels | Buckets (ms) |
+|-------------|-------------|--------|--------------|
+| `keeperhub_block_dispatcher_reconnect_duration_ms` | Time from `handleDisconnect()` to next `Block subscription active`. | `chain` | 100, 500, 1000, 2000, 5000, 10000, 30000, 60000, 120000 |
+| `keeperhub_block_dispatcher_block_lag_seconds` | `wall_clock - block.timestamp` when the block was received. p95 > 30s on a fast chain indicates upstream lag. | `chain` | 1, 2, 5, 10, 30, 60, 120, 300 |
+
+---
+
 ## Label Keys Reference
 
 | Label Key | Description | Example Values |
