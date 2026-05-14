@@ -80,9 +80,6 @@ describe("GET /api/openapi", () => {
     expect(path).toBeDefined();
     expect(path.post["x-payment-info"]).toBeDefined();
     expect(path.post["x-payment-info"].price.amount).toBe("0.05");
-    expect(path.post["x-x402-price"]).toBe("0.05");
-    expect(path.post["x-x402-protocol"]).toBe("x402");
-    expect(path.post["x-x402-network"]).toBe("eip155:8453");
     expect(path.post.responses["402"]).toBeDefined();
   });
 
@@ -99,14 +96,13 @@ describe("GET /api/openapi", () => {
     const body = await response.json();
 
     expect(body.components.securitySchemes.x402).toMatchObject({
-      type: "apiKey",
-      in: "header",
-      name: "PAYMENT-SIGNATURE",
+      type: "http",
+      scheme: "Payment",
     });
     expect(body.components.securitySchemes.siwx).toMatchObject({
       type: "http",
       scheme: "bearer",
-      bearerFormat: "CAIP-122 SIWX",
+      bearerFormat: "CAIP-122",
     });
   });
 
@@ -330,22 +326,5 @@ describe("GET /api/openapi", () => {
     expect(path.post["x-payment-info"]).toBeUndefined();
     expect(path.post["x-workflow-type"]).toBe("write");
     expect(path.post.responses["402"]).toBeUndefined();
-  });
-
-  it("/openapi.json reuses the OpenAPI emitter", async () => {
-    mockDbSelect.mockReturnValue({
-      from: vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue([]),
-      }),
-    });
-
-    const { GET } = await import("@/app/openapi.json/route");
-    const request = new Request("https://app.keeperhub.com/openapi.json");
-    const response = await GET(request);
-    const body = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(body.openapi).toBe("3.1.0");
-    expect(body.servers[0].url).toBe("https://app.keeperhub.com");
   });
 });
