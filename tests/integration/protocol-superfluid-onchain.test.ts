@@ -387,6 +387,40 @@ describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
     expect(msg).toBe("");
   }, 15_000);
 
+  // -- Reroute regression --------------------------------------------------
+
+  it("reroute regression: misdispatched calldata triggers DISPATCH_FAILURE_RE", async () => {
+    // Acceptance criterion #2 of KEEP-459: "no test passes when its
+    // action is silently re-routed to a non-existent contract method."
+    //
+    // Reproduces the KEEP-456 failure mode end-to-end against the live
+    // Sepolia RPC: take a currently-passing action (grant-flow-operator,
+    // which routes correctly to the CFAv1Forwarder), then override its
+    // destination to SEPOLIA_FUSDC -- a real ERC20 contract that exists
+    // on chain but has no Superfluid methods. The EVM returns from the
+    // dispatch with empty revert data (no fallback, no matching selector),
+    // and ethers surfaces it as `missing revert data ... code=CALL_EXCEPTION`.
+    //
+    // If DISPATCH_FAILURE_RE is ever weakened or removed, this test fails
+    // -- which is the whole point. This is the load-bearing assertion of
+    // the hardening, validated against a real RPC rather than a regex
+    // shape sample.
+    const msg = await estimateGasError(
+      "grant-flow-operator",
+      {
+        token: SEPOLIA_FUSDCX,
+        flowOperator: TEST_OPERATOR,
+        permissions: DUMMY_PERMISSIONS_ALL,
+        flowRateAllowance: DUMMY_FLOW_RATE,
+      },
+      SEPOLIA_FUSDC
+    );
+    // Sanity: must not be the empty-string "simulated" case.
+    expect(msg).not.toBe("");
+    // The actual guard: a real misroute must surface as a dispatch failure.
+    expect(msg).toMatch(DISPATCH_FAILURE_RE);
+  }, 15_000);
+
   // -- Coverage check ------------------------------------------------------
 
   it("every declared action has at least one dispatch test in this file", () => {
