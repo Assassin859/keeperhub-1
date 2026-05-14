@@ -115,7 +115,7 @@ describe.skipIf(!RPC_URL)("Rocket Pool on-chain integration", () => {
   it("getExchangeRate: eth_call returns a non-zero uint256", async () => {
     const { to, data, contract } = buildCalldata(
       rocketPoolDef,
-      "get-reth-exchange-rate",
+      "get-exchange-rate",
       {}
     );
 
@@ -135,7 +135,7 @@ describe.skipIf(!RPC_URL)("Rocket Pool on-chain integration", () => {
   it("balanceOf: eth_call returns a decodable uint256", async () => {
     const { to, data, contract } = buildCalldata(
       rocketPoolDef,
-      "get-reth-balance",
+      "balance-of",
       { account: TEST_ADDRESS }
     );
 
@@ -152,7 +152,7 @@ describe.skipIf(!RPC_URL)("Rocket Pool on-chain integration", () => {
   it("totalSupply: eth_call returns a non-zero uint256", async () => {
     const { to, data, contract } = buildCalldata(
       rocketPoolDef,
-      "get-reth-total-supply",
+      "total-supply",
       {}
     );
 
@@ -191,7 +191,7 @@ describe.skipIf(!RPC_URL)("Rocket Pool on-chain integration", () => {
   }, 15_000);
 
   it("burn: deployed bytecode accepts the calldata", async () => {
-    const { to, data } = buildCalldata(rocketPoolDef, "burn-reth", {
+    const { to, data } = buildCalldata(rocketPoolDef, "burn", {
       amount: "1000000000000000000",
     });
 

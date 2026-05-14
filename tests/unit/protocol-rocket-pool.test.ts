@@ -107,7 +107,7 @@ describe("Rocket Pool Protocol Definition", () => {
 
   it("getExchangeRate has 1 output matching rETH return value", () => {
     const action = rocketPoolDef.actions.find(
-      (a) => a.slug === "get-reth-exchange-rate"
+      (a) => a.slug === "get-exchange-rate"
     );
     expect(action).toBeDefined();
     expect(action?.outputs).toHaveLength(1);
@@ -116,9 +116,7 @@ describe("Rocket Pool Protocol Definition", () => {
   });
 
   it("balanceOf has 1 output matching ERC-20 return value", () => {
-    const action = rocketPoolDef.actions.find(
-      (a) => a.slug === "get-reth-balance"
-    );
+    const action = rocketPoolDef.actions.find((a) => a.slug === "balance-of");
     expect(action).toBeDefined();
     expect(action?.outputs).toHaveLength(1);
     const outputNames = action?.outputs?.map((o) => o.name);
@@ -127,7 +125,7 @@ describe("Rocket Pool Protocol Definition", () => {
 
   it("totalSupply has 1 output", () => {
     const action = rocketPoolDef.actions.find(
-      (a) => a.slug === "get-reth-total-supply"
+      (a) => a.slug === "total-supply"
     );
     expect(action).toBeDefined();
     expect(action?.outputs).toHaveLength(1);
@@ -166,7 +164,7 @@ describe("Rocket Pool Protocol Definition", () => {
   });
 
   it("write actions do not surface ABI-derived outputs as UI template suggestions (KEEP-296)", () => {
-    for (const slug of ["burn-reth", "deposit"]) {
+    for (const slug of ["burn", "deposit"]) {
       const action = rocketPoolDef.actions.find((a) => a.slug === slug);
       expect(action, `action "${slug}" not found`).toBeDefined();
       if (!action) {
@@ -188,8 +186,8 @@ describe("Rocket Pool Protocol Definition", () => {
     }
   });
 
-  it("burn-reth renames the on-chain _rethAmount parameter to 'amount'", () => {
-    const burn = rocketPoolDef.actions.find((a) => a.slug === "burn-reth");
+  it("burn renames the on-chain _rethAmount parameter to 'amount'", () => {
+    const burn = rocketPoolDef.actions.find((a) => a.slug === "burn");
     expect(burn).toBeDefined();
     expect(burn?.function).toBe("burn");
     expect(burn?.inputs).toHaveLength(1);
