@@ -176,18 +176,48 @@ describe("block dispatcher metrics", () => {
       expect(value).toBeLessThan(10);
     });
 
-    it("forgetChain drops snapshots so closed chains no longer appear", async () => {
-      metrics.setLastBlockAdvanceAt("Ethereum Mainnet", Date.now());
-      metrics.setSubscribedAt("Ethereum Mainnet", Date.now());
-      metrics.forgetChain("Ethereum Mainnet");
+    it("forgetChain drops every per-chain gauge labelset so closed chains disappear from /metrics", async () => {
+      // Populate every per-chain gauge for two chains so we can confirm that
+      // forgetChain only wipes the one we asked for.
+      const now = Date.now();
+      for (const chain of ["Ethereum Mainnet", "Avalanche"]) {
+        metrics.setLastBlockAdvanceAt(chain, now);
+        metrics.setSubscribedAt(chain, now);
+        metrics.setIsAlive(chain, true);
+        metrics.setIsReconnecting(chain, false);
+        metrics.setHasActiveSubscription(chain, true);
+        metrics.setCurrentUrlIndex(chain, 0);
+        metrics.setSilentReconnectsCurrent(chain, 0);
+        metrics.setLastProcessedBlock(chain, 100);
+        metrics.setWorkflowsTracked(chain, 1);
+      }
 
+      metrics.forgetChain("Ethereum Mainnet");
       const text = await registry.metrics();
-      expect(text).not.toContain(
-        'keeperhub_block_dispatcher_seconds_since_last_block{chain="Ethereum Mainnet"}',
-      );
-      expect(text).not.toContain(
-        'keeperhub_block_dispatcher_socket_age_seconds{chain="Ethereum Mainnet"}',
-      );
+
+      // No labelset for the forgotten chain anywhere. Without forgetChain
+      // calling .remove() on each gauge, prom-client would keep emitting the
+      // last value of these labels forever — exactly the behaviour that
+      // would make the alert fire for chains we no longer monitor.
+      for (const gaugeName of [
+        "seconds_since_last_block",
+        "socket_age_seconds",
+        "is_alive",
+        "is_reconnecting",
+        "has_active_subscription",
+        "current_url_index",
+        "silent_reconnects_current",
+        "last_processed_block",
+        "workflows_tracked",
+      ]) {
+        expect(text).not.toContain(
+          `keeperhub_block_dispatcher_${gaugeName}{chain="Ethereum Mainnet"}`,
+        );
+        // The other chain stays.
+        expect(text).toContain(
+          `keeperhub_block_dispatcher_${gaugeName}{chain="Avalanche"}`,
+        );
+      }
     });
   });
 

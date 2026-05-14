@@ -225,8 +225,23 @@ export const metrics = {
   setSubscribedAt(chain: string, atMs: number | null): void {
     readSnapshot(chain).subscribedAt = atMs;
   },
+  // Remove every per-chain gauge labelset so a chain that is no longer
+  // monitored disappears entirely from /metrics output. Without this, the
+  // gauges would retain the last-set value of each label combination forever
+  // (prom-client's default behaviour), causing alerts to fire indefinitely
+  // for chains we are no longer monitoring. Counters and histograms are not
+  // reset — their cumulative history is more useful than empty post-stop.
   forgetChain(chain: string): void {
     livenessSnapshotByChain.delete(chain);
+    secondsSinceLastBlock.remove({ chain });
+    socketAgeSeconds.remove({ chain });
+    isAlive.remove({ chain });
+    isReconnecting.remove({ chain });
+    hasActiveSubscription.remove({ chain });
+    currentUrlIndex.remove({ chain });
+    silentReconnectsCurrent.remove({ chain });
+    lastProcessedBlock.remove({ chain });
+    workflowsTracked.remove({ chain });
   },
 
   // Discrete gauges (called when ChainMonitor flips a boolean / counter).

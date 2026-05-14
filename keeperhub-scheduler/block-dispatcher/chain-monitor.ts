@@ -220,11 +220,10 @@ export class ChainMonitor {
     this.silentReconnects = 0;
     this.stopTimers();
     await this.destroyProvider();
-    metrics.setIsAlive(this.chainName, false);
-    metrics.setIsReconnecting(this.chainName, false);
-    metrics.setHasActiveSubscription(this.chainName, false);
-    metrics.setSilentReconnectsCurrent(this.chainName, 0);
-    metrics.setWorkflowsTracked(this.chainName, 0);
+    // forgetChain() removes every per-chain gauge labelset, so the chain
+    // disappears entirely from /metrics output. No need to flip individual
+    // gauges to 0 first — that would leave residual labels behind. Counters
+    // and histograms keep their cumulative history.
     metrics.forgetChain(this.chainName);
   }
 
