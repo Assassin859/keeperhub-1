@@ -3,6 +3,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { type ApiKeyAuthResult, authenticateApiKey } from "@/lib/api-key-auth";
 import { McpEventStore } from "@/lib/mcp/event-store";
+import { getInternalApiBaseUrl } from "@/lib/mcp/internal-url";
 import { logMcpEvent } from "@/lib/mcp/logging";
 import { authenticateOAuthToken } from "@/lib/mcp/oauth-auth";
 import { checkMcpRateLimit } from "@/lib/mcp/rate-limit";
@@ -177,7 +178,7 @@ function buildSession(
   organizationId: string,
   apiKeyId: string,
   scope: string | undefined,
-  baseUrl: string,
+  internalApiBaseUrl: string,
   authHeader: string
 ): BuiltSession {
   const eventStore = new McpEventStore();
@@ -197,7 +198,7 @@ function buildSession(
     enableJsonResponse: true,
   });
 
-  const server = createMcpServer(baseUrl, authHeader, scope);
+  const server = createMcpServer(internalApiBaseUrl, authHeader, scope);
 
   const entry: SessionEntry = {
     transport,
@@ -278,7 +279,7 @@ async function resolveSession(
     orgId: organizationId,
   });
 
-  const baseUrl = getBaseUrl(request);
+  const internalApiBaseUrl = getInternalApiBaseUrl();
   // Re-derive the auth header from the current request so tool calls in this
   // reconstructed session use the caller's credentials.
   const authHeader = request.headers.get("authorization") ?? "";
@@ -287,7 +288,7 @@ async function resolveSession(
     organizationId,
     result.payload.key,
     result.payload.scope,
-    baseUrl,
+    internalApiBaseUrl,
     authHeader
   );
 
@@ -483,14 +484,14 @@ export async function POST(request: Request): Promise<Response> {
     scope,
   });
 
-  const baseUrl = getBaseUrl(request);
+  const internalApiBaseUrl = getInternalApiBaseUrl();
   const authHeader = request.headers.get("authorization") ?? "";
   const { transport, entry } = buildSession(
     newSessionId,
     organizationId,
     apiKeyId,
     scope,
-    baseUrl,
+    internalApiBaseUrl,
     authHeader
   );
 
