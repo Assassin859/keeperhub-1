@@ -77,6 +77,8 @@ type FeedbackRequestBody = {
   comment?: unknown;
   agentChainId?: unknown;
   agentId?: unknown;
+  // Part of the agentic-wallet client contract; see ValidatedInput.forceBroadcast.
+  forceBroadcast?: unknown;
 };
 
 type ValidatedInput = {
@@ -86,6 +88,10 @@ type ValidatedInput = {
   comment?: string;
   agentChainId: number;
   agentId: bigint;
+  // Accepted to honor the agentic-wallet client contract, but intentionally
+  // not branched on: a null-txHash feedback row is always retryable
+  // regardless of this flag, so the retry path is never gated on it.
+  forceBroadcast: boolean;
 };
 
 function badRequest(message: string, code = "BAD_INPUT"): NextResponse {
@@ -170,6 +176,7 @@ function validateInput(body: FeedbackRequestBody): ValidatedInput | string {
     comment: typeof body.comment === "string" ? body.comment : undefined,
     agentChainId,
     agentId,
+    forceBroadcast: body.forceBroadcast === true,
   };
 }
 
@@ -262,12 +269,29 @@ async function verifyExecutionAndPayer(args: {
   };
 }
 
-async function ensureNotAlreadyRated(args: {
+type ExistingFeedbackRow = {
+  id: string;
+  txHash: string | null;
+  status: string;
+  createdAt: Date;
+};
+
+// Returns the prior feedback row for this (execution, wallet) pair, if any.
+// The caller decides what to do with it: a row with a non-empty txHash is a
+// real on-chain rating (reject as ALREADY_RATED), but a row with a null
+// txHash is a stranded/in-flight attempt that must be reused so the user is
+// not permanently stuck (KEEP-515).
+async function findExistingFeedback(args: {
   executionId: string;
   payerWallet: string;
-}): Promise<NextResponse | null> {
+}): Promise<ExistingFeedbackRow | null> {
   const existing = await db
-    .select({ id: feedback.id })
+    .select({
+      id: feedback.id,
+      txHash: feedback.txHash,
+      status: feedback.status,
+      createdAt: feedback.createdAt,
+    })
     .from(feedback)
     .where(
       and(
@@ -276,17 +300,7 @@ async function ensureNotAlreadyRated(args: {
       )
     )
     .limit(1);
-  if (existing.length > 0) {
-    return NextResponse.json(
-      {
-        error: "Wallet has already submitted feedback for this execution",
-        code: "ALREADY_RATED",
-        feedbackId: existing[0]?.id,
-      },
-      { status: 409 }
-    );
-  }
-  return null;
+  return existing[0] ?? null;
 }
 
 async function buildAndSignTx(args: {
@@ -399,41 +413,66 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  const dup = await ensureNotAlreadyRated({
+  const existingRow = await findExistingFeedback({
     executionId: validated.executionId,
     payerWallet: wallet.walletAddress,
   });
-  if (dup) {
-    return dup;
+  // A row with a non-empty txHash is a real on-chain rating -- reject. A row
+  // with a null/empty txHash is a stranded or in-flight attempt (e.g. a
+  // broadcast that failed for lack of gas); reuse it so the caller can
+  // retry instead of being permanently locked out (KEEP-515). This retry is
+  // unconditional -- see the note on ValidatedInput.forceBroadcast.
+  if (existingRow?.txHash && existingRow.txHash.length > 0) {
+    return NextResponse.json(
+      {
+        error: "Wallet has already submitted feedback for this execution",
+        code: "ALREADY_RATED",
+        feedbackId: existingRow.id,
+      },
+      { status: 409 }
+    );
   }
 
-  // Insert feedback row first -- we need the id for the feedbackURI before
-  // we can compute the hash and build the giveFeedback call. We update the
-  // row with feedbackHash + txHash + status="broadcast" once we've signed
-  // and broadcast. If signing or broadcast fails, the row stays at status=
-  // "pending" with the error column set, providing a debug breadcrumb
-  // without re-issuing an id (the URI is already committed-to nowhere).
-  const inserted = await db
-    .insert(feedback)
-    .values({
-      executionId: validated.executionId,
-      workflowId: exec.workflowId,
-      agentChainId: validated.agentChainId,
-      agentId: validated.agentId.toString(),
-      payerWallet: wallet.walletAddress.toLowerCase(),
-      value: validated.value.toString(),
-      valueDecimals: validated.valueDecimals,
-      comment: validated.comment ?? null,
-      txChainId: validated.agentChainId,
-      status: "pending",
-    })
-    .returning({ id: feedback.id, createdAt: feedback.createdAt });
-  const newRow = inserted[0];
-  if (!newRow) {
-    return NextResponse.json(
-      { error: "Failed to insert feedback row" },
-      { status: 500 }
-    );
+  // We need a feedback row id before we can build the feedbackURI, compute
+  // the hash, and encode the giveFeedback call. On a fresh request we
+  // INSERT; on a retry of a stranded row we reuse the existing id and its
+  // original createdAt (so the already-derived feedbackURI stays stable)
+  // and reset its status to "pending" with the error cleared. Both paths
+  // produce the same downstream variables.
+  let feedbackId: string;
+  let feedbackCreatedAt: Date;
+  if (existingRow) {
+    await db
+      .update(feedback)
+      .set({ status: "pending", error: null })
+      .where(eq(feedback.id, existingRow.id));
+    feedbackId = existingRow.id;
+    feedbackCreatedAt = existingRow.createdAt;
+  } else {
+    const inserted = await db
+      .insert(feedback)
+      .values({
+        executionId: validated.executionId,
+        workflowId: exec.workflowId,
+        agentChainId: validated.agentChainId,
+        agentId: validated.agentId.toString(),
+        payerWallet: wallet.walletAddress.toLowerCase(),
+        value: validated.value.toString(),
+        valueDecimals: validated.valueDecimals,
+        comment: validated.comment ?? null,
+        txChainId: validated.agentChainId,
+        status: "pending",
+      })
+      .returning({ id: feedback.id, createdAt: feedback.createdAt });
+    const newRow = inserted[0];
+    if (!newRow) {
+      return NextResponse.json(
+        { error: "Failed to insert feedback row" },
+        { status: 500 }
+      );
+    }
+    feedbackId = newRow.id;
+    feedbackCreatedAt = newRow.createdAt;
   }
 
   // Compute the canonical feedbackURI JSON + its keccak256. The hash MUST
@@ -443,7 +482,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     agentChainId: validated.agentChainId,
     agentId: validated.agentId,
     clientAddress: wallet.walletAddress,
-    createdAt: newRow.createdAt,
+    createdAt: feedbackCreatedAt,
     value: validated.value,
     valueDecimals: validated.valueDecimals,
     comment: validated.comment,
@@ -462,7 +501,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       agentId: validated.agentId,
       value: validated.value,
       valueDecimals: validated.valueDecimals,
-      feedbackId: newRow.id,
+      feedbackId,
       feedbackHash,
     });
     signedTx = result.signedTx;
@@ -474,10 +513,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         status: "failed",
         error: err instanceof Error ? err.message : String(err),
       })
-      .where(eq(feedback.id, newRow.id));
+      .where(eq(feedback.id, feedbackId));
     if (err instanceof PolicyBlockedError) {
       return NextResponse.json(
-        { error: err.message, code: "POLICY_BLOCKED", feedbackId: newRow.id },
+        { error: err.message, code: "POLICY_BLOCKED", feedbackId },
         { status: 403 }
       );
     }
@@ -486,13 +525,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         ErrorCategory.WORKFLOW_ENGINE,
         "[feedback] Turnkey signing failed",
         err,
-        { endpoint: "/api/agentic-wallet/feedback", feedbackId: newRow.id }
+        { endpoint: "/api/agentic-wallet/feedback", feedbackId }
       );
       return NextResponse.json(
         {
           error: "Upstream signing failed",
           code: "TURNKEY_UPSTREAM",
-          feedbackId: newRow.id,
+          feedbackId,
         },
         { status: 502 }
       );
@@ -501,10 +540,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       ErrorCategory.WORKFLOW_ENGINE,
       "[feedback] Build/sign failed",
       err,
-      { endpoint: "/api/agentic-wallet/feedback", feedbackId: newRow.id }
+      { endpoint: "/api/agentic-wallet/feedback", feedbackId }
     );
     return NextResponse.json(
-      { error: "Failed to prepare or sign tx", feedbackId: newRow.id },
+      { error: "Failed to prepare or sign tx", feedbackId },
       { status: 500 }
     );
   }
@@ -523,18 +562,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         status: "failed",
         error: err instanceof Error ? err.message : String(err),
       })
-      .where(eq(feedback.id, newRow.id));
+      .where(eq(feedback.id, feedbackId));
     logSystemError(
       ErrorCategory.WORKFLOW_ENGINE,
       "[feedback] RPC broadcast failed",
       err,
-      { endpoint: "/api/agentic-wallet/feedback", feedbackId: newRow.id }
+      { endpoint: "/api/agentic-wallet/feedback", feedbackId }
     );
     return NextResponse.json(
       {
         error: "Broadcast failed",
         code: "RPC_UPSTREAM",
-        feedbackId: newRow.id,
+        feedbackId,
       },
       { status: 502 }
     );
@@ -548,11 +587,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       feedbackHash,
       broadcastAt: new Date(),
     })
-    .where(eq(feedback.id, newRow.id));
+    .where(eq(feedback.id, feedbackId));
 
   return NextResponse.json({
-    feedbackId: newRow.id,
+    feedbackId,
     txHash,
-    publicUrl: `${publicBaseUrl}/api/feedback/${newRow.id}`,
+    publicUrl: `${publicBaseUrl}/api/feedback/${feedbackId}`,
   });
 }
