@@ -2,7 +2,7 @@ import { defineAbiProtocol } from "@/lib/protocol-registry";
 import depositPoolAbi from "./abis/rocket-pool-deposit-pool.json";
 import rethAbi from "./abis/rocket-pool-reth.json";
 
-const ROCKET_POOL_DOCS = "https://docs.rocketpool.net/guides/staking/via-rp";
+const ROCKET_POOL_DOCS = "https://docs.rocketpool.net";
 
 export default defineAbiProtocol({
   name: "Rocket Pool",
@@ -24,6 +24,7 @@ export default defineAbiProtocol({
           label: "Get rETH Exchange Rate",
           description:
             "Get the current ETH value of 1 rETH (exchange rate from rETH to ETH)",
+          docUrl: ROCKET_POOL_DOCS,
           outputs: {
             rate: {
               label: "Exchange Rate (wei per rETH)",
@@ -34,6 +35,7 @@ export default defineAbiProtocol({
         balanceOf: {
           label: "Get rETH Balance",
           description: "Check the rETH balance of an address",
+          docUrl: ROCKET_POOL_DOCS,
           inputs: {
             account: {
               label: "Wallet Address",
@@ -52,6 +54,7 @@ export default defineAbiProtocol({
         totalSupply: {
           label: "Get rETH Total Supply",
           description: "Get the total supply of rETH tokens in circulation",
+          docUrl: ROCKET_POOL_DOCS,
           outputs: {
             totalSupply: {
               label: "Total rETH Supply (wei)",
@@ -63,6 +66,7 @@ export default defineAbiProtocol({
           label: "Get Total ETH Collateral",
           description:
             "Get the total amount of ETH collateral held by the rETH contract",
+          docUrl: ROCKET_POOL_DOCS,
           outputs: {
             totalCollateral: {
               label: "Total ETH Collateral (wei)",
@@ -74,6 +78,7 @@ export default defineAbiProtocol({
           label: "Burn rETH for ETH",
           description:
             "Burn rETH tokens to receive the underlying ETH back at the current exchange rate",
+          docUrl: ROCKET_POOL_DOCS,
           inputs: {
             _rethAmount: {
               name: "amount",
@@ -109,6 +114,7 @@ export default defineAbiProtocol({
           label: "Deposit ETH for rETH",
           description:
             "Deposit ETH into Rocket Pool to receive rETH liquid staking tokens",
+          docUrl: ROCKET_POOL_DOCS,
         },
       },
       events: {

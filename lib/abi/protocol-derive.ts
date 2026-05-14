@@ -48,6 +48,7 @@ export type AbiFunctionOverride = {
   slug?: string;
   label?: string;
   description?: string;
+  docUrl?: string;
   inputs?: Record<string, AbiInputOverride>;
   outputs?: Record<string, AbiOutputOverride>;
 };
@@ -241,6 +242,7 @@ function deriveAction(
   const label = override?.label ?? camelToTitle(fn.name);
   const description =
     override?.description ?? `Call ${fn.name} on the contract`;
+  const docUrl = override?.docUrl;
   const actionType = isReadOnly(fn.stateMutability) ? "read" : "write";
   const payable = fn.stateMutability === "payable";
 
@@ -282,6 +284,10 @@ function deriveAction(
     function: fn.name,
     inputs,
   };
+
+  if (docUrl !== undefined) {
+    action.docUrl = docUrl;
+  }
 
   if (outputs.length > 0) {
     action.outputs = outputs;

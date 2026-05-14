@@ -233,6 +233,10 @@ export type PluginAction = {
   // Optional - if not provided, will fall back to auto-generated template
   // from steps that export _exportCore
   codegenTemplate?: string;
+
+  // External documentation URL rendered as a "Docs" link in the action
+  // config panel header. Optional; if absent, no link is shown.
+  docUrl?: string;
 };
 
 /**

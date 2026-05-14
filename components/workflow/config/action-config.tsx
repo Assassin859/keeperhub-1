@@ -894,6 +894,16 @@ export function ActionConfig({
                 ))}
             </SelectContent>
           </Select>
+          {pluginAction?.docUrl && (
+            <a
+              className="ml-1 inline-flex items-center text-muted-foreground text-xs hover:text-primary"
+              href={pluginAction.docUrl}
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              Docs &#x2197;
+            </a>
+          )}
         </div>
       </div>
 

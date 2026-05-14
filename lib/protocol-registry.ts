@@ -73,6 +73,9 @@ export type ProtocolAction = {
   inputs: ProtocolActionInput[];
   outputs?: ProtocolActionOutput[];
   payable?: boolean;
+  /** External documentation URL rendered as a "Docs" link in the action
+   *  config panel header. Optional; if absent, no link is shown. */
+  docUrl?: string;
 };
 
 export type ProtocolDefinition = {
@@ -434,6 +437,7 @@ export function protocolActionToPluginAction(
     ...(action.type === "write" ? { credentialIntegrationType: "web3" } : {}),
     configFields: buildConfigFieldsFromAction(def, action),
     outputFields: buildOutputFieldsFromAction(action),
+    ...(action.docUrl ? { docUrl: action.docUrl } : {}),
   };
 }
 
