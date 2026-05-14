@@ -872,7 +872,11 @@ export function AbiWithAutoFetchField({
         className="max-h-40 overflow-y-auto"
         disabled={disabled || isLoading || !useManualAbi}
         id={field.key}
-        key={`${field.key}-${value?.length || 0}-${useProxyAbi ? "proxy" : "impl"}${isDiamond ? `-${useDiamondAbi ? "diamond" : "proxy"}` : ""}`}
+        // Do not include `value.length` in the key: it remounts the textarea
+        // on every keystroke and kills focus mid-word. Parent-driven value
+        // changes are already synced via TemplateBadgeTextarea's effect when
+        // the field is blurred.
+        key={`${field.key}-${useProxyAbi ? "proxy" : "impl"}${isDiamond ? `-${useDiamondAbi ? "diamond" : "proxy"}` : ""}`}
         maxRows={4}
         onChange={(val) => {
           onChange(val);
