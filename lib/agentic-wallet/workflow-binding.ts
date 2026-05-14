@@ -65,6 +65,7 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { organizationWallets, workflows } from "@/lib/db/schema";
+import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 import {
   BASE_CHAIN_ID,
   TEMPO_MAINNET_CHAIN_ID,
@@ -199,7 +200,13 @@ export async function verifyWorkflowBinding(
       chain: workflows.chain,
     })
     .from(workflows)
-    .where(and(eq(workflows.listedSlug, slug), eq(workflows.isListed, true)))
+    .where(
+      and(
+        eq(workflows.listedSlug, slug),
+        eq(workflows.isListed, true),
+        workflowNotDeleted()
+      )
+    )
     .limit(1);
 
   const wf = rows[0];

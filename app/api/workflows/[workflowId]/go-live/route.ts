@@ -37,7 +37,8 @@ export async function PUT(
       authMethod: "session",
     });
 
-    if (!access.hasFullAccess) {
+    // KEEP-440: a soft-deleted workflow cannot be taken live.
+    if (!access.hasFullAccess || access.isDeleted) {
       return NextResponse.json(
         { error: "Workflow not found" },
         { status: 404 }

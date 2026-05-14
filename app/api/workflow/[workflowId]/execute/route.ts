@@ -133,7 +133,8 @@ export async function POST(
         authMethod: "internal",
       });
 
-      if (!access.hasFullAccess) {
+      // KEEP-440: a soft-deleted workflow can never be executed.
+      if (!access.hasFullAccess || access.isDeleted) {
         return NextResponse.json(
           { error: "Workflow not found" },
           { status: 404 }
@@ -165,7 +166,8 @@ export async function POST(
         authMethod: authContext.authMethod,
       });
 
-      if (!access.hasFullAccess) {
+      // KEEP-440: a soft-deleted workflow can never be executed.
+      if (!access.hasFullAccess || access.isDeleted) {
         return NextResponse.json(
           { error: "Workflow not found" },
           { status: 404 }

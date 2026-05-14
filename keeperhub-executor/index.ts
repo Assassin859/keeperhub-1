@@ -36,9 +36,9 @@ import {
   workflowSchedules,
   workflows,
 } from "../lib/db/schema";
-import { generateId } from "../lib/utils/id";
 import { getMetricsCollector } from "../lib/metrics";
 import { LabelKeys, MetricNames } from "../lib/metrics/types";
+import { generateId } from "../lib/utils/id";
 import type { WorkflowNode } from "../lib/workflow/store";
 import { type ApiExecuteTriggerType, executeViaApi } from "./api-execute";
 import { checkExecutionLimitForExecutor } from "./billing-guard";
@@ -222,6 +222,13 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
 
   if (!workflow) {
     console.error(`[Executor] Workflow not found: ${workflowId}`);
+    return;
+  }
+
+  // KEEP-440: a soft-deleted workflow must never execute, even if a stale
+  // schedule or queued message still references it.
+  if (workflow.deletedAt) {
+    console.log(`[Executor] Workflow deleted, skipping: ${workflowId}`);
     return;
   }
 

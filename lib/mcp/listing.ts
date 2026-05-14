@@ -6,6 +6,7 @@ import {
   findBareAtLiterals,
   isInputSchemaPresent,
 } from "@/lib/mcp/listing-validators";
+import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 
 export type ListingErrorCode =
   | "NOT_FOUND"
@@ -97,7 +98,11 @@ export async function listWorkflow(
     .select()
     .from(workflows)
     .where(
-      and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId))
+      and(
+        eq(workflows.id, workflowId),
+        eq(workflows.organizationId, orgId),
+        workflowNotDeleted()
+      )
     )
     .limit(1);
 
@@ -218,7 +223,11 @@ export async function unlistWorkflow(
     .select()
     .from(workflows)
     .where(
-      and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId))
+      and(
+        eq(workflows.id, workflowId),
+        eq(workflows.organizationId, orgId),
+        workflowNotDeleted()
+      )
     )
     .limit(1);
 
@@ -230,7 +239,11 @@ export async function unlistWorkflow(
     .update(workflows)
     .set({ isListed: false, updatedAt: new Date() })
     .where(
-      and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId))
+      and(
+        eq(workflows.id, workflowId),
+        eq(workflows.organizationId, orgId),
+        workflowNotDeleted()
+      )
     )
     .returning();
 
@@ -250,7 +263,11 @@ export async function updateWorkflowListing(
     .select()
     .from(workflows)
     .where(
-      and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId))
+      and(
+        eq(workflows.id, workflowId),
+        eq(workflows.organizationId, orgId),
+        workflowNotDeleted()
+      )
     )
     .limit(1);
 
@@ -373,7 +390,13 @@ export async function getWorkflowListing(
   const rows = await db
     .select(LISTING_COLUMNS)
     .from(workflows)
-    .where(and(eq(workflows.listedSlug, slug), eq(workflows.isListed, true)))
+    .where(
+      and(
+        eq(workflows.listedSlug, slug),
+        eq(workflows.isListed, true),
+        workflowNotDeleted()
+      )
+    )
     .limit(1);
 
   if (rows.length === 0) {

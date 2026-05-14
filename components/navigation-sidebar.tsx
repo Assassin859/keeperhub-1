@@ -50,6 +50,9 @@ type WorkflowEntry = {
   updatedAt: string;
   projectId?: string | null;
   tagId?: string | null;
+  // KEEP-440: set when the workflow has been soft-deleted. Deleted rows stay
+  // in the list with a marker so the user has an audit trail / recovery window.
+  deletedAt?: string | null;
 };
 
 function groupWorkflows(workflows: WorkflowEntry[]): {
@@ -81,6 +84,7 @@ function WorkflowItem({
   activeWorkflowId: string | undefined;
 }): React.ReactNode {
   const router = useRouter();
+  const isDeleted = Boolean(workflow.deletedAt);
   return (
     <button
       className={cn(
@@ -90,9 +94,22 @@ function WorkflowItem({
       onClick={() => router.push(`/workflows/${workflow.id}`)}
       type="button"
     >
-      <span className="truncate">{workflow.name}</span>
-      {workflow.id === activeWorkflowId && (
-        <Check className="ml-2 size-3.5 shrink-0 text-muted-foreground" />
+      <span
+        className={cn(
+          "truncate",
+          isDeleted && "text-muted-foreground line-through"
+        )}
+      >
+        {workflow.name}
+      </span>
+      {isDeleted ? (
+        <span className="ml-2 shrink-0 text-muted-foreground text-xs">
+          Deleted
+        </span>
+      ) : (
+        workflow.id === activeWorkflowId && (
+          <Check className="ml-2 size-3.5 shrink-0 text-muted-foreground" />
+        )
       )}
     </button>
   );

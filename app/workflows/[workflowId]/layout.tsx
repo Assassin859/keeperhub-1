@@ -1,8 +1,9 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
+import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 
 type WorkflowLayoutProps = {
   children: ReactNode;
@@ -20,7 +21,7 @@ export async function generateMetadata({
 
   try {
     const workflow = await db.query.workflows.findFirst({
-      where: eq(workflows.id, workflowId),
+      where: and(eq(workflows.id, workflowId), workflowNotDeleted()),
       columns: {
         name: true,
         visibility: true,
