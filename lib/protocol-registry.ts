@@ -228,7 +228,7 @@ export function defineAbiProtocol(
     icon: input.icon,
     contracts,
     actions,
-    ...(events.length > 0 ? { events } : {}),
+    events,
   });
 }
 
