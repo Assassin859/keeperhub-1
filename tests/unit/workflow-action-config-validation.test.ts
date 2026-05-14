@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   formatActionConfigValidationResponse,
@@ -24,6 +26,20 @@ function actionNode(
 }
 
 describe("validateWorkflowActionConfigs", () => {
+  it("accepts the valid workflow import fixture", () => {
+    const fixture = JSON.parse(
+      readFileSync(
+        join(import.meta.dirname, "fixtures/workflow-import-valid.json"),
+        "utf8"
+      )
+    ) as { nodes: Parameters<typeof validateWorkflowActionConfigs>[0] };
+
+    expect(validateWorkflowActionConfigs(fixture.nodes)).toEqual({
+      valid: true,
+      issues: [],
+    });
+  });
+
   it("rejects unknown namespaced action types before persistence", () => {
     const result = validateWorkflowActionConfigs([
       actionNode("webhook/send", { webhookUrl: "https://example.com" }),
