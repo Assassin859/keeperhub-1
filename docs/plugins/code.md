@@ -76,7 +76,7 @@ The sandbox uses `node:vm` which prevents accidental access to Node.js internals
 
 ### Network Egress Policy
 
-`fetch` can reach any public internet destination over HTTP or HTTPS. To prevent server-side request forgery, the sandbox blocks requests whose resolved IP falls inside a private, internal, or reserved range. The block decision is **made on the resolved IP, not on the hostname** -- DNS is consulted at request time and the result is checked against the denylist.
+`fetch` can reach any public internet destination over HTTP or HTTPS. To prevent server-side request forgery, the sandbox blocks requests whose resolved IP falls inside a private, internal, or reserved range. The block decision is **made on the resolved IP, not on the hostname** - DNS is consulted at request time and the result is checked against the denylist.
 
 **Allowed**
 
