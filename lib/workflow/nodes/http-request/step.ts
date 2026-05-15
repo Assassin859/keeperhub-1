@@ -6,10 +6,17 @@ import "server-only";
 import { safeFetch } from "@/lib/safe-fetch";
 import { getErrorMessage } from "@/lib/utils";
 import { extractTemplateTokens } from "@/lib/utils/template";
-import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
+import {
+  type StepInput,
+  withStepLogging,
+} from "@/lib/workflow/executor/step-handler";
 
 type HttpRequestResult =
-  | { success: true; data: unknown; status: number }
+  // KEEP-444: the success variant carries an optional `error` so a soft-failed
+  // request (failOnError=false) can hand `{ data: null, status, error }` to the
+  // next node without failing the step. `status` is null when no HTTP response
+  // was received at all (timeout, DNS, connection error).
+  | { success: true; data: unknown; status: number | null; error?: string }
   | { success: false; error: string; status?: number };
 
 export type HttpRequestInput = StepInput & {
@@ -17,7 +24,39 @@ export type HttpRequestInput = StepInput & {
   httpMethod: string;
   httpHeaders?: string;
   httpBody?: string;
+  // KEEP-444: per-node request timeout in seconds (default 5, clamped 1-30).
+  timeout?: number;
+  // KEEP-444: when false, non-2xx responses and timeouts return a soft result
+  // to the next node instead of failing the step. Defaults to true.
+  failOnError?: boolean;
 };
+
+const DEFAULT_TIMEOUT_SECONDS = 5;
+const MIN_TIMEOUT_SECONDS = 1;
+const MAX_TIMEOUT_SECONDS = 30;
+
+/**
+ * Resolve the request timeout in milliseconds. Accepts the raw config value
+ * (numbers from MCP callers, strings from the visual editor), coerces it, and
+ * clamps to [1, 30] seconds. Falls back to the 5s default for missing or
+ * non-numeric input. Exported for tests.
+ */
+export function resolveTimeoutMs(timeout: unknown): number {
+  const requested = typeof timeout === "number" ? timeout : Number(timeout);
+  const seconds = Number.isFinite(requested)
+    ? Math.min(Math.max(MIN_TIMEOUT_SECONDS, requested), MAX_TIMEOUT_SECONDS)
+    : DEFAULT_TIMEOUT_SECONDS;
+  return seconds * 1000;
+}
+
+/**
+ * Resolve the failOnError flag. Defaults to true (a failed request fails the
+ * step); only an explicit `false` (boolean or the "false" string the visual
+ * editor may persist) opts into soft-fail. Exported for tests.
+ */
+export function resolveFailOnError(failOnError: unknown): boolean {
+  return failOnError !== false && failOnError !== "false";
+}
 
 // URLs never legitimately contain `{{`, so any token left in the endpoint
 // after template processing is a user-config bug we surface clearly instead
@@ -87,9 +126,9 @@ function parseResponse(response: Response): Promise<unknown> {
 }
 
 /**
- * HTTP request logic
+ * HTTP request logic. Exported for tests.
  */
-async function httpRequest(
+export async function httpRequest(
   input: HttpRequestInput
 ): Promise<HttpRequestResult> {
   const validation = validateHttpRequestEndpoint(input.endpoint);
@@ -97,31 +136,38 @@ async function httpRequest(
     return { success: false, error: validation.error };
   }
   const { endpoint } = validation;
+  const failOnError = resolveFailOnError(input.failOnError);
 
   try {
     const response = await safeFetch(endpoint, {
       method: input.httpMethod,
       headers: parseHeaders(input.httpHeaders),
       body: parseBody(input.httpMethod, input.httpBody),
+      signal: AbortSignal.timeout(resolveTimeoutMs(input.timeout)),
       plugin: "http-request",
     });
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "Unknown error");
-      return {
-        success: false,
-        error: `HTTP request failed with status ${response.status}: ${errorText}`,
-        status: response.status,
-      };
+      const error = `HTTP request failed with status ${response.status}: ${errorText}`;
+      if (failOnError) {
+        return { success: false, error, status: response.status };
+      }
+      // Soft-fail: hand the error to the next node instead of failing the
+      // step, so aggregator workflows can treat one bad source as a miss.
+      return { success: true, data: null, status: response.status, error };
     }
 
     const data = await parseResponse(response);
     return { success: true, data, status: response.status };
   } catch (error) {
-    return {
-      success: false,
-      error: `HTTP request failed: ${getErrorMessage(error)}`,
-    };
+    // A timeout abort surfaces here too -- AbortSignal.timeout() rejects the
+    // fetch, which getErrorMessage renders as a timeout error.
+    const message = `HTTP request failed: ${getErrorMessage(error)}`;
+    if (failOnError) {
+      return { success: false, error: message };
+    }
+    return { success: true, data: null, status: null, error: message };
   }
 }
 

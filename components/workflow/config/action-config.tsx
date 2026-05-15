@@ -18,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { TemplateBadgeInput } from "@/components/ui/template-badge-input";
 import {
   Tooltip,
@@ -122,7 +123,7 @@ function HttpRequestFields({
   disabled,
 }: {
   config: Record<string, unknown>;
-  onUpdateConfig: (key: string, value: string) => void;
+  onUpdateConfig: (key: string, value: ConfigValue) => void;
   disabled: boolean;
 }) {
   return (
@@ -184,6 +185,40 @@ function HttpRequestFields({
             Body is disabled for GET requests
           </p>
         )}
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="timeout">Timeout (seconds)</Label>
+        <Input
+          disabled={disabled}
+          id="timeout"
+          max={30}
+          min={1}
+          onChange={(e) => {
+            const raw = e.target.value.replace(/[^0-9]/g, "");
+            onUpdateConfig("timeout", raw);
+          }}
+          placeholder="5"
+          type="number"
+          value={(config?.timeout as string) || ""}
+        />
+        <p className="text-muted-foreground text-xs">
+          How long to wait for a response. Default 5 seconds, max 30.
+        </p>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <div className="space-y-0.5">
+          <Label htmlFor="failOnError">Fail workflow on error</Label>
+          <p className="text-muted-foreground text-xs">
+            When off, a non-2xx response or timeout passes a soft error to the
+            next node instead of failing the run.
+          </p>
+        </div>
+        <Switch
+          checked={config?.failOnError !== false}
+          disabled={disabled}
+          id="failOnError"
+          onCheckedChange={(checked) => onUpdateConfig("failOnError", checked)}
+        />
       </div>
     </>
   );

@@ -1,11 +1,12 @@
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-
-import { BUILTIN_NODE_ID, BUILTIN_NODE_LABEL } from "@/lib/workflow/editor/builtin-variables";
-
 import { db } from "@/lib/db";
 import { chains, explorerConfigs } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import {
+  BUILTIN_NODE_ID,
+  BUILTIN_NODE_LABEL,
+} from "@/lib/workflow/editor/builtin-variables";
 import {
   type ActionConfigFieldBase,
   computeActionId,
@@ -53,11 +54,15 @@ const SYSTEM_ACTIONS = {
     optionalFields: {
       httpHeaders: "string - JSON object of headers",
       httpBody: "string - JSON request body (ignored for GET)",
+      timeout: "number - Request timeout in seconds (default 5, min 1, max 30)",
+      failOnError:
+        "boolean - Default true. When false, a non-2xx response or timeout does not fail the step; instead the next node receives { status, data: null, error }. Use for aggregator workflows where one source being down should not fail the whole run.",
     },
     outputFields: {
-      status: "number - HTTP status code",
-      data: "object - Response body (parsed JSON)",
-      headers: "object - Response headers",
+      status: "number - HTTP status code (null on timeout or connection error)",
+      data: "object - Response body (parsed JSON), or null on a soft failure",
+      error:
+        "string - Present only on a soft failure (failOnError=false): the failure reason",
     },
   },
   "Database Query": {
