@@ -301,12 +301,10 @@ export class ChainMonitor {
     // the previous logic where subscribeToBlocks reset lastBlockAdvanceAt
     // on every reconnect — that reset masked monitors stuck across many
     // silent-reconnect cycles, exactly the prod failure mode.
-    const stalenessBaseline =
-      this.lastBlockAdvanceAt ?? this.monitorBootAt;
+    const stalenessBaseline = this.lastBlockAdvanceAt ?? this.monitorBootAt;
     if (
       stalenessBaseline !== null &&
-      Date.now() - stalenessBaseline >
-        liveness("MONITOR_RECREATE_TIMEOUT_MS")
+      Date.now() - stalenessBaseline > liveness("MONITOR_RECREATE_TIMEOUT_MS")
     ) {
       return false;
     }
