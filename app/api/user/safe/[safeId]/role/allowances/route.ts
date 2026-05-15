@@ -3,11 +3,20 @@ import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getSafeForOrg, validateSafeAdmin } from "@/lib/safe/auth";
+import { PROTOCOL_CATALOG } from "@/lib/safe/protocol-registry";
 import {
+  DIRECT_RULE_PROTOCOL_SLUG,
   getSafeRole,
   listRoleAllowances,
   setRoleTokenAllowance,
 } from "@/lib/safe/roles-orchestrator";
+
+// Slugs that may key an allowance bucket: any known protocol plus the
+// synthetic "direct" slug used by per-rule (transfer/approve) caps.
+const ALLOWED_ALLOWANCE_SLUGS: ReadonlySet<string> = new Set<string>([
+  ...Object.keys(PROTOCOL_CATALOG),
+  DIRECT_RULE_PROTOCOL_SLUG,
+]);
 
 type RouteParams = { params: Promise<{ safeId: string }> };
 
@@ -96,6 +105,12 @@ export async function POST(
     if (!body.protocolSlug || typeof body.protocolSlug !== "string") {
       return NextResponse.json(
         { error: "protocolSlug is required" },
+        { status: 400 }
+      );
+    }
+    if (!ALLOWED_ALLOWANCE_SLUGS.has(body.protocolSlug)) {
+      return NextResponse.json(
+        { error: `Unknown protocolSlug: ${body.protocolSlug}` },
         { status: 400 }
       );
     }

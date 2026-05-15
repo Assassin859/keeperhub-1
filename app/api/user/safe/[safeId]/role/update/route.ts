@@ -35,7 +35,16 @@ type UpdateBody = {
     tokens?: TokenLimitBody[];
   }>;
   directRules?: DirectRuleBody[];
+  /**
+   * Opt-in flag required to apply an empty desired state (which would
+   * revoke every protocol scope and zero every allowance bucket). Defense
+   * against a UI bug or partner integration that accidentally serializes
+   * `{}` against a non-empty role.
+   */
+  confirm?: string;
 };
+
+const WIPE_CONFIRM_TOKEN = "remove-all-policies";
 
 function normaliseProtocols(body: UpdateBody): {
   protocols: ProtocolInput[];
@@ -140,6 +149,19 @@ export async function POST(
     const body = (await request.json()) as UpdateBody;
     const { protocols, skipped } = normaliseProtocols(body);
     const directRules = normaliseDirectRules(body);
+
+    if (
+      protocols.length === 0 &&
+      directRules.length === 0 &&
+      body.confirm !== WIPE_CONFIRM_TOKEN
+    ) {
+      return NextResponse.json(
+        {
+          error: `Refusing to apply empty policy set. Pass confirm: "${WIPE_CONFIRM_TOKEN}" to revoke all current protocols and allowances.`,
+        },
+        { status: 400 }
+      );
+    }
 
     const result = await updateRolesConfig({
       organizationId: admin.organizationId,
