@@ -313,8 +313,13 @@ export const safeRoleDirectRules = pgTable(
       .notNull()
       .references(() => safeRoles.id, { onDelete: "cascade" }),
     kind: text("kind").notNull(),
-    /** Token contract for ERC-20 rules; null for native-transfer */
-    tokenAddress: text("token_address"),
+    /**
+     * Token contract for ERC-20 rules. Native-transfer rules use
+     * NATIVE_TOKEN_SENTINEL (0x0000000000000000000000000000000000000000) so
+     * the unique index below can dedupe them under Postgres' default
+     * NULLs-are-distinct semantics. Mirrors `safe_role_allowances.tokenAddress`.
+     */
+    tokenAddress: text("token_address").notNull(),
     tokenSymbol: text("token_symbol").notNull(),
     tokenDecimals: integer("token_decimals").notNull(),
     /** Recipient (transfer/native) or spender (approve), checksummed */

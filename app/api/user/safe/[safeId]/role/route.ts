@@ -8,6 +8,7 @@ import {
   getSafeRoleWithBackfill,
   installRolesWithInitialConfig,
   type ProtocolInput,
+  tokenAddressForWire,
 } from "@/lib/safe/roles-orchestrator";
 
 type RouteParams = { params: Promise<{ safeId: string }> };
@@ -230,7 +231,7 @@ export async function GET(
       directRules: directRules.map((r) => ({
         id: r.id,
         kind: r.kind,
-        tokenAddress: r.tokenAddress,
+        tokenAddress: tokenAddressForWire(r.tokenAddress),
         tokenSymbol: r.tokenSymbol,
         tokenDecimals: r.tokenDecimals,
         counterparty: r.counterparty,

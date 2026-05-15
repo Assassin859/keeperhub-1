@@ -533,6 +533,13 @@
       "when": 1778869656699,
       "tag": "0075_safe_wallet_integration",
       "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1778873393610,
+      "tag": "0076_safe_role_direct_rules_token_not_null",
+      "breakpoints": true
     }
   ]
 }

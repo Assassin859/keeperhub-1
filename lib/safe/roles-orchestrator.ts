@@ -143,14 +143,26 @@ export type DirectRuleInput = {
 export const DIRECT_RULE_PROTOCOL_SLUG = "direct" as const;
 
 /**
- * Sentinel "address" stored in `safe_role_allowances.tokenAddress` for
- * native-transfer rules. The token_address column is NOT NULL; we use the
- * zero address (matches every wallet/UI's convention for native asset) so
- * the bucket row schema stays uniform without a migration. UI code should
- * treat this value as "native ETH" and skip token-info lookups.
+ * Sentinel "address" stored in `safe_role_allowances.tokenAddress` and
+ * `safe_role_direct_rules.tokenAddress` for native-transfer rules. Both
+ * columns are NOT NULL; we use the zero address (matches every wallet/UI's
+ * convention for native asset) so the row schema stays uniform and the
+ * direct-rules unique index can dedupe native rules without falling into
+ * Postgres' NULLs-are-distinct semantics. UI code should treat this value
+ * as "native ETH" and skip token-info lookups.
  */
 export const NATIVE_TOKEN_SENTINEL =
   "0x0000000000000000000000000000000000000000" as const;
+
+/**
+ * Translate the stored token address into the wire/UI format, where
+ * native-transfer rules are represented as `null` rather than the
+ * sentinel zero-address. Wire format predates the DB sentinel and is
+ * what every existing client expects.
+ */
+export function tokenAddressForWire(stored: string): string | null {
+  return stored.toLowerCase() === NATIVE_TOKEN_SENTINEL ? null : stored;
+}
 
 /**
  * User-facing message returned by `updateRolesConfig` when a subgraph
@@ -1075,7 +1087,7 @@ export async function installRolesWithInitialConfig(
           : rule.counterparty;
         const normalizedTokenAddress = rule.tokenAddress
           ? normalizeAddressForStorage(rule.tokenAddress)
-          : null;
+          : NATIVE_TOKEN_SENTINEL;
         await tx
           .insert(safeRoleDirectRules)
           .values({
@@ -1705,9 +1717,9 @@ export async function updateRolesConfig(
           : rule.counterparty;
         const normalizedTokenAddress = rule.tokenAddress
           ? normalizeAddressForStorage(rule.tokenAddress)
-          : null;
+          : NATIVE_TOKEN_SENTINEL;
         desiredRuleKeys.add(
-          `${rule.kind}|${normalizedTokenAddress ?? ""}|${normalizedCounterparty}`
+          `${rule.kind}|${normalizedTokenAddress}|${normalizedCounterparty}`
         );
         await tx
           .insert(safeRoleDirectRules)
@@ -1746,7 +1758,7 @@ export async function updateRolesConfig(
         .from(safeRoleDirectRules)
         .where(eq(safeRoleDirectRules.roleId, role.id));
       for (const existing of existingRuleRows) {
-        const key = `${existing.kind}|${existing.tokenAddress ?? ""}|${existing.counterparty}`;
+        const key = `${existing.kind}|${existing.tokenAddress}|${existing.counterparty}`;
         if (!desiredRuleKeys.has(key)) {
           await tx
             .delete(safeRoleDirectRules)
