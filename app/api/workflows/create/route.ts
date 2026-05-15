@@ -8,6 +8,7 @@ import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { projects, tags, workflows } from "@/lib/db/schema";
 import { generateId } from "@/lib/utils/id";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
+import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 import {
   formatActionConfigValidationResponse,
   validateWorkflowActionConfigs,
@@ -68,13 +69,15 @@ async function generateWorkflowName(
     ? await db.query.workflows.findMany({
         where: and(
           eq(workflows.userId, userId),
-          eq(workflows.isAnonymous, true)
+          eq(workflows.isAnonymous, true),
+          workflowNotDeleted()
         ),
       })
     : await db.query.workflows.findMany({
         where: and(
           eq(workflows.organizationId, organizationId ?? ""),
-          eq(workflows.isAnonymous, false)
+          eq(workflows.isAnonymous, false),
+          workflowNotDeleted()
         ),
       });
 

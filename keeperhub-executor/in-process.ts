@@ -43,6 +43,16 @@ export async function executeInProcess(params: {
       throw new Error(`Workflow not found: ${workflowId}`);
     }
 
+    // KEEP-440: a soft-deleted workflow must never execute, even if a stale
+    // schedule or queued message still references it.
+    if (workflow.deletedAt) {
+      console.log(
+        `[Executor:InProcess] Workflow deleted, skipping: ${workflowId}`
+      );
+      await updateExecutionStatus(db, executionId, "cancelled");
+      return;
+    }
+
     if (workflow.enabled === false) {
       console.log(
         `[Executor:InProcess] Workflow disabled, skipping: ${workflowId}`

@@ -40,7 +40,8 @@ export async function GET(
       authMethod: authContext.authMethod,
     });
 
-    if (!access.hasFullAccess) {
+    // KEEP-440: execution history is hidden once the workflow is soft-deleted.
+    if (!access.hasFullAccess || access.isDeleted) {
       return NextResponse.json(
         { error: "Workflow not found" },
         { status: 404 }
@@ -104,7 +105,8 @@ export async function DELETE(
       authMethod: authContext.authMethod,
     });
 
-    if (!access.hasFullAccess) {
+    // KEEP-440: execution history is hidden once the workflow is soft-deleted.
+    if (!access.hasFullAccess || access.isDeleted) {
       return NextResponse.json(
         { error: "Workflow not found" },
         { status: 404 }

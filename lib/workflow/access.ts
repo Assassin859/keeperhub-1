@@ -13,12 +13,19 @@ type WorkflowAccessWorkflow = {
   userId: string;
   organizationId: string | null;
   isAnonymous: boolean;
+  // KEEP-440: present on full workflow rows; absent on the trimmed shapes some
+  // callers pass. Treated as not-deleted when absent.
+  deletedAt?: Date | null;
 };
 
 export type WorkflowAccess = {
   isCreatorWithCurrentAccess: boolean;
   isSameOrg: boolean;
   hasFullAccess: boolean;
+  // KEEP-440: true when the workflow has been soft-deleted. Mutation, execution
+  // and export routes must reject deleted workflows; only the owner-facing read
+  // paths keep serving them so the UI can render a deleted marker.
+  isDeleted: boolean;
 };
 
 async function isUserMemberOfOrganization(
@@ -83,5 +90,6 @@ export async function getWorkflowAccess(
     isCreatorWithCurrentAccess,
     isSameOrg,
     hasFullAccess: isCreatorWithCurrentAccess || isSameOrg,
+    isDeleted: (workflow.deletedAt ?? null) !== null,
   };
 }

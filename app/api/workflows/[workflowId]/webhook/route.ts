@@ -261,7 +261,8 @@ export async function POST(
       authMethod: "webhook",
     });
 
-    if (!access.hasFullAccess) {
+    // KEEP-440: a soft-deleted workflow must never execute via its webhook URL.
+    if (!access.hasFullAccess || access.isDeleted) {
       return failResponse(workflowId, timer, 404, "Workflow not found");
     }
 

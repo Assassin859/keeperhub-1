@@ -45,7 +45,8 @@ export async function GET(
       authMethod: authContext.authMethod,
     });
 
-    if (!access.hasFullAccess) {
+    // KEEP-440: code export is unavailable for a soft-deleted workflow.
+    if (!access.hasFullAccess || access.isDeleted) {
       return NextResponse.json(
         { error: "Workflow not found" },
         { status: 404 }

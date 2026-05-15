@@ -5,7 +5,7 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
-import { projects, publicTags, tags, workflowExecutions, workflowPublicTags, workflows } from "@/lib/db/schema";
+import { projects, publicTags, tags, workflowExecutions, workflowPublicTags, workflowSchedules, workflows } from "@/lib/db/schema";
 import { findFirstWriteActionNode } from "@/lib/mcp/calldata";
 import {
   findBareAtLiterals,
@@ -15,6 +15,7 @@ import { syncWorkflowSchedule } from "@/lib/schedule-service";
 import { sanitizeDescription } from "@/lib/sanitize-description";
 import { getWorkflowAccess } from "@/lib/workflow/access";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
+import { softDeleteValues } from "@/lib/workflow/soft-delete";
 import { isReservedSlug } from "@/lib/workflow/reserved-slugs";
 import {
   formatActionConfigValidationResponse,
@@ -103,6 +104,15 @@ export async function GET(
     // - Private workflows: owner or org member can view
     // - Anonymous workflows: only owner can view
     if (!access.hasFullAccess && workflow.visibility !== "public") {
+      return NextResponse.json(
+        { error: "Workflow not found" },
+        { status: 404 }
+      );
+    }
+
+    // KEEP-440: a soft-deleted workflow stays readable for its owner/org so the
+    // UI can render a deleted marker, but is gone for everyone else.
+    if (access.isDeleted && !access.hasFullAccess) {
       return NextResponse.json(
         { error: "Workflow not found" },
         { status: 404 }
@@ -229,9 +239,11 @@ async function validateWorkflowAccess(
     authMethod,
   });
 
+  // KEEP-440: a soft-deleted workflow is not mutable. PATCH and DELETE both
+  // treat it as not-found rather than re-deleting or editing a tombstone.
   return {
     workflow: existingWorkflow,
-    hasAccess: access.hasFullAccess,
+    hasAccess: access.hasFullAccess && !access.isDeleted,
   };
 }
 
@@ -642,7 +654,14 @@ export async function DELETE(
       );
     }
 
-    // If force delete, cascade delete logs, executions, and workflow in a transaction
+    // KEEP-440: soft-delete the workflow row instead of hard-deleting it. The
+    // surviving row keeps its listedSlug bound in idx_workflows_listed_slug, so
+    // the slug can never be re-claimed by another workflow. Execution history
+    // is still hard-deleted on force (only the workflow row must persist), and
+    // schedules are removed explicitly -- the ON DELETE CASCADE that used to
+    // clean them up no longer fires now that the row is not actually deleted.
+    const softDelete = softDeleteValues();
+
     if (hasExecutions && force) {
       const { workflowExecutionLogs } = await import("@/lib/db/schema");
       const { inArray } = await import("drizzle-orm");
@@ -665,10 +684,26 @@ export async function DELETE(
             .where(eq(workflowExecutions.workflowId, workflowId));
         }
 
-        await tx.delete(workflows).where(eq(workflows.id, workflowId));
+        await tx
+          .delete(workflowSchedules)
+          .where(eq(workflowSchedules.workflowId, workflowId));
+
+        await tx
+          .update(workflows)
+          .set(softDelete)
+          .where(eq(workflows.id, workflowId));
       });
     } else {
-      await db.delete(workflows).where(eq(workflows.id, workflowId));
+      await db.transaction(async (tx) => {
+        await tx
+          .delete(workflowSchedules)
+          .where(eq(workflowSchedules.workflowId, workflowId));
+
+        await tx
+          .update(workflows)
+          .set(softDelete)
+          .where(eq(workflows.id, workflowId));
+      });
     }
 
     return NextResponse.json({ success: true });
