@@ -65,8 +65,11 @@ export function RoleAllowanceRow({
   const handleRevoke = async (): Promise<void> => {
     setRevoking(true);
     try {
+      const params = new URLSearchParams({
+        protocolSlug: allowance.protocolSlug,
+      });
       const res = await fetch(
-        `/api/user/safe/${safeId}/role/allowances/${allowance.tokenAddress}`,
+        `/api/user/safe/${safeId}/role/allowances/${allowance.tokenAddress}?${params.toString()}`,
         { method: "DELETE" }
       );
       const data = (await res.json()) as { success?: boolean; error?: string };
