@@ -336,4 +336,268 @@ test.describe("KEEP-571: workflow save with stringified container fields", () =>
       await deleteTestWorkflow(workflow.id);
     }
   });
+
+  test("node-count invariance: saves a 6-node workflow with the affected read-contract at index 3", async ({
+    page,
+    apiRequest,
+  }) => {
+    const filler = (id: string, y: number): WorkflowNode => ({
+      id,
+      type: "action",
+      position: { x: 0, y },
+      data: {
+        label: "Discord",
+        type: "action",
+        config: {
+          actionType: "discord/send-message",
+          discordMessage: `step-${id}`,
+        },
+      },
+    });
+
+    const nodes: WorkflowNode[] = [
+      triggerNode(),
+      filler("f-1", 120),
+      filler("f-2", 240),
+      readContractNode({}, "r-3"),
+      filler("f-4", 480),
+      filler("f-5", 600),
+    ];
+
+    const edges = [
+      { id: "e1", source: "trigger", target: "f-1" },
+      { id: "e2", source: "f-1", target: "f-2" },
+      { id: "e3", source: "f-2", target: "r-3" },
+      { id: "e4", source: "r-3", target: "f-4" },
+      { id: "e5", source: "f-4", target: "f-5" },
+    ];
+
+    const workflow = await createTestWorkflow(PERSISTENT_TEST_USER_EMAIL, {
+      name: `keep-571-6node-${Date.now()}`,
+      triggerType: "manual",
+      nodes,
+      edges,
+    });
+
+    try {
+      await page.goto(`/workflows/${workflow.id}`, {
+        waitUntil: "domcontentloaded",
+      });
+
+      const response = await apiRequest.patch(`/api/workflows/${workflow.id}`, {
+        data: { nodes, edges },
+      });
+
+      const body = await response.text();
+      expect(response.status(), `PATCH failed with body: ${body}`).toBe(200);
+    } finally {
+      await deleteTestWorkflow(workflow.id);
+    }
+  });
+
+  test("node-count invariance: saves a 10-node workflow with TWO affected read-contract nodes (proves no aggregate cap)", async ({
+    page,
+    apiRequest,
+  }) => {
+    const filler = (id: string, y: number): WorkflowNode => ({
+      id,
+      type: "action",
+      position: { x: 0, y },
+      data: {
+        label: "Discord",
+        type: "action",
+        config: {
+          actionType: "discord/send-message",
+          discordMessage: id,
+        },
+      },
+    });
+
+    const nodes: WorkflowNode[] = [triggerNode()];
+    for (let i = 1; i <= 9; i++) {
+      if (i === 2 || i === 7) {
+        nodes.push(readContractNode({}, `r-${i}`));
+      } else {
+        nodes.push(filler(`f-${i}`, i * 120));
+      }
+    }
+
+    const edges: Array<{ id: string; source: string; target: string }> = [];
+    for (let i = 0; i < nodes.length - 1; i++) {
+      edges.push({
+        id: `e-${i}`,
+        source: nodes[i].id,
+        target: nodes[i + 1].id,
+      });
+    }
+
+    const workflow = await createTestWorkflow(PERSISTENT_TEST_USER_EMAIL, {
+      name: `keep-571-10node-${Date.now()}`,
+      triggerType: "manual",
+      nodes,
+      edges,
+    });
+
+    try {
+      await page.goto(`/workflows/${workflow.id}`, {
+        waitUntil: "domcontentloaded",
+      });
+
+      const response = await apiRequest.patch(`/api/workflows/${workflow.id}`, {
+        data: { nodes, edges },
+      });
+
+      const body = await response.text();
+      expect(response.status(), `PATCH failed with body: ${body}`).toBe(200);
+    } finally {
+      await deleteTestWorkflow(workflow.id);
+    }
+  });
+
+  test("saves a 2-node workflow (trigger + single affected read-contract) -- baseline for the original report", async ({
+    page,
+    apiRequest,
+  }) => {
+    const nodes = [triggerNode(), readContractNode({}, "r-1")];
+    const edges = [{ id: "e1", source: "trigger", target: "r-1" }];
+
+    const workflow = await createTestWorkflow(PERSISTENT_TEST_USER_EMAIL, {
+      name: `keep-571-2node-${Date.now()}`,
+      triggerType: "manual",
+      nodes,
+      edges,
+    });
+
+    try {
+      await page.goto(`/workflows/${workflow.id}`, {
+        waitUntil: "domcontentloaded",
+      });
+
+      const response = await apiRequest.patch(`/api/workflows/${workflow.id}`, {
+        data: { nodes, edges },
+      });
+
+      const body = await response.text();
+      expect(response.status(), `PATCH failed with body: ${body}`).toBe(200);
+    } finally {
+      await deleteTestWorkflow(workflow.id);
+    }
+  });
+
+  test("partial PATCH that does not include `nodes` succeeds without triggering validation", async ({
+    page,
+    apiRequest,
+  }) => {
+    const nodes = [triggerNode(), readContractNode(), discordNode()];
+    const edges = [
+      { id: "e1", source: "trigger", target: "read-1" },
+      { id: "e2", source: "read-1", target: "notify-1" },
+    ];
+
+    const workflow = await createTestWorkflow(PERSISTENT_TEST_USER_EMAIL, {
+      name: `keep-571-partial-${Date.now()}`,
+      triggerType: "manual",
+      nodes,
+      edges,
+    });
+
+    try {
+      await page.goto(`/workflows/${workflow.id}`, {
+        waitUntil: "domcontentloaded",
+      });
+
+      const response = await apiRequest.patch(`/api/workflows/${workflow.id}`, {
+        data: { name: `renamed-${Date.now()}` },
+      });
+
+      const body = await response.text();
+      expect(response.status(), `PATCH failed with body: ${body}`).toBe(200);
+    } finally {
+      await deleteTestWorkflow(workflow.id);
+    }
+  });
+
+  test("rejected error response reports the correct node-index path in a large workflow", async ({
+    page,
+    apiRequest,
+  }) => {
+    const filler = (id: string, y: number): WorkflowNode => ({
+      id,
+      type: "action",
+      position: { x: 0, y },
+      data: {
+        label: "Discord",
+        type: "action",
+        config: {
+          actionType: "discord/send-message",
+          discordMessage: id,
+        },
+      },
+    });
+
+    const badNode = readContractNode(
+      { functionArgs: "definitely-not-json-or-template" },
+      "bad-4"
+    );
+
+    const nodes: WorkflowNode[] = [
+      triggerNode(),
+      filler("f-1", 120),
+      filler("f-2", 240),
+      filler("f-3", 360),
+      badNode,
+      filler("f-5", 600),
+    ];
+
+    const edges: Array<{ id: string; source: string; target: string }> = [];
+    for (let i = 0; i < nodes.length - 1; i++) {
+      edges.push({
+        id: `e-${i}`,
+        source: nodes[i].id,
+        target: nodes[i + 1].id,
+      });
+    }
+
+    // The workflow needs valid args to seed; we send the bad args via PATCH below.
+    const seedNodes = [
+      triggerNode(),
+      filler("f-1", 120),
+      filler("f-2", 240),
+      filler("f-3", 360),
+      readContractNode({}, "bad-4"),
+      filler("f-5", 600),
+    ];
+
+    const workflow = await createTestWorkflow(PERSISTENT_TEST_USER_EMAIL, {
+      name: `keep-571-large-bad-${Date.now()}`,
+      triggerType: "manual",
+      nodes: seedNodes,
+      edges,
+    });
+
+    try {
+      await page.goto(`/workflows/${workflow.id}`, {
+        waitUntil: "domcontentloaded",
+      });
+
+      const response = await apiRequest.patch(`/api/workflows/${workflow.id}`, {
+        data: { nodes, edges },
+      });
+
+      expect(response.status()).toBe(422);
+      const responseBody = await response.json();
+      expect(responseBody.error).toBe("INVALID_ACTION_CONFIG");
+      expect(responseBody.invalidFields).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: "INVALID_FIELD_TYPE",
+            path: "nodes[4].data.config.functionArgs",
+            field: "functionArgs",
+          }),
+        ])
+      );
+    } finally {
+      await deleteTestWorkflow(workflow.id);
+    }
+  });
 });
