@@ -106,6 +106,37 @@ function isJsonArrayString(value: unknown): boolean {
   }
 }
 
+function isJsonArrayOrObjectString(value: unknown): boolean {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const trimmed = value.trim();
+  if (trimmed === "") {
+    return true;
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    return (
+      Array.isArray(parsed) || (typeof parsed === "object" && parsed !== null)
+    );
+  } catch {
+    return false;
+  }
+}
+
+// Legacy field keys that older workflows persisted before a field rename.
+// They are accepted on save (treated as the canonical key for validation) so
+// users can re-save existing workflows that contain the legacy shape. The
+// runtime is responsible for normalizing aliases when it reads the config.
+const LEGACY_FIELD_ALIASES: Record<string, Record<string, string>> = {
+  "web3/read-contract": { functionName: "abiFunction" },
+  "web3/write-contract": { functionName: "abiFunction" },
+};
+
+function getLegacyAliasMap(actionType: string): Record<string, string> {
+  return LEGACY_FIELD_ALIASES[actionType] ?? {};
+}
+
 function validateStringLike(value: unknown): boolean {
   return typeof value === "string" || typeof value === "number";
 }
@@ -217,7 +248,10 @@ function validateFieldValue(
     case "abi-function-args":
     case "call-list-builder":
     case "args-list-builder":
-      return isRecord(value) || Array.isArray(value)
+      return isRecord(value) ||
+        Array.isArray(value) ||
+        valueContainsTemplate(value) ||
+        isJsonArrayOrObjectString(value)
         ? { valid: true }
         : { valid: false, expected: "object or array", received: value };
     default:
@@ -271,21 +305,26 @@ export function validateWorkflowActionConfigs(
 
     const fields = flattenConfigFields(action.configFields);
     const fieldsByKey = new Map(fields.map((field) => [field.key, field]));
+    const aliasMap = getLegacyAliasMap(actionType);
 
     for (const [key, value] of Object.entries(config)) {
       if (RESERVED_CONFIG_KEYS.has(key)) {
         continue;
       }
-      if (!fieldsByKey.has(key)) {
-        issues.push({
-          code: "UNKNOWN_FIELD",
-          path: `nodes[${nodeIndex}].data.config.${key}`,
-          actionType,
-          field: key,
-          received: value,
-          message: `Unknown field "${key}" for action "${actionType}".`,
-        });
+      if (fieldsByKey.has(key)) {
+        continue;
       }
+      if (aliasMap[key] && fieldsByKey.has(aliasMap[key])) {
+        continue;
+      }
+      issues.push({
+        code: "UNKNOWN_FIELD",
+        path: `nodes[${nodeIndex}].data.config.${key}`,
+        actionType,
+        field: key,
+        received: value,
+        message: `Unknown field "${key}" for action "${actionType}".`,
+      });
     }
 
     for (const field of fields) {
@@ -293,7 +332,17 @@ export function validateWorkflowActionConfigs(
         continue;
       }
 
-      const value = config[field.key];
+      const legacyKey = Object.entries(aliasMap).find(
+        ([, canonical]) => canonical === field.key
+      )?.[0];
+      const canonicalValue = config[field.key];
+      const value =
+        canonicalValue !== undefined ||
+        legacyKey === undefined ||
+        config[legacyKey] === undefined
+          ? canonicalValue
+          : config[legacyKey];
+
       if (field.required && isMissingRequiredValue(value)) {
         issues.push({
           code: "MISSING_REQUIRED_FIELD",

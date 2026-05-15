@@ -449,6 +449,179 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
     expect(mockUpdateReturning).not.toHaveBeenCalled();
   });
 
+  it("KEEP-571: PATCH accepts a 3+ node workflow whose web3/read-contract uses stringified functionArgs (UI wire format)", async () => {
+    mockWorkflowsFindFirst.mockResolvedValue(makeWorkflow());
+    mockUpdateReturning.mockResolvedValue([makeWorkflow()]);
+
+    const response = await PATCH(
+      createRequest("PATCH", {
+        nodes: [
+          {
+            id: "trigger",
+            type: "trigger",
+            data: {
+              type: "trigger",
+              config: { actionType: "Manual" },
+            },
+          },
+          {
+            id: "read-1",
+            type: "action",
+            data: {
+              type: "action",
+              config: {
+                actionType: "web3/read-contract",
+                network: "1",
+                contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+                abi: JSON.stringify([
+                  {
+                    inputs: [
+                      { internalType: "bytes32", name: "ilk", type: "bytes32" },
+                    ],
+                    name: "ilks",
+                    outputs: [
+                      { internalType: "uint256", name: "Art", type: "uint256" },
+                    ],
+                    stateMutability: "view",
+                    type: "function",
+                  },
+                ]),
+                abiFunction: "ilks",
+                functionArgs:
+                  '["{{@osm-loop:OSM Loop.currentItem.ilkBytes32}}"]',
+              },
+            },
+          },
+          {
+            id: "msg-1",
+            type: "action",
+            data: {
+              type: "action",
+              config: {
+                actionType: "discord/send-message",
+                discordMessage: "ilk read",
+              },
+            },
+          },
+        ],
+        edges: [],
+      }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateReturning).toHaveBeenCalled();
+  });
+
+  it("KEEP-571: PATCH accepts legacy `functionName` on web3/write-contract (MegaPoker case)", async () => {
+    mockWorkflowsFindFirst.mockResolvedValue(makeWorkflow());
+    mockUpdateReturning.mockResolvedValue([makeWorkflow()]);
+
+    const response = await PATCH(
+      createRequest("PATCH", {
+        nodes: [
+          {
+            id: "trigger",
+            type: "trigger",
+            data: {
+              type: "trigger",
+              config: { actionType: "Manual" },
+            },
+          },
+          {
+            id: "poke-1",
+            type: "action",
+            data: {
+              type: "action",
+              config: {
+                actionType: "web3/write-contract",
+                network: "1",
+                contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+                abi: JSON.stringify([
+                  {
+                    inputs: [],
+                    name: "poke",
+                    outputs: [],
+                    stateMutability: "nonpayable",
+                    type: "function",
+                  },
+                ]),
+                functionName: "poke",
+                functionArgs: "[]",
+              },
+            },
+          },
+          {
+            id: "notify",
+            type: "action",
+            data: {
+              type: "action",
+              config: {
+                actionType: "discord/send-message",
+                discordMessage: "poked",
+              },
+            },
+          },
+        ],
+        edges: [],
+      }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateReturning).toHaveBeenCalled();
+  });
+
+  it("KEEP-571: PATCH still rejects bogus values for stringified container fields", async () => {
+    mockWorkflowsFindFirst.mockResolvedValue(makeWorkflow());
+
+    const response = await PATCH(
+      createRequest("PATCH", {
+        nodes: [
+          {
+            id: "trigger",
+            type: "trigger",
+            data: {
+              type: "trigger",
+              config: { actionType: "Manual" },
+            },
+          },
+          {
+            id: "read-1",
+            type: "action",
+            data: {
+              type: "action",
+              config: {
+                actionType: "web3/read-contract",
+                network: "1",
+                contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+                abi: "[]",
+                abiFunction: "ilks",
+                functionArgs: "this-is-not-json-or-a-template",
+              },
+            },
+          },
+        ],
+        edges: [],
+      }),
+      { params: mockParams }
+    );
+
+    const data = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(data.error).toBe("INVALID_ACTION_CONFIG");
+    expect(data.invalidFields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "INVALID_FIELD_TYPE",
+          field: "functionArgs",
+        }),
+      ])
+    );
+    expect(mockUpdateReturning).not.toHaveBeenCalled();
+  });
+
   it("KEEP-467: PATCH validates integration ownership after sanitizer moves misplaced config fields", async () => {
     mockWorkflowsFindFirst.mockResolvedValue(makeWorkflow());
     mockValidateWorkflowIntegrations.mockResolvedValue({
