@@ -8,6 +8,11 @@ import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { projects, tags, workflows } from "@/lib/db/schema";
 import { generateId } from "@/lib/utils/id";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
+import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
+import {
+  formatActionConfigValidationResponse,
+  validateWorkflowActionConfigs,
+} from "@/lib/workflow/validation/action-config";
 function createDefaultNodes() {
   const triggerId = nanoid();
   const actionId = nanoid();
@@ -64,13 +69,15 @@ async function generateWorkflowName(
     ? await db.query.workflows.findMany({
         where: and(
           eq(workflows.userId, userId),
-          eq(workflows.isAnonymous, true)
+          eq(workflows.isAnonymous, true),
+          workflowNotDeleted()
         ),
       })
     : await db.query.workflows.findMany({
         where: and(
           eq(workflows.organizationId, organizationId ?? ""),
-          eq(workflows.isAnonymous, false)
+          eq(workflows.isAnonymous, false),
+          workflowNotDeleted()
         ),
       });
 
@@ -102,19 +109,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Validate that all integrationIds in nodes belong to the current user
-    const validation = await validateWorkflowIntegrations(
-      body.nodes,
-      userId,
-      organizationId
-    );
-    if (!validation.valid) {
-      return NextResponse.json(
-        { error: "Invalid integration references in workflow" },
-        { status: 403 }
-      );
-    }
-
     // Ensure there are always default nodes (trigger + action) if nodes array is empty
     let nodes = body.nodes;
     let edges = body.edges;
@@ -128,6 +122,28 @@ export async function POST(request: Request) {
     const sanitized = sanitizeWorkflowData(nodes, edges);
     nodes = sanitized.nodes;
     edges = sanitized.edges;
+
+    // Validate the exact shape that will be persisted. The sanitizer moves
+    // misplaced root fields into data.config, including integrationId.
+    const validation = await validateWorkflowIntegrations(
+      nodes,
+      userId,
+      organizationId
+    );
+    if (!validation.valid) {
+      return NextResponse.json(
+        { error: "Invalid integration references in workflow" },
+        { status: 403 }
+      );
+    }
+
+    const actionConfigValidation = validateWorkflowActionConfigs(nodes);
+    if (!actionConfigValidation.valid) {
+      return NextResponse.json(
+        formatActionConfigValidationResponse(actionConfigValidation),
+        { status: 422 }
+      );
+    }
 
     const isAnonymous = !organizationId;
     const workflowName = await generateWorkflowName(

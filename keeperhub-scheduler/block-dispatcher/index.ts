@@ -23,6 +23,7 @@ import {
   RECONCILE_INTERVAL_MS,
   SQS_QUEUE_URL,
 } from "../lib/config.js";
+import { metrics, registry } from "../lib/metrics.js";
 import type { BlockWorkflow, ChainConfig } from "../lib/types.js";
 import { fetchBlockWorkflows } from "./api-client.js";
 import { ChainMonitor } from "./chain-monitor.js";
@@ -102,6 +103,7 @@ class BlockMonitorService {
             `${chain.name}(${id}): ${workflows.length} wf`,
         )
         .join(", ");
+      metrics.setChainsMonitored(this.monitors.size);
       console.log(
         `[BlockMonitorService] Reconciled: ${this.monitors.size} chain(s) monitored [${chainNames}]`,
       );
@@ -180,6 +182,7 @@ class BlockMonitorService {
 process.on("unhandledRejection", (reason: unknown) => {
   const message = reason instanceof Error ? reason.message : String(reason);
   const stack = reason instanceof Error ? reason.stack : "";
+  metrics.recordUnhandledRejection();
   console.error(`[BlockDispatcher] Unhandled rejection: ${message}`, stack);
 });
 
@@ -256,6 +259,16 @@ async function main(): Promise<void> {
       timestamp: new Date().toISOString(),
       monitors: health.monitors,
     });
+  });
+
+  healthApp.get("/metrics", async (_req, res) => {
+    try {
+      res.set("Content-Type", registry.contentType);
+      res.end(await registry.metrics());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(500).send(`Error collecting metrics: ${message}`);
+    }
   });
 
   const healthServer = healthApp.listen(HEALTH_PORT, () => {

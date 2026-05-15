@@ -3,6 +3,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { type ApiKeyAuthResult, authenticateApiKey } from "@/lib/api-key-auth";
 import { McpEventStore } from "@/lib/mcp/event-store";
+import { getInternalApiBaseUrl } from "@/lib/mcp/internal-url";
 import { getWorkflowListing } from "@/lib/mcp/listing";
 import { logMcpEvent } from "@/lib/mcp/logging";
 import { authenticateOAuthToken } from "@/lib/mcp/oauth-auth";
@@ -157,7 +158,7 @@ function buildSession(
   organizationId: string,
   apiKeyId: string,
   scope: string | undefined,
-  baseUrl: string,
+  internalApiBaseUrl: string,
   authHeader: string,
   slug: string,
   listing: Parameters<typeof createWorkflowMcpServer>[0]["listing"]
@@ -179,7 +180,7 @@ function buildSession(
   const server = createWorkflowMcpServer({
     slug,
     listing,
-    baseUrl,
+    internalApiBaseUrl,
     authHeader,
     scope,
   });
@@ -261,14 +262,14 @@ async function resolveSession(
     orgId: organizationId,
   });
 
-  const baseUrl = getBaseUrl(request);
+  const internalApiBaseUrl = getInternalApiBaseUrl();
   const authHeader = request.headers.get("authorization") ?? "";
   const { transport, entry } = buildSession(
     sessionId,
     organizationId,
     result.payload.key,
     result.payload.scope,
-    baseUrl,
+    internalApiBaseUrl,
     authHeader,
     slug,
     listing
@@ -440,14 +441,14 @@ export async function POST(
     scope,
   });
 
-  const baseUrl = getBaseUrl(request);
+  const internalApiBaseUrl = getInternalApiBaseUrl();
   const authHeader = request.headers.get("authorization") ?? "";
   const { transport, entry } = buildSession(
     newSessionId,
     organizationId,
     apiKeyId,
     scope,
-    baseUrl,
+    internalApiBaseUrl,
     authHeader,
     slug,
     listing

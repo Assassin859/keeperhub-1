@@ -3,9 +3,15 @@ import { NextResponse } from "next/server";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { workflows } from "@/lib/db/schema";
+import { getOrgContext } from "@/lib/middleware/org-context";
 import { generateId } from "@/lib/utils/id";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
+import {
+  formatActionConfigValidationResponse,
+  validateWorkflowActionConfigs,
+} from "@/lib/workflow/validation/action-config";
 
 const CURRENT_WORKFLOW_NAME = "~~__CURRENT__~~";
 
@@ -89,6 +95,27 @@ export async function POST(request: Request) {
     // Sanitize nodes/edges: strip React Flow UI state and normalize formats
     const sanitized = sanitizeWorkflowData(rawNodes, rawEdges);
     const { nodes, edges } = sanitized;
+    const orgContext = await getOrgContext();
+
+    const integrationValidation = await validateWorkflowIntegrations(
+      nodes,
+      session.user.id,
+      orgContext.organization?.id ?? null
+    );
+    if (!integrationValidation.valid) {
+      return NextResponse.json(
+        { error: "Invalid integration references in workflow" },
+        { status: 403 }
+      );
+    }
+
+    const actionConfigValidation = validateWorkflowActionConfigs(nodes);
+    if (!actionConfigValidation.valid) {
+      return NextResponse.json(
+        formatActionConfigValidationResponse(actionConfigValidation),
+        { status: 422 }
+      );
+    }
 
     // Check if current workflow exists
     const [existingWorkflow] = await db

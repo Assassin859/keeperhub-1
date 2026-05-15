@@ -20,10 +20,12 @@ import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { apiKeys, workflowExecutions, workflows } from "@/lib/db/schema";
 import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
+import { getWorkflowAccess } from "@/lib/workflow/access";
 import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 type ValidateApiKeyResult = {
   valid: boolean;
+  userId?: string;
   error?: string;
   statusCode?: number;
   errorBody?: Record<string, unknown>;
@@ -107,7 +109,7 @@ async function validateApiKey(
       // Fire and forget - ignore errors
     });
 
-  return { valid: true };
+  return { valid: true, userId: apiKey.userId };
 }
 
 const corsHeaders = {
@@ -251,6 +253,17 @@ export async function POST(
         apiKeyValidation.error ?? "Invalid API key",
         apiKeyValidation.errorBody
       );
+    }
+
+    const access = await getWorkflowAccess(workflow, {
+      userId: apiKeyValidation.userId ?? null,
+      organizationId: null,
+      authMethod: "webhook",
+    });
+
+    // KEEP-440: a soft-deleted workflow must never execute via its webhook URL.
+    if (!access.hasFullAccess || access.isDeleted) {
+      return failResponse(workflowId, timer, 404, "Workflow not found");
     }
 
     // Verify this is a webhook-triggered workflow

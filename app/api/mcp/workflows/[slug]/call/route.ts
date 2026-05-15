@@ -28,6 +28,7 @@ import {
   type CallRouteWorkflow,
 } from "@/lib/payments/x402/types";
 import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
+import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 const corsHeaders = {
@@ -185,7 +186,13 @@ async function lookupWorkflow(slug: string): Promise<CallRouteWorkflow | null> {
     .select({ ...CALL_ROUTE_COLUMNS, tagName: tags.name })
     .from(workflows)
     .leftJoin(tags, eq(workflows.tagId, tags.id))
-    .where(and(eq(workflows.listedSlug, slug), eq(workflows.isListed, true)))
+    .where(
+      and(
+        eq(workflows.listedSlug, slug),
+        eq(workflows.isListed, true),
+        workflowNotDeleted()
+      )
+    )
     .limit(1);
   return rows[0] ?? null;
 }

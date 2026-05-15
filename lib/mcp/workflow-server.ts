@@ -5,13 +5,13 @@ import { z } from "zod";
 type ApiResponse = Record<string, unknown>;
 
 async function callApi(
-  baseUrl: string,
+  internalApiBaseUrl: string,
   authHeader: string,
   path: string,
   method: string,
   body?: unknown
 ): Promise<ApiResponse> {
-  const url = `${baseUrl}${path}`;
+  const url = `${internalApiBaseUrl}${path}`;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Authorization: authHeader,
@@ -53,7 +53,7 @@ export type WorkflowListing = {
 type CreateWorkflowMcpServerOptions = {
   slug: string;
   listing: WorkflowListing;
-  baseUrl: string;
+  internalApiBaseUrl: string;
   authHeader: string;
   scope?: string;
 };
@@ -113,7 +113,7 @@ function buildToolDescription(listing: WorkflowListing): string {
 export function createWorkflowMcpServer(
   options: CreateWorkflowMcpServerOptions
 ): McpServer {
-  const { slug, listing, baseUrl, authHeader } = options;
+  const { slug, listing, internalApiBaseUrl, authHeader } = options;
 
   const server = new McpServer({
     name: `keeperhub-workflow-${slug}`,
@@ -135,7 +135,7 @@ export function createWorkflowMcpServer(
     },
     async (args) => {
       const data = await callApi(
-        baseUrl,
+        internalApiBaseUrl,
         authHeader,
         `/api/mcp/workflows/${encodeURIComponent(slug)}/call`,
         "POST",

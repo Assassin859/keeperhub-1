@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { workflowPublicTags, workflows } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getOrgContext } from "@/lib/middleware/org-context";
+import { getWorkflowAccess } from "@/lib/workflow/access";
 
 export async function PUT(
   request: Request,
@@ -30,13 +31,14 @@ export async function PUT(
       );
     }
 
-    const isOwner = workflow.userId === orgContext.user.id;
-    const isSameOrg =
-      !workflow.isAnonymous &&
-      workflow.organizationId &&
-      orgContext.organization?.id === workflow.organizationId;
+    const access = await getWorkflowAccess(workflow, {
+      userId: orgContext.user.id,
+      organizationId: orgContext.organization?.id ?? null,
+      authMethod: "session",
+    });
 
-    if (!(isOwner || isSameOrg)) {
+    // KEEP-440: a soft-deleted workflow cannot be taken live.
+    if (!access.hasFullAccess || access.isDeleted) {
       return NextResponse.json(
         { error: "Workflow not found" },
         { status: 404 }

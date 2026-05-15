@@ -67,6 +67,7 @@ const manualWorkflow = {
 const {
   mockWorkflowsFindFirst,
   mockApiKeysFindFirst,
+  mockMemberLimit,
   mockInsertReturning,
   mockValidateIntegrations,
   mockEnforceExecutionLimit,
@@ -74,6 +75,7 @@ const {
 } = vi.hoisted(() => ({
   mockWorkflowsFindFirst: vi.fn(),
   mockApiKeysFindFirst: vi.fn(),
+  mockMemberLimit: vi.fn(),
   mockInsertReturning: vi.fn(),
   mockValidateIntegrations: vi.fn(),
   mockEnforceExecutionLimit: vi.fn(),
@@ -82,6 +84,13 @@ const {
 
 vi.mock("@/lib/db", () => ({
   db: {
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({
+          limit: mockMemberLimit,
+        })),
+      })),
+    })),
     query: {
       workflows: { findFirst: mockWorkflowsFindFirst },
       apiKeys: { findFirst: mockApiKeysFindFirst },
@@ -103,6 +112,7 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@/lib/db/schema", () => ({
   apiKeys: { keyHash: "key_hash", id: "id", lastUsedAt: "last_used_at" },
+  member: { id: "id", organizationId: "organizationId", userId: "userId" },
   workflows: { id: "id" },
   workflowExecutions: { id: "id" },
 }));
@@ -180,6 +190,7 @@ function setupHappyPath(): void {
     userId: OWNER_USER_ID,
     keyHash: VALID_KEY_HASH,
   });
+  mockMemberLimit.mockResolvedValue([{ id: "member-1" }]);
   mockValidateIntegrations.mockResolvedValue({ valid: true });
   mockEnforceExecutionLimit.mockResolvedValue({ blocked: false });
   mockCheckConcurrency.mockResolvedValue({ allowed: true });
@@ -191,6 +202,7 @@ function setupHappyPath(): void {
 describe("POST /api/workflows/:workflowId/webhook", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockMemberLimit.mockResolvedValue([{ id: "member-1" }]);
   });
 
   describe("workflow lookup", () => {
@@ -306,6 +318,24 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
       expect(data.error).toBe(
         "You do not have permission to run this workflow"
       );
+    });
+
+    it("should return 404 when the owner key belongs to a removed org member", async () => {
+      mockWorkflowsFindFirst.mockResolvedValue(webhookWorkflow);
+      mockApiKeysFindFirst.mockResolvedValue({
+        id: "key-1",
+        userId: OWNER_USER_ID,
+        keyHash: VALID_KEY_HASH,
+      });
+      mockMemberLimit.mockResolvedValue([]);
+
+      const response = await POST(
+        createWebhookRequest(VALID_API_KEY),
+        createContext(WORKFLOW_ID)
+      );
+      expect(response.status).toBe(404);
+      const data = await response.json();
+      expect(data.error).toBe("Workflow not found");
     });
   });
 

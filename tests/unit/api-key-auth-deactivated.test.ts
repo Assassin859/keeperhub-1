@@ -16,11 +16,14 @@ vi.mock("@/lib/db", () => ({
   db: {
     select: vi.fn(() => ({
       from: vi.fn(() => ({
-        leftJoin: vi.fn(() => ({
-          where: vi.fn(() => ({
-            limit: mockSelectLimit,
-          })),
-        })),
+        leftJoin: vi.fn(function leftJoin() {
+          return {
+            leftJoin,
+            where: vi.fn(() => ({
+              limit: mockSelectLimit,
+            })),
+          };
+        }),
       })),
     })),
     update: mockUpdate,
@@ -28,13 +31,20 @@ vi.mock("@/lib/db", () => ({
 }));
 
 vi.mock("@/lib/db/schema", () => ({
+  member: {
+    id: "id",
+    organizationId: "organization_id",
+    userId: "user_id",
+  },
   organizationApiKeys: {
     id: "id",
+    organizationId: "organization_id",
     keyHash: "key_hash",
     revokedAt: "revoked_at",
     expiresAt: "expires_at",
+    createdBy: "created_by",
   },
-  users: { id: "id" },
+  users: { id: "id", deactivatedAt: "deactivated_at" },
 }));
 
 import { authenticateApiKey } from "@/lib/api-key-auth";
@@ -61,6 +71,7 @@ describe("authenticateApiKey -- deactivated creator handling", () => {
         organizationId: "org-1",
         createdBy: "user-1",
         creatorDeactivatedAt: null,
+        creatorMemberId: "member-1",
       },
     ]);
 
@@ -79,6 +90,7 @@ describe("authenticateApiKey -- deactivated creator handling", () => {
         organizationId: "org-1",
         createdBy: "user-1",
         creatorDeactivatedAt: new Date("2026-01-01T00:00:00Z"),
+        creatorMemberId: "member-1",
       },
     ]);
 
@@ -89,6 +101,26 @@ describe("authenticateApiKey -- deactivated creator handling", () => {
     expect(result.error).toBe("API key creator account is deactivated");
   });
 
+  it("rejects a key whose creator is no longer an organization member", async () => {
+    mockSelectLimit.mockResolvedValue([
+      {
+        id: "key-1",
+        organizationId: "org-1",
+        createdBy: "user-1",
+        creatorDeactivatedAt: null,
+        creatorMemberId: null,
+      },
+    ]);
+
+    const result = await authenticateApiKey(buildRequest());
+
+    expect(result.authenticated).toBe(false);
+    expect(result.statusCode).toBe(401);
+    expect(result.error).toBe(
+      "API key creator is no longer a member of this organization"
+    );
+  });
+
   it("authenticates a key with no recorded creator (legacy compat)", async () => {
     mockSelectLimit.mockResolvedValue([
       {
@@ -96,6 +128,7 @@ describe("authenticateApiKey -- deactivated creator handling", () => {
         organizationId: "org-1",
         createdBy: null,
         creatorDeactivatedAt: null,
+        creatorMemberId: null,
       },
     ]);
 
@@ -122,6 +155,7 @@ describe("authenticateApiKey -- deactivated creator handling", () => {
         organizationId: "org-1",
         createdBy: "user-1",
         creatorDeactivatedAt: null,
+        creatorMemberId: "member-1",
       },
     ]);
 

@@ -7,7 +7,12 @@ import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
 import { generateId } from "@/lib/utils/id";
 import { remapTemplateRefsInString } from "@/lib/utils/template";
+import { getWorkflowAccess } from "@/lib/workflow/access";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
+import {
+  softDeleteValues,
+  workflowNotDeleted,
+} from "@/lib/workflow/soft-delete";
 // Node type for type-safe node manipulation
 type WorkflowNodeLike = {
   id: string;
@@ -139,10 +144,22 @@ export async function POST(
       );
     }
 
-    const isOwner = userId === sourceWorkflow.userId;
+    const access = await getWorkflowAccess(sourceWorkflow, {
+      userId,
+      organizationId,
+      authMethod: authContext.authMethod,
+    });
 
     // If not owner, check if workflow is public
-    if (!isOwner && sourceWorkflow.visibility !== "public") {
+    if (!access.hasFullAccess && sourceWorkflow.visibility !== "public") {
+      return NextResponse.json(
+        { error: "Workflow not found" },
+        { status: 404 }
+      );
+    }
+
+    // KEEP-440: a soft-deleted workflow cannot be duplicated.
+    if (access.isDeleted) {
       return NextResponse.json(
         { error: "Workflow not found" },
         { status: 404 }
@@ -177,13 +194,15 @@ export async function POST(
       ? await db.query.workflows.findMany({
           where: and(
             eq(workflows.userId, userId ?? ""),
-            eq(workflows.isAnonymous, true)
+            eq(workflows.isAnonymous, true),
+            workflowNotDeleted()
           ),
         })
       : await db.query.workflows.findMany({
           where: and(
             eq(workflows.organizationId, organizationId ?? ""),
-            eq(workflows.isAnonymous, false)
+            eq(workflows.isAnonymous, false),
+            workflowNotDeleted()
           ),
         });
 
@@ -218,10 +237,19 @@ export async function POST(
       })
       .returning();
 
-    // If moving an anonymous workflow to an org, delete the original
-    // This prevents the old anonymous workflow from being accessible after sign out
-    if (sourceWorkflow.isAnonymous && isOwner && !isAnonymous) {
-      await db.delete(workflows).where(eq(workflows.id, workflowId));
+    // If moving an anonymous workflow to an org, retire the original.
+    // This prevents the old anonymous workflow from being accessible after
+    // sign out. KEEP-440: soft-delete so all workflow removal goes through one
+    // path and the deletedAt filters cover it uniformly.
+    if (
+      sourceWorkflow.isAnonymous &&
+      access.isCreatorWithCurrentAccess &&
+      !isAnonymous
+    ) {
+      await db
+        .update(workflows)
+        .set(softDeleteValues())
+        .where(eq(workflows.id, workflowId));
     }
 
     return NextResponse.json({

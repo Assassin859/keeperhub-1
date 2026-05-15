@@ -245,6 +245,9 @@ export const workflows = pgTable(
     chain: text("chain"),
     // v1.11: per-workflow MCP server versioning (incremented on listing schema changes)
     listingVersion: integer("listing_version").notNull().default(1),
+    // KEEP-440: soft-delete. Set instead of hard-deleting the row so the listed
+    // slug stays bound to this row and cannot be re-claimed by another workflow.
+    deletedAt: timestamp("deleted_at"),
   },
   (table) => [
     // INFRA-02: globally unique listed slug so external callers can invoke by slug alone

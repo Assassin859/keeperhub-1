@@ -8,6 +8,7 @@ import {
   auditFromAuth,
   getDualAuthContext,
 } from "@/lib/middleware/auth-helpers";
+import { getWorkflowAccess } from "@/lib/workflow/access";
 import { generateWorkflowSDKCode } from "@/lib/workflow/codegen/sdk";
 
 export async function GET(
@@ -38,13 +39,14 @@ export async function GET(
       );
     }
 
-    const isOwner = userId !== null && userId === workflow.userId;
-    const isSameOrg =
-      !workflow.isAnonymous &&
-      workflow.organizationId !== null &&
-      workflow.organizationId === organizationId;
+    const access = await getWorkflowAccess(workflow, {
+      userId,
+      organizationId,
+      authMethod: authContext.authMethod,
+    });
 
-    if (!(isOwner || isSameOrg)) {
+    // KEEP-440: code export is unavailable for a soft-deleted workflow.
+    if (!access.hasFullAccess || access.isDeleted) {
       return NextResponse.json(
         { error: "Workflow not found" },
         { status: 404 }

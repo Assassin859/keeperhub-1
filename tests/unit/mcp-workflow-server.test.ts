@@ -48,7 +48,7 @@ describe("createWorkflowMcpServer", () => {
     createWorkflowMcpServer({
       slug: "aave-position-monitor",
       listing: baseListing,
-      baseUrl: "http://localhost:3000",
+      internalApiBaseUrl: "http://localhost:3000",
       authHeader: "Bearer kh_test",
     });
 
@@ -60,7 +60,7 @@ describe("createWorkflowMcpServer", () => {
     createWorkflowMcpServer({
       slug: "aave-position-monitor",
       listing: baseListing,
-      baseUrl: "http://localhost:3000",
+      internalApiBaseUrl: "http://localhost:3000",
       authHeader: "Bearer kh_test",
     });
 
@@ -72,7 +72,7 @@ describe("createWorkflowMcpServer", () => {
     createWorkflowMcpServer({
       slug: "aave-position-monitor",
       listing: baseListing,
-      baseUrl: "http://localhost:3000",
+      internalApiBaseUrl: "http://localhost:3000",
       authHeader: "Bearer kh_test",
     });
 
@@ -85,7 +85,7 @@ describe("createWorkflowMcpServer", () => {
     createWorkflowMcpServer({
       slug: "aave-position-monitor",
       listing: baseListing,
-      baseUrl: "http://localhost:3000",
+      internalApiBaseUrl: "http://localhost:3000",
       authHeader: "Bearer kh_test",
     });
 
@@ -103,7 +103,7 @@ describe("createWorkflowMcpServer", () => {
     createWorkflowMcpServer({
       slug: "aave-position-monitor",
       listing: paidListing,
-      baseUrl: "http://localhost:3000",
+      internalApiBaseUrl: "http://localhost:3000",
       authHeader: "Bearer kh_test",
     });
 
@@ -123,7 +123,7 @@ describe("createWorkflowMcpServer", () => {
     createWorkflowMcpServer({
       slug: "aave-position-monitor",
       listing: baseListing,
-      baseUrl: "http://localhost:3000",
+      internalApiBaseUrl: "http://localhost:3000",
       authHeader: "Bearer kh_test",
     });
 
@@ -152,7 +152,7 @@ describe("createWorkflowMcpServer", () => {
     createWorkflowMcpServer({
       slug: "aave-position-monitor",
       listing: baseListing,
-      baseUrl: "http://localhost:3000",
+      internalApiBaseUrl: "http://localhost:3000",
       authHeader: "Bearer kh_test",
     });
 

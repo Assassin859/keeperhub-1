@@ -56,6 +56,13 @@ const MAX_LOG_ENTRIES = 200;
 // The defense here is DNS-resolved denylist — it catches hostnames that
 // resolve to RFC 1918, loopback, link-local (IMDS), CGNAT, and reserved
 // ranges, where the old substring check only caught named metadata hosts.
+// NAT64 (64:ff9b::/96): the well-known prefix is treated specially. In
+// dual-stack / IPv6-preferred pods (typical for our AWS prod VPC) the
+// resolver synthesises NAT64 AAAA records for every IPv4-only public
+// host (discord.com, slack.com, telegram.org, etc.). Blanket-blocking
+// the prefix would block all of them. Instead, on a NAT64 hit we
+// extract the embedded IPv4 and recheck it against the IPv4 list —
+// preserving the SSRF property without false positives on public IPv4.
 // TOCTOU: we do not have undici's per-connect hook (would require adding
 // undici as a sandbox dep), so there is a small window between our
 // dns.lookup and the fetch's internal connect where the record could
@@ -63,6 +70,11 @@ const MAX_LOG_ENTRIES = 200;
 const ALLOWED_SCHEMES = new Set(["http:", "https:"]);
 const IPV4_MAPPED_PREFIX = "::ffff:";
 const IPV4_MAPPED_HEX_REGEX = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/;
+// NAT64 well-known prefix (RFC 6052): 64:ff9b::/96 — last 32 bits encode an
+// IPv4. We accept three textual forms a resolver may return.
+const NAT64_CANONICAL_REGEX = /^64:ff9b::([0-9a-f]{1,4}):([0-9a-f]{1,4})$/;
+const NAT64_UNCOMPRESSED_REGEX = /^64:ff9b:0:0:0:0:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/;
+const NAT64_DOTTED_REGEX = /^64:ff9b::(\\d+\\.\\d+\\.\\d+\\.\\d+)$/;
 
 const SSRF_BLOCK_LIST = new BlockList();
 SSRF_BLOCK_LIST.addSubnet("0.0.0.0", 8, "ipv4");
@@ -87,11 +99,26 @@ SSRF_BLOCK_LIST.addAddress("::1", "ipv6");
 // subnet as "all IPv4" which would make every IPv4 check return true.
 // IPv4-mapped IPv6 pointing at private IPv4 is caught via the mapped
 // extraction below.
-SSRF_BLOCK_LIST.addSubnet("64:ff9b::", 96, "ipv6");
+// NAT64 (64:ff9b::/96) is intentionally separate: dual-stack networks
+// synthesise it for every IPv4-only public host, so blanket-blocking the
+// prefix would block legitimate destinations. The embedded IPv4 is
+// rechecked against the IPv4 list below.
 SSRF_BLOCK_LIST.addSubnet("100::", 64, "ipv6");
 SSRF_BLOCK_LIST.addSubnet("fc00::", 7, "ipv6");
 SSRF_BLOCK_LIST.addSubnet("fe80::", 10, "ipv6");
 SSRF_BLOCK_LIST.addSubnet("ff00::", 8, "ipv6");
+
+const NAT64_BLOCK_LIST = new BlockList();
+NAT64_BLOCK_LIST.addSubnet("64:ff9b::", 96, "ipv6");
+
+function hexGroupsToIpv4(highHex, lowHex) {
+  const high = Number.parseInt(highHex, 16);
+  const low = Number.parseInt(lowHex, 16);
+  if (!(Number.isFinite(high) && Number.isFinite(low))) {
+    return undefined;
+  }
+  return [((high >> 8) & 0xff), (high & 0xff), ((low >> 8) & 0xff), (low & 0xff)].join(".");
+}
 
 function extractMappedIpv4(ipv6) {
   const lower = ipv6.toLowerCase();
@@ -106,17 +133,41 @@ function extractMappedIpv4(ipv6) {
   if (!hexMatch) {
     return undefined;
   }
-  const high = Number.parseInt(hexMatch[1] || "", 16);
-  const low = Number.parseInt(hexMatch[2] || "", 16);
-  if (!(Number.isFinite(high) && Number.isFinite(low))) {
-    return undefined;
+  return hexGroupsToIpv4(hexMatch[1] || "", hexMatch[2] || "");
+}
+
+function extractNat64Ipv4(ipv6) {
+  const lower = ipv6.toLowerCase();
+  const canonical = lower.match(NAT64_CANONICAL_REGEX);
+  if (canonical && canonical[1] && canonical[2]) {
+    return hexGroupsToIpv4(canonical[1], canonical[2]);
   }
-  return [((high >> 8) & 0xff), (high & 0xff), ((low >> 8) & 0xff), (low & 0xff)].join(".");
+  const uncompressed = lower.match(NAT64_UNCOMPRESSED_REGEX);
+  if (uncompressed && uncompressed[1] && uncompressed[2]) {
+    return hexGroupsToIpv4(uncompressed[1], uncompressed[2]);
+  }
+  const dotted = lower.match(NAT64_DOTTED_REGEX);
+  if (dotted && dotted[1] && isIP(dotted[1]) === 4) {
+    return dotted[1];
+  }
+  return undefined;
 }
 
 function isBlockedIp(ip) {
   const family = isIP(ip);
   if (family === 0) {
+    return { blocked: false };
+  }
+  if (family === 6 && NAT64_BLOCK_LIST.check(ip, "ipv6")) {
+    const embedded = extractNat64Ipv4(ip);
+    if (embedded === undefined) {
+      // Inside 64:ff9b::/96 but textual form is unfamiliar — block
+      // defensively rather than pass an unvalidated v6 through.
+      return { blocked: true, ip: ip };
+    }
+    if (SSRF_BLOCK_LIST.check(embedded, "ipv4")) {
+      return { blocked: true, ip: embedded };
+    }
     return { blocked: false };
   }
   const familyKey = family === 4 ? "ipv4" : "ipv6";
