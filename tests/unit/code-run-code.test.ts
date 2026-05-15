@@ -523,6 +523,23 @@ describe("code/run-code - sandbox globals", () => {
     expect(result.error).toContain("SSRF blocked");
   });
 
+  it("blocks fetch to NAT64-wrapped link-local IPv4 (IMDS via 64:ff9b::/96)", async () => {
+    // 64:ff9b::a9fe:a9fe -> 169.254.169.254 (IMDS). The NAT64 wrapper
+    // must not bypass the IPv4 link-local denylist.
+    const result = await expectFailure({
+      code: 'await fetch("http://[64:ff9b::a9fe:a9fe]/")',
+    });
+    expect(result.error).toContain("SSRF blocked");
+  });
+
+  it("blocks fetch to NAT64-wrapped RFC 1918 IPv4", async () => {
+    // 64:ff9b::a00:1 -> 10.0.0.1. Same recheck must catch this.
+    const result = await expectFailure({
+      code: 'await fetch("http://[64:ff9b::a00:1]/")',
+    });
+    expect(result.error).toContain("SSRF blocked");
+  });
+
   it("blocks fetch to a hostname that resolves to loopback", async () => {
     const result = await expectFailure({
       code: 'await fetch("http://localhost/")',

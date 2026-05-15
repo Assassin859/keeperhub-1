@@ -477,7 +477,7 @@ describe("ChainMonitor", () => {
       expect(monitor.isAlive()).toBe(false);
     });
 
-    it("returns false when subscription has gone silent for >10 minutes", async () => {
+    it("returns false when subscription has gone silent past MONITOR_RECREATE_TIMEOUT_MS", async () => {
       // Reproduces the prod zombie state: subscription is set up but the
       // upstream WSS never delivers blocks. The in-monitor no-block timer
       // failed to fire; the reconciler must catch this via isAlive() so it
@@ -487,7 +487,12 @@ describe("ChainMonitor", () => {
       // reconciler-level staleness path is exercised on its own. (In prod,
       // the in-monitor timer was demonstrably not firing — that is the
       // failure mode this fallback exists for.)
+      //
+      // Pin the reconciler threshold so the test stays decoupled from the
+      // production default (which has been tuned tighter alongside
+      // BLOCK_ADVANCE_TIMEOUT_MS to match the dashboard red threshold).
       vi.stubEnv("BLOCK_ADVANCE_TIMEOUT_MS", String(60 * 60_000));
+      vi.stubEnv("MONITOR_RECREATE_TIMEOUT_MS", String(10 * 60_000));
 
       const monitor = new ChainMonitor({
         chain: makeChain(),
@@ -507,6 +512,16 @@ describe("ChainMonitor", () => {
     });
 
     it("stays alive when blocks are arriving regularly", async () => {
+      // Pin the windows so the 5-minute gap between blocks does not trigger
+      // the in-monitor reconnect cycle. The previous version of this test
+      // relied on subscribeToBlocks resetting lastBlockAdvanceAt to mask the
+      // reconnect activity, which masked the very bug (KEEP-570) that broke
+      // the reconciler's view of stuck monitors. The contract this test
+      // intends to assert is: each real height advance refreshes the
+      // staleness clock; verify it directly.
+      vi.stubEnv("BLOCK_ADVANCE_TIMEOUT_MS", String(60 * 60_000));
+      vi.stubEnv("MONITOR_RECREATE_TIMEOUT_MS", String(10 * 60_000));
+
       const monitor = new ChainMonitor({
         chain: makeChain(),
         workflows: [makeWorkflow({ blockInterval: 1 })],
@@ -534,9 +549,43 @@ describe("ChainMonitor", () => {
       });
 
       await monitor.start();
-      // Without seeding lastBlockAdvanceAt at subscribe time, isAlive()
-      // would compute a stale gap immediately. Sanity check the seed.
+      // monitorBootAt covers the cold-start warmup window: isAlive() returns
+      // true even before the first real block arrives, until staleness
+      // measured from boot exceeds MONITOR_RECREATE_TIMEOUT_MS.
       expect(monitor.isAlive()).toBe(true);
+    });
+
+    it("reaps a monitor stuck across silent reconnects with no real blocks", async () => {
+      // KEEP-570 regression: previously, subscribeToBlocks reset
+      // lastBlockAdvanceAt on every reconnect, so a monitor that kept
+      // re-subscribing but never received a real block looked alive forever
+      // to the reconciler. After this fix the staleness clock is measured
+      // from the last real height advance (or monitorBootAt as the cold-
+      // start fallback), so persistent silence across reconnects becomes
+      // visible to BlockMonitorService.isAlive().
+      //
+      // Pin a short BLOCK_ADVANCE_TIMEOUT_MS to drive multiple silent
+      // reconnects within the test window, and a short
+      // MONITOR_RECREATE_TIMEOUT_MS so the reaper threshold is reachable.
+      vi.stubEnv("BLOCK_ADVANCE_TIMEOUT_MS", String(60_000));
+      vi.stubEnv("MONITOR_RECREATE_TIMEOUT_MS", String(120_000));
+
+      const monitor = new ChainMonitor({
+        chain: makeChain(),
+        workflows: [makeWorkflow()],
+      });
+
+      await monitor.start();
+      expect(monitor.isAlive()).toBe(true);
+
+      // Three silent windows of 60s each plus the reconnects in between.
+      // No real blocks emitted; the monitor's in-process reconnect cycle
+      // keeps re-subscribing but the upstream stays silent.
+      await vi.advanceTimersByTimeAsync(3 * 60_000);
+
+      // Past the 120s staleness threshold, the reaper sees the monitor as
+      // not alive even though it is happily resubscribing.
+      expect(monitor.isAlive()).toBe(false);
     });
   });
 

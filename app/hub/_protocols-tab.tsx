@@ -7,6 +7,7 @@ import {
   getRegisteredProtocols,
   type ProtocolDefinition,
 } from "@/lib/protocol-registry";
+import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 import { ProtocolDetailIsland } from "./_protocol-detail-island";
 import { ProtocolGridClient } from "./_protocols-grid-client";
 
@@ -23,7 +24,8 @@ async function fetchProtocolWorkflowCounts(): Promise<Record<string, number>> {
     .where(
       and(
         eq(workflows.visibility, "public"),
-        isNotNull(workflows.featuredProtocol)
+        isNotNull(workflows.featuredProtocol),
+        workflowNotDeleted()
       )
     )
     .groupBy(workflows.featuredProtocol);

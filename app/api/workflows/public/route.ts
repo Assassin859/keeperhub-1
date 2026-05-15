@@ -10,6 +10,7 @@ import {
 } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import type { VoteDirection } from "@/lib/workflow/editor/votes";
+import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 type TagInfo = { id: string; name: string; slug: string };
 
 async function resolveTagFilter(tagSlug: string): Promise<string[] | "empty"> {
@@ -122,7 +123,12 @@ async function fetchDuplicateCounts(
       count: sql<string>`COUNT(*)`,
     })
     .from(workflows)
-    .where(inArray(workflows.sourceWorkflowId, workflowIds))
+    .where(
+      and(
+        inArray(workflows.sourceWorkflowId, workflowIds),
+        workflowNotDeleted()
+      )
+    )
     .groupBy(workflows.sourceWorkflowId);
 
   const result: Record<string, number> = {};
@@ -146,7 +152,8 @@ async function fetchUserDuplications(
     .where(
       and(
         eq(workflows.userId, userId),
-        inArray(workflows.sourceWorkflowId, workflowIds)
+        inArray(workflows.sourceWorkflowId, workflowIds),
+        workflowNotDeleted()
       )
     );
 
@@ -177,7 +184,11 @@ export async function GET(request: Request): Promise<NextResponse> {
 
     const isProtocolFeaturedRequest = Boolean(featuredProtocol);
 
-    const conditions = [eq(workflows.visibility, "public")];
+    // KEEP-440: soft-deleted workflows must never surface in the public feed.
+    const conditions = [
+      eq(workflows.visibility, "public"),
+      workflowNotDeleted(),
+    ];
 
     if (isProtocolFeaturedRequest) {
       conditions.push(

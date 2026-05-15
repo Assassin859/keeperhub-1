@@ -24,6 +24,7 @@
  *   200 { feedbackId, txHash, publicUrl }
  *   400 BAD_INPUT
  *   401 missing/invalid HMAC
+ *   402 INSUFFICIENT_GAS -- caller's wallet cannot cover mainnet gas
  *   403 NOT_PAYER  -- caller's wallet did not pay for the referenced execution
  *   404 EXECUTION_NOT_FOUND
  *   409 ALREADY_RATED -- caller already rated this execution
@@ -96,6 +97,25 @@ type ValidatedInput = {
 
 function badRequest(message: string, code = "BAD_INPUT"): NextResponse {
   return NextResponse.json({ error: message, code }, { status: 400 });
+}
+
+// Thrown by buildAndSignTx when the caller wallet cannot cover mainnet gas
+// for the giveFeedback() tx. Surfaced as a clean 402 INSUFFICIENT_GAS so the
+// caller can fund the wallet and retry the now-stranded feedback row
+// (KEEP-515), instead of estimateGas/broadcast failing opaquely.
+class InsufficientGasError extends Error {
+  readonly balanceWei: bigint;
+  readonly requiredWei: bigint | null;
+  constructor(balanceWei: bigint, requiredWei: bigint | null) {
+    const need =
+      requiredWei === null
+        ? "any mainnet gas"
+        : `the ~${requiredWei} wei needed for mainnet gas`;
+    super(`Wallet balance ${balanceWei} wei is below ${need}`);
+    this.name = "InsufficientGasError";
+    this.balanceWei = balanceWei;
+    this.requiredWei = requiredWei;
+  }
 }
 
 // Hoisted to module scope per useTopLevelRegex (avoids re-parsing the
@@ -331,14 +351,25 @@ async function buildAndSignTx(args: {
     transport: http(rpcUrl),
   });
 
-  // Live network reads -- nonce + gas estimate + fee estimate. Each one
-  // hits the upstream RPC; we await sequentially to keep error surfacing
-  // crisp (and Promise.all would still be sequential because of viem's
-  // single-connection transport in practice).
+  // Live network reads -- nonce + balance + gas estimate + fee estimate.
+  // Each one hits the upstream RPC; we await sequentially to keep error
+  // surfacing crisp (and Promise.all would still be sequential because of
+  // viem's single-connection transport in practice).
   const nonce = await publicClient.getTransactionCount({
     address: args.walletAddress,
     blockTag: "pending",
   });
+  // Gas preflight. The caller wallet pays mainnet gas natively, so a wallet
+  // with no ETH cannot complete this tx. Check the balance up front: a zero
+  // balance short-circuits before estimateGas, which on a 0-balance account
+  // can fail opaquely or stall on some RPC providers. A non-zero balance is
+  // re-checked against the real estimated cost once it is known.
+  const balanceWei = await publicClient.getBalance({
+    address: args.walletAddress,
+  });
+  if (balanceWei === BigInt(0)) {
+    throw new InsufficientGasError(balanceWei, null);
+  }
   const gas = await publicClient.estimateGas({
     account: args.walletAddress,
     to: ERC_8004_REPUTATION_REGISTRY_ADDRESS,
@@ -349,6 +380,11 @@ async function buildAndSignTx(args: {
   // bumps invalidating the broadcast. Cheap insurance on a $3-10 tx.
   const gasWithHeadroom = (gas * BigInt(12)) / BigInt(10);
   const fees = await publicClient.estimateFeesPerGas();
+  // Reject before signing if the balance cannot cover the estimated cost.
+  const requiredWei = gasWithHeadroom * fees.maxFeePerGas;
+  if (balanceWei < requiredWei) {
+    throw new InsufficientGasError(balanceWei, requiredWei);
+  }
 
   const unsignedTx = serializeTransaction({
     chainId: args.agentChainId,
@@ -531,6 +567,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         error: err instanceof Error ? err.message : String(err),
       })
       .where(eq(feedback.id, feedbackId));
+    if (err instanceof InsufficientGasError) {
+      return NextResponse.json(
+        {
+          error: err.message,
+          code: "INSUFFICIENT_GAS",
+          feedbackId,
+          balanceWei: err.balanceWei.toString(),
+          ...(err.requiredWei === null
+            ? {}
+            : { requiredWei: err.requiredWei.toString() }),
+        },
+        { status: 402 }
+      );
+    }
     if (err instanceof PolicyBlockedError) {
       return NextResponse.json(
         { error: err.message, code: "POLICY_BLOCKED", feedbackId },

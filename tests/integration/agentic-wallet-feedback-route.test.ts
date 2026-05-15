@@ -54,6 +54,7 @@ const {
   mockLookupSecret,
   mockSignEthereumTransaction,
   mockBroadcastSignedTransaction,
+  mockGetBalance,
 } = vi.hoisted(
   (): {
     mockSelectLimit: MockFn;
@@ -63,6 +64,7 @@ const {
     mockLookupSecret: MockFn;
     mockSignEthereumTransaction: MockFn;
     mockBroadcastSignedTransaction: MockFn;
+    mockGetBalance: MockFn;
   } => {
     const updateWhere = vi.fn();
     return {
@@ -75,6 +77,9 @@ const {
       mockLookupSecret: vi.fn(),
       mockSignEthereumTransaction: vi.fn(),
       mockBroadcastSignedTransaction: vi.fn(),
+      // buildAndSignTx's gas preflight reads the wallet balance; tests drive
+      // it per-case (default healthy balance set in beforeEach).
+      mockGetBalance: vi.fn(),
     };
   }
 );
@@ -160,16 +165,18 @@ vi.mock("@/lib/logging", () => ({
   logSystemError: vi.fn(),
 }));
 
-// buildAndSignTx does live RPC reads (getTransactionCount / estimateGas /
-// estimateFeesPerGas) via viem's createPublicClient. Stub the client so
-// those reads are canned; keep serializeTransaction + http real so the
-// route's RLP encoding path still executes for real.
+// buildAndSignTx does live RPC reads (getTransactionCount / getBalance /
+// estimateGas / estimateFeesPerGas) via viem's createPublicClient. Stub the
+// client so those reads are canned; keep serializeTransaction + http real so
+// the route's RLP encoding path still executes for real. getBalance is the
+// hoisted mock so tests can drive the gas preflight per-case.
 vi.mock("viem", async (importOriginal) => {
   const actual = await importOriginal<typeof import("viem")>();
   return {
     ...actual,
     createPublicClient: (): {
       getTransactionCount: () => Promise<number>;
+      getBalance: () => Promise<bigint>;
       estimateGas: () => Promise<bigint>;
       estimateFeesPerGas: () => Promise<{
         maxFeePerGas: bigint;
@@ -177,6 +184,9 @@ vi.mock("viem", async (importOriginal) => {
       }>;
     } => ({
       getTransactionCount: async (): Promise<number> => 7,
+      // vi.fn()'s loose Mock type is not assignable to the explicit
+      // () => Promise<bigint> signature; cast the hoisted mock through.
+      getBalance: mockGetBalance as unknown as () => Promise<bigint>,
       estimateGas: async (): Promise<bigint> => BigInt(120_000),
       estimateFeesPerGas: async (): Promise<{
         maxFeePerGas: bigint;
@@ -283,6 +293,7 @@ beforeEach(() => {
   mockLookupSecret.mockReset();
   mockSignEthereumTransaction.mockReset();
   mockBroadcastSignedTransaction.mockReset();
+  mockGetBalance.mockReset();
 
   mockLookupSecret.mockResolvedValue({
     secret: TEST_HMAC_SECRET,
@@ -301,6 +312,9 @@ beforeEach(() => {
   mockBroadcastSignedTransaction.mockResolvedValue({
     txHash: BROADCAST_TX_HASH,
   });
+  // Default healthy balance (1 ETH) -- comfortably covers the canned gas
+  // cost so the existing happy-path tests clear the preflight unchanged.
+  mockGetBalance.mockResolvedValue(BigInt("1000000000000000000"));
 });
 
 describe("POST /api/agentic-wallet/feedback -- KEEP-515 retry recovery", () => {
@@ -485,5 +499,57 @@ describe("POST /api/agentic-wallet/feedback -- KEEP-515 retry recovery", () => {
     }
     // The route never reached the success update that writes txHash.
     expect(mockBroadcastSignedTransaction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("POST /api/agentic-wallet/feedback -- gas preflight", () => {
+  it("returns 402 INSUFFICIENT_GAS and leaves the row stranded when the wallet holds zero ETH", async () => {
+    queueSelects([]); // fresh insert path
+    mockGetBalance.mockResolvedValueOnce(BigInt(0));
+
+    const res = await callFeedback(VALID_BODY);
+
+    expect(res.status).toBe(402);
+    const json = (await res.json()) as {
+      code: string;
+      feedbackId: string;
+      balanceWei: string;
+    };
+    expect(json.code).toBe("INSUFFICIENT_GAS");
+    expect(json.feedbackId).toBe(NEW_FEEDBACK_ID);
+    expect(json.balanceWei).toBe("0");
+
+    // The row was inserted then marked "failed" -- a stranded, retryable row
+    // (KEEP-515). estimateGas is never reached; nothing is signed or cast.
+    expect(mockInsertReturning).toHaveBeenCalledTimes(1);
+    expect(mockUpdateSet).toHaveBeenCalledWith({
+      status: "failed",
+      error: expect.stringContaining("below any mainnet gas"),
+    });
+    expect(mockSignEthereumTransaction).not.toHaveBeenCalled();
+    expect(mockBroadcastSignedTransaction).not.toHaveBeenCalled();
+  });
+
+  it("returns 402 INSUFFICIENT_GAS with the required amount when the balance cannot cover the estimated cost", async () => {
+    queueSelects([]); // fresh insert path
+    // Non-zero, so it clears the zero short-circuit, but far below the canned
+    // cost: gasWithHeadroom (120_000 * 1.2) * maxFeePerGas (30 gwei).
+    mockGetBalance.mockResolvedValueOnce(BigInt(1));
+
+    const res = await callFeedback(VALID_BODY);
+
+    expect(res.status).toBe(402);
+    const json = (await res.json()) as {
+      code: string;
+      balanceWei: string;
+      requiredWei: string;
+    };
+    expect(json.code).toBe("INSUFFICIENT_GAS");
+    expect(json.balanceWei).toBe("1");
+    expect(json.requiredWei).toBe(
+      (BigInt(144_000) * BigInt(30_000_000_000)).toString()
+    );
+    expect(mockSignEthereumTransaction).not.toHaveBeenCalled();
+    expect(mockBroadcastSignedTransaction).not.toHaveBeenCalled();
   });
 });

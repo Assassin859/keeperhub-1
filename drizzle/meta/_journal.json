@@ -519,6 +519,13 @@
       "when": 1777760000007,
       "tag": "0073_keep545_workflow_executions_error_classification",
       "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1777760000008,
+      "tag": "0074_keep440_workflows_soft_delete",
+      "breakpoints": true
     }
   ]
 }
