@@ -74,6 +74,45 @@ The sandbox uses `node:vm` which prevents accidental access to Node.js internals
 
 `fetch` is wrapped with an `AbortController` deadline matching the configured timeout, so network requests cannot hang indefinitely. A wall-clock `Promise.race` timeout also guards the entire execution, covering any async operation (not just fetch). Only `crypto.randomUUID` is exposed (`crypto.subtle` and other methods are not available).
 
+### Network Egress Policy
+
+`fetch` can reach any public internet destination over HTTP or HTTPS. To prevent server-side request forgery, the sandbox blocks requests whose resolved IP falls inside a private, internal, or reserved range. The block decision is **made on the resolved IP, not on the hostname** -- DNS is consulted at request time and the result is checked against the denylist.
+
+**Allowed**
+
+- Any public IPv4 destination (e.g. `api.openai.com`, `api.coingecko.com`, `discord.com`, `slack.com`, `telegram.org`)
+- Any public IPv6 destination
+- Public IPv4 reached via NAT64 in dual-stack environments
+
+**Blocked** (the request fails with an SSRF error before any packet leaves the sandbox)
+
+| Category               | Examples                                                   |
+| ---------------------- | ---------------------------------------------------------- |
+| Loopback               | `127.0.0.0/8`, `::1`                                       |
+| Link-local             | `169.254.0.0/16` (incl. cloud metadata endpoints), `fe80::/10` |
+| Private (RFC 1918)     | `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`            |
+| Carrier-grade NAT      | `100.64.0.0/10`                                            |
+| Unique local (IPv6)    | `fc00::/7` (incl. `fd00::/8`)                              |
+| Multicast              | `224.0.0.0/4`, `ff00::/8`                                  |
+| Documentation/reserved | `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`, `240.0.0.0/4` |
+| Benchmarking           | `198.18.0.0/15`                                            |
+| Broadcast              | `255.255.255.255`                                          |
+| Non-http(s) schemes    | `file://`, `data://`, `ftp://`, `gopher://`                |
+
+NAT64-wrapped equivalents of the above (`64:ff9b::/96` plus an embedded private IPv4) are also blocked. A hostname that resolves to **any** address in these ranges is rejected — split-horizon DNS does not bypass the check.
+
+**What you see on a block**
+
+```
+sandbox fetch: SSRF blocked (hostname -> resolved_ip)
+```
+
+This appears in the step's `error` field. The error indicates the destination IP class fell into one of the denied ranges; it does not mean the host is permanently unreachable, only that its current DNS resolution is.
+
+**Choosing a dedicated plugin instead of `fetch`**
+
+For common third-party services with rate limits, retries, or credential management, a dedicated plugin is usually a better choice than calling `fetch` directly. The platform ships first-class plugins for `discord/send-message`, `slack/send-message`, `telegram/send-message`, `sendgrid/send-email`, `webhook/send-webhook`, and others — they handle authentication, rate-limit backoff, and structured field validation that you would otherwise reimplement in user code.
+
 ## Example Workflows
 
 ### Filter and Aggregate Transfer Events

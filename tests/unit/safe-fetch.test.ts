@@ -148,6 +148,21 @@ describe("isBlockedIp", () => {
     }
   });
 
+  // Uncompressed form. c-ares normalises to canonical, so this branch is
+  // mainly defensive — but the regex exists, so it should be exercised.
+  it("allows NAT64-wrapped public IPv4 uncompressed form (64:ff9b:0:0:0:0:a29f:8ae8)", () => {
+    const result = isBlockedIp("64:ff9b:0:0:0:0:a29f:8ae8");
+    expect(result.blocked).toBe(false);
+  });
+
+  it("blocks NAT64-wrapped IMDS uncompressed form (64:ff9b:0:0:0:0:a9fe:a9fe)", () => {
+    const result = isBlockedIp("64:ff9b:0:0:0:0:a9fe:a9fe");
+    expect(result.blocked).toBe(true);
+    if (result.blocked) {
+      expect(result.reason).toBe("ipv4-nat64-private");
+    }
+  });
+
   const allowedV4 = ["8.8.8.8", "1.1.1.1", "93.184.216.34", "185.60.216.35"];
   for (const ip of allowedV4) {
     it(`allows public IPv4 ${ip}`, () => {
