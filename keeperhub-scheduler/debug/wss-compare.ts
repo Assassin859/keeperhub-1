@@ -105,7 +105,9 @@ rawWs.on("error", (err: Error) => {
 });
 
 rawWs.on("close", (code: number, reason: Buffer) => {
-  console.log(`[raw] close code=${code} reason=${reason.toString() || "(none)"}`);
+  console.log(
+    `[raw] close code=${code} reason=${reason.toString() || "(none)"}`,
+  );
 });
 
 // ---------------------------------------------------------------------------

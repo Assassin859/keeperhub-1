@@ -39,7 +39,7 @@
  *   pnpm tsx keeperhub-scheduler/debug/wss-compare.ts ws://localhost:8546 30
  */
 
-import { WebSocketServer, type WebSocket } from "ws";
+import { type WebSocket, WebSocketServer } from "ws";
 
 type Scenario =
   | "healthy"
@@ -162,7 +162,7 @@ wss.on("connection", (ws: WebSocket) => {
         // _processMessage should queue this in #pending. Then send the
         // response; when start()'s .then runs _register, the queued frame
         // should drain.
-        console.log(`   (scenario) pushing newHead before subscribe response`);
+        console.log("   (scenario) pushing newHead before subscribe response");
         pushNewHead(ws, subId);
       }
 
@@ -170,7 +170,7 @@ wss.on("connection", (ws: WebSocket) => {
       console.log(`   subscribed id=${subId}`);
 
       if (scenario === "zombie") {
-        console.log(`   (scenario) holding subscription silent`);
+        console.log("   (scenario) holding subscription silent");
         return;
       }
 

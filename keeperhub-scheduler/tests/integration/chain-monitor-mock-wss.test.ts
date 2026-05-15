@@ -191,12 +191,12 @@ function isBenignDestroyRace(reason: unknown): boolean {
 }
 
 describe("KEEP-570 integration: ChainMonitor warning patterns against a real ws mock", () => {
-  let serverHandle:
-    | { server: WebSocketServer; serverStarted: Promise<void> }
-    | null = null;
+  let serverHandle: {
+    server: WebSocketServer;
+    serverStarted: Promise<void>;
+  } | null = null;
   let monitor: ChainMonitor | null = null;
-  let warningCapture: { warnings: string[]; restore: () => void } | null =
-    null;
+  let warningCapture: { warnings: string[]; restore: () => void } | null = null;
   const rejectionHandler = (reason: unknown): void => {
     if (!isBenignDestroyRace(reason)) {
       throw reason;
@@ -208,10 +208,7 @@ describe("KEEP-570 integration: ChainMonitor warning patterns against a real ws 
     port++;
     vi.stubEnv("BLOCK_ADVANCE_TIMEOUT_MS", String(BLOCK_ADVANCE_MS));
     vi.stubEnv("MONITOR_RECREATE_TIMEOUT_MS", String(MONITOR_RECREATE_MS));
-    vi.stubEnv(
-      "PRIMARY_PROBE_INTERVAL_MS",
-      String(PRIMARY_PROBE_INTERVAL_MS),
-    );
+    vi.stubEnv("PRIMARY_PROBE_INTERVAL_MS", String(PRIMARY_PROBE_INTERVAL_MS));
     warningCapture = captureWarnings();
     process.on("unhandledRejection", rejectionHandler);
   });
@@ -237,92 +234,74 @@ describe("KEEP-570 integration: ChainMonitor warning patterns against a real ws 
     vi.unstubAllEnvs();
   });
 
-  it(
-    "zombie mode -> warning shows subscriptionPushes=0, blocksReceived=0",
-    async () => {
-      serverHandle = startMockServer(port, "zombie");
-      await serverHandle.serverStarted;
+  it("zombie mode -> warning shows subscriptionPushes=0, blocksReceived=0", async () => {
+    serverHandle = startMockServer(port, "zombie");
+    await serverHandle.serverStarted;
 
-      monitor = new ChainMonitor({
-        chain: makeChain(port),
-        workflows: [{ id: "wf1", userId: "u1", blockInterval: 1 }],
-      });
+    monitor = new ChainMonitor({
+      chain: makeChain(port),
+      workflows: [{ id: "wf1", userId: "u1", blockInterval: 1 }],
+    });
 
-      await monitor.start();
+    await monitor.start();
 
-      // Wait through at least one noBlockTimer firing plus reconnect.
-      await new Promise((r) => setTimeout(r, STUCK_WINDOW_MS));
+    // Wait through at least one noBlockTimer firing plus reconnect.
+    await new Promise((r) => setTimeout(r, STUCK_WINDOW_MS));
 
-      const warning = warningCapture?.warnings.find((w) =>
-        w.includes("Block height has not advanced"),
-      );
-      expect(
-        warning,
-        "expected at least one noBlockTimer warning",
-      ).toBeDefined();
-      // wsFrames > 0 because chainId/blockNumber/subscribe round-trips
-      // produce non-subscription frames. subscriptionPushes is 0 because
-      // the server never sends pushes in zombie mode.
-      expect(warning).toMatch(/subscriptionPushes=0/);
-      expect(warning).toMatch(/blocksReceived=0/);
-    },
-    30_000,
-  );
+    const warning = warningCapture?.warnings.find((w) =>
+      w.includes("Block height has not advanced"),
+    );
+    expect(warning, "expected at least one noBlockTimer warning").toBeDefined();
+    // wsFrames > 0 because chainId/blockNumber/subscribe round-trips
+    // produce non-subscription frames. subscriptionPushes is 0 because
+    // the server never sends pushes in zombie mode.
+    expect(warning).toMatch(/subscriptionPushes=0/);
+    expect(warning).toMatch(/blocksReceived=0/);
+  }, 30_000);
 
-  it(
-    "subscribe-no-response mode -> warning shows subscriptionPushes>0, blocksReceived=0 (ethers routing bug)",
-    async () => {
-      serverHandle = startMockServer(port, "subscribe-no-response");
-      await serverHandle.serverStarted;
+  it("subscribe-no-response mode -> warning shows subscriptionPushes>0, blocksReceived=0 (ethers routing bug)", async () => {
+    serverHandle = startMockServer(port, "subscribe-no-response");
+    await serverHandle.serverStarted;
 
-      monitor = new ChainMonitor({
-        chain: makeChain(port),
-        workflows: [{ id: "wf1", userId: "u1", blockInterval: 1 }],
-      });
+    monitor = new ChainMonitor({
+      chain: makeChain(port),
+      workflows: [{ id: "wf1", userId: "u1", blockInterval: 1 }],
+    });
 
-      await monitor.start();
-      await new Promise((r) => setTimeout(r, STUCK_WINDOW_MS));
+    await monitor.start();
+    await new Promise((r) => setTimeout(r, STUCK_WINDOW_MS));
 
-      const warning = warningCapture?.warnings.find((w) =>
-        w.includes("Block height has not advanced"),
-      );
-      expect(
-        warning,
-        "expected at least one noBlockTimer warning",
-      ).toBeDefined();
-      // Pushes are arriving (server sends eth_subscription messages with
-      // the server-side known subId), but ethers never registered the
-      // subscriber in #subs because the response was dropped. Frames show
-      // in our raw-ws tap counter even though they never reach onBlock.
-      expect(warning).toMatch(/subscriptionPushes=[1-9]/);
-      expect(warning).toMatch(/blocksReceived=0/);
-    },
-    30_000,
-  );
+    const warning = warningCapture?.warnings.find((w) =>
+      w.includes("Block height has not advanced"),
+    );
+    expect(warning, "expected at least one noBlockTimer warning").toBeDefined();
+    // Pushes are arriving (server sends eth_subscription messages with
+    // the server-side known subId), but ethers never registered the
+    // subscriber in #subs because the response was dropped. Frames show
+    // in our raw-ws tap counter even though they never reach onBlock.
+    expect(warning).toMatch(/subscriptionPushes=[1-9]/);
+    expect(warning).toMatch(/blocksReceived=0/);
+  }, 30_000);
 
-  it(
-    "healthy mode -> blocks arrive, no stuck warning, isAlive stays true",
-    async () => {
-      serverHandle = startMockServer(port, "healthy");
-      await serverHandle.serverStarted;
+  it("healthy mode -> blocks arrive, no stuck warning, isAlive stays true", async () => {
+    serverHandle = startMockServer(port, "healthy");
+    await serverHandle.serverStarted;
 
-      monitor = new ChainMonitor({
-        chain: makeChain(port),
-        workflows: [{ id: "wf1", userId: "u1", blockInterval: 1 }],
-      });
+    monitor = new ChainMonitor({
+      chain: makeChain(port),
+      workflows: [{ id: "wf1", userId: "u1", blockInterval: 1 }],
+    });
 
-      await monitor.start();
-      await new Promise((r) => setTimeout(r, STUCK_WINDOW_MS));
+    await monitor.start();
+    await new Promise((r) => setTimeout(r, STUCK_WINDOW_MS));
 
-      const stuckWarning = warningCapture?.warnings.find((w) =>
-        w.includes("Block height has not advanced"),
-      );
-      expect(
-        stuckWarning,
-        "should not see a stuck warning in healthy mode",
-      ).toBeUndefined();
-      expect(monitor.isAlive()).toBe(true);
-    },
-    30_000,
-  );
+    const stuckWarning = warningCapture?.warnings.find((w) =>
+      w.includes("Block height has not advanced"),
+    );
+    expect(
+      stuckWarning,
+      "should not see a stuck warning in healthy mode",
+    ).toBeUndefined();
+    expect(monitor.isAlive()).toBe(true);
+  }, 30_000);
 });

@@ -355,7 +355,10 @@ export class ChainMonitor {
       // stale handlers from firing handleDisconnect during teardown
       if (this.wsCloseHandler) {
         const ws = this.provider.websocket as unknown as {
-          removeListener?: (event: string, cb: (data?: unknown) => void) => void;
+          removeListener?: (
+            event: string,
+            cb: (data?: unknown) => void,
+          ) => void;
         };
         ws?.removeListener?.("close", this.wsCloseHandler);
         this.wsCloseHandler = null;
@@ -365,7 +368,10 @@ export class ChainMonitor {
       // teardown frames ethers sends during eth_unsubscribe.
       if (this.wsMessageHandler) {
         const ws = this.provider.websocket as unknown as {
-          removeListener?: (event: string, cb: (data?: unknown) => void) => void;
+          removeListener?: (
+            event: string,
+            cb: (data?: unknown) => void,
+          ) => void;
         };
         ws?.removeListener?.("message", this.wsMessageHandler);
         this.wsMessageHandler = null;
@@ -887,9 +893,7 @@ export class ChainMonitor {
         //                       pushes but did not route them to onBlock
         //                       (the ethers v6 sharp edge)
         const lastFrameAgoMs =
-          this.lastWsFrameAt === null
-            ? null
-            : Date.now() - this.lastWsFrameAt;
+          this.lastWsFrameAt === null ? null : Date.now() - this.lastWsFrameAt;
         console.warn(
           `[BlockMonitor:${this.chainName}] Block height has not advanced in ${timeoutMs / 1000}s ` +
             `(silentReconnects=${this.silentReconnects}, wsFrames=${this.wsFrameCount}, ` +

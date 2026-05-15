@@ -247,7 +247,9 @@ async function main(): Promise<void> {
   const sanity = await runProbe(url, 2_000);
   console.log(`Sanity probe (cycle 0): newHeads=${sanity}`);
   if (sanity === 0) {
-    console.error("FATAL: sanity probe failed - mock server or ethers not working");
+    console.error(
+      "FATAL: sanity probe failed - mock server or ethers not working",
+    );
     process.exit(1);
   }
 
@@ -273,9 +275,11 @@ async function main(): Promise<void> {
     if (cycle % probeEvery === 0) {
       const lag = await eventLoopLagMs();
       const mem = process.memoryUsage();
-      const stats = (server as unknown as {
-        stats: { total: number; live: number };
-      }).stats;
+      const stats = (
+        server as unknown as {
+          stats: { total: number; live: number };
+        }
+      ).stats;
       const blocks = await runProbe(url, probeDurationMs);
       const sample = {
         cycle,
@@ -301,9 +305,7 @@ async function main(): Promise<void> {
       );
       if (blocks === 0) {
         console.log(
-          "REPRO HIT: a fresh ethers WebSocketProvider in this process " +
-            "received zero newHeads from the same server that delivered " +
-            `${sanity} blocks at process start.`,
+          `REPRO HIT: a fresh ethers WebSocketProvider in this process received zero newHeads from the same server that delivered ${sanity} blocks at process start.`,
         );
         console.log(
           "Letting the loop continue so we can see whether subsequent " +
@@ -322,9 +324,7 @@ async function main(): Promise<void> {
   const failures = probeHistory.filter((p) => p.blocks === 0);
   if (failures.length === 0) {
     console.log(
-      `All ${probeHistory.length} probes received newHeads. Hypothesis ` +
-        "REFUTED: in-process accumulated state in ethers/ws does not " +
-        "explain the prod failure mode (within this many cycles).",
+      `All ${probeHistory.length} probes received newHeads. Hypothesis REFUTED: in-process accumulated state in ethers/ws does not explain the prod failure mode (within this many cycles).`,
     );
   } else {
     console.log(
@@ -333,8 +333,7 @@ async function main(): Promise<void> {
     );
   }
   console.log(
-    `Benign destroy-race rejections: ${benignRejections.length}. ` +
-      "(These mirror the 53/5000 lines we saw in prod logs.)",
+    `Benign destroy-race rejections: ${benignRejections.length}. (These mirror the 53/5000 lines we saw in prod logs.)`,
   );
 
   server.close();
