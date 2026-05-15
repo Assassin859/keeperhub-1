@@ -111,6 +111,43 @@ describe("isBlockedIp", () => {
     expect(result.blocked).toBe(true);
   });
 
+  // NAT64 (RFC 6052, 64:ff9b::/96): dual-stack pods synthesise these for
+  // every IPv4-only public host. The wrapper is allowed; the embedded
+  // IPv4 is what we check.
+  it("allows NAT64-wrapped public IPv4 (64:ff9b::a29f:8ae8 -> 162.159.138.232 discord/cloudflare)", () => {
+    const result = isBlockedIp("64:ff9b::a29f:8ae8");
+    expect(result.blocked).toBe(false);
+  });
+
+  it("allows NAT64-wrapped public IPv4 dotted form (64:ff9b::1.1.1.1)", () => {
+    const result = isBlockedIp("64:ff9b::1.1.1.1");
+    expect(result.blocked).toBe(false);
+  });
+
+  it("blocks NAT64-wrapped link-local IPv4 (IMDS via NAT64)", () => {
+    const result = isBlockedIp("64:ff9b::a9fe:a9fe");
+    expect(result.blocked).toBe(true);
+    if (result.blocked) {
+      expect(result.reason).toBe("ipv4-nat64-private");
+    }
+  });
+
+  it("blocks NAT64-wrapped RFC 1918 IPv4 (64:ff9b::0a00:0001 -> 10.0.0.1)", () => {
+    const result = isBlockedIp("64:ff9b::a00:1");
+    expect(result.blocked).toBe(true);
+    if (result.blocked) {
+      expect(result.reason).toBe("ipv4-nat64-private");
+    }
+  });
+
+  it("blocks NAT64-wrapped loopback IPv4 dotted form (64:ff9b::127.0.0.1)", () => {
+    const result = isBlockedIp("64:ff9b::127.0.0.1");
+    expect(result.blocked).toBe(true);
+    if (result.blocked) {
+      expect(result.reason).toBe("ipv4-nat64-private");
+    }
+  });
+
   const allowedV4 = ["8.8.8.8", "1.1.1.1", "93.184.216.34", "185.60.216.35"];
   for (const ip of allowedV4) {
     it(`allows public IPv4 ${ip}`, () => {
@@ -179,6 +216,8 @@ describe("safeFetch (enforce mode)", () => {
     ["http://[fe80::1]/", "link-local"],
     ["http://[fc00::1]/", "private-ip"],
     ["http://[::ffff:169.254.169.254]/", "ipv4-mapped-private"],
+    ["http://[64:ff9b::a9fe:a9fe]/", "ipv4-nat64-private"],
+    ["http://[64:ff9b::a00:1]/", "ipv4-nat64-private"],
   ];
 
   for (const [url, reason] of blockedLiteralUrls) {
@@ -375,6 +414,7 @@ describe("assertUrlIsPublic", () => {
     ["https://[fe80::1]/", "link-local"],
     ["https://[fc00::1]/", "private-ip"],
     ["http://[::ffff:169.254.169.254]/", "ipv4-mapped-private"],
+    ["http://[64:ff9b::a9fe:a9fe]/", "ipv4-nat64-private"],
   ];
 
   for (const [url, reason] of blockedLiterals) {
@@ -396,6 +436,10 @@ describe("assertUrlIsPublic", () => {
     "http://1.1.1.1/",
     "https://8.8.8.8/",
     "https://[2606:4700:4700::1111]/",
+    // NAT64-wrapped public IPv4 (discord.com via Cloudflare). Dual-stack
+    // pods see this for IPv4-only hosts; the embedded IPv4 is public, so
+    // the wrapper is allowed.
+    "https://[64:ff9b::a29f:8ae8]/",
   ];
 
   for (const url of allowedLiterals) {
@@ -465,6 +509,31 @@ describe("assertUrlIsPublic", () => {
     }
     expect(thrown).toBeInstanceOf(SsrfBlockedError);
     expect((thrown as SsrfBlockedError).reason).toBe("private-ip");
+  });
+
+  it("accepts a domain that resolves to NAT64-wrapped public IPv4", async () => {
+    // Dual-stack pod resolving discord.com gets a 64:ff9b::/96 AAAA
+    // synthesised from 162.159.138.232 (public Cloudflare). Must allow.
+    mockPromisesLookup.mockResolvedValue([
+      { address: "64:ff9b::a29f:8ae8", family: 6 },
+    ]);
+    await expect(
+      assertUrlIsPublic("https://discord.com/")
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects a domain that resolves to NAT64-wrapped private IPv4", async () => {
+    mockPromisesLookup.mockResolvedValue([
+      { address: "64:ff9b::a00:1", family: 6 },
+    ]);
+    let thrown: unknown;
+    try {
+      await assertUrlIsPublic("https://nat64-private.example.com/");
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(SsrfBlockedError);
+    expect((thrown as SsrfBlockedError).reason).toBe("ipv4-nat64-private");
   });
 
   it("throws a plain Error when DNS resolution fails", async () => {
