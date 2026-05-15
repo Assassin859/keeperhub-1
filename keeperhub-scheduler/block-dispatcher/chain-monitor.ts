@@ -174,7 +174,19 @@ export class ChainMonitor {
   // not falsify liveness. This was previously `lastBlockReceivedAt` and was
   // updated before dedup — that was the root cause of the silent 7-hour
   // outage where block-triggered workflows stopped without recovering.
+  //
+  // KEEP-570: also no longer reset by subscribeToBlocks on reconnect. A
+  // monitor that keeps reconnecting but never gets a real block is exactly
+  // the stuck state the reconciler needs to detect. The monitorBootAt field
+  // covers the cold-start warmup window so a freshly-booted monitor isn't
+  // reaped before its first block.
   private lastBlockAdvanceAt: number | null = null;
+  // Wall-clock ms of when this monitor instance started running. Used by
+  // isAlive() as the staleness baseline before the first real block arrives.
+  // Replaces the previous behaviour of seeding lastBlockAdvanceAt on every
+  // subscribe, which broke the reconciler's ability to detect monitors
+  // stuck across many reconnect cycles.
+  private monitorBootAt: number | null = null;
   private blocksReceived = 0;
   private blocksMatched = 0;
   private lastHeartbeat = Date.now();
@@ -207,6 +219,7 @@ export class ChainMonitor {
     }
     this.isRunning = true;
     this.silentReconnects = 0;
+    this.monitorBootAt = Date.now();
     metrics.setSilentReconnectsCurrent(this.chainName, 0);
     metrics.setWorkflowsTracked(this.chainName, this.workflows.length);
 
@@ -280,10 +293,18 @@ export class ChainMonitor {
     // reconciler tears it down and starts a fresh monitor. The signal is
     // height-advance — not callback-fire — because a stuck upstream can
     // replay the same block(N) forever without us advancing.
+    //
+    // KEEP-570: staleness is measured from the last *real* height advance.
+    // Before the first block ever arrives the baseline is monitorBootAt, so
+    // a freshly-booted monitor isn't reaped during cold-start warmup. Once
+    // the first block lands, lastBlockAdvanceAt takes over. This replaces
+    // the previous logic where subscribeToBlocks reset lastBlockAdvanceAt
+    // on every reconnect — that reset masked monitors stuck across many
+    // silent-reconnect cycles, exactly the prod failure mode.
+    const stalenessBaseline = this.lastBlockAdvanceAt ?? this.monitorBootAt;
     if (
-      this.lastBlockAdvanceAt !== null &&
-      Date.now() - this.lastBlockAdvanceAt >
-        liveness("MONITOR_RECREATE_TIMEOUT_MS")
+      stalenessBaseline !== null &&
+      Date.now() - stalenessBaseline > liveness("MONITOR_RECREATE_TIMEOUT_MS")
     ) {
       return false;
     }
@@ -488,13 +509,13 @@ export class ChainMonitor {
     });
 
     this.hasActiveSubscription = true;
-    // Seed the staleness clock so a freshly-subscribed monitor isn't reaped
-    // by isAlive() before the first block arrives. Real height advances
-    // refresh this in processBlockRange().
+    // KEEP-570: do NOT seed lastBlockAdvanceAt here. Resetting it on every
+    // subscribe falsified isAlive() across reconnects, so monitors that
+    // re-subscribed every BLOCK_ADVANCE_TIMEOUT_MS without ever receiving
+    // a real block looked permanently alive to the reconciler. The cold-
+    // start warmup case is now handled by monitorBootAt in isAlive().
     const subscribedAt = Date.now();
-    this.lastBlockAdvanceAt = subscribedAt;
     metrics.setHasActiveSubscription(this.chainName, true);
-    metrics.setLastBlockAdvanceAt(this.chainName, subscribedAt);
     metrics.setSubscribedAt(this.chainName, subscribedAt);
     // resetNoBlockTimer is called from start/reconnect, but seed it here too
     // for the same reason — the watchdog needs a baseline from the moment we
