@@ -476,9 +476,9 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
                 abi: JSON.stringify([
                   {
                     inputs: [
-                      { internalType: "bytes32", name: "ilk", type: "bytes32" },
+                      { internalType: "bytes32", name: "id", type: "bytes32" },
                     ],
-                    name: "ilks",
+                    name: "reader",
                     outputs: [
                       { internalType: "uint256", name: "Art", type: "uint256" },
                     ],
@@ -486,9 +486,9 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
                     type: "function",
                   },
                 ]),
-                abiFunction: "ilks",
+                abiFunction: "reader",
                 functionArgs:
-                  '["{{@osm-loop:OSM Loop.currentItem.ilkBytes32}}"]',
+                  '["{{@prev-loop:Prev Loop.currentItem.idBytes32}}"]',
               },
             },
           },
@@ -499,7 +499,7 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
               type: "action",
               config: {
                 actionType: "discord/send-message",
-                discordMessage: "ilk read",
+                discordMessage: "id read",
               },
             },
           },
@@ -513,7 +513,7 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
     expect(mockUpdateReturning).toHaveBeenCalled();
   });
 
-  it("KEEP-571: PATCH accepts legacy `functionName` on web3/write-contract (MegaPoker case)", async () => {
+  it("KEEP-571: PATCH accepts legacy `functionName` on web3/write-contract (legacy functionName case)", async () => {
     mockWorkflowsFindFirst.mockResolvedValue(makeWorkflow());
     mockUpdateReturning.mockResolvedValue([makeWorkflow()]);
 
@@ -529,7 +529,7 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
             },
           },
           {
-            id: "poke-1",
+            id: "doWrite-1",
             type: "action",
             data: {
               type: "action",
@@ -540,13 +540,13 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
                 abi: JSON.stringify([
                   {
                     inputs: [],
-                    name: "poke",
+                    name: "doWrite",
                     outputs: [],
                     stateMutability: "nonpayable",
                     type: "function",
                   },
                 ]),
-                functionName: "poke",
+                functionName: "doWrite",
                 functionArgs: "[]",
               },
             },
@@ -558,7 +558,7 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
               type: "action",
               config: {
                 actionType: "discord/send-message",
-                discordMessage: "poked",
+                discordMessage: "done",
               },
             },
           },
@@ -596,7 +596,7 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
                 network: "1",
                 contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
                 abi: "[]",
-                abiFunction: "ilks",
+                abiFunction: "reader",
                 functionArgs: "this-is-not-json-or-a-template",
               },
             },
@@ -622,14 +622,92 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
     expect(mockUpdateReturning).not.toHaveBeenCalled();
   });
 
+  it("KEEP-571: PATCH accepts useManualAbi UI state on web3 actions (global reserved key)", async () => {
+    mockWorkflowsFindFirst.mockResolvedValue(makeWorkflow());
+    mockUpdateReturning.mockResolvedValue([makeWorkflow()]);
+
+    const response = await PATCH(
+      createRequest("PATCH", {
+        nodes: [
+          {
+            id: "trigger",
+            type: "trigger",
+            data: { type: "trigger", config: { actionType: "Manual" } },
+          },
+          {
+            id: "read-1",
+            type: "action",
+            data: {
+              type: "action",
+              config: {
+                actionType: "web3/read-contract",
+                network: "1",
+                contractAddress: "0x0000000000000000000000000000000000000001",
+                abi: "[]",
+                abiFunction: "reader",
+                functionArgs: "[]",
+                useManualAbi: "true",
+              },
+            },
+          },
+        ],
+        edges: [],
+      }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateReturning).toHaveBeenCalled();
+  });
+
+  it("KEEP-571: PATCH accepts inputMode/batchSize leak on web3/query-transactions", async () => {
+    mockWorkflowsFindFirst.mockResolvedValue(makeWorkflow());
+    mockUpdateReturning.mockResolvedValue([makeWorkflow()]);
+
+    const response = await PATCH(
+      createRequest("PATCH", {
+        nodes: [
+          {
+            id: "trigger",
+            type: "trigger",
+            data: { type: "trigger", config: { actionType: "Manual" } },
+          },
+          {
+            id: "query-1",
+            type: "action",
+            data: {
+              type: "action",
+              config: {
+                actionType: "web3/query-transactions",
+                network: "1",
+                contractAddress: "0x0000000000000000000000000000000000000001",
+                abi: "[]",
+                abiFunction: "doWrite",
+                inputMode: "uniform",
+                batchSize: "100",
+                blockCount: "225000",
+                useManualAbi: "true",
+              },
+            },
+          },
+        ],
+        edges: [],
+      }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateReturning).toHaveBeenCalled();
+  });
+
   it("KEEP-571: PATCH saves a 6-node workflow with the affected node at index 3 (proves node-count is not a threshold)", async () => {
     mockWorkflowsFindFirst.mockResolvedValue(makeWorkflow());
     mockUpdateReturning.mockResolvedValue([makeWorkflow()]);
 
     const readContractAbi = JSON.stringify([
       {
-        inputs: [{ internalType: "bytes32", name: "ilk", type: "bytes32" }],
-        name: "ilks",
+        inputs: [{ internalType: "bytes32", name: "id", type: "bytes32" }],
+        name: "reader",
         outputs: [{ internalType: "uint256", name: "Art", type: "uint256" }],
         stateMutability: "view",
         type: "function",
@@ -668,7 +746,7 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
                 network: "1",
                 contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
                 abi: readContractAbi,
-                abiFunction: "ilks",
+                abiFunction: "reader",
                 functionArgs:
                   '["0x0000000000000000000000000000000000000000000000000000000000000001"]',
               },
@@ -785,7 +863,7 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
             network: "1",
             contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
             abi: "[]",
-            abiFunction: "ilks",
+            abiFunction: "reader",
             functionArgs: "not-json",
           },
         },

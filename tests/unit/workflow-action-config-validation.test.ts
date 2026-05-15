@@ -201,8 +201,8 @@ describe("validateWorkflowActionConfigs", () => {
   describe("KEEP-571 stringified container fields (UI wire format)", () => {
     const READ_CONTRACT_ABI = JSON.stringify([
       {
-        inputs: [{ internalType: "bytes32", name: "ilk", type: "bytes32" }],
-        name: "ilks",
+        inputs: [{ internalType: "bytes32", name: "id", type: "bytes32" }],
+        name: "reader",
         outputs: [
           { internalType: "uint256", name: "Art", type: "uint256" },
           { internalType: "uint256", name: "rate", type: "uint256" },
@@ -218,8 +218,8 @@ describe("validateWorkflowActionConfigs", () => {
           network: "1",
           contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
           abi: READ_CONTRACT_ABI,
-          abiFunction: "ilks",
-          functionArgs: '["{{@osm-loop:OSM Loop.currentItem.ilkBytes32}}"]',
+          abiFunction: "reader",
+          functionArgs: '["{{@prev-loop:Prev Loop.currentItem.idBytes32}}"]',
         }),
       ]);
 
@@ -234,13 +234,13 @@ describe("validateWorkflowActionConfigs", () => {
           abi: JSON.stringify([
             {
               inputs: [],
-              name: "poke",
+              name: "doWrite",
               outputs: [],
               stateMutability: "nonpayable",
               type: "function",
             },
           ]),
-          abiFunction: "poke",
+          abiFunction: "doWrite",
           functionArgs: "[]",
         }),
       ]);
@@ -254,7 +254,7 @@ describe("validateWorkflowActionConfigs", () => {
           network: "1",
           contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
           abi: READ_CONTRACT_ABI,
-          abiFunction: "ilks",
+          abiFunction: "reader",
           functionArgs: "",
         }),
       ]);
@@ -268,7 +268,7 @@ describe("validateWorkflowActionConfigs", () => {
           network: "1",
           contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
           abi: READ_CONTRACT_ABI,
-          abiFunction: "ilks",
+          abiFunction: "reader",
           functionArgs: [
             "0x0000000000000000000000000000000000000000000000000000000000000001",
           ],
@@ -284,7 +284,7 @@ describe("validateWorkflowActionConfigs", () => {
           network: "1",
           contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
           abi: READ_CONTRACT_ABI,
-          abiFunction: "ilks",
+          abiFunction: "reader",
           functionArgs: "{{@previous.argsList}}",
         }),
       ]);
@@ -298,7 +298,7 @@ describe("validateWorkflowActionConfigs", () => {
           network: "1",
           contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
           abi: READ_CONTRACT_ABI,
-          abiFunction: "ilks",
+          abiFunction: "reader",
           functionArgs: "not-json",
         }),
       ]);
@@ -321,7 +321,7 @@ describe("validateWorkflowActionConfigs", () => {
           network: "1",
           contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
           abi: READ_CONTRACT_ABI,
-          abiFunction: "ilks",
+          abiFunction: "reader",
           functionArgs: '"only-a-string"',
         }),
       ]);
@@ -342,7 +342,7 @@ describe("validateWorkflowActionConfigs", () => {
           network: "1",
           contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
           abi: READ_CONTRACT_ABI,
-          abiFunction: "ilks",
+          abiFunction: "reader",
           argsList: '[["0x01"],["0x02"]]',
         }),
       ]);
@@ -368,7 +368,7 @@ describe("validateWorkflowActionConfigs", () => {
           network: "1",
           contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
           abi: READ_CONTRACT_ABI,
-          abiFunction: "ilks",
+          abiFunction: "reader",
           functionArgs: '{"named":"args"}',
         }),
       ]);
@@ -393,7 +393,7 @@ describe("validateWorkflowActionConfigs", () => {
             network: "1",
             contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
             abi: READ_CONTRACT_ABI,
-            abiFunction: "ilks",
+            abiFunction: "reader",
             functionArgs: '["0x0000000000000000000000000000000000000001"]',
           },
           "node-1"
@@ -406,13 +406,13 @@ describe("validateWorkflowActionConfigs", () => {
             abi: JSON.stringify([
               {
                 inputs: [],
-                name: "poke",
+                name: "doWrite",
                 outputs: [],
                 stateMutability: "nonpayable",
                 type: "function",
               },
             ]),
-            abiFunction: "poke",
+            abiFunction: "doWrite",
             functionArgs: "[]",
           },
           "node-2"
@@ -432,20 +432,20 @@ describe("validateWorkflowActionConfigs", () => {
     const WRITE_CONTRACT_ABI = JSON.stringify([
       {
         inputs: [],
-        name: "poke",
+        name: "doWrite",
         outputs: [],
         stateMutability: "nonpayable",
         type: "function",
       },
     ]);
 
-    it("accepts legacy functionName on web3/write-contract when abiFunction is absent (MegaPoker case)", () => {
+    it("accepts legacy functionName on web3/write-contract when abiFunction is absent", () => {
       const result = validateWorkflowActionConfigs([
         actionNode("web3/write-contract", {
           network: "1",
           contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
           abi: WRITE_CONTRACT_ABI,
-          functionName: "poke",
+          functionName: "doWrite",
           functionArgs: "[]",
         }),
       ]);
@@ -473,7 +473,7 @@ describe("validateWorkflowActionConfigs", () => {
           network: "1",
           contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
           abi: WRITE_CONTRACT_ABI,
-          abiFunction: "poke",
+          abiFunction: "doWrite",
           functionName: "stale-legacy-value",
           functionArgs: "[]",
         }),
@@ -488,7 +488,7 @@ describe("validateWorkflowActionConfigs", () => {
           network: "1",
           contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
           abi: WRITE_CONTRACT_ABI,
-          abiFunction: "poke",
+          abiFunction: "doWrite",
           functionArgs: "[]",
           totallyMadeUpField: "nope",
         }),
@@ -525,16 +525,16 @@ describe("validateWorkflowActionConfigs", () => {
     });
   });
 
-  describe("KEEP-571 OSM Alert regression (real prod node shape)", () => {
-    it("accepts the exact node shape that prod workflow ooiuqkddnj6fnssg93kgr was failing to save", () => {
+  describe("KEEP-571 regression on a multi-template, integrationId-bearing node", () => {
+    it("accepts a read-contract node shape that combines stringified args, integrationId, and templated address", () => {
       const result = validateWorkflowActionConfigs([
         actionNode("web3/read-contract", {
-          abi: '[{"inputs":[{"internalType":"bytes32","name":"ilk","type":"bytes32"}],"name":"ilks","outputs":[{"internalType":"uint256","name":"Art","type":"uint256"},{"internalType":"uint256","name":"rate","type":"uint256"},{"internalType":"uint256","name":"spot","type":"uint256"},{"internalType":"uint256","name":"line","type":"uint256"},{"internalType":"uint256","name":"dust","type":"uint256"}],"stateMutability":"view","type":"function"}]',
+          abi: '[{"inputs":[{"internalType":"bytes32","name":"id","type":"bytes32"}],"name":"reader","outputs":[{"internalType":"uint256","name":"a","type":"uint256"},{"internalType":"uint256","name":"b","type":"uint256"}],"stateMutability":"view","type":"function"}]',
           network: "1",
-          abiFunction: "ilks",
-          functionArgs: '["{{@osm-loop:OSM Loop.currentItem.ilkBytes32}}"]',
-          integrationId: "ecw50nj0v9at1p6thn0nh",
-          contractAddress: "{{@fetch-chainlog:Fetch Chainlog.data.MCD_VAT}}",
+          abiFunction: "reader",
+          functionArgs: '["{{@prev-loop:Prev Loop.currentItem.idBytes32}}"]',
+          integrationId: "mock-integration-id-00000",
+          contractAddress: "{{@prev-fetch:Prev Fetch.data.targetAddress}}",
         }),
       ]);
 
@@ -542,11 +542,160 @@ describe("validateWorkflowActionConfigs", () => {
     });
   });
 
+  describe("KEEP-571 UI-only state and cross-action leak fields", () => {
+    it("accepts useManualAbi on web3/write-contract (UI toggle, never a config field)", () => {
+      const result = validateWorkflowActionConfigs([
+        actionNode("web3/write-contract", {
+          network: "1",
+          contractAddress: "0x0000000000000000000000000000000000000001",
+          abi: JSON.stringify([
+            {
+              inputs: [],
+              name: "cast",
+              outputs: [],
+              stateMutability: "nonpayable",
+              type: "function",
+            },
+          ]),
+          abiFunction: "cast",
+          functionArgs: "[]",
+          useManualAbi: "true",
+        }),
+      ]);
+
+      expect(result).toEqual({ valid: true, issues: [] });
+    });
+
+    it.each([
+      "web3/read-contract",
+      "web3/write-contract",
+      "web3/query-events",
+      "web3/query-transactions",
+      "web3/batch-read-contract",
+    ])("accepts useManualAbi on %s (global UI state)", (actionType) => {
+      const result = validateWorkflowActionConfigs([
+        actionNode(actionType, {
+          network: "1",
+          contractAddress: "0x0000000000000000000000000000000000000001",
+          abi: "[]",
+          abiFunction: "foo",
+          functionArgs: "[]",
+          useManualAbi: "true",
+        }),
+      ]);
+
+      // We only care that useManualAbi itself does NOT show up as UNKNOWN_FIELD.
+      const useManualAbiIssues = result.issues.filter(
+        (i) => i.field === "useManualAbi"
+      );
+      expect(useManualAbiIssues).toEqual([]);
+    });
+
+    it("accepts inputMode and batchSize leftovers on web3/query-transactions (cross-action UI leak)", () => {
+      const result = validateWorkflowActionConfigs([
+        actionNode("web3/query-transactions", {
+          network: "1",
+          contractAddress: "0x0000000000000000000000000000000000000001",
+          abi: "[]",
+          abiFunction: "schedule",
+          inputMode: "uniform",
+          batchSize: "100",
+          blockCount: "225000",
+        }),
+      ]);
+
+      const leakIssues = result.issues.filter(
+        (i) => i.field === "inputMode" || i.field === "batchSize"
+      );
+      expect(leakIssues).toEqual([]);
+    });
+
+    it("accepts inputMode and batchSize leftovers on web3/query-events (same cross-action leak)", () => {
+      const result = validateWorkflowActionConfigs([
+        actionNode("web3/query-events", {
+          network: "1",
+          contractAddress: "0x0000000000000000000000000000000000000001",
+          abi: "[]",
+          eventName: "Transfer",
+          inputMode: "uniform",
+          batchSize: "100",
+        }),
+      ]);
+
+      const leakIssues = result.issues.filter(
+        (i) => i.field === "inputMode" || i.field === "batchSize"
+      );
+      expect(leakIssues).toEqual([]);
+    });
+
+    it("accepts the full cross-action leak import payload (combined useManualAbi + inputMode + batchSize)", () => {
+      const result = validateWorkflowActionConfigs([
+        actionNode("web3/query-transactions", {
+          network: "1",
+          batchSize: "100",
+          inputMode: "uniform",
+          blockCount: "225000",
+          abi: "[]",
+          abiFunction: "schedule",
+          useManualAbi: "true",
+          contractAddress: "0x0000000000000000000000000000000000000001",
+        }),
+      ]);
+
+      expect(result).toEqual({ valid: true, issues: [] });
+    });
+
+    it("still rejects a TRULY unknown field even when useManualAbi is present", () => {
+      const result = validateWorkflowActionConfigs([
+        actionNode("web3/read-contract", {
+          network: "1",
+          contractAddress: "0x0000000000000000000000000000000000000001",
+          abi: "[]",
+          abiFunction: "foo",
+          functionArgs: "[]",
+          useManualAbi: "true",
+          completelyMadeUpField: "yes",
+        }),
+      ]);
+
+      expect(result.valid).toBe(false);
+      expect(result.issues).toEqual([
+        expect.objectContaining({
+          code: "UNKNOWN_FIELD",
+          field: "completelyMadeUpField",
+        }),
+      ]);
+    });
+
+    it("does not extend the inputMode/batchSize ignore to actions that genuinely use them (batch-read-contract still validates)", () => {
+      const result = validateWorkflowActionConfigs([
+        actionNode("web3/batch-read-contract", {
+          inputMode: "not-a-valid-mode",
+          network: "1",
+          contractAddress: "0x0000000000000000000000000000000000000001",
+          abi: "[]",
+          abiFunction: "foo",
+          argsList: "[]",
+        }),
+      ]);
+
+      expect(result.valid).toBe(false);
+      expect(result.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: "INVALID_FIELD_TYPE",
+            field: "inputMode",
+          }),
+        ])
+      );
+    });
+  });
+
   describe("node-count invariance (prove >2 node failures were per-node, not threshold)", () => {
     const READ_CONTRACT_ABI = JSON.stringify([
       {
-        inputs: [{ internalType: "bytes32", name: "ilk", type: "bytes32" }],
-        name: "ilks",
+        inputs: [{ internalType: "bytes32", name: "id", type: "bytes32" }],
+        name: "reader",
         outputs: [{ internalType: "uint256", name: "Art", type: "uint256" }],
         stateMutability: "view",
         type: "function",
@@ -560,7 +709,7 @@ describe("validateWorkflowActionConfigs", () => {
           network: "1",
           contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
           abi: READ_CONTRACT_ABI,
-          abiFunction: "ilks",
+          abiFunction: "reader",
           functionArgs:
             '["0x0000000000000000000000000000000000000000000000000000000000000001"]',
         },
@@ -623,7 +772,7 @@ describe("validateWorkflowActionConfigs", () => {
             network: "1",
             contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
             abi: READ_CONTRACT_ABI,
-            abiFunction: "ilks",
+            abiFunction: "reader",
             functionArgs: "not-json-not-template",
           },
           "n-3"
@@ -650,7 +799,7 @@ describe("validateWorkflowActionConfigs", () => {
             network: "1",
             contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
             abi: READ_CONTRACT_ABI,
-            abiFunction: "ilks",
+            abiFunction: "reader",
             functionArgs: "bogus-a",
           },
           "n-0"
@@ -663,7 +812,7 @@ describe("validateWorkflowActionConfigs", () => {
             network: "1",
             contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
             abi: READ_CONTRACT_ABI,
-            abiFunction: "ilks",
+            abiFunction: "reader",
             functionArgs: "bogus-b",
           },
           "n-3"

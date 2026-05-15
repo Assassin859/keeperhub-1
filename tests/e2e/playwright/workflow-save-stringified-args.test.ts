@@ -7,8 +7,8 @@ import {
 
 const READ_CONTRACT_ABI = JSON.stringify([
   {
-    inputs: [{ internalType: "bytes32", name: "ilk", type: "bytes32" }],
-    name: "ilks",
+    inputs: [{ internalType: "bytes32", name: "id", type: "bytes32" }],
+    name: "reader",
     outputs: [
       { internalType: "uint256", name: "Art", type: "uint256" },
       { internalType: "uint256", name: "rate", type: "uint256" },
@@ -21,7 +21,7 @@ const READ_CONTRACT_ABI = JSON.stringify([
 const WRITE_CONTRACT_ABI = JSON.stringify([
   {
     inputs: [],
-    name: "poke",
+    name: "doWrite",
     outputs: [],
     stateMutability: "nonpayable",
     type: "function",
@@ -68,8 +68,8 @@ function readContractNode(
         network: "1",
         contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
         abi: READ_CONTRACT_ABI,
-        abiFunction: "ilks",
-        functionArgs: '["{{@osm-loop:OSM Loop.currentItem.ilkBytes32}}"]',
+        abiFunction: "reader",
+        functionArgs: '["{{@prev-loop:Prev Loop.currentItem.idBytes32}}"]',
         ...overrides,
       },
     },
@@ -93,7 +93,7 @@ function discordNode(id = "notify-1"): WorkflowNode {
 }
 
 test.describe("KEEP-571: workflow save with stringified container fields", () => {
-  test("saves a 3-node workflow with web3/read-contract stringified functionArgs (OSM Alert shape)", async ({
+  test("saves a 3-node workflow with web3/read-contract stringified functionArgs (templated-args shape)", async ({
     page,
     apiRequest,
   }) => {
@@ -129,12 +129,12 @@ test.describe("KEEP-571: workflow save with stringified container fields", () =>
     }
   });
 
-  test("saves a workflow with legacy `functionName` on web3/write-contract (MegaPoker shape)", async ({
+  test("saves a workflow with legacy `functionName` on web3/write-contract (legacy functionName shape)", async ({
     page,
     apiRequest,
   }) => {
     const writeNode: WorkflowNode = {
-      id: "poke-1",
+      id: "write-1",
       type: "action",
       position: { x: 0, y: 120 },
       data: {
@@ -145,7 +145,7 @@ test.describe("KEEP-571: workflow save with stringified container fields", () =>
           network: "1",
           contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
           abi: WRITE_CONTRACT_ABI,
-          functionName: "poke",
+          functionName: "doWrite",
           functionArgs: "[]",
         },
       },
@@ -156,8 +156,8 @@ test.describe("KEEP-571: workflow save with stringified container fields", () =>
       triggerType: "manual",
       nodes: [triggerNode(), writeNode, discordNode()],
       edges: [
-        { id: "e1", source: "trigger", target: "poke-1" },
-        { id: "e2", source: "poke-1", target: "notify-1" },
+        { id: "e1", source: "trigger", target: "write-1" },
+        { id: "e2", source: "write-1", target: "notify-1" },
       ],
     });
 
@@ -170,8 +170,8 @@ test.describe("KEEP-571: workflow save with stringified container fields", () =>
         data: {
           nodes: [triggerNode(), writeNode, discordNode()],
           edges: [
-            { id: "e1", source: "trigger", target: "poke-1" },
-            { id: "e2", source: "poke-1", target: "notify-1" },
+            { id: "e1", source: "trigger", target: "write-1" },
+            { id: "e2", source: "write-1", target: "notify-1" },
           ],
         },
       });
@@ -188,7 +188,7 @@ test.describe("KEEP-571: workflow save with stringified container fields", () =>
     apiRequest,
   }) => {
     const noArgWrite: WorkflowNode = {
-      id: "poke-1",
+      id: "write-1",
       type: "action",
       position: { x: 0, y: 120 },
       data: {
@@ -199,7 +199,7 @@ test.describe("KEEP-571: workflow save with stringified container fields", () =>
           network: "1",
           contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
           abi: WRITE_CONTRACT_ABI,
-          abiFunction: "poke",
+          abiFunction: "doWrite",
           functionArgs: "[]",
         },
       },
@@ -210,8 +210,8 @@ test.describe("KEEP-571: workflow save with stringified container fields", () =>
       triggerType: "manual",
       nodes: [triggerNode(), noArgWrite, discordNode()],
       edges: [
-        { id: "e1", source: "trigger", target: "poke-1" },
-        { id: "e2", source: "poke-1", target: "notify-1" },
+        { id: "e1", source: "trigger", target: "write-1" },
+        { id: "e2", source: "write-1", target: "notify-1" },
       ],
     });
 
@@ -224,8 +224,8 @@ test.describe("KEEP-571: workflow save with stringified container fields", () =>
         data: {
           nodes: [triggerNode(), noArgWrite, discordNode()],
           edges: [
-            { id: "e1", source: "trigger", target: "poke-1" },
-            { id: "e2", source: "poke-1", target: "notify-1" },
+            { id: "e1", source: "trigger", target: "write-1" },
+            { id: "e2", source: "write-1", target: "notify-1" },
           ],
         },
       });
@@ -286,36 +286,37 @@ test.describe("KEEP-571: workflow save with stringified container fields", () =>
     }
   });
 
-  test("saves the exact OSM Alert prod node shape that was failing (ooiuqkddnj6fnssg93kgr)", async ({
+  test("saves the exact templated-args prod node shape that was failing (mock-workflow-id)", async ({
     page,
     apiRequest,
   }) => {
-    const osmAlertNode: WorkflowNode = {
+    const mockTemplatedNode: WorkflowNode = {
       id: "node-6",
       type: "action",
       position: { x: 0, y: 120 },
       data: {
-        label: "Read Vat ilks",
+        label: "Read mock contract",
         type: "action",
         config: {
           actionType: "web3/read-contract",
-          abi: '[{"inputs":[{"internalType":"bytes32","name":"ilk","type":"bytes32"}],"name":"ilks","outputs":[{"internalType":"uint256","name":"Art","type":"uint256"},{"internalType":"uint256","name":"rate","type":"uint256"},{"internalType":"uint256","name":"spot","type":"uint256"},{"internalType":"uint256","name":"line","type":"uint256"},{"internalType":"uint256","name":"dust","type":"uint256"}],"stateMutability":"view","type":"function"}]',
+          abi: '[{"inputs":[{"internalType":"bytes32","name":"id","type":"bytes32"}],"name":"reader","outputs":[{"internalType":"uint256","name":"Art","type":"uint256"},{"internalType":"uint256","name":"rate","type":"uint256"},{"internalType":"uint256","name":"spot","type":"uint256"},{"internalType":"uint256","name":"line","type":"uint256"},{"internalType":"uint256","name":"dust","type":"uint256"}],"stateMutability":"view","type":"function"}]',
           network: "1",
-          abiFunction: "ilks",
-          functionArgs: '["{{@osm-loop:OSM Loop.currentItem.ilkBytes32}}"]',
-          contractAddress: "{{@fetch-chainlog:Fetch Chainlog.data.MCD_VAT}}",
+          abiFunction: "reader",
+          functionArgs: '["{{@prev-loop:Prev Loop.currentItem.idBytes32}}"]',
+          contractAddress:
+            "{{@fetch@prev-fetch:Prev Fetch.data.targetAddress}}",
         },
       },
     };
 
-    const nodes = [triggerNode(), osmAlertNode, discordNode("notify-1")];
+    const nodes = [triggerNode(), mockTemplatedNode, discordNode("notify-1")];
     const edges = [
       { id: "e1", source: "trigger", target: "node-6" },
       { id: "e2", source: "node-6", target: "notify-1" },
     ];
 
     const workflow = await createTestWorkflow(PERSISTENT_TEST_USER_EMAIL, {
-      name: `keep-571-osm-alert-${Date.now()}`,
+      name: `keep-571-templated-args-${Date.now()}`,
       triggerType: "manual",
       nodes,
       edges,

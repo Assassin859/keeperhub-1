@@ -20,6 +20,12 @@ const RESERVED_CONFIG_KEYS = new Set([
   ADDRESS_BOOK_SELECTION_KEY,
   "usePrivateMempool",
   "strict",
+  // UI-only state written by the abi-with-auto-fetch field renderer
+  // (components/workflow/config/abi-with-auto-fetch-field.tsx). Persisted on
+  // every action that uses that field type so the form remembers the user's
+  // manual-vs-fetched ABI toggle across reloads. The step runtime never reads
+  // it.
+  "useManualAbi",
 ]);
 
 const TEMPLATE_VALUE_PATTERN = /\{\{[^}]+}}/;
@@ -133,8 +139,24 @@ const LEGACY_FIELD_ALIASES: Record<string, Record<string, string>> = {
   "web3/write-contract": { functionName: "abiFunction" },
 };
 
+// Legacy config keys that don't map to a canonical field but should not be
+// rejected on save. Typically these are leftovers from a sibling action's
+// form state (e.g. an editor session that started as batch-read-contract and
+// was switched to query-transactions persisted batch-read's `inputMode` /
+// `batchSize`) or fields that were removed during a refactor. The runtime
+// ignores them; the validator must too, otherwise legacy / cross-org imports
+// can't be saved.
+const LEGACY_IGNORED_FIELDS: Record<string, Set<string>> = {
+  "web3/query-transactions": new Set(["inputMode", "batchSize"]),
+  "web3/query-events": new Set(["inputMode", "batchSize"]),
+};
+
 function getLegacyAliasMap(actionType: string): Record<string, string> {
   return LEGACY_FIELD_ALIASES[actionType] ?? {};
+}
+
+function isLegacyIgnoredField(actionType: string, key: string): boolean {
+  return LEGACY_IGNORED_FIELDS[actionType]?.has(key) ?? false;
 }
 
 function validateStringLike(value: unknown): boolean {
@@ -315,6 +337,9 @@ export function validateWorkflowActionConfigs(
         continue;
       }
       if (aliasMap[key] && fieldsByKey.has(aliasMap[key])) {
+        continue;
+      }
+      if (isLegacyIgnoredField(actionType, key)) {
         continue;
       }
       issues.push({
