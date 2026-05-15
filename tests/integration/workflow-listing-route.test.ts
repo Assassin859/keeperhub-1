@@ -449,6 +449,529 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
     expect(mockUpdateReturning).not.toHaveBeenCalled();
   });
 
+  it("KEEP-571: PATCH accepts a 3+ node workflow whose web3/read-contract uses stringified functionArgs (UI wire format)", async () => {
+    mockWorkflowsFindFirst.mockResolvedValue(makeWorkflow());
+    mockUpdateReturning.mockResolvedValue([makeWorkflow()]);
+
+    const response = await PATCH(
+      createRequest("PATCH", {
+        nodes: [
+          {
+            id: "trigger",
+            type: "trigger",
+            data: {
+              type: "trigger",
+              config: { actionType: "Manual" },
+            },
+          },
+          {
+            id: "read-1",
+            type: "action",
+            data: {
+              type: "action",
+              config: {
+                actionType: "web3/read-contract",
+                network: "1",
+                contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+                abi: JSON.stringify([
+                  {
+                    inputs: [
+                      { internalType: "bytes32", name: "id", type: "bytes32" },
+                    ],
+                    name: "reader",
+                    outputs: [
+                      { internalType: "uint256", name: "Art", type: "uint256" },
+                    ],
+                    stateMutability: "view",
+                    type: "function",
+                  },
+                ]),
+                abiFunction: "reader",
+                functionArgs:
+                  '["{{@prev-loop:Prev Loop.currentItem.idBytes32}}"]',
+              },
+            },
+          },
+          {
+            id: "msg-1",
+            type: "action",
+            data: {
+              type: "action",
+              config: {
+                actionType: "discord/send-message",
+                discordMessage: "id read",
+              },
+            },
+          },
+        ],
+        edges: [],
+      }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateReturning).toHaveBeenCalled();
+  });
+
+  it("KEEP-571: PATCH accepts legacy `functionName` on web3/write-contract (legacy functionName case)", async () => {
+    mockWorkflowsFindFirst.mockResolvedValue(makeWorkflow());
+    mockUpdateReturning.mockResolvedValue([makeWorkflow()]);
+
+    const response = await PATCH(
+      createRequest("PATCH", {
+        nodes: [
+          {
+            id: "trigger",
+            type: "trigger",
+            data: {
+              type: "trigger",
+              config: { actionType: "Manual" },
+            },
+          },
+          {
+            id: "doWrite-1",
+            type: "action",
+            data: {
+              type: "action",
+              config: {
+                actionType: "web3/write-contract",
+                network: "1",
+                contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+                abi: JSON.stringify([
+                  {
+                    inputs: [],
+                    name: "doWrite",
+                    outputs: [],
+                    stateMutability: "nonpayable",
+                    type: "function",
+                  },
+                ]),
+                functionName: "doWrite",
+                functionArgs: "[]",
+              },
+            },
+          },
+          {
+            id: "notify",
+            type: "action",
+            data: {
+              type: "action",
+              config: {
+                actionType: "discord/send-message",
+                discordMessage: "done",
+              },
+            },
+          },
+        ],
+        edges: [],
+      }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateReturning).toHaveBeenCalled();
+  });
+
+  it("KEEP-571: PATCH still rejects bogus values for stringified container fields", async () => {
+    mockWorkflowsFindFirst.mockResolvedValue(makeWorkflow());
+
+    const response = await PATCH(
+      createRequest("PATCH", {
+        nodes: [
+          {
+            id: "trigger",
+            type: "trigger",
+            data: {
+              type: "trigger",
+              config: { actionType: "Manual" },
+            },
+          },
+          {
+            id: "read-1",
+            type: "action",
+            data: {
+              type: "action",
+              config: {
+                actionType: "web3/read-contract",
+                network: "1",
+                contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+                abi: "[]",
+                abiFunction: "reader",
+                functionArgs: "this-is-not-json-or-a-template",
+              },
+            },
+          },
+        ],
+        edges: [],
+      }),
+      { params: mockParams }
+    );
+
+    const data = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(data.error).toBe("INVALID_ACTION_CONFIG");
+    expect(data.invalidFields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "INVALID_FIELD_TYPE",
+          field: "functionArgs",
+        }),
+      ])
+    );
+    expect(mockUpdateReturning).not.toHaveBeenCalled();
+  });
+
+  it("KEEP-571: PATCH accepts useManualAbi UI state on web3 actions (global reserved key)", async () => {
+    mockWorkflowsFindFirst.mockResolvedValue(makeWorkflow());
+    mockUpdateReturning.mockResolvedValue([makeWorkflow()]);
+
+    const response = await PATCH(
+      createRequest("PATCH", {
+        nodes: [
+          {
+            id: "trigger",
+            type: "trigger",
+            data: { type: "trigger", config: { actionType: "Manual" } },
+          },
+          {
+            id: "read-1",
+            type: "action",
+            data: {
+              type: "action",
+              config: {
+                actionType: "web3/read-contract",
+                network: "1",
+                contractAddress: "0x0000000000000000000000000000000000000001",
+                abi: "[]",
+                abiFunction: "reader",
+                functionArgs: "[]",
+                useManualAbi: "true",
+              },
+            },
+          },
+        ],
+        edges: [],
+      }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateReturning).toHaveBeenCalled();
+  });
+
+  it("KEEP-571: PATCH accepts inputMode/batchSize leak on web3/query-transactions", async () => {
+    mockWorkflowsFindFirst.mockResolvedValue(makeWorkflow());
+    mockUpdateReturning.mockResolvedValue([makeWorkflow()]);
+
+    const response = await PATCH(
+      createRequest("PATCH", {
+        nodes: [
+          {
+            id: "trigger",
+            type: "trigger",
+            data: { type: "trigger", config: { actionType: "Manual" } },
+          },
+          {
+            id: "query-1",
+            type: "action",
+            data: {
+              type: "action",
+              config: {
+                actionType: "web3/query-transactions",
+                network: "1",
+                contractAddress: "0x0000000000000000000000000000000000000001",
+                abi: "[]",
+                abiFunction: "doWrite",
+                inputMode: "uniform",
+                batchSize: "100",
+                blockCount: "225000",
+                useManualAbi: "true",
+              },
+            },
+          },
+        ],
+        edges: [],
+      }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateReturning).toHaveBeenCalled();
+  });
+
+  it("KEEP-571: PATCH saves a 6-node workflow with the affected node at index 3 (proves node-count is not a threshold)", async () => {
+    mockWorkflowsFindFirst.mockResolvedValue(makeWorkflow());
+    mockUpdateReturning.mockResolvedValue([makeWorkflow()]);
+
+    const readContractAbi = JSON.stringify([
+      {
+        inputs: [{ internalType: "bytes32", name: "id", type: "bytes32" }],
+        name: "reader",
+        outputs: [{ internalType: "uint256", name: "Art", type: "uint256" }],
+        stateMutability: "view",
+        type: "function",
+      },
+    ]);
+
+    const fillerNode = (id: string): Record<string, unknown> => ({
+      id,
+      type: "action",
+      data: {
+        type: "action",
+        config: {
+          actionType: "discord/send-message",
+          discordMessage: `msg-${id}`,
+        },
+      },
+    });
+
+    const response = await PATCH(
+      createRequest("PATCH", {
+        nodes: [
+          {
+            id: "trigger",
+            type: "trigger",
+            data: { type: "trigger", config: { actionType: "Manual" } },
+          },
+          fillerNode("n-1"),
+          fillerNode("n-2"),
+          {
+            id: "read-3",
+            type: "action",
+            data: {
+              type: "action",
+              config: {
+                actionType: "web3/read-contract",
+                network: "1",
+                contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+                abi: readContractAbi,
+                abiFunction: "reader",
+                functionArgs:
+                  '["0x0000000000000000000000000000000000000000000000000000000000000001"]',
+              },
+            },
+          },
+          fillerNode("n-4"),
+          fillerNode("n-5"),
+        ],
+        edges: [],
+      }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateReturning).toHaveBeenCalled();
+  });
+
+  it("KEEP-571: PATCH saves a 10-node workflow with two affected read-contract nodes at different indices", async () => {
+    mockWorkflowsFindFirst.mockResolvedValue(makeWorkflow());
+    mockUpdateReturning.mockResolvedValue([makeWorkflow()]);
+
+    const readAbi = JSON.stringify([
+      {
+        inputs: [],
+        name: "totalSupply",
+        outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+        stateMutability: "view",
+        type: "function",
+      },
+    ]);
+
+    const filler = (id: string): Record<string, unknown> => ({
+      id,
+      type: "action",
+      data: {
+        type: "action",
+        config: {
+          actionType: "discord/send-message",
+          discordMessage: id,
+        },
+      },
+    });
+
+    const readContract = (id: string): Record<string, unknown> => ({
+      id,
+      type: "action",
+      data: {
+        type: "action",
+        config: {
+          actionType: "web3/read-contract",
+          network: "1",
+          contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+          abi: readAbi,
+          abiFunction: "totalSupply",
+          functionArgs: "[]",
+        },
+      },
+    });
+
+    const nodes: Record<string, unknown>[] = [
+      {
+        id: "trigger",
+        type: "trigger",
+        data: { type: "trigger", config: { actionType: "Manual" } },
+      },
+    ];
+    for (let i = 1; i <= 9; i++) {
+      if (i === 2 || i === 7) {
+        nodes.push(readContract(`r-${i}`));
+      } else {
+        nodes.push(filler(`f-${i}`));
+      }
+    }
+
+    const response = await PATCH(createRequest("PATCH", { nodes, edges: [] }), {
+      params: mockParams,
+    });
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateReturning).toHaveBeenCalled();
+  });
+
+  it("KEEP-571: PATCH still surfaces correct node-index paths in invalidFields for large workflows", async () => {
+    mockWorkflowsFindFirst.mockResolvedValue(makeWorkflow());
+
+    const filler = (id: string): Record<string, unknown> => ({
+      id,
+      type: "action",
+      data: {
+        type: "action",
+        config: {
+          actionType: "discord/send-message",
+          discordMessage: id,
+        },
+      },
+    });
+
+    const nodes: Record<string, unknown>[] = [
+      {
+        id: "trigger",
+        type: "trigger",
+        data: { type: "trigger", config: { actionType: "Manual" } },
+      },
+      filler("f-1"),
+      filler("f-2"),
+      filler("f-3"),
+      {
+        id: "bad-4",
+        type: "action",
+        data: {
+          type: "action",
+          config: {
+            actionType: "web3/read-contract",
+            network: "1",
+            contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+            abi: "[]",
+            abiFunction: "reader",
+            functionArgs: "not-json",
+          },
+        },
+      },
+      filler("f-5"),
+    ];
+
+    const response = await PATCH(createRequest("PATCH", { nodes, edges: [] }), {
+      params: mockParams,
+    });
+
+    expect(response.status).toBe(422);
+    const data = await response.json();
+    expect(data.invalidFields).toEqual([
+      expect.objectContaining({
+        code: "INVALID_FIELD_TYPE",
+        path: "nodes[4].data.config.functionArgs",
+        field: "functionArgs",
+      }),
+    ]);
+    expect(mockUpdateReturning).not.toHaveBeenCalled();
+  });
+
+  it("KEEP-571: PATCH with a 1-node workflow (trigger only, no actions) succeeds", async () => {
+    mockWorkflowsFindFirst.mockResolvedValue(makeWorkflow());
+    mockUpdateReturning.mockResolvedValue([makeWorkflow()]);
+
+    const response = await PATCH(
+      createRequest("PATCH", {
+        nodes: [
+          {
+            id: "trigger",
+            type: "trigger",
+            data: { type: "trigger", config: { actionType: "Manual" } },
+          },
+        ],
+        edges: [],
+      }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateReturning).toHaveBeenCalled();
+  });
+
+  it("KEEP-571: PATCH with a 2-node workflow (trigger + single read-contract using stringified args) succeeds", async () => {
+    mockWorkflowsFindFirst.mockResolvedValue(makeWorkflow());
+    mockUpdateReturning.mockResolvedValue([makeWorkflow()]);
+
+    const response = await PATCH(
+      createRequest("PATCH", {
+        nodes: [
+          {
+            id: "trigger",
+            type: "trigger",
+            data: { type: "trigger", config: { actionType: "Manual" } },
+          },
+          {
+            id: "read-1",
+            type: "action",
+            data: {
+              type: "action",
+              config: {
+                actionType: "web3/read-contract",
+                network: "1",
+                contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+                abi: "[]",
+                abiFunction: "balanceOf",
+                functionArgs: '["{{trigger.walletAddress}}"]',
+              },
+            },
+          },
+        ],
+        edges: [],
+      }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateReturning).toHaveBeenCalled();
+  });
+
+  it("KEEP-571: PATCH with empty nodes array succeeds (cleared workflow)", async () => {
+    mockWorkflowsFindFirst.mockResolvedValue(makeWorkflow());
+    mockUpdateReturning.mockResolvedValue([makeWorkflow()]);
+
+    const response = await PATCH(
+      createRequest("PATCH", { nodes: [], edges: [] }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateReturning).toHaveBeenCalled();
+  });
+
+  it("KEEP-571: PATCH without nodes in body (partial update) skips action-config validation", async () => {
+    mockWorkflowsFindFirst.mockResolvedValue(makeWorkflow());
+    mockUpdateReturning.mockResolvedValue([makeWorkflow()]);
+
+    const response = await PATCH(
+      createRequest("PATCH", { name: "Renamed only" }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateReturning).toHaveBeenCalled();
+  });
+
   it("KEEP-467: PATCH validates integration ownership after sanitizer moves misplaced config fields", async () => {
     mockWorkflowsFindFirst.mockResolvedValue(makeWorkflow());
     mockValidateWorkflowIntegrations.mockResolvedValue({
