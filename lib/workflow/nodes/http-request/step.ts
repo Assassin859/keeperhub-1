@@ -1,181 +1,24 @@
 /**
- * Executable step function for HTTP Request action
+ * Executable step function for the HTTP Request action.
+ *
+ * This file is intentionally minimal: the Workflow DevKit bundler treats a
+ * step file as a boundary -- only `"use step"` exports are stubbed into the
+ * workflow-function bundle, while their bodies and the imports they reach
+ * stay in the step's Node bundle. Anything else exported from here would be
+ * pulled into the workflow bundle (where Node modules are forbidden), so all
+ * the worker logic and its `safeFetch` dependency live in `./perform` and we
+ * only re-export types.
  */
 import "server-only";
 
-import { safeFetch } from "@/lib/safe-fetch";
-import { getErrorMessage } from "@/lib/utils";
-import { extractTemplateTokens } from "@/lib/utils/template";
+import { withStepLogging } from "@/lib/workflow/executor/step-handler";
 import {
-  type StepInput,
-  withStepLogging,
-} from "@/lib/workflow/executor/step-handler";
+  type HttpRequestInput,
+  type HttpRequestResult,
+  httpRequest,
+} from "./perform";
 
-type HttpRequestResult =
-  // KEEP-444: the success variant carries an optional `error` so a soft-failed
-  // request (failOnError=false) can hand `{ data: null, status, error }` to the
-  // next node without failing the step. `status` is null when no HTTP response
-  // was received at all (timeout, DNS, connection error).
-  | { success: true; data: unknown; status: number | null; error?: string }
-  | { success: false; error: string; status?: number };
-
-export type HttpRequestInput = StepInput & {
-  endpoint: string;
-  httpMethod: string;
-  httpHeaders?: string;
-  httpBody?: string;
-  // KEEP-444: per-node request timeout in seconds (default 5, clamped 1-30).
-  timeout?: number;
-  // KEEP-444: when false, non-2xx responses and timeouts return a soft result
-  // to the next node instead of failing the step. Defaults to true.
-  failOnError?: boolean;
-};
-
-const DEFAULT_TIMEOUT_SECONDS = 5;
-const MIN_TIMEOUT_SECONDS = 1;
-const MAX_TIMEOUT_SECONDS = 30;
-
-/**
- * Resolve the request timeout in milliseconds. Accepts the raw config value
- * (numbers from MCP callers, strings from the visual editor), coerces it, and
- * clamps to [1, 30] seconds. Falls back to the 5s default for missing or
- * non-numeric input. Exported for tests.
- */
-export function resolveTimeoutMs(timeout: unknown): number {
-  // Treat missing / empty / null as "use default" -- otherwise Number(null) and
-  // Number("") both coerce to 0 and clamp up to the 1s minimum, which is the
-  // most punishing possible timeout for a config the user did not actually set.
-  if (timeout === undefined || timeout === null || timeout === "") {
-    return DEFAULT_TIMEOUT_SECONDS * 1000;
-  }
-  const requested = typeof timeout === "number" ? timeout : Number(timeout);
-  const seconds = Number.isFinite(requested)
-    ? Math.min(Math.max(MIN_TIMEOUT_SECONDS, requested), MAX_TIMEOUT_SECONDS)
-    : DEFAULT_TIMEOUT_SECONDS;
-  return seconds * 1000;
-}
-
-/**
- * Resolve the failOnError flag. Defaults to true (a failed request fails the
- * step); only an explicit `false` (boolean or the "false" string the visual
- * editor may persist) opts into soft-fail. Exported for tests.
- */
-export function resolveFailOnError(failOnError: unknown): boolean {
-  return failOnError !== false && failOnError !== "false";
-}
-
-// URLs never legitimately contain `{{`, so any token left in the endpoint
-// after template processing is a user-config bug we surface clearly instead
-// of forwarding to fetch as a malformed URL.
-function findUnresolvedTemplateVariables(value: string): string[] {
-  return [...new Set(extractTemplateTokens(value))];
-}
-
-/**
- * Validate the rendered endpoint string before any network IO. Trims
- * surrounding whitespace and rejects unresolved `{{var}}` template tokens
- * (which usually mean a missing trigger payload field). Exported for tests.
- */
-export type EndpointValidation =
-  | { ok: true; endpoint: string }
-  | { ok: false; error: string };
-
-export function validateHttpRequestEndpoint(
-  rawEndpoint: string | undefined | null
-): EndpointValidation {
-  const endpoint = rawEndpoint?.trim();
-  if (!endpoint) {
-    return { ok: false, error: "HTTP request failed: URL is required" };
-  }
-  const unresolved = findUnresolvedTemplateVariables(endpoint);
-  if (unresolved.length > 0) {
-    return {
-      ok: false,
-      error: `HTTP request failed: Missing template variable(s) in URL: ${unresolved.join(", ")}`,
-    };
-  }
-  return { ok: true, endpoint };
-}
-
-function parseHeaders(httpHeaders?: string): Record<string, string> {
-  if (!httpHeaders) {
-    return {};
-  }
-  try {
-    return JSON.parse(httpHeaders);
-  } catch {
-    return {};
-  }
-}
-
-function parseBody(httpMethod: string, httpBody?: string): string | undefined {
-  if (httpMethod === "GET" || !httpBody) {
-    return;
-  }
-  try {
-    const parsedBody = JSON.parse(httpBody);
-    return Object.keys(parsedBody).length > 0
-      ? JSON.stringify(parsedBody)
-      : undefined;
-  } catch {
-    const trimmed = httpBody.trim();
-    return trimmed && trimmed !== "{}" ? httpBody : undefined;
-  }
-}
-
-function parseResponse(response: Response): Promise<unknown> {
-  const contentType = response.headers.get("content-type");
-  if (contentType?.includes("application/json")) {
-    return response.json();
-  }
-  return response.text();
-}
-
-/**
- * HTTP request logic. Exported for tests.
- */
-export async function httpRequest(
-  input: HttpRequestInput
-): Promise<HttpRequestResult> {
-  const validation = validateHttpRequestEndpoint(input.endpoint);
-  if (!validation.ok) {
-    return { success: false, error: validation.error };
-  }
-  const { endpoint } = validation;
-  const failOnError = resolveFailOnError(input.failOnError);
-
-  try {
-    const response = await safeFetch(endpoint, {
-      method: input.httpMethod,
-      headers: parseHeaders(input.httpHeaders),
-      body: parseBody(input.httpMethod, input.httpBody),
-      signal: AbortSignal.timeout(resolveTimeoutMs(input.timeout)),
-      plugin: "http-request",
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => "Unknown error");
-      const error = `HTTP request failed with status ${response.status}: ${errorText}`;
-      if (failOnError) {
-        return { success: false, error, status: response.status };
-      }
-      // Soft-fail: hand the error to the next node instead of failing the
-      // step, so aggregator workflows can treat one bad source as a miss.
-      return { success: true, data: null, status: response.status, error };
-    }
-
-    const data = await parseResponse(response);
-    return { success: true, data, status: response.status };
-  } catch (error) {
-    // A timeout abort surfaces here too -- AbortSignal.timeout() rejects the
-    // fetch, which getErrorMessage renders as a timeout error.
-    const message = `HTTP request failed: ${getErrorMessage(error)}`;
-    if (failOnError) {
-      return { success: false, error: message };
-    }
-    return { success: true, data: null, status: null, error: message };
-  }
-}
+export type { HttpRequestInput, HttpRequestResult } from "./perform";
 
 /**
  * HTTP Request Step

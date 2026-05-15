@@ -17,7 +17,7 @@ import {
   httpRequest,
   resolveFailOnError,
   resolveTimeoutMs,
-} from "@/lib/workflow/nodes/http-request/step";
+} from "@/lib/workflow/nodes/http-request/perform";
 
 const mockedSafeFetch = vi.mocked(safeFetch);
 
