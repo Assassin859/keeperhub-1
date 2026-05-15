@@ -70,6 +70,13 @@ describe("resolveTimeoutMs", () => {
   it("falls back to the default for non-numeric input", () => {
     expect(resolveTimeoutMs("not-a-number")).toBe(5000);
   });
+
+  it("falls back to the default for null / empty string (not 1s)", () => {
+    // Number(null) and Number("") both coerce to 0 -> the clamp would otherwise
+    // produce a 1s timeout for a config the user did not actually set.
+    expect(resolveTimeoutMs(null)).toBe(5000);
+    expect(resolveTimeoutMs("")).toBe(5000);
+  });
 });
 
 describe("resolveFailOnError", () => {
@@ -99,7 +106,7 @@ describe("httpRequest timeout wiring", () => {
     vi.clearAllMocks();
   });
 
-  it("passes an AbortSignal to safeFetch derived from the timeout", async () => {
+  it("passes an AbortSignal to safeFetch", async () => {
     mockedSafeFetch.mockResolvedValue(
       mockResponse({ ok: true, status: 200, body: { quote: 1 } })
     );
@@ -109,6 +116,30 @@ describe("httpRequest timeout wiring", () => {
     expect(mockedSafeFetch).toHaveBeenCalledOnce();
     const init = mockedSafeFetch.mock.calls[0][1];
     expect(init?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("derives the AbortSignal timeout from input.timeout in milliseconds", async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    mockedSafeFetch.mockResolvedValue(
+      mockResponse({ ok: true, status: 200, body: {} })
+    );
+
+    await httpRequest({ ...BASE_INPUT, timeout: 10 });
+
+    expect(timeoutSpy).toHaveBeenCalledWith(10_000);
+    timeoutSpy.mockRestore();
+  });
+
+  it("uses the default 5s timeout when none is configured", async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    mockedSafeFetch.mockResolvedValue(
+      mockResponse({ ok: true, status: 200, body: {} })
+    );
+
+    await httpRequest(BASE_INPUT);
+
+    expect(timeoutSpy).toHaveBeenCalledWith(5000);
+    timeoutSpy.mockRestore();
   });
 });
 

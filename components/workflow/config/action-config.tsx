@@ -214,7 +214,11 @@ function HttpRequestFields({
           </p>
         </div>
         <Switch
-          checked={config?.failOnError !== false}
+          // Mirror `resolveFailOnError` so an imported workflow that persisted
+          // the string "false" doesn't display as ON while running as OFF.
+          checked={
+            config?.failOnError !== false && config?.failOnError !== "false"
+          }
           disabled={disabled}
           id="failOnError"
           onCheckedChange={(checked) => onUpdateConfig("failOnError", checked)}

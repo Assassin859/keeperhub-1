@@ -42,6 +42,12 @@ const MAX_TIMEOUT_SECONDS = 30;
  * non-numeric input. Exported for tests.
  */
 export function resolveTimeoutMs(timeout: unknown): number {
+  // Treat missing / empty / null as "use default" -- otherwise Number(null) and
+  // Number("") both coerce to 0 and clamp up to the 1s minimum, which is the
+  // most punishing possible timeout for a config the user did not actually set.
+  if (timeout === undefined || timeout === null || timeout === "") {
+    return DEFAULT_TIMEOUT_SECONDS * 1000;
+  }
   const requested = typeof timeout === "number" ? timeout : Number(timeout);
   const seconds = Number.isFinite(requested)
     ? Math.min(Math.max(MIN_TIMEOUT_SECONDS, requested), MAX_TIMEOUT_SECONDS)
