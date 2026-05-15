@@ -94,14 +94,27 @@ function getOrCreateGauge(
 // All metrics are GAUGES (point-in-time snapshots). Use max() aggregation across pods.
 // For rate/delta queries, use PromQL delta() function: max(delta(metric[1h]))
 
-// Workflow execution counts by status and org_slug. Personal/anonymous
-// workflows are emitted under org_slug="_anonymous" so the sum across
-// org_slug for a given status equals the global per-status total.
+// Workflow execution counts by status, org_slug, and is_user_error. Personal/
+// anonymous workflows are emitted under org_slug="_anonymous" so the sum
+// across org_slug for a given status equals the global per-status total.
+//
+// is_user_error label values:
+//   "true"    - error caused by user input/config/external service
+//   "false"   - error caused by KeeperHub system/infrastructure
+//   "unknown" - errored row predating classification (NULL in DB)
+//   "na"      - non-error status (success/running/pending/cancelled)
+//
+// PromQL queries that ignore is_user_error still work (Prometheus aggregates
+// across all values by default). The label unlocks "platform-side SLO"
+// queries that exclude user-caused failures from the denominator, since the
+// counter `keeperhub_workflow_execution_errors_created_total` can miss
+// errors when finalization paths bypass it; the gauge is sourced from the DB
+// directly and stays authoritative.
 const workflowExecutionsTotal = getOrCreateGauge(
   dbRegistry,
   "keeperhub_workflow_executions_total",
-  "Total workflow executions by status, broken down by org_slug (all-time)",
-  ["status", "org_slug"]
+  "Total workflow executions by status, broken down by org_slug and is_user_error (all-time)",
+  ["status", "org_slug", "is_user_error"]
 );
 
 // KEEP-545: the previous DB-sourced gauge `keeperhub_workflow_execution_errors_total`
@@ -1233,7 +1246,11 @@ export async function updateDbMetrics(): Promise<void> {
     workflowExecutionsTotal.reset();
     for (const row of workflowStats.executionsByStatusAndOrgSlug) {
       workflowExecutionsTotal.set(
-        { status: row.status, org_slug: row.orgSlug },
+        {
+          status: row.status,
+          org_slug: row.orgSlug,
+          is_user_error: row.isUserError,
+        },
         row.count
       );
     }

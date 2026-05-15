@@ -58,12 +58,23 @@ export type WorkflowStats = {
   totalPending: number;
   totalCancelled: number;
 
-  // Per-(status, org_slug) execution counts. Personal/anonymous workflows
-  // are bucketed under ANONYMOUS_ORG_SLUG so the sum of counts for a given
-  // status across all orgs matches the corresponding total* above.
+  // Per-(status, org_slug, is_user_error) execution counts. Personal/anonymous
+  // workflows are bucketed under ANONYMOUS_ORG_SLUG so the sum of counts for a
+  // given status across all orgs matches the corresponding total* above.
+  //
+  // isUserError values:
+  //   "true"    - error caused by user input/config/external service
+  //   "false"   - error caused by KeeperHub system/infrastructure
+  //   "unknown" - errored row predating classification (NULL in DB)
+  //   "na"      - non-error status (success/running/pending/cancelled)
+  //
+  // Encoding NULL as "unknown" rather than dropping the row keeps the gauge
+  // total equal to the all-up execution count and surfaces backfill gaps in
+  // the dashboard rather than hiding them.
   executionsByStatusAndOrgSlug: Array<{
     status: string;
     orgSlug: string;
+    isUserError: string;
     count: number;
   }>;
 
@@ -93,30 +104,42 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
       durationCount: 0,
     };
 
-    // Per-(status, org_slug) execution breakdown: JOIN workflows + organization,
-    // LEFT JOIN so anonymous workflows still contribute (under ANONYMOUS_ORG_SLUG).
-    // GROUP BY uses the organization.slug column reference (not the COALESCE
-    // expression): Drizzle would otherwise bind ANONYMOUS_ORG_SLUG as separate
-    // parameters in SELECT and GROUP BY clauses, and Postgres rejects the query
-    // because the two COALESCE expressions are not textually identical. Postgres
-    // groups all NULL slugs into one group (NULLs are equal in GROUP BY), and
-    // the SELECT-side COALESCE renders that group as ANONYMOUS_ORG_SLUG.
+    // Per-(status, org_slug, is_user_error) execution breakdown: JOIN workflows
+    // + organization, LEFT JOIN so anonymous workflows still contribute (under
+    // ANONYMOUS_ORG_SLUG). GROUP BY uses the underlying columns (not the
+    // COALESCE/CASE expressions): Drizzle would otherwise bind constants as
+    // separate parameters in SELECT and GROUP BY clauses, and Postgres rejects
+    // the query because the two expressions are not textually identical.
+    // Postgres groups NULLs together (NULLs are equal in GROUP BY), and the
+    // SELECT-side expressions render those groups as ANONYMOUS_ORG_SLUG /
+    // "unknown" / "na" as appropriate.
     const breakdown = await db
       .select({
         status: workflowExecutions.status,
         orgSlug: sql<string>`COALESCE(${organization.slug}, ${ANONYMOUS_ORG_SLUG})`,
+        isUserError: sql<string>`CASE
+          WHEN ${workflowExecutions.status} <> 'error' THEN 'na'
+          WHEN ${workflowExecutions.isUserError} IS NULL THEN 'unknown'
+          WHEN ${workflowExecutions.isUserError} = TRUE THEN 'true'
+          ELSE 'false'
+        END`,
         count: count(),
       })
       .from(workflowExecutions)
       .innerJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
       .leftJoin(organization, eq(workflows.organizationId, organization.id))
-      .groupBy(workflowExecutions.status, organization.slug);
+      .groupBy(
+        workflowExecutions.status,
+        organization.slug,
+        workflowExecutions.isUserError
+      );
 
     for (const row of breakdown) {
       const c = Number(row.count) || 0;
       stats.executionsByStatusAndOrgSlug.push({
         status: row.status,
         orgSlug: row.orgSlug,
+        isUserError: row.isUserError,
         count: c,
       });
       switch (row.status) {
