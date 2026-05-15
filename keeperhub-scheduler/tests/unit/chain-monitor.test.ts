@@ -477,7 +477,7 @@ describe("ChainMonitor", () => {
       expect(monitor.isAlive()).toBe(false);
     });
 
-    it("returns false when subscription has gone silent for >10 minutes", async () => {
+    it("returns false when subscription has gone silent past MONITOR_RECREATE_TIMEOUT_MS", async () => {
       // Reproduces the prod zombie state: subscription is set up but the
       // upstream WSS never delivers blocks. The in-monitor no-block timer
       // failed to fire; the reconciler must catch this via isAlive() so it
@@ -487,7 +487,12 @@ describe("ChainMonitor", () => {
       // reconciler-level staleness path is exercised on its own. (In prod,
       // the in-monitor timer was demonstrably not firing — that is the
       // failure mode this fallback exists for.)
+      //
+      // Pin the reconciler threshold so the test stays decoupled from the
+      // production default (which has been tuned tighter alongside
+      // BLOCK_ADVANCE_TIMEOUT_MS to match the dashboard red threshold).
       vi.stubEnv("BLOCK_ADVANCE_TIMEOUT_MS", String(60 * 60_000));
+      vi.stubEnv("MONITOR_RECREATE_TIMEOUT_MS", String(10 * 60_000));
 
       const monitor = new ChainMonitor({
         chain: makeChain(),

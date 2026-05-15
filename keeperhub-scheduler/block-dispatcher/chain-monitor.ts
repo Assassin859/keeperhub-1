@@ -61,11 +61,22 @@ const LIVENESS_DEFAULTS = {
   // Subscription-level liveness. If lastProcessedBlock has not *advanced* in
   // this window, force a reconnect. Was NO_BLOCK_TIMEOUT_MS. Renamed to make
   // the rule explicit: it is about new-height delivery, not callback fire.
-  BLOCK_ADVANCE_TIMEOUT_MS: 5 * 60_000,
+  // 60s is the floor that still tolerates Ethereum's 12s block time during
+  // testnet variance (~5 missed blocks) while detecting silent subscriptions
+  // on sub-2s chains (Polygon, Base, Avalanche, BSC) within tens of expected
+  // blocks. Combined with SILENT_FAILOVER_THRESHOLD=2, this flips a chain
+  // to fallback at 120s — the same moment the dashboard cell turns red and
+  // the Block Dispatcher Chain Silent alert finishes its for=2m debounce.
+  BLOCK_ADVANCE_TIMEOUT_MS: 60_000,
   // Reconciler-level recreate threshold. If a monitor reports not-alive for
   // longer than this gap of dead subscription, BlockMonitorService destroys
   // and recreates it. Was STALE_SUBSCRIPTION_MS. Same purpose.
-  MONITOR_RECREATE_TIMEOUT_MS: 10 * 60_000,
+  // Aligned with the dashboard red threshold (120s) so the reconciler's
+  // backstop kicks in at the same moment the alert fires. By that point the
+  // chain has already had its first 60s reconnect attempt and is about to
+  // hit the SILENT_FAILOVER_THRESHOLD flip; the recreate is the next-tier
+  // safety net for monitors that wedge during the flip itself.
+  MONITOR_RECREATE_TIMEOUT_MS: 120_000,
   // Cap on how long isReconnecting=true is acceptable before the reconciler
   // treats the monitor as dead. The normal reconnect-with-backoff path (max
   // 10 attempts, max 30s each) completes well under this; only a hung
