@@ -37,6 +37,7 @@ const baseListing: WorkflowListing = {
   priceUsdcPerCall: null,
   workflowType: "read",
   listingVersion: 3,
+  nodes: [],
 };
 
 describe("createWorkflowMcpServer", () => {
@@ -143,7 +144,8 @@ describe("createWorkflowMcpServer", () => {
       "http://localhost:3000/api/mcp/workflows/aave-position-monitor/call"
     );
     expect(init.method).toBe("POST");
-    expect(JSON.parse(init.body ?? "{}")).toEqual(args);
+    // Handler normalizes args: missing `type` is injected as "manual"
+    expect(JSON.parse(init.body ?? "{}")).toEqual({ type: "manual", ...args });
 
     fetchSpy.mockRestore();
   });

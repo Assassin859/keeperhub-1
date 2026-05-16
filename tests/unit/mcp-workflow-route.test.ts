@@ -99,6 +99,7 @@ const makeListing = (
   priceUsdcPerCall: null,
   workflowType: "read",
   listingVersion: 1,
+  nodes: [],
   ...overrides,
 });
 
