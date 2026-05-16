@@ -43,7 +43,7 @@ export async function GET(
     const includeDataRaw = searchParams.get("includeData");
     const includeData =
       includeDataRaw === null ? undefined : includeDataRaw !== "false";
-    const nodeIdsParam = searchParams.getAll("nodeIds");
+    const nodeIdsParam = searchParams.getAll("nodeIds").filter((id) => id !== "");
     const nodeIds = nodeIdsParam.length > 0 ? nodeIdsParam : undefined;
     const truncateDataRaw = searchParams.get("truncateData");
     const truncateDataParsed =
