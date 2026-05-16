@@ -1457,6 +1457,42 @@ export function registerMetaTools(
     )
   );
 
+  // validate_workflow: structural + listing-eligibility + Web3 validation pilot
+  server.tool(
+    "validate_workflow",
+    [
+      "Validate a workflow's structural and Web3-specific correctness before calling create_workflow or executing it.",
+      "Fast tier (default): structural checks (empty nodes, edge references, trigger config, bare-@ literals), listing-eligibility checks (inputSchema present for listed workflows, outputMapping references real nodes), write-action consistency, plus Web3 cheap checks (chain ID in chains table, contract address format via ethers.isAddress). Zero network calls; <300ms p95.",
+      "Deep tier (deepCheck=true): in addition, runs best-effort ABI bytecode match via resolveAbi against every contract reference. Mismatches on abi-with-auto-fetch fields are emitted as WARNINGS, never errors, so proxy contracts (Aave V3, Uniswap V3, WETH) never produce false positives. Capped at 3s aggregate + 2s per-call + 5 concurrent RPC calls.",
+      "Return shape: { ok: true, result: { valid: boolean, nodeCount: number, errors?: Array<{ code, message, parameterPath }>, warnings?: Array<{ code, message, parameterPath }> } }. The errors and warnings keys are OMITTED when empty (not present as []). Error codes are kebab-case stable identifiers; parameterPath is a dot-path like 'nodes[2].config.contractAddress'.",
+    ].join(" "),
+    {
+      workflowId: z
+        .string()
+        .describe(
+          "The workflow ID to validate. Must belong to the caller's org."
+        ),
+      deepCheck: z
+        .boolean()
+        .optional()
+        .describe(
+          "When true, also runs best-effort ABI bytecode matching via resolveAbi. Adds up to 3 seconds of latency. Mismatches emit warnings only (never errors). Default false."
+        ),
+    },
+    { title: "Validate Workflow", readOnlyHint: true, destructiveHint: false },
+    withScopeCheck("validate_workflow", scope, async (args) =>
+      withToolLogging("validate_workflow", undefined, async () => {
+        const path = args.deepCheck
+          ? `/api/workflows/${encodeURIComponent(args.workflowId)}/validate?deepCheck=true`
+          : `/api/workflows/${encodeURIComponent(args.workflowId)}/validate`;
+        const data = await callApi(internalApiBaseUrl, authHeader, path, "GET");
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+        };
+      })
+    )
+  );
+
   // Curator tool 4: Read listing metadata for a workflow by slug
   server.tool(
     "get_workflow_listing",

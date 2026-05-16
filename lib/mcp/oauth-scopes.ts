@@ -26,6 +26,7 @@ const READ_TOOLS = new Set<string>([
   "search_protocol_actions",
   "get_direct_execution_status",
   "search_workflows",
+  "validate_workflow",
   "get_workflow_listing",
 ]);
 
