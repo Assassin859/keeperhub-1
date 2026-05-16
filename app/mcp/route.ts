@@ -387,7 +387,7 @@ export async function POST(request: Request): Promise<Response> {
       result: {
         protocolVersion: "2025-06-18",
         capabilities: {},
-        serverInfo: { name: "keeperhub", version: "1.1.0" },
+        serverInfo: { name: "keeperhub", version: "1.2.0" },
         authentication: {
           required: true,
           resource_metadata: resourceMetadataUrl,
@@ -513,7 +513,7 @@ export async function GET(request: Request): Promise<Response> {
     return new Response(
       JSON.stringify({
         name: "keeperhub",
-        version: "1.1.0",
+        version: "1.2.0",
         protocol: "mcp",
         status: "ok",
         authentication: {
