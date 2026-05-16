@@ -6,7 +6,7 @@ vi.mock("@/plugins/registry", () => ({
     const out: unknown[] = [];
     for (const f of fields) {
       if ((f as { type?: string }).type === "group") {
-        out.push(...((f as { fields: unknown[] }).fields));
+        out.push(...(f as { fields: unknown[] }).fields);
       } else {
         out.push(f);
       }
@@ -15,11 +15,11 @@ vi.mock("@/plugins/registry", () => ({
   },
 }));
 
-import { getAllIntegrations } from "@/plugins/registry";
 import {
   preparePinDataForWorkflow,
   type WorkflowNodeLike,
 } from "@/lib/mcp/prepare-test-pin-data";
+import { getAllIntegrations } from "@/plugins/registry";
 
 function mockRegistry(
   actions: Array<{
@@ -45,8 +45,7 @@ function mockRegistry(
           stepImportPath: "",
         },
       ],
-      // biome-ignore lint/suspicious/noExplicitAny: test-only IntegrationPlugin stub
-    })) as any
+    })) as unknown as ReturnType<typeof getAllIntegrations>
   );
 }
 

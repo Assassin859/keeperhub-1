@@ -1,8 +1,5 @@
-import {
-  flattenConfigFields,
-  getAllIntegrations,
-} from "@/plugins/registry";
 import type { ActionConfigFieldBase, PluginAction } from "@/plugins/registry";
+import { flattenConfigFields, getAllIntegrations } from "@/plugins/registry";
 
 /**
  * Per-node pin data schema returned by prepare_test_pin_data MCP tool.

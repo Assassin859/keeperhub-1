@@ -1493,6 +1493,45 @@ export function registerMetaTools(
     )
   );
 
+  // prepare_test_pin_data: per-node pin schemas for the future test_workflow tool
+  // Phase 49 / TESTWF-05. Introspection only — never executes any step.
+  server.tool(
+    "prepare_test_pin_data",
+    [
+      "Return the JSON Schema each node in a workflow expects as pin data, so an agent can construct valid test inputs.",
+      "Read-only introspection: does NOT execute any plugin step, does NOT write to the database, makes zero network calls beyond the workflow row fetch.",
+      "Return shape: { ok: true, result: { nodes: Array<{ nodeId, nodeName, type, pinSchema: JSONSchema, required: boolean }> } }.",
+      "Each node's pinSchema is a JSON Schema with type:object describing the fields its plugin action expects.",
+      "`required` on each node is true when the action declares one or more required configFields.",
+      "Use this to learn what pin data to supply before invoking the future test_workflow execution tool (on the roadmap — see specs/mcp-test-workflow.md).",
+    ].join(" "),
+    {
+      workflowId: z
+        .string()
+        .describe(
+          "The workflow ID to introspect. Must belong to the caller's org."
+        ),
+    },
+    {
+      title: "Prepare Test Pin Data",
+      readOnlyHint: true,
+      destructiveHint: false,
+    },
+    withScopeCheck("prepare_test_pin_data", scope, async (args) =>
+      withToolLogging("prepare_test_pin_data", undefined, async () => {
+        const data = await callApi(
+          internalApiBaseUrl,
+          authHeader,
+          `/api/workflows/${encodeURIComponent(args.workflowId)}/test-pins/prepare`,
+          "GET"
+        );
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+        };
+      })
+    )
+  );
+
   // Curator tool 4: Read listing metadata for a workflow by slug
   server.tool(
     "get_workflow_listing",
