@@ -13,6 +13,10 @@ import {
   type ValidationErrorCode,
   type ValidationWarningCode,
 } from "@/lib/mcp/validate-workflow-codes";
+import {
+  chainExists,
+  tokenAddressFormat,
+} from "@/lib/mcp/validate-workflow-web3";
 
 export type ValidationIssue = {
   code: ValidationErrorCode | ValidationWarningCode;
@@ -40,7 +44,20 @@ export type ValidatorWorkflow = {
   workflowType: "read" | "write";
 };
 
-export function validateWorkflow(workflow: ValidatorWorkflow): ValidationResult {
+export type ValidateWorkflowOptions = {
+  /**
+   * Pre-fetched set of enabled chain IDs from the `chains` Drizzle table.
+   * Caller is responsible for the DB query (keeps this module pure and
+   * unit-testable). When omitted, the chain ID existence check is SKIPPED
+   * entirely (no false errors).
+   */
+  chainIds?: Set<number>;
+};
+
+export function validateWorkflow(
+  workflow: ValidatorWorkflow,
+  opts: ValidateWorkflowOptions = {}
+): ValidationResult {
   const errors: ValidationIssue[] = [];
   const warnings: ValidationIssue[] = [];
 
@@ -59,6 +76,19 @@ export function validateWorkflow(workflow: ValidatorWorkflow): ValidationResult 
 
   // VALID-04 write-action consistency
   runWriteActionCheck(workflow, errors, warnings);
+
+  // VALID-05: chain ID existence — only when caller pre-fetched chainIds.
+  // Per-node check mitigates Pitfall 12 (multi-chain WETH false positives).
+  if (opts.chainIds !== undefined) {
+    for (const issue of chainExists(workflow.nodes, opts.chainIds)) {
+      errors.push(issue);
+    }
+  }
+
+  // VALID-06: token / contract address format (always runs — no DB needed)
+  for (const issue of tokenAddressFormat(workflow.nodes)) {
+    errors.push(issue);
+  }
 
   return {
     valid: errors.length === 0,

@@ -45,7 +45,7 @@ const writeActionNode = (id = "write-1") => ({
     type: "action",
     config: {
       actionType: "web3/write-contract",
-      contractAddress: "0x1234",
+      contractAddress: "0x6B175474E89094C44Da98b954EedeAC495271d0F",
       abi: "[]",
       abiFunction: "transfer",
     },
@@ -75,7 +75,7 @@ function makeWorkflow(
 
 function buildLargeWorkflowFixture(nodeCount: number): ValidatorWorkflow {
   const nodes: unknown[] = [triggerNode("trigger-1")];
-  const edges = [];
+  const edges: unknown[] = [];
   let prev = "trigger-1";
   for (let i = 1; i < nodeCount; i++) {
     const id = `action-${i}`;
