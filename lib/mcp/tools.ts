@@ -475,19 +475,50 @@ export function registerTools(
 
   server.tool(
     "get_execution_logs",
-    "Get detailed step-by-step logs for a workflow execution.",
+    "Get detailed step-by-step logs for a workflow execution. By default returns full node input/output data (backward compatible). Pass `includeData: false` to omit input/output/outputRaw blobs, `nodeIds: string[]` to restrict full data to specific nodes (status and error are always returned for every node), or `truncateData: number` (bytes) to cap individual input/output/outputRaw payloads. The `error` field is never truncated.",
     {
       executionId: z.string().describe("The execution ID to fetch logs for"),
+      includeData: z
+        .boolean()
+        .optional()
+        .describe(
+          "Include input/output/outputRaw blobs on each log entry. Defaults to true for backward compatibility. Pass false to receive a compact status-only response."
+        ),
+      nodeIds: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Restrict full input/output/outputRaw data to only the listed nodeIds (exact, case-sensitive match against the nodeId column). All other entries still return status, error, nodeName, nodeType, startedAt, completedAt, duration, timestamp, iterationIndex, and forEachNodeId. Empty array is treated as omitted (returns full data for all nodes). Has no effect when includeData is false."
+        ),
+      truncateData: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe(
+          "Per-field byte cap. Any input/output/outputRaw JSON-stringified payload exceeding this size is replaced with { _truncated: true, originalSize: <bytes>, preview: <first N bytes of stringified value> }. The error field is NEVER truncated regardless of this cap."
+        ),
     },
     { title: "Get Execution Logs", readOnlyHint: true, destructiveHint: false },
     withScopeCheck("get_execution_logs", scope, async (args) =>
       withToolLogging("get_execution_logs", undefined, async () => {
-        const data = await callApi(
-          internalApiBaseUrl,
-          authHeader,
-          `/api/workflows/executions/${args.executionId}/logs`,
-          "GET"
-        );
+        const params = new URLSearchParams();
+        if (args.includeData !== undefined) {
+          params.set("includeData", String(args.includeData));
+        }
+        if (args.nodeIds !== undefined && args.nodeIds.length > 0) {
+          for (const nodeId of args.nodeIds) {
+            params.append("nodeIds", nodeId);
+          }
+        }
+        if (args.truncateData !== undefined) {
+          params.set("truncateData", String(args.truncateData));
+        }
+        const query = params.toString();
+        const path = query
+          ? `/api/workflows/executions/${args.executionId}/logs?${query}`
+          : `/api/workflows/executions/${args.executionId}/logs`;
+        const data = await callApi(internalApiBaseUrl, authHeader, path, "GET");
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
         };
