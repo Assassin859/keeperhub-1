@@ -27,6 +27,7 @@ const READ_TOOLS = new Set<string>([
   "get_direct_execution_status",
   "search_workflows",
   "validate_workflow",
+  "prepare_test_pin_data",
   "get_workflow_listing",
 ]);
 
