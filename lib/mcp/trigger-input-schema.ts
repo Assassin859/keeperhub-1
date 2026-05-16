@@ -86,9 +86,7 @@ export function detectListingTriggerType(nodes: unknown): TriggerKind {
  * directly; ALSO embedded into the schema via z.preprocess so the SDK's
  * parse-on-call applies the normalization automatically.
  */
-export function normalizeTriggerInput(
-  input: unknown
-): Record<string, unknown> {
+export function normalizeTriggerInput(input: unknown): Record<string, unknown> {
   if (input === null || input === undefined) {
     return { type: "manual" };
   }
@@ -201,7 +199,6 @@ export function buildTriggerInputSchema(kind: TriggerKind): z.ZodTypeAny {
       case "on-chain-event":
         return onChainEventBranch;
       default: {
-        // biome-ignore lint/correctness/noUnusedVariables: TS exhaustiveness check
         const exhaustive: never = kind;
         throw new Error(`Unknown trigger kind: ${String(exhaustive)}`);
       }
