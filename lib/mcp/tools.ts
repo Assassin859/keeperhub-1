@@ -599,7 +599,7 @@ export function registerTools(
 
   server.tool(
     "search_plugins",
-    "List available action schemas filtered by category (e.g., 'web3', 'discord', 'system').",
+    "[DEPRECATED — will be removed in v1.13. Use list_action_schemas instead.] List available action schemas filtered by category (e.g., 'web3', 'discord', 'system').",
     {
       category: z
         .string()
@@ -733,7 +733,7 @@ export function registerTools(
 
   server.tool(
     "get_template",
-    "Get details of a specific workflow template by ID.",
+    "[DEPRECATED — will be removed in v1.13. Use get_workflow instead.] Get details of a specific workflow template by ID.",
     {
       templateId: z.string().describe("The template workflow ID"),
     },
