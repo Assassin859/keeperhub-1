@@ -53,6 +53,7 @@ vi.mock("@/lib/db/schema", () => ({
     workflowType: "workflow_type",
     category: "category",
     chain: "chain",
+    deletedAt: "deleted_at",
   },
 }));
 
@@ -67,6 +68,7 @@ vi.mock("drizzle-orm", () => ({
     col,
     pattern,
   })),
+  isNull: vi.fn((col: unknown) => ({ type: "isNull", col })),
   or: vi.fn((...args: unknown[]) => ({ type: "or", args })),
   and: vi.fn((...args: unknown[]) => ({ type: "and", args })),
   desc: vi.fn((col: unknown) => ({ type: "desc", col })),

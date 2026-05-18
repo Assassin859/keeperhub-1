@@ -12,13 +12,15 @@ import {
 } from "../../src/health/health-server";
 
 class MockProvider {
-  ready: Promise<void> = Promise.resolve();
   destroyed = false;
   on(): void {
     /* noop */
   }
   off(): void {
     /* noop */
+  }
+  async getBlockNumber(): Promise<number> {
+    return 0;
   }
   async send(): Promise<unknown> {
     return 0;

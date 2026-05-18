@@ -46,37 +46,45 @@ export const users = pgTable("users", {
   deactivatedAt: timestamp("deactivated_at"),
 });
 
-export const sessions = pgTable("sessions", {
-  id: text("id").primaryKey(),
-  expiresAt: timestamp("expires_at").notNull(),
-  token: text("token").notNull().unique(),
-  createdAt: timestamp("created_at").notNull(),
-  updatedAt: timestamp("updated_at").notNull(),
-  ipAddress: text("ip_address"),
-  userAgent: text("user_agent"),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id),
-  activeOrganizationId: text("active_organization_id"),
-});
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: text("id").primaryKey(),
+    expiresAt: timestamp("expires_at").notNull(),
+    token: text("token").notNull().unique(),
+    createdAt: timestamp("created_at").notNull(),
+    updatedAt: timestamp("updated_at").notNull(),
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    activeOrganizationId: text("active_organization_id"),
+  },
+  (table) => [index("idx_sessions_user_id").on(table.userId)]
+);
 
-export const accounts = pgTable("accounts", {
-  id: text("id").primaryKey(),
-  accountId: text("account_id").notNull(),
-  providerId: text("provider_id").notNull(),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id),
-  accessToken: text("access_token"),
-  refreshToken: text("refresh_token"),
-  idToken: text("id_token"),
-  accessTokenExpiresAt: timestamp("access_token_expires_at"),
-  refreshTokenExpiresAt: timestamp("refresh_token_expires_at"),
-  scope: text("scope"),
-  password: text("password"),
-  createdAt: timestamp("created_at").notNull(),
-  updatedAt: timestamp("updated_at").notNull(),
-});
+export const accounts = pgTable(
+  "accounts",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    providerId: text("provider_id").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    accessToken: text("access_token"),
+    refreshToken: text("refresh_token"),
+    idToken: text("id_token"),
+    accessTokenExpiresAt: timestamp("access_token_expires_at"),
+    refreshTokenExpiresAt: timestamp("refresh_token_expires_at"),
+    scope: text("scope"),
+    password: text("password"),
+    createdAt: timestamp("created_at").notNull(),
+    updatedAt: timestamp("updated_at").notNull(),
+  },
+  (table) => [index("idx_accounts_user_id").on(table.userId)]
+);
 
 export const verifications = pgTable("verifications", {
   id: text("id").primaryKey(),
@@ -97,17 +105,24 @@ export const organization = pgTable("organization", {
   metadata: text("metadata"),
 });
 
-export const member = pgTable("member", {
-  id: text("id").primaryKey(),
-  organizationId: text("organization_id")
-    .notNull()
-    .references(() => organization.id, { onDelete: "cascade" }),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  role: text("role").default("member").notNull(),
-  createdAt: timestamp("created_at").notNull(),
-});
+export const member = pgTable(
+  "member",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    role: text("role").default("member").notNull(),
+    createdAt: timestamp("created_at").notNull(),
+  },
+  (table) => [
+    index("idx_member_user_id").on(table.userId),
+    index("idx_member_organization_id").on(table.organizationId),
+  ]
+);
 
 export const invitation = pgTable("invitation", {
   id: text("id").primaryKey(),
@@ -225,6 +240,10 @@ export const workflows = pgTable(
     sourceWorkflowId: text("source_workflow_id"), // tracks which public template was duplicated
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    // KEEP-458: last time the row was written by scripts/seed/seed-protocol-workflows.
+    // Null for user-created rows. Lets the seeder detect post-seed user edits
+    // (updatedAt > seededAt + epsilon) without overloading createdAt/updatedAt.
+    seededAt: timestamp("seeded_at"),
     // v1.7: Workflow listing columns (INFRA-01)
     isListed: boolean("is_listed").default(false).notNull(),
     listedSlug: text("listed_slug"),
@@ -241,12 +260,18 @@ export const workflows = pgTable(
     chain: text("chain"),
     // v1.11: per-workflow MCP server versioning (incremented on listing schema changes)
     listingVersion: integer("listing_version").notNull().default(1),
+    // KEEP-440: soft-delete. Set instead of hard-deleting the row so the listed
+    // slug stays bound to this row and cannot be re-claimed by another workflow.
+    deletedAt: timestamp("deleted_at"),
   },
   (table) => [
     // INFRA-02: globally unique listed slug so external callers can invoke by slug alone
     uniqueIndex("idx_workflows_listed_slug")
       .on(table.listedSlug)
       .where(isNotNull(table.listedSlug)),
+    index("idx_workflows_user_id").on(table.userId),
+    index("idx_workflows_tag_id").on(table.tagId),
+    index("idx_workflows_project_id").on(table.projectId),
   ]
 );
 
@@ -283,6 +308,7 @@ export const integrations = pgTable(
       .where(
         sql`${table.type} = 'web3' AND ${table.organizationId} IS NOT NULL`
       ),
+    index("idx_integrations_user_id").on(table.userId),
   ]
 );
 
@@ -316,6 +342,19 @@ export const workflowExecutions = pgTable(
     // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
     output: jsonb("output").$type<any>(),
     error: text("error"),
+    errorCategory: text("error_category").$type<
+      | "validation"
+      | "configuration"
+      | "external_service"
+      | "network_rpc"
+      | "transaction"
+      | "database"
+      | "auth"
+      | "infrastructure"
+      | "workflow_engine"
+      | "unknown"
+    >(),
+    isUserError: boolean("is_user_error"),
     startedAt: timestamp("started_at").notNull().defaultNow(),
     completedAt: timestamp("completed_at"),
     duration: numeric("duration"), // Duration in milliseconds
@@ -349,14 +388,19 @@ export const workflowExecutions = pgTable(
      */
     billable: boolean("billable").notNull().default(true),
   },
-  (table) => [index("idx_workflow_executions_status").on(table.status)]
+  (table) => [
+    index("idx_workflow_executions_status").on(table.status),
+    index("idx_workflow_executions_user_id").on(table.userId),
+  ]
 );
 
 // Workflow execution logs to track individual node executions
-export const workflowExecutionLogs = pgTable("workflow_execution_logs", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => generateId()),
+export const workflowExecutionLogs = pgTable(
+  "workflow_execution_logs",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
   executionId: text("execution_id")
     .notNull()
     .references(() => workflowExecutions.id),
@@ -383,7 +427,9 @@ export const workflowExecutionLogs = pgTable("workflow_execution_logs", {
   timestamp: timestamp("timestamp").notNull().defaultNow(),
   iterationIndex: integer("iteration_index"), // 0-based loop iteration (null for non-loop nodes)
   forEachNodeId: text("for_each_node_id"), // parent For Each node ID (null for non-loop nodes)
-});
+  },
+  (table) => [index("idx_exec_logs_started_at").on(table.startedAt)]
+);
 
 export {
   type AgenticWalletCredit,

@@ -415,7 +415,7 @@ describe.skipIf(shouldSkip)("API Key Authentication", () => {
       expect(result.status).toBe("running");
     });
 
-    it("should reject execution from different org", async ({ skip }) => {
+    it("should mask execution from different org", async ({ skip }) => {
       if (!setupSucceeded) {
         skip();
       }
@@ -448,7 +448,7 @@ describe.skipIf(shouldSkip)("API Key Authentication", () => {
           body: JSON.stringify({ input: { test: "data" } }),
         }
       );
-      expect(response.status).toBe(403);
+      expect(response.status).toBe(404);
     });
   });
 

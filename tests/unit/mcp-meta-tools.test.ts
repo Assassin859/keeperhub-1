@@ -112,11 +112,11 @@ describe("registerMetaTools: tool registration", () => {
     vi.resetModules();
   });
 
-  it("Test 6: registerMetaTools registers all 8 meta-tools (4 protocol/marketplace + 4 curator)", async () => {
+  it("Test 6: registerMetaTools registers all 10 meta-tools (4 protocol/marketplace + 4 curator + validate_workflow + prepare_test_pin_data)", async () => {
     const { server, registeredTools } = makeMockServer();
     const { registerMetaTools } = await import("@/lib/mcp/tools");
     registerMetaTools(server, "http://localhost:3000", "Bearer test-token");
-    expect(registeredTools.length).toBe(8);
+    expect(registeredTools.length).toBe(10);
     expect(registeredTools.map((t) => t.name)).toEqual([
       "search_protocol_actions",
       "execute_protocol_action",
@@ -125,6 +125,8 @@ describe("registerMetaTools: tool registration", () => {
       "list_workflow",
       "unlist_workflow",
       "update_workflow_listing",
+      "validate_workflow",
+      "prepare_test_pin_data",
       "get_workflow_listing",
     ]);
   });
@@ -798,7 +800,7 @@ describe("call_workflow tool behavior", () => {
       content: Array<{ type: string; text: string }>;
     };
     const parsed = JSON.parse(result.content[0].text) as { error?: string };
-    expect(parsed.error).toBe("Forbidden");
+    expect(parsed.error).toBe("insufficient_scope");
   });
 
   it("Test 24: call_workflow encodes slug in URL", async () => {
@@ -938,6 +940,16 @@ describe("POST /api/mcp/workflows/[slug]/call: write workflow returns calldata",
 
   vi.mock("@/lib/mcp/calldata", () => ({
     generateCalldataForWorkflow: mockGenerateCalldata,
+  }));
+
+  vi.mock("@/lib/errors/classify", () => ({
+    classifyExecutionError: () => ({
+      errorCategory: "workflow_engine",
+      isUserError: false,
+    }),
+  }));
+  vi.mock("@/lib/errors/finalize-error", () => ({
+    recordExecutionErrorFinalized: vi.fn().mockResolvedValue(undefined),
   }));
 
   const WRITE_WORKFLOW = {

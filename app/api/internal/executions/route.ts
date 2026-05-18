@@ -27,10 +27,11 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const workflow = await db.query.workflows.findFirst({
     where: eq(workflows.id, workflowId),
-    columns: { organizationId: true },
+    columns: { organizationId: true, deletedAt: true },
   });
 
-  if (!workflow) {
+  // KEEP-440: never create an execution for a soft-deleted workflow.
+  if (!workflow || workflow.deletedAt) {
     return NextResponse.json({ error: "Workflow not found" }, { status: 404 });
   }
 

@@ -2,16 +2,19 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { start } from "workflow/api";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
+import { classifyExecutionError } from "@/lib/errors/classify";
+import { recordExecutionErrorFinalized } from "@/lib/errors/finalize-error";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
 import { getMetricsCollector } from "@/lib/metrics";
-import { LabelKeys, MetricNames } from "@/lib/metrics/types";
+import { isTriggerType, LabelKeys, MetricNames, type TriggerType } from "@/lib/metrics/types";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
 import { workflowExecutions, workflows } from "@/lib/db/schema";
+import { getWorkflowAccess } from "@/lib/workflow/access";
 import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
@@ -63,15 +66,30 @@ async function executeWorkflowBackground(
   } catch (error) {
     logSystemError(ErrorCategory.WORKFLOW_ENGINE, "[Workflow Execute] Error during execution", error, { endpoint: "/api/workflow/[workflowId]/execute", operation: "executeWorkflow" });
 
-    // Update execution record with error
-    await db
+    // KEEP-545: classify the error so the row carries error_category and
+    // is_user_error and so the per-execution counter is incremented post-update.
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    const classification = classifyExecutionError(errorMessage);
+
+    const updated = await db
       .update(workflowExecutions)
       .set({
         status: "error",
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: errorMessage,
+        errorCategory: classification.errorCategory,
+        isUserError: classification.isUserError,
         completedAt: new Date(),
       })
-      .where(eq(workflowExecutions.id, executionId));
+      .where(eq(workflowExecutions.id, executionId))
+      .returning({ workflowId: workflowExecutions.workflowId });
+
+    if (updated.length > 0) {
+      await recordExecutionErrorFinalized({
+        workflowId: updated[0].workflowId,
+        errorMessage,
+      });
+    }
   }
 }
 
@@ -108,6 +126,20 @@ export async function POST(
       }
 
       userId = workflow.userId;
+
+      const access = await getWorkflowAccess(workflow, {
+        userId,
+        organizationId: null,
+        authMethod: "internal",
+      });
+
+      // KEEP-440: a soft-deleted workflow can never be executed.
+      if (!access.hasFullAccess || access.isDeleted) {
+        return NextResponse.json(
+          { error: "Workflow not found" },
+          { status: 404 }
+        );
+      }
     } else {
       const authContext = await getDualAuthContext(request);
       if ("error" in authContext) {
@@ -128,14 +160,18 @@ export async function POST(
         );
       }
 
-      const isOwner = authContext.authMethod === "session" && workflow.userId === authContext.userId;
-      const isSameOrg =
-        !workflow.isAnonymous &&
-        workflow.organizationId &&
-        authContext.organizationId === workflow.organizationId;
+      const access = await getWorkflowAccess(workflow, {
+        userId: authContext.userId,
+        organizationId: authContext.organizationId,
+        authMethod: authContext.authMethod,
+      });
 
-      if (!(isOwner || isSameOrg)) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      // KEEP-440: a soft-deleted workflow can never be executed.
+      if (!access.hasFullAccess || access.isDeleted) {
+        return NextResponse.json(
+          { error: "Workflow not found" },
+          { status: 404 }
+        );
       }
 
       userId = authContext.userId ?? workflow.userId;
@@ -179,6 +215,11 @@ export async function POST(
     // Check if executionId was provided (for scheduled executions)
     // This allows the executor to pre-create the execution record
     let executionId = body.executionId;
+    // Whether this request created the workflow_executions row itself, vs.
+    // reusing one that the executor pre-created. The KEEP-556 counter only
+    // increments here when we created the row, so the executor-side increment
+    // and this one never double-count.
+    let createdHere = false;
 
     if (executionId) {
       // Verify execution exists and is in running state
@@ -199,6 +240,7 @@ export async function POST(
           input,
         });
         console.log("[API] Created execution with provided ID:", executionId);
+        createdHere = true;
       }
     } else {
       // Create new execution record
@@ -214,15 +256,30 @@ export async function POST(
 
       executionId = execution.id;
       console.log("[API] Created execution:", executionId);
+      createdHere = true;
     }
 
-    // Record workflow execution metric in API process (workflow runs in separate context)
-    const triggerType = isInternalExecution ? "scheduled" : "manual";
-    const metrics = getMetricsCollector();
-    metrics.incrementCounter(MetricNames.WORKFLOW_EXECUTIONS_TOTAL, {
-      [LabelKeys.TRIGGER_TYPE]: triggerType,
-      [LabelKeys.WORKFLOW_ID]: workflowId,
-    });
+    // Record per-(trigger_type, chain) start of a workflow execution. Drives the
+    // Grafana "zero executions in N min" alert family (see KEEP-556). The
+    // trigger type is carried by the caller via the X-Trigger-Type header so
+    // internal callers can mark precise sources (block / schedule / event); we
+    // fall back to the legacy "scheduled" / "manual" defaults if the header is
+    // absent or invalid. Skipped when the executor pre-created the row - it
+    // already incremented on its side in that case.
+    if (createdHere) {
+      const headerTrigger = request.headers.get("x-trigger-type");
+      const triggerType: TriggerType = isTriggerType(headerTrigger)
+        ? headerTrigger
+        : isInternalExecution
+          ? "scheduled"
+          : "manual";
+      const chainLabel = workflow.chain ?? "_unknown";
+      const metrics = getMetricsCollector();
+      metrics.incrementCounter(MetricNames.WORKFLOW_EXECUTIONS_STARTED_TOTAL, {
+        [LabelKeys.TRIGGER_TYPE]: triggerType,
+        [LabelKeys.CHAIN]: chainLabel,
+      });
+    }
 
     // Resolve org slug + plan for log labels (cached per request)
     const [organizationSlug, organizationPlan] = await Promise.all([

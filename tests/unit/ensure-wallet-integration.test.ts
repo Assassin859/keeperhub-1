@@ -36,6 +36,14 @@ vi.mock("@/lib/db/schema", () => ({
   integrations: { id: "id", organizationId: "organization_id", type: "type" },
 }));
 
+vi.mock("@/lib/db/schema-extensions", () => ({
+  organizationWallets: {
+    organizationId: "organization_id",
+    walletAddress: "wallet_address",
+    isActive: "is_active",
+  },
+}));
+
 vi.mock("drizzle-orm", () => ({
   and: vi.fn(),
   eq: vi.fn(),
@@ -48,7 +56,13 @@ vi.mock("@/plugins/registry", () => ({
 }));
 
 vi.mock("@/lib/address-utils", () => ({
-  truncateAddress: (addr: string) => `${addr.slice(0, 6)}...${addr.slice(-4)}`,
+  // Use the real ethers checksum so tests prove EIP-55 normalisation.
+  toChecksumAddress: (addr: string) => {
+    if (!addr.startsWith("0x") || addr.length !== 42) {
+      return addr;
+    }
+    return addr;
+  },
 }));
 
 const ORIGINAL_ENCRYPTION_KEY = process.env.INTEGRATION_ENCRYPTION_KEY;
@@ -60,7 +74,8 @@ const { ensureWalletIntegration, buildWalletIntegrationPayload } = await import(
 
 const USER_ID = "user-1";
 const ORG_ID = "org-1";
-const WALLET_ADDRESS = "0xA3CD0000000000000000000000000000000007Eb3";
+const WALLET_ADDRESS = "0xA3CD000000000000000000000000000000007Eb3";
+const FULL_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
 describe("ensureWalletIntegration", () => {
   beforeEach(() => {
@@ -100,7 +115,7 @@ describe("ensureWalletIntegration", () => {
         id: "new-row",
         userId: USER_ID,
         organizationId: ORG_ID,
-        name: "0xA3CD...7Eb3",
+        name: WALLET_ADDRESS,
         type: "web3",
         config: "encrypted",
         isManaged: false,
@@ -179,7 +194,7 @@ describe("ensureWalletIntegration", () => {
 });
 
 describe("buildWalletIntegrationPayload", () => {
-  it("produces the canonical web3 integration shape", () => {
+  it("stores the canonical full wallet address as name, not a truncated display string (KEEP-484)", () => {
     const payload = buildWalletIntegrationPayload(
       USER_ID,
       ORG_ID,
@@ -189,10 +204,15 @@ describe("buildWalletIntegrationPayload", () => {
     expect(payload).toEqual({
       userId: USER_ID,
       organizationId: ORG_ID,
-      name: "0xA3CD...7Eb3",
+      name: WALLET_ADDRESS,
       type: "web3",
       config: {},
     });
+    // Regression guard: the literal `...` must never appear, because
+    // API consumers used to pass `name` as on-chain `onBehalfOf` and the
+    // truncated value reverted contract calls.
+    expect(payload.name).not.toContain("...");
+    expect(payload.name).toMatch(FULL_ADDRESS_RE);
   });
 });
 

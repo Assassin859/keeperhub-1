@@ -43,6 +43,14 @@ export async function POST(
       );
     }
 
+    // KEEP-440: a soft-deleted workflow cannot be claimed into an org.
+    if (workflow.deletedAt) {
+      return NextResponse.json(
+        { error: "Workflow not found" },
+        { status: 404 }
+      );
+    }
+
     const [updatedWorkflow] = await db
       .update(workflows)
       .set({

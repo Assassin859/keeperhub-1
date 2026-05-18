@@ -83,6 +83,29 @@ describe("GET /api/openapi", () => {
     expect(path.post.responses["402"]).toBeDefined();
   });
 
+  it("declares OpenAPI security schemes for x402 and SIWX discovery clients", async () => {
+    mockDbSelect.mockReturnValue({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue([]),
+      }),
+    });
+
+    const { GET } = await import("@/app/api/openapi/route");
+    const request = new Request("https://app.keeperhub.com/api/openapi");
+    const response = await GET(request);
+    const body = await response.json();
+
+    expect(body.components.securitySchemes.x402).toMatchObject({
+      type: "http",
+      scheme: "Payment",
+    });
+    expect(body.components.securitySchemes.siwx).toMatchObject({
+      type: "http",
+      scheme: "bearer",
+      bearerFormat: "CAIP-122",
+    });
+  });
+
   it("paid read workflows: no `security` (paid auth via x-payment-info → 402) + open-object fallback requestBody", async () => {
     mockDbSelect.mockReturnValue({
       from: vi.fn().mockReturnValue({

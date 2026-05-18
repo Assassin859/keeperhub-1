@@ -4,6 +4,7 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { db } from "@/lib/db";
 import { workflowExecutions, workflows } from "@/lib/db/schema";
+import { getWorkflowAccess } from "@/lib/workflow/access";
 
 export async function GET(
   request: Request,
@@ -33,13 +34,14 @@ export async function GET(
       );
     }
 
-    const isOwner = userId !== null && userId === workflow.userId;
-    const isSameOrg =
-      !workflow.isAnonymous &&
-      workflow.organizationId &&
-      organizationId === workflow.organizationId;
+    const access = await getWorkflowAccess(workflow, {
+      userId,
+      organizationId,
+      authMethod: authContext.authMethod,
+    });
 
-    if (!(isOwner || isSameOrg)) {
+    // KEEP-440: execution history is hidden once the workflow is soft-deleted.
+    if (!access.hasFullAccess || access.isDeleted) {
       return NextResponse.json(
         { error: "Workflow not found" },
         { status: 404 }
@@ -97,13 +99,14 @@ export async function DELETE(
       );
     }
 
-    const isOwner = userId !== null && userId === workflow.userId;
-    const isSameOrg =
-      !workflow.isAnonymous &&
-      workflow.organizationId &&
-      organizationId === workflow.organizationId;
+    const access = await getWorkflowAccess(workflow, {
+      userId,
+      organizationId,
+      authMethod: authContext.authMethod,
+    });
 
-    if (!(isOwner || isSameOrg)) {
+    // KEEP-440: execution history is hidden once the workflow is soft-deleted.
+    if (!access.hasFullAccess || access.isDeleted) {
       return NextResponse.json(
         { error: "Workflow not found" },
         { status: 404 }

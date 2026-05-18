@@ -125,10 +125,13 @@ serviceMonitors:
 
 resources:
   limits:
-    memory: 3Gi
+    # Must exceed NODE_OPTIONS --max-old-space-size by ~1 GiB to leave headroom
+    # for off-heap RSS (Buffers, source maps, native addons, worker threads).
+    # Setting these equal causes the kernel OOM-killer to fire before V8 GCs.
+    memory: 4Gi
   requests:
     cpu: 100m
-    memory: 512Mi
+    memory: 2Gi
 
 env:
   <<: *shared_env

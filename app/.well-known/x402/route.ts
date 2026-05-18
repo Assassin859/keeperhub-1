@@ -1,6 +1,7 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
+import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +13,7 @@ export async function GET(): Promise<Response> {
       workflowType: workflows.workflowType,
     })
     .from(workflows)
-    .where(eq(workflows.isListed, true));
+    .where(and(eq(workflows.isListed, true), workflowNotDeleted()));
 
   const resources: string[] = [];
   for (const row of rows) {

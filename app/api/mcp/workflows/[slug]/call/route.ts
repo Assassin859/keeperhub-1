@@ -7,6 +7,8 @@ import { priceQualifiesForMarketplaceExemption } from "@/lib/billing/marketplace
 import { db } from "@/lib/db";
 import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
 import { tags, workflowExecutions, workflows } from "@/lib/db/schema";
+import { classifyExecutionError } from "@/lib/errors/classify";
+import { recordExecutionErrorFinalized } from "@/lib/errors/finalize-error";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
 import { hashMppCredential } from "@/lib/payments/mpp/server";
@@ -26,6 +28,7 @@ import {
   type CallRouteWorkflow,
 } from "@/lib/payments/x402/types";
 import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
+import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 const corsHeaders = {
@@ -183,7 +186,13 @@ async function lookupWorkflow(slug: string): Promise<CallRouteWorkflow | null> {
     .select({ ...CALL_ROUTE_COLUMNS, tagName: tags.name })
     .from(workflows)
     .leftJoin(tags, eq(workflows.tagId, tags.id))
-    .where(and(eq(workflows.listedSlug, slug), eq(workflows.isListed, true)))
+    .where(
+      and(
+        eq(workflows.listedSlug, slug),
+        eq(workflows.isListed, true),
+        workflowNotDeleted()
+      )
+    )
     .limit(1);
   return rows[0] ?? null;
 }
@@ -359,16 +368,30 @@ async function handlePaidWorkflow(
             }
           });
         } catch (err) {
-          await db
+          // KEEP-545: classify and record per-execution counter increment.
+          const errorMessage =
+            err instanceof Error
+              ? `recordPayment failed: ${err.message}`
+              : "recordPayment failed";
+          const classification = classifyExecutionError(errorMessage);
+
+          const updated = await db
             .update(workflowExecutions)
             .set({
               status: "error",
-              error:
-                err instanceof Error
-                  ? `recordPayment failed: ${err.message}`
-                  : "recordPayment failed",
+              error: errorMessage,
+              errorCategory: classification.errorCategory,
+              isUserError: classification.isUserError,
             })
-            .where(eq(workflowExecutions.id, executionId));
+            .where(eq(workflowExecutions.id, executionId))
+            .returning({ workflowId: workflowExecutions.workflowId });
+
+          if (updated.length > 0) {
+            await recordExecutionErrorFinalized({
+              workflowId: updated[0].workflowId,
+              errorMessage,
+            });
+          }
           throw err;
         }
 

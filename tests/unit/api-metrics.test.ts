@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getOrgIdentity } from "@/lib/db/org-helpers";
 import { resetMetricsCollector, setMetricsCollector } from "@/lib/metrics";
 import {
   recordStatusPollMetrics,
@@ -6,6 +7,10 @@ import {
 } from "@/lib/metrics/instrumentation/api";
 import { MetricNames, type MetricsCollector } from "@/lib/metrics/types";
 import { createMockMetricsCollector } from "../mocks/metrics";
+
+vi.mock("@/lib/db/org-helpers", () => ({
+  getOrgIdentity: vi.fn(),
+}));
 
 describe("API Metrics Instrumentation", () => {
   let mockCollector: MetricsCollector;
@@ -16,6 +21,8 @@ describe("API Metrics Instrumentation", () => {
 
     mockCollector = createMockMetricsCollector();
     setMetricsCollector(mockCollector);
+
+    vi.mocked(getOrgIdentity).mockResolvedValue({});
   });
 
   afterEach(() => {
@@ -24,8 +31,8 @@ describe("API Metrics Instrumentation", () => {
   });
 
   describe("recordWebhookMetrics", () => {
-    it("should record successful webhook trigger", () => {
-      recordWebhookMetrics({
+    it("should record successful webhook trigger", async () => {
+      await recordWebhookMetrics({
         workflowId: "wf_123",
         executionId: "exec_456",
         durationMs: 45,
@@ -44,8 +51,8 @@ describe("API Metrics Instrumentation", () => {
       expect(mockCollector.recordError).not.toHaveBeenCalled();
     });
 
-    it("should record failed webhook trigger with error", () => {
-      recordWebhookMetrics({
+    it("should record failed webhook trigger with error", async () => {
+      await recordWebhookMetrics({
         workflowId: "wf_123",
         durationMs: 100,
         statusCode: 401,
@@ -69,6 +76,72 @@ describe("API Metrics Instrumentation", () => {
           status_code: "401",
         })
       );
+    });
+
+    it("should resolve and attach org labels when organizationId provided", async () => {
+      vi.mocked(getOrgIdentity).mockResolvedValueOnce({
+        slug: "acme-corp",
+        name: "Acme Corp",
+      });
+
+      await recordWebhookMetrics({
+        workflowId: "wf_123",
+        durationMs: 100,
+        statusCode: 429,
+        error: "Execution limit reached",
+        organizationId: "org_abc",
+      });
+
+      expect(getOrgIdentity).toHaveBeenCalledWith("org_abc");
+      expect(mockCollector.recordError).toHaveBeenCalledWith(
+        MetricNames.API_ERRORS_TOTAL,
+        { message: "Execution limit reached" },
+        expect.objectContaining({
+          endpoint: "webhook",
+          status_code: "429",
+          org_id: "org_abc",
+          org_slug: "acme-corp",
+          org_name: "Acme Corp",
+        })
+      );
+    });
+
+    it("should omit org labels and skip lookup when organizationId not provided", async () => {
+      await recordWebhookMetrics({
+        workflowId: "wf_123",
+        durationMs: 100,
+        statusCode: 401,
+        error: "Invalid API key",
+      });
+
+      expect(getOrgIdentity).not.toHaveBeenCalled();
+      const labels = (mockCollector.recordError as ReturnType<typeof vi.fn>)
+        .mock.calls[0][2];
+      expect(labels).not.toHaveProperty("org_id");
+      expect(labels).not.toHaveProperty("org_slug");
+      expect(labels).not.toHaveProperty("org_name");
+    });
+
+    it("should attach only org_id when identity lookup yields nothing", async () => {
+      vi.mocked(getOrgIdentity).mockResolvedValueOnce({});
+
+      await recordWebhookMetrics({
+        workflowId: "wf_123",
+        durationMs: 100,
+        statusCode: 429,
+        error: "Execution limit reached",
+        organizationId: "org_abc",
+      });
+
+      const labels = (mockCollector.recordError as ReturnType<typeof vi.fn>)
+        .mock.calls[0][2];
+      expect(labels).toMatchObject({
+        endpoint: "webhook",
+        status_code: "429",
+        org_id: "org_abc",
+      });
+      expect(labels).not.toHaveProperty("org_slug");
+      expect(labels).not.toHaveProperty("org_name");
     });
   });
 

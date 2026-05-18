@@ -5,6 +5,7 @@ import { workflows } from "@/lib/db/schema";
 import { workflowPayments } from "@/lib/db/schema-payments";
 import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
 import { sanitizeDescription } from "@/lib/sanitize-description";
+import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 
 const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 20;
@@ -100,7 +101,8 @@ export async function GET(request: Request): Promise<NextResponse> {
     const offset = (page - 1) * limit;
     const sort = readSort(searchParams.get("sort"));
 
-    const baseFilter = eq(workflows.isListed, true);
+    // KEEP-440: soft-deleted workflows must never surface in the public catalog.
+    const baseFilter = and(eq(workflows.isListed, true), workflowNotDeleted());
     const textFilter = q
       ? or(
           ilike(workflows.name, `%${escapeLikePattern(q)}%`),
