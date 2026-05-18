@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildSessionErrorEnvelope,
+  buildSessionErrorResponse,
   SESSION_ERROR_DESCRIPTORS,
   sessionErrorBody,
 } from "@/lib/mcp/session-error";
@@ -61,5 +62,42 @@ describe("MCP session error envelope (KEEP-474)", () => {
       expect(descriptor.hint.length).toBeGreaterThan(20);
       expect(descriptor.message.length).toBeGreaterThan(0);
     }
+  });
+
+  describe("buildSessionErrorResponse", () => {
+    it("returns a Response with descriptor-derived HTTP status", async () => {
+      const res = buildSessionErrorResponse("session_not_found");
+      expect(res.status).toBe(404);
+      expect(res.headers.get("Content-Type")).toBe("application/json");
+      const json = (await res.json()) as {
+        jsonrpc: string;
+        error: { code: number; data: { reason: string } };
+      };
+      expect(json.jsonrpc).toBe("2.0");
+      expect(json.error.code).toBe(-32_001);
+      expect(json.error.data.reason).toBe("session_not_found");
+    });
+
+    it("uses HTTP 400 for the previously-dead -32003 / -32004 codes", () => {
+      expect(buildSessionErrorResponse("session_not_initialized").status).toBe(
+        400
+      );
+      expect(buildSessionErrorResponse("missing_session_id").status).toBe(400);
+    });
+
+    it("merges caller-supplied headers (CORS) without clobbering Content-Type", () => {
+      const res = buildSessionErrorResponse("session_expired", {
+        headers: { "Access-Control-Allow-Origin": "*" },
+      });
+      expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+      expect(res.headers.get("Content-Type")).toBe("application/json");
+    });
+
+    it("respects statusOverride when callers need a non-descriptor status", () => {
+      const res = buildSessionErrorResponse("session_not_found", {
+        statusOverride: 410,
+      });
+      expect(res.status).toBe(410);
+    });
   });
 });

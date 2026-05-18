@@ -89,3 +89,29 @@ export function buildSessionErrorEnvelope(code: string): SessionErrorEnvelope {
 export function sessionErrorBody(code: string): string {
   return JSON.stringify(buildSessionErrorEnvelope(code));
 }
+
+/**
+ * Build a full `Response` for a session bootstrap error.
+ *
+ * Picks the HTTP status from the descriptor so callsites stay consistent
+ * with the JSON-RPC code (-32001/-32002 are 404, -32003/-32004 are 400).
+ * Merges caller-supplied headers (typically CORS + Content-Type) into the
+ * response so every MCP route emits the same envelope without duplicating
+ * the body assembly.
+ */
+export function buildSessionErrorResponse(
+  code: string,
+  options?: { headers?: HeadersInit; statusOverride?: number }
+): Response {
+  const descriptor =
+    SESSION_ERROR_DESCRIPTORS[code as SessionErrorCode] ??
+    SESSION_ERROR_DESCRIPTORS.session_not_found;
+  const headers = new Headers(options?.headers);
+  if (!headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  return new Response(sessionErrorBody(code), {
+    status: options?.statusOverride ?? descriptor.httpStatus,
+    headers,
+  });
+}

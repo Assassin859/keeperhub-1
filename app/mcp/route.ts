@@ -8,7 +8,7 @@ import { logMcpEvent } from "@/lib/mcp/logging";
 import { authenticateOAuthToken } from "@/lib/mcp/oauth-auth";
 import { checkMcpRateLimit } from "@/lib/mcp/rate-limit";
 import { createMcpServer } from "@/lib/mcp/server";
-import { sessionErrorBody } from "@/lib/mcp/session-error";
+import { buildSessionErrorResponse } from "@/lib/mcp/session-error";
 import {
   createSessionToken,
   verifySessionToken,
@@ -427,9 +427,8 @@ export async function POST(request: Request): Promise<Response> {
   if (sessionId) {
     const resolved = await resolveSession(sessionId, organizationId, request);
     if (!resolved.ok) {
-      return new Response(sessionErrorBody(resolved.code), {
-        status: 404,
-        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+      return buildSessionErrorResponse(resolved.code, {
+        headers: CORS_HEADERS,
       });
     }
     const response = await resolved.transport.handleRequest(
@@ -440,15 +439,14 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   if (!isInitializeRequestBody(body)) {
-    return new Response(
-      JSON.stringify({
-        error: "Missing mcp-session-id header for non-initialize requests",
-      }),
-      {
-        status: 400,
-        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
-      }
-    );
+    // No session header AND not an `initialize` request: the caller is
+    // attempting tools/list or tools/call before completing the bootstrap
+    // handshake. Surface -32003 so clients can branch on the code and run
+    // the documented `initialize` -> `notifications/initialized` sequence
+    // before retrying.
+    return buildSessionErrorResponse("session_not_initialized", {
+      headers: CORS_HEADERS,
+    });
   }
 
   if (!(auth.organizationId && auth.apiKeyId)) {
@@ -537,9 +535,8 @@ export async function GET(request: Request): Promise<Response> {
   const organizationId = auth.organizationId ?? "";
   const resolved = await resolveSession(sessionId, organizationId, request);
   if (!resolved.ok) {
-    return new Response(sessionErrorBody(resolved.code), {
-      status: 404,
-      headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    return buildSessionErrorResponse(resolved.code, {
+      headers: CORS_HEADERS,
     });
   }
 
@@ -565,13 +562,12 @@ export async function DELETE(request: Request): Promise<Response> {
 
   const sessionId = request.headers.get("mcp-session-id");
   if (!sessionId) {
-    return new Response(
-      JSON.stringify({ error: "Missing mcp-session-id header" }),
-      {
-        status: 400,
-        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
-      }
-    );
+    // DELETE requires the client to echo back the Mcp-Session-Id from the
+    // initialize response. Surface -32004 so clients distinguish "you
+    // forgot the header" from "your session doesn't exist".
+    return buildSessionErrorResponse("missing_session_id", {
+      headers: CORS_HEADERS,
+    });
   }
 
   const organizationId = auth.organizationId ?? "";
@@ -580,9 +576,8 @@ export async function DELETE(request: Request): Promise<Response> {
   // Accept expired JWTs so clients can clean up old sessions.
   const payload = await verifySessionToken(sessionId, { allowExpired: true });
   if (!payload || payload.org !== organizationId) {
-    return new Response(sessionErrorBody("session_not_found"), {
-      status: 404,
-      headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    return buildSessionErrorResponse("session_not_found", {
+      headers: CORS_HEADERS,
     });
   }
 
