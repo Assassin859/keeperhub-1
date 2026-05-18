@@ -38,8 +38,6 @@ import {
   getOrganizationWallet,
   initializeWalletSigner,
 } from "@/lib/para/wallet-helpers";
-import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
-import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 import { buildExecTransactionCalldata } from "@/lib/safe/allowance-module";
 import {
   TEMPLATE_SPECS,
@@ -52,6 +50,7 @@ import {
   PROTOCOL_CATALOG,
   type ProtocolSlug,
 } from "@/lib/safe/protocol-registry";
+import { buildFailoverRpcManager } from "@/lib/safe/rpc";
 import { buildDesiredRole } from "@/lib/safe/simulate";
 import {
   directRuleAllowanceKey,
@@ -188,29 +187,6 @@ export function shouldBailOnSubgraphOutage(input: {
   return (
     input.existingDirectRulesCount > 0 || input.desiredDirectRulesCount > 0
   );
-}
-
-/**
- * Build an RpcProviderManager wired with both the chain's primary and
- * fallback endpoints so on-chain reads/writes survive a transient primary
- * outage. Mirrors the pattern locked in by review #923-r2 on the
- * signer-resolver chain probe (`lib/safe/signer-resolver.ts`).
- *
- * Dedupes the fallback when it resolves to the same URL as primary so the
- * manager does not flap between two identical endpoints.
- */
-async function buildFailoverRpcManager(chainId: number): Promise<{
-  rpcManager: Awaited<ReturnType<typeof getRpcProviderFromUrls>>;
-  rpcUrl: string;
-}> {
-  const rpcUrl = getRpcUrlByChainId(chainId, "primary");
-  const fallbackRpcUrl = getRpcUrlByChainId(chainId, "fallback");
-  const rpcManager = await getRpcProviderFromUrls(
-    rpcUrl,
-    fallbackRpcUrl === rpcUrl ? undefined : fallbackRpcUrl,
-    chainId
-  );
-  return { rpcManager, rpcUrl };
 }
 
 /**
