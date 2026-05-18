@@ -798,7 +798,7 @@ describe("call_workflow tool behavior", () => {
       content: Array<{ type: string; text: string }>;
     };
     const parsed = JSON.parse(result.content[0].text) as { error?: string };
-    expect(parsed.error).toBe("Forbidden");
+    expect(parsed.error).toBe("insufficient_scope");
   });
 
   it("Test 24: call_workflow encodes slug in URL", async () => {

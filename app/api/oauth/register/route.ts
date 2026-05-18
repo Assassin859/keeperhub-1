@@ -29,7 +29,7 @@ type TokenEndpointAuthMethod =
   | "client_secret_post"
   | "none";
 
-const SUPPORTED_AUTH_METHODS: ReadonlyArray<TokenEndpointAuthMethod> = [
+const SUPPORTED_AUTH_METHODS: readonly TokenEndpointAuthMethod[] = [
   "client_secret_basic",
   "client_secret_post",
   "none",
