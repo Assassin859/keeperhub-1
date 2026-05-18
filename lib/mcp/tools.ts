@@ -1,19 +1,53 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { withToolLogging } from "./logging";
-import { isToolAllowed } from "./oauth-scopes";
+import { getRequiredScopeForTool, isToolAllowed } from "./oauth-scopes";
 
-const SCOPE_DENIED_RESULT = {
-  content: [
-    {
-      type: "text" as const,
-      text: JSON.stringify({
-        error: "Forbidden",
-        message: "This tool is not allowed by the current OAuth scope.",
-      }),
-    },
-  ],
-} as const;
+type ScopeDeniedContent = {
+  content: [{ type: "text"; text: string }];
+  isError: true;
+};
+
+/**
+ * KEEP-483: when a tool is denied for missing scope, the response must
+ * include enough structured detail that the client can prompt the user
+ * to reauthorize with the right scope. The Hydra report observed write
+ * tools all returning a generic "Forbidden" so builders had no idea
+ * `mcp:write` was the missing piece.
+ *
+ * MCP error responses live in `content[0].text` per the SDK pattern, with
+ * `isError: true` so clients that check the `isError` flag short-circuit
+ * correctly. The text payload is structured JSON so machine readers can
+ * branch on `error`, `required_scope`, and `granted_scope`.
+ */
+function buildScopeDeniedResult(
+  toolName: string,
+  grantedScope: string
+): ScopeDeniedContent {
+  const requiredScope = getRequiredScopeForTool(toolName);
+  // Encode the granted/required pair into the upgrade_url so the stub
+  // page at /settings/mcp/reauthorize can render contextual messaging
+  // ("you have mcp:read, this needs mcp:write") without the client
+  // having to thread the original denial state through itself.
+  const upgradeUrl = `/settings/mcp/reauthorize?required=${encodeURIComponent(requiredScope)}&granted=${encodeURIComponent(grantedScope)}`;
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          error: "insufficient_scope",
+          message: `This tool requires the \`${requiredScope}\` OAuth scope. The current token only has \`${grantedScope || "(none)"}\`.`,
+          required_scope: requiredScope,
+          granted_scope: grantedScope,
+          tool: toolName,
+          upgrade_url: upgradeUrl,
+          hint: `Reauthorize the MCP integration and request \`${requiredScope}\` on the consent screen.`,
+        }),
+      },
+    ],
+    isError: true,
+  };
+}
 
 // biome-ignore lint/suspicious/noExplicitAny: SDK ToolCallback uses complex generic overloads that cannot be expressed without any
 type AnyToolHandler = (...args: any[]) => unknown;
@@ -28,9 +62,9 @@ function withScopeCheck<H extends AnyToolHandler>(
   }
   const wrapped = (
     ...args: Parameters<H>
-  ): ReturnType<H> | typeof SCOPE_DENIED_RESULT => {
+  ): ReturnType<H> | ScopeDeniedContent => {
     if (!isToolAllowed(toolName, scope)) {
-      return SCOPE_DENIED_RESULT;
+      return buildScopeDeniedResult(toolName, scope);
     }
     return handler(...args) as ReturnType<H>;
   };
