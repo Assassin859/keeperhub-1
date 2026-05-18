@@ -31,6 +31,11 @@ export const workflowStepStatus = pgEnum("step_status", [
   "failed",
   "cancelled",
 ]);
+// Created by @workflow/world-postgres migrations in `public` and referenced
+// cross-schema by `workflow.workflow_waits.status`. Declared here so
+// `pnpm db:push` does not emit a DROP that Postgres rejects with
+// "cannot drop type wait_status because other objects depend on it".
+export const workflowWaitStatus = pgEnum("wait_status", ["waiting", "completed"]);
 
 // Better Auth tables
 export const users = pgTable("users", {
