@@ -4,7 +4,7 @@ import {
   ensureWalletIntegration,
   getIntegrations,
 } from "@/lib/db/integrations";
-import { apiError, ApiErrorCodes } from "@/lib/errors/api-envelope";
+import { ApiErrorCodes, apiError } from "@/lib/errors/api-envelope";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import type {
@@ -49,6 +49,7 @@ export async function GET(request: Request) {
         code: ApiErrorCodes.UNAUTHORIZED,
         detail: authContext.error,
         hint: "Provide a valid `Authorization: Bearer <token>` header. API keys start with `kh_`; OAuth tokens are issued via /oauth/authorize.",
+        requestHeaders: request.headers,
       });
     }
 
@@ -60,6 +61,7 @@ export async function GET(request: Request) {
         code: ApiErrorCodes.UNAUTHORIZED,
         detail: "Request has neither a user nor an organization context",
         hint: "Sign in or supply a valid API key.",
+        requestHeaders: request.headers,
       });
     }
 
@@ -126,6 +128,7 @@ export async function GET(request: Request) {
       code: ApiErrorCodes.INTERNAL_ERROR,
       detail: "Failed to list integrations",
       hint: "Retry with backoff. If the error persists, check the request_id in server logs.",
+      requestHeaders: request.headers,
     });
   }
 }
@@ -143,6 +146,7 @@ export async function POST(request: Request) {
         code: ApiErrorCodes.UNAUTHORIZED,
         detail: authContext.error,
         hint: "Provide a valid `Authorization: Bearer <token>` header.",
+        requestHeaders: request.headers,
       });
     }
 
@@ -152,6 +156,7 @@ export async function POST(request: Request) {
         code: ApiErrorCodes.UNAUTHORIZED,
         detail: "User context is required to create an integration",
         hint: "Sign in or supply a user-scoped API key (not an org-only key).",
+        requestHeaders: request.headers,
       });
     }
 
@@ -165,6 +170,7 @@ export async function POST(request: Request) {
         code: ApiErrorCodes.INVALID_INPUT,
         detail: "Request body must include both `type` and `config` fields",
         hint: "See https://docs.keeperhub.com/api/integrations for the full request schema.",
+        requestHeaders: request.headers,
       });
     }
 
@@ -195,6 +201,7 @@ export async function POST(request: Request) {
         code: "web3_integration_exists",
         detail: "This organization already has a web3 integration",
         hint: "Use GET /api/integrations?type=web3 to find the existing row, then DELETE it before creating a new one.",
+        requestHeaders: request.headers,
       });
     }
     logSystemError(
@@ -211,6 +218,7 @@ export async function POST(request: Request) {
       code: ApiErrorCodes.INTERNAL_ERROR,
       detail: "Failed to create integration",
       hint: "Retry with backoff. If the error persists, check the request_id in server logs.",
+      requestHeaders: request.headers,
     });
   }
 }
