@@ -8,6 +8,7 @@ import { logMcpEvent } from "@/lib/mcp/logging";
 import { authenticateOAuthToken } from "@/lib/mcp/oauth-auth";
 import { checkMcpRateLimit } from "@/lib/mcp/rate-limit";
 import { createMcpServer } from "@/lib/mcp/server";
+import { sessionErrorBody } from "@/lib/mcp/session-error";
 import {
   createSessionToken,
   verifySessionToken,
@@ -212,18 +213,6 @@ function buildSession(
   };
 
   return { transport, entry };
-}
-
-const SESSION_ERROR_MESSAGES: Record<string, string> = {
-  session_not_found: "Session not found",
-  session_expired: "Session expired",
-};
-
-function sessionErrorBody(code: string): string {
-  return JSON.stringify({
-    error: code,
-    message: SESSION_ERROR_MESSAGES[code] ?? code,
-  });
 }
 
 type ResolveSessionOk = {
