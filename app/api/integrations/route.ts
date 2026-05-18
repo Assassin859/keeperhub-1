@@ -19,6 +19,13 @@ export type GetIntegrationsResponse = {
   isManaged?: boolean;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Canonical EIP-55 wallet address for web3 integrations, or null for
+   * other integration types. API consumers MUST prefer this field over
+   * `name` when the value is destined for an on-chain call such as
+   * `onBehalfOf` (KEEP-484).
+   */
+  address: string | null;
   // Config is intentionally excluded for security
 }[];
 
@@ -109,6 +116,7 @@ export async function GET(request: Request) {
         isManaged: integration.isManaged ?? false,
         createdAt: integration.createdAt.toISOString(),
         updatedAt: integration.updatedAt.toISOString(),
+        address: integration.address,
       })
     );
 
