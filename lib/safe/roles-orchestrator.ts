@@ -191,6 +191,29 @@ export function shouldBailOnSubgraphOutage(input: {
 }
 
 /**
+ * Build an RpcProviderManager wired with both the chain's primary and
+ * fallback endpoints so on-chain reads/writes survive a transient primary
+ * outage. Mirrors the pattern locked in by review #923-r2 on the
+ * signer-resolver chain probe (`lib/safe/signer-resolver.ts`).
+ *
+ * Dedupes the fallback when it resolves to the same URL as primary so the
+ * manager does not flap between two identical endpoints.
+ */
+async function buildFailoverRpcManager(chainId: number): Promise<{
+  rpcManager: Awaited<ReturnType<typeof getRpcProviderFromUrls>>;
+  rpcUrl: string;
+}> {
+  const rpcUrl = getRpcUrlByChainId(chainId, "primary");
+  const fallbackRpcUrl = getRpcUrlByChainId(chainId, "fallback");
+  const rpcManager = await getRpcProviderFromUrls(
+    rpcUrl,
+    fallbackRpcUrl === rpcUrl ? undefined : fallbackRpcUrl,
+    chainId
+  );
+  return { rpcManager, rpcUrl };
+}
+
+/**
  * 4-byte function selectors for the ERC-20 methods we scope under direct
  * rules. Stored verbatim on `safe_role_protocols.allowedSelectors` so the
  * audit panel can show "transfer(address,uint256)" alongside the rule.
@@ -736,8 +759,7 @@ export async function installRolesWithInitialConfig(
   ) as `0x${string}`;
   const saltNonce = defaultSaltNonce({ organizationId, chainId });
 
-  const rpcUrl = getRpcUrlByChainId(chainId, "primary");
-  const rpcManager = await getRpcProviderFromUrls(rpcUrl, undefined, chainId);
+  const { rpcManager, rpcUrl } = await buildFailoverRpcManager(chainId);
 
   await initializeWalletSigner(organizationId, rpcUrl, chainId);
 
@@ -1409,8 +1431,7 @@ export async function updateRolesConfig(
   const multiSendAddress = getSafeContracts(chainId).multiSendCallOnly;
   const roleKey = role.roleKey as `0x${string}`;
 
-  const rpcUrl = getRpcUrlByChainId(chainId, "primary");
-  const rpcManager = await getRpcProviderFromUrls(rpcUrl, undefined, chainId);
+  const { rpcManager, rpcUrl } = await buildFailoverRpcManager(chainId);
   await initializeWalletSigner(organizationId, rpcUrl, chainId);
 
   const context: TransactionContext = {
@@ -1943,8 +1964,7 @@ export async function setRoleTokenAllowance(
 
   const ownerWallet = await getOrganizationWallet(organizationId);
   const ownerAddress = normalizeAddressForStorage(ownerWallet.walletAddress);
-  const rpcUrl = getRpcUrlByChainId(chainId, "primary");
-  const rpcManager = await getRpcProviderFromUrls(rpcUrl, undefined, chainId);
+  const { rpcManager, rpcUrl } = await buildFailoverRpcManager(chainId);
 
   await initializeWalletSigner(organizationId, rpcUrl, chainId);
 
@@ -2089,8 +2109,7 @@ export async function revokeRoleTokenAllowance(input: {
 
   const ownerWallet = await getOrganizationWallet(organizationId);
   const ownerAddress = normalizeAddressForStorage(ownerWallet.walletAddress);
-  const rpcUrl = getRpcUrlByChainId(chainId, "primary");
-  const rpcManager = await getRpcProviderFromUrls(rpcUrl, undefined, chainId);
+  const { rpcManager, rpcUrl } = await buildFailoverRpcManager(chainId);
 
   await initializeWalletSigner(organizationId, rpcUrl, chainId);
 
@@ -2195,18 +2214,16 @@ async function probeRolesModifierOnChain(
   safe: SafeWallet
 ): Promise<string | null> {
   try {
-    const rpcUrl = getRpcUrlByChainId(safe.chainId, "primary");
-    const rpcManager = await getRpcProviderFromUrls(
-      rpcUrl,
-      undefined,
-      safe.chainId
+    const { rpcManager } = await buildFailoverRpcManager(safe.chainId);
+    const modules = await rpcManager.executeWithFailover((provider) =>
+      readEnabledSafeModules(provider, safe.safeAddress)
     );
-    const provider = rpcManager.getProvider();
-    const modules = await readEnabledSafeModules(provider, safe.safeAddress);
     if (modules.length === 0) {
       return null;
     }
-    return await findRolesModifierForSafe(provider, safe.safeAddress, modules);
+    return await rpcManager.executeWithFailover((provider) =>
+      findRolesModifierForSafe(provider, safe.safeAddress, modules)
+    );
   } catch (error) {
     logSystemError(
       ErrorCategory.TRANSACTION,
@@ -2666,13 +2683,7 @@ export async function reconcileSafeRoleFromChain(
     // rather than failing the reconcile and (in the workflow case)
     // downgrading the write to the unscoped `safe.execTransaction` path.
     // See review #923-r2 (MEDIUM).
-    const rpcUrl = getRpcUrlByChainId(safe.chainId, "primary");
-    const fallbackRpcUrl = getRpcUrlByChainId(safe.chainId, "fallback");
-    const rpcManager = await getRpcProviderFromUrls(
-      rpcUrl,
-      fallbackRpcUrl,
-      safe.chainId
-    );
+    const { rpcManager } = await buildFailoverRpcManager(safe.chainId);
 
     const enabledModules = await rpcManager.executeWithFailover(
       (rpcProvider) => readEnabledSafeModules(rpcProvider, safe.safeAddress),
