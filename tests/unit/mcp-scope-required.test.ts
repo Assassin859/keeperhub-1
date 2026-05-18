@@ -21,7 +21,7 @@ describe("getRequiredScopeForTool (KEEP-483)", () => {
   it.each([
     "list_workflows",
     "get_workflow",
-    "get_execution_status",
+    "get_execution",
     "list_action_schemas",
     "search_plugins",
     "list_integrations",
@@ -57,7 +57,7 @@ describe("getRequiredScopeForTool (KEEP-483)", () => {
     const readToolSample = [
       "list_workflows",
       "get_workflow",
-      "get_execution_logs",
+      "get_execution",
       "search_workflows",
       "search_templates",
     ];
