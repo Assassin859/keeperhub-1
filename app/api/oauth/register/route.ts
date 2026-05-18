@@ -29,7 +29,7 @@ type TokenEndpointAuthMethod =
   | "client_secret_post"
   | "none";
 
-const SUPPORTED_AUTH_METHODS: ReadonlyArray<TokenEndpointAuthMethod> = [
+const SUPPORTED_AUTH_METHODS: readonly TokenEndpointAuthMethod[] = [
   "client_secret_basic",
   "client_secret_post",
   "none",
@@ -108,8 +108,12 @@ export async function POST(request: Request): Promise<Response> {
     }
   }
 
+  // Default to full read+write when the client omits `scope`. Standard MCP
+  // DCR clients (Anthropic reference, Hydra, etc.) don't pass scope, so
+  // defaulting to `mcp:read` only left them silently 401ing on every write
+  // tool (KEEP-483). Matches the authorize-page default.
   const resolvedScope = normalizeScope(
-    typeof scope === "string" ? scope : "mcp:read"
+    typeof scope === "string" ? scope : "mcp:read mcp:write"
   );
 
   const resolvedGrantTypes = isStringArray(grant_types)

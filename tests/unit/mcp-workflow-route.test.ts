@@ -35,7 +35,6 @@ vi.mock("@/lib/mcp/sessions", () => ({
 vi.mock("@/lib/mcp/event-store", () => {
   return {
     // biome-ignore lint/style/useConsistentObjectDefinitions: explicit function expression needed so `new McpEventStore()` works; method shorthand is not newable
-    // biome-ignore lint/suspicious/noEmptyBlockStatements: constructor mock body intentionally empty
     McpEventStore: function McpEventStore() {
       return;
     },
@@ -247,7 +246,7 @@ describe("POST /mcp/w/[slug] — listing resolution", () => {
     expect(res.status).toBe(404);
   });
 
-  it("returns 400 for non-initialize POST without session ID", async () => {
+  it("returns JSON-RPC -32003 (session_not_initialized) for non-initialize POST without session ID", async () => {
     vi.mocked(getWorkflowListing).mockResolvedValue({
       ok: true,
       listing: { ...makeListing(), isListed: true } as never,
@@ -264,9 +263,17 @@ describe("POST /mcp/w/[slug] — listing resolution", () => {
     });
 
     const res = await POST(req, makeParams());
+    // -32003 maps to HTTP 400 per SESSION_ERROR_DESCRIPTORS.
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toContain("mcp-session-id");
+    const body = (await res.json()) as {
+      jsonrpc: string;
+      id: null;
+      error: { code: number; message: string; data: { reason: string } };
+    };
+    expect(body.jsonrpc).toBe("2.0");
+    expect(body.id).toBeNull();
+    expect(body.error.code).toBe(-32_003);
+    expect(body.error.data.reason).toBe("session_not_initialized");
   });
 });
 
@@ -304,7 +311,7 @@ describe("GET /mcp/w/[slug]", () => {
     expect(res.status).toBe(401);
   });
 
-  it("returns 400 when mcp-session-id header is missing", async () => {
+  it("returns JSON-RPC -32004 (missing_session_id) when mcp-session-id header is missing", async () => {
     vi.mocked(getWorkflowListing).mockResolvedValue({
       ok: true,
       listing: { ...makeListing(), isListed: true } as never,
@@ -316,9 +323,17 @@ describe("GET /mcp/w/[slug]", () => {
       headers: { Authorization: "Bearer kh_test" },
     });
     const res = await GET(req, makeParams());
+    // -32004 maps to HTTP 400 per SESSION_ERROR_DESCRIPTORS.
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toContain("mcp-session-id");
+    const body = (await res.json()) as {
+      jsonrpc: string;
+      id: null;
+      error: { code: number; message: string; data: { reason: string } };
+    };
+    expect(body.jsonrpc).toBe("2.0");
+    expect(body.id).toBeNull();
+    expect(body.error.code).toBe(-32_004);
+    expect(body.error.data.reason).toBe("missing_session_id");
   });
 });
 
