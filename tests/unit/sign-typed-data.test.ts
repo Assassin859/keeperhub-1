@@ -73,7 +73,7 @@ describe("signTypedDataCore (KEEP-473)", () => {
 
   it("returns the signature and the signer when Turnkey succeeds", async () => {
     mockGetOrgWallet.mockResolvedValue(WALLET);
-    mockSign.mockResolvedValue("0x" + "ab".repeat(65));
+    mockSign.mockResolvedValue(`0x${"ab".repeat(65)}`);
 
     const result = await signTypedDataCore({
       typedData: VALID_TYPED_DATA,
@@ -82,7 +82,7 @@ describe("signTypedDataCore (KEEP-473)", () => {
 
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.signature).toMatch(/^0x[a-f0-9]{130}$/);
+      expect(result.signature).toMatch(SIGNATURE_HEX_RE);
       expect(result.signer).toBe(WALLET.walletAddress);
     }
     expect(mockSign).toHaveBeenCalledWith(
@@ -100,7 +100,6 @@ describe("signTypedDataCore (KEEP-473)", () => {
       { domain: {}, types: {}, primaryType: "", message: {} },
       { domain: {}, types: {}, primaryType: "X" },
     ]) {
-      // biome-ignore lint/suspicious/noExplicitAny: intentionally malformed
       const r = await signTypedDataCore({ typedData: td as any });
       expect(r.success).toBe(false);
       if (!r.success) {
