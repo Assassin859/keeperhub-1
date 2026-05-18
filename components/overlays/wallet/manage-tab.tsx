@@ -8,12 +8,14 @@ import { WalletAddressCard } from "./wallet-address-card";
 export function ManageTab({
   canExportKey,
   email,
+  isAdmin,
   isOwner,
   onOpenSafeView,
   walletAddress,
 }: {
   canExportKey: boolean;
   email: string;
+  isAdmin: boolean;
   isOwner: boolean;
   onOpenSafeView: () => void;
   walletAddress: string;
@@ -23,7 +25,7 @@ export function ManageTab({
       <WalletAddressCard walletAddress={walletAddress} />
       <RecoveryEmailCard email={email} />
       {isOwner && canExportKey && <SecurityCard />}
-      <SafeWalletsEntryCard isAdmin={isOwner} onOpen={onOpenSafeView} />
+      <SafeWalletsEntryCard isAdmin={isAdmin} onOpen={onOpenSafeView} />
     </>
   );
 }

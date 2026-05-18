@@ -91,10 +91,12 @@ function chainLabel(chainId: number): string {
 function DeployedSafeRow({
   safe,
   isAdmin,
+  isOwner,
   onSigningChange,
 }: {
   safe: SafeSummary;
   isAdmin: boolean;
+  isOwner: boolean;
   onSigningChange: (safeId: string, next: boolean) => void;
 }): React.ReactElement {
   const label = chainLabel(safe.chainId);
@@ -182,6 +184,7 @@ function DeployedSafeRow({
         <RolePermissionsCard
           chainId={safe.chainId}
           isAdmin={isAdmin}
+          isOwner={isOwner}
           safeAddress={safe.safeAddress}
           safeId={safe.id}
         />
@@ -450,9 +453,11 @@ function DeployDialog({
 
 export function DeploySafeCard({
   isAdmin,
+  isOwner,
   hideExistingList = false,
 }: {
   isAdmin: boolean;
+  isOwner: boolean;
   /**
    * When true, the inline list of already-deployed Safes is omitted. Used
    * by the wallet overlay's Deploy-a-Safe modal where each existing Safe is
@@ -603,6 +608,7 @@ export function DeploySafeCard({
           {safes.map((safe) => (
             <DeployedSafeRow
               isAdmin={isAdmin}
+              isOwner={isOwner}
               key={safe.id}
               onSigningChange={handleSigningChange}
               safe={safe}

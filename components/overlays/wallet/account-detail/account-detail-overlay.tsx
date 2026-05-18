@@ -298,6 +298,7 @@ export function AccountDetailOverlay({
             <PoliciesTab
               chainId={account.chainId}
               isAdmin={isAdmin}
+              isOwner={isOwner}
               safeAddress={account.address}
               safeId={account.safeId}
             />

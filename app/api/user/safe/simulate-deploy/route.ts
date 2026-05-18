@@ -1,14 +1,10 @@
 import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
-import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
-import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { chains } from "@/lib/db/schema";
-import { getActiveOrgId } from "@/lib/middleware/org-context";
-import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
-import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
+import { validateSafeAdmin } from "@/lib/safe/auth";
 import { TEMPLATE_SPECS } from "@/lib/safe/condition-templates";
 import { isSafeSupportedChain } from "@/lib/safe/contracts";
 import { formatPeriod, formatTokenAmount } from "@/lib/safe/format-allowance";
@@ -24,6 +20,7 @@ import {
   type ProtocolInput,
 } from "@/lib/safe/roles-orchestrator";
 import type { DroppedInput } from "@/lib/safe/route-input";
+import { buildFailoverRpcManager } from "@/lib/safe/rpc";
 
 /**
  * Pre-deploy simulation: tells the wizard what will land on chain when the
@@ -132,9 +129,11 @@ function normaliseProtocols(body: SimulateBody): {
 
 async function getMaxFeePerGas(chainId: number): Promise<bigint> {
   try {
-    const rpcUrl = getRpcUrlByChainId(chainId, "primary");
-    const manager = await getRpcProviderFromUrls(rpcUrl, undefined, chainId);
-    const feeData = await manager.getProvider().getFeeData();
+    const { rpcManager } = await buildFailoverRpcManager(chainId);
+    const feeData = await rpcManager.executeWithFailover(
+      (provider) => provider.getFeeData(),
+      "read"
+    );
     if (feeData.maxFeePerGas) {
       return feeData.maxFeePerGas;
     }
@@ -149,24 +148,15 @@ async function getMaxFeePerGas(chainId: number): Promise<bigint> {
 
 export async function POST(request: Request): Promise<NextResponse> {
   try {
-    const session = await auth.api.getSession({ headers: request.headers });
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    const activeOrgId = getActiveOrgId(session);
-    if (!activeOrgId) {
+    // Pre-deploy simulate hits RPC + the native-USD price oracle every
+    // request. Gate to admin-only so non-admin members can't drive RPC /
+    // oracle work from the unauthenticated-feeling preview endpoint
+    // (review #923-r3 MEDIUM).
+    const admin = await validateSafeAdmin(request);
+    if ("error" in admin) {
       return NextResponse.json(
-        { error: "No active organization" },
-        { status: 400 }
-      );
-    }
-    const activeMember = await auth.api.getActiveMember({
-      headers: await headers(),
-    });
-    if (!activeMember) {
-      return NextResponse.json(
-        { error: "Not a member of the active organization" },
-        { status: 403 }
+        { error: admin.error },
+        { status: admin.status }
       );
     }
 

@@ -18,9 +18,12 @@ export type AdminError = {
 
 /**
  * Authenticate the request, require an active organization, and require the
- * caller to be an admin or owner of that organization. Mirrors the gate used
- * by the Safe deploy endpoint so Safe policy management is held to the same
- * permission bar as Safe deployment.
+ * caller to be an admin or owner of that organization. Single source of truth
+ * for the admin-gate on every Safe surface: deploy, policy install/update,
+ * per-allowance edit/revoke, signing-toggle, and the pre-deploy simulate
+ * preview. All Safe mutation endpoints (and the simulate that previews them)
+ * MUST go through this gate so non-admin members cannot drive on-chain state
+ * or trigger RPC/oracle work from the API.
  */
 export async function validateSafeAdmin(
   request: Request
@@ -51,7 +54,53 @@ export async function validateSafeAdmin(
   const role = activeMember.role;
   if (role !== "admin" && role !== "owner") {
     return {
-      error: "Only organization admins and owners can manage Safe policies",
+      error: "Only organization admins and owners can manage Safe wallets",
+      status: 403,
+    };
+  }
+
+  return { organizationId: activeOrgId };
+}
+
+/**
+ * Stricter variant of `validateSafeAdmin` that requires the caller to be
+ * the org owner. Used for destructive Safe actions whose UI surfaces are
+ * still visible to admins (so they can see what would be deleted) but
+ * whose execution is reserved to the owner. Today this gates the
+ * per-allowance Revoke endpoint; admins hitting the API directly get a
+ * 403 with a clear message so the UI can pair it with a "owner only"
+ * tooltip on the disabled control.
+ */
+export async function validateSafeOwner(
+  request: Request
+): Promise<AdminContext | AdminError> {
+  const session = await auth.api.getSession({ headers: request.headers });
+  if (!session?.user) {
+    return { error: "Unauthorized", status: 401 };
+  }
+
+  const activeOrgId = getActiveOrgId(session);
+  if (!activeOrgId) {
+    return {
+      error: "No active organization. Please select or create an organization.",
+      status: 400,
+    };
+  }
+
+  const activeMember = await auth.api.getActiveMember({
+    headers: await headers(),
+  });
+  if (!activeMember) {
+    return {
+      error: "You are not a member of the active organization",
+      status: 403,
+    };
+  }
+
+  if (activeMember.role !== "owner") {
+    return {
+      error:
+        "Only the organization owner can perform this destructive Safe action",
       status: 403,
     };
   }

@@ -5,6 +5,11 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { POLICY_PERIOD_OPTIONS } from "./policy-token-row";
 
 export type RoleAllowance = {
@@ -23,6 +28,13 @@ type Props = {
   allowance: RoleAllowance;
   safeId: string;
   isAdmin: boolean;
+  /**
+   * Strict-subset gate for the Revoke button. Revoking an allowance writes
+   * a zero-out call to the on-chain Roles modifier; we restrict that to
+   * the org owner. Admins still see the disabled button + a tooltip
+   * explaining why; members (`!isAdmin`) never see the button at all.
+   */
+  isOwner: boolean;
   onRevoked: () => Promise<void>;
   /** Optional pencil-edit callback. When provided, a pencil button shows on
    * row hover so admins can open the per-allowance edit modal. */
@@ -57,6 +69,7 @@ export function RoleAllowanceRow({
   allowance,
   safeId,
   isAdmin,
+  isOwner,
   onRevoked,
   onEdit,
 }: Props): React.ReactElement {
@@ -117,18 +130,39 @@ export function RoleAllowanceRow({
           <Pencil className="h-3.5 w-3.5" />
         </Button>
       )}
-      {isAdmin && (
-        <Button
-          aria-label={`Revoke ${allowance.tokenSymbol} allowance`}
-          disabled={revoking}
-          onClick={handleRevoke}
-          size="sm"
-          type="button"
-          variant="ghost"
-        >
-          {revoking ? <Spinner className="h-4 w-4" /> : "Revoke"}
-        </Button>
-      )}
+      {isAdmin &&
+        (isOwner ? (
+          <Button
+            aria-label={`Revoke ${allowance.tokenSymbol} allowance`}
+            disabled={revoking}
+            onClick={handleRevoke}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            {revoking ? <Spinner className="h-4 w-4" /> : "Revoke"}
+          </Button>
+        ) : (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex">
+                <Button
+                  aria-disabled
+                  aria-label={`Revoke ${allowance.tokenSymbol} allowance (owner only)`}
+                  disabled
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  Revoke
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              Only the organization owner can revoke an on-chain allowance.
+            </TooltipContent>
+          </Tooltip>
+        ))}
     </li>
   );
 }

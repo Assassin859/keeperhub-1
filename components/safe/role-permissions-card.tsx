@@ -66,12 +66,19 @@ type Props = {
   safeId: string;
   chainId: number;
   isAdmin: boolean;
+  /**
+   * Strict subset of `isAdmin` for destructive controls. Admins can view +
+   * edit policies; only owners can revoke an on-chain allowance bucket.
+   * The UI uses this to disable + tooltip the Revoke action for admins
+   * (members never see the button regardless).
+   */
+  isOwner: boolean;
   safeAddress?: string;
   safeUrl?: string | null;
   /**
    * Drop the outer card wrapper + "On-chain policies" header when the parent
    * surface already announces the Safe (e.g. the account-detail overlay
-   * titled "Safe · Ethereum"). The Refresh-from-chain action moves to the
+   * titled "Safe -- Ethereum"). The Refresh-from-chain action moves to the
    * top of the inner content so admin actions are still reachable.
    */
   bare?: boolean;
@@ -147,6 +154,7 @@ export function RolePermissionsCard({
   safeId,
   chainId,
   isAdmin,
+  isOwner,
   safeAddress,
   safeUrl,
   bare = false,
@@ -366,6 +374,7 @@ export function RolePermissionsCard({
                         (a) => a.protocolSlug === protocol.protocolSlug
                       )}
                       isAdmin={isAdmin}
+                      isOwner={isOwner}
                       key={protocol.id}
                       onAllowanceRevoked={loadRole}
                       onEditAllowance={

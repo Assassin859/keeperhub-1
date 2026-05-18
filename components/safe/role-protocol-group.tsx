@@ -8,6 +8,7 @@ type Props = {
   allowances: RoleAllowance[];
   safeId: string;
   isAdmin: boolean;
+  isOwner: boolean;
   onAllowanceRevoked: () => Promise<void>;
   /** Per-allowance edit click; opens the focused per-policy edit modal in
    *  the parent. Pass undefined to hide the pencil. */
@@ -19,6 +20,7 @@ export function RoleProtocolGroup({
   allowances,
   safeId,
   isAdmin,
+  isOwner,
   onAllowanceRevoked,
   onEditAllowance,
 }: Props): React.ReactElement {
@@ -41,6 +43,7 @@ export function RoleProtocolGroup({
             <RoleAllowanceRow
               allowance={allowance}
               isAdmin={isAdmin}
+              isOwner={isOwner}
               key={allowance.id}
               onEdit={
                 onEditAllowance

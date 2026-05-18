@@ -2,7 +2,7 @@ import { ethers } from "ethers";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { getSafeForOrg, validateSafeAdmin } from "@/lib/safe/auth";
+import { getSafeForOrg, validateSafeOwner } from "@/lib/safe/auth";
 import { PROTOCOL_CATALOG } from "@/lib/safe/protocol-registry";
 import {
   DIRECT_RULE_PROTOCOL_SLUG,
@@ -25,6 +25,21 @@ export async function DELETE(
   { params }: RouteParams
 ): Promise<NextResponse> {
   try {
+    // Authenticate first: don't leak route-shape (specific 400 messages
+    // about token-address validity or required protocolSlug) to
+    // unauthenticated probes. Review #923-r3 LOW.
+    //
+    // Owner-only by design: revoking a single on-chain allowance bucket
+    // is destructive. Admins can view + edit but only the org owner can
+    // revoke. The UI pairs the 403 with a tooltip on the disabled control.
+    const owner = await validateSafeOwner(request);
+    if ("error" in owner) {
+      return NextResponse.json(
+        { error: owner.error },
+        { status: owner.status }
+      );
+    }
+
     const { safeId, tokenAddress } = await params;
     if (!ethers.isAddress(tokenAddress)) {
       return NextResponse.json(
@@ -48,24 +63,16 @@ export async function DELETE(
       );
     }
 
-    const admin = await validateSafeAdmin(request);
-    if ("error" in admin) {
-      return NextResponse.json(
-        { error: admin.error },
-        { status: admin.status }
-      );
-    }
-
     const safe = await getSafeForOrg({
       safeId,
-      organizationId: admin.organizationId,
+      organizationId: owner.organizationId,
     });
     if (!safe) {
       return NextResponse.json({ error: "Safe not found" }, { status: 404 });
     }
 
     const result = await revokeRoleTokenAllowance({
-      organizationId: admin.organizationId,
+      organizationId: owner.organizationId,
       chainId: safe.chainId,
       protocolSlug,
       tokenAddress,

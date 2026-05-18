@@ -1,61 +1,13 @@
-import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
-import { auth } from "@/lib/auth";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
-import { getActiveOrgId } from "@/lib/middleware/org-context";
+import { validateSafeAdmin } from "@/lib/safe/auth";
 import {
   isSafeSupportedChain,
   SUPPORTED_SAFE_CHAIN_IDS,
 } from "@/lib/safe/contracts";
 import { deployOrgSafe, listOrgSafes } from "@/lib/safe/deployment";
-
-type AdminValidationSuccess = {
-  organizationId: string;
-};
-
-type AdminValidationFailure = {
-  error: string;
-  status: number;
-};
-
-async function validateAdmin(
-  request: Request
-): Promise<AdminValidationSuccess | AdminValidationFailure> {
-  const session = await auth.api.getSession({ headers: request.headers });
-  if (!session?.user) {
-    return { error: "Unauthorized", status: 401 };
-  }
-
-  const activeOrgId = getActiveOrgId(session);
-  if (!activeOrgId) {
-    return {
-      error: "No active organization. Please select or create an organization.",
-      status: 400,
-    };
-  }
-
-  const activeMember = await auth.api.getActiveMember({
-    headers: await headers(),
-  });
-  if (!activeMember) {
-    return {
-      error: "You are not a member of the active organization",
-      status: 403,
-    };
-  }
-
-  const role = activeMember.role;
-  if (role !== "admin" && role !== "owner") {
-    return {
-      error: "Only organization admins and owners can deploy Safe wallets",
-      status: 403,
-    };
-  }
-
-  return { organizationId: activeOrgId };
-}
 
 export async function GET(request: Request): Promise<NextResponse> {
   try {
@@ -91,7 +43,7 @@ export async function GET(request: Request): Promise<NextResponse> {
 
 export async function POST(request: Request): Promise<NextResponse> {
   try {
-    const admin = await validateAdmin(request);
+    const admin = await validateSafeAdmin(request);
     if ("error" in admin) {
       return NextResponse.json(
         { error: admin.error },
