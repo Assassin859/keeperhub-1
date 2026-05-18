@@ -207,6 +207,170 @@ const ROLES_STATUS_LABELS: readonly string[] = [
   "EtherAllowanceExceeded",
 ];
 
+/**
+ * Safe wallet GS-code map. Safe v1.x reverts use plain string reasons like
+ * "GS013" (signature validation failed) -- they never come through as
+ * custom errors, so the only way to classify them is to match the string
+ * AFTER `Error(string)` decoding. Map drawn from the Safe contracts
+ * source (`contracts/common/Errors.sol` and friends).
+ *
+ * `recovery` groups codes into a typed RevertKind so callers can render a
+ * coherent recovery affordance (e.g. all signature-related GS codes share
+ * the same kind even though they have distinct numeric labels).
+ */
+const SAFE_GS_CODES = {
+  // Initialization / config
+  GS000: {
+    recovery: "safe-error",
+    description: "Could not finish initialization",
+  },
+  GS001: {
+    recovery: "safe-error",
+    description: "Threshold needs to be defined",
+  },
+  // Gas accounting
+  GS010: {
+    recovery: "safe-insufficient-gas",
+    description: "Not enough gas to execute Safe transaction",
+  },
+  GS011: {
+    recovery: "safe-insufficient-gas",
+    description: "Could not pay gas costs with ether",
+  },
+  GS012: {
+    recovery: "safe-insufficient-gas",
+    description: "Could not pay gas costs with token",
+  },
+  // Signatures
+  GS013: {
+    recovery: "safe-signature-invalid",
+    description: "Safe tx failed; signature validation failed",
+  },
+  GS014: {
+    recovery: "safe-signature-invalid",
+    description: "Signatures data too short",
+  },
+  GS017: {
+    recovery: "safe-signature-invalid",
+    description: "Invalid contract signature provided",
+  },
+  GS020: {
+    recovery: "safe-signature-invalid",
+    description: "Signatures data too short",
+  },
+  GS021: {
+    recovery: "safe-signature-invalid",
+    description: "Invalid contract signature location: inside static part",
+  },
+  GS022: {
+    recovery: "safe-signature-invalid",
+    description: "Invalid contract signature location: length not present",
+  },
+  GS023: {
+    recovery: "safe-signature-invalid",
+    description: "Invalid contract signature location: data not complete",
+  },
+  GS024: {
+    recovery: "safe-signature-invalid",
+    description: "Invalid contract signature provided",
+  },
+  GS025: {
+    recovery: "safe-signature-invalid",
+    description: "Hash has not been approved",
+  },
+  GS026: {
+    recovery: "safe-signature-invalid",
+    description: "Invalid owner provided",
+  },
+  GS030: {
+    recovery: "safe-not-authorized",
+    description: "Only owners can approve a hash",
+  },
+  GS031: {
+    recovery: "safe-not-authorized",
+    description: "Method can only be called from this contract",
+  },
+  // Modules
+  GS100: {
+    recovery: "safe-error",
+    description: "Modules have already been initialized",
+  },
+  GS101: {
+    recovery: "safe-error",
+    description: "Invalid module address provided",
+  },
+  GS102: {
+    recovery: "safe-error",
+    description: "Module has already been added",
+  },
+  GS103: {
+    recovery: "safe-error",
+    description: "Invalid prevModule, module pair provided",
+  },
+  GS104: {
+    recovery: "safe-not-authorized",
+    description: "Method can only be called from an enabled module",
+  },
+  GS105: {
+    recovery: "safe-error",
+    description: "Invalid starting point for fetching paginated modules",
+  },
+  GS106: {
+    recovery: "safe-error",
+    description: "Invalid page size for fetching paginated modules",
+  },
+  // Owners / threshold
+  GS200: {
+    recovery: "safe-error",
+    description: "Owners have already been set up",
+  },
+  GS201: {
+    recovery: "safe-error",
+    description: "Threshold cannot exceed owner count",
+  },
+  GS202: {
+    recovery: "safe-error",
+    description: "Threshold needs to be greater than 0",
+  },
+  GS203: {
+    recovery: "safe-error",
+    description: "Invalid owner address provided",
+  },
+  GS204: { recovery: "safe-error", description: "Address is already an owner" },
+  GS205: {
+    recovery: "safe-error",
+    description: "Invalid prevOwner, owner pair provided",
+  },
+  // Guards
+  GS300: {
+    recovery: "safe-error",
+    description: "Guard does not implement IERC165",
+  },
+  GS301: {
+    recovery: "safe-error",
+    description: "Fallback handler does not implement IERC165",
+  },
+} as const satisfies Record<
+  string,
+  {
+    recovery:
+      | "safe-signature-invalid"
+      | "safe-insufficient-gas"
+      | "safe-not-authorized"
+      | "safe-error";
+    description: string;
+  }
+>;
+
+type SafeGsCode = keyof typeof SAFE_GS_CODES;
+
+const SAFE_GS_PATTERN = /^GS\d{3}$/;
+const SAFE_GS_EMBEDDED_PATTERN = /\bGS\d{3}\b/;
+
+function isSafeGsCode(value: string): value is SafeGsCode {
+  return value in SAFE_GS_CODES;
+}
+
 export type RevertKind =
   | {
       kind: "role-condition-violation";
@@ -227,9 +391,42 @@ export type RevertKind =
     }
   | { kind: "paused" }
   | { kind: "reentrancy" }
+  | {
+      kind: "safe-signature-invalid";
+      gsCode: SafeGsCode;
+      description: string;
+    }
+  | {
+      kind: "safe-insufficient-gas";
+      gsCode: SafeGsCode;
+      description: string;
+    }
+  | {
+      kind: "safe-not-authorized";
+      gsCode: SafeGsCode;
+      description: string;
+    }
+  | { kind: "safe-error"; gsCode: SafeGsCode; description: string }
   | { kind: "string-revert"; reason: string }
   | { kind: "contract-custom"; name: string }
   | { kind: "unknown" };
+
+/**
+ * Classify a Safe wallet GS-code string into a typed RevertKind. Returns
+ * null if the string doesn't look like a Safe GS code so the caller can
+ * fall through to the generic string-revert kind.
+ */
+function classifySafeGsCode(reason: string): RevertKind | null {
+  if (!(SAFE_GS_PATTERN.test(reason) && isSafeGsCode(reason))) {
+    return null;
+  }
+  const entry = SAFE_GS_CODES[reason];
+  return {
+    kind: entry.recovery,
+    gsCode: reason,
+    description: entry.description,
+  };
+}
 
 function classifyRoleError(
   decoded: ethers.ErrorDescription
@@ -331,6 +528,24 @@ export function classifyRevert(
   try {
     const decoded = COMMON_ERRORS_INTERFACE.parseError(revertData);
     if (decoded) {
+      // ethers' Interface.parseError matches the built-in `Error(string)`
+      // and `Panic(uint256)` selectors. Route Error(string) through the
+      // Safe-GS extractor + string-revert kind so callers get a useful
+      // discriminator instead of a misleading `contract-custom: "Error"`.
+      if (decoded.name === "Error" && decoded.args.length > 0) {
+        const reasonStr = String(decoded.args[0]);
+        const safeGs = extractSafeGsCode(reasonStr);
+        if (safeGs) {
+          return safeGs;
+        }
+        return { kind: "string-revert", reason: reasonStr };
+      }
+      if (decoded.name === "Panic" && decoded.args.length > 0) {
+        return {
+          kind: "string-revert",
+          reason: `Panic(${String(decoded.args[0])})`,
+        };
+      }
       const common = classifyCommonError(decoded);
       if (common) {
         return common;
@@ -341,17 +556,65 @@ export function classifyRevert(
     // not a known common error
   }
 
+  // Some revert payloads encode the string directly without the
+  // Error(string) selector wrapper (e.g. low-level reverts in older
+  // contracts). Fall through to a raw decode attempt before giving up.
   try {
     const reason = ethers.AbiCoder.defaultAbiCoder().decode(
       ["string"],
       ethers.dataSlice(revertData, 4)
     );
-    if (reason[0]) {
-      return { kind: "string-revert", reason: String(reason[0]) };
+    const raw = reason[0];
+    if (raw) {
+      const reasonStr = String(raw);
+      const safeGs = extractSafeGsCode(reasonStr);
+      if (safeGs) {
+        return safeGs;
+      }
+      return { kind: "string-revert", reason: reasonStr };
     }
   } catch {
     // not a string revert
   }
 
   return { kind: "unknown" };
+}
+
+/**
+ * Look for an embedded Safe GS-code anywhere in a revert reason string.
+ *
+ * Defensive: handles
+ *   - exact match: `"GS013"`
+ *   - whitespace: `"  GS013  "` (trimmed)
+ *   - prefixed framing: `"Safe execution failed: GS013"` (substring)
+ *   - chained wrappers: `"Module call: GS104"` (matches the first GS-code)
+ *   - unknown codes: `"GS999"` (not in map -> returns null so caller falls
+ *     back to the generic string-revert kind rather than mislabeling)
+ *
+ * Returns null on null/empty input, non-Safe strings, or codes outside the
+ * documented SAFE_GS_CODES map. Side-effect free; does not throw.
+ */
+function extractSafeGsCode(
+  reason: string | null | undefined
+): RevertKind | null {
+  if (!reason) {
+    return null;
+  }
+  const trimmed = reason.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+  // Match the first GS-code anywhere in the string (\b for word-boundary so
+  // we don't match GS01300 inside a wider numeric token).
+  const match = trimmed.match(SAFE_GS_EMBEDDED_PATTERN);
+  if (!match) {
+    return null;
+  }
+  const code = match[0];
+  if (!isSafeGsCode(code)) {
+    // Looks like a GS code but not one we know about; let it pass through
+    // as a generic string-revert so the operator still sees the raw text.
+    return null;
+  }
+  return classifySafeGsCode(code);
 }
