@@ -10,6 +10,7 @@ import {
   type ProtocolInput,
   tokenAddressForWire,
 } from "@/lib/safe/roles-orchestrator";
+import type { DroppedInput } from "@/lib/safe/route-input";
 
 type RouteParams = { params: Promise<{ safeId: string }> };
 
@@ -49,21 +50,36 @@ type InstallBody = {
   }>;
 };
 
-function normaliseDirectRules(body: InstallBody): DirectRuleInput[] {
-  const out: DirectRuleInput[] = [];
-  for (const rule of body.directRules ?? []) {
+function normaliseDirectRules(body: InstallBody): {
+  values: DirectRuleInput[];
+  dropped: DroppedInput[];
+} {
+  const values: DirectRuleInput[] = [];
+  const dropped: DroppedInput[] = [];
+  const rules = body.directRules ?? [];
+  for (const [index, rule] of rules.entries()) {
     if (
       !(rule.kind && rule.counterparty && rule.amountHuman && rule.tokenSymbol)
     ) {
+      dropped.push({
+        category: "direct-rule",
+        index,
+        reason: "Missing one of: kind, counterparty, amountHuman, tokenSymbol",
+      });
       continue;
     }
     if (
       typeof rule.tokenDecimals !== "number" ||
       typeof rule.periodSeconds !== "number"
     ) {
+      dropped.push({
+        category: "direct-rule",
+        index,
+        reason: "tokenDecimals and periodSeconds must be numbers",
+      });
       continue;
     }
-    out.push({
+    values.push({
       kind: rule.kind,
       tokenAddress: rule.tokenAddress ?? null,
       tokenSymbol: rule.tokenSymbol,
@@ -73,7 +89,7 @@ function normaliseDirectRules(body: InstallBody): DirectRuleInput[] {
       periodSeconds: rule.periodSeconds,
     });
   }
-  return out;
+  return { values, dropped };
 }
 
 /**
@@ -85,9 +101,11 @@ function normaliseDirectRules(body: InstallBody): DirectRuleInput[] {
 function normaliseInstallBody(body: InstallBody): {
   protocols: ProtocolInput[];
   skipped: string[];
+  dropped: DroppedInput[];
 } {
   const raw = body.protocols ?? [];
   const skipped: string[] = [];
+  const dropped: DroppedInput[] = [];
 
   const looksLikeNewShape =
     raw.length > 0 && typeof raw[0] === "object" && raw[0] !== null;
@@ -106,28 +124,35 @@ function normaliseInstallBody(body: InstallBody): {
         skipped.push(slug);
         continue;
       }
-      const tokens = (entry.tokens ?? []).flatMap((t) => {
+      const tokens: ProtocolInput["tokens"] = [];
+      const rawTokens = entry.tokens ?? [];
+      for (const [tokenIndex, t] of rawTokens.entries()) {
         if (
           !(t.tokenAddress && t.tokenSymbol) ||
           typeof t.tokenDecimals !== "number" ||
           !t.amountHuman ||
           typeof t.periodSeconds !== "number"
         ) {
-          return [];
+          dropped.push({
+            category: "protocol-token",
+            protocolSlug: slug,
+            tokenIndex,
+            reason:
+              "Missing one of: tokenAddress, tokenSymbol, tokenDecimals, amountHuman, periodSeconds",
+          });
+          continue;
         }
-        return [
-          {
-            tokenAddress: t.tokenAddress,
-            tokenSymbol: t.tokenSymbol,
-            tokenDecimals: t.tokenDecimals,
-            amountHuman: t.amountHuman,
-            periodSeconds: t.periodSeconds,
-          },
-        ];
-      });
+        tokens.push({
+          tokenAddress: t.tokenAddress,
+          tokenSymbol: t.tokenSymbol,
+          tokenDecimals: t.tokenDecimals,
+          amountHuman: t.amountHuman,
+          periodSeconds: t.periodSeconds,
+        });
+      }
       protocols.push({ slug, tokens });
     }
-    return { protocols, skipped };
+    return { protocols, skipped, dropped };
   }
 
   const legacySlugs = raw.filter(
@@ -150,7 +175,7 @@ function normaliseInstallBody(body: InstallBody): {
     }
     protocols.push({ slug, tokens });
   }
-  return { protocols, skipped };
+  return { protocols, skipped, dropped };
 }
 
 export async function GET(
@@ -272,8 +297,28 @@ export async function POST(
     }
 
     const body = (await request.json()) as InstallBody;
-    const { protocols: perProtocol, skipped } = normaliseInstallBody(body);
-    const directRules = normaliseDirectRules(body);
+    const {
+      protocols: perProtocol,
+      skipped,
+      dropped: droppedProtocols,
+    } = normaliseInstallBody(body);
+    const { values: directRules, dropped: droppedDirectRules } =
+      normaliseDirectRules(body);
+    const droppedInputs: DroppedInput[] = [
+      ...droppedProtocols,
+      ...droppedDirectRules,
+    ];
+
+    if (droppedInputs.length > 0) {
+      return NextResponse.json(
+        {
+          error:
+            "Some entries were dropped due to missing or invalid fields. Fix and resubmit.",
+          droppedInputs,
+        },
+        { status: 400 }
+      );
+    }
 
     if (perProtocol.length === 0 && directRules.length === 0) {
       return NextResponse.json(

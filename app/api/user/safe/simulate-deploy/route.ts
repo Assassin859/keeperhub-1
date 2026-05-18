@@ -23,6 +23,7 @@ import {
   flattenInstallInput,
   type ProtocolInput,
 } from "@/lib/safe/roles-orchestrator";
+import type { DroppedInput } from "@/lib/safe/route-input";
 
 /**
  * Pre-deploy simulation: tells the wizard what will land on chain when the
@@ -84,8 +85,10 @@ type OperationSummary = {
 function normaliseProtocols(body: SimulateBody): {
   protocols: ProtocolInput[];
   skipped: string[];
+  dropped: DroppedInput[];
 } {
   const skipped: string[] = [];
+  const dropped: DroppedInput[] = [];
   const out: ProtocolInput[] = [];
   for (const entry of body.protocols ?? []) {
     const slug = entry?.slug;
@@ -96,28 +99,35 @@ function normaliseProtocols(body: SimulateBody): {
       skipped.push(slug);
       continue;
     }
-    const tokens = (entry.tokens ?? []).flatMap((t) => {
+    const tokens: ProtocolInput["tokens"] = [];
+    const rawTokens = entry.tokens ?? [];
+    for (const [tokenIndex, t] of rawTokens.entries()) {
       if (
         !(t.tokenAddress && t.tokenSymbol) ||
         typeof t.tokenDecimals !== "number" ||
         !t.amountHuman ||
         typeof t.periodSeconds !== "number"
       ) {
-        return [];
+        dropped.push({
+          category: "protocol-token",
+          protocolSlug: slug,
+          tokenIndex,
+          reason:
+            "Missing one of: tokenAddress, tokenSymbol, tokenDecimals, amountHuman, periodSeconds",
+        });
+        continue;
       }
-      return [
-        {
-          tokenAddress: t.tokenAddress,
-          tokenSymbol: t.tokenSymbol,
-          tokenDecimals: t.tokenDecimals,
-          amountHuman: t.amountHuman,
-          periodSeconds: t.periodSeconds,
-        },
-      ];
-    });
+      tokens.push({
+        tokenAddress: t.tokenAddress,
+        tokenSymbol: t.tokenSymbol,
+        tokenDecimals: t.tokenDecimals,
+        amountHuman: t.amountHuman,
+        periodSeconds: t.periodSeconds,
+      });
+    }
     out.push({ slug, tokens });
   }
-  return { protocols: out, skipped };
+  return { protocols: out, skipped, dropped };
 }
 
 async function getMaxFeePerGas(chainId: number): Promise<bigint> {
@@ -175,9 +185,15 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    const { protocols: protocolInputs, skipped } = normaliseProtocols(body);
+    const {
+      protocols: protocolInputs,
+      skipped,
+      dropped: droppedProtocols,
+    } = normaliseProtocols(body);
     const directRulesInput: DirectRuleInput[] = [];
-    for (const rule of body.directRules ?? []) {
+    const droppedDirectRules: DroppedInput[] = [];
+    const rawDirectRules = body.directRules ?? [];
+    for (const [index, rule] of rawDirectRules.entries()) {
       if (
         !(
           rule.kind &&
@@ -186,12 +202,23 @@ export async function POST(request: Request): Promise<NextResponse> {
           rule.tokenSymbol
         )
       ) {
+        droppedDirectRules.push({
+          category: "direct-rule",
+          index,
+          reason:
+            "Missing one of: kind, counterparty, amountHuman, tokenSymbol",
+        });
         continue;
       }
       if (
         typeof rule.tokenDecimals !== "number" ||
         typeof rule.periodSeconds !== "number"
       ) {
+        droppedDirectRules.push({
+          category: "direct-rule",
+          index,
+          reason: "tokenDecimals and periodSeconds must be numbers",
+        });
         continue;
       }
       directRulesInput.push({
@@ -203,6 +230,20 @@ export async function POST(request: Request): Promise<NextResponse> {
         amountHuman: rule.amountHuman,
         periodSeconds: rule.periodSeconds,
       });
+    }
+    const droppedInputs: DroppedInput[] = [
+      ...droppedProtocols,
+      ...droppedDirectRules,
+    ];
+    if (droppedInputs.length > 0) {
+      return NextResponse.json(
+        {
+          error:
+            "Some entries were dropped due to missing or invalid fields. Fix and resubmit.",
+          droppedInputs,
+        },
+        { status: 400 }
+      );
     }
 
     let tokenAllowances: ReturnType<typeof flattenInstallInput>["allowances"] =

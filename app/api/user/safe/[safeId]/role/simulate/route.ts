@@ -25,6 +25,7 @@ import {
   flattenInstallInput,
   type ProtocolInput,
 } from "@/lib/safe/roles-orchestrator";
+import type { DroppedInput } from "@/lib/safe/route-input";
 
 /**
  * Simulation endpoint used by the install / upgrade UI to show "you are about
@@ -102,9 +103,11 @@ type OperationSummary = {
 function normaliseBody(body: SimulateBody): {
   protocols: ProtocolInput[];
   skipped: string[];
+  dropped: DroppedInput[];
 } {
   const raw = body.protocols ?? [];
   const skipped: string[] = [];
+  const dropped: DroppedInput[] = [];
 
   const looksLikeNewShape =
     raw.length > 0 && typeof raw[0] === "object" && raw[0] !== null;
@@ -123,28 +126,35 @@ function normaliseBody(body: SimulateBody): {
         skipped.push(slug);
         continue;
       }
-      const tokens = (entry.tokens ?? []).flatMap((t) => {
+      const tokens: ProtocolInput["tokens"] = [];
+      const rawTokens = entry.tokens ?? [];
+      for (const [tokenIndex, t] of rawTokens.entries()) {
         if (
           !(t.tokenAddress && t.tokenSymbol) ||
           typeof t.tokenDecimals !== "number" ||
           !t.amountHuman ||
           typeof t.periodSeconds !== "number"
         ) {
-          return [];
+          dropped.push({
+            category: "protocol-token",
+            protocolSlug: slug,
+            tokenIndex,
+            reason:
+              "Missing one of: tokenAddress, tokenSymbol, tokenDecimals, amountHuman, periodSeconds",
+          });
+          continue;
         }
-        return [
-          {
-            tokenAddress: t.tokenAddress,
-            tokenSymbol: t.tokenSymbol,
-            tokenDecimals: t.tokenDecimals,
-            amountHuman: t.amountHuman,
-            periodSeconds: t.periodSeconds,
-          },
-        ];
-      });
+        tokens.push({
+          tokenAddress: t.tokenAddress,
+          tokenSymbol: t.tokenSymbol,
+          tokenDecimals: t.tokenDecimals,
+          amountHuman: t.amountHuman,
+          periodSeconds: t.periodSeconds,
+        });
+      }
       protocols.push({ slug, tokens });
     }
-    return { protocols, skipped };
+    return { protocols, skipped, dropped };
   }
 
   const legacySlugs = raw.filter(
@@ -176,7 +186,7 @@ function normaliseBody(body: SimulateBody): {
     }
     protocols.push({ slug, tokens });
   }
-  return { protocols, skipped };
+  return { protocols, skipped, dropped };
 }
 
 export async function POST(
@@ -202,9 +212,15 @@ export async function POST(
     }
 
     const body = (await request.json()) as SimulateBody;
-    const { protocols: protocolInputs, skipped } = normaliseBody(body);
+    const {
+      protocols: protocolInputs,
+      skipped,
+      dropped: droppedProtocols,
+    } = normaliseBody(body);
     const directRulesInput: DirectRuleInput[] = [];
-    for (const rule of body.directRules ?? []) {
+    const droppedDirectRules: DroppedInput[] = [];
+    const rawDirectRules = body.directRules ?? [];
+    for (const [index, rule] of rawDirectRules.entries()) {
       if (
         !(
           rule.kind &&
@@ -213,12 +229,23 @@ export async function POST(
           rule.tokenSymbol
         )
       ) {
+        droppedDirectRules.push({
+          category: "direct-rule",
+          index,
+          reason:
+            "Missing one of: kind, counterparty, amountHuman, tokenSymbol",
+        });
         continue;
       }
       if (
         typeof rule.tokenDecimals !== "number" ||
         typeof rule.periodSeconds !== "number"
       ) {
+        droppedDirectRules.push({
+          category: "direct-rule",
+          index,
+          reason: "tokenDecimals and periodSeconds must be numbers",
+        });
         continue;
       }
       directRulesInput.push({
@@ -230,6 +257,20 @@ export async function POST(
         amountHuman: rule.amountHuman,
         periodSeconds: rule.periodSeconds,
       });
+    }
+    const droppedInputs: DroppedInput[] = [
+      ...droppedProtocols,
+      ...droppedDirectRules,
+    ];
+    if (droppedInputs.length > 0) {
+      return NextResponse.json(
+        {
+          error:
+            "Some entries were dropped due to missing or invalid fields. Fix and resubmit.",
+          droppedInputs,
+        },
+        { status: 400 }
+      );
     }
 
     let tokenAllowances: ReturnType<typeof flattenInstallInput>["allowances"] =
