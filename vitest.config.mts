@@ -16,6 +16,14 @@ export default defineConfig({
       ".pnpm-store",
       ".worktrees",
       "**/.worktrees/**",
+      // .claude/worktrees/ holds ephemeral agent worktrees created by
+      // gsd-executor and other isolated-worktree workflows. These
+      // contain stale snapshots of test files that drift from main as
+      // agents commit; including them means a single Phase commit
+      // surfaces duplicate failures from every still-existing agent
+      // worktree. CI doesn't see these dirs; locally they pollute the
+      // signal so the matrix must match CI.
+      ".claude/worktrees/**",
       // keeperhub-events is a separate pnpm workspace with its own
       // vitest config and dependencies. Without this exclude,
       // `pnpm test:integration tests/integration` from the main app

@@ -480,50 +480,68 @@ export function registerTools(
   );
 
   server.tool(
-    "get_execution_status",
-    "Get the current status of a workflow execution by execution ID.",
+    "get_execution",
+    "Get combined status and step-by-step logs for a workflow execution. Replaces the v1.11 get_execution_status + get_execution_logs pair. Returns { status, logs } in a single response. By default returns full node input/output data (backward compatible with v1.11 get_execution_logs no-param callers). Pass `includeData: false` to omit input/output/outputRaw blobs, `nodeIds: string[]` to restrict full data to specific nodes (status and error always returned for every node), or `truncateData: number` (bytes) to cap individual input/output/outputRaw payloads. The `error` field is never truncated.",
     {
       executionId: z
         .string()
         .describe("The execution ID returned by execute_workflow"),
+      includeData: z
+        .boolean()
+        .optional()
+        .describe(
+          "Include input/output/outputRaw blobs on each log entry. Defaults to true for backward compatibility with v1.11 get_execution_logs callers. Pass false to receive a compact status-only response."
+        ),
+      nodeIds: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Restrict full input/output/outputRaw data to only the listed nodeIds (exact, case-sensitive match against the nodeId column). All other entries still return status, error, nodeName, nodeType, startedAt, completedAt, duration, timestamp, iterationIndex, and forEachNodeId. Empty array is treated as omitted. Has no effect when includeData is false."
+        ),
+      truncateData: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe(
+          "Per-field byte cap. Any input/output/outputRaw JSON-stringified payload exceeding this size is replaced with { _truncated: true, originalSize: <bytes>, preview: <first N bytes of stringified value> }. The error field is NEVER truncated regardless of this cap."
+        ),
     },
-    {
-      title: "Get Execution Status",
-      readOnlyHint: true,
-      destructiveHint: false,
-    },
-    withScopeCheck("get_execution_status", scope, async (args) =>
-      withToolLogging("get_execution_status", undefined, async () => {
-        const data = await callApi(
-          internalApiBaseUrl,
-          authHeader,
-          `/api/workflows/executions/${args.executionId}/status`,
-          "GET"
-        );
+    { title: "Get Execution", readOnlyHint: true, destructiveHint: false },
+    withScopeCheck("get_execution", scope, async (args) =>
+      withToolLogging("get_execution", undefined, async () => {
+        const params = new URLSearchParams();
+        if (args.includeData !== undefined) {
+          params.set("includeData", String(args.includeData));
+        }
+        if (args.nodeIds !== undefined && args.nodeIds.length > 0) {
+          for (const nodeId of args.nodeIds) {
+            params.append("nodeIds", nodeId);
+          }
+        }
+        if (args.truncateData !== undefined) {
+          params.set("truncateData", String(args.truncateData));
+        }
+        const query = params.toString();
+        const logsPath = query
+          ? `/api/workflows/executions/${args.executionId}/logs?${query}`
+          : `/api/workflows/executions/${args.executionId}/logs`;
+        const statusPath = `/api/workflows/executions/${args.executionId}/status`;
+        const [statusData, logsData] = await Promise.all([
+          callApi(internalApiBaseUrl, authHeader, statusPath, "GET"),
+          callApi(internalApiBaseUrl, authHeader, logsPath, "GET"),
+        ]);
         return {
-          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-        };
-      })
-    )
-  );
-
-  server.tool(
-    "get_execution_logs",
-    "Get detailed step-by-step logs for a workflow execution.",
-    {
-      executionId: z.string().describe("The execution ID to fetch logs for"),
-    },
-    { title: "Get Execution Logs", readOnlyHint: true, destructiveHint: false },
-    withScopeCheck("get_execution_logs", scope, async (args) =>
-      withToolLogging("get_execution_logs", undefined, async () => {
-        const data = await callApi(
-          internalApiBaseUrl,
-          authHeader,
-          `/api/workflows/executions/${args.executionId}/logs`,
-          "GET"
-        );
-        return {
-          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                { status: statusData, logs: logsData },
+                null,
+                2
+              ),
+            },
+          ],
         };
       })
     )
@@ -615,7 +633,7 @@ export function registerTools(
 
   server.tool(
     "search_plugins",
-    "List available action schemas filtered by category (e.g., 'web3', 'discord', 'system').",
+    "[DEPRECATED — will be removed in v1.13. Use list_action_schemas instead.] List available action schemas filtered by category (e.g., 'web3', 'discord', 'system').",
     {
       category: z
         .string()
@@ -749,7 +767,7 @@ export function registerTools(
 
   server.tool(
     "get_template",
-    "Get details of a specific workflow template by ID.",
+    "[DEPRECATED — will be removed in v1.13. Use get_workflow instead.] Get details of a specific workflow template by ID.",
     {
       templateId: z.string().describe("The template workflow ID"),
     },
@@ -819,7 +837,7 @@ export function registerTools(
           "2. Call ai_generate_workflow with a natural language prompt to generate a workflow",
           "3. Call create_workflow with the generated definition to persist it",
           "4. Call execute_workflow to run it manually",
-          "5. Call get_execution_status to poll for completion",
+          "5. Call get_execution to poll for completion (returns combined status + logs)",
           "",
           "WORKFLOW MANAGEMENT",
           "- list_workflows: List all org workflows (filter by projectId or tagId)",
@@ -1452,6 +1470,81 @@ export function registerMetaTools(
           `/api/mcp/workflows/${encodeURIComponent(workflowId)}/listing`,
           "PATCH",
           patch
+        );
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+        };
+      })
+    )
+  );
+
+  // validate_workflow: structural + listing-eligibility + Web3 validation pilot
+  server.tool(
+    "validate_workflow",
+    [
+      "Validate a workflow's structural and Web3-specific correctness before calling create_workflow or executing it.",
+      "Fast tier (default): structural checks (empty nodes, edge references, trigger config, bare-@ literals), listing-eligibility checks (inputSchema present for listed workflows, outputMapping references real nodes), write-action consistency, plus Web3 cheap checks (chain ID in chains table, contract address format via ethers.isAddress). Zero network calls; <300ms p95.",
+      "Deep tier (deepCheck=true): in addition, runs best-effort ABI bytecode match via resolveAbi against every contract reference. Mismatches on abi-with-auto-fetch fields are emitted as WARNINGS, never errors, so proxy contracts (Aave V3, Uniswap V3, WETH) never produce false positives. Capped at 3s aggregate + 2s per-call + 5 concurrent RPC calls.",
+      "Return shape: { ok: true, result: { valid: boolean, nodeCount: number, errors?: Array<{ code, message, parameterPath }>, warnings?: Array<{ code, message, parameterPath }> } }. The errors and warnings keys are OMITTED when empty (not present as []). Error codes are kebab-case stable identifiers; parameterPath is a dot-path like 'nodes[2].config.contractAddress'.",
+    ].join(" "),
+    {
+      workflowId: z
+        .string()
+        .describe(
+          "The workflow ID to validate. Must belong to the caller's org."
+        ),
+      deepCheck: z
+        .boolean()
+        .optional()
+        .describe(
+          "When true, also runs best-effort ABI bytecode matching via resolveAbi. Adds up to 3 seconds of latency. Mismatches emit warnings only (never errors). Default false."
+        ),
+    },
+    { title: "Validate Workflow", readOnlyHint: true, destructiveHint: false },
+    withScopeCheck("validate_workflow", scope, async (args) =>
+      withToolLogging("validate_workflow", undefined, async () => {
+        const path = args.deepCheck
+          ? `/api/workflows/${encodeURIComponent(args.workflowId)}/validate?deepCheck=true`
+          : `/api/workflows/${encodeURIComponent(args.workflowId)}/validate`;
+        const data = await callApi(internalApiBaseUrl, authHeader, path, "GET");
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+        };
+      })
+    )
+  );
+
+  // prepare_test_pin_data: per-node pin schemas for the future test_workflow tool
+  // Phase 49 / TESTWF-05. Introspection only — never executes any step.
+  server.tool(
+    "prepare_test_pin_data",
+    [
+      "Return the JSON Schema each node in a workflow expects as pin data, so an agent can construct valid test inputs.",
+      "Read-only introspection: does NOT execute any plugin step, does NOT write to the database, makes zero network calls beyond the workflow row fetch.",
+      "Return shape: { ok: true, result: { nodes: Array<{ nodeId, nodeName, type, pinSchema: JSONSchema, required: boolean }> } }.",
+      "Each node's pinSchema is a JSON Schema with type:object describing the fields its plugin action expects.",
+      "`required` on each node is true when the action declares one or more required configFields.",
+      "Use this to learn what pin data to supply before invoking the future test_workflow execution tool (on the roadmap — see specs/mcp-test-workflow.md).",
+    ].join(" "),
+    {
+      workflowId: z
+        .string()
+        .describe(
+          "The workflow ID to introspect. Must belong to the caller's org."
+        ),
+    },
+    {
+      title: "Prepare Test Pin Data",
+      readOnlyHint: true,
+      destructiveHint: false,
+    },
+    withScopeCheck("prepare_test_pin_data", scope, async (args) =>
+      withToolLogging("prepare_test_pin_data", undefined, async () => {
+        const data = await callApi(
+          internalApiBaseUrl,
+          authHeader,
+          `/api/workflows/${encodeURIComponent(args.workflowId)}/test-pins/prepare`,
+          "GET"
         );
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],

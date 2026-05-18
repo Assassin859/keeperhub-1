@@ -13,8 +13,7 @@ export type OAuthScope = (typeof SUPPORTED_SCOPES)[number];
 const READ_TOOLS = new Set<string>([
   "list_workflows",
   "get_workflow",
-  "get_execution_status",
-  "get_execution_logs",
+  "get_execution",
   "list_action_schemas",
   "search_plugins",
   "get_plugin",
@@ -26,6 +25,8 @@ const READ_TOOLS = new Set<string>([
   "search_protocol_actions",
   "get_direct_execution_status",
   "search_workflows",
+  "validate_workflow",
+  "prepare_test_pin_data",
   "get_workflow_listing",
 ]);
 

@@ -131,7 +131,7 @@ describe("GET /mcp — anonymous health probe", () => {
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     const json = await response.json();
     expect(json.name).toBe("keeperhub");
-    expect(json.version).toBe("1.0.0");
+    expect(json.version).toBe("1.2.0");
     expect(json.protocol).toBe("mcp");
     expect(json.status).toBe("ok");
     expect(json.authentication.required).toBe(true);
@@ -176,7 +176,7 @@ describe("POST /mcp — anonymous initialize", () => {
     expect(json.result.protocolVersion).toBe("2025-06-18");
     expect(json.result.capabilities).toEqual({});
     expect(json.result.serverInfo.name).toBe("keeperhub");
-    expect(json.result.serverInfo.version).toBe("1.0.0");
+    expect(json.result.serverInfo.version).toBe("1.2.0");
     expect(json.result.authentication.required).toBe(true);
     expect(json.result.authentication.resource_metadata).toMatch(
       RESOURCE_METADATA_PATH

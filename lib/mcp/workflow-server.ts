@@ -1,6 +1,10 @@
 import "server-only";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
+import {
+  buildTriggerInputSchema,
+  detectListingTriggerType,
+  normalizeTriggerInput,
+} from "@/lib/mcp/trigger-input-schema";
 
 type ApiResponse = Record<string, unknown>;
 
@@ -48,6 +52,7 @@ export type WorkflowListing = {
   priceUsdcPerCall: string | null;
   workflowType: "read" | "write";
   listingVersion: number;
+  nodes: unknown[];
 };
 
 type CreateWorkflowMcpServerOptions = {
@@ -121,25 +126,28 @@ export function createWorkflowMcpServer(
   });
 
   const toolDescription = buildToolDescription(listing);
+  const triggerKind = detectListingTriggerType(listing.nodes);
+  const inputSchema = buildTriggerInputSchema(triggerKind);
 
   server.registerTool(
     slug,
     {
       title: listing.name,
       description: toolDescription,
-      inputSchema: z.record(z.string(), z.unknown()),
+      inputSchema,
       annotations: {
         readOnlyHint: listing.workflowType === "read",
         destructiveHint: false,
       },
     },
-    async (args) => {
+    async (args: unknown) => {
+      const normalized = normalizeTriggerInput(args);
       const data = await callApi(
         internalApiBaseUrl,
         authHeader,
         `/api/mcp/workflows/${encodeURIComponent(slug)}/call`,
         "POST",
-        args
+        normalized
       );
       return {
         content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
