@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { validateHttpRequestEndpoint } from "@/lib/workflow/nodes/http-request/step";
+import { validateHttpRequestEndpoint } from "@/lib/workflow/nodes/http-request/perform";
 
 describe("validateHttpRequestEndpoint", () => {
   it("trims surrounding whitespace before validation", () => {

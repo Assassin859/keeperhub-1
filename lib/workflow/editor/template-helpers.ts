@@ -160,8 +160,16 @@ export function getActionFields(node: WorkflowNode): FieldEntry[] | null {
 
   if (actionType === "HTTP Request") {
     return [
-      { field: "data", description: "Response data" },
-      { field: "status", description: "HTTP status code" },
+      { field: "data", description: "Response data (null on soft failure)" },
+      {
+        field: "status",
+        description: "HTTP status code (null on timeout or connection error)",
+      },
+      {
+        field: "error",
+        description:
+          "Error message (present only on a soft failure when Fail on error is OFF)",
+      },
     ];
   }
 
