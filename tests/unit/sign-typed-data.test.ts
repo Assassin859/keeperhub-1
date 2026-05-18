@@ -42,6 +42,10 @@ const { PolicyBlockedError, TurnkeyUpstreamError } = await import(
   "@/lib/agentic-wallet/sign-typed-data"
 );
 
+const JSON_ERROR_RE = /JSON/i;
+const PRIMARY_TYPE_ERROR_RE = /primaryType/;
+const SIGNATURE_HEX_RE = /^0x[a-f0-9]{130}$/;
+
 const VALID_TYPED_DATA = {
   domain: { name: "USD Coin", version: "2", chainId: 8453 },
   types: {
@@ -162,5 +166,69 @@ describe("signTypedDataCore (KEEP-473)", () => {
     if (!result.success) {
       expect(result.code).toBe("UPSTREAM");
     }
+  });
+
+  // KEEP-473 regression: the json-editor UI field emits typedData as a JSON
+  // string. Core must parse it before validation. Same shape-mismatch class
+  // as KEEP-571 (UI vs validator emit-shape).
+  it("accepts typedData as a JSON string from the json-editor UI", async () => {
+    mockGetOrgWallet.mockResolvedValue(WALLET);
+    mockSign.mockResolvedValue(`0x${"ab".repeat(65)}`);
+
+    const result = await signTypedDataCore({
+      typedData: JSON.stringify(VALID_TYPED_DATA),
+      _context: { organizationId: "org-1" },
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.signature).toMatch(SIGNATURE_HEX_RE);
+    }
+    // Turnkey must receive the parsed object, never the raw string.
+    expect(mockSign).toHaveBeenCalledWith(
+      WALLET.turnkeySubOrgId,
+      WALLET.walletAddress,
+      VALID_TYPED_DATA
+    );
+  });
+
+  it("returns VALIDATION when typedData is an invalid JSON string", async () => {
+    mockGetOrgWallet.mockResolvedValue(WALLET);
+
+    const result = await signTypedDataCore({
+      typedData: "{not valid json",
+      _context: { organizationId: "org-1" },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.code).toBe("VALIDATION");
+      expect(result.error).toMatch(JSON_ERROR_RE);
+    }
+    // The signer must NEVER be invoked when the input fails to parse.
+    expect(mockSign).not.toHaveBeenCalled();
+  });
+
+  it("routes a parsed string through validateTypedData (missing primaryType is rejected)", async () => {
+    mockGetOrgWallet.mockResolvedValue(WALLET);
+
+    const malformed = {
+      domain: VALID_TYPED_DATA.domain,
+      types: VALID_TYPED_DATA.types,
+      message: VALID_TYPED_DATA.message,
+      // primaryType intentionally omitted
+    };
+
+    const result = await signTypedDataCore({
+      typedData: JSON.stringify(malformed),
+      _context: { organizationId: "org-1" },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.code).toBe("VALIDATION");
+      expect(result.error).toMatch(PRIMARY_TYPE_ERROR_RE);
+    }
+    expect(mockSign).not.toHaveBeenCalled();
   });
 });

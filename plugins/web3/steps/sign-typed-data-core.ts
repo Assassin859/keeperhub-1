@@ -31,12 +31,15 @@ const MAX_TYPED_DATA_BYTES = 32 * 1024;
 
 export type SignTypedDataCoreInput = {
   /**
-   * The EIP-712 typed-data object. Standard shape:
+   * The EIP-712 typed-data payload. Standard shape:
    *   { domain, types, primaryType, message }
-   * The step does NOT modify it; it is forwarded verbatim to Turnkey
-   * (which hashes and signs server-side under PAYLOAD_ENCODING_EIP712).
+   * Accepted as either a native object (direct/MCP callers) or a JSON
+   * string (the workflow UI's `json-editor` field emits this shape via
+   * Monaco). Strings are parsed before validation; native objects are
+   * forwarded verbatim to Turnkey (which hashes and signs server-side
+   * under PAYLOAD_ENCODING_EIP712).
    */
-  typedData: EIP712TypedData;
+  typedData: EIP712TypedData | string;
   _context?: {
     executionId?: string;
     organizationId?: string;
@@ -84,7 +87,26 @@ function validateTypedData(typedData: unknown): typedData is EIP712TypedData {
 export async function signTypedDataCore(
   input: SignTypedDataCoreInput
 ): Promise<SignTypedDataResult> {
-  if (!validateTypedData(input.typedData)) {
+  // The `json-editor` UI field (Monaco-backed) emits its value as a JSON
+  // string, while direct/MCP callers pass a native object. Parse the string
+  // shape here so the validator and downstream Turnkey call always receive
+  // a native object. Mirrors the JSON.parse / try-catch pattern used by
+  // `resolveArraySource` in lib/workflow/executor/executor.workflow.ts.
+  let typedData: unknown = input.typedData;
+  if (typeof typedData === "string") {
+    try {
+      typedData = JSON.parse(typedData);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      return {
+        success: false,
+        code: "VALIDATION",
+        error: `typedData is not valid JSON: ${detail}`,
+      };
+    }
+  }
+
+  if (!validateTypedData(typedData)) {
     return {
       success: false,
       code: "VALIDATION",
@@ -93,7 +115,7 @@ export async function signTypedDataCore(
     };
   }
 
-  const serialized = JSON.stringify(input.typedData);
+  const serialized = JSON.stringify(typedData);
   if (serialized.length > MAX_TYPED_DATA_BYTES) {
     return {
       success: false,
@@ -145,7 +167,7 @@ export async function signTypedDataCore(
     const signature = await signTypedDataWithTurnkey(
       wallet.turnkeySubOrgId,
       checksummed,
-      input.typedData
+      typedData
     );
     return {
       success: true,
