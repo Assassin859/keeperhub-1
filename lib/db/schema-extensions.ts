@@ -122,24 +122,31 @@ export const keyExportCodes = pgTable("key_export_codes", {
  * NOTE: This is separate from the user-scoped apiKeys table in the main schema.
  * Organization keys have broader permissions and are meant for API/MCP access.
  */
-export const organizationApiKeys = pgTable("organization_api_keys", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => generateId()),
-  organizationId: text("organization_id")
-    .notNull()
-    .references(() => organization.id, { onDelete: "cascade" }),
-  name: text("name").notNull(), // User-provided label for the key
-  keyHash: text("key_hash").notNull().unique(), // SHA-256 hash of the key
-  keyPrefix: text("key_prefix").notNull(), // First 8 chars for identification (e.g., "kh_abc12")
-  createdBy: text("created_by").references(() => users.id, {
-    onDelete: "set null",
-  }), // User who created the key
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  lastUsedAt: timestamp("last_used_at"), // Track usage for audit
-  expiresAt: timestamp("expires_at"), // Optional expiration
-  revokedAt: timestamp("revoked_at"), // Soft delete via revocation
-});
+export const organizationApiKeys = pgTable(
+  "organization_api_keys",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    name: text("name").notNull(), // User-provided label for the key
+    keyHash: text("key_hash").notNull().unique(), // SHA-256 hash of the key
+    keyPrefix: text("key_prefix").notNull(), // First 8 chars for identification (e.g., "kh_abc12")
+    createdBy: text("created_by").references(() => users.id, {
+      onDelete: "set null",
+    }), // User who created the key
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    lastUsedAt: timestamp("last_used_at"), // Track usage for audit
+    expiresAt: timestamp("expires_at"), // Optional expiration
+    revokedAt: timestamp("revoked_at"), // Soft delete via revocation
+  },
+  (table) => [
+    index("idx_org_api_keys_org_id").on(table.organizationId),
+    index("idx_org_api_keys_created_by").on(table.createdBy),
+  ]
+);
 
 // Type exports for the Organization API Keys table
 export type OrganizationApiKey = typeof organizationApiKeys.$inferSelect;
