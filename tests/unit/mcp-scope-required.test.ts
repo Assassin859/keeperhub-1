@@ -7,13 +7,15 @@
  * full set of tool -> required-scope mappings so the contract doesn't
  * silently drift as new tools are added.
  */
-import { describe, expect, it } from "vitest";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { describe, expect, it, vi } from "vitest";
 import {
   getRequiredScopeForTool,
   SCOPE_MCP_ADMIN,
   SCOPE_MCP_READ,
   SCOPE_MCP_WRITE,
 } from "@/lib/mcp/oauth-scopes";
+import { registerTools } from "@/lib/mcp/tools";
 
 describe("getRequiredScopeForTool (KEEP-483)", () => {
   it.each([
@@ -64,5 +66,123 @@ describe("getRequiredScopeForTool (KEEP-483)", () => {
       expect(required).not.toBe(SCOPE_MCP_WRITE);
       expect(required).not.toBe(SCOPE_MCP_ADMIN);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Envelope-shape regression test (KEEP-483 review WARN)
+// ---------------------------------------------------------------------------
+
+type RegisteredTool = {
+  name: string;
+  handler: (...args: unknown[]) => unknown;
+};
+
+function makeMockServer(): {
+  server: McpServer;
+  registeredTools: RegisteredTool[];
+} {
+  const registeredTools: RegisteredTool[] = [];
+  const server = {
+    tool: vi.fn(
+      (
+        name: string,
+        _description: string,
+        _schema: unknown,
+        _annotations: unknown,
+        handler: (...args: unknown[]) => unknown
+      ) => {
+        registeredTools.push({ name, handler });
+      }
+    ),
+  } as unknown as McpServer;
+  return { server, registeredTools };
+}
+
+type ScopeDeniedEnvelope = {
+  error: string;
+  message: string;
+  required_scope: string;
+  granted_scope: string;
+  tool: string;
+  upgrade_url: string;
+  hint: string;
+};
+
+describe("buildScopeDeniedResult envelope shape (KEEP-483)", () => {
+  it("returns all six (+message+hint) keys with isError: true when scope is insufficient", async () => {
+    // Drive the denial through the real registerTools path so we pin the
+    // contract that agents actually observe over the wire — not the
+    // private helper's shape directly.
+    const { server, registeredTools } = makeMockServer();
+    registerTools(server, "http://internal", "Bearer test", SCOPE_MCP_READ);
+
+    const createTool = registeredTools.find(
+      (t) => t.name === "create_workflow"
+    );
+    expect(createTool).toBeDefined();
+    if (!createTool) {
+      return;
+    }
+
+    const result = (await createTool.handler({
+      name: "x",
+      nodes: [],
+      edges: [],
+    })) as {
+      content: [{ type: "text"; text: string }];
+      isError: true;
+    };
+
+    expect(result.isError).toBe(true);
+    expect(result.content).toHaveLength(1);
+    expect(result.content[0].type).toBe("text");
+
+    const envelope = JSON.parse(result.content[0].text) as ScopeDeniedEnvelope;
+
+    // All six structured fields + the human-readable message + hint must
+    // be present. If any of these go missing, agents lose the recovery
+    // affordance the envelope was designed to provide.
+    expect(envelope.error).toBe("insufficient_scope");
+    expect(envelope.message).toContain(SCOPE_MCP_WRITE);
+    expect(envelope.required_scope).toBe(SCOPE_MCP_WRITE);
+    expect(envelope.granted_scope).toBe(SCOPE_MCP_READ);
+    expect(envelope.tool).toBe("create_workflow");
+    expect(envelope.hint).toContain(SCOPE_MCP_WRITE);
+
+    // upgrade_url must point at the real stub page and carry the
+    // granted/required pair so the page can render contextual messaging.
+    expect(envelope.upgrade_url).toBe(
+      `/settings/mcp/reauthorize?required=${encodeURIComponent(
+        SCOPE_MCP_WRITE
+      )}&granted=${encodeURIComponent(SCOPE_MCP_READ)}`
+    );
+  });
+
+  it("encodes an empty granted scope correctly in upgrade_url", async () => {
+    // An empty granted scope is the "no scopes at all" case. The URL
+    // must still be well-formed (no `granted=undefined`, no broken
+    // template) so the recovery page can render.
+    const { server, registeredTools } = makeMockServer();
+    registerTools(server, "http://internal", "Bearer test", "");
+
+    const listTool = registeredTools.find((t) => t.name === "list_workflows");
+    expect(listTool).toBeDefined();
+    if (!listTool) {
+      return;
+    }
+
+    const result = (await listTool.handler({})) as {
+      content: [{ type: "text"; text: string }];
+      isError: true;
+    };
+    const envelope = JSON.parse(result.content[0].text) as ScopeDeniedEnvelope;
+
+    expect(envelope.granted_scope).toBe("");
+    expect(envelope.upgrade_url).toBe(
+      `/settings/mcp/reauthorize?required=${encodeURIComponent(
+        SCOPE_MCP_READ
+      )}&granted=`
+    );
   });
 });

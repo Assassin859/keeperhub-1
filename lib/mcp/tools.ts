@@ -25,6 +25,11 @@ function buildScopeDeniedResult(
   grantedScope: string
 ): ScopeDeniedContent {
   const requiredScope = getRequiredScopeForTool(toolName);
+  // Encode the granted/required pair into the upgrade_url so the stub
+  // page at /settings/mcp/reauthorize can render contextual messaging
+  // ("you have mcp:read, this needs mcp:write") without the client
+  // having to thread the original denial state through itself.
+  const upgradeUrl = `/settings/mcp/reauthorize?required=${encodeURIComponent(requiredScope)}&granted=${encodeURIComponent(grantedScope)}`;
   return {
     content: [
       {
@@ -35,7 +40,7 @@ function buildScopeDeniedResult(
           required_scope: requiredScope,
           granted_scope: grantedScope,
           tool: toolName,
-          upgrade_url: "/settings/mcp/reauthorize",
+          upgrade_url: upgradeUrl,
           hint: `Reauthorize the MCP integration and request \`${requiredScope}\` on the consent screen.`,
         }),
       },
