@@ -63,6 +63,7 @@ const LISTING_COLUMNS = {
   category: workflows.category,
   chain: workflows.chain,
   listingVersion: workflows.listingVersion,
+  nodes: workflows.nodes,
 };
 
 type ListingRow = {
@@ -82,6 +83,7 @@ type ListingRow = {
   category: string | null;
   chain: string | null;
   listingVersion: number;
+  nodes: unknown[];
 };
 
 function isSlugConflict(err: unknown): boolean {

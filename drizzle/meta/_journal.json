@@ -537,15 +537,22 @@
     {
       "idx": 76,
       "version": "7",
-      "when": 1778869656699,
-      "tag": "0076_safe_wallet_integration",
+      "when": 1777760000010,
+      "tag": "0076_keep484_backfill_wallet_integration_name",
       "breakpoints": true
     },
     {
       "idx": 77,
       "version": "7",
+      "when": 1778869656699,
+      "tag": "0077_safe_wallet_integration",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
       "when": 1778873393610,
-      "tag": "0077_safe_role_direct_rules_token_not_null",
+      "tag": "0078_safe_role_direct_rules_token_not_null",
       "breakpoints": true
     }
   ]

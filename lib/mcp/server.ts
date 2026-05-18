@@ -88,7 +88,7 @@ export function createMcpServer(
 ): McpServer {
   const server = new McpServer({
     name: "keeperhub",
-    version: "1.0.0",
+    version: "1.2.0",
   });
 
   registerTools(server, internalApiBaseUrl, authHeader, scope);

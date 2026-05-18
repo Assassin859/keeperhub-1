@@ -1,6 +1,6 @@
 {
-  "id": "d6f6f371-53de-42ee-baff-3a3bb486ec88",
-  "prevId": "e22cb427-074c-458b-8e5e-0a9dbcbd30ca",
+  "id": "e22cb427-074c-458b-8e5e-0a9dbcbd30ca",
+  "prevId": "59fe0f4e-7539-487f-bc83-668620750579",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -3948,7 +3948,7 @@
           "name": "token_address",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "token_symbol": {
           "name": "token_symbol",

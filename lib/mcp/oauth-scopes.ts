@@ -13,8 +13,7 @@ export type OAuthScope = (typeof SUPPORTED_SCOPES)[number];
 const READ_TOOLS = new Set<string>([
   "list_workflows",
   "get_workflow",
-  "get_execution_status",
-  "get_execution_logs",
+  "get_execution",
   "list_action_schemas",
   "search_plugins",
   "get_plugin",
@@ -26,6 +25,8 @@ const READ_TOOLS = new Set<string>([
   "search_protocol_actions",
   "get_direct_execution_status",
   "search_workflows",
+  "validate_workflow",
+  "prepare_test_pin_data",
   "get_workflow_listing",
 ]);
 
@@ -80,4 +81,26 @@ export function normalizeScope(requestedScope: string): string {
   const requested = parseScopes(requestedScope);
   const valid = requested.filter((s) => isScopeValid(s));
   return valid.length > 0 ? valid.join(" ") : SCOPE_MCP_READ;
+}
+
+/**
+ * Return the minimum OAuth scope a caller needs to invoke the given tool.
+ *
+ * KEEP-483: when a tool denies for missing scope, the client must be told
+ * which scope to request on reauthorize. Previously the MCP wrapper
+ * returned a generic "Forbidden" so builders had no actionable signal —
+ * the Hydra report observed write tools all denied with no clue that
+ * `mcp:write` was the missing piece.
+ */
+export function getRequiredScopeForTool(toolName: string): OAuthScope {
+  // READ_TOOLS is a strict subset of WRITE_TOOLS, so a tool present in
+  // READ_TOOLS satisfies the read scope. Tools in WRITE_TOOLS only need
+  // write. Anything else (unknown / admin-only) falls back to admin.
+  if (READ_TOOLS.has(toolName)) {
+    return SCOPE_MCP_READ;
+  }
+  if (WRITE_TOOLS.has(toolName)) {
+    return SCOPE_MCP_WRITE;
+  }
+  return SCOPE_MCP_ADMIN;
 }
