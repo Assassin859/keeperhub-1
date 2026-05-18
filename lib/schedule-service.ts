@@ -39,9 +39,11 @@ export function computeNextRunTime(
 /**
  * Compute the next run time for an interval schedule (KEEP-575).
  *
- * Fires on `anchor + k * intervalSeconds`. Returns the next k >= 1 in the
- * future relative to `now`. If `now < anchor`, returns the anchor itself
- * (a schedule that hasn't started yet fires first at its anchor).
+ * Fires on `anchor + k * intervalSeconds` for k >= 1. The first fire is
+ * `anchor + 1 * interval` (saving a schedule must not cause an immediate
+ * run before the user's interval has elapsed). Returns the smallest such
+ * value strictly greater than `now`, or `anchor + interval` if `now` is
+ * not yet past the first fire.
  */
 export function computeNextIntervalRunTime(
   intervalSeconds: number,
@@ -51,11 +53,10 @@ export function computeNextIntervalRunTime(
   const intervalMs = intervalSeconds * 1000;
   const anchorMs = anchorAt.getTime();
   const nowMs = now.getTime();
-  // Strictly before the anchor: the first fire is the anchor itself.
-  // At the anchor (or past it): the k=0 fire has happened, so the next
-  // future fire is anchor + ceil((now - anchor + 1ms) / interval) * interval.
-  if (nowMs < anchorMs) {
-    return new Date(anchorMs);
+  const firstFireMs = anchorMs + intervalMs;
+  // Before the first fire: next fire is anchor + 1*interval.
+  if (nowMs < firstFireMs) {
+    return new Date(firstFireMs);
   }
   const elapsedMs = nowMs - anchorMs;
   const kNext = Math.floor(elapsedMs / intervalMs) + 1;
@@ -366,10 +367,19 @@ export async function updateScheduleAfterRun(
     return;
   }
 
-  const nextRunAt =
-    schedule.intervalSeconds && schedule.anchorAt
-      ? computeNextIntervalRunTime(schedule.intervalSeconds, schedule.anchorAt)
-      : computeNextRunTime(schedule.cronExpression, schedule.timezone);
+  // KEEP-575: prefer interval mode when intervalSeconds + anchorAt are
+  // both populated; strict !== checks so a stray zero in the column cannot
+  // silently demote the row to the cron path.
+  const intervalSeconds = schedule.intervalSeconds;
+  const anchorAt = schedule.anchorAt;
+  const isInterval =
+    intervalSeconds !== null &&
+    intervalSeconds > 0 &&
+    anchorAt !== null &&
+    anchorAt !== undefined;
+  const nextRunAt = isInterval
+    ? computeNextIntervalRunTime(intervalSeconds, anchorAt)
+    : computeNextRunTime(schedule.cronExpression, schedule.timezone);
 
   const runCount =
     status === "success"

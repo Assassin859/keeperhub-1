@@ -194,16 +194,18 @@ describe("shouldTriggerNow", () => {
 // of each hour (55-min then 5-min gap); the interval path fires every
 // 55 minutes from the anchor regardless of clock alignment.
 describe("shouldTriggerInterval", () => {
-  it("fires exactly at the anchor", () => {
+  it("does NOT fire at the anchor itself (first fire is anchor + interval)", () => {
     const anchor = new Date("2026-05-18T10:00:00Z");
-    expect(shouldTriggerInterval(3300, anchor, anchor)).toBe(true);
+    expect(shouldTriggerInterval(3300, anchor, anchor)).toBe(false);
   });
 
-  it("fires within the 60s window after the anchor", () => {
+  it("does NOT fire within the 60s window after the anchor", () => {
+    // KEEP-575: saving a schedule must not cause an immediate run. The
+    // first fire is `anchor + 1 * interval`, not the anchor itself.
     const anchor = new Date("2026-05-18T10:00:00Z");
     expect(
       shouldTriggerInterval(3300, anchor, new Date("2026-05-18T10:00:30Z")),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("does not fire mid-interval", () => {
@@ -214,10 +216,17 @@ describe("shouldTriggerInterval", () => {
     ).toBe(false);
   });
 
-  it("fires at anchor + 1 * interval (55 min later)", () => {
+  it("fires at the first occurrence: anchor + 1 * interval (55 min later)", () => {
     const anchor = new Date("2026-05-18T10:00:00Z");
     expect(
       shouldTriggerInterval(3300, anchor, new Date("2026-05-18T10:55:00Z")),
+    ).toBe(true);
+  });
+
+  it("fires within the 60s window of anchor + 1 * interval", () => {
+    const anchor = new Date("2026-05-18T10:00:00Z");
+    expect(
+      shouldTriggerInterval(3300, anchor, new Date("2026-05-18T10:55:30Z")),
     ).toBe(true);
   });
 

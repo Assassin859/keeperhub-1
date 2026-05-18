@@ -77,8 +77,10 @@ export function computeNextRunTime(
 
 /**
  * KEEP-575: next interval fire time = first `anchor + k * intervalSeconds`
- * strictly greater than `now`. Mirrors lib/schedule-service.ts so the
- * executor's lastRunAt-update path stays consistent with the dispatcher.
+ * with k >= 1 and the value strictly greater than `now`. First fire is
+ * `anchor + 1 * interval` (not the anchor itself). Mirrors
+ * lib/schedule-service.ts so the executor's lastRunAt-update path stays
+ * consistent with the dispatcher.
  */
 export function computeNextIntervalRunTime(
   intervalSeconds: number,
@@ -88,8 +90,9 @@ export function computeNextIntervalRunTime(
   const intervalMs = intervalSeconds * 1000;
   const anchorMs = anchorAt.getTime();
   const nowMs = now.getTime();
-  if (nowMs < anchorMs) {
-    return new Date(anchorMs);
+  const firstFireMs = anchorMs + intervalMs;
+  if (nowMs < firstFireMs) {
+    return new Date(firstFireMs);
   }
   const elapsedMs = nowMs - anchorMs;
   const kNext = Math.floor(elapsedMs / intervalMs) + 1;
@@ -110,10 +113,18 @@ export async function updateScheduleStatus(
     return;
   }
 
-  const nextRunAt =
-    schedule.intervalSeconds && schedule.anchorAt
-      ? computeNextIntervalRunTime(schedule.intervalSeconds, schedule.anchorAt)
-      : computeNextRunTime(schedule.cronExpression, schedule.timezone);
+  // KEEP-575: strict !== checks so a stray zero/null in either column
+  // can't silently demote the row to the cron path.
+  const intervalSeconds = schedule.intervalSeconds;
+  const anchorAt = schedule.anchorAt;
+  const isInterval =
+    intervalSeconds !== null &&
+    intervalSeconds > 0 &&
+    anchorAt !== null &&
+    anchorAt !== undefined;
+  const nextRunAt = isInterval
+    ? computeNextIntervalRunTime(intervalSeconds, anchorAt)
+    : computeNextRunTime(schedule.cronExpression, schedule.timezone);
 
   const runCount =
     status === "success"

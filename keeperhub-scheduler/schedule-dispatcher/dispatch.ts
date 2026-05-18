@@ -77,13 +77,19 @@ export function shouldTriggerNow(
 }
 
 /**
- * KEEP-575: returns true when an interval schedule's most recent fire time
- * (anchorAt + k * intervalSeconds, largest k with that sum <= now) is within
- * the current minute. Mirrors the 60s window used by the cron path so the
- * dispatcher's per-minute polling can fire each occurrence exactly once.
+ * KEEP-575: returns true when an interval schedule's k-th fire (anchorAt +
+ * k * intervalSeconds, k >= 1) lands within the current minute. Mirrors the
+ * 60s window used by the cron path so the dispatcher's per-minute polling
+ * can fire each occurrence exactly once.
  *
- * Returns false (without firing) if the schedule hasn't reached its anchor
- * yet, or if the inputs are unusable.
+ * The first fire is at `anchor + 1 * interval`, not at the anchor itself —
+ * saving a schedule must not cause an immediate run before the user's
+ * intended interval has elapsed. This also keeps `shouldTriggerInterval`
+ * consistent with the `next_run_at` value `syncWorkflowSchedule` writes on
+ * create.
+ *
+ * Returns false (without firing) if the schedule hasn't reached its first
+ * fire yet, or if the inputs are unusable.
  */
 export function shouldTriggerInterval(
   intervalSeconds: number,
@@ -96,17 +102,36 @@ export function shouldTriggerInterval(
 
   const nowMs = now.getTime();
   const anchorMs = anchorAt.getTime();
+  const intervalMs = intervalSeconds * 1000;
+  const elapsedMs = nowMs - anchorMs;
 
-  // Fire exactly once on the anchor itself (and never before it).
-  if (nowMs < anchorMs) {
+  // First fire is at anchor + 1*interval. Anything before that is "waiting".
+  if (elapsedMs < intervalMs) {
     return false;
   }
 
-  const elapsedMs = nowMs - anchorMs;
-  const intervalMs = intervalSeconds * 1000;
   const sinceMostRecentMs = elapsedMs % intervalMs;
 
   return sinceMostRecentMs < 60_000;
+}
+
+/**
+ * KEEP-575: true when the row is in interval mode (intervalSeconds is set
+ * to a usable positive number AND anchorAt is present). Strict null/undefined
+ * checks instead of truthy `&&` so an accidental zero in the column doesn't
+ * silently route through the cron path.
+ */
+function isIntervalMode(
+  schedule: Schedule,
+): schedule is Schedule & { intervalSeconds: number; anchorAt: string } {
+  const { intervalSeconds, anchorAt } = schedule;
+  return (
+    intervalSeconds !== null &&
+    intervalSeconds !== undefined &&
+    intervalSeconds > 0 &&
+    anchorAt !== null &&
+    anchorAt !== undefined
+  );
 }
 
 /**
@@ -116,7 +141,7 @@ export function shouldTriggerInterval(
  * when intervalSeconds is set.
  */
 function scheduleShouldTrigger(schedule: Schedule, now: Date): boolean {
-  if (schedule.intervalSeconds && schedule.anchorAt) {
+  if (isIntervalMode(schedule)) {
     return shouldTriggerInterval(
       schedule.intervalSeconds,
       new Date(schedule.anchorAt),
@@ -127,7 +152,7 @@ function scheduleShouldTrigger(schedule: Schedule, now: Date): boolean {
 }
 
 function describeSchedule(schedule: Schedule): string {
-  if (schedule.intervalSeconds && schedule.anchorAt) {
+  if (isIntervalMode(schedule)) {
     return `interval: every ${schedule.intervalSeconds}s, anchor: ${schedule.anchorAt}`;
   }
   return `cron: ${schedule.cronExpression}`;

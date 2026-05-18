@@ -371,21 +371,36 @@ describe("schedule-service", () => {
   // and the executor's lastRunAt-update path both need to agree, so the
   // formula is centralised in schedule-service.
   describe("computeNextIntervalRunTime", () => {
-    it("returns the anchor itself when now is before the anchor", () => {
+    it("returns anchor + interval when now is before the anchor", () => {
+      // KEEP-575: first fire is `anchor + 1 * interval`, never the anchor
+      // itself. A schedule scheduled in the future fires at its first
+      // proper occurrence.
       const anchor = new Date("2026-05-18T10:00:00Z");
       const now = new Date("2026-05-18T09:30:00Z");
 
       const next = computeNextIntervalRunTime(3300, anchor, now);
 
-      expect(next.toISOString()).toBe(anchor.toISOString());
+      expect(next.toISOString()).toBe("2026-05-18T10:55:00.000Z");
     });
 
     it("returns anchor + interval when called exactly at the anchor", () => {
+      // The "schedule was just saved" case. next_run_at should be the
+      // first real fire time, never the moment of save itself.
       const anchor = new Date("2026-05-18T10:00:00Z");
 
       const next = computeNextIntervalRunTime(3300, anchor, anchor);
 
       // anchor + 3300s = anchor + 55min = 10:55:00
+      expect(next.toISOString()).toBe("2026-05-18T10:55:00.000Z");
+    });
+
+    it("returns anchor + interval when called mid-first-interval", () => {
+      // 30 minutes past anchor, well before the first fire at 10:55.
+      const anchor = new Date("2026-05-18T10:00:00Z");
+      const now = new Date("2026-05-18T10:30:00Z");
+
+      const next = computeNextIntervalRunTime(3300, anchor, now);
+
       expect(next.toISOString()).toBe("2026-05-18T10:55:00.000Z");
     });
 

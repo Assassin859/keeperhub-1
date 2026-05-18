@@ -24,7 +24,8 @@ function computeNextRunTime(
   }
 }
 
-// KEEP-575: interval-schedule next-fire = first anchor + k*interval > now.
+// KEEP-575: interval-schedule next-fire = first anchor + k*interval > now,
+// k >= 1. First fire is anchor + 1*interval (never the anchor itself).
 function computeNextIntervalRunTime(
   intervalSeconds: number,
   anchorAt: Date,
@@ -33,8 +34,9 @@ function computeNextIntervalRunTime(
   const intervalMs = intervalSeconds * 1000;
   const anchorMs = anchorAt.getTime();
   const nowMs = now.getTime();
-  if (nowMs < anchorMs) {
-    return new Date(anchorMs);
+  const firstFireMs = anchorMs + intervalMs;
+  if (nowMs < firstFireMs) {
+    return new Date(firstFireMs);
   }
   const elapsedMs = nowMs - anchorMs;
   const kNext = Math.floor(elapsedMs / intervalMs) + 1;
@@ -92,10 +94,18 @@ export async function PATCH(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Schedule not found" }, { status: 404 });
   }
 
-  const nextRunAt =
-    schedule.intervalSeconds && schedule.anchorAt
-      ? computeNextIntervalRunTime(schedule.intervalSeconds, schedule.anchorAt)
-      : computeNextRunTime(schedule.cronExpression, schedule.timezone);
+  // KEEP-575: strict null/undefined checks so a stray zero in either
+  // column can't silently fall through to the cron path.
+  const intervalSeconds = schedule.intervalSeconds;
+  const anchorAt = schedule.anchorAt;
+  const isInterval =
+    intervalSeconds !== null &&
+    intervalSeconds > 0 &&
+    anchorAt !== null &&
+    anchorAt !== undefined;
+  const nextRunAt = isInterval
+    ? computeNextIntervalRunTime(intervalSeconds, anchorAt)
+    : computeNextRunTime(schedule.cronExpression, schedule.timezone);
 
   const runCount =
     status === "success"
