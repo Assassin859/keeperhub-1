@@ -35,7 +35,6 @@ vi.mock("@/lib/mcp/sessions", () => ({
 vi.mock("@/lib/mcp/event-store", () => {
   return {
     // biome-ignore lint/style/useConsistentObjectDefinitions: explicit function expression needed so `new McpEventStore()` works; method shorthand is not newable
-    // biome-ignore lint/suspicious/noEmptyBlockStatements: constructor mock body intentionally empty
     McpEventStore: function McpEventStore() {
       return;
     },
