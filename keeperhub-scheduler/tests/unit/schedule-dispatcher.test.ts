@@ -264,9 +264,7 @@ describe("shouldTriggerInterval", () => {
 
   it("returns false for non-finite interval", () => {
     const anchor = new Date("2026-05-18T10:00:00Z");
-    expect(
-      shouldTriggerInterval(Number.NaN, anchor, anchor),
-    ).toBe(false);
+    expect(shouldTriggerInterval(Number.NaN, anchor, anchor)).toBe(false);
     expect(
       shouldTriggerInterval(Number.POSITIVE_INFINITY, anchor, anchor),
     ).toBe(false);
