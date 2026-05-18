@@ -33,6 +33,22 @@ type TriggerConfigProps = {
   workflowId?: string;
 };
 
+/**
+ * KEEP-575: the trigger config JSONB stores scheduleIntervalSeconds as a
+ * string (onUpdateConfig only takes strings), but historical configs may
+ * carry a number. Coerce both into a positive integer, or null if absent.
+ */
+function parseIntervalConfigValue(raw: unknown): number | null {
+  if (raw === undefined || raw === null || raw === "") {
+    return null;
+  }
+  const n = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    return null;
+  }
+  return Math.floor(n);
+}
+
 export function TriggerConfig({
   config,
   onUpdateConfig,
@@ -188,8 +204,27 @@ export function TriggerConfig({
         <>
           <CronScheduleBuilder
             disabled={disabled}
-            onChange={(value) => onUpdateConfig("scheduleCron", value)}
-            value={(config?.scheduleCron as string) || ""}
+            onChange={(value) => {
+              // KEEP-575: schedule builder emits either a cron string or a
+              // true interval. Interval mode clears scheduleCron so legacy
+              // readers don't fall back to a stale cron value.
+              if (value.mode === "interval") {
+                onUpdateConfig(
+                  "scheduleIntervalSeconds",
+                  String(value.intervalSeconds)
+                );
+                onUpdateConfig("scheduleCron", "");
+              } else {
+                onUpdateConfig("scheduleCron", value.cron);
+                onUpdateConfig("scheduleIntervalSeconds", "");
+              }
+            }}
+            value={{
+              cron: (config?.scheduleCron as string) || "",
+              intervalSeconds: parseIntervalConfigValue(
+                config?.scheduleIntervalSeconds
+              ),
+            }}
           />
           <div className="space-y-2">
             <Label className="ml-1" htmlFor="scheduleTimezone">

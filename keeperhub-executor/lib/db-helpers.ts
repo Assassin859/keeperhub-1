@@ -75,6 +75,27 @@ export function computeNextRunTime(
   }
 }
 
+/**
+ * KEEP-575: next interval fire time = first `anchor + k * intervalSeconds`
+ * strictly greater than `now`. Mirrors lib/schedule-service.ts so the
+ * executor's lastRunAt-update path stays consistent with the dispatcher.
+ */
+export function computeNextIntervalRunTime(
+  intervalSeconds: number,
+  anchorAt: Date,
+  now: Date = new Date()
+): Date {
+  const intervalMs = intervalSeconds * 1000;
+  const anchorMs = anchorAt.getTime();
+  const nowMs = now.getTime();
+  if (nowMs < anchorMs) {
+    return new Date(anchorMs);
+  }
+  const elapsedMs = nowMs - anchorMs;
+  const kNext = Math.floor(elapsedMs / intervalMs) + 1;
+  return new Date(anchorMs + kNext * intervalMs);
+}
+
 export async function updateScheduleStatus(
   db: PostgresJsDatabase<DbSchema>,
   scheduleId: string,
@@ -89,10 +110,10 @@ export async function updateScheduleStatus(
     return;
   }
 
-  const nextRunAt = computeNextRunTime(
-    schedule.cronExpression,
-    schedule.timezone
-  );
+  const nextRunAt =
+    schedule.intervalSeconds && schedule.anchorAt
+      ? computeNextIntervalRunTime(schedule.intervalSeconds, schedule.anchorAt)
+      : computeNextRunTime(schedule.cronExpression, schedule.timezone);
 
   const runCount =
     status === "success"

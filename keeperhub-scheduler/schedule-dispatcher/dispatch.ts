@@ -76,6 +76,63 @@ export function shouldTriggerNow(
   }
 }
 
+/**
+ * KEEP-575: returns true when an interval schedule's most recent fire time
+ * (anchorAt + k * intervalSeconds, largest k with that sum <= now) is within
+ * the current minute. Mirrors the 60s window used by the cron path so the
+ * dispatcher's per-minute polling can fire each occurrence exactly once.
+ *
+ * Returns false (without firing) if the schedule hasn't reached its anchor
+ * yet, or if the inputs are unusable.
+ */
+export function shouldTriggerInterval(
+  intervalSeconds: number,
+  anchorAt: Date,
+  now: Date,
+): boolean {
+  if (!Number.isFinite(intervalSeconds) || intervalSeconds <= 0) {
+    return false;
+  }
+
+  const nowMs = now.getTime();
+  const anchorMs = anchorAt.getTime();
+
+  // Fire exactly once on the anchor itself (and never before it).
+  if (nowMs < anchorMs) {
+    return false;
+  }
+
+  const elapsedMs = nowMs - anchorMs;
+  const intervalMs = intervalSeconds * 1000;
+  const sinceMostRecentMs = elapsedMs % intervalMs;
+
+  return sinceMostRecentMs < 60_000;
+}
+
+/**
+ * KEEP-575: pick interval vs cron dispatch based on whether the schedule
+ * has an `intervalSeconds` populated. Interval rows synthesize a placeholder
+ * cron expression for legacy readers — the dispatcher must NOT parse that
+ * when intervalSeconds is set.
+ */
+function scheduleShouldTrigger(schedule: Schedule, now: Date): boolean {
+  if (schedule.intervalSeconds && schedule.anchorAt) {
+    return shouldTriggerInterval(
+      schedule.intervalSeconds,
+      new Date(schedule.anchorAt),
+      now,
+    );
+  }
+  return shouldTriggerNow(schedule.cronExpression, schedule.timezone, now);
+}
+
+function describeSchedule(schedule: Schedule): string {
+  if (schedule.intervalSeconds && schedule.anchorAt) {
+    return `interval: every ${schedule.intervalSeconds}s, anchor: ${schedule.anchorAt}`;
+  }
+  return `cron: ${schedule.cronExpression}`;
+}
+
 export async function sendToQueue(message: ScheduleMessage): Promise<void> {
   const command = new SendMessageCommand({
     QueueUrl: SQS_QUEUE_URL,
@@ -116,16 +173,13 @@ export async function dispatch(): Promise<DispatchResult> {
 
   for (const schedule of schedules) {
     try {
-      const shouldTrigger = shouldTriggerNow(
-        schedule.cronExpression,
-        schedule.timezone,
-        now,
-      );
+      const shouldTrigger = scheduleShouldTrigger(schedule, now);
 
       if (shouldTrigger) {
+        const description = describeSchedule(schedule);
         console.log(
           `[${runId}] Triggering workflow ${schedule.workflowId} ` +
-            `(cron: ${schedule.cronExpression}, tz: ${schedule.timezone})`,
+            `(${description}, tz: ${schedule.timezone})`,
         );
 
         await sendToQueue({

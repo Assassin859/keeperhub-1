@@ -578,6 +578,12 @@ export const workflowSchedules = pgTable(
       .unique()
       .references(() => workflows.id, { onDelete: "cascade" }),
     cronExpression: text("cron_expression").notNull(),
+    // KEEP-575: true-interval scheduling. When intervalSeconds is set, the
+    // dispatcher fires on anchorAt + k * intervalSeconds instead of parsing
+    // cronExpression. This expresses "every 55 minutes" accurately, which
+    // a 5-field cron cannot when the period doesn't divide 60.
+    intervalSeconds: integer("interval_seconds"),
+    anchorAt: timestamp("anchor_at", { withTimezone: true }),
     timezone: text("timezone").notNull().default("UTC"),
     enabled: boolean("enabled").notNull().default(true),
     lastRunAt: timestamp("last_run_at", { withTimezone: true }),

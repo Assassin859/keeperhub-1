@@ -24,6 +24,23 @@ function computeNextRunTime(
   }
 }
 
+// KEEP-575: interval-schedule next-fire = first anchor + k*interval > now.
+function computeNextIntervalRunTime(
+  intervalSeconds: number,
+  anchorAt: Date,
+  now: Date = new Date()
+): Date {
+  const intervalMs = intervalSeconds * 1000;
+  const anchorMs = anchorAt.getTime();
+  const nowMs = now.getTime();
+  if (nowMs < anchorMs) {
+    return new Date(anchorMs);
+  }
+  const elapsedMs = nowMs - anchorMs;
+  const kNext = Math.floor(elapsedMs / intervalMs) + 1;
+  return new Date(anchorMs + kNext * intervalMs);
+}
+
 export async function GET(request: Request, context: RouteContext) {
   const auth = authenticateInternalService(request);
   if (!auth.authenticated) {
@@ -75,10 +92,10 @@ export async function PATCH(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Schedule not found" }, { status: 404 });
   }
 
-  const nextRunAt = computeNextRunTime(
-    schedule.cronExpression,
-    schedule.timezone
-  );
+  const nextRunAt =
+    schedule.intervalSeconds && schedule.anchorAt
+      ? computeNextIntervalRunTime(schedule.intervalSeconds, schedule.anchorAt)
+      : computeNextRunTime(schedule.cronExpression, schedule.timezone);
 
   const runCount =
     status === "success"

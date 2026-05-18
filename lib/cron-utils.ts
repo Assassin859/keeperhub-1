@@ -261,8 +261,17 @@ function describeSimple(s: SimpleSchedule): string {
   switch (s.frequency) {
     case "every-minute":
       return "Every minute";
-    case "every-n-minutes":
-      return `Every ${s.interval} minutes`;
+    case "every-n-minutes": {
+      // KEEP-575: `*/N * * * *` in 5-field cron means "minutes divisible
+      // by N within each hour", which only equals "every N minutes" when
+      // N divides 60. For other N the cron fires twice per hour with
+      // uneven gaps — be honest about that here.
+      const n = s.interval ?? 0;
+      if (n > 0 && 60 % n === 0) {
+        return `Every ${n} minutes`;
+      }
+      return `At minute 0 and every ${n} minutes within each hour (uneven gaps)`;
+    }
     case "hourly":
       return s.minute === 0
         ? "Every hour on the hour"

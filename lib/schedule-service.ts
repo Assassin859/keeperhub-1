@@ -37,6 +37,32 @@ export function computeNextRunTime(
 }
 
 /**
+ * Compute the next run time for an interval schedule (KEEP-575).
+ *
+ * Fires on `anchor + k * intervalSeconds`. Returns the next k >= 1 in the
+ * future relative to `now`. If `now < anchor`, returns the anchor itself
+ * (a schedule that hasn't started yet fires first at its anchor).
+ */
+export function computeNextIntervalRunTime(
+  intervalSeconds: number,
+  anchorAt: Date,
+  now: Date = new Date()
+): Date {
+  const intervalMs = intervalSeconds * 1000;
+  const anchorMs = anchorAt.getTime();
+  const nowMs = now.getTime();
+  // Strictly before the anchor: the first fire is the anchor itself.
+  // At the anchor (or past it): the k=0 fire has happened, so the next
+  // future fire is anchor + ceil((now - anchor + 1ms) / interval) * interval.
+  if (nowMs < anchorMs) {
+    return new Date(anchorMs);
+  }
+  const elapsedMs = nowMs - anchorMs;
+  const kNext = Math.floor(elapsedMs / intervalMs) + 1;
+  return new Date(anchorMs + kNext * intervalMs);
+}
+
+/**
  * Validate a cron expression
  */
 export function validateCronExpression(cronExpression: string): {
@@ -80,11 +106,21 @@ export function validateTimezone(timezone: string): boolean {
 }
 
 /**
+ * Discriminated schedule configuration extracted from a trigger node.
+ *
+ * KEEP-575: interval mode lets us represent "every N minutes" accurately
+ * when N doesn't divide 60 — something a single 5-field cron cannot do.
+ */
+export type ExtractedScheduleConfig =
+  | { mode: "cron"; cronExpression: string; timezone: string }
+  | { mode: "interval"; intervalSeconds: number; timezone: string };
+
+/**
  * Extract schedule configuration from workflow trigger node
  */
 export function extractScheduleConfig(
   nodes: WorkflowNode[]
-): { cronExpression: string; timezone: string } | null {
+): ExtractedScheduleConfig | null {
   const triggerNode = nodes.find((n) => n.data.type === "trigger");
 
   if (!triggerNode) {
@@ -96,14 +132,36 @@ export function extractScheduleConfig(
     return null;
   }
 
-  const cronExpression = config.scheduleCron as string | undefined;
   const timezone = (config.scheduleTimezone as string) || "UTC";
 
+  const intervalSecondsRaw = config.scheduleIntervalSeconds;
+  const intervalSeconds = parseIntervalSeconds(intervalSecondsRaw);
+  if (intervalSeconds !== null) {
+    return { mode: "interval", intervalSeconds, timezone };
+  }
+
+  const cronExpression = config.scheduleCron as string | undefined;
   if (!cronExpression) {
     return null;
   }
 
-  return { cronExpression, timezone };
+  return { mode: "cron", cronExpression, timezone };
+}
+
+/**
+ * Coerce a `scheduleIntervalSeconds` value (number or numeric string from
+ * the trigger config JSONB) into a positive integer, or null if the value
+ * is missing or unusable.
+ */
+function parseIntervalSeconds(raw: unknown): number | null {
+  if (raw === undefined || raw === null || raw === "") {
+    return null;
+  }
+  const n = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    return null;
+  }
+  return Math.floor(n);
 }
 
 /**
@@ -126,18 +184,9 @@ export async function syncWorkflowSchedule(
     return { synced: true };
   }
 
-  const { cronExpression, timezone } = scheduleConfig;
+  const { timezone } = scheduleConfig;
 
-  // Validate cron expression
-  const cronValidation = validateCronExpression(cronExpression);
-  if (!cronValidation.valid) {
-    console.warn(
-      `[Schedule] Invalid cron for workflow ${workflowId}: ${cronValidation.error}`
-    );
-    return { synced: false, error: cronValidation.error };
-  }
-
-  // Validate timezone
+  // Validate timezone (shared by both modes)
   if (!validateTimezone(timezone)) {
     console.warn(
       `[Schedule] Invalid timezone for workflow ${workflowId}: ${timezone}`
@@ -145,20 +194,86 @@ export async function syncWorkflowSchedule(
     return { synced: false, error: `Invalid timezone: ${timezone}` };
   }
 
-  // Compute next run time
-  const nextRunAt = computeNextRunTime(cronExpression, timezone);
+  // Validate the mode-specific payload up front so we never write a half-
+  // valid row to the DB.
+  if (scheduleConfig.mode === "cron") {
+    const cronValidation = validateCronExpression(
+      scheduleConfig.cronExpression
+    );
+    if (!cronValidation.valid) {
+      console.warn(
+        `[Schedule] Invalid cron for workflow ${workflowId}: ${cronValidation.error}`
+      );
+      return { synced: false, error: cronValidation.error };
+    }
+  }
 
-  // Check for existing schedule
   const existingSchedule = await db.query.workflowSchedules.findFirst({
     where: eq(workflowSchedules.workflowId, workflowId),
   });
 
+  if (scheduleConfig.mode === "cron") {
+    const { cronExpression } = scheduleConfig;
+    const nextRunAt = computeNextRunTime(cronExpression, timezone);
+
+    if (existingSchedule) {
+      await db
+        .update(workflowSchedules)
+        .set({
+          cronExpression,
+          intervalSeconds: null,
+          anchorAt: null,
+          timezone,
+          nextRunAt,
+          updatedAt: new Date(),
+        })
+        .where(eq(workflowSchedules.workflowId, workflowId));
+
+      console.log(
+        `[Schedule] Updated schedule for workflow ${workflowId}: ${cronExpression} (${timezone})`
+      );
+    } else {
+      await db.insert(workflowSchedules).values({
+        id: generateId(),
+        workflowId,
+        cronExpression,
+        timezone,
+        enabled: true,
+        nextRunAt,
+      });
+
+      console.log(
+        `[Schedule] Created schedule for workflow ${workflowId}: ${cronExpression} (${timezone})`
+      );
+    }
+
+    return { synced: true };
+  }
+
+  // Interval mode (KEEP-575). The cron column is kept non-null so legacy
+  // readers that parse it don't blow up — we stash a best-effort synthetic
+  // value, but the dispatcher checks intervalSeconds first and ignores cron.
+  const { intervalSeconds } = scheduleConfig;
+  const syntheticCron = synthesizeCronForInterval(intervalSeconds);
+
+  // Re-anchor only when the interval changes (or when switching modes).
+  // Preserving the anchor across no-op autosaves keeps fire-times stable.
+  const intervalChanged =
+    !existingSchedule ||
+    existingSchedule.intervalSeconds !== intervalSeconds ||
+    !existingSchedule.anchorAt;
+  const anchorAt = intervalChanged
+    ? new Date()
+    : (existingSchedule?.anchorAt ?? new Date());
+  const nextRunAt = computeNextIntervalRunTime(intervalSeconds, anchorAt);
+
   if (existingSchedule) {
-    // Update existing
     await db
       .update(workflowSchedules)
       .set({
-        cronExpression,
+        cronExpression: syntheticCron,
+        intervalSeconds,
+        anchorAt,
         timezone,
         nextRunAt,
         updatedAt: new Date(),
@@ -166,25 +281,40 @@ export async function syncWorkflowSchedule(
       .where(eq(workflowSchedules.workflowId, workflowId));
 
     console.log(
-      `[Schedule] Updated schedule for workflow ${workflowId}: ${cronExpression} (${timezone})`
+      `[Schedule] Updated schedule for workflow ${workflowId}: every ${intervalSeconds}s (${timezone})`
     );
   } else {
-    // Insert new
     await db.insert(workflowSchedules).values({
       id: generateId(),
       workflowId,
-      cronExpression,
+      cronExpression: syntheticCron,
+      intervalSeconds,
+      anchorAt,
       timezone,
       enabled: true,
       nextRunAt,
     });
 
     console.log(
-      `[Schedule] Created schedule for workflow ${workflowId}: ${cronExpression} (${timezone})`
+      `[Schedule] Created schedule for workflow ${workflowId}: every ${intervalSeconds}s (${timezone})`
     );
   }
 
   return { synced: true };
+}
+
+/**
+ * Build a best-effort 5-field cron string for an interval, used only as a
+ * fallback display value for the cron_expression column when the schedule
+ * is actually in interval mode. The dispatcher never parses this — it sees
+ * intervalSeconds is non-null and switches paths.
+ */
+function synthesizeCronForInterval(intervalSeconds: number): string {
+  const minutes = Math.max(1, Math.round(intervalSeconds / 60));
+  if (minutes >= 60) {
+    return `0 */${Math.min(23, Math.floor(minutes / 60))} * * *`;
+  }
+  return `*/${minutes} * * * *`;
 }
 
 /**
@@ -236,10 +366,10 @@ export async function updateScheduleAfterRun(
     return;
   }
 
-  const nextRunAt = computeNextRunTime(
-    schedule.cronExpression,
-    schedule.timezone
-  );
+  const nextRunAt =
+    schedule.intervalSeconds && schedule.anchorAt
+      ? computeNextIntervalRunTime(schedule.intervalSeconds, schedule.anchorAt)
+      : computeNextRunTime(schedule.cronExpression, schedule.timezone);
 
   const runCount =
     status === "success"
