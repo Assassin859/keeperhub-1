@@ -7,6 +7,7 @@ import {
   getTransactionUrl as buildTransactionUrl,
 } from "@/lib/explorer";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
+import { submitSignedTransactionWithFailover } from "@/lib/web3/submit-signed";
 import type { AdaptiveGasStrategy, GasConfig } from "../gas-strategy";
 import type { NonceManager, NonceSession } from "../nonce-manager";
 import type {
@@ -84,13 +85,32 @@ export class EvmChainAdapter implements ChainAdapter {
       options.gasOverrides.priorityFeeOverride
     );
 
-    const tx = await signer.sendTransaction({
+    // KEEP-565: when an rpcManager is wired, broadcast through the
+    // sign-once-and-failover helper so the actual broadcast survives a
+    // primary-RPC blip between resolveActiveRpcUrl() and send. Signing
+    // happens exactly once; helper reconciles on broadcast error
+    // (already-known / nonce-too-low) by checking chain state before
+    // re-throwing. Falls back to direct signer.sendTransaction when no
+    // manager is provided (legacy callers; tracked by KEEP-548 for full
+    // adoption).
+    const txRequest = {
       ...baseTx,
+      from: walletAddress,
       nonce,
       gasLimit: gasConfig.gasLimit,
       maxFeePerGas: gasConfig.maxFeePerGas,
       maxPriorityFeePerGas: gasConfig.maxPriorityFeePerGas,
-    });
+      chainId: this.chainId,
+    };
+    const tx = options.rpcManager
+      ? (
+          await submitSignedTransactionWithFailover(
+            signer,
+            txRequest,
+            options.rpcManager
+          )
+        ).response
+      : await signer.sendTransaction(txRequest);
 
     return this.confirmTransaction(tx, session, nonce, gasConfig, options);
   }
@@ -170,13 +190,44 @@ export class EvmChainAdapter implements ChainAdapter {
       options.gasOverrides.priorityFeeOverride
     );
 
-    const tx = await fn(...request.args, {
-      nonce,
-      gasLimit: gasConfig.gasLimit,
-      maxFeePerGas: gasConfig.maxFeePerGas,
-      maxPriorityFeePerGas: gasConfig.maxPriorityFeePerGas,
-      ...(request.value ? { value: request.value } : {}),
-    });
+    // KEEP-565: route the broadcast through submitSignedTransactionWithFailover
+    // when a manager is available. We encode the calldata via the contract's
+    // own Interface and pass an explicit TransactionRequest -- the helper
+    // populates / signs / broadcasts with failover and reconciles on error.
+    // Direct `fn(...)` call kept as fallback for callers without an
+    // rpcManager (legacy code paths; tracked by KEEP-548).
+    let tx: ethers.TransactionResponse;
+    if (options.rpcManager) {
+      const calldata = contract.interface.encodeFunctionData(
+        request.functionKey,
+        request.args
+      );
+      const txRequest = {
+        to: request.contractAddress,
+        data: calldata,
+        from: signerAddress,
+        nonce,
+        gasLimit: gasConfig.gasLimit,
+        maxFeePerGas: gasConfig.maxFeePerGas,
+        maxPriorityFeePerGas: gasConfig.maxPriorityFeePerGas,
+        chainId: this.chainId,
+        ...(request.value ? { value: request.value } : {}),
+      };
+      const broadcast = await submitSignedTransactionWithFailover(
+        signer,
+        txRequest,
+        options.rpcManager
+      );
+      tx = broadcast.response;
+    } else {
+      tx = await fn(...request.args, {
+        nonce,
+        gasLimit: gasConfig.gasLimit,
+        maxFeePerGas: gasConfig.maxFeePerGas,
+        maxPriorityFeePerGas: gasConfig.maxPriorityFeePerGas,
+        ...(request.value ? { value: request.value } : {}),
+      });
+    }
 
     return this.confirmTransaction(tx, session, nonce, gasConfig, options);
   }
