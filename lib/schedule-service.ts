@@ -350,7 +350,18 @@ export async function getWorkflowSchedule(
 }
 
 /**
- * Update schedule enabled status
+ * Update schedule enabled status.
+ *
+ * KEEP-575: deliberately does NOT touch anchorAt or nextRunAt. For
+ * interval-mode rows, that means the fire phase is preserved across a
+ * disable/re-enable: if a "every 55 minutes" schedule is disabled at
+ * elapsed=10min and re-enabled an hour later, the next fire still lands
+ * on the original anchor + k*interval grid, not 55 minutes from the
+ * re-enable moment. No catch-up storm either -- the dispatcher's per-
+ * minute polling fires at most once per cycle, so a long-disabled
+ * schedule resumes on its next natural slot rather than replaying
+ * missed slots. Re-anchoring on enable would surprise users who pause
+ * a workflow briefly and expect the same cadence to resume.
  */
 export async function setScheduleEnabled(
   workflowId: string,
