@@ -21,7 +21,7 @@ import type {
   ProtocolDefinition,
   ProtocolEvent,
 } from "@/lib/protocol-registry";
-import { parseIntervalSeconds } from "@/lib/schedule-service";
+import { parseIntervalSeconds } from "@/lib/cron-utils";
 import type { ActionConfigField } from "@/plugins/registry";
 import { ActionConfigRenderer } from "./action-config-renderer";
 import { CronScheduleBuilder } from "./cron-schedule-builder";

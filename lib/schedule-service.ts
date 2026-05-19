@@ -1,5 +1,6 @@
 import { CronExpressionParser } from "cron-parser";
 import { eq } from "drizzle-orm";
+import { parseIntervalSeconds } from "@/lib/cron-utils";
 import { db } from "@/lib/db";
 import { workflowSchedules } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
@@ -181,21 +182,6 @@ export function extractScheduleConfig(
   return { mode: "cron", cronExpression, timezone };
 }
 
-/**
- * Coerce a `scheduleIntervalSeconds` value (number or numeric string from
- * the trigger config JSONB) into a positive integer, or null if the value
- * is missing or unusable.
- */
-export function parseIntervalSeconds(raw: unknown): number | null {
-  if (raw === undefined || raw === null || raw === "") {
-    return null;
-  }
-  const n = typeof raw === "number" ? raw : Number(raw);
-  if (!Number.isFinite(n) || n <= 0) {
-    return null;
-  }
-  return Math.floor(n);
-}
 
 /**
  * Sync workflow schedule based on trigger configuration

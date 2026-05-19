@@ -5,6 +5,26 @@ const CRON_FIELD_SPLITTER = /\s+/;
 const INTERVAL_PATTERN = /^\*\/(\d+)$/;
 const RANGE_PATTERN = /^(\d+)-(\d+)$/;
 
+/**
+ * KEEP-575: coerce a `scheduleIntervalSeconds` value (number or numeric
+ * string from the trigger config JSONB) into a positive integer, or null
+ * if the value is missing or unusable.
+ *
+ * Lives in cron-utils (not schedule-service) so client components can
+ * import it without dragging the server-only DB connection into the
+ * browser bundle.
+ */
+export function parseIntervalSeconds(raw: unknown): number | null {
+  if (raw === undefined || raw === null || raw === "") {
+    return null;
+  }
+  const n = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    return null;
+  }
+  return Math.floor(n);
+}
+
 const DAY_NAMES = [
   "Sunday",
   "Monday",

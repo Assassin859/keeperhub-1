@@ -1,0 +1,13 @@
+
+> ai-workflow-builder-template@0.1.0 test /home/suisuss/.programming/work/TechOps/keeperhub/.worktrees/KEEP-575
+> vitest run "tests/unit/schedule-service.test.ts" "tests/integration/schedule-sync.test.ts"
+
+
+ RUN  v4.1.2 /home/suisuss/.programming/work/TechOps/keeperhub/.worktrees/KEEP-575
+
+
+ Test Files  2 passed (2)
+      Tests  63 passed (63)
+   Start at  11:37:48
+   Duration  5.18s (transform 1.23s, setup 1.73s, import 1.62s, tests 1.07s, environment 1ms)
+
