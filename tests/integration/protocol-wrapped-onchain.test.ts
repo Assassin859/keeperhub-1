@@ -15,63 +15,16 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 // otherwise throw under vitest's Node runtime.
 vi.mock("server-only", () => ({}));
 
-import { reshapeArgsForAbi } from "@/lib/abi/struct-args";
-import type {
-  ProtocolAction,
-  ProtocolContract,
-  ProtocolDefinition,
-} from "@/lib/protocol-registry";
 import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 import wrappedDef from "@/protocols/wrapped";
+import { buildCalldata } from "./_shared/build-calldata";
 
 const RPC_URL = process.env.INTEGRATION_TEST_RPC_URL;
 const CHAIN_ID = "11155111";
 const SEPOLIA_CHAIN_ID = 11_155_111;
 const TEST_ADDRESS = "0x0000000000000000000000000000000000000001";
-
-function buildCalldata(
-  protocol: ProtocolDefinition,
-  actionSlug: string,
-  sampleInputs: Record<string, string>
-): {
-  to: string;
-  data: string;
-  action: ProtocolAction;
-  contract: ProtocolContract;
-} {
-  const action = protocol.actions.find((a) => a.slug === actionSlug);
-  if (!action) {
-    throw new Error(`Action ${actionSlug} not found`);
-  }
-
-  const contract = protocol.contracts[action.contract];
-  if (!contract.abi) {
-    throw new Error(`Contract ${action.contract} has no ABI`);
-  }
-
-  const contractAddress = contract.addresses[CHAIN_ID];
-  if (!contractAddress) {
-    throw new Error(`Contract ${action.contract} not on chain ${CHAIN_ID}`);
-  }
-
-  const rawArgs = action.inputs.map((inp) => {
-    const val = sampleInputs[inp.name] ?? inp.default ?? "";
-    return val;
-  });
-
-  const abi = JSON.parse(contract.abi);
-  const functionAbi = abi.find(
-    (f: { name: string; type: string }) =>
-      f.type === "function" && f.name === action.function
-  );
-  const args = reshapeArgsForAbi(rawArgs, functionAbi);
-  const iface = new ethers.Interface(abi);
-  const data = iface.encodeFunctionData(action.function, args);
-
-  return { to: contractAddress, data, action, contract };
-}
 
 describe.skipIf(!RPC_URL)("Wrapped on-chain integration", () => {
   // Route every RPC call through the failover manager so a primary-endpoint
@@ -93,9 +46,12 @@ describe.skipIf(!RPC_URL)("Wrapped on-chain integration", () => {
   });
 
   it("balanceOf: eth_call returns a decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata(wrappedDef, "balance-of", {
-      account: TEST_ADDRESS,
-    });
+    const { to, data, contract } = buildCalldata(
+      wrappedDef,
+      "balance-of",
+      { account: TEST_ADDRESS },
+      { chainId: CHAIN_ID }
+    );
 
     const result = await manager.executeWithFailover((p) =>
       p.call({ to, data })
@@ -109,7 +65,12 @@ describe.skipIf(!RPC_URL)("Wrapped on-chain integration", () => {
   }, 15_000);
 
   it("deposit: estimateGas succeeds with ETH value", async () => {
-    const { to, data } = buildCalldata(wrappedDef, "wrap", {});
+    const { to, data } = buildCalldata(
+      wrappedDef,
+      "wrap",
+      {},
+      { chainId: CHAIN_ID }
+    );
 
     const gas = await manager.executeWithFailover((p) =>
       p.estimateGas({
@@ -124,9 +85,12 @@ describe.skipIf(!RPC_URL)("Wrapped on-chain integration", () => {
   }, 15_000);
 
   it("withdraw: calldata encodes correctly (business revert expected)", async () => {
-    const { to, data } = buildCalldata(wrappedDef, "unwrap", {
-      wad: "1000000000000000000",
-    });
+    const { to, data } = buildCalldata(
+      wrappedDef,
+      "unwrap",
+      { wad: "1000000000000000000" },
+      { chainId: CHAIN_ID }
+    );
 
     try {
       await manager.executeWithFailover((p) =>
