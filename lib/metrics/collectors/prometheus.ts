@@ -94,14 +94,29 @@ function getOrCreateGauge(
 // All metrics are GAUGES (point-in-time snapshots). Use max() aggregation across pods.
 // For rate/delta queries, use PromQL delta() function: max(delta(metric[1h]))
 
-// Workflow execution counts by status and org_slug. Personal/anonymous
-// workflows are emitted under org_slug="_anonymous" so the sum across
-// org_slug for a given status equals the global per-status total.
+// Workflow execution counts by status, org_slug, and error_type. Personal/
+// anonymous workflows are emitted under org_slug="_anonymous" so the sum
+// across org_slug for a given status equals the global per-status total.
+//
+// error_type label values:
+//   "user"    - errored execution caused by user input/config/external service
+//   "system"  - errored execution caused by KeeperHub system/infrastructure
+//   "unknown" - errored row predating classification (NULL in DB)
+//   "na"      - non-error status (success/running/pending/cancelled)
+//
+// PromQL queries that do not filter on error_type continue to work — Prometheus
+// auto-aggregates across all label values when a label is unconstrained. The
+// label unlocks platform-side SLI queries (filter error_type="system") and
+// managed-client end-to-end SLI panels that need to separate system vs user
+// failures. Sourced from the DB scan via projection of the existing
+// `workflow_executions.error_type` column, so this metric stays
+// authoritative even when short-lived workflow runner processes exit before
+// Prometheus can scrape their in-memory counters.
 const workflowExecutionsTotal = getOrCreateGauge(
   dbRegistry,
   "keeperhub_workflow_executions_total",
-  "Total workflow executions by status, broken down by org_slug (all-time)",
-  ["status", "org_slug"]
+  "Total workflow executions by status, broken down by org_slug and error_type (all-time)",
+  ["status", "org_slug", "error_type"]
 );
 
 // KEEP-545: the previous DB-sourced gauge `keeperhub_workflow_execution_errors_total`
@@ -773,7 +788,6 @@ const apiErrors = getOrCreateCounter(
 export const ERROR_LABELS = [
   "error_category",
   "error_context",
-  "is_user_error",
   "error_type",
   "plugin_name",
   "action_name",
@@ -864,7 +878,7 @@ const systemWorkflowEngineErrors = getOrCreateCounter(
 //   org_slug       per-organization slug (or ANONYMOUS_ORG_SLUG for personal)
 //   error_category one of the ErrorCategory enum values (validation,
 //                  configuration, database, workflow_engine, etc.)
-//   is_user_error  "true" for workflow-author bugs, "false" for engine/infra
+//   error_type     "user" for workflow-author bugs, "system" for engine/infra
 //
 // Cardinality: ~200 active orgs * 10 categories * 2 = 4k worst case;
 // realistic ~1k (most orgs hit 1-2 categories).
@@ -872,18 +886,18 @@ const workflowExecutionErrorsCreated = getOrCreateCounter(
   apiRegistry,
   "keeperhub_workflow_execution_errors_created_total",
   "Workflow execution errors observed since pod start, by classification",
-  ["org_slug", "error_category", "is_user_error"]
+  ["org_slug", "error_category", "error_type"]
 );
 
 export function recordWorkflowExecutionError(labels: {
   orgSlug: string;
   errorCategory: string;
-  isUserError: boolean;
+  errorType: "user" | "system";
 }): void {
   workflowExecutionErrorsCreated.inc({
     org_slug: labels.orgSlug,
     error_category: labels.errorCategory,
-    is_user_error: labels.isUserError ? "true" : "false",
+    error_type: labels.errorType,
   });
 }
 
@@ -1227,13 +1241,17 @@ export async function updateDbMetrics(): Promise<void> {
       getBillingStatsFromDb(),
     ]);
 
-    // Update workflow execution counts per (status, org_slug). Reset before
-    // populating so series for orgs that no longer have executions in a given
-    // status clear out instead of going stale.
+    // Update workflow execution counts per (status, org_slug, error_type).
+    // Reset before populating so series for orgs that no longer have executions
+    // in a given bucket clear out instead of going stale.
     workflowExecutionsTotal.reset();
     for (const row of workflowStats.executionsByStatusAndOrgSlug) {
       workflowExecutionsTotal.set(
-        { status: row.status, org_slug: row.orgSlug },
+        {
+          status: row.status,
+          org_slug: row.orgSlug,
+          error_type: row.errorType,
+        },
         row.count
       );
     }
