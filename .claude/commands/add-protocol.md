@@ -7,9 +7,9 @@ argument-hint: <protocol-name-or-spec-file>
 Add a new KeeperHub protocol plugin and iterate until the on-chain integration tests pass.
 
 `$ARGUMENTS` is one of:
-- A protocol name (e.g. `"Aave V4"`, `"Pendle"`). Pipeline researches contracts, ABIs, and chains via web search and explorer lookups.
+- A protocol name **including the version when multiple versions are live** (e.g. `"Aave V4"`, `"Uniswap V3"`, `"Compound V3"`, `"Pendle"`). The pipeline researches contracts, ABIs, and chains via web search and explorer lookups.
 - A path to a spec file ending in `.md`. Pipeline reads it as the source of truth and only researches gaps.
-- Empty. Pipeline asks the user what protocol to add.
+- Empty, or a version-ambiguous name (e.g. just `"Aave"`). Pipeline MUST ask the user which version before researching. Do not default to "the latest" - V3 and V4 of Aave are both in active production use today, and each has its own contracts, ABIs, and slug.
 
 DONE when ALL of the following pass:
 - `pnpm test tests/unit/protocol-{slug}.test.ts`
@@ -62,10 +62,15 @@ PHASE 1 - RESEARCH (web search + explorer lookups, BEFORE any code is written)
 
 Use WebSearch and WebFetch to gather concrete facts. Cite URLs and addresses for every claim. Do not guess; if a fact cannot be confirmed, mark it open and surface to the user.
 
-1.1 Identity
+1.1 Identity and version (do this FIRST; everything downstream depends on getting the version right)
 - Canonical name and 1-line description of what the protocol does.
+- **Version**: which specific version of the protocol is being added? Aave V2/V3/V4, Uniswap V2/V3/V4, Compound V2/V3, the Maker -> Sky rebrand, etc. Confirm the exact version explicitly. Do not assume "the latest" or "the most common" - the live deployments answer this, not your priors.
+- Slug convention based on existing protocols in `protocols/`:
+  - When multiple versions of the protocol are supported in this codebase as separate entries, the slug encodes the version: `aave-v3`, `aave-v4`.
+  - When only one version is supported, the slug omits the version: `compound`, `uniswap`, `yearn` (file is named `compound-v3.ts` etc., but slug is bare). This is intentional - users see "Compound", not "Compound V3", in the workflow builder when no other version is exposed.
+  - Decide which case applies based on whether you are adding alongside an existing version of the same protocol.
 - Official website.
-- Confirm the kebab-case slug does not collide with any entry in `protocols/` or `lib/types/integration.ts`.
+- Confirm the chosen slug does not collide with any entry in `protocols/` or `lib/types/integration.ts`.
 
 1.2 Chains
 - Which chains is the protocol deployed on?
@@ -74,15 +79,17 @@ Use WebSearch and WebFetch to gather concrete facts. Cite URLs and addresses for
 
 1.3 Contracts
 - For each contract the user will interact with: label, address per chain, and the curated function set to expose.
+- **Version isolation**: every contract MUST belong to the version identified in Phase 1.1. Do not mix V3 and V4 contracts in one protocol entry. When a version has sub-surfaces (Aave V4 Hub vs Spoke, Uniswap V3 SwapRouter02 vs older SwapRouter, Maker DSR vs Sky Savings Rate), name the exact surface in the contract label.
 - Curate aggressively. Exposing every public function bloats the UI; pick the actions a user actually wants to run.
 - Flag any contract whose address is per-user input (e.g. user supplies a pool address); these set `userSpecifiedAddress: true`.
 
 1.4 ABI
 - Obtain a reduced ABI for each contract. Source order of preference:
-  a. npm package shipped by the protocol team (use the latest tagged release, not main).
-  b. Verified contract on the relevant block explorer (Etherscan-style "Contract" tab).
-  c. Protocol's GitHub repo (look under `abi/`, `artifacts/`, or `out/` for forge projects).
+  a. npm package shipped by the protocol team **for the target version** (use the latest tagged release of that version's package, not main, not a different version's package).
+  b. Verified contract on the relevant block explorer (Etherscan-style "Contract" tab). The explorer page MUST be for the version's deployment address from Phase 1.3 - confirm before copying the ABI. A V3 ABI scraped from a V4 contract page (or vice versa) will compile, pass unit tests, and fail integration tests with `INVALID_ARGUMENT` or `BAD_DATA`.
+  c. Protocol's GitHub repo (look under `abi/`, `artifacts/`, or `out/` for forge projects). Pin to the version's tag or release branch, not `main` or `master`.
   d. Official protocol docs.
+- **ABI-to-version match is a hard gate.** Function signatures drift between versions (Aave V3 `supply(asset, amount, onBehalfOf, referralCode)` becomes V4 `supply(reserveId, amount, onBehalfOf)`). The integration tests in Phase 4 will catch a version mismatch, but the cost is one or more failed iterations. Cite the exact source URL for each ABI in the Phase 2 report so reviewers can verify the version match before any code is written.
 - Reduce: keep only the functions and events being exposed. Drop everything else.
 
 1.5 Documentation URLs
@@ -98,11 +105,11 @@ Use WebSearch and WebFetch to gather concrete facts. Cite URLs and addresses for
 PHASE 2 - CONFIRM (gate: do NOT proceed without explicit user approval)
 
 Post a research report to the user containing:
-- Protocol: name, slug, 1-line description.
+- Protocol: name, **version**, slug, 1-line description. State the version prominently; do not bury it.
 - Chains: intersection list with rationale for each inclusion/exclusion.
-- Contracts: table of label / function set / source ABI URL / docs URL.
+- Contracts: table of label / function set / source ABI URL / docs URL. All contracts belong to the named version only.
 - Definition strategy + why this one fits.
-- ABI source(s) per contract.
+- ABI source(s) per contract, with the version each ABI corresponds to and the exact URL it came from.
 
 WAIT for explicit user confirmation on chains AND contracts. If the user says "add chain X" or "drop function Y", loop back to Phase 1 with the adjustment. Do not begin writing code.
 
@@ -177,6 +184,7 @@ BAIL-OUT CONDITIONS (stop the loop and surface to user):
 - The same integration test failure recurs across 3 consecutive iterations.
 - Research surfaces a chain / contract requirement that conflicts with the Phase 2 confirmation - re-confirm before proceeding.
 - No ABI source can be obtained from any explorer, npm package, GitHub repo, or official docs - escalate; do not invent ABI fragments.
+- **Version ambiguity**: $ARGUMENTS does not uniquely identify a version (e.g. just `"Aave"` when V3 and V4 are both live), OR research surfaces a candidate ABI / contract whose version cannot be confirmed. Surface the available versions to the user and wait for disambiguation. Do not pick a default.
 
 On bail-out, surface to the user:
 - Current state of all generated files.
