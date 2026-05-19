@@ -116,13 +116,17 @@ async function dispatch(): Promise<{
     `[${runId}] Starting dispatch run at ${new Date().toISOString()}`
   );
 
-  // Query all enabled schedules for enabled workflows
-  const schedules = await db
+  // Query all enabled schedules for enabled workflows. KEEP-581: also
+  // select intervalSeconds so we can partition cron-mode vs interval-mode
+  // rows in JS and skip the interval ones (this script only knows the
+  // cron path; the prod dispatcher in keeperhub-scheduler handles both).
+  const allEnabled = await db
     .select({
       id: workflowSchedules.id,
       workflowId: workflowSchedules.workflowId,
       cronExpression: workflowSchedules.cronExpression,
       timezone: workflowSchedules.timezone,
+      intervalSeconds: workflowSchedules.intervalSeconds,
     })
     .from(workflowSchedules)
     .innerJoin(workflows, eq(workflowSchedules.workflowId, workflows.id))
@@ -130,7 +134,23 @@ async function dispatch(): Promise<{
       and(eq(workflowSchedules.enabled, true), eq(workflows.enabled, true))
     );
 
-  console.log(`[${runId}] Found ${schedules.length} enabled schedules`);
+  const schedules = allEnabled.filter((s) => s.intervalSeconds === null);
+  const skippedIntervalCount = allEnabled.length - schedules.length;
+  if (skippedIntervalCount > 0) {
+    // Interval-mode rows store a fixed `0 0 1 1 *` sentinel in
+    // cron_expression. If this script parsed it, the schedule would
+    // "fire" once a year. Skip them explicitly with a log so the
+    // omission is visible rather than just an unexplained drop in
+    // dispatched schedules.
+    console.log(
+      `[${runId}] Skipping ${skippedIntervalCount} interval-mode schedule(s); ` +
+        "this standalone script only dispatches cron-mode rows"
+    );
+  }
+
+  console.log(
+    `[${runId}] Found ${schedules.length} enabled cron-mode schedules`
+  );
 
   const now = new Date();
   let triggered = 0;
