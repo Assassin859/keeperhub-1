@@ -17,7 +17,10 @@ export async function generateMetadata({
 
   // Try to fetch the workflow to get its name
   let title = "Workflow";
-  let isPublic = false;
+  // isShareable = anyone with the link may view (public OR unlisted). Drives
+  // both name/OG-image exposure in metadata and rich link previews; private
+  // workflows stay fully redacted to prevent name enumeration.
+  let isShareable = false;
 
   try {
     const workflow = await db.query.workflows.findFirst({
@@ -29,10 +32,8 @@ export async function generateMetadata({
     });
 
     if (workflow) {
-      isPublic = workflow.visibility === "public";
-      // Only expose workflow name in metadata if it's public
-      // This prevents private workflow name enumeration
-      if (isPublic) {
+      isShareable = workflow.visibility !== "private";
+      if (isShareable) {
         title = workflow.name;
       }
     }
@@ -43,7 +44,7 @@ export async function generateMetadata({
   const baseUrl =
     process.env.NEXT_PUBLIC_APP_URL || "https://app.keeperhub.com";
   const workflowUrl = `${baseUrl}/workflows/${workflowId}`;
-  const ogImageUrl = isPublic
+  const ogImageUrl = isShareable
     ? `${baseUrl}/api/og/workflow/${workflowId}`
     : `${baseUrl}/api/og/default`;
 

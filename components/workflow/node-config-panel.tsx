@@ -883,8 +883,8 @@ export const PanelInner = () => {
               {!isOwner && (
                 <div className="rounded-lg border border-muted bg-muted/30 p-3">
                   <p className="text-muted-foreground text-sm">
-                    You are viewing a public workflow. Duplicate it to make
-                    changes.
+                    You're viewing this workflow in read-only mode.
+                    Use it as a template to create your own editable copy.
                   </p>
                 </div>
               )}
@@ -1160,8 +1160,8 @@ export const PanelInner = () => {
               {!isOwner && (
                 <div className="rounded-lg border border-muted bg-muted/30 p-3">
                   <p className="text-muted-foreground text-sm">
-                    You are viewing a public workflow. Duplicate it to make
-                    changes.
+                    You're viewing this workflow in read-only mode.
+                    Use it as a template to create your own editable copy.
                   </p>
                 </div>
               )}
