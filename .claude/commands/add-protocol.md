@@ -65,10 +65,8 @@ Use WebSearch and WebFetch to gather concrete facts. Cite URLs and addresses for
 1.1 Identity and version (do this FIRST; everything downstream depends on getting the version right)
 - Canonical name and 1-line description of what the protocol does.
 - **Version**: which specific version of the protocol is being added? Aave V2/V3/V4, Uniswap V2/V3/V4, Compound V2/V3, the Maker -> Sky rebrand, etc. Confirm the exact version explicitly. Do not assume "the latest" or "the most common" - the live deployments answer this, not your priors.
-- Slug convention based on existing protocols in `protocols/`:
-  - When multiple versions of the protocol are supported in this codebase as separate entries, the slug encodes the version: `aave-v3`, `aave-v4`.
-  - When only one version is supported, the slug omits the version: `compound`, `uniswap`, `yearn` (file is named `compound-v3.ts` etc., but slug is bare). This is intentional - users see "Compound", not "Compound V3", in the workflow builder when no other version is exposed.
-  - Decide which case applies based on whether you are adding alongside an existing version of the same protocol.
+- Slug convention: **the slug tracks the protocol's own version branding**. If the protocol team brands itself as V2 / V3 / V4 in their docs and product UI (Aave V4, Uniswap V3, Compound III, Frax Ether V2), the slug includes that version suffix: `aave-v4`, `uniswap-v3`, `frax-ether-v2`. If the protocol does not version itself externally (WETH, ENS, Disperse, Multicall3), the slug omits a version. This rule applies whether or not an earlier version is already present in keeperhub - we are following the protocol's branding, not disambiguating internal entries.
+- Pre-existing inconsistencies: a few protocols already in `protocols/` (`compound`, `uniswap`, `yearn`) use bare slugs even though the protocols they wrap brand themselves as V3, and their files are named `compound-v3.ts` / `uniswap-v3.ts` / `yearn-v3.ts`. These predate the rule above. Do not perpetuate them: new protocols MUST follow the protocol-version-branding rule, even when the result feels redundant.
 - Official website.
 - Confirm the chosen slug does not collide with any entry in `protocols/` or `lib/types/integration.ts`.
 
