@@ -23,6 +23,7 @@ export const SAFE_SETUP_ABI = [
  */
 export const SAFE_PROXY_FACTORY_ABI = [
   "function createProxyWithNonce(address _singleton, bytes initializer, uint256 saltNonce) returns (address proxy)",
+  "function proxyCreationCode() view returns (bytes)",
   "event ProxyCreation(address indexed proxy, address singleton)",
 ] as const;
 
@@ -138,4 +139,49 @@ export function buildCreateProxyCalldata(options: {
     options.initializer,
     options.saltNonce,
   ]);
+}
+
+/**
+ * Predict the CREATE2 address of the Safe proxy BEFORE the deploy tx
+ * actually executes. Mirrors what `SafeProxyFactory.createProxyWithNonce`
+ * does on-chain:
+ *
+ *   salt        = keccak256(keccak256(initializer) || saltNonce)
+ *   initCode    = proxyCreationCode ++ abi.encode(singleton)
+ *   address     = keccak256(0xff ++ factory ++ salt ++ keccak256(initCode))[12:]
+ *
+ * `proxyCreationCode` is fetched from the factory at call time rather than
+ * hardcoded so future Safe-version bumps don't drift this helper. Caller
+ * supplies an ethers Provider so the read can route through the
+ * RpcProviderManager's failover if desired.
+ *
+ * Returns a checksummed (EIP-55) address. Pure once the proxyCreationCode
+ * has been fetched; no side effects.
+ */
+export async function computeSafeProxyAddress(options: {
+  provider: ethers.Provider;
+  factory: string;
+  singleton: string;
+  initializer: string;
+  saltNonce: bigint;
+}): Promise<string> {
+  const { provider, factory, singleton, initializer, saltNonce } = options;
+  const factoryContract = new ethers.Contract(
+    factory,
+    SAFE_PROXY_FACTORY_ABI,
+    provider
+  );
+  const proxyCreationCode =
+    (await factoryContract.proxyCreationCode()) as string;
+  const salt = ethers.keccak256(
+    ethers.solidityPacked(
+      ["bytes32", "uint256"],
+      [ethers.keccak256(initializer), saltNonce]
+    )
+  );
+  const initCode = ethers.concat([
+    proxyCreationCode,
+    ethers.AbiCoder.defaultAbiCoder().encode(["address"], [singleton]),
+  ]);
+  return ethers.getCreate2Address(factory, salt, ethers.keccak256(initCode));
 }
