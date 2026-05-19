@@ -42,18 +42,28 @@ const STUCK_WINDOW_MS = MONITOR_RECREATE_MS + 2_000;
 type Scenario = "healthy" | "zombie" | "subscribe-no-response";
 
 function startMockServer(
-  port: number,
   scenario: Scenario,
-): { server: WebSocketServer; serverStarted: Promise<void> } {
+): {
+  server: WebSocketServer;
+  serverStarted: Promise<number>;
+} {
   let blockNumber = 0x1000;
-  // Bind to loopback only. WebSocketServer's default host is 0.0.0.0, which
-  // opens a transient public port on CI runners. Tests are loopback-only by
-  // construction; there is no reason to advertise externally.
-  const server = new WebSocketServer({ port, host: "127.0.0.1" });
+  // Port 0 => OS picks a free port. Read the actual port back from
+  // server.address() once listening fires. Removes flake from a
+  // static-counter scheme racing against anything else on the host.
+  // Loopback-only for the reasons in the previous commit.
+  const server = new WebSocketServer({ port: 0, host: "127.0.0.1" });
   const subscriptions = new Map<string, NodeJS.Timeout>();
 
-  const serverStarted = new Promise<void>((resolve, reject) => {
-    server.once("listening", () => resolve());
+  const serverStarted = new Promise<number>((resolve, reject) => {
+    server.once("listening", () => {
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        reject(new Error("server.address() did not return an AddressInfo"));
+        return;
+      }
+      resolve(address.port);
+    });
     server.once("error", reject);
   });
 
@@ -224,7 +234,7 @@ function isBenignDestroyRace(reason: unknown): boolean {
 describe("KEEP-570 integration: ChainMonitor warning patterns against a real ws mock", () => {
   let serverHandle: {
     server: WebSocketServer;
-    serverStarted: Promise<void>;
+    serverStarted: Promise<number>;
   } | null = null;
   let monitor: ChainMonitor | null = null;
   let warningCapture: { warnings: string[]; restore: () => void } | null = null;
@@ -236,7 +246,6 @@ describe("KEEP-570 integration: ChainMonitor warning patterns against a real ws 
       throw reason;
     }
   };
-  let port = 19100;
 
   beforeAll(() => {
     process.on("unhandledRejection", rejectionHandler);
@@ -247,7 +256,6 @@ describe("KEEP-570 integration: ChainMonitor warning patterns against a real ws 
   });
 
   beforeEach(() => {
-    port++;
     vi.stubEnv("BLOCK_ADVANCE_TIMEOUT_MS", String(BLOCK_ADVANCE_MS));
     vi.stubEnv("MONITOR_RECREATE_TIMEOUT_MS", String(MONITOR_RECREATE_MS));
     vi.stubEnv("PRIMARY_PROBE_INTERVAL_MS", String(PRIMARY_PROBE_INTERVAL_MS));
@@ -275,8 +283,8 @@ describe("KEEP-570 integration: ChainMonitor warning patterns against a real ws 
   });
 
   it("zombie mode -> warning shows subscriptionPushes=0, blocksReceived=0", async () => {
-    serverHandle = startMockServer(port, "zombie");
-    await serverHandle.serverStarted;
+    serverHandle = startMockServer("zombie");
+    const port = await serverHandle.serverStarted;
 
     monitor = new ChainMonitor({
       chain: makeChain(port),
@@ -310,8 +318,8 @@ describe("KEEP-570 integration: ChainMonitor warning patterns against a real ws 
   }, 30_000);
 
   it("subscribe-no-response mode -> warning shows subscriptionPushes>0, blocksReceived=0 (ethers routing bug)", async () => {
-    serverHandle = startMockServer(port, "subscribe-no-response");
-    await serverHandle.serverStarted;
+    serverHandle = startMockServer("subscribe-no-response");
+    const port = await serverHandle.serverStarted;
 
     monitor = new ChainMonitor({
       chain: makeChain(port),
@@ -344,8 +352,8 @@ describe("KEEP-570 integration: ChainMonitor warning patterns against a real ws 
   }, 30_000);
 
   it("healthy mode -> blocks arrive, no stuck warning, isAlive stays true", async () => {
-    serverHandle = startMockServer(port, "healthy");
-    await serverHandle.serverStarted;
+    serverHandle = startMockServer("healthy");
+    const port = await serverHandle.serverStarted;
 
     monitor = new ChainMonitor({
       chain: makeChain(port),
