@@ -581,7 +581,12 @@ export const workflowSchedules = pgTable(
     // KEEP-575: true-interval scheduling. When intervalSeconds is set, the
     // dispatcher fires on anchorAt + k * intervalSeconds instead of parsing
     // cronExpression. This expresses "every 55 minutes" accurately, which
-    // a 5-field cron cannot when the period doesn't divide 60.
+    // a 5-field cron cannot when the period doesn't divide 60. In that mode
+    // cronExpression holds a fixed non-match sentinel (see
+    // INTERVAL_MODE_CRON_PLACEHOLDER) and `timezone` is unused by the
+    // dispatcher -- interval math is in raw milliseconds. The column is
+    // still populated for display purposes and stays meaningful for cron
+    // mode.
     intervalSeconds: integer("interval_seconds"),
     anchorAt: timestamp("anchor_at", { withTimezone: true }),
     timezone: text("timezone").notNull().default("UTC"),
