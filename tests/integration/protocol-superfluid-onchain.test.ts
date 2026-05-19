@@ -20,12 +20,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 // otherwise throw under vitest's Node runtime.
 vi.mock("server-only", () => ({}));
 
-import { coerceArgsForAbi, reshapeArgsForAbi } from "@/lib/abi/struct-args";
-import type {
-  ProtocolAction,
-  ProtocolContract,
-  ProtocolDefinition,
-} from "@/lib/protocol-registry";
+import type { ProtocolAction, ProtocolContract } from "@/lib/protocol-registry";
 import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
@@ -33,6 +28,7 @@ import superfluidDef, {
   CFA_FORWARDER_ADDRESS,
   GDA_FORWARDER_ADDRESS,
 } from "@/protocols/superfluid";
+import { buildCalldata } from "./_shared/build-calldata";
 
 const RPC_URL = process.env.INTEGRATION_TEST_RPC_URL;
 const CHAIN_ID = "11155111";
@@ -78,55 +74,6 @@ const DUMMY_BYTES = "0x";
 const DISPATCH_FAILURE_RE =
   /INVALID_ARGUMENT|could not decode|invalid function|missing revert data|,\s*data="0x"/;
 
-function buildCalldata(
-  protocol: ProtocolDefinition,
-  actionSlug: string,
-  sampleInputs: Record<string, string>,
-  contractAddressOverride?: string
-): {
-  to: string;
-  data: string;
-  action: ProtocolAction;
-  contract: ProtocolContract;
-} {
-  const action = protocol.actions.find((a) => a.slug === actionSlug);
-  if (!action) {
-    throw new Error(`Action ${actionSlug} not found`);
-  }
-
-  const contract = protocol.contracts[action.contract];
-  if (!contract.abi) {
-    throw new Error(`Contract ${action.contract} has no ABI`);
-  }
-
-  const contractAddress =
-    contractAddressOverride ?? contract.addresses[CHAIN_ID];
-  if (!contractAddress) {
-    throw new Error(
-      `Contract ${action.contract} not on chain ${CHAIN_ID} and no override given`
-    );
-  }
-
-  const rawArgs = action.inputs.map(
-    (inp) => sampleInputs[inp.name] ?? inp.default ?? ""
-  );
-
-  const abi = JSON.parse(contract.abi);
-  const functionAbi = abi.find(
-    (f: { name: string; type: string }) =>
-      f.type === "function" && f.name === action.function
-  );
-  // Reproduce the production pipeline: reshape flat args into tuples per
-  // ABI, then coerce stringly-typed leaves (bool "false" -> false) before
-  // encoding. Same order as plugins/web3/steps/write-contract-core.ts.
-  const reshaped = reshapeArgsForAbi(rawArgs, functionAbi);
-  const args = coerceArgsForAbi(reshaped, functionAbi);
-  const iface = new ethers.Interface(abi);
-  const data = iface.encodeFunctionData(action.function, args);
-
-  return { to: contractAddress, data, action, contract };
-}
-
 describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
   let manager: RpcProviderManager;
 
@@ -158,7 +105,11 @@ describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
       superfluidDef,
       slug,
       inputs,
-      contractAddressOverride
+      {
+        chainId: CHAIN_ID,
+        toOverride: contractAddressOverride,
+        coerceArgs: true,
+      }
     );
     const result = await manager.executeWithFailover((p) =>
       p.call({ to, data })
@@ -178,12 +129,11 @@ describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
     inputs: Record<string, string>,
     contractAddressOverride?: string
   ): Promise<string> {
-    const { to, data } = buildCalldata(
-      superfluidDef,
-      slug,
-      inputs,
-      contractAddressOverride
-    );
+    const { to, data } = buildCalldata(superfluidDef, slug, inputs, {
+      chainId: CHAIN_ID,
+      toOverride: contractAddressOverride,
+      coerceArgs: true,
+    });
     try {
       await manager.executeWithFailover((p) =>
         p.estimateGas({ to, data, from: TEST_ADDRESS })

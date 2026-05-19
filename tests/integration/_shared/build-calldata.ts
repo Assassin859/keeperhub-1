@@ -24,7 +24,7 @@
  */
 
 import { ethers } from "ethers";
-import { reshapeArgsForAbi } from "@/lib/abi/struct-args";
+import { coerceArgsForAbi, reshapeArgsForAbi } from "@/lib/abi/struct-args";
 import type {
   ProtocolAction,
   ProtocolContract,
@@ -51,6 +51,17 @@ export type BuildCalldataOptions = {
    * than from the protocol definition.
    */
   toOverride?: string;
+  /**
+   * Run `coerceArgsForAbi` after `reshapeArgsForAbi`, matching the
+   * production write path in `plugins/web3/steps/write-contract-core.ts`
+   * (reshape -> coerce -> encode). Required for protocols whose sample
+   * inputs include stringly-typed booleans (`"true"`, `"false"`), since
+   * `ethers.encodeFunctionData` treats any non-empty string as truthy and
+   * silently encodes `"false"` as `true`. Default off to preserve the
+   * pre-existing behavior of the 4 test suites converted in the same
+   * PR as this helper; opt in per call site as needed.
+   */
+  coerceArgs?: boolean;
 };
 
 export function buildCalldata(
@@ -85,7 +96,10 @@ export function buildCalldata(
     (f: { name: string; type: string }) =>
       f.type === "function" && f.name === action.function
   );
-  const args = reshapeArgsForAbi(rawArgs, functionAbi);
+  const reshaped = reshapeArgsForAbi(rawArgs, functionAbi);
+  const args = options.coerceArgs
+    ? coerceArgsForAbi(reshaped, functionAbi)
+    : reshaped;
   const iface = new ethers.Interface(abi);
   const data = iface.encodeFunctionData(action.function, args);
 
