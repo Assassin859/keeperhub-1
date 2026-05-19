@@ -47,12 +47,32 @@ export async function PUT(
 
     const body = await request.json().catch(() => ({}));
     const name = body.name?.trim();
+    const rawMode = body.mode;
+    const mode: "public" | "unlisted" =
+      rawMode === "unlisted" ? "unlisted" : "public";
+
+    if (rawMode !== undefined && rawMode !== "public" && rawMode !== "unlisted") {
+      return NextResponse.json(
+        { error: "Invalid mode. Must be 'public' or 'unlisted'." },
+        { status: 400 }
+      );
+    }
+
     const publicTagIds: string[] = Array.isArray(body.publicTagIds)
       ? body.publicTagIds
       : [];
 
     if (!name) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
+    }
+
+    // Unlisted = link-only sharing; tags are a Hub-discovery feature, so
+    // reject tag payloads under unlisted rather than silently dropping them.
+    if (mode === "unlisted" && publicTagIds.length > 0) {
+      return NextResponse.json(
+        { error: "Tags are not allowed when sharing as unlisted." },
+        { status: 400 }
+      );
     }
 
     if (publicTagIds.length > 5) {
@@ -67,16 +87,18 @@ export async function PUT(
         .update(workflows)
         .set({
           name,
-          visibility: "public",
+          visibility: mode,
           updatedAt: new Date(),
         })
         .where(eq(workflows.id, workflowId));
 
+      // Unlisted workflows never carry Hub tags; clear any leftover rows
+      // from a previous public listing so demote-to-unlisted is clean.
       await tx
         .delete(workflowPublicTags)
         .where(eq(workflowPublicTags.workflowId, workflowId));
 
-      if (publicTagIds.length > 0) {
+      if (mode === "public" && publicTagIds.length > 0) {
         await tx.insert(workflowPublicTags).values(
           publicTagIds.map((tagId) => ({
             workflowId,

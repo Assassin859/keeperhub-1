@@ -9,7 +9,7 @@ import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 import type { IntegrationConfig, IntegrationType } from "./types/integration";
 
 // Workflow data types
-export type WorkflowVisibility = "private" | "public";
+export type WorkflowVisibility = "private" | "unlisted" | "public";
 
 export type WorkflowData = {
   id?: string;
@@ -567,7 +567,14 @@ export const workflowApi = {
       body: JSON.stringify({}),
     }),
 
-  goLive: (id: string, data: { name: string; publicTagIds: string[] }) =>
+  goLive: (
+    id: string,
+    data: {
+      name: string;
+      publicTagIds?: string[];
+      mode?: "public" | "unlisted";
+    }
+  ) =>
     apiCall<SavedWorkflow>(`/api/workflows/${id}/go-live`, {
       method: "PUT",
       body: JSON.stringify(data),
