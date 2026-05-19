@@ -17,7 +17,10 @@ export type FundingHistoryInput = StepInput & FundingHistoryCoreInput;
 
 function parseTimestamp(value: string | number): number | null {
   const n = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(n) ? Math.trunc(n) : null;
+  if (!Number.isInteger(n) || n <= 0) {
+    return null;
+  }
+  return n;
 }
 
 async function stepHandler(
@@ -31,7 +34,7 @@ async function stepHandler(
   if (startTime === null) {
     return {
       success: false,
-      error: "startTime must be a Unix timestamp in milliseconds",
+      error: "startTime must be a positive integer Unix timestamp in milliseconds",
     };
   }
 
@@ -46,7 +49,13 @@ async function stepHandler(
     if (endTime === null) {
       return {
         success: false,
-        error: "endTime must be a Unix timestamp in milliseconds",
+        error: "endTime must be a positive integer Unix timestamp in milliseconds",
+      };
+    }
+    if (endTime < startTime) {
+      return {
+        success: false,
+        error: "endTime must be greater than or equal to startTime",
       };
     }
     body.endTime = endTime;

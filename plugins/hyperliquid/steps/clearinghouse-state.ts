@@ -5,7 +5,7 @@ import {
   type StepInput,
   withStepLogging,
 } from "@/lib/workflow/executor/step-handler";
-import { type InfoResult, postInfo } from "./info-request-core";
+import { type InfoResult, isEvmAddress, postInfo } from "./info-request-core";
 
 export type ClearinghouseStateCoreInput = {
   user: string;
@@ -17,8 +17,8 @@ export type ClearinghouseStateInput = StepInput & ClearinghouseStateCoreInput;
 async function stepHandler(
   input: ClearinghouseStateCoreInput
 ): Promise<InfoResult> {
-  if (!input.user) {
-    return { success: false, error: "User address is required" };
+  if (!isEvmAddress(input.user)) {
+    return { success: false, error: "User must be a 0x-prefixed EVM address" };
   }
 
   const body: Record<string, unknown> = {

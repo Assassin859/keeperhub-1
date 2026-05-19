@@ -1,6 +1,6 @@
 import { safeFetch } from "@/lib/safe-fetch";
+import { HYPERLIQUID_INFO_URL } from "./steps/info-request-core";
 
-const HYPERLIQUID_INFO_URL = "https://api.hyperliquid.xyz/info";
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 export async function testHyperliquid(

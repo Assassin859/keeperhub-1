@@ -5,7 +5,7 @@ import {
   type StepInput,
   withStepLogging,
 } from "@/lib/workflow/executor/step-handler";
-import { type InfoResult, postInfo } from "./info-request-core";
+import { type InfoResult, isEvmAddress, postInfo } from "./info-request-core";
 
 export type SubAccountsCoreInput = {
   user: string;
@@ -14,8 +14,11 @@ export type SubAccountsCoreInput = {
 export type SubAccountsInput = StepInput & SubAccountsCoreInput;
 
 async function stepHandler(input: SubAccountsCoreInput): Promise<InfoResult> {
-  if (!input.user) {
-    return { success: false, error: "Master address is required" };
+  if (!isEvmAddress(input.user)) {
+    return {
+      success: false,
+      error: "Master address must be a 0x-prefixed EVM address",
+    };
   }
 
   return postInfo({ type: "subAccounts", user: input.user }, "sub-accounts");

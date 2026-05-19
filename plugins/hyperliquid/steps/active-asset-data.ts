@@ -5,7 +5,7 @@ import {
   type StepInput,
   withStepLogging,
 } from "@/lib/workflow/executor/step-handler";
-import { type InfoResult, postInfo } from "./info-request-core";
+import { type InfoResult, isEvmAddress, postInfo } from "./info-request-core";
 
 export type ActiveAssetDataCoreInput = {
   user: string;
@@ -14,11 +14,15 @@ export type ActiveAssetDataCoreInput = {
 
 export type ActiveAssetDataInput = StepInput & ActiveAssetDataCoreInput;
 
+// Hyperliquid's `activeAssetCtx` is a WebSocket subscription type, not an
+// Info POST endpoint. The Info equivalent that returns the same user+coin
+// context (leverage, max trade sizes, available balance, mark price) is
+// `activeAssetData`.
 async function stepHandler(
   input: ActiveAssetDataCoreInput
 ): Promise<InfoResult> {
-  if (!input.user) {
-    return { success: false, error: "User address is required" };
+  if (!isEvmAddress(input.user)) {
+    return { success: false, error: "User must be a 0x-prefixed EVM address" };
   }
   if (!input.coin) {
     return { success: false, error: "Coin is required" };

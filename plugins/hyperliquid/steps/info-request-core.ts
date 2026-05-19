@@ -4,7 +4,13 @@ import { ErrorCategory, logUserError } from "@/lib/logging";
 import { safeFetch } from "@/lib/safe-fetch";
 import { getErrorMessage } from "@/lib/utils";
 
-const HYPERLIQUID_INFO_URL = "https://api.hyperliquid.xyz/info";
+export const HYPERLIQUID_INFO_URL = "https://api.hyperliquid.xyz/info";
+
+const EVM_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
+
+export function isEvmAddress(value: unknown): value is string {
+  return typeof value === "string" && EVM_ADDRESS_PATTERN.test(value);
+}
 
 export type InfoResult<T = unknown> =
   | { success: true; data: T }
@@ -40,7 +46,45 @@ export async function postInfo<T = unknown>(
       };
     }
 
-    const data = (await response.json()) as T;
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!contentType.includes("application/json")) {
+      const preview = (await response.text().catch(() => "")).slice(0, 120);
+      logUserError(
+        ErrorCategory.VALIDATION,
+        "[Hyperliquid] Non-JSON 2xx response:",
+        { contentType, preview },
+        {
+          plugin_name: "hyperliquid",
+          action_name: actionName,
+          service: "hyperliquid",
+        }
+      );
+      return {
+        success: false,
+        error: `Hyperliquid returned non-JSON content-type "${contentType}"`,
+      };
+    }
+
+    let data: T;
+    try {
+      data = (await response.json()) as T;
+    } catch (parseError: unknown) {
+      logUserError(
+        ErrorCategory.VALIDATION,
+        "[Hyperliquid] Failed to parse JSON response:",
+        parseError,
+        {
+          plugin_name: "hyperliquid",
+          action_name: actionName,
+          service: "hyperliquid",
+        }
+      );
+      return {
+        success: false,
+        error: `Invalid JSON response from Hyperliquid: ${getErrorMessage(parseError)}`,
+      };
+    }
+
     return { success: true, data };
   } catch (error: unknown) {
     logUserError(

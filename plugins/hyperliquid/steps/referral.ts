@@ -5,7 +5,7 @@ import {
   type StepInput,
   withStepLogging,
 } from "@/lib/workflow/executor/step-handler";
-import { type InfoResult, postInfo } from "./info-request-core";
+import { type InfoResult, isEvmAddress, postInfo } from "./info-request-core";
 
 export type ReferralCoreInput = {
   user: string;
@@ -14,8 +14,8 @@ export type ReferralCoreInput = {
 export type ReferralInput = StepInput & ReferralCoreInput;
 
 async function stepHandler(input: ReferralCoreInput): Promise<InfoResult> {
-  if (!input.user) {
-    return { success: false, error: "User address is required" };
+  if (!isEvmAddress(input.user)) {
+    return { success: false, error: "User must be a 0x-prefixed EVM address" };
   }
 
   return postInfo({ type: "referral", user: input.user }, "referral");

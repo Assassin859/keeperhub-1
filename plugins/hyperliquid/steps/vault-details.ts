@@ -5,7 +5,7 @@ import {
   type StepInput,
   withStepLogging,
 } from "@/lib/workflow/executor/step-handler";
-import { type InfoResult, postInfo } from "./info-request-core";
+import { type InfoResult, isEvmAddress, postInfo } from "./info-request-core";
 
 export type VaultDetailsCoreInput = {
   vaultAddress: string;
@@ -17,15 +17,24 @@ export type VaultDetailsInput = StepInput & VaultDetailsCoreInput;
 async function stepHandler(
   input: VaultDetailsCoreInput
 ): Promise<InfoResult> {
-  if (!input.vaultAddress) {
-    return { success: false, error: "Vault address is required" };
+  if (!isEvmAddress(input.vaultAddress)) {
+    return {
+      success: false,
+      error: "Vault address must be a 0x-prefixed EVM address",
+    };
   }
 
   const body: Record<string, unknown> = {
     type: "vaultDetails",
     vaultAddress: input.vaultAddress,
   };
-  if (input.user) {
+  if (input.user !== undefined && input.user !== "") {
+    if (!isEvmAddress(input.user)) {
+      return {
+        success: false,
+        error: "User must be a 0x-prefixed EVM address",
+      };
+    }
     body.user = input.user;
   }
 
