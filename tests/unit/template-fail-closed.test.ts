@@ -19,6 +19,29 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
+// KEEP-525 step 1: spy on logging + metrics to assert the legacy-mode
+// telemetry shape (warn-level, dedicated counter, no engine-error bump).
+// vi.hoisted is required because vi.mock factories are hoisted above the
+// top-level statements, so plain const declarations cannot be referenced.
+const { mockIncrementCounter, mockLogSystemWarn, mockLogSystemError } =
+  vi.hoisted(() => ({
+    mockIncrementCounter: vi.fn(),
+    mockLogSystemWarn: vi.fn(),
+    mockLogSystemError: vi.fn(),
+  }));
+
+vi.mock("@/lib/logging", () => ({
+  ErrorCategory: { WORKFLOW_ENGINE: "workflow_engine" },
+  logSystemError: mockLogSystemError,
+  logSystemWarn: mockLogSystemWarn,
+}));
+
+vi.mock("@/lib/metrics", () => ({
+  getMetricsCollector: () => ({
+    incrementCounter: mockIncrementCounter,
+  }),
+}));
+
 import { processTemplate } from "@/lib/utils/template";
 import {
   extractTemplateParameters,
@@ -33,6 +56,7 @@ import {
 
 const ENV_KEY = "KEEPERHUB_TEMPLATE_RESOLVE_MODE";
 const UNRESOLVED_REF_MESSAGE = /Unresolved template reference/;
+const LEGACY_COUNTER = "template.resolve.legacy_substitution.total";
 
 const baseOutputs = {
   trigger: {
@@ -43,6 +67,9 @@ const baseOutputs = {
 
 afterEach(() => {
   process.env[ENV_KEY] = undefined;
+  mockIncrementCounter.mockClear();
+  mockLogSystemWarn.mockClear();
+  mockLogSystemError.mockClear();
 });
 
 describe("processTemplate tracker (lib/utils/template)", () => {
@@ -104,6 +131,91 @@ describe("assertResolved (executor strict gate)", () => {
     expect(() =>
       assertResolved(tracker, { value: "" }, { actionType: "Webhook" })
     ).not.toThrow();
+  });
+
+  // KEEP-525 step 1: legacy mode previously used logSystemError, which
+  // bumped the generic engine-errors counter and paged on-call. The
+  // dedicated counter below is what dashboards consume to quantify the
+  // exposure window without alert noise.
+  describe("KEEP-525: legacy-mode telemetry shape", () => {
+    it("emits the dedicated counter with action_type + single reason label", () => {
+      process.env[ENV_KEY] = "legacy";
+
+      const tracker = createTracker();
+      tracker.unresolved.push({
+        token: "{{@missing:Foo}}",
+        reason: "no-node",
+      });
+      assertResolved(tracker, { value: "" }, { actionType: "ENS Write" });
+
+      expect(mockIncrementCounter).toHaveBeenCalledWith(LEGACY_COUNTER, {
+        action_type: "ENS Write",
+        reason: "no-node",
+      });
+      expect(mockLogSystemWarn).toHaveBeenCalledTimes(1);
+    });
+
+    it("labels the reason as 'mixed' when multiple distinct reasons fire", () => {
+      process.env[ENV_KEY] = "legacy";
+
+      const tracker = createTracker();
+      tracker.unresolved.push({ token: "{{@missing:Foo}}", reason: "no-node" });
+      tracker.unresolved.push({
+        token: "{{@trigger:Trigger.bad}}",
+        reason: "no-path",
+      });
+      assertResolved(tracker, { value: "" }, { actionType: "HTTP Request" });
+
+      expect(mockIncrementCounter).toHaveBeenCalledWith(LEGACY_COUNTER, {
+        action_type: "HTTP Request",
+        reason: "mixed",
+      });
+    });
+
+    it("does not call logSystemError in legacy mode (no on-call page)", () => {
+      process.env[ENV_KEY] = "legacy";
+
+      const tracker = createTracker();
+      tracker.unresolved.push({
+        token: "{{@missing:Foo}}",
+        reason: "no-node",
+      });
+      assertResolved(tracker, { value: "" }, { actionType: "Webhook" });
+
+      expect(mockLogSystemError).not.toHaveBeenCalled();
+    });
+
+    it("derives literal-leftover from post-scan and includes it in the reason label", () => {
+      process.env[ENV_KEY] = "legacy";
+
+      const tracker = createTracker();
+      assertResolved(
+        tracker,
+        { value: "Address: {{Trigger.unknownField}}" },
+        { actionType: "ENS Write" }
+      );
+
+      expect(mockIncrementCounter).toHaveBeenCalledWith(LEGACY_COUNTER, {
+        action_type: "ENS Write",
+        reason: "literal-leftover",
+      });
+    });
+
+    it("defaults action_type label to 'unknown' when context omits it", () => {
+      process.env[ENV_KEY] = "legacy";
+
+      const tracker = createTracker();
+      tracker.unresolved.push({
+        token: "{{@missing:Foo}}",
+        reason: "no-node",
+      });
+      assertResolved(tracker, { value: "" }, {});
+
+      expect(mockIncrementCounter).toHaveBeenCalledWith(LEGACY_COUNTER, {
+        action_type: "unknown",
+        reason: "no-node",
+      });
+    });
   });
 
   it("detects displayPattern literal pass-through in strict mode", () => {

@@ -15,7 +15,9 @@
  *     operators can quantify exposure during the transition window.
  */
 
-import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { ErrorCategory, logSystemWarn } from "@/lib/logging";
+import { getMetricsCollector } from "@/lib/metrics";
+import { MetricNames } from "@/lib/metrics/types";
 
 const TEMPLATE_LITERAL_SCAN = /\{\{[^}]+\}\}/g;
 
@@ -127,7 +129,22 @@ export function assertResolved(
 
   const mode = getTemplateResolveMode();
   if (mode === "legacy") {
-    logSystemError(
+    // KEEP-525: previously logSystemError, which paged on-call (Sentry error
+    // event) and bumped the generic engine-errors counter. That made the
+    // would-have-aborted exposure question unanswerable from dashboards.
+    // We now emit a dedicated counter (one bump per assertResolved call that
+    // hit the legacy passthrough) so `sum(rate(...))` answers
+    // "executions/day that would have aborted under strict", filterable by
+    // `action_type` for the write/read split needed by Step 2.
+    getMetricsCollector().incrementCounter(
+      MetricNames.TEMPLATE_RESOLVE_LEGACY_SUBSTITUTIONS,
+      {
+        action_type: context.actionType ?? "unknown",
+        reason: summarizeReason(all),
+      }
+    );
+
+    logSystemWarn(
       ErrorCategory.WORKFLOW_ENGINE,
       "[Template] unresolved references in legacy mode (would fail in strict)",
       new Error(formatErrorMessage(all)),
@@ -142,6 +159,24 @@ export function assertResolved(
   }
 
   throw new TemplateResolutionError(all);
+}
+
+/**
+ * Reduce the unresolved set to a single low-cardinality label value for the
+ * legacy-substitution counter. Single reason → that reason; multiple distinct
+ * reasons in one call → "mixed". Keeps the label cardinality bounded to the
+ * fixed UnresolvedReason enum plus "mixed".
+ */
+function summarizeReason(refs: UnresolvedRef[]): UnresolvedReason | "mixed" {
+  const reasons = new Set<UnresolvedReason>();
+  for (const ref of refs) {
+    reasons.add(ref.reason);
+    if (reasons.size > 1) {
+      return "mixed";
+    }
+  }
+  const [only] = reasons;
+  return only ?? "mixed";
 }
 
 function dedupeByToken(refs: UnresolvedRef[]): UnresolvedRef[] {
