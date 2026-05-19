@@ -262,6 +262,18 @@ export function isProtocolAvailableOnChain(
   return PROTOCOL_CATALOG[slug]?.chainIds.includes(chainId) ?? false;
 }
 
+/**
+ * Resolve a protocol slug (e.g. "pendle", "aave-v3") to its display label
+ * (e.g. "Pendle", "Aave V3") via PROTOCOL_CATALOG. Falls back to the raw
+ * slug when no catalog entry exists -- happens for chain-only protocols
+ * skipped during install or for legacy / synthetic slugs (e.g. the
+ * "direct" rule slug); better to show the unmapped string than to crash
+ * the surface. Use everywhere we render a protocol name to a human.
+ */
+export function getProtocolLabel(slug: string): string {
+  return PROTOCOL_CATALOG[slug as ProtocolSlug]?.label ?? slug;
+}
+
 export const DEFAULT_ENABLED_PROTOCOLS: readonly ProtocolSlug[] = [
   "aave-v3",
   "cowswap",

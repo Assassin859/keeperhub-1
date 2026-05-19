@@ -25,7 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { PROTOCOL_CATALOG } from "@/lib/safe/protocol-registry";
+import { getProtocolLabel } from "@/lib/safe/protocol-registry";
 
 const TRAILING_ZEROS_REGEX = /0+$/;
 const TRAILING_DOT_REGEX = /\.$/;
@@ -95,11 +95,6 @@ type Props = {
   directRules: DirectRule[];
   onUpdated: () => Promise<void>;
 };
-
-function protocolLabel(slug: string): string {
-  const catalog = PROTOCOL_CATALOG[slug as keyof typeof PROTOCOL_CATALOG];
-  return catalog?.label ?? slug;
-}
 
 export function RoleAllowanceEditDialog({
   allowance,
@@ -216,7 +211,7 @@ export function RoleAllowanceEditDialog({
         <DialogHeader>
           <DialogTitle>Edit allowance</DialogTitle>
           <DialogDescription>
-            {protocolLabel(allowance.protocolSlug)} · {allowance.tokenSymbol}.
+            {getProtocolLabel(allowance.protocolSlug)} · {allowance.tokenSymbol}.
             Change the cap or refill period for this bucket.
           </DialogDescription>
         </DialogHeader>

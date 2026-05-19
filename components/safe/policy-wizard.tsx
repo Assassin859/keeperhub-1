@@ -21,6 +21,7 @@ import {
 } from "@/lib/safe/protocol-default-tokens";
 import {
   type EnforcementLevel,
+  getProtocolLabel,
   listProtocolsForChain,
   type ProtocolCatalogEntry,
   type ProtocolSlug,
@@ -542,7 +543,7 @@ export function PolicyWizard({
             <div className="rounded-md border bg-muted/20 p-3">
               <div className="mb-1 font-medium">Protocols applied</div>
               <div className="text-muted-foreground text-xs">
-                {simulation.applied.join(", ")}
+                {simulation.applied.map(getProtocolLabel).join(", ")}
               </div>
             </div>
           )}
@@ -554,8 +555,8 @@ export function PolicyWizard({
                 Protocols skipped
               </div>
               <div className="text-muted-foreground text-xs">
-                {simulation.skipped.join(", ")}. These are not supported on this
-                chain or lack a template.
+                {simulation.skipped.map(getProtocolLabel).join(", ")}. These
+                are not supported on this chain or lack a template.
               </div>
             </div>
           )}
