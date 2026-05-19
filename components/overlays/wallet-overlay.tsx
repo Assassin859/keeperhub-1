@@ -1,6 +1,6 @@
 "use client";
 
-import { Plus, ShieldCheck } from "lucide-react";
+import { Plus, RefreshCw, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Overlay } from "@/components/overlays/overlay";
@@ -98,6 +98,7 @@ export function WalletOverlay({ overlayId }: WalletOverlayProps) {
   const [tokens, setTokens] = useState<TokenData[]>([]);
   const [supportedTokens, setSupportedTokens] = useState<SupportedToken[]>([]);
   const [safes, setSafes] = useState<SafeRow[]>([]);
+  const [reconcilingFromChain, setReconcilingFromChain] = useState(false);
 
   const {
     balances,
@@ -356,6 +357,68 @@ export function WalletOverlay({ overlayId }: WalletOverlayProps) {
     });
   };
 
+  const handleReconcileFromChain = async (): Promise<void> => {
+    if (reconcilingFromChain) {
+      return;
+    }
+    setReconcilingFromChain(true);
+    try {
+      const res = await fetch("/api/user/safe/reconcile-all", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = (await res.json()) as {
+        success?: boolean;
+        error?: string;
+        summary?: {
+          adopted: number;
+          alreadyInDb: number;
+          noOnchainSafe: number;
+          failed: number;
+          rolesSynced: number;
+          rolesNotInstalled: number;
+          rolesFailed: number;
+        };
+      };
+      if (!(res.ok && data.success && data.summary)) {
+        toast.error(data.error ?? "Sync from chain failed");
+        return;
+      }
+      const { adopted, alreadyInDb, failed, rolesSynced, rolesFailed } =
+        data.summary;
+      // Refresh the in-memory Safe list whenever anything changed on chain,
+      // either a new adoption OR a policy update on an existing Safe.
+      if (adopted > 0 || rolesSynced > 0) {
+        await fetchSafes();
+      }
+      const parts: string[] = [];
+      if (adopted > 0) {
+        parts.push(`adopted ${adopted} Safe${adopted === 1 ? "" : "s"}`);
+      }
+      if (rolesSynced > 0) {
+        parts.push(
+          `refreshed ${rolesSynced} policy set${rolesSynced === 1 ? "" : "s"}`
+        );
+      }
+      if (parts.length > 0) {
+        toast.success(`Sync from chain: ${parts.join(", ")}.`);
+      } else if (failed > 0 || rolesFailed > 0) {
+        toast.warning(
+          `Sync completed with ${failed + rolesFailed} chain operation${failed + rolesFailed === 1 ? "" : "s"} that failed; nothing new adopted.`
+        );
+      } else {
+        toast.info(
+          `Sync complete. ${alreadyInDb} Safe${alreadyInDb === 1 ? "" : "s"} already in sync with chain.`
+        );
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Sync from chain failed");
+    } finally {
+      setReconcilingFromChain(false);
+    }
+  };
+
   const turnkeyAccount: WalletAccountKind | null = walletData?.walletAddress
     ? { kind: "turnkey", address: walletData.walletAddress }
     : null;
@@ -424,15 +487,37 @@ export function WalletOverlay({ overlayId }: WalletOverlayProps) {
           </div>
 
           {isAdmin && (
-            <Button
-              className="w-full justify-center gap-2"
-              onClick={openDeploySafe}
-              type="button"
-              variant="outline"
-            >
-              <Plus className="h-4 w-4" />
-              Deploy a Safe
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                className="flex-1 justify-center gap-2"
+                onClick={openDeploySafe}
+                type="button"
+                variant="outline"
+              >
+                <Plus className="h-4 w-4" />
+                Deploy a Safe
+              </Button>
+              <Button
+                aria-label="Sync Safe wallets from chain"
+                className="gap-2"
+                disabled={reconcilingFromChain}
+                onClick={() => {
+                  handleReconcileFromChain().catch(() => {
+                    // toast already fired
+                  });
+                }}
+                title="Adopt any Safe that exists on chain at this org's deterministic address but isn't yet tracked here. Use after a failed deploy attempt."
+                type="button"
+                variant="outline"
+              >
+                {reconcilingFromChain ? (
+                  <Spinner className="h-4 w-4" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+                Sync from chain
+              </Button>
+            </div>
           )}
         </div>
       )}
