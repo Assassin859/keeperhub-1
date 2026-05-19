@@ -627,8 +627,8 @@ export const workflowApi = {
         completedAt: Date | null;
         duration: string | null;
         // Progress tracking fields
-        totalSteps: string | null;
-        completedSteps: string | null;
+        totalSteps: number | null;
+        completedSteps: number | null;
         currentNodeId: string | null;
         currentNodeName: string | null;
         lastSuccessfulNodeId: string | null;
