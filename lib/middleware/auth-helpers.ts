@@ -82,36 +82,31 @@ async function resolveSessionOrg(
   request: Request,
   userId: string,
   defaultOrgId: string | null
-): Promise<{ organizationId: string | null } | { error: string; status: number }> {
+): Promise<
+  { organizationId: string | null } | { error: string; status: number }
+> {
   const raw = request.headers.get(ORG_HEADER)?.trim();
   if (!raw) {
     return { organizationId: defaultOrgId };
   }
 
+  // Single query joining organization to the caller's membership row. We can't
+  // branch on "org exists but you're not a member" vs "org does not exist"
+  // because the difference between those two responses would let any
+  // authenticated user enumerate org ids and slugs.
   const match = await db
     .select({ id: organization.id })
     .from(organization)
+    .innerJoin(
+      member,
+      and(eq(member.organizationId, organization.id), eq(member.userId, userId))
+    )
     .where(or(eq(organization.id, raw), eq(organization.slug, raw)))
     .limit(1);
 
   const targetOrgId = match[0]?.id;
   if (!targetOrgId) {
-    return { error: `Unknown organization: ${raw}`, status: 404 };
-  }
-
-  const membership = await db
-    .select({ id: member.id })
-    .from(member)
-    .where(
-      and(eq(member.userId, userId), eq(member.organizationId, targetOrgId))
-    )
-    .limit(1);
-
-  if (membership.length === 0) {
-    return {
-      error: `Not a member of organization: ${raw}`,
-      status: 403,
-    };
+    return { error: "Organization not found", status: 404 };
   }
 
   return { organizationId: targetOrgId };

@@ -6,18 +6,16 @@ const {
   mockGetSession,
   mockGetOrgContext,
   mockOrgLookup,
-  mockMemberLookup,
 } = vi.hoisted(() => ({
   mockAuthenticateApiKey: vi.fn(),
   mockAuthenticateOAuthToken: vi.fn(),
   mockGetSession: vi.fn(),
   mockGetOrgContext: vi.fn(),
-  // KEEP-563: resolveSessionOrg looks up org by id-or-slug, then member by
-  // (userId, organizationId). The select chain is select().from(table).where().limit().
-  // We replay the same chain shape and feed each call from a pluggable mock so
-  // tests can program the org / member resolution outcomes independently.
+  // KEEP-563: resolveSessionOrg does a single org+member inner-join lookup.
+  // The select chain is select().from().innerJoin().where().limit(). The result
+  // is empty when either the org is unknown OR the caller is not a member --
+  // both cases must be indistinguishable to avoid org enumeration.
   mockOrgLookup: vi.fn(),
-  mockMemberLookup: vi.fn(),
 }));
 
 vi.mock("@/lib/api-key-auth", () => ({
@@ -40,19 +38,14 @@ vi.mock("@/lib/mcp/oauth-auth", () => ({
   authenticateOAuthToken: mockAuthenticateOAuthToken,
 }));
 
-// Pull the call counter out of the closure so beforeEach can reset it.
-const dbState = { selectCount: 0 };
 vi.mock("@/lib/db", () => ({
   db: {
     select: () => ({
       from: () => ({
-        where: () => ({
-          limit: () => {
-            dbState.selectCount += 1;
-            return dbState.selectCount % 2 === 1
-              ? mockOrgLookup()
-              : mockMemberLookup();
-          },
+        innerJoin: () => ({
+          where: () => ({
+            limit: () => mockOrgLookup(),
+          }),
         }),
       }),
     }),
@@ -83,7 +76,6 @@ function makeRequest(
 describe("getDualAuthContext", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    dbState.selectCount = 0;
     mockAuthenticateOAuthToken.mockResolvedValue({ authenticated: false });
   });
 
@@ -235,7 +227,6 @@ describe("getDualAuthContext", () => {
 
       it("honors header pointing at a different org the user is a member of", async () => {
         mockOrgLookup.mockResolvedValueOnce([{ id: "org_target" }]);
-        mockMemberLookup.mockResolvedValueOnce([{ id: "member_row" }]);
 
         const result = await getDualAuthContext(
           makeRequest({ "X-Organization-Id": "target-slug" })
@@ -249,21 +240,20 @@ describe("getDualAuthContext", () => {
         });
       });
 
-      it("rejects 403 when caller is not a member of the requested org", async () => {
-        mockOrgLookup.mockResolvedValueOnce([{ id: "org_target" }]);
-        mockMemberLookup.mockResolvedValueOnce([]);
+      it("returns 404 (no enumeration leak) when caller is not a member", async () => {
+        mockOrgLookup.mockResolvedValueOnce([]);
 
         const result = await getDualAuthContext(
           makeRequest({ "X-Organization-Id": "other-org" })
         );
 
         expect(result).toEqual({
-          error: "Not a member of organization: other-org",
-          status: 403,
+          error: "Organization not found",
+          status: 404,
         });
       });
 
-      it("rejects 404 when the requested org slug/id is unknown", async () => {
+      it("returns 404 (no enumeration leak) when the org id/slug is unknown", async () => {
         mockOrgLookup.mockResolvedValueOnce([]);
 
         const result = await getDualAuthContext(
@@ -271,7 +261,7 @@ describe("getDualAuthContext", () => {
         );
 
         expect(result).toEqual({
-          error: "Unknown organization: ghost-org",
+          error: "Organization not found",
           status: 404,
         });
       });
@@ -286,7 +276,6 @@ describe("getDualAuthContext", () => {
           apiKeyId: null,
         });
         expect(mockOrgLookup).not.toHaveBeenCalled();
-        expect(mockMemberLookup).not.toHaveBeenCalled();
       });
     });
   });
@@ -556,7 +545,6 @@ describe("getDualAuthContext", () => {
 describe("resolveOrganizationId — origin check wiring", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    dbState.selectCount = 0;
     mockAuthenticateOAuthToken.mockResolvedValue({ authenticated: false });
     mockAuthenticateApiKey.mockResolvedValue({ authenticated: false });
     mockGetSession.mockResolvedValue({ user: { id: "user_session" } });
@@ -599,7 +587,6 @@ describe("resolveOrganizationId — origin check wiring", () => {
 describe("resolveCreatorContext — origin check wiring", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    dbState.selectCount = 0;
     mockAuthenticateOAuthToken.mockResolvedValue({ authenticated: false });
     mockAuthenticateApiKey.mockResolvedValue({ authenticated: false });
     mockGetSession.mockResolvedValue({ user: { id: "user_session" } });
