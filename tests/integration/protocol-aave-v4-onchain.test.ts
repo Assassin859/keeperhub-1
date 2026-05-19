@@ -2,14 +2,18 @@
  * Aave V4 On-Chain Integration Tests (Lido Spoke)
  *
  * Verifies that the ABI-driven Aave V4 protocol definition produces valid
- * calldata that the deployed Lido Spoke contract accepts. Runs against a
- * live Ethereum mainnet RPC endpoint.
+ * calldata that the deployed Lido Spoke contract accepts on Ethereum
+ * mainnet.
  *
- * Uses a separate env var (INTEGRATION_TEST_MAINNET_RPC_URL) because Aave V4
- * has no Sepolia deployment - the existing INTEGRATION_TEST_RPC_URL targets
- * Sepolia and would produce address mismatches.
+ * RPC URL resolution (shared with the rest of the codebase):
+ *   1. CHAIN_RPC_CONFIG JSON (Helm/AWS Parameter Store, set in CI + deployed
+ *      environments)
+ *   2. Individual CHAIN_ETH_MAINNET_*_RPC env vars (dev override)
+ *   3. Public Ethereum mainnet RPC default (last resort)
  *
- * Gated on INTEGRATION_TEST_MAINNET_RPC_URL - skipped in CI without it.
+ * Ungated. Always runs. Public RPC backs every tier so the test is never
+ * blocked by missing env vars. CI uses the paid staging endpoints via
+ * CHAIN_RPC_CONFIG.
  */
 
 import { ethers } from "ethers";
@@ -22,15 +26,35 @@ vi.mock("server-only", () => ({}));
 
 import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
-import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
+import {
+  createRpcUrlResolver,
+  PUBLIC_RPCS,
+  parseRpcConfig,
+} from "@/lib/rpc/rpc-config";
 import aaveV4Def from "@/protocols/aave-v4";
 import { buildCalldata } from "./_shared/build-calldata";
 
-const RPC_URL = process.env.INTEGRATION_TEST_MAINNET_RPC_URL;
 const CHAIN_ID = "1";
 const MAINNET_CHAIN_ID = 1;
 const TEST_ADDRESS = "0x0000000000000000000000000000000000000001";
 const CORE_HUB = "0xCca852Bc40e560adC3b1Cc58CA5b55638ce826c9";
+
+// Resolve Ethereum mainnet RPC URLs via the shared config pipeline:
+// CHAIN_RPC_CONFIG first, individual env vars second, public default last.
+const rpcConfig = parseRpcConfig(process.env.CHAIN_RPC_CONFIG);
+const resolveRpcUrl = createRpcUrlResolver(rpcConfig);
+const MAINNET_PRIMARY_URL = resolveRpcUrl(
+  "eth-mainnet",
+  "CHAIN_ETH_MAINNET_PRIMARY_RPC",
+  PUBLIC_RPCS.ETH_MAINNET,
+  "primary"
+);
+const MAINNET_FALLBACK_URL = resolveRpcUrl(
+  "eth-mainnet",
+  "CHAIN_ETH_MAINNET_FALLBACK_RPC",
+  PUBLIC_RPCS.ETH_MAINNET_FALLBACK,
+  "fallback"
+);
 
 // Assertion model:
 //  - Read tests: let the RPC call fail loudly. A success path asserts the
@@ -46,20 +70,15 @@ const CORE_HUB = "0xCca852Bc40e560adC3b1Cc58CA5b55638ce826c9";
 //    deployed contract. Observed: supply reverts (ERC20 transferFrom fails
 //    on zero allowance); setUsingAsCollateral silently succeeds on
 //    reserveId=0 because the Spoke no-ops on nonexistent reserves.
-describe.skipIf(!RPC_URL)("Aave V4 Lido Spoke on-chain integration", () => {
+describe("Aave V4 Lido Spoke on-chain integration", () => {
   // Route every RPC call through the failover manager so a primary-endpoint
-  // hiccup falls back to the secondary instead of failing the test. The
-  // primary URL respects INTEGRATION_TEST_MAINNET_RPC_URL (the original
-  // gate); the fallback comes from the chains-config used in production.
+  // hiccup falls back to the secondary instead of failing the test.
   let manager: RpcProviderManager;
 
   beforeAll(async () => {
-    if (!RPC_URL) {
-      return;
-    }
     manager = await getRpcProviderFromUrls(
-      RPC_URL,
-      getRpcUrlByChainId(MAINNET_CHAIN_ID, "fallback"),
+      MAINNET_PRIMARY_URL,
+      MAINNET_FALLBACK_URL,
       MAINNET_CHAIN_ID,
       "ethereum"
     );

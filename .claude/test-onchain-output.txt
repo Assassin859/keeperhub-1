@@ -1,0 +1,13 @@
+
+> ai-workflow-builder-template@0.1.0 test /home/suisuss/.programming/work/TechOps/keeperhub/.worktrees/KEEP-579-extract-build-calldata
+> vitest run "tests/integration/protocol-wrapped-onchain.test.ts" "tests/integration/protocol-aave-v4-onchain.test.ts" "tests/integration/protocol-rocket-pool-onchain.test.ts"
+
+
+ RUN  v4.1.2 /home/suisuss/.programming/work/TechOps/keeperhub/.worktrees/KEEP-579-extract-build-calldata
+
+
+ Test Files  3 passed (3)
+      Tests  15 passed (15)
+   Start at  15:10:46
+   Duration  34.21s (transform 3.40s, setup 5.91s, import 14.87s, tests 10.18s, environment 2ms)
+
