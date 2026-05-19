@@ -39,6 +39,7 @@ const RPC_URL = process.env.INTEGRATION_TEST_MAINNET_RPC_URL;
 const CHAIN_ID = "1";
 const MAINNET_CHAIN_ID = 1;
 const TEST_ADDRESS = "0x0000000000000000000000000000000000000001";
+const TX_RESULT_HEX_PREFIX = /^0x/;
 
 function buildCalldata(
   protocol: ProtocolDefinition,
@@ -114,6 +115,46 @@ describe.skipIf(!RPC_URL)("Frax Ether V2 minter on-chain integration", () => {
     );
   });
 
+  /**
+   * Simulates an eth_call against the deployed bytecode and resolves
+   * cleanly if the calldata was accepted: either the call returned hex
+   * data (void functions return "0x") or reverted with CALL_EXCEPTION at
+   * the contract level (an acceptable business revert). Any other error
+   * class is rethrown so the test fails; that signals an ABI/bytecode
+   * mismatch. The call is routed through the failover manager (closed
+   * over from describe scope) so a primary-RPC hiccup falls back to the
+   * secondary endpoint.
+   *
+   * Throws-instead-of-asserts so the helper does not contain expect()
+   * calls outside an it() block. Call sites use
+   * `await expect(simulateBytecodeCall(...)).resolves.toBeUndefined()`.
+   */
+  async function simulateBytecodeCall(tx: {
+    to: string;
+    data: string;
+  }): Promise<void> {
+    try {
+      const result = await manager.executeWithFailover((p) =>
+        p.call({ ...tx, from: TEST_ADDRESS })
+      );
+      if (!TX_RESULT_HEX_PREFIX.test(result)) {
+        throw new Error(
+          `Expected hex-prefixed return from eth_call, got: ${result}`
+        );
+      }
+    } catch (err: unknown) {
+      if (
+        typeof err === "object" &&
+        err !== null &&
+        "code" in err &&
+        err.code === "CALL_EXCEPTION"
+      ) {
+        return;
+      }
+      throw err;
+    }
+  }
+
   it("mintFrxEthPaused: eth_call returns a decodable bool", async () => {
     const { to, data, contract } = buildCalldata(
       fraxEtherV2Def,
@@ -135,7 +176,7 @@ describe.skipIf(!RPC_URL)("Frax Ether V2 minter on-chain integration", () => {
   it("mintFrxEth: deployed bytecode accepts the calldata", async () => {
     const { to, data } = buildCalldata(fraxEtherV2Def, "mint", {});
 
-    await expectCallAcceptedByBytecode(manager, { to, data });
+    await expect(simulateBytecodeCall({ to, data })).resolves.toBeUndefined();
   }, 15_000);
 
   it("mintFrxEthAndGive: deployed bytecode accepts the calldata", async () => {
@@ -143,7 +184,7 @@ describe.skipIf(!RPC_URL)("Frax Ether V2 minter on-chain integration", () => {
       recipient: TEST_ADDRESS,
     });
 
-    await expectCallAcceptedByBytecode(manager, { to, data });
+    await expect(simulateBytecodeCall({ to, data })).resolves.toBeUndefined();
   }, 15_000);
 
   it("submitAndDeposit: deployed bytecode accepts the calldata", async () => {
@@ -151,27 +192,6 @@ describe.skipIf(!RPC_URL)("Frax Ether V2 minter on-chain integration", () => {
       recipient: TEST_ADDRESS,
     });
 
-    await expectCallAcceptedByBytecode(manager, { to, data });
+    await expect(simulateBytecodeCall({ to, data })).resolves.toBeUndefined();
   }, 15_000);
 });
-
-/**
- * Asserts the deployed bytecode accepted our calldata: either the call
- * returned cleanly (void functions return "0x") or reverted at the contract
- * level (CALL_EXCEPTION). Any other error class means the ABI doesn't match
- * what's deployed. The call is routed through the failover manager so a
- * primary-RPC hiccup falls back to the secondary endpoint.
- */
-async function expectCallAcceptedByBytecode(
-  manager: RpcProviderManager,
-  tx: { to: string; data: string }
-): Promise<void> {
-  try {
-    const result = await manager.executeWithFailover((p) =>
-      p.call({ ...tx, from: TEST_ADDRESS })
-    );
-    expect(result).toMatch(/^0x/);
-  } catch (err: unknown) {
-    expect(err).toMatchObject({ code: "CALL_EXCEPTION" });
-  }
-}
