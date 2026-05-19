@@ -432,7 +432,7 @@ describe("schedule-service", () => {
       const now = new Date("2026-05-18T10:30:00Z");
 
       expect(() => computeNextIntervalRunTime(3300, badAnchor, now)).toThrow(
-        /invalid anchorAt/
+        "invalid anchorAt"
       );
     });
 
@@ -440,22 +440,22 @@ describe("schedule-service", () => {
       const anchor = new Date("2026-05-18T10:00:00Z");
 
       expect(() => computeNextIntervalRunTime(0, anchor)).toThrow(
-        /invalid intervalSeconds/
+        "invalid intervalSeconds"
       );
       expect(() => computeNextIntervalRunTime(-10, anchor)).toThrow(
-        /invalid intervalSeconds/
+        "invalid intervalSeconds"
       );
     });
 
     it("throws on non-finite interval", () => {
       const anchor = new Date("2026-05-18T10:00:00Z");
 
-      expect(() =>
-        computeNextIntervalRunTime(Number.NaN, anchor)
-      ).toThrow(/invalid intervalSeconds/);
+      expect(() => computeNextIntervalRunTime(Number.NaN, anchor)).toThrow(
+        "invalid intervalSeconds"
+      );
       expect(() =>
         computeNextIntervalRunTime(Number.POSITIVE_INFINITY, anchor)
-      ).toThrow(/invalid intervalSeconds/);
+      ).toThrow("invalid intervalSeconds");
     });
   });
 });

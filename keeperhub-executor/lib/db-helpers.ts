@@ -99,7 +99,7 @@ export function computeNextIntervalRunTime(
   const anchorMs = anchorAt.getTime();
   if (!Number.isFinite(anchorMs)) {
     throw new Error(
-      `computeNextIntervalRunTime: invalid anchorAt (getTime returned NaN)`
+      "computeNextIntervalRunTime: invalid anchorAt (getTime returned NaN)"
     );
   }
   const intervalMs = intervalSeconds * 1000;
