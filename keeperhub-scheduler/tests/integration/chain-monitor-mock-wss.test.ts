@@ -17,7 +17,16 @@
  * bug. It validates the discrimination + reaper logic end-to-end.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { type WebSocket, WebSocketServer } from "ws";
 import { ChainMonitor } from "../../block-dispatcher/chain-monitor.js";
 
@@ -219,6 +228,9 @@ describe("KEEP-570 integration: ChainMonitor warning patterns against a real ws 
   } | null = null;
   let monitor: ChainMonitor | null = null;
   let warningCapture: { warnings: string[]; restore: () => void } | null = null;
+  // process.on/off is a global side effect. Install once for the file and
+  // tear down once at the end, so a crash in afterEach cannot leave a
+  // dangling handler or accumulate duplicates across iterations.
   const rejectionHandler = (reason: unknown): void => {
     if (!isBenignDestroyRace(reason)) {
       throw reason;
@@ -226,13 +238,20 @@ describe("KEEP-570 integration: ChainMonitor warning patterns against a real ws 
   };
   let port = 19100;
 
+  beforeAll(() => {
+    process.on("unhandledRejection", rejectionHandler);
+  });
+
+  afterAll(() => {
+    process.off("unhandledRejection", rejectionHandler);
+  });
+
   beforeEach(() => {
     port++;
     vi.stubEnv("BLOCK_ADVANCE_TIMEOUT_MS", String(BLOCK_ADVANCE_MS));
     vi.stubEnv("MONITOR_RECREATE_TIMEOUT_MS", String(MONITOR_RECREATE_MS));
     vi.stubEnv("PRIMARY_PROBE_INTERVAL_MS", String(PRIMARY_PROBE_INTERVAL_MS));
     warningCapture = captureWarnings();
-    process.on("unhandledRejection", rejectionHandler);
   });
 
   afterEach(async () => {
@@ -252,7 +271,6 @@ describe("KEEP-570 integration: ChainMonitor warning patterns against a real ws 
       warningCapture.restore();
       warningCapture = null;
     }
-    process.off("unhandledRejection", rejectionHandler);
     vi.unstubAllEnvs();
   });
 
