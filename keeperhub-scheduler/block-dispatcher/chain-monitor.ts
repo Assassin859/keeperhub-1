@@ -149,7 +149,7 @@ type ChainMonitorConfig = {
 // the regression the diagnostic exists to prevent. Returns null when the
 // payload is none of those shapes; the caller still counts the frame but
 // will not attempt to parse it for the subscription-push tally.
-function decodeWsFrame(data: unknown): string | null {
+export function decodeWsFrame(data: unknown): string | null {
   if (typeof data === "string") {
     return data;
   }
