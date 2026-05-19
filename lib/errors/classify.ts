@@ -81,12 +81,28 @@ const RULES: readonly Rule[] = [
     errorType: "user",
   },
   {
+    pattern:
+      /^(Token approval failed|Token transfer failed|Transaction failed):/i,
+    errorCategory: ErrorCategory.TRANSACTION,
+    errorType: "user",
+  },
+  {
     pattern: /^Invalid contract address/i,
     errorCategory: ErrorCategory.VALIDATION,
     errorType: "user",
   },
   {
+    pattern: /^Invalid Ethereum address/i,
+    errorCategory: ErrorCategory.VALIDATION,
+    errorType: "user",
+  },
+  {
     pattern: /^Invalid (function arguments|ABI JSON|payable value)/i,
+    errorCategory: ErrorCategory.VALIDATION,
+    errorType: "user",
+  },
+  {
+    pattern: /Function '.+' not found in ABI/i,
     errorCategory: ErrorCategory.VALIDATION,
     errorType: "user",
   },
@@ -120,6 +136,20 @@ const RULES: readonly Rule[] = [
     errorCategory: ErrorCategory.VALIDATION,
     errorType: "user",
   },
+  // User-config: database integration not configured
+  {
+    pattern: /^DATABASE_URL is not configured/i,
+    errorCategory: ErrorCategory.CONFIGURATION,
+    errorType: "user",
+  },
+  // User-action: Para wallet session needs re-export
+  // Must come BEFORE the generic `^Failed to initialize organization wallet` rule below.
+  {
+    pattern:
+      /^Failed to initialize organization wallet:\s*Para session expired/i,
+    errorCategory: ErrorCategory.CONFIGURATION,
+    errorType: "user",
+  },
 
   // External-service / network: dependencies outside KeeperHub
   {
@@ -141,6 +171,21 @@ const RULES: readonly Rule[] = [
     pattern: /^Failed to send webhook/i,
     errorCategory: ErrorCategory.EXTERNAL_SERVICE,
     errorType: "system",
+  },
+  // User-config: external endpoint returned non-2xx (webhook/safe/discord/etc.)
+  {
+    pattern: /^HTTP \d{3}:/,
+    errorCategory: ErrorCategory.EXTERNAL_SERVICE,
+    errorType: "user",
+  },
+  // User-config: HTTP request step couldn't reach the external endpoint
+  // (DNS, ECONNRESET, connection timeout, TLS) or got a non-2xx response.
+  // Falls below the more specific `Missing template variable` /
+  // `GET/HEAD method` rules above.
+  {
+    pattern: /^HTTP request failed(:\s|\s+with status\s+\d+)/i,
+    errorCategory: ErrorCategory.EXTERNAL_SERVICE,
+    errorType: "user",
   },
 
   // System: database / persistence layer
