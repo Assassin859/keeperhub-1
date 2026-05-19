@@ -1,12 +1,13 @@
 /**
- * KEEP-468: regression tests for the strict-mode template resolution path.
+ * KEEP-468 / KEEP-525: regression tests for the strict template resolution
+ * path. Strict is now the only mode; the legacy env-var opt-out was removed.
  *
  * Coverage:
  *   - tracker collects each unresolved category (no-node, no-data, no-path)
  *     when callers thread it through processTemplate / processTemplates
  *     / processCodeTemplates / extractTemplateParameters
- *   - assertResolved throws TemplateResolutionError in strict mode and is a
- *     no-op in legacy mode (env-flag-gated)
+ *   - assertResolved always throws TemplateResolutionError on any unresolved
+ *     reference
  *   - the displayPattern literal-passthrough is detected by the post-scan
  *     even when the resolver returned a plain string with `{{...}}` left in
  *
@@ -15,32 +16,9 @@
  * not flow through to a downstream action.
  */
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
-
-// KEEP-525 step 1: spy on logging + metrics to assert the legacy-mode
-// telemetry shape (warn-level, dedicated counter, no engine-error bump).
-// vi.hoisted is required because vi.mock factories are hoisted above the
-// top-level statements, so plain const declarations cannot be referenced.
-const { mockIncrementCounter, mockLogSystemWarn, mockLogSystemError } =
-  vi.hoisted(() => ({
-    mockIncrementCounter: vi.fn(),
-    mockLogSystemWarn: vi.fn(),
-    mockLogSystemError: vi.fn(),
-  }));
-
-vi.mock("@/lib/logging", () => ({
-  ErrorCategory: { WORKFLOW_ENGINE: "workflow_engine" },
-  logSystemError: mockLogSystemError,
-  logSystemWarn: mockLogSystemWarn,
-}));
-
-vi.mock("@/lib/metrics", () => ({
-  getMetricsCollector: () => ({
-    incrementCounter: mockIncrementCounter,
-  }),
-}));
 
 import { processTemplate } from "@/lib/utils/template";
 import {
@@ -54,9 +32,7 @@ import {
   TemplateResolutionError,
 } from "@/lib/workflow/executor/template-resolution";
 
-const ENV_KEY = "KEEPERHUB_TEMPLATE_RESOLVE_MODE";
 const UNRESOLVED_REF_MESSAGE = /Unresolved template reference/;
-const LEGACY_COUNTER = "template.resolve.legacy_substitution.total";
 
 const baseOutputs = {
   trigger: {
@@ -64,13 +40,6 @@ const baseOutputs = {
     data: { triggered: true, ts: 1_715_000_000 },
   },
 };
-
-afterEach(() => {
-  process.env[ENV_KEY] = undefined;
-  mockIncrementCounter.mockClear();
-  mockLogSystemWarn.mockClear();
-  mockLogSystemError.mockClear();
-});
 
 describe("processTemplate tracker (lib/utils/template)", () => {
   it("records no-node when the referenced node is absent", () => {
@@ -119,103 +88,6 @@ describe("assertResolved (executor strict gate)", () => {
     expect(() =>
       assertResolved(tracker, { value: "" }, { actionType: "Webhook" })
     ).toThrow(TemplateResolutionError);
-  });
-
-  it("does not throw in legacy mode but emits a warn (no throw)", () => {
-    process.env[ENV_KEY] = "legacy";
-    const tracker = createTracker();
-    tracker.unresolved.push({
-      token: "{{@missing:Foo}}",
-      reason: "no-node",
-    });
-    expect(() =>
-      assertResolved(tracker, { value: "" }, { actionType: "Webhook" })
-    ).not.toThrow();
-  });
-
-  // KEEP-525 step 1: legacy mode previously used logSystemError, which
-  // bumped the generic engine-errors counter and paged on-call. The
-  // dedicated counter below is what dashboards consume to quantify the
-  // exposure window without alert noise.
-  describe("KEEP-525: legacy-mode telemetry shape", () => {
-    it("emits the dedicated counter with action_type + single reason label", () => {
-      process.env[ENV_KEY] = "legacy";
-
-      const tracker = createTracker();
-      tracker.unresolved.push({
-        token: "{{@missing:Foo}}",
-        reason: "no-node",
-      });
-      assertResolved(tracker, { value: "" }, { actionType: "ENS Write" });
-
-      expect(mockIncrementCounter).toHaveBeenCalledWith(LEGACY_COUNTER, {
-        action_type: "ENS Write",
-        reason: "no-node",
-      });
-      expect(mockLogSystemWarn).toHaveBeenCalledTimes(1);
-    });
-
-    it("labels the reason as 'mixed' when multiple distinct reasons fire", () => {
-      process.env[ENV_KEY] = "legacy";
-
-      const tracker = createTracker();
-      tracker.unresolved.push({ token: "{{@missing:Foo}}", reason: "no-node" });
-      tracker.unresolved.push({
-        token: "{{@trigger:Trigger.bad}}",
-        reason: "no-path",
-      });
-      assertResolved(tracker, { value: "" }, { actionType: "HTTP Request" });
-
-      expect(mockIncrementCounter).toHaveBeenCalledWith(LEGACY_COUNTER, {
-        action_type: "HTTP Request",
-        reason: "mixed",
-      });
-    });
-
-    it("does not call logSystemError in legacy mode (no on-call page)", () => {
-      process.env[ENV_KEY] = "legacy";
-
-      const tracker = createTracker();
-      tracker.unresolved.push({
-        token: "{{@missing:Foo}}",
-        reason: "no-node",
-      });
-      assertResolved(tracker, { value: "" }, { actionType: "Webhook" });
-
-      expect(mockLogSystemError).not.toHaveBeenCalled();
-    });
-
-    it("derives literal-leftover from post-scan and includes it in the reason label", () => {
-      process.env[ENV_KEY] = "legacy";
-
-      const tracker = createTracker();
-      assertResolved(
-        tracker,
-        { value: "Address: {{Trigger.unknownField}}" },
-        { actionType: "ENS Write" }
-      );
-
-      expect(mockIncrementCounter).toHaveBeenCalledWith(LEGACY_COUNTER, {
-        action_type: "ENS Write",
-        reason: "literal-leftover",
-      });
-    });
-
-    it("defaults action_type label to 'unknown' when context omits it", () => {
-      process.env[ENV_KEY] = "legacy";
-
-      const tracker = createTracker();
-      tracker.unresolved.push({
-        token: "{{@missing:Foo}}",
-        reason: "no-node",
-      });
-      assertResolved(tracker, { value: "" }, {});
-
-      expect(mockIncrementCounter).toHaveBeenCalledWith(LEGACY_COUNTER, {
-        action_type: "unknown",
-        reason: "no-node",
-      });
-    });
   });
 
   it("detects displayPattern literal pass-through in strict mode", () => {

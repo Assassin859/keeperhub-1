@@ -869,19 +869,6 @@ const systemWorkflowEngineErrors = getOrCreateCounter(
   ERROR_LABELS
 );
 
-// KEEP-525: legacy-mode template substitution counter. Bumped once per
-// `assertResolved` call that would have aborted under strict mode. Distinct
-// from the engine-errors counter above so dashboards can quantify the
-// would-have-aborted exposure without conflating with real engine failures.
-const TEMPLATE_RESOLVE_LEGACY_LABELS = ["action_type", "reason"];
-
-const templateResolveLegacySubstitutions = getOrCreateCounter(
-  apiRegistry,
-  "keeperhub_template_resolve_legacy_substitution_total",
-  "Template references that would have aborted under KEEPERHUB_TEMPLATE_RESOLVE_MODE=strict but silently substituted under legacy mode",
-  TEMPLATE_RESOLVE_LEGACY_LABELS
-);
-
 // KEEP-545: per-execution-row counter incremented exactly once when a
 // workflow execution is finalized with status='error'. Replaces the old
 // poll-driven `keeperhub_workflow_execution_errors_total` gauge that
@@ -1028,9 +1015,6 @@ const counterMap: Record<string, Counter> = {
   "billing.invoice.paid": billingInvoicePaid,
   "billing.invoice.failed": billingInvoiceFailed,
   "billing.overage.charged": billingOverageCharged,
-  // KEEP-525
-  "template.resolve.legacy_substitution.total":
-    templateResolveLegacySubstitutions,
 };
 
 const errorCounterMap: Record<string, Counter> = {

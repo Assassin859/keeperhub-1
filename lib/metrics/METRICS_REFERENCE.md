@@ -85,7 +85,6 @@ Error metrics tracking failures and exceptions.
 | `workflow.step.errors` | Failed step executions | `step_type` | < 10% | DB |
 | `plugin.action.errors` | Failed plugin actions | `plugin_name`, `action_name`, `error_type` | < 20% | API |
 | `api.errors.total` | API errors (webhook failures) | `endpoint`, `status_code`, `error_type` | count | API |
-| `template.resolve.legacy_substitution.total` | Template references that would have aborted under `KEEPERHUB_TEMPLATE_RESOLVE_MODE=strict` but silently substituted under legacy mode (KEEP-525). Target: zero before removing the legacy opt-out. | `action_type`, `reason` | 0 | API |
 
 ---
 

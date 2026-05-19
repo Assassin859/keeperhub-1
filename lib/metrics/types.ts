@@ -123,13 +123,6 @@ export const MetricNames = {
   PLUGIN_ACTION_ERRORS: "plugin.action.errors",
   API_ERRORS_TOTAL: "api.errors.total",
 
-  // KEEP-525: dedicated counter for legacy-mode template substitutions.
-  // Separates "would have aborted under strict" exposure counting from the
-  // generic engine-error counter (which pages on-call), so dashboards can
-  // answer the question without alerting noise.
-  TEMPLATE_RESOLVE_LEGACY_SUBSTITUTIONS:
-    "template.resolve.legacy_substitution.total",
-
   // User-caused error metrics
   USER_VALIDATION_ERRORS: "errors.user.validation.total",
   USER_CONFIGURATION_ERRORS: "errors.user.configuration.total",

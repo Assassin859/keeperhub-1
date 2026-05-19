@@ -7,17 +7,10 @@
  * writes. This module provides the tracker, error type, and post-scan
  * used by the resolver path to fail closed on any unresolved reference.
  *
- * Mode is gated by `KEEPERHUB_TEMPLATE_RESOLVE_MODE`:
- *   - "strict" (default): throw `TemplateResolutionError` on any unresolved
- *     reference or leftover `{{...}}` literal in the rendered config.
- *   - "legacy": preserve historical silent-substitute behaviour. Unresolved
- *     references are still collected and emitted as a structured warn so
- *     operators can quantify exposure during the transition window.
+ * KEEP-525 removed the `KEEPERHUB_TEMPLATE_RESOLVE_MODE=legacy` opt-out;
+ * strict is now the only mode and `assertResolved` always throws on any
+ * unresolved reference.
  */
-
-import { ErrorCategory, logSystemWarn } from "@/lib/logging";
-import { getMetricsCollector } from "@/lib/metrics";
-import { MetricNames } from "@/lib/metrics/types";
 
 const TEMPLATE_LITERAL_SCAN = /\{\{[^}]+\}\}/g;
 
@@ -36,8 +29,6 @@ export type UnresolvedRef = {
 export type TemplateResolutionTracker = {
   unresolved: UnresolvedRef[];
 };
-
-export type TemplateResolveMode = "strict" | "legacy";
 
 export class TemplateResolutionError extends Error {
   readonly unresolved: UnresolvedRef[];
@@ -61,11 +52,6 @@ export function recordUnresolved(
     return;
   }
   tracker.unresolved.push(ref);
-}
-
-export function getTemplateResolveMode(): TemplateResolveMode {
-  const raw = process.env.KEEPERHUB_TEMPLATE_RESOLVE_MODE?.trim().toLowerCase();
-  return raw === "legacy" ? "legacy" : "strict";
 }
 
 /**
@@ -110,14 +96,14 @@ export function scanForLeftoverLiterals(
 
 /**
  * Aggregate tracker entries plus a fresh leftover-literal scan over the
- * rendered config. In strict mode, throw `TemplateResolutionError` if either
- * source reports anything. In legacy mode, log a warn for observability and
- * return so the action can run with the historical substitution behaviour.
+ * rendered config and throw `TemplateResolutionError` if either source
+ * reports anything. Always fails closed; KEEP-525 removed the legacy
+ * silent-substitute opt-out.
  */
 export function assertResolved(
   tracker: TemplateResolutionTracker,
   renderedConfig: unknown,
-  context: { nodeId?: string; nodeLabel?: string; actionType?: string }
+  _context: { nodeId?: string; nodeLabel?: string; actionType?: string }
 ): void {
   const literals: UnresolvedRef[] = [];
   scanForLeftoverLiterals(renderedConfig, literals);
@@ -127,56 +113,7 @@ export function assertResolved(
     return;
   }
 
-  const mode = getTemplateResolveMode();
-  if (mode === "legacy") {
-    // KEEP-525: previously logSystemError, which paged on-call (Sentry error
-    // event) and bumped the generic engine-errors counter. That made the
-    // would-have-aborted exposure question unanswerable from dashboards.
-    // We now emit a dedicated counter (one bump per assertResolved call that
-    // hit the legacy passthrough) so `sum(rate(...))` answers
-    // "executions/day that would have aborted under strict", filterable by
-    // `action_type` for the write/read split needed by Step 2.
-    getMetricsCollector().incrementCounter(
-      MetricNames.TEMPLATE_RESOLVE_LEGACY_SUBSTITUTIONS,
-      {
-        action_type: context.actionType ?? "unknown",
-        reason: summarizeReason(all),
-      }
-    );
-
-    logSystemWarn(
-      ErrorCategory.WORKFLOW_ENGINE,
-      "[Template] unresolved references in legacy mode (would fail in strict)",
-      new Error(formatErrorMessage(all)),
-      {
-        node_id: context.nodeId ?? "",
-        node_label: context.nodeLabel ?? "",
-        action_type: context.actionType ?? "",
-        unresolved_count: String(all.length),
-      }
-    );
-    return;
-  }
-
   throw new TemplateResolutionError(all);
-}
-
-/**
- * Reduce the unresolved set to a single low-cardinality label value for the
- * legacy-substitution counter. Single reason → that reason; multiple distinct
- * reasons in one call → "mixed". Keeps the label cardinality bounded to the
- * fixed UnresolvedReason enum plus "mixed".
- */
-function summarizeReason(refs: UnresolvedRef[]): UnresolvedReason | "mixed" {
-  const reasons = new Set<UnresolvedReason>();
-  for (const ref of refs) {
-    reasons.add(ref.reason);
-    if (reasons.size > 1) {
-      return "mixed";
-    }
-  }
-  const [only] = reasons;
-  return only ?? "mixed";
 }
 
 function dedupeByToken(refs: UnresolvedRef[]): UnresolvedRef[] {
@@ -198,5 +135,5 @@ function formatErrorMessage(unresolved: UnresolvedRef[]): string {
     unresolved.length > summaries.length
       ? ` (+${unresolved.length - summaries.length} more)`
       : "";
-  return `Unresolved template reference(s): ${summaries.join("; ")}${more}. The action was aborted to prevent silently writing empty or literal values. Fix the reference, or set KEEPERHUB_TEMPLATE_RESOLVE_MODE=legacy for a temporary opt-out.`;
+  return `Unresolved template reference(s): ${summaries.join("; ")}${more}. The action was aborted to prevent silently writing empty or literal values. Fix the reference in the workflow definition.`;
 }
