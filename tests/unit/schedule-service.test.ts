@@ -422,5 +422,40 @@ describe("schedule-service", () => {
 
       expect(next.getTime()).toBeGreaterThan(now.getTime());
     });
+
+    // KEEP-575: callers write the result straight to workflow_schedules.
+    // next_run_at. Returning Invalid Date silently would surface as a
+    // cryptic DB error far from the cause; throw with a clear message
+    // instead.
+    it("throws on Invalid Date anchor", () => {
+      const badAnchor = new Date("not-a-real-date");
+      const now = new Date("2026-05-18T10:30:00Z");
+
+      expect(() => computeNextIntervalRunTime(3300, badAnchor, now)).toThrow(
+        /invalid anchorAt/
+      );
+    });
+
+    it("throws on non-positive interval", () => {
+      const anchor = new Date("2026-05-18T10:00:00Z");
+
+      expect(() => computeNextIntervalRunTime(0, anchor)).toThrow(
+        /invalid intervalSeconds/
+      );
+      expect(() => computeNextIntervalRunTime(-10, anchor)).toThrow(
+        /invalid intervalSeconds/
+      );
+    });
+
+    it("throws on non-finite interval", () => {
+      const anchor = new Date("2026-05-18T10:00:00Z");
+
+      expect(() =>
+        computeNextIntervalRunTime(Number.NaN, anchor)
+      ).toThrow(/invalid intervalSeconds/);
+      expect(() =>
+        computeNextIntervalRunTime(Number.POSITIVE_INFINITY, anchor)
+      ).toThrow(/invalid intervalSeconds/);
+    });
   });
 });

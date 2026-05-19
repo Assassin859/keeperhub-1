@@ -278,6 +278,18 @@ describe("shouldTriggerInterval", () => {
       shouldTriggerInterval(Number.POSITIVE_INFINITY, anchor, anchor),
     ).toBe(false);
   });
+
+  it("returns false for an Invalid Date anchor (anchorAt.getTime() is NaN)", () => {
+    // KEEP-575: the dispatcher constructs anchor via `new Date(schedule.anchorAt)`
+    // where schedule.anchorAt is a string from the JSON API. A malformed
+    // string yields Invalid Date; without the guard, every comparison below
+    // is silently false and the schedule never fires.
+    const badAnchor = new Date("not-a-real-date");
+    expect(Number.isNaN(badAnchor.getTime())).toBe(true);
+    expect(
+      shouldTriggerInterval(3300, badAnchor, new Date("2026-05-18T11:00:00Z")),
+    ).toBe(false);
+  });
 });
 
 describe("fetchSchedules", () => {

@@ -67,8 +67,23 @@ export function computeNextIntervalRunTime(
   anchorAt: Date,
   now: Date = new Date()
 ): Date {
-  const intervalMs = intervalSeconds * 1000;
+  // KEEP-575: throw on garbage inputs rather than silently returning an
+  // Invalid Date. Callers (syncWorkflowSchedule, updateScheduleAfterRun,
+  // the schedule status PATCH route) write the result directly to the
+  // workflow_schedules.next_run_at column; returning NaN-as-Date would
+  // surface as a cryptic DB error far from the actual cause.
+  if (!Number.isFinite(intervalSeconds) || intervalSeconds <= 0) {
+    throw new Error(
+      `computeNextIntervalRunTime: invalid intervalSeconds ${String(intervalSeconds)}`
+    );
+  }
   const anchorMs = anchorAt.getTime();
+  if (!Number.isFinite(anchorMs)) {
+    throw new Error(
+      `computeNextIntervalRunTime: invalid anchorAt (getTime returned NaN)`
+    );
+  }
+  const intervalMs = intervalSeconds * 1000;
   const nowMs = now.getTime();
   const firstFireMs = anchorMs + intervalMs;
   // Before the first fire: next fire is anchor + 1*interval.

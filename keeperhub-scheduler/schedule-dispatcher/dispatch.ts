@@ -100,8 +100,18 @@ export function shouldTriggerInterval(
     return false;
   }
 
-  const nowMs = now.getTime();
   const anchorMs = anchorAt.getTime();
+  // KEEP-575: anchorAt arrives as `new Date(schedule.anchorAt)` where
+  // schedule.anchorAt is a string from the JSON API. Invalid strings
+  // produce Invalid Date and getTime() = NaN, which would make every
+  // comparison below silently false — looking like "schedule isn't due
+  // yet" forever. Treat a bad anchor as a non-firing input, same as a
+  // bad interval.
+  if (!Number.isFinite(anchorMs)) {
+    return false;
+  }
+
+  const nowMs = now.getTime();
   const intervalMs = intervalSeconds * 1000;
   const elapsedMs = nowMs - anchorMs;
 

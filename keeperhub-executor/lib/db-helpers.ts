@@ -87,8 +87,22 @@ export function computeNextIntervalRunTime(
   anchorAt: Date,
   now: Date = new Date()
 ): Date {
-  const intervalMs = intervalSeconds * 1000;
+  // KEEP-575: throw on garbage inputs rather than silently writing
+  // Invalid Date to workflow_schedules.next_run_at. Mirrors the
+  // lib/schedule-service.ts guard so the executor and the app stay
+  // consistent.
+  if (!Number.isFinite(intervalSeconds) || intervalSeconds <= 0) {
+    throw new Error(
+      `computeNextIntervalRunTime: invalid intervalSeconds ${String(intervalSeconds)}`
+    );
+  }
   const anchorMs = anchorAt.getTime();
+  if (!Number.isFinite(anchorMs)) {
+    throw new Error(
+      `computeNextIntervalRunTime: invalid anchorAt (getTime returned NaN)`
+    );
+  }
+  const intervalMs = intervalSeconds * 1000;
   const nowMs = now.getTime();
   const firstFireMs = anchorMs + intervalMs;
   if (nowMs < firstFireMs) {
