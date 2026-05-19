@@ -145,11 +145,6 @@ describe("Frax Ether V2 Protocol Definition (ABI-driven)", () => {
   it("minter contract is deployed on Ethereum mainnet only (chain 1)", () => {
     const chains = Object.keys(fraxEtherV2Def.contracts.minter.addresses);
     expect(chains).toEqual(["1"]);
-    expect(chains).toContain("1");
-    expect(chains).not.toContain("8453");
-    expect(chains).not.toContain("42161");
-    expect(chains).not.toContain("11155111");
-    expect(chains).not.toContain("10");
   });
 
   it("minter contract address matches the verified V2 deployment", () => {
