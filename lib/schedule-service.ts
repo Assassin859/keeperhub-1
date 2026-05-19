@@ -10,6 +10,23 @@ import type { WorkflowNode } from "@/lib/workflow/store";
 const CRON_FIELD_SPLITTER = /\s+/;
 
 /**
+ * Sentinel placeholder written to `cron_expression` when a schedule is in
+ * interval mode (KEEP-575). cron_expression is NOT NULL on the table, so
+ * interval-mode rows still need a syntactically valid cron string. The
+ * dispatcher switches on intervalSeconds first and never parses this; the
+ * value exists only to satisfy the column constraint and be obviously
+ * not-the-real-schedule for anyone reading the row directly.
+ *
+ * `0 0 1 1 *` = "00:00 on January 1" — fires once a year, deliberately
+ * unrelated to whatever interval the user configured. An earlier attempt
+ * derived `*\/N * * * *` from the interval, which would have reproduced
+ * the exact bug KEEP-575 fixes inside any non-dispatcher reader (the two
+ * standalone scripts in scripts/ that still parse cron_expression). A
+ * constant non-match removes that footgun entirely.
+ */
+const INTERVAL_MODE_CRON_PLACEHOLDER = "0 0 1 1 *";
+
+/**
  * Compute the next run time for a cron expression in a given timezone
  */
 export function computeNextRunTime(
@@ -251,11 +268,11 @@ export async function syncWorkflowSchedule(
     return { synced: true };
   }
 
-  // Interval mode (KEEP-575). The cron column is kept non-null so legacy
-  // readers that parse it don't blow up — we stash a best-effort synthetic
-  // value, but the dispatcher checks intervalSeconds first and ignores cron.
+  // Interval mode (KEEP-575). cron_expression is NOT NULL, so we stash a
+  // fixed sentinel placeholder. The dispatcher switches on intervalSeconds
+  // and never parses this value; see INTERVAL_MODE_CRON_PLACEHOLDER for why
+  // it's a constant non-match rather than a "best-effort" derived cron.
   const { intervalSeconds } = scheduleConfig;
-  const syntheticCron = synthesizeCronForInterval(intervalSeconds);
 
   // Re-anchor only when the interval changes (or when switching modes).
   // Preserving the anchor across no-op autosaves keeps fire-times stable.
@@ -272,7 +289,7 @@ export async function syncWorkflowSchedule(
     await db
       .update(workflowSchedules)
       .set({
-        cronExpression: syntheticCron,
+        cronExpression: INTERVAL_MODE_CRON_PLACEHOLDER,
         intervalSeconds,
         anchorAt,
         timezone,
@@ -288,7 +305,7 @@ export async function syncWorkflowSchedule(
     await db.insert(workflowSchedules).values({
       id: generateId(),
       workflowId,
-      cronExpression: syntheticCron,
+      cronExpression: INTERVAL_MODE_CRON_PLACEHOLDER,
       intervalSeconds,
       anchorAt,
       timezone,
@@ -304,19 +321,6 @@ export async function syncWorkflowSchedule(
   return { synced: true };
 }
 
-/**
- * Build a best-effort 5-field cron string for an interval, used only as a
- * fallback display value for the cron_expression column when the schedule
- * is actually in interval mode. The dispatcher never parses this — it sees
- * intervalSeconds is non-null and switches paths.
- */
-function synthesizeCronForInterval(intervalSeconds: number): string {
-  const minutes = Math.max(1, Math.round(intervalSeconds / 60));
-  if (minutes >= 60) {
-    return `0 */${Math.min(23, Math.floor(minutes / 60))} * * *`;
-  }
-  return `*/${minutes} * * * *`;
-}
 
 /**
  * Get schedule for a workflow

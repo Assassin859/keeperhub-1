@@ -363,9 +363,11 @@ describe("Schedule Sync Integration Tests", () => {
       const anchorAt = inserted?.anchorAt as Date;
       expect(anchorAt.getTime()).toBeGreaterThanOrEqual(before);
       expect(anchorAt.getTime()).toBeLessThanOrEqual(after);
-      // Cron column carries the best-effort synthetic value so legacy
-      // readers don't choke; the dispatcher ignores it in interval mode.
-      expect(inserted?.cronExpression).toBe("*/55 * * * *");
+      // Cron column carries a fixed non-match sentinel so legacy readers
+      // can land the row without it parsing to a schedule that resembles
+      // the real interval. The dispatcher switches on intervalSeconds and
+      // never reads this value in interval mode.
+      expect(inserted?.cronExpression).toBe("0 0 1 1 *");
       // First fire = anchor + 1 * interval. KEEP-575: saving a schedule
       // must not cause an immediate run, so next_run_at is at least one
       // interval into the future.
