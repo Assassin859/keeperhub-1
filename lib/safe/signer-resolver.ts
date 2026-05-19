@@ -80,6 +80,15 @@ async function probeRolesModifierFromChain(
   safe: Pick<SafeWallet, "id" | "chainId" | "safeAddress">
 ): Promise<string | null> {
   try {
+    // Deliberately uses the static chain RPC config rather than
+    // `resolveRpcConfig(chainId, userId, ...)`. The probe issues stateless
+    // `eth_call`s (readEnabledSafeModules, findRolesModifierForSafe) that
+    // should not be routed through any user write-side private mempool
+    // (Flashbots Protect, custom bundler endpoints, etc.). Those endpoints
+    // are not designed to serve reads, and routing them would leak the
+    // workflow's resolver-time RPC traffic into the user's private channel.
+    // Reads always go to the public/configured chain RPC; user RPC prefs
+    // apply only to the broadcast side. See KEEP-566.
     const primaryRpcUrl = getRpcUrlByChainId(safe.chainId, "primary");
     const fallbackRpcUrl = getRpcUrlByChainId(safe.chainId, "fallback");
     const rpcManager = await getRpcProviderFromUrls(
