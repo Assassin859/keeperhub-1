@@ -13,8 +13,11 @@ Add a new KeeperHub protocol plugin and iterate until the on-chain integration t
 
 DONE when ALL of the following pass:
 - `public/protocols/{slug}.png` exists at the path the plugin's `icon` field points to. Every protocol ships with a real logo; placeholders and default-icon fallbacks are not allowed.
-- `pnpm test tests/unit/protocol-{slug}.test.ts`
-- `pnpm test tests/integration/protocol-{slug}-onchain.test.ts` against the test pattern selected in Phase 1 (a real testnet RPC, an anvil mainnet fork for mainnet-only protocols, or the public-RPC-fallback pattern; see `<process>` Phase 4).
+- `pnpm test tests/unit/protocol-{slug}.test.ts` (shape lock)
+- `pnpm test tests/unit/build-workflow.test.ts` (registry walker: verifies the new protocol's `TEST_DATA` resolves cleanly for every chain it claims)
+- `pnpm test tests/integration/protocol-{slug}-onchain.test.ts` against the test pattern selected in Phase 1 (a real testnet RPC, an anvil mainnet fork for mainnet-only protocols, or the public-RPC-fallback pattern; see `<process>` Phase 4). Calldata validation.
+- `pnpm test tests/integration/protocol-coverage/{slug}/<chain-name>/coverage.test.ts` PER CHAIN in `TEST_DATA`, gated on the chain's RPC env var (`SEPOLIA_RPC_URL`, `MAINNET_RPC_URL`, etc.). End-to-end execution via the shared coverage engine. Skipped is NOT pass.
+- `pnpm tsx scripts/seed/seed-protocol-workflows.ts --protocol={slug}` is idempotent: first run reports `N inserted, 0 failed`; immediate re-run reports `0 inserted, N refreshed, 0 skipped, 0 failed`.
 - `pnpm check` (Ultracite lint)
 - `pnpm type-check` (TypeScript)
 - `pnpm discover-plugins` (protocol is registered and `protocols/index.ts` + `lib/types/integration.ts` regenerate cleanly)
@@ -36,6 +39,13 @@ Unit test template: @tests/unit/protocol-wrapped.test.ts
 Integration test template (Sepolia, gated): @tests/integration/protocol-wrapped-onchain.test.ts
 Integration test template (mainnet, gated): @tests/integration/protocol-aave-v4-onchain.test.ts
 Integration test template (ungated, public-RPC fallback): @tests/integration/protocol-uniswap-onchain.test.ts
+
+Co-located TEST_DATA (KEEP-458 SSOT for protocol coverage): @lib/test-data/types.ts + @lib/test-data/build-workflow.ts + @lib/test-data/chain-test-data.ts
+Canonical TEST_DATA examples: @protocols/aave-v3.ts (Sepolia, single contract, supply-cap workaround documented inline) + @protocols/superfluid.ts (multi-contract, userSpecifiedAddress, skip list)
+Coverage test template (one file per chain, beforeAll setup + read/write phases): @tests/integration/protocol-coverage/aave-v3/sepolia/coverage.test.ts
+Shared coverage engine: @tests/integration/protocol-coverage/_shared/setup.ts + @tests/integration/protocol-coverage/_shared/run-fixture.ts + @tests/integration/protocol-coverage/_shared/funding.ts
+Seeder (idempotent; --protocol/--chain/--phase/--trigger/--user filters): @scripts/seed/seed-protocol-workflows.ts
+Build-workflow registry walker (walks every protocol with testData): @tests/unit/build-workflow.test.ts
 
 Protocol registry: @lib/protocol-registry.ts
 ABI derivation internals: @lib/abi/protocol-derive.ts
@@ -104,6 +114,28 @@ Use WebSearch and WebFetch to gather concrete facts. Cite URLs and addresses for
 - FALLBACK: pure `defineProtocol()`. ONLY when no ABI source exists anywhere. Document the unavailability in the PR.
 - ERC-4626 vaults: `defineProtocol()` + `erc4626VaultActions()` (no ABI-driven helper yet).
 
+1.7 Test data scope (do this AFTER 1.6; depends on the action set being final)
+
+For each chain confirmed in 1.2:
+- Native gas floor. Minimum native balance needed for setup + every write action to land. The shared coverage engine's preflight throws on shortfall; conservative numbers are fine.
+- ERC20 holdings. Cumulative across setup + every write action call. Concrete example: Aave V3 Sepolia uses 100 LINK setup supply + 10 LINK per supply test + buffer = 200 LINK floor (see `protocols/aave-v3.ts:23-25`).
+- **TOKEN_REGISTRY coverage (gating)**: confirm every symbol the bindings reference already exists in `lib/test-data/chain-test-data.ts` for the chain. **If any entry is missing, ESCALATE: do not extend `chain-test-data.ts` during BUILD.** Surface the missing `(chainId, symbol, address, decimals)` tuples to the user in Phase 2 with verified addresses (from the explorer used for ABI sourcing) and ask for explicit confirmation before any code is written. TOKEN_REGISTRY is shared infra: a wrong decimals or address breaks every protocol that uses that token, not just the one being added.
+- Approvals. List `(token, spender, amount)` triples. `spender` is usually `contract("<key>")`; literal addresses are valid but signal a non-protocol approval.
+- One-shot protocol prep. If any write action needs state the wallet doesn't start with (Aave: open supply position; Superfluid: wrapped SuperToken balance; Uniswap V3: deployed pool), encode it as `setup.protocolSteps` entries: each is itself a protocol action call with bindings, runs once in `beforeAll`.
+- Known on-chain gotchas. Document inline in `TEST_DATA` as comments. Real precedent: Aave V3 Sepolia hits `SUPPLY_CAP_EXCEEDED` (error 51) on DAI / USDC / USDT; LINK is the only borrowable testnet reserve with headroom (see `protocols/aave-v3.ts:13-18`).
+
+For each action exposed:
+- Bind every address-typed input. **Unbound address-typed inputs throw at build time** with a remediation message (see `lib/test-data/build-workflow.ts:166`). There is no silent default. Pick one of:
+  - Token symbol string (e.g. `"DAI"`): resolves via `TOKEN_REGISTRY[chainId][symbol].address`.
+  - `wallet()`: the persistent test user's per-environment Turnkey wallet (the user-self path).
+  - `contract("<key>")`: protocol contract address by registry key.
+  - Literal `"0x..."`: passed through verbatim.
+- Bind every uint-with-decimals via `amount(symbol, human)`. Use `native(human)` for native ETH inputs.
+- Literal strings (bool flags, enum codes, `referralCode`, `interestRateMode`) pass through unchanged.
+- For actions whose on-chain prerequisite cannot be provisioned in setup (e.g. Superfluid GDA actions that need a pool address that doesn't exist until a write action creates one), list them in `skipped: { "<action-slug>": "<one-line reason>" }`. The seeder still emits these rows for dashboard discoverability; the test runner marks them `test.skip` with the reason visible to the reporter. **Skips are a Phase 2 commit, not a Phase 4 escape hatch.**
+
+If a contract has `userSpecifiedAddress: true` (e.g. Superfluid SuperTokens), bind `contractAddress` as a virtual input on each action that uses it. Real inputs named `contractAddress` are forbidden by the builder (see `lib/test-data/build-workflow.ts:302-310`): rename in the protocol definition if any clash.
+
 PHASE 2 - CONFIRM (gate: do NOT proceed without explicit user approval)
 
 Post a research report to the user containing:
@@ -112,8 +144,13 @@ Post a research report to the user containing:
 - Contracts: table of label / function set / source ABI URL / docs URL. All contracts belong to the named version only.
 - Definition strategy + why this one fits.
 - ABI source(s) per contract, with the version each ABI corresponds to and the exact URL it came from.
+- TEST_DATA scope per chain:
+  - Setup: `minNativeHuman`, `requiredTokens`, `approvals`, `protocolSteps`.
+  - Per-action bindings table (one row per chain if scope diverges between chains).
+  - Skip list: action slugs that will be `test.skip` with their reasons.
+- TOKEN_REGISTRY changes (REQUIRED whenever any binding references a `(chain, symbol)` not already in `lib/test-data/chain-test-data.ts`): table of new entries with verified `address`, `decimals`, `symbol`. Cite the explorer URL for each address. Do not omit this section silently; if no changes are needed, state "no TOKEN_REGISTRY changes".
 
-WAIT for explicit user confirmation on chains AND contracts. If the user says "add chain X" or "drop function Y", loop back to Phase 1 with the adjustment. Do not begin writing code.
+WAIT for explicit user confirmation on chains AND contracts AND TEST_DATA scope (setup + per-action bindings + skip list) AND any TOKEN_REGISTRY additions. The skip list and TOKEN_REGISTRY changes must be approved here, not introduced silently in BUILD. If the user says "add chain X" or "drop function Y" or "fix that decimals to 6", loop back to Phase 1 with the adjustment. Do not begin writing code.
 
 Rationale: the chain selector auto-restricts to `Object.keys(contract.addresses)`. Any chain in the map becomes user-selectable in the workflow builder, and any user-selectable chain without a real deployment breaks workflows at runtime. This gate exists to prevent that class of bug.
 
@@ -121,7 +158,7 @@ PHASE 3 - BUILD
 
 Once Phase 2 is confirmed, produce these files. For each, match the structure of the example called out:
 
-- `protocols/{slug}.ts` - protocol definition. Match the example file picked in Phase 1.6.
+- `protocols/{slug}.ts` - protocol definition AND co-located `TEST_DATA: ProtocolTestData` export, passed into `defineProtocol` as `testData: TEST_DATA`. Sentinel helpers imported from `@/lib/test-data/types` (`wallet()`, `amount()`, `contract()`, `native()`). Match the file picked in Phase 1.6 for the definition shape; match `protocols/aave-v3.ts` for the TEST_DATA layout (or `protocols/superfluid.ts` for protocols using userSpecifiedAddress contracts or a skip list).
 - `protocols/abis/{slug}.json` (or `{slug}-{contract}.json` if multiple contracts) - reduced ABI(s). Functions plus only the events being exposed. Nothing else.
 - `tests/unit/protocol-{slug}.test.ts` - shape and override integrity. Model on `tests/unit/protocol-wrapped.test.ts`. Cover at minimum:
   - Default export imports without throwing; name and slug correct.
@@ -140,6 +177,8 @@ Once Phase 2 is confirmed, produce these files. For each, match the structure of
   - **Pattern B - no testnet contract, mainnet-only**: model on `tests/integration/protocol-aave-v4-onchain.test.ts` BUT point the RPC at a local anvil mainnet fork. Default URL `http://localhost:8545`; allow `INTEGRATION_TEST_MAINNET_RPC_URL` as an override. Do NOT default the test at a paid mainnet RPC: the anvil fork is free, deterministic, requires no secret, and is the supported substitute for the missing testnet. Pattern B is incomplete without the two extra artifacts listed below in this Phase 3 section (the fork-test script and the docs "Testing Without Risking Real ETH" section).
   - **Pattern C - ungated public RPC**: model on `tests/integration/protocol-uniswap-onchain.test.ts`. Uses the `CHAIN_RPC_CONFIG` resolver with a public-RPC fallback. Use only when the protocol's chain has a free public RPC reliable enough for CI traffic.
   - All patterns require: `vi.mock("server-only", () => ({}));` at the top. RPC routed through `getRpcProviderFromUrls` + `executeWithFailover` (same failover the prod request path uses). One test per exposed action: reads decode the return type; writes call `estimateGas` or `provider.call` and accept `CALL_EXCEPTION` (business revert) while rejecting ABI errors (see Phase 4).
+- `tests/integration/protocol-coverage/{slug}/<chain-name>/coverage.test.ts` PER CHAIN in `TEST_DATA` - end-to-end execution via the shared coverage engine (KEEP-458). Model on `tests/integration/protocol-coverage/aave-v3/sepolia/coverage.test.ts`. Gated on the chain's RPC env var (`SEPOLIA_RPC_URL`, `MAINNET_RPC_URL`, etc.); skips cleanly when unset. The shared `_shared/setup.ts` handles preflight (native gas, ERC20 balances), runs the setup workflow once in `beforeAll`, then `runPhaseFixtures` executes read+write actions with Manual triggers only (the webhook-fired execution path ignores trigger config, so the 5 trigger variants give no test signal at execution time). This test is MANDATORY alongside the calldata `-onchain.test.ts`: they catch different classes of regression (calldata shape vs end-to-end execution).
+- `lib/test-data/chain-test-data.ts` - extend ONLY with the `(chain, token)` entries explicitly confirmed in Phase 2. Each new entry needs `address`, `decimals`, `symbol`. Do NOT add entries silently in BUILD: TOKEN_REGISTRY is shared infra and a wrong entry (e.g. USDC at 18 decimals instead of 6) breaks every protocol that uses that token, not just the one being added.
 - `docs/plugins/{slug}.md` - public docs page with actions table and per-action sections. For **Pattern B (mainnet-only)** protocols, MUST also include a `## Testing Without Risking Real ETH` section that documents: (a) how to start anvil via the Foundry Docker image with `--fork-url <YOUR_MAINNET_RPC_URL>` on port 8545, (b) how to run the fork-test script with `pnpm tsx scripts/{slug}-fork-test.ts`, (c) how to point the local dev server at the fork via `CHAIN_ETH_MAINNET_PRIMARY_RPC=http://localhost:8545 pnpm dev`, (d) a `## Why no testnet entry in the plugin` subsection that names the testnets checked (with evidence the protocol is not on them) so future maintainers don't try to "add Sepolia" again. Model on the section in `docs/plugins/frax-ether-v2.md`.
 - `docs/plugins/_meta.ts` - add nav entry.
 - `docs/plugins/overview.md` - add to protocols table.
@@ -162,25 +201,35 @@ Run in order. Do NOT advance past a failing step. Re-run the FULL sequence after
 4.2 `pnpm discover-plugins` exits 0 and registers the protocol (check stdout includes the new slug; check `protocols/index.ts` was regenerated).
 4.3 `pnpm check` passes.
 4.4 `pnpm type-check` passes.
-4.5 `pnpm test tests/unit/protocol-{slug}.test.ts` passes.
-4.6 `pnpm test tests/integration/protocol-{slug}-onchain.test.ts` passes against the test pattern selected in Phase 1.2 / Phase 3:
+4.5 `pnpm test tests/unit/protocol-{slug}.test.ts` passes (shape lock).
+4.6 `pnpm test tests/unit/build-workflow.test.ts` passes - the registry walker resolves every binding in the new `TEST_DATA` without throwing.
+4.7 `pnpm test tests/integration/protocol-{slug}-onchain.test.ts` passes against the test pattern selected in Phase 1.2 / Phase 3 (calldata validation):
   - Pattern A (real testnet): `INTEGRATION_TEST_RPC_URL` set to a public testnet RPC (Sepolia, etc.).
   - **Pattern B (mainnet-only, anvil fork)**: `scripts/{slug}-fork-test.ts` runs cleanly AND the vitest integration test passes against `http://localhost:8545` (start anvil in another terminal via the Docker command documented in the docs page). `INTEGRATION_TEST_MAINNET_RPC_URL` may override the default URL but anvil is the supported default; do NOT verify against a paid mainnet RPC.
   - Pattern C (ungated public-RPC fallback): no env var needed.
   - If the test skips because the configured RPC is unreachable (env var unset, anvil not running, public RPC throttling), that counts as "did not pass". Surface the missing piece to the user before declaring DONE.
+4.8 `pnpm tsx scripts/seed/seed-protocol-workflows.ts --protocol={slug}` against a local DB (run `pnpm db:seed-test-wallet` first if needed):
+  - First run: `N inserted, 0 refreshed, 0 skipped, 0 failed` where N = (setup rows + actions * 5 triggers) summed across chains in `TEST_DATA`.
+  - Immediate re-run with no edits: `0 inserted, N refreshed, 0 skipped, 0 failed` (idempotency check).
+4.9 `pnpm test tests/integration/protocol-coverage/{slug}/<chain-name>/coverage.test.ts` PER CHAIN in `TEST_DATA`, against the chain's gating env var (end-to-end execution). If the env var is unset the file skips, which is NOT pass. The Orchestrator must obtain the RPC URL before declaring DONE.
 
 When a check fails, classify and resolve:
 - Lint / type / shape failure -> patch the source file or the unit test, depending on which is wrong. Tests encode intent; if the intent was wrong, update both.
 - Integration test ABI errors (`INVALID_ARGUMENT`, `BAD_DATA`, `BUFFER_OVERRUN`, `"could not decode"`, `"invalid function"`) -> the reduced ABI does NOT match the deployed bytecode. Fix the ABI. Do NOT loosen the test.
-- Integration test `CALL_EXCEPTION` on a write action -> ACCEPT. A business revert (zero allowance, nonexistent reserve, missing approval) still proves the bytecode parsed the calldata. Document the revert in a comment if it is non-obvious.
+- Calldata-test (`-onchain.test.ts`) `CALL_EXCEPTION` on a write action -> ACCEPT. A business revert (zero allowance, nonexistent reserve, missing approval) still proves the bytecode parsed the calldata. Document the revert in a comment if it is non-obvious.
 - Integration test `CALL_EXCEPTION` on a read action -> investigate. Reads should not revert unless the calldata is wrong (e.g. calling `balanceOf` on a non-token).
+- Builder throws "address-typed input ... has no binding and no protocol-level default" -> bind the input in `TEST_DATA`. The message names the protocol/action/input; fix at the binding, not by adding a literal default in the protocol file.
+- Builder throws "TOKEN_REGISTRY missing <symbol> on chain <id>" -> the binding references an entry not in Phase 2 scope. Loop back to Phase 2 with the missing tuple `(chain, symbol, address, decimals)` for explicit user confirmation. Do NOT silently add the entry in BUILD.
+- Coverage-test setup-phase revert (in `runSetup`, on `approve-token` or a `protocolSteps` action) -> on-chain prereq not met. Common causes: faucet exhausted, supply cap reached on this asset, reserve paused, missing role. Audit `setup.requiredTokens` and the Phase 1.7 gotchas list. Do NOT relax the test.
+- Coverage-test "skipped" rows in the vitest reporter for actions NOT listed in `skipped: {}` -> the runner only skips what the SSOT marks. Treat unexpected skips as failure and investigate (usually a `beforeAll` throw the harness converted to skip).
+- Seeder reports `failed > 0` -> read the per-row error in stdout. Common cause: an input the registry doesn't know about (re-run `pnpm discover-plugins`).
 
-Loop back to PHASE 3 with the specific failure as the problem to solve. Do not declare DONE until all five checks pass cleanly.
+Loop back to PHASE 3 with the specific failure as the problem to solve. Do not declare DONE until all checks pass cleanly.
 
 PHASE 5 - EXIT
 
 Once Phase 4 passes:
-- Summarise: protocol slug, contracts, chains, action count, definition strategy used.
+- Summarise: protocol slug, contracts, chains, action count, definition strategy used, TEST_DATA scope (per-chain setup, action-bindings count, skip count), seeded row count, coverage-test pass count per chain, any TOKEN_REGISTRY additions.
 - Draft PR title and body, conventional commit format (e.g. `feat: KEEP-XXX add <Protocol> protocol plugin`). Branch `feat/KEEP-XXXX-add-{slug}` if a Linear ticket is set; else `feat/add-{slug}-protocol`.
 - DO NOT create the PR. User confirmation is required per CLAUDE.md ("Do not git push or create GitHub PRs without user's confirmation").
 
@@ -203,11 +252,14 @@ The Orchestrator handles: web search, decomposing subtasks, delegating to Resear
 
 <success_criteria>
 - Protocol logo committed at `public/protocols/{slug}.png` (real logo from an official source; no placeholders).
-- Integration tests at `tests/integration/protocol-{slug}-onchain.test.ts` pass against the configured RPC for the selected pattern (skipped is not pass).
+- Calldata integration tests at `tests/integration/protocol-{slug}-onchain.test.ts` pass against the configured RPC for the selected pattern (skipped is not pass).
+- Coverage tests at `tests/integration/protocol-coverage/{slug}/<chain-name>/coverage.test.ts` pass per chain in `TEST_DATA` (skipped is NOT pass).
 - For Pattern B (mainnet-only, anvil fork): `scripts/{slug}-fork-test.ts` exists and exits PASS. `docs/plugins/{slug}.md` includes a `## Testing Without Risking Real ETH` section and a `## Why no testnet entry in the plugin` subsection.
 - Unit tests at `tests/unit/protocol-{slug}.test.ts` pass.
+- `pnpm test tests/unit/build-workflow.test.ts` passes.
+- `pnpm tsx scripts/seed/seed-protocol-workflows.ts --protocol={slug}` is idempotent (first run inserts, immediate re-run refreshes, neither reports failures).
 - `pnpm check`, `pnpm type-check`, `pnpm discover-plugins` all exit 0.
-- Chain and contract scope was explicitly confirmed by the user in Phase 2 before any code was written. No fabricated chain entries in `contract.addresses`.
+- Chain, contract scope, TEST_DATA scope (setup + per-action bindings + skip list), and any TOKEN_REGISTRY additions were explicitly confirmed by the user in Phase 2 before any code was written. No fabricated chain entries in `contract.addresses`; no silent TOKEN_REGISTRY edits.
 - Definition strategy is justified in the PR description (which of defineAbiProtocol / hybrid / fallback was used and why).
 - Input docUrls populated for every input where a canonical per-page docs URL exists; absences noted in the PR.
 - PR drafted but not created; user confirmation required to push and open.
