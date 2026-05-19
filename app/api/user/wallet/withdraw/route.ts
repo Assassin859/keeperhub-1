@@ -14,7 +14,7 @@ import {
   getOrganizationWalletAddress,
   initializeWalletSigner,
 } from "@/lib/para/wallet-helpers";
-import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
+import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import {
   executeContractCallAsSafe,
   executeNativeTransferAsSafe,
@@ -152,7 +152,7 @@ export async function POST(request: Request) {
         { status: validation.status }
       );
     }
-    const { organizationId } = validation;
+    const { organizationId, user } = validation;
 
     // 2. Parse request body
     const body = (await request.json()) as {
@@ -234,7 +234,6 @@ export async function POST(request: Request) {
     }
 
     const chain = chainResult[0];
-    const rpcUrl = chain.defaultPrimaryRpc;
 
     // 4. Get wallet address for nonce management
     const walletAddress = await getOrganizationWalletAddress(organizationId);
@@ -242,10 +241,15 @@ export async function POST(request: Request) {
     // Generate a unique execution ID for this API call
     const executionId = `withdraw-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 
-    // Build transaction context. Single-armed RPC manager (no fallback URL)
-    // matches the pattern used in lib/safe/deployment.ts and
-    // lib/safe/roles-orchestrator.ts; broadcast reconcile still works.
-    const rpcManager = await getRpcProviderFromUrls(rpcUrl, undefined, chainId);
+    // KEEP-548: build an RPC manager via getRpcProvider so the withdraw
+    // honours per-user RPC preferences (private mempool / Flashbots Protect)
+    // AND gets failover between primary + fallback for gas estimation,
+    // gas-strategy reads, and receipt polling -- same surface the Safe
+    // executors already use via options.rpcManager. resolveActiveRpcUrl()
+    // probes once and returns whichever endpoint is live so the signer URL
+    // stays consistent with what the manager will dispatch to.
+    const rpcManager = await getRpcProvider({ chainId, userId: user.id });
+    const rpcUrl = await rpcManager.resolveActiveRpcUrl();
     const txContext: TransactionContext = {
       organizationId,
       executionId,
