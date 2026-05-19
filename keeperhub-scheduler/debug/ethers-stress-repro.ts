@@ -63,7 +63,9 @@ process.on("unhandledRejection", (reason: unknown) => {
 
 function startHealthyMockServer(serverPort: number): WebSocketServer {
   let blockNumber = 0x1000;
-  const server = new WebSocketServer({ port: serverPort });
+  // Bind to loopback only; this is a debug-only mock that does not need
+  // to be reachable externally.
+  const server = new WebSocketServer({ port: serverPort, host: "127.0.0.1" });
   let connectionCount = 0;
   let liveConnections = 0;
 

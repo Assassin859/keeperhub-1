@@ -37,7 +37,10 @@ function startMockServer(
   scenario: Scenario,
 ): { server: WebSocketServer; serverStarted: Promise<void> } {
   let blockNumber = 0x1000;
-  const server = new WebSocketServer({ port });
+  // Bind to loopback only. WebSocketServer's default host is 0.0.0.0, which
+  // opens a transient public port on CI runners. Tests are loopback-only by
+  // construction; there is no reason to advertise externally.
+  const server = new WebSocketServer({ port, host: "127.0.0.1" });
   const subscriptions = new Map<string, NodeJS.Timeout>();
 
   const serverStarted = new Promise<void>((resolve, reject) => {

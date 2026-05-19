@@ -63,9 +63,14 @@ if (!VALID_SCENARIOS.includes(scenario)) {
   process.exit(1);
 }
 
-const wss = new WebSocketServer({ port });
+// Bind to loopback only. The debug server has no auth and speaks just enough
+// JSON-RPC for ethers' startup; binding to 0.0.0.0 (the WebSocketServer
+// default) would advertise a fake-Ethereum endpoint on every interface for
+// the lifetime of the script. Loopback is sufficient for wss-compare runs
+// on the same host.
+const wss = new WebSocketServer({ port, host: "127.0.0.1" });
 console.log(
-  `Mock WSS listening on ws://localhost:${port} in '${scenario}' mode`,
+  `Mock WSS listening on ws://127.0.0.1:${port} in '${scenario}' mode`,
 );
 
 let blockNumber = 0x1000;
