@@ -81,3 +81,42 @@ Read whether minting is currently paused on the Frax Ether V2 minter.
 | paused | bool | True if minting is paused, false if mints are accepted |
 
 **When to use:** as a gate in scheduled workflows so a mint action only runs when the contract is unpaused. Useful for resilient automation that should self-suspend during contract maintenance windows.
+
+---
+
+## Testing Without Risking Real ETH
+
+Frax Ether V2 has no testnet deployment. The V2 minter contract lives only on Ethereum mainnet, so the only way to exercise the write path (mintFrxEth, mintFrxEthAndGive, submitAndDeposit) end-to-end without spending real ETH is against a local mainnet fork.
+
+### One-shot smoke test
+
+A scripted smoke test broadcasts a real `mintFrxEth` against forked mainnet bytecode and asserts the 1:1 frxETH mint. Recommended whenever upgrading the plugin, the ABI, or the dispatching layer.
+
+In one terminal, start anvil with your mainnet RPC:
+
+```bash
+docker run --rm -p 8545:8545 ghcr.io/foundry-rs/foundry:latest \
+  "anvil --host 0.0.0.0 --fork-url <YOUR_MAINNET_RPC_URL>"
+```
+
+In another terminal, run the smoke test:
+
+```bash
+pnpm tsx scripts/frax-ether-v2-fork-test.ts
+```
+
+The script uses one of anvil's pre-funded test accounts, mints 1 frxETH, and prints a PASS line on success.
+
+### Driving the UI against the fork
+
+For end-to-end UI testing, point your local dev server at the same fork by overriding the Ethereum mainnet RPC URL:
+
+```bash
+CHAIN_ETH_MAINNET_PRIMARY_RPC=http://localhost:8545 pnpm dev
+```
+
+Any wallet you connect must be funded on the fork (use one of anvil's pre-funded private keys, or `anvil_setBalance` via `cast`). Workflows that target chain ID 1 will then hit the forked bytecode instead of real mainnet.
+
+### Why no testnet entry in the plugin
+
+Adding a Sepolia or Holesky chain ID to the plugin would require a contract address. Frax did not deploy the V2 minter on any public testnet (verified against the official frxETH V2 addresses page and Sepolia and Holesky block explorers), so any address added would be fabricated and would revert on first call. The fork pattern above is the supported substitute.
