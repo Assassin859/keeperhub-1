@@ -73,6 +73,13 @@ export type ProtocolAction = {
   inputs: ProtocolActionInput[];
   outputs?: ProtocolActionOutput[];
   payable?: boolean;
+  /** External documentation URL rendered as a "Docs" link in the action
+   *  config panel header. Optional; if absent, no link is shown. */
+  docUrl?: string;
+  /** Pre-serialized GasLimitConfig JSON (see lib/web3/gas-defaults.ts)
+   *  fed to the gas-limit-multiplier field as defaultValue. Only set on
+   *  write actions whose override declared a gasLimit; reads ignore it. */
+  gasLimitDefault?: string;
 };
 
 export type ProtocolDefinition = {
@@ -184,11 +191,13 @@ export function defineProtocol(def: ProtocolDefinition): ProtocolDefinition {
 import {
   type AbiDrivenProtocolInput,
   deriveActionsFromAbi,
+  deriveEventsFromAbi,
 } from "@/lib/abi/protocol-derive";
 
 export type {
   AbiDrivenContract,
   AbiDrivenProtocolInput,
+  AbiEventOverride,
   AbiFunctionOverride,
   AbiInputOverride,
   AbiOutputOverride,
@@ -198,6 +207,7 @@ export function defineAbiProtocol(
   input: AbiDrivenProtocolInput
 ): ProtocolDefinition {
   const actions: ProtocolAction[] = [];
+  const events: ProtocolEvent[] = [];
   const contracts: Record<string, ProtocolContract> = {};
 
   for (const [key, contract] of Object.entries(input.contracts)) {
@@ -211,6 +221,10 @@ export function defineAbiProtocol(
     for (const action of derived) {
       actions.push(action);
     }
+    const derivedEvents = deriveEventsFromAbi(key, contract);
+    for (const evt of derivedEvents) {
+      events.push(evt);
+    }
   }
 
   return defineProtocol({
@@ -221,6 +235,7 @@ export function defineAbiProtocol(
     icon: input.icon,
     contracts,
     actions,
+    events,
   });
 }
 
@@ -346,6 +361,9 @@ function buildConfigFieldsFromAction(
       type: "gas-limit-multiplier",
       networkField: "network",
       actionSlug: action.slug,
+      ...(action.gasLimitDefault
+        ? { defaultValue: action.gasLimitDefault }
+        : {}),
     });
   }
 
@@ -370,6 +388,7 @@ function buildConfigFieldsFromAction(
     label: "Protocol Metadata",
     type: "text",
     defaultValue: metaValue,
+    hidden: true,
   });
 
   return fields;
@@ -426,6 +445,7 @@ export function protocolActionToPluginAction(
     ...(action.type === "write" ? { credentialIntegrationType: "web3" } : {}),
     configFields: buildConfigFieldsFromAction(def, action),
     outputFields: buildOutputFieldsFromAction(action),
+    ...(action.docUrl ? { docUrl: action.docUrl } : {}),
   };
 }
 

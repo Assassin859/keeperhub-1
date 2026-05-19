@@ -7,12 +7,55 @@ import { workflowExecutionLogs, workflowExecutions } from "@/lib/db/schema";
 import { redactSensitiveData } from "@/lib/utils/redact";
 import { getWorkflowAccess } from "@/lib/workflow/access";
 
+type TruncatedMarker = {
+  _truncated: true;
+  originalSize: number;
+  preview: string;
+};
+
+function truncateField(value: unknown, maxBytes: number): unknown | TruncatedMarker {
+  if (value === null || value === undefined) {
+    return value;
+  }
+  const stringified = JSON.stringify(value);
+  if (stringified === undefined) {
+    return value;
+  }
+  const originalSize = Buffer.byteLength(stringified, "utf8");
+  if (originalSize <= maxBytes) {
+    return value;
+  }
+  return {
+    _truncated: true as const,
+    originalSize,
+    preview: stringified.slice(0, maxBytes),
+  };
+}
+
 export async function GET(
   request: Request,
   context: { params: Promise<{ executionId: string }> }
 ) {
   try {
     const { executionId } = await context.params;
+
+    const { searchParams } = new URL(request.url);
+    const includeDataRaw = searchParams.get("includeData");
+    const includeData =
+      includeDataRaw === null ? undefined : includeDataRaw !== "false";
+    const nodeIdsParam = searchParams.getAll("nodeIds").filter((id) => id !== "");
+    const nodeIds = nodeIdsParam.length > 0 ? nodeIdsParam : undefined;
+    const truncateDataRaw = searchParams.get("truncateData");
+    const truncateDataParsed =
+      truncateDataRaw === null ? Number.NaN : Number.parseInt(truncateDataRaw, 10);
+    const truncateData =
+      Number.isFinite(truncateDataParsed) && truncateDataParsed > 0
+        ? truncateDataParsed
+        : undefined;
+    const hasAnyPartialParam =
+      includeData !== undefined ||
+      nodeIds !== undefined ||
+      truncateData !== undefined;
 
     const authContext = await getDualAuthContext(request);
     if ("error" in authContext) {
@@ -30,7 +73,6 @@ export async function GET(
       );
     }
 
-    // Get the execution and verify ownership
     const execution = await db.query.workflowExecutions.findFirst({
       where: eq(workflowExecutions.id, executionId),
       with: {
@@ -45,7 +87,6 @@ export async function GET(
       );
     }
 
-    // Verify access: owner or org member
     const access = await getWorkflowAccess(execution.workflow, {
       userId,
       organizationId,
@@ -59,23 +100,48 @@ export async function GET(
       );
     }
 
-    // Get logs
     const logs = await db.query.workflowExecutionLogs.findMany({
       where: eq(workflowExecutionLogs.executionId, executionId),
       orderBy: [desc(workflowExecutionLogs.timestamp)],
     });
 
-    // Apply an additional layer of redaction to ensure no sensitive data is exposed
-    // Even though data should already be redacted when stored, this provides defense in depth
     const redactedLogs = logs.map((log) => ({
       ...log,
       input: redactSensitiveData(log.input),
       output: redactSensitiveData(log.output),
     }));
 
+    if (!hasAnyPartialParam) {
+      return NextResponse.json({
+        execution,
+        logs: redactedLogs,
+      });
+    }
+
+    const nodeIdSet = nodeIds ? new Set(nodeIds) : null;
+    const transformedLogs = redactedLogs.map((log) => {
+      const stripData = includeData === false;
+      const stripForNodeFilter =
+        !stripData && nodeIdSet !== null && !nodeIdSet.has(log.nodeId);
+      if (stripData || stripForNodeFilter) {
+        // biome-ignore lint/correctness/noUnusedVariables: destructure-to-omit pattern
+        const { input: _input, output: _output, outputRaw: _outputRaw, ...rest } = log;
+        return rest;
+      }
+      if (truncateData !== undefined) {
+        return {
+          ...log,
+          input: truncateField(log.input, truncateData),
+          output: truncateField(log.output, truncateData),
+          outputRaw: truncateField(log.outputRaw, truncateData),
+        };
+      }
+      return log;
+    });
+
     return NextResponse.json({
       execution,
-      logs: redactedLogs,
+      logs: transformedLogs,
     });
   } catch (error) {
     logSystemError(ErrorCategory.DATABASE, "Failed to get execution logs", error, {

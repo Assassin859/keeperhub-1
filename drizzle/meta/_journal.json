@@ -533,6 +533,20 @@
       "when": 1777760000009,
       "tag": "0075_keep_432_db_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1777760000010,
+      "tag": "0076_keep484_backfill_wallet_integration_name",
+      "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1777760000011,
+      "tag": "0077_keep_575_schedule_interval",
+      "breakpoints": true
     }
   ]
 }

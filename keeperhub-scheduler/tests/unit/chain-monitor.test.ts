@@ -1171,4 +1171,112 @@ describe("ChainMonitor", () => {
       await monitor.stop();
     });
   });
+
+  // -------------------------------------------------------------------------
+  // KEEP-570 raw-ws diagnostic tap
+  // -------------------------------------------------------------------------
+
+  describe("ws frame diagnostic tap", () => {
+    it("counts every frame, only parses JSON for eth_subscription, and surfaces both counters in the noBlockTimer warning", async () => {
+      // Drive the tap with a mix of frame shapes and contents, then drive
+      // the no-block timer to fire and assert the warning's diagnostic
+      // counters reflect what we sent.
+      vi.stubEnv("BLOCK_ADVANCE_TIMEOUT_MS", "2000");
+      vi.stubEnv("SOCKET_MAX_AGE_MS", String(60 * 60_000));
+      vi.stubEnv("PONG_TIMEOUT_MS", String(60 * 60_000));
+      vi.stubEnv("PING_INTERVAL_MS", String(60 * 60_000));
+
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation((): void => {
+        // capture only; suppress test output
+      });
+
+      try {
+        const monitor = new ChainMonitor({
+          chain: makeChain(),
+          workflows: [makeWorkflow()],
+        });
+        await monitor.start();
+        const provider = latestProvider();
+
+        // 5 frames total, 3 of which are eth_subscription pushes. Mixed
+        // shapes (string, Buffer, fragmented Buffer[]) to exercise
+        // decodeWsFrame as part of the tap, plus one malformed frame to
+        // confirm the parse-error path is silent.
+        provider.websocket.emit(
+          "message",
+          Buffer.from('{"id":1,"result":"0x1"}', "utf8"),
+        );
+        provider.websocket.emit("message", "not-json");
+        provider.websocket.emit(
+          "message",
+          Buffer.from('{"method":"eth_subscription"}', "utf8"),
+        );
+        provider.websocket.emit("message", [
+          Buffer.from('{"method":"eth_su', "utf8"),
+          Buffer.from('bscription"}', "utf8"),
+        ]);
+        provider.websocket.emit("message", '{"method":"eth_subscription"}');
+
+        // Drive the no-block timer; no real blocks were emitted so it must
+        // fire and emit the warning containing the counters.
+        await vi.advanceTimersByTimeAsync(2_500);
+
+        const warnings = warnSpy.mock.calls
+          .map((args) => String(args[0]))
+          .filter((line) => line.includes("Block height has not advanced"));
+        expect(warnings.length).toBeGreaterThanOrEqual(1);
+        const warning = warnings[0];
+        expect(warning).toMatch(/wsFrames=5/);
+        expect(warning).toMatch(/subscriptionPushes=3/);
+        expect(warning).toMatch(/blocksReceived=0/);
+
+        await monitor.stop();
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it("does not increment the push counter when a frame is malformed", async () => {
+      // Isolates the parse-error branch: malformed JSON frames must
+      // increment wsFrameCount but not subscriptionPushCount, and must
+      // not throw / unhandle.
+      vi.stubEnv("BLOCK_ADVANCE_TIMEOUT_MS", "2000");
+      vi.stubEnv("SOCKET_MAX_AGE_MS", String(60 * 60_000));
+      vi.stubEnv("PONG_TIMEOUT_MS", String(60 * 60_000));
+      vi.stubEnv("PING_INTERVAL_MS", String(60 * 60_000));
+
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation((): void => {
+        // capture only; suppress test output
+      });
+
+      try {
+        const monitor = new ChainMonitor({
+          chain: makeChain(),
+          workflows: [makeWorkflow()],
+        });
+        await monitor.start();
+        const provider = latestProvider();
+
+        for (let i = 0; i < 4; i++) {
+          provider.websocket.emit(
+            "message",
+            Buffer.from("not-json-at-all", "utf8"),
+          );
+        }
+
+        await vi.advanceTimersByTimeAsync(2_500);
+
+        const warning = warnSpy.mock.calls
+          .map((args) => String(args[0]))
+          .find((line) => line.includes("Block height has not advanced"));
+        expect(warning).toBeDefined();
+        expect(warning).toMatch(/wsFrames=4/);
+        expect(warning).toMatch(/subscriptionPushes=0/);
+
+        await monitor.stop();
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+  });
 });

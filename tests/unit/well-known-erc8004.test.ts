@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { GET as agentGET } from "@/app/agent/route";
 import { GET as agentJsonGET } from "@/app/.well-known/agent.json/route";
 import { GET as erc8004GET } from "@/app/.well-known/erc8004.json/route";
 
 const REQ_URL = "https://app.keeperhub.com/.well-known/test";
+const EIP55_ADDRESS = /^0x[a-fA-F0-9]{40}$/;
 const ORIGINAL_APP_URL = process.env.NEXT_PUBLIC_APP_URL;
 const ORIGINAL_AUTH_URL = process.env.BETTER_AUTH_URL;
 
@@ -38,7 +40,7 @@ describe("/.well-known/erc8004.json (KEEP-475)", () => {
     expect(body.agent_id).toBe(31_875);
     expect(body.chain).toBe("ethereum");
     expect(body.chain_id).toBe(1);
-    expect(body.registry).toMatch(/^0x[a-fA-F0-9]{40}$/);
+    expect(body.registry).toMatch(EIP55_ADDRESS);
     expect(body.reputation.registry).toBe(body.registry);
     expect(body.reputation.type).toBe("erc-8004");
     expect(body.cards.mcp).toBe(
@@ -58,6 +60,17 @@ describe("/.well-known/erc8004.json (KEEP-475)", () => {
 describe("/.well-known/agent.json (KEEP-475)", () => {
   it("301-redirects to the canonical /.well-known/agent-card.json", () => {
     const response = agentJsonGET(new Request(REQ_URL));
+
+    expect(response.status).toBe(301);
+    expect(response.headers.get("location")).toBe(
+      "https://app.keeperhub.com/.well-known/agent-card.json"
+    );
+  });
+});
+
+describe("/agent (KEEP-475)", () => {
+  it("301-redirects the bare /agent path to the canonical agent card", () => {
+    const response = agentGET(new Request("https://app.keeperhub.com/agent"));
 
     expect(response.status).toBe(301);
     expect(response.headers.get("location")).toBe(

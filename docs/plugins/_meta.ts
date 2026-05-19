@@ -11,6 +11,7 @@ export default {
   compound: "Compound V3",
   cowswap: "CoW Swap",
   curve: "Curve",
+  "frax-ether-v2": "Frax Ether V2",
   lido: "Lido",
   morpho: "Morpho",
   pendle: "Pendle",
