@@ -1186,11 +1186,9 @@ describe("ChainMonitor", () => {
       vi.stubEnv("PONG_TIMEOUT_MS", String(60 * 60_000));
       vi.stubEnv("PING_INTERVAL_MS", String(60 * 60_000));
 
-      const warnSpy = vi
-        .spyOn(console, "warn")
-        .mockImplementation((): void => {
-          // capture only; suppress test output
-        });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation((): void => {
+        // capture only; suppress test output
+      });
 
       try {
         const monitor = new ChainMonitor({
@@ -1217,10 +1215,7 @@ describe("ChainMonitor", () => {
           Buffer.from('{"method":"eth_su', "utf8"),
           Buffer.from('bscription"}', "utf8"),
         ]);
-        provider.websocket.emit(
-          "message",
-          '{"method":"eth_subscription"}',
-        );
+        provider.websocket.emit("message", '{"method":"eth_subscription"}');
 
         // Drive the no-block timer; no real blocks were emitted so it must
         // fire and emit the warning containing the counters.
@@ -1250,11 +1245,9 @@ describe("ChainMonitor", () => {
       vi.stubEnv("PONG_TIMEOUT_MS", String(60 * 60_000));
       vi.stubEnv("PING_INTERVAL_MS", String(60 * 60_000));
 
-      const warnSpy = vi
-        .spyOn(console, "warn")
-        .mockImplementation((): void => {
-          // capture only; suppress test output
-        });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation((): void => {
+        // capture only; suppress test output
+      });
 
       try {
         const monitor = new ChainMonitor({

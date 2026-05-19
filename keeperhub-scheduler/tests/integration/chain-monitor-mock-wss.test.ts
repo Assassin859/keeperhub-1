@@ -41,9 +41,7 @@ const STUCK_WINDOW_MS = MONITOR_RECREATE_MS + 2_000;
 
 type Scenario = "healthy" | "zombie" | "subscribe-no-response";
 
-function startMockServer(
-  scenario: Scenario,
-): {
+function startMockServer(scenario: Scenario): {
   server: WebSocketServer;
   serverStarted: Promise<number>;
 } {

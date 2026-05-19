@@ -33,8 +33,7 @@ describe("decodeWsFrame", () => {
   });
 
   it("decodes an ArrayBuffer", () => {
-    const arrayBuffer = new TextEncoder().encode("hello")
-      .buffer as ArrayBuffer;
+    const arrayBuffer = new TextEncoder().encode("hello").buffer as ArrayBuffer;
     expect(decodeWsFrame(arrayBuffer)).toBe("hello");
   });
 
