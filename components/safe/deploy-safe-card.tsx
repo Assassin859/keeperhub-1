@@ -27,7 +27,9 @@ import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -86,6 +88,29 @@ const CHAIN_LABELS: Record<number, string> = {
 
 function chainLabel(chainId: number): string {
   return CHAIN_LABELS[chainId] ?? `Chain ${chainId}`;
+}
+
+// Mainnet chain IDs the Safe deploy surface knows about. Anything not in
+// this set renders as a testnet in the network picker. Kept in sync with
+// the "// mainnets" block in CHAIN_LABELS above.
+const MAINNET_CHAIN_IDS: ReadonlySet<number> = new Set<number>([
+  1, 10, 8453, 42_161, 56, 137, 43_114,
+]);
+
+function partitionChainsByNetworkClass(chainIds: readonly number[]): {
+  mainnets: number[];
+  testnets: number[];
+} {
+  const mainnets: number[] = [];
+  const testnets: number[] = [];
+  for (const id of chainIds) {
+    if (MAINNET_CHAIN_IDS.has(id)) {
+      mainnets.push(id);
+    } else {
+      testnets.push(id);
+    }
+  }
+  return { mainnets, testnets };
 }
 
 function DeployedSafeRow({
@@ -402,11 +427,38 @@ function DeployDialog({
                 <SelectValue placeholder="Select a network" />
               </SelectTrigger>
               <SelectContent>
-                {deployableChainIds.map((id) => (
-                  <SelectItem key={id} value={id.toString()}>
-                    {chainLabel(id)}
-                  </SelectItem>
-                ))}
+                {(() => {
+                  const { mainnets, testnets } =
+                    partitionChainsByNetworkClass(deployableChainIds);
+                  return (
+                    <>
+                      {mainnets.length > 0 && (
+                        <SelectGroup>
+                          <SelectLabel className="font-medium text-[10px] text-keeperhub-green/80 uppercase tracking-wide">
+                            Mainnet
+                          </SelectLabel>
+                          {mainnets.map((id) => (
+                            <SelectItem key={id} value={id.toString()}>
+                              {chainLabel(id)}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      )}
+                      {testnets.length > 0 && (
+                        <SelectGroup>
+                          <SelectLabel className="font-medium text-[10px] text-keeperhub-green/80 uppercase tracking-wide">
+                            Testnet
+                          </SelectLabel>
+                          {testnets.map((id) => (
+                            <SelectItem key={id} value={id.toString()}>
+                              {chainLabel(id)}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      )}
+                    </>
+                  );
+                })()}
               </SelectContent>
             </Select>
           </div>
@@ -863,11 +915,38 @@ export function DeploySafeFlow({
               <SelectValue placeholder="Select a network" />
             </SelectTrigger>
             <SelectContent>
-              {deployableChainIds.map((id) => (
-                <SelectItem key={id} value={id.toString()}>
-                  {chainLabel(id)}
-                </SelectItem>
-              ))}
+              {(() => {
+                const { mainnets, testnets } =
+                  partitionChainsByNetworkClass(deployableChainIds);
+                return (
+                  <>
+                    {mainnets.length > 0 && (
+                      <SelectGroup>
+                        <SelectLabel className="font-medium text-[10px] text-keeperhub-green/80 uppercase tracking-wide">
+                          Mainnet
+                        </SelectLabel>
+                        {mainnets.map((id) => (
+                          <SelectItem key={id} value={id.toString()}>
+                            {chainLabel(id)}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    )}
+                    {testnets.length > 0 && (
+                      <SelectGroup>
+                        <SelectLabel className="font-medium text-[10px] text-keeperhub-green/80 uppercase tracking-wide">
+                          Testnet
+                        </SelectLabel>
+                        {testnets.map((id) => (
+                          <SelectItem key={id} value={id.toString()}>
+                            {chainLabel(id)}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    )}
+                  </>
+                );
+              })()}
             </SelectContent>
           </Select>
         </div>
