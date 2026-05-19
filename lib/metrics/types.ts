@@ -170,6 +170,13 @@ export const MetricNames = {
   SAFE_TX_DURATION: "safe.tx.duration_ms",
   SAFE_TX_TOTAL: "safe.tx.total",
   SAFE_WITHDRAW_TOTAL: "safe.withdraw.total",
+
+  // Signer-mode resolver distribution counter (KEEP-568). Emitted once per
+  // `resolveSignerMode` call, labelled by kind so dashboards can answer
+  // "what fraction of org writes are policy-gated (`safe-role`) vs
+  // unscoped (`safe`) vs EOA (`eoa`)?" -- the per-tx safe.tx.total
+  // counter only covers the two Safe branches.
+  SIGNER_MODE_TOTAL: "signer_mode.total",
 } as const;
 
 /**

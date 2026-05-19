@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import type { SafeWallet } from "@/lib/db/schema";
 import { safeRoles, safeWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { recordSignerMode } from "@/lib/metrics/instrumentation/safe";
 import {
   getOrganizationWallet,
   getOrganizationWalletAddress,
@@ -172,6 +173,18 @@ function backfillRoleInBackground(safe: SafeWallet): void {
  *     (signing off, or no Safe at all).
  */
 export async function resolveSignerMode(
+  organizationId: string,
+  chainId: number
+): Promise<SignerMode> {
+  const mode = await resolveSignerModeImpl(organizationId, chainId);
+  // KEEP-568: emit a single resolver-level counter so dashboards can track
+  // the eoa / safe / safe-role distribution. The per-tx `safe.tx.*` counter
+  // only sees the two Safe branches; this one also covers EOA.
+  recordSignerMode({ kind: mode.kind, chainId });
+  return mode;
+}
+
+async function resolveSignerModeImpl(
   organizationId: string,
   chainId: number
 ): Promise<SignerMode> {

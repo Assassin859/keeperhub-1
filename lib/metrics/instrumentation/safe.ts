@@ -113,3 +113,22 @@ export function recordSafeWithdraw(options: {
     outcome: options.outcome,
   });
 }
+
+/**
+ * Signer-mode distribution counter (KEEP-568). Emitted once per
+ * `resolveSignerMode` call so dashboards can answer "what fraction of org
+ * writes are policy-gated (`safe-role`) vs unscoped (`safe`) vs EOA
+ * (`eoa`)?" The per-tx `safe.tx.*` counter only sees the two Safe
+ * branches; this resolver-level counter adds the EOA branch and lets
+ * product/security stakeholders track Safe adoption over time.
+ */
+export function recordSignerMode(options: {
+  kind: "eoa" | "safe" | "safe-role";
+  chainId: number;
+}): void {
+  const metrics = getMetricsCollector();
+  metrics.incrementCounter(MetricNames.SIGNER_MODE_TOTAL, {
+    kind: options.kind,
+    chain_id: chainLabel(options.chainId),
+  });
+}
