@@ -364,6 +364,38 @@ describe("schedule-service", () => {
 
         expect(result?.mode).toBe("cron");
       });
+
+      // KEEP-581: anything below the dispatcher's 60s poll resolution
+      // would silently fire every 60s instead of every N -- the same
+      // class of "UI says X, schedule does Y" bug KEEP-575 fixes. Reject
+      // sub-60s values so the config falls back to cron (or no-op) at
+      // sync time, rather than being stored and silently miscadenced.
+      it("falls back to cron when scheduleIntervalSeconds is below 60 (under poll resolution)", () => {
+        const result = extractScheduleConfig([
+          makeIntervalTrigger(30, "UTC", { scheduleCron: "0 9 * * *" }),
+        ]);
+
+        expect(result?.mode).toBe("cron");
+      });
+
+      it("falls back to cron when scheduleIntervalSeconds is 59 (one below the floor)", () => {
+        const result = extractScheduleConfig([
+          makeIntervalTrigger(59, "UTC", { scheduleCron: "0 9 * * *" }),
+        ]);
+
+        expect(result?.mode).toBe("cron");
+      });
+
+      it("accepts scheduleIntervalSeconds at exactly the 60s floor", () => {
+        const result = extractScheduleConfig([
+          makeIntervalTrigger(60, "UTC", { scheduleCron: "0 9 * * *" }),
+        ]);
+
+        expect(result?.mode).toBe("interval");
+        if (result?.mode === "interval") {
+          expect(result.intervalSeconds).toBe(60);
+        }
+      });
     });
   });
 
