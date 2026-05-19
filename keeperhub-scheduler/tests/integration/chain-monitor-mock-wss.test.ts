@@ -1,20 +1,20 @@
 /**
- * KEEP-570 - End-to-end validation of the diagnostic warning produced by
- * this PR, against the real ChainMonitor and real ethers v6.
+ * KEEP-570 - End-to-end validation of the diagnostic warning AND the reaper
+ * behavior, against the real ChainMonitor and real ethers v6.
  *
  * Unlike tests/unit/chain-monitor.test.ts which mocks ethers, this test
  * runs ChainMonitor against a real `ws` server we control. The server
- * implements each candidate failure mode; we observe the noBlockTimer
- * warning and verify that the (wsFrames, subscriptionPushes, blocksReceived)
- * triple in the warning correctly distinguishes the three modes.
+ * implements each candidate failure mode and the assertions cover:
  *
- * The reaper-side assertion (isAlive returns false past
- * MONITOR_RECREATE_TIMEOUT_MS while subscribe re-fires) belongs with the
- * companion PR that fixes the staleness-clock reset on reconnect; it is
- * out of scope here.
+ *   1. The noBlockTimer warning's (wsFrames, subscriptionPushes,
+ *      blocksReceived) triple correctly distinguishes the three modes.
+ *   2. isAlive() flips to false once MONITOR_RECREATE_TIMEOUT_MS elapses
+ *      without a real block height advance, even while subscribe re-fires
+ *      on reconnect attempts (the reaper backstop). isAlive() returns true
+ *      transiently while isReconnecting, so the assertion polls.
  *
  * This is a synthetic stuck state, not a reproduction of the actual prod
- * bug. It validates the discrimination logic end-to-end.
+ * bug. It validates the discrimination + reaper logic end-to-end.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -147,6 +147,25 @@ function startMockServer(
   return { server, serverStarted };
 }
 
+// Poll isAlive() because it returns true transiently while isReconnecting is
+// set during the reconnect-with-backoff loop. The reaper-relevant moments are
+// the windows between reconnect attempts where staleness exceeds
+// MONITOR_RECREATE_TIMEOUT_MS and the monitor is not reconnecting; the
+// reconciler runs every 30s in prod and only needs one such reading.
+async function waitForReap(
+  monitor: ChainMonitor,
+  timeoutMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!monitor.isAlive()) {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return false;
+}
+
 function captureWarnings(): { warnings: string[]; restore: () => void } {
   const warnings: string[] = [];
   const original = console.warn;
@@ -257,6 +276,16 @@ describe("KEEP-570 integration: ChainMonitor warning patterns against a real ws 
     // the server never sends pushes in zombie mode.
     expect(warning).toMatch(/subscriptionPushes=0/);
     expect(warning).toMatch(/blocksReceived=0/);
+
+    // Reaper backstop: staleness from monitorBootAt has exceeded
+    // MONITOR_RECREATE_TIMEOUT_MS and no real block ever arrived, so
+    // isAlive() must report false between reconnect attempts. The
+    // reconciler relies on this signal to tear the monitor down.
+    const reaped = await waitForReap(monitor, MONITOR_RECREATE_MS);
+    expect(
+      reaped,
+      "monitor should report isAlive=false once MONITOR_RECREATE_TIMEOUT_MS has elapsed without a real block",
+    ).toBe(true);
   }, 30_000);
 
   it("subscribe-no-response mode -> warning shows subscriptionPushes>0, blocksReceived=0 (ethers routing bug)", async () => {
@@ -281,6 +310,16 @@ describe("KEEP-570 integration: ChainMonitor warning patterns against a real ws 
     // in our raw-ws tap counter even though they never reach onBlock.
     expect(warning).toMatch(/subscriptionPushes=[1-9]/);
     expect(warning).toMatch(/blocksReceived=0/);
+
+    // Reaper backstop: even though subscription pushes are being received
+    // at the socket, no real block ever advances height, so the staleness
+    // baseline (monitorBootAt) exceeds MONITOR_RECREATE_TIMEOUT_MS and the
+    // monitor must report isAlive=false to the reconciler.
+    const reaped = await waitForReap(monitor, MONITOR_RECREATE_MS);
+    expect(
+      reaped,
+      "monitor should report isAlive=false once MONITOR_RECREATE_TIMEOUT_MS has elapsed without a real block",
+    ).toBe(true);
   }, 30_000);
 
   it("healthy mode -> blocks arrive, no stuck warning, isAlive stays true", async () => {
