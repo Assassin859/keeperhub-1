@@ -22,6 +22,30 @@ function requiredFieldError(field: string): ValidationResult {
   };
 }
 
+// KEEP-490: accept `chainId` as the canonical input field, with `network` as a
+// deprecated alias. Either is treated as present so long as one carries a
+// non-empty string. Numeric chainIds may be sent as numbers; we coerce here.
+function hasChainInput(record: Record<string, unknown>): boolean {
+  if (typeof record.chainId === "number") {
+    return true;
+  }
+  return (
+    isNonEmptyString(record.chainId) || isNonEmptyString(record.network)
+  );
+}
+
+function chainFieldError(): ValidationResult {
+  return {
+    valid: false,
+    error: {
+      error: "Missing required field",
+      field: "chainId",
+      details:
+        "chainId is required (network is accepted as a deprecated alias). Pass a numeric chain ID or a known chain name.",
+    },
+  };
+}
+
 export function validateTransferInput(body: unknown): ValidationResult {
   if (!body || typeof body !== "object") {
     return {
@@ -32,8 +56,8 @@ export function validateTransferInput(body: unknown): ValidationResult {
 
   const record = body as Record<string, unknown>;
 
-  if (!isNonEmptyString(record.network)) {
-    return requiredFieldError("network");
+  if (!hasChainInput(record)) {
+    return chainFieldError();
   }
 
   if (!isNonEmptyString(record.recipientAddress)) {
@@ -61,8 +85,8 @@ export function validateContractCallInput(body: unknown): ValidationResult {
     return requiredFieldError("contractAddress");
   }
 
-  if (!isNonEmptyString(record.network)) {
-    return requiredFieldError("network");
+  if (!hasChainInput(record)) {
+    return chainFieldError();
   }
 
   if (!isNonEmptyString(record.functionName)) {
@@ -248,8 +272,8 @@ export function validateCheckAndExecuteInput(body: unknown): ValidationResult {
     return requiredFieldError("contractAddress");
   }
 
-  if (!isNonEmptyString(record.network)) {
-    return requiredFieldError("network");
+  if (!hasChainInput(record)) {
+    return chainFieldError();
   }
 
   if (!isNonEmptyString(record.functionName)) {

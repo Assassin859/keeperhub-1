@@ -61,8 +61,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json(tokenValidation.error, { status: 400 });
   }
 
-  const { network, recipientAddress, amount } = body as {
-    network: string;
+  // KEEP-490: accept `chainId` as canonical, `network` as deprecated alias.
+  // The core helper normalizes the value internally (chainId number / string,
+  // or a known chain name) so we just pick whichever field is present.
+  const network = String((body as Record<string, unknown>).chainId ?? body.network ?? "");
+  const { recipientAddress, amount } = body as {
     recipientAddress: string;
     amount: string;
   };
