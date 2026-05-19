@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { workflowSchedules } from "@/lib/db/schema";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
+import { computeNextIntervalRunTime } from "@/lib/schedule-service";
 
 type RouteContext = {
   params: Promise<{ scheduleId: string }>;
@@ -22,25 +23,6 @@ function computeNextRunTime(
   } catch {
     return null;
   }
-}
-
-// KEEP-575: interval-schedule next-fire = first anchor + k*interval > now,
-// k >= 1. First fire is anchor + 1*interval (never the anchor itself).
-function computeNextIntervalRunTime(
-  intervalSeconds: number,
-  anchorAt: Date,
-  now: Date = new Date()
-): Date {
-  const intervalMs = intervalSeconds * 1000;
-  const anchorMs = anchorAt.getTime();
-  const nowMs = now.getTime();
-  const firstFireMs = anchorMs + intervalMs;
-  if (nowMs < firstFireMs) {
-    return new Date(firstFireMs);
-  }
-  const elapsedMs = nowMs - anchorMs;
-  const kNext = Math.floor(elapsedMs / intervalMs) + 1;
-  return new Date(anchorMs + kNext * intervalMs);
 }
 
 export async function GET(request: Request, context: RouteContext) {

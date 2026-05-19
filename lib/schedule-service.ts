@@ -154,7 +154,7 @@ export function extractScheduleConfig(
  * the trigger config JSONB) into a positive integer, or null if the value
  * is missing or unusable.
  */
-function parseIntervalSeconds(raw: unknown): number | null {
+export function parseIntervalSeconds(raw: unknown): number | null {
   if (raw === undefined || raw === null || raw === "") {
     return null;
   }

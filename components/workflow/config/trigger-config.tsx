@@ -21,6 +21,7 @@ import type {
   ProtocolDefinition,
   ProtocolEvent,
 } from "@/lib/protocol-registry";
+import { parseIntervalSeconds } from "@/lib/schedule-service";
 import type { ActionConfigField } from "@/plugins/registry";
 import { ActionConfigRenderer } from "./action-config-renderer";
 import { CronScheduleBuilder } from "./cron-schedule-builder";
@@ -32,22 +33,6 @@ type TriggerConfigProps = {
   disabled: boolean;
   workflowId?: string;
 };
-
-/**
- * KEEP-575: the trigger config JSONB stores scheduleIntervalSeconds as a
- * string (onUpdateConfig only takes strings), but historical configs may
- * carry a number. Coerce both into a positive integer, or null if absent.
- */
-function parseIntervalConfigValue(raw: unknown): number | null {
-  if (raw === undefined || raw === null || raw === "") {
-    return null;
-  }
-  const n = typeof raw === "number" ? raw : Number(raw);
-  if (!Number.isFinite(n) || n <= 0) {
-    return null;
-  }
-  return Math.floor(n);
-}
 
 export function TriggerConfig({
   config,
@@ -221,7 +206,7 @@ export function TriggerConfig({
             }}
             value={{
               cron: (config?.scheduleCron as string) || "",
-              intervalSeconds: parseIntervalConfigValue(
+              intervalSeconds: parseIntervalSeconds(
                 config?.scheduleIntervalSeconds
               ),
             }}
