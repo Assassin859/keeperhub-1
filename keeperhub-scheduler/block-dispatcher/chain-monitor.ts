@@ -141,6 +141,30 @@ type ChainMonitorConfig = {
   workflows: BlockWorkflow[];
 };
 
+// Decodes a `ws` library "message" event payload to a string for the KEEP-570
+// raw-frame diagnostic. The ws library can deliver `data` as string, Buffer,
+// Buffer[] (fragmented frames, when the high-water mark is reached mid-frame),
+// or ArrayBuffer (when binaryType is "arraybuffer"). ethers v6 configures
+// Buffer today, but a silent under-count if upstream changes that is exactly
+// the regression the diagnostic exists to prevent. Returns null when the
+// payload is none of those shapes; the caller still counts the frame but
+// will not attempt to parse it for the subscription-push tally.
+function decodeWsFrame(data: unknown): string | null {
+  if (typeof data === "string") {
+    return data;
+  }
+  if (Buffer.isBuffer(data)) {
+    return data.toString("utf8");
+  }
+  if (data instanceof ArrayBuffer) {
+    return Buffer.from(data).toString("utf8");
+  }
+  if (Array.isArray(data) && data.every((d) => Buffer.isBuffer(d))) {
+    return Buffer.concat(data).toString("utf8");
+  }
+  return null;
+}
+
 // Reduces a probe-failure error to a single short tag like "HTTP 429",
 // "timeout", or a 60-char first-line slice. Keeps log lines compact —
 // ethers errors can include long JSON-RPC payloads and ABI dumps otherwise.
@@ -578,13 +602,17 @@ export class ChainMonitor {
       this.wsMessageHandler = (data: unknown): void => {
         this.wsFrameCount++;
         this.lastWsFrameAt = Date.now();
+        // The ws library can deliver a frame as string, Buffer, Buffer[]
+        // (fragmented), or ArrayBuffer (when binaryType is set). ethers v6
+        // configures Buffer today, but a quiet under-count if upstream
+        // changes that is exactly the kind of regression this diagnostic
+        // is supposed to prevent. Decode all four shapes; anything else
+        // counts as a frame but is not parsed for the push counter.
+        const text = decodeWsFrame(data);
+        if (text === null) {
+          return;
+        }
         try {
-          const text =
-            typeof data === "string"
-              ? data
-              : data instanceof Buffer
-                ? data.toString("utf8")
-                : String(data);
           const parsed = JSON.parse(text) as { method?: string };
           if (parsed?.method === "eth_subscription") {
             this.subscriptionPushCount++;
