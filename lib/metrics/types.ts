@@ -177,6 +177,13 @@ export const MetricNames = {
   // unscoped (`safe`) vs EOA (`eoa`)?" -- the per-tx safe.tx.total
   // counter only covers the two Safe branches.
   SIGNER_MODE_TOTAL: "signer_mode.total",
+
+  // Probe-swallow counter (KEEP-567). Fires when the Safe role-modifier
+  // chain probe fails (both primary + fallback RPC) and the resolver
+  // silently downgrades to unscoped `safe` mode. Needed to measure how
+  // often the policy-bypass window opens before deciding whether to
+  // hard-fail the resolver vs keep the current silent-downgrade behavior.
+  SIGNER_PROBE_FAILURE: "signer_probe.failure.total",
 } as const;
 
 /**

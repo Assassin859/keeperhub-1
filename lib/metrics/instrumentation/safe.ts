@@ -132,3 +132,19 @@ export function recordSignerMode(options: {
     chain_id: chainLabel(options.chainId),
   });
 }
+
+/**
+ * Probe-swallow counter (KEEP-567). Fires when
+ * `probeRolesModifierFromChain` hits both-RPC failure and the resolver
+ * silently downgrades to unscoped `safe` mode. Pair with
+ * `signer_mode.total{kind=safe}` to see how much of the safe-routed
+ * surface bypassed policy enforcement during an RPC outage window; the
+ * design call (hard-fail vs degrade-after-N vs keep silent) lives in
+ * KEEP-567 and shouldn't be made without this measurement.
+ */
+export function recordSignerProbeFailure(options: { chainId: number }): void {
+  const metrics = getMetricsCollector();
+  metrics.incrementCounter(MetricNames.SIGNER_PROBE_FAILURE, {
+    chain_id: chainLabel(options.chainId),
+  });
+}

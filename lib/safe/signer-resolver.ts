@@ -6,7 +6,10 @@ import { db } from "@/lib/db";
 import type { SafeWallet } from "@/lib/db/schema";
 import { safeRoles, safeWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { recordSignerMode } from "@/lib/metrics/instrumentation/safe";
+import {
+  recordSignerMode,
+  recordSignerProbeFailure,
+} from "@/lib/metrics/instrumentation/safe";
 import {
   getOrganizationWallet,
   getOrganizationWalletAddress,
@@ -107,6 +110,13 @@ async function probeRolesModifierFromChain(
       findRolesModifierForSafe(provider, safe.safeAddress, modules)
     );
   } catch (error) {
+    // KEEP-567: probe hit both-RPC failure. We currently swallow and let
+    // the caller downgrade to unscoped `safe` mode (policy enforcement
+    // gone for the window). Emit a counter so the silent-downgrade
+    // frequency is observable before deciding whether to hard-fail the
+    // resolver instead. Logged via logSystemError (Sentry) AND the
+    // signer_probe.failure counter (dashboards).
+    recordSignerProbeFailure({ chainId: safe.chainId });
     logSystemError(
       ErrorCategory.TRANSACTION,
       `[Safe] signer-resolver chain probe failed for safe=${safe.id}`,
