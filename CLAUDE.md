@@ -10,6 +10,7 @@
 - **No co-authored with Claude in PR descriptions and git commits**
 - **Do not git push or create Github PRs without user's confirmation**
 - **Do not leave code comments with summaries of user's prompt**
+- **No Linear ticket IDs in code comments, PR titles, or PR descriptions**: Do not include Linear IDs (e.g. `KEEP-XXX`) in code comments, PR titles, or PR descriptions. Linear's GitHub integration cross-links via the branch name; the ticket ID does not need to appear in the artifact. Commit messages and internal docs under `.planning/` / `specs/` may still reference them.
 - **PR titles must follow conventional commit format**: `<type>: <description>` or `<type>(scope): <description>`. Allowed types: `feat`, `fix`, `hotfix`, `chore`, `docs`, `refactor`, `test`, `ci`, `build`, `perf`, `style`, `breaking`, `release`. This is enforced by the `pr-title-check` workflow on PRs targeting `staging`.
 - **Use `kh` CLI and KeeperHub MCP tools for all KeeperHub API interactions**: NEVER use raw `curl` or `fetch` against KeeperHub endpoints. Use MCP tools (`mcp__keeperhub-dev__*`, `mcp__keeperhub-staging__*`, `mcp__keeperhub__*`) for the target environment, or the `kh` CLI which handles auth and CF Access headers automatically via `~/.config/kh/hosts.yml`.
 

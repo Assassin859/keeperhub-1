@@ -126,6 +126,32 @@ export {
 
 type NodeOutputs = Record<string, { label: string; data: unknown }>;
 
+/**
+ * Catch-time write of a node's entry in the `outputs` map. Preserves a prior
+ * non-null success when one exists; otherwise writes `{ label, data: null }`
+ * so downstream resolvers see a sentinel rather than `undefined`.
+ *
+ * Rationale: the workflow SDK occasionally replays a step after its first
+ * attempt has already populated `outputs[sanitizedNodeId]` with a successful
+ * object (the post-step `step_completed` event is lost under heavy fan-in,
+ * the same race covered by the spurious-max-retries reconciliation above).
+ * Unconditionally overwriting that prior success with `data: null` caused
+ * downstream templates to fail with `Node "X" produced no data.` This helper
+ * keeps the catch handler's null-fallback contract for the no-prior-data case
+ * while leaving real replay-survivor data intact.
+ */
+export function recordCatchOutput(
+  outputs: NodeOutputs,
+  sanitizedNodeId: string,
+  label: string
+): void {
+  const prior = outputs[sanitizedNodeId];
+  if (prior !== undefined && prior.data !== null && prior.data !== undefined) {
+    return;
+  }
+  outputs[sanitizedNodeId] = { label, data: null };
+}
+
 /** Matches path segment like "carts[0]" for array index access (same as template.ts) */
 const ARRAY_ACCESS_PATTERN = /^([^[]+)\[(\d+)\]$/;
 
@@ -2673,13 +2699,15 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         }
       }
 
-      // Store null output so downstream templates resolve to null rather than
-      // being undefined (same pattern as disabled nodes).
+      // Catch-time output write. Preserves a prior in-memory success when one
+      // exists (the SDK occasionally replays a step after its first attempt
+      // has already populated `outputs[sanitizedNodeId]` under heavy fan-in),
+      // and otherwise falls back to `{ data: null }` so downstream templates
+      // resolve to a sentinel instead of `undefined`. The previous
+      // unconditional overwrite discarded replay-survivor output and caused
+      // downstream resolvers to throw `Node "X" produced no data.`
       const sanitizedNodeId = nodeId.replace(/[^a-zA-Z0-9]/g, "_");
-      outputs[sanitizedNodeId] = {
-        label: getNodeName(node),
-        data: null,
-      };
+      recordCatchOutput(outputs, sanitizedNodeId, getNodeName(node));
 
       // Signal arrival at downstream convergence nodes to prevent deadlocks.
       // If this failure was the last arrival, execute the convergence node
