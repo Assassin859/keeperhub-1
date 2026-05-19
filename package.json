@@ -136,6 +136,7 @@
     "@types/node": "^24",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^4.1.2",
     "dotenv-expand": "^12.0.3",
     "drizzle-kit": "^0.31.10",
@@ -150,7 +151,8 @@
     "typescript": "^5",
     "ultracite": "6.5.1",
     "viem": "^2.47.1",
-    "vitest": "^4.1.2"
+    "vitest": "^4.1.2",
+    "ws": "^8.20.1"
   },
   "pnpm": {
     "neverBuiltDependencies_comment": "prisma is an unused optional dep of better-auth's prisma adapter; we use drizzle. Skip its preinstall which requires Node 20.19+.",

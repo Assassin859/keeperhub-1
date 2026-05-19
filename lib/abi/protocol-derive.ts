@@ -11,6 +11,8 @@ import type {
   ProtocolActionInput,
   ProtocolActionInputComponent,
   ProtocolActionOutput,
+  ProtocolEvent,
+  ProtocolEventInput,
 } from "@/lib/protocol-registry";
 
 // -- Override types ----------------------------------------------------------
@@ -34,12 +36,36 @@ export type AbiOutputOverride = {
   decimals?: number;
 };
 
+/**
+ * Override applied to an ABI function. Override keys for `inputs` and
+ * `outputs` are the raw ABI param names (or `arg<index>` / `result` /
+ * `result<index>` defaults if the ABI declares the param unnamed) - NOT
+ * post-rename display names. Renaming via override.inputs.<rawName>.name
+ * changes the resulting input.name (form field key) but does not change
+ * the lookup key for further overrides.
+ */
 export type AbiFunctionOverride = {
   slug?: string;
   label?: string;
   description?: string;
+  docUrl?: string;
   inputs?: Record<string, AbiInputOverride>;
   outputs?: Record<string, AbiOutputOverride>;
+  /** Default value for the gas-limit-multiplier field. Mode + value
+   *  match parseGasLimitConfig in lib/web3/gas-defaults.ts. Only meaningful
+   *  on write actions; ignored on reads. */
+  gasLimit?: { mode: "maxGasLimit" | "multiplier"; value: string };
+};
+
+/**
+ * Override applied to an ABI event. The lookup key in
+ * AbiDrivenContract.events is the raw event name from the ABI (e.g.
+ * "TokensMinted"), not the kebab-case slug.
+ */
+export type AbiEventOverride = {
+  slug?: string;
+  label?: string;
+  description?: string;
 };
 
 // -- ABI JSON types (subset of ethers ABI format) ----------------------------
@@ -59,7 +85,17 @@ type AbiFunctionEntry = {
   outputs: AbiParam[];
 };
 
-type AbiEntry = AbiFunctionEntry | { type: string; [key: string]: unknown };
+type AbiEventEntry = {
+  type: "event";
+  name: string;
+  inputs: AbiParam[];
+  anonymous?: boolean;
+};
+
+type AbiEntry =
+  | AbiFunctionEntry
+  | AbiEventEntry
+  | { type: string; [key: string]: unknown };
 
 // -- Helpers -----------------------------------------------------------------
 
@@ -210,6 +246,7 @@ function deriveAction(
   const label = override?.label ?? camelToTitle(fn.name);
   const description =
     override?.description ?? `Call ${fn.name} on the contract`;
+  const docUrl = override?.docUrl;
   const actionType = isReadOnly(fn.stateMutability) ? "read" : "write";
   const payable = fn.stateMutability === "payable";
 
@@ -252,6 +289,14 @@ function deriveAction(
     inputs,
   };
 
+  if (docUrl !== undefined) {
+    action.docUrl = docUrl;
+  }
+
+  if (override?.gasLimit !== undefined) {
+    action.gasLimitDefault = JSON.stringify(override.gasLimit);
+  }
+
   if (outputs.length > 0) {
     action.outputs = outputs;
   }
@@ -271,6 +316,7 @@ export type AbiDrivenContract = {
   addresses: Record<string, string>;
   userSpecifiedAddress?: boolean;
   overrides?: Record<string, AbiFunctionOverride>;
+  events?: Record<string, AbiEventOverride>;
 };
 
 export type AbiDrivenProtocolInput = {
@@ -298,4 +344,55 @@ export function deriveActionsFromAbi(
   }
 
   return actions;
+}
+
+function deriveEvent(
+  contractKey: string,
+  evt: AbiEventEntry,
+  override: AbiEventOverride | undefined
+): ProtocolEvent {
+  if (evt.anonymous === true) {
+    throw new Error(
+      `Anonymous event "${evt.name}" on contract "${contractKey}" cannot be derived: anonymous events have no topic-0 selector and cannot be matched by name downstream.`
+    );
+  }
+
+  const slug = override?.slug ?? camelToKebab(evt.name);
+  const label = override?.label ?? camelToTitle(evt.name);
+  const description =
+    override?.description ??
+    `Fires when ${evt.name} is emitted by the contract`;
+
+  const inputs: ProtocolEventInput[] = evt.inputs.map((p, i) => ({
+    name: p.name || defaultInputName(i),
+    type: p.type,
+    indexed: p.indexed === true,
+  }));
+
+  return {
+    slug,
+    label,
+    description,
+    eventName: evt.name,
+    contract: contractKey,
+    inputs,
+  };
+}
+
+export function deriveEventsFromAbi(
+  contractKey: string,
+  contract: AbiDrivenContract
+): ProtocolEvent[] {
+  const parsed: AbiEntry[] = JSON.parse(contract.abi);
+  const eventEntries = parsed.filter(
+    (entry): entry is AbiEventEntry => entry.type === "event"
+  );
+
+  const events: ProtocolEvent[] = [];
+  for (const evt of eventEntries) {
+    const override = contract.events?.[evt.name];
+    events.push(deriveEvent(contractKey, evt, override));
+  }
+
+  return events;
 }

@@ -545,7 +545,21 @@
       "idx": 77,
       "version": "7",
       "when": 1777760000011,
-      "tag": "0077_keep_230_decom_para",
+      "tag": "0077_keep_575_schedule_interval",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1777760000012,
+      "tag": "0078_error_type_label_rename",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1777760000013,
+      "tag": "0079_keep_230_decom_para",
       "breakpoints": true
     }
   ]
