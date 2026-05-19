@@ -602,6 +602,23 @@ async function updateScheduleStatus(
     return;
   }
 
+  // KEEP-581: skip interval-mode rows. This profiling script computes
+  // nextRunAt by parsing cron_expression, but interval-mode rows hold a
+  // fixed `0 0 1 1 *` sentinel there -- parsing it would set
+  // next_run_at to "Jan 1 next year", visibly wrong for an "every N
+  // minutes" schedule. The production updateScheduleStatus path in
+  // lib/schedule-service.ts has the correct interval math; that's what
+  // real scheduled runs hit. This profiling runner is invoked manually
+  // and isn't on the critical path for schedule timing, so simply log
+  // and skip instead of pulling the interval helpers in.
+  if (schedule.intervalSeconds !== null) {
+    console.warn(
+      `[Runner] Schedule ${scheduleId} is in interval mode; ` +
+        "skipping nextRunAt update (profiling runner only handles cron-mode rows)"
+    );
+    return;
+  }
+
   const nextRunAt = computeNextRunTime(
     schedule.cronExpression,
     schedule.timezone
