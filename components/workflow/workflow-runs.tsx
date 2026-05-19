@@ -65,8 +65,8 @@ type WorkflowExecution = {
   duration: string | null;
   error: string | null;
   // Progress tracking fields
-  totalSteps: string | null;
-  completedSteps: string | null;
+  totalSteps: number | null;
+  completedSteps: number | null;
   currentNodeId: string | null;
   currentNodeName: string | null;
   lastSuccessfulNodeId: string | null;
