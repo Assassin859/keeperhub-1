@@ -2,6 +2,7 @@ import "server-only";
 
 import { and, eq } from "drizzle-orm";
 import type { ethers } from "ethers";
+import { recordWalletInAddressBook } from "@/lib/address-book/record-wallet";
 import { normalizeAddressForStorage } from "@/lib/address-utils";
 import { db } from "@/lib/db";
 import { chains, type SafeWallet, safeWallets } from "@/lib/db/schema";
@@ -197,12 +198,22 @@ export async function deployOrgSafe(
       .returning();
     finishMetrics("already_deployed");
     if (adopted) {
+      await recordWalletInAddressBook({
+        organizationId,
+        address: adopted.safeAddress,
+        label: "Safe Wallet",
+      });
       return { success: true, safe: adopted, alreadyDeployed: true };
     }
     // Race: another caller adopted between our findExistingSafe + insert.
     // Re-read and return that row.
     const refetched = await findExistingSafe(organizationId, chainId);
     if (refetched) {
+      await recordWalletInAddressBook({
+        organizationId,
+        address: refetched.safeAddress,
+        label: "Safe Wallet",
+      });
       return { success: true, safe: refetched, alreadyDeployed: true };
     }
     return {
@@ -263,6 +274,12 @@ export async function deployOrgSafe(
         deployedAt: new Date(),
       })
       .returning();
+
+    await recordWalletInAddressBook({
+      organizationId,
+      address: inserted.safeAddress,
+      label: "Safe Wallet",
+    });
 
     finishMetrics("success");
     return { success: true, safe: inserted, alreadyDeployed: false };
@@ -431,11 +448,21 @@ export async function reconcileSafeWalletForChain(input: {
       .onConflictDoNothing()
       .returning();
     if (adopted) {
+      await recordWalletInAddressBook({
+        organizationId,
+        address: adopted.safeAddress,
+        label: "Safe Wallet",
+      });
       const role = await reconcileRoleForSafe(adopted);
       return { chainId, status: "adopted", safe: adopted, role };
     }
     const refetched = await findExistingSafe(organizationId, chainId);
     if (refetched) {
+      await recordWalletInAddressBook({
+        organizationId,
+        address: refetched.safeAddress,
+        label: "Safe Wallet",
+      });
       const role = await reconcileRoleForSafe(refetched);
       return { chainId, status: "already-in-db", safe: refetched, role };
     }
