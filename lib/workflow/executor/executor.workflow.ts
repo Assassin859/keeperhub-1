@@ -51,6 +51,7 @@ import {
   clearOutputCache,
   getCompletedStepOutput,
 } from "@/lib/workflow/executor/get-completed-step-output";
+import { awaitCompletedStepOutputStep } from "@/lib/workflow/executor/get-completed-step-output.step";
 import { createPendingTracker } from "@/lib/workflow/executor/pending-tasks";
 import {
   EXCEEDED_MAX_RETRIES_REGEX,
@@ -154,6 +155,16 @@ export function recordCatchOutput(
 
 /** Matches path segment like "carts[0]" for array index access (same as template.ts) */
 const ARRAY_ACCESS_PATTERN = /^([^[]+)\[(\d+)\]$/;
+
+/**
+ * Spurious-max-retries recovery poll window. When the framework re-fires a
+ * step after a lost completion event and throws before the step's success row
+ * is committed, the real success lands ~0.3-0.5s later. The catch handler
+ * polls the step authority for up to this window before falling back to
+ * nullifying the node.
+ */
+const SPURIOUS_RECOVERY_POLL_TIMEOUT_MS = 3000;
+const SPURIOUS_RECOVERY_POLL_INTERVAL_MS = 250;
 
 /**
  * KEEP-398: SDK error shapes that indicate a spurious step-completion failure.
@@ -2620,10 +2631,26 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         EXCEEDED_MAX_RETRIES_REGEX.test(errorMessage) ||
         FAILED_AFTER_RETRIES_REGEX.test(errorMessage) ||
         NO_STEP_COMPLETION_REGEX.test(errorMessage);
-      const recordedOutput =
+      let recordedOutput =
         isSpuriousMaxRetries && executionId
           ? (await getCompletedStepOutput(executionId, nodeId))?.output
           : undefined;
+      // The framework re-fires a step after a lost completion event and throws
+      // "exceeded max retries" BEFORE the step body's success row is committed,
+      // so the one-shot read above misses by ~0.3-0.5s. Wait for the
+      // late-landing success inside a step boundary (DB-backed, replay-safe via
+      // memoization) before giving up, so the reconcile path below recovers it
+      // instead of nullifying the node and unblocking convergence with no data.
+      if (isSpuriousMaxRetries && executionId && recordedOutput === undefined) {
+        recordedOutput = (
+          await awaitCompletedStepOutputStep(
+            executionId,
+            nodeId,
+            SPURIOUS_RECOVERY_POLL_TIMEOUT_MS,
+            SPURIOUS_RECOVERY_POLL_INTERVAL_MS
+          )
+        )?.outputRaw;
+      }
       if (isSpuriousMaxRetries && recordedOutput !== undefined) {
         // Recovered execution: the step body succeeded, only the SDK's
         // bookkeeping tripped. Emit a structured warn (no Sentry) and a
