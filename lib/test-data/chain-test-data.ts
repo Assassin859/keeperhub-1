@@ -89,7 +89,7 @@ export type FaucetSpec = {
 };
 
 /**
- * Faucet registry consumed by `tests/integration/protocol-coverage/_shared/funding.ts`.
+ * Faucet registry consumed by `tests/e2e/vitest/protocol-coverage/_shared/funding.ts`.
  * The TS preflight calls each faucet from the funder EOA before the setup
  * workflow runs. Args are bound by input *name* (case-insensitive):
  *   `token` -> token's address on this chain

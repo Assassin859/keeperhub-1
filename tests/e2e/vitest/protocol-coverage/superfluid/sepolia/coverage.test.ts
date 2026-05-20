@@ -1,5 +1,8 @@
 /**
- * KEEP-458 protocol coverage: superfluid on Sepolia.
+ * Protocol coverage: superfluid on Sepolia.
+ *
+ * Gating and infra contract match the sibling aave-v3 coverage.test.ts in
+ * this directory.
  */
 
 import { afterAll, beforeAll, describe } from "vitest";
@@ -8,9 +11,10 @@ import { cleanupAll, createSharedCtx, runSetup } from "../../_shared/setup";
 
 const PROTOCOL = "superfluid";
 const CHAIN_ID = "11155111";
-const RPC_PRESENT = Boolean(process.env.SEPOLIA_RPC_URL);
+const SKIP_INFRA_TESTS =
+  !process.env.DATABASE_URL || process.env.SKIP_INFRA_TESTS === "true";
 
-describe.skipIf(!RPC_PRESENT)(`${PROTOCOL} (Sepolia)`, () => {
+describe.skipIf(SKIP_INFRA_TESTS)(`${PROTOCOL} (Sepolia)`, () => {
   const ctx = createSharedCtx();
 
   beforeAll(async () => {

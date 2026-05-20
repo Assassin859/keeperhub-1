@@ -138,7 +138,7 @@ export function bindFaucetArgs(
     }
     throw new Error(
       `FAUCET mint ABI has unsupported input "${input.name}" of type "${input.type}". ` +
-        "Update bindFaucetArgs in tests/integration/protocol-coverage/_shared/funding.ts."
+        "Update bindFaucetArgs in tests/e2e/vitest/protocol-coverage/_shared/funding.ts."
     );
   });
 }

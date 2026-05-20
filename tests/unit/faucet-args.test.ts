@@ -1,8 +1,8 @@
 /**
- * Unit tests for KEEP-458 bindFaucetArgs.
+ * Unit tests for bindFaucetArgs.
  *
  * Pure function -- no DB, no RPC, no env. Locks in the case-insensitive
- * name conventions that `tests/integration/protocol-coverage/_shared/funding.ts::
+ * name conventions that `tests/e2e/vitest/protocol-coverage/_shared/funding.ts::
  * ensureErc20Acquired` relies on when it calls FAUCETS[*].functionName.
  */
 
@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   type AbiFunction,
   bindFaucetArgs,
-} from "@/tests/integration/protocol-coverage/_shared/funding";
+} from "@/tests/e2e/vitest/protocol-coverage/_shared/funding";
 
 const aaveShape: AbiFunction = {
   type: "function",
