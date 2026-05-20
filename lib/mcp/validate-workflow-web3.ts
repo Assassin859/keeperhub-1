@@ -81,15 +81,21 @@ export function tokenAddressFormat(nodes: unknown): Web3Issue[] {
     return issues;
   }
   for (const [idx, rawNode] of nodes.entries()) {
-    const contractAddress = readStringConfig(rawNode as NodeLike, "contractAddress");
-    if (contractAddress !== null && contractAddress.length > 0) {
-      if (!ethers.isAddress(contractAddress)) {
-        issues.push({
-          code: VALIDATION_ERROR_CODES.INVALID_TOKEN_ADDRESS,
-          message: `nodes[${idx}].config.contractAddress "${contractAddress}" is not a valid EVM address`,
-          parameterPath: `nodes[${idx}].config.contractAddress`,
-        });
-      }
+    const contractAddress = readStringConfig(
+      rawNode as NodeLike,
+      "contractAddress"
+    );
+    if (
+      contractAddress !== null &&
+      contractAddress.length > 0 &&
+      !isTemplateReference(contractAddress) &&
+      !ethers.isAddress(contractAddress)
+    ) {
+      issues.push({
+        code: VALIDATION_ERROR_CODES.INVALID_TOKEN_ADDRESS,
+        message: `nodes[${idx}].config.contractAddress "${contractAddress}" is not a valid EVM address`,
+        parameterPath: `nodes[${idx}].config.contractAddress`,
+      });
     }
 
     // tokenConfig is a JSON string (token-select field type — see
@@ -106,7 +112,11 @@ export function tokenAddressFormat(nodes: unknown): Web3Issue[] {
       continue;
     }
     const embeddedAddress = extractTokenConfigAddress(parsed);
-    if (embeddedAddress !== null && !ethers.isAddress(embeddedAddress)) {
+    if (
+      embeddedAddress !== null &&
+      !isTemplateReference(embeddedAddress) &&
+      !ethers.isAddress(embeddedAddress)
+    ) {
       issues.push({
         code: VALIDATION_ERROR_CODES.INVALID_TOKEN_ADDRESS,
         message: `nodes[${idx}].config.tokenConfig.customToken.address "${embeddedAddress}" is not a valid EVM address`,
@@ -115,6 +125,16 @@ export function tokenAddressFormat(nodes: unknown): Web3Issue[] {
     }
   }
   return issues;
+}
+
+// Address fields may hold a `{{...}}` template that resolves to a real
+// address at execution time (e.g. `{{@prep:Prep.governor_address_safe}}`).
+// These are not literal addresses, so the ethers.isAddress format check
+// must skip them rather than report a false invalid-token-address.
+const TEMPLATE_REFERENCE_RE = /\{\{.*?\}\}/;
+
+function isTemplateReference(value: string): boolean {
+  return TEMPLATE_REFERENCE_RE.test(value);
 }
 
 function readStringConfig(node: NodeLike, key: string): string | null {
