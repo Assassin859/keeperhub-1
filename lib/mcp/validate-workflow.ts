@@ -222,9 +222,28 @@ function runOutputMappingCheck(
   if (outputMapping === null || typeof outputMapping !== "object") {
     return;
   }
+
+  // Flat shape: `{ nodeId: string, field?/fields?: ... }`. This is what the
+  // runtime (applyOutputMapping) reads — it pulls the top-level `nodeId` and
+  // picks `field`/`fields` off that node's output. The sibling `field`/`fields`
+  // keys NAME output fields, they are not node references, so only `nodeId` is
+  // verified. Matches `typeof mapping.nodeId === "string"` in
+  // lib/payments/x402/execution-wait.ts.
+  const flatNodeId = (outputMapping as { nodeId?: unknown }).nodeId;
+  if (typeof flatNodeId === "string") {
+    if (!nodeIds.has(flatNodeId)) {
+      errors.push({
+        code: VALIDATION_ERROR_CODES.UNKNOWN_OUTPUT_MAPPING_NODE,
+        message: `outputMapping.nodeId references nodeId "${flatNodeId}" which is not present in nodes[]`,
+        parameterPath: "outputMapping.nodeId",
+      });
+    }
+    return;
+  }
+
+  // Keyed shape: `{ outputKey: <{{@nodeId:Label.field}} template | { nodeId, field } | nodeIdString> }`.
+  // Extract any concrete node reference from each value and verify it.
   for (const [key, value] of Object.entries(outputMapping)) {
-    // outputMapping shape (per existing listing flow): { outputKey: { nodeId, field } | nodeIdString }
-    // Be defensive: extract any string-typed nodeId reference and verify it.
     const referencedNodeId = extractNodeIdReference(value);
     if (referencedNodeId !== null && !nodeIds.has(referencedNodeId)) {
       errors.push({
@@ -236,8 +255,16 @@ function runOutputMappingCheck(
   }
 }
 
+// Captures the nodeId from a `{{@nodeId:Label.field}}` template reference.
+// Mirrors TEMPLATE_REF_PATTERN in lib/utils/template.ts.
+const OUTPUT_MAPPING_TEMPLATE_RE = /\{\{@([^:]+):[^}]+\}\}/;
+
 function extractNodeIdReference(value: unknown): string | null {
   if (typeof value === "string") {
+    const templateMatch = value.match(OUTPUT_MAPPING_TEMPLATE_RE);
+    if (templateMatch) {
+      return templateMatch[1].trim();
+    }
     return value;
   }
   if (value !== null && typeof value === "object" && "nodeId" in value) {
