@@ -203,6 +203,11 @@ jobs:
 
       - name: Start anvil Sepolia fork for orchestrator integration tests
         run: |
+          # docker-compose.yml attaches every service to the external
+          # `keeperhub-network`; the ephemeral start-app step uses
+          # `docker run --network host` and never creates it, so compose
+          # bails before bringing test-anvil-fork up. Create it idempotently.
+          docker network create keeperhub-network 2>/dev/null || true
           docker compose --profile test up -d --wait test-anvil-fork || \
             docker compose --profile test up -d test-anvil-fork
           # Health-poll the fork up to ~60s -- the wait flag above is best-effort
