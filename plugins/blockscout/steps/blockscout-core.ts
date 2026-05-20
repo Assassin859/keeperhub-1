@@ -3,6 +3,7 @@ import "server-only";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getErrorMessage } from "@/lib/utils";
 import type { BlockscoutCredentials } from "../credentials";
+import { BLOCKSCOUT_INSTANCES } from "../chains";
 
 // Default public Blockscout instance (Ethereum mainnet), used when no chain is
 // selected and no custom instance URL is configured.
@@ -10,25 +11,6 @@ const DEFAULT_BLOCKSCOUT_API_URL = "https://eth.blockscout.com";
 
 // Strips one or more trailing slashes so paths can be appended consistently.
 const TRAILING_SLASH_RE = /\/+$/;
-
-/**
- * Canonical hosted Blockscout instance per chain ID. Lets a workflow pick a
- * chain on the node and query the right explorer with zero connection setup.
- * Chains not listed here require a Blockscout connection with an explicit
- * instance URL (BLOCKSCOUT_API_URL).
- */
-export const BLOCKSCOUT_INSTANCES: Record<number, string> = {
-  1: "https://eth.blockscout.com",
-  11_155_111: "https://eth-sepolia.blockscout.com",
-  8453: "https://base.blockscout.com",
-  84_532: "https://base-sepolia.blockscout.com",
-  10: "https://explorer.optimism.io",
-  42_161: "https://arbitrum.blockscout.com",
-  100: "https://gnosis.blockscout.com",
-  137: "https://polygon.blockscout.com",
-};
-
-export const SUPPORTED_BLOCKSCOUT_CHAIN_IDS = Object.keys(BLOCKSCOUT_INSTANCES);
 
 export type BlockscoutFetchResult<T> =
   | { success: true; data: T }

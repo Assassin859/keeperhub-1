@@ -1,5 +1,6 @@
 import type { ActionConfigField, IntegrationPlugin } from "@/plugins/registry";
 import { registerIntegration } from "@/plugins/registry-core";
+import { SUPPORTED_BLOCKSCOUT_CHAIN_IDS } from "./chains";
 import { BlockscoutIcon } from "./icon";
 
 // Chain picker shared by every action. Maps to a hosted Blockscout instance so
@@ -11,7 +12,7 @@ const NETWORK_FIELD: ActionConfigField = {
   label: "Chain",
   type: "chain-select",
   chainTypeFilter: "evm",
-  allowedChainIds: ["1", "11155111", "8453", "84532", "10", "42161", "100", "137"],
+  allowedChainIds: SUPPORTED_BLOCKSCOUT_CHAIN_IDS,
   defaultValue: "1",
   helpTip:
     "Which chain's Blockscout explorer to query. Defaults to Ethereum mainnet. For a chain not listed here, add a Blockscout connection with its instance URL.",
