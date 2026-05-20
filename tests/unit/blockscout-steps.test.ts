@@ -16,6 +16,8 @@ vi.mock("@/lib/credential-fetcher", () => ({
 }));
 
 import { getAddressBalanceStep } from "@/plugins/blockscout/steps/get-address-balance";
+import { getAddressCountersStep } from "@/plugins/blockscout/steps/get-address-counters";
+import { getAddressInfoStep } from "@/plugins/blockscout/steps/get-address-info";
 import { getTokenInfoStep } from "@/plugins/blockscout/steps/get-token-info";
 import { getTransactionStep } from "@/plugins/blockscout/steps/get-transaction";
 
@@ -179,5 +181,128 @@ describe("blockscout get-token-info", () => {
       success: false,
       error: "Token address is required.",
     });
+  });
+});
+
+describe("blockscout get-address-info", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("flattens the full address summary with defaults", async () => {
+    mockFetchOnce({
+      hash: "0xabc",
+      coin_balance: "3121840566764650005",
+      exchange_rate: "2127.52",
+      is_scam: false,
+      is_verified: true,
+      is_contract: true,
+      reputation: "ok",
+      ens_domain_name: "vitalik.eth",
+      proxy_type: "eip7702",
+      public_tags: [],
+      has_token_transfers: true,
+      has_tokens: true,
+      has_logs: false,
+      block_number_balance_updated_at: 45_911_658,
+    });
+
+    const result = await getAddressInfoStep({ address: "0xabc" });
+
+    expect(result).toEqual({
+      success: true,
+      address: "0xabc",
+      coinBalance: "3121840566764650005",
+      exchangeRate: "2127.52",
+      isScam: false,
+      isVerified: true,
+      isContract: true,
+      reputation: "ok",
+      ensName: "vitalik.eth",
+      proxyType: "eip7702",
+      publicTags: [],
+      hasTokenTransfers: true,
+      hasTokens: true,
+      hasLogs: false,
+      blockNumberBalanceUpdatedAt: 45_911_658,
+    });
+  });
+
+  it("applies safe defaults for missing fields", async () => {
+    mockFetchOnce({ hash: "0xabc" });
+
+    const result = await getAddressInfoStep({ address: "0xabc" });
+
+    expect(result).toEqual({
+      success: true,
+      address: "0xabc",
+      coinBalance: "0",
+      exchangeRate: null,
+      isScam: false,
+      isVerified: false,
+      isContract: false,
+      reputation: null,
+      ensName: null,
+      proxyType: null,
+      publicTags: [],
+      hasTokenTransfers: false,
+      hasTokens: false,
+      hasLogs: false,
+      blockNumberBalanceUpdatedAt: null,
+    });
+  });
+
+  it("rejects an empty address", async () => {
+    global.fetch = vi.fn() as unknown as typeof fetch;
+    const result = await getAddressInfoStep({ address: "" });
+
+    expect(result).toEqual({ success: false, error: "Address is required." });
+  });
+});
+
+describe("blockscout get-address-counters", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns activity counters", async () => {
+    mockFetchOnce({
+      transactions_count: "36251",
+      token_transfers_count: "86562",
+      gas_usage_count: "10772437",
+      validations_count: "0",
+    });
+
+    const result = await getAddressCountersStep({ address: "0xabc" });
+
+    expect(result).toEqual({
+      success: true,
+      transactionsCount: "36251",
+      tokenTransfersCount: "86562",
+      gasUsageCount: "10772437",
+      validationsCount: "0",
+    });
+    expect(lastFetchUrl()).toContain("/api/v2/addresses/0xabc/counters");
+  });
+
+  it("defaults missing counters to zero", async () => {
+    mockFetchOnce({});
+
+    const result = await getAddressCountersStep({ address: "0xabc" });
+
+    expect(result).toEqual({
+      success: true,
+      transactionsCount: "0",
+      tokenTransfersCount: "0",
+      gasUsageCount: "0",
+      validationsCount: "0",
+    });
+  });
+
+  it("rejects an empty address", async () => {
+    global.fetch = vi.fn() as unknown as typeof fetch;
+    const result = await getAddressCountersStep({ address: "  " });
+
+    expect(result).toEqual({ success: false, error: "Address is required." });
   });
 });

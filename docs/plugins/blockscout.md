@@ -12,6 +12,8 @@ Read on-chain data from any Blockscout-powered block explorer. All actions are r
 | Action | Description |
 |--------|-------------|
 | Get Address Balance | Look up the native coin balance and metadata for an address |
+| Get Address Info | Fetch the full address summary including reputation and verification flags |
+| Get Address Counters | Fetch activity counters (transactions, token transfers, gas usage) |
 | Get Transaction | Fetch details for a transaction by hash |
 | Get Token Info | Fetch metadata for an ERC-20/721/1155 token contract |
 
@@ -40,6 +42,42 @@ Schedule (every 10 min)
   -> Get Address Balance (treasury address)
   -> Condition: balance < threshold
   -> Discord: "Treasury low: {{GetAddressBalance.balance}} wei"
+```
+
+## Get Address Info
+
+Fetch the full Blockscout address summary in one call -- balance, exchange rate, reputation, verification, and engagement flags.
+
+**Inputs:** Address (supports `{{NodeName.field}}` variables)
+
+**Outputs:** `address`, `coinBalance` (wei), `exchangeRate` (USD), `isScam`, `isVerified`, `isContract`, `reputation`, `ensName`, `proxyType`, `publicTags`, `hasTokenTransfers`, `hasTokens`, `hasLogs`, `blockNumberBalanceUpdatedAt`, `success`, `error`
+
+**When to use:** Build an address reputation or trust score, gate a workflow on whether an address is scam-flagged or a verified contract, surface ENS and balance together in one step.
+
+**Example workflow:**
+```
+Manual trigger
+  -> Get Address Info: {{Trigger.address}}
+  -> Get Address Counters: {{Trigger.address}}
+  -> Code: compute trust score from {{GetAddressInfo}} + {{GetAddressCounters}}
+```
+
+## Get Address Counters
+
+Fetch lifetime activity counters for an address.
+
+**Inputs:** Address (supports `{{NodeName.field}}` variables)
+
+**Outputs:** `transactionsCount`, `tokenTransfersCount`, `gasUsageCount`, `validationsCount`, `success`, `error`
+
+**When to use:** Measure how active or established an address is, weight an activity score, branch on whether an address has any transaction history.
+
+**Example workflow:**
+```
+Webhook (address received)
+  -> Get Address Counters: {{Webhook.address}}
+  -> Condition: transactionsCount > 1000
+  -> Discord: "Established wallet: {{GetAddressCounters.transactionsCount}} txs"
 ```
 
 ## Get Transaction
