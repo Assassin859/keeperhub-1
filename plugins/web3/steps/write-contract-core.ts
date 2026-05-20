@@ -108,6 +108,19 @@ export async function writeContractCore(
     _context,
   } = input;
 
+  if (!abiFunction || abiFunction.trim() === "") {
+    logUserError(
+      ErrorCategory.VALIDATION,
+      "[Write Contract] Missing abiFunction",
+      { abiFunction },
+      { plugin_name: "web3", action_name: "write-contract" }
+    );
+    return {
+      success: false,
+      error: "Missing `abiFunction` in the step config",
+    };
+  }
+
   const { multiplierOverride, gasLimitOverride } =
     resolveGasLimitOverrides(gasLimitMultiplier);
   const priorityFeeOverride = parsePriorityFeeGwei(priorityFeeGwei);
