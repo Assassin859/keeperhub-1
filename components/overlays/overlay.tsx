@@ -54,8 +54,16 @@ export function Overlay({
         />
       )}
 
-      {/* Content area */}
-      {children && <div className="flex-1 overflow-y-auto p-6">{children}</div>}
+      {/* Content area. `thin-scrollbar` (globals.css) renders a styled,
+          permanently visible scrollbar so users can tell when content
+          extends below the fold; `scrollbar-gutter: stable` (inside the
+          utility) keeps the gutter reserved so toggling overflow doesn't
+          shift content horizontally. */}
+      {children && (
+        <div className="thin-scrollbar flex-1 overflow-y-scroll p-6">
+          {children}
+        </div>
+      )}
 
       {/* Footer with actions */}
       <OverlayFooter actions={actions} />

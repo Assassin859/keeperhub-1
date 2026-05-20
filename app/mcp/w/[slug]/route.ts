@@ -3,10 +3,12 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { type ApiKeyAuthResult, authenticateApiKey } from "@/lib/api-key-auth";
 import { McpEventStore } from "@/lib/mcp/event-store";
+import { getInternalApiBaseUrl } from "@/lib/mcp/internal-url";
 import { getWorkflowListing } from "@/lib/mcp/listing";
 import { logMcpEvent } from "@/lib/mcp/logging";
 import { authenticateOAuthToken } from "@/lib/mcp/oauth-auth";
 import { checkMcpRateLimit } from "@/lib/mcp/rate-limit";
+import { buildSessionErrorResponse } from "@/lib/mcp/session-error";
 import {
   createSessionToken,
   verifySessionToken,
@@ -157,7 +159,7 @@ function buildSession(
   organizationId: string,
   apiKeyId: string,
   scope: string | undefined,
-  baseUrl: string,
+  internalApiBaseUrl: string,
   authHeader: string,
   slug: string,
   listing: Parameters<typeof createWorkflowMcpServer>[0]["listing"]
@@ -179,7 +181,7 @@ function buildSession(
   const server = createWorkflowMcpServer({
     slug,
     listing,
-    baseUrl,
+    internalApiBaseUrl,
     authHeader,
     scope,
   });
@@ -196,18 +198,6 @@ function buildSession(
   };
 
   return { transport, entry };
-}
-
-const SESSION_ERROR_MESSAGES: Record<string, string> = {
-  session_not_found: "Session not found",
-  session_expired: "Session expired",
-};
-
-function sessionErrorBody(code: string): string {
-  return JSON.stringify({
-    error: code,
-    message: SESSION_ERROR_MESSAGES[code] ?? code,
-  });
 }
 
 type ResolveSessionOk = {
@@ -261,14 +251,14 @@ async function resolveSession(
     orgId: organizationId,
   });
 
-  const baseUrl = getBaseUrl(request);
+  const internalApiBaseUrl = getInternalApiBaseUrl();
   const authHeader = request.headers.get("authorization") ?? "";
   const { transport, entry } = buildSession(
     sessionId,
     organizationId,
     result.payload.key,
     result.payload.scope,
-    baseUrl,
+    internalApiBaseUrl,
     authHeader,
     slug,
     listing
@@ -388,9 +378,8 @@ export async function POST(
       listing
     );
     if (!resolved.ok) {
-      return new Response(sessionErrorBody(resolved.code), {
-        status: 404,
-        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+      return buildSessionErrorResponse(resolved.code, {
+        headers: CORS_HEADERS,
       });
     }
     const response = await resolved.transport.handleRequest(
@@ -410,15 +399,12 @@ export async function POST(
   }
 
   if (!isInitializeRequestBody(body)) {
-    return new Response(
-      JSON.stringify({
-        error: "Missing mcp-session-id header for non-initialize requests",
-      }),
-      {
-        status: 400,
-        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
-      }
-    );
+    // No session header AND not an `initialize` request: surface -32003 so
+    // clients run the documented `initialize` -> `notifications/initialized`
+    // bootstrap before retrying. Mirrors the wire shape from /mcp.
+    return buildSessionErrorResponse("session_not_initialized", {
+      headers: CORS_HEADERS,
+    });
   }
 
   if (!(auth.organizationId && auth.apiKeyId)) {
@@ -440,14 +426,14 @@ export async function POST(
     scope,
   });
 
-  const baseUrl = getBaseUrl(request);
+  const internalApiBaseUrl = getInternalApiBaseUrl();
   const authHeader = request.headers.get("authorization") ?? "";
   const { transport, entry } = buildSession(
     newSessionId,
     organizationId,
     apiKeyId,
     scope,
-    baseUrl,
+    internalApiBaseUrl,
     authHeader,
     slug,
     listing
@@ -486,13 +472,9 @@ export async function GET(
 
   const sessionId = request.headers.get("mcp-session-id");
   if (!sessionId) {
-    return new Response(
-      JSON.stringify({ error: "Missing mcp-session-id header" }),
-      {
-        status: 400,
-        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
-      }
-    );
+    return buildSessionErrorResponse("missing_session_id", {
+      headers: CORS_HEADERS,
+    });
   }
 
   const organizationId = auth.organizationId ?? "";
@@ -504,9 +486,8 @@ export async function GET(
     listingResult.listing
   );
   if (!resolved.ok) {
-    return new Response(sessionErrorBody(resolved.code), {
-      status: 404,
-      headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    return buildSessionErrorResponse(resolved.code, {
+      headers: CORS_HEADERS,
     });
   }
 
@@ -542,22 +523,17 @@ export async function DELETE(
 
   const sessionId = request.headers.get("mcp-session-id");
   if (!sessionId) {
-    return new Response(
-      JSON.stringify({ error: "Missing mcp-session-id header" }),
-      {
-        status: 400,
-        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
-      }
-    );
+    return buildSessionErrorResponse("missing_session_id", {
+      headers: CORS_HEADERS,
+    });
   }
 
   const organizationId = auth.organizationId ?? "";
 
   const payload = await verifySessionToken(sessionId, { allowExpired: true });
   if (!payload || payload.org !== organizationId) {
-    return new Response(sessionErrorBody("session_not_found"), {
-      status: 404,
-      headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    return buildSessionErrorResponse("session_not_found", {
+      headers: CORS_HEADERS,
     });
   }
 

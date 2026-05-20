@@ -12,60 +12,108 @@
  */
 
 import { ethers } from "ethers";
+import { metrics } from "../lib/metrics.js";
 import type { BlockWorkflow, ChainConfig } from "../lib/types.js";
 import { enqueueBlockTrigger } from "./sqs-enqueue.js";
 
 const MAX_RECONNECT_ATTEMPTS = 10;
 const BASE_DELAY_MS = 1000;
 const MAX_DELAY_MS = 30_000;
-const CONNECT_TIMEOUT_MS = 15_000;
-const PING_INTERVAL_MS = 30_000;
-const PONG_TIMEOUT_MS = 5_000;
-const NO_BLOCK_TIMEOUT_DEFAULT_MS = 5 * 60_000; // 5 minutes
-// Overridable so tests can exercise the staleness path in isolation from the
-// in-monitor no-block timer. Read on each resetNoBlockTimer() call so the
-// override applies even when set after module load.
-function getNoBlockTimeoutMs(): number {
-  return Number(process.env.NO_BLOCK_TIMEOUT_MS) || NO_BLOCK_TIMEOUT_DEFAULT_MS;
-}
-// Reconciler-level staleness threshold. Backstop for the in-monitor no-block
-// timer above:
-// observed in prod that the timer can fail to fire after a reconnect (root
-// cause unconfirmed; suspected ethers v6 subscription + upstream WSS half-open
-// state). When that happens, the monitor reports hasActiveSubscription=true
-// indefinitely and the reconciler never restarts it. Treating "no blocks for
-// N minutes" as not-alive lets the reconciler tear down and restart the
-// monitor regardless of why the in-monitor timer failed.
-const STALE_SUBSCRIPTION_MS = 10 * 60_000; // 10 minutes
 const STALE_BLOCK_THRESHOLD_S = 120; // warn if block timestamp >2 min behind
 const HEARTBEAT_INTERVAL_MS = 60_000;
 const MAX_BACKFILL_BLOCKS = 100;
-const PRIMARY_PROBE_TIMEOUT_MS = 5_000;
-// Overridable via env so dev/tests don't wait 5 minutes. Read on each
-// startPrimaryProbe() call so the override applies even when set after
-// module load (e.g. inside a test setup).
-function getPrimaryProbeIntervalMs(): number {
-  return Number(process.env.PRIMARY_PROBE_INTERVAL_MS) || 5 * 60_000;
+
+// ---------------------------------------------------------------------------
+// LIVENESS — single source of truth for all reconnect/teardown timing.
+//
+// Every threshold the monitor uses to decide "is this connection healthy"
+// lives here. Each is overridable through one helper so tests can collapse
+// minute-scale waits into milliseconds without touching the production code,
+// and so ops can tune any value via env without code changes. Keep this the
+// only place these numbers are defined.
+//
+// The three liveness signals this monitor exposes:
+//
+//   1. Transport keepalive       ping/pong       PONG_TIMEOUT_MS
+//   2. Subscription delivery     block-advance   BLOCK_ADVANCE_TIMEOUT_MS
+//   3. Reconciler backstop       isAlive() flips after RECONNECT_STUCK_TIMEOUT_MS
+//                                or MONITOR_RECREATE_TIMEOUT_MS
+//
+// Plus two operational safety nets that are not user-facing liveness signals
+// but live here for the same reason:
+//
+//   CONNECT_TIMEOUT_MS           bound on a single connect() attempt
+//   DESTROY_PROVIDER_TIMEOUT_MS  bound on each ethers v6 teardown step
+//   SOCKET_MAX_AGE_MS            proactive recycle of an apparently-healthy socket
+//   PRIMARY_PROBE_*              fallback-to-primary recovery probe timing
+// ---------------------------------------------------------------------------
+
+const LIVENESS_DEFAULTS = {
+  // How often we send a ws-level ping. Stays at 30s — short enough to detect a
+  // half-open transport within a minute, long enough not to spam the upstream.
+  PING_INTERVAL_MS: 30_000,
+  // How long we wait for a pong before declaring the transport dead and forcing
+  // a reconnect. Bumped from 5s to 30s per oncall ask: the previous 5s was
+  // tight enough to false-positive on bursty CPU or GC pauses on the dispatcher
+  // pod. handleDisconnect is idempotent so overlap with the 30s ping interval
+  // is safe.
+  PONG_TIMEOUT_MS: 30_000,
+  // Subscription-level liveness. If lastProcessedBlock has not *advanced* in
+  // this window, force a reconnect. Was NO_BLOCK_TIMEOUT_MS. Renamed to make
+  // the rule explicit: it is about new-height delivery, not callback fire.
+  // 60s is the floor that still tolerates Ethereum's 12s block time during
+  // testnet variance (~5 missed blocks) while detecting silent subscriptions
+  // on sub-2s chains (Polygon, Base, Avalanche, BSC) within tens of expected
+  // blocks. Combined with SILENT_FAILOVER_THRESHOLD=2, this flips a chain
+  // to fallback at 120s — the same moment the dashboard cell turns red and
+  // the Block Dispatcher Chain Silent alert finishes its for=2m debounce.
+  BLOCK_ADVANCE_TIMEOUT_MS: 60_000,
+  // Reconciler-level recreate threshold. If a monitor reports not-alive for
+  // longer than this gap of dead subscription, BlockMonitorService destroys
+  // and recreates it. Was STALE_SUBSCRIPTION_MS. Same purpose.
+  // Aligned with the dashboard red threshold (120s) so the reconciler's
+  // backstop kicks in at the same moment the alert fires. By that point the
+  // chain has already had its first 60s reconnect attempt and is about to
+  // hit the SILENT_FAILOVER_THRESHOLD flip; the recreate is the next-tier
+  // safety net for monitors that wedge during the flip itself.
+  MONITOR_RECREATE_TIMEOUT_MS: 120_000,
+  // Cap on how long isReconnecting=true is acceptable before the reconciler
+  // treats the monitor as dead. The normal reconnect-with-backoff path (max
+  // 10 attempts, max 30s each) completes well under this; only a hung
+  // destroy/connect await can exceed it.
+  RECONNECT_STUCK_TIMEOUT_MS: 5 * 60_000,
+  // Bound on a single connect() attempt.
+  CONNECT_TIMEOUT_MS: 15_000,
+  // Bound on each ethers v6 teardown step (removeAllListeners, destroy).
+  // ethers fires an internal eth_unsubscribe over the WSS during teardown;
+  // on a half-open socket that promise can hang and block the reconnect loop
+  // forever. Each step is bounded with this timeout.
+  DESTROY_PROVIDER_TIMEOUT_MS: 3_000,
+  // Proactive socket recycle: tear down and re-subscribe a socket that has
+  // been continuously connected longer than this, even when blocks keep
+  // arriving. Belt-and-suspenders against degraded-but-not-dead WSS state.
+  SOCKET_MAX_AGE_MS: 60 * 60_000,
+  // Primary recovery probe (used only while running on the fallback URL).
+  PRIMARY_PROBE_INTERVAL_MS: 5 * 60_000,
+  PRIMARY_PROBE_TIMEOUT_MS: 5_000,
+  // After this many consecutive BLOCK_ADVANCE_TIMEOUT_MS firings on the same
+  // URL, flip the URL preference (primary <-> fallback) on the next reconnect.
+  // This catches half-open-subscription upstreams where the WSS connects and
+  // request/response works but eth_subscribe never delivers newHeads — a
+  // failure mode the existing connect-level fallback cannot detect because
+  // getBlockNumber() succeeds on the broken URL. Reset to 0 on a real block
+  // advance, so a recovered URL is fully trusted again.
+  SILENT_FAILOVER_THRESHOLD: 2,
+} as const;
+
+type LivenessKey = keyof typeof LIVENESS_DEFAULTS;
+
+// Read on every call so env overrides take effect even when set after module
+// load (the test suite does this). One helper, one rule, applied uniformly.
+function liveness(key: LivenessKey): number {
+  const override = Number(process.env[key]);
+  return override > 0 ? override : LIVENESS_DEFAULTS[key];
 }
-
-// Proactive socket recycle: tear down and re-subscribe any socket that has
-// been continuously connected longer than this. Belt-and-suspenders against
-// half-open WSS state that doesn't surface as a 'close' event.
-const SOCKET_MAX_AGE_DEFAULT_MS = 60 * 60_000; // 1 hour
-function getSocketMaxAgeMs(): number {
-  return Number(process.env.SOCKET_MAX_AGE_MS) || SOCKET_MAX_AGE_DEFAULT_MS;
-}
-
-// destroyProvider awaits ethers v6 cleanup which can hang when the upstream
-// WSS is half-open (the internal eth_unsubscribe never settles). Bound each
-// cleanup step so the reconnect loop cannot get stuck mid-teardown.
-const DESTROY_PROVIDER_TIMEOUT_MS = 3_000;
-
-// If isReconnecting stays true longer than this, treat the monitor as dead
-// so the reconciler can tear it down and start a fresh one. The normal
-// reconnect-with-backoff path (max 10 attempts, max 30s each) completes well
-// under this threshold; only a hung destroy/connect await can exceed it.
-const STUCK_RECONNECT_MS = 5 * 60_000;
 
 function withTimeout<T>(
   promise: Promise<T>,
@@ -92,6 +140,30 @@ type ChainMonitorConfig = {
   chain: ChainConfig;
   workflows: BlockWorkflow[];
 };
+
+// Decodes a `ws` library "message" event payload to a string for the KEEP-570
+// raw-frame diagnostic. The ws library can deliver `data` as string, Buffer,
+// Buffer[] (fragmented frames, when the high-water mark is reached mid-frame),
+// or ArrayBuffer (when binaryType is "arraybuffer"). ethers v6 configures
+// Buffer today, but a silent under-count if upstream changes that is exactly
+// the regression the diagnostic exists to prevent. Returns null when the
+// payload is none of those shapes; the caller still counts the frame but
+// will not attempt to parse it for the subscription-push tally.
+export function decodeWsFrame(data: unknown): string | null {
+  if (typeof data === "string") {
+    return data;
+  }
+  if (Buffer.isBuffer(data)) {
+    return data.toString("utf8");
+  }
+  if (data instanceof ArrayBuffer) {
+    return Buffer.from(data).toString("utf8");
+  }
+  if (Array.isArray(data) && data.every((d) => Buffer.isBuffer(d))) {
+    return Buffer.concat(data).toString("utf8");
+  }
+  return null;
+}
 
 // Reduces a probe-failure error to a single short tag like "HTTP 429",
 // "timeout", or a 60-char first-line slice. Keeps log lines compact —
@@ -121,7 +193,24 @@ export class ChainMonitor {
   private pendingBlock: number | null = null;
   private reconnectAttempts = 0;
   private lastProcessedBlock: number | null = null;
-  private lastBlockReceivedAt: number | null = null;
+  // Wall-clock ms of the last time lastProcessedBlock *advanced*. Updated
+  // only after dedup, so a stuck upstream replaying the same block(N) does
+  // not falsify liveness. This was previously `lastBlockReceivedAt` and was
+  // updated before dedup — that was the root cause of the silent 7-hour
+  // outage where block-triggered workflows stopped without recovering.
+  //
+  // KEEP-570: also no longer reset by subscribeToBlocks on reconnect. A
+  // monitor that keeps reconnecting but never gets a real block is exactly
+  // the stuck state the reconciler needs to detect. The monitorBootAt field
+  // covers the cold-start warmup window so a freshly-booted monitor isn't
+  // reaped before its first block.
+  private lastBlockAdvanceAt: number | null = null;
+  // Wall-clock ms of when this monitor instance started running. Used by
+  // isAlive() as the staleness baseline before the first real block arrives.
+  // Replaces the previous behaviour of seeding lastBlockAdvanceAt on every
+  // subscribe, which broke the reconciler's ability to detect monitors
+  // stuck across many reconnect cycles.
+  private monitorBootAt: number | null = null;
   private blocksReceived = 0;
   private blocksMatched = 0;
   private lastHeartbeat = Date.now();
@@ -134,6 +223,19 @@ export class ChainMonitor {
   private currentUrlIndex = 0;
   private hasActiveSubscription = false;
   private wsCloseHandler: (() => void) | null = null;
+  // Consecutive BLOCK_ADVANCE_TIMEOUT_MS firings on the same URL. Reset on a
+  // real height advance in processBlockRange. When this hits
+  // SILENT_FAILOVER_THRESHOLD, the next reconnect flips currentUrlIndex so the
+  // monitor tries the other configured URL (primary <-> fallback).
+  private silentReconnects = 0;
+  // KEEP-570 diagnostic counters. These observe the raw ws socket independent
+  // of ethers' subscription routing. They distinguish "subscription confirmed,
+  // pushes routed, dedup discarded them" from "pushes never arrived" from
+  // "pushes arrived but ethers never routed them". Reset in subscribeToBlocks.
+  private wsFrameCount = 0;
+  private subscriptionPushCount = 0;
+  private lastWsFrameAt: number | null = null;
+  private wsMessageHandler: ((data: unknown) => void) | null = null;
 
   constructor(config: ChainMonitorConfig) {
     this.chainId = config.chain.chainId;
@@ -148,6 +250,10 @@ export class ChainMonitor {
       return;
     }
     this.isRunning = true;
+    this.silentReconnects = 0;
+    this.monitorBootAt = Date.now();
+    metrics.setSilentReconnectsCurrent(this.chainName, 0);
+    metrics.setWorkflowsTracked(this.chainName, this.workflows.length);
 
     try {
       await this.connect();
@@ -155,8 +261,10 @@ export class ChainMonitor {
       this.startPingPong();
       this.resetNoBlockTimer();
       this.startPrimaryProbe();
+      metrics.setIsAlive(this.chainName, true);
     } catch (error) {
       this.isRunning = false;
+      metrics.setIsAlive(this.chainName, false);
       throw error;
     }
   }
@@ -165,12 +273,19 @@ export class ChainMonitor {
     this.isRunning = false;
     this.isReconnecting = false;
     this.reconnectingStartedAt = null;
+    this.silentReconnects = 0;
     this.stopTimers();
     await this.destroyProvider();
+    // forgetChain() removes every per-chain gauge labelset, so the chain
+    // disappears entirely from /metrics output. No need to flip individual
+    // gauges to 0 first — that would leave residual labels behind. Counters
+    // and histograms keep their cumulative history.
+    metrics.forgetChain(this.chainName);
   }
 
   updateWorkflows(workflows: BlockWorkflow[]): void {
     this.workflows = workflows;
+    metrics.setWorkflowsTracked(this.chainName, workflows.length);
   }
 
   hasConfigChanged(chain: ChainConfig): boolean {
@@ -190,11 +305,12 @@ export class ChainMonitor {
     }
     if (this.isReconnecting) {
       // Normal reconnect-with-backoff (max ~3 min) is well under
-      // STUCK_RECONNECT_MS. Anything longer indicates destroyProvider() or
-      // connect() got hung mid-await, and the reconciler must intervene.
+      // RECONNECT_STUCK_TIMEOUT_MS. Anything longer indicates destroyProvider()
+      // or connect() got hung mid-await, and the reconciler must intervene.
       if (
         this.reconnectingStartedAt !== null &&
-        Date.now() - this.reconnectingStartedAt > STUCK_RECONNECT_MS
+        Date.now() - this.reconnectingStartedAt >
+          liveness("RECONNECT_STUCK_TIMEOUT_MS")
       ) {
         return false;
       }
@@ -204,12 +320,23 @@ export class ChainMonitor {
       return false;
     }
     // Subscription is set up, but the upstream WSS may have gone silent
-    // (zombie subscription). Treat as not-alive once the gap since the last
-    // block exceeds STALE_SUBSCRIPTION_MS so the BlockMonitorService
-    // reconciler tears it down and starts a fresh monitor.
+    // (zombie subscription). Treat as not-alive once block height has not
+    // advanced for MONITOR_RECREATE_TIMEOUT_MS so the BlockMonitorService
+    // reconciler tears it down and starts a fresh monitor. The signal is
+    // height-advance — not callback-fire — because a stuck upstream can
+    // replay the same block(N) forever without us advancing.
+    //
+    // KEEP-570: staleness is measured from the last *real* height advance.
+    // Before the first block ever arrives the baseline is monitorBootAt, so
+    // a freshly-booted monitor isn't reaped during cold-start warmup. Once
+    // the first block lands, lastBlockAdvanceAt takes over. This replaces
+    // the previous logic where subscribeToBlocks reset lastBlockAdvanceAt
+    // on every reconnect — that reset masked monitors stuck across many
+    // silent-reconnect cycles, exactly the prod failure mode.
+    const stalenessBaseline = this.lastBlockAdvanceAt ?? this.monitorBootAt;
     if (
-      this.lastBlockReceivedAt !== null &&
-      Date.now() - this.lastBlockReceivedAt > STALE_SUBSCRIPTION_MS
+      stalenessBaseline !== null &&
+      Date.now() - stalenessBaseline > liveness("MONITOR_RECREATE_TIMEOUT_MS")
     ) {
       return false;
     }
@@ -252,19 +379,36 @@ export class ChainMonitor {
       // stale handlers from firing handleDisconnect during teardown
       if (this.wsCloseHandler) {
         const ws = this.provider.websocket as unknown as {
-          removeListener?: (event: string, cb: () => void) => void;
+          removeListener?: (
+            event: string,
+            cb: (data?: unknown) => void,
+          ) => void;
         };
         ws?.removeListener?.("close", this.wsCloseHandler);
         this.wsCloseHandler = null;
+      }
+      // KEEP-570: detach the diagnostic message tap before destroying so it
+      // does not retain a reference to the closed socket or fire on the
+      // teardown frames ethers sends during eth_unsubscribe.
+      if (this.wsMessageHandler) {
+        const ws = this.provider.websocket as unknown as {
+          removeListener?: (
+            event: string,
+            cb: (data?: unknown) => void,
+          ) => void;
+        };
+        ws?.removeListener?.("message", this.wsMessageHandler);
+        this.wsMessageHandler = null;
       }
 
       // ethers v6 removeAllListeners/destroy fire an internal eth_unsubscribe
       // over the WSS. On a half-open socket that promise can hang and block
       // the reconnect loop forever; bound both steps with a hard timeout.
+      const destroyTimeoutMs = liveness("DESTROY_PROVIDER_TIMEOUT_MS");
       try {
         await withTimeout(
           this.provider.removeAllListeners(),
-          DESTROY_PROVIDER_TIMEOUT_MS,
+          destroyTimeoutMs,
           "removeAllListeners",
         );
       } catch (error) {
@@ -273,11 +417,7 @@ export class ChainMonitor {
         );
       }
       try {
-        await withTimeout(
-          this.provider.destroy(),
-          DESTROY_PROVIDER_TIMEOUT_MS,
-          "destroy",
-        );
+        await withTimeout(this.provider.destroy(), destroyTimeoutMs, "destroy");
       } catch (error) {
         console.warn(
           `[BlockMonitor:${this.chainName}] destroyProvider.destroy: ${error instanceof Error ? error.message : String(error)}`,
@@ -288,21 +428,39 @@ export class ChainMonitor {
   }
 
   private async connect(): Promise<void> {
-    const urls = [this.primaryWss, this.fallbackWss].filter(
-      (url): url is string => url !== null && url !== "",
-    );
+    type Candidate = {
+      url: string;
+      index: 0 | 1;
+      label: "primary" | "fallback";
+    };
+    const candidates: Candidate[] = [];
+    if (this.primaryWss) {
+      candidates.push({ url: this.primaryWss, index: 0, label: "primary" });
+    }
+    if (this.fallbackWss) {
+      candidates.push({ url: this.fallbackWss, index: 1, label: "fallback" });
+    }
 
-    if (urls.length === 0) {
+    if (candidates.length === 0) {
       throw new Error(
         `No WSS URLs configured for chain ${this.chainName} (${this.chainId})`,
       );
     }
 
-    for (const [index, url] of urls.entries()) {
-      const label = index === 0 ? "primary" : "fallback";
+    // Honor currentUrlIndex as the starting preference. It is updated below
+    // when we successfully connect, and also explicitly flipped by
+    // maybeFlipUrlPreference() when SILENT_FAILOVER_THRESHOLD is reached on
+    // the previous URL. The labels "primary"/"fallback" stay stable across
+    // reorderings so logs always identify which physical URL is in use.
+    const ordered =
+      this.currentUrlIndex === 1 && candidates.length === 2
+        ? [candidates[1], candidates[0]]
+        : candidates;
+
+    for (const [iterIdx, candidate] of ordered.entries()) {
       let provider: ethers.WebSocketProvider | null = null;
       try {
-        provider = new ethers.WebSocketProvider(url);
+        provider = new ethers.WebSocketProvider(candidate.url);
 
         // ethers v6 WebSocketProvider does not attach an 'error' listener on
         // the underlying ws. Without one, an HTTP 429 (or any non-101 upgrade
@@ -326,15 +484,16 @@ export class ChainMonitor {
           new Promise<number>((_, reject) => {
             setTimeout(
               () => reject(new Error("Connection timeout")),
-              CONNECT_TIMEOUT_MS,
+              liveness("CONNECT_TIMEOUT_MS"),
             );
           }),
         ])) as number;
 
         this.provider = provider;
-        this.currentUrlIndex = index;
+        this.currentUrlIndex = candidate.index;
+        metrics.setCurrentUrlIndex(this.chainName, candidate.index);
         console.log(
-          `[BlockMonitor:${this.chainName}] Connected to ${label} WSS (block: ${blockNumber})`,
+          `[BlockMonitor:${this.chainName}] Connected to ${candidate.label} WSS (block: ${blockNumber})`,
         );
         return;
       } catch (error) {
@@ -344,10 +503,10 @@ export class ChainMonitor {
           await provider.destroy().catch(() => {});
         }
         console.warn(
-          `[BlockMonitor:${this.chainName}] Failed to connect to ${label} WSS:`,
+          `[BlockMonitor:${this.chainName}] Failed to connect to ${candidate.label} WSS:`,
           error instanceof Error ? error.message : error,
         );
-        if (index === urls.length - 1) {
+        if (iterIdx === ordered.length - 1) {
           throw error;
         }
       }
@@ -398,24 +557,71 @@ export class ChainMonitor {
     });
 
     this.hasActiveSubscription = true;
-    // Seed the staleness clock so a freshly-subscribed monitor isn't reaped
-    // by isAlive() before the first block arrives. Real blocks will refresh
-    // this in onBlock().
-    this.lastBlockReceivedAt = Date.now();
+    // KEEP-570: do NOT seed lastBlockAdvanceAt here. Resetting it on every
+    // subscribe falsified isAlive() across reconnects, so monitors that
+    // re-subscribed every BLOCK_ADVANCE_TIMEOUT_MS without ever receiving
+    // a real block looked permanently alive to the reconciler. The cold-
+    // start warmup case is now handled by monitorBootAt in isAlive().
+    const subscribedAt = Date.now();
+    // KEEP-570 diagnostic: reset the per-subscription frame counters so the
+    // noBlockTimer log shows what happened on THIS subscription, not the
+    // cumulative since pod start.
+    this.wsFrameCount = 0;
+    this.subscriptionPushCount = 0;
+    this.lastWsFrameAt = null;
+    metrics.setHasActiveSubscription(this.chainName, true);
+    metrics.setSubscribedAt(this.chainName, subscribedAt);
+    // resetNoBlockTimer is called from start/reconnect, but seed it here too
+    // for the same reason — the watchdog needs a baseline from the moment we
+    // are subscribed, not from the previous run.
+    this.resetNoBlockTimer();
     this.startSocketAgeTimer();
     console.log(`[BlockMonitor:${this.chainName}] Block subscription active`);
 
     // Handle WebSocket close for reconnection - store reference for cleanup
     const ws = this.provider.websocket as unknown as {
-      on?: (event: string, cb: () => void) => void;
+      on?: (event: string, cb: (data?: unknown) => void) => void;
     };
     if (ws?.on) {
-      this.wsCloseHandler = () => {
+      this.wsCloseHandler = (): void => {
         console.warn(`[BlockMonitor:${this.chainName}] WebSocket closed`);
         this.hasActiveSubscription = false;
+        metrics.setHasActiveSubscription(this.chainName, false);
+        metrics.recordWsClose(this.chainName, "upstream_close");
         this.handleDisconnect();
       };
       ws.on("close", this.wsCloseHandler);
+
+      // KEEP-570 diagnostic: tap the raw ws below ethers' subscription
+      // routing. Counts every incoming frame and decodes enough JSON to
+      // identify eth_subscription pushes. Lets the noBlockTimer log
+      // distinguish "no frames at all" from "frames arrived but ethers did
+      // not route them to onBlock". The ws library's "message" event fires
+      // alongside ethers' onmessage property handler, so this tap does not
+      // intercept or shadow ethers' own message processing.
+      this.wsMessageHandler = (data: unknown): void => {
+        this.wsFrameCount++;
+        this.lastWsFrameAt = Date.now();
+        // The ws library can deliver a frame as string, Buffer, Buffer[]
+        // (fragmented), or ArrayBuffer (when binaryType is set). ethers v6
+        // configures Buffer today, but a quiet under-count if upstream
+        // changes that is exactly the kind of regression this diagnostic
+        // is supposed to prevent. Decode all four shapes; anything else
+        // counts as a frame but is not parsed for the push counter.
+        const text = decodeWsFrame(data);
+        if (text === null) {
+          return;
+        }
+        try {
+          const parsed = JSON.parse(text) as { method?: string };
+          if (parsed?.method === "eth_subscription") {
+            this.subscriptionPushCount++;
+          }
+        } catch {
+          // Non-JSON or partial frame; counted in wsFrameCount, ignored here.
+        }
+      };
+      ws.on("message", this.wsMessageHandler);
     }
   }
 
@@ -424,10 +630,12 @@ export class ChainMonitor {
   // ---------------------------------------------------------------------------
 
   private async onBlock(blockNumber: number): Promise<void> {
-    this.lastBlockReceivedAt = Date.now();
-    this.resetNoBlockTimer();
-
-    // Deduplicate — ethers may fire the same block from both polling and newHeads
+    // Deduplicate first — ethers may fire the same block from both polling
+    // and newHeads, and a half-open upstream can replay block(N) forever.
+    // Liveness MUST NOT be reset by repeated/old blocks; the no-block timer
+    // and lastBlockAdvanceAt are updated downstream in processBlockRange,
+    // only when lastProcessedBlock actually advances. (Root-cause fix for
+    // the silent 7-hour outage on prod.)
     if (
       this.lastProcessedBlock !== null &&
       blockNumber <= this.lastProcessedBlock
@@ -496,7 +704,19 @@ export class ChainMonitor {
 
     await this.processBlockNumber(blockNumber);
     this.lastProcessedBlock = blockNumber;
+    // Height genuinely advanced — refresh liveness AFTER the fact.
+    const advancedAt = Date.now();
+    this.lastBlockAdvanceAt = advancedAt;
+    // Trust the current URL again: a real height advance means the
+    // subscription is delivering. Without this reset, an old streak of silent
+    // reconnects would still trigger a URL flip on the next disconnect.
+    this.silentReconnects = 0;
+    this.resetNoBlockTimer();
     this.blocksReceived++;
+    metrics.recordBlockReceived(this.chainName);
+    metrics.setLastProcessedBlock(this.chainName, blockNumber);
+    metrics.setLastBlockAdvanceAt(this.chainName, advancedAt);
+    metrics.setSilentReconnectsCurrent(this.chainName, 0);
 
     // Heartbeat log
     const now = Date.now();
@@ -523,15 +743,18 @@ export class ChainMonitor {
       return;
     }
 
-    // Stale block warning
+    // Stale block warning + lag histogram
     const nowSeconds = Math.floor(Date.now() / 1000);
-    if (nowSeconds - block.timestamp > STALE_BLOCK_THRESHOLD_S) {
+    const lagSeconds = nowSeconds - block.timestamp;
+    metrics.observeBlockLag(this.chainName, lagSeconds);
+    if (lagSeconds > STALE_BLOCK_THRESHOLD_S) {
       console.warn(
-        `[BlockMonitor:${this.chainName}] Block ${blockNumber} timestamp is ${nowSeconds - block.timestamp}s behind wall clock`,
+        `[BlockMonitor:${this.chainName}] Block ${blockNumber} timestamp is ${lagSeconds}s behind wall clock`,
       );
     }
 
     this.blocksMatched++;
+    metrics.recordBlockMatched(this.chainName);
     console.log(
       `[BlockMonitor:${this.chainName}] Block ${blockNumber} matched ${matchingWorkflows.length} workflow(s): ${matchingWorkflows.map((wf) => `${wf.id}(interval=${wf.blockInterval})`).join(", ")}`,
     );
@@ -554,10 +777,13 @@ export class ChainMonitor {
 
     for (const [index, result] of results.entries()) {
       if (result.status === "rejected") {
+        metrics.recordSqsEnqueue(this.chainName, "error");
         console.error(
           `[BlockMonitor:${this.chainName}] Failed to enqueue workflow ${matchingWorkflows[index].id}:`,
           result.reason,
         );
+      } else {
+        metrics.recordSqsEnqueue(this.chainName, "success");
       }
     }
   }
@@ -622,6 +848,9 @@ export class ChainMonitor {
       }
     });
 
+    const pingIntervalMs = liveness("PING_INTERVAL_MS");
+    const pongTimeoutMs = liveness("PONG_TIMEOUT_MS");
+
     this.pingTimer = setInterval(() => {
       if (!this.isRunning || ws.readyState !== 1) {
         return;
@@ -633,21 +862,28 @@ export class ChainMonitor {
         console.warn(
           `[BlockMonitor:${this.chainName}] Failed to send ping, triggering reconnect`,
         );
+        metrics.recordWsClose(this.chainName, "ping_send_failure");
         this.handleDisconnect();
         return;
       }
 
-      // If no pong arrives within timeout, connection is dead
+      // Idempotent: don't stack pong waits if one is already in flight.
+      if (this.pongTimer) {
+        return;
+      }
+      // If no pong arrives within timeout, the transport is dead.
       this.pongTimer = setTimeout(() => {
+        this.pongTimer = null;
         console.warn(
-          `[BlockMonitor:${this.chainName}] Pong timeout (${PONG_TIMEOUT_MS}ms), triggering reconnect`,
+          `[BlockMonitor:${this.chainName}] Pong timeout (${pongTimeoutMs}ms), triggering reconnect`,
         );
+        metrics.recordWsClose(this.chainName, "pong_timeout");
         this.handleDisconnect();
-      }, PONG_TIMEOUT_MS);
-    }, PING_INTERVAL_MS);
+      }, pongTimeoutMs);
+    }, pingIntervalMs);
 
     console.log(
-      `[BlockMonitor:${this.chainName}] Ping/pong keepalive started (interval=${PING_INTERVAL_MS}ms, timeout=${PONG_TIMEOUT_MS}ms)`,
+      `[BlockMonitor:${this.chainName}] Ping/pong keepalive started (interval=${pingIntervalMs}ms, timeout=${pongTimeoutMs}ms)`,
     );
   }
 
@@ -664,11 +900,33 @@ export class ChainMonitor {
 
   private resetNoBlockTimer(): void {
     this.stopNoBlockTimer();
-    const timeoutMs = getNoBlockTimeoutMs();
+    const timeoutMs = liveness("BLOCK_ADVANCE_TIMEOUT_MS");
     this.noBlockTimer = setTimeout(() => {
       if (this.isRunning) {
+        // Count this as a silent reconnect on the current URL. Decision to
+        // flip to the other URL is made by reconnectWithBackoff before its
+        // next connect attempt, based on SILENT_FAILOVER_THRESHOLD.
+        this.silentReconnects++;
+        metrics.setSilentReconnectsCurrent(
+          this.chainName,
+          this.silentReconnects,
+        );
+        metrics.recordWsClose(this.chainName, "block_advance_timeout");
+        // KEEP-570: enrich the silent-window warning with the raw ws frame
+        // counters. The three load-bearing comparisons:
+        //   wsFrameCount == 0  -> no frames at all (network or upstream silent)
+        //   wsFrameCount > 0 && subscriptionPushCount == 0 -> only req/response
+        //                       and keepalives, no newHeads pushes
+        //   subscriptionPushCount > 0 && blocksReceived == 0 -> ethers received
+        //                       pushes but did not route them to onBlock
+        //                       (the ethers v6 sharp edge)
+        const lastFrameAgoMs =
+          this.lastWsFrameAt === null ? null : Date.now() - this.lastWsFrameAt;
         console.warn(
-          `[BlockMonitor:${this.chainName}] No blocks received in ${timeoutMs / 1000}s, triggering reconnect`,
+          `[BlockMonitor:${this.chainName}] Block height has not advanced in ${timeoutMs / 1000}s ` +
+            `(silentReconnects=${this.silentReconnects}, wsFrames=${this.wsFrameCount}, ` +
+            `subscriptionPushes=${this.subscriptionPushCount}, blocksReceived=${this.blocksReceived}, ` +
+            `lastFrameAgo=${lastFrameAgoMs === null ? "never" : `${lastFrameAgoMs}ms`}), triggering reconnect`,
         );
         this.handleDisconnect();
       }
@@ -700,7 +958,7 @@ export class ChainMonitor {
 
   private startSocketAgeTimer(): void {
     this.stopSocketAgeTimer();
-    const maxAgeMs = getSocketMaxAgeMs();
+    const maxAgeMs = liveness("SOCKET_MAX_AGE_MS");
     this.socketAgeTimer = setTimeout(() => {
       if (!this.isRunning || this.isReconnecting) {
         return;
@@ -708,6 +966,7 @@ export class ChainMonitor {
       console.log(
         `[BlockMonitor:${this.chainName}] Socket age exceeded ${Math.floor(maxAgeMs / 1000)}s, recycling`,
       );
+      metrics.recordWsClose(this.chainName, "socket_age_recycle");
       this.handleDisconnect();
     }, maxAgeMs);
   }
@@ -740,7 +999,7 @@ export class ChainMonitor {
       this.probePrimary().catch(() => {
         // probePrimary handles its own logging; nothing to do here
       });
-    }, getPrimaryProbeIntervalMs());
+    }, liveness("PRIMARY_PROBE_INTERVAL_MS"));
   }
 
   private stopPrimaryProbe(): void {
@@ -776,7 +1035,7 @@ export class ChainMonitor {
         new Promise<never>((_, reject) => {
           setTimeout(
             () => reject(new Error("Primary probe timeout")),
-            PRIMARY_PROBE_TIMEOUT_MS,
+            liveness("PRIMARY_PROBE_TIMEOUT_MS"),
           );
         }),
       ]);
@@ -788,6 +1047,8 @@ export class ChainMonitor {
       await probeProvider.destroy().catch(() => {
         // ignore cleanup errors
       });
+      metrics.recordUrlFlip(this.chainName, "to_primary");
+      metrics.recordWsClose(this.chainName, "primary_probe_recovered");
       this.handleDisconnect();
     } catch (error) {
       const reason = summarizeProbeError(error);
@@ -814,6 +1075,8 @@ export class ChainMonitor {
 
     this.isReconnecting = true;
     this.reconnectingStartedAt = Date.now();
+    metrics.setIsReconnecting(this.chainName, true);
+    metrics.setHasActiveSubscription(this.chainName, false);
     this.stopTimers();
 
     this.reconnectWithBackoff().catch((error: unknown) => {
@@ -823,10 +1086,12 @@ export class ChainMonitor {
       );
       this.isReconnecting = false;
       this.reconnectingStartedAt = null;
+      metrics.setIsReconnecting(this.chainName, false);
     });
   }
 
   private async reconnectWithBackoff(): Promise<void> {
+    const reconnectStartedAt = this.reconnectingStartedAt ?? Date.now();
     await this.destroyProvider();
 
     while (this.isRunning) {
@@ -837,6 +1102,9 @@ export class ChainMonitor {
         this.isRunning = false;
         this.isReconnecting = false;
         this.reconnectingStartedAt = null;
+        metrics.recordReconnect(this.chainName, "exhausted");
+        metrics.setIsAlive(this.chainName, false);
+        metrics.setIsReconnecting(this.chainName, false);
         return;
       }
 
@@ -858,6 +1126,8 @@ export class ChainMonitor {
         return;
       }
 
+      this.maybeFlipUrlPreference();
+
       try {
         await this.connect();
         await this.subscribeToBlocks();
@@ -867,6 +1137,13 @@ export class ChainMonitor {
         this.startPingPong();
         this.resetNoBlockTimer();
         this.startPrimaryProbe();
+        metrics.recordReconnect(this.chainName, "success");
+        metrics.observeReconnectDuration(
+          this.chainName,
+          Date.now() - reconnectStartedAt,
+        );
+        metrics.setIsReconnecting(this.chainName, false);
+        metrics.setIsAlive(this.chainName, true);
         return;
       } catch (error) {
         console.warn(
@@ -877,5 +1154,44 @@ export class ChainMonitor {
         await this.destroyProvider();
       }
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // URL preference flip
+  //
+  // Catches the half-open-subscription failure mode: the primary WSS accepts
+  // the upgrade, getBlockNumber() returns, eth_subscribe is acknowledged, but
+  // no newHeads notifications ever arrive. From connect()'s point of view the
+  // URL is healthy, so the existing fallback path never fires. After
+  // SILENT_FAILOVER_THRESHOLD consecutive BLOCK_ADVANCE_TIMEOUT_MS firings on
+  // the same URL, swap the URL preference so the next reconnect lands on the
+  // other configured endpoint. Reset the counter on flip; if the new URL is
+  // also silent, the counter will rebuild and the monitor will alternate
+  // until one of them recovers. The existing primaryProbeTimer handles
+  // swapping back to primary when it recovers.
+  // ---------------------------------------------------------------------------
+
+  private maybeFlipUrlPreference(): void {
+    const threshold = liveness("SILENT_FAILOVER_THRESHOLD");
+    if (this.silentReconnects < threshold) {
+      return;
+    }
+    if (!(this.primaryWss && this.fallbackWss)) {
+      return;
+    }
+    const previousLabel = this.currentUrlIndex === 0 ? "primary" : "fallback";
+    const nextLabel = this.currentUrlIndex === 0 ? "fallback" : "primary";
+    const nextIndex: 0 | 1 = this.currentUrlIndex === 0 ? 1 : 0;
+    this.currentUrlIndex = nextIndex;
+    this.silentReconnects = 0;
+    metrics.setSilentReconnectsCurrent(this.chainName, 0);
+    metrics.recordUrlFlip(
+      this.chainName,
+      nextIndex === 1 ? "to_fallback" : "to_primary",
+    );
+    metrics.recordWsClose(this.chainName, "silent_failover");
+    console.warn(
+      `[BlockMonitor:${this.chainName}] Silent-reconnect threshold (${threshold}) reached on ${previousLabel}, flipping URL preference to ${nextLabel}`,
+    );
   }
 }

@@ -52,10 +52,18 @@ const mockDbQuery = {
 };
 
 const mockDbDelete = vi.fn().mockResolvedValue(undefined);
+const mockMemberLimit = vi.fn();
 
 vi.mock("@/lib/db", () => ({
   db: {
     query: mockDbQuery,
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({
+          limit: mockMemberLimit,
+        })),
+      })),
+    })),
     insert: vi.fn().mockReturnValue({
       values: vi.fn().mockImplementation((v: unknown) => ({
         returning: vi.fn().mockResolvedValue([
@@ -131,6 +139,7 @@ describe("Workflow duplicate API", () => {
     vi.clearAllMocks();
     mockDbQuery.workflows.findFirst.mockResolvedValue(sourceWorkflow);
     mockDbQuery.workflows.findMany.mockResolvedValue([]);
+    mockMemberLimit.mockResolvedValue([{ id: "member-1" }]);
   });
 
   it("duplicates workflow and remaps template references to new node IDs", async () => {

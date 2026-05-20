@@ -1,3 +1,4 @@
+import type { ethers } from "ethers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ---------------------------------------------------------------------------
@@ -64,11 +65,24 @@ vi.mock("@/lib/web3/gas-strategy", () => ({
   getGasStrategy: vi.fn(),
 }));
 
+const mockSubmitSigned = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/web3/submit-signed", async () => {
+  const actual = await vi.importActual<
+    typeof import("@/lib/web3/submit-signed")
+  >("@/lib/web3/submit-signed");
+  return {
+    ...actual,
+    submitSignedTransactionWithFailover: mockSubmitSigned,
+  };
+});
+
 // ---------------------------------------------------------------------------
 // Import module under test AFTER mocks
 // ---------------------------------------------------------------------------
 
 import type { NonceSession } from "@/lib/web3/nonce-manager";
+import { NonceConflictError } from "@/lib/web3/submit-signed";
 import {
   type SubmitAndConfirmOptions,
   submitAndConfirm,
@@ -79,19 +93,16 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeMockReceipt(hash: string): {
-  hash: string;
-  gasUsed: bigint;
-  gasPrice: bigint;
-} {
-  return { hash, gasUsed: BigInt(21_000), gasPrice: BigInt(10_000_000_000) };
+function makeMockReceipt(hash: string): ethers.TransactionReceipt {
+  return {
+    hash,
+    gasUsed: BigInt(21_000),
+    gasPrice: BigInt(10_000_000_000),
+  } as unknown as ethers.TransactionReceipt;
 }
 
-function makeMockTxResponse(hash: string): {
-  hash: string;
-  wait: ReturnType<typeof vi.fn>;
-} {
-  return { hash, wait: vi.fn().mockResolvedValue(makeMockReceipt(hash)) };
+function makeMockTxResponse(hash: string): ethers.TransactionResponse {
+  return { hash } as unknown as ethers.TransactionResponse;
 }
 
 function makeSession(): NonceSession {
@@ -104,27 +115,36 @@ function makeSession(): NonceSession {
   };
 }
 
+function makeRpcManager(waitReceipt?: ethers.TransactionReceipt | null) {
+  const executeWithFailover = vi
+    .fn()
+    .mockImplementation(
+      async (
+        op: (p: ethers.JsonRpcProvider) => Promise<unknown>,
+        _opType: string
+      ) => {
+        const provider = {
+          waitForTransaction: vi
+            .fn()
+            .mockImplementation((hash: string) =>
+              Promise.resolve(
+                waitReceipt === undefined ? makeMockReceipt(hash) : waitReceipt
+              )
+            ),
+        } as unknown as ethers.JsonRpcProvider;
+        return await op(provider);
+      }
+    );
+  return {
+    executeWithFailover,
+  } as unknown as SubmitAndConfirmOptions["rpcManager"];
+}
+
 function makeOptions(
   overrides?: Partial<SubmitAndConfirmOptions>
 ): SubmitAndConfirmOptions {
   return {
-    rpcManager: {
-      getFallbackProvider: vi.fn().mockReturnValue(null),
-      getChainName: vi.fn().mockReturnValue("ethereum"),
-      getCurrentProviderType: vi.fn().mockReturnValue("primary"),
-      getMetricsCollector: vi.fn().mockReturnValue({
-        recordPrimaryAttempt: vi.fn(),
-        recordPrimaryFailure: vi.fn(),
-        recordFallbackAttempt: vi.fn(),
-        recordFallbackFailure: vi.fn(),
-        recordFailoverEvent: vi.fn(),
-        recordRecoveryEvent: vi.fn(),
-        recordBothFailed: vi.fn(),
-        recordSuccess: vi.fn(),
-        recordLatency: vi.fn(),
-        recordErrorType: vi.fn(),
-      }),
-    } as unknown as SubmitAndConfirmOptions["rpcManager"],
+    rpcManager: makeRpcManager(),
     session: makeSession(),
     nonce: 42,
     workflowId: "wf-1",
@@ -143,113 +163,92 @@ describe("submitAndConfirm", () => {
     vi.clearAllMocks();
   });
 
-  it("sends on primary and returns result on success", async () => {
-    const txResponse = makeMockTxResponse("0xhash1");
-    const signer = {
-      sendTransaction: vi.fn().mockResolvedValue(txResponse),
-      connect: vi.fn(),
-    };
+  it("routes broadcast through submitSignedTransactionWithFailover and returns built result", async () => {
+    mockSubmitSigned.mockResolvedValue({
+      hash: "0xhash1",
+      response: makeMockTxResponse("0xhash1"),
+    });
+    const signer = {} as ethers.Signer;
+    const options = makeOptions();
 
     const result = await submitAndConfirm(
       signer as never,
       { to: "0xrecipient", value: BigInt(1000), nonce: 42 },
-      makeOptions()
+      options
     );
 
+    expect(mockSubmitSigned).toHaveBeenCalledWith(
+      signer,
+      { to: "0xrecipient", value: BigInt(1000), nonce: 42 },
+      options.rpcManager
+    );
     expect(result.txHash).toBe("0xhash1");
     expect(result.gasCostWei).toBe(
       (BigInt(21_000) * BigInt(10_000_000_000)).toString()
     );
     expect(result.transactionLink).toContain("0xhash1");
-    expect(signer.connect).not.toHaveBeenCalled();
     expect(mockRecordTransaction).toHaveBeenCalledOnce();
     expect(mockConfirmTransaction).toHaveBeenCalledOnce();
   });
 
-  it("throws immediately for non-retryable errors without trying fallback", async () => {
-    const error = Object.assign(new Error("revert"), {
-      code: "CALL_EXCEPTION",
+  it("uses preExistingReceipt and skips waitForTransaction when helper found tx already mined", async () => {
+    const preReceipt = makeMockReceipt("0xhash-mined");
+    mockSubmitSigned.mockResolvedValue({
+      hash: "0xhash-mined",
+      response: makeMockTxResponse("0xhash-mined"),
+      preExistingReceipt: preReceipt,
     });
-    const signer = {
-      sendTransaction: vi.fn().mockRejectedValue(error),
-      connect: vi.fn(),
-    };
-
-    await expect(
-      submitAndConfirm(
-        signer as never,
-        { to: "0xrecipient", value: BigInt(1000), nonce: 42 },
-        makeOptions()
-      )
-    ).rejects.toThrow("revert");
-
-    expect(signer.connect).not.toHaveBeenCalled();
-  });
-
-  it("retries on fallback for retryable errors when fallback exists", async () => {
-    const error = Object.assign(new Error("timeout"), {
-      code: "NETWORK_ERROR",
-    });
-    const fallbackTx = makeMockTxResponse("0xfallback");
-    const reconnectedSigner = {
-      sendTransaction: vi.fn().mockResolvedValue(fallbackTx),
-    };
-    const signer = {
-      sendTransaction: vi.fn().mockRejectedValue(error),
-      connect: vi.fn().mockReturnValue(reconnectedSigner),
-    };
-
-    const fallbackProvider = { _isFallback: true };
-    const rpcManager = {
-      getFallbackProvider: vi.fn().mockReturnValue(fallbackProvider),
-      getChainName: vi.fn().mockReturnValue("ethereum"),
-      getCurrentProviderType: vi.fn().mockReturnValue("primary"),
-      getMetricsCollector: vi.fn().mockReturnValue({
-        recordPrimaryAttempt: vi.fn(),
-        recordPrimaryFailure: vi.fn(),
-        recordFallbackAttempt: vi.fn(),
-        recordFallbackFailure: vi.fn(),
-        recordFailoverEvent: vi.fn(),
-        recordRecoveryEvent: vi.fn(),
-        recordBothFailed: vi.fn(),
-        recordSuccess: vi.fn(),
-        recordLatency: vi.fn(),
-        recordErrorType: vi.fn(),
-      }),
-    };
+    const options = makeOptions();
+    const waitSpy = options.rpcManager.executeWithFailover as ReturnType<
+      typeof vi.fn
+    >;
 
     const result = await submitAndConfirm(
-      signer as never,
-      { to: "0xrecipient", value: BigInt(1000), nonce: 42 },
-      makeOptions({
-        rpcManager:
-          rpcManager as unknown as SubmitAndConfirmOptions["rpcManager"],
-      })
+      {} as never,
+      { to: "0xrecipient", value: BigInt(0), nonce: 42 },
+      options
     );
 
-    expect(result.txHash).toBe("0xfallback");
-    expect(signer.connect).toHaveBeenCalledWith(fallbackProvider);
-    expect(reconnectedSigner.sendTransaction).toHaveBeenCalledOnce();
+    expect(result.txHash).toBe("0xhash-mined");
+    expect(waitSpy).not.toHaveBeenCalled();
+    expect(mockConfirmTransaction).toHaveBeenCalledWith("0xhash-mined");
   });
 
-  it("throws retryable error when no fallback provider exists", async () => {
-    const error = Object.assign(new Error("timeout"), {
-      code: "NETWORK_ERROR",
-    });
-    const signer = {
-      sendTransaction: vi.fn().mockRejectedValue(error),
-      connect: vi.fn(),
-    };
+  it("propagates NonceConflictError from the helper without recording", async () => {
+    const conflictErr = new NonceConflictError(
+      "0xhashlost",
+      42,
+      new Error("nonce too low")
+    );
+    mockSubmitSigned.mockRejectedValue(conflictErr);
 
     await expect(
       submitAndConfirm(
-        signer as never,
-        { to: "0xrecipient", value: BigInt(1000), nonce: 42 },
+        {} as never,
+        { to: "0xrecipient", value: BigInt(0), nonce: 42 },
         makeOptions()
       )
-    ).rejects.toThrow("timeout");
+    ).rejects.toBe(conflictErr);
 
-    expect(signer.connect).not.toHaveBeenCalled();
+    expect(mockRecordTransaction).not.toHaveBeenCalled();
+    expect(mockConfirmTransaction).not.toHaveBeenCalled();
+  });
+
+  it("throws when waitForTransaction resolves null (receipt unavailable)", async () => {
+    mockSubmitSigned.mockResolvedValue({
+      hash: "0xhash1",
+      response: makeMockTxResponse("0xhash1"),
+    });
+    const options = makeOptions(undefined);
+    options.rpcManager = makeRpcManager(null);
+
+    await expect(
+      submitAndConfirm(
+        {} as never,
+        { to: "0xrecipient", value: BigInt(0), nonce: 42 },
+        options
+      )
+    ).rejects.toThrow("receipt not available");
   });
 });
 
@@ -258,130 +257,65 @@ describe("submitContractCallAndConfirm", () => {
     vi.clearAllMocks();
   });
 
-  it("sends contract call on primary and returns result on success", async () => {
-    const txResponse = makeMockTxResponse("0xcontract1");
-    const transferFn = vi.fn().mockResolvedValue(txResponse);
+  it("encodes calldata and forwards a fully-populated txRequest to the helper", async () => {
+    mockSubmitSigned.mockResolvedValue({
+      hash: "0xhash-c1",
+      response: makeMockTxResponse("0xhash-c1"),
+    });
+    const encodeFunctionData = vi.fn().mockReturnValue("0xencodeddata");
+    const getAddress = vi.fn().mockResolvedValue("0xcontract");
     const contract = {
-      transfer: transferFn,
-      connect: vi.fn(),
-      getFunction: (name: string): unknown => {
-        if (name === "transfer") {
-          return transferFn;
-        }
-        throw new Error(`unknown function: ${name}`);
-      },
-    };
-    const signer = { connect: vi.fn() };
+      interface: { encodeFunctionData },
+      getAddress,
+    } as unknown as ethers.Contract;
+    const signer = {} as ethers.Signer;
+    const options = makeOptions();
 
     const result = await submitContractCallAndConfirm(
-      contract as never,
+      contract,
       "transfer",
       ["0xrecipient", BigInt(1000)],
-      { nonce: 42, gasLimit: BigInt(100_000) },
+      { nonce: 42, gasLimit: BigInt(50_000) },
       signer as never,
-      makeOptions()
+      options
     );
 
-    expect(result.txHash).toBe("0xcontract1");
-    expect(contract.connect).not.toHaveBeenCalled();
-  });
-
-  it("retries contract call on fallback for retryable errors", async () => {
-    const error = Object.assign(new Error("timeout"), {
-      code: "SERVER_ERROR",
-    });
-    const fallbackTx = makeMockTxResponse("0xfallbackContract");
-    const fallbackTransferFn = vi.fn().mockResolvedValue(fallbackTx);
-    const reconnectedContract = {
-      transfer: fallbackTransferFn,
-      getFunction: (name: string): unknown => {
-        if (name === "transfer") {
-          return fallbackTransferFn;
-        }
-        throw new Error(`unknown function: ${name}`);
+    expect(encodeFunctionData).toHaveBeenCalledWith("transfer", [
+      "0xrecipient",
+      BigInt(1000),
+    ]);
+    expect(getAddress).toHaveBeenCalledOnce();
+    expect(mockSubmitSigned).toHaveBeenCalledWith(
+      signer,
+      {
+        to: "0xcontract",
+        data: "0xencodeddata",
+        nonce: 42,
+        gasLimit: BigInt(50_000),
       },
-    };
-    const reconnectedSigner = {};
-    const primaryTransferFn = vi.fn().mockRejectedValue(error);
-    const contract = {
-      transfer: primaryTransferFn,
-      connect: vi.fn().mockReturnValue(reconnectedContract),
-      getFunction: (name: string): unknown => {
-        if (name === "transfer") {
-          return primaryTransferFn;
-        }
-        throw new Error(`unknown function: ${name}`);
-      },
-    };
-    const signer = {
-      connect: vi.fn().mockReturnValue(reconnectedSigner),
-    };
-
-    const fallbackProvider = { _isFallback: true };
-    const rpcManager = {
-      getFallbackProvider: vi.fn().mockReturnValue(fallbackProvider),
-      getChainName: vi.fn().mockReturnValue("ethereum"),
-      getCurrentProviderType: vi.fn().mockReturnValue("primary"),
-      getMetricsCollector: vi.fn().mockReturnValue({
-        recordPrimaryAttempt: vi.fn(),
-        recordPrimaryFailure: vi.fn(),
-        recordFallbackAttempt: vi.fn(),
-        recordFallbackFailure: vi.fn(),
-        recordFailoverEvent: vi.fn(),
-        recordRecoveryEvent: vi.fn(),
-        recordBothFailed: vi.fn(),
-        recordSuccess: vi.fn(),
-        recordLatency: vi.fn(),
-        recordErrorType: vi.fn(),
-      }),
-    };
-
-    const result = await submitContractCallAndConfirm(
-      contract as never,
-      "transfer",
-      ["0xrecipient", BigInt(1000)],
-      { nonce: 42, gasLimit: BigInt(100_000) },
-      signer as never,
-      makeOptions({
-        rpcManager:
-          rpcManager as unknown as SubmitAndConfirmOptions["rpcManager"],
-      })
+      options.rpcManager
     );
-
-    expect(result.txHash).toBe("0xfallbackContract");
-    expect(signer.connect).toHaveBeenCalledWith(fallbackProvider);
-    expect(contract.connect).toHaveBeenCalledWith(reconnectedSigner);
-    expect(reconnectedContract.transfer).toHaveBeenCalledOnce();
+    expect(result.txHash).toBe("0xhash-c1");
   });
 
-  it("throws immediately for non-retryable contract errors", async () => {
-    const error = Object.assign(new Error("invalid args"), {
-      code: "INVALID_ARGUMENT",
-    });
-    const approveFn = vi.fn().mockRejectedValue(error);
+  it("propagates NonceConflictError from helper", async () => {
+    mockSubmitSigned.mockRejectedValue(
+      new NonceConflictError("0xhashlost", 42, new Error("nonce too low"))
+    );
     const contract = {
-      approve: approveFn,
-      connect: vi.fn(),
-      getFunction: (name: string): unknown => {
-        if (name === "approve") {
-          return approveFn;
-        }
-        throw new Error(`unknown function: ${name}`);
-      },
-    };
-    const signer = { connect: vi.fn() };
+      interface: { encodeFunctionData: vi.fn().mockReturnValue("0xdata") },
+      getAddress: vi.fn().mockResolvedValue("0xcontract"),
+    } as unknown as ethers.Contract;
 
     await expect(
       submitContractCallAndConfirm(
-        contract as never,
+        contract,
         "approve",
-        ["0xspender", BigInt(1000)],
+        [],
         { nonce: 42 },
-        signer as never,
+        {} as never,
         makeOptions()
       )
-    ).rejects.toThrow("invalid args");
-
-    expect(signer.connect).not.toHaveBeenCalled();
+    ).rejects.toBeInstanceOf(NonceConflictError);
   });
 });

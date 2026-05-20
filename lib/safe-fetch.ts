@@ -18,7 +18,8 @@ export type SsrfBlockReason =
   | "link-local"
   | "multicast"
   | "reserved"
-  | "ipv4-mapped-private";
+  | "ipv4-mapped-private"
+  | "ipv4-nat64-private";
 
 export class SsrfBlockedError extends Error {
   readonly code = "SSRF_BLOCKED";
@@ -48,12 +49,30 @@ const IPV4_MULTICAST_REGEX = /^(22[4-9]|23\d)\./;
 
 const IPV4_MAPPED_HEX_REGEX = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/;
 
+// NAT64 well-known prefix per RFC 6052 — 64:ff9b::/96. The last 32 bits
+// encode an IPv4 address. We recognise three textual forms a resolver may
+// return: canonical "64:ff9b::WWXX:YYZZ", uncompressed
+// "64:ff9b:0:0:0:0:WWXX:YYZZ", and dotted-quad "64:ff9b::1.2.3.4".
+const NAT64_CANONICAL_REGEX = /^64:ff9b::([0-9a-f]{1,4}):([0-9a-f]{1,4})$/;
+const NAT64_UNCOMPRESSED_REGEX =
+  /^64:ff9b:0:0:0:0:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/;
+const NAT64_DOTTED_REGEX = /^64:ff9b::(\d+\.\d+\.\d+\.\d+)$/;
+
 /**
  * Denylist of IP ranges that must never be reached from user-controlled fetch.
  * IPv4 covers unspecified, private, loopback, link-local (incl. IMDS
  * 169.254.169.254), CGNAT, documentation ranges, benchmarking, multicast,
- * reserved, broadcast. IPv6 covers unspecified, loopback, IPv4-mapped, NAT64,
- * discard, ULA, link-local, multicast.
+ * reserved, broadcast. IPv6 covers unspecified, loopback, IPv4-mapped (via
+ * extractor), discard, ULA, link-local, multicast.
+ *
+ * NAT64 (64:ff9b::/96) is intentionally NOT in this list. In dual-stack /
+ * IPv6-preferred networks (e.g. AWS VPCs with `enable_ipv6 = true`) the
+ * resolver synthesises NAT64 AAAA records for every IPv4-only public host,
+ * so blanket-blocking the prefix would block legitimate public destinations
+ * like Discord, Slack, Telegram. Instead, NAT64 hits are detected
+ * separately in `isBlockedIp` and the embedded IPv4 is rechecked against
+ * this list — preserving the SSRF property (no NAT64 path to RFC 1918,
+ * IMDS, etc.) without false positives on public IPv4.
  */
 function buildBlockList(): BlockList {
   const list = new BlockList();
@@ -81,7 +100,6 @@ function buildBlockList(): BlockList {
   // Node's BlockList treats that subnet as "all IPv4", which makes every
   // IPv4 check return true. IPv4-mapped IPv6 addresses pointing at private
   // IPv4 space are caught via extractMappedIpv4 below.
-  list.addSubnet("64:ff9b::", 96, "ipv6");
   list.addSubnet("100::", 64, "ipv6");
   list.addSubnet("fc00::", 7, "ipv6");
   list.addSubnet("fe80::", 10, "ipv6");
@@ -91,6 +109,12 @@ function buildBlockList(): BlockList {
 }
 
 const BLOCK_LIST = buildBlockList();
+
+const NAT64_BLOCK_LIST = (() => {
+  const list = new BlockList();
+  list.addSubnet("64:ff9b::", 96, "ipv6");
+  return list;
+})();
 
 function reasonForIpv4(ip: string): SsrfBlockReason {
   if (ip.startsWith("127.")) {
@@ -152,6 +176,39 @@ function extractMappedIpv4(ipv6: string): string | undefined {
   );
 }
 
+function hexGroupsToIpv4(highHex: string, lowHex: string): string | undefined {
+  const high = Number.parseInt(highHex, 16);
+  const low = Number.parseInt(lowHex, 16);
+  if (!(Number.isFinite(high) && Number.isFinite(low))) {
+    return;
+  }
+  return [(high >> 8) & 0xff, high & 0xff, (low >> 8) & 0xff, low & 0xff].join(
+    "."
+  );
+}
+
+/**
+ * Extract the embedded IPv4 from a NAT64 well-known prefix address
+ * (`64:ff9b::/96`, RFC 6052). The last 32 bits encode the IPv4 destination.
+ * Returns undefined for non-NAT64 input or an unrecognised textual form.
+ */
+function extractNat64Ipv4(ipv6: string): string | undefined {
+  const lower = ipv6.toLowerCase();
+  const canonical = lower.match(NAT64_CANONICAL_REGEX);
+  if (canonical?.[1] && canonical[2]) {
+    return hexGroupsToIpv4(canonical[1], canonical[2]);
+  }
+  const uncompressed = lower.match(NAT64_UNCOMPRESSED_REGEX);
+  if (uncompressed?.[1] && uncompressed[2]) {
+    return hexGroupsToIpv4(uncompressed[1], uncompressed[2]);
+  }
+  const dotted = lower.match(NAT64_DOTTED_REGEX);
+  if (dotted?.[1] && isIP(dotted[1]) === 4) {
+    return dotted[1];
+  }
+  return;
+}
+
 /**
  * Check an IP literal against the denylist. For IPv4-mapped IPv6 addresses,
  * the embedded IPv4 is also matched against the IPv4 denylist so an IPv6
@@ -162,6 +219,21 @@ export function isBlockedIp(
 ): { blocked: true; reason: SsrfBlockReason } | { blocked: false } {
   const family = isIP(ip);
   if (family === 0) {
+    return { blocked: false };
+  }
+
+  if (family === 6 && NAT64_BLOCK_LIST.check(ip, "ipv6")) {
+    const embedded = extractNat64Ipv4(ip);
+    if (embedded === undefined) {
+      // Address is inside 64:ff9b::/96 but the textual form is unfamiliar
+      // and we can't read the embedded IPv4. Block defensively rather than
+      // pass through unvalidated — extending the form-aware extractor is
+      // safer than weakening the guard.
+      return { blocked: true, reason: "ipv4-nat64-private" };
+    }
+    if (BLOCK_LIST.check(embedded, "ipv4")) {
+      return { blocked: true, reason: "ipv4-nat64-private" };
+    }
     return { blocked: false };
   }
 

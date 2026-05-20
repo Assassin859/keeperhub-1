@@ -32,6 +32,39 @@ export const getOrgSlug = cache(
 );
 
 /**
+ * Resolve an organization's slug and display name in a single round-trip.
+ * Cached per request via React `cache()`. Same best-effort semantics as
+ * `getOrgSlug` - a failed lookup yields `{}` rather than throwing, so a
+ * metric label resolution can never break the calling request.
+ */
+export const getOrgIdentity = cache(
+  async (
+    orgId: string | null | undefined
+  ): Promise<{ slug?: string; name?: string }> => {
+    if (!orgId) {
+      return {};
+    }
+    try {
+      const rows = await db
+        .select({ slug: organization.slug, name: organization.name })
+        .from(organization)
+        .where(eq(organization.id, orgId))
+        .limit(1);
+      const row = rows[0];
+      if (!row) {
+        return {};
+      }
+      return {
+        slug: row.slug ?? undefined,
+        name: row.name ?? undefined,
+      };
+    } catch {
+      return {};
+    }
+  }
+);
+
+/**
  * Resolve an organization's plan by id. Cached per request. Returns "free"
  * when the org has no subscription row, undefined when the lookup fails or
  * orgId is missing. Used as a low-cardinality label on error metrics so

@@ -5,7 +5,7 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
-import { projects, publicTags, tags, workflowExecutions, workflowPublicTags, workflows } from "@/lib/db/schema";
+import { projects, publicTags, tags, workflowExecutions, workflowPublicTags, workflowSchedules, workflows } from "@/lib/db/schema";
 import { findFirstWriteActionNode } from "@/lib/mcp/calldata";
 import {
   findBareAtLiterals,
@@ -13,8 +13,14 @@ import {
 } from "@/lib/mcp/listing-validators";
 import { syncWorkflowSchedule } from "@/lib/schedule-service";
 import { sanitizeDescription } from "@/lib/sanitize-description";
+import { getWorkflowAccess } from "@/lib/workflow/access";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
+import { softDeleteValues } from "@/lib/workflow/soft-delete";
 import { isReservedSlug } from "@/lib/workflow/reserved-slugs";
+import {
+  formatActionConfigValidationResponse,
+  validateWorkflowActionConfigs,
+} from "@/lib/workflow/validation/action-config";
 import { findInvalidTemplateTokens } from "@/lib/workflow/validation/template-syntax";
 async function fetchWorkflowPublicTags(
   workflowId: string
@@ -87,26 +93,34 @@ export async function GET(
       );
     }
 
-    const isOwner = userId === workflow.userId;
-
-    // Check organization membership for private workflows
-    const isSameOrg =
-      !workflow.isAnonymous &&
-      workflow.organizationId &&
-      organizationId === workflow.organizationId;
+    const access = await getWorkflowAccess(workflow, {
+      userId,
+      organizationId,
+      authMethod: authContext.authMethod,
+    });
 
     // Access control:
-    // - Public workflows: anyone can view (sanitized)
+    // - Public workflows: anyone can view (sanitized), Hub-listed
+    // - Unlisted workflows: anyone with the link can view (sanitized), not on Hub
     // - Private workflows: owner or org member can view
     // - Anonymous workflows: only owner can view
-    if (!isOwner && workflow.visibility !== "public" && !isSameOrg) {
+    if (!access.hasFullAccess && workflow.visibility === "private") {
       return NextResponse.json(
         { error: "Workflow not found" },
         { status: 404 }
       );
     }
 
-    const hasFullAccess = isOwner || isSameOrg;
+    // KEEP-440: a soft-deleted workflow stays readable for its owner/org so the
+    // UI can render a deleted marker, but is gone for everyone else.
+    if (access.isDeleted && !access.hasFullAccess) {
+      return NextResponse.json(
+        { error: "Workflow not found" },
+        { status: 404 }
+      );
+    }
+
+    const hasFullAccess = access.hasFullAccess;
 
     const workflowTags = await fetchWorkflowPublicTags(workflowId);
 
@@ -198,6 +212,7 @@ function isValidVisibility(visibility: unknown): boolean {
   return (
     visibility === undefined ||
     visibility === "private" ||
+    visibility === "unlisted" ||
     visibility === "public"
   );
 }
@@ -206,7 +221,8 @@ function isValidVisibility(visibility: unknown): boolean {
 async function validateWorkflowAccess(
   workflowId: string,
   userId: string | null,
-  organizationId: string | null
+  organizationId: string | null,
+  authMethod: "api-key" | "oauth" | "session"
 ): Promise<{
   workflow: typeof workflows.$inferSelect | null;
   hasAccess: boolean;
@@ -219,15 +235,17 @@ async function validateWorkflowAccess(
     return { workflow: null, hasAccess: false };
   }
 
-  const isOwner = userId ? existingWorkflow.userId === userId : false;
-  const isSameOrg =
-    !existingWorkflow.isAnonymous &&
-    existingWorkflow.organizationId &&
-    organizationId === existingWorkflow.organizationId;
+  const access = await getWorkflowAccess(existingWorkflow, {
+    userId,
+    organizationId,
+    authMethod,
+  });
 
+  // KEEP-440: a soft-deleted workflow is not mutable. PATCH and DELETE both
+  // treat it as not-found rather than re-deleting or editing a tombstone.
   return {
     workflow: existingWorkflow,
-    hasAccess: isOwner || Boolean(isSameOrg),
+    hasAccess: access.hasFullAccess && !access.isDeleted,
   };
 }
 
@@ -235,7 +253,9 @@ async function handlePostUpdateSideEffects(
   workflowId: string,
   body: Record<string, unknown>
 ): Promise<void> {
-  if (body.visibility === "private") {
+  // Tags are Hub-discovery only; clear them on any demote off of "public",
+  // including demote-to-unlisted (link-only) and demote-to-private.
+  if (body.visibility === "private" || body.visibility === "unlisted") {
     await db
       .delete(workflowPublicTags)
       .where(eq(workflowPublicTags.workflowId, workflowId));
@@ -283,7 +303,12 @@ export async function PATCH(
 
     const { userId, organizationId } = authContext;
     const { workflow: existingWorkflow, hasAccess } =
-      await validateWorkflowAccess(workflowId, userId, organizationId);
+      await validateWorkflowAccess(
+        workflowId,
+        userId,
+        organizationId,
+        authContext.authMethod
+      );
 
     if (!(existingWorkflow && hasAccess)) {
       return NextResponse.json(
@@ -294,20 +319,7 @@ export async function PATCH(
 
     const body = await request.json();
 
-    // Validate that all integrationIds in nodes belong to the current user
     if (Array.isArray(body.nodes)) {
-      const validation = await validateWorkflowIntegrations(
-        body.nodes,
-        userId || existingWorkflow.userId,
-        organizationId
-      );
-      if (!validation.valid) {
-        return NextResponse.json(
-          { error: "Invalid integration references in workflow" },
-          { status: 403 }
-        );
-      }
-
       // KEEP-468: parse every `{{...}}` token at save time so grammar typos
       // (the n8n-style `{{$trigger.input.ts}}`-shaped errors that produced
       // on-chain corruption during the hackathon) are rejected with line/path
@@ -329,7 +341,10 @@ export async function PATCH(
     // Validate visibility value if provided
     if (!isValidVisibility(body.visibility)) {
       return NextResponse.json(
-        { error: "Invalid visibility value. Must be 'private' or 'public'" },
+        {
+          error:
+            "Invalid visibility value. Must be 'private', 'unlisted', or 'public'",
+        },
         { status: 400 }
       );
     }
@@ -403,6 +418,32 @@ export async function PATCH(
     }
 
     const updateData = buildUpdateData(body);
+
+    if (Array.isArray(updateData.nodes)) {
+      // Validate the exact shape that will be persisted. The sanitizer moves
+      // misplaced root fields into data.config, including integrationId.
+      const validation = await validateWorkflowIntegrations(
+        updateData.nodes,
+        userId || existingWorkflow.userId,
+        organizationId
+      );
+      if (!validation.valid) {
+        return NextResponse.json(
+          { error: "Invalid integration references in workflow" },
+          { status: 403 }
+        );
+      }
+
+      const actionConfigValidation = validateWorkflowActionConfigs(
+        updateData.nodes
+      );
+      if (!actionConfigValidation.valid) {
+        return NextResponse.json(
+          formatActionConfigValidationResponse(actionConfigValidation),
+          { status: 422 }
+        );
+      }
+    }
 
     // Set listedAt server-side on first listing (never from client, never cleared on unlist)
     if (body.isListed === true && existingWorkflow.listedAt === null) {
@@ -589,7 +630,8 @@ export async function DELETE(
     const { hasAccess } = await validateWorkflowAccess(
       workflowId,
       userId,
-      organizationId
+      organizationId,
+      authContext.authMethod
     );
 
     if (!hasAccess) {
@@ -619,7 +661,14 @@ export async function DELETE(
       );
     }
 
-    // If force delete, cascade delete logs, executions, and workflow in a transaction
+    // KEEP-440: soft-delete the workflow row instead of hard-deleting it. The
+    // surviving row keeps its listedSlug bound in idx_workflows_listed_slug, so
+    // the slug can never be re-claimed by another workflow. Execution history
+    // is still hard-deleted on force (only the workflow row must persist), and
+    // schedules are removed explicitly -- the ON DELETE CASCADE that used to
+    // clean them up no longer fires now that the row is not actually deleted.
+    const softDelete = softDeleteValues();
+
     if (hasExecutions && force) {
       const { workflowExecutionLogs } = await import("@/lib/db/schema");
       const { inArray } = await import("drizzle-orm");
@@ -642,10 +691,26 @@ export async function DELETE(
             .where(eq(workflowExecutions.workflowId, workflowId));
         }
 
-        await tx.delete(workflows).where(eq(workflows.id, workflowId));
+        await tx
+          .delete(workflowSchedules)
+          .where(eq(workflowSchedules.workflowId, workflowId));
+
+        await tx
+          .update(workflows)
+          .set(softDelete)
+          .where(eq(workflows.id, workflowId));
       });
     } else {
-      await db.delete(workflows).where(eq(workflows.id, workflowId));
+      await db.transaction(async (tx) => {
+        await tx
+          .delete(workflowSchedules)
+          .where(eq(workflowSchedules.workflowId, workflowId));
+
+        await tx
+          .update(workflows)
+          .set(softDelete)
+          .where(eq(workflows.id, workflowId));
+      });
     }
 
     return NextResponse.json({ success: true });

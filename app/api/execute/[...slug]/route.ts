@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { resolveAbi } from "@/lib/abi/cache";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import { getProtocol } from "@/lib/protocol-registry";
+import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { PLUGIN_STEP_IMPORTERS } from "@/lib/step-registry";
 import { resolveProtocolMeta } from "@/plugins/protocol/steps/resolve-protocol-meta";
 import {
@@ -80,13 +81,36 @@ async function executeProtocolAction(
     );
   }
 
-  const network = String(body.network ?? "");
-  if (!network) {
+  // KEEP-490: accept `chainId` as the canonical input, with `network` as a
+  // deprecated alias. Either field may carry the numeric chain ID (1, 11155111)
+  // or a known chain name/slug ("ethereum", "sepolia", "base"). Downstream
+  // helpers (contract.addresses, resolveAbi, the chain adapter) are keyed by
+  // numeric chainId, so normalize here once.
+  const rawNetwork = String(body.chainId ?? body.network ?? "");
+  if (!rawNetwork) {
     return NextResponse.json(
-      { success: false, error: "Missing required field: network" },
+      {
+        success: false,
+        error:
+          "Missing required field: chainId (or network, which is a deprecated alias)",
+      },
       { status: 400 }
     );
   }
+
+  let resolvedChainId: number;
+  try {
+    resolvedChainId = getChainIdFromNetwork(rawNetwork);
+  } catch (err: unknown) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+      },
+      { status: 400 }
+    );
+  }
+  const network = String(resolvedChainId);
 
   const contractAddress = contract.userSpecifiedAddress
     ? String(body.contractAddress ?? "")
@@ -98,7 +122,7 @@ async function executeProtocolAction(
         success: false,
         error: contract.userSpecifiedAddress
           ? `Missing contract address for "${meta.contractKey}"`
-          : `Protocol "${meta.protocolSlug}" contract "${meta.contractKey}" is not deployed on network "${network}"`,
+          : `Protocol "${meta.protocolSlug}" contract "${meta.contractKey}" is not deployed on chain ${network} (input: "${rawNetwork}")`,
       },
       { status: 400 }
     );

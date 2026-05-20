@@ -2,13 +2,59 @@ import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { Box } from "lucide-react";
 import "@/protocols";
 import { db } from "@/lib/db";
-import { workflows } from "@/lib/db/schema";
 import {
   getRegisteredProtocols,
+  type ProtocolActionInput,
   type ProtocolDefinition,
 } from "@/lib/protocol-registry";
+import type { IntegrationType } from "@/lib/types/integration";
+import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
+import { workflows } from "@/lib/db/schema";
+import {
+  flattenConfigFields,
+  getIntegration,
+  type PluginAction,
+} from "@/plugins/registry";
 import { ProtocolDetailIsland } from "./_protocol-detail-island";
 import { ProtocolGridClient } from "./_protocols-grid-client";
+
+// hubOnly protocols (e.g., Hyperliquid) carry no protocol-registry actions —
+// their runtime actions live in a plugin sharing the same slug. Surface those
+// plugin actions in the Hub card + detail modal so the protocol reads as
+// first-class instead of "Coming soon". The synthesized ProtocolActions reuse
+// the plugin slug, so "Use in workflow" resolves to the real plugin action id
+// (e.g., hyperliquid/clearinghouse-state).
+function pluginActionInputs(action: PluginAction): ProtocolActionInput[] {
+  return flattenConfigFields(action.configFields)
+    .filter((field) => field.required)
+    .map((field) => ({
+      name: field.key,
+      type: field.isAddressField ? "address" : "string",
+      label: field.label,
+    }));
+}
+
+function withPluginActions(protocol: ProtocolDefinition): ProtocolDefinition {
+  if (!protocol.hubOnly) {
+    return protocol;
+  }
+  const plugin = getIntegration(protocol.slug as IntegrationType);
+  if (!plugin || plugin.actions.length === 0) {
+    return protocol;
+  }
+  return {
+    ...protocol,
+    actions: plugin.actions.map((action) => ({
+      slug: action.slug,
+      label: action.label,
+      description: action.description,
+      type: "read" as const,
+      contract: "",
+      function: "",
+      inputs: pluginActionInputs(action),
+    })),
+  };
+}
 
 async function fetchProtocolWorkflowCounts(): Promise<Record<string, number>> {
   // Mirrors /api/workflows/public?featuredProtocol=<slug> visibility filter
@@ -23,7 +69,8 @@ async function fetchProtocolWorkflowCounts(): Promise<Record<string, number>> {
     .where(
       and(
         eq(workflows.visibility, "public"),
-        isNotNull(workflows.featuredProtocol)
+        isNotNull(workflows.featuredProtocol),
+        workflowNotDeleted()
       )
     )
     .groupBy(workflows.featuredProtocol);
@@ -53,7 +100,7 @@ export async function HubProtocolsTab({
   // Read from the in-process registry — same source the /api/protocols route
   // serves. Avoids an HTTP hop for the SSR render and keeps the data path
   // independent of the Workflows tab (per CONTEXT.md "no coupling").
-  const all = getRegisteredProtocols();
+  const all = getRegisteredProtocols().map(withPluginActions);
   const trimmed = query.trim().toLowerCase();
   const protocols =
     trimmed === "" ? all : all.filter((p) => matchesQuery(p, trimmed));

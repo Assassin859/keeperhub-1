@@ -3,7 +3,9 @@
 import { Info, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useSession } from "@/lib/auth-client";
 import { isBillingEnabled } from "@/lib/billing/feature-flag";
+import { isAnonymousUser } from "@/lib/is-anonymous";
 
 const STORAGE_KEY = "kh-billing-announce-v1";
 
@@ -17,6 +19,9 @@ export function AppBanner(): React.ReactElement | null {
 function BillingBanner(): React.ReactElement | null {
   const [mounted, setMounted] = useState(false);
   const [dismissed, setDismissed] = useState(true);
+  const { data: session, isPending } = useSession();
+  const isAnonymous = isAnonymousUser(session?.user);
+  const visible = mounted && !dismissed && !isPending && !isAnonymous;
 
   useEffect(() => {
     setMounted(true);
@@ -29,18 +34,15 @@ function BillingBanner(): React.ReactElement | null {
   }, []);
 
   useEffect(() => {
-    if (!mounted) {
-      return;
-    }
-    if (dismissed) {
-      document.documentElement.style.removeProperty("--app-banner-height");
-    } else {
+    if (visible) {
       document.documentElement.style.setProperty("--app-banner-height", "36px");
+    } else {
+      document.documentElement.style.removeProperty("--app-banner-height");
     }
     return (): void => {
       document.documentElement.style.removeProperty("--app-banner-height");
     };
-  }, [mounted, dismissed]);
+  }, [visible]);
 
   function handleDismiss(): void {
     try {
@@ -51,7 +53,7 @@ function BillingBanner(): React.ReactElement | null {
     setDismissed(true);
   }
 
-  if (!mounted || dismissed) {
+  if (!visible) {
     return null;
   }
 

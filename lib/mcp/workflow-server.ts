@@ -1,17 +1,21 @@
 import "server-only";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
+import {
+  buildTriggerInputSchema,
+  detectListingTriggerType,
+  normalizeTriggerInput,
+} from "@/lib/mcp/trigger-input-schema";
 
 type ApiResponse = Record<string, unknown>;
 
 async function callApi(
-  baseUrl: string,
+  internalApiBaseUrl: string,
   authHeader: string,
   path: string,
   method: string,
   body?: unknown
 ): Promise<ApiResponse> {
-  const url = `${baseUrl}${path}`;
+  const url = `${internalApiBaseUrl}${path}`;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Authorization: authHeader,
@@ -48,12 +52,13 @@ export type WorkflowListing = {
   priceUsdcPerCall: string | null;
   workflowType: "read" | "write";
   listingVersion: number;
+  nodes: unknown[];
 };
 
 type CreateWorkflowMcpServerOptions = {
   slug: string;
   listing: WorkflowListing;
-  baseUrl: string;
+  internalApiBaseUrl: string;
   authHeader: string;
   scope?: string;
 };
@@ -113,7 +118,7 @@ function buildToolDescription(listing: WorkflowListing): string {
 export function createWorkflowMcpServer(
   options: CreateWorkflowMcpServerOptions
 ): McpServer {
-  const { slug, listing, baseUrl, authHeader } = options;
+  const { slug, listing, internalApiBaseUrl, authHeader } = options;
 
   const server = new McpServer({
     name: `keeperhub-workflow-${slug}`,
@@ -121,25 +126,28 @@ export function createWorkflowMcpServer(
   });
 
   const toolDescription = buildToolDescription(listing);
+  const triggerKind = detectListingTriggerType(listing.nodes);
+  const inputSchema = buildTriggerInputSchema(triggerKind);
 
   server.registerTool(
     slug,
     {
       title: listing.name,
       description: toolDescription,
-      inputSchema: z.record(z.string(), z.unknown()),
+      inputSchema,
       annotations: {
         readOnlyHint: listing.workflowType === "read",
         destructiveHint: false,
       },
     },
-    async (args) => {
+    async (args: unknown) => {
+      const normalized = normalizeTriggerInput(args);
       const data = await callApi(
-        baseUrl,
+        internalApiBaseUrl,
         authHeader,
         `/api/mcp/workflows/${encodeURIComponent(slug)}/call`,
         "POST",
-        args
+        normalized
       );
       return {
         content: [{ type: "text", text: JSON.stringify(data, null, 2) }],

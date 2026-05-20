@@ -22,6 +22,8 @@
     "db:seed-x402": "tsx scripts/seed/seed-x402-test.ts",
     "db:fund-test-wallet": "tsx scripts/miscellaneous/fund-test-wallet.ts",
     "db:seed-tokens": "tsx scripts/seed/seed-tokens.ts",
+    "db:seed-workflows": "tsx scripts/seed/seed-protocol-workflows.ts",
+    "db:seed-all": "pnpm db:seed && pnpm db:seed-test-wallet && pnpm db:seed-workflows",
     "db:setup": "pnpm db:migrate && pnpm db:setup-workflow && pnpm db:seed",
     "db:setup-workflow": "workflow-postgres-setup",
     "discover-plugins": "tsx scripts/discover-plugins.ts",
@@ -36,6 +38,7 @@
     "test:coverage": "vitest run --coverage",
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
+    "test:protocol": "vitest run tests/e2e/vitest/protocol-coverage",
     "test:e2e": "playwright test",
     "test:e2e:bfcache:dev": "playwright test back-forward-hydration",
     "test:e2e:bfcache:prod": "NEXT_BUILD_MODE=production playwright test back-forward-hydration",
@@ -94,6 +97,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "cron-parser": "^5.5.0",
+    "defi-kit": "2.26.9",
     "dotenv": "^17.4.1",
     "drizzle-orm": "^0.45.2",
     "ethers": "^6.16.0",
@@ -123,7 +127,9 @@
     "v0-sdk": "^0.16.4",
     "vaul": "^1.1.2",
     "workflow": "4.2.0-beta.76",
-    "zod": "^4.3.6"
+    "zod": "^4.3.6",
+    "zodiac-roles-deployments": "3.3.0",
+    "zodiac-roles-sdk": "3.4.1"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.10",
@@ -131,10 +137,12 @@
     "@noble/hashes": "^2.0.1",
     "@playwright/test": "^1.59.1",
     "@sentry/cli": "^2.58.5",
+    "@superfluid-finance/metadata": "^1.6.2",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^24",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^4.1.2",
     "dotenv-expand": "^12.0.3",
     "drizzle-kit": "^0.31.10",
@@ -149,7 +157,8 @@
     "typescript": "^5",
     "ultracite": "6.5.1",
     "viem": "^2.47.1",
-    "vitest": "^4.1.2"
+    "vitest": "^4.1.2",
+    "ws": "^8.20.1"
   },
   "pnpm": {
     "neverBuiltDependencies_comment": "prisma is an unused optional dep of better-auth's prisma adapter; we use drizzle. Skip its preinstall which requires Node 20.19+.",

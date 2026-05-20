@@ -143,6 +143,12 @@ export type ActionConfigFieldBase = {
 
   // For protocol field types: the underlying Solidity type (e.g. "uint256", "tuple[]")
   solidityType?: string;
+
+  // When true, the field is never rendered in the form. Its defaultValue
+  // still flows through node-config-panel's default-application logic, so
+  // hidden fields can carry config the runtime needs without surfacing to
+  // the user (e.g. _protocolMeta).
+  hidden?: boolean;
 };
 
 /**
@@ -233,6 +239,10 @@ export type PluginAction = {
   // Optional - if not provided, will fall back to auto-generated template
   // from steps that export _exportCore
   codegenTemplate?: string;
+
+  // External documentation URL rendered as a "Docs" link in the action
+  // config panel header. Optional; if absent, no link is shown.
+  docUrl?: string;
 };
 
 /**

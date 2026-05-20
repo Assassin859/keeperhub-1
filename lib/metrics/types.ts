@@ -111,6 +111,7 @@ export const MetricNames = {
 
   // Traffic metrics
   WORKFLOW_EXECUTIONS_TOTAL: "workflow.executions.total",
+  WORKFLOW_EXECUTIONS_STARTED_TOTAL: "workflow.executions.started.total",
   WORKFLOW_EXPORTS_TOTAL: "workflow.exports.total",
   WORKFLOW_IMPORTS_TOTAL: "workflow.imports.total",
   PLUGIN_INVOCATIONS_TOTAL: "plugin.invocations.total",
@@ -154,6 +155,35 @@ export const MetricNames = {
   DB_QUERY_SLOW_COUNT: "db.query.slow_count",
   WORKFLOW_QUEUE_DEPTH: "workflow.queue.depth",
   WORKFLOW_CONCURRENT_COUNT: "workflow.concurrent.count",
+
+  // Safe wallet metrics (KEEP-301 wave 2). Cover the hot paths only:
+  //  - safe.deploy.*           CREATE2 deploy through the SafeProxyFactory
+  //  - safe.role_install.*     Roles modifier proxy deploy + initial config
+  //  - safe.tx.*               safe.execTransaction (owner-signed) and
+  //                            rolesModifier.execTransactionWithRole writes
+  //  - safe.withdraw.*         User-initiated withdrawals routed through
+  //                            executeContractCallAsSafe / executeNativeTransferAsSafe
+  SAFE_DEPLOY_DURATION: "safe.deploy.duration_ms",
+  SAFE_DEPLOY_TOTAL: "safe.deploy.total",
+  SAFE_ROLE_INSTALL_DURATION: "safe.role_install.duration_ms",
+  SAFE_ROLE_INSTALL_TOTAL: "safe.role_install.total",
+  SAFE_TX_DURATION: "safe.tx.duration_ms",
+  SAFE_TX_TOTAL: "safe.tx.total",
+  SAFE_WITHDRAW_TOTAL: "safe.withdraw.total",
+
+  // Signer-mode resolver distribution counter (KEEP-568). Emitted once per
+  // `resolveSignerMode` call, labelled by kind so dashboards can answer
+  // "what fraction of org writes are policy-gated (`safe-role`) vs
+  // unscoped (`safe`) vs EOA (`eoa`)?" -- the per-tx safe.tx.total
+  // counter only covers the two Safe branches.
+  SIGNER_MODE_TOTAL: "signer_mode.total",
+
+  // Probe-swallow counter (KEEP-567). Fires when the Safe role-modifier
+  // chain probe fails (both primary + fallback RPC) and the resolver
+  // silently downgrades to unscoped `safe` mode. Needed to measure how
+  // often the policy-bypass window opens before deciding whether to
+  // hard-fail the resolver vs keep the current silent-downgrade behavior.
+  SIGNER_PROBE_FAILURE: "signer_probe.failure.total",
 } as const;
 
 /**
@@ -164,6 +194,7 @@ export const LabelKeys = {
   EXECUTION_ID: "execution_id",
   ORG_ID: "org_id",
   ORG_SLUG: "org_slug",
+  ORG_NAME: "org_name",
   PLAN: "plan",
   OWNER_ID: "owner_id",
   PLUGIN_ID: "plugin_id",
@@ -172,6 +203,7 @@ export const LabelKeys = {
   PLUGIN_NAME: "plugin_name",
   ACTION_NAME: "action_name",
   TRIGGER_TYPE: "trigger_type",
+  CHAIN: "chain",
   STATUS: "status",
   STATUS_CODE: "status_code",
   ERROR_TYPE: "error_type",
@@ -179,15 +211,39 @@ export const LabelKeys = {
   SERVICE: "service",
   ERROR_CATEGORY: "error_category",
   ERROR_CONTEXT: "error_context",
-  IS_USER_ERROR: "is_user_error",
   BILLING_STATUS: "billing_status",
   TIER: "tier",
 } as const;
 
 /**
- * Trigger types for workflow executions
+ * Trigger types for workflow executions.
+ *
+ * "scheduled" is the legacy label used for any internal call before the per-source
+ * discriminator was introduced. New code should prefer the precise values
+ * "schedule" (cron-based), "block" (block-interval), or "event" (smart contract
+ * event). Both "scheduled" and "schedule" are kept here so historical metric
+ * series remain valid.
  */
-export type TriggerType = "manual" | "webhook" | "scheduled";
+export type TriggerType =
+  | "manual"
+  | "webhook"
+  | "scheduled"
+  | "schedule"
+  | "block"
+  | "event";
+
+const TRIGGER_TYPES: ReadonlySet<TriggerType> = new Set<TriggerType>([
+  "manual",
+  "webhook",
+  "scheduled",
+  "schedule",
+  "block",
+  "event",
+]);
+
+export function isTriggerType(value: unknown): value is TriggerType {
+  return typeof value === "string" && TRIGGER_TYPES.has(value as TriggerType);
+}
 
 /**
  * Execution status values

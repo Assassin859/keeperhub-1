@@ -24,8 +24,9 @@
         "label": "HTTP Request",
         "type": "action",
         "config": {
-          "actionType": "http/request",
-          "url": "https://example.com/api"
+          "actionType": "HTTP Request",
+          "httpMethod": "GET",
+          "endpoint": "https://example.com/api"
         }
       }
     }

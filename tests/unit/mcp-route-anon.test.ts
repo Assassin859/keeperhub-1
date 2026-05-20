@@ -131,7 +131,7 @@ describe("GET /mcp — anonymous health probe", () => {
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     const json = await response.json();
     expect(json.name).toBe("keeperhub");
-    expect(json.version).toBe("1.0.0");
+    expect(json.version).toBe("1.2.0");
     expect(json.protocol).toBe("mcp");
     expect(json.status).toBe("ok");
     expect(json.authentication.required).toBe(true);
@@ -176,7 +176,7 @@ describe("POST /mcp — anonymous initialize", () => {
     expect(json.result.protocolVersion).toBe("2025-06-18");
     expect(json.result.capabilities).toEqual({});
     expect(json.result.serverInfo.name).toBe("keeperhub");
-    expect(json.result.serverInfo.version).toBe("1.0.0");
+    expect(json.result.serverInfo.version).toBe("1.2.0");
     expect(json.result.authentication.required).toBe(true);
     expect(json.result.authentication.resource_metadata).toMatch(
       RESOURCE_METADATA_PATH
@@ -349,6 +349,69 @@ describe("POST /mcp — authed session-resume forwards parsedBody", () => {
 
     expect(response.status).toBe(400);
     expect(handleRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /mcp — session bootstrap errors (KEEP-474 wire shape)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAuthenticate.mockResolvedValue({
+      authenticated: true,
+      organizationId: "org-1",
+      apiKeyId: "key-1",
+      scope: undefined,
+    });
+  });
+
+  it("returns -32003 session_not_initialized when authed POST omits session id on a non-initialize body", async () => {
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 21,
+      method: "tools/list",
+    });
+    const request = makeRequest("POST", {}, body);
+    const response = await POST(request);
+
+    // -32003 maps to HTTP 400 per SESSION_ERROR_DESCRIPTORS.
+    expect(response.status).toBe(400);
+    const json = (await response.json()) as {
+      jsonrpc: string;
+      id: null;
+      error: { code: number; message: string; data: { reason: string } };
+    };
+    expect(json.jsonrpc).toBe("2.0");
+    expect(json.id).toBeNull();
+    expect(json.error.code).toBe(-32_003);
+    expect(json.error.data.reason).toBe("session_not_initialized");
+    expect(json.error.data).toHaveProperty("hint");
+  });
+});
+
+describe("DELETE /mcp — session bootstrap errors (KEEP-474 wire shape)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAuthenticate.mockResolvedValue({
+      authenticated: true,
+      organizationId: "org-1",
+      apiKeyId: "key-1",
+      scope: undefined,
+    });
+  });
+
+  it("returns -32004 missing_session_id when authed DELETE omits the mcp-session-id header", async () => {
+    const request = makeRequest("DELETE");
+    const response = await DELETE(request);
+
+    // -32004 maps to HTTP 400 per SESSION_ERROR_DESCRIPTORS.
+    expect(response.status).toBe(400);
+    const json = (await response.json()) as {
+      jsonrpc: string;
+      id: null;
+      error: { code: number; data: { reason: string; hint: string } };
+    };
+    expect(json.jsonrpc).toBe("2.0");
+    expect(json.error.code).toBe(-32_004);
+    expect(json.error.data.reason).toBe("missing_session_id");
   });
 });
 

@@ -1,20 +1,172 @@
 import { defineProtocol } from "@/lib/protocol-registry";
+import { amount, type ProtocolTestData, wallet } from "@/lib/test-data/types";
+
+// KEEP-458 protocol-coverage test data. Sepolia uses the canonical fUSDC /
+// fUSDCx pair (matches tests/integration/protocol-superfluid-onchain.test.ts).
+// The fUSDC ERC20 exposes a permissionless `mint(to, amount)`; the funder
+// calls it in the TS preflight (FAUCETS entry in chain-test-data.ts).
+const TEST_DATA: ProtocolTestData = {
+  "11155111": {
+    setup: {
+      minNativeHuman: "0.001",
+      // 10 FUSDC wrapped to FUSDCX in setup + headroom for per-test wraps.
+      requiredTokens: [{ symbol: "FUSDC", human: "20" }],
+      approvals: [
+        // Wrap requires the SuperToken (FUSDCX) to spend underlying FUSDC.
+        { token: "FUSDC", spender: "FUSDCX", human: "20" },
+      ],
+      protocolSteps: [
+        {
+          protocol: "superfluid",
+          action: "wrap",
+          inputs: {
+            contractAddress: "FUSDCX",
+            amount: amount("FUSDC", "10"),
+          },
+        },
+      ],
+    },
+    // GDA pool actions reference a zero-address placeholder pool (we don't
+    // capture the create-pool tx receipt to extract the deployed address in
+    // Phase 1). Skip on-chain execution; the seeder still surfaces them in
+    // the dashboard for discoverability.
+    skipped: {
+      "update-member-units": "pool dependency; needs real pool address",
+      distribute: "pool dependency; needs real pool address",
+      "distribute-flow": "pool dependency; needs real pool address",
+      "connect-pool": "pool dependency; needs real pool address",
+    },
+    actions: {
+      // Reads
+      "get-flow": {
+        token: "FUSDCX",
+        sender: wallet(),
+        receiver: wallet(),
+      },
+      "get-account-flow-rate": {
+        token: "FUSDCX",
+        account: wallet(),
+      },
+      // superToken contract is userSpecifiedAddress: pass `contractAddress`.
+      "get-super-token-balance": {
+        contractAddress: "FUSDCX",
+        account: wallet(),
+      },
+      "get-underlying-token": { contractAddress: "FUSDCX" },
+      "get-cfa-net-flow": {
+        token: "FUSDCX",
+        account: wallet(),
+      },
+      "get-net-flow": {
+        token: "FUSDCX",
+        account: wallet(),
+      },
+      // Writes — wallet -> burn address. Superfluid CFA reverts with
+      // CFA_NO_SELF_FLOW (0xa47338ef) when sender == receiver, so self-streams
+      // aren't usable. 0x...dEaD is a stable, contract-free sink: streaming a
+      // few wei/sec there costs only the SuperToken buffer (~14400 wei at
+      // flowRate=1). Sender stays as the test wallet so create/update/delete
+      // operate on the same flow row.
+      "create-flow": {
+        token: "FUSDCX",
+        sender: wallet(),
+        receiver: "0x000000000000000000000000000000000000dEaD",
+        flowRate: "1",
+        userData: "0x",
+      },
+      "update-flow": {
+        token: "FUSDCX",
+        sender: wallet(),
+        receiver: "0x000000000000000000000000000000000000dEaD",
+        flowRate: "2",
+        userData: "0x",
+      },
+      "delete-flow": {
+        token: "FUSDCX",
+        sender: wallet(),
+        receiver: "0x000000000000000000000000000000000000dEaD",
+        userData: "0x",
+      },
+      // SuperToken is userSpecifiedAddress: pass contractAddress explicitly.
+      wrap: {
+        contractAddress: "FUSDCX",
+        amount: amount("FUSDC", "1"),
+      },
+      unwrap: {
+        contractAddress: "FUSDCX",
+        amount: amount("FUSDCX", "1"),
+      },
+      // GDA pool actions. No pool is provisioned in Phase 1, so the `pool`
+      // address is the zero placeholder -- the seeded workflow loads but
+      // on-chain execution reverts until a pool is created (a setup step
+      // for a future iteration).
+      "create-pool": {
+        token: "FUSDCX",
+        admin: wallet(),
+        // bools transferabilityForUnitsOwner / distributionFromAnyAddress
+        // have `default: "false"` in the protocol def; the resolver picks
+        // those up automatically.
+      },
+      "update-member-units": {
+        pool: "0x0000000000000000000000000000000000000000",
+        member: wallet(),
+        units: "1",
+        userData: "0x",
+      },
+      distribute: {
+        token: "FUSDCX",
+        from: wallet(),
+        pool: "0x0000000000000000000000000000000000000000",
+        amount: amount("FUSDCX", "1"),
+        userData: "0x",
+      },
+      "distribute-flow": {
+        token: "FUSDCX",
+        from: wallet(),
+        pool: "0x0000000000000000000000000000000000000000",
+        flowRate: "1",
+        userData: "0x",
+      },
+      "connect-pool": {
+        pool: "0x0000000000000000000000000000000000000000",
+        userData: "0x",
+      },
+      // CFA flow-operator permissions: grant the burn address full permissions
+      // on FUSDCX. Self-operator (flowOperator == msg.sender) reverts with a
+      // CFA forwarder ACL custom error; using a stable sink address sidesteps
+      // it without affecting any real account.
+      "grant-flow-operator": {
+        token: "FUSDCX",
+        flowOperator: "0x000000000000000000000000000000000000dEaD",
+        permissions: "7", // CREATE | UPDATE | DELETE = 1 | 2 | 4
+        flowRateAllowance: "1",
+      },
+    },
+  },
+};
 
 /**
  * Chain IDs (as strings, matching ProtocolContract.addresses keys) where the
  * Superfluid CFAv1 and GDAv1 forwarders are deployed.
  *
  * Adding a chain: append its ID here. Both forwarders pick it up automatically
- * via sameOnAllChains() because the addresses are deliberately constant across
- * every chain Superfluid supports. To ship a new chain, also add an entry to
- * tests/scripts/verify-superfluid-addresses.ts so the bytecode check covers it.
+ * via sameOnAllChains() because Superfluid pins both forwarders to identical
+ * addresses on every chain currently in SUPERFLUID_CHAIN_IDS. This is NOT
+ * universal across all chains Superfluid supports -- Avalanche Fuji (43113)
+ * uses a different CFAv1Forwarder address. The unit test in
+ * tests/unit/superfluid-protocol.test.ts cross-checks every chain here
+ * against @superfluid-finance/metadata and will fail if a chain whose
+ * forwarders deviate is added without replacing sameOnAllChains() with a
+ * per-chain map.
  */
 export const SUPERFLUID_CHAIN_IDS = [
   "1", // Ethereum Mainnet
   "10", // Optimism
+  "56", // BNB Smart Chain
   "137", // Polygon
   "8453", // Base
   "42161", // Arbitrum One
+  "43114", // Avalanche C-Chain
   "11155111", // Sepolia
 ] as const;
 
@@ -265,6 +417,24 @@ export default defineProtocol({
     },
   },
 
+  // KEEP-458: the protocol-coverage test runner executes write actions in
+  // the order they appear below (`protocol.actions.filter(type==='write')`
+  // preserves array order, and vitest within a file runs tests sequentially).
+  // Tests share the wallet's on-chain CFA flow + SuperToken balance as a
+  // singleton, so order matters:
+  //   - update-flow MUST follow create-flow (CFA reverts on update of a
+  //     non-existent flow).
+  //   - delete-flow MUST follow create-flow (and is fine after update-flow;
+  //     update doesn't close the flow).
+  //   - wrap / unwrap operate on the SuperToken balance setup provisions
+  //     (10 FUSDC wrapped to 10 FUSDCX), so they are independent of each
+  //     other and of the flow trio.
+  //   - grant-flow-operator is independent.
+  //   - GDA pool actions (create-pool/update-member-units/distribute/
+  //     distribute-flow/connect-pool) are listed in `skipped` above because
+  //     Phase 1 setup doesn't capture the deployed pool address; reordering
+  //     them does not affect on-chain state.
+  // Reordering this array (e.g. alphabetising) will silently break the suite.
   actions: [
     {
       slug: "create-flow",
@@ -620,4 +790,6 @@ export default defineProtocol({
       ],
     },
   ],
+
+  testData: TEST_DATA,
 });

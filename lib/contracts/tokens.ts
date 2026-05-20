@@ -91,8 +91,42 @@ export const COMMON_TOKENS: ChainTokens = {
 
   // Sepolia Testnet (chainId: 11155111)
   11155111: [
-    // Sepolia test tokens can be added here
-    // Note: Testnet token addresses vary and may not be stable
+    {
+      address: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+      symbol: "USDC",
+      decimals: 6,
+      name: "USD Coin (Circle testnet)",
+    },
+  ],
+
+  // Optimism Sepolia (chainId: 11155420)
+  11155420: [
+    {
+      address: "0x5fd84259d66Cd46123540766Be93DFE6D43130D7",
+      symbol: "USDC",
+      decimals: 6,
+      name: "USD Coin (Circle testnet)",
+    },
+  ],
+
+  // Base Sepolia (chainId: 84532)
+  84532: [
+    {
+      address: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+      symbol: "USDC",
+      decimals: 6,
+      name: "USD Coin (Circle testnet)",
+    },
+  ],
+
+  // Arbitrum Sepolia (chainId: 421614)
+  421614: [
+    {
+      address: "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
+      symbol: "USDC",
+      decimals: 6,
+      name: "USD Coin (Circle testnet)",
+    },
   ],
 
   // Arbitrum One (chainId: 42161)

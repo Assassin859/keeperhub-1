@@ -49,6 +49,15 @@ const MAX_RECONNECT_ATTEMPTS = 10;
  * same scale.
  */
 const PROBE_TIMEOUT_MS = 10_000;
+/**
+ * Cap on the WS handshake + first RPC round-trip during `openProvider`.
+ * `getBlockNumber()` internally calls ethers' `_waitUntilReady()`, which
+ * resolves on socket open but never rejects on socket failure - so a host
+ * that DNS-fails or refuses the TCP connect would otherwise hang the
+ * connect attempt indefinitely. Matches `PROBE_TIMEOUT_MS` so both
+ * connect-time reachability gates fail at the same scale.
+ */
+const CONNECT_TIMEOUT_MS = 10_000;
 
 export type LogHandler = (log: ethers.Log) => void | Promise<void>;
 export type Unsubscribe = () => void;
@@ -130,9 +139,10 @@ interface ChainEntry {
   wssUrl: string;
   /**
    * Configured fallback URL, immutable once the entry is created. Tried
-   * only when the primary attempt fails (factory throws, `provider.ready`
-   * rejects, or `eth_subscribe` probe rejects). Reconnects always start
-   * over from primary so a primary that recovers is preferred.
+   * only when the primary attempt fails (factory throws, the connect
+   * race in `openProvider` rejects, or the `eth_subscribe` probe
+   * rejects). Reconnects always start over from primary so a primary
+   * that recovers is preferred.
    */
   fallbackWssUrl: string | null;
   /**
@@ -175,11 +185,12 @@ interface ChainEntry {
  * exits the pod - which would crashloop the whole event-tracker on a
  * misconfigured WSS URL even when a healthy fallback is configured.
  *
- * The listener is a no-op: failures still reject `provider.ready` via
- * ethers' onerror (assigned shortly after we return), and that rejection
- * is what openProvider catches to walk to the fallback. We just need
- * *some* error listener to be on the ws by the time the connection
- * attempt resolves.
+ * The listener is a no-op: actual error propagation happens through
+ * `attachConnectErrorListener` (a second listener attached in
+ * `openProvider`), which rejects the connect race that walks to the
+ * fallback URL. We just need *some* error listener to be on the ws by
+ * the time the connection attempt resolves so the EventEmitter does not
+ * re-throw synchronously.
  */
 const defaultFactory: ProviderFactory = (wssUrl) =>
   new ethers.WebSocketProvider(() => {
@@ -195,6 +206,34 @@ const defaultOnPermanentFailure = (chainId: number): void => {
     `[ChainProviderManager] chain=${chainId} permanent failure after ${MAX_RECONNECT_ATTEMPTS} reconnect attempts; exiting process for K8s restart`,
   );
   process.exit(1);
+};
+
+/**
+ * Returns a Promise<never> that rejects when the provider's underlying ws
+ * emits "error". The no-op listener in `defaultFactory` exists only to
+ * keep the EventEmitter happy and prevent uncaughtException; this listener
+ * does the actual error propagation that `openProvider`'s race needs to
+ * walk to the fallback URL instead of hanging on `getBlockNumber()`.
+ *
+ * Cast through unknown because ethers does not expose `.websocket` in its
+ * public type even though it is the documented hook for direct ws access.
+ * A factory that returns a provider without a usable `.websocket` (e.g. a
+ * test mock) leaves this promise pending, so the race falls back to the
+ * timeout - acceptable for tests, and the connect path is exercised by
+ * the integration tests in `provider-manager-bad-url.test.ts`.
+ */
+const attachConnectErrorListener = (
+  provider: ethers.WebSocketProvider,
+): Promise<never> => {
+  const ws = provider.websocket as unknown as {
+    on?: (event: string, cb: (err: Error) => void) => void;
+  };
+  return new Promise<never>((_, reject) => {
+    ws?.on?.("error", (err: Error) => {
+      const message = err?.message ?? String(err);
+      reject(new Error(`WebSocket error: ${message}`));
+    });
+  });
 };
 
 export class ChainProviderManager {
@@ -501,7 +540,35 @@ export class ChainProviderManager {
       let provider: ethers.WebSocketProvider | null = null;
       try {
         provider = this.factory(url);
-        await provider.ready;
+        // Confirm the ws upgrade actually completed. `provider.ready` in
+        // ethers v6 is a synchronous boolean getter, not a Promise, so
+        // awaiting it tells us nothing. `getBlockNumber()` internally
+        // calls `_waitUntilReady()` which waits for socket open but
+        // never rejects on socket failure - so race it against an
+        // explicit ws-error listener and a connect timeout, matching
+        // PR #988 in keeperhub-scheduler/block-dispatcher/chain-monitor.ts.
+        const wsErrorPromise = attachConnectErrorListener(provider);
+        let timeoutHandle: NodeJS.Timeout | null = null;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(
+            () =>
+              reject(
+                new Error(`connect timed out after ${CONNECT_TIMEOUT_MS}ms`),
+              ),
+            CONNECT_TIMEOUT_MS,
+          );
+        });
+        try {
+          await Promise.race([
+            provider.getBlockNumber(),
+            wsErrorPromise,
+            timeoutPromise,
+          ]);
+        } finally {
+          if (timeoutHandle) {
+            clearTimeout(timeoutHandle);
+          }
+        }
         await this.probeSubscriptionSupport(provider, entry, url);
         return { provider, urlUsed: url };
       } catch (err) {

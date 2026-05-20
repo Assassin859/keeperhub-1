@@ -20,7 +20,7 @@
 import { createHash } from "node:crypto";
 import { and, eq, gt, isNull, or } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { organizationApiKeys, users } from "@/lib/db/schema";
+import { member, organizationApiKeys, users } from "@/lib/db/schema";
 
 export type ApiKeyAuthResult = {
   authenticated: boolean;
@@ -90,9 +90,17 @@ export async function authenticateApiKey(
         organizationId: organizationApiKeys.organizationId,
         createdBy: organizationApiKeys.createdBy,
         creatorDeactivatedAt: users.deactivatedAt,
+        creatorMemberId: member.id,
       })
       .from(organizationApiKeys)
       .leftJoin(users, eq(users.id, organizationApiKeys.createdBy))
+      .leftJoin(
+        member,
+        and(
+          eq(member.userId, organizationApiKeys.createdBy),
+          eq(member.organizationId, organizationApiKeys.organizationId)
+        )
+      )
       .where(
         and(
           eq(organizationApiKeys.keyHash, keyHash),
@@ -126,6 +134,14 @@ export async function authenticateApiKey(
       return {
         authenticated: false,
         error: "API key creator account is deactivated",
+        statusCode: 401,
+      };
+    }
+
+    if (apiKey.createdBy && !apiKey.creatorMemberId) {
+      return {
+        authenticated: false,
+        error: "API key creator is no longer a member of this organization",
         statusCode: 401,
       };
     }

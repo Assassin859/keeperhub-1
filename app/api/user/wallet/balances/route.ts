@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { ethers } from "ethers";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
@@ -10,6 +10,7 @@ import {
   organizationTokens,
   supportedTokens,
 } from "@/lib/db/schema";
+import { safeWallets } from "@/lib/db/schema-extensions";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { getOrganizationWallet } from "@/lib/para/wallet-helpers";
@@ -81,28 +82,78 @@ export async function GET(request: Request) {
     }
     const { organizationId: activeOrgId } = authCtx;
 
-    // Get the organization's wallet
-    const wallet = await getOrganizationWallet(activeOrgId).catch(() => null);
-    if (!wallet) {
-      return NextResponse.json(
-        { error: "No wallet found for this organization" },
-        { status: 404 }
-      );
+    // Optional ?safeId=X scopes the balance read to a Safe's address +
+    // chain instead of the Turnkey EOA. The Safe must belong to the active
+    // org; we validate before reading anything off-chain.
+    const url = new URL(request.url);
+    const safeIdParam = url.searchParams.get("safeId");
+
+    let walletAddress: string;
+    let safeChainId: number | null = null;
+    if (safeIdParam) {
+      const safeRows = await db
+        .select()
+        .from(safeWallets)
+        .where(
+          and(
+            eq(safeWallets.id, safeIdParam),
+            eq(safeWallets.organizationId, activeOrgId)
+          )
+        )
+        .limit(1);
+      const safe = safeRows[0];
+      if (!safe) {
+        return NextResponse.json(
+          { error: "Safe not found for this organization" },
+          { status: 404 }
+        );
+      }
+      if (safe.status !== "deployed") {
+        return NextResponse.json(
+          { error: "Safe is not deployed" },
+          { status: 400 }
+        );
+      }
+      walletAddress = safe.safeAddress;
+      safeChainId = safe.chainId;
+    } else {
+      const wallet = await getOrganizationWallet(activeOrgId).catch(() => null);
+      if (!wallet) {
+        return NextResponse.json(
+          { error: "No wallet found for this organization" },
+          { status: 404 }
+        );
+      }
+      walletAddress = wallet.walletAddress;
     }
 
-    const walletAddress = wallet.walletAddress;
-
     // Get all enabled EVM chains. Non-EVM chains (Solana) need a different
-    // provider/RPC stack and are out of scope for this endpoint.
+    // provider/RPC stack and are out of scope for this endpoint. A Safe
+    // lives on exactly one chain, so we restrict the chain list when
+    // safeId is set.
     const enabledChains = (
       await db.select().from(chains).where(eq(chains.isEnabled, true))
-    ).filter((chain) => chain.chainType === "evm");
+    ).filter(
+      (chain) =>
+        chain.chainType === "evm" &&
+        (safeChainId === null || chain.chainId === safeChainId)
+    );
 
-    // Get tracked tokens for this organization
+    // Get tracked tokens scoped to the requested wallet view: when
+    // safeId is set, only rows tagged to that Safe; otherwise org-level
+    // rows tracked under the Turnkey EOA (safe_wallet_id IS NULL).
+    const tokenScopeCondition = safeIdParam
+      ? eq(organizationTokens.safeWalletId, safeIdParam)
+      : isNull(organizationTokens.safeWalletId);
     const trackedTokens = await db
       .select()
       .from(organizationTokens)
-      .where(eq(organizationTokens.organizationId, activeOrgId));
+      .where(
+        and(
+          eq(organizationTokens.organizationId, activeOrgId),
+          tokenScopeCondition
+        )
+      );
 
     // Group tokens by chainId
     const tokensByChain = new Map<number, typeof trackedTokens>();

@@ -527,6 +527,10 @@ function renderField(
   nodeId?: string
 ) {
   // Check conditional rendering
+  if (field.hidden) {
+    return null;
+  }
+
   if (!evaluateShowWhen(field.showWhen, config)) {
     return null;
   }

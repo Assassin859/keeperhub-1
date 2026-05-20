@@ -38,9 +38,11 @@ import {
 import type { BillingStatus } from "./types";
 
 // Label value used for workflow executions whose workflow has no organization
-// (personal/anonymous workflows). Keeps the per-org error gauge total equal
-// to the global error count instead of silently dropping these executions.
-const ANONYMOUS_ORG_SLUG = "_anonymous";
+// (personal/anonymous workflows). Keeps the per-(status, org_slug) execution
+// gauge total equal to the global total instead of silently dropping these
+// rows. Also re-exported for the runtime finalization counter so personal
+// workflows still produce a series rather than silently dropping increments.
+export const ANONYMOUS_ORG_SLUG = "_anonymous";
 
 // Histogram bucket boundaries in milliseconds (must match prometheus.ts)
 const WORKFLOW_DURATION_BUCKETS = [
@@ -56,16 +58,25 @@ export type WorkflowStats = {
   totalPending: number;
   totalCancelled: number;
 
-  // Error count per org slug. Personal/anonymous workflows are bucketed
-  // under ANONYMOUS_ORG_SLUG so the sum across this map matches totalError.
-  errorByOrgSlug: Record<string, number>;
-
-  // Per-(status, org_slug) execution counts. Personal/anonymous workflows
-  // are bucketed under ANONYMOUS_ORG_SLUG so the sum of counts for a given
-  // status across all orgs matches the corresponding total* above.
+  // Per-(status, org_slug, error_type) execution counts. Personal/anonymous
+  // workflows are bucketed under ANONYMOUS_ORG_SLUG so the sum of counts for
+  // a given status across all orgs matches the corresponding total* above.
+  //
+  // errorType is read directly from the workflow_executions.error_type text
+  // column (KEEP-545 rename — see drizzle/0077_error_type_label_rename.sql).
+  // For non-error rows and for rows that predate classification, the column
+  // is NULL; both cases are projected to a sentinel string so every gauge
+  // series carries a populated label.
+  //
+  // errorType values:
+  //   "user"    - errored row with error_type = 'user'
+  //   "system"  - errored row with error_type = 'system'
+  //   "unknown" - errored row with error_type IS NULL (predates classification)
+  //   "na"      - non-error status (success/running/pending/cancelled)
   executionsByStatusAndOrgSlug: Array<{
     status: string;
     orgSlug: string;
+    errorType: string;
     count: number;
   }>;
 
@@ -89,37 +100,47 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
       totalRunning: 0,
       totalPending: 0,
       totalCancelled: 0,
-      errorByOrgSlug: {},
       executionsByStatusAndOrgSlug: [],
       durationBuckets: new Array(WORKFLOW_DURATION_BUCKETS.length + 1).fill(0),
       durationSum: 0,
       durationCount: 0,
     };
 
-    // Per-(status, org_slug) execution breakdown: JOIN workflows + organization,
-    // LEFT JOIN so anonymous workflows still contribute (under ANONYMOUS_ORG_SLUG).
-    // GROUP BY uses the organization.slug column reference (not the COALESCE
-    // expression): Drizzle would otherwise bind ANONYMOUS_ORG_SLUG as separate
-    // parameters in SELECT and GROUP BY clauses, and Postgres rejects the query
-    // because the two COALESCE expressions are not textually identical. Postgres
-    // groups all NULL slugs into one group (NULLs are equal in GROUP BY), and
-    // the SELECT-side COALESCE renders that group as ANONYMOUS_ORG_SLUG.
+    // Per-(status, org_slug, error_type) execution breakdown: JOIN workflows +
+    // organization, LEFT JOIN so anonymous workflows still contribute (under
+    // ANONYMOUS_ORG_SLUG). GROUP BY uses the underlying columns (not the
+    // COALESCE/CASE expressions): Drizzle would otherwise bind constants as
+    // separate parameters in SELECT and GROUP BY clauses, and Postgres rejects
+    // the query because the two expressions are not textually identical.
+    // Postgres groups NULLs together (NULLs are equal in GROUP BY), and the
+    // SELECT-side expressions render those groups as ANONYMOUS_ORG_SLUG /
+    // "unknown" / "na" as appropriate.
     const breakdown = await db
       .select({
         status: workflowExecutions.status,
         orgSlug: sql<string>`COALESCE(${organization.slug}, ${ANONYMOUS_ORG_SLUG})`,
+        errorType: sql<string>`CASE
+          WHEN ${workflowExecutions.status} <> 'error' THEN 'na'
+          WHEN ${workflowExecutions.errorType} IS NULL THEN 'unknown'
+          ELSE ${workflowExecutions.errorType}
+        END`,
         count: count(),
       })
       .from(workflowExecutions)
       .innerJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
       .leftJoin(organization, eq(workflows.organizationId, organization.id))
-      .groupBy(workflowExecutions.status, organization.slug);
+      .groupBy(
+        workflowExecutions.status,
+        organization.slug,
+        workflowExecutions.errorType
+      );
 
     for (const row of breakdown) {
       const c = Number(row.count) || 0;
       stats.executionsByStatusAndOrgSlug.push({
         status: row.status,
         orgSlug: row.orgSlug,
+        errorType: row.errorType,
         count: c,
       });
       switch (row.status) {
@@ -128,7 +149,6 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
           break;
         case "error":
           stats.totalError += c;
-          stats.errorByOrgSlug[row.orgSlug] = c;
           break;
         case "running":
           stats.totalRunning += c;
@@ -196,7 +216,6 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
       totalRunning: 0,
       totalPending: 0,
       totalCancelled: 0,
-      errorByOrgSlug: {},
       executionsByStatusAndOrgSlug: [],
       durationBuckets: new Array(WORKFLOW_DURATION_BUCKETS.length + 1).fill(0),
       durationSum: 0,

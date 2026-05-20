@@ -1,3 +1,4 @@
+import sfMetadata from "@superfluid-finance/metadata";
 import { describe, expect, it } from "vitest";
 import { reshapeArgsForAbi } from "@/lib/abi/struct-args";
 import superfluidProtocol, {
@@ -30,7 +31,7 @@ describe("Superfluid protocol", () => {
   });
 
   describe("cfaForwarder contract", () => {
-    it("declares cfaForwarder with the same address on all six chains", () => {
+    it("declares cfaForwarder with the same address on every chain in SUPERFLUID_CHAIN_IDS", () => {
       const contract = superfluidProtocol.contracts.cfaForwarder;
       expect(contract).toBeDefined();
       expect(Object.keys(contract.addresses).sort()).toEqual(
@@ -220,7 +221,7 @@ describe("Superfluid protocol", () => {
   describe("gdaForwarder contract", () => {
     const GDA_FORWARDER = GDA_FORWARDER_ADDRESS;
 
-    it("declares gdaForwarder with the same address on all six chains", () => {
+    it("declares gdaForwarder with the same address on every chain in SUPERFLUID_CHAIN_IDS", () => {
       const contract = superfluidProtocol.contracts.gdaForwarder;
       expect(contract).toBeDefined();
       expect(Object.keys(contract.addresses).sort()).toEqual(
@@ -496,6 +497,65 @@ describe("Superfluid protocol", () => {
           .map((f) => f.name);
         expect(fnNames).toContain(action.function);
       }
+    });
+  });
+
+  // KEEP-463: guards against the Avalanche-Fuji-style trap where a chain
+  // added to SUPERFLUID_CHAIN_IDS has a deviant CFAv1Forwarder address.
+  // sameOnAllChains() would silently mis-route on such a chain. This block
+  // cross-checks every pinned address against Superfluid's canonical
+  // @superfluid-finance/metadata package and fails fast on any deviation.
+  describe("canonical metadata cross-check", () => {
+    it("pins constants that match metadata for Ethereum Mainnet", () => {
+      const eth = sfMetadata.getNetworkByChainId(1);
+      expect(eth?.contractsV1.cfaV1Forwarder).toBe(CFA_FORWARDER_ADDRESS);
+      expect(eth?.contractsV1.gdaV1Forwarder).toBe(GDA_FORWARDER_ADDRESS);
+    });
+
+    for (const chainId of SUPERFLUID_CHAIN_IDS) {
+      describe(`chain ${chainId}`, () => {
+        const network = sfMetadata.getNetworkByChainId(Number(chainId));
+
+        it("is present in @superfluid-finance/metadata", () => {
+          expect(network).toBeDefined();
+        });
+
+        it("pinned cfaForwarder matches the canonical CFAv1Forwarder", () => {
+          const pinned =
+            superfluidProtocol.contracts.cfaForwarder.addresses[chainId];
+          expect(pinned).toBe(network?.contractsV1.cfaV1Forwarder);
+        });
+
+        it("pinned gdaForwarder matches the canonical GDAv1Forwarder", () => {
+          const pinned =
+            superfluidProtocol.contracts.gdaForwarder.addresses[chainId];
+          expect(pinned).toBe(network?.contractsV1.gdaV1Forwarder);
+        });
+      });
+    }
+
+    // Lock in the documented Fuji forwarder-address deviation that
+    // motivates the cross-check above. If the "is not canonical" assertion
+    // ever fails, Superfluid has redeployed Fuji's CFA at the canonical
+    // address -- the trap is gone and Fuji can safely be added to
+    // SUPERFLUID_CHAIN_IDS (and this describe block deleted).
+    describe("Avalanche Fuji (43113) exception", () => {
+      const fuji = sfMetadata.getNetworkByChainId(43_113);
+
+      it("is intentionally excluded from SUPERFLUID_CHAIN_IDS", () => {
+        const ids: readonly string[] = SUPERFLUID_CHAIN_IDS;
+        expect(ids).not.toContain("43113");
+      });
+
+      it("has a non-canonical CFAv1Forwarder address upstream", () => {
+        expect(fuji?.contractsV1.cfaV1Forwarder).not.toBe(
+          CFA_FORWARDER_ADDRESS
+        );
+      });
+
+      it("has the canonical GDAv1Forwarder address (asymmetric deviation)", () => {
+        expect(fuji?.contractsV1.gdaV1Forwarder).toBe(GDA_FORWARDER_ADDRESS);
+      });
     });
   });
 });

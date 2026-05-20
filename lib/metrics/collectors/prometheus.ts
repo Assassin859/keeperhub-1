@@ -94,26 +94,40 @@ function getOrCreateGauge(
 // All metrics are GAUGES (point-in-time snapshots). Use max() aggregation across pods.
 // For rate/delta queries, use PromQL delta() function: max(delta(metric[1h]))
 
-// Workflow execution counts by status and org_slug. Personal/anonymous
-// workflows are emitted under org_slug="_anonymous" so the sum across
-// org_slug for a given status equals the global per-status total.
+// Workflow execution counts by status, org_slug, and error_type. Personal/
+// anonymous workflows are emitted under org_slug="_anonymous" so the sum
+// across org_slug for a given status equals the global per-status total.
+//
+// error_type label values:
+//   "user"    - errored execution caused by user input/config/external service
+//   "system"  - errored execution caused by KeeperHub system/infrastructure
+//   "unknown" - errored row predating classification (NULL in DB)
+//   "na"      - non-error status (success/running/pending/cancelled)
+//
+// PromQL queries that do not filter on error_type continue to work — Prometheus
+// auto-aggregates across all label values when a label is unconstrained. The
+// label unlocks platform-side SLI queries (filter error_type="system") and
+// managed-client end-to-end SLI panels that need to separate system vs user
+// failures. Sourced from the DB scan via projection of the existing
+// `workflow_executions.error_type` column, so this metric stays
+// authoritative even when short-lived workflow runner processes exit before
+// Prometheus can scrape their in-memory counters.
 const workflowExecutionsTotal = getOrCreateGauge(
   dbRegistry,
   "keeperhub_workflow_executions_total",
-  "Total workflow executions by status, broken down by org_slug (all-time)",
-  ["status", "org_slug"]
+  "Total workflow executions by status, broken down by org_slug and error_type (all-time)",
+  ["status", "org_slug", "error_type"]
 );
 
-// Workflow errors total (convenience gauge for alerting). Labeled by org_slug
-// so alerts can scope to managed clients. Personal/anonymous workflows are
-// emitted under org_slug="_anonymous" so the sum across labels matches the
-// global error count.
-const workflowErrorsTotal = getOrCreateGauge(
-  dbRegistry,
-  "keeperhub_workflow_execution_errors_total",
-  "Total failed workflow executions (all-time), broken down by org_slug",
-  ["org_slug"]
-);
+// KEEP-545: the previous DB-sourced gauge `keeperhub_workflow_execution_errors_total`
+// has been removed. It was named with the `_total` counter suffix but was
+// actually a poll-driven gauge that overwrote itself on every scrape with the
+// all-time cumulative error count, which made every dashboard read it as a
+// huge static number instead of recent activity. The replacement is the
+// per-pod counter `keeperhub_workflow_execution_errors_created_total` below,
+// incremented at the workflow-execution finalization site (see
+// lib/workflow/finalize-error.ts) so it reflects actual new errors and
+// composes correctly with PromQL `rate()` / `increase()` over time ranges.
 
 // Workflow duration histogram as gauges (replaces histogram)
 const workflowDurationBucket = getOrCreateGauge(
@@ -738,6 +752,21 @@ const pluginInvocations = getOrCreateCounter(
   ["plugin_name", "action_name", "org_slug", "plan"]
 );
 
+// Runtime counter incremented exactly once per workflow_executions row creation,
+// labelled by trigger_type (block | schedule | event | manual | webhook | scheduled)
+// and chain (the workflows.chain column; "_unknown" when null). Used by the
+// Grafana "zero executions in N min" alert family - increase()[window] == 0 with
+// no_data_state="Alerting" fires when a (trigger_type, chain) pair stalls.
+//
+// Distinct from "workflow.executions.total" (a DB-sourced gauge of all-time counts
+// by status+org_slug) - that metric is computed via SQL in updateDbMetrics().
+const workflowExecutionsStartedTotal = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_workflow_executions_started_total",
+  "Workflow executions started (counter), labelled by trigger_type and chain",
+  ["trigger_type", "chain"]
+);
+
 // Error counters
 const pluginErrors = getOrCreateCounter(
   apiRegistry,
@@ -753,11 +782,12 @@ const apiErrors = getOrCreateCounter(
   ["endpoint", "status_code", "error_type", "org_slug", "plan"]
 );
 
-// Common labels for all error counters (allows any subset to be used)
-const ERROR_LABELS = [
+// Common labels for all error counters (allows any subset to be used).
+// Exported so the KEEP-545 regression test can snapshot the canonical set
+// and prevent any panel-affecting label from being removed silently.
+export const ERROR_LABELS = [
   "error_category",
   "error_context",
-  "is_user_error",
   "error_type",
   "plugin_name",
   "action_name",
@@ -838,6 +868,38 @@ const systemWorkflowEngineErrors = getOrCreateCounter(
   "System workflow engine errors",
   ERROR_LABELS
 );
+
+// KEEP-545: per-execution-row counter incremented exactly once when a
+// workflow execution is finalized with status='error'. Replaces the old
+// poll-driven `keeperhub_workflow_execution_errors_total` gauge that
+// overwrote itself with the all-time cumulative count on every scrape.
+//
+// Labels:
+//   org_slug       per-organization slug (or ANONYMOUS_ORG_SLUG for personal)
+//   error_category one of the ErrorCategory enum values (validation,
+//                  configuration, database, workflow_engine, etc.)
+//   error_type     "user" for workflow-author bugs, "system" for engine/infra
+//
+// Cardinality: ~200 active orgs * 10 categories * 2 = 4k worst case;
+// realistic ~1k (most orgs hit 1-2 categories).
+const workflowExecutionErrorsCreated = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_workflow_execution_errors_created_total",
+  "Workflow execution errors observed since pod start, by classification",
+  ["org_slug", "error_category", "error_type"]
+);
+
+export function recordWorkflowExecutionError(labels: {
+  orgSlug: string;
+  errorCategory: string;
+  errorType: "user" | "system";
+}): void {
+  workflowExecutionErrorsCreated.inc({
+    org_slug: labels.orgSlug,
+    error_category: labels.errorCategory,
+    error_type: labels.errorType,
+  });
+}
 
 const slowQueries = getOrCreateCounter(
   apiRegistry,
@@ -940,6 +1002,7 @@ const histogramMap: Record<string, Histogram> = {
 
 const counterMap: Record<string, Counter> = {
   "plugin.invocations.total": pluginInvocations,
+  "workflow.executions.started.total": workflowExecutionsStartedTotal,
   "db.query.slow_count": slowQueries,
   "sponsorship.transactions.total": sponsorshipTransactions,
   "sponsorship.gas_used.total": sponsorshipGasUsed,
@@ -1178,26 +1241,24 @@ export async function updateDbMetrics(): Promise<void> {
       getBillingStatsFromDb(),
     ]);
 
-    // Update workflow execution counts per (status, org_slug). Reset before
-    // populating so series for orgs that no longer have executions in a given
-    // status clear out instead of going stale.
+    // Update workflow execution counts per (status, org_slug, error_type).
+    // Reset before populating so series for orgs that no longer have executions
+    // in a given bucket clear out instead of going stale.
     workflowExecutionsTotal.reset();
     for (const row of workflowStats.executionsByStatusAndOrgSlug) {
       workflowExecutionsTotal.set(
-        { status: row.status, org_slug: row.orgSlug },
+        {
+          status: row.status,
+          org_slug: row.orgSlug,
+          error_type: row.errorType,
+        },
         row.count
       );
     }
 
-    // Update workflow errors total per org_slug (convenience gauge for
-    // alerting). Reset before populating so series for orgs that no longer
-    // have errors clear out instead of going stale.
-    workflowErrorsTotal.reset();
-    for (const [orgSlug, errorCount] of Object.entries(
-      workflowStats.errorByOrgSlug
-    )) {
-      workflowErrorsTotal.set({ org_slug: orgSlug }, errorCount);
-    }
+    // KEEP-545: the per-org error gauge that used to live here was removed.
+    // See `keeperhub_workflow_execution_errors_created_total` (per-pod
+    // counter incremented at finalization time) for the replacement.
 
     // Update workflow duration histogram buckets
     for (let i = 0; i < WORKFLOW_DURATION_BUCKETS.length; i++) {

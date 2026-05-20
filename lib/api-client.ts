@@ -9,7 +9,7 @@ import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 import type { IntegrationConfig, IntegrationType } from "./types/integration";
 
 // Workflow data types
-export type WorkflowVisibility = "private" | "public";
+export type WorkflowVisibility = "private" | "unlisted" | "public";
 
 export type WorkflowData = {
   id?: string;
@@ -54,6 +54,9 @@ export type SavedWorkflow = WorkflowData & {
   isListed?: boolean;
   listedSlug?: string | null;
   listedAt?: string | null;
+  // KEEP-440: set when the workflow has been soft-deleted. The owner-facing
+  // list keeps showing these rows with a deleted marker.
+  deletedAt?: string | null;
   inputSchema?: Record<string, unknown> | null;
   outputMapping?: Record<string, unknown> | null;
   priceUsdcPerCall?: string | null;
@@ -564,7 +567,14 @@ export const workflowApi = {
       body: JSON.stringify({}),
     }),
 
-  goLive: (id: string, data: { name: string; publicTagIds: string[] }) =>
+  goLive: (
+    id: string,
+    data: {
+      name: string;
+      publicTagIds?: string[];
+      mode?: "public" | "unlisted";
+    }
+  ) =>
     apiCall<SavedWorkflow>(`/api/workflows/${id}/go-live`, {
       method: "PUT",
       body: JSON.stringify(data),
@@ -624,8 +634,8 @@ export const workflowApi = {
         completedAt: Date | null;
         duration: string | null;
         // Progress tracking fields
-        totalSteps: string | null;
-        completedSteps: string | null;
+        totalSteps: number | null;
+        completedSteps: number | null;
         currentNodeId: string | null;
         currentNodeName: string | null;
         lastSuccessfulNodeId: string | null;

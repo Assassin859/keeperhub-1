@@ -4,6 +4,7 @@ import {
   ensureWalletIntegration,
   getIntegrations,
 } from "@/lib/db/integrations";
+import { ApiErrorCodes, apiError } from "@/lib/errors/api-envelope";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import type {
@@ -18,6 +19,13 @@ export type GetIntegrationsResponse = {
   isManaged?: boolean;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Canonical EIP-55 wallet address for web3 integrations, or null for
+   * other integration types. API consumers MUST prefer this field over
+   * `name` when the value is destined for an on-chain call such as
+   * `onBehalfOf` (KEEP-484).
+   */
+  address: string | null;
   // Config is intentionally excluded for security
 }[];
 
@@ -43,16 +51,25 @@ export async function GET(request: Request) {
   try {
     const authContext = await getDualAuthContext(request);
     if ("error" in authContext) {
-      return NextResponse.json(
-        { error: authContext.error },
-        { status: authContext.status }
-      );
+      return apiError({
+        status: authContext.status,
+        code: ApiErrorCodes.UNAUTHORIZED,
+        detail: authContext.error,
+        hint: "Provide a valid `Authorization: Bearer <token>` header. API keys start with `kh_`; OAuth tokens are issued via /oauth/authorize.",
+        requestHeaders: request.headers,
+      });
     }
 
     const { userId, organizationId } = authContext;
 
     if (!(userId || organizationId)) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return apiError({
+        status: 401,
+        code: ApiErrorCodes.UNAUTHORIZED,
+        detail: "Request has neither a user nor an organization context",
+        hint: "Sign in or supply a valid API key.",
+        requestHeaders: request.headers,
+      });
     }
 
     // Get optional type filter from query params
@@ -99,6 +116,7 @@ export async function GET(request: Request) {
         isManaged: integration.isManaged ?? false,
         createdAt: integration.createdAt.toISOString(),
         updatedAt: integration.updatedAt.toISOString(),
+        address: integration.address,
       })
     );
 
@@ -113,13 +131,13 @@ export async function GET(request: Request) {
         operation: "get",
       }
     );
-    return NextResponse.json(
-      {
-        error: "Failed to get integrations",
-        details: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
+    return apiError({
+      status: 500,
+      code: ApiErrorCodes.INTERNAL_ERROR,
+      detail: "Failed to list integrations",
+      hint: "Retry with backoff. If the error persists, check the request_id in server logs.",
+      requestHeaders: request.headers,
+    });
   }
 }
 
@@ -131,14 +149,23 @@ export async function POST(request: Request) {
   try {
     const authContext = await getDualAuthContext(request);
     if ("error" in authContext) {
-      return NextResponse.json(
-        { error: authContext.error },
-        { status: authContext.status }
-      );
+      return apiError({
+        status: authContext.status,
+        code: ApiErrorCodes.UNAUTHORIZED,
+        detail: authContext.error,
+        hint: "Provide a valid `Authorization: Bearer <token>` header.",
+        requestHeaders: request.headers,
+      });
     }
 
     if (!authContext.userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return apiError({
+        status: 401,
+        code: ApiErrorCodes.UNAUTHORIZED,
+        detail: "User context is required to create an integration",
+        hint: "Sign in or supply a user-scoped API key (not an org-only key).",
+        requestHeaders: request.headers,
+      });
     }
 
     const { userId, organizationId } = authContext;
@@ -146,10 +173,13 @@ export async function POST(request: Request) {
     const body: CreateIntegrationRequest = await request.json();
 
     if (!(body.type && body.config)) {
-      return NextResponse.json(
-        { error: "Type and config are required" },
-        { status: 400 }
-      );
+      return apiError({
+        status: 400,
+        code: ApiErrorCodes.INVALID_INPUT,
+        detail: "Request body must include both `type` and `config` fields",
+        hint: "See https://docs.keeperhub.com/api/integrations for the full request schema.",
+        requestHeaders: request.headers,
+      });
     }
 
     const integration = await createIntegration({
@@ -174,12 +204,13 @@ export async function POST(request: Request) {
     // integration per org. Surface that as a 409 instead of falling
     // through to the generic 500.
     if (isUniqueViolation(error)) {
-      return NextResponse.json(
-        {
-          error: "This organization already has a web3 integration.",
-        },
-        { status: 409 }
-      );
+      return apiError({
+        status: 409,
+        code: "web3_integration_exists",
+        detail: "This organization already has a web3 integration",
+        hint: "Use GET /api/integrations?type=web3 to find the existing row, then DELETE it before creating a new one.",
+        requestHeaders: request.headers,
+      });
     }
     logSystemError(
       ErrorCategory.DATABASE,
@@ -190,13 +221,13 @@ export async function POST(request: Request) {
         operation: "create",
       }
     );
-    return NextResponse.json(
-      {
-        error: "Failed to create integration",
-        details: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
+    return apiError({
+      status: 500,
+      code: ApiErrorCodes.INTERNAL_ERROR,
+      detail: "Failed to create integration",
+      hint: "Retry with backoff. If the error persists, check the request_id in server logs.",
+      requestHeaders: request.headers,
+    });
   }
 }
 

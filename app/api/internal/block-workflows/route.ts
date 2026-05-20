@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { type Chain, chains, workflows } from "@/lib/db/schema";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 import type { WorkflowNode } from "@/lib/workflow/store";
 
 export async function GET(request: Request): Promise<NextResponse> {
@@ -21,9 +22,14 @@ export async function GET(request: Request): Promise<NextResponse> {
 
     const blockTriggerFilter = sql`${workflows.nodes} @> '[{"data":{"type":"trigger","config":{"triggerType":"Block"}}}]'::jsonb`;
 
+    // KEEP-440: never hand a soft-deleted workflow to the block watcher.
     const conditions = filterActive
-      ? and(eq(workflows.enabled, true), blockTriggerFilter)
-      : blockTriggerFilter;
+      ? and(
+          eq(workflows.enabled, true),
+          blockTriggerFilter,
+          workflowNotDeleted()
+        )
+      : and(blockTriggerFilter, workflowNotDeleted());
 
     const matchedWorkflows = await db
       .select({

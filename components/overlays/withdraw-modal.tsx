@@ -22,11 +22,29 @@ import type { WithdrawableAsset } from "@/lib/wallet/build-withdrawable-assets";
 
 export type { WithdrawableAsset };
 
+/**
+ * The wallet whose funds the withdraw moves. Default = the org's Turnkey
+ * EOA (no extra param sent to the API). For a Safe, the modal POSTs
+ * `safeId` so the server routes through `safe.execTransaction` instead of
+ * the EOA's direct transfer.
+ */
+export type WithdrawSource =
+  | { kind: "turnkey" }
+  | {
+      kind: "safe";
+      safeId: string;
+      /** Display-only Safe address, used in the "Sending from" line. */
+      safeAddress: string;
+      /** Display-only chain name, e.g. "Base". */
+      chainName?: string;
+    };
+
 type WithdrawModalProps = {
   overlayId: string;
   assets: WithdrawableAsset[];
   walletAddress: string;
   initialAssetIndex?: number;
+  source?: WithdrawSource;
 };
 
 type WithdrawState = "input" | "confirming" | "success" | "error";
@@ -42,6 +60,7 @@ export function WithdrawModal({
   assets,
   walletAddress,
   initialAssetIndex = 0,
+  source = { kind: "turnkey" },
 }: WithdrawModalProps) {
   const { closeAll, pop } = useOverlay();
 
@@ -63,6 +82,16 @@ export function WithdrawModal({
 
   useEffect(() => {
     if (!selectedAsset) {
+      return;
+    }
+    // Safe-routed withdraws wrap the inner transfer in safe.execTransaction,
+    // which has a different gas profile than a direct EOA transfer. The
+    // server estimates and signs internally; we skip the client preview
+    // rather than show a misleading EOA-direct figure.
+    if (source.kind === "safe") {
+      setGasEstimate(null);
+      setGasEstimateError(null);
+      setGasEstimateLoading(false);
       return;
     }
     const parsedAmount = Number.parseFloat(amount);
@@ -265,6 +294,7 @@ export function WithdrawModal({
           amount: useServerMax ? undefined : amount,
           recipient,
           fromMax: useServerMax,
+          safeId: source.kind === "safe" ? source.safeId : undefined,
         }),
       });
 

@@ -37,6 +37,7 @@ const baseListing: WorkflowListing = {
   priceUsdcPerCall: null,
   workflowType: "read",
   listingVersion: 3,
+  nodes: [],
 };
 
 describe("createWorkflowMcpServer", () => {
@@ -48,7 +49,7 @@ describe("createWorkflowMcpServer", () => {
     createWorkflowMcpServer({
       slug: "aave-position-monitor",
       listing: baseListing,
-      baseUrl: "http://localhost:3000",
+      internalApiBaseUrl: "http://localhost:3000",
       authHeader: "Bearer kh_test",
     });
 
@@ -60,7 +61,7 @@ describe("createWorkflowMcpServer", () => {
     createWorkflowMcpServer({
       slug: "aave-position-monitor",
       listing: baseListing,
-      baseUrl: "http://localhost:3000",
+      internalApiBaseUrl: "http://localhost:3000",
       authHeader: "Bearer kh_test",
     });
 
@@ -72,7 +73,7 @@ describe("createWorkflowMcpServer", () => {
     createWorkflowMcpServer({
       slug: "aave-position-monitor",
       listing: baseListing,
-      baseUrl: "http://localhost:3000",
+      internalApiBaseUrl: "http://localhost:3000",
       authHeader: "Bearer kh_test",
     });
 
@@ -85,7 +86,7 @@ describe("createWorkflowMcpServer", () => {
     createWorkflowMcpServer({
       slug: "aave-position-monitor",
       listing: baseListing,
-      baseUrl: "http://localhost:3000",
+      internalApiBaseUrl: "http://localhost:3000",
       authHeader: "Bearer kh_test",
     });
 
@@ -103,7 +104,7 @@ describe("createWorkflowMcpServer", () => {
     createWorkflowMcpServer({
       slug: "aave-position-monitor",
       listing: paidListing,
-      baseUrl: "http://localhost:3000",
+      internalApiBaseUrl: "http://localhost:3000",
       authHeader: "Bearer kh_test",
     });
 
@@ -123,7 +124,7 @@ describe("createWorkflowMcpServer", () => {
     createWorkflowMcpServer({
       slug: "aave-position-monitor",
       listing: baseListing,
-      baseUrl: "http://localhost:3000",
+      internalApiBaseUrl: "http://localhost:3000",
       authHeader: "Bearer kh_test",
     });
 
@@ -143,7 +144,8 @@ describe("createWorkflowMcpServer", () => {
       "http://localhost:3000/api/mcp/workflows/aave-position-monitor/call"
     );
     expect(init.method).toBe("POST");
-    expect(JSON.parse(init.body ?? "{}")).toEqual(args);
+    // Handler normalizes args: missing `type` is injected as "manual"
+    expect(JSON.parse(init.body ?? "{}")).toEqual({ type: "manual", ...args });
 
     fetchSpy.mockRestore();
   });
@@ -152,7 +154,7 @@ describe("createWorkflowMcpServer", () => {
     createWorkflowMcpServer({
       slug: "aave-position-monitor",
       listing: baseListing,
-      baseUrl: "http://localhost:3000",
+      internalApiBaseUrl: "http://localhost:3000",
       authHeader: "Bearer kh_test",
     });
 
