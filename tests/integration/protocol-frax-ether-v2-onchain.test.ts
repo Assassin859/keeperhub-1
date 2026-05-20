@@ -6,14 +6,15 @@
  * mainnet. Catches contract dispatch and ABI-shape mistakes the unit-test
  * layer cannot see.
  *
- * Coverage: every action declared by the protocol gets at least one
- * dispatch test (the read decodes, the writes encode without ABI errors).
+ * RPC URL resolution (shared with the rest of the codebase):
+ *   1. CHAIN_RPC_CONFIG JSON (Helm/AWS Parameter Store, set in CI + deployed
+ *      environments)
+ *   2. Individual CHAIN_ETH_MAINNET_*_RPC env vars (dev override)
+ *   3. Public Ethereum mainnet RPC default (last resort)
  *
- * Uses INTEGRATION_TEST_MAINNET_RPC_URL because Frax Ether V2 is deployed
- * on Ethereum mainnet only - the Sepolia-targeted INTEGRATION_TEST_RPC_URL
- * would produce address mismatches.
- *
- * Gated on INTEGRATION_TEST_MAINNET_RPC_URL - skipped in CI without it.
+ * Ungated. Always runs. Public RPC backs every tier so the test is never
+ * blocked by missing env vars. CI uses the paid staging endpoints via
+ * CHAIN_RPC_CONFIG.
  */
 
 import { ethers } from "ethers";
@@ -24,64 +25,37 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 // otherwise throw under vitest's Node runtime.
 vi.mock("server-only", () => ({}));
 
-import { reshapeArgsForAbi } from "@/lib/abi/struct-args";
-import type {
-  ProtocolAction,
-  ProtocolContract,
-  ProtocolDefinition,
-} from "@/lib/protocol-registry";
 import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
-import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
+import {
+  createRpcUrlResolver,
+  PUBLIC_RPCS,
+  parseRpcConfig,
+} from "@/lib/rpc/rpc-config";
 import fraxEtherV2Def from "@/protocols/frax-ether-v2";
+import { buildCalldata } from "./_shared/build-calldata";
 
-const RPC_URL = process.env.INTEGRATION_TEST_MAINNET_RPC_URL;
 const CHAIN_ID = "1";
 const MAINNET_CHAIN_ID = 1;
 const TEST_ADDRESS = "0x0000000000000000000000000000000000000001";
 const TX_RESULT_HEX_PREFIX = /^0x/;
 
-function buildCalldata(
-  protocol: ProtocolDefinition,
-  actionSlug: string,
-  sampleInputs: Record<string, string>
-): {
-  to: string;
-  data: string;
-  action: ProtocolAction;
-  contract: ProtocolContract;
-} {
-  const action = protocol.actions.find((a) => a.slug === actionSlug);
-  if (!action) {
-    throw new Error(`Action ${actionSlug} not found`);
-  }
-
-  const contract = protocol.contracts[action.contract];
-  if (!contract.abi) {
-    throw new Error(`Contract ${action.contract} has no ABI`);
-  }
-
-  const contractAddress = contract.addresses[CHAIN_ID];
-  if (!contractAddress) {
-    throw new Error(`Contract ${action.contract} not on chain ${CHAIN_ID}`);
-  }
-
-  const rawArgs = action.inputs.map((inp) => {
-    const val = sampleInputs[inp.name] ?? inp.default ?? "";
-    return val;
-  });
-
-  const abi = JSON.parse(contract.abi);
-  const functionAbi = abi.find(
-    (f: { name: string; type: string }) =>
-      f.type === "function" && f.name === action.function
-  );
-  const args = reshapeArgsForAbi(rawArgs, functionAbi);
-  const iface = new ethers.Interface(abi);
-  const data = iface.encodeFunctionData(action.function, args);
-
-  return { to: contractAddress, data, action, contract };
-}
+// Resolve Ethereum mainnet RPC URLs via the shared config pipeline:
+// CHAIN_RPC_CONFIG first, individual env vars second, public default last.
+const rpcConfig = parseRpcConfig(process.env.CHAIN_RPC_CONFIG);
+const resolveRpcUrl = createRpcUrlResolver(rpcConfig);
+const MAINNET_PRIMARY_URL = resolveRpcUrl(
+  "eth-mainnet",
+  "CHAIN_ETH_MAINNET_PRIMARY_RPC",
+  PUBLIC_RPCS.ETH_MAINNET,
+  "primary"
+);
+const MAINNET_FALLBACK_URL = resolveRpcUrl(
+  "eth-mainnet",
+  "CHAIN_ETH_MAINNET_FALLBACK_RPC",
+  PUBLIC_RPCS.ETH_MAINNET_FALLBACK,
+  "fallback"
+);
 
 // Assertion model:
 //  - Read tests: let the RPC call surface failures. A success path decodes
@@ -96,20 +70,15 @@ function buildCalldata(
 //    ethers errors (INVALID_ARGUMENT, BAD_DATA, BUFFER_OVERRUN) which
 //    would indicate the V1/V2 ABI confusion this protocol entry is
 //    designed to avoid.
-describe.skipIf(!RPC_URL)("Frax Ether V2 minter on-chain integration", () => {
+describe("Frax Ether V2 minter on-chain integration", () => {
   // Route every RPC call through the failover manager so a primary-endpoint
-  // hiccup falls back to the secondary instead of failing the test. The
-  // primary URL respects INTEGRATION_TEST_MAINNET_RPC_URL (the original
-  // gate); the fallback comes from the chains-config used in production.
+  // hiccup falls back to the secondary instead of failing the test.
   let manager: RpcProviderManager;
 
   beforeAll(async () => {
-    if (!RPC_URL) {
-      return;
-    }
     manager = await getRpcProviderFromUrls(
-      RPC_URL,
-      getRpcUrlByChainId(MAINNET_CHAIN_ID, "fallback"),
+      MAINNET_PRIMARY_URL,
+      MAINNET_FALLBACK_URL,
       MAINNET_CHAIN_ID,
       "ethereum"
     );
@@ -156,11 +125,12 @@ describe.skipIf(!RPC_URL)("Frax Ether V2 minter on-chain integration", () => {
   }
 
   it("mintFrxEthPaused: eth_call returns a decodable bool", async () => {
-    const { to, data, contract } = buildCalldata(
-      fraxEtherV2Def,
-      "mint-paused",
-      {}
-    );
+    const { to, data, contract } = buildCalldata({
+      protocol: fraxEtherV2Def,
+      actionSlug: "mint-paused",
+      sampleInputs: {},
+      chainId: CHAIN_ID,
+    });
 
     const result = await manager.executeWithFailover((p) =>
       p.call({ to, data })
@@ -174,22 +144,33 @@ describe.skipIf(!RPC_URL)("Frax Ether V2 minter on-chain integration", () => {
   }, 15_000);
 
   it("mintFrxEth: deployed bytecode accepts the calldata", async () => {
-    const { to, data } = buildCalldata(fraxEtherV2Def, "mint", {});
+    const { to, data } = buildCalldata({
+      protocol: fraxEtherV2Def,
+      actionSlug: "mint",
+      sampleInputs: {},
+      chainId: CHAIN_ID,
+    });
 
     await expect(simulateBytecodeCall({ to, data })).resolves.toBeUndefined();
   }, 15_000);
 
   it("mintFrxEthAndGive: deployed bytecode accepts the calldata", async () => {
-    const { to, data } = buildCalldata(fraxEtherV2Def, "mint-and-give", {
-      recipient: TEST_ADDRESS,
+    const { to, data } = buildCalldata({
+      protocol: fraxEtherV2Def,
+      actionSlug: "mint-and-give",
+      sampleInputs: { recipient: TEST_ADDRESS },
+      chainId: CHAIN_ID,
     });
 
     await expect(simulateBytecodeCall({ to, data })).resolves.toBeUndefined();
   }, 15_000);
 
   it("submitAndDeposit: deployed bytecode accepts the calldata", async () => {
-    const { to, data } = buildCalldata(fraxEtherV2Def, "mint-and-stake", {
-      recipient: TEST_ADDRESS,
+    const { to, data } = buildCalldata({
+      protocol: fraxEtherV2Def,
+      actionSlug: "mint-and-stake",
+      sampleInputs: { recipient: TEST_ADDRESS },
+      chainId: CHAIN_ID,
     });
 
     await expect(simulateBytecodeCall({ to, data })).resolves.toBeUndefined();
