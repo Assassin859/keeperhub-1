@@ -3,13 +3,16 @@ import "server-only";
 import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflowExecutionLogs } from "@/lib/db/schema";
+import { pollForCompletedOutput } from "@/lib/workflow/executor/poll-for-output";
 
-export async function fetchCompletedStepOutputStep(
+/**
+ * Raw single-row query for a completed success log. Not a step boundary so it
+ * can be reused by both the one-shot and polling step bodies.
+ */
+async function queryCompletedSuccessRow(
   executionId: string,
   nodeId: string
 ): Promise<{ outputRaw: unknown } | null> {
-  "use step";
-
   const row = await db.transaction(async (tx) => {
     await tx.execute(sql`SET LOCAL statement_timeout = '2s'`);
     return tx.query.workflowExecutionLogs.findFirst({
@@ -33,7 +36,45 @@ export async function fetchCompletedStepOutputStep(
   return { outputRaw: row.outputRaw as unknown };
 }
 
+// biome-ignore lint/suspicious/useAwait: workflow "use step" requires async
+export async function fetchCompletedStepOutputStep(
+  executionId: string,
+  nodeId: string
+): Promise<{ outputRaw: unknown } | null> {
+  "use step";
+
+  return queryCompletedSuccessRow(executionId, nodeId);
+}
+
 fetchCompletedStepOutputStep.maxRetries = 1;
+
+/**
+ * Poll `workflow_execution_logs` for a step's recorded success for up to
+ * `timeoutMs`. The wait runs INSIDE this step boundary so the workflow body
+ * stays deterministic and the result is memoized on replay.
+ *
+ * Recovers the spurious-max-retries race: the framework re-fires a step after
+ * a lost completion event and throws before the step body's success row is
+ * committed. The success then lands ~0.3-0.5s later; a one-shot read misses
+ * it. Polling here lets the catch handler reconcile instead of nullifying the
+ * node and racing convergence ahead with no data.
+ */
+// biome-ignore lint/suspicious/useAwait: workflow "use step" requires async
+export async function awaitCompletedStepOutputStep(
+  executionId: string,
+  nodeId: string,
+  timeoutMs: number,
+  intervalMs: number
+): Promise<{ outputRaw: unknown } | null> {
+  "use step";
+
+  return pollForCompletedOutput(
+    () => queryCompletedSuccessRow(executionId, nodeId),
+    { timeoutMs, intervalMs }
+  );
+}
+
+awaitCompletedStepOutputStep.maxRetries = 1;
 
 export async function fetchCompletedStepOutputsBatchStep(
   executionId: string,
