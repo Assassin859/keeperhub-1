@@ -294,6 +294,22 @@ describe("validateWorkflow — invalid-token-address (VALID-06)", () => {
     expect(err).toBeUndefined();
   });
 
+  it("treats a contractAddress containing any template token as dynamic (skips format check even with a literal prefix)", () => {
+    // Policy: a value with a {{...}} token is dynamic and cannot be
+    // statically format-checked, so it is skipped rather than flagged —
+    // even if it carries a literal-looking prefix.
+    const wf = makeWorkflow({
+      nodes: [
+        triggerNode(),
+        actionNode("a1", { contractAddress: "0xbad{{Prep.suffix}}" }),
+      ],
+      edges: [edge("e1", "trigger-1", "a1")],
+    });
+    const result = validateWorkflow(wf);
+    const err = result.errors.find((e) => e.code === "invalid-token-address");
+    expect(err).toBeUndefined();
+  });
+
   it("does NOT error for a contractAddress that is a display-format template reference", () => {
     const wf = makeWorkflow({
       nodes: [
