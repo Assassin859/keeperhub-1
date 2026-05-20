@@ -1,15 +1,51 @@
 "use client";
 
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Info } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { BillingInterval } from "@/lib/billing/plans";
 import { PLANS } from "@/lib/billing/plans";
 import { cn } from "@/lib/utils";
+import {
+  SPONSORSHIP_MAINNET_NAMES,
+  SPONSORSHIP_TESTNET_NAMES,
+} from "@/lib/web3/sponsorship-chains-meta";
 import { PlanCard } from "./plan-card";
 import type { PricingTableProps } from "./types";
 
-const COMPARISON_ROWS = [
+function formatGasCredits(cents: number): string {
+  return `$${(cents / 100).toFixed(0)} / mo`;
+}
+
+type ComparisonRow = {
+  label: string;
+  free: string;
+  pro: string;
+  business: string;
+  enterprise: string;
+  tooltip?: React.ReactNode;
+};
+
+const SPONSORED_NETWORKS_TOOLTIP: React.ReactNode = (
+  <div className="space-y-1.5">
+    <p className="font-medium">Supported networks</p>
+    <p>
+      <span className="font-medium">Mainnets:</span>{" "}
+      {SPONSORSHIP_MAINNET_NAMES.join(", ")}
+    </p>
+    <p>
+      <span className="font-medium">Testnets:</span>{" "}
+      {SPONSORSHIP_TESTNET_NAMES.join(", ")}
+    </p>
+  </div>
+);
+
+const COMPARISON_ROWS: ComparisonRow[] = [
   {
     label: "Workflows",
     free: "Unlimited",
@@ -23,6 +59,14 @@ const COMPARISON_ROWS = [
     pro: "All EVM",
     business: "All EVM",
     enterprise: "Custom",
+  },
+  {
+    label: "Sponsored gas",
+    free: formatGasCredits(PLANS.free.features.gasCreditsCents),
+    pro: formatGasCredits(PLANS.pro.features.gasCreditsCents),
+    business: formatGasCredits(PLANS.business.features.gasCreditsCents),
+    enterprise: `${formatGasCredits(PLANS.enterprise.features.gasCreditsCents)} (custom)`,
+    tooltip: SPONSORED_NETWORKS_TOOLTIP,
   },
   {
     label: "Triggers",
@@ -133,7 +177,25 @@ function ComparisonTable(): React.ReactElement {
                   key={row.label}
                 >
                   <td className="px-5 py-3 font-medium text-muted-foreground">
-                    {row.label}
+                    <span className="inline-flex items-center gap-1">
+                      {row.label}
+                      {row.tooltip && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              aria-label={`More info about ${row.label}`}
+                              className="inline-flex cursor-help items-center text-muted-foreground transition-colors hover:text-foreground"
+                              type="button"
+                            >
+                              <Info className="size-3.5" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs">
+                            {row.tooltip}
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                    </span>
                   </td>
                   <td className="px-5 py-3 text-center text-muted-foreground">
                     {row.free}

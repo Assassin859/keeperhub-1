@@ -1,13 +1,23 @@
 "use client";
 
+import { Info } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { BILLING_ALERTS, BILLING_API } from "@/lib/billing/constants";
 import { PLANS, type PlanName } from "@/lib/billing/plans";
+import {
+  SPONSORSHIP_MAINNET_NAMES,
+  SPONSORSHIP_TESTNET_NAMES,
+} from "@/lib/web3/sponsorship-chains-meta";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
 
 type OverageCharge = {
@@ -464,7 +474,33 @@ function GasCreditsBar({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between text-sm">
-        <span className="text-muted-foreground">Gas sponsorship credits</span>
+        <span className="flex items-center gap-1 text-muted-foreground">
+          Gas sponsorship credits
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                aria-label="Supported networks"
+                className="inline-flex cursor-help items-center text-muted-foreground transition-colors hover:text-foreground"
+                type="button"
+              >
+                <Info className="size-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs">
+              <div className="space-y-1.5">
+                <p className="font-medium">Supported networks</p>
+                <p>
+                  <span className="font-medium">Mainnets:</span>{" "}
+                  {SPONSORSHIP_MAINNET_NAMES.join(", ")}
+                </p>
+                <p>
+                  <span className="font-medium">Testnets:</span>{" "}
+                  {SPONSORSHIP_TESTNET_NAMES.join(", ")}
+                </p>
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        </span>
         <span className="font-medium">
           ${(gasCredits.usedCents / 100).toFixed(2)} / $
           {(gasCredits.totalCents / 100).toFixed(2)}
