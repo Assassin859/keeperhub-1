@@ -38,6 +38,7 @@ type GetTransactionResult =
 
 export type GetTransactionCoreInput = {
   txHash: string;
+  network?: string;
 };
 
 export type GetTransactionInput = StepInput &
@@ -56,7 +57,8 @@ async function stepHandler(
 
   const result = await blockscoutGet<TransactionResponse>(
     `/api/v2/transactions/${encodeURIComponent(txHash)}`,
-    credentials
+    credentials,
+    input.network
   );
 
   if (!result.success) {
