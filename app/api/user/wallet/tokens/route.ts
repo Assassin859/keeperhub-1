@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { ethers } from "ethers";
 import { NextResponse } from "next/server";
 import { normalizeAddressForStorage } from "@/lib/address-utils";
@@ -6,10 +6,46 @@ import { apiError } from "@/lib/api-error";
 import ERC20_ABI from "@/lib/contracts/abis/erc20.json";
 import { db } from "@/lib/db";
 import { chains, organizationTokens, supportedTokens } from "@/lib/db/schema";
+import { safeWallets } from "@/lib/db/schema-extensions";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { organizationHasWallet } from "@/lib/para/wallet-helpers";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
+
+/**
+ * Resolve an optional `safeId` to a validated row in `safe_wallets`. The
+ * Safe must belong to the active org. Returns null when no safeId is
+ * supplied so the caller can fall back to org-level (Turnkey EOA) scope.
+ */
+async function resolveSafeScope(
+  organizationId: string,
+  safeId: string | null
+): Promise<
+  | { ok: true; safeWalletId: string | null }
+  | { ok: false; status: number; error: string }
+> {
+  if (!safeId) {
+    return { ok: true, safeWalletId: null };
+  }
+  const rows = await db
+    .select({ id: safeWallets.id })
+    .from(safeWallets)
+    .where(
+      and(
+        eq(safeWallets.id, safeId),
+        eq(safeWallets.organizationId, organizationId)
+      )
+    )
+    .limit(1);
+  if (rows.length === 0) {
+    return {
+      ok: false,
+      status: 404,
+      error: "Safe not found for this organization",
+    };
+  }
+  return { ok: true, safeWalletId: rows[0].id };
+}
 
 /**
  * GET /api/user/wallet/tokens
@@ -27,10 +63,28 @@ export async function GET(request: Request) {
     }
     const { organizationId: activeOrgId } = authCtx;
 
+    // Optional ?safeId=X scopes the list to a Safe; otherwise we return
+    // org-level rows (safe_wallet_id IS NULL) tracked for the Turnkey EOA.
+    const url = new URL(request.url);
+    const safeIdParam = url.searchParams.get("safeId");
+    const scope = await resolveSafeScope(activeOrgId, safeIdParam);
+    if (!scope.ok) {
+      return NextResponse.json(
+        { error: scope.error },
+        { status: scope.status }
+      );
+    }
+
+    const scopeCondition = scope.safeWalletId
+      ? eq(organizationTokens.safeWalletId, scope.safeWalletId)
+      : isNull(organizationTokens.safeWalletId);
+
     const tokens = await db
       .select()
       .from(organizationTokens)
-      .where(eq(organizationTokens.organizationId, activeOrgId));
+      .where(
+        and(eq(organizationTokens.organizationId, activeOrgId), scopeCondition)
+      );
 
     return NextResponse.json({ tokens });
   } catch (error) {
@@ -64,8 +118,12 @@ export async function POST(request: Request) {
       );
     }
 
-    const body = await request.json();
-    const { chainId, tokenAddress } = body;
+    const body = (await request.json()) as {
+      chainId?: number;
+      tokenAddress?: string;
+      safeId?: string | null;
+    };
+    const { chainId, tokenAddress, safeId } = body;
 
     if (!chainId || typeof chainId !== "number") {
       return NextResponse.json(
@@ -88,6 +146,14 @@ export async function POST(request: Request) {
       );
     }
 
+    const scope = await resolveSafeScope(activeOrgId, safeId ?? null);
+    if (!scope.ok) {
+      return NextResponse.json(
+        { error: scope.error },
+        { status: scope.status }
+      );
+    }
+
     // Check if chain exists and is enabled
     const chain = await db
       .select()
@@ -104,7 +170,13 @@ export async function POST(request: Request) {
 
     const normalizedTokenAddress = normalizeAddressForStorage(tokenAddress);
 
-    // Check if token is already tracked by the organization
+    // Check if token is already tracked within the SAME scope (per-Safe or
+    // org-level). The same token may legitimately be tracked once at the
+    // org level and again under each Safe, so the scope condition is part
+    // of the dedup query.
+    const scopeCondition = scope.safeWalletId
+      ? eq(organizationTokens.safeWalletId, scope.safeWalletId)
+      : isNull(organizationTokens.safeWalletId);
     const existing = await db
       .select()
       .from(organizationTokens)
@@ -112,7 +184,8 @@ export async function POST(request: Request) {
         and(
           eq(organizationTokens.organizationId, activeOrgId),
           eq(organizationTokens.chainId, chainId),
-          eq(organizationTokens.tokenAddress, normalizedTokenAddress)
+          eq(organizationTokens.tokenAddress, normalizedTokenAddress),
+          scopeCondition
         )
       )
       .limit(1);
@@ -180,11 +253,13 @@ export async function POST(request: Request) {
       );
     }
 
-    // Insert the token
+    // Insert the token at the resolved scope (safeWalletId is null for
+    // org-level rows tracked under the Turnkey EOA).
     const [newToken] = await db
       .insert(organizationTokens)
       .values({
         organizationId: activeOrgId,
+        safeWalletId: scope.safeWalletId,
         chainId,
         tokenAddress: normalizedTokenAddress,
         symbol,

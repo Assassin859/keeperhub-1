@@ -6,11 +6,10 @@
  * steps to execute transactions with proper nonce handling and adaptive
  * gas estimation.
  *
- * submitAndConfirm / submitContractCallAndConfirm consolidate the
- * send -> record -> wait -> confirm -> explorer-link flow into one place
- * and add RPC failover: if the primary provider fails with a retryable
- * error, the signer (or contract) is reconnected to the fallback provider
- * and the send is retried once. Same nonce ensures idempotency.
+ * submitAndConfirm / submitContractCallAndConfirm / executeTransaction /
+ * executeContractTransaction all route the broadcast through
+ * submitSignedTransactionWithFailover (sign once, broadcast same bytes
+ * across the RPC failover loop, reconcile on error via on-chain lookup).
  *
  * @see docs/keeperhub/KEEP-1240/nonce.md for nonce specification
  * @see docs/keeperhub/KEEP-1240/gas.md for gas strategy specification
@@ -25,14 +24,12 @@ import { ErrorCategory, logUserError } from "@/lib/logging";
 import { initializeWalletSigner } from "@/lib/para/wallet-helpers";
 import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
-import { isNonRetryableError } from "@/lib/rpc/providers/error-classification";
-import {
-  type RpcMetricsContext,
-  rpcMetricsCtx,
-  withRpcMetrics,
-} from "@/lib/rpc/providers/with-rpc-metrics";
 import { getGasStrategy } from "./gas-strategy";
 import { getNonceManager, type NonceSession } from "./nonce-manager";
+import {
+  type BroadcastResult,
+  submitSignedTransactionWithFailover,
+} from "./submit-signed";
 
 export type TransactionContext = {
   organizationId: string;
@@ -40,7 +37,7 @@ export type TransactionContext = {
   workflowId?: string;
   chainId: number;
   rpcUrl: string;
-  rpcManager?: RpcProviderManager;
+  rpcManager: RpcProviderManager;
 };
 
 export type TransactionResult = {
@@ -68,13 +65,8 @@ export type SubmitAndConfirmResult = {
 };
 
 /**
- * Attempt to send a signer-based transaction with RPC failover.
- *
- * 1. Try sendTransaction on the current provider.
- * 2. If the error is non-retryable, throw immediately.
- * 3. If retryable and a fallback provider exists, reconnect the signer
- *    and retry once. Same nonce ensures idempotency.
- * 4. After successful send: record -> wait -> confirm -> explorer link.
+ * Send a signer-based transaction with sign-once + failover broadcast,
+ * then record -> wait -> confirm -> explorer link.
  */
 export async function submitAndConfirm(
   signer: ReturnType<typeof initializeWalletSigner> extends Promise<infer T>
@@ -83,172 +75,71 @@ export async function submitAndConfirm(
   txRequest: ethers.TransactionRequest,
   options: SubmitAndConfirmOptions
 ): Promise<SubmitAndConfirmResult> {
-  const { rpcManager, session, nonce, workflowId, chainId, maxFeePerGas } =
-    options;
-  const nonceManager = getNonceManager();
-  const primaryCtx = rpcMetricsCtx(rpcManager);
-
-  let tx: ethers.TransactionResponse;
-  try {
-    tx = await withRpcMetrics(primaryCtx, () =>
-      signer.sendTransaction(txRequest)
-    );
-  } catch (primaryError) {
-    if (isNonRetryableError(primaryError)) {
-      throw primaryError;
-    }
-
-    const fallbackProvider = rpcManager.getFallbackProvider();
-    if (!fallbackProvider) {
-      throw primaryError;
-    }
-
-    rpcManager
-      .getMetricsCollector()
-      .recordFailoverEvent(rpcManager.getChainName());
-
-    console.warn(
-      JSON.stringify({
-        level: "warn",
-        event: "WRITE_TX_FAILOVER",
-        message: `Primary RPC failed during sendTransaction for chain ${rpcManager.getChainName()}, retrying on fallback`,
-        chain: rpcManager.getChainName(),
-        error:
-          primaryError instanceof Error
-            ? primaryError.message
-            : String(primaryError),
-        timestamp: new Date().toISOString(),
-      })
-    );
-
-    const fallbackCtx: RpcMetricsContext = {
-      ...primaryCtx,
-      providerType: "fallback",
-    };
-    const reconnectedSigner = signer.connect(fallbackProvider) as typeof signer;
-    tx = await withRpcMetrics(fallbackCtx, () =>
-      reconnectedSigner.sendTransaction(txRequest)
-    );
-  }
-
-  return await confirmAndBuildResult(
-    tx,
-    nonceManager,
-    session,
-    nonce,
-    workflowId,
-    chainId,
-    maxFeePerGas
+  const broadcast = await submitSignedTransactionWithFailover(
+    signer,
+    txRequest,
+    options.rpcManager
   );
+  return await confirmAndBuildResult(broadcast, options);
 }
 
 /**
- * Attempt to send a contract method call with RPC failover.
- *
- * Same failover logic as submitAndConfirm but for contract interactions.
- * On failover, both the signer and contract are reconnected to the fallback.
+ * Send a contract method call with sign-once + failover broadcast.
+ * Builds calldata once, then routes through the same helper as submitAndConfirm.
  */
 export async function submitContractCallAndConfirm(
   contract: ethers.Contract,
   method: string,
   args: unknown[],
-  overrides: Record<string, unknown>,
+  overrides: ethers.TransactionRequest,
   signer: ReturnType<typeof initializeWalletSigner> extends Promise<infer T>
     ? T
     : never,
   options: SubmitAndConfirmOptions
 ): Promise<SubmitAndConfirmResult> {
-  const { rpcManager, session, nonce, workflowId, chainId, maxFeePerGas } =
-    options;
-  const nonceManager = getNonceManager();
-  const primaryCtx = rpcMetricsCtx(rpcManager);
-
-  let tx: ethers.TransactionResponse;
-  try {
-    tx = await withRpcMetrics(primaryCtx, () =>
-      contract.getFunction(method)(...args, overrides)
-    );
-  } catch (primaryError) {
-    if (isNonRetryableError(primaryError)) {
-      throw primaryError;
-    }
-
-    const fallbackProvider = rpcManager.getFallbackProvider();
-    if (!fallbackProvider) {
-      throw primaryError;
-    }
-
-    rpcManager
-      .getMetricsCollector()
-      .recordFailoverEvent(rpcManager.getChainName());
-
-    console.warn(
-      JSON.stringify({
-        level: "warn",
-        event: "WRITE_TX_CONTRACT_FAILOVER",
-        message: `Primary RPC failed during ${method}() for chain ${rpcManager.getChainName()}, retrying on fallback`,
-        chain: rpcManager.getChainName(),
-        method,
-        error:
-          primaryError instanceof Error
-            ? primaryError.message
-            : String(primaryError),
-        timestamp: new Date().toISOString(),
-      })
-    );
-
-    const fallbackCtx: RpcMetricsContext = {
-      ...primaryCtx,
-      providerType: "fallback",
-    };
-    const reconnectedSigner = signer.connect(fallbackProvider) as typeof signer;
-    const reconnectedContract = contract.connect(
-      reconnectedSigner
-    ) as typeof contract;
-    tx = await withRpcMetrics(fallbackCtx, () =>
-      reconnectedContract.getFunction(method)(...args, overrides)
-    );
-  }
-
-  return await confirmAndBuildResult(
-    tx,
-    nonceManager,
-    session,
-    nonce,
-    workflowId,
-    chainId,
-    maxFeePerGas
-  );
+  const data = contract.interface.encodeFunctionData(method, args);
+  const to = await contract.getAddress();
+  const txRequest: ethers.TransactionRequest = {
+    ...overrides,
+    to,
+    data,
+  };
+  return await submitAndConfirm(signer, txRequest, options);
 }
 
 /**
- * Shared post-send flow: record pending tx, wait for mining, confirm,
- * compute gas cost, and build explorer link.
+ * Shared post-broadcast flow: record pending tx, wait for mining (with
+ * failover), confirm, compute gas cost, and build explorer link. Skips
+ * waitForTransaction when broadcast reconciliation already returned a receipt.
  */
 async function confirmAndBuildResult(
-  tx: ethers.TransactionResponse,
-  nonceManager: ReturnType<typeof getNonceManager>,
-  session: NonceSession,
-  nonce: number,
-  workflowId: string | undefined,
-  chainId: number,
-  maxFeePerGas: bigint
+  broadcast: BroadcastResult,
+  options: SubmitAndConfirmOptions
 ): Promise<SubmitAndConfirmResult> {
+  const { rpcManager, session, nonce, workflowId, chainId, maxFeePerGas } =
+    options;
+  const nonceManager = getNonceManager();
+
   await nonceManager.recordTransaction(
     session,
     nonce,
-    tx.hash,
+    broadcast.hash,
     workflowId,
     maxFeePerGas.toString()
   );
 
-  const receipt = await tx.wait();
+  const receipt =
+    broadcast.preExistingReceipt ??
+    (await rpcManager.executeWithFailover(
+      (provider) => provider.waitForTransaction(broadcast.hash),
+      "read"
+    ));
 
   if (!receipt) {
     throw new Error("Transaction sent but receipt not available");
   }
 
-  await nonceManager.confirmTransaction(tx.hash);
+  await nonceManager.confirmTransaction(broadcast.hash);
 
   const gasCostWei = (receipt.gasUsed * receipt.gasPrice).toString();
 
@@ -268,7 +159,7 @@ async function confirmAndBuildResult(
 }
 
 // ---------------------------------------------------------------------------
-// Legacy helpers (still used by executeTransaction / executeContractTransaction)
+// High-level helpers used by Safe deployment and roles-orchestrator
 // ---------------------------------------------------------------------------
 
 /**
@@ -299,13 +190,11 @@ export async function executeTransaction(
       throw new Error("Signer has no provider");
     }
 
-    const estimatedGas = context.rpcManager
-      ? await context.rpcManager.executeWithFailover(
-          (rpcProvider) =>
-            rpcProvider.estimateGas({ ...baseTx, from: walletAddress }),
-          "preflight"
-        )
-      : await provider.estimateGas({ ...baseTx, from: walletAddress });
+    const estimatedGas = await context.rpcManager.executeWithFailover(
+      (rpcProvider) =>
+        rpcProvider.estimateGas({ ...baseTx, from: walletAddress }),
+      "preflight"
+    );
 
     const gasConfig = await gasStrategy.getGasConfig(
       provider,
@@ -322,36 +211,45 @@ export async function executeTransaction(
       gasLimit: gasConfig.gasLimit,
       maxFeePerGas: gasConfig.maxFeePerGas,
       maxPriorityFeePerGas: gasConfig.maxPriorityFeePerGas,
+      chainId: context.chainId,
     };
 
-    const tx = await signer.sendTransaction(txRequest);
+    const broadcast = await submitSignedTransactionWithFailover(
+      signer,
+      txRequest,
+      context.rpcManager
+    );
 
     await nonceManager.recordTransaction(
       session,
       nonce,
-      tx.hash,
+      broadcast.hash,
       context.workflowId,
       gasConfig.maxFeePerGas.toString()
     );
 
-    const receipt = await tx.wait();
+    const receipt =
+      broadcast.preExistingReceipt ??
+      (await context.rpcManager.executeWithFailover(
+        (rpcProvider) => rpcProvider.waitForTransaction(broadcast.hash),
+        "read"
+      ));
 
-    await nonceManager.confirmTransaction(tx.hash);
+    await nonceManager.confirmTransaction(broadcast.hash);
 
     return {
       success: true,
-      txHash: tx.hash,
+      txHash: broadcast.hash,
       receipt: receipt ?? undefined,
       nonce,
     };
   } catch (error) {
     logUserError(
       ErrorCategory.TRANSACTION,
-      "[TransactionManager] Transaction failed:",
+      `[TransactionManager] Transaction failed at nonce=${nonce}`,
       error,
       {
         chain_id: context.chainId.toString(),
-        nonce: nonce.toString(),
       }
     );
 
@@ -384,16 +282,18 @@ export async function executeContractTransaction(
     if (!provider) {
       throw new Error("Contract has no provider");
     }
+    const signer = contract.runner as ethers.Signer;
+    if (typeof signer.signTransaction !== "function") {
+      throw new Error("Contract runner is not a signer");
+    }
 
-    const estimatedGas = context.rpcManager
-      ? await context.rpcManager.executeWithFailover(
-          (rpcProvider) =>
-            (contract.connect(rpcProvider) as typeof contract)
-              .getFunction(method)
-              .estimateGas(...args, { from: walletAddress }),
-          "preflight"
-        )
-      : await contract.getFunction(method).estimateGas(...args);
+    const estimatedGas = await context.rpcManager.executeWithFailover(
+      (rpcProvider) =>
+        (contract.connect(rpcProvider) as typeof contract)
+          .getFunction(method)
+          .estimateGas(...args, { from: walletAddress }),
+      "preflight"
+    );
 
     const gasConfig = await gasStrategy.getGasConfig(
       provider as ethers.Provider,
@@ -404,40 +304,54 @@ export async function executeContractTransaction(
       context.rpcManager
     );
 
-    const tx = await contract.getFunction(method)(...args, {
+    const data = contract.interface.encodeFunctionData(method, args);
+    const to = await contract.getAddress();
+    const txRequest: ethers.TransactionRequest = {
+      to,
+      data,
       nonce,
       gasLimit: gasConfig.gasLimit,
       maxFeePerGas: gasConfig.maxFeePerGas,
       maxPriorityFeePerGas: gasConfig.maxPriorityFeePerGas,
-    });
+      chainId: context.chainId,
+    };
+
+    const broadcast = await submitSignedTransactionWithFailover(
+      signer,
+      txRequest,
+      context.rpcManager
+    );
 
     await nonceManager.recordTransaction(
       session,
       nonce,
-      tx.hash,
+      broadcast.hash,
       context.workflowId,
       gasConfig.maxFeePerGas.toString()
     );
 
-    const receipt = await tx.wait();
+    const receipt =
+      broadcast.preExistingReceipt ??
+      (await context.rpcManager.executeWithFailover(
+        (rpcProvider) => rpcProvider.waitForTransaction(broadcast.hash),
+        "read"
+      ));
 
-    await nonceManager.confirmTransaction(tx.hash);
+    await nonceManager.confirmTransaction(broadcast.hash);
 
     return {
       success: true,
-      txHash: tx.hash,
+      txHash: broadcast.hash,
       receipt: receipt ?? undefined,
       nonce,
     };
   } catch (error) {
     logUserError(
       ErrorCategory.TRANSACTION,
-      "[TransactionManager] Contract transaction failed:",
+      `[TransactionManager] Contract transaction failed: method=${method} nonce=${nonce}`,
       error,
       {
         chain_id: context.chainId.toString(),
-        nonce: nonce.toString(),
-        method,
       }
     );
 
@@ -459,10 +373,7 @@ export async function withNonceSession<T>(
   fn: (session: NonceSession) => Promise<T>
 ): Promise<T> {
   const nonceManager = getNonceManager();
-  const rpcManager =
-    context.rpcManager ??
-    (await getRpcProviderFromUrls(context.rpcUrl, undefined, context.chainId));
-  const provider = rpcManager.getProvider();
+  const provider = context.rpcManager.getProvider();
 
   const { session, validation } = await nonceManager.startSession(
     walletAddress,

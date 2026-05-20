@@ -10,7 +10,7 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
 import { db } from "@/lib/db";
-import { explorerConfigs, workflowExecutions } from "@/lib/db/schema";
+import { chains, explorerConfigs, workflowExecutions } from "@/lib/db/schema";
 import { getTransactionUrl } from "@/lib/explorer";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import {
@@ -21,8 +21,17 @@ import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import { getErrorMessage } from "@/lib/utils";
 import { generateId } from "@/lib/utils/id";
+import {
+  executeNativeTransferAsRole,
+  executeNativeTransferAsSafe,
+} from "@/lib/safe/execute-as-safe";
+import { resolveSignerMode } from "@/lib/safe/signer-resolver";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
-import { formatContractError } from "@/lib/web3/decode-revert-error";
+import {
+  classifyRevert,
+  formatContractError,
+  type RevertKind,
+} from "@/lib/web3/decode-revert-error";
 import { resolveGasLimitOverrides } from "@/lib/web3/gas-defaults";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
 import { executeSponsoredTransaction } from "@/lib/web3/sponsored-transaction-manager";
@@ -58,7 +67,7 @@ export type TransferFundsResult =
       gasUsedUnits: string;
       effectiveGasPrice: string;
     }
-  | { success: false; error: string };
+  | { success: false; error: string; rejection?: RevertKind };
 
 /**
  * Core transfer funds logic
@@ -155,6 +164,9 @@ export async function transferFundsCore(
     };
   }
 
+  // Decide whether to route this write through the org's Safe on this chain.
+  const signerMode = await resolveSignerMode(organizationId, chainId);
+
   // Get workflow ID for transaction tracking (only for workflow executions)
   let workflowId: string | undefined;
   if (_context.executionId && !_context.organizationId) {
@@ -182,7 +194,13 @@ export async function transferFundsCore(
 
   // KEEP-137: skip sponsorship when routing through a private mempool --
   // ERC-4337 bundlers use their own RPC (Pimlico), which bypasses Flashbots Protect.
-  if (!usePrivateMempool && isGasSponsorshipEnabled()) {
+  // KEEP-177: skip sponsorship in Safe mode -- the 4337 bundler sends from
+  // its own smart account, which would change msg.sender away from the Safe.
+  if (
+    !usePrivateMempool &&
+    signerMode.kind === "eoa" &&
+    isGasSponsorshipEnabled()
+  ) {
     // Try gas-sponsored execution first (ERC-4337 via Pimlico)
     try {
       const sponsoredResult = await executeSponsoredTransaction({
@@ -251,15 +269,91 @@ export async function transferFundsCore(
       };
     }
 
+    // Preflight native balance check. Mirrors the ERC-20 preflight in
+    // transfer-token-core: read the funding address' native balance and
+    // short-circuit with a clean message before the orchestrator simulates
+    // and surfaces a cryptic revert. Holder is the Safe in safe / safe-role
+    // mode (funds come from the Safe's balance), otherwise the EOA. An
+    // RPC failure here surfaces as a step error to stay consistent with
+    // transfer-token-core's pattern. See review #923-r3 (MEDIUM).
+    const fundingHolderAddress: string =
+      signerMode.kind === "safe-role" || signerMode.kind === "safe"
+        ? signerMode.safeAddress
+        : walletAddress;
+    const nativeBalance = await rpcManager.executeWithFailover(
+      (p) => p.getBalance(fundingHolderAddress),
+      "preflight"
+    );
+    if (nativeBalance < amountInWei) {
+      const balanceFormatted = ethers.formatEther(nativeBalance);
+      const requestedFormatted = ethers.formatEther(amountInWei);
+      // Look up the chain's native symbol so the error reads "Insufficient
+      // ETH balance" / "Insufficient BNB balance" instead of the chain-
+      // agnostic "native". Looked up lazily because this branch only fires
+      // on the slow / unhappy path.
+      const chainRow = await db
+        .select({ symbol: chains.symbol })
+        .from(chains)
+        .where(eq(chains.chainId, chainId))
+        .limit(1);
+      const nativeSymbol = chainRow[0]?.symbol ?? "native";
+      return {
+        success: false,
+        error: `Insufficient ${nativeSymbol} balance. Have: ${balanceFormatted}, Need: ${requestedFormatted}`,
+      };
+    }
+
     try {
-      const receipt = await adapter.sendTransaction(signer, {
-        to: recipientAddress,
-        value: amountInWei,
-      }, session, {
-        gasOverrides: { multiplierOverride, gasLimitOverride },
-        workflowId,
-        rpcManager,
-      });
+      let receipt: Awaited<ReturnType<typeof adapter.sendTransaction>>;
+      if (signerMode.kind === "safe-role") {
+        receipt = await executeNativeTransferAsRole(
+          signer,
+          {
+            safeAddress: signerMode.safeAddress,
+            delegateAddress: signerMode.delegateAddress,
+            rolesModifierAddress: signerMode.rolesModifierAddress,
+            roleKey: signerMode.roleKey,
+            to: recipientAddress,
+            amount: amountInWei,
+          },
+          session,
+          {
+            chainId,
+            workflowId,
+            rpcManager,
+          }
+        );
+      } else if (signerMode.kind === "safe") {
+        receipt = await executeNativeTransferAsSafe(
+          signer,
+          {
+            safeAddress: signerMode.safeAddress,
+            ownerAddress: signerMode.ownerAddress,
+            to: recipientAddress,
+            amount: amountInWei,
+          },
+          session,
+          {
+            chainId,
+            workflowId,
+            rpcManager,
+          }
+        );
+      } else {
+        receipt = await adapter.sendTransaction(
+          signer,
+          {
+            to: recipientAddress,
+            value: amountInWei,
+          },
+          session,
+          {
+            gasOverrides: { multiplierOverride, gasLimitOverride },
+            workflowId,
+            rpcManager,
+          }
+        );
+      }
 
       const gasUsedUnits = receipt.gasUsed.toString();
       const effectiveGasPrice = receipt.effectiveGasPrice.toString();
@@ -285,9 +379,11 @@ export async function transferFundsCore(
           chain_id: String(chainId),
         }
       );
+      const rejection = classifyRevert(error);
       return {
         success: false,
         error: formatContractError(error, undefined, "Transaction failed"),
+        ...(rejection.kind !== "unknown" ? { rejection } : {}),
       };
     }
   });

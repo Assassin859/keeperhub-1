@@ -50,6 +50,10 @@ export const PUBLIC_RPCS = {
   OPTIMISM_MAINNET: "https://mainnet.optimism.io",
   ARBITRUM_SEPOLIA: "https://sepolia-rollup.arbitrum.io/rpc",
   ARBITRUM_SEPOLIA_FALLBACK: "https://arbitrum-sepolia-rpc.publicnode.com",
+  OP_MAINNET: "https://mainnet.optimism.io",
+  OP_MAINNET_FALLBACK: "https://optimism-rpc.publicnode.com",
+  OP_SEPOLIA: "https://sepolia.optimism.io",
+  OP_SEPOLIA_FALLBACK: "https://optimism-sepolia-rpc.publicnode.com",
   AVAX_MAINNET: "https://api.avax.network/ext/bc/C/rpc",
   AVAX_MAINNET_FALLBACK: "https://avalanche-c-chain-rpc.publicnode.com",
   AVAX_FUJI: "https://api.avax-test.network/ext/bc/C/rpc",
@@ -168,6 +172,22 @@ export const CHAIN_CONFIG: Record<number, ChainConfigEntry> = {
     fallbackEnvKey: "CHAIN_ARBITRUM_SEPOLIA_FALLBACK_RPC",
     publicDefault: PUBLIC_RPCS.ARBITRUM_SEPOLIA,
     publicFallback: PUBLIC_RPCS.ARBITRUM_SEPOLIA_FALLBACK,
+  },
+  // Optimism Mainnet
+  10: {
+    jsonKey: "op-mainnet",
+    envKey: "CHAIN_OP_MAINNET_PRIMARY_RPC",
+    fallbackEnvKey: "CHAIN_OP_MAINNET_FALLBACK_RPC",
+    publicDefault: PUBLIC_RPCS.OP_MAINNET,
+    publicFallback: PUBLIC_RPCS.OP_MAINNET_FALLBACK,
+  },
+  // Optimism Sepolia
+  11155420: {
+    jsonKey: "op-sepolia",
+    envKey: "CHAIN_OP_SEPOLIA_PRIMARY_RPC",
+    fallbackEnvKey: "CHAIN_OP_SEPOLIA_FALLBACK_RPC",
+    publicDefault: PUBLIC_RPCS.OP_SEPOLIA,
+    publicFallback: PUBLIC_RPCS.OP_SEPOLIA_FALLBACK,
   },
   // Avalanche C-Chain
   43114: {

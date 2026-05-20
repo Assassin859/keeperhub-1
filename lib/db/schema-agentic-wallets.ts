@@ -214,7 +214,7 @@ export const agenticWalletDailySpend = pgTable(
     dayUtc: date("day_utc").notNull(),
     spentMicros: bigint("spent_micros", { mode: "bigint" })
       .notNull()
-      .default(BigInt(0)),
+      .default(sql`0`),
   },
   (table) => [
     primaryKey({ columns: [table.subOrgId, table.dayUtc] }),

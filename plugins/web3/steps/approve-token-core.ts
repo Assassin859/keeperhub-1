@@ -22,8 +22,17 @@ import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import { getErrorMessage } from "@/lib/utils";
 import { generateId } from "@/lib/utils/id";
+import {
+  executeContractCallAsRole,
+  executeContractCallAsSafe,
+} from "@/lib/safe/execute-as-safe";
+import { resolveSignerMode } from "@/lib/safe/signer-resolver";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
-import { formatContractError } from "@/lib/web3/decode-revert-error";
+import {
+  classifyRevert,
+  formatContractError,
+  type RevertKind,
+} from "@/lib/web3/decode-revert-error";
 import { resolveGasLimitOverrides } from "@/lib/web3/gas-defaults";
 import { isSponsorshipSupported } from "@/lib/web3/pimlico-config";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
@@ -66,7 +75,16 @@ export type ApproveTokenResult =
       spender: string;
       symbol: string;
     }
-  | { success: false; error: string };
+  | {
+      success: false;
+      error: string;
+      /**
+       * Structured classification of the revert when one was emitted.
+       * Omitted when the failure is pre-flight (validation, RPC) or when
+       * the revert payload was empty / unrecognised.
+       */
+      rejection?: RevertKind;
+    };
 
 /**
  * Core approve token logic
@@ -187,6 +205,9 @@ export async function approveTokenCore(
     };
   }
 
+  // Decide whether to route this write through the org's Safe on this chain.
+  const signerMode = await resolveSignerMode(organizationId, chainId);
+
   // Get workflow ID for transaction tracking (only for workflow executions)
   let workflowId: string | undefined;
   if (_context.executionId && !_context.organizationId) {
@@ -215,9 +236,12 @@ export async function approveTokenCore(
   // Try gas-sponsored execution first (ERC-4337 via Pimlico).
   // KEEP-137: skip sponsorship when routing through a private mempool --
   // ERC-4337 bundlers use their own RPC (Pimlico), which bypasses Flashbots Protect.
+  // KEEP-177: skip sponsorship in Safe mode -- the 4337 bundler sends from
+  // its own smart account, which would change msg.sender away from the Safe.
   if (
     isSponsorshipSupported(chainId) &&
     !usePrivateMempool &&
+    signerMode.kind === "eoa" &&
     isGasSponsorshipEnabled()
   ) {
     try {
@@ -348,16 +372,62 @@ export async function approveTokenCore(
         }
       }
 
-      const receipt = await adapter.executeContractCall(signer, {
-        contractAddress: tokenAddress,
-        abi: ERC20_ABI,
-        functionKey: "approve",
-        args: [spenderAddress, amountRaw],
-      }, session, {
-        gasOverrides: { multiplierOverride, gasLimitOverride },
-        workflowId,
-        rpcManager,
-      });
+      let receipt: Awaited<ReturnType<typeof adapter.executeContractCall>>;
+      if (signerMode.kind === "safe-role") {
+        receipt = await executeContractCallAsRole(
+          signer,
+          {
+            safeAddress: signerMode.safeAddress,
+            delegateAddress: signerMode.delegateAddress,
+            rolesModifierAddress: signerMode.rolesModifierAddress,
+            roleKey: signerMode.roleKey,
+            contractAddress: tokenAddress,
+            abi: ERC20_ABI,
+            functionKey: "approve",
+            args: [spenderAddress, amountRaw],
+          },
+          session,
+          {
+            chainId,
+            workflowId,
+            rpcManager,
+          }
+        );
+      } else if (signerMode.kind === "safe") {
+        receipt = await executeContractCallAsSafe(
+          signer,
+          {
+            safeAddress: signerMode.safeAddress,
+            ownerAddress: signerMode.ownerAddress,
+            contractAddress: tokenAddress,
+            abi: ERC20_ABI,
+            functionKey: "approve",
+            args: [spenderAddress, amountRaw],
+          },
+          session,
+          {
+            chainId,
+            workflowId,
+            rpcManager,
+          }
+        );
+      } else {
+        receipt = await adapter.executeContractCall(
+          signer,
+          {
+            contractAddress: tokenAddress,
+            abi: ERC20_ABI,
+            functionKey: "approve",
+            args: [spenderAddress, amountRaw],
+          },
+          session,
+          {
+            gasOverrides: { multiplierOverride, gasLimitOverride },
+            workflowId,
+            rpcManager,
+          }
+        );
+      }
 
       const gasUsedUnits = receipt.gasUsed.toString();
       const effectiveGasPrice = receipt.effectiveGasPrice.toString();
@@ -386,6 +456,7 @@ export async function approveTokenCore(
           chain_id: String(chainId),
         }
       );
+      const rejection = classifyRevert(error, contract.interface);
       return {
         success: false,
         error: formatContractError(
@@ -393,6 +464,7 @@ export async function approveTokenCore(
           contract.interface,
           "Token approval failed"
         ),
+        ...(rejection.kind !== "unknown" ? { rejection } : {}),
       };
     }
   });
