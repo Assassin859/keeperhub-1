@@ -148,7 +148,7 @@ describe("blockscout get-token-info", () => {
 
   it("returns token metadata", async () => {
     mockFetchOnce({
-      address: "0xtoken",
+      address_hash: "0xTOKENchecksum",
       name: "Tether USD",
       symbol: "USDT",
       decimals: "6",
@@ -161,7 +161,7 @@ describe("blockscout get-token-info", () => {
 
     expect(result).toEqual({
       success: true,
-      address: "0xtoken",
+      address: "0xTOKENchecksum",
       name: "Tether USD",
       symbol: "USDT",
       decimals: "6",

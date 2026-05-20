@@ -10,7 +10,7 @@ import type { BlockscoutCredentials } from "../credentials";
 import { blockscoutGet } from "./blockscout-core";
 
 type TokenResponse = {
-  address?: string;
+  address_hash?: string;
   name?: string | null;
   symbol?: string | null;
   decimals?: string | null;
@@ -63,7 +63,7 @@ async function stepHandler(
   const token = result.data;
   return {
     success: true,
-    address: token.address ?? tokenAddress,
+    address: token.address_hash ?? tokenAddress,
     name: token.name ?? null,
     symbol: token.symbol ?? null,
     decimals: token.decimals ?? null,
