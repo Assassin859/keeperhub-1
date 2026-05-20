@@ -84,12 +84,16 @@ describe("Uniswap V3 on-chain integration (Sepolia)", () => {
   // -- factory ---------------------------------------------------------------
 
   it("get-pool: eth_call returns a decodable address", async () => {
-    const { to, data, contract } = buildCalldata(
-      uniswapDef,
-      "get-pool",
-      { tokenA: SEPOLIA_WETH, tokenB: SEPOLIA_USDC, fee: FEE_TIER_030 },
-      { chainId: CHAIN_ID }
-    );
+    const { to, data, contract } = buildCalldata({
+      protocol: uniswapDef,
+      actionSlug: "get-pool",
+      sampleInputs: {
+        tokenA: SEPOLIA_WETH,
+        tokenB: SEPOLIA_USDC,
+        fee: FEE_TIER_030,
+      },
+      chainId: CHAIN_ID,
+    });
 
     const provider = await makeProvider();
     const result = await provider.executeWithFailover(
@@ -105,12 +109,12 @@ describe("Uniswap V3 on-chain integration (Sepolia)", () => {
   // -- positionManager -------------------------------------------------------
 
   it("balance-of: eth_call returns a decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata(
-      uniswapDef,
-      "balance-of",
-      { owner: TEST_ADDRESS },
-      { chainId: CHAIN_ID }
-    );
+    const { to, data, contract } = buildCalldata({
+      protocol: uniswapDef,
+      actionSlug: "balance-of",
+      sampleInputs: { owner: TEST_ADDRESS },
+      chainId: CHAIN_ID,
+    });
 
     const provider = await makeProvider();
     const result = await provider.executeWithFailover(
@@ -123,12 +127,12 @@ describe("Uniswap V3 on-chain integration (Sepolia)", () => {
   }, 30_000);
 
   it("owner-of: calldata encodes (business revert expected for invalid tokenId)", async () => {
-    const { to, data } = buildCalldata(
-      uniswapDef,
-      "owner-of",
-      { tokenId: "1" },
-      { chainId: CHAIN_ID }
-    );
+    const { to, data } = buildCalldata({
+      protocol: uniswapDef,
+      actionSlug: "owner-of",
+      sampleInputs: { tokenId: "1" },
+      chainId: CHAIN_ID,
+    });
 
     const provider = await makeProvider();
     try {
@@ -144,12 +148,12 @@ describe("Uniswap V3 on-chain integration (Sepolia)", () => {
   }, 30_000);
 
   it("get-position: calldata encodes (business revert expected for invalid tokenId)", async () => {
-    const { to, data } = buildCalldata(
-      uniswapDef,
-      "get-position",
-      { tokenId: "1" },
-      { chainId: CHAIN_ID }
-    );
+    const { to, data } = buildCalldata({
+      protocol: uniswapDef,
+      actionSlug: "get-position",
+      sampleInputs: { tokenId: "1" },
+      chainId: CHAIN_ID,
+    });
 
     const provider = await makeProvider();
     try {
@@ -165,12 +169,12 @@ describe("Uniswap V3 on-chain integration (Sepolia)", () => {
   }, 30_000);
 
   it("approve-position: estimateGas calldata is valid (business revert expected)", async () => {
-    const { to, data } = buildCalldata(
-      uniswapDef,
-      "approve-position",
-      { to: TEST_ADDRESS, tokenId: "1" },
-      { chainId: CHAIN_ID }
-    );
+    const { to, data } = buildCalldata({
+      protocol: uniswapDef,
+      actionSlug: "approve-position",
+      sampleInputs: { to: TEST_ADDRESS, tokenId: "1" },
+      chainId: CHAIN_ID,
+    });
 
     const provider = await makeProvider();
     try {
@@ -186,12 +190,12 @@ describe("Uniswap V3 on-chain integration (Sepolia)", () => {
   }, 30_000);
 
   it("transfer-position: estimateGas calldata is valid (business revert expected)", async () => {
-    const { to, data } = buildCalldata(
-      uniswapDef,
-      "transfer-position",
-      { from: TEST_ADDRESS, to: TEST_ADDRESS, tokenId: "1" },
-      { chainId: CHAIN_ID }
-    );
+    const { to, data } = buildCalldata({
+      protocol: uniswapDef,
+      actionSlug: "transfer-position",
+      sampleInputs: { from: TEST_ADDRESS, to: TEST_ADDRESS, tokenId: "1" },
+      chainId: CHAIN_ID,
+    });
 
     const provider = await makeProvider();
     try {
@@ -207,12 +211,12 @@ describe("Uniswap V3 on-chain integration (Sepolia)", () => {
   }, 30_000);
 
   it("burn-position: estimateGas calldata is valid (business revert expected)", async () => {
-    const { to, data } = buildCalldata(
-      uniswapDef,
-      "burn-position",
-      { tokenId: "1" },
-      { chainId: CHAIN_ID }
-    );
+    const { to, data } = buildCalldata({
+      protocol: uniswapDef,
+      actionSlug: "burn-position",
+      sampleInputs: { tokenId: "1" },
+      chainId: CHAIN_ID,
+    });
 
     const provider = await makeProvider();
     try {
@@ -230,18 +234,18 @@ describe("Uniswap V3 on-chain integration (Sepolia)", () => {
   // -- quoter (tuple-flattened inputs) ---------------------------------------
 
   it("quote-exact-input: calldata encodes (business revert OK if pool lacks liquidity)", async () => {
-    const { to, data } = buildCalldata(
-      uniswapDef,
-      "quote-exact-input",
-      {
+    const { to, data } = buildCalldata({
+      protocol: uniswapDef,
+      actionSlug: "quote-exact-input",
+      sampleInputs: {
         tokenIn: SEPOLIA_WETH,
         tokenOut: SEPOLIA_USDC,
         amountIn: ONE_ETH,
         fee: FEE_TIER_030,
         sqrtPriceLimitX96: "0",
       },
-      { chainId: CHAIN_ID }
-    );
+      chainId: CHAIN_ID,
+    });
 
     const provider = await makeProvider();
     try {
@@ -257,18 +261,18 @@ describe("Uniswap V3 on-chain integration (Sepolia)", () => {
   }, 30_000);
 
   it("quote-exact-output: calldata encodes (business revert OK if pool lacks liquidity)", async () => {
-    const { to, data } = buildCalldata(
-      uniswapDef,
-      "quote-exact-output",
-      {
+    const { to, data } = buildCalldata({
+      protocol: uniswapDef,
+      actionSlug: "quote-exact-output",
+      sampleInputs: {
         tokenIn: SEPOLIA_WETH,
         tokenOut: SEPOLIA_USDC,
         amount: ONE_ETH,
         fee: FEE_TIER_030,
         sqrtPriceLimitX96: "0",
       },
-      { chainId: CHAIN_ID }
-    );
+      chainId: CHAIN_ID,
+    });
 
     const provider = await makeProvider();
     try {
@@ -286,10 +290,10 @@ describe("Uniswap V3 on-chain integration (Sepolia)", () => {
   // -- swapRouter (tuple-flattened inputs) -----------------------------------
 
   it("swap-exact-input: estimateGas calldata is valid (business revert expected - no approval)", async () => {
-    const { to, data } = buildCalldata(
-      uniswapDef,
-      "swap-exact-input",
-      {
+    const { to, data } = buildCalldata({
+      protocol: uniswapDef,
+      actionSlug: "swap-exact-input",
+      sampleInputs: {
         tokenIn: SEPOLIA_WETH,
         tokenOut: SEPOLIA_USDC,
         fee: FEE_TIER_030,
@@ -298,8 +302,8 @@ describe("Uniswap V3 on-chain integration (Sepolia)", () => {
         amountOutMinimum: "0",
         sqrtPriceLimitX96: "0",
       },
-      { chainId: CHAIN_ID }
-    );
+      chainId: CHAIN_ID,
+    });
 
     const provider = await makeProvider();
     try {
@@ -315,10 +319,10 @@ describe("Uniswap V3 on-chain integration (Sepolia)", () => {
   }, 30_000);
 
   it("swap-exact-output: estimateGas calldata is valid (business revert expected - no approval)", async () => {
-    const { to, data } = buildCalldata(
-      uniswapDef,
-      "swap-exact-output",
-      {
+    const { to, data } = buildCalldata({
+      protocol: uniswapDef,
+      actionSlug: "swap-exact-output",
+      sampleInputs: {
         tokenIn: SEPOLIA_WETH,
         tokenOut: SEPOLIA_USDC,
         fee: FEE_TIER_030,
@@ -327,8 +331,8 @@ describe("Uniswap V3 on-chain integration (Sepolia)", () => {
         amountInMaximum: ONE_ETH,
         sqrtPriceLimitX96: "0",
       },
-      { chainId: CHAIN_ID }
-    );
+      chainId: CHAIN_ID,
+    });
 
     const provider = await makeProvider();
     try {

@@ -85,12 +85,12 @@ describe("Chainlink CCIP on-chain integration (Sepolia)", () => {
     );
 
   it("ccip-get-fee: eth_call returns decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata(
-      chainlinkDef,
-      "ccip-get-fee",
-      CCIP_MESSAGE_SAMPLE,
-      { chainId: CHAIN_ID }
-    );
+    const { to, data, contract } = buildCalldata({
+      protocol: chainlinkDef,
+      actionSlug: "ccip-get-fee",
+      sampleInputs: CCIP_MESSAGE_SAMPLE,
+      chainId: CHAIN_ID,
+    });
 
     const provider = await makeProvider();
     try {
@@ -113,12 +113,13 @@ describe("Chainlink CCIP on-chain integration (Sepolia)", () => {
   }, 30_000);
 
   it("ccip-check-bridge-balance: eth_call returns decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata(
-      chainlinkDef,
-      "ccip-check-bridge-balance",
-      { account: TEST_ADDRESS },
-      { chainId: CHAIN_ID, toOverride: CCIP_BNM_SEPOLIA }
-    );
+    const { to, data, contract } = buildCalldata({
+      protocol: chainlinkDef,
+      actionSlug: "ccip-check-bridge-balance",
+      sampleInputs: { account: TEST_ADDRESS },
+      chainId: CHAIN_ID,
+      toOverride: CCIP_BNM_SEPOLIA,
+    });
 
     const provider = await makeProvider();
     const result = await provider.executeWithFailover(
@@ -132,12 +133,13 @@ describe("Chainlink CCIP on-chain integration (Sepolia)", () => {
   }, 30_000);
 
   it("ccip-check-bridge-allowance: eth_call returns decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata(
-      chainlinkDef,
-      "ccip-check-bridge-allowance",
-      { owner: TEST_ADDRESS, spender: ethers.ZeroAddress },
-      { chainId: CHAIN_ID, toOverride: CCIP_BNM_SEPOLIA }
-    );
+    const { to, data, contract } = buildCalldata({
+      protocol: chainlinkDef,
+      actionSlug: "ccip-check-bridge-allowance",
+      sampleInputs: { owner: TEST_ADDRESS, spender: ethers.ZeroAddress },
+      chainId: CHAIN_ID,
+      toOverride: CCIP_BNM_SEPOLIA,
+    });
 
     const provider = await makeProvider();
     const result = await provider.executeWithFailover(
@@ -151,12 +153,16 @@ describe("Chainlink CCIP on-chain integration (Sepolia)", () => {
   }, 30_000);
 
   it("ccip-approve-bridge-token: calldata encodes (business revert expected)", async () => {
-    const { to, data } = buildCalldata(
-      chainlinkDef,
-      "ccip-approve-bridge-token",
-      { spender: ethers.ZeroAddress, amount: "1000000000000000000" },
-      { chainId: CHAIN_ID, toOverride: CCIP_BNM_SEPOLIA }
-    );
+    const { to, data } = buildCalldata({
+      protocol: chainlinkDef,
+      actionSlug: "ccip-approve-bridge-token",
+      sampleInputs: {
+        spender: ethers.ZeroAddress,
+        amount: "1000000000000000000",
+      },
+      chainId: CHAIN_ID,
+      toOverride: CCIP_BNM_SEPOLIA,
+    });
 
     const provider = await makeProvider();
     try {
@@ -172,12 +178,12 @@ describe("Chainlink CCIP on-chain integration (Sepolia)", () => {
   }, 30_000);
 
   it("ccip-send: calldata encodes (business revert expected)", async () => {
-    const { to, data } = buildCalldata(
-      chainlinkDef,
-      "ccip-send",
-      CCIP_MESSAGE_SAMPLE,
-      { chainId: CHAIN_ID }
-    );
+    const { to, data } = buildCalldata({
+      protocol: chainlinkDef,
+      actionSlug: "ccip-send",
+      sampleInputs: CCIP_MESSAGE_SAMPLE,
+      chainId: CHAIN_ID,
+    });
 
     const provider = await makeProvider();
     try {
@@ -202,12 +208,12 @@ describe("Chainlink CCIP on-chain integration (Sepolia)", () => {
   }, 30_000);
 
   it("ccip-bnm-drip: calldata encodes (business revert expected)", async () => {
-    const { to, data } = buildCalldata(
-      chainlinkDef,
-      "ccip-bnm-drip",
-      { to: TEST_ADDRESS },
-      { chainId: CHAIN_ID }
-    );
+    const { to, data } = buildCalldata({
+      protocol: chainlinkDef,
+      actionSlug: "ccip-bnm-drip",
+      sampleInputs: { to: TEST_ADDRESS },
+      chainId: CHAIN_ID,
+    });
 
     const provider = await makeProvider();
     try {

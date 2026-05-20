@@ -47,18 +47,22 @@ export type Calldata = {
   contract: ProtocolContract;
 };
 
-export type BuildCalldataOptions = {
-  /**
-   * Chain ID string as it appears in `protocol.contracts[key].addresses`.
-   * Required; mistakes here are silent bugs (wrong contract on wrong
-   * chain) so the helper does not default.
-   */
+export type BuildCalldataParams = {
+  /** The protocol definition the action belongs to. */
+  protocol: ProtocolDefinition;
+  /** Slug of the action to encode, as declared on `protocol.actions[i].slug`. */
+  actionSlug: string;
+  /** Map of input name to stringly-typed value. Must not contain keys
+   *  that the action does not declare; unknown keys throw. Missing
+   *  declared keys fall back to `inp.default ?? ""`. */
+  sampleInputs: Record<string, string>;
+  /** Chain ID string as it appears in `protocol.contracts[key].addresses`.
+   *  Required; mistakes here are silent bugs (wrong contract on wrong
+   *  chain) so the helper does not default. */
   chainId: string;
-  /**
-   * Override the resolved contract address. Use for contracts marked
-   * `userSpecifiedAddress` where the address is supplied per call rather
-   * than from the protocol definition.
-   */
+  /** Override the resolved contract address. Use for contracts marked
+   *  `userSpecifiedAddress` where the address is supplied per call rather
+   *  than from the protocol definition. */
   toOverride?: string;
   /**
    * Run `coerceArgsForAbi` after `reshapeArgsForAbi`, matching the
@@ -75,12 +79,16 @@ export type BuildCalldataOptions = {
   coerceArgs?: boolean;
 };
 
-export function buildCalldata(
-  protocol: ProtocolDefinition,
-  actionSlug: string,
-  sampleInputs: Record<string, string>,
-  options: BuildCalldataOptions
-): Calldata {
+export function buildCalldata(params: BuildCalldataParams): Calldata {
+  const {
+    protocol,
+    actionSlug,
+    sampleInputs,
+    chainId,
+    toOverride,
+    coerceArgs,
+  } = params;
+
   const action = protocol.actions.find((a) => a.slug === actionSlug);
   if (!action) {
     throw new Error(`Action ${actionSlug} not found`);
@@ -104,10 +112,10 @@ export function buildCalldata(
     throw new Error(`Contract ${action.contract} has no ABI`);
   }
 
-  const to = options.toOverride ?? contract.addresses[options.chainId];
+  const to = toOverride ?? contract.addresses[chainId];
   if (!to) {
     throw new Error(
-      `No address for contract ${action.contract} on chain ${options.chainId} and no toOverride given`
+      `No address for contract ${action.contract} on chain ${chainId} and no toOverride given`
     );
   }
 
@@ -126,9 +134,7 @@ export function buildCalldata(
   }
   const reshaped = reshapeArgsForAbi(rawArgs, functionAbi);
   const args =
-    options.coerceArgs === false
-      ? reshaped
-      : coerceArgsForAbi(reshaped, functionAbi);
+    coerceArgs === false ? reshaped : coerceArgsForAbi(reshaped, functionAbi);
   const iface = new ethers.Interface(parsedAbi);
   const data = iface.encodeFunctionData(action.function, args);
 

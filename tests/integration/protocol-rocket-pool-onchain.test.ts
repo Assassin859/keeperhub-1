@@ -66,12 +66,12 @@ describe.skipIf(!RPC_URL)("Rocket Pool on-chain integration", () => {
   });
 
   it("getExchangeRate: eth_call returns a decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata(
-      rocketPoolDef,
-      "get-exchange-rate",
-      {},
-      { chainId: CHAIN_ID }
-    );
+    const { to, data, contract } = buildCalldata({
+      protocol: rocketPoolDef,
+      actionSlug: "get-exchange-rate",
+      sampleInputs: {},
+      chainId: CHAIN_ID,
+    });
 
     const result = await manager.executeWithFailover((p) =>
       p.call({ to, data })
@@ -84,12 +84,12 @@ describe.skipIf(!RPC_URL)("Rocket Pool on-chain integration", () => {
   }, 15_000);
 
   it("balanceOf: eth_call returns a decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata(
-      rocketPoolDef,
-      "balance-of",
-      { account: TEST_ADDRESS },
-      { chainId: CHAIN_ID }
-    );
+    const { to, data, contract } = buildCalldata({
+      protocol: rocketPoolDef,
+      actionSlug: "balance-of",
+      sampleInputs: { account: TEST_ADDRESS },
+      chainId: CHAIN_ID,
+    });
 
     const result = await manager.executeWithFailover((p) =>
       p.call({ to, data })
@@ -102,12 +102,12 @@ describe.skipIf(!RPC_URL)("Rocket Pool on-chain integration", () => {
   }, 15_000);
 
   it("totalSupply: eth_call returns a decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata(
-      rocketPoolDef,
-      "total-supply",
-      {},
-      { chainId: CHAIN_ID }
-    );
+    const { to, data, contract } = buildCalldata({
+      protocol: rocketPoolDef,
+      actionSlug: "total-supply",
+      sampleInputs: {},
+      chainId: CHAIN_ID,
+    });
 
     const result = await manager.executeWithFailover((p) =>
       p.call({ to, data })
@@ -120,12 +120,12 @@ describe.skipIf(!RPC_URL)("Rocket Pool on-chain integration", () => {
   }, 15_000);
 
   it("getTotalCollateral: eth_call returns a decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata(
-      rocketPoolDef,
-      "get-total-collateral",
-      {},
-      { chainId: CHAIN_ID }
-    );
+    const { to, data, contract } = buildCalldata({
+      protocol: rocketPoolDef,
+      actionSlug: "get-total-collateral",
+      sampleInputs: {},
+      chainId: CHAIN_ID,
+    });
 
     const result = await manager.executeWithFailover((p) =>
       p.call({ to, data })
@@ -138,23 +138,23 @@ describe.skipIf(!RPC_URL)("Rocket Pool on-chain integration", () => {
   }, 15_000);
 
   it("deposit: deployed bytecode accepts the calldata", async () => {
-    const { to, data } = buildCalldata(
-      rocketPoolDef,
-      "deposit",
-      {},
-      { chainId: CHAIN_ID }
-    );
+    const { to, data } = buildCalldata({
+      protocol: rocketPoolDef,
+      actionSlug: "deposit",
+      sampleInputs: {},
+      chainId: CHAIN_ID,
+    });
 
     await expectCallAcceptedByBytecode(manager, { to, data });
   }, 15_000);
 
   it("burn: deployed bytecode accepts the calldata", async () => {
-    const { to, data } = buildCalldata(
-      rocketPoolDef,
-      "burn",
-      { amount: "1000000000000000000" },
-      { chainId: CHAIN_ID }
-    );
+    const { to, data } = buildCalldata({
+      protocol: rocketPoolDef,
+      actionSlug: "burn",
+      sampleInputs: { amount: "1000000000000000000" },
+      chainId: CHAIN_ID,
+    });
 
     await expectCallAcceptedByBytecode(manager, { to, data });
   }, 15_000);

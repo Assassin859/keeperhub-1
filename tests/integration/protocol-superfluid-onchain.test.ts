@@ -101,12 +101,13 @@ describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
     action: ProtocolAction;
     to: string;
   }> {
-    const { to, data, contract, action } = buildCalldata(
-      superfluidDef,
-      slug,
-      inputs,
-      { chainId: CHAIN_ID, toOverride: contractAddressOverride }
-    );
+    const { to, data, contract, action } = buildCalldata({
+      protocol: superfluidDef,
+      actionSlug: slug,
+      sampleInputs: inputs,
+      chainId: CHAIN_ID,
+      toOverride: contractAddressOverride,
+    });
     const result = await manager.executeWithFailover((p) =>
       p.call({ to, data })
     );
@@ -125,7 +126,10 @@ describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
     inputs: Record<string, string>,
     contractAddressOverride?: string
   ): Promise<string> {
-    const { to, data } = buildCalldata(superfluidDef, slug, inputs, {
+    const { to, data } = buildCalldata({
+      protocol: superfluidDef,
+      actionSlug: slug,
+      sampleInputs: inputs,
       chainId: CHAIN_ID,
       toOverride: contractAddressOverride,
     });
@@ -436,18 +440,14 @@ describe("DISPATCH_FAILURE_RE shape (synthesized ethers errors)", () => {
   it('does NOT misfire on data="0x..." with actual revert payload', () => {
     // Guards against the obvious regression of writing `/data="0x/`
     // (no closing quote), which would match every revert.
-    const err = ethers.makeError(
-      'execution reverted: "X"',
-      "CALL_EXCEPTION",
-      {
-        action: "estimateGas",
-        data: "0x08c379a0deadbeef",
-        reason: "X",
-        transaction: { data: "0xdeadbeef", to: TEST_ADDRESS },
-        invocation: null,
-        revert: { args: ["X"], name: "Error", signature: "Error(string)" },
-      }
-    );
+    const err = ethers.makeError('execution reverted: "X"', "CALL_EXCEPTION", {
+      action: "estimateGas",
+      data: "0x08c379a0deadbeef",
+      reason: "X",
+      transaction: { data: "0xdeadbeef", to: TEST_ADDRESS },
+      invocation: null,
+      revert: { args: ["X"], name: "Error", signature: "Error(string)" },
+    });
     expect(asMessage(err)).not.toMatch(DISPATCH_FAILURE_RE);
   });
 
@@ -467,19 +467,15 @@ describe("DISPATCH_FAILURE_RE shape (synthesized ethers errors)", () => {
     // ever produced a transaction object whose data was literally "0x"
     // while the top-level data was populated, the old `data="0x"` pattern
     // would have false-positived. The anchor prevents that.
-    const err = ethers.makeError(
-      'execution reverted: "X"',
-      "CALL_EXCEPTION",
-      {
-        action: "estimateGas",
-        data: "0x08c379a0deadbeef",
-        reason: "X",
-        // Nested transaction with empty data (hypothetical fallback call):
-        transaction: { data: "0x", to: TEST_ADDRESS },
-        invocation: null,
-        revert: { args: ["X"], name: "Error", signature: "Error(string)" },
-      }
-    );
+    const err = ethers.makeError('execution reverted: "X"', "CALL_EXCEPTION", {
+      action: "estimateGas",
+      data: "0x08c379a0deadbeef",
+      reason: "X",
+      // Nested transaction with empty data (hypothetical fallback call):
+      transaction: { data: "0x", to: TEST_ADDRESS },
+      invocation: null,
+      revert: { args: ["X"], name: "Error", signature: "Error(string)" },
+    });
     expect(asMessage(err)).not.toMatch(DISPATCH_FAILURE_RE);
   });
 

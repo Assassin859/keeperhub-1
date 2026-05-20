@@ -66,12 +66,12 @@ describe.skipIf(!RPC_URL)("Aave V4 Lido Spoke on-chain integration", () => {
   });
 
   it("getReserveId: eth_call returns a decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata(
-      aaveV4Def,
-      "get-reserve-id",
-      { hub: CORE_HUB, assetId: "0" },
-      { chainId: CHAIN_ID }
-    );
+    const { to, data, contract } = buildCalldata({
+      protocol: aaveV4Def,
+      actionSlug: "get-reserve-id",
+      sampleInputs: { hub: CORE_HUB, assetId: "0" },
+      chainId: CHAIN_ID,
+    });
 
     const result = await manager.executeWithFailover((p) =>
       p.call({ to, data })
@@ -84,12 +84,12 @@ describe.skipIf(!RPC_URL)("Aave V4 Lido Spoke on-chain integration", () => {
   }, 15_000);
 
   it("getUserSuppliedAssets: eth_call returns a decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata(
-      aaveV4Def,
-      "get-user-supplied-assets",
-      { reserveId: "0", user: TEST_ADDRESS },
-      { chainId: CHAIN_ID }
-    );
+    const { to, data, contract } = buildCalldata({
+      protocol: aaveV4Def,
+      actionSlug: "get-user-supplied-assets",
+      sampleInputs: { reserveId: "0", user: TEST_ADDRESS },
+      chainId: CHAIN_ID,
+    });
 
     const result = await manager.executeWithFailover((p) =>
       p.call({ to, data })
@@ -102,12 +102,12 @@ describe.skipIf(!RPC_URL)("Aave V4 Lido Spoke on-chain integration", () => {
   }, 15_000);
 
   it("getUserDebt: eth_call returns two decodable uint256 values", async () => {
-    const { to, data, contract } = buildCalldata(
-      aaveV4Def,
-      "get-user-debt",
-      { reserveId: "0", user: TEST_ADDRESS },
-      { chainId: CHAIN_ID }
-    );
+    const { to, data, contract } = buildCalldata({
+      protocol: aaveV4Def,
+      actionSlug: "get-user-debt",
+      sampleInputs: { reserveId: "0", user: TEST_ADDRESS },
+      chainId: CHAIN_ID,
+    });
 
     const result = await manager.executeWithFailover((p) =>
       p.call({ to, data })
@@ -122,12 +122,12 @@ describe.skipIf(!RPC_URL)("Aave V4 Lido Spoke on-chain integration", () => {
   }, 15_000);
 
   it("getUserAccountData: eth_call returns a decodable struct with named fields", async () => {
-    const { to, data, contract } = buildCalldata(
-      aaveV4Def,
-      "get-user-account-data",
-      { user: TEST_ADDRESS },
-      { chainId: CHAIN_ID }
-    );
+    const { to, data, contract } = buildCalldata({
+      protocol: aaveV4Def,
+      actionSlug: "get-user-account-data",
+      sampleInputs: { user: TEST_ADDRESS },
+      chainId: CHAIN_ID,
+    });
 
     const result = await manager.executeWithFailover((p) =>
       p.call({ to, data })
@@ -144,31 +144,31 @@ describe.skipIf(!RPC_URL)("Aave V4 Lido Spoke on-chain integration", () => {
   }, 15_000);
 
   it("supply: deployed bytecode accepts the calldata", async () => {
-    const { to, data } = buildCalldata(
-      aaveV4Def,
-      "supply",
-      {
+    const { to, data } = buildCalldata({
+      protocol: aaveV4Def,
+      actionSlug: "supply",
+      sampleInputs: {
         reserveId: "0",
         amount: "1000000000000000000",
         onBehalfOf: TEST_ADDRESS,
       },
-      { chainId: CHAIN_ID }
-    );
+      chainId: CHAIN_ID,
+    });
 
     await expectCallAcceptedByBytecode(manager, { to, data });
   }, 15_000);
 
   it("setUsingAsCollateral: deployed bytecode accepts the calldata", async () => {
-    const { to, data } = buildCalldata(
-      aaveV4Def,
-      "set-collateral",
-      {
+    const { to, data } = buildCalldata({
+      protocol: aaveV4Def,
+      actionSlug: "set-collateral",
+      sampleInputs: {
         reserveId: "0",
         usingAsCollateral: "true",
         onBehalfOf: TEST_ADDRESS,
       },
-      { chainId: CHAIN_ID }
-    );
+      chainId: CHAIN_ID,
+    });
 
     await expectCallAcceptedByBytecode(manager, { to, data });
   }, 15_000);

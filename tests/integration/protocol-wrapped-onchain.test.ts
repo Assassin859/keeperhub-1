@@ -46,12 +46,12 @@ describe.skipIf(!RPC_URL)("Wrapped on-chain integration", () => {
   });
 
   it("balanceOf: eth_call returns a decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata(
-      wrappedDef,
-      "balance-of",
-      { account: TEST_ADDRESS },
-      { chainId: CHAIN_ID }
-    );
+    const { to, data, contract } = buildCalldata({
+      protocol: wrappedDef,
+      actionSlug: "balance-of",
+      sampleInputs: { account: TEST_ADDRESS },
+      chainId: CHAIN_ID,
+    });
 
     const result = await manager.executeWithFailover((p) =>
       p.call({ to, data })
@@ -65,12 +65,12 @@ describe.skipIf(!RPC_URL)("Wrapped on-chain integration", () => {
   }, 15_000);
 
   it("deposit: estimateGas succeeds with ETH value", async () => {
-    const { to, data } = buildCalldata(
-      wrappedDef,
-      "wrap",
-      {},
-      { chainId: CHAIN_ID }
-    );
+    const { to, data } = buildCalldata({
+      protocol: wrappedDef,
+      actionSlug: "wrap",
+      sampleInputs: {},
+      chainId: CHAIN_ID,
+    });
 
     const gas = await manager.executeWithFailover((p) =>
       p.estimateGas({
@@ -85,12 +85,12 @@ describe.skipIf(!RPC_URL)("Wrapped on-chain integration", () => {
   }, 15_000);
 
   it("withdraw: calldata encodes correctly (business revert expected)", async () => {
-    const { to, data } = buildCalldata(
-      wrappedDef,
-      "unwrap",
-      { wad: "1000000000000000000" },
-      { chainId: CHAIN_ID }
-    );
+    const { to, data } = buildCalldata({
+      protocol: wrappedDef,
+      actionSlug: "unwrap",
+      sampleInputs: { wad: "1000000000000000000" },
+      chainId: CHAIN_ID,
+    });
 
     try {
       await manager.executeWithFailover((p) =>
