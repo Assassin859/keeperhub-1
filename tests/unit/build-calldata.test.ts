@@ -96,6 +96,15 @@ const fixture: ProtocolDefinition = {
       function: "balanceOf",
       inputs: [],
     },
+    {
+      slug: "unknown-function",
+      label: "Unknown Function",
+      description: "Action whose function is not in the ABI",
+      type: "read",
+      contract: "token",
+      function: "doesNotExist",
+      inputs: [],
+    },
   ],
 };
 
@@ -209,6 +218,14 @@ describe("buildCalldata", () => {
       expect(() =>
         buildCalldata(fixture, "no-abi-action", {}, { chainId: "1" })
       ).toThrow("Contract noAbi has no ABI");
+    });
+
+    it("throws when the action.function is not declared in the ABI", () => {
+      expect(() =>
+        buildCalldata(fixture, "unknown-function", {}, { chainId: "1" })
+      ).toThrow(
+        "Function doesNotExist not found in ABI for contract token"
+      );
     });
 
     it("throws with a toOverride hint when no address is found", () => {

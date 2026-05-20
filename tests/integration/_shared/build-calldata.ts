@@ -24,12 +24,21 @@
  */
 
 import { ethers } from "ethers";
-import { coerceArgsForAbi, reshapeArgsForAbi } from "@/lib/abi/struct-args";
+import {
+  coerceArgsForAbi,
+  type FunctionAbiEntry,
+  reshapeArgsForAbi,
+} from "@/lib/abi/struct-args";
 import type {
   ProtocolAction,
   ProtocolContract,
   ProtocolDefinition,
 } from "@/lib/protocol-registry";
+
+type AbiEntry = FunctionAbiEntry & {
+  type: string;
+  name?: string;
+};
 
 export type Calldata = {
   to: string;
@@ -91,16 +100,20 @@ export function buildCalldata(
     (inp) => sampleInputs[inp.name] ?? inp.default ?? ""
   );
 
-  const abi = JSON.parse(contract.abi);
-  const functionAbi = abi.find(
-    (f: { name: string; type: string }) =>
-      f.type === "function" && f.name === action.function
+  const parsedAbi = JSON.parse(contract.abi) as AbiEntry[];
+  const functionAbi = parsedAbi.find(
+    (f) => f.type === "function" && f.name === action.function
   );
+  if (!functionAbi) {
+    throw new Error(
+      `Function ${action.function} not found in ABI for contract ${action.contract}`
+    );
+  }
   const reshaped = reshapeArgsForAbi(rawArgs, functionAbi);
   const args = options.coerceArgs
     ? coerceArgsForAbi(reshaped, functionAbi)
     : reshaped;
-  const iface = new ethers.Interface(abi);
+  const iface = new ethers.Interface(parsedAbi);
   const data = iface.encodeFunctionData(action.function, args);
 
   return { to, data, action, contract };
