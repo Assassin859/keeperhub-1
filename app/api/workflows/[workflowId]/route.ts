@@ -100,10 +100,11 @@ export async function GET(
     });
 
     // Access control:
-    // - Public workflows: anyone can view (sanitized)
+    // - Public workflows: anyone can view (sanitized), Hub-listed
+    // - Unlisted workflows: anyone with the link can view (sanitized), not on Hub
     // - Private workflows: owner or org member can view
     // - Anonymous workflows: only owner can view
-    if (!access.hasFullAccess && workflow.visibility !== "public") {
+    if (!access.hasFullAccess && workflow.visibility === "private") {
       return NextResponse.json(
         { error: "Workflow not found" },
         { status: 404 }
@@ -211,6 +212,7 @@ function isValidVisibility(visibility: unknown): boolean {
   return (
     visibility === undefined ||
     visibility === "private" ||
+    visibility === "unlisted" ||
     visibility === "public"
   );
 }
@@ -251,7 +253,9 @@ async function handlePostUpdateSideEffects(
   workflowId: string,
   body: Record<string, unknown>
 ): Promise<void> {
-  if (body.visibility === "private") {
+  // Tags are Hub-discovery only; clear them on any demote off of "public",
+  // including demote-to-unlisted (link-only) and demote-to-private.
+  if (body.visibility === "private" || body.visibility === "unlisted") {
     await db
       .delete(workflowPublicTags)
       .where(eq(workflowPublicTags.workflowId, workflowId));
@@ -337,7 +341,10 @@ export async function PATCH(
     // Validate visibility value if provided
     if (!isValidVisibility(body.visibility)) {
       return NextResponse.json(
-        { error: "Invalid visibility value. Must be 'private' or 'public'" },
+        {
+          error:
+            "Invalid visibility value. Must be 'private', 'unlisted', or 'public'",
+        },
         { status: 400 }
       );
     }

@@ -804,7 +804,9 @@ export async function generateWorkflowOGImage(
       return new Response("Workflow not found", { status: 404 });
     }
 
-    if (workflow.visibility !== "public") {
+    // Unlisted workflows are link-shareable, so they also get an OG preview.
+    // Only private workflows refuse OG rendering.
+    if (workflow.visibility === "private") {
       return new Response("Workflow is private", { status: 403 });
     }
 

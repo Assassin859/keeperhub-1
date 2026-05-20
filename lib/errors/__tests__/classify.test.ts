@@ -97,6 +97,73 @@ describe("classifyExecutionError", () => {
       expect(r.errorCategory).toBe(ErrorCategory.TRANSACTION);
       expect(r.errorType).toBe("user");
     });
+
+    it.each([
+      "Token approval failed: execution reverted (unknown custom error)",
+      "Token transfer failed: execution reverted",
+      'Transaction failed: missing revert data (action="call", data=null)',
+    ])("classifies %s as transaction + user", (input) => {
+      const r = classifyExecutionError(input);
+      expect(r.errorCategory).toBe(ErrorCategory.TRANSACTION);
+      expect(r.errorType).toBe("user");
+    });
+
+    it("Invalid Ethereum address: validation + user", () => {
+      const r = classifyExecutionError(
+        "Invalid Ethereum address: 0x0B3d7DE83b842A78F6d4be3Ad0C66f8b86b79e06"
+      );
+      expect(r.errorCategory).toBe(ErrorCategory.VALIDATION);
+      expect(r.errorType).toBe("user");
+    });
+
+    it.each([
+      "Function 'name' not found in ABI",
+      "Call at index 0: Function 'totalSupply' not found in ABI",
+    ])("classifies %s as validation + user", (input) => {
+      const r = classifyExecutionError(input);
+      expect(r.errorCategory).toBe(ErrorCategory.VALIDATION);
+      expect(r.errorType).toBe("user");
+    });
+
+    it("DATABASE_URL is not configured: configuration + user", () => {
+      const r = classifyExecutionError(
+        "DATABASE_URL is not configured. Please add it in Project Integrations."
+      );
+      expect(r.errorCategory).toBe(ErrorCategory.CONFIGURATION);
+      expect(r.errorType).toBe("user");
+    });
+
+    it("Para session expired: configuration + user (more specific than generic wallet-init system rule)", () => {
+      const r = classifyExecutionError(
+        "Failed to initialize organization wallet: Para session expired. User must re-export from wallet settings."
+      );
+      expect(r.errorCategory).toBe(ErrorCategory.CONFIGURATION);
+      expect(r.errorType).toBe("user");
+    });
+  });
+
+  describe("user-config: external HTTP endpoint failures", () => {
+    it.each([
+      'HTTP 401: {"error":"unauthorized"}',
+      "HTTP 404: Not Found",
+      "HTTP 500: Internal Server Error",
+      "HTTP 502: Failed to send Discord message",
+    ])("classifies %s as external_service + user", (input) => {
+      const r = classifyExecutionError(input);
+      expect(r.errorCategory).toBe(ErrorCategory.EXTERNAL_SERVICE);
+      expect(r.errorType).toBe("user");
+    });
+
+    it.each([
+      "HTTP request failed: fetch failed: read ECONNRESET",
+      "HTTP request failed: fetch failed: getaddrinfo ENOTFOUND api.example.com",
+      "HTTP request failed: The operation was aborted",
+      "HTTP request failed with status 503: Service Unavailable",
+    ])("classifies %s as external_service + user", (input) => {
+      const r = classifyExecutionError(input);
+      expect(r.errorCategory).toBe(ErrorCategory.EXTERNAL_SERVICE);
+      expect(r.errorType).toBe("user");
+    });
   });
 
   describe("network / RPC: external dependencies", () => {

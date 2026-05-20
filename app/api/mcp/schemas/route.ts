@@ -356,7 +356,7 @@ export async function GET(request: Request) {
     tips: [
       "actionType must match exactly (e.g., 'web3/check-balance', not 'Get Wallet Balance')",
       "Use {{@nodeId:Label.field}} syntax to reference outputs from previous nodes",
-      "network should be chain ID as string (e.g., '1' for mainnet, '11155111' for sepolia)",
+      "chainId is the canonical field for the target chain (e.g., 1 for Ethereum mainnet, 11155111 for Sepolia, 8453 for Base). Accepts a number or stringified number. The legacy `network` field is still accepted as a deprecated alias and also resolves common chain names (mainnet/ethereum, sepolia, base, base-sepolia, etc.).",
       "Edges need id, source, and target. For Condition nodes, also set sourceHandle to 'true' or 'false' to control which branch executes.",
       "For verified contracts, ABI is auto-fetched. For unverified contracts, provide ABI manually.",
       "Condition nodes have dual output handles ('true' and 'false'). Set sourceHandle on edges to route execution. For if/else, connect different nodes to each handle of a single Condition node.",

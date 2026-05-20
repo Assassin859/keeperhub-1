@@ -200,7 +200,10 @@ export const tags = pgTable(
   (table) => [index("idx_tags_org").on(table.organizationId)]
 );
 // Workflow visibility type
-export type WorkflowVisibility = "private" | "public";
+// - private: only owner / org members can view (default)
+// - unlisted: anyone with the URL can view read-only; not surfaced in Hub feed
+// - public: viewable by anyone AND listed on the Hub
+export type WorkflowVisibility = "private" | "unlisted" | "public";
 
 // Workflows table with user association
 export const workflows = pgTable(

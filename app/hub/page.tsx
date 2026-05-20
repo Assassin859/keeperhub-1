@@ -157,7 +157,7 @@ export default async function HubPage({
   return (
     <div className="pointer-events-auto fixed inset-0 overflow-x-hidden overflow-y-auto bg-sidebar [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
       <div className="flex min-h-full flex-col md:ml-[var(--nav-sidebar-width,60px)]">
-        <div className="container mx-auto max-w-7xl px-6 pt-20 pb-8">
+        <div className="container mx-auto max-w-7xl px-6 pb-8 pt-[calc(5rem+var(--app-banner-height,0px))]">
           <HubHero />
           <HubTabsShell
             actionsSlot={<HubExternalLinks />}
