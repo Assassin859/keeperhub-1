@@ -9,7 +9,15 @@
  * Coverage: every action declared by the protocol gets at least one
  * dispatch test (read decodes, write encodes without ABI errors).
  *
- * Gated on INTEGRATION_TEST_RPC_URL env var - skipped in CI without it.
+ * RPC URL resolution (shared with the rest of the codebase):
+ *   1. CHAIN_RPC_CONFIG JSON (Helm/AWS Parameter Store, set in CI + deployed
+ *      environments)
+ *   2. Individual CHAIN_SEPOLIA_*_RPC env vars (dev override)
+ *   3. Public Sepolia RPC default (last resort)
+ *
+ * Ungated. Always runs. Public RPC backs every tier so the test is never
+ * blocked by missing env vars. CI uses the paid staging endpoints via
+ * CHAIN_RPC_CONFIG.
  */
 
 import { ethers } from "ethers";
@@ -23,16 +31,36 @@ vi.mock("server-only", () => ({}));
 import type { ProtocolAction, ProtocolContract } from "@/lib/protocol-registry";
 import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
-import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
+import {
+  createRpcUrlResolver,
+  PUBLIC_RPCS,
+  parseRpcConfig,
+} from "@/lib/rpc/rpc-config";
 import superfluidDef, {
   CFA_FORWARDER_ADDRESS,
   GDA_FORWARDER_ADDRESS,
 } from "@/protocols/superfluid";
 import { buildCalldata } from "./_shared/build-calldata";
 
-const RPC_URL = process.env.INTEGRATION_TEST_RPC_URL;
 const CHAIN_ID = "11155111";
 const SEPOLIA_CHAIN_ID = 11_155_111;
+
+// Resolve Sepolia RPC URLs via the shared config pipeline: CHAIN_RPC_CONFIG
+// first, individual env vars second, public default last.
+const rpcConfig = parseRpcConfig(process.env.CHAIN_RPC_CONFIG);
+const resolveRpcUrl = createRpcUrlResolver(rpcConfig);
+const SEPOLIA_PRIMARY_URL = resolveRpcUrl(
+  "eth-sepolia",
+  "CHAIN_SEPOLIA_PRIMARY_RPC",
+  PUBLIC_RPCS.SEPOLIA,
+  "primary"
+);
+const SEPOLIA_FALLBACK_URL = resolveRpcUrl(
+  "eth-sepolia",
+  "CHAIN_SEPOLIA_FALLBACK_RPC",
+  PUBLIC_RPCS.SEPOLIA,
+  "fallback"
+);
 const TEST_ADDRESS = "0x0000000000000000000000000000000000000001";
 // Distinct from TEST_ADDRESS: estimateGas runs with `from: TEST_ADDRESS`,
 // and Superfluid's CFA rejects sender == flowOperator (self-grant).
@@ -74,16 +102,13 @@ const DUMMY_BYTES = "0x";
 const DISPATCH_FAILURE_RE =
   /INVALID_ARGUMENT|could not decode|invalid function|missing revert data|,\s*data="0x"/;
 
-describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
+describe("Superfluid on-chain integration", () => {
   let manager: RpcProviderManager;
 
   beforeAll(async () => {
-    if (!RPC_URL) {
-      return;
-    }
     manager = await getRpcProviderFromUrls(
-      RPC_URL,
-      getRpcUrlByChainId(SEPOLIA_CHAIN_ID, "fallback"),
+      SEPOLIA_PRIMARY_URL,
+      SEPOLIA_FALLBACK_URL,
       SEPOLIA_CHAIN_ID,
       "sepolia"
     );

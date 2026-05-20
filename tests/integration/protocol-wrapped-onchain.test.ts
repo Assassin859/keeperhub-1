@@ -2,9 +2,17 @@
  * Wrapped On-Chain Integration Tests
  *
  * Verifies that the ABI-driven Wrapped protocol definition produces valid
- * calldata that real contracts accept. Runs against a live RPC endpoint.
+ * calldata that real Sepolia contracts accept.
  *
- * Gated on INTEGRATION_TEST_RPC_URL env var - skipped in CI without it.
+ * RPC URL resolution (shared with the rest of the codebase):
+ *   1. CHAIN_RPC_CONFIG JSON (Helm/AWS Parameter Store, set in CI + deployed
+ *      environments)
+ *   2. Individual CHAIN_SEPOLIA_*_RPC env vars (dev override)
+ *   3. Public Sepolia RPC default (last resort)
+ *
+ * Ungated. Always runs. Public RPC backs every tier so the test is never
+ * blocked by missing env vars. CI uses the paid staging endpoints via
+ * CHAIN_RPC_CONFIG.
  */
 
 import { ethers } from "ethers";
@@ -17,29 +25,45 @@ vi.mock("server-only", () => ({}));
 
 import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
-import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
+import {
+  createRpcUrlResolver,
+  PUBLIC_RPCS,
+  parseRpcConfig,
+} from "@/lib/rpc/rpc-config";
 import wrappedDef from "@/protocols/wrapped";
 import { buildCalldata } from "./_shared/build-calldata";
 
-const RPC_URL = process.env.INTEGRATION_TEST_RPC_URL;
 const CHAIN_ID = "11155111";
 const SEPOLIA_CHAIN_ID = 11_155_111;
 const TEST_ADDRESS = "0x0000000000000000000000000000000000000001";
 
-describe.skipIf(!RPC_URL)("Wrapped on-chain integration", () => {
+// Resolve Sepolia RPC URLs via the shared config pipeline: CHAIN_RPC_CONFIG
+// first, individual env vars second, public default last. Same machinery as
+// the uniswap test and deployed services.
+const rpcConfig = parseRpcConfig(process.env.CHAIN_RPC_CONFIG);
+const resolveRpcUrl = createRpcUrlResolver(rpcConfig);
+const SEPOLIA_PRIMARY_URL = resolveRpcUrl(
+  "eth-sepolia",
+  "CHAIN_SEPOLIA_PRIMARY_RPC",
+  PUBLIC_RPCS.SEPOLIA,
+  "primary"
+);
+const SEPOLIA_FALLBACK_URL = resolveRpcUrl(
+  "eth-sepolia",
+  "CHAIN_SEPOLIA_FALLBACK_RPC",
+  PUBLIC_RPCS.SEPOLIA,
+  "fallback"
+);
+
+describe("Wrapped on-chain integration", () => {
   // Route every RPC call through the failover manager so a primary-endpoint
-  // hiccup falls back to the secondary instead of failing the test. The
-  // primary URL respects INTEGRATION_TEST_RPC_URL (the original gate); the
-  // fallback comes from the same chains-config used in production.
+  // hiccup falls back to the secondary instead of failing the test.
   let manager: RpcProviderManager;
 
   beforeAll(async () => {
-    if (!RPC_URL) {
-      return;
-    }
     manager = await getRpcProviderFromUrls(
-      RPC_URL,
-      getRpcUrlByChainId(SEPOLIA_CHAIN_ID, "fallback"),
+      SEPOLIA_PRIMARY_URL,
+      SEPOLIA_FALLBACK_URL,
       SEPOLIA_CHAIN_ID,
       "sepolia"
     );

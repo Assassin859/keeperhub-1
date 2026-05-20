@@ -9,11 +9,15 @@
  * Coverage: every action declared by the protocol gets at least one
  * dispatch test (read decodes, write encodes without ABI errors).
  *
- * Uses INTEGRATION_TEST_MAINNET_RPC_URL because Rocket Pool is deployed
- * on Ethereum mainnet only - the Sepolia-targeted INTEGRATION_TEST_RPC_URL
- * would produce address mismatches.
+ * RPC URL resolution (shared with the rest of the codebase):
+ *   1. CHAIN_RPC_CONFIG JSON (Helm/AWS Parameter Store, set in CI + deployed
+ *      environments)
+ *   2. Individual CHAIN_ETH_MAINNET_*_RPC env vars (dev override)
+ *   3. Public Ethereum mainnet RPC default (last resort)
  *
- * Gated on INTEGRATION_TEST_MAINNET_RPC_URL - skipped in CI without it.
+ * Ungated. Always runs. Public RPC backs every tier so the test is never
+ * blocked by missing env vars. CI uses the paid staging endpoints via
+ * CHAIN_RPC_CONFIG.
  */
 
 import { ethers } from "ethers";
@@ -26,14 +30,34 @@ vi.mock("server-only", () => ({}));
 
 import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
-import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
+import {
+  createRpcUrlResolver,
+  PUBLIC_RPCS,
+  parseRpcConfig,
+} from "@/lib/rpc/rpc-config";
 import rocketPoolDef from "@/protocols/rocket-pool";
 import { buildCalldata } from "./_shared/build-calldata";
 
-const RPC_URL = process.env.INTEGRATION_TEST_MAINNET_RPC_URL;
 const CHAIN_ID = "1";
 const MAINNET_CHAIN_ID = 1;
 const TEST_ADDRESS = "0x0000000000000000000000000000000000000001";
+
+// Resolve Ethereum mainnet RPC URLs via the shared config pipeline:
+// CHAIN_RPC_CONFIG first, individual env vars second, public default last.
+const rpcConfig = parseRpcConfig(process.env.CHAIN_RPC_CONFIG);
+const resolveRpcUrl = createRpcUrlResolver(rpcConfig);
+const MAINNET_PRIMARY_URL = resolveRpcUrl(
+  "eth-mainnet",
+  "CHAIN_ETH_MAINNET_PRIMARY_RPC",
+  PUBLIC_RPCS.ETH_MAINNET,
+  "primary"
+);
+const MAINNET_FALLBACK_URL = resolveRpcUrl(
+  "eth-mainnet",
+  "CHAIN_ETH_MAINNET_FALLBACK_RPC",
+  PUBLIC_RPCS.ETH_MAINNET_FALLBACK,
+  "fallback"
+);
 
 // Assertion model:
 //  - Read tests: let the RPC call fail loudly. A success path asserts the
@@ -48,18 +72,15 @@ const TEST_ADDRESS = "0x0000000000000000000000000000000000000001";
 //    the calldata. What we reject: calldata-level ethers errors
 //    (INVALID_ARGUMENT, BAD_DATA, BUFFER_OVERRUN) which would indicate the
 //    ABI doesn't match the deployed contract.
-describe.skipIf(!RPC_URL)("Rocket Pool on-chain integration", () => {
+describe("Rocket Pool on-chain integration", () => {
   // Route every RPC call through the failover manager so a primary-endpoint
   // hiccup falls back to the secondary instead of failing the test.
   let manager: RpcProviderManager;
 
   beforeAll(async () => {
-    if (!RPC_URL) {
-      return;
-    }
     manager = await getRpcProviderFromUrls(
-      RPC_URL,
-      getRpcUrlByChainId(MAINNET_CHAIN_ID, "fallback"),
+      MAINNET_PRIMARY_URL,
+      MAINNET_FALLBACK_URL,
       MAINNET_CHAIN_ID,
       "ethereum"
     );
