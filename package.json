@@ -38,7 +38,7 @@
     "test:coverage": "vitest run --coverage",
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
-    "test:protocol": "vitest run tests/integration/protocol-coverage",
+    "test:protocol": "vitest run tests/e2e/vitest/protocol-coverage",
     "test:e2e": "playwright test",
     "test:e2e:bfcache:dev": "playwright test back-forward-hydration",
     "test:e2e:bfcache:prod": "NEXT_BUILD_MODE=production playwright test back-forward-hydration",
