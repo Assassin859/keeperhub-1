@@ -103,7 +103,6 @@ vi.mock("@/lib/db/schema", () => ({
     status: "status",
   },
   safeWallets: {},
-  paraWallets: {},
 }));
 
 vi.mock("drizzle-orm", () => ({
@@ -188,7 +187,6 @@ vi.mock("@/lib/web3/wallet-helpers", () => ({
       id: "test-wallet-row",
       organizationId: TEST_ORG_ID,
       walletAddress: getFork().ownerAddress,
-      provider: "turnkey",
       turnkeySubOrgId: "test-suborg",
       isActive: true,
     }),
