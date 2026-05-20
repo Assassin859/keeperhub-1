@@ -35,6 +35,7 @@ Plugins provide the actions available in your workflows. Each plugin adds one or
 | [Telegram](/plugins/telegram) | Notifications | Send messages to chats | Bot token |
 | [SendGrid](/plugins/sendgrid) | Notifications | Send emails | API key |
 | [Webhook](/plugins/webhook) | Integrations | Send HTTP requests to external services | None |
+| [Hyperliquid](/plugins/hyperliquid) | Data | Read-only Info API queries: clearinghouse state, vault details, validators, funding history, spot deploy state, referrals, sub-accounts, active asset data | None |
 
 ## How Plugins Work
 
