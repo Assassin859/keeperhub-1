@@ -24,4 +24,5 @@ export default {
   telegram: "Telegram",
   sendgrid: "SendGrid",
   webhook: "Webhook",
+  hyperliquid: "Hyperliquid",
 };

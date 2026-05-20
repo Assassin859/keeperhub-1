@@ -10,19 +10,19 @@
 const TEMPLATE_VARIABLE_RE = /^\{\{.+\}\}$/;
 const ARRAY_SUFFIX_RE = /\[\d*\]$/;
 
-type AbiComponent = {
+export type AbiComponent = {
   name: string;
   type: string;
   components?: AbiComponent[];
 };
 
-type AbiInput = {
+export type AbiInput = {
   name: string;
   type: string;
   components?: AbiComponent[];
 };
 
-type FunctionAbiEntry = {
+export type FunctionAbiEntry = {
   inputs?: AbiInput[];
 };
 

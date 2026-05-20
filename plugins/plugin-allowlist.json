@@ -4,6 +4,7 @@
   "plugins": [
     "code",
     "discord",
+    "hyperliquid",
     "math",
     "protocol",
     "safe",

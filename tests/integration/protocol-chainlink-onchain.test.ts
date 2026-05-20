@@ -28,12 +28,6 @@ import { describe, expect, it, vi } from "vitest";
 // otherwise throw under vitest's Node runtime.
 vi.mock("server-only", () => ({}));
 
-import { reshapeArgsForAbi } from "@/lib/abi/struct-args";
-import type {
-  ProtocolAction,
-  ProtocolContract,
-  ProtocolDefinition,
-} from "@/lib/protocol-registry";
 import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import {
   createRpcUrlResolver,
@@ -41,6 +35,7 @@ import {
   parseRpcConfig,
 } from "@/lib/rpc/rpc-config";
 import chainlinkDef from "@/protocols/chainlink";
+import { buildCalldata } from "./_shared/build-calldata";
 
 const CHAIN_ID = "11155111"; // Sepolia
 const CHAIN_ID_NUMBER = 11_155_111;
@@ -80,56 +75,6 @@ const CCIP_MESSAGE_SAMPLE: Record<string, string> = {
   extraArgs: EXTRA_ARGS_V1_GAS_LIMIT_ZERO,
 };
 
-type Calldata = {
-  to: string;
-  data: string;
-  action: ProtocolAction;
-  contract: ProtocolContract;
-};
-
-// Builds calldata from a protocol action. For contracts with
-// userSpecifiedAddress: true, pass `toOverride` so the request targets a real
-// runtime token address rather than the reference address baked into the
-// protocol definition.
-function buildCalldata(
-  protocol: ProtocolDefinition,
-  actionSlug: string,
-  sampleInputs: Record<string, string>,
-  toOverride?: string
-): Calldata {
-  const action = protocol.actions.find((a) => a.slug === actionSlug);
-  if (!action) {
-    throw new Error(`Action ${actionSlug} not found`);
-  }
-
-  const contract = protocol.contracts[action.contract];
-  if (!contract.abi) {
-    throw new Error(`Contract ${action.contract} has no ABI`);
-  }
-
-  const to = toOverride ?? contract.addresses[CHAIN_ID];
-  if (!to) {
-    throw new Error(
-      `No address for contract ${action.contract} on chain ${CHAIN_ID}`
-    );
-  }
-
-  const rawArgs = action.inputs.map(
-    (inp) => sampleInputs[inp.name] ?? inp.default ?? ""
-  );
-
-  const abi = JSON.parse(contract.abi);
-  const functionAbi = abi.find(
-    (f: { name: string; type: string }) =>
-      f.type === "function" && f.name === action.function
-  );
-  const args = reshapeArgsForAbi(rawArgs, functionAbi);
-  const iface = new ethers.Interface(abi);
-  const data = iface.encodeFunctionData(action.function, args);
-
-  return { to, data, action, contract };
-}
-
 describe("Chainlink CCIP on-chain integration (Sepolia)", () => {
   const makeProvider = () =>
     getRpcProviderFromUrls(
@@ -140,11 +85,12 @@ describe("Chainlink CCIP on-chain integration (Sepolia)", () => {
     );
 
   it("ccip-get-fee: eth_call returns decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata(
-      chainlinkDef,
-      "ccip-get-fee",
-      CCIP_MESSAGE_SAMPLE
-    );
+    const { to, data, contract } = buildCalldata({
+      protocol: chainlinkDef,
+      actionSlug: "ccip-get-fee",
+      sampleInputs: CCIP_MESSAGE_SAMPLE,
+      chainId: CHAIN_ID,
+    });
 
     const provider = await makeProvider();
     try {
@@ -167,12 +113,13 @@ describe("Chainlink CCIP on-chain integration (Sepolia)", () => {
   }, 30_000);
 
   it("ccip-check-bridge-balance: eth_call returns decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata(
-      chainlinkDef,
-      "ccip-check-bridge-balance",
-      { account: TEST_ADDRESS },
-      CCIP_BNM_SEPOLIA
-    );
+    const { to, data, contract } = buildCalldata({
+      protocol: chainlinkDef,
+      actionSlug: "ccip-check-bridge-balance",
+      sampleInputs: { account: TEST_ADDRESS },
+      chainId: CHAIN_ID,
+      toOverride: CCIP_BNM_SEPOLIA,
+    });
 
     const provider = await makeProvider();
     const result = await provider.executeWithFailover(
@@ -186,12 +133,13 @@ describe("Chainlink CCIP on-chain integration (Sepolia)", () => {
   }, 30_000);
 
   it("ccip-check-bridge-allowance: eth_call returns decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata(
-      chainlinkDef,
-      "ccip-check-bridge-allowance",
-      { owner: TEST_ADDRESS, spender: ethers.ZeroAddress },
-      CCIP_BNM_SEPOLIA
-    );
+    const { to, data, contract } = buildCalldata({
+      protocol: chainlinkDef,
+      actionSlug: "ccip-check-bridge-allowance",
+      sampleInputs: { owner: TEST_ADDRESS, spender: ethers.ZeroAddress },
+      chainId: CHAIN_ID,
+      toOverride: CCIP_BNM_SEPOLIA,
+    });
 
     const provider = await makeProvider();
     const result = await provider.executeWithFailover(
@@ -205,12 +153,16 @@ describe("Chainlink CCIP on-chain integration (Sepolia)", () => {
   }, 30_000);
 
   it("ccip-approve-bridge-token: calldata encodes (business revert expected)", async () => {
-    const { to, data } = buildCalldata(
-      chainlinkDef,
-      "ccip-approve-bridge-token",
-      { spender: ethers.ZeroAddress, amount: "1000000000000000000" },
-      CCIP_BNM_SEPOLIA
-    );
+    const { to, data } = buildCalldata({
+      protocol: chainlinkDef,
+      actionSlug: "ccip-approve-bridge-token",
+      sampleInputs: {
+        spender: ethers.ZeroAddress,
+        amount: "1000000000000000000",
+      },
+      chainId: CHAIN_ID,
+      toOverride: CCIP_BNM_SEPOLIA,
+    });
 
     const provider = await makeProvider();
     try {
@@ -226,11 +178,12 @@ describe("Chainlink CCIP on-chain integration (Sepolia)", () => {
   }, 30_000);
 
   it("ccip-send: calldata encodes (business revert expected)", async () => {
-    const { to, data } = buildCalldata(
-      chainlinkDef,
-      "ccip-send",
-      CCIP_MESSAGE_SAMPLE
-    );
+    const { to, data } = buildCalldata({
+      protocol: chainlinkDef,
+      actionSlug: "ccip-send",
+      sampleInputs: CCIP_MESSAGE_SAMPLE,
+      chainId: CHAIN_ID,
+    });
 
     const provider = await makeProvider();
     try {
@@ -255,8 +208,11 @@ describe("Chainlink CCIP on-chain integration (Sepolia)", () => {
   }, 30_000);
 
   it("ccip-bnm-drip: calldata encodes (business revert expected)", async () => {
-    const { to, data } = buildCalldata(chainlinkDef, "ccip-bnm-drip", {
-      to: TEST_ADDRESS,
+    const { to, data } = buildCalldata({
+      protocol: chainlinkDef,
+      actionSlug: "ccip-bnm-drip",
+      sampleInputs: { to: TEST_ADDRESS },
+      chainId: CHAIN_ID,
     });
 
     const provider = await makeProvider();
