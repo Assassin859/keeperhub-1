@@ -200,6 +200,36 @@ jobs:
           test_api_key: ${{ secrets.TEST_API_KEY }}
           chain_rpc_config: ${{ secrets.CHAIN_RPC_CONFIG }}
           integration_encryption_key: ${{ secrets.TEST_INTEGRATION_ENCRYPTION_KEY }}
+          wallet_encryption_key: ${{ secrets.TEST_WALLET_ENCRYPTION_KEY }}
+          turnkey_api_public_key: ${{ secrets.TURNKEY_API_PUBLIC_KEY }}
+          turnkey_api_private_key: ${{ secrets.TURNKEY_API_PRIVATE_KEY }}
+          turnkey_organization_id: ${{ secrets.TURNKEY_ORGANIZATION_ID }}
+
+      - name: Start anvil Sepolia fork for orchestrator integration tests
+        run: |
+          # docker-compose.yml attaches every service to the external
+          # `keeperhub-network`; the ephemeral start-app step uses
+          # `docker run --network host` and never creates it, so compose
+          # bails before bringing test-anvil-fork up. Create it idempotently.
+          docker network create keeperhub-network 2>/dev/null || true
+          docker compose --profile test up -d --wait test-anvil-fork || \
+            docker compose --profile test up -d test-anvil-fork
+          # Health-poll the fork up to ~60s -- the wait flag above is best-effort
+          # because the foundry image's healthcheck depends on cast resolving
+          # the public Sepolia RPC over IPv4.
+          retries=0
+          until curl -sf -X POST http://localhost:8547 \
+                -H "Content-Type: application/json" \
+                -d '{"jsonrpc":"2.0","method":"eth_chainId","id":1}' | grep -q '"0xaa36a7"'; do
+            retries=$((retries + 1))
+            if [ "$retries" -ge 30 ]; then
+              echo "anvil Sepolia fork did not become ready in 60s"
+              docker logs keeperhub-test-anvil-fork || true
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "anvil Sepolia fork ready on localhost:8547"
 
       - name: Run E2E Vitest tests
         run: pnpm test:e2e:vitest
@@ -213,6 +243,9 @@ jobs:
           AWS_REGION: us-east-1
           TEST_API_KEY: ${{ secrets.TEST_API_KEY }}
           CHAIN_RPC_CONFIG: ${{ secrets.CHAIN_RPC_CONFIG }}
+          # Funder EOA for protocol-coverage suites' ensureNativeGas top-up.
+          # When unset the suites skip cleanly (see coverage.test.ts gate).
+          TESTNET_FUNDER_PK: ${{ secrets.TESTNET_FUNDER_PK }}
 
       - name: Dump app container logs
         if: failure() && inputs.image_tag != ''
@@ -291,6 +324,10 @@ jobs:
           test_api_key: ${{ secrets.TEST_API_KEY }}
           chain_rpc_config: ${{ secrets.CHAIN_RPC_CONFIG }}
           integration_encryption_key: ${{ secrets.TEST_INTEGRATION_ENCRYPTION_KEY }}
+          wallet_encryption_key: ${{ secrets.TEST_WALLET_ENCRYPTION_KEY }}
+          turnkey_api_public_key: ${{ secrets.TURNKEY_API_PUBLIC_KEY }}
+          turnkey_api_private_key: ${{ secrets.TURNKEY_API_PRIVATE_KEY }}
+          turnkey_organization_id: ${{ secrets.TURNKEY_ORGANIZATION_ID }}
 
       - name: Run Playwright tests
         run: pnpm test:e2e

@@ -89,7 +89,7 @@ export type FaucetSpec = {
 };
 
 /**
- * Faucet registry consumed by `tests/integration/protocol-coverage/_shared/funding.ts`.
+ * Faucet registry consumed by `tests/e2e/vitest/protocol-coverage/_shared/funding.ts`.
  * The TS preflight calls each faucet from the funder EOA before the setup
  * workflow runs. Args are bound by input *name* (case-insensitive):
  *   `token` -> token's address on this chain
@@ -141,12 +141,20 @@ export const FAUCETS: Record<
   },
 };
 
-/** Native gas floor below which the funder must top up the test wallet. */
+/**
+ * Native gas floor below which the funder must top up the test wallet.
+ * Sized to cover several write fixtures (typical Sepolia tx cost is
+ * ~0.0012 ETH; coverage suites run multiple writes per CI run, sometimes
+ * concurrently across protocols sharing one wallet via NonceManager).
+ */
 export const MIN_NATIVE_BALANCE_WEI_BY_CHAIN: Record<string, bigint> = {
-  "11155111": BigInt("1000000000000000"), // 0.001 ETH
+  "11155111": BigInt("10000000000000000"), // 0.01 ETH
 };
 
-/** How much native to send when topping up. */
+/**
+ * How much native to send when topping up. Aim for ~10x the per-tx cost so
+ * a single top-up survives a full suite run without re-checking mid-flight.
+ */
 export const FUND_NATIVE_AMOUNT_WEI_BY_CHAIN: Record<string, bigint> = {
-  "11155111": BigInt("2000000000000000"), // 0.002 ETH
+  "11155111": BigInt("20000000000000000"), // 0.02 ETH
 };

@@ -31,6 +31,11 @@ export const workflowStepStatus = pgEnum("step_status", [
   "failed",
   "cancelled",
 ]);
+// Created by @workflow/world-postgres migrations in `public` and referenced
+// cross-schema by `workflow.workflow_waits.status`. Declared here so
+// `pnpm db:push` does not emit a DROP that Postgres rejects with
+// "cannot drop type wait_status because other objects depend on it".
+export const workflowWaitStatus = pgEnum("wait_status", ["waiting", "completed"]);
 
 // Better Auth tables
 export const users = pgTable("users", {
@@ -156,7 +161,13 @@ export const addressBookEntry = pgTable(
       onDelete: "set null",
     }),
   },
-  (table) => [index("idx_address_book_org").on(table.organizationId)]
+  (table) => [
+    index("idx_address_book_org").on(table.organizationId),
+    uniqueIndex("idx_address_book_org_address").on(
+      table.organizationId,
+      table.address
+    ),
+  ]
 );
 
 export const projects = pgTable(
@@ -200,7 +211,10 @@ export const tags = pgTable(
   (table) => [index("idx_tags_org").on(table.organizationId)]
 );
 // Workflow visibility type
-export type WorkflowVisibility = "private" | "public";
+// - private: only owner / org members can view (default)
+// - unlisted: anyone with the URL can view read-only; not surfaced in Hub feed
+// - public: viewable by anyone AND listed on the Hub
+export type WorkflowVisibility = "private" | "unlisted" | "public";
 
 // Workflows table with user association
 export const workflows = pgTable(
@@ -479,6 +493,11 @@ export {
   type NewOrganizationToken,
   type NewOrganizationWallet,
   type NewPublicTag,
+  type NewSafeRole,
+  type NewSafeRoleAllowance,
+  type NewSafeRoleDirectRule,
+  type NewSafeRoleProtocol,
+  type NewSafeWallet,
   type NewSupportedToken,
   type NewWorkflowPublicTag,
   type OrganizationApiKey,
@@ -497,7 +516,17 @@ export {
   type PublicTag,
   pendingTransactions,
   publicTags,
+  type SafeRole,
+  type SafeRoleAllowance,
+  type SafeRoleDirectRule,
+  type SafeRoleProtocol,
+  type SafeWallet,
   type SupportedToken,
+  safeRoleAllowances,
+  safeRoleDirectRules,
+  safeRoleProtocols,
+  safeRoles,
+  safeWallets,
   supportedTokens,
   type WalletLock,
   type WorkflowPublicTag,

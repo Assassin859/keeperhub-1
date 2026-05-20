@@ -4,6 +4,7 @@ export default {
   code: "Code",
   math: "Math",
   safe: "Safe",
+  blockscout: "Blockscout",
   "aave-v3": "Aave V3",
   aerodrome: "Aerodrome",
   ajna: "Ajna",
@@ -24,4 +25,5 @@ export default {
   telegram: "Telegram",
   sendgrid: "SendGrid",
   webhook: "Webhook",
+  hyperliquid: "Hyperliquid",
 };

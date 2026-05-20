@@ -208,11 +208,17 @@ function generateProtocolsIndexFile(): void {
   const registrations: string[] = [];
   const slugList: string[] = [];
 
-  for (const { slug, fileStem } of registeredProtocolEntries) {
+  for (const entry of registeredProtocolEntries) {
+    const { slug, fileStem } = entry;
     const varName = slugToVarName(slug);
     imports.push(`import ${varName} from "./${fileStem}";`);
     registrations.push(`registerProtocol(${varName});`);
-    registrations.push(`registerIntegration(protocolToPlugin(${varName}));`);
+    // hubOnly protocols appear in Hub > Protocols but do not register
+    // as an integration plugin. Their slug is owned by a separately
+    // registered plugin in plugins/{slug}/ (e.g., hyperliquid).
+    if (!entry.definition.hubOnly) {
+      registrations.push(`registerIntegration(protocolToPlugin(${varName}));`);
+    }
     slugList.push(slug);
   }
 

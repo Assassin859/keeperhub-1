@@ -95,6 +95,13 @@ export type ProtocolDefinition = {
    *  protocol-coverage seeder and test runner. Optional; protocols without
    *  testnet coverage simply omit it. */
   testData?: import("./test-data/types").ProtocolTestData;
+  /** When true, the protocol appears in the Hub > Protocols tab but does
+   *  NOT register as an integration plugin in the action grid. Use for
+   *  placeholder/forthcoming protocols whose runtime actions are served
+   *  by a separately-registered plugin sharing the same slug (e.g.,
+   *  Hyperliquid's read-side Info REST plugin). Allows empty `contracts`
+   *  and `actions`. */
+  hubOnly?: boolean;
 };
 
 function validateSlug(slug: string, context: string): void {
@@ -160,6 +167,27 @@ export function buildEventAbiFragment(event: ProtocolEvent): string {
 }
 
 export function defineProtocol(def: ProtocolDefinition): ProtocolDefinition {
+  validateSlug(def.slug, `protocol "${def.name}"`);
+
+  if (def.hubOnly) {
+    if (Object.keys(def.contracts).length > 0) {
+      throw new Error(
+        `Hub-only protocol "${def.slug}" must not declare contracts`
+      );
+    }
+    if (def.actions.length > 0) {
+      throw new Error(
+        `Hub-only protocol "${def.slug}" must not declare actions`
+      );
+    }
+    if (def.events && def.events.length > 0) {
+      throw new Error(
+        `Hub-only protocol "${def.slug}" must not declare events`
+      );
+    }
+    return def;
+  }
+
   if (Object.keys(def.contracts).length === 0) {
     throw new Error(`Protocol "${def.slug}" must define at least one contract`);
   }
@@ -167,8 +195,6 @@ export function defineProtocol(def: ProtocolDefinition): ProtocolDefinition {
   if (def.actions.length === 0) {
     throw new Error(`Protocol "${def.slug}" must define at least one action`);
   }
-
-  validateSlug(def.slug, `protocol "${def.name}"`);
 
   for (const action of def.actions) {
     validateSlug(action.slug, `action of protocol "${def.slug}"`);

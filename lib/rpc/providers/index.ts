@@ -17,7 +17,11 @@ export type RpcErrorType =
   | "connection"
   | "rpc_error";
 
-export type RpcOperationType = "read" | "write" | "preflight";
+export type RpcOperationType =
+  | "read"
+  | "write"
+  | "preflight"
+  | "write-broadcast";
 
 export type RpcMetricsCollector = {
   recordPrimaryAttempt(chainName: string, operation?: RpcOperationType): void;

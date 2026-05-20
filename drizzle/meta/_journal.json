@@ -558,8 +558,29 @@
     {
       "idx": 79,
       "version": "7",
-      "when": 1777760000013,
-      "tag": "0079_keep_230_decom_para",
+      "when": 1778869656699,
+      "tag": "0079_safe_wallet_integration",
+      "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1778873393610,
+      "tag": "0080_safe_role_direct_rules_token_not_null",
+      "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1778873393611,
+      "tag": "0081_address_book_unique_address",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1778873393612,
+      "tag": "0082_keep_230_decom_para",
       "breakpoints": true
     }
   ]

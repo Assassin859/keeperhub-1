@@ -25,8 +25,17 @@ import { findAbiFunction } from "@/lib/abi/utils";
 import { getErrorMessage } from "@/lib/utils";
 import { getAbiFunctionKey } from "@/lib/abi/function-key";
 import { generateId } from "@/lib/utils/id";
+import {
+  executeContractCallAsRole,
+  executeContractCallAsSafe,
+} from "@/lib/safe/execute-as-safe";
+import { resolveSignerMode } from "@/lib/safe/signer-resolver";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
-import { formatContractError } from "@/lib/web3/decode-revert-error";
+import {
+  classifyRevert,
+  formatContractError,
+  type RevertKind,
+} from "@/lib/web3/decode-revert-error";
 import {
   parsePriorityFeeGwei,
   resolveGasLimitOverrides,
@@ -74,7 +83,7 @@ export type WriteContractResult =
       effectiveGasPrice: string;
       result?: unknown;
     }
-  | { success: false; error: string };
+  | { success: false; error: string; rejection?: RevertKind };
 
 /**
  * Core write contract logic
@@ -230,6 +239,11 @@ export async function writeContractCore(
     };
   }
 
+  // Decide whether to route this write through the org's Safe on this chain.
+  // In "safe" mode msg.sender at the target contract becomes the Safe address;
+  // the Turnkey EOA still signs the outer tx and pays gas.
+  const signerMode = await resolveSignerMode(organizationId, chainId);
+
   // Get workflow ID for transaction tracking (only for workflow executions)
   let workflowId: string | undefined;
   if (_context?.executionId && !_context?.organizationId) {
@@ -288,7 +302,13 @@ export async function writeContractCore(
   // Try gas-sponsored execution first (ERC-4337 via Pimlico).
   // KEEP-137: skip sponsorship when routing through a private mempool --
   // ERC-4337 bundlers use their own RPC (Pimlico), which bypasses Flashbots Protect.
-  if (!usePrivateMempool && isGasSponsorshipEnabled()) {
+  // KEEP-177: skip sponsorship in Safe mode -- the 4337 bundler sends from
+  // its own smart account, which would change msg.sender away from the Safe.
+  if (
+    !usePrivateMempool &&
+    signerMode.kind === "eoa" &&
+    isGasSponsorshipEnabled()
+  ) {
     try {
       const sponsoredResult = await executeSponsoredContractTransaction({
         organizationId,
@@ -370,21 +390,69 @@ export async function writeContractCore(
     }
 
     try {
-      const receipt = await adapter.executeContractCall(signer, {
-        contractAddress,
-        abi: parsedAbi as ethers.InterfaceAbi,
-        functionKey: abiFunctionKey,
-        args,
-        value: parsedEthValue,
-      }, session, {
-        gasOverrides: {
-          multiplierOverride,
-          gasLimitOverride,
-          priorityFeeOverride,
-        },
-        workflowId,
-        rpcManager,
-      });
+      let receipt: Awaited<ReturnType<typeof adapter.executeContractCall>>;
+      if (signerMode.kind === "safe-role") {
+        receipt = await executeContractCallAsRole(
+          signer,
+          {
+            safeAddress: signerMode.safeAddress,
+            delegateAddress: signerMode.delegateAddress,
+            rolesModifierAddress: signerMode.rolesModifierAddress,
+            roleKey: signerMode.roleKey,
+            contractAddress,
+            abi: parsedAbi as ethers.InterfaceAbi,
+            functionKey: abiFunctionKey,
+            args,
+            value: parsedEthValue,
+          },
+          session,
+          {
+            chainId,
+            workflowId,
+            rpcManager,
+          }
+        );
+      } else if (signerMode.kind === "safe") {
+        receipt = await executeContractCallAsSafe(
+          signer,
+          {
+            safeAddress: signerMode.safeAddress,
+            ownerAddress: signerMode.ownerAddress,
+            contractAddress,
+            abi: parsedAbi as ethers.InterfaceAbi,
+            functionKey: abiFunctionKey,
+            args,
+            value: parsedEthValue,
+          },
+          session,
+          {
+            chainId,
+            workflowId,
+            rpcManager,
+          }
+        );
+      } else {
+        receipt = await adapter.executeContractCall(
+          signer,
+          {
+            contractAddress,
+            abi: parsedAbi as ethers.InterfaceAbi,
+            functionKey: abiFunctionKey,
+            args,
+            value: parsedEthValue,
+          },
+          session,
+          {
+            gasOverrides: {
+              multiplierOverride,
+              gasLimitOverride,
+              priorityFeeOverride,
+            },
+            workflowId,
+            rpcManager,
+          }
+        );
+      }
 
       const gasUsedUnits = receipt.gasUsed.toString();
       const effectiveGasPrice = receipt.effectiveGasPrice.toString();
@@ -411,9 +479,11 @@ export async function writeContractCore(
           chain_id: String(chainId),
         }
       );
+      const rejection = classifyRevert(error, contractInterface);
       return {
         success: false,
         error: formatContractError(error, contractInterface),
+        ...(rejection.kind !== "unknown" ? { rejection } : {}),
       };
     }
   });

@@ -48,13 +48,31 @@ type ServerBalancesResponse = {
   error?: string;
 };
 
+type FetchBalancesOptions = {
+  /**
+   * When set, hits `/api/user/wallet/balances?safeId=X` so the server
+   * returns the Safe's balances instead of the Turnkey EOA's. The caller
+   * still supplies `address` so client-side display (explorer URLs etc.)
+   * uses the Safe's address.
+   */
+  safeId?: string;
+};
+
 type UseWalletBalancesReturn = {
   balances: ChainBalance[];
   tokenBalances: TokenBalance[];
   supportedTokenBalances: SupportedTokenBalance[];
   loading: boolean;
-  fetchBalances: (address: string, chains: ChainData[]) => Promise<void>;
-  refreshBalances: (address: string, chains: ChainData[]) => Promise<void>;
+  fetchBalances: (
+    address: string,
+    chains: ChainData[],
+    options?: FetchBalancesOptions
+  ) => Promise<void>;
+  refreshBalances: (
+    address: string,
+    chains: ChainData[],
+    options?: FetchBalancesOptions
+  ) => Promise<void>;
 };
 
 function buildExplorerAddressUrl(
@@ -97,7 +115,11 @@ export function useWalletBalances(): UseWalletBalancesReturn {
   const [loading, setLoading] = useState(false);
 
   const fetchBalances = useCallback(
-    async (address: string, chains: ChainData[]) => {
+    async (
+      address: string,
+      chains: ChainData[],
+      options?: FetchBalancesOptions
+    ) => {
       if (chains.length === 0) {
         return;
       }
@@ -106,7 +128,10 @@ export function useWalletBalances(): UseWalletBalancesReturn {
       setBalances(buildLoadingChainBalances(chains, address));
 
       try {
-        const response = await fetch("/api/user/wallet/balances");
+        const url = options?.safeId
+          ? `/api/user/wallet/balances?safeId=${encodeURIComponent(options.safeId)}`
+          : "/api/user/wallet/balances";
+        const response = await fetch(url);
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
@@ -178,8 +203,7 @@ export function useWalletBalances(): UseWalletBalancesReturn {
             loading: false,
             isTestnet: chain.isTestnet,
             explorerUrl: buildExplorerAddressUrl(chain, address),
-            error:
-              error instanceof Error ? error.message : "Failed to fetch",
+            error: error instanceof Error ? error.message : "Failed to fetch",
           }))
         );
       } finally {
@@ -190,8 +214,12 @@ export function useWalletBalances(): UseWalletBalancesReturn {
   );
 
   const refreshBalances = useCallback(
-    async (address: string, chains: ChainData[]) => {
-      await fetchBalances(address, chains);
+    async (
+      address: string,
+      chains: ChainData[],
+      options?: FetchBalancesOptions
+    ) => {
+      await fetchBalances(address, chains, options);
     },
     [fetchBalances]
   );

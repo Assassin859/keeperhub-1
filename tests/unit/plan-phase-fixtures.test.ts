@@ -1,5 +1,5 @@
 /**
- * Unit tests for KEEP-458 planPhaseFixtures.
+ * Unit tests for planPhaseFixtures.
  *
  * planPhaseFixtures is the pure decision layer behind runPhaseFixtures.
  * Tested in isolation so a regression in the `chainData.skipped` honouring
@@ -13,7 +13,7 @@ import type {
   ProtocolAction,
   ProtocolDefinition,
 } from "@/lib/protocol-registry";
-import { planPhaseFixtures } from "@/tests/integration/protocol-coverage/_shared/run-fixture";
+import { planPhaseFixtures } from "@/tests/e2e/vitest/protocol-coverage/_shared/run-fixture";
 
 function makeAction(
   slug: string,

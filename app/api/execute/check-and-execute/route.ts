@@ -170,7 +170,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json(validation.error, { status: 400 });
   }
 
-  const network = body.network as string;
+  // KEEP-490: chainId is the canonical input; network is a deprecated alias.
+  const network = String(body.chainId ?? body.network ?? "");
   const condition = body.condition as ConditionInput;
   const action = body.action as ActionBody;
 

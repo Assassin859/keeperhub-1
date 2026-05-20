@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
+import { recordWalletInAddressBook } from "@/lib/address-book/record-wallet";
 import { normalizeAddressForStorage } from "@/lib/address-utils";
 import { apiError } from "@/lib/api-error";
 import { auth } from "@/lib/auth";
@@ -196,6 +197,13 @@ async function storeTurnkeyWalletAndIntegration(options: {
       normalizedWalletAddress
     )
   );
+
+  await recordWalletInAddressBook({
+    organizationId,
+    address: normalizedWalletAddress,
+    label: "Org Wallet",
+    createdBy: userId,
+  });
 
   return { walletAddress: normalizedWalletAddress, walletId: turnkeyWalletId };
 }

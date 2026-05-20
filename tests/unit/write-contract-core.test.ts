@@ -135,6 +135,18 @@ vi.mock("@/lib/web3/wallet-helpers", () => ({
   }),
 }));
 
+vi.mock("@/lib/safe/signer-resolver", () => ({
+  resolveSignerMode: vi.fn().mockResolvedValue({
+    kind: "eoa",
+    ownerAddress: "0xwalletaddress",
+  }),
+}));
+
+vi.mock("@/lib/safe/execute-as-safe", () => ({
+  executeContractCallAsSafe: vi.fn(),
+  executeNativeTransferAsSafe: vi.fn(),
+}));
+
 // Capture txContext passed to withNonceSession
 let capturedTxContext: Record<string, unknown> | null = null;
 vi.mock("@/lib/web3/transaction-manager", () => ({
