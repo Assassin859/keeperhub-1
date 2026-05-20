@@ -4,6 +4,7 @@ export default {
   code: "Code",
   math: "Math",
   safe: "Safe",
+  blockscout: "Blockscout",
   "aave-v3": "Aave V3",
   aerodrome: "Aerodrome",
   ajna: "Ajna",
