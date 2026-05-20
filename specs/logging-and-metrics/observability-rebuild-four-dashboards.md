@@ -15,6 +15,12 @@ Four narrow dashboards, each with one named audience and a tight panel set, repl
 - Every panel has a documented metric source (Prometheus query, DB-sourced gauge, or both) and links to any alert that fires from the same data.
 - Every panel must be answerable for "now", "last 1h", "last 24h" and "last 7d" without breaking. Histogram quantiles, gauges, and counters are all OK as long as the query is honest about which one it is.
 
+### Known caveat: bulk `error_type` reclassification distorts SLI panels
+
+When `scripts/backfill-error-classification.ts` is re-run, classifier rules change, or `error_type` is manually fixed on many rows at once, the DB-sourced gauge sees rows "leave" one `error_type` label-value series and "enter" another in the same scrape. PromQL's `increase()` reads the gain as new errors while the loss is treated as a counter reset, producing a phantom positive bump that contaminates SLI panels for one `[$__range]` window-length.
+
+If the SLI panel suddenly tanks while DB shows no real new errors, check whether anyone ran a backfill or pushed a new classifier rule. The artifact self-clears once the reclassification timestamp falls outside the dashboard's time-range window. See [KEEP-592](https://linear.app/keeperhubapp/issue/KEEP-592) for the full root-cause analysis. Note: alert windows are short (2m) and recover before the artifact is visible, so paging is unaffected.
+
 ## Dashboard naming + URLs
 
 | Dashboard | Slug | Path | Audience |
