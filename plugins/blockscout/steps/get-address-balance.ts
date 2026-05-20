@@ -28,6 +28,7 @@ type GetAddressBalanceResult =
 
 export type GetAddressBalanceCoreInput = {
   address: string;
+  network?: string;
 };
 
 export type GetAddressBalanceInput = StepInput &
@@ -46,7 +47,8 @@ async function stepHandler(
 
   const result = await blockscoutGet<AddressResponse>(
     `/api/v2/addresses/${encodeURIComponent(address)}`,
-    credentials
+    credentials,
+    input.network
   );
 
   if (!result.success) {

@@ -1,6 +1,22 @@
-import type { IntegrationPlugin } from "@/plugins/registry";
+import type { ActionConfigField, IntegrationPlugin } from "@/plugins/registry";
 import { registerIntegration } from "@/plugins/registry-core";
+import { SUPPORTED_BLOCKSCOUT_CHAIN_IDS } from "./chains";
 import { BlockscoutIcon } from "./icon";
+
+// Chain picker shared by every action. Maps to a hosted Blockscout instance so
+// a workflow can query any supported chain with no connection setup. Defaults
+// to Ethereum mainnet; for a chain not listed, attach a Blockscout connection
+// with its instance URL.
+const NETWORK_FIELD: ActionConfigField = {
+  key: "network",
+  label: "Chain",
+  type: "chain-select",
+  chainTypeFilter: "evm",
+  allowedChainIds: SUPPORTED_BLOCKSCOUT_CHAIN_IDS,
+  defaultValue: "1",
+  helpTip:
+    "Which chain's Blockscout explorer to query. Defaults to Ethereum mainnet. For a chain not listed here, add a Blockscout connection with its instance URL.",
+};
 
 const blockscoutPlugin: IntegrationPlugin = {
   type: "blockscout",
@@ -63,6 +79,7 @@ const blockscoutPlugin: IntegrationPlugin = {
         { field: "error", description: "Error message if failed" },
       ],
       configFields: [
+        NETWORK_FIELD,
         {
           key: "address",
           label: "Address",
@@ -100,6 +117,7 @@ const blockscoutPlugin: IntegrationPlugin = {
         { field: "error", description: "Error message if failed" },
       ],
       configFields: [
+        NETWORK_FIELD,
         {
           key: "address",
           label: "Address",
@@ -127,6 +145,7 @@ const blockscoutPlugin: IntegrationPlugin = {
         { field: "error", description: "Error message if failed" },
       ],
       configFields: [
+        NETWORK_FIELD,
         {
           key: "address",
           label: "Address",
@@ -157,6 +176,7 @@ const blockscoutPlugin: IntegrationPlugin = {
         { field: "error", description: "Error message if failed" },
       ],
       configFields: [
+        NETWORK_FIELD,
         {
           key: "txHash",
           label: "Transaction Hash",
@@ -187,6 +207,7 @@ const blockscoutPlugin: IntegrationPlugin = {
         { field: "error", description: "Error message if failed" },
       ],
       configFields: [
+        NETWORK_FIELD,
         {
           key: "tokenAddress",
           label: "Token Address",
