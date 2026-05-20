@@ -78,7 +78,7 @@ export type NewOrganizationWallet = typeof organizationWallets.$inferInsert;
  *
  * One row per (organization, chain). A Safe is a smart-contract wallet
  * deployed on a specific chain and owned by the organization's active EOA
- * (Turnkey or Para row in organizationWallets). The Safe itself holds funds;
+ * (Turnkey row in organizationWallets). The Safe itself holds funds;
  * the EOA signs transactions on its behalf.
  *
  * Addresses are deterministic: same (org, chain) always resolves to the
