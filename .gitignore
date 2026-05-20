@@ -108,6 +108,7 @@ lib/types/integration.ts
 lib/workflow/codegen/registry.ts
 lib/step-registry.ts
 lib/output-display-configs.ts
+public/.well-known/
 lib/credential-map.ts
 public/monaco/
 

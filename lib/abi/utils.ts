@@ -69,8 +69,11 @@ export type AbiFunctionItem = AbiItem & { name: string };
  */
 export function findAbiFunction(
   abi: AbiItem[],
-  key: string
+  key: string | undefined | null
 ): AbiFunctionItem | undefined {
+  if (!key) {
+    return;
+  }
   const parenIdx = key.indexOf("(");
   if (parenIdx === -1) {
     return abi.find(

@@ -348,6 +348,59 @@ describe("validateWorkflow — unknown-output-mapping-node (VALID-03)", () => {
     expect(err).toBeUndefined();
   });
 
+  it("does not error on flat {field, nodeId} shape when nodeId references a valid node", () => {
+    const result = validateWorkflow(
+      makeWorkflow({
+        outputMapping: { field: "result", nodeId: "action-1" },
+      })
+    );
+    const err = result.errors.find(
+      (e) => e.code === "unknown-output-mapping-node"
+    );
+    expect(err).toBeUndefined();
+  });
+
+  it("errors on flat {field, nodeId} shape when nodeId is dangling", () => {
+    const result = validateWorkflow(
+      makeWorkflow({
+        outputMapping: { field: "result", nodeId: "ghost-node" },
+      })
+    );
+    expect(result.valid).toBe(false);
+    const err = result.errors.find(
+      (e) => e.code === "unknown-output-mapping-node"
+    );
+    expect(err).toBeDefined();
+    expect(err?.parameterPath).toBe("outputMapping.nodeId");
+    expect(err?.message).toContain("ghost-node");
+  });
+
+  it("does not error on keyed template-string shape referencing a valid node", () => {
+    const result = validateWorkflow(
+      makeWorkflow({
+        outputMapping: { result: "{{@action-1:Action.result}}" },
+      })
+    );
+    const err = result.errors.find(
+      (e) => e.code === "unknown-output-mapping-node"
+    );
+    expect(err).toBeUndefined();
+  });
+
+  it("errors on keyed template-string shape referencing a dangling node", () => {
+    const result = validateWorkflow(
+      makeWorkflow({
+        outputMapping: { result: "{{@ghost-node:Ghost.result}}" },
+      })
+    );
+    expect(result.valid).toBe(false);
+    const err = result.errors.find(
+      (e) => e.code === "unknown-output-mapping-node"
+    );
+    expect(err).toBeDefined();
+    expect(err?.message).toContain("ghost-node");
+  });
+
   it("does not error when outputMapping is null", () => {
     const result = validateWorkflow(makeWorkflow({ outputMapping: null }));
     const err = result.errors.find(

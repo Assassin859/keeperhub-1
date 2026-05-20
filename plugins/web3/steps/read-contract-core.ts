@@ -63,6 +63,19 @@ export async function readContractCore(
   const { contractAddress, network, abi, abiFunction, functionArgs, _context } =
     input;
 
+  if (!abiFunction || abiFunction.trim() === "") {
+    logUserError(
+      ErrorCategory.VALIDATION,
+      "[Read Contract] Missing abiFunction",
+      { abiFunction },
+      { plugin_name: "web3", action_name: "read-contract" }
+    );
+    return {
+      success: false,
+      error: "Missing `abiFunction` in the step config",
+    };
+  }
+
   const userId = _context?.organizationId
     ? undefined
     : await getUserIdFromExecution(_context?.executionId);
