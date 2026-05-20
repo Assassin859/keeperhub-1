@@ -229,7 +229,8 @@ describe("blockscout get-address-info", () => {
   });
 
   it("applies safe defaults for missing fields", async () => {
-    mockFetchOnce({ hash: "0xabc" });
+    // Empty body: exercises every fallback, including address <- input.address
+    mockFetchOnce({});
 
     const result = await getAddressInfoStep({ address: "0xabc" });
 
