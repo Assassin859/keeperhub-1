@@ -105,11 +105,7 @@ describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
       superfluidDef,
       slug,
       inputs,
-      {
-        chainId: CHAIN_ID,
-        toOverride: contractAddressOverride,
-        coerceArgs: true,
-      }
+      { chainId: CHAIN_ID, toOverride: contractAddressOverride }
     );
     const result = await manager.executeWithFailover((p) =>
       p.call({ to, data })
@@ -132,7 +128,6 @@ describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
     const { to, data } = buildCalldata(superfluidDef, slug, inputs, {
       chainId: CHAIN_ID,
       toOverride: contractAddressOverride,
-      coerceArgs: true,
     });
     try {
       await manager.executeWithFailover((p) =>

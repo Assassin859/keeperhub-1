@@ -66,9 +66,11 @@ export type BuildCalldataOptions = {
    * (reshape -> coerce -> encode). Required for protocols whose sample
    * inputs include stringly-typed booleans (`"true"`, `"false"`), since
    * `ethers.encodeFunctionData` treats any non-empty string as truthy and
-   * silently encodes `"false"` as `true`. Default off to preserve the
-   * pre-existing behavior of the 4 test suites converted in the same
-   * PR as this helper; opt in per call site as needed.
+   * silently encodes `"false"` as `true` without coercion.
+   *
+   * Defaults to `true` so tests match the production encoding pipeline
+   * by default. Pass `false` only to deliberately exercise the
+   * pre-coerce shape (e.g. a regression test asserting the trap exists).
    */
   coerceArgs?: boolean;
 };
@@ -123,9 +125,10 @@ export function buildCalldata(
     );
   }
   const reshaped = reshapeArgsForAbi(rawArgs, functionAbi);
-  const args = options.coerceArgs
-    ? coerceArgsForAbi(reshaped, functionAbi)
-    : reshaped;
+  const args =
+    options.coerceArgs === false
+      ? reshaped
+      : coerceArgsForAbi(reshaped, functionAbi);
   const iface = new ethers.Interface(parsedAbi);
   const data = iface.encodeFunctionData(action.function, args);
 

@@ -168,6 +168,17 @@ describe("buildCalldata", () => {
   });
 
   describe("coerceArgs option", () => {
+    it("defaults to true: 'false' encodes as boolean false (production parity)", () => {
+      const result = buildCalldata(
+        fixture,
+        "set-flag",
+        { flag: "false" },
+        { chainId: "1" }
+      );
+      const decoded = iface.decodeFunctionData("setFlag", result.data);
+      expect(decoded[0]).toBe(false);
+    });
+
     it("coerceArgs: false documents the trap: 'false' encodes as boolean true", () => {
       // Without coerce, ethers treats any non-empty string as truthy, so
       // the literal "false" round-trips through encodeFunctionData as true.
