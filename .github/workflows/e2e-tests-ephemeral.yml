@@ -242,6 +242,9 @@ jobs:
           AWS_REGION: us-east-1
           TEST_API_KEY: ${{ secrets.TEST_API_KEY }}
           CHAIN_RPC_CONFIG: ${{ secrets.CHAIN_RPC_CONFIG }}
+          # Funder EOA for protocol-coverage suites' ensureNativeGas top-up.
+          # When unset the suites skip cleanly (see coverage.test.ts gate).
+          TESTNET_FUNDER_PK: ${{ secrets.TESTNET_FUNDER_PK }}
 
       - name: Dump app container logs
         if: failure() && inputs.image_tag != ''
