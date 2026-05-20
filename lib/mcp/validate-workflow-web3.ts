@@ -133,7 +133,7 @@ export function tokenAddressFormat(nodes: unknown): Web3Issue[] {
 // must skip them rather than report a false invalid-token-address.
 const TEMPLATE_REFERENCE_RE = /\{\{.*?\}\}/;
 
-function isTemplateReference(value: string): boolean {
+export function isTemplateReference(value: string): boolean {
   return TEMPLATE_REFERENCE_RE.test(value);
 }
 

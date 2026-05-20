@@ -122,10 +122,17 @@ describe("collectContractRefs", () => {
   });
 
   it("collects a web3/write-contract node", () => {
-    const node = makeWriteNode(0, "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "1", SIMPLE_ABI_TRANSFER);
+    const node = makeWriteNode(
+      0,
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "1",
+      SIMPLE_ABI_TRANSFER
+    );
     const refs = collectContractRefs([makeTriggerNode(), node]);
     expect(refs).toHaveLength(1);
-    expect(refs[0].contractAddress).toBe("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    expect(refs[0].contractAddress).toBe(
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
     expect(refs[0].isAbiAutoFetch).toBe(true);
   });
 
@@ -156,6 +163,17 @@ describe("collectContractRefs", () => {
       },
     };
     const refs = collectContractRefs([node]);
+    expect(refs).toHaveLength(0);
+  });
+
+  it("skips nodes whose contractAddress is a template reference (no spurious ABI fetch)", () => {
+    const node = makeWriteNode(
+      0,
+      "{{@prep:Prep.governor_address_safe}}",
+      "1",
+      SIMPLE_ABI_TRANSFER
+    );
+    const refs = collectContractRefs([makeTriggerNode(), node]);
     expect(refs).toHaveLength(0);
   });
 });
@@ -205,7 +223,12 @@ describe("validateWorkflowDeep — fast tier composition", () => {
 
 describe("validateWorkflowDeep — ABI match", () => {
   it("emits no warning when declared ABI matches resolved ABI", async () => {
-    const writeNode = makeWriteNode(0, "0xabcabcabcabcabcabcabcabcabcabcabcabcabca", "1", SIMPLE_ABI_TRANSFER);
+    const writeNode = makeWriteNode(
+      0,
+      "0xabcabcabcabcabcabcabcabcabcabcabcabcabca",
+      "1",
+      SIMPLE_ABI_TRANSFER
+    );
     const workflow = makeWorkflow({
       nodes: [makeTriggerNode(), writeNode],
       workflowType: "write",
@@ -229,7 +252,12 @@ describe("validateWorkflowDeep — ABI match", () => {
 describe("validateWorkflowDeep — ABI mismatch (Pitfall 1)", () => {
   it("emits a warning when declared ABI differs from resolved ABI", async () => {
     // Declared: transfer. Resolved: approve. Mismatch.
-    const writeNode = makeWriteNode(0, "0xabcabcabcabcabcabcabcabcabcabcabcabcabca", "1", SIMPLE_ABI_TRANSFER);
+    const writeNode = makeWriteNode(
+      0,
+      "0xabcabcabcabcabcabcabcabcabcabcabcabcabca",
+      "1",
+      SIMPLE_ABI_TRANSFER
+    );
     const workflow = makeWorkflow({
       nodes: [makeTriggerNode(), writeNode],
       workflowType: "write",
@@ -256,7 +284,12 @@ describe("validateWorkflowDeep — ABI mismatch (Pitfall 1)", () => {
   });
 
   it("mismatch result lands in warnings[], NEVER errors[] (assertion on errors array explicitly)", async () => {
-    const writeNode = makeWriteNode(0, "0xdefdefdefdefdefdefdefdefdefdefdefdefdef0", "1", SIMPLE_ABI_TRANSFER);
+    const writeNode = makeWriteNode(
+      0,
+      "0xdefdefdefdefdefdefdefdefdefdefdefdefdef0",
+      "1",
+      SIMPLE_ABI_TRANSFER
+    );
     const workflow = makeWorkflow({
       nodes: [makeTriggerNode(), writeNode],
       workflowType: "write",
@@ -284,7 +317,12 @@ describe("validateWorkflowDeep — proxy contract (Pitfall 1 regression)", () =>
   it("emits only a warning (not error) when explorer returns implementation ABI for a proxy", async () => {
     // Workflow declares a 3-function proxy stub ABI; explorer returns 100-function impl ABI.
     // This is the Aave V3 / Uniswap pattern — resolveAbi already handled the proxy.
-    const writeNode = makeWriteNode(0, "0x1111111111111111111111111111111111111111", "1", PROXY_STUB_ABI);
+    const writeNode = makeWriteNode(
+      0,
+      "0x1111111111111111111111111111111111111111",
+      "1",
+      PROXY_STUB_ABI
+    );
     const workflow = makeWorkflow({
       nodes: [makeTriggerNode(), writeNode],
       workflowType: "write",
@@ -312,7 +350,12 @@ describe("validateWorkflowDeep — proxy contract (Pitfall 1 regression)", () =>
 
 describe("validateWorkflowDeep — resolveAbi failure handling", () => {
   it("emits no warning or error when resolveAbi rejects (degraded explorer)", async () => {
-    const writeNode = makeWriteNode(0, "0xabcabcabcabcabcabcabcabcabcabcabcabcabca", "1", SIMPLE_ABI_TRANSFER);
+    const writeNode = makeWriteNode(
+      0,
+      "0xabcabcabcabcabcabcabcabcabcabcabcabcabca",
+      "1",
+      SIMPLE_ABI_TRANSFER
+    );
     const workflow = makeWorkflow({
       nodes: [makeTriggerNode(), writeNode],
       workflowType: "write",
@@ -338,7 +381,12 @@ describe("validateWorkflowDeep — resolveAbi failure handling", () => {
 describe("validateWorkflowDeep — per-call timeout", () => {
   it("silently abandons a call that never resolves, completes in < 2500ms", async () => {
     vi.useRealTimers();
-    const writeNode = makeWriteNode(0, "0xabcabcabcabcabcabcabcabcabcabcabcabcabca", "1", SIMPLE_ABI_TRANSFER);
+    const writeNode = makeWriteNode(
+      0,
+      "0xabcabcabcabcabcabcabcabcabcabcabcabcabca",
+      "1",
+      SIMPLE_ABI_TRANSFER
+    );
     const workflow = makeWorkflow({
       nodes: [makeTriggerNode(), writeNode],
       workflowType: "write",
