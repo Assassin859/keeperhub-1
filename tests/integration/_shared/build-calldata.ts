@@ -83,7 +83,7 @@ export function buildCalldata(
   const to = options.toOverride ?? contract.addresses[options.chainId];
   if (!to) {
     throw new Error(
-      `No address for contract ${action.contract} on chain ${options.chainId}`
+      `No address for contract ${action.contract} on chain ${options.chainId} and no toOverride given`
     );
   }
 
