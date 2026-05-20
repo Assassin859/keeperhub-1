@@ -24,63 +24,16 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 // otherwise throw under vitest's Node runtime.
 vi.mock("server-only", () => ({}));
 
-import { reshapeArgsForAbi } from "@/lib/abi/struct-args";
-import type {
-  ProtocolAction,
-  ProtocolContract,
-  ProtocolDefinition,
-} from "@/lib/protocol-registry";
 import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 import rocketPoolDef from "@/protocols/rocket-pool";
+import { buildCalldata } from "./_shared/build-calldata";
 
 const RPC_URL = process.env.INTEGRATION_TEST_MAINNET_RPC_URL;
 const CHAIN_ID = "1";
 const MAINNET_CHAIN_ID = 1;
 const TEST_ADDRESS = "0x0000000000000000000000000000000000000001";
-
-function buildCalldata(
-  protocol: ProtocolDefinition,
-  actionSlug: string,
-  sampleInputs: Record<string, string>
-): {
-  to: string;
-  data: string;
-  action: ProtocolAction;
-  contract: ProtocolContract;
-} {
-  const action = protocol.actions.find((a) => a.slug === actionSlug);
-  if (!action) {
-    throw new Error(`Action ${actionSlug} not found`);
-  }
-
-  const contract = protocol.contracts[action.contract];
-  if (!contract.abi) {
-    throw new Error(`Contract ${action.contract} has no ABI`);
-  }
-
-  const contractAddress = contract.addresses[CHAIN_ID];
-  if (!contractAddress) {
-    throw new Error(`Contract ${action.contract} not on chain ${CHAIN_ID}`);
-  }
-
-  const rawArgs = action.inputs.map((inp) => {
-    const val = sampleInputs[inp.name] ?? inp.default ?? "";
-    return val;
-  });
-
-  const abi = JSON.parse(contract.abi);
-  const functionAbi = abi.find(
-    (f: { name: string; type: string }) =>
-      f.type === "function" && f.name === action.function
-  );
-  const args = reshapeArgsForAbi(rawArgs, functionAbi);
-  const iface = new ethers.Interface(abi);
-  const data = iface.encodeFunctionData(action.function, args);
-
-  return { to: contractAddress, data, action, contract };
-}
 
 // Assertion model:
 //  - Read tests: let the RPC call fail loudly. A success path asserts the
@@ -113,11 +66,12 @@ describe.skipIf(!RPC_URL)("Rocket Pool on-chain integration", () => {
   });
 
   it("getExchangeRate: eth_call returns a decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata(
-      rocketPoolDef,
-      "get-exchange-rate",
-      {}
-    );
+    const { to, data, contract } = buildCalldata({
+      protocol: rocketPoolDef,
+      actionSlug: "get-exchange-rate",
+      sampleInputs: {},
+      chainId: CHAIN_ID,
+    });
 
     const result = await manager.executeWithFailover((p) =>
       p.call({ to, data })
@@ -130,11 +84,12 @@ describe.skipIf(!RPC_URL)("Rocket Pool on-chain integration", () => {
   }, 15_000);
 
   it("balanceOf: eth_call returns a decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata(
-      rocketPoolDef,
-      "balance-of",
-      { account: TEST_ADDRESS }
-    );
+    const { to, data, contract } = buildCalldata({
+      protocol: rocketPoolDef,
+      actionSlug: "balance-of",
+      sampleInputs: { account: TEST_ADDRESS },
+      chainId: CHAIN_ID,
+    });
 
     const result = await manager.executeWithFailover((p) =>
       p.call({ to, data })
@@ -147,11 +102,12 @@ describe.skipIf(!RPC_URL)("Rocket Pool on-chain integration", () => {
   }, 15_000);
 
   it("totalSupply: eth_call returns a decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata(
-      rocketPoolDef,
-      "total-supply",
-      {}
-    );
+    const { to, data, contract } = buildCalldata({
+      protocol: rocketPoolDef,
+      actionSlug: "total-supply",
+      sampleInputs: {},
+      chainId: CHAIN_ID,
+    });
 
     const result = await manager.executeWithFailover((p) =>
       p.call({ to, data })
@@ -164,11 +120,12 @@ describe.skipIf(!RPC_URL)("Rocket Pool on-chain integration", () => {
   }, 15_000);
 
   it("getTotalCollateral: eth_call returns a decodable uint256", async () => {
-    const { to, data, contract } = buildCalldata(
-      rocketPoolDef,
-      "get-total-collateral",
-      {}
-    );
+    const { to, data, contract } = buildCalldata({
+      protocol: rocketPoolDef,
+      actionSlug: "get-total-collateral",
+      sampleInputs: {},
+      chainId: CHAIN_ID,
+    });
 
     const result = await manager.executeWithFailover((p) =>
       p.call({ to, data })
@@ -181,14 +138,22 @@ describe.skipIf(!RPC_URL)("Rocket Pool on-chain integration", () => {
   }, 15_000);
 
   it("deposit: deployed bytecode accepts the calldata", async () => {
-    const { to, data } = buildCalldata(rocketPoolDef, "deposit", {});
+    const { to, data } = buildCalldata({
+      protocol: rocketPoolDef,
+      actionSlug: "deposit",
+      sampleInputs: {},
+      chainId: CHAIN_ID,
+    });
 
     await expectCallAcceptedByBytecode(manager, { to, data });
   }, 15_000);
 
   it("burn: deployed bytecode accepts the calldata", async () => {
-    const { to, data } = buildCalldata(rocketPoolDef, "burn", {
-      amount: "1000000000000000000",
+    const { to, data } = buildCalldata({
+      protocol: rocketPoolDef,
+      actionSlug: "burn",
+      sampleInputs: { amount: "1000000000000000000" },
+      chainId: CHAIN_ID,
     });
 
     await expectCallAcceptedByBytecode(manager, { to, data });
