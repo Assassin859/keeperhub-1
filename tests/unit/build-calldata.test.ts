@@ -228,6 +228,32 @@ describe("buildCalldata", () => {
       );
     });
 
+    it("throws when sampleInputs contains a key the action does not declare", () => {
+      expect(() =>
+        buildCalldata(
+          fixture,
+          "balance-of",
+          { account: TEST_ADDRESS, accountt: TEST_ADDRESS },
+          { chainId: "1" }
+        )
+      ).toThrow(
+        "Sample input 'accountt' is not declared for action 'balance-of'. Known inputs: account"
+      );
+    });
+
+    it("throws with '(none)' hint when the action declares no inputs at all", () => {
+      expect(() =>
+        buildCalldata(
+          fixture,
+          "no-abi-action",
+          { stray: "value" },
+          { chainId: "1" }
+        )
+      ).toThrow(
+        "Sample input 'stray' is not declared for action 'no-abi-action'. Known inputs: (none)"
+      );
+    });
+
     it("throws with a toOverride hint when no address is found", () => {
       expect(() =>
         buildCalldata(

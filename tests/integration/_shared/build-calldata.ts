@@ -84,6 +84,19 @@ export function buildCalldata(
     throw new Error(`Action ${actionSlug} not found`);
   }
 
+  const declaredInputNames = new Set(action.inputs.map((i) => i.name));
+  for (const key of Object.keys(sampleInputs)) {
+    if (!declaredInputNames.has(key)) {
+      const known =
+        action.inputs.length === 0
+          ? "(none)"
+          : action.inputs.map((i) => i.name).join(", ");
+      throw new Error(
+        `Sample input '${key}' is not declared for action '${action.slug}'. Known inputs: ${known}`
+      );
+    }
+  }
+
   const contract = protocol.contracts[action.contract];
   if (!contract.abi) {
     throw new Error(`Contract ${action.contract} has no ABI`);
