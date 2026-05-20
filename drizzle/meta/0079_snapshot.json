@@ -1,6 +1,6 @@
 {
-  "id": "e88ff1ff-c201-4294-838e-b47be45cc5db",
-  "prevId": "d6f6f371-53de-42ee-baff-3a3bb486ec88",
+  "id": "e22cb427-074c-458b-8e5e-0a9dbcbd30ca",
+  "prevId": "59fe0f4e-7539-487f-bc83-668620750579",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -170,27 +170,6 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "idx_address_book_org_address": {
-          "name": "idx_address_book_org_address",
-          "columns": [
-            {
-              "expression": "organization_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "address",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -3969,7 +3948,7 @@
           "name": "token_address",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "token_symbol": {
           "name": "token_symbol",

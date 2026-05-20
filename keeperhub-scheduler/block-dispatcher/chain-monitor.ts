@@ -141,6 +141,30 @@ type ChainMonitorConfig = {
   workflows: BlockWorkflow[];
 };
 
+// Decodes a `ws` library "message" event payload to a string for the KEEP-570
+// raw-frame diagnostic. The ws library can deliver `data` as string, Buffer,
+// Buffer[] (fragmented frames, when the high-water mark is reached mid-frame),
+// or ArrayBuffer (when binaryType is "arraybuffer"). ethers v6 configures
+// Buffer today, but a silent under-count if upstream changes that is exactly
+// the regression the diagnostic exists to prevent. Returns null when the
+// payload is none of those shapes; the caller still counts the frame but
+// will not attempt to parse it for the subscription-push tally.
+export function decodeWsFrame(data: unknown): string | null {
+  if (typeof data === "string") {
+    return data;
+  }
+  if (Buffer.isBuffer(data)) {
+    return data.toString("utf8");
+  }
+  if (data instanceof ArrayBuffer) {
+    return Buffer.from(data).toString("utf8");
+  }
+  if (Array.isArray(data) && data.every((d) => Buffer.isBuffer(d))) {
+    return Buffer.concat(data).toString("utf8");
+  }
+  return null;
+}
+
 // Reduces a probe-failure error to a single short tag like "HTTP 429",
 // "timeout", or a 60-char first-line slice. Keeps log lines compact —
 // ethers errors can include long JSON-RPC payloads and ABI dumps otherwise.
@@ -204,6 +228,14 @@ export class ChainMonitor {
   // SILENT_FAILOVER_THRESHOLD, the next reconnect flips currentUrlIndex so the
   // monitor tries the other configured URL (primary <-> fallback).
   private silentReconnects = 0;
+  // KEEP-570 diagnostic counters. These observe the raw ws socket independent
+  // of ethers' subscription routing. They distinguish "subscription confirmed,
+  // pushes routed, dedup discarded them" from "pushes never arrived" from
+  // "pushes arrived but ethers never routed them". Reset in subscribeToBlocks.
+  private wsFrameCount = 0;
+  private subscriptionPushCount = 0;
+  private lastWsFrameAt: number | null = null;
+  private wsMessageHandler: ((data: unknown) => void) | null = null;
 
   constructor(config: ChainMonitorConfig) {
     this.chainId = config.chain.chainId;
@@ -347,10 +379,26 @@ export class ChainMonitor {
       // stale handlers from firing handleDisconnect during teardown
       if (this.wsCloseHandler) {
         const ws = this.provider.websocket as unknown as {
-          removeListener?: (event: string, cb: () => void) => void;
+          removeListener?: (
+            event: string,
+            cb: (data?: unknown) => void,
+          ) => void;
         };
         ws?.removeListener?.("close", this.wsCloseHandler);
         this.wsCloseHandler = null;
+      }
+      // KEEP-570: detach the diagnostic message tap before destroying so it
+      // does not retain a reference to the closed socket or fire on the
+      // teardown frames ethers sends during eth_unsubscribe.
+      if (this.wsMessageHandler) {
+        const ws = this.provider.websocket as unknown as {
+          removeListener?: (
+            event: string,
+            cb: (data?: unknown) => void,
+          ) => void;
+        };
+        ws?.removeListener?.("message", this.wsMessageHandler);
+        this.wsMessageHandler = null;
       }
 
       // ethers v6 removeAllListeners/destroy fire an internal eth_unsubscribe
@@ -515,6 +563,12 @@ export class ChainMonitor {
     // a real block looked permanently alive to the reconciler. The cold-
     // start warmup case is now handled by monitorBootAt in isAlive().
     const subscribedAt = Date.now();
+    // KEEP-570 diagnostic: reset the per-subscription frame counters so the
+    // noBlockTimer log shows what happened on THIS subscription, not the
+    // cumulative since pod start.
+    this.wsFrameCount = 0;
+    this.subscriptionPushCount = 0;
+    this.lastWsFrameAt = null;
     metrics.setHasActiveSubscription(this.chainName, true);
     metrics.setSubscribedAt(this.chainName, subscribedAt);
     // resetNoBlockTimer is called from start/reconnect, but seed it here too
@@ -526,7 +580,7 @@ export class ChainMonitor {
 
     // Handle WebSocket close for reconnection - store reference for cleanup
     const ws = this.provider.websocket as unknown as {
-      on?: (event: string, cb: () => void) => void;
+      on?: (event: string, cb: (data?: unknown) => void) => void;
     };
     if (ws?.on) {
       this.wsCloseHandler = (): void => {
@@ -537,6 +591,37 @@ export class ChainMonitor {
         this.handleDisconnect();
       };
       ws.on("close", this.wsCloseHandler);
+
+      // KEEP-570 diagnostic: tap the raw ws below ethers' subscription
+      // routing. Counts every incoming frame and decodes enough JSON to
+      // identify eth_subscription pushes. Lets the noBlockTimer log
+      // distinguish "no frames at all" from "frames arrived but ethers did
+      // not route them to onBlock". The ws library's "message" event fires
+      // alongside ethers' onmessage property handler, so this tap does not
+      // intercept or shadow ethers' own message processing.
+      this.wsMessageHandler = (data: unknown): void => {
+        this.wsFrameCount++;
+        this.lastWsFrameAt = Date.now();
+        // The ws library can deliver a frame as string, Buffer, Buffer[]
+        // (fragmented), or ArrayBuffer (when binaryType is set). ethers v6
+        // configures Buffer today, but a quiet under-count if upstream
+        // changes that is exactly the kind of regression this diagnostic
+        // is supposed to prevent. Decode all four shapes; anything else
+        // counts as a frame but is not parsed for the push counter.
+        const text = decodeWsFrame(data);
+        if (text === null) {
+          return;
+        }
+        try {
+          const parsed = JSON.parse(text) as { method?: string };
+          if (parsed?.method === "eth_subscription") {
+            this.subscriptionPushCount++;
+          }
+        } catch {
+          // Non-JSON or partial frame; counted in wsFrameCount, ignored here.
+        }
+      };
+      ws.on("message", this.wsMessageHandler);
     }
   }
 
@@ -827,8 +912,21 @@ export class ChainMonitor {
           this.silentReconnects,
         );
         metrics.recordWsClose(this.chainName, "block_advance_timeout");
+        // KEEP-570: enrich the silent-window warning with the raw ws frame
+        // counters. The three load-bearing comparisons:
+        //   wsFrameCount == 0  -> no frames at all (network or upstream silent)
+        //   wsFrameCount > 0 && subscriptionPushCount == 0 -> only req/response
+        //                       and keepalives, no newHeads pushes
+        //   subscriptionPushCount > 0 && blocksReceived == 0 -> ethers received
+        //                       pushes but did not route them to onBlock
+        //                       (the ethers v6 sharp edge)
+        const lastFrameAgoMs =
+          this.lastWsFrameAt === null ? null : Date.now() - this.lastWsFrameAt;
         console.warn(
-          `[BlockMonitor:${this.chainName}] Block height has not advanced in ${timeoutMs / 1000}s (silent reconnects=${this.silentReconnects}), triggering reconnect`,
+          `[BlockMonitor:${this.chainName}] Block height has not advanced in ${timeoutMs / 1000}s ` +
+            `(silentReconnects=${this.silentReconnects}, wsFrames=${this.wsFrameCount}, ` +
+            `subscriptionPushes=${this.subscriptionPushCount}, blocksReceived=${this.blocksReceived}, ` +
+            `lastFrameAgo=${lastFrameAgoMs === null ? "never" : `${lastFrameAgoMs}ms`}), triggering reconnect`,
         );
         this.handleDisconnect();
       }

@@ -9,7 +9,15 @@
  * Coverage: every action declared by the protocol gets at least one
  * dispatch test (read decodes, write encodes without ABI errors).
  *
- * Gated on INTEGRATION_TEST_RPC_URL env var - skipped in CI without it.
+ * RPC URL resolution (shared with the rest of the codebase):
+ *   1. CHAIN_RPC_CONFIG JSON (Helm/AWS Parameter Store, set in CI + deployed
+ *      environments)
+ *   2. Individual CHAIN_SEPOLIA_*_RPC env vars (dev override)
+ *   3. Public Sepolia RPC default (last resort)
+ *
+ * Ungated. Always runs. Public RPC backs every tier so the test is never
+ * blocked by missing env vars. CI uses the paid staging endpoints via
+ * CHAIN_RPC_CONFIG.
  */
 
 import { ethers } from "ethers";
@@ -20,23 +28,39 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 // otherwise throw under vitest's Node runtime.
 vi.mock("server-only", () => ({}));
 
-import { coerceArgsForAbi, reshapeArgsForAbi } from "@/lib/abi/struct-args";
-import type {
-  ProtocolAction,
-  ProtocolContract,
-  ProtocolDefinition,
-} from "@/lib/protocol-registry";
+import type { ProtocolAction, ProtocolContract } from "@/lib/protocol-registry";
 import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
-import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
+import {
+  createRpcUrlResolver,
+  PUBLIC_RPCS,
+  parseRpcConfig,
+} from "@/lib/rpc/rpc-config";
 import superfluidDef, {
   CFA_FORWARDER_ADDRESS,
   GDA_FORWARDER_ADDRESS,
 } from "@/protocols/superfluid";
+import { buildCalldata } from "./_shared/build-calldata";
 
-const RPC_URL = process.env.INTEGRATION_TEST_RPC_URL;
 const CHAIN_ID = "11155111";
 const SEPOLIA_CHAIN_ID = 11_155_111;
+
+// Resolve Sepolia RPC URLs via the shared config pipeline: CHAIN_RPC_CONFIG
+// first, individual env vars second, public default last.
+const rpcConfig = parseRpcConfig(process.env.CHAIN_RPC_CONFIG);
+const resolveRpcUrl = createRpcUrlResolver(rpcConfig);
+const SEPOLIA_PRIMARY_URL = resolveRpcUrl(
+  "eth-sepolia",
+  "CHAIN_SEPOLIA_PRIMARY_RPC",
+  PUBLIC_RPCS.SEPOLIA,
+  "primary"
+);
+const SEPOLIA_FALLBACK_URL = resolveRpcUrl(
+  "eth-sepolia",
+  "CHAIN_SEPOLIA_FALLBACK_RPC",
+  PUBLIC_RPCS.SEPOLIA,
+  "fallback"
+);
 const TEST_ADDRESS = "0x0000000000000000000000000000000000000001";
 // Distinct from TEST_ADDRESS: estimateGas runs with `from: TEST_ADDRESS`,
 // and Superfluid's CFA rejects sender == flowOperator (self-grant).
@@ -78,65 +102,13 @@ const DUMMY_BYTES = "0x";
 const DISPATCH_FAILURE_RE =
   /INVALID_ARGUMENT|could not decode|invalid function|missing revert data|,\s*data="0x"/;
 
-function buildCalldata(
-  protocol: ProtocolDefinition,
-  actionSlug: string,
-  sampleInputs: Record<string, string>,
-  contractAddressOverride?: string
-): {
-  to: string;
-  data: string;
-  action: ProtocolAction;
-  contract: ProtocolContract;
-} {
-  const action = protocol.actions.find((a) => a.slug === actionSlug);
-  if (!action) {
-    throw new Error(`Action ${actionSlug} not found`);
-  }
-
-  const contract = protocol.contracts[action.contract];
-  if (!contract.abi) {
-    throw new Error(`Contract ${action.contract} has no ABI`);
-  }
-
-  const contractAddress =
-    contractAddressOverride ?? contract.addresses[CHAIN_ID];
-  if (!contractAddress) {
-    throw new Error(
-      `Contract ${action.contract} not on chain ${CHAIN_ID} and no override given`
-    );
-  }
-
-  const rawArgs = action.inputs.map(
-    (inp) => sampleInputs[inp.name] ?? inp.default ?? ""
-  );
-
-  const abi = JSON.parse(contract.abi);
-  const functionAbi = abi.find(
-    (f: { name: string; type: string }) =>
-      f.type === "function" && f.name === action.function
-  );
-  // Reproduce the production pipeline: reshape flat args into tuples per
-  // ABI, then coerce stringly-typed leaves (bool "false" -> false) before
-  // encoding. Same order as plugins/web3/steps/write-contract-core.ts.
-  const reshaped = reshapeArgsForAbi(rawArgs, functionAbi);
-  const args = coerceArgsForAbi(reshaped, functionAbi);
-  const iface = new ethers.Interface(abi);
-  const data = iface.encodeFunctionData(action.function, args);
-
-  return { to: contractAddress, data, action, contract };
-}
-
-describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
+describe("Superfluid on-chain integration", () => {
   let manager: RpcProviderManager;
 
   beforeAll(async () => {
-    if (!RPC_URL) {
-      return;
-    }
     manager = await getRpcProviderFromUrls(
-      RPC_URL,
-      getRpcUrlByChainId(SEPOLIA_CHAIN_ID, "fallback"),
+      SEPOLIA_PRIMARY_URL,
+      SEPOLIA_FALLBACK_URL,
       SEPOLIA_CHAIN_ID,
       "sepolia"
     );
@@ -154,12 +126,13 @@ describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
     action: ProtocolAction;
     to: string;
   }> {
-    const { to, data, contract, action } = buildCalldata(
-      superfluidDef,
-      slug,
-      inputs,
-      contractAddressOverride
-    );
+    const { to, data, contract, action } = buildCalldata({
+      protocol: superfluidDef,
+      actionSlug: slug,
+      sampleInputs: inputs,
+      chainId: CHAIN_ID,
+      toOverride: contractAddressOverride,
+    });
     const result = await manager.executeWithFailover((p) =>
       p.call({ to, data })
     );
@@ -178,12 +151,13 @@ describe.skipIf(!RPC_URL)("Superfluid on-chain integration", () => {
     inputs: Record<string, string>,
     contractAddressOverride?: string
   ): Promise<string> {
-    const { to, data } = buildCalldata(
-      superfluidDef,
-      slug,
-      inputs,
-      contractAddressOverride
-    );
+    const { to, data } = buildCalldata({
+      protocol: superfluidDef,
+      actionSlug: slug,
+      sampleInputs: inputs,
+      chainId: CHAIN_ID,
+      toOverride: contractAddressOverride,
+    });
     try {
       await manager.executeWithFailover((p) =>
         p.estimateGas({ to, data, from: TEST_ADDRESS })
@@ -491,18 +465,14 @@ describe("DISPATCH_FAILURE_RE shape (synthesized ethers errors)", () => {
   it('does NOT misfire on data="0x..." with actual revert payload', () => {
     // Guards against the obvious regression of writing `/data="0x/`
     // (no closing quote), which would match every revert.
-    const err = ethers.makeError(
-      'execution reverted: "X"',
-      "CALL_EXCEPTION",
-      {
-        action: "estimateGas",
-        data: "0x08c379a0deadbeef",
-        reason: "X",
-        transaction: { data: "0xdeadbeef", to: TEST_ADDRESS },
-        invocation: null,
-        revert: { args: ["X"], name: "Error", signature: "Error(string)" },
-      }
-    );
+    const err = ethers.makeError('execution reverted: "X"', "CALL_EXCEPTION", {
+      action: "estimateGas",
+      data: "0x08c379a0deadbeef",
+      reason: "X",
+      transaction: { data: "0xdeadbeef", to: TEST_ADDRESS },
+      invocation: null,
+      revert: { args: ["X"], name: "Error", signature: "Error(string)" },
+    });
     expect(asMessage(err)).not.toMatch(DISPATCH_FAILURE_RE);
   });
 
@@ -522,19 +492,15 @@ describe("DISPATCH_FAILURE_RE shape (synthesized ethers errors)", () => {
     // ever produced a transaction object whose data was literally "0x"
     // while the top-level data was populated, the old `data="0x"` pattern
     // would have false-positived. The anchor prevents that.
-    const err = ethers.makeError(
-      'execution reverted: "X"',
-      "CALL_EXCEPTION",
-      {
-        action: "estimateGas",
-        data: "0x08c379a0deadbeef",
-        reason: "X",
-        // Nested transaction with empty data (hypothetical fallback call):
-        transaction: { data: "0x", to: TEST_ADDRESS },
-        invocation: null,
-        revert: { args: ["X"], name: "Error", signature: "Error(string)" },
-      }
-    );
+    const err = ethers.makeError('execution reverted: "X"', "CALL_EXCEPTION", {
+      action: "estimateGas",
+      data: "0x08c379a0deadbeef",
+      reason: "X",
+      // Nested transaction with empty data (hypothetical fallback call):
+      transaction: { data: "0x", to: TEST_ADDRESS },
+      invocation: null,
+      revert: { args: ["X"], name: "Error", signature: "Error(string)" },
+    });
     expect(asMessage(err)).not.toMatch(DISPATCH_FAILURE_RE);
   });
 

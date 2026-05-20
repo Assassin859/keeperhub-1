@@ -47,7 +47,10 @@ export type WorkflowNode = Node<WorkflowNodeData>;
 export type WorkflowEdge = Edge;
 
 // Workflow visibility type
-export type WorkflowVisibility = "private" | "public";
+// - private: only owner / org members can view (default)
+// - unlisted: anyone with the URL can view read-only; not surfaced in Hub feed
+// - public: viewable by anyone AND listed on the Hub
+export type WorkflowVisibility = "private" | "unlisted" | "public";
 
 // Atoms for workflow state (now backed by database)
 export const nodesAtom = atom<WorkflowNode[]>([]);

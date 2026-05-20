@@ -51,6 +51,7 @@ import {
   clearOutputCache,
   getCompletedStepOutput,
 } from "@/lib/workflow/executor/get-completed-step-output";
+import { awaitCompletedStepOutputStep } from "@/lib/workflow/executor/get-completed-step-output.step";
 import { createPendingTracker } from "@/lib/workflow/executor/pending-tasks";
 import {
   EXCEEDED_MAX_RETRIES_REGEX,
@@ -126,8 +127,44 @@ export {
 
 type NodeOutputs = Record<string, { label: string; data: unknown }>;
 
+/**
+ * Catch-time write of a node's entry in the `outputs` map. Preserves a prior
+ * non-null success when one exists; otherwise writes `{ label, data: null }`
+ * so downstream resolvers see a sentinel rather than `undefined`.
+ *
+ * Rationale: the workflow SDK occasionally replays a step after its first
+ * attempt has already populated `outputs[sanitizedNodeId]` with a successful
+ * object (the post-step `step_completed` event is lost under heavy fan-in,
+ * the same race covered by the spurious-max-retries reconciliation above).
+ * Unconditionally overwriting that prior success with `data: null` caused
+ * downstream templates to fail with `Node "X" produced no data.` This helper
+ * keeps the catch handler's null-fallback contract for the no-prior-data case
+ * while leaving real replay-survivor data intact.
+ */
+export function recordCatchOutput(
+  outputs: NodeOutputs,
+  sanitizedNodeId: string,
+  label: string
+): void {
+  const prior = outputs[sanitizedNodeId];
+  if (prior !== undefined && prior.data !== null && prior.data !== undefined) {
+    return;
+  }
+  outputs[sanitizedNodeId] = { label, data: null };
+}
+
 /** Matches path segment like "carts[0]" for array index access (same as template.ts) */
 const ARRAY_ACCESS_PATTERN = /^([^[]+)\[(\d+)\]$/;
+
+/**
+ * Spurious-max-retries recovery poll window. When the framework re-fires a
+ * step after a lost completion event and throws before the step's success row
+ * is committed, the real success lands ~0.3-0.5s later. The catch handler
+ * polls the step authority for up to this window before falling back to
+ * nullifying the node.
+ */
+const SPURIOUS_RECOVERY_POLL_TIMEOUT_MS = 3000;
+const SPURIOUS_RECOVERY_POLL_INTERVAL_MS = 250;
 
 /**
  * KEEP-398: SDK error shapes that indicate a spurious step-completion failure.
@@ -2594,10 +2631,26 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         EXCEEDED_MAX_RETRIES_REGEX.test(errorMessage) ||
         FAILED_AFTER_RETRIES_REGEX.test(errorMessage) ||
         NO_STEP_COMPLETION_REGEX.test(errorMessage);
-      const recordedOutput =
+      let recordedOutput =
         isSpuriousMaxRetries && executionId
           ? (await getCompletedStepOutput(executionId, nodeId))?.output
           : undefined;
+      // The framework re-fires a step after a lost completion event and throws
+      // "exceeded max retries" BEFORE the step body's success row is committed,
+      // so the one-shot read above misses by ~0.3-0.5s. Wait for the
+      // late-landing success inside a step boundary (DB-backed, replay-safe via
+      // memoization) before giving up, so the reconcile path below recovers it
+      // instead of nullifying the node and unblocking convergence with no data.
+      if (isSpuriousMaxRetries && executionId && recordedOutput === undefined) {
+        recordedOutput = (
+          await awaitCompletedStepOutputStep(
+            executionId,
+            nodeId,
+            SPURIOUS_RECOVERY_POLL_TIMEOUT_MS,
+            SPURIOUS_RECOVERY_POLL_INTERVAL_MS
+          )
+        )?.outputRaw;
+      }
       if (isSpuriousMaxRetries && recordedOutput !== undefined) {
         // Recovered execution: the step body succeeded, only the SDK's
         // bookkeeping tripped. Emit a structured warn (no Sentry) and a
@@ -2673,13 +2726,15 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         }
       }
 
-      // Store null output so downstream templates resolve to null rather than
-      // being undefined (same pattern as disabled nodes).
+      // Catch-time output write. Preserves a prior in-memory success when one
+      // exists (the SDK occasionally replays a step after its first attempt
+      // has already populated `outputs[sanitizedNodeId]` under heavy fan-in),
+      // and otherwise falls back to `{ data: null }` so downstream templates
+      // resolve to a sentinel instead of `undefined`. The previous
+      // unconditional overwrite discarded replay-survivor output and caused
+      // downstream resolvers to throw `Node "X" produced no data.`
       const sanitizedNodeId = nodeId.replace(/[^a-zA-Z0-9]/g, "_");
-      outputs[sanitizedNodeId] = {
-        label: getNodeName(node),
-        data: null,
-      };
+      recordCatchOutput(outputs, sanitizedNodeId, getNodeName(node));
 
       // Signal arrival at downstream convergence nodes to prevent deadlocks.
       // If this failure was the last arrival, execute the convergence node

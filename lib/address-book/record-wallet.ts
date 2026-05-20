@@ -14,7 +14,7 @@ type RecordWalletInAddressBookInput = {
  * Insert an address book entry for a wallet that was just created.
  *
  * Idempotent: relies on the unique (organization_id, address) index added
- * in migration 0079. A duplicate (Safe reconciled on a second chain, user
+ * in migration 0081. A duplicate (Safe reconciled on a second chain, user
  * manually saved the same address first, etc.) is silently skipped.
  *
  * Non-fatal: errors are logged and swallowed. The address book is a UX

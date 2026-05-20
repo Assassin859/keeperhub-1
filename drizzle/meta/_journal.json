@@ -544,22 +544,36 @@
     {
       "idx": 77,
       "version": "7",
-      "when": 1778869656699,
-      "tag": "0077_safe_wallet_integration",
+      "when": 1777760000011,
+      "tag": "0077_keep_575_schedule_interval",
       "breakpoints": true
     },
     {
       "idx": 78,
       "version": "7",
-      "when": 1778873393610,
-      "tag": "0078_safe_role_direct_rules_token_not_null",
+      "when": 1777760000012,
+      "tag": "0078_error_type_label_rename",
       "breakpoints": true
     },
     {
       "idx": 79,
       "version": "7",
+      "when": 1778869656699,
+      "tag": "0079_safe_wallet_integration",
+      "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1778873393610,
+      "tag": "0080_safe_role_direct_rules_token_not_null",
+      "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
       "when": 1778873393611,
-      "tag": "0079_keep177_address_book_unique_address",
+      "tag": "0081_address_book_unique_address",
       "breakpoints": true
     }
   ]

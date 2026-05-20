@@ -175,6 +175,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json(validation.error, { status: 400 });
   }
 
+  // KEEP-490: collapse `chainId` (canonical) and `network` (deprecated alias)
+  // onto a single field so the downstream read sites do not have to know about
+  // both. The core helpers normalize chain names/IDs internally.
+  if (body.chainId !== undefined && body.network === undefined) {
+    body.network = String(body.chainId);
+  }
+
   const abiResult = await resolveAbiForRequest(body);
   if ("error" in abiResult) {
     return NextResponse.json(

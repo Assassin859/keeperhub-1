@@ -83,7 +83,7 @@ export function ProtocolCardV2({
         {protocol.description}
       </p>
 
-      <div className="pointer-events-none relative z-[2] mt-auto flex items-center gap-2 border-border/30 border-t pt-3">
+      <div className="pointer-events-none relative z-[2] mt-auto flex items-center gap-2 pt-3">
         <WorkflowIcon
           aria-hidden="true"
           className="size-3.5 text-muted-foreground"
