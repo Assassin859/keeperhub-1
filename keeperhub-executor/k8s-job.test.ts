@@ -244,4 +244,41 @@ describe("createWorkflowJob", () => {
       '{"eth":"http://localhost:8545"}'
     );
   });
+
+  it("force-enables SAFE_FETCH_ENFORCE on runner pods even when unset on controller", async () => {
+    // SSRF guard must be on regardless of controller config to prevent
+    // workflow runs from reaching internal hosts (cloud IMDS, RFC1918,
+    // in-cluster services). The runner pod is the actual execution path,
+    // not the controller; if the controller's env ever drifts the runner
+    // must still enforce.
+    delete process.env.SAFE_FETCH_ENFORCE;
+
+    await createWorkflowJob({
+      workflowId: "wf-1",
+      executionId: "exec-1234abcd",
+      input: {},
+      triggerType: "schedule",
+    });
+
+    const envVars = getJobEnvVars(getSubmittedJob());
+    expect(getEnvVar(envVars, "SAFE_FETCH_ENFORCE")).toBe("true");
+  });
+
+  it("force-enables SAFE_FETCH_ENFORCE even when controller has it set to shadow", async () => {
+    // Hardcoded `value: "true"` in k8s-job.ts wins over any controller
+    // env. Flipping shadow mode for runner pods requires a code change.
+    process.env.SAFE_FETCH_ENFORCE = "false";
+
+    await createWorkflowJob({
+      workflowId: "wf-1",
+      executionId: "exec-1234abcd",
+      input: {},
+      triggerType: "schedule",
+    });
+
+    const envVars = getJobEnvVars(getSubmittedJob());
+    expect(getEnvVar(envVars, "SAFE_FETCH_ENFORCE")).toBe("true");
+    const occurrences = envVars.filter((v) => v.name === "SAFE_FETCH_ENFORCE");
+    expect(occurrences).toHaveLength(1);
+  });
 });
