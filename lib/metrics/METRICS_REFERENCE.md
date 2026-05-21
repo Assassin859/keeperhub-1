@@ -68,7 +68,7 @@ Counter/Gauge metrics tracking request/event counts.
 
 | Metric Name | Description | Labels | Unit | Source |
 |-------------|-------------|--------|------|--------|
-| `workflow.executions.total` | Total workflow executions by status (all-time) | `status`, `org_slug`, `error_type` (`user`/`system`/`unknown`/`na`) | gauge | DB |
+| `workflow.executions.total` | Total workflow executions by status (all-time) | `status`, `org_slug`, `project_id` (`_unassigned` when no project), `error_type` (`user`/`system`/`unknown`/`na`) | gauge | DB |
 | `workflow.execution.errors.total` | Total failed workflow executions (all-time) | - | gauge | DB |
 | `plugin.invocations.total` | Plugin action invocations | `plugin_name`, `action_name` | count | API |
 | `user.active.daily` | Daily active users (24h) | - | gauge | DB |

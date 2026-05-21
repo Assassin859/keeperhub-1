@@ -44,6 +44,12 @@ import type { BillingStatus } from "./types";
 // workflows still produce a series rather than silently dropping increments.
 export const ANONYMOUS_ORG_SLUG = "_anonymous";
 
+// Label value used for workflow executions whose workflow has no project
+// assigned (`workflows.project_id IS NULL`). Keeps every gauge series populated
+// so PromQL aggregates that drop the project_id dimension still sum to the
+// per-(status, org_slug) total.
+export const UNASSIGNED_PROJECT_ID = "_unassigned";
+
 // Histogram bucket boundaries in milliseconds (must match prometheus.ts)
 const WORKFLOW_DURATION_BUCKETS = [
   100, 250, 500, 1000, 2000, 5000, 10_000, 30_000,
@@ -58,9 +64,15 @@ export type WorkflowStats = {
   totalPending: number;
   totalCancelled: number;
 
-  // Per-(status, org_slug, error_type) execution counts. Personal/anonymous
-  // workflows are bucketed under ANONYMOUS_ORG_SLUG so the sum of counts for
-  // a given status across all orgs matches the corresponding total* above.
+  // Per-(status, org_slug, project_id, error_type) execution counts.
+  // Personal/anonymous workflows are bucketed under ANONYMOUS_ORG_SLUG.
+  // Workflows with no project assigned are bucketed under UNASSIGNED_PROJECT_ID.
+  // The sum of counts for a given status across all orgs/projects matches
+  // the corresponding total* above.
+  //
+  // projectId carries the raw `projects.id` value (globally unique nanoid).
+  // PromQL filters can therefore use `project_id` directly without needing
+  // org_slug to disambiguate, since project ids never collide across orgs.
   //
   // errorType is read directly from the workflow_executions.error_type text
   // column (KEEP-545 rename — see drizzle/0077_error_type_label_rename.sql).
@@ -76,6 +88,7 @@ export type WorkflowStats = {
   executionsByStatusAndOrgSlug: Array<{
     status: string;
     orgSlug: string;
+    projectId: string;
     errorType: string;
     count: number;
   }>;
@@ -106,19 +119,22 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
       durationCount: 0,
     };
 
-    // Per-(status, org_slug, error_type) execution breakdown: JOIN workflows +
-    // organization, LEFT JOIN so anonymous workflows still contribute (under
-    // ANONYMOUS_ORG_SLUG). GROUP BY uses the underlying columns (not the
-    // COALESCE/CASE expressions): Drizzle would otherwise bind constants as
-    // separate parameters in SELECT and GROUP BY clauses, and Postgres rejects
-    // the query because the two expressions are not textually identical.
-    // Postgres groups NULLs together (NULLs are equal in GROUP BY), and the
-    // SELECT-side expressions render those groups as ANONYMOUS_ORG_SLUG /
-    // "unknown" / "na" as appropriate.
+    // Per-(status, org_slug, project_id, error_type) execution breakdown:
+    // JOIN workflows + organization, LEFT JOIN so anonymous workflows still
+    // contribute (under ANONYMOUS_ORG_SLUG). Workflows without a project_id
+    // are bucketed under UNASSIGNED_PROJECT_ID via COALESCE. GROUP BY uses
+    // the underlying columns (not the COALESCE/CASE expressions): Drizzle
+    // would otherwise bind constants as separate parameters in SELECT and
+    // GROUP BY clauses, and Postgres rejects the query because the two
+    // expressions are not textually identical. Postgres groups NULLs
+    // together (NULLs are equal in GROUP BY), and the SELECT-side
+    // expressions render those groups as ANONYMOUS_ORG_SLUG /
+    // UNASSIGNED_PROJECT_ID / "unknown" / "na" as appropriate.
     const breakdown = await db
       .select({
         status: workflowExecutions.status,
         orgSlug: sql<string>`COALESCE(${organization.slug}, ${ANONYMOUS_ORG_SLUG})`,
+        projectId: sql<string>`COALESCE(${workflows.projectId}, ${UNASSIGNED_PROJECT_ID})`,
         errorType: sql<string>`CASE
           WHEN ${workflowExecutions.status} <> 'error' THEN 'na'
           WHEN ${workflowExecutions.errorType} IS NULL THEN 'unknown'
@@ -132,6 +148,7 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
       .groupBy(
         workflowExecutions.status,
         organization.slug,
+        workflows.projectId,
         workflowExecutions.errorType
       );
 
@@ -140,6 +157,7 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
       stats.executionsByStatusAndOrgSlug.push({
         status: row.status,
         orgSlug: row.orgSlug,
+        projectId: row.projectId,
         errorType: row.errorType,
         count: c,
       });

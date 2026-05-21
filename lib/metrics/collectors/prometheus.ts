@@ -115,8 +115,8 @@ function getOrCreateGauge(
 const workflowExecutionsTotal = getOrCreateGauge(
   dbRegistry,
   "keeperhub_workflow_executions_total",
-  "Total workflow executions by status, broken down by org_slug and error_type (all-time)",
-  ["status", "org_slug", "error_type"]
+  "Total workflow executions by status, broken down by org_slug, project_id, and error_type (all-time)",
+  ["status", "org_slug", "project_id", "error_type"]
 );
 
 // KEEP-545: the previous DB-sourced gauge `keeperhub_workflow_execution_errors_total`
@@ -1241,15 +1241,17 @@ export async function updateDbMetrics(): Promise<void> {
       getBillingStatsFromDb(),
     ]);
 
-    // Update workflow execution counts per (status, org_slug, error_type).
-    // Reset before populating so series for orgs that no longer have executions
-    // in a given bucket clear out instead of going stale.
+    // Update workflow execution counts per (status, org_slug, project_id,
+    // error_type). Reset before populating so series for orgs/projects that
+    // no longer have executions in a given bucket clear out instead of
+    // going stale.
     workflowExecutionsTotal.reset();
     for (const row of workflowStats.executionsByStatusAndOrgSlug) {
       workflowExecutionsTotal.set(
         {
           status: row.status,
           org_slug: row.orgSlug,
+          project_id: row.projectId,
           error_type: row.errorType,
         },
         row.count

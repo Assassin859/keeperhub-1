@@ -195,6 +195,7 @@ export const LabelKeys = {
   ORG_ID: "org_id",
   ORG_SLUG: "org_slug",
   ORG_NAME: "org_name",
+  PROJECT_ID: "project_id",
   PLAN: "plan",
   OWNER_ID: "owner_id",
   PLUGIN_ID: "plugin_id",
