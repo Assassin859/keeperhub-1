@@ -10,6 +10,15 @@ import { BlockList, isIP } from "node:net";
 import { captureException } from "@sentry/nextjs";
 import { Agent, buildConnector, fetch as undiciFetch } from "undici";
 import { getMetricsCollector } from "@/lib/metrics";
+import {
+  SSRF_BLOCKED_HOST_EXACT,
+  SSRF_BLOCKED_HOST_SUFFIXES,
+  SSRF_IPV4_BROADCAST_ADDRESSES,
+  SSRF_IPV4_CIDRS,
+  SSRF_IPV6_CIDRS,
+  SSRF_IPV6_LITERAL_ADDRESSES,
+  SSRF_NAT64_PREFIX_CIDR,
+} from "@/lib/ssrf-blocklist";
 
 export type SsrfBlockReason =
   | "scheme"
@@ -60,66 +69,25 @@ const NAT64_UNCOMPRESSED_REGEX =
 const NAT64_DOTTED_REGEX = /^64:ff9b::(\d+\.\d+\.\d+\.\d+)$/;
 
 /**
- * Denylist of IP ranges that must never be reached from user-controlled fetch.
- * IPv4 covers unspecified, private, loopback, link-local (incl. IMDS
- * 169.254.169.254), CGNAT, documentation ranges, benchmarking, multicast,
- * reserved, broadcast. IPv6 covers unspecified, loopback, IPv4-mapped (via
- * extractor), site-local NAT64 (RFC 8215), discard, Teredo, documentation,
- * 6to4, ULA, link-local, multicast.
- *
- * NAT64 well-known prefix (64:ff9b::/96, RFC 6052) is intentionally NOT in
- * this list. In dual-stack / IPv6-preferred networks (e.g. AWS VPCs with
- * `enable_ipv6 = true`) the resolver synthesises NAT64 AAAA records for
- * every IPv4-only public host, so blanket-blocking the prefix would block
- * legitimate public destinations like Discord, Slack, Telegram. Instead,
- * NAT64 hits are detected separately in `isBlockedIp` and the embedded
- * IPv4 is rechecked against this list - preserving the SSRF property (no
- * NAT64 path to RFC 1918, IMDS, etc.) without false positives on public
- * IPv4.
- *
- * Site-local NAT64 (64:ff9b:1::/48, RFC 8215) IS blanket-blocked here: the
- * RFC defines it for site-local deployments, so by construction the
- * embedded IPv4 maps to internal infrastructure. Teredo (2001::/32) and
- * 6to4 (2002::/16) are also blanket-blocked despite carrying embedded
- * public-IPv4 in some cases - both transition mechanisms are deprecated
- * and not synthesised by mainstream resolvers, so false-positive risk is
- * low.
+ * Builds the runtime BlockList from the shared data in
+ * `lib/ssrf-blocklist.ts`. See that module for the rationale on which
+ * ranges are blanket-blocked and which are handled specially (IPv4-mapped
+ * IPv6 and the well-known NAT64 prefix).
  */
 function buildBlockList(): BlockList {
   const list = new BlockList();
-
-  list.addSubnet("0.0.0.0", 8, "ipv4");
-  list.addSubnet("10.0.0.0", 8, "ipv4");
-  list.addSubnet("100.64.0.0", 10, "ipv4");
-  list.addSubnet("127.0.0.0", 8, "ipv4");
-  list.addSubnet("169.254.0.0", 16, "ipv4");
-  list.addSubnet("172.16.0.0", 12, "ipv4");
-  list.addSubnet("192.0.0.0", 24, "ipv4");
-  list.addSubnet("192.0.2.0", 24, "ipv4");
-  list.addSubnet("192.88.99.0", 24, "ipv4");
-  list.addSubnet("192.168.0.0", 16, "ipv4");
-  list.addSubnet("198.18.0.0", 15, "ipv4");
-  list.addSubnet("198.51.100.0", 24, "ipv4");
-  list.addSubnet("203.0.113.0", 24, "ipv4");
-  list.addSubnet("224.0.0.0", 4, "ipv4");
-  list.addSubnet("240.0.0.0", 4, "ipv4");
-  list.addAddress("255.255.255.255", "ipv4");
-
-  list.addAddress("::", "ipv6");
-  list.addAddress("::1", "ipv6");
-  // Note: ::ffff:0:0/96 (IPv4-mapped IPv6) is intentionally not added here.
-  // Node's BlockList treats that subnet as "all IPv4", which makes every
-  // IPv4 check return true. IPv4-mapped IPv6 addresses pointing at private
-  // IPv4 space are caught via extractMappedIpv4 below.
-  list.addSubnet("64:ff9b:1::", 48, "ipv6");
-  list.addSubnet("100::", 64, "ipv6");
-  list.addSubnet("2001::", 32, "ipv6");
-  list.addSubnet("2001:db8::", 32, "ipv6");
-  list.addSubnet("2002::", 16, "ipv6");
-  list.addSubnet("fc00::", 7, "ipv6");
-  list.addSubnet("fe80::", 10, "ipv6");
-  list.addSubnet("ff00::", 8, "ipv6");
-
+  for (const [addr, prefix] of SSRF_IPV4_CIDRS) {
+    list.addSubnet(addr, prefix, "ipv4");
+  }
+  for (const addr of SSRF_IPV4_BROADCAST_ADDRESSES) {
+    list.addAddress(addr, "ipv4");
+  }
+  for (const addr of SSRF_IPV6_LITERAL_ADDRESSES) {
+    list.addAddress(addr, "ipv6");
+  }
+  for (const [addr, prefix] of SSRF_IPV6_CIDRS) {
+    list.addSubnet(addr, prefix, "ipv6");
+  }
   return list;
 }
 
@@ -127,7 +95,7 @@ const BLOCK_LIST = buildBlockList();
 
 const NAT64_BLOCK_LIST = (() => {
   const list = new BlockList();
-  list.addSubnet("64:ff9b::", 96, "ipv6");
+  list.addSubnet(SSRF_NAT64_PREFIX_CIDR[0], SSRF_NAT64_PREFIX_CIDR[1], "ipv6");
   return list;
 })();
 
@@ -270,30 +238,8 @@ export function isBlockedIp(
   return { blocked: false };
 }
 
-const BLOCKED_HOST_EXACT = new Set(["localhost"]);
-
-/**
- * Suffixes that mark a hostname as referring to a local / internal /
- * in-cluster service. Matched against the normalised hostname (lower-cased,
- * trailing dot stripped) using `String.prototype.endsWith`. Each entry must
- * begin with a `.` so that a top-level token like "internal" cannot match
- * an unrelated host such as "myinternal.com".
- *
- * `*.local` covers mDNS / Bonjour and is a superset of the Kubernetes
- * patterns, but the cluster suffixes are listed explicitly so the intent
- * is visible at the denylist site and so any future narrowing of `.local`
- * (e.g. to mDNS-only) does not silently re-open the in-cluster path.
- *
- * Cluster suffix scope: KeeperHub staging and production both run on AWS
- * EKS with the default `clusterDomain` of `cluster.local`. If we move to a
- * cluster with a custom `clusterDomain`, add it here.
- */
-const BLOCKED_HOST_SUFFIXES = [
-  ".local",
-  ".internal",
-  ".svc.cluster.local",
-  ".pod.cluster.local",
-];
+const BLOCKED_HOST_EXACT = new Set<string>(SSRF_BLOCKED_HOST_EXACT);
+const BLOCKED_HOST_SUFFIXES = SSRF_BLOCKED_HOST_SUFFIXES;
 
 /**
  * Pre-DNS hostname denylist. Pure string match - no DNS lookup, no IP
