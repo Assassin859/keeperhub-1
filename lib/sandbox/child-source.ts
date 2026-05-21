@@ -22,6 +22,11 @@
  * by design. Adding third-party packages (e.g. undici) would enlarge the
  * supply-chain attack surface of the sandbox container.
  */
+// Relative import: this file is compiled by two separate tsconfigs (the
+// keeperhub app and the standalone @keeperhub/sandbox package), and the
+// sandbox tsconfig's `@/*` alias points at its own src dir rather than the
+// keeperhub workspace. The relative path resolves identically from both
+// build contexts.
 import {
   SSRF_BLOCKED_HOST_EXACT,
   SSRF_BLOCKED_HOST_SUFFIXES,
@@ -30,7 +35,7 @@ import {
   SSRF_IPV6_CIDRS,
   SSRF_IPV6_LITERAL_ADDRESSES,
   SSRF_NAT64_PREFIX_CIDR,
-} from "@/lib/ssrf-blocklist";
+} from "../ssrf-blocklist";
 
 /**
  * Byte-sequence that prefixes the grandchild's final v8-serialized result
