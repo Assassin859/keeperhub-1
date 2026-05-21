@@ -10,6 +10,7 @@ import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { fetchCredentials } from "@/lib/credential-fetcher";
+import { assertConnectionUrlIsPublic } from "@/lib/db/connection-host-guard";
 import {
   getDatabaseErrorMessage,
   getPostgresConnectionOptions,
@@ -138,6 +139,18 @@ async function databaseQuery(
     databaseUrl,
     credentials.DATABASE_SSL_MODE
   );
+
+  try {
+    await assertConnectionUrlIsPublic(normalizedUrl);
+  } catch (guardError) {
+    return {
+      success: false,
+      error:
+        guardError instanceof Error
+          ? guardError.message
+          : "Host is not allowed: must resolve to a public address",
+    };
+  }
 
   const queryString = (input.dbQuery || input.query) as string;
   let client: postgres.Sql | null = null;

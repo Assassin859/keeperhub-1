@@ -1,5 +1,6 @@
 import "server-only";
 import type { Address } from "viem";
+import { SPONSORSHIP_CHAIN_IDS } from "./sponsorship-chains-meta";
 
 function getPimlicoBaseUrl(): string {
   const url = process.env.PIMLICO_BASE_URL;
@@ -9,19 +10,8 @@ function getPimlicoBaseUrl(): string {
   return url;
 }
 
-/**
- * Chain IDs where gas sponsorship via EIP-7702 + Pimlico is supported.
- * Chains must support both EIP-7702 and have Pimlico bundler coverage.
- */
-export const SUPPORTED_SPONSORSHIP_CHAINS: ReadonlySet<number> = new Set([
-  8453, // Base
-  84_532, // Base Sepolia
-  10, // Optimism
-  42_161, // Arbitrum One
-  137, // Polygon
-  1, // Ethereum Mainnet
-  11_155_111, // Sepolia
-]);
+export const SUPPORTED_SPONSORSHIP_CHAINS: ReadonlySet<number> =
+  SPONSORSHIP_CHAIN_IDS;
 
 export function isSponsorshipSupported(chainId: number): boolean {
   return SUPPORTED_SPONSORSHIP_CHAINS.has(chainId);

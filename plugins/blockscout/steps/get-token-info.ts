@@ -35,6 +35,7 @@ type GetTokenInfoResult =
 
 export type GetTokenInfoCoreInput = {
   tokenAddress: string;
+  network?: string;
 };
 
 export type GetTokenInfoInput = StepInput &
@@ -53,7 +54,8 @@ async function stepHandler(
 
   const result = await blockscoutGet<TokenResponse>(
     `/api/v2/tokens/${encodeURIComponent(tokenAddress)}`,
-    credentials
+    credentials,
+    input.network
   );
 
   if (!result.success) {

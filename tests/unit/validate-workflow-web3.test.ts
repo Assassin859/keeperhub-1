@@ -22,10 +22,7 @@ import {
 describe("validateWorkflow — unknown-chain-id (VALID-05)", () => {
   it("passes when action node network is in the chainIds Set", () => {
     const wf = makeWorkflow({
-      nodes: [
-        triggerNode(),
-        actionNode("a1", { network: "1" }),
-      ],
+      nodes: [triggerNode(), actionNode("a1", { network: "1" })],
       edges: [edge("e1", "trigger-1", "a1")],
     });
     const result = validateWorkflow(wf, { chainIds: new Set([1, 8453]) });
@@ -36,10 +33,7 @@ describe("validateWorkflow — unknown-chain-id (VALID-05)", () => {
 
   it("errors when action node network is NOT in the chainIds Set", () => {
     const wf = makeWorkflow({
-      nodes: [
-        triggerNode(),
-        actionNode("a1", { network: "9999" }),
-      ],
+      nodes: [triggerNode(), actionNode("a1", { network: "9999" })],
       edges: [edge("e1", "trigger-1", "a1")],
     });
     const result = validateWorkflow(wf, { chainIds: new Set([1, 8453]) });
@@ -51,10 +45,7 @@ describe("validateWorkflow — unknown-chain-id (VALID-05)", () => {
 
   it("errors when network value is a non-numeric string", () => {
     const wf = makeWorkflow({
-      nodes: [
-        triggerNode(),
-        actionNode("a1", { network: "abc" }),
-      ],
+      nodes: [triggerNode(), actionNode("a1", { network: "abc" })],
       edges: [edge("e1", "trigger-1", "a1")],
     });
     const result = validateWorkflow(wf, { chainIds: new Set([1, 8453]) });
@@ -65,10 +56,7 @@ describe("validateWorkflow — unknown-chain-id (VALID-05)", () => {
 
   it("skips chain check entirely when chainIds is undefined (no false errors)", () => {
     const wf = makeWorkflow({
-      nodes: [
-        triggerNode(),
-        actionNode("a1", { network: "99999" }),
-      ],
+      nodes: [triggerNode(), actionNode("a1", { network: "99999" })],
       edges: [edge("e1", "trigger-1", "a1")],
     });
     const result = validateWorkflow(wf);
@@ -227,10 +215,7 @@ describe("validateWorkflow — invalid-token-address (VALID-06)", () => {
 
   it("does NOT error for an empty contractAddress (empty is a different validation surface)", () => {
     const wf = makeWorkflow({
-      nodes: [
-        triggerNode(),
-        actionNode("a1", { contractAddress: "" }),
-      ],
+      nodes: [triggerNode(), actionNode("a1", { contractAddress: "" })],
       edges: [edge("e1", "trigger-1", "a1")],
     });
     const result = validateWorkflow(wf);
@@ -294,11 +279,93 @@ describe("validateWorkflow — invalid-token-address (VALID-06)", () => {
     expect(err).toBeUndefined();
   });
 
+  it("does NOT error for a contractAddress that is a stored-format template reference", () => {
+    const wf = makeWorkflow({
+      nodes: [
+        triggerNode(),
+        actionNode("a1", {
+          contractAddress: "{{@prep:Prep.governor_address_safe}}",
+        }),
+      ],
+      edges: [edge("e1", "trigger-1", "a1")],
+    });
+    const result = validateWorkflow(wf);
+    const err = result.errors.find((e) => e.code === "invalid-token-address");
+    expect(err).toBeUndefined();
+  });
+
+  it("treats a contractAddress containing any template token as dynamic (skips format check even with a literal prefix)", () => {
+    // Policy: a value with a {{...}} token is dynamic and cannot be
+    // statically format-checked, so it is skipped rather than flagged —
+    // even if it carries a literal-looking prefix.
+    const wf = makeWorkflow({
+      nodes: [
+        triggerNode(),
+        actionNode("a1", { contractAddress: "0xbad{{Prep.suffix}}" }),
+      ],
+      edges: [edge("e1", "trigger-1", "a1")],
+    });
+    const result = validateWorkflow(wf);
+    const err = result.errors.find((e) => e.code === "invalid-token-address");
+    expect(err).toBeUndefined();
+  });
+
+  it("does NOT error for a contractAddress that is a display-format template reference", () => {
+    const wf = makeWorkflow({
+      nodes: [
+        triggerNode(),
+        actionNode("a1", { contractAddress: "{{Prep.tokenAddress}}" }),
+      ],
+      edges: [edge("e1", "trigger-1", "a1")],
+    });
+    const result = validateWorkflow(wf);
+    const err = result.errors.find((e) => e.code === "invalid-token-address");
+    expect(err).toBeUndefined();
+  });
+
+  it("does NOT error for a template address embedded in tokenConfig JSON", () => {
+    const wf = makeWorkflow({
+      nodes: [
+        triggerNode(),
+        actionNode("a1", {
+          tokenConfig: JSON.stringify({
+            mode: "custom",
+            customToken: {
+              address: "{{@prep:Prep.token_address}}",
+              symbol: "X",
+            },
+          }),
+        }),
+      ],
+      edges: [edge("e1", "trigger-1", "a1")],
+    });
+    const result = validateWorkflow(wf);
+    const err = result.errors.find((e) => e.code === "invalid-token-address");
+    expect(err).toBeUndefined();
+  });
+
+  it("STILL errors for a literal non-address contractAddress (template skip does not mask real errors)", () => {
+    const wf = makeWorkflow({
+      nodes: [
+        triggerNode(),
+        actionNode("a1", { contractAddress: "0xnotanaddress" }),
+      ],
+      edges: [edge("e1", "trigger-1", "a1")],
+    });
+    const result = validateWorkflow(wf);
+    const err = result.errors.find((e) => e.code === "invalid-token-address");
+    expect(err).toBeDefined();
+    expect(err?.message).toContain("0xnotanaddress");
+  });
+
   it("does NOT crash or error on deeply malformed / adversarial node config", () => {
     const wf: ValidatorWorkflow = {
       id: "wf-adversarial",
       nodes: [
-        { id: "trigger-1", data: { type: "trigger", config: { triggerType: "Manual" } } },
+        {
+          id: "trigger-1",
+          data: { type: "trigger", config: { triggerType: "Manual" } },
+        },
         null as unknown as object,
         { id: "a1", data: null },
         { id: "a2", data: { config: null } },

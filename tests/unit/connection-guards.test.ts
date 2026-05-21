@@ -9,6 +9,7 @@ vi.mock("node:dns", () => ({
 }));
 
 import {
+  assertConnectionUrlIsPublic,
   assertHostIsPublic,
   extractHostFromConnectionString,
 } from "@/lib/db/connection-host-guard";
@@ -62,9 +63,13 @@ describe("assertHostIsPublic", () => {
   it("rejects hostname that resolves to a private address", async () => {
     mockLookup.mockResolvedValue([{ address: "10.0.0.5", family: 4 }]);
 
-    await expect(assertHostIsPublic("internal-db.local")).rejects.toThrow(
+    // Uses .example TLD so the hostname does not match the pre-DNS
+    // isBlockedHost denylist; we want to exercise the DNS-resolution path
+    // specifically.
+    await expect(assertHostIsPublic("internal-db.example")).rejects.toThrow(
       "Host is not allowed: must resolve to a public address"
     );
+    expect(mockLookup).toHaveBeenCalled();
   });
 
   it("rejects hostname that resolves to a mix of public and private addresses", async () => {
@@ -86,12 +91,31 @@ describe("assertHostIsPublic", () => {
     );
   });
 
-  it("rejects localhost (resolves to loopback)", async () => {
+  it("rejects localhost before any DNS lookup", async () => {
+    // isBlockedHost catches `localhost` as a pre-DNS pattern, so the
+    // resolver is never consulted. The mock is only here to prove the
+    // negative.
     mockLookup.mockResolvedValue([{ address: "127.0.0.1", family: 4 }]);
 
     await expect(assertHostIsPublic("localhost")).rejects.toThrow(
       "Host is not allowed: must resolve to a public address"
     );
+    expect(mockLookup).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["case-insensitive localhost", "LOCALHOST"],
+    ["trailing-dot FQDN form", "localhost."],
+    ["mDNS .local suffix", "raspberrypi.local"],
+    [".internal suffix", "service.internal"],
+    ["EC2 VPC internal hostname", "ip-10-0-0-5.us-east-2.compute.internal"],
+    ["k8s service DNS", "keeperhub-common.keeperhub.svc.cluster.local"],
+    ["k8s pod DNS", "mypod.keeperhub.pod.cluster.local"],
+  ])("rejects %s before any DNS lookup", async (_label, host) => {
+    await expect(assertHostIsPublic(host)).rejects.toThrow(
+      "Host is not allowed: must resolve to a public address"
+    );
+    expect(mockLookup).not.toHaveBeenCalled();
   });
 });
 
@@ -142,5 +166,97 @@ describe("extractHostFromConnectionString", () => {
       "Host is not allowed: must resolve to a public address"
     );
     expect(mockLookup).not.toHaveBeenCalled();
+  });
+});
+
+describe("assertConnectionUrlIsPublic", () => {
+  it.each([
+    ["IPv4 loopback", "postgres://u:p@127.0.0.1:5432/db"],
+    ["IPv4 private 10/8", "postgres://u:p@10.0.0.1:5432/db"],
+    ["IPv4 private 192.168/16", "postgres://u:p@192.168.1.1:5432/db"],
+    ["IPv4 IMDS link-local", "postgres://u:p@169.254.169.254:5432/db"],
+    ["IPv6 loopback (bracketed)", "postgres://u:p@[::1]:5432/db"],
+    ["IPv6 ULA (bracketed)", "postgres://u:p@[fc00::1]:5432/db"],
+    ["IPv6 site-local NAT64", "postgres://u:p@[64:ff9b:1::1]:5432/db"],
+    ["IPv6 Teredo", "postgres://u:p@[2001::1]:5432/db"],
+    [
+      "IPv4-mapped IPv6 to private",
+      "postgres://u:p@[::ffff:127.0.0.1]:5432/db",
+    ],
+  ])("rejects %s before any DNS lookup", async (_label, url) => {
+    await expect(assertConnectionUrlIsPublic(url)).rejects.toThrow(
+      "Host is not allowed: must resolve to a public address"
+    );
+    expect(mockLookup).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["localhost", "postgres://u:p@localhost:5432/db"],
+    [
+      "k8s service DNS",
+      "postgres://u:p@db.keeperhub.svc.cluster.local:5432/db",
+    ],
+    [
+      "EC2 VPC internal hostname",
+      "postgres://u:p@ip-10-0-0-5.us-east-2.compute.internal:5432/db",
+    ],
+    ["mDNS suffix", "postgres://u:p@raspberrypi.local:5432/db"],
+  ])("rejects hostname pattern %s before any DNS lookup", async (_label, url) => {
+    await expect(assertConnectionUrlIsPublic(url)).rejects.toThrow(
+      "Host is not allowed: must resolve to a public address"
+    );
+    expect(mockLookup).not.toHaveBeenCalled();
+  });
+
+  it("rejects hostname that resolves to a private address", async () => {
+    mockLookup.mockResolvedValue([{ address: "10.0.0.5", family: 4 }]);
+    await expect(
+      assertConnectionUrlIsPublic("postgres://u:p@db.example/x")
+    ).rejects.toThrow("Host is not allowed: must resolve to a public address");
+    expect(mockLookup).toHaveBeenCalled();
+  });
+
+  it("permits hostname that resolves only to public addresses", async () => {
+    mockLookup.mockResolvedValue([{ address: "1.1.1.1", family: 4 }]);
+    await expect(
+      assertConnectionUrlIsPublic("postgres://u:p@db.example.com:5432/db")
+    ).resolves.toBeUndefined();
+  });
+
+  it.each([
+    ["IPv4 literal", "postgres://u:p@1.1.1.1:5432/db"],
+    [
+      "IPv6 literal (bracketed)",
+      "postgres://u:p@[2606:4700:4700::1111]:5432/db",
+    ],
+  ])("permits public %s without any DNS lookup", async (_label, url) => {
+    await expect(assertConnectionUrlIsPublic(url)).resolves.toBeUndefined();
+    expect(mockLookup).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["empty string", ""],
+    ["plain garbage", "not-a-url"],
+    ["scheme-only", "postgres://"],
+  ])("throws for malformed URL: %s", async (_label, url) => {
+    await expect(assertConnectionUrlIsPublic(url)).rejects.toThrow(
+      "Connection string is missing a host"
+    );
+    expect(mockLookup).not.toHaveBeenCalled();
+  });
+
+  it("error messages never echo the connection string", async () => {
+    let thrown: unknown;
+    try {
+      await assertConnectionUrlIsPublic(
+        "postgres://supersecretuser:supersecretpassword@10.0.0.1:5432/internal"
+      );
+    } catch (err) {
+      thrown = err;
+    }
+    const message = thrown instanceof Error ? thrown.message : String(thrown);
+    expect(message).not.toContain("supersecret");
+    expect(message).not.toContain("10.0.0.1");
+    expect(message).not.toContain("internal");
   });
 });
