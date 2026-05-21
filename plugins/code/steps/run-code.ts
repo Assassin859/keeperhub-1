@@ -32,14 +32,16 @@ const MAX_TIMEOUT_SECONDS = 120;
 const UNRESOLVED_TEMPLATE_REGEX = /\{\{@?[^}]+\}\}/g;
 const VM_LINE_REGEX = /user-code\.js:(\d+)/;
 
-/**
- * Backend selector read once at module init — "local" means the in-pod
- * child_process path (the PR #953 runner inlined below), "remote" dispatches
- * to the standalone sandbox HTTP service via `lib/sandbox-client.ts`. Default
- * is "local" so dev and unit tests stay on the in-pod runner without extra
- * env wiring.
- */
-const SANDBOX_BACKEND = process.env.SANDBOX_BACKEND ?? "local";
+const SANDBOX_BACKEND = process.env.SANDBOX_BACKEND;
+
+if (
+  process.env.NODE_ENV === "production" &&
+  (SANDBOX_BACKEND !== "remote" || !process.env.SANDBOX_URL)
+) {
+  throw new Error(
+    "SANDBOX_BACKEND must be 'remote' and SANDBOX_URL must be set in production"
+  );
+}
 
 const JS_STRING_LITERAL_REGEX =
   /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`/g;
@@ -294,11 +296,6 @@ function normalizeRemoteError(
   return { ...outcome, error: rewritten };
 }
 
-/**
- * Backend dispatcher. SANDBOX_BACKEND is read once at module init; when
- * "remote" we delegate to lib/sandbox-client.ts, otherwise runLocal handles
- * the invocation via the in-pod child_process path.
- */
 async function stepHandler(input: RunCodeCoreInput): Promise<RunCodeResult> {
   const validationError = validateInput(input);
   if (validationError) {
