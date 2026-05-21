@@ -139,10 +139,11 @@ async function dispatch(): Promise<{
   if (skippedIntervalCount > 0) {
     // Interval-mode rows store a fixed `0 0 1 1 *` sentinel in
     // cron_expression. If this script parsed it, the schedule would
-    // "fire" once a year. Skip them explicitly with a log so the
-    // omission is visible rather than just an unexplained drop in
-    // dispatched schedules.
-    console.log(
+    // "fire" once a year. Skip them explicitly with a warn-level log
+    // -- "you wanted X scheduled rows, you got X-N" is information
+    // operators should see (matches the equivalent skip in
+    // scripts/runtime/workflow_runtime_analysis/workflow-runner-profiled.ts).
+    console.warn(
       `[${runId}] Skipping ${skippedIntervalCount} interval-mode schedule(s); ` +
         "this standalone script only dispatches cron-mode rows"
     );
