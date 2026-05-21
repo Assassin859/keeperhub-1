@@ -1,8 +1,14 @@
+import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { deserialize } from "node:v8";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { SANDBOX_CHILD_SOURCE } from "@/lib/sandbox/child-source";
+import {
+  SANDBOX_CHILD_SOURCE,
+  SANDBOX_RESULT_SENTINEL,
+} from "@/lib/sandbox/child-source";
 import {
   SSRF_BLOCKED_HOST_EXACT,
   SSRF_BLOCKED_HOST_SUFFIXES,
@@ -16,14 +22,18 @@ import {
 // The sandbox grandchild runs as a separate `node -e <SANDBOX_CHILD_SOURCE>`
 // subprocess with no access to npm or the rest of the codebase, so the SSRF
 // blocklist has to cross the process boundary as inlined literals
-// (`JSON.stringify` interpolation at template-render time). This test locks
-// that contract: every entry in lib/ssrf-blocklist.ts must appear in the
-// rendered source. If someone later regresses by hardcoding the list in
-// child-source.ts and forgetting to update one consumer, this test fails.
+// (`JSON.stringify` interpolation at template-render time). This file locks
+// two contracts:
+//   1. Data parity: every entry in lib/ssrf-blocklist.ts must appear in the
+//      rendered source.
+//   2. Behavioural parity: the rendered source actually blocks the things
+//      it inlines when spawned and asked to fetch them. Item #2 is the
+//      contract the KEEP-603 incident required and the contract data-only
+//      tests cannot prove on their own.
 describe("sandbox child-source consumes lib/ssrf-blocklist.ts", () => {
-  it("inlines every IPv4 CIDR address from the SoT", () => {
-    for (const [addr] of SSRF_IPV4_CIDRS) {
-      expect(SANDBOX_CHILD_SOURCE).toContain(`"${addr}"`);
+  it("inlines every IPv4 CIDR tuple from the SoT", () => {
+    for (const cidr of SSRF_IPV4_CIDRS) {
+      expect(SANDBOX_CHILD_SOURCE).toContain(JSON.stringify(cidr));
     }
   });
 
@@ -33,9 +43,9 @@ describe("sandbox child-source consumes lib/ssrf-blocklist.ts", () => {
     }
   });
 
-  it("inlines every IPv6 CIDR address from the SoT", () => {
-    for (const [addr] of SSRF_IPV6_CIDRS) {
-      expect(SANDBOX_CHILD_SOURCE).toContain(`"${addr}"`);
+  it("inlines every IPv6 CIDR tuple from the SoT", () => {
+    for (const cidr of SSRF_IPV6_CIDRS) {
+      expect(SANDBOX_CHILD_SOURCE).toContain(JSON.stringify(cidr));
     }
   });
 
@@ -45,8 +55,10 @@ describe("sandbox child-source consumes lib/ssrf-blocklist.ts", () => {
     }
   });
 
-  it("inlines the NAT64 well-known prefix address from the SoT", () => {
-    expect(SANDBOX_CHILD_SOURCE).toContain(`"${SSRF_NAT64_PREFIX_CIDR[0]}"`);
+  it("inlines the NAT64 well-known prefix tuple from the SoT", () => {
+    expect(SANDBOX_CHILD_SOURCE).toContain(
+      JSON.stringify(SSRF_NAT64_PREFIX_CIDR),
+    );
   });
 
   it("inlines every blocked-host exact match from the SoT", () => {
@@ -71,3 +83,160 @@ describe("sandbox child-source consumes lib/ssrf-blocklist.ts", () => {
     expect(() => new Script(SANDBOX_CHILD_SOURCE)).not.toThrow();
   });
 });
+
+// Drift-resistance policy guard. The grandchild template is now
+// data-imported from lib/ssrf-blocklist.json; any other import would either
+// silently no-op in the spawned subprocess (runtime values do not propagate
+// across "node -e") or introduce a dependency the standalone sandbox image
+// does not have. Lock the contract here so it cannot regress quietly.
+const IMPORT_STATEMENT_REGEX = /^import\s.+$/gm;
+
+describe("lib/sandbox/child-source.ts only imports pure data", () => {
+  it("has at most one import and it points at the SSRF blocklist JSON", async () => {
+    const src = await readFile("lib/sandbox/child-source.ts", "utf8");
+    const imports = src.match(IMPORT_STATEMENT_REGEX) ?? [];
+    expect(imports).toHaveLength(1);
+    expect(imports[0]).toContain('"../ssrf-blocklist.json"');
+    expect(imports[0]).toContain('with { type: "json" }');
+  });
+});
+
+type SandboxOutcome =
+  | { ok: true; result: unknown; logs: unknown[] }
+  | {
+      ok: false;
+      errorMessage: string;
+      errorStack?: string;
+      logs: unknown[];
+    };
+
+function parseChildOutput(stdout: string): SandboxOutcome {
+  const idx = stdout.lastIndexOf(SANDBOX_RESULT_SENTINEL);
+  if (idx === -1) {
+    return { ok: false, errorMessage: "no sentinel in stdout", logs: [] };
+  }
+  const newlineIdx = stdout.indexOf("\n", idx);
+  const end = newlineIdx === -1 ? stdout.length : newlineIdx;
+  const base64 = stdout
+    .slice(idx + SANDBOX_RESULT_SENTINEL.length, end)
+    .trim();
+  try {
+    return deserialize(Buffer.from(base64, "base64")) as SandboxOutcome;
+  } catch (_err) {
+    return { ok: false, errorMessage: "malformed v8 payload", logs: [] };
+  }
+}
+
+async function runSandboxed(
+  userCode: string,
+  timeoutMs = 3000,
+): Promise<SandboxOutcome> {
+  return await new Promise<SandboxOutcome>((resolve) => {
+    const child = spawn(process.execPath, ["-e", SANDBOX_CHILD_SOURCE], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let settled = false;
+
+    function finish(outcome: SandboxOutcome): void {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(killTimer);
+      if (!child.killed) {
+        try {
+          child.kill("SIGKILL");
+        } catch (_err) {
+          // child may already have exited
+        }
+      }
+      resolve(outcome);
+    }
+
+    const killTimer = setTimeout(() => {
+      finish({ ok: false, errorMessage: "harness timeout", logs: [] });
+    }, timeoutMs + 3000);
+
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.on("error", (err: Error) => {
+      finish({ ok: false, errorMessage: err.message, logs: [] });
+    });
+    child.on("close", () => {
+      finish(parseChildOutput(stdout));
+    });
+
+    try {
+      child.stdin.write(JSON.stringify({ code: userCode, timeoutMs }));
+      child.stdin.end();
+    } catch (err) {
+      finish({
+        ok: false,
+        errorMessage: err instanceof Error ? err.message : String(err),
+        logs: [],
+      });
+    }
+  });
+}
+
+function expectBlocked(outcome: SandboxOutcome): void {
+  expect(outcome.ok).toBe(false);
+  if (outcome.ok) {
+    return;
+  }
+  expect(outcome.errorMessage).toMatch(/SSRF blocked/);
+}
+
+// Behavioural parity: spawn the actual grandchild and confirm the SSRF
+// guard fires for every category Sasha listed in the incident response
+// (RFC 1918, link-local incl. IMDSv2, multicast, reserved, IPv6 transition
+// prefixes, and the pre-DNS hostname denylist). These cases use IP
+// literals or pre-DNS-blocked hostnames so the test is deterministic and
+// performs no real DNS / network IO.
+describe("sandbox grandchild SSRF guard fires on every category", () => {
+  it.each([
+    ['await fetch("http://169.254.169.254/")', "IMDSv2 link-local"],
+    ['await fetch("http://10.0.0.1/")', "RFC 1918"],
+    ['await fetch("http://127.0.0.1/")', "loopback IPv4"],
+    ['await fetch("http://255.255.255.255/")', "IPv4 broadcast"],
+    ['await fetch("http://[::1]/")', "IPv6 loopback"],
+    ['await fetch("http://[fc00::1]/")', "ULA IPv6"],
+    ['await fetch("http://[fe80::1]/")', "link-local IPv6"],
+    ['await fetch("http://[2001::1]/")', "Teredo (2001::/32)"],
+    ['await fetch("http://[2002::1]/")', "6to4 (2002::/16)"],
+    [
+      'await fetch("http://[2001:db8::1]/")',
+      "documentation range (2001:db8::/32)",
+    ],
+    [
+      'await fetch("http://[64:ff9b:1::1]/")',
+      "site-local NAT64 (64:ff9b:1::/48)",
+    ],
+    ['await fetch("http://[ff02::1]/")', "multicast IPv6"],
+  ])("blocks %s (%s)", async (snippet) => {
+    const outcome = await runSandboxed(snippet);
+    expectBlocked(outcome);
+  });
+
+  it.each([
+    ['await fetch("http://localhost/")', "pre-DNS exact match"],
+    ['await fetch("http://LOCALHOST/")', "case normalisation"],
+    ['await fetch("http://localhost./")', "trailing-dot normalisation"],
+    [
+      'await fetch("http://probe.svc.cluster.local/")',
+      "*.svc.cluster.local",
+    ],
+    [
+      'await fetch("http://probe.pod.cluster.local/")',
+      "*.pod.cluster.local",
+    ],
+    ['await fetch("http://probe.internal/")', "*.internal"],
+    ['await fetch("http://probe.local/")', "*.local (mDNS / Bonjour)"],
+  ])("blocks %s before DNS (%s)", async (snippet) => {
+    const outcome = await runSandboxed(snippet);
+    expectBlocked(outcome);
+  });
+}, 30_000);
