@@ -24,7 +24,7 @@ const RANGE_PATTERN = /^(\d+)-(\d+)$/;
  * to surface a 400 to the user instead of silently demoting the
  * schedule to the cron path.
  */
-const MIN_INTERVAL_SECONDS = 60;
+export const MIN_INTERVAL_SECONDS = 60;
 
 export class IntervalTooSmallError extends Error {
   readonly raw: number;
