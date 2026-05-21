@@ -42,6 +42,7 @@ vi.mock("@/lib/metrics", () => ({
 
 import {
   assertUrlIsPublic,
+  isBlockedHost,
   isBlockedIp,
   SsrfBlockedError,
   type SsrfBlockReason,
@@ -86,6 +87,19 @@ describe("isBlockedIp", () => {
     ["fc00::1", "private-ip"],
     ["fd00::1", "private-ip"],
     ["ff02::1", "multicast"],
+    // Site-local NAT64 (RFC 8215). Distinct from the well-known 64:ff9b::/96
+    // prefix, which is intentionally allowed when embedded IPv4 is public.
+    ["64:ff9b:1::1", "private-ip"],
+    ["64:ff9b:1:abcd::1", "private-ip"],
+    // Teredo tunneling (2001::/32). Deprecated transition mechanism.
+    ["2001::1", "private-ip"],
+    ["2001:0:abcd:ef01:1234:5678:9abc:def0", "private-ip"],
+    // 6to4 (2002::/16). Deprecated transition mechanism.
+    ["2002::1", "private-ip"],
+    ["2002:0102:0304::1", "private-ip"],
+    // Documentation (2001:db8::/32). No legitimate traffic.
+    ["2001:db8::1", "private-ip"],
+    ["2001:db8:abcd::1", "private-ip"],
   ];
 
   for (const [ip, reason] of blockedV6) {
@@ -186,6 +200,61 @@ describe("isBlockedIp", () => {
   });
 });
 
+describe("isBlockedHost", () => {
+  const blockedHosts = [
+    "localhost",
+    "LOCALHOST",
+    "localhost.",
+    "  localhost  ",
+    "foo.local",
+    "raspberrypi.local",
+    "service.internal",
+    "ip-10-0-0-5.us-east-2.compute.internal",
+    "ip-172-31-1-1.ec2.internal",
+    "instance-data.ec2.internal",
+    "keeperhub-common.keeperhub.svc.cluster.local",
+    "mypod.keeperhub.pod.cluster.local",
+  ];
+
+  for (const host of blockedHosts) {
+    it(`blocks "${host}"`, () => {
+      const result = isBlockedHost(host);
+      expect(result.blocked).toBe(true);
+      if (result.blocked) {
+        expect(result.reason).toBe("blocked-host");
+      }
+    });
+  }
+
+  const allowedHosts = [
+    "example.com",
+    "www.example.com",
+    "db.us-east-1.rds.amazonaws.com",
+    "discord.com",
+    "keeperhub.com",
+    "myinternal.com",
+    "mylocal.com",
+    // IP literals are out of scope for the hostname check - isBlockedIp
+    // catches them. isBlockedHost must not match them on the suffix rules.
+    "127.0.0.1",
+    "10.0.0.1",
+    "::1",
+    "fe80::1",
+  ];
+
+  for (const host of allowedHosts) {
+    it(`allows "${host}"`, () => {
+      expect(isBlockedHost(host).blocked).toBe(false);
+    });
+  }
+
+  it("returns not-blocked for empty input", () => {
+    expect(isBlockedHost("").blocked).toBe(false);
+    expect(isBlockedHost("   ").blocked).toBe(false);
+    expect(isBlockedHost(".").blocked).toBe(false);
+  });
+});
+
 describe("safeFetch (enforce mode)", () => {
   const originalEnforce = process.env.SAFE_FETCH_ENFORCE;
 
@@ -257,11 +326,14 @@ describe("safeFetch (enforce mode)", () => {
     );
   });
 
-  it("attributes plugin on DNS-resolved private IP (localhost)", async () => {
-    // `localhost` is not an IP literal, so it reaches the DNS path and is
-    // resolved inside the Agent's connector to 127.0.0.1 or ::1. The plugin
-    // label must propagate there via AsyncLocalStorage. Port 9999 avoids
-    // the WHATWG fetch "bad port" list (which includes port 1).
+  it("attributes plugin on hostname-pattern block (localhost)", async () => {
+    // `localhost` is caught by the pre-DNS hostname denylist (isBlockedHost)
+    // before any resolver runs, so the block is recorded synchronously with
+    // the directly-passed plugin label. The previous DNS-resolved-attribution
+    // path through AsyncLocalStorage is still present in the connector but
+    // is no longer reachable via `localhost`; covering it would require
+    // mocking the undici connector or using a non-pattern-matching
+    // hostname that resolves to a private IP.
     await expect(
       safeFetch("http://localhost:9999/", { plugin: "webhook" })
     ).rejects.toThrow();
@@ -269,10 +341,30 @@ describe("safeFetch (enforce mode)", () => {
       "safe_fetch.blocks.total",
       expect.objectContaining({
         plugin_name: "webhook",
-        reason: "loopback",
+        reason: "blocked-host",
       })
     );
   });
+
+  const blockedHostnames = [
+    "http://localhost/",
+    "http://localhost:9999/",
+    "http://foo.local/",
+    "http://service.internal/",
+    "http://ip-10-0-0-5.us-east-2.compute.internal/",
+    "http://keeperhub-common.keeperhub.svc.cluster.local/",
+    "http://mypod.keeperhub.pod.cluster.local/",
+  ];
+
+  for (const url of blockedHostnames) {
+    it(`rejects hostname-pattern ${url}`, async () => {
+      await expect(safeFetch(url)).rejects.toBeInstanceOf(SsrfBlockedError);
+      expect(incrementCounter).toHaveBeenCalledWith(
+        "safe_fetch.blocks.total",
+        expect.objectContaining({ reason: "blocked-host", shadow: "false" })
+      );
+    });
+  }
 
   it("throws TypeError for malformed URLs", async () => {
     await expect(safeFetch("not a url")).rejects.toBeInstanceOf(TypeError);
@@ -565,4 +657,27 @@ describe("assertUrlIsPublic", () => {
     expect(thrown).not.toBeInstanceOf(SsrfBlockedError);
     expect(thrown).not.toBeInstanceOf(TypeError);
   });
+
+  const blockedHostnames = [
+    "http://localhost/",
+    "http://foo.local/",
+    "http://service.internal/",
+    "http://ip-10-0-0-5.us-east-2.compute.internal/",
+    "http://keeperhub-common.keeperhub.svc.cluster.local/",
+    "http://mypod.keeperhub.pod.cluster.local/",
+  ];
+
+  for (const url of blockedHostnames) {
+    it(`rejects hostname-pattern ${url} before any DNS lookup`, async () => {
+      let thrown: unknown;
+      try {
+        await assertUrlIsPublic(url);
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(SsrfBlockedError);
+      expect((thrown as SsrfBlockedError).reason).toBe("blocked-host");
+      expect(mockPromisesLookup).not.toHaveBeenCalled();
+    });
+  }
 });

@@ -19,7 +19,8 @@ export type SsrfBlockReason =
   | "multicast"
   | "reserved"
   | "ipv4-mapped-private"
-  | "ipv4-nat64-private";
+  | "ipv4-nat64-private"
+  | "blocked-host";
 
 export class SsrfBlockedError extends Error {
   readonly code = "SSRF_BLOCKED";
@@ -63,16 +64,26 @@ const NAT64_DOTTED_REGEX = /^64:ff9b::(\d+\.\d+\.\d+\.\d+)$/;
  * IPv4 covers unspecified, private, loopback, link-local (incl. IMDS
  * 169.254.169.254), CGNAT, documentation ranges, benchmarking, multicast,
  * reserved, broadcast. IPv6 covers unspecified, loopback, IPv4-mapped (via
- * extractor), discard, ULA, link-local, multicast.
+ * extractor), site-local NAT64 (RFC 8215), discard, Teredo, documentation,
+ * 6to4, ULA, link-local, multicast.
  *
- * NAT64 (64:ff9b::/96) is intentionally NOT in this list. In dual-stack /
- * IPv6-preferred networks (e.g. AWS VPCs with `enable_ipv6 = true`) the
- * resolver synthesises NAT64 AAAA records for every IPv4-only public host,
- * so blanket-blocking the prefix would block legitimate public destinations
- * like Discord, Slack, Telegram. Instead, NAT64 hits are detected
- * separately in `isBlockedIp` and the embedded IPv4 is rechecked against
- * this list — preserving the SSRF property (no NAT64 path to RFC 1918,
- * IMDS, etc.) without false positives on public IPv4.
+ * NAT64 well-known prefix (64:ff9b::/96, RFC 6052) is intentionally NOT in
+ * this list. In dual-stack / IPv6-preferred networks (e.g. AWS VPCs with
+ * `enable_ipv6 = true`) the resolver synthesises NAT64 AAAA records for
+ * every IPv4-only public host, so blanket-blocking the prefix would block
+ * legitimate public destinations like Discord, Slack, Telegram. Instead,
+ * NAT64 hits are detected separately in `isBlockedIp` and the embedded
+ * IPv4 is rechecked against this list - preserving the SSRF property (no
+ * NAT64 path to RFC 1918, IMDS, etc.) without false positives on public
+ * IPv4.
+ *
+ * Site-local NAT64 (64:ff9b:1::/48, RFC 8215) IS blanket-blocked here: the
+ * RFC defines it for site-local deployments, so by construction the
+ * embedded IPv4 maps to internal infrastructure. Teredo (2001::/32) and
+ * 6to4 (2002::/16) are also blanket-blocked despite carrying embedded
+ * public-IPv4 in some cases - both transition mechanisms are deprecated
+ * and not synthesised by mainstream resolvers, so false-positive risk is
+ * low.
  */
 function buildBlockList(): BlockList {
   const list = new BlockList();
@@ -100,7 +111,11 @@ function buildBlockList(): BlockList {
   // Node's BlockList treats that subnet as "all IPv4", which makes every
   // IPv4 check return true. IPv4-mapped IPv6 addresses pointing at private
   // IPv4 space are caught via extractMappedIpv4 below.
+  list.addSubnet("64:ff9b:1::", 48, "ipv6");
   list.addSubnet("100::", 64, "ipv6");
+  list.addSubnet("2001::", 32, "ipv6");
+  list.addSubnet("2001:db8::", 32, "ipv6");
+  list.addSubnet("2002::", 16, "ipv6");
   list.addSubnet("fc00::", 7, "ipv6");
   list.addSubnet("fe80::", 10, "ipv6");
   list.addSubnet("ff00::", 8, "ipv6");
@@ -252,6 +267,66 @@ export function isBlockedIp(
     }
   }
 
+  return { blocked: false };
+}
+
+const BLOCKED_HOST_EXACT = new Set(["localhost"]);
+
+/**
+ * Suffixes that mark a hostname as referring to a local / internal /
+ * in-cluster service. Matched against the normalised hostname (lower-cased,
+ * trailing dot stripped) using `String.prototype.endsWith`. Each entry must
+ * begin with a `.` so that a top-level token like "internal" cannot match
+ * an unrelated host such as "myinternal.com".
+ *
+ * `*.local` covers mDNS / Bonjour and is a superset of the Kubernetes
+ * patterns, but the cluster suffixes are listed explicitly so the intent
+ * is visible at the denylist site and so any future narrowing of `.local`
+ * (e.g. to mDNS-only) does not silently re-open the in-cluster path.
+ *
+ * Cluster suffix scope: KeeperHub staging and production both run on AWS
+ * EKS with the default `clusterDomain` of `cluster.local`. If we move to a
+ * cluster with a custom `clusterDomain`, add it here.
+ */
+const BLOCKED_HOST_SUFFIXES = [
+  ".local",
+  ".internal",
+  ".svc.cluster.local",
+  ".pod.cluster.local",
+];
+
+/**
+ * Pre-DNS hostname denylist. Pure string match - no DNS lookup, no IP
+ * resolution. Intended as defense-in-depth on top of `isBlockedIp`: catches
+ * hosts that are internal by NAME (localhost, *.svc.cluster.local, EC2 VPC
+ * internal hostnames like *.compute.internal) before any resolver gets to
+ * synthesise a record. Pairs with the existing IP-resolution checks in
+ * `safeFetch` and `assertUrlIsPublic`.
+ *
+ * Returns `{ blocked: false }` for IP literals - those are validated by
+ * `isBlockedIp` instead.
+ */
+export function isBlockedHost(
+  host: string
+): { blocked: true; reason: "blocked-host" } | { blocked: false } {
+  if (host === "") {
+    return { blocked: false };
+  }
+  let normalised = host.trim().toLowerCase();
+  if (normalised.endsWith(".")) {
+    normalised = normalised.slice(0, -1);
+  }
+  if (normalised === "") {
+    return { blocked: false };
+  }
+  if (BLOCKED_HOST_EXACT.has(normalised)) {
+    return { blocked: true, reason: "blocked-host" };
+  }
+  for (const suffix of BLOCKED_HOST_SUFFIXES) {
+    if (normalised.endsWith(suffix)) {
+      return { blocked: true, reason: "blocked-host" };
+    }
+  }
   return { blocked: false };
 }
 
@@ -453,6 +528,23 @@ export async function safeFetch(
   }
 
   const hostname = stripIpv6Brackets(parsed.hostname);
+
+  const hostCheck = isBlockedHost(hostname);
+  if (hostCheck.blocked) {
+    recordBlock({ hostname, reason: hostCheck.reason, plugin }, shadow);
+    if (!shadow) {
+      throw new SsrfBlockedError({
+        hostname,
+        reason: hostCheck.reason,
+        message: blockedMessage({
+          hostname,
+          reason: hostCheck.reason,
+          plugin,
+        }),
+      });
+    }
+  }
+
   if (isIP(hostname) !== 0) {
     const check = isBlockedIp(hostname);
     if (check.blocked) {
@@ -533,6 +625,15 @@ export async function assertUrlIsPublic(rawUrl: string): Promise<void> {
   const hostname = stripIpv6Brackets(parsed.hostname);
   if (hostname === "") {
     throw new TypeError(`URL has no hostname: ${rawUrl}`);
+  }
+
+  const hostCheck = isBlockedHost(hostname);
+  if (hostCheck.blocked) {
+    throw new SsrfBlockedError({
+      hostname,
+      reason: hostCheck.reason,
+      message: blockedMessage({ hostname, reason: hostCheck.reason }),
+    });
   }
 
   if (isIP(hostname) !== 0) {
