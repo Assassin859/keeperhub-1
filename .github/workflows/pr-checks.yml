@@ -203,6 +203,9 @@ jobs:
       - name: Run unit tests
         run: pnpm test:unit
 
+      - name: Run executor unit tests
+        run: pnpm test:executor
+
   test-unit-sandbox-remote:
     runs-on: ubuntu-latest
     steps:
