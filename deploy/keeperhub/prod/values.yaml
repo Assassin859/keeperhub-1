@@ -437,6 +437,9 @@ env:
     type: parameterStore
     name: feedback-api-key
     parameter_name: /eks/techops-prod/keeperhub-feedback/feedback-api-key
+  SAFE_FETCH_ENFORCE:
+    type: kv
+    value: "true"
 
 externalSecrets:
   clusterSecretStoreName: techops-prod
