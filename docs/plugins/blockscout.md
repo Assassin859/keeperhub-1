@@ -5,7 +5,7 @@ description: "Query the Blockscout block explorer REST API for address, transact
 
 # Blockscout Plugin
 
-Read on-chain data from any Blockscout-powered block explorer. All actions are read-only and work against the public Ethereum mainnet instance out of the box. Connect an instance to query a different chain or raise rate limits with an API key.
+Read on-chain data from any Blockscout-powered block explorer. All actions are read-only and require no credentials. Pick a chain on the action and it queries that chain's Blockscout explorer automatically.
 
 ## Actions
 
@@ -17,20 +17,39 @@ Read on-chain data from any Blockscout-powered block explorer. All actions are r
 | Get Transaction | Fetch details for a transaction by hash |
 | Get Token Info | Fetch metadata for an ERC-20/721/1155 token contract |
 
-## Setup
+Every action takes a **Chain** input that selects which Blockscout explorer to query (defaults to Ethereum mainnet).
 
-No setup is required to query Ethereum mainnet. To use a different Blockscout instance or an API key:
+## Choosing a chain
+
+Each action has a **Chain** selector backed by hosted Blockscout instances, so no connection is needed for supported chains:
+
+| Chain | Chain ID |
+|-------|----------|
+| Ethereum Mainnet | 1 |
+| Ethereum Sepolia | 11155111 |
+| Base | 8453 |
+| Base Sepolia | 84532 |
+| Optimism | 10 |
+| Arbitrum One | 42161 |
+| Gnosis | 100 |
+| Polygon | 137 |
+
+## Setup (custom or self-hosted instances only)
+
+For a chain not in the list above, or to use a self-hosted instance or an API key:
 
 1. In KeeperHub, go to **Connections > Add Connection > Blockscout**
-2. Set the **Blockscout Instance URL** (for example `https://base.blockscout.com`)
+2. Set the **Blockscout Instance URL** (for example `https://gnosis.blockscout.com`)
 3. Optionally add an **API Key** for higher rate limits
 4. Save the connection and select it on the action
+
+A connection's instance URL takes precedence over the Chain selector.
 
 ## Get Address Balance
 
 Look up the native coin balance and metadata for an account or contract address.
 
-**Inputs:** Address (supports `{{NodeName.field}}` variables)
+**Inputs:** Chain, Address (supports `{{NodeName.field}}` variables)
 
 **Outputs:** `address`, `balance` (wei), `isContract`, `ensName`, `success`, `error`
 
@@ -48,7 +67,7 @@ Schedule (every 10 min)
 
 Fetch the full Blockscout address summary in one call -- balance, exchange rate, reputation, verification, and engagement flags.
 
-**Inputs:** Address (supports `{{NodeName.field}}` variables)
+**Inputs:** Chain, Address (supports `{{NodeName.field}}` variables)
 
 **Outputs:** `address`, `coinBalance` (wei), `exchangeRate` (USD), `isScam`, `isVerified`, `isContract`, `reputation`, `ensName`, `proxyType`, `publicTags`, `hasTokenTransfers`, `hasTokens`, `hasLogs`, `blockNumberBalanceUpdatedAt`, `success`, `error`
 
@@ -66,7 +85,7 @@ Manual trigger
 
 Fetch lifetime activity counters for an address.
 
-**Inputs:** Address (supports `{{NodeName.field}}` variables)
+**Inputs:** Chain, Address (supports `{{NodeName.field}}` variables)
 
 **Outputs:** `transactionsCount`, `tokenTransfersCount`, `gasUsageCount`, `validationsCount`, `success`, `error`
 
@@ -84,7 +103,7 @@ Webhook (address received)
 
 Fetch status and details for a transaction by hash.
 
-**Inputs:** Transaction Hash (supports `{{NodeName.field}}` variables)
+**Inputs:** Chain, Transaction Hash (supports `{{NodeName.field}}` variables)
 
 **Outputs:** `hash`, `status`, `value`, `from`, `to`, `blockNumber`, `fee`, `method`, `success`, `error`
 
@@ -102,7 +121,7 @@ Webhook (tx hash received)
 
 Fetch metadata for a token contract.
 
-**Inputs:** Token Address (supports `{{NodeName.field}}` variables)
+**Inputs:** Chain, Token Address (supports `{{NodeName.field}}` variables)
 
 **Outputs:** `address`, `name`, `symbol`, `decimals`, `totalSupply`, `type`, `holders`, `success`, `error`
 

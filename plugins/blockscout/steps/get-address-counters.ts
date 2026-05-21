@@ -28,6 +28,7 @@ type GetAddressCountersResult =
 
 export type GetAddressCountersCoreInput = {
   address: string;
+  network?: string;
 };
 
 export type GetAddressCountersInput = StepInput &
@@ -46,7 +47,8 @@ async function stepHandler(
 
   const result = await blockscoutGet<CountersResponse>(
     `/api/v2/addresses/${encodeURIComponent(address)}/counters`,
-    credentials
+    credentials,
+    input.network
   );
 
   if (!result.success) {

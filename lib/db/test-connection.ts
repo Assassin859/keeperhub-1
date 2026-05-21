@@ -1,8 +1,5 @@
 import postgres from "postgres";
-import {
-  assertHostIsPublic,
-  extractHostFromConnectionString,
-} from "@/lib/db/connection-host-guard";
+import { assertConnectionUrlIsPublic } from "@/lib/db/connection-host-guard";
 import {
   buildDatabaseUrlFromConfig,
   type DatabaseConnectionConfig,
@@ -32,14 +29,17 @@ export async function testDatabaseConnection(
       sslMode
     );
 
-    const host = extractHostFromConnectionString(normalizedUrl);
-    if (!host) {
+    try {
+      await assertConnectionUrlIsPublic(normalizedUrl);
+    } catch (guardError) {
       return {
         status: "error",
-        message: "Connection string is missing a host",
+        message:
+          guardError instanceof Error
+            ? guardError.message
+            : "Host is not allowed: must resolve to a public address",
       };
     }
-    await assertHostIsPublic(host);
 
     connection = postgres(normalizedUrl, {
       max: 1,

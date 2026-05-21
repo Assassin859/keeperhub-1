@@ -48,6 +48,7 @@ type GetAddressInfoResult =
 
 export type GetAddressInfoCoreInput = {
   address: string;
+  network?: string;
 };
 
 export type GetAddressInfoInput = StepInput &
@@ -66,7 +67,8 @@ async function stepHandler(
 
   const result = await blockscoutGet<AddressInfoResponse>(
     `/api/v2/addresses/${encodeURIComponent(address)}`,
-    credentials
+    credentials,
+    input.network
   );
 
   if (!result.success) {
