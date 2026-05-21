@@ -342,16 +342,35 @@ type BlockContext = {
 };
 
 /**
- * Carries the calling plugin label across the async boundary into the
+ * Carries per-request state across the async boundary into the
  * module-level Agent's lookup callback, where the original `safeFetch`
- * closure is out of scope. Without this, DNS-path blocks record
- * plugin_name="unknown" — precisely the case the shadow-mode soak needs
- * to attribute.
+ * closure is out of scope.
+ *
+ * - `plugin` attributes DNS-path blocks (without this, they record
+ *   plugin_name="unknown" — precisely the case the shadow-mode soak
+ *   needs to attribute).
+ * - `initialBlockRecorded` lets the synchronous entry-point checks
+ *   (`isBlockedHost` and the IP-literal `isBlockedIp` check) tell the
+ *   connector "we already counted this request as blocked." Without this
+ *   signal, a single shadow-mode request to e.g. `http://localhost/` is
+ *   counted twice (once for the hostname-pattern match, once again when
+ *   the connector's `dnsLookup` resolves it to 127.0.0.1). The flag
+ *   short-circuits the second `recordBlock` while still letting the
+ *   connector enforce in non-shadow mode.
  */
-const pluginContext = new AsyncLocalStorage<{ plugin?: string }>();
+type SafeFetchStore = {
+  plugin?: string;
+  initialBlockRecorded?: boolean;
+};
+
+const pluginContext = new AsyncLocalStorage<SafeFetchStore>();
 
 function currentPlugin(): string | undefined {
   return pluginContext.getStore()?.plugin;
+}
+
+function initialBlockAlreadyRecorded(): boolean {
+  return pluginContext.getStore()?.initialBlockRecorded === true;
 }
 
 function recordBlock(ctx: BlockContext, shadow: boolean): void {
@@ -448,10 +467,12 @@ function validatingConnect(
     const plugin = currentPlugin();
 
     if (check.blocked) {
-      recordBlock(
-        { hostname, resolvedIp: resolved, reason: check.reason, plugin },
-        shadow
-      );
+      if (!initialBlockAlreadyRecorded()) {
+        recordBlock(
+          { hostname, resolvedIp: resolved, reason: check.reason, plugin },
+          shadow
+        );
+      }
       if (!shadow) {
         callback(
           new SsrfBlockedError({
@@ -529,9 +550,20 @@ export async function safeFetch(
 
   const hostname = stripIpv6Brackets(parsed.hostname);
 
+  // Tracks whether one of the synchronous entry-point checks below has
+  // already incremented the block counter for this request. In shadow
+  // mode, execution continues past the block, the request reaches the
+  // connector, and the connector's own `isBlockedIp` check would record
+  // a second block for the same request (the resolved IP for a hostname
+  // pattern, or the literal itself for an IP-URL). Passing this flag
+  // through `pluginContext` lets the connector skip its `recordBlock`
+  // while still enforcing in non-shadow mode.
+  let initialBlockRecorded = false;
+
   const hostCheck = isBlockedHost(hostname);
   if (hostCheck.blocked) {
     recordBlock({ hostname, reason: hostCheck.reason, plugin }, shadow);
+    initialBlockRecorded = true;
     if (!shadow) {
       throw new SsrfBlockedError({
         hostname,
@@ -552,6 +584,7 @@ export async function safeFetch(
         { hostname, resolvedIp: hostname, reason: check.reason, plugin },
         shadow
       );
+      initialBlockRecorded = true;
       if (!shadow) {
         throw new SsrfBlockedError({
           hostname,
@@ -581,9 +614,12 @@ export async function safeFetch(
   } as unknown as UndiciFetchInit;
 
   // Run the fetch inside the plugin-context store so the shared Agent's
-  // DNS lookup can attribute blocks to the calling plugin.
-  const response = await pluginContext.run({ plugin }, () =>
-    undiciFetch(rawUrl, initWithDispatcher)
+  // DNS lookup can attribute blocks to the calling plugin, and so the
+  // connector can suppress a duplicate `recordBlock` when the
+  // synchronous checks above have already counted this request.
+  const response = await pluginContext.run(
+    { plugin, initialBlockRecorded },
+    () => undiciFetch(rawUrl, initWithDispatcher)
   );
   return response as unknown as Response;
 }

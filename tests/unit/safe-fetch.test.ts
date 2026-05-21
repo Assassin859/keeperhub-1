@@ -400,10 +400,17 @@ describe("safeFetch (shadow mode)", () => {
     } catch (err) {
       expect(err).not.toBeInstanceOf(SsrfBlockedError);
     }
-    expect(incrementCounter).toHaveBeenCalledWith(
-      "safe_fetch.blocks.total",
-      expect.objectContaining({ reason: "loopback", shadow: "true" })
+    const blockCalls = incrementCounter.mock.calls.filter(
+      (call) => call[0] === "safe_fetch.blocks.total"
     );
+    // Exactly one block per request, even though the connector's
+    // post-DNS check would otherwise re-fire on the resolved IP. See
+    // SafeFetchStore.initialBlockRecorded in safe-fetch.ts.
+    expect(blockCalls).toHaveLength(1);
+    expect(blockCalls[0]?.[1]).toMatchObject({
+      reason: "loopback",
+      shadow: "true",
+    });
     expect(captureException).toHaveBeenCalledWith(
       expect.any(Error),
       expect.objectContaining({
@@ -414,6 +421,31 @@ describe("safeFetch (shadow mode)", () => {
         }),
       })
     );
+  });
+
+  it("records exactly one block in shadow mode for a hostname-pattern URL", async () => {
+    // Regression: a single shadow-mode request to `http://localhost/` used
+    // to be counted twice - once for the pre-DNS isBlockedHost match
+    // (reason="blocked-host"), then again inside the connector's DNS
+    // callback after `localhost` resolved to 127.0.0.1 (reason="loopback").
+    // The fix threads `initialBlockRecorded` through pluginContext so the
+    // connector skips its recordBlock when the entry-point check already
+    // counted this request. The connect itself still happens, preserving
+    // shadow-mode "log and continue" semantics.
+    try {
+      await safeFetch("http://localhost:9999/", { plugin: "webhook" });
+    } catch (err) {
+      expect(err).not.toBeInstanceOf(SsrfBlockedError);
+    }
+    const blockCalls = incrementCounter.mock.calls.filter(
+      (call) => call[0] === "safe_fetch.blocks.total"
+    );
+    expect(blockCalls).toHaveLength(1);
+    expect(blockCalls[0]?.[1]).toMatchObject({
+      reason: "blocked-host",
+      plugin_name: "webhook",
+      shadow: "true",
+    });
   });
 
   it("records scheme block with shadow=true on non-http URL", async () => {
