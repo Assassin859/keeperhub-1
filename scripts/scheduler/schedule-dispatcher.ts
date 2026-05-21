@@ -134,6 +134,16 @@ async function dispatch(): Promise<{
       and(eq(workflowSchedules.enabled, true), eq(workflows.enabled, true))
     );
 
+  // KEEP-581: `=== null` is intentional, not `!= null && >= 60`. A row
+  // with intervalSeconds = 0 is excluded from the cron bucket (treated as
+  // an anomalous interval-mode row and skipped) rather than passed to
+  // the cron path, which would parse the `0 0 1 1 *` sentinel and fire
+  // once a year. The API layer doesn't write 0, and parseIntervalSeconds
+  // turns 0 into null at sync time, so we don't expect to see this row
+  // in practice -- the strict null check is the defensive layer for
+  // anything that bypassed the API. A DB CHECK constraint enforcing
+  // `interval_seconds IS NULL OR interval_seconds >= 60` would make
+  // this concern impossible to express at all.
   const schedules = allEnabled.filter((s) => s.intervalSeconds === null);
   const skippedIntervalCount = allEnabled.length - schedules.length;
   if (skippedIntervalCount > 0) {
