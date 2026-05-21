@@ -36,7 +36,6 @@ const SANDBOX_BACKEND = process.env.SANDBOX_BACKEND;
 
 if (
   process.env.NODE_ENV === "production" &&
-  process.env.NEXT_PHASE !== "phase-production-build" &&
   (SANDBOX_BACKEND !== "remote" || !process.env.SANDBOX_URL)
 ) {
   throw new Error(
