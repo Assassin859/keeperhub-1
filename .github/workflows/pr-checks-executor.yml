@@ -13,6 +13,9 @@ on:
       - "keeperhub-executor/**"
       - ".github/workflows/pr-checks-executor.yml"
 
+permissions:
+  contents: read
+
 jobs:
   test-unit:
     runs-on: ubuntu-latest
