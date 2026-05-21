@@ -16,6 +16,11 @@ COPY sandbox/src ./sandbox/src
 # `../../lib/sandbox/child-source.js`. sandbox/tsconfig.json has
 # rootDir=".." so tsc can compile this file as part of the sandbox build.
 COPY lib/sandbox/child-source.ts ./lib/sandbox/child-source.ts
+# Shared SSRF blocklist data (CIDR ranges + hostname patterns),
+# imported by lib/sandbox/child-source.ts. tsc resolves the relative
+# import and emits dist/lib/ssrf-blocklist.js, which child-source.js
+# requires at runtime.
+COPY lib/ssrf-blocklist.ts ./lib/ssrf-blocklist.ts
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/sandbox/node_modules ./sandbox/node_modules
 RUN pnpm --filter @keeperhub/sandbox build
