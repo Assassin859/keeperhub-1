@@ -22,24 +22,16 @@
  * by design. Adding third-party packages (e.g. undici) would enlarge the
  * supply-chain attack surface of the sandbox container.
  */
-// Relative import with explicit `.js` extension. This file is compiled
-// by two separate tsconfigs (the keeperhub app and the standalone
-// @keeperhub/sandbox package). The sandbox package is `"type": "module"`
-// and runs the compiled output via plain `node`, whose strict ESM loader
-// requires explicit file extensions in imports - extension-less or
-// `@/`-aliased forms fail at runtime with ERR_MODULE_NOT_FOUND. TS
-// resolves "../ssrf-blocklist.js" to the matching .ts source at compile
-// time (matching the convention used by `sandbox/src/run-code.ts` which
-// imports `"../../lib/sandbox/child-source.js"`).
-import {
-  SSRF_BLOCKED_HOST_EXACT,
-  SSRF_BLOCKED_HOST_SUFFIXES,
-  SSRF_IPV4_BROADCAST_ADDRESSES,
-  SSRF_IPV4_CIDRS,
-  SSRF_IPV6_CIDRS,
-  SSRF_IPV6_LITERAL_ADDRESSES,
-  SSRF_NAT64_PREFIX_CIDR,
-} from "../ssrf-blocklist.js";
+// The blocklist data is imported as JSON (not as a `.ts` module) because
+// this file is compiled by two separate tsconfigs with incompatible
+// `.js`/`.ts` resolution conventions: the keeperhub app (Next.js
+// Turbopack) wants extension-less imports for `.ts` sources, while the
+// standalone @keeperhub/sandbox package is `"type": "module"` and its
+// strict ESM runtime requires explicit file extensions. A `.json`
+// extension resolves identically in both contexts, so the data lives in
+// `lib/ssrf-blocklist.json` and `lib/ssrf-blocklist.ts` is just a typed
+// re-export used by the keeperhub-side consumers.
+import blocklist from "../ssrf-blocklist.json" with { type: "json" };
 
 /**
  * Byte-sequence that prefixes the grandchild's final v8-serialized result
@@ -119,11 +111,11 @@ const NAT64_DOTTED_REGEX = /^64:ff9b::(\\d+\\.\\d+\\.\\d+\\.\\d+)$/;
 // (64:ff9b::/96) is also kept separate for the same reason - dual-stack
 // resolvers synthesise it for every IPv4-only public host, so we extract
 // the embedded IPv4 and recheck it against the IPv4 list.
-const SSRF_IPV4_CIDRS = ${JSON.stringify(SSRF_IPV4_CIDRS)};
-const SSRF_IPV4_BROADCAST_ADDRESSES = ${JSON.stringify(SSRF_IPV4_BROADCAST_ADDRESSES)};
-const SSRF_IPV6_LITERAL_ADDRESSES = ${JSON.stringify(SSRF_IPV6_LITERAL_ADDRESSES)};
-const SSRF_IPV6_CIDRS = ${JSON.stringify(SSRF_IPV6_CIDRS)};
-const SSRF_NAT64_PREFIX_CIDR = ${JSON.stringify(SSRF_NAT64_PREFIX_CIDR)};
+const SSRF_IPV4_CIDRS = ${JSON.stringify(blocklist.ipv4Cidrs)};
+const SSRF_IPV4_BROADCAST_ADDRESSES = ${JSON.stringify(blocklist.ipv4BroadcastAddresses)};
+const SSRF_IPV6_LITERAL_ADDRESSES = ${JSON.stringify(blocklist.ipv6LiteralAddresses)};
+const SSRF_IPV6_CIDRS = ${JSON.stringify(blocklist.ipv6Cidrs)};
+const SSRF_NAT64_PREFIX_CIDR = ${JSON.stringify(blocklist.nat64PrefixCidr)};
 
 const SSRF_BLOCK_LIST = new BlockList();
 for (const cidr of SSRF_IPV4_CIDRS) {
@@ -224,8 +216,8 @@ function stripIpv6Brackets(hostname) {
 // Pre-DNS hostname denylist interpolated from lib/ssrf-blocklist.ts at
 // module-render time. See that module for the rationale (case handling,
 // suffix semantics, cluster-domain assumption).
-const BLOCKED_HOST_EXACT = new Set(${JSON.stringify(Array.from(SSRF_BLOCKED_HOST_EXACT))});
-const BLOCKED_HOST_SUFFIXES = ${JSON.stringify(SSRF_BLOCKED_HOST_SUFFIXES)};
+const BLOCKED_HOST_EXACT = new Set(${JSON.stringify(blocklist.blockedHostExact)});
+const BLOCKED_HOST_SUFFIXES = ${JSON.stringify(blocklist.blockedHostSuffixes)};
 
 function isBlockedHost(host) {
   if (host === "") {
