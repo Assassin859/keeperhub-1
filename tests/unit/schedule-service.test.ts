@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { IntervalTooSmallError } from "@/lib/cron-utils";
 import {
   computeNextIntervalRunTime,
   computeNextRunTime,
@@ -367,23 +368,37 @@ describe("schedule-service", () => {
 
       // KEEP-581: anything below the dispatcher's 60s poll resolution
       // would silently fire every 60s instead of every N -- the same
-      // class of "UI says X, schedule does Y" bug KEEP-575 fixes. Reject
-      // sub-60s values so the config falls back to cron (or no-op) at
-      // sync time, rather than being stored and silently miscadenced.
-      it("falls back to cron when scheduleIntervalSeconds is below 60 (under poll resolution)", () => {
-        const result = extractScheduleConfig([
-          makeIntervalTrigger(30, "UTC", { scheduleCron: "0 9 * * *" }),
-        ]);
-
-        expect(result?.mode).toBe("cron");
+      // class of "UI says X, schedule does Y" bug KEEP-575 fixes. The
+      // parser throws IntervalTooSmallError for sub-60s values; callers
+      // must catch it and surface a 400 rather than letting the
+      // workflow save through with a sub-60s value stored.
+      it("throws IntervalTooSmallError when scheduleIntervalSeconds is below 60 (under poll resolution)", () => {
+        expect(() =>
+          extractScheduleConfig([
+            makeIntervalTrigger(30, "UTC", { scheduleCron: "0 9 * * *" }),
+          ])
+        ).toThrow(IntervalTooSmallError);
       });
 
-      it("falls back to cron when scheduleIntervalSeconds is 59 (one below the floor)", () => {
-        const result = extractScheduleConfig([
-          makeIntervalTrigger(59, "UTC", { scheduleCron: "0 9 * * *" }),
-        ]);
+      it("throws IntervalTooSmallError when scheduleIntervalSeconds is 59 (one below the floor)", () => {
+        expect(() =>
+          extractScheduleConfig([
+            makeIntervalTrigger(59, "UTC", { scheduleCron: "0 9 * * *" }),
+          ])
+        ).toThrow(IntervalTooSmallError);
+      });
 
-        expect(result?.mode).toBe("cron");
+      it("attaches raw and minimum on the thrown error so callers can render structured 400 bodies", () => {
+        try {
+          extractScheduleConfig([makeIntervalTrigger(30)]);
+          expect.fail("expected IntervalTooSmallError to be thrown");
+        } catch (error) {
+          expect(error).toBeInstanceOf(IntervalTooSmallError);
+          if (error instanceof IntervalTooSmallError) {
+            expect(error.raw).toBe(30);
+            expect(error.minimum).toBe(60);
+          }
+        }
       });
 
       it("accepts scheduleIntervalSeconds at exactly the 60s floor", () => {

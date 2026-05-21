@@ -1,6 +1,6 @@
 import { CronExpressionParser } from "cron-parser";
 import { eq } from "drizzle-orm";
-import { parseIntervalSeconds } from "@/lib/cron-utils";
+import { IntervalTooSmallError, parseIntervalSeconds } from "@/lib/cron-utils";
 import { db } from "@/lib/db";
 import { workflowSchedules } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
@@ -182,16 +182,37 @@ export function extractScheduleConfig(
   return { mode: "cron", cronExpression, timezone };
 }
 
+/**
+ * Outcome of a schedule sync. `code` distinguishes sync failures the
+ * save route should surface as a hard 400 (currently only
+ * `interval_too_small`) from soft failures it warn-logs and lets the
+ * save succeed for.
+ */
+export type ScheduleSyncResult =
+  | { synced: true }
+  | { synced: false; error: string; code?: "interval_too_small" };
 
 /**
- * Sync workflow schedule based on trigger configuration
- * Called when a workflow is saved
+ * Sync workflow schedule based on trigger configuration.
+ * Called when a workflow is saved.
  */
 export async function syncWorkflowSchedule(
   workflowId: string,
   nodes: WorkflowNode[]
-): Promise<{ synced: boolean; error?: string }> {
-  const scheduleConfig = extractScheduleConfig(nodes);
+): Promise<ScheduleSyncResult> {
+  let scheduleConfig: ExtractedScheduleConfig | null;
+  try {
+    scheduleConfig = extractScheduleConfig(nodes);
+  } catch (error) {
+    if (error instanceof IntervalTooSmallError) {
+      return {
+        synced: false,
+        error: error.message,
+        code: "interval_too_small",
+      };
+    }
+    throw error;
+  }
 
   if (!scheduleConfig) {
     // No schedule trigger - delete any existing schedule
@@ -223,7 +244,10 @@ export async function syncWorkflowSchedule(
       console.warn(
         `[Schedule] Invalid cron for workflow ${workflowId}: ${cronValidation.error}`
       );
-      return { synced: false, error: cronValidation.error };
+      return {
+        synced: false,
+        error: cronValidation.error ?? "Invalid cron expression",
+      };
     }
   }
 
