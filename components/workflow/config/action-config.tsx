@@ -66,6 +66,7 @@ import {
 } from "@/plugins/registry";
 import { ActionConfigRenderer } from "./action-config-renderer";
 import { SchemaBuilder, type SchemaField } from "./schema-builder";
+import { Web3ConnectionSelect } from "./web3-connection-select";
 
 type ConfigValue = string | boolean | Record<string, unknown> | undefined;
 
@@ -1000,19 +1001,26 @@ export function ActionConfig({
           <div className="space-y-2">
             <div className="ml-1 flex items-center justify-between">
               <div className="flex items-center gap-1">
-                <Label>Connection</Label>
+                <Label>
+                  {integrationType === "web3" ? "Web3 Connection" : "Connection"}
+                </Label>
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <HelpCircle className="size-3.5 text-muted-foreground" />
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>API key or OAuth credentials for this service</p>
+                      <p>
+                        {integrationType === "web3"
+                          ? "Which wallet is the sender (msg.sender) for this transaction. Your EOA always signs the outer tx and pays gas."
+                          : "API key or OAuth credentials for this service"}
+                      </p>
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
               </div>
-              {hasExistingConnections &&
+              {integrationType !== "web3" &&
+                hasExistingConnections &&
                 !getIntegration(integrationType)?.singleConnection && (
                   <Button
                     className="size-6"
@@ -1025,12 +1033,21 @@ export function ActionConfig({
                   </Button>
                 )}
             </div>
-            <IntegrationSelector
-              disabled={disabled}
-              integrationType={integrationType}
-              onChange={(id) => onUpdateConfig("integrationId", id)}
-              value={(config?.integrationId as string) || ""}
-            />
+            {integrationType === "web3" ? (
+              <Web3ConnectionSelect
+                disabled={disabled}
+                network={(config?.network as string) || undefined}
+                onChange={(val) => onUpdateConfig("web3Connection", val)}
+                value={(config?.web3Connection as string) || undefined}
+              />
+            ) : (
+              <IntegrationSelector
+                disabled={disabled}
+                integrationType={integrationType}
+                onChange={(id) => onUpdateConfig("integrationId", id)}
+                value={(config?.integrationId as string) || ""}
+              />
+            )}
           </div>
         ))}
 

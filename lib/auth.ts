@@ -14,6 +14,7 @@ import { createAccessControl } from "better-auth/plugins/access";
 import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { rateLimitBypassRule } from "@/lib/admin-auth";
+import { isUserDeactivated } from "@/lib/auth-deactivation-guard";
 import { sendInvitationEmail, sendVerificationOTP } from "@/lib/email";
 import { TRUSTED_ORIGINS } from "@/lib/trusted-origins";
 import { wrapWithSessionTokenHash } from "./auth-session-token-hash";
@@ -409,6 +410,18 @@ export const auth = betterAuth({
     },
     session: {
       create: {
+        // Reject session creation when the user has been deactivated.
+        // Better Auth's OAuth callback otherwise mints a fresh session on
+        // every Google/GitHub signin attempt because it has no awareness
+        // of users.deactivated_at. Returning false aborts the write before
+        // the sessions row exists, so no cookie ever ships to the client.
+        before: async (session) => {
+          const userId =
+            typeof session.userId === "string" ? session.userId : null;
+          if (userId && (await isUserDeactivated(userId))) {
+            return false;
+          }
+        },
         after: async (session) => {
           // If session already has an active organization, skip
           if (session.activeOrganizationId) {
@@ -432,6 +445,23 @@ export const auth = betterAuth({
             }
           } catch (error) {
             console.error(error);
+          }
+        },
+      },
+    },
+    account: {
+      create: {
+        // Defence in depth for the OAuth re-link path: even if the session
+        // hook above ever regresses, refuse to attach a fresh GitHub/Google
+        // accounts row to a deactivated users row. Otherwise the attacker
+        // shape is: OAuth callback misses the wiped accounts row, falls
+        // back to email match, links a new accounts row, then proceeds to
+        // session creation.
+        before: async (account) => {
+          const userId =
+            typeof account.userId === "string" ? account.userId : null;
+          if (userId && (await isUserDeactivated(userId))) {
+            return false;
           }
         },
       },

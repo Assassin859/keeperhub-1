@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { isUserDeactivated } from "@/lib/auth-deactivation-guard";
 import { createAccessToken } from "@/lib/mcp/oauth-auth";
 import {
   deleteAuthCode,
@@ -66,6 +67,13 @@ async function handleAuthorizationCode(
   // Consume the code immediately (single use)
   await deleteAuthCode(code);
 
+  // Refuse to mint tokens if the user was deactivated between consenting
+  // to the auth code and exchanging it. Without this, an auth code held
+  // by an attacker would still buy a fresh access + refresh token pair.
+  if (await isUserDeactivated(authCode.userId)) {
+    return jsonError("User account is deactivated", 401);
+  }
+
   const accessToken = await createAccessToken({
     sub: authCode.userId,
     org: authCode.organizationId,
@@ -118,6 +126,14 @@ async function handleRefreshToken(params: URLSearchParams): Promise<Response> {
 
   // Rotate the refresh token
   await deleteRefreshToken(refreshTokenValue);
+
+  // Refuse to mint tokens for a deactivated user. authenticateOAuthToken
+  // already rejects existing access tokens on use; this closes the same
+  // gap on the refresh-exchange path so a stolen refresh token cannot
+  // survive deactivation by repeatedly cycling itself.
+  if (await isUserDeactivated(entry.userId)) {
+    return jsonError("User account is deactivated", 401);
+  }
 
   const newRefreshToken = randomBytes(32).toString("hex");
   await storeRefreshToken({
