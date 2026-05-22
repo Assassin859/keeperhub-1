@@ -2,6 +2,8 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
+import { extractActionTypeNodes } from "@/lib/features";
+import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getOrgContext } from "@/lib/middleware/org-context";
 
@@ -49,6 +51,14 @@ export async function POST(
         { error: "Workflow not found" },
         { status: 404 }
       );
+    }
+
+    const featureGuard = await enforceWorkflowFeatures(
+      extractActionTypeNodes(workflow.nodes as unknown[]),
+      orgContext.organization.id
+    );
+    if (featureGuard.blocked) {
+      return featureGuard.response;
     }
 
     const [updatedWorkflow] = await db

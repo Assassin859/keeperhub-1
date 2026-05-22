@@ -6,6 +6,8 @@ import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { projects, tags, workflows } from "@/lib/db/schema";
+import { extractActionTypeNodes } from "@/lib/features";
+import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
 import { generateId } from "@/lib/utils/id";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
 import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
@@ -143,6 +145,14 @@ export async function POST(request: Request) {
         formatActionConfigValidationResponse(actionConfigValidation),
         { status: 422 }
       );
+    }
+
+    const featureGuard = await enforceWorkflowFeatures(
+      extractActionTypeNodes(nodes),
+      organizationId
+    );
+    if (featureGuard.blocked) {
+      return featureGuard.response;
     }
 
     const isAnonymous = !organizationId;

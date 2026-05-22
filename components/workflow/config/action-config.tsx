@@ -801,19 +801,6 @@ export function ActionConfig({
     setCategory(newCategory || "");
   }, [actionType]);
 
-  const handleCategoryChange = (newCategory: string): void => {
-    setCategory(newCategory);
-    // Auto-select the first non-locked action in the new category. Skipping
-    // locked actions here avoids opening the upgrade dialog as a side effect
-    // of changing the category dropdown.
-    const firstAvailable = categories[newCategory]?.find(
-      (a) => isActionLocked(a.id) === null
-    );
-    if (firstAvailable) {
-      onUpdateConfig("actionType", firstAvailable.id);
-    }
-  };
-
   const { snapshot: featureSnapshot } = useFeatures();
   const [upgradeFeature, setUpgradeFeature] = useState<FeatureDefinition | null>(
     null
@@ -827,6 +814,16 @@ export function ActionConfig({
     const enabled =
       featureSnapshot?.enabledFeatureIds.includes(feature.id) ?? false;
     return enabled ? null : feature;
+  };
+
+  const handleCategoryChange = (newCategory: string): void => {
+    setCategory(newCategory);
+    const firstAvailable = categories[newCategory]?.find(
+      (a) => isActionLocked(a.id) === null
+    );
+    if (firstAvailable) {
+      onUpdateConfig("actionType", firstAvailable.id);
+    }
   };
 
   const handleActionTypeChange = (value: string): void => {

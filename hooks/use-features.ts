@@ -7,9 +7,23 @@ import type {
   FeatureId,
   FeatureSnapshotForClient,
 } from "@/lib/features";
-import { getFeatureForActionType } from "@/lib/features";
+import { getAllFeatures, getFeatureForActionType } from "@/lib/features";
 
 type SnapshotResponse = FeatureSnapshotForClient & { billingEnabled: boolean };
+
+// Fallback snapshot used when /api/features is unreachable so the UI does not
+// lock every gated action behind an opaque "loading" state. The server-side
+// guards remain authoritative; any attempt to actually save or run a gated
+// workflow without the right plan is still rejected with a 402.
+function buildFailOpenSnapshot(): SnapshotResponse {
+  const features = getAllFeatures();
+  return {
+    plan: "enterprise",
+    enabledFeatureIds: features.map((f) => f.id),
+    features,
+    billingEnabled: false,
+  };
+}
 
 // Module-level cache: snapshot is keyed only by the current session/org cookie
 // the browser sends with the request. Org switches typically trigger a page
@@ -94,10 +108,15 @@ export function useFeatures(): UseFeaturesResult {
         }
       })
       .catch((err: unknown) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err : new Error(String(err)));
-          setLoading(false);
+        if (cancelled) {
+          return;
         }
+        setError(err instanceof Error ? err : new Error(String(err)));
+        // Fall open client-side so a network blip doesn't lock every gated
+        // node. Server-side guards stay authoritative — any actual save or
+        // execute attempt against a gated feature is still rejected.
+        setSnapshot((current) => current ?? buildFailOpenSnapshot());
+        setLoading(false);
       });
     return () => {
       cancelled = true;

@@ -5,6 +5,8 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { workflows } from "@/lib/db/schema";
+import { extractActionTypeNodes } from "@/lib/features";
+import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
 import { getOrgContext } from "@/lib/middleware/org-context";
 import { generateId } from "@/lib/utils/id";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
@@ -115,6 +117,14 @@ export async function POST(request: Request) {
         formatActionConfigValidationResponse(actionConfigValidation),
         { status: 422 }
       );
+    }
+
+    const featureGuard = await enforceWorkflowFeatures(
+      extractActionTypeNodes(nodes),
+      orgContext.organization?.id ?? null
+    );
+    if (featureGuard.blocked) {
+      return featureGuard.response;
     }
 
     // Check if current workflow exists
