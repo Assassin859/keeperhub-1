@@ -18,11 +18,12 @@ export const FEATURE_UPGRADE_REQUIRED_ERROR =
   "This workflow uses features that require a paid plan.";
 
 function buildBlockedResponse(
-  violations: readonly WorkflowFeatureViolation[]
+  violations: readonly WorkflowFeatureViolation[],
+  errorMessage: string
 ): NextResponse {
   return NextResponse.json(
     {
-      error: FEATURE_UPGRADE_REQUIRED_ERROR,
+      error: errorMessage,
       code: "upgrade_required",
       violations: violations.map((v) => ({
         featureId: v.featureId,
@@ -36,9 +37,17 @@ function buildBlockedResponse(
   );
 }
 
+type EnforceOptions = {
+  // Override the default user-facing error string in the 402 body. The
+  // `violations` array still carries the structured detail, but a custom
+  // message lets a route like /claim explain the destination-org context.
+  errorMessage?: string;
+};
+
 export async function enforceWorkflowFeatures(
   nodes: readonly WorkflowNodeRef[],
-  organizationId: string | null | undefined
+  organizationId: string | null | undefined,
+  options?: EnforceOptions
 ): Promise<FeatureGuardResult> {
   // Billing disabled (e.g. local dev or self-hosted): never block.
   if (!isBillingEnabled()) {
@@ -55,5 +64,9 @@ export async function enforceWorkflowFeatures(
     return { blocked: false };
   }
 
-  return { blocked: true, response: buildBlockedResponse(violations) };
+  const errorMessage = options?.errorMessage ?? FEATURE_UPGRADE_REQUIRED_ERROR;
+  return {
+    blocked: true,
+    response: buildBlockedResponse(violations, errorMessage),
+  };
 }

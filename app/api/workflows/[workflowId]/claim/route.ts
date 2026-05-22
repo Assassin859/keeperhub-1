@@ -55,7 +55,11 @@ export async function POST(
 
     const featureGuard = await enforceWorkflowFeatures(
       extractActionTypeNodes(workflow.nodes as unknown[]),
-      orgContext.organization.id
+      orgContext.organization.id,
+      {
+        errorMessage:
+          "Can't claim this workflow: it uses features your current organization's plan doesn't include. Upgrade to claim it here, or remove the gated nodes first.",
+      }
     );
     if (featureGuard.blocked) {
       return featureGuard.response;
