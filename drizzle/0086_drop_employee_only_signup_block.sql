@@ -23,5 +23,22 @@
 --   block_executions_security_2026_05_21  (still present)
 -- Should NOT include block_user_signup_security_2026_05_21.
 
+-- Surface drift loudly in deploy logs without failing the migration.
+-- If the trigger was renamed ad-hoc on prod (the same drift pattern that
+-- TECH-11 is reconciling), the DROP IF EXISTS below would silently no-op
+-- and the signup gate would stay live without anyone noticing. The
+-- NOTICE forces it into the migration output so on-call sees the
+-- mismatch.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'block_user_signup_security_2026_05_21'
+      AND NOT tgisinternal
+  ) THEN
+    RAISE NOTICE 'block_user_signup_security_2026_05_21 not present at drop time - check for ad-hoc rename / prior drop and reconcile via TECH-11 before relying on this migration to re-open signup.';
+  END IF;
+END $$;
+
 DROP TRIGGER IF EXISTS block_user_signup_security_2026_05_21 ON users;
 DROP FUNCTION IF EXISTS public.block_user_signup_security_2026_05_21();
