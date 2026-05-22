@@ -2,10 +2,13 @@
 
 import { ethers } from "ethers";
 import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { ChangeEvent, ChangeEventHandler, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Overlay } from "@/components/overlays/overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
+import { SettingsOverlay } from "@/components/overlays/settings-overlay";
+import { handleGuardError } from "@/lib/client/handle-guard-error";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -62,7 +65,8 @@ export function WithdrawModal({
   initialAssetIndex = 0,
   source = { kind: "turnkey" },
 }: WithdrawModalProps) {
-  const { closeAll, pop } = useOverlay();
+  const { closeAll, open: openOverlay, pop } = useOverlay();
+  const router = useRouter();
 
   const [selectedAssetIndex, setSelectedAssetIndex] =
     useState(initialAssetIndex);
@@ -298,11 +302,27 @@ export function WithdrawModal({
         }),
       });
 
-      const data = await response.json();
       if (!response.ok) {
+        // Owner+MFA gate (lib/middleware/owner-mfa-guard.ts) returns a
+        // discriminated 403. handleGuardError routes the user to the
+        // right next step (enroll MFA / verify step-up / role
+        // explanation) and tells us it handled the response — we then
+        // stop the withdraw flow without surfacing a duplicate error
+        // toast on top of the helper's.
+        const guarded = await handleGuardError(response, {
+          onEnrollMfa: () => openOverlay(SettingsOverlay),
+          onPendingMfa: (next) =>
+            router.push(`/verify-mfa?next=${encodeURIComponent(next)}`),
+        });
+        if (guarded) {
+          setState("input");
+          return;
+        }
+        const data = await response.json();
         throw new Error(data.error || "Withdrawal failed");
       }
 
+      const data = await response.json();
       setTxHash(data.txHash);
       setState("success");
       toast.success("Withdrawal successful!");
