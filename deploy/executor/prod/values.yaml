@@ -177,6 +177,12 @@ env:
   SAFE_FETCH_ENFORCE:
     type: kv
     value: "true"
+  SANDBOX_BACKEND:
+    type: kv
+    value: "remote"
+  SANDBOX_URL:
+    type: kv
+    value: "http://keeperhub-sandbox-common.keeperhub.svc.cluster.local:8787"
 
 externalSecrets:
   clusterSecretStoreName: techops-prod

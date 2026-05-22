@@ -57,7 +57,7 @@ describe.skipIf(shouldSkip)("wrapWithSessionTokenHash (integration)", () => {
     const now = new Date();
     await db.insert(users).values({
       id: testUserId,
-      email: `${testUserId}@keep-239-test.local`,
+      email: `${testUserId}@techops.services`,
       emailVerified: false,
       createdAt: now,
       updatedAt: now,
