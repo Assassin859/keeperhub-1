@@ -79,13 +79,17 @@ export function useFeatures(): UseFeaturesResult {
   const [loading, setLoading] = useState<boolean>(!cachedSnapshot);
   const [error, setError] = useState<Error | null>(null);
   const [version, setVersion] = useState<number>(cacheVersion);
+  const listenerRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    const listener = (): void => {
-      setSnapshot(null);
-      setLoading(true);
-      setVersion(cacheVersion);
-    };
+    if (!listenerRef.current) {
+      listenerRef.current = () => {
+        setSnapshot(null);
+        setLoading(true);
+        setVersion(cacheVersion);
+      };
+    }
+    const listener = listenerRef.current;
     invalidationListeners.add(listener);
     return () => {
       invalidationListeners.delete(listener);
