@@ -38,6 +38,55 @@ The Turnkey EOA always signs the outer transaction — the toggle only changes w
 
 ERC-4337 gas sponsorship is only available when the toggle is OFF; the bundler swaps `msg.sender` to its own smart account, which would change what the target contract sees.
 
+## Who pays for what
+
+Two distinct accounts are involved in every workflow write. Confusing them is the most common source of "out of funds" errors, so it's worth spelling out.
+
+| Concern | Who covers it | Why |
+|---|---|---|
+| Gas (the outer ETH fee on the L1/L2 itself) | Always the Turnkey EOA | The EOA broadcasts and signs the outer transaction. It needs native ETH on every chain you run workflows on. |
+| Native token sends (e.g. transfer 0.1 ETH to someone) | The active **Sender** (Safe if its toggle is ON, EOA otherwise) | The Sender is `msg.sender` at the target. Native value comes from `msg.sender`'s balance. |
+| ERC20 transfers and approvals | The active **Sender**'s token balance | `IERC20.transfer` debits `msg.sender`. If the Safe is Sender, the Safe needs the tokens; the EOA's balance is irrelevant. |
+| Swap inputs (Uniswap, etc.) | The active **Sender**'s token balance | Same reason. The swap pulls tokens from `msg.sender` via `transferFrom` after the approve. |
+| Protocol deposits (Aave supply, etc.) | The active **Sender**'s token balance | The protocol pulls `msg.sender`'s tokens and credits the position to `msg.sender`. |
+
+In other words: **the EOA always pays gas, and the Sender's balance is what gets debited for everything else.** Fund both accounts on every chain you transact on. Gas goes on the EOA, transactable balance on the Sender.
+
+If you flip the Sender toggle from EOA to Safe and your workflow starts failing with insufficient balance, the most likely cause is that the tokens are still on the EOA and need to be moved to the Safe.
+
+## Side-by-side: signer modes
+
+Three modes a workflow write can run in, depending on whether a Safe is deployed, whether its Sender toggle is ON, and whether a Zodiac Roles modifier is installed.
+
+| Aspect | EOA only | Safe (Sender ON, no Role) | Safe + Zodiac Roles |
+|---|---|---|---|
+| `msg.sender` at the target contract | Turnkey EOA | Safe | Safe |
+| Signs the outer tx | Turnkey EOA | Turnkey EOA (via `safe.execTransaction`) | Turnkey EOA (via `rolesModifier.execTransactionWithRole`) |
+| Pays gas | Turnkey EOA | Turnkey EOA | Turnkey EOA |
+| Native sends debit | Turnkey EOA balance | Safe balance | Safe balance |
+| ERC20 transfers/approvals debit | Turnkey EOA balance | Safe balance | Safe balance (capped by allowances) |
+| Swap inputs come from | Turnkey EOA balance | Safe balance | Safe balance (capped by allowances) |
+| Protocol position credited to | Turnkey EOA | Safe | Safe |
+| ERC4337 gas sponsorship eligible | Yes | No (bundler would change `msg.sender`) | No (same reason) |
+| Policy gating (function and arg allowlist) | None | None | Yes, per role scope |
+| Per-token spending caps | None | None | Yes, per allowance bucket |
+| Survives a compromised EOA | N/A | No (EOA owner can call `execTransaction` directly) | No (EOA owner can call `execTransaction` directly, bypassing the modifier) |
+
+The "compromised EOA" row is intentional: at threshold 1, the role is policy, not boundary. See the [Owner-bypass property](#owner-bypass-property) below for what that means and how multi-owner Safes close the gap.
+
+## Per-node Sender override
+
+Workflow nodes that send transactions (Transfer Native Token, Transfer ERC20, Approve ERC20, Write Contract, and any protocol action that writes on chain) have a **Web3 Connection** picker in their config.
+
+| Option | What it does | Stored value | Use when |
+|---|---|---|---|
+| Default Sender (Safe) | Routes through the org's active Safe Sender on this chain. Auto-switches if you change the Sender later. | `default` | Standard production setup once a Safe is the active Sender. |
+| Default Sender (EOA) | No Safe is the active Sender, so this falls back to the Turnkey EOA. Auto-switches if you turn on a Safe Sender later. | `default` | Default state before you turn on a Safe. |
+| EOA | Pins this node to the Turnkey EOA even if a Safe is the active Sender. Bypasses any Zodiac Roles policy. | `eoa` | Diagnostics, or a one-off node that must skip the Safe entirely. The picker shows a yellow warning when you pick this while a Safe is the org default. |
+| Safe `0x…` | Pins this node to a specific Safe by id, regardless of the org default. Only deployed, signing-active Safes on the node's chain appear. | `safe:<safeWalletId>` | You have multiple Safes and want one node to always use a specific one. |
+
+If the node's network is templated (e.g. `{{trigger.chainId}}`), only Default and EOA are pickable. A specific Safe can't be bound to a chain that isn't known until runtime.
+
 ## On-chain policies (Zodiac Roles)
 
 The Zodiac Roles Modifier sits between the Safe and its workflow caller. When installed, every workflow write goes through the modifier first; the modifier checks the call against the role's scope and forwards to the Safe only if the call is allowed. The owner EOA holds the role and is the only address authorised to use it.
