@@ -13,8 +13,8 @@
 -- broaden to LIKE / wildcards - the sibling trigger
 -- block_executions_security_2026_05_21 (migration 0082) is the executions
 -- kill-switch and must remain in place until separately retired. The
--- cascade-deactivation triggers from migration 0085 are also unrelated and
--- must remain.
+-- cascade_user_deactivation trigger from migration 0085 is also unrelated
+-- and must remain.
 --
 -- Pre-flight verification on staging (run after this migration applies):
 --   SELECT tgname FROM pg_trigger

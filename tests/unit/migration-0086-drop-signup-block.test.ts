@@ -53,6 +53,11 @@ describe("migration 0086: drop emergency signup whitelist trigger", () => {
     expect(ddl).not.toMatch(/block_database_integration_type/);
   });
 
+  it("does not touch the cascade-deactivation trigger (migration 0085)", () => {
+    const ddl = READ_SQL_DDL_ONLY();
+    expect(ddl).not.toMatch(/cascade_user_deactivation/);
+  });
+
   it("does not use wildcard / LIKE matchers in any DROP statement", () => {
     const sql = READ_SQL();
     // Look for the dangerous patterns explicitly. Comment text is fine.
