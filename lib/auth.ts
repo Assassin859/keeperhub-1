@@ -9,6 +9,7 @@ import {
   // end keeperhub code //
   emailOTP,
   organization,
+  twoFactor,
 } from "better-auth/plugins";
 import { createAccessControl } from "better-auth/plugins/access";
 import { eq } from "drizzle-orm";
@@ -16,6 +17,7 @@ import { nanoid } from "nanoid";
 import { rateLimitBypassRule } from "@/lib/admin-auth";
 import { isUserDeactivated } from "@/lib/auth-deactivation-guard";
 import { sendInvitationEmail, sendVerificationOTP } from "@/lib/email";
+import { assessLoginRisk, serializeRiskFlags } from "@/lib/security/login-risk";
 import { TRUSTED_ORIGINS } from "@/lib/trusted-origins";
 import { wrapWithSessionTokenHash } from "./auth-session-token-hash";
 import { db } from "./db";
@@ -31,6 +33,7 @@ import {
   organizationSubscriptions,
   organization as organizationTable,
   sessions,
+  twoFactor as twoFactorTable,
   users,
   verifications,
   workflowExecutionLogs,
@@ -84,6 +87,7 @@ const schema = {
   session: sessions,
   account: accounts,
   verification: verifications,
+  twoFactor: twoFactorTable,
   deviceCode,
   workflows,
   workflowExecutions,
@@ -114,6 +118,18 @@ const plugins = [
   deviceAuthorization({
     expiresIn: "15m",
     interval: "5s",
+  }),
+  // TOTP only. Email-OTP-as-second-factor is intentionally left without a
+  // sendOTP callback because email OTP is already our primary login factor;
+  // using it as the "second" factor would collapse both factors onto the
+  // same channel. The /two-factor/send-otp endpoint is therefore inert
+  // (would fail at call time) but our UI never invokes it. Backup codes
+  // provide the recovery path. Enrollment is handled by a custom
+  // passwordless endpoint (see app/api/user/totp/setup) because the
+  // plugin's /two-factor/enable requires a password and most of our users
+  // sign in via OAuth or email OTP.
+  twoFactor({
+    issuer: "KeeperHub",
   }),
   // end keeperhub code //
   emailOTP({
@@ -276,7 +292,9 @@ async function subscribeToMailerLite(user: {
   email?: string | null;
 }): Promise<void> {
   const apiKey = process.env.MAILERLITE_API_KEY;
-  if (!(apiKey && user.email)) return;
+  if (!(apiKey && user.email)) {
+    return;
+  }
 
   await fetch("https://connect.mailerlite.com/api/subscribers", {
     method: "POST",
@@ -308,7 +326,9 @@ async function notifyDiscordSignup(user: {
   image?: string | null;
 }): Promise<void> {
   const webhookUrl = process.env.DISCORD_WEBHOOK_SIGNUPS;
-  if (!webhookUrl) return;
+  if (!webhookUrl) {
+    return;
+  }
 
   await fetch(webhookUrl, {
     method: "POST",
@@ -415,12 +435,40 @@ export const auth = betterAuth({
         // every Google/GitHub signin attempt because it has no awareness
         // of users.deactivated_at. Returning false aborts the write before
         // the sessions row exists, so no cookie ever ships to the client.
+        //
+        // Risk-based step-up: when Cloudflare-attested geo signals a new
+        // country and the user has TOTP enrolled, we mark the new session
+        // requires_mfa=true rather than rejecting it. App middleware then
+        // restricts the quarantined session to the verify-mfa endpoints
+        // only. Sessions where TOTP is not enrolled pass through (we have
+        // nothing to step up to); the anomaly is still recorded in
+        // sessions.risk_flags_json for downstream detection alerting.
         before: async (session) => {
           const userId =
             typeof session.userId === "string" ? session.userId : null;
-          if (userId && (await isUserDeactivated(userId))) {
+          if (!userId) {
+            return;
+          }
+          if (await isUserDeactivated(userId)) {
             return false;
           }
+          const risk = await assessLoginRisk(userId);
+          if (!risk.country) {
+            return;
+          }
+          const [userRow] = await db
+            .select({ twoFactorEnabled: users.twoFactorEnabled })
+            .from(users)
+            .where(eq(users.id, userId))
+            .limit(1);
+          const twoFactorEnabled = userRow?.twoFactorEnabled === true;
+          const requiresMfa = risk.anomaly && twoFactorEnabled;
+          return {
+            data: {
+              requiresMfa,
+              riskFlagsJson: serializeRiskFlags(risk),
+            },
+          };
         },
         after: async (session) => {
           // If session already has an active organization, skip

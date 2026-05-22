@@ -35,7 +35,10 @@ export const workflowStepStatus = pgEnum("step_status", [
 // cross-schema by `workflow.workflow_waits.status`. Declared here so
 // `pnpm db:push` does not emit a DROP that Postgres rejects with
 // "cannot drop type wait_status because other objects depend on it".
-export const workflowWaitStatus = pgEnum("wait_status", ["waiting", "completed"]);
+export const workflowWaitStatus = pgEnum("wait_status", [
+  "waiting",
+  "completed",
+]);
 
 // Better Auth tables
 export const users = pgTable("users", {
@@ -49,6 +52,7 @@ export const users = pgTable("users", {
   // Anonymous user tracking
   isAnonymous: boolean("is_anonymous").default(false),
   deactivatedAt: timestamp("deactivated_at"),
+  twoFactorEnabled: boolean("two_factor_enabled").default(false),
 });
 
 export const sessions = pgTable(
@@ -65,8 +69,31 @@ export const sessions = pgTable(
       .notNull()
       .references(() => users.id),
     activeOrganizationId: text("active_organization_id"),
+    requiresMfa: boolean("requires_mfa").notNull().default(false),
+    mfaVerifiedAt: timestamp("mfa_verified_at"),
+    riskFlagsJson: text("risk_flags_json"),
   },
   (table) => [index("idx_sessions_user_id").on(table.userId)]
+);
+
+export const twoFactor = pgTable(
+  "two_factor",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .unique()
+      .references(() => users.id, { onDelete: "cascade" }),
+    secret: text("secret").notNull(),
+    // Nullable: backup codes are generated only when the user explicitly
+    // requests them via /api/user/totp/backup-codes, not at TOTP setup.
+    // A row with secret + null backup_codes is a valid enrolled user who
+    // simply hasn't generated codes yet.
+    backupCodes: text("backup_codes"),
+    name: text("name"),
+    enrolledAt: timestamp("enrolled_at").notNull().defaultNow(),
+  },
+  (table) => [index("idx_two_factor_user_id").on(table.userId)]
 );
 
 export const accounts = pgTable(
@@ -415,32 +442,32 @@ export const workflowExecutionLogs = pgTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => generateId()),
-  executionId: text("execution_id")
-    .notNull()
-    .references(() => workflowExecutions.id),
-  nodeId: text("node_id").notNull(),
-  nodeName: text("node_name").notNull(),
-  nodeType: text("node_type").notNull(),
-  status: text("status")
-    .notNull()
-    .$type<"pending" | "running" | "success" | "error" | "cancelled">(),
-  // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
-  input: jsonb("input").$type<any>(),
-  // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
-  output: jsonb("output").$type<any>(),
-  // output_raw is the executor's authoritative source-of-truth for cross-process resume.
-  // `output` receives redactSensitiveData() for observability/UI display; `output_raw`
-  // stores the unredacted payload so downstream template rendering receives real values
-  // rather than "[REDACTED]" strings when a pod resumes across a process boundary.
-  // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
-  outputRaw: jsonb("output_raw").$type<any>(),
-  error: text("error"),
-  startedAt: timestamp("started_at").notNull().defaultNow(),
-  completedAt: timestamp("completed_at"),
-  duration: numeric("duration"), // Duration in milliseconds
-  timestamp: timestamp("timestamp").notNull().defaultNow(),
-  iterationIndex: integer("iteration_index"), // 0-based loop iteration (null for non-loop nodes)
-  forEachNodeId: text("for_each_node_id"), // parent For Each node ID (null for non-loop nodes)
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => workflowExecutions.id),
+    nodeId: text("node_id").notNull(),
+    nodeName: text("node_name").notNull(),
+    nodeType: text("node_type").notNull(),
+    status: text("status")
+      .notNull()
+      .$type<"pending" | "running" | "success" | "error" | "cancelled">(),
+    // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
+    input: jsonb("input").$type<any>(),
+    // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
+    output: jsonb("output").$type<any>(),
+    // output_raw is the executor's authoritative source-of-truth for cross-process resume.
+    // `output` receives redactSensitiveData() for observability/UI display; `output_raw`
+    // stores the unredacted payload so downstream template rendering receives real values
+    // rather than "[REDACTED]" strings when a pod resumes across a process boundary.
+    // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
+    outputRaw: jsonb("output_raw").$type<any>(),
+    error: text("error"),
+    startedAt: timestamp("started_at").notNull().defaultNow(),
+    completedAt: timestamp("completed_at"),
+    duration: numeric("duration"), // Duration in milliseconds
+    timestamp: timestamp("timestamp").notNull().defaultNow(),
+    iterationIndex: integer("iteration_index"), // 0-based loop iteration (null for non-loop nodes)
+    forEachNodeId: text("for_each_node_id"), // parent For Each node ID (null for non-loop nodes)
   },
   (table) => [index("idx_exec_logs_started_at").on(table.startedAt)]
 );

@@ -7,6 +7,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ChangePasswordSection } from "@/components/settings/change-password-section";
 import { DeactivateAccountSection } from "@/components/settings/delete-account-section";
+import { TwoFactorSection } from "@/components/settings/two-factor-section";
 import { api } from "@/lib/api-client";
 import { Overlay } from "./overlay";
 import { useOverlay } from "./overlay-provider";
@@ -103,7 +104,8 @@ export function SettingsOverlay({ overlayId }: SettingsOverlayProps) {
             <DeactivateAccountSection />
           </TabsContent>
 
-          <TabsContent value="security">
+          <TabsContent className="space-y-6" value="security">
+            <TwoFactorSection />
             <ChangePasswordSection providerId={providerId} />
           </TabsContent>
         </Tabs>

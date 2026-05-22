@@ -1,0 +1,73 @@
+import { eq } from "drizzle-orm";
+import { NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
+import { isAnonymousUserShape } from "@/lib/auth-anonymous-guard";
+import { db } from "@/lib/db";
+import { twoFactor as twoFactorTable, users } from "@/lib/db/schema";
+import { ErrorCategory, logSystemError } from "@/lib/logging";
+
+type RequestBody = {
+  code?: string;
+};
+
+/**
+ * POST /api/user/totp/disable
+ *
+ * Disables TOTP for the signed-in user. Requires a currently-valid
+ * TOTP code as proof that the caller holds the second factor
+ * (otherwise a stolen session cookie could trivially turn off MFA).
+ * Better Auth's built-in /two-factor/disable requires a password and
+ * is unusable for our OAuth / email-OTP users.
+ */
+export async function POST(request: Request): Promise<NextResponse> {
+  const session = await auth.api.getSession({ headers: request.headers });
+  if (!session?.user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (isAnonymousUserShape(session.user)) {
+    return NextResponse.json(
+      { error: "Sign in with a real account" },
+      { status: 403 }
+    );
+  }
+
+  const body = (await request.json().catch(() => ({}))) as RequestBody;
+  const code = typeof body.code === "string" ? body.code.trim() : "";
+  if (!code) {
+    return NextResponse.json({ error: "Code is required" }, { status: 400 });
+  }
+
+  try {
+    await auth.api.verifyTOTP({
+      body: { code },
+      headers: request.headers,
+    });
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid verification code" },
+      { status: 401 }
+    );
+  }
+
+  const userId = session.user.id;
+  try {
+    await db.delete(twoFactorTable).where(eq(twoFactorTable.userId, userId));
+    await db
+      .update(users)
+      .set({ twoFactorEnabled: false })
+      .where(eq(users.id, userId));
+  } catch (error) {
+    logSystemError(
+      ErrorCategory.AUTH,
+      "[TOTP Disable] Failed to delete enrollment",
+      error,
+      { endpoint: "/api/user/totp/disable", user_id: userId }
+    );
+    return NextResponse.json(
+      { error: "Failed to disable TOTP" },
+      { status: 500 }
+    );
+  }
+
+  return NextResponse.json({ status: "ok" });
+}
