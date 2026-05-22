@@ -127,7 +127,16 @@ const captchaSkippedForTests =
   process.env.NODE_ENV === "test" ||
   (testEndpointsEnabled() && process.env.NODE_ENV !== "production");
 
-if (process.env.NODE_ENV === "production" && !captchaSecretKey) {
+// next build evaluates route modules during the "Collecting page data" phase
+// with NODE_ENV=production but no runtime secrets injected. Skip the
+// assertion during that phase so the build doesn't crash. The same
+// assertion still fires at server boot (phase-production-server) and
+// under any custom server that doesn't set NEXT_PHASE.
+if (
+  process.env.NODE_ENV === "production" &&
+  process.env.NEXT_PHASE !== "phase-production-build" &&
+  !captchaSecretKey
+) {
   throw new Error(
     "TURNSTILE_SECRET_KEY is required in production - refusing to expose /sign-up/email without captcha verification"
   );

@@ -21,6 +21,8 @@ function clearTurnstileEnv(): void {
   delete process.env.INCLUDE_TEST_ENDPOINTS;
   // biome-ignore lint/performance/noDelete: same
   delete process.env.ALLOW_TEST_ENDPOINTS;
+  // biome-ignore lint/performance/noDelete: same
+  delete process.env.NEXT_PHASE;
 }
 
 describe("signup defenses: captcha plugin", () => {
@@ -74,6 +76,17 @@ describe("signup defenses: captcha plugin", () => {
     await expect(import("@/lib/auth")).rejects.toThrow(
       /TURNSTILE_SECRET_KEY is required in production/
     );
+  });
+
+  it("does not throw during next build phase even without the secret", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXT_PHASE", "phase-production-build");
+    const mod = await import("@/lib/auth");
+    expect(mod.auth).toBeDefined();
+    const plugin = (mod.auth.options.plugins ?? []).find(
+      (p) => (p as CaptchaPluginShape).id === "captcha"
+    );
+    expect(plugin).toBeUndefined();
   });
 
   it("skips captcha plugin when admin test endpoints are enabled outside production", async () => {
