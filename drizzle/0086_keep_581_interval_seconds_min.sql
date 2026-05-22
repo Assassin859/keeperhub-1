@@ -19,6 +19,14 @@
 --
 -- Pre-flight (run 2026-05-21 against staging and prod): zero existing rows
 -- have interval_seconds < 60, so no backfill is needed.
+--
+-- Lock duration: ADD CONSTRAINT ... CHECK takes an ACCESS EXCLUSIVE lock
+-- and scans the whole table to validate. Table size verified 2026-05-22:
+-- staging 39 rows, prod 396 rows. Validation scan at this size is
+-- functionally instant (microseconds), so a single-statement ALTER TABLE
+-- is fine. If this table ever grows past ~100k rows, switch to the
+-- two-step ADD CONSTRAINT ... NOT VALID + VALIDATE CONSTRAINT pattern
+-- so concurrent reads/writes aren't blocked during the scan.
 ALTER TABLE "workflow_schedules"
   ADD CONSTRAINT "workflow_schedules_interval_seconds_min_60"
   CHECK ("interval_seconds" IS NULL OR "interval_seconds" >= 60);
