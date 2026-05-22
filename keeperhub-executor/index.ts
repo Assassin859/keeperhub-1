@@ -288,11 +288,7 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
       status: "error",
       input: toJsonSafe(blockedInput) as Record<string, unknown>,
       error: errorMessage,
-      // "configuration" + "user" classify this as a user-fixable workflow
-      // configuration problem (the workflow uses features the org's plan
-      // doesn't include). Surfaces in the same dashboards as other config
-      // errors instead of being categorized as a system fault.
-      errorCategory: "configuration",
+      errorCategory: "billing",
       errorType: "user",
       startedAt: new Date(),
       completedAt: new Date(),
