@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { apiKeys } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { requireMfaEnrolled } from "@/lib/middleware/owner-mfa-guard";
 
 // Generate a secure API key
 function generateApiKey(): { key: string; hash: string; prefix: string } {
@@ -74,6 +75,23 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: "Anonymous users cannot create API keys" },
         { status: 403 }
+      );
+    }
+
+    // User-scoped key creation is the highest-leverage forever-bypass
+    // a session can mint. Even though the apiKeys table has no org
+    // column to gate on, we require MFA enrolled + step-up cleared so
+    // a stolen session alone can't issue a key that survives any
+    // future MFA enforcement.
+    const sessionRow = session.session as { requiresMfa?: boolean | null };
+    const guard = await requireMfaEnrolled(
+      session.user.id,
+      sessionRow.requiresMfa === true
+    );
+    if (!guard.ok) {
+      return NextResponse.json(
+        { error: guard.error, code: guard.code },
+        { status: guard.status }
       );
     }
 

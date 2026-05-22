@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { apiKeys } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { requireMfaEnrolled } from "@/lib/middleware/owner-mfa-guard";
 
 // DELETE - Delete an API key
 export async function DELETE(
@@ -18,6 +19,21 @@ export async function DELETE(
 
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // User-scoped API keys (wfb_ prefix) aren't tied to an org so the
+    // owner-role gate doesn't apply; require MFA enrolled + step-up
+    // cleared. Symmetric with creation (same gate in POST).
+    const sessionRow = session.session as { requiresMfa?: boolean | null };
+    const guard = await requireMfaEnrolled(
+      session.user.id,
+      sessionRow.requiresMfa === true
+    );
+    if (!guard.ok) {
+      return NextResponse.json(
+        { error: guard.error, code: guard.code },
+        { status: guard.status }
+      );
     }
 
     // Delete the key (only if it belongs to the user)
