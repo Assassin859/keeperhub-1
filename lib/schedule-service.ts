@@ -183,14 +183,24 @@ export function extractScheduleConfig(
 }
 
 /**
- * Outcome of a schedule sync. `code` distinguishes sync failures the
- * save route should surface as a hard 400 (currently only
- * `interval_too_small`) from soft failures it warn-logs and lets the
- * save succeed for.
+ * Outcome of a schedule sync.
+ *
+ * `kind: "hard"` failures MUST be surfaced to the API caller as a 400.
+ * `kind: "soft"` failures are warn-logged; the save itself still
+ * succeeds. The discriminator is required (not optional) so that
+ * adding a new failure category forces every call site to handle it
+ * via exhaustiveness checks instead of silently falling into the
+ * default branch.
  */
 export type ScheduleSyncResult =
   | { synced: true }
-  | { synced: false; error: string; code?: "interval_too_small" };
+  | { synced: false; kind: "soft"; error: string }
+  | {
+      synced: false;
+      kind: "hard";
+      code: "interval_too_small";
+      error: string;
+    };
 
 /**
  * Sync workflow schedule based on trigger configuration.
@@ -207,8 +217,9 @@ export async function syncWorkflowSchedule(
     if (error instanceof IntervalTooSmallError) {
       return {
         synced: false,
-        error: error.message,
+        kind: "hard",
         code: "interval_too_small",
+        error: error.message,
       };
     }
     throw error;
@@ -231,7 +242,11 @@ export async function syncWorkflowSchedule(
     console.warn(
       `[Schedule] Invalid timezone for workflow ${workflowId}: ${timezone}`
     );
-    return { synced: false, error: `Invalid timezone: ${timezone}` };
+    return {
+      synced: false,
+      kind: "soft",
+      error: `Invalid timezone: ${timezone}`,
+    };
   }
 
   // Validate the mode-specific payload up front so we never write a half-
@@ -246,6 +261,7 @@ export async function syncWorkflowSchedule(
       );
       return {
         synced: false,
+        kind: "soft",
         error: cronValidation.error ?? "Invalid cron expression",
       };
     }

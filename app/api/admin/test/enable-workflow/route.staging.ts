@@ -71,7 +71,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       workflow.nodes as Parameters<typeof syncWorkflowSchedule>[1]
     );
 
-    if (!syncResult.synced && syncResult.code === "interval_too_small") {
+    if (!syncResult.synced && syncResult.kind === "hard") {
       return NextResponse.json(
         {
           error: "SCHEDULE_INTERVAL_TOO_SMALL",
