@@ -21,7 +21,7 @@ Turnkey generates and stores private keys inside secure hardware enclaves (TEEs)
 
 ## Wallet Funding
 
-Topping up your Turnkey wallet with ETH is only required for workflow operations that execute on-chain transactions.
+Topping up your Turnkey EOA with native gas tokens (ETH on Ethereum, ETH on Base, MATIC on Polygon, etc.) is required for any workflow that broadcasts a transaction.
 
 **When funding is needed**:
 
@@ -34,6 +34,18 @@ Topping up your Turnkey wallet with ETH is only required for workflow operations
 - Read-only monitoring workflows
 - Multisig monitoring workflows
 - Read function calls
+
+### Gas vs transactable balance
+
+The EOA plays two distinct roles in a workflow write. Keep them separate when topping up.
+
+1. **Gas (always the EOA).** Every workflow transaction is signed and broadcast by the EOA, and the gas fee is paid from the EOA's native balance. This is true whether or not you have a Safe configured as the Sender.
+
+2. **Transactable balance (the active Sender).** If you have a [Safe](/docs/wallet-management/safe) deployed and marked as the Sender on a chain, the Safe's balance is what gets debited when the workflow transfers a native token, approves or transfers an ERC20, swaps, or deposits into a protocol. If no Safe is the Sender, the EOA's own token balance is used instead.
+
+The most common surprise: you turn on a Safe Sender, fund the Safe with USDC, and the workflow fails because the EOA still has no ETH for gas. Or vice versa: you fund the EOA but the Safe is the Sender, so the EOA's USDC sits idle while the swap fails for insufficient Safe balance.
+
+Rule of thumb: **always keep some native gas on the EOA. Keep transactable tokens on whichever account is the active Sender.**
 
 Balance updates are reflected in the KeeperHub interface and displayed per network.
 
