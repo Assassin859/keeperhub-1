@@ -6,7 +6,7 @@ import {
   serialize as v8Serialize,
 } from "node:v8";
 
-const SANDBOX_URL = process.env.SANDBOX_URL ?? "http://localhost:8787";
+const SANDBOX_URL = process.env.SANDBOX_URL;
 const RESULT_SENTINEL = "\u0001RESULT\u0002";
 
 // HTTP budget on top of the user-code timeout. Sandbox server's in-child
@@ -67,12 +67,14 @@ function postOnce(
       return;
     }
 
+    if (!SANDBOX_URL) {
+      reject(new Error("SANDBOX_URL is not set"));
+      return;
+    }
+
     const url = new URL("/run", SANDBOX_URL);
-    const port = url.port
-      ? Number.parseInt(url.port, 10)
-      : url.protocol === "https:"
-        ? 443
-        : 80;
+    const defaultPort = url.protocol === "https:" ? 443 : 80;
+    const port = url.port ? Number.parseInt(url.port, 10) : defaultPort;
 
     let settled = false;
     let budgetTimer: NodeJS.Timeout | null = null;
