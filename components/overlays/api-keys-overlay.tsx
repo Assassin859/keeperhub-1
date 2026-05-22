@@ -1,6 +1,7 @@
 "use client";
 
 import { Copy, Key, Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -8,9 +9,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { handleGuardError } from "@/lib/client/handle-guard-error";
 import { ConfirmOverlay } from "./confirm-overlay";
 import { Overlay } from "./overlay";
 import { useOverlay } from "./overlay-provider";
+import { SettingsOverlay } from "./settings-overlay";
 
 type ApiKey = {
   id: string;
@@ -41,7 +44,8 @@ function CreateApiKeyOverlay({
   endpoint: string;
   keyType: "webhook" | "organisation";
 }) {
-  const { pop } = useOverlay();
+  const { open: openOverlay, pop } = useOverlay();
+  const router = useRouter();
   const [keyName, setKeyName] = useState("");
   const [creating, setCreating] = useState(false);
 
@@ -55,6 +59,22 @@ function CreateApiKeyOverlay({
       });
 
       if (!response.ok) {
+        // Both endpoints (/api/keys + /api/api-keys) are gated by an MFA
+        // helper on the server. Route the 403 to the right next step
+        // instead of leaving the user staring at a generic toast.
+        const guarded = await handleGuardError(response, {
+          onEnrollMfa: () => {
+            pop();
+            openOverlay(SettingsOverlay);
+          },
+          onPendingMfa: (next) => {
+            pop();
+            router.push(`/verify-mfa?next=${encodeURIComponent(next)}`);
+          },
+        });
+        if (guarded) {
+          return;
+        }
         const error = await response.json();
         throw new Error(error.error || "Failed to create API key");
       }
@@ -238,6 +258,8 @@ function useApiKeys(
   listEndpoint: string,
   deleteEndpoint: (id: string) => string
 ) {
+  const { open: openOverlay, closeAll } = useOverlay();
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(null);
@@ -277,6 +299,19 @@ function useApiKeys(
       });
 
       if (!response.ok) {
+        const guarded = await handleGuardError(response, {
+          onEnrollMfa: () => {
+            closeAll();
+            openOverlay(SettingsOverlay);
+          },
+          onPendingMfa: (next) => {
+            closeAll();
+            router.push(`/verify-mfa?next=${encodeURIComponent(next)}`);
+          },
+        });
+        if (guarded) {
+          return;
+        }
         throw new Error("Failed to delete API key");
       }
 
