@@ -1,8 +1,9 @@
 "use client";
 
 import { useAtomValue, useSetAtom } from "jotai";
-import { HelpCircle, Plus, Settings } from "lucide-react";
+import { Gem, HelpCircle, Plus, Settings } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { FeatureUpgradeDialog } from "@/components/billing/feature-upgrade-dialog";
 import { ConfigureConnectionOverlay } from "@/components/overlays/add-connection-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { Button } from "@/components/ui/button";
@@ -38,6 +39,9 @@ import {
 } from "@/lib/workflow/nodes/condition/builder-utils";
 import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
 import { validateConditionExpressionUI } from "@/lib/workflow/nodes/condition/validator";
+import { useFeatures } from "@/hooks/use-features";
+import type { FeatureDefinition } from "@/lib/features";
+import { getFeatureForActionType } from "@/lib/features";
 import {
   integrationsAtom,
   integrationsVersionAtom,
@@ -797,16 +801,40 @@ export function ActionConfig({
     setCategory(newCategory || "");
   }, [actionType]);
 
-  const handleCategoryChange = (newCategory: string) => {
+  const handleCategoryChange = (newCategory: string): void => {
     setCategory(newCategory);
-    // Auto-select the first action in the new category
-    const firstAction = categories[newCategory]?.[0];
-    if (firstAction) {
-      onUpdateConfig("actionType", firstAction.id);
+    // Auto-select the first non-locked action in the new category. Skipping
+    // locked actions here avoids opening the upgrade dialog as a side effect
+    // of changing the category dropdown.
+    const firstAvailable = categories[newCategory]?.find(
+      (a) => isActionLocked(a.id) === null
+    );
+    if (firstAvailable) {
+      onUpdateConfig("actionType", firstAvailable.id);
     }
   };
 
-  const handleActionTypeChange = (value: string) => {
+  const { snapshot: featureSnapshot } = useFeatures();
+  const [upgradeFeature, setUpgradeFeature] = useState<FeatureDefinition | null>(
+    null
+  );
+
+  const isActionLocked = (actionId: string): FeatureDefinition | null => {
+    const feature = getFeatureForActionType(actionId);
+    if (!feature) {
+      return null;
+    }
+    const enabled =
+      featureSnapshot?.enabledFeatureIds.includes(feature.id) ?? false;
+    return enabled ? null : feature;
+  };
+
+  const handleActionTypeChange = (value: string): void => {
+    const lockedFeature = isActionLocked(value);
+    if (lockedFeature) {
+      setUpgradeFeature(lockedFeature);
+      return;
+    }
     onUpdateConfig("actionType", value);
   };
 
@@ -926,11 +954,27 @@ export function ActionConfig({
             </SelectTrigger>
             <SelectContent>
               {category &&
-                categories[category]?.map((action) => (
-                  <SelectItem key={action.id} value={action.id}>
-                    {action.label}
-                  </SelectItem>
-                ))}
+                categories[category]?.map((action) => {
+                  const lockedFeature = isActionLocked(action.id);
+                  return (
+                    <SelectItem
+                      data-locked={lockedFeature ? "true" : undefined}
+                      key={action.id}
+                      value={action.id}
+                    >
+                      <span className="flex items-center gap-1.5">
+                        {lockedFeature && (
+                          <Gem className="size-3 text-[var(--color-text-accent)]" />
+                        )}
+                        <span
+                          className={lockedFeature ? "opacity-70" : undefined}
+                        >
+                          {action.label}
+                        </span>
+                      </span>
+                    </SelectItem>
+                  );
+                })}
             </SelectContent>
           </Select>
           {pluginAction?.docUrl && (
@@ -1013,6 +1057,15 @@ export function ActionConfig({
             onUpdateConfig={handlePluginUpdateConfig}
           />
         )}
+      <FeatureUpgradeDialog
+        feature={upgradeFeature}
+        onOpenChange={(open) => {
+          if (!open) {
+            setUpgradeFeature(null);
+          }
+        }}
+        open={upgradeFeature !== null}
+      />
     </>
   );
 }
