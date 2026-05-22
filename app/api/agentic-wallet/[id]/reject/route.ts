@@ -16,6 +16,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { agenticWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { requireMfaEnrolled } from "@/lib/middleware/owner-mfa-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +49,22 @@ export async function POST(
   const session = await auth.api.getSession({ headers: request.headers });
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Symmetric with the /approve gate. Reject doesn't move funds, but a
+  // stolen session that can reject can DoS legitimate requests by
+  // pre-emptively cancelling them; gating prevents that and keeps the
+  // approve/reject pair on identical authorization rules.
+  const sessionRow = session.session as { requiresMfa?: boolean | null };
+  const mfa = await requireMfaEnrolled(
+    session.user.id,
+    sessionRow.requiresMfa === true
+  );
+  if (!mfa.ok) {
+    return NextResponse.json(
+      { error: mfa.error, code: mfa.code },
+      { status: mfa.status }
+    );
   }
 
   const { id } = await params;
