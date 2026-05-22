@@ -5,11 +5,14 @@
  * Usage: pnpm tsx scripts/seed-user.ts
  *
  * Default credentials:
- *   Email:    dev@keeperhub.local
+ *   Email:    dev@techops.services
  *   Password: Test1234!
  *
  * Override via env:
- *   SEED_EMAIL=me@example.com SEED_PASSWORD=secret pnpm tsx scripts/seed-user.ts
+ *   SEED_EMAIL=dev@keeperhub.com SEED_PASSWORD=secret pnpm tsx scripts/seed-user.ts
+ *
+ * Note: SEED_EMAIL must match the public.block_user_signup_security trigger
+ * allowlist (techops.services or keeperhub.com), otherwise the INSERT fails.
  */
 
 import "dotenv/config";
@@ -22,7 +25,7 @@ import { getDatabaseUrl } from "../../lib/db/connection-utils";
 import { accounts, users } from "../../lib/db/schema";
 import { generateId } from "../../lib/utils/id";
 
-const EMAIL = process.env.SEED_EMAIL ?? "dev@keeperhub.local";
+const EMAIL = process.env.SEED_EMAIL ?? "dev@techops.services";
 const PASSWORD = process.env.SEED_PASSWORD ?? "Test1234!";
 const NAME = process.env.SEED_NAME ?? "Dev User";
 
