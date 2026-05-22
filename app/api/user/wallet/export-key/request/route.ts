@@ -1,6 +1,5 @@
 import crypto from "node:crypto";
 import { and, eq } from "drizzle-orm";
-import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { auth } from "@/lib/auth";
@@ -8,6 +7,7 @@ import { db } from "@/lib/db";
 import { keyExportCodes, organizationWallets } from "@/lib/db/schema";
 import { sendEmail } from "@/lib/email";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
+import { requireOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
 import { checkRequestRateLimit } from "../_lib/rate-limit";
 
 const CODE_EXPIRY_MINUTES = 5;
@@ -38,14 +38,20 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    const activeMember = await auth.api.getActiveMember({
-      headers: await headers(),
-    });
-
-    if (!activeMember) {
+    // Private-key export is the most destructive read in the system —
+    // it exfiltrates the org's signing material in plaintext. Owner-
+    // only role, MFA enrolled, and step-up cleared, in addition to the
+    // existing wallet-creator + wallet-inbox-email-OTP factors below.
+    const sessionRow = session.session as { requiresMfa?: boolean | null };
+    const guard = await requireOwnerWithMfa(
+      session.user.id,
+      activeOrgId,
+      sessionRow.requiresMfa === true
+    );
+    if ("error" in guard) {
       return NextResponse.json(
-        { error: "You are not a member of the active organization" },
-        { status: 403 }
+        { error: guard.error, code: guard.code },
+        { status: guard.status }
       );
     }
 

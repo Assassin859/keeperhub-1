@@ -1,6 +1,5 @@
 import crypto from "node:crypto";
 import { and, eq, gt, sql } from "drizzle-orm";
-import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { toChecksumAddress } from "@/lib/address-utils";
 import { apiError } from "@/lib/api-error";
@@ -9,6 +8,7 @@ import { db } from "@/lib/db";
 import { keyExportCodes, organizationWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
+import { requireOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
 import { exportTurnkeyPrivateKey } from "@/lib/turnkey/turnkey-client";
 import { checkVerifyRateLimit } from "../_lib/rate-limit";
 
@@ -34,14 +34,21 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    const activeMember = await auth.api.getActiveMember({
-      headers: await headers(),
-    });
-
-    if (!activeMember) {
+    // Mirror the gate enforced in the /request leg so an attacker who
+    // somehow obtains a wallet-inbox OTP without owning + MFA-enrolling
+    // on the user account can't complete the export by skipping
+    // straight to /verify. Two-step flows must enforce role + MFA on
+    // both legs.
+    const sessionRow = session.session as { requiresMfa?: boolean | null };
+    const guard = await requireOwnerWithMfa(
+      session.user.id,
+      activeOrgId,
+      sessionRow.requiresMfa === true
+    );
+    if ("error" in guard) {
       return NextResponse.json(
-        { error: "You are not a member of the active organization" },
-        { status: 403 }
+        { error: guard.error, code: guard.code },
+        { status: guard.status }
       );
     }
 

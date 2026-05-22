@@ -1,6 +1,5 @@
 import { and, eq } from "drizzle-orm";
 import { ethers } from "ethers";
-import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { auth } from "@/lib/auth";
@@ -10,6 +9,7 @@ import { safeWallets } from "@/lib/db/schema-extensions";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { recordSafeWithdraw } from "@/lib/metrics/instrumentation/safe";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
+import { requireOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
 import {
   getOrganizationWalletAddress,
   initializeWalletSigner,
@@ -101,7 +101,12 @@ async function executeNativeTransfer(
   return receipt?.hash || tx.hash;
 }
 
-// Validate user authentication and admin permissions
+// Withdraw is the highest-leverage action a session cookie can trigger:
+// it moves funds off the org's wallet. Gated on owner-only role +
+// MFA-enrolled + step-up cleared via requireOwnerWithMfa. Admins are
+// intentionally excluded here even though they have other write
+// privileges; widening the role would let any admin-session compromise
+// drain the wallet.
 async function validateUserAndOrganization(request: Request) {
   const session = await auth.api.getSession({
     headers: request.headers,
@@ -120,23 +125,14 @@ async function validateUserAndOrganization(request: Request) {
     };
   }
 
-  const activeMember = await auth.api.getActiveMember({
-    headers: await headers(),
-  });
-
-  if (!activeMember) {
-    return {
-      error: "You are not a member of the active organization",
-      status: 403,
-    };
-  }
-
-  const role = activeMember.role;
-  if (role !== "admin" && role !== "owner") {
-    return {
-      error: "Only organization admins and owners can withdraw funds",
-      status: 403,
-    };
+  const sessionRow = session.session as { requiresMfa?: boolean | null };
+  const guard = await requireOwnerWithMfa(
+    session.user.id,
+    activeOrgId,
+    sessionRow.requiresMfa === true
+  );
+  if ("error" in guard) {
+    return { error: guard.error, status: guard.status, code: guard.code };
   }
 
   return { user: session.user, organizationId: activeOrgId };
