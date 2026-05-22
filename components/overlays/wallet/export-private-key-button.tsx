@@ -1,8 +1,11 @@
 "use client";
 
 import { Copy, Eye, EyeOff, KeyRound } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
+import { useOverlay } from "@/components/overlays/overlay-provider";
+import { SettingsOverlay } from "@/components/overlays/settings-overlay";
 import {
   Dialog,
   DialogContent,
@@ -14,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import { handleGuardError } from "@/lib/client/handle-guard-error";
 
 type ExportStep = "idle" | "requesting" | "otp" | "verifying" | "done";
 
@@ -41,6 +45,24 @@ export function ExportPrivateKeyButton(): React.ReactElement {
   const [revealed, setRevealed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recipientEmail, setRecipientEmail] = useState<string | null>(null);
+  const { open: openOverlay } = useOverlay();
+  const router = useRouter();
+
+  // Shared guard-error options for both legs of the export flow.
+  // The /request and /verify endpoints are gated by requireOwnerWithMfa
+  // on the server; either can produce a not_owner / mfa_not_enrolled /
+  // mfa_pending response, so both fetch calls below route through the
+  // same handler.
+  const guardOptions = {
+    onEnrollMfa: () => {
+      setOpen(false);
+      openOverlay(SettingsOverlay);
+    },
+    onPendingMfa: (next: string) => {
+      setOpen(false);
+      router.push(`/verify-mfa?next=${encodeURIComponent(next)}`);
+    },
+  };
 
   const handleOpen = async (): Promise<void> => {
     setOpen(true);
@@ -54,12 +76,18 @@ export function ExportPrivateKeyButton(): React.ReactElement {
       const res = await fetch("/api/user/wallet/export-key/request", {
         method: "POST",
       });
-      const data: { error?: string; email?: string } = await res.json();
 
       if (!res.ok) {
+        const guarded = await handleGuardError(res, guardOptions);
+        if (guarded) {
+          setStep("idle");
+          return;
+        }
+        const data: { error?: string } = await res.json();
         throw new Error(data.error ?? "Failed to send verification code");
       }
 
+      const data: { email?: string } = await res.json();
       setRecipientEmail(data.email ?? null);
       setStep("otp");
     } catch (err) {
@@ -83,12 +111,18 @@ export function ExportPrivateKeyButton(): React.ReactElement {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code: otpCode }),
       });
-      const data: { privateKey?: string; error?: string } = await res.json();
 
       if (!res.ok) {
+        const guarded = await handleGuardError(res, guardOptions);
+        if (guarded) {
+          setStep("otp");
+          return;
+        }
+        const data: { error?: string } = await res.json();
         throw new Error(data.error ?? "Verification failed");
       }
 
+      const data: { privateKey?: string } = await res.json();
       if (!data.privateKey) {
         throw new Error("No private key returned");
       }
