@@ -5,6 +5,8 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
+import { extractActionTypeNodes } from "@/lib/features";
+import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
 import { generateId } from "@/lib/utils/id";
 import { remapTemplateRefsInString } from "@/lib/utils/template";
 import { getWorkflowAccess } from "@/lib/workflow/access";
@@ -188,6 +190,14 @@ export async function POST(
     );
     const newNodes = sanitized.nodes;
     const newEdges = sanitized.edges;
+
+    const featureGuard = await enforceWorkflowFeatures(
+      extractActionTypeNodes(newNodes),
+      organizationId
+    );
+    if (featureGuard.blocked) {
+      return featureGuard.response;
+    }
 
     // Count workflows in current context (org or anonymous) to generate unique name
     const existingWorkflows = isAnonymous
