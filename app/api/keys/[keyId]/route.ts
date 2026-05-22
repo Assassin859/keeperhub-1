@@ -1,9 +1,11 @@
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { organizationApiKeys } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
+import { requireAdminOrOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
 
 // DELETE - Revoke an API key
 export async function DELETE(
@@ -20,6 +22,27 @@ export async function DELETE(
       );
     }
     const { organizationId: activeOrgId } = authCtx;
+
+    // Revoking an API key is symmetric with creating one — anything
+    // that grants long-lived bypass deserves the same gate to remove.
+    // Without this, an attacker on a session could rotate keys (delete
+    // + recreate via a separate path) to lock owners out.
+    const session = await auth.api.getSession({ headers: request.headers });
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const sessionRow = session.session as { requiresMfa?: boolean | null };
+    const guard = await requireAdminOrOwnerWithMfa(
+      session.user.id,
+      activeOrgId,
+      sessionRow.requiresMfa === true
+    );
+    if (!guard.ok) {
+      return NextResponse.json(
+        { error: guard.error, code: guard.code },
+        { status: guard.status }
+      );
+    }
 
     // Revoke the key (soft delete) - only if it belongs to the organization
     const result = await db

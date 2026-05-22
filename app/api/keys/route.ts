@@ -7,6 +7,7 @@ import { organizationApiKeys, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { getOrgContext } from "@/lib/middleware/org-context";
+import { requireAdminOrOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
 
 // Generate a secure API key with KeeperHub prefix
 function generateApiKey(): { key: string; hash: string; prefix: string } {
@@ -117,6 +118,24 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: "Anonymous users cannot create API keys" },
         { status: 403 }
+      );
+    }
+
+    // Creating an org API key mints a long-lived credential that
+    // bypasses session MFA forever afterward, so gate the act of
+    // minting with admin/owner role + MFA enrolled + step-up cleared.
+    // Once issued the key itself is not MFA-aware; the time to enforce
+    // is at creation.
+    const sessionRow = session.session as { requiresMfa?: boolean | null };
+    const guard = await requireAdminOrOwnerWithMfa(
+      session.user.id,
+      activeOrgId,
+      sessionRow.requiresMfa === true
+    );
+    if (!guard.ok) {
+      return NextResponse.json(
+        { error: guard.error, code: guard.code },
+        { status: guard.status }
       );
     }
 
