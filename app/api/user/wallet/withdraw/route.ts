@@ -131,7 +131,7 @@ async function validateUserAndOrganization(request: Request) {
     activeOrgId,
     sessionRow.requiresMfa === true
   );
-  if ("error" in guard) {
+  if (!guard.ok) {
     return { error: guard.error, status: guard.status, code: guard.code };
   }
 

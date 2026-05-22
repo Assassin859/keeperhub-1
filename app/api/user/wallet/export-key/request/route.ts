@@ -48,7 +48,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       activeOrgId,
       sessionRow.requiresMfa === true
     );
-    if ("error" in guard) {
+    if (!guard.ok) {
       return NextResponse.json(
         { error: guard.error, code: guard.code },
         { status: guard.status }
