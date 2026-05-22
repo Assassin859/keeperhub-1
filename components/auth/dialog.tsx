@@ -1,6 +1,7 @@
 "use client";
 
-import { type ReactNode, useEffect, useState } from "react";
+import { Turnstile, type TurnstileInstance } from "@marsidev/react-turnstile";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -374,6 +375,12 @@ export const AuthDialog = ({
   const [loadingProvider, setLoadingProvider] = useState<
     "github" | "google" | null
   >(null);
+  const [captchaToken, setCaptchaToken] = useState("");
+  const captchaRef = useRef<TurnstileInstance | null>(null);
+  // Client-side captcha is keyed off NEXT_PUBLIC_TURNSTILE_SITE_KEY. The
+  // server-side gate is keyed off TURNSTILE_SECRET_KEY (lib/auth.ts) - both
+  // must be set together or signup will fail with a missing-token error.
+  const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
   // Handle pending verification when component mounts/remounts
   // Do NOT clear pendingVerify* here - they must survive remounts caused by
@@ -404,6 +411,23 @@ export const AuthDialog = ({
     setForgotEmail("");
     setNewPassword("");
     setConfirmNewPassword("");
+    setCaptchaToken("");
+    captchaRef.current?.reset();
+  };
+
+  // Reset the Turnstile widget when leaving the signup view so that
+  // returning to it always renders a fresh challenge. Tokens are
+  // single-use and short-lived; a stale token would 401 the next signup.
+  useEffect(() => {
+    if (view !== "signup") {
+      setCaptchaToken("");
+      captchaRef.current?.reset();
+    }
+  }, [view]);
+
+  const resetCaptcha = () => {
+    setCaptchaToken("");
+    captchaRef.current?.reset();
   };
 
   const getClaimContext = async () => {
@@ -541,6 +565,11 @@ export const AuthDialog = ({
         email,
         password,
         name: email.split("@")[0],
+        ...(captchaToken && {
+          fetchOptions: {
+            headers: { "x-captcha-response": captchaToken },
+          },
+        }),
       });
 
       if (signUpResponse.error) {
@@ -567,6 +596,7 @@ export const AuthDialog = ({
               setError(
                 "An account with this email already exists. Please sign in."
               );
+              resetCaptcha();
               setLoading(false);
               return;
             }
@@ -597,12 +627,14 @@ export const AuthDialog = ({
             setError(
               "An account with this email already exists. Please sign in."
             );
+            resetCaptcha();
             setLoading(false);
             return;
           }
         }
 
         setError(errorMsg);
+        resetCaptcha();
         setLoading(false);
         return;
       }
@@ -629,6 +661,7 @@ export const AuthDialog = ({
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create account");
+      resetCaptcha();
       setLoading(false);
     }
   };
@@ -947,7 +980,21 @@ export const AuthDialog = ({
                 {error && (
                   <div className="text-destructive text-sm">{error}</div>
                 )}
-                <Button className="w-full" disabled={loading} type="submit">
+                {turnstileSiteKey && (
+                  <Turnstile
+                    onError={() => setCaptchaToken("")}
+                    onExpire={() => setCaptchaToken("")}
+                    onSuccess={(token) => setCaptchaToken(token)}
+                    options={{ theme: "auto" }}
+                    ref={captchaRef}
+                    siteKey={turnstileSiteKey}
+                  />
+                )}
+                <Button
+                  className="w-full"
+                  disabled={loading || (!!turnstileSiteKey && !captchaToken)}
+                  type="submit"
+                >
                   {loading ? <Spinner className="mr-2 size-4" /> : null}
                   Create account
                 </Button>

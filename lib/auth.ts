@@ -5,15 +5,16 @@ import {
   anonymous,
   // start custom keeperhub code //
   bearer,
-  deviceAuthorization,
   // end keeperhub code //
+  captcha,
+  deviceAuthorization,
   emailOTP,
   organization,
 } from "better-auth/plugins";
 import { createAccessControl } from "better-auth/plugins/access";
 import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { rateLimitBypassRule } from "@/lib/admin-auth";
+import { rateLimitBypassRule, testEndpointsEnabled } from "@/lib/admin-auth";
 import { isUserDeactivated } from "@/lib/auth-deactivation-guard";
 import { sendInvitationEmail, sendVerificationOTP } from "@/lib/email";
 import { TRUSTED_ORIGINS } from "@/lib/trusted-origins";
@@ -106,6 +107,42 @@ function getBaseURL() {
   }
   return "http://localhost:3000";
 }
+
+// Turnstile is gated on the signup endpoint. In production the secret key
+// is required - fail fast at module load rather than serving an open signup
+// endpoint. Two skip conditions outside production:
+//   1. Vitest / CI unit-test runs (NODE_ENV=test or CI=true) - tests assert
+//      config shape without needing a live Turnstile challenge.
+//   2. When admin test endpoints are wired up (INCLUDE_TEST_ENDPOINTS=true,
+//      with the same runtime gate testEndpointsEnabled enforces). This is
+//      the Playwright E2E + local-dev-with-admin-tests path: requests carry
+//      X-Test-API-Key for rate-limit bypass, and the captcha plugin's
+//      onRequest middleware can't honor that header, so skip the plugin
+//      instead. Production never hits this skip because the same gate
+//      requires explicit ALLOW_TEST_ENDPOINTS=true and we hard-fail the
+//      missing-key assertion below regardless.
+const captchaSecretKey = process.env.TURNSTILE_SECRET_KEY;
+const captchaSkippedForTests =
+  process.env.CI === "true" ||
+  process.env.NODE_ENV === "test" ||
+  (testEndpointsEnabled() && process.env.NODE_ENV !== "production");
+
+if (process.env.NODE_ENV === "production" && !captchaSecretKey) {
+  throw new Error(
+    "TURNSTILE_SECRET_KEY is required in production - refusing to expose /sign-up/email without captcha verification"
+  );
+}
+
+const captchaPlugins =
+  !captchaSkippedForTests && captchaSecretKey
+    ? [
+        captcha({
+          provider: "cloudflare-turnstile",
+          secretKey: captchaSecretKey,
+          endpoints: ["/sign-up/email"],
+        }),
+      ]
+    : [];
 
 // Build plugins array conditionally
 const plugins = [
@@ -204,6 +241,7 @@ const plugins = [
       }
     },
   }),
+  ...captchaPlugins,
   organization({
     // Access control with custom roles
     ac,
@@ -508,6 +546,14 @@ export const auth = betterAuth({
   rateLimit: {
     enabled: !(process.env.CI || process.env.NODE_ENV === "test"),
     customRules: {
+      // Per-IP signup gate (5/hour). Declared before "/*" so first-match
+      // wins on /sign-up/email. The bypass is still honored via the
+      // explicit call below so Playwright E2E keeps working with the
+      // X-Test-API-Key header. In-memory storage means the effective
+      // limit is 5 * pod_count; acceptable as defense-in-depth behind
+      // Turnstile until a shared store is wired up.
+      "/sign-up/email": (req) =>
+        rateLimitBypassRule(req, { window: 3600, max: 5 }),
       // Rate-limit bypass is gated by the same predicate as admin test
       // routes (build-time + runtime). See lib/admin-auth.ts for the gate
       // and KEEP-237 for context.
