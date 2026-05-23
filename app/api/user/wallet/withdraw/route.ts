@@ -102,12 +102,20 @@ async function executeNativeTransfer(
 }
 
 // Withdraw is the highest-leverage action a session cookie can trigger:
-// it moves funds off the org's wallet. Gated on owner-only role +
-// MFA-enrolled + step-up cleared via requireOwnerWithMfa. Admins are
-// intentionally excluded here even though they have other write
-// privileges; widening the role would let any admin-session compromise
-// drain the wallet.
-async function validateUserAndOrganization(request: Request) {
+// it moves funds off the org's wallet. Gated on:
+//   1. owner-only role via requireOwnerWithMfa (admin not accepted —
+//      widening the role would let any admin-session compromise drain
+//      the wallet)
+//   2. MFA enrolled + step-up cleared (passive gate)
+//   3. Fresh TOTP challenge at the exact moment of withdrawal. The
+//      client passes `code` in the body; we verify it via the same
+//      auth.api.verifyTOTP primitive used by /verify-mfa and the
+//      manage dialog. Without this, a session that was authenticated
+//      hours ago can still drain funds without a re-challenge.
+async function validateUserAndOrganization(
+  request: Request,
+  code: string | undefined
+) {
   const session = await auth.api.getSession({
     headers: request.headers,
   });
@@ -135,22 +143,35 @@ async function validateUserAndOrganization(request: Request) {
     return { error: guard.error, status: guard.status, code: guard.code };
   }
 
+  const trimmedCode = typeof code === "string" ? code.trim() : "";
+  if (trimmedCode.length !== 6) {
+    return {
+      error: "A 6-digit verification code is required",
+      status: 400,
+      code: "mfa_code_required",
+    };
+  }
+  try {
+    await auth.api.verifyTOTP({
+      body: { code: trimmedCode },
+      headers: request.headers,
+    });
+  } catch {
+    return {
+      error: "Invalid verification code",
+      status: 401,
+      code: "mfa_code_invalid",
+    };
+  }
+
   return { user: session.user, organizationId: activeOrgId };
 }
 
 export async function POST(request: Request) {
   try {
-    // 1. Validate user and permissions
-    const validation = await validateUserAndOrganization(request);
-    if ("error" in validation) {
-      return NextResponse.json(
-        { error: validation.error },
-        { status: validation.status }
-      );
-    }
-    const { organizationId, user } = validation;
-
-    // 2. Parse request body
+    // Parse body up-front so the validator can pull the TOTP code out
+    // for the fresh-challenge step. Everything else still gets
+    // re-destructured below for the action itself.
     const body = (await request.json()) as {
       chainId?: number | string;
       tokenAddress?: string;
@@ -158,7 +179,19 @@ export async function POST(request: Request) {
       recipient?: string;
       fromMax?: boolean;
       safeId?: string;
+      code?: string;
     };
+
+    // 1. Validate user and permissions (includes fresh TOTP challenge).
+    const validation = await validateUserAndOrganization(request, body.code);
+    if ("error" in validation) {
+      return NextResponse.json(
+        { error: validation.error, code: validation.code },
+        { status: validation.status }
+      );
+    }
+    const { organizationId, user } = validation;
+
     const { chainId: rawChainId, tokenAddress, amount, fromMax, safeId } = body;
     const recipient = body.recipient;
 

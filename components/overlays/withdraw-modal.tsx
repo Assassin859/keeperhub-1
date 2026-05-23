@@ -1,14 +1,16 @@
 "use client";
 
 import { ethers } from "ethers";
-import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2, ShieldAlert } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ChangeEvent, ChangeEventHandler, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Overlay } from "@/components/overlays/overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { SettingsOverlay } from "@/components/overlays/settings-overlay";
+import { useSession } from "@/lib/auth-client";
 import { handleGuardError } from "@/lib/client/handle-guard-error";
+import { useActiveMember } from "@/lib/hooks/use-organization";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -50,7 +52,13 @@ type WithdrawModalProps = {
   source?: WithdrawSource;
 };
 
-type WithdrawState = "input" | "confirming" | "success" | "error";
+type WithdrawState =
+  | "input"
+  | "mfa-code"
+  | "needs-mfa"
+  | "confirming"
+  | "success"
+  | "error";
 
 type GasEstimate = {
   costWei: bigint;
@@ -68,10 +76,23 @@ export function WithdrawModal({
   const { closeAll, open: openOverlay, pop } = useOverlay();
   const router = useRouter();
 
+  // Client-side hardening: only owners with MFA enrolled can use this
+  // modal. Server still enforces the same rules via requireOwnerWithMfa
+  // + auth.api.verifyTOTP at submission time; these checks just gate
+  // what the user sees.
+  const { role, isLoading: memberLoading } = useActiveMember();
+  const session = useSession();
+  const sessionUser = session.data?.user as
+    | { twoFactorEnabled?: boolean | null }
+    | undefined;
+  const isOwner = role === "owner";
+  const mfaEnrolled = sessionUser?.twoFactorEnabled === true;
+
   const [selectedAssetIndex, setSelectedAssetIndex] =
     useState(initialAssetIndex);
   const [amount, setAmount] = useState("");
   const [recipient, setRecipient] = useState("");
+  const [mfaCode, setMfaCode] = useState("");
   const [state, setState] = useState<WithdrawState>("input");
   const [txHash, setTxHash] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -268,12 +289,38 @@ export function WithdrawModal({
     return null;
   };
 
-  const handleSubmit = async () => {
+  // Click handler for the input-step "Withdraw" button. Validates
+  // local form state, then routes to the MFA step (owner with MFA
+  // enrolled) or the enroll-MFA prompt (owner without MFA). The
+  // earlier non-owner branch is handled by the early-exit render at
+  // the top of the component; reaching this function implies isOwner.
+  const handleProceedToMfa = (): void => {
     const validationError = validateWithdrawal();
     if (validationError || !selectedAsset) {
       if (validationError) {
         toast.error(validationError);
       }
+      return;
+    }
+    if (!mfaEnrolled) {
+      setState("needs-mfa");
+      return;
+    }
+    setMfaCode("");
+    setErrorMessage(null);
+    setState("mfa-code");
+  };
+
+  const handleSubmit = async (): Promise<void> => {
+    const validationError = validateWithdrawal();
+    if (validationError || !selectedAsset) {
+      if (validationError) {
+        toast.error(validationError);
+      }
+      return;
+    }
+    if (mfaCode.trim().length !== 6) {
+      toast.error("Enter the 6-digit code from your authenticator");
       return;
     }
 
@@ -299,6 +346,7 @@ export function WithdrawModal({
           recipient,
           fromMax: useServerMax,
           safeId: source.kind === "safe" ? source.safeId : undefined,
+          code: mfaCode.trim(),
         }),
       });
 
@@ -319,6 +367,18 @@ export function WithdrawModal({
           return;
         }
         const data = await response.json();
+        // 401 with mfa_code_invalid or 400 with mfa_code_required:
+        // bring the user back to the MFA step instead of dropping
+        // them into the red error screen with no way to retry.
+        if (
+          data.code === "mfa_code_invalid" ||
+          data.code === "mfa_code_required"
+        ) {
+          toast.error(data.error || "Invalid verification code");
+          setMfaCode("");
+          setState("mfa-code");
+          return;
+        }
         throw new Error(data.error || "Withdrawal failed");
       }
 
@@ -391,6 +451,118 @@ export function WithdrawModal({
     );
   }
 
+  // Wait for role + session to resolve so we don't briefly flash the
+  // input form to a non-owner.
+  if (memberLoading || session.isPending) {
+    return (
+      <Overlay overlayId={overlayId} title="Withdraw Funds">
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="size-6 animate-spin text-muted-foreground" />
+        </div>
+      </Overlay>
+    );
+  }
+
+  // Non-owner: refuse the action outright. Server still enforces this
+  // via requireOwnerWithMfa, so even bypassing the UI gets a 403.
+  if (!isOwner) {
+    return (
+      <Overlay
+        actions={[{ label: "Close", onClick: closeAll }]}
+        overlayId={overlayId}
+        title="Withdraw Funds"
+      >
+        <div className="flex flex-col items-center justify-center py-8 text-center">
+          <ShieldAlert className="mb-4 size-12 text-amber-500" />
+          <p className="mb-2 font-medium">Owner only</p>
+          <p className="text-muted-foreground text-sm">
+            Only an organization owner can withdraw funds. Ask the owner
+            to perform the transfer.
+          </p>
+        </div>
+      </Overlay>
+    );
+  }
+
+  // Owner without MFA enrolled: refuse to proceed until they enable
+  // two-factor. Server would also refuse via the mfa_not_enrolled
+  // code path; this gives them a clear next step.
+  if (state === "needs-mfa") {
+    return (
+      <Overlay
+        actions={[
+          { label: "Cancel", variant: "outline", onClick: closeAll },
+          {
+            label: "Open Settings",
+            onClick: () => {
+              closeAll();
+              openOverlay(SettingsOverlay);
+            },
+          },
+        ]}
+        overlayId={overlayId}
+        title="Two-factor required"
+      >
+        <div className="flex items-start gap-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-4">
+          <ShieldAlert
+            aria-hidden="true"
+            className="mt-0.5 size-5 shrink-0 text-amber-500"
+          />
+          <p className="text-sm">
+            Withdrawing funds requires two-factor authentication. Enable
+            it in Settings, then come back to finish your withdrawal.
+          </p>
+        </div>
+      </Overlay>
+    );
+  }
+
+  // MFA code step: shown after the user clicks "Withdraw" on the
+  // input form. The owner+MFA-enrolled checks have already passed by
+  // this point; we just need a fresh TOTP code to confirm the action.
+  if (state === "mfa-code") {
+    return (
+      <Overlay
+        actions={[
+          {
+            label: "Back",
+            variant: "outline",
+            onClick: () => setState("input"),
+          },
+          {
+            label: "Confirm withdraw",
+            onClick: handleSubmit,
+            disabled: mfaCode.trim().length !== 6,
+          },
+        ]}
+        overlayId={overlayId}
+        title="Confirm with your authenticator"
+      >
+        <p className="-mt-2 mb-4 text-muted-foreground text-sm">
+          Enter the current 6-digit code from your authenticator app to
+          confirm sending {amount} {selectedAsset?.symbol} to{" "}
+          {truncateAddress(recipient)}.
+        </p>
+        <div className="space-y-2">
+          <Label htmlFor="withdraw-mfa-code">Authenticator code</Label>
+          <Input
+            autoComplete="one-time-code"
+            autoFocus
+            className="font-mono text-center text-lg tracking-[0.3em]"
+            id="withdraw-mfa-code"
+            inputMode="numeric"
+            maxLength={6}
+            onChange={(event) =>
+              setMfaCode(event.target.value.replace(/\D/g, ""))
+            }
+            placeholder="000000"
+            value={mfaCode}
+          />
+        </div>
+      </Overlay>
+    );
+  }
+
   // Input state
   return (
     <Overlay
@@ -398,7 +570,7 @@ export function WithdrawModal({
         { label: "Cancel", variant: "outline", onClick: pop },
         {
           label: "Withdraw",
-          onClick: handleSubmit,
+          onClick: handleProceedToMfa,
           disabled:
             !(amount && recipient && ethers.isAddress(recipient)) ||
             Number.parseFloat(amount) <= 0 ||
