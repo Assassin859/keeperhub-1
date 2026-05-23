@@ -371,6 +371,11 @@ export const AuthDialog = ({
   const [forgotEmail, setForgotEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  // Optional second factor on the password-reset path. Server only
+  // requires it when the target user has TOTP enrolled; we ask for
+  // it preemptively so the user doesn't have to round-trip.
+  const [forgotTotp, setForgotTotp] = useState("");
+  const [forgotNeedsMfa, setForgotNeedsMfa] = useState(false);
   const [loadingProvider, setLoadingProvider] = useState<
     "github" | "google" | null
   >(null);
@@ -404,6 +409,8 @@ export const AuthDialog = ({
     setForgotEmail("");
     setNewPassword("");
     setConfirmNewPassword("");
+    setForgotTotp("");
+    setForgotNeedsMfa(false);
   };
 
   const getClaimContext = async () => {
@@ -781,12 +788,32 @@ export const AuthDialog = ({
           email: forgotEmail,
           otp,
           newPassword,
+          code: forgotTotp ? forgotTotp.trim() : undefined,
         }),
       });
 
-      const data = (await response.json()) as { error?: string };
+      const data = (await response.json()) as {
+        error?: string;
+        code?: string;
+      };
 
       if (!response.ok) {
+        // Server signaled the user has TOTP enrolled: reveal the
+        // code field and let them retry without losing the OTP /
+        // password they already typed.
+        if (data.code === "mfa_code_required") {
+          setForgotNeedsMfa(true);
+          setError(
+            data.error ??
+              "This account has two-factor enabled. Enter a code from your authenticator."
+          );
+          return;
+        }
+        if (data.code === "mfa_code_invalid") {
+          setForgotTotp("");
+          setError(data.error ?? "Invalid verification code");
+          return;
+        }
         throw new Error(data.error ?? "Failed to reset password");
       }
 
@@ -1129,6 +1156,33 @@ export const AuthDialog = ({
                     value={confirmNewPassword}
                   />
                 </div>
+                {forgotNeedsMfa && (
+                  <div className="space-y-2">
+                    <Label className="ml-1" htmlFor="forgot-totp">
+                      Authenticator code
+                    </Label>
+                    <Input
+                      autoComplete="one-time-code"
+                      className="text-center font-mono text-2xl tracking-[0.5em]"
+                      id="forgot-totp"
+                      inputMode="numeric"
+                      maxLength={6}
+                      onChange={(e) =>
+                        setForgotTotp(
+                          e.target.value.replace(/\D/g, "").slice(0, 6)
+                        )
+                      }
+                      pattern="[0-9]*"
+                      placeholder="000000"
+                      required
+                      value={forgotTotp}
+                    />
+                    <p className="text-muted-foreground text-xs">
+                      Your account has two-factor enabled. Enter the current
+                      code from your authenticator app.
+                    </p>
+                  </div>
+                )}
                 {error && (
                   <div className="text-destructive text-sm">{error}</div>
                 )}

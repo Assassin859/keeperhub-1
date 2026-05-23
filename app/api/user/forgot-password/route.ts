@@ -2,10 +2,16 @@ import { randomInt } from "node:crypto";
 import { and, eq, gt } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { accounts, users, verifications } from "@/lib/db/schema";
+import {
+  accounts,
+  twoFactor as twoFactorTable,
+  users,
+  verifications,
+} from "@/lib/db/schema";
 import { sendOAuthPasswordResetEmail, sendVerificationOTP } from "@/lib/email";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { hashPassword } from "@/lib/password";
+import { verifyUserTotp } from "@/lib/security/totp-verify";
 import { generateId } from "@/lib/utils/id";
 
 const OAUTH_PROVIDERS = ["github", "google"];
@@ -27,6 +33,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       email?: string;
       otp?: string;
       newPassword?: string;
+      code?: string;
     };
 
     const { action, email } = body;
@@ -38,7 +45,12 @@ export async function POST(request: Request): Promise<NextResponse> {
     const normalizedEmail = email.toLowerCase().trim();
 
     if (action === "reset") {
-      return handleReset(normalizedEmail, body.otp, body.newPassword);
+      return handleReset(
+        normalizedEmail,
+        body.otp,
+        body.newPassword,
+        body.code
+      );
     }
 
     // Default to request action
@@ -149,7 +161,8 @@ async function handleRequest(email: string): Promise<NextResponse> {
 async function handleReset(
   email: string,
   otp: string | undefined,
-  newPassword: string | undefined
+  newPassword: string | undefined,
+  code: string | undefined
 ): Promise<NextResponse> {
   if (!(otp && newPassword)) {
     return NextResponse.json(
@@ -203,6 +216,63 @@ async function handleReset(
       { error: "This account uses social login and cannot reset password" },
       { status: 400 }
     );
+  }
+
+  // Step-up gate: users with TOTP enrolled must additionally prove
+  // possession of the second factor before the reset is honored. This
+  // closes the well-known reset-as-takeover vector — an attacker with
+  // mailbox access alone (or who can read plaintext OTPs from the DB,
+  // KEEP-625) can otherwise mint a new password and walk into the
+  // account. Users without MFA enrolled keep the email-OTP-only flow.
+  if (user.twoFactorEnabled === true) {
+    const totpCode = typeof code === "string" ? code.trim() : "";
+    if (totpCode.length !== 6) {
+      return NextResponse.json(
+        {
+          error:
+            "This account has two-factor enabled. Enter a code from your authenticator to continue.",
+          code: "mfa_code_required",
+        },
+        { status: 400 }
+      );
+    }
+    const [totpRow] = await db
+      .select({ secret: twoFactorTable.secret })
+      .from(twoFactorTable)
+      .where(eq(twoFactorTable.userId, user.id))
+      .limit(1);
+    if (!totpRow) {
+      logSystemError(
+        ErrorCategory.AUTH,
+        "[Forgot Password] user marked two-factor enabled but no row in two_factor table",
+        new Error("twoFactor row missing"),
+        { user_id: user.id }
+      );
+      return NextResponse.json(
+        { error: "Two-factor configuration is inconsistent" },
+        { status: 500 }
+      );
+    }
+    const serverSecret = process.env.BETTER_AUTH_SECRET;
+    if (!serverSecret) {
+      logSystemError(
+        ErrorCategory.CONFIGURATION,
+        "[Forgot Password] BETTER_AUTH_SECRET is not configured",
+        new Error("BETTER_AUTH_SECRET missing"),
+        { endpoint: "/api/user/forgot-password" }
+      );
+      return NextResponse.json(
+        { error: "Server misconfigured" },
+        { status: 500 }
+      );
+    }
+    const ok = await verifyUserTotp(totpRow.secret, totpCode, serverSecret);
+    if (!ok) {
+      return NextResponse.json(
+        { error: "Invalid verification code", code: "mfa_code_invalid" },
+        { status: 401 }
+      );
+    }
   }
 
   // Hash and update password
