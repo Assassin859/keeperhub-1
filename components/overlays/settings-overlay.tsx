@@ -9,6 +9,7 @@ import { ChangePasswordSection } from "@/components/settings/change-password-sec
 import { DeactivateAccountSection } from "@/components/settings/delete-account-section";
 import { TwoFactorSection } from "@/components/settings/two-factor-section";
 import { api } from "@/lib/api-client";
+import { useSession } from "@/lib/auth-client";
 import { Overlay } from "./overlay";
 import { useOverlay } from "./overlay-provider";
 
@@ -24,13 +25,25 @@ export function SettingsOverlay({ overlayId }: SettingsOverlayProps) {
   // Account state
   const [accountName, setAccountName] = useState("");
   const [accountEmail, setAccountEmail] = useState("");
+  const [originalEmail, setOriginalEmail] = useState("");
   const [providerId, setProviderId] = useState<string | null>(null);
+  const [totpCode, setTotpCode] = useState("");
+
+  const session = useSession();
+  const sessionUser = session.data?.user as
+    | { twoFactorEnabled?: boolean | null }
+    | undefined;
+  const mfaEnrolled = sessionUser?.twoFactorEnabled === true;
+  const emailChanged = accountEmail.trim() !== originalEmail;
+  const showMfaCode = mfaEnrolled && emailChanged;
 
   const loadAccount = useCallback(async () => {
     try {
       const data = await api.user.get();
       setAccountName(data.name || "");
       setAccountEmail(data.email || "");
+      setOriginalEmail(data.email || "");
+      setTotpCode("");
       setProviderId(data.providerId ?? null);
     } catch (error) {
       console.error("Failed to load account:", error);
@@ -51,15 +64,32 @@ export function SettingsOverlay({ overlayId }: SettingsOverlayProps) {
   }, [loadAll]);
 
   const saveAccount = async () => {
+    if (showMfaCode && totpCode.trim().length !== 6) {
+      toast.error("Enter the 6-digit code from your authenticator");
+      return;
+    }
     try {
       setSaving(true);
-      await api.user.update({ name: accountName, email: accountEmail });
+      await api.user.update({
+        name: accountName,
+        email: accountEmail,
+        code: showMfaCode ? totpCode.trim() : undefined,
+      });
       await loadAccount();
       toast.success("Settings saved");
       closeAll();
     } catch (error) {
+      // apiCall throws on non-2xx; parse the json body if possible to
+      // route MFA failures back to the input instead of bailing to a
+      // generic toast.
+      const message = error instanceof Error ? error.message : "";
+      if (message.toLowerCase().includes("verification code")) {
+        toast.error(message || "Invalid verification code");
+        setTotpCode("");
+        return;
+      }
       console.error("Failed to save account:", error);
-      toast.error("Failed to save settings");
+      toast.error(message || "Failed to save settings");
     } finally {
       setSaving(false);
     }
@@ -100,6 +130,9 @@ export function SettingsOverlay({ overlayId }: SettingsOverlayProps) {
               accountName={accountName}
               onEmailChange={setAccountEmail}
               onNameChange={setAccountName}
+              onTotpChange={setTotpCode}
+              showMfaCode={showMfaCode}
+              totpCode={totpCode}
             />
             <DeactivateAccountSection />
           </TabsContent>

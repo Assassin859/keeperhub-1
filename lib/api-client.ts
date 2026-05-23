@@ -502,7 +502,7 @@ export const userApi = {
       walletAddress: string | null;
     }>("/api/user"),
 
-  update: (data: { name?: string; email?: string }) =>
+  update: (data: { name?: string; email?: string; code?: string }) =>
     apiCall<{ success: boolean }>("/api/user", {
       method: "PATCH",
       body: JSON.stringify(data),
