@@ -11,7 +11,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
-import { authClient } from "@/lib/auth-client";
+import { authClient, useSession } from "@/lib/auth-client";
 
 type ChangePasswordSectionProps = {
   providerId: string | null;
@@ -22,9 +22,15 @@ export function ChangePasswordSection({
 }: ChangePasswordSectionProps) {
   const router = useRouter();
   const { closeAll: closeOverlays } = useOverlay();
+  const session = useSession();
+  const sessionUser = session.data?.user as
+    | { twoFactorEnabled?: boolean | null }
+    | undefined;
+  const mfaEnrolled = sessionUser?.twoFactorEnabled === true;
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [totpCode, setTotpCode] = useState("");
   const [loading, setLoading] = useState(false);
 
   const isOAuthUser = providerId !== null && providerId !== "credential";
@@ -42,17 +48,37 @@ export function ChangePasswordSection({
       return;
     }
 
+    if (mfaEnrolled && totpCode.trim().length !== 6) {
+      toast.error("Enter the 6-digit code from your authenticator");
+      return;
+    }
+
     setLoading(true);
     try {
       const response = await fetch("/api/user/password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ currentPassword, newPassword }),
+        body: JSON.stringify({
+          currentPassword,
+          newPassword,
+          code: mfaEnrolled ? totpCode.trim() : undefined,
+        }),
       });
 
-      const data = (await response.json()) as { error?: string };
+      const data = (await response.json()) as {
+        error?: string;
+        code?: string;
+      };
 
       if (!response.ok) {
+        if (
+          data.code === "mfa_code_invalid" ||
+          data.code === "mfa_code_required"
+        ) {
+          toast.error(data.error ?? "Invalid verification code");
+          setTotpCode("");
+          return;
+        }
         throw new Error(data.error ?? "Failed to change password");
       }
 
@@ -145,10 +171,34 @@ export function ChangePasswordSection({
             />
           </div>
 
+          {mfaEnrolled && (
+            <div className="space-y-2">
+              <Label className="ml-1" htmlFor="passwordTotp">
+                Authenticator code
+              </Label>
+              <Input
+                autoComplete="one-time-code"
+                className="font-mono text-center text-lg tracking-[0.3em]"
+                id="passwordTotp"
+                inputMode="numeric"
+                maxLength={6}
+                onChange={(e) =>
+                  setTotpCode(e.target.value.replace(/\D/g, ""))
+                }
+                placeholder="000000"
+                value={totpCode}
+              />
+            </div>
+          )}
+
           <Button
             className="w-full"
             disabled={
-              loading || !currentPassword || !newPassword || !confirmPassword
+              loading ||
+              !currentPassword ||
+              !newPassword ||
+              !confirmPassword ||
+              (mfaEnrolled && totpCode.trim().length !== 6)
             }
             type="submit"
           >
