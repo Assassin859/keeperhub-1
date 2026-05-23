@@ -6,6 +6,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { SettingsOverlay } from "@/components/overlays/settings-overlay";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -13,46 +14,23 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { handleGuardError } from "@/lib/client/handle-guard-error";
 
-type ExportStep = "idle" | "requesting" | "otp" | "verifying" | "done";
-
-function getDescription(
-  step: ExportStep,
-  recipientEmail: string | null
-): string {
-  if (step === "done") {
-    return "Your private key is shown below. Copy it and store it securely.";
-  }
-  if (step === "requesting") {
-    return "Sending a verification code to the wallet's recovery email...";
-  }
-  if (recipientEmail) {
-    return `A verification code has been sent to ${recipientEmail} (the wallet's recovery email).`;
-  }
-  return "A verification code has been sent to the wallet's recovery email.";
-}
+type ExportStep = "idle" | "totp" | "verifying" | "done";
 
 export function ExportPrivateKeyButton(): React.ReactElement {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<ExportStep>("idle");
-  const [otpCode, setOtpCode] = useState("");
+  const [totpCode, setTotpCode] = useState("");
   const [privateKey, setPrivateKey] = useState<string | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [recipientEmail, setRecipientEmail] = useState<string | null>(null);
   const { open: openOverlay } = useOverlay();
   const router = useRouter();
 
-  // Shared guard-error options for both legs of the export flow.
-  // The /request and /verify endpoints are gated by requireOwnerWithMfa
-  // on the server; either can produce a not_owner / mfa_not_enrolled /
-  // mfa_pending response, so both fetch calls below route through the
-  // same handler.
   const guardOptions = {
     onEnrollMfa: () => {
       setOpen(false);
@@ -64,42 +42,18 @@ export function ExportPrivateKeyButton(): React.ReactElement {
     },
   };
 
-  const handleOpen = async (): Promise<void> => {
+  const handleOpen = (): void => {
     setOpen(true);
-    setStep("requesting");
+    setStep("totp");
     setError(null);
-    setOtpCode("");
+    setTotpCode("");
     setPrivateKey(null);
     setRevealed(false);
-    setRecipientEmail(null);
-    try {
-      const res = await fetch("/api/user/wallet/export-key/request", {
-        method: "POST",
-      });
-
-      if (!res.ok) {
-        const guarded = await handleGuardError(res, guardOptions);
-        if (guarded) {
-          setStep("idle");
-          return;
-        }
-        const data: { error?: string } = await res.json();
-        throw new Error(data.error ?? "Failed to send verification code");
-      }
-
-      const data: { email?: string } = await res.json();
-      setRecipientEmail(data.email ?? null);
-      setStep("otp");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to send code");
-      setOpen(false);
-      setStep("idle");
-    }
   };
 
   const handleVerify = async (): Promise<void> => {
-    if (otpCode.length !== 6) {
-      setError("Enter the 6-digit code from your email");
+    if (totpCode.length !== 6) {
+      setError("Enter the 6-digit code from your authenticator app");
       return;
     }
 
@@ -109,13 +63,13 @@ export function ExportPrivateKeyButton(): React.ReactElement {
       const res = await fetch("/api/user/wallet/export-key/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: otpCode }),
+        body: JSON.stringify({ code: totpCode }),
       });
 
       if (!res.ok) {
         const guarded = await handleGuardError(res, guardOptions);
         if (guarded) {
-          setStep("otp");
+          setStep("totp");
           return;
         }
         const data: { error?: string } = await res.json();
@@ -132,7 +86,7 @@ export function ExportPrivateKeyButton(): React.ReactElement {
       setStep("done");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Verification failed");
-      setStep("otp");
+      setStep("totp");
     }
   };
 
@@ -147,12 +101,16 @@ export function ExportPrivateKeyButton(): React.ReactElement {
   const handleClose = (): void => {
     setOpen(false);
     setStep("idle");
-    setOtpCode("");
+    setTotpCode("");
     setPrivateKey(null);
     setRevealed(false);
     setError(null);
-    setRecipientEmail(null);
   };
+
+  const description =
+    step === "done"
+      ? "Your private key is shown below. Copy it and store it securely."
+      : "Enter the current 6-digit code from your authenticator app to confirm.";
 
   return (
     <>
@@ -177,28 +135,25 @@ export function ExportPrivateKeyButton(): React.ReactElement {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Export Private Key</DialogTitle>
-            <DialogDescription>{getDescription(step, recipientEmail)}</DialogDescription>
+            <DialogDescription>{description}</DialogDescription>
           </DialogHeader>
 
-          {step === "requesting" && (
-            <div className="flex items-center justify-center py-8">
-              <Spinner className="h-6 w-6" />
-            </div>
-          )}
-
-          {(step === "otp" || step === "verifying") && (
+          {(step === "totp" || step === "verifying") && (
             <div className="space-y-4 py-2">
               <div className="space-y-2">
-                <Label htmlFor="export-otp">Verification Code</Label>
+                <Label htmlFor="export-totp">Authenticator code</Label>
                 <Input
+                  autoComplete="one-time-code"
+                  autoFocus
                   className="font-mono text-center text-lg tracking-[0.3em]"
-                  id="export-otp"
+                  id="export-totp"
+                  inputMode="numeric"
                   maxLength={6}
                   onChange={(e) =>
-                    setOtpCode(e.target.value.replace(/\D/g, ""))
+                    setTotpCode(e.target.value.replace(/\D/g, ""))
                   }
                   placeholder="000000"
-                  value={otpCode}
+                  value={totpCode}
                 />
                 {error && <p className="text-destructive text-sm">{error}</p>}
               </div>
@@ -213,7 +168,7 @@ export function ExportPrivateKeyButton(): React.ReactElement {
                 </Button>
                 <Button
                   className="flex-1"
-                  disabled={step === "verifying" || otpCode.length !== 6}
+                  disabled={step === "verifying" || totpCode.length !== 6}
                   onClick={handleVerify}
                 >
                   {step === "verifying" ? (
@@ -262,7 +217,7 @@ export function ExportPrivateKeyButton(): React.ReactElement {
                   </div>
                 </div>
                 <code className="block break-all font-mono text-sm">
-                  {revealed ? privateKey : privateKey.replace(/./g, "\u2022")}
+                  {revealed ? privateKey : privateKey.replace(/./g, "•")}
                 </code>
               </div>
               <Button className="w-full" onClick={handleClose}>
