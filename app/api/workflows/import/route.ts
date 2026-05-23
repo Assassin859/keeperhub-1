@@ -4,6 +4,8 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { workflows } from "@/lib/db/schema";
+import { extractActionTypeNodes } from "@/lib/features";
+import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
@@ -136,6 +138,14 @@ export async function POST(request: Request): Promise<NextResponse> {
         formatActionConfigValidationResponse(actionConfigValidation),
         { status: 422 }
       );
+    }
+
+    const featureGuard = await enforceWorkflowFeatures(
+      extractActionTypeNodes(sanitized.nodes),
+      organizationId
+    );
+    if (featureGuard.blocked) {
+      return featureGuard.response;
     }
 
     const workflowId = generateId();
