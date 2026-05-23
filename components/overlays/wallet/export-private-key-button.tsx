@@ -1,6 +1,6 @@
 "use client";
 
-import { Copy, Eye, EyeOff, KeyRound } from "lucide-react";
+import { Copy, Eye, EyeOff, KeyRound, ShieldAlert } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -11,17 +11,20 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import { useSession } from "@/lib/auth-client";
 import { handleGuardError } from "@/lib/client/handle-guard-error";
+import { useActiveMember } from "@/lib/hooks/use-organization";
 
-type ExportStep = "idle" | "totp" | "verifying" | "done";
+type ExportStep = "idle" | "totp" | "verifying" | "done" | "needs-mfa";
 
-export function ExportPrivateKeyButton(): React.ReactElement {
+export function ExportPrivateKeyButton(): React.ReactElement | null {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<ExportStep>("idle");
   const [totpCode, setTotpCode] = useState("");
@@ -30,6 +33,26 @@ export function ExportPrivateKeyButton(): React.ReactElement {
   const [error, setError] = useState<string | null>(null);
   const { open: openOverlay } = useOverlay();
   const router = useRouter();
+
+  // Client-side pre-check: hide the button entirely for non-owners
+  // and route owners-without-MFA to enrollment instead of the TOTP
+  // dialog. Server still enforces the same rules via
+  // requireOwnerWithMfa, so this is purely UX hardening — never the
+  // sole source of authorization.
+  const { role, isLoading: memberLoading } = useActiveMember();
+  const session = useSession();
+  const sessionUser = session.data?.user as
+    | { twoFactorEnabled?: boolean | null }
+    | undefined;
+  const isOwner = role === "owner";
+  const mfaEnrolled = sessionUser?.twoFactorEnabled === true;
+
+  if (memberLoading || session.isPending) {
+    return null;
+  }
+  if (!isOwner) {
+    return null;
+  }
 
   const guardOptions = {
     onEnrollMfa: () => {
@@ -44,11 +67,15 @@ export function ExportPrivateKeyButton(): React.ReactElement {
 
   const handleOpen = (): void => {
     setOpen(true);
-    setStep("totp");
     setError(null);
     setTotpCode("");
     setPrivateKey(null);
     setRevealed(false);
+    // If the owner hasn't enrolled MFA yet, send them to the
+    // "enable MFA first" view instead of asking for a TOTP code
+    // they don't have. They can hit Settings from this dialog and
+    // resume the export afterwards.
+    setStep(mfaEnrolled ? "totp" : "needs-mfa");
   };
 
   const handleVerify = async (): Promise<void> => {
@@ -107,10 +134,15 @@ export function ExportPrivateKeyButton(): React.ReactElement {
     setError(null);
   };
 
-  const description =
-    step === "done"
-      ? "Your private key is shown below. Copy it and store it securely."
-      : "Enter the current 6-digit code from your authenticator app to confirm.";
+  const description = (() => {
+    if (step === "done") {
+      return "Your private key is shown below. Copy it and store it securely.";
+    }
+    if (step === "needs-mfa") {
+      return "Enable two-factor authentication on your account before exporting a private key.";
+    }
+    return "Enter the current 6-digit code from your authenticator app to confirm.";
+  })();
 
   return (
     <>
@@ -137,6 +169,35 @@ export function ExportPrivateKeyButton(): React.ReactElement {
             <DialogTitle>Export Private Key</DialogTitle>
             <DialogDescription>{description}</DialogDescription>
           </DialogHeader>
+
+          {step === "needs-mfa" && (
+            <div className="space-y-4 py-2">
+              <div className="flex items-start gap-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-4">
+                <ShieldAlert
+                  aria-hidden="true"
+                  className="mt-0.5 size-5 shrink-0 text-amber-500"
+                />
+                <p className="text-sm">
+                  Exporting a private key requires a second factor. Open
+                  Settings to enroll your authenticator, then come back to
+                  finish the export.
+                </p>
+              </div>
+              <DialogFooter>
+                <Button onClick={handleClose} variant="outline">
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => {
+                    handleClose();
+                    openOverlay(SettingsOverlay);
+                  }}
+                >
+                  Open Settings
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
 
           {(step === "totp" || step === "verifying") && (
             <div className="space-y-4 py-2">
