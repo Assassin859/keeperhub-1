@@ -152,6 +152,15 @@ const plugins = [
     otpLength: 6,
     expiresIn: 300, // 5 minutes
     sendVerificationOnSignUp: true,
+    // KEEP-625: the better-auth emailOTP plugin defaults to storing
+    // OTPs in plaintext in the verifications table. With "encrypted"
+    // the value is symmetric-encrypted with BETTER_AUTH_SECRET via
+    // the same symmetricEncrypt used elsewhere, so a DB-read alone
+    // can't reveal a live 6-digit code — the attacker also needs
+    // the server secret. "hashed" would be cryptographically
+    // brute-forceable in seconds for a 6-digit space; "encrypted"
+    // is the right primitive for short, low-entropy secrets.
+    storeOTP: "encrypted",
   }),
   anonymous({
     async onLinkAccount(data) {

@@ -12,7 +12,9 @@ import { sendOAuthPasswordResetEmail, sendVerificationOTP } from "@/lib/email";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { hashPassword } from "@/lib/password";
 import { verifyUserTotp } from "@/lib/security/totp-verify";
+import { resolveTrustedClientIp } from "@/lib/security/trusted-proxies";
 import { generateId } from "@/lib/utils/id";
+import { checkForgotPasswordRateLimit } from "./_lib/rate-limit";
 
 const OAUTH_PROVIDERS = ["github", "google"];
 const OTP_EXPIRY_MINUTES = 5;
@@ -43,6 +45,28 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     const normalizedEmail = email.toLowerCase().trim();
+
+    // KEEP-625: rate limit BOTH legs of the flow. The /request leg
+    // mints reset codes (DoS / cost surface) and the /reset leg is
+    // where a stolen code is actually consumed; throttling both
+    // closes brute-force and email-flood paths.
+    const ip = resolveTrustedClientIp(
+      request,
+      request.headers.get("x-real-ip")
+    );
+    const limit = checkForgotPasswordRateLimit(normalizedEmail, ip);
+    if (!limit.allowed) {
+      return NextResponse.json(
+        {
+          error: `Too many requests. Try again in ${limit.retryAfterSeconds} seconds.`,
+          retryAfterSeconds: limit.retryAfterSeconds,
+        },
+        {
+          status: 429,
+          headers: { "Retry-After": String(limit.retryAfterSeconds) },
+        }
+      );
+    }
 
     if (action === "reset") {
       return handleReset(
