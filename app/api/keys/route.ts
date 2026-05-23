@@ -141,6 +141,29 @@ export async function POST(request: Request) {
 
     // Parse request body
     const body = await request.json().catch(() => ({}));
+
+    // Fresh TOTP challenge — minting a forever-bypass credential
+    // warrants a re-prompt at the exact moment, not just passive
+    // session MFA. Symmetric with withdraw / export-key.
+    const code =
+      typeof body.code === "string" ? body.code.trim() : "";
+    if (code.length !== 6) {
+      return NextResponse.json(
+        { error: "A 6-digit verification code is required", code: "mfa_code_required" },
+        { status: 400 }
+      );
+    }
+    try {
+      await auth.api.verifyTOTP({
+        body: { code },
+        headers: request.headers,
+      });
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid verification code", code: "mfa_code_invalid" },
+        { status: 401 }
+      );
+    }
     const name = body.name || null;
     const expiresAt = body.expiresAt ? new Date(body.expiresAt) : null;
 

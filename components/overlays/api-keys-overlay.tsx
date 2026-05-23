@@ -47,21 +47,22 @@ function CreateApiKeyOverlay({
   const { open: openOverlay, pop } = useOverlay();
   const router = useRouter();
   const [keyName, setKeyName] = useState("");
+  const [totpCode, setTotpCode] = useState("");
   const [creating, setCreating] = useState(false);
 
-  const handleCreate = async () => {
+  const handleCreate = async (): Promise<void> => {
     setCreating(true);
     try {
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: keyName || null }),
+        body: JSON.stringify({
+          name: keyName || null,
+          code: totpCode.trim(),
+        }),
       });
 
       if (!response.ok) {
-        // Both endpoints (/api/keys + /api/api-keys) are gated by an MFA
-        // helper on the server. Route the 403 to the right next step
-        // instead of leaving the user staring at a generic toast.
         const guarded = await handleGuardError(response, {
           onEnrollMfa: () => {
             pop();
@@ -75,8 +76,19 @@ function CreateApiKeyOverlay({
         if (guarded) {
           return;
         }
-        const error = await response.json();
-        throw new Error(error.error || "Failed to create API key");
+        const data = (await response.json().catch(() => ({}))) as {
+          error?: string;
+          code?: string;
+        };
+        if (
+          data.code === "mfa_code_invalid" ||
+          data.code === "mfa_code_required"
+        ) {
+          toast.error(data.error || "Invalid verification code");
+          setTotpCode("");
+          return;
+        }
+        throw new Error(data.error || "Failed to create API key");
       }
 
       const newKey = await response.json();
@@ -105,21 +117,39 @@ function CreateApiKeyOverlay({
           label: "Create",
           onClick: handleCreate,
           loading: creating,
-          disabled: !keyName.trim(),
+          disabled: !keyName.trim() || totpCode.trim().length !== 6,
         },
       ]}
       overlayId={overlayId}
       title="Create API Key"
     >
       <p className="mb-4 text-muted-foreground text-sm">{description}</p>
-      <div className="space-y-2">
-        <Label htmlFor="key-name">Label</Label>
-        <Input
-          id="key-name"
-          onChange={(e) => setKeyName(e.target.value)}
-          placeholder="e.g., Production, Testing"
-          value={keyName}
-        />
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor="key-name">Label</Label>
+          <Input
+            id="key-name"
+            onChange={(e) => setKeyName(e.target.value)}
+            placeholder="e.g., Production, Testing"
+            value={keyName}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="key-totp">Authenticator code</Label>
+          <Input
+            autoComplete="one-time-code"
+            className="font-mono text-center text-lg tracking-[0.3em]"
+            id="key-totp"
+            inputMode="numeric"
+            maxLength={6}
+            onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, ""))}
+            placeholder="000000"
+            value={totpCode}
+          />
+          <p className="text-muted-foreground text-xs">
+            Minting an API key requires a fresh code from your authenticator.
+          </p>
+        </div>
       </div>
     </Overlay>
   );
@@ -128,6 +158,72 @@ function CreateApiKeyOverlay({
 /**
  * Shared component for displaying and managing API keys list
  */
+/**
+ * Confirm-and-revoke dialog. Replaces the older ConfirmOverlay path
+ * because revocation now requires a fresh TOTP code in addition to
+ * a confirmation click; the generic ConfirmOverlay can't collect a
+ * second factor without bloating its API.
+ */
+function DeleteApiKeyOverlay({
+  overlayId,
+  keyId,
+  onDelete,
+}: {
+  overlayId: string;
+  keyId: string;
+  onDelete: (keyId: string, code: string) => Promise<void>;
+}) {
+  const { pop } = useOverlay();
+  const [totpCode, setTotpCode] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleConfirm = async (): Promise<void> => {
+    setSubmitting(true);
+    try {
+      await onDelete(keyId, totpCode.trim());
+      pop();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Overlay
+      actions={[
+        { label: "Cancel", variant: "outline", onClick: pop },
+        {
+          label: "Revoke",
+          onClick: handleConfirm,
+          loading: submitting,
+          disabled: totpCode.trim().length !== 6,
+          variant: "destructive",
+        },
+      ]}
+      overlayId={overlayId}
+      title="Revoke API Key"
+    >
+      <p className="mb-4 text-muted-foreground text-sm">
+        Any integrations using this key will stop working immediately. Enter
+        a code from your authenticator to confirm.
+      </p>
+      <div className="space-y-2">
+        <Label htmlFor="revoke-totp">Authenticator code</Label>
+        <Input
+          autoComplete="one-time-code"
+          autoFocus
+          className="font-mono text-center text-lg tracking-[0.3em]"
+          id="revoke-totp"
+          inputMode="numeric"
+          maxLength={6}
+          onChange={(event) => setTotpCode(event.target.value.replace(/\D/g, ""))}
+          placeholder="000000"
+          value={totpCode}
+        />
+      </div>
+    </Overlay>
+  );
+}
+
 function ApiKeysList({
   apiKeys,
   newlyCreatedKey,
@@ -139,7 +235,7 @@ function ApiKeysList({
   apiKeys: ApiKey[];
   newlyCreatedKey: string | null;
   deleting: string | null;
-  onDelete: (keyId: string) => void;
+  onDelete: (keyId: string, code: string) => Promise<void>;
   onDismissNewKey: () => void;
   showCreator?: boolean;
 }) {
@@ -158,14 +254,9 @@ function ApiKeysList({
     });
 
   const openDeleteConfirm = (keyId: string) => {
-    push(ConfirmOverlay, {
-      title: "Delete API Key",
-      message:
-        "Are you sure you want to delete this API key? Any integrations using this key will stop working immediately.",
-      confirmLabel: "Delete",
-      confirmVariant: "destructive" as const,
-      destructive: true,
-      onConfirm: () => onDelete(keyId),
+    push(DeleteApiKeyOverlay, {
+      keyId,
+      onDelete,
     });
   };
 
@@ -291,11 +382,13 @@ function useApiKeys(
     setApiKeys((prev) => [newKey, ...prev]);
   };
 
-  const handleDelete = async (keyId: string) => {
+  const handleDelete = async (keyId: string, code: string): Promise<void> => {
     setDeleting(keyId);
     try {
       const response = await fetch(deleteEndpoint(keyId), {
         method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
       });
 
       if (!response.ok) {
@@ -312,14 +405,27 @@ function useApiKeys(
         if (guarded) {
           return;
         }
-        throw new Error("Failed to delete API key");
+        const data = (await response.json().catch(() => ({}))) as {
+          error?: string;
+          code?: string;
+        };
+        if (
+          data.code === "mfa_code_invalid" ||
+          data.code === "mfa_code_required"
+        ) {
+          toast.error(data.error || "Invalid verification code");
+          return;
+        }
+        throw new Error(data.error || "Failed to delete API key");
       }
 
       setApiKeys((prev) => prev.filter((k) => k.id !== keyId));
-      toast.success("API key deleted");
+      toast.success("API key revoked");
     } catch (error) {
       console.error("Failed to delete API key:", error);
-      toast.error("Failed to delete API key");
+      toast.error(
+        error instanceof Error ? error.message : "Failed to delete API key"
+      );
     } finally {
       setDeleting(null);
     }

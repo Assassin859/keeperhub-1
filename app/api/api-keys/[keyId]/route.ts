@@ -36,6 +36,29 @@ export async function DELETE(
       );
     }
 
+    // Fresh TOTP at revoke time. Same rationale as the create leg.
+    const body = (await request.json().catch(() => ({}))) as {
+      code?: string;
+    };
+    const totpCode = typeof body.code === "string" ? body.code.trim() : "";
+    if (totpCode.length !== 6) {
+      return NextResponse.json(
+        { error: "A 6-digit verification code is required", code: "mfa_code_required" },
+        { status: 400 }
+      );
+    }
+    try {
+      await auth.api.verifyTOTP({
+        body: { code: totpCode },
+        headers: request.headers,
+      });
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid verification code", code: "mfa_code_invalid" },
+        { status: 401 }
+      );
+    }
+
     // Delete the key (only if it belongs to the user)
     const result = await db
       .delete(apiKeys)

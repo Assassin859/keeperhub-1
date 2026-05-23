@@ -98,6 +98,27 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => ({}));
     const name = body.name || null;
 
+    // Fresh TOTP at mint time. Same rationale as the org API key
+    // flow: long-lived bypass credentials warrant a re-prompt.
+    const totpCode = typeof body.code === "string" ? body.code.trim() : "";
+    if (totpCode.length !== 6) {
+      return NextResponse.json(
+        { error: "A 6-digit verification code is required", code: "mfa_code_required" },
+        { status: 400 }
+      );
+    }
+    try {
+      await auth.api.verifyTOTP({
+        body: { code: totpCode },
+        headers: request.headers,
+      });
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid verification code", code: "mfa_code_invalid" },
+        { status: 401 }
+      );
+    }
+
     // Generate new API key
     const { key, hash, prefix } = generateApiKey();
 
