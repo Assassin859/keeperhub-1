@@ -19,8 +19,11 @@ export async function POST(request: Request): Promise<NextResponse> {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = (await request.json()) as { confirmation?: string };
-    const { confirmation } = body;
+    const body = (await request.json()) as {
+      confirmation?: string;
+      code?: string;
+    };
+    const { confirmation, code } = body;
 
     if (confirmation !== "DEACTIVATE") {
       return NextResponse.json(
@@ -51,6 +54,40 @@ export async function POST(request: Request): Promise<NextResponse> {
         { error: "Account is already deactivated" },
         { status: 400 }
       );
+    }
+
+    // Fresh TOTP challenge for users who have MFA enrolled. Account
+    // deletion is irreversible (from the user's perspective — it
+    // cascades to sessions + revokes API keys + flips deactivatedAt
+    // which the deactivation trigger then uses to cascade to wallets
+    // etc.). A stolen session must not be able to nuke the account
+    // without proving the second factor. Users without MFA enrolled
+    // keep the DEACTIVATE-typed-confirmation as the only gate.
+    if (user.twoFactorEnabled === true) {
+      const totpCode = typeof code === "string" ? code.trim() : "";
+      if (totpCode.length !== 6) {
+        return NextResponse.json(
+          {
+            error: "A 6-digit verification code is required",
+            code: "mfa_code_required",
+          },
+          { status: 400 }
+        );
+      }
+      try {
+        await auth.api.verifyTOTP({
+          body: { code: totpCode },
+          headers: request.headers,
+        });
+      } catch {
+        return NextResponse.json(
+          {
+            error: "Invalid verification code",
+            code: "mfa_code_invalid",
+          },
+          { status: 401 }
+        );
+      }
     }
 
     // Run the deactivation writes in one transaction so a partial failure

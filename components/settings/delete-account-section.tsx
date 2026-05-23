@@ -20,18 +20,28 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
-import { authClient } from "@/lib/auth-client";
+import { authClient, useSession } from "@/lib/auth-client";
 
 export function DeactivateAccountSection() {
   const router = useRouter();
   const { closeAll: closeOverlays } = useOverlay();
+  const session = useSession();
+  const sessionUser = session.data?.user as
+    | { twoFactorEnabled?: boolean | null }
+    | undefined;
+  const mfaEnrolled = sessionUser?.twoFactorEnabled === true;
   const [confirmation, setConfirmation] = useState("");
+  const [totpCode, setTotpCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
 
-  const handleDeactivate = async () => {
+  const handleDeactivate = async (): Promise<void> => {
     if (confirmation !== "DEACTIVATE") {
       toast.error("Please type DEACTIVATE to confirm");
+      return;
+    }
+    if (mfaEnrolled && totpCode.trim().length !== 6) {
+      toast.error("Enter the 6-digit code from your authenticator");
       return;
     }
 
@@ -40,12 +50,26 @@ export function DeactivateAccountSection() {
       const response = await fetch("/api/user/delete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ confirmation }),
+        body: JSON.stringify({
+          confirmation,
+          code: mfaEnrolled ? totpCode.trim() : undefined,
+        }),
       });
 
-      const data = (await response.json()) as { error?: string };
+      const data = (await response.json()) as {
+        error?: string;
+        code?: string;
+      };
 
       if (!response.ok) {
+        if (
+          data.code === "mfa_code_invalid" ||
+          data.code === "mfa_code_required"
+        ) {
+          toast.error(data.error ?? "Invalid verification code");
+          setTotpCode("");
+          return;
+        }
         throw new Error(data.error ?? "Failed to deactivate account");
       }
 
@@ -89,32 +113,56 @@ export function DeactivateAccountSection() {
                 </AlertDialogDescription>
               </AlertDialogHeader>
 
-              <div className="space-y-2 py-4">
-                <Label htmlFor="deactivateConfirmation">
-                  Type{" "}
-                  <span className="font-mono font-semibold">DEACTIVATE</span> to
-                  confirm
-                </Label>
-                <Input
-                  autoComplete="off"
-                  id="deactivateConfirmation"
-                  onChange={(e) => setConfirmation(e.target.value)}
-                  placeholder="DEACTIVATE"
-                  value={confirmation}
-                />
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label htmlFor="deactivateConfirmation">
+                    Type{" "}
+                    <span className="font-mono font-semibold">DEACTIVATE</span>{" "}
+                    to confirm
+                  </Label>
+                  <Input
+                    autoComplete="off"
+                    id="deactivateConfirmation"
+                    onChange={(e) => setConfirmation(e.target.value)}
+                    placeholder="DEACTIVATE"
+                    value={confirmation}
+                  />
+                </div>
+                {mfaEnrolled && (
+                  <div className="space-y-2">
+                    <Label htmlFor="deactivateTotp">Authenticator code</Label>
+                    <Input
+                      autoComplete="one-time-code"
+                      className="font-mono text-center text-lg tracking-[0.3em]"
+                      id="deactivateTotp"
+                      inputMode="numeric"
+                      maxLength={6}
+                      onChange={(e) =>
+                        setTotpCode(e.target.value.replace(/\D/g, ""))
+                      }
+                      placeholder="000000"
+                      value={totpCode}
+                    />
+                  </div>
+                )}
               </div>
 
               <AlertDialogFooter>
                 <AlertDialogCancel
                   onClick={() => {
                     setConfirmation("");
+                    setTotpCode("");
                   }}
                 >
                   Cancel
                 </AlertDialogCancel>
                 <AlertDialogAction
                   className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                  disabled={confirmation !== "DEACTIVATE" || loading}
+                  disabled={
+                    confirmation !== "DEACTIVATE" ||
+                    loading ||
+                    (mfaEnrolled && totpCode.trim().length !== 6)
+                  }
                   onClick={(e) => {
                     e.preventDefault();
                     handleDeactivate();
