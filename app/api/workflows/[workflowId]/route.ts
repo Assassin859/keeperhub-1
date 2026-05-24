@@ -5,6 +5,8 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
+import { extractActionTypeNodes } from "@/lib/features";
+import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
 import { projects, publicTags, tags, workflowExecutions, workflowPublicTags, workflowSchedules, workflows } from "@/lib/db/schema";
 import { findFirstWriteActionNode } from "@/lib/mcp/calldata";
 import {
@@ -442,6 +444,14 @@ export async function PATCH(
           formatActionConfigValidationResponse(actionConfigValidation),
           { status: 422 }
         );
+      }
+
+      const featureGuard = await enforceWorkflowFeatures(
+        extractActionTypeNodes(updateData.nodes),
+        existingWorkflow.organizationId
+      );
+      if (featureGuard.blocked) {
+        return featureGuard.response;
       }
     }
 

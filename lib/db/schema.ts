@@ -362,6 +362,7 @@ export const workflowExecutions = pgTable(
       | "external_service"
       | "network_rpc"
       | "transaction"
+      | "billing"
       | "database"
       | "auth"
       | "infrastructure"

@@ -129,6 +129,12 @@ vi.mock("@/lib/db/integrations", () => ({
   validateWorkflowIntegrations: vi.fn().mockResolvedValue({ valid: true }),
 }));
 
+vi.mock("@/lib/features/route-guard", () => ({
+  enforceWorkflowFeatures: vi.fn().mockResolvedValue({ blocked: false }),
+  FEATURE_UPGRADE_REQUIRED_ERROR:
+    "This workflow uses features that require a paid plan.",
+}));
+
 vi.mock("@/lib/auth", () => ({
   auth: {
     api: {

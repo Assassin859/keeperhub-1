@@ -925,6 +925,12 @@ describe("POST /api/mcp/workflows/[slug]/call: write workflow returns calldata",
     EXECUTION_LIMIT_ERROR: "Monthly execution limit exceeded",
   }));
 
+  vi.mock("@/lib/features/route-guard", () => ({
+    enforceWorkflowFeatures: vi.fn().mockResolvedValue({ blocked: false }),
+    FEATURE_UPGRADE_REQUIRED_ERROR:
+      "This workflow uses features that require a paid plan.",
+  }));
+
   vi.mock("@/app/api/execute/_lib/concurrency-limit", () => ({
     checkConcurrencyLimit: mockCheckConcurrencyLimit,
   }));
