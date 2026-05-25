@@ -12,6 +12,10 @@ import { sessions, twoFactor as twoFactorTable, users } from "@/lib/db/schema";
 import { resolveEnrollMfaCaller } from "@/lib/enroll-mfa-caller";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
+  checkDualFactorRateLimit,
+  resetDualFactor,
+} from "@/lib/mfa/dual-factor-rate-limit";
+import {
   buildPendingSignupClearCookie,
 } from "@/lib/pending-signup-cookie";
 import { verifyUserTotp } from "@/lib/security/totp-verify";
@@ -161,10 +165,26 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
   }
 
-  // Pending-signup path: no session yet. Verify the TOTP directly
-  // against the encrypted secret we stored at /setup time, then
-  // atomically (a) flip users.two_factor_enabled, (b) persist
-  // backup codes, (c) mint the first session for this user.
+  // Pending-signup path: no session yet. Sliding-window rate limit
+  // on the TOTP verify because the caller is unauthenticated by
+  // session and Better Auth's per-route plugin rate limiter does not
+  // wrap this code path. Without this, an attacker holding a stolen
+  // pending_signup_mfa cookie could brute the 6-digit code for the
+  // entire 30-min cookie TTL. Same sliding-window primitive used by
+  // requireDualFactor; the counter is wiped on a successful verify
+  // so a typo burst does not lock out a legitimate user.
+  const rate = checkDualFactorRateLimit(userId, "totp_enroll");
+  if (!rate.allowed) {
+    return NextResponse.json(
+      {
+        error: "Too many attempts. Wait and try again.",
+        code: "rate_limited",
+        retryAfter: rate.retryAfter,
+      },
+      { status: 429 }
+    );
+  }
+
   const [enrollment] = await db
     .select({ secret: twoFactorTable.secret })
     .from(twoFactorTable)
@@ -184,20 +204,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
+  resetDualFactor(userId, "totp_enroll");
+
   try {
     const backupCodes = generatePlainBackupCodes();
     const encryptedBackupCodes = await symmetricEncrypt({
       key: secret,
       data: JSON.stringify(backupCodes),
     });
-    await db
-      .update(twoFactorTable)
-      .set({ backupCodes: encryptedBackupCodes })
-      .where(eq(twoFactorTable.userId, userId));
-    await db
-      .update(users)
-      .set({ twoFactorEnabled: true })
-      .where(eq(users.id, userId));
 
     const rawToken = randomBytes(32).toString("base64url");
     const tokenHash = hashSessionToken(rawToken);
@@ -208,17 +222,35 @@ export async function POST(request: Request): Promise<NextResponse> {
       request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
       request.headers.get("x-real-ip") ??
       null;
-    await db.insert(sessions).values({
-      id: sessionId,
-      userId,
-      token: tokenHash,
-      expiresAt,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      ipAddress,
-      userAgent,
-      requiresMfa: false,
-      mfaVerifiedAt: new Date(),
+
+    // Single transaction across the three writes so a mid-flight
+    // failure cannot leave the account in a "twoFactorEnabled = true
+    // but no session row" state. A partial commit would brick the
+    // user: the next request would route them through MFA gates
+    // they can satisfy, but no session means they would never
+    // authenticate, while the absence of the pending cookie (which
+    // we are about to clear) means they could not retry enrollment.
+    await db.transaction(async (tx) => {
+      await tx
+        .update(twoFactorTable)
+        .set({ backupCodes: encryptedBackupCodes })
+        .where(eq(twoFactorTable.userId, userId));
+      await tx
+        .update(users)
+        .set({ twoFactorEnabled: true })
+        .where(eq(users.id, userId));
+      await tx.insert(sessions).values({
+        id: sessionId,
+        userId,
+        token: tokenHash,
+        expiresAt,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        ipAddress,
+        userAgent,
+        requiresMfa: false,
+        mfaVerifiedAt: new Date(),
+      });
     });
 
     const responseBody: EnrollResponse = {
