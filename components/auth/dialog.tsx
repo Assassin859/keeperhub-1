@@ -24,7 +24,6 @@ import {
   getSingleProvider,
 } from "@/lib/auth-providers";
 import { setPendingClaim } from "@/lib/hooks/use-claim-workflow";
-import { refetchOrganizations } from "@/lib/refetch-organizations";
 
 const WORKFLOW_PATH_REGEX = /^\/workflows\/([^/]+)$/;
 
@@ -317,7 +316,11 @@ function SignInStepIndicator({
     <ol className="flex items-center gap-2 px-1 pb-1 text-xs">
       {SIGN_IN_STEPS.map((s, idx) => {
         const status =
-          idx === currentIdx ? "current" : idx < currentIdx ? "done" : "pending";
+          idx === currentIdx
+            ? "current"
+            : idx < currentIdx
+              ? "done"
+              : "pending";
         const isLast = idx === SIGN_IN_STEPS.length - 1;
         const bubble =
           status === "current"
@@ -704,7 +707,11 @@ export const AuthDialog = ({
       });
       const completeBody = (await completeResponse
         .json()
-        .catch(() => ({}))) as { error?: string; code?: string };
+        .catch(() => ({}))) as {
+        error?: string;
+        code?: string;
+        redirect?: string;
+      };
       if (!completeResponse.ok) {
         if (completeBody.code === "invalid_email_otp") {
           setError("Invalid email code");
@@ -720,9 +727,22 @@ export const AuthDialog = ({
         setError(completeBody.error ?? "Sign in failed");
         return;
       }
-      toast.success("Signed in successfully!");
       setTotpCode("");
       setOtp("");
+      // The atomic strict-signin endpoint can defer the session and
+      // return a redirect when the request came from an IP that the
+      // user has never signed in from. In that case a signed
+      // pending_ip_verify cookie has just been set, no session row
+      // exists yet, and /verify-ip is the page that will ask for a
+      // fresh email+TOTP dual factor against the same IP and only
+      // then mint the session.
+      if (completeBody.redirect === "/verify-ip") {
+        if (typeof window !== "undefined") {
+          window.location.assign("/verify-ip");
+        }
+        return;
+      }
+      toast.success("Signed in successfully!");
       window.dispatchEvent(new CustomEvent(AUTH_SUCCESS_EVENT));
       // Hard reload so the server re-renders with the new
       // better-auth.session_token cookie. authClient.getSession()
@@ -890,17 +910,14 @@ export const AuthDialog = ({
         setLoading(false);
         return;
       }
-      const finishResponse = await fetch(
-        "/api/auth/finish-credential-signup",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            email: verifyEmail,
-            password: verifyPassword,
-          }),
-        }
-      );
+      const finishResponse = await fetch("/api/auth/finish-credential-signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: verifyEmail,
+          password: verifyPassword,
+        }),
+      });
       const finishBody = (await finishResponse.json().catch(() => ({}))) as {
         error?: string;
         code?: string;

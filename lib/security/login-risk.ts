@@ -186,9 +186,23 @@ async function resolveLoginIp(): Promise<string | null> {
     if (cfConnectingIp) {
       return cfConnectingIp;
     }
-    // Local dev fallback: every request looks like it came from the
-    // dev machine. Returning null tells assessIpTrust to skip the
-    // gate; we never want to block self-hosters from signing in.
+    // Cloudflare is the trusted source in staging/prod. In other
+    // environments we fall back to the first X-Forwarded-For hop and
+    // then to X-Real-IP so VPN / NAT changes during local dev still
+    // exercise the new-IP gate. NODE_ENV-gated because in CF-fronted
+    // environments these headers are caller-controlled and must not
+    // be trusted.
+    if (process.env.NODE_ENV !== "production") {
+      const xff = header.get("x-forwarded-for");
+      const xffFirst = xff?.split(",")[0]?.trim();
+      if (xffFirst) {
+        return xffFirst;
+      }
+      const xRealIp = header.get("x-real-ip");
+      if (xRealIp) {
+        return xRealIp;
+      }
+    }
     return null;
   } catch {
     return null;
@@ -205,20 +219,12 @@ export async function assessIpTrust(userId: string): Promise<IpTrust> {
   const [hit] = await db
     .select({ id: userTrustedIps.id })
     .from(userTrustedIps)
-    .where(
-      and(eq(userTrustedIps.userId, userId), eq(userTrustedIps.ip, ip))
-    )
+    .where(and(eq(userTrustedIps.userId, userId), eq(userTrustedIps.ip, ip)))
     .limit(1);
   if (hit) {
     return { ip, trusted: true, country, reason: "known" };
   }
 
-  // First-time attestation: a user with zero trusted IPs cannot
-  // satisfy /verify-ip in the same request (their TOTP is not
-  // enrolled yet for fresh accounts; even for upgrades they have no
-  // prior trust to bootstrap from). Trust the first IP we see, the
-  // session.create.after hook adds it to user_trusted_ips so the
-  // SECOND IP they sign in from is the one that gets gated.
   const [anyTrusted] = await db
     .select({ id: userTrustedIps.id })
     .from(userTrustedIps)

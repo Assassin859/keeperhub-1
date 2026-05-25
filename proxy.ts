@@ -116,6 +116,7 @@ function csrfBlock(request: NextRequest): NextResponse | null {
 const MFA_EXEMPT_API_PREFIXES: readonly string[] = [
   "/api/auth/",
   "/api/user/totp/",
+  "/api/user/verify-ip",
   "/api/user/forgot-password",
   "/api/og/",
   "/api/health",
@@ -137,6 +138,7 @@ const MFA_EXEMPT_PAGES = new Set<string>([
   "/privacy",
   "/enroll-mfa",
   "/verify-mfa",
+  "/verify-ip",
 ]);
 
 const MFA_EXEMPT_PAGE_PREFIXES: readonly string[] = [

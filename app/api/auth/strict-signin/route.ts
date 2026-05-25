@@ -6,12 +6,18 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import {
   accounts,
+  sessions,
   twoFactor as twoFactorTable,
   users,
   verifications,
 } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { verifyPassword } from "@/lib/password";
+import {
+  buildPendingIpSetCookie,
+  encodePendingIpCookie,
+} from "@/lib/pending-ip-cookie";
+import { assessIpTrust } from "@/lib/security/login-risk";
 import { verifyUserTotp } from "@/lib/security/totp-verify";
 
 function constantTimeEquals(a: string, b: string): boolean {
@@ -186,6 +192,50 @@ export async function POST(request: Request): Promise<NextResponse> {
     return unauthorized("Invalid authenticator code", "invalid_totp");
   }
 
+  // Three factors are now valid but we have not minted a session
+  // yet. Consult assessIpTrust before doing so. If the request comes
+  // from an IP this user has never signed in from, defer the session:
+  // consume the email-OTP row, set a signed `pending_ip_verify`
+  // cookie carrying the resolved identity + IP, and route the user
+  // to /verify-ip where they must satisfy another email+TOTP dual
+  // factor against the very same IP. No session row exists in
+  // between, so a stolen cookie alone cannot unlock the account on a
+  // new network. assessIpTrust returns trusted=true for the user's
+  // first-ever attestation and for requests that did not arrive via
+  // Cloudflare (no_cf), so local dev and self-hosted setups still
+  // sign in normally.
+  const ipTrust = await assessIpTrust(user.id);
+  if (!ipTrust.trusted && ipTrust.ip) {
+    try {
+      await db
+        .delete(verifications)
+        .where(eq(verifications.id, emailOtpResult.rowId));
+    } catch (err) {
+      logSystemError(
+        ErrorCategory.DATABASE,
+        "[strict-signin] failed to consume email OTP row before /verify-ip handoff",
+        err,
+        { endpoint: "/api/auth/strict-signin", user_id: user.id }
+      );
+    }
+    const pendingCookieValue = encodePendingIpCookie(
+      {
+        userId: user.id,
+        email,
+        ip: ipTrust.ip,
+        country: ipTrust.country,
+        redirect: "/",
+      },
+      serverSecret
+    );
+    const response = NextResponse.json({ ok: true, redirect: "/verify-ip" });
+    response.headers.append(
+      "set-cookie",
+      buildPendingIpSetCookie(pendingCookieValue)
+    );
+    return response;
+  }
+
   // 5. All three factors verified. Chain Better Auth's standard flow
   // to mint the session cookie before consuming the email-OTP row.
   // signInEmail returns a Response with two_factor cookie; we extract
@@ -287,6 +337,26 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json(
       { error: "Sign-in failed at session step", code: "session_failed" },
       { status: 500 }
+    );
+  }
+
+  // The session.create.before hook in lib/auth.ts stamps requires_mfa=true
+  // on every new session for users with two_factor_enabled. That gate is
+  // for the legacy single-factor sign-in path; strict-signin has already
+  // verified password + email OTP + TOTP atomically, so the freshly minted
+  // session is fully MFA-verified. Clear the flag now so the proxy does
+  // not bounce the user to /verify-mfa for a redundant step-up.
+  try {
+    await db
+      .update(sessions)
+      .set({ requiresMfa: false, mfaVerifiedAt: new Date() })
+      .where(eq(sessions.userId, user.id));
+  } catch (err) {
+    logSystemError(
+      ErrorCategory.AUTH,
+      "[strict-signin] failed to clear requires_mfa after dual-factor verification",
+      err,
+      { endpoint: "/api/auth/strict-signin", user_id: user.id }
     );
   }
 
