@@ -11,6 +11,8 @@ const {
   mockUsersFindMany,
   mockInsertReturning,
   mockUpdateReturning,
+  mockRequireAdminOrOwnerWithMfa,
+  mockRequireDualFactor,
 } = vi.hoisted(() => ({
   mockResolveOrganizationId: vi.fn(),
   mockGetSession: vi.fn(),
@@ -19,6 +21,8 @@ const {
   mockUsersFindMany: vi.fn(),
   mockInsertReturning: vi.fn(),
   mockUpdateReturning: vi.fn(),
+  mockRequireAdminOrOwnerWithMfa: vi.fn(),
+  mockRequireDualFactor: vi.fn(),
 }));
 
 vi.mock("@/lib/middleware/auth-helpers", () => ({
@@ -31,6 +35,14 @@ vi.mock("@/lib/auth", () => ({
       getSession: mockGetSession,
     },
   },
+}));
+
+vi.mock("@/lib/middleware/owner-mfa-guard", () => ({
+  requireAdminOrOwnerWithMfa: mockRequireAdminOrOwnerWithMfa,
+}));
+
+vi.mock("@/lib/mfa/dual-factor", () => ({
+  requireDualFactor: mockRequireDualFactor,
 }));
 
 vi.mock("@/lib/middleware/org-context", () => ({
@@ -243,10 +255,13 @@ describe("POST /api/keys", () => {
   it("should create kh_ key with name", async () => {
     mockGetSession.mockResolvedValue({
       user: { id: USER_ID, name: "Test User", email: "test@test.com" },
+      session: { requiresMfa: false },
     });
     mockGetOrgContext.mockResolvedValue({
       organization: { id: ORG_ID },
     });
+    mockRequireAdminOrOwnerWithMfa.mockResolvedValue({ ok: true });
+    mockRequireDualFactor.mockResolvedValue({ ok: true });
     mockInsertReturning.mockResolvedValue([
       {
         id: "new-key-id",
@@ -258,7 +273,7 @@ describe("POST /api/keys", () => {
     ]);
 
     const response = await POST(
-      createRequest("POST", { name: "Production Key" })
+      createRequest("POST", { name: "Production Key", code: "123456" })
     );
     expect(response.status).toBe(200);
     const data = await response.json();
@@ -271,10 +286,13 @@ describe("POST /api/keys", () => {
   it("should create kh_ key with expiration", async () => {
     mockGetSession.mockResolvedValue({
       user: { id: USER_ID, name: "Test User", email: "test@test.com" },
+      session: { requiresMfa: false },
     });
     mockGetOrgContext.mockResolvedValue({
       organization: { id: ORG_ID },
     });
+    mockRequireAdminOrOwnerWithMfa.mockResolvedValue({ ok: true });
+    mockRequireDualFactor.mockResolvedValue({ ok: true });
     mockInsertReturning.mockResolvedValue([
       {
         id: "new-key-id",
@@ -289,6 +307,7 @@ describe("POST /api/keys", () => {
       createRequest("POST", {
         name: "Expiring Key",
         expiresAt: "2027-01-01T00:00:00.000Z",
+        code: "123456",
       })
     );
     expect(response.status).toBe(200);
@@ -300,13 +319,18 @@ describe("POST /api/keys", () => {
   it("should return 500 on database error", async () => {
     mockGetSession.mockResolvedValue({
       user: { id: USER_ID, name: "Test User", email: "test@test.com" },
+      session: { requiresMfa: false },
     });
     mockGetOrgContext.mockResolvedValue({
       organization: { id: ORG_ID },
     });
+    mockRequireAdminOrOwnerWithMfa.mockResolvedValue({ ok: true });
+    mockRequireDualFactor.mockResolvedValue({ ok: true });
     mockInsertReturning.mockRejectedValue(new Error("Insert failed"));
 
-    const response = await POST(createRequest("POST", { name: "Test" }));
+    const response = await POST(
+      createRequest("POST", { name: "Test", code: "123456" })
+    );
     expect(response.status).toBe(500);
     const data = await response.json();
     expect(data.error).toBe("Insert failed");
@@ -335,10 +359,16 @@ describe("DELETE /api/keys/:keyId (revoke)", () => {
     mockResolveOrganizationId.mockResolvedValue({
       organizationId: ORG_ID,
     });
+    mockGetSession.mockResolvedValue({
+      user: { id: USER_ID },
+      session: { requiresMfa: false },
+    });
+    mockRequireAdminOrOwnerWithMfa.mockResolvedValue({ ok: true });
+    mockRequireDualFactor.mockResolvedValue({ ok: true });
     mockUpdateReturning.mockResolvedValue([{ id: "key-1" }]);
 
     const response = await DELETE(
-      createRequest("DELETE"),
+      createRequest("DELETE", { code: "123456" }),
       createDeleteContext("key-1")
     );
     expect(response.status).toBe(200);
@@ -350,10 +380,16 @@ describe("DELETE /api/keys/:keyId (revoke)", () => {
     mockResolveOrganizationId.mockResolvedValue({
       organizationId: ORG_ID,
     });
+    mockGetSession.mockResolvedValue({
+      user: { id: USER_ID },
+      session: { requiresMfa: false },
+    });
+    mockRequireAdminOrOwnerWithMfa.mockResolvedValue({ ok: true });
+    mockRequireDualFactor.mockResolvedValue({ ok: true });
     mockUpdateReturning.mockResolvedValue([]);
 
     const response = await DELETE(
-      createRequest("DELETE"),
+      createRequest("DELETE", { code: "123456" }),
       createDeleteContext("nonexistent")
     );
     expect(response.status).toBe(404);
@@ -365,10 +401,16 @@ describe("DELETE /api/keys/:keyId (revoke)", () => {
     mockResolveOrganizationId.mockResolvedValue({
       organizationId: ORG_ID,
     });
+    mockGetSession.mockResolvedValue({
+      user: { id: USER_ID },
+      session: { requiresMfa: false },
+    });
+    mockRequireAdminOrOwnerWithMfa.mockResolvedValue({ ok: true });
+    mockRequireDualFactor.mockResolvedValue({ ok: true });
     mockUpdateReturning.mockResolvedValue([]);
 
     const response = await DELETE(
-      createRequest("DELETE"),
+      createRequest("DELETE", { code: "123456" }),
       createDeleteContext("other-org-key")
     );
     expect(response.status).toBe(404);
@@ -378,10 +420,16 @@ describe("DELETE /api/keys/:keyId (revoke)", () => {
     mockResolveOrganizationId.mockResolvedValue({
       organizationId: ORG_ID,
     });
+    mockGetSession.mockResolvedValue({
+      user: { id: USER_ID },
+      session: { requiresMfa: false },
+    });
+    mockRequireAdminOrOwnerWithMfa.mockResolvedValue({ ok: true });
+    mockRequireDualFactor.mockResolvedValue({ ok: true });
     mockUpdateReturning.mockRejectedValue(new Error("Update failed"));
 
     const response = await DELETE(
-      createRequest("DELETE"),
+      createRequest("DELETE", { code: "123456" }),
       createDeleteContext("key-1")
     );
     expect(response.status).toBe(500);

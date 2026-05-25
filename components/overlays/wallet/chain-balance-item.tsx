@@ -462,7 +462,7 @@ export function ChainBalanceItem({
       ))}
       {chainSupportedTokens.length === 0 && chainCustomTokens.length === 0 && (
         <div className="py-1.5 text-muted-foreground text-xs">
-          Loading tokens...
+          {isLoadingBalances ? "Loading tokens..." : "No tokens on this chain"}
         </div>
       )}
     </div>

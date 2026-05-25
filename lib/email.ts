@@ -128,7 +128,12 @@ type InvitationEmailData = {
 type VerificationOTPData = {
   email: string;
   otp: string;
-  type: "sign-in" | "email-verification" | "forget-password" | "change-email";
+  type:
+    | "sign-in"
+    | "email-verification"
+    | "forget-password"
+    | "change-email"
+    | "confirm-action";
 };
 
 /**
@@ -147,6 +152,7 @@ export async function sendVerificationOTP(
     "email-verification": "Verify your email address - KeeperHub",
     "forget-password": "Reset your KeeperHub password",
     "change-email": "Confirm your new email - KeeperHub",
+    "confirm-action": "Confirm a sensitive action - KeeperHub",
   };
 
   const actionTextMap = {
@@ -154,6 +160,7 @@ export async function sendVerificationOTP(
     "email-verification": "verify your email address",
     "forget-password": "reset your password",
     "change-email": "confirm your new email address",
+    "confirm-action": "confirm the action you just requested",
   };
 
   const actionPromptMap = {
@@ -161,6 +168,7 @@ export async function sendVerificationOTP(
     "email-verification": "Enter this code to verify your email address:",
     "forget-password": "Enter this code to reset your password:",
     "change-email": "Enter this code to confirm your new email:",
+    "confirm-action": "Enter this code in the app to confirm the action:",
   };
 
   const subject = subjectMap[type];

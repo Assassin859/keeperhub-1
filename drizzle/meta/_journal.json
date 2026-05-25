@@ -624,6 +624,13 @@
       "when": 1779670685295,
       "tag": "0088_keep_581_interval_seconds_min",
       "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1779670685296,
+      "tag": "0089_two_factor_and_session_mfa",
+      "breakpoints": true
     }
   ]
 }

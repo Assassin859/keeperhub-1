@@ -16,6 +16,8 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { agenticWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { requireDualFactor } from "@/lib/mfa/dual-factor";
+import { requireMfaEnrolled } from "@/lib/middleware/owner-mfa-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +50,44 @@ export async function POST(
   const session = await auth.api.getSession({ headers: request.headers });
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Symmetric with the /approve gate. Reject doesn't move funds, but a
+  // stolen session that can reject can DoS legitimate requests by
+  // pre-emptively cancelling them; gating prevents that and keeps the
+  // approve/reject pair on identical authorization rules.
+  const sessionRow = session.session as { requiresMfa?: boolean | null };
+  const mfa = await requireMfaEnrolled(
+    session.user.id,
+    sessionRow.requiresMfa === true
+  );
+  if (!mfa.ok) {
+    return NextResponse.json(
+      { error: mfa.error, code: mfa.code },
+      { status: mfa.status }
+    );
+  }
+
+  // Dual-factor: symmetric with /approve. A stolen session must not be
+  // able to pre-emptively cancel legitimate requests without proving
+  // both factors at the moment of rejection.
+  const body = (await request.json().catch(() => ({}))) as {
+    code?: string;
+    emailOtp?: string;
+  };
+  const dual = await requireDualFactor({
+    userId: session.user.id,
+    email: session.user.email,
+    action: "agentic_wallet_reject",
+    code: body.code,
+    emailOtp: body.emailOtp,
+    headers: request.headers,
+  });
+  if (!dual.ok) {
+    return NextResponse.json(
+      { error: dual.error, code: dual.code },
+      { status: dual.status }
+    );
   }
 
   const { id } = await params;
