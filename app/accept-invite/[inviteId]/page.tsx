@@ -512,8 +512,8 @@ function AuthFormState({
   onShowVerification: (password: string) => void;
   onAccepting: () => void;
 }) {
-  // Default to signup; trySignUp detects an existing account at submit time and
-  // redirects to sign-in or verification (see handleSignupSubmit below).
+  // Default to signup; at submit time an existing account flips to sign-in and
+  // a new account proceeds to email verification (see handleSignupSubmit below).
   const [authMode, setAuthMode] = useState<"signin" | "signup">("signup");
   const [password, setPassword] = useState("");
   const [formError, setFormError] = useState("");
@@ -523,23 +523,14 @@ function AuthFormState({
     const signUpResult = await trySignUp(invitation.email, password);
 
     if (signUpResult.userExists) {
-      try {
-        await authClient.emailOtp.sendVerificationOtp({
-          email: invitation.email,
-          type: "email-verification",
-        });
-        toast.info(
-          "Account exists but needs verification. Please check your email."
-        );
-        onShowVerification(password);
-        return { done: true };
-      } catch {
-        setAuthMode("signin");
-        setFormError(
-          "An account with this email already exists. Please sign in."
-        );
-        return { done: true };
-      }
+      // Existing account: switch to sign-in instead of firing an
+      // email-verification OTP. trySignIn already detects an unverified
+      // account and sends a code, so the verification case stays covered.
+      setAuthMode("signin");
+      setFormError(
+        "You already have an account. Enter your password to sign in."
+      );
+      return { done: true };
     }
 
     if (!signUpResult.success) {
