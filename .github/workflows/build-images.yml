@@ -133,11 +133,13 @@ jobs:
           SSM_REGION: ${{ vars.SSM_REGION || 'us-east-2' }}
         run: |
           set -euo pipefail
+          # These are NEXT_PUBLIC_* values - inlined into the client bundle and
+          # therefore public - so they are deliberately not masked. Keeping them
+          # visible in build logs is what makes baked-vs-runtime drift debuggable.
           fetch() {
             local var="$1" path="$2" val
             val=$(aws ssm get-parameter --name "$path" --with-decryption \
               --query 'Parameter.Value' --output text --region "$SSM_REGION")
-            echo "::add-mask::$val"
             echo "$var=$val" >> "$GITHUB_ENV"
           }
           fetch NEXT_PUBLIC_TURNSTILE_SITE_KEY "$SSM_PREFIX/turnstile-site-key"
