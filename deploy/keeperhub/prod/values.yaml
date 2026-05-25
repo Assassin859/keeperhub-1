@@ -230,6 +230,13 @@ env:
     type: parameterStore
     name: turnstile-secret-key
     parameter_name: /eks/techops-prod/keeperhub/turnstile-secret-key
+  # Enforce the captcha plugin explicitly rather than relying solely on
+  # NODE_ENV=production. Defense-in-depth: if NODE_ENV were ever misconfigured
+  # to non-production on a build that includes test endpoints, the plugin would
+  # otherwise silently skip. Keeps prod's captcha posture self-documenting.
+  TURNSTILE_ENFORCE:
+    type: kv
+    value: "true"
   OPENAI_API_KEY:
     type: parameterStore
     name: openai-api-key
