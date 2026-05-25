@@ -139,38 +139,21 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
   }
 
-  // Trigger Better Auth's emailOTP sendVerificationOtp endpoint to
-  // mint and email the code under the `sign-in-otp-<email>` identifier
-  // that /api/auth/strict-signin reads in the complete step.
+  // Trigger Better Auth's emailOTP sendVerificationOTP server-side so
+  // the encrypted `sign-in-otp-<email>` verifications row is seeded
+  // for /api/auth/strict-signin to compare against. Calling the plugin
+  // API directly avoids a self-fetch over HTTP, which CodeQL flagged
+  // as SSRF because `new URL(request.url).origin` reflects the
+  // request's Host header.
   try {
-    const origin = new URL(request.url).origin;
-    const sendRes = await fetch(
-      `${origin}/api/auth/email-otp/send-verification-otp`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, type: "sign-in" }),
-      }
-    );
-    if (!sendRes.ok) {
-      logSystemError(
-        ErrorCategory.AUTH,
-        "[strict-signin.start] emailOTP send failed",
-        new Error(`HTTP ${sendRes.status}`),
-        { endpoint: "/api/auth/strict-signin/start", user_id: user.id }
-      );
-      return NextResponse.json(
-        {
-          error: "Failed to send confirmation email",
-          code: "email_send_failed",
-        },
-        { status: 503 }
-      );
-    }
+    await auth.api.sendVerificationOTP({
+      body: { email, type: "sign-in" },
+      headers: request.headers,
+    });
   } catch (err) {
     logSystemError(
       ErrorCategory.AUTH,
-      "[strict-signin.start] emailOTP send threw",
+      "[strict-signin.start] emailOTP send failed",
       err,
       { endpoint: "/api/auth/strict-signin/start", user_id: user.id }
     );
