@@ -6,26 +6,36 @@ const mockSession = {
     name: "Test User",
     email: "test@techops.services",
   },
+  session: { requiresMfa: false },
 };
 
 const {
   mockGetSession,
+  mockVerifyTotp,
   mockFindMany,
   mockInsertReturning,
   mockDeleteReturning,
+  mockRequireMfaEnrolled,
 } = vi.hoisted(() => ({
   mockGetSession: vi.fn(),
+  mockVerifyTotp: vi.fn(),
   mockFindMany: vi.fn(),
   mockInsertReturning: vi.fn(),
   mockDeleteReturning: vi.fn(),
+  mockRequireMfaEnrolled: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({
   auth: {
     api: {
       getSession: mockGetSession,
+      verifyTOTP: mockVerifyTotp,
     },
   },
+}));
+
+vi.mock("@/lib/middleware/owner-mfa-guard", () => ({
+  requireMfaEnrolled: mockRequireMfaEnrolled,
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -179,6 +189,8 @@ describe("POST /api/api-keys", () => {
 
   it("should create API key with name", async () => {
     mockGetSession.mockResolvedValue(mockSession);
+    mockRequireMfaEnrolled.mockResolvedValue({ ok: true });
+    mockVerifyTotp.mockResolvedValue({ valid: true });
     mockInsertReturning.mockResolvedValue([
       {
         id: "new-key-id",
@@ -188,7 +200,9 @@ describe("POST /api/api-keys", () => {
       },
     ]);
 
-    const response = await POST(createRequest("POST", { name: "My Key" }));
+    const response = await POST(
+      createRequest("POST", { name: "My Key", code: "123456" })
+    );
     expect(response.status).toBe(200);
     const data = await response.json();
     expect(data.id).toBe("new-key-id");
@@ -199,6 +213,8 @@ describe("POST /api/api-keys", () => {
 
   it("should create API key without name", async () => {
     mockGetSession.mockResolvedValue(mockSession);
+    mockRequireMfaEnrolled.mockResolvedValue({ ok: true });
+    mockVerifyTotp.mockResolvedValue({ valid: true });
     mockInsertReturning.mockResolvedValue([
       {
         id: "new-key-id",
@@ -208,7 +224,7 @@ describe("POST /api/api-keys", () => {
       },
     ]);
 
-    const response = await POST(createRequest("POST"));
+    const response = await POST(createRequest("POST", { code: "123456" }));
     expect(response.status).toBe(200);
     const data = await response.json();
     expect(data.name).toBeNull();
@@ -217,9 +233,13 @@ describe("POST /api/api-keys", () => {
 
   it("should return 500 on database error", async () => {
     mockGetSession.mockResolvedValue(mockSession);
+    mockRequireMfaEnrolled.mockResolvedValue({ ok: true });
+    mockVerifyTotp.mockResolvedValue({ valid: true });
     mockInsertReturning.mockRejectedValue(new Error("Insert failed"));
 
-    const response = await POST(createRequest("POST", { name: "Test" }));
+    const response = await POST(
+      createRequest("POST", { name: "Test", code: "123456" })
+    );
     expect(response.status).toBe(500);
     const data = await response.json();
     expect(data.error).toBe("Insert failed");
@@ -242,10 +262,12 @@ describe("DELETE /api/api-keys/:keyId", () => {
 
   it("should delete own key", async () => {
     mockGetSession.mockResolvedValue(mockSession);
+    mockRequireMfaEnrolled.mockResolvedValue({ ok: true });
+    mockVerifyTotp.mockResolvedValue({ valid: true });
     mockDeleteReturning.mockResolvedValue([{ id: "key-1" }]);
 
     const response = await DELETE(
-      createRequest("DELETE"),
+      createRequest("DELETE", { code: "123456" }),
       createDeleteContext("key-1")
     );
     expect(response.status).toBe(200);
@@ -255,10 +277,12 @@ describe("DELETE /api/api-keys/:keyId", () => {
 
   it("should return 404 when key not found", async () => {
     mockGetSession.mockResolvedValue(mockSession);
+    mockRequireMfaEnrolled.mockResolvedValue({ ok: true });
+    mockVerifyTotp.mockResolvedValue({ valid: true });
     mockDeleteReturning.mockResolvedValue([]);
 
     const response = await DELETE(
-      createRequest("DELETE"),
+      createRequest("DELETE", { code: "123456" }),
       createDeleteContext("nonexistent")
     );
     expect(response.status).toBe(404);
@@ -268,10 +292,12 @@ describe("DELETE /api/api-keys/:keyId", () => {
 
   it("should return 404 when key belongs to another user", async () => {
     mockGetSession.mockResolvedValue(mockSession);
+    mockRequireMfaEnrolled.mockResolvedValue({ ok: true });
+    mockVerifyTotp.mockResolvedValue({ valid: true });
     mockDeleteReturning.mockResolvedValue([]);
 
     const response = await DELETE(
-      createRequest("DELETE"),
+      createRequest("DELETE", { code: "123456" }),
       createDeleteContext("other-user-key")
     );
     expect(response.status).toBe(404);
@@ -279,10 +305,12 @@ describe("DELETE /api/api-keys/:keyId", () => {
 
   it("should return 500 on database error", async () => {
     mockGetSession.mockResolvedValue(mockSession);
+    mockRequireMfaEnrolled.mockResolvedValue({ ok: true });
+    mockVerifyTotp.mockResolvedValue({ valid: true });
     mockDeleteReturning.mockRejectedValue(new Error("Delete failed"));
 
     const response = await DELETE(
-      createRequest("DELETE"),
+      createRequest("DELETE", { code: "123456" }),
       createDeleteContext("key-1")
     );
     expect(response.status).toBe(500);
