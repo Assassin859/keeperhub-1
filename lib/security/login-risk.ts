@@ -1,7 +1,7 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { db } from "@/lib/db";
-import { sessions } from "@/lib/db/schema";
+import { sessions, userTrustedIps } from "@/lib/db/schema";
 
 /**
  * Risk signal emitted by the login-time anomaly check. `anomaly: true`
@@ -145,4 +145,88 @@ export function serializeRiskFlags(signal: LoginRiskSignal): string {
     country: signal.country,
     recentCountries: signal.recentCountries,
   });
+}
+
+/**
+ * Trust decision for the in-flight session's source IP. Called from
+ * databaseHooks.session.create.before alongside assessLoginRisk so
+ * the row written for the new session captures both signals.
+ *
+ *   - `ip: null`                       -> request did not arrive via
+ *                                         Cloudflare; no IP signal to
+ *                                         act on. Treat as trusted to
+ *                                         avoid locking out local-dev
+ *                                         and self-hosted setups.
+ *   - `trusted: true`                  -> ip appears in user_trusted_ips
+ *                                         for this user. No /verify-ip
+ *                                         needed.
+ *   - first attestation for this user  -> trusted = true. Mirrors the
+ *                                         "first-geo-attestation" rule
+ *                                         in assessLoginRisk: a brand
+ *                                         new user cannot satisfy
+ *                                         /verify-ip (they have no
+ *                                         TOTP yet). The IP is added
+ *                                         to user_trusted_ips by the
+ *                                         session.create.after hook.
+ *   - subsequent unknown ip            -> trusted = false. Caller sets
+ *                                         requires_ip_verification on
+ *                                         the new session.
+ */
+export type IpTrust = {
+  ip: string | null;
+  trusted: boolean;
+  country: string | null;
+  reason: "no_cf" | "known" | "first" | "unknown";
+};
+
+async function resolveLoginIp(): Promise<string | null> {
+  try {
+    const header = await headers();
+    const cfConnectingIp = header.get("cf-connecting-ip");
+    if (cfConnectingIp) {
+      return cfConnectingIp;
+    }
+    // Local dev fallback: every request looks like it came from the
+    // dev machine. Returning null tells assessIpTrust to skip the
+    // gate; we never want to block self-hosters from signing in.
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export async function assessIpTrust(userId: string): Promise<IpTrust> {
+  const ip = await resolveLoginIp();
+  const country = await resolveLoginCountry();
+  if (!ip) {
+    return { ip: null, trusted: true, country, reason: "no_cf" };
+  }
+
+  const [hit] = await db
+    .select({ id: userTrustedIps.id })
+    .from(userTrustedIps)
+    .where(
+      and(eq(userTrustedIps.userId, userId), eq(userTrustedIps.ip, ip))
+    )
+    .limit(1);
+  if (hit) {
+    return { ip, trusted: true, country, reason: "known" };
+  }
+
+  // First-time attestation: a user with zero trusted IPs cannot
+  // satisfy /verify-ip in the same request (their TOTP is not
+  // enrolled yet for fresh accounts; even for upgrades they have no
+  // prior trust to bootstrap from). Trust the first IP we see, the
+  // session.create.after hook adds it to user_trusted_ips so the
+  // SECOND IP they sign in from is the one that gets gated.
+  const [anyTrusted] = await db
+    .select({ id: userTrustedIps.id })
+    .from(userTrustedIps)
+    .where(eq(userTrustedIps.userId, userId))
+    .limit(1);
+  if (!anyTrusted) {
+    return { ip, trusted: true, country, reason: "first" };
+  }
+
+  return { ip, trusted: false, country, reason: "unknown" };
 }

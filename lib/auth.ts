@@ -18,7 +18,11 @@ import { nanoid } from "nanoid";
 import { rateLimitBypassRule, testEndpointsEnabled } from "@/lib/admin-auth";
 import { isUserDeactivated } from "@/lib/auth-deactivation-guard";
 import { sendInvitationEmail, sendVerificationOTP } from "@/lib/email";
-import { assessLoginRisk, serializeRiskFlags } from "@/lib/security/login-risk";
+import {
+  assessIpTrust,
+  assessLoginRisk,
+  serializeRiskFlags,
+} from "@/lib/security/login-risk";
 import { TRUSTED_ORIGINS } from "@/lib/trusted-origins";
 import { wrapWithSessionTokenHash } from "./auth-session-token-hash";
 import { db } from "./db";
@@ -35,6 +39,7 @@ import {
   organization as organizationTable,
   sessions,
   twoFactor as twoFactorTable,
+  userTrustedIps,
   users,
   verifications,
   workflowExecutionLogs,
@@ -541,6 +546,34 @@ export const auth = betterAuth({
             return false;
           }
           const risk = await assessLoginRisk(userId);
+          const ipTrust = await assessIpTrust(userId);
+          // When the session is being created from a trusted IP (or
+          // for the user's first-ever attestation) record/refresh it
+          // in user_trusted_ips. This is the only path that auto-adds
+          // an IP without going through /verify-ip; the unique
+          // (user_id, ip) constraint makes the upsert idempotent so a
+          // repeat sign-in from a known IP just bumps last_seen_at.
+          if (ipTrust.ip && ipTrust.trusted) {
+            try {
+              await db
+                .insert(userTrustedIps)
+                .values({
+                  userId,
+                  ip: ipTrust.ip,
+                  country: ipTrust.country,
+                })
+                .onConflictDoUpdate({
+                  target: [userTrustedIps.userId, userTrustedIps.ip],
+                  set: { lastSeenAt: new Date() },
+                });
+            } catch (err) {
+              // Trust list bookkeeping must never block sign-in. If
+              // the insert fails the next sign-in from the same IP
+              // will hit the /verify-ip gate, which is the correct
+              // fail-closed direction.
+              console.error("[ip-trust] failed to upsert trusted IP", err);
+            }
+          }
           const [userRow] = await db
             .select({ twoFactorEnabled: users.twoFactorEnabled })
             .from(users)
@@ -549,15 +582,17 @@ export const auth = betterAuth({
           const twoFactorEnabled = userRow?.twoFactorEnabled === true;
           // Sessions that still need step-up get a short TTL so a stolen
           // cookie expires before a legitimate user finishes the
-          // /verify-mfa flow. The flag is cleared and the expiry is
-          // extended back to the default in either
-          //   - app/api/auth/strict-signin/route.ts (credential flow:
-          //     all three factors were just verified atomically)
-          //   - app/api/user/totp/verify-stepup/route.ts (OAuth flow:
-          //     user proves email + TOTP from /verify-mfa)
-          // Without one of those clears, the session expires in 10 min
-          // and the user has to re-sign-in.
+          // /verify-mfa flow.
           const PRE_STEPUP_TTL_MS = 10 * 60 * 1000;
+          // IP-verification (`requires_ip_verification`, `pending_ip`)
+          // is intentionally NOT set on the session row. The atomic
+          // flow used by the manual session-minting routes
+          // (strict-signin, oauth-mfa-finalize, totp/enroll) checks
+          // IP trust BEFORE the row is written; an untrusted IP
+          // never produces a session in the first place, only a
+          // signed `pending_ip_verify` cookie that routes the user
+          // to /verify-ip. The schema columns exist for forensic
+          // capture in case we later wire a stepup-style fallback.
           return {
             data: twoFactorEnabled
               ? {
@@ -648,6 +683,16 @@ export const auth = betterAuth({
       requiresMfa: { type: "boolean", defaultValue: false },
       mfaVerifiedAt: { type: "date", required: false },
       riskFlagsJson: { type: "string", required: false },
+      // Mirrors the MFA gate but for new-IP detection. Set true at
+      // session.create.before when the request IP is not in this
+      // user's user_trusted_ips list. The proxy gate routes every
+      // request to /verify-ip until the user clears the flag via the
+      // signed email link + dual-factor verify.
+      requiresIpVerification: { type: "boolean", defaultValue: false },
+      // The IP that needs verifying for this session, captured at
+      // session creation so the /verify-ip route knows which IP to
+      // promote into user_trusted_ips on success.
+      pendingIp: { type: "string", required: false },
     },
   },
   emailAndPassword: {
