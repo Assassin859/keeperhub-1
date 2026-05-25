@@ -209,13 +209,11 @@ env:
     type: parameterStore
     name: next-public-google-client-id
     parameter_name: /eks/techops-staging/keeperhub/google-client-id
-  # Cloudflare Turnstile (signup captcha). Site key is also baked into the
-  # client bundle at build time (build-images.yml); this runtime entry covers
-  # server-side reads. Secret key is server-only (lib/auth.ts).
-  NEXT_PUBLIC_TURNSTILE_SITE_KEY:
-    type: parameterStore
-    name: next-public-turnstile-site-key
-    parameter_name: /eks/techops-staging/keeperhub/turnstile-site-key
+  # Cloudflare Turnstile (signup captcha). The public site key is baked into
+  # the client bundle at build time (NEXT_PUBLIC_TURNSTILE_SITE_KEY build arg,
+  # sourced from a GitHub Actions variable) and is never read server-side, so
+  # it is intentionally NOT a runtime env here. Only the secret key is needed
+  # at runtime (lib/auth.ts).
   TURNSTILE_SECRET_KEY:
     type: parameterStore
     name: turnstile-secret-key
