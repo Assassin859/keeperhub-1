@@ -82,6 +82,12 @@ vi.mock("@/lib/db/integrations", () => ({
   validateWorkflowIntegrations: mockValidateWorkflowIntegrations,
 }));
 
+vi.mock("@/lib/features/route-guard", () => ({
+  enforceWorkflowFeatures: vi.fn().mockResolvedValue({ blocked: false }),
+  FEATURE_UPGRADE_REQUIRED_ERROR:
+    "This workflow uses features that require a paid plan.",
+}));
+
 // Only the side-effect sync is mocked; extractScheduleConfig is exercised
 // for real so the pre-check path runs the actual parseIntervalSeconds
 // guard from cron-utils.
