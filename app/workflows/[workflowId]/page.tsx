@@ -15,6 +15,7 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { NodeConfigPanel } from "@/components/workflow/node-config-panel";
+import { useGatedWorkflowWarning } from "@/hooks/use-features";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { api } from "@/lib/api-client";
 import { authClient, useSession } from "@/lib/auth-client";
@@ -147,8 +148,28 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
     () => nodes.some((node) => node.data.type === "trigger"),
     [nodes]
   );
+
   const [edges] = useAtom(edgesAtom);
   const [currentWorkflowId] = useAtom(currentWorkflowIdAtom);
+  const workflowActionTypes = useMemo(
+    () =>
+      nodes
+        .filter((node) => node.data.type === "action")
+        .map((node) => {
+          const cfg = node.data.config;
+          const value =
+            cfg && typeof cfg === "object" && "actionType" in cfg
+              ? (cfg as { actionType?: unknown }).actionType
+              : undefined;
+          return typeof value === "string" ? value : "";
+        })
+        .filter((s) => s.length > 0),
+    [nodes]
+  );
+  useGatedWorkflowWarning(
+    currentWorkflowId === workflowId ? workflowId : null,
+    workflowActionTypes
+  );
   const [selectedExecutionId, setSelectedExecutionId] = useAtom(
     selectedExecutionIdAtom
   );

@@ -12,6 +12,8 @@ import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
+import { extractActionTypeNodes } from "@/lib/features";
+import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
 import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
 import { workflowExecutions, workflows } from "@/lib/db/schema";
 import { getWorkflowAccess } from "@/lib/workflow/access";
@@ -189,6 +191,14 @@ export async function POST(
         { error: "Workflow contains invalid integration references" },
         { status: 403 }
       );
+    }
+
+    const featureGuard = await enforceWorkflowFeatures(
+      extractActionTypeNodes(workflow.nodes as unknown[]),
+      workflow.organizationId
+    );
+    if (featureGuard.blocked) {
+      return featureGuard.response;
     }
 
     const executionGuard = await enforceExecutionLimit(workflow.organizationId);

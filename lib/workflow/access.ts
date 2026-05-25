@@ -28,7 +28,7 @@ export type WorkflowAccess = {
   isDeleted: boolean;
 };
 
-async function isUserMemberOfOrganization(
+export async function isUserMemberOfOrganization(
   userId: string,
   organizationId: string
 ): Promise<boolean> {

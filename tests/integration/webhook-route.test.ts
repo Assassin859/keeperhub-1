@@ -126,6 +126,12 @@ vi.mock("@/lib/billing/execution-guard", () => ({
   enforceExecutionLimit: mockEnforceExecutionLimit,
 }));
 
+vi.mock("@/lib/features/route-guard", () => ({
+  enforceWorkflowFeatures: vi.fn().mockResolvedValue({ blocked: false }),
+  FEATURE_UPGRADE_REQUIRED_ERROR:
+    "This workflow uses features that require a paid plan.",
+}));
+
 vi.mock("@/app/api/execute/_lib/concurrency-limit", () => ({
   checkConcurrencyLimit: mockCheckConcurrency,
 }));

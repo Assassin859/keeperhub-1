@@ -44,6 +44,7 @@ import { type ApiExecuteTriggerType, executeViaApi } from "./api-execute";
 import { checkExecutionLimitForExecutor } from "./billing-guard";
 import { CONFIG } from "./config";
 import { resolveDispatchTarget } from "./execution-mode";
+import { checkWorkflowFeaturesForExecutor } from "./feature-guard";
 import { executeInProcess } from "./in-process";
 import { createWorkflowJob } from "./k8s-job";
 import { applyCounterDeltas, isIngestPayload } from "./lib/metrics-shipping";
@@ -254,6 +255,44 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     console.warn(
       `[Executor] Billing guard blocked ${triggerType} trigger for workflow ${workflowId}: org=${workflow.organizationId} plan=${billingResult.plan} used=${billingResult.used} limit=${billingResult.limit} effectiveLimit=${billingResult.effectiveLimit} debt=${billingResult.debtExecutions} reason=${billingResult.reason}`
     );
+    return;
+  }
+
+  const featureResult = await checkWorkflowFeaturesForExecutor(
+    db,
+    workflow.organizationId,
+    workflow.nodes as unknown[]
+  );
+  if (!featureResult.allowed) {
+    const gatedFeatureIds = featureResult.violations
+      .map((v) => v.featureId)
+      .join(",");
+    const errorMessage = `Workflow uses features that require a paid plan: ${featureResult.violations
+      .map((v) => v.feature.name)
+      .join(", ")}`;
+    console.warn(
+      `[Executor] Feature guard blocked ${triggerType} trigger for workflow ${workflowId}: org=${workflow.organizationId} gated=${gatedFeatureIds}`
+    );
+    // Record a failed execution row so the user sees this in their dashboard
+    // instead of the trigger silently vanishing. Matches the shape of a regular
+    // step failure (status=error, completedAt set) so the rest of the UI
+    // and metrics pipeline pick it up uniformly.
+    const blockedExecutionId = generateId();
+    const blockedInput = buildInput(message);
+    const blockedUserId =
+      "userId" in message ? message.userId : workflow.userId;
+    await db.insert(workflowExecutions).values({
+      id: blockedExecutionId,
+      workflowId,
+      userId: blockedUserId,
+      status: "error",
+      input: toJsonSafe(blockedInput) as Record<string, unknown>,
+      error: errorMessage,
+      errorCategory: "billing",
+      errorType: "user",
+      startedAt: new Date(),
+      completedAt: new Date(),
+    });
     return;
   }
 

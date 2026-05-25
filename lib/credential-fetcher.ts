@@ -18,6 +18,10 @@ import "server-only";
 import { PLUGIN_CREDENTIAL_MAP } from "./credential-map";
 import { buildDatabaseUrlFromConfig } from "./db/connection-utils";
 import { getIntegrationById } from "./db/integrations";
+import {
+  filterUnauthorizedIntegrationIds,
+  type IntegrationPrincipal,
+} from "./integrations/authorization";
 import type { IntegrationConfig, IntegrationType } from "./types/integration";
 
 // WorkflowCredentials is now a generic record since plugins define their own keys
@@ -78,14 +82,35 @@ function mapIntegrationConfig(
 }
 
 /**
- * Fetch credentials for an integration by ID
+ * Fetch credentials for an integration by ID.
+ *
+ * When `principal` is provided, the fetch is authorized against it (owner /
+ * organization visibility / specific_members grant) before any credential is
+ * decrypted, and returns no credentials if the principal is not authorized.
+ * This is runtime defense-in-depth: execution entry points already authorize
+ * the effective principal before dispatch, but only the owner-context
+ * (ownerId/organizationId) is available once a run is in flight, so steps pass
+ * that here to fail closed if a referenced id ever escapes the pre-execution
+ * check. Omitting `principal` preserves the prior unauthenticated behaviour.
  *
  * @param integrationId - The ID of the integration to fetch credentials for
+ * @param principal - Optional owner-context principal to authorize against
  * @returns WorkflowCredentials object with the integration's credentials
  */
 export async function fetchCredentials(
-  integrationId: string
+  integrationId: string,
+  principal?: IntegrationPrincipal
 ): Promise<WorkflowCredentials> {
+  if (principal) {
+    const unauthorized = await filterUnauthorizedIntegrationIds(
+      [integrationId],
+      principal
+    );
+    if (unauthorized.length > 0) {
+      return {};
+    }
+  }
+
   const integration = await getIntegrationById(integrationId);
   if (!integration) {
     return {};
@@ -98,7 +123,8 @@ export async function fetchCredentials(
  * Now fetches by integration ID instead of workflow ID
  */
 export function fetchIntegrationCredentials(
-  integrationId: string
+  integrationId: string,
+  principal?: IntegrationPrincipal
 ): Promise<WorkflowCredentials> {
-  return fetchCredentials(integrationId);
+  return fetchCredentials(integrationId, principal);
 }
