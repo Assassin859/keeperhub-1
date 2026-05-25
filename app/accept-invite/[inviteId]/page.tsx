@@ -25,7 +25,6 @@ type InvitationData = {
   expiresAt: string;
   organizationName: string;
   inviterName: string;
-  userExists?: boolean;
 };
 
 type InvitationError = {
@@ -513,9 +512,9 @@ function AuthFormState({
   onShowVerification: (password: string) => void;
   onAccepting: () => void;
 }) {
-  const [authMode, setAuthMode] = useState<"signin" | "signup">(
-    invitation.userExists ? "signin" : "signup"
-  );
+  // Default to signup; trySignUp detects an existing account at submit time and
+  // redirects to sign-in or verification (see handleSignupSubmit below).
+  const [authMode, setAuthMode] = useState<"signin" | "signup">("signup");
   const [password, setPassword] = useState("");
   const [formError, setFormError] = useState("");
   const [submitting, setSubmitting] = useState(false);
