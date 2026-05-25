@@ -26,19 +26,26 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/sandbox/node_modules ./sandbox/node_modules
 RUN pnpm --filter @keeperhub/sandbox build
 
-FROM node:24-alpine AS runtime
-RUN apk add --no-cache tini
-RUN addgroup -g 1001 -S sandbox && \
-    adduser -S sandbox -u 1001 -G sandbox
+# Runtime: distroless nodejs24. No shell, no busybox, no apk, no package
+# manager, no compiler. A successful node:vm escape lands in a process
+# whose only spawnable executable is /nodejs/bin/node. The chart's
+# readOnlyRootFilesystem + tmpfs /tmp + dropped capabilities seal off
+# the rest.
+#
+# Pinned by digest below for reproducibility; refresh when bumping the
+# node 24 line. The tag-only reference is kept in a comment for grep.
+# Reference tag: gcr.io/distroless/nodejs24-debian12:latest
+# Digest verified against the multi-arch image index on 2026-05-25.
+FROM gcr.io/distroless/nodejs24-debian12@sha256:61f4f4341db81820c24ce771b83d202eb6452076f58628cd536cc7d94a10978b AS runtime
 WORKDIR /app
-# With rootDir=".." the tsc output mirrors the source tree:
-#   sandbox/src/index.ts -> dist/sandbox/src/index.js
-#   lib/sandbox/child-source.ts -> dist/lib/sandbox/child-source.js
-COPY --from=build --chown=sandbox:sandbox /app/sandbox/dist ./dist
-COPY --from=build --chown=sandbox:sandbox /app/sandbox/package.json ./package.json
-USER sandbox
+# Pod spec sets runAsUser=1001; ensure /app and its contents are owned
+# by that uid even though the user is not in /etc/passwd.
+COPY --from=build --chown=1001:1001 /app/sandbox/dist ./dist
+COPY --from=build --chown=1001:1001 /app/sandbox/package.json ./package.json
+USER 1001
 ENV NODE_ENV=production
 ENV SANDBOX_PORT=8787
 EXPOSE 8787
-ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["node", "dist/sandbox/src/index.js"]
+# Distroless nodejs ENTRYPOINT is already ["/nodejs/bin/node"], so CMD
+# is just the script path.
+CMD ["dist/sandbox/src/index.js"]

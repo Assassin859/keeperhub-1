@@ -138,4 +138,60 @@ describe("POST /api/admin/test/enable-workflow", () => {
     const json = (await res.json()) as { enabled: boolean };
     expect(json.enabled).toBe(true);
   });
+
+  // KEEP-581: hard sync failures (currently only interval_too_small)
+  // surface as 400. Other sync failures (soft kind: invalid timezone,
+  // invalid cron) keep the warn-and-200 behaviour exercised by the
+  // happy-path test above.
+  it("returns 400 SCHEDULE_INTERVAL_TOO_SMALL when sync fails with kind:hard", async () => {
+    mockFindWorkflow.mockResolvedValue({
+      id: "wf_1",
+      userId: "u_1",
+      nodes: [{ id: "t" }],
+    });
+    mockFindUser.mockResolvedValue({ email: "k6-vu1-12345@techops.services" });
+    mockSyncSchedule.mockResolvedValue({
+      synced: false,
+      kind: "hard",
+      code: "interval_too_small",
+      error: "scheduleIntervalSeconds must be >= 60 (got 30)",
+    });
+
+    const res = await POST(makeRequest({ workflowId: "wf_1" }));
+
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as { error: string; message: string };
+    expect(json.error).toBe("SCHEDULE_INTERVAL_TOO_SMALL");
+    expect(json.message).toContain(">= 60");
+  });
+
+  it("returns 200 (warn-and-continue) when sync fails with kind:soft", async () => {
+    mockFindWorkflow.mockResolvedValue({
+      id: "wf_1",
+      userId: "u_1",
+      nodes: [{ id: "t" }],
+    });
+    mockFindUser.mockResolvedValue({ email: "k6-vu1-12345@techops.services" });
+    mockSyncSchedule.mockResolvedValue({
+      synced: false,
+      kind: "soft",
+      error: "Invalid timezone: Mars/Olympus_Mons",
+    });
+
+    const res = await POST(makeRequest({ workflowId: "wf_1" }));
+
+    // Soft failures are not promoted to 400; the workflow was still
+    // enabled successfully, and the sync result is returned in the
+    // body so the caller can decide what to do.
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as {
+      enabled: boolean;
+      scheduleSync: unknown;
+    };
+    expect(json.enabled).toBe(true);
+    expect(json.scheduleSync).toMatchObject({
+      synced: false,
+      kind: "soft",
+    });
+  });
 });

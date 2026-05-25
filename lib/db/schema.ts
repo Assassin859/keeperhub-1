@@ -316,6 +316,17 @@ export const workflows = pgTable(
   ]
 );
 
+// Integration visibility controls which principals may use a credential at
+// workflow execution time (not just view it).
+// - private: only the owner (creator) may use it (default / opt-in)
+// - specific_members: the owner plus users with an integration_grants row
+// - organization: any current member of the owning organization may use it
+export const integrationVisibility = pgEnum("integration_visibility", [
+  "private",
+  "specific_members",
+  "organization",
+]);
+
 // Integrations table for storing user credentials
 export const integrations = pgTable(
   "integrations",
@@ -335,6 +346,9 @@ export const integrations = pgTable(
     config: jsonb("config").notNull().$type<any>(),
     // Whether this integration was created via OAuth (managed by app) vs manual entry
     isManaged: boolean("is_managed").default(false),
+    visibility: integrationVisibility("visibility")
+      .notNull()
+      .default("private"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
@@ -350,6 +364,36 @@ export const integrations = pgTable(
         sql`${table.type} = 'web3' AND ${table.organizationId} IS NOT NULL`
       ),
     index("idx_integrations_user_id").on(table.userId),
+  ]
+);
+
+// Per-user grants for integrations with visibility = 'specific_members'.
+// A row authorizes `userId` to use `integrationId` at execution time.
+// Rows are deleted (cascade) when the integration or grantee user is removed,
+// which is the lazy-revocation mechanism: dropping the row fails execution closed.
+export const integrationGrants = pgTable(
+  "integration_grants",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    integrationId: text("integration_id")
+      .notNull()
+      .references(() => integrations.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    grantedBy: text("granted_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("idx_integration_grants_integration_user").on(
+      table.integrationId,
+      table.userId
+    ),
+    index("idx_integration_grants_user").on(table.userId),
   ]
 );
 
@@ -389,6 +433,7 @@ export const workflowExecutions = pgTable(
       | "external_service"
       | "network_rpc"
       | "transaction"
+      | "billing"
       | "database"
       | "auth"
       | "infrastructure"
@@ -911,6 +956,10 @@ export type ListedWorkflowView = Pick<
 >;
 export type Integration = typeof integrations.$inferSelect;
 export type NewIntegration = typeof integrations.$inferInsert;
+export type IntegrationVisibility =
+  (typeof integrationVisibility.enumValues)[number];
+export type IntegrationGrant = typeof integrationGrants.$inferSelect;
+export type NewIntegrationGrant = typeof integrationGrants.$inferInsert;
 export type WorkflowExecution = typeof workflowExecutions.$inferSelect;
 export type NewWorkflowExecution = typeof workflowExecutions.$inferInsert;
 export type WorkflowExecutionLog = typeof workflowExecutionLogs.$inferSelect;

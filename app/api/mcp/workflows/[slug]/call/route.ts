@@ -9,6 +9,8 @@ import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
 import { tags, workflowExecutions, workflows } from "@/lib/db/schema";
 import { classifyExecutionError } from "@/lib/errors/classify";
 import { recordExecutionErrorFinalized } from "@/lib/errors/finalize-error";
+import { extractActionTypeNodes } from "@/lib/features";
+import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
 import { hashMppCredential } from "@/lib/payments/mpp/server";
@@ -88,6 +90,20 @@ async function prepareExecution(
   workflow: CallRouteWorkflow,
   body: Record<string, unknown>
 ): Promise<{ executionId: string } | { error: NextResponse }> {
+  const featureGuard = await enforceWorkflowFeatures(
+    extractActionTypeNodes(workflow.nodes as unknown[]),
+    workflow.organizationId
+  );
+  if (featureGuard.blocked) {
+    const guardBody = await featureGuard.response.json();
+    return {
+      error: NextResponse.json(guardBody, {
+        status: 402,
+        headers: corsHeaders,
+      }),
+    };
+  }
+
   const executionGuard = await enforceExecutionLimit(workflow.organizationId);
   if (executionGuard.blocked) {
     const guardBody = await executionGuard.response.json();

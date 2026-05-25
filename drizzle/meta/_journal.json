@@ -607,8 +607,29 @@
     {
       "idx": 86,
       "version": "7",
-      "when": 1779498676220,
-      "tag": "0086_two_factor_and_session_mfa",
+      "when": 1779430610634,
+      "tag": "0086_drop_employee_only_signup_block",
+      "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1779670685294,
+      "tag": "0087_integration_visibility_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1779670685295,
+      "tag": "0088_keep_581_interval_seconds_min",
+      "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1779670685296,
+      "tag": "0089_two_factor_and_session_mfa",
       "breakpoints": true
     }
   ]
