@@ -157,6 +157,7 @@ export const ErrorCategory = {
   EXTERNAL_SERVICE: "external_service",
   NETWORK_RPC: "network_rpc",
   TRANSACTION: "transaction",
+  BILLING: "billing",
 
   // System-caused errors
   DATABASE: "database",

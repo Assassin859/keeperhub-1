@@ -95,6 +95,12 @@ vi.mock("@/lib/middleware/org-context", () => ({
   }),
 }));
 
+vi.mock("@/lib/features/route-guard", () => ({
+  enforceWorkflowFeatures: vi.fn().mockResolvedValue({ blocked: false }),
+  FEATURE_UPGRADE_REQUIRED_ERROR:
+    "This workflow uses features that require a paid plan.",
+}));
+
 const workflowWithArrayConfig = {
   ...sourceWorkflow,
   id: "source-wf-array",

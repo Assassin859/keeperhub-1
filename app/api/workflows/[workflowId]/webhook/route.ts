@@ -18,6 +18,11 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { recordWebhookMetrics } from "@/lib/metrics/instrumentation/api";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
+import { extractActionTypeNodes } from "@/lib/features";
+import {
+  enforceWorkflowFeatures,
+  FEATURE_UPGRADE_REQUIRED_ERROR,
+} from "@/lib/features/route-guard";
 import { apiKeys, workflowExecutions, workflows } from "@/lib/db/schema";
 import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
 import { getWorkflowAccess } from "@/lib/workflow/access";
@@ -294,6 +299,25 @@ export async function POST(
         403,
         "Workflow contains invalid integration references"
       );
+    }
+
+    const featureGuard = await enforceWorkflowFeatures(
+      extractActionTypeNodes(workflow.nodes as unknown[]),
+      workflow.organizationId
+    );
+    if (featureGuard.blocked) {
+      await recordWebhookMetrics({
+        workflowId,
+        durationMs: timer(),
+        statusCode: 402,
+        error: FEATURE_UPGRADE_REQUIRED_ERROR,
+        organizationId: workflow.organizationId,
+      });
+      const body = await featureGuard.response.json();
+      return NextResponse.json(body, {
+        status: 402,
+        headers: corsHeaders,
+      });
     }
 
     const executionGuard = await enforceExecutionLimit(workflow.organizationId);

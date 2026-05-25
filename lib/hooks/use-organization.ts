@@ -3,6 +3,7 @@
 import { getDefaultStore } from "jotai";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import { invalidateFeatureSnapshot } from "@/hooks/use-features";
 import { api } from "@/lib/api-client";
 import { authClient } from "@/lib/auth-client";
 import { registerOrganizationRefetch } from "@/lib/refetch-organizations";
@@ -33,6 +34,7 @@ export function useOrganization() {
     await authClient.organization.setActive({ organizationId: orgId });
     // Reset workflow state only after org switch succeeds (safe in hook context)
     getDefaultStore().set(resetWorkflowStateForOrgSwitchAtom);
+    invalidateFeatureSnapshot();
     refetchSidebar();
 
     // Stay on non-workflow pages (e.g. /analytics, /hub, /billing) after switching orgs

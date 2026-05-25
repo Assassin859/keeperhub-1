@@ -69,6 +69,12 @@ vi.mock("@/lib/db/integrations", () => ({
   validateWorkflowIntegrations: mockValidateWorkflowIntegrations,
 }));
 
+vi.mock("@/lib/features/route-guard", () => ({
+  enforceWorkflowFeatures: vi.fn().mockResolvedValue({ blocked: false }),
+  FEATURE_UPGRADE_REQUIRED_ERROR:
+    "This workflow uses features that require a paid plan.",
+}));
+
 vi.mock("@/lib/schedule-service", async () => {
   const actual =
     await vi.importActual<typeof import("@/lib/schedule-service")>(
