@@ -11,6 +11,7 @@ type CaptchaPluginShape = {
 };
 
 const TEST_API_KEY = "kha_test_signup_defenses_key";
+const MISSING_CAPTCHA_SECRET_ERROR = /TURNSTILE_SECRET_KEY is required/;
 
 function clearTurnstileEnv(): void {
   // biome-ignore lint/performance/noDelete: env vars must be removed, not stringified
@@ -23,6 +24,8 @@ function clearTurnstileEnv(): void {
   delete process.env.ALLOW_TEST_ENDPOINTS;
   // biome-ignore lint/performance/noDelete: same
   delete process.env.NEXT_PHASE;
+  // biome-ignore lint/performance/noDelete: same
+  delete process.env.TURNSTILE_ENFORCE;
 }
 
 describe("signup defenses: captcha plugin", () => {
@@ -100,6 +103,30 @@ describe("signup defenses: captcha plugin", () => {
       (p) => (p as CaptchaPluginShape).id === "captcha"
     );
     expect(plugin).toBeUndefined();
+  });
+
+  it("loads the captcha plugin when TURNSTILE_ENFORCE=true even with admin test endpoints enabled", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("CI", "");
+    vi.stubEnv("INCLUDE_TEST_ENDPOINTS", "true");
+    vi.stubEnv("TURNSTILE_ENFORCE", "true");
+    process.env.TURNSTILE_SECRET_KEY = "test-secret";
+    process.env.TEST_API_KEY = "kha_admin_test";
+    const { auth } = await import("@/lib/auth");
+    const plugin = (auth.options.plugins ?? []).find(
+      (p) => (p as CaptchaPluginShape).id === "captcha"
+    ) as CaptchaPluginShape | undefined;
+    expect(plugin).toBeDefined();
+    expect(plugin?.options.endpoints).toEqual(["/sign-up/email"]);
+  });
+
+  it("throws at module load when TURNSTILE_ENFORCE=true but the secret is missing", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("CI", "");
+    vi.stubEnv("TURNSTILE_ENFORCE", "true");
+    await expect(import("@/lib/auth")).rejects.toThrow(
+      MISSING_CAPTCHA_SECRET_ERROR
+    );
   });
 });
 

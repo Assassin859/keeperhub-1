@@ -220,6 +220,12 @@ env:
     type: parameterStore
     name: turnstile-secret-key
     parameter_name: /eks/techops-staging/keeperhub/turnstile-secret-key
+  # Opt staging into enforcing the captcha plugin (it is otherwise skipped
+  # where admin test endpoints are enabled). Lets us exercise the real
+  # Turnstile flow before prod. Disables the X-Test-API-Key signup bypass.
+  TURNSTILE_ENFORCE:
+    type: kv
+    value: "true"
   OPENAI_API_KEY:
     type: parameterStore
     name: openai-api-key

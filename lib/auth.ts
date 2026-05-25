@@ -108,37 +108,46 @@ function getBaseURL() {
   return "http://localhost:3000";
 }
 
-// Turnstile is gated on the signup endpoint. In production the secret key
-// is required - fail fast at module load rather than serving an open signup
-// endpoint. Two skip conditions outside production:
+// Turnstile is gated on the signup endpoint. The secret key is required
+// wherever the plugin is enforced - fail fast at module load rather than
+// serving an open signup endpoint. Skip conditions:
 //   1. Vitest / CI unit-test runs (NODE_ENV=test or CI=true) - tests assert
-//      config shape without needing a live Turnstile challenge.
+//      config shape without needing a live Turnstile challenge. These win
+//      over TURNSTILE_ENFORCE so unit runs never load the live plugin.
 //   2. When admin test endpoints are wired up (INCLUDE_TEST_ENDPOINTS=true,
-//      with the same runtime gate testEndpointsEnabled enforces). This is
-//      the Playwright E2E + local-dev-with-admin-tests path: requests carry
+//      with the same runtime gate testEndpointsEnabled enforces) and the
+//      environment has NOT opted in via TURNSTILE_ENFORCE. This is the
+//      Playwright E2E + local-dev-with-admin-tests path: requests carry
 //      X-Test-API-Key for rate-limit bypass, and the captcha plugin's
 //      onRequest middleware can't honor that header, so skip the plugin
-//      instead. Production never hits this skip because the same gate
-//      requires explicit ALLOW_TEST_ENDPOINTS=true and we hard-fail the
-//      missing-key assertion below regardless.
+//      instead.
+// TURNSTILE_ENFORCE=true opts a non-production environment (staging,
+// pr-deploy) into loading the plugin so the real Turnstile flow can be
+// exercised before prod. Note: with the plugin loaded, the X-Test-API-Key
+// signup bypass no longer applies - that environment's site/secret keys must
+// be ones the widget+server can pass (e.g. Cloudflare's always-pass test
+// keys) for any UI-driven signup E2E to keep working.
 const captchaSecretKey = process.env.TURNSTILE_SECRET_KEY;
+const captchaForceEnabled = process.env.TURNSTILE_ENFORCE === "true";
 const captchaSkippedForTests =
   process.env.CI === "true" ||
   process.env.NODE_ENV === "test" ||
-  (testEndpointsEnabled() && process.env.NODE_ENV !== "production");
+  (!captchaForceEnabled &&
+    testEndpointsEnabled() &&
+    process.env.NODE_ENV !== "production");
 
-// next build evaluates route modules during the "Collecting page data" phase
-// with NODE_ENV=production but no runtime secrets injected. Skip the
-// assertion during that phase so the build doesn't crash. The same
-// assertion still fires at server boot (phase-production-server) and
-// under any custom server that doesn't set NEXT_PHASE.
-if (
-  process.env.NODE_ENV === "production" &&
-  process.env.NEXT_PHASE !== "phase-production-build" &&
-  !captchaSecretKey
-) {
+// Captcha is mandatory in production and in any environment that explicitly
+// opts in via TURNSTILE_ENFORCE. next build evaluates route modules during
+// the "Collecting page data" phase with NODE_ENV=production but no runtime
+// secrets injected, so skip the assertion during that phase to avoid crashing
+// the build. The assertion still fires at server boot (phase-production-server)
+// and under any custom server that doesn't set NEXT_PHASE.
+const captchaRequired =
+  (process.env.NODE_ENV === "production" || captchaForceEnabled) &&
+  process.env.NEXT_PHASE !== "phase-production-build";
+if (captchaRequired && !captchaSecretKey) {
   throw new Error(
-    "TURNSTILE_SECRET_KEY is required in production - refusing to expose /sign-up/email without captcha verification"
+    "TURNSTILE_SECRET_KEY is required in production (or when TURNSTILE_ENFORCE=true) - refusing to expose /sign-up/email without captcha verification"
   );
 }
 
@@ -572,6 +581,18 @@ export const auth = betterAuth({
   advanced: {
     // Use secure cookies in production (HTTPS only)
     useSecureCookies: process.env.NODE_ENV === "production",
+    // Resolve the client IP from CF-Connecting-IP, not the default
+    // X-Forwarded-For. better-auth's getIp takes the leftmost XFF value;
+    // Cloudflare appends the real client IP to any client-supplied XFF rather
+    // than stripping it, so the leftmost value is attacker-controlled and the
+    // /sign-up/email rate limit above would be trivially bypassable via XFF
+    // spoofing. CF-Connecting-IP is set by Cloudflare's edge and cannot be
+    // forged by the client. All envs sit behind Cloudflare with origin-pull,
+    // so this header is always present. Swap if the edge ever changes (e.g.
+    // X-Real-IP for nginx).
+    ipAddress: {
+      ipAddressHeaders: ["CF-Connecting-IP"],
+    },
   },
   trustedOrigins: [...TRUSTED_ORIGINS],
   plugins,
