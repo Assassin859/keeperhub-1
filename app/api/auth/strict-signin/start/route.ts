@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { accounts, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
@@ -57,7 +58,11 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   const [user] = await db
-    .select({ id: users.id, email: users.email })
+    .select({
+      id: users.id,
+      email: users.email,
+      twoFactorEnabled: users.twoFactorEnabled,
+    })
     .from(users)
     .where(eq(users.email, email))
     .limit(1);
@@ -91,6 +96,50 @@ export async function POST(request: Request): Promise<NextResponse> {
       { error: "Invalid sign-in", code: "invalid_signin" },
       { status: 401 }
     );
+  }
+
+  // Users without TOTP enrolled bypass the dual-factor flow. Mint the
+  // session directly via Better Auth's signInEmail and forward its
+  // session cookies on the response so the client can hard-reload into
+  // an authenticated state. Only users with two_factor_enabled=true
+  // proceed to the email-OTP + TOTP atomic flow below.
+  if (user.twoFactorEnabled !== true) {
+    try {
+      const signInRes = await auth.api.signInEmail({
+        body: { email, password },
+        headers: request.headers,
+        returnHeaders: true,
+      });
+      const headersWithGetSetCookie = signInRes.headers as Headers & {
+        getSetCookie?: () => string[];
+      };
+      const sessionCookies =
+        typeof headersWithGetSetCookie.getSetCookie === "function"
+          ? headersWithGetSetCookie.getSetCookie()
+          : [];
+      if (sessionCookies.length === 0) {
+        const fallback = signInRes.headers?.get?.("set-cookie");
+        if (fallback) {
+          sessionCookies.push(fallback);
+        }
+      }
+      const response = NextResponse.json({ ok: true, signedIn: true });
+      for (const cookie of sessionCookies) {
+        response.headers.append("Set-Cookie", cookie);
+      }
+      return response;
+    } catch (err) {
+      logSystemError(
+        ErrorCategory.AUTH,
+        "[strict-signin.start] signInEmail failed for non-TOTP user",
+        err,
+        { endpoint: "/api/auth/strict-signin/start", user_id: user.id }
+      );
+      return NextResponse.json(
+        { error: "Sign-in failed", code: "signin_failed" },
+        { status: 500 }
+      );
+    }
   }
 
   // Trigger Better Auth's emailOTP sendVerificationOtp endpoint to

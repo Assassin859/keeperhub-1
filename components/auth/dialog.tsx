@@ -511,17 +511,31 @@ export const AuthDialog = ({
       const startBody = (await startResponse.json().catch(() => ({}))) as {
         error?: string;
         code?: string;
+        signedIn?: boolean;
       };
       // biome-ignore lint/suspicious/noConsole: diagnostic while wiring strict signin
       console.log("[Auth] strict-signin/start", {
         status: startResponse.status,
         code: startBody.code,
+        signedIn: startBody.signedIn,
       });
       if (!startResponse.ok) {
         setError(startBody.error ?? "Sign in failed");
         return;
       }
       storeClaimIfNeeded(claimContext);
+      // Users without TOTP enrolled get a session minted directly by
+      // /strict-signin/start; the response carries the session cookies
+      // and we hard-reload to pick them up. Users with TOTP enrolled
+      // get signedIn=false and proceed to the email-OTP step.
+      if (startBody.signedIn) {
+        toast.success("Signed in successfully!");
+        window.dispatchEvent(new CustomEvent(AUTH_SUCCESS_EVENT));
+        if (typeof window !== "undefined") {
+          window.location.assign("/");
+        }
+        return;
+      }
       setOtp("");
       setVerifyEmail(email);
       setView("signin-email-otp");
