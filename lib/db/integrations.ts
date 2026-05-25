@@ -384,6 +384,11 @@ export async function createIntegration(
       type,
       config: encryptedConfig,
       organizationId,
+      // Org-scoped integrations are team-shared by default so collaborative
+      // workflows keep working without a grant step; personal (no-org)
+      // integrations stay owner-only. Matches the migration backfill. Owners
+      // can later tighten an org integration to private/specific_members.
+      visibility: organizationId ? "organization" : "private",
     })
     .returning();
 
