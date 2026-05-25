@@ -111,6 +111,22 @@ jobs:
           echo "::error::Cannot skip build: one or more images for ${{ steps.vars.outputs.sha_short }} do not exist in ECR. Remove [skip build] from the commit message or push a build first."
           exit 1
 
+      - name: Fetch Turnstile site key from Parameter Store
+        # Public Cloudflare Turnstile site key, inlined into the client bundle
+        # at build time (NEXT_PUBLIC_*). Sourced per-environment from SSM so it
+        # matches the runtime value in deploy/keeperhub/<env>/values.yaml.
+        # Non-prod refs (including PR branches) resolve to the staging key.
+        if: steps.skip.outputs.skip_build != 'true' && steps.check-image.outputs.exists != 'true'
+        run: |
+          SITE_KEY=$(aws ssm get-parameter \
+            --name "/eks/techops-${ENVIRONMENT_TAG}/keeperhub/turnstile-site-key" \
+            --query "Parameter.Value" --output text \
+            --region us-east-2)
+          echo "NEXT_PUBLIC_TURNSTILE_SITE_KEY=$SITE_KEY" >> "$GITHUB_ENV"
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.TO_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.TO_AWS_SECRET_ACCESS_KEY }}
+
       - name: Set up Docker Buildx
         if: steps.skip.outputs.skip_build != 'true' && steps.check-image.outputs.exists != 'true'
         uses: docker/setup-buildx-action@v4
@@ -127,6 +143,7 @@ jobs:
           NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${{ env.NEXT_PUBLIC_GOOGLE_CLIENT_ID }}
           NEXT_PUBLIC_BILLING_ENABLED: ${{ env.NEXT_PUBLIC_BILLING_ENABLED }}
           NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED: ${{ env.NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED }}
+          NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ env.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}
           ENVIRONMENT_TAG: ${{ env.ENVIRONMENT_TAG }}
           INCLUDE_TEST_ENDPOINTS: ${{ env.INCLUDE_TEST_ENDPOINTS }}
           NEXT_PUBLIC_SENTRY_DSN: ${{ env.NEXT_PUBLIC_SENTRY_DSN }}
@@ -149,6 +166,7 @@ jobs:
           NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${{ env.NEXT_PUBLIC_GOOGLE_CLIENT_ID }}
           NEXT_PUBLIC_BILLING_ENABLED: ${{ env.NEXT_PUBLIC_BILLING_ENABLED }}
           NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED: ${{ env.NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED }}
+          NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ env.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}
           NEXT_PUBLIC_SENTRY_DSN: ${{ env.NEXT_PUBLIC_SENTRY_DSN }}
           INCLUDE_TEST_ENDPOINTS: ${{ env.INCLUDE_TEST_ENDPOINTS }}
           SENTRY_ORG: ${{ env.SENTRY_ORG }}

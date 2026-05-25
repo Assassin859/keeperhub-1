@@ -190,6 +190,17 @@ env:
     type: parameterStore
     name: next-public-google-client-id
     parameter_name: /eks/techops-staging/keeperhub/google-client-id
+  # Cloudflare Turnstile (signup captcha). PR envs reuse the staging keys.
+  # Site key is also baked into the client bundle at build time
+  # (build-images.yml); this runtime entry covers server-side reads.
+  NEXT_PUBLIC_TURNSTILE_SITE_KEY:
+    type: parameterStore
+    name: next-public-turnstile-site-key
+    parameter_name: /eks/techops-staging/keeperhub/turnstile-site-key
+  TURNSTILE_SECRET_KEY:
+    type: parameterStore
+    name: turnstile-secret-key
+    parameter_name: /eks/techops-staging/keeperhub/turnstile-secret-key
   BETTER_AUTH_SECRET:
     type: parameterStore
     name: better-auth-secret
