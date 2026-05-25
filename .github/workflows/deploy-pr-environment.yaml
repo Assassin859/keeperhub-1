@@ -189,6 +189,29 @@ jobs:
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
 
+      # Mirror build-images.yml: source the SSM-backed NEXT_PUBLIC_* values for
+      # the app image from Parameter Store so PR-environment bundles match what
+      # build-images.yml bakes and what the pods read at runtime. PR envs run in
+      # the staging GitHub Environment and use the staging parameter tree.
+      # Region is us-east-2 (where SSM lives), not the cluster region (TO_REGION
+      # is us-east-1 for staging).
+      - name: Fetch NEXT_PUBLIC_* from SSM
+        if: matrix.image.build_args == true && steps.check-image.outputs.exists != 'true'
+        env:
+          SSM_PREFIX: /eks/techops-staging/keeperhub
+          SSM_REGION: ${{ vars.SSM_REGION || 'us-east-2' }}
+        run: |
+          set -euo pipefail
+          fetch() {
+            local var="$1" path="$2" val
+            val=$(aws ssm get-parameter --name "$path" --with-decryption \
+              --query 'Parameter.Value' --output text --region "$SSM_REGION")
+            echo "$var=$val" >> "$GITHUB_ENV"
+          }
+          fetch NEXT_PUBLIC_TURNSTILE_SITE_KEY "$SSM_PREFIX/turnstile-site-key"
+          fetch NEXT_PUBLIC_GITHUB_CLIENT_ID   "$SSM_PREFIX/github-client-id"
+          fetch NEXT_PUBLIC_GOOGLE_CLIENT_ID   "$SSM_PREFIX/google-client-id"
+
       - name: Build and push image
         if: steps.check-image.outputs.exists != 'true'
         uses: docker/build-push-action@v7
@@ -198,7 +221,7 @@ jobs:
           target: ${{ matrix.image.target }}
           push: true
           provenance: false
-          build-args: ${{ matrix.image.build_args == true && format('NEXT_PUBLIC_AUTH_PROVIDERS={0}\nNEXT_PUBLIC_GITHUB_CLIENT_ID={1}\nNEXT_PUBLIC_GOOGLE_CLIENT_ID={2}\nNEXT_PUBLIC_BILLING_ENABLED={3}\nNEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED={4}\nNEXT_PUBLIC_TURNSTILE_SITE_KEY={5}', vars.NEXT_PUBLIC_AUTH_PROVIDERS, vars.NEXT_PUBLIC_GITHUB_CLIENT_ID, vars.NEXT_PUBLIC_GOOGLE_CLIENT_ID, vars.NEXT_PUBLIC_BILLING_ENABLED, vars.NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED, vars.NEXT_PUBLIC_TURNSTILE_SITE_KEY) || '' }}
+          build-args: ${{ matrix.image.build_args == true && format('NEXT_PUBLIC_AUTH_PROVIDERS={0}\nNEXT_PUBLIC_GITHUB_CLIENT_ID={1}\nNEXT_PUBLIC_GOOGLE_CLIENT_ID={2}\nNEXT_PUBLIC_BILLING_ENABLED={3}\nNEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED={4}\nNEXT_PUBLIC_TURNSTILE_SITE_KEY={5}', vars.NEXT_PUBLIC_AUTH_PROVIDERS, env.NEXT_PUBLIC_GITHUB_CLIENT_ID, env.NEXT_PUBLIC_GOOGLE_CLIENT_ID, vars.NEXT_PUBLIC_BILLING_ENABLED, vars.NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED, env.NEXT_PUBLIC_TURNSTILE_SITE_KEY) || '' }}
           tags: |
             ${{ steps.login-ecr.outputs.registry }}/${{ env.AWS_ECR_NAME }}:${{ matrix.image.tag_prefix }}-${{ steps.vars.outputs.sha_short }}
           cache-from: |
