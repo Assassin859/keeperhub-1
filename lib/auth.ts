@@ -547,11 +547,32 @@ export const auth = betterAuth({
             .where(eq(users.id, userId))
             .limit(1);
           const twoFactorEnabled = userRow?.twoFactorEnabled === true;
+          // Sessions that still need step-up get a short TTL so a stolen
+          // cookie expires before a legitimate user finishes the
+          // /verify-mfa flow. The flag is cleared and the expiry is
+          // extended back to the default in either
+          //   - app/api/auth/strict-signin/route.ts (credential flow:
+          //     all three factors were just verified atomically)
+          //   - app/api/user/totp/verify-stepup/route.ts (OAuth flow:
+          //     user proves email + TOTP from /verify-mfa)
+          // Without one of those clears, the session expires in 10 min
+          // and the user has to re-sign-in.
+          const PRE_STEPUP_TTL_MS = 10 * 60 * 1000;
           return {
-            data: {
-              requiresMfa: twoFactorEnabled,
-              riskFlagsJson: risk.country ? serializeRiskFlags(risk) : null,
-            },
+            data: twoFactorEnabled
+              ? {
+                  requiresMfa: true,
+                  expiresAt: new Date(Date.now() + PRE_STEPUP_TTL_MS),
+                  riskFlagsJson: risk.country
+                    ? serializeRiskFlags(risk)
+                    : null,
+                }
+              : {
+                  requiresMfa: false,
+                  riskFlagsJson: risk.country
+                    ? serializeRiskFlags(risk)
+                    : null,
+                },
           };
         },
         after: async (session) => {
@@ -612,6 +633,21 @@ export const auth = betterAuth({
             : error,
         context: ctx,
       });
+    },
+  },
+  // Declare the custom session columns we added in migration 0089
+  // (`requires_mfa`, `mfa_verified_at`, `risk_flags_json`). Without
+  // these declarations Better Auth filters them out of any insert/
+  // update payload before reaching the Drizzle adapter, so the
+  // session.create.before hook's `data: { requiresMfa: true }` is
+  // silently dropped and every TOTP-enrolled user sails past the
+  // step-up gate. This is the field-declaration backbone for the
+  // mandatory-step-up policy in proxy.ts.
+  session: {
+    additionalFields: {
+      requiresMfa: { type: "boolean", defaultValue: false },
+      mfaVerifiedAt: { type: "date", required: false },
+      riskFlagsJson: { type: "string", required: false },
     },
   },
   emailAndPassword: {

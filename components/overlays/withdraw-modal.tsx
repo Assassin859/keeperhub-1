@@ -5,7 +5,7 @@ import { AlertCircle, CheckCircle2, Loader2, ShieldAlert } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ChangeEvent, ChangeEventHandler, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { DualFactorInput } from "@/components/auth/dual-factor-input";
+import { DualFactorSteps } from "@/components/auth/dual-factor-steps";
 import { Overlay } from "@/components/overlays/overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { SettingsOverlay } from "@/components/overlays/settings-overlay";
@@ -519,39 +519,48 @@ export function WithdrawModal({
   // TOTP and triggers the server to email a fresh OTP; the email field
   // reveals once that response lands. The second click submits both.
   if (state === "mfa-code") {
+    const withdrawEmptyCodes = (): Promise<Response> =>
+      fetch("/api/user/wallet/withdraw", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chainId: selectedAsset?.chainId,
+          tokenAddress: selectedAsset?.tokenAddress,
+          amount:
+            maxReserveApplied && selectedAsset?.type === "native"
+              ? undefined
+              : amount,
+          recipient,
+          fromMax: maxReserveApplied && selectedAsset?.type === "native",
+          safeId: source.kind === "safe" ? source.safeId : undefined,
+        }),
+      });
     return (
-      <Overlay
-        actions={[
-          {
-            label: "Back",
-            variant: "outline",
-            onClick: () => {
-              dual.reset();
-              setState("input");
-            },
-          },
-          {
-            label: dual.awaitingEmailOtp ? "Confirm withdraw" : "Continue",
-            onClick: handleSubmit,
-            disabled: !dual.isReady,
-          },
-        ]}
-        overlayId={overlayId}
-        title="Confirm with your authenticator"
-      >
-        <p className="-mt-2 mb-4 text-muted-foreground text-sm">
-          Enter the current 6-digit code from your authenticator app to
-          confirm sending {amount} {selectedAsset?.symbol} to{" "}
-          {truncateAddress(recipient)}.
-        </p>
-        <DualFactorInput
-          autoFocusTotp
-          awaitingEmailOtp={dual.awaitingEmailOtp}
-          emailOtp={dual.emailOtp}
-          idPrefix="withdraw"
-          onEmailOtpChange={dual.setEmailOtp}
-          onTotpChange={dual.setTotpCode}
-          totpCode={dual.totpCode}
+      <Overlay overlayId={overlayId} title="Confirm withdrawal">
+        <DualFactorSteps
+          context={
+            <>
+              Confirm sending{" "}
+              <span className="font-medium text-foreground">
+                {amount} {selectedAsset?.symbol}
+              </span>{" "}
+              to{" "}
+              <span className="font-mono text-foreground">
+                {truncateAddress(recipient)}
+              </span>
+              .
+            </>
+          }
+          dual={dual}
+          onBack={() => {
+            dual.reset();
+            setState("input");
+          }}
+          onPrefetchEmail={() => dual.prefetchEmail(withdrawEmptyCodes)}
+          onResendEmail={() => dual.resendEmail(withdrawEmptyCodes)}
+          onSubmit={handleSubmit}
+          submitLabel="Confirm withdraw"
+          submitVariant="destructive"
         />
       </Overlay>
     );

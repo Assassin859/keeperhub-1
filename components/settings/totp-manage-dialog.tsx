@@ -3,7 +3,7 @@
 import { ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { DualFactorInput } from "@/components/auth/dual-factor-input";
+import { DualFactorSteps } from "@/components/auth/dual-factor-steps";
 import { TotpBackupCodesPanel } from "@/components/settings/totp-backup-codes-panel";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -305,39 +305,35 @@ export function TotpManageDialog({
 
         {mode === "disable" && (
           <div className="space-y-3">
-            <DualFactorInput
-              autoFocusTotp
-              awaitingEmailOtp={dual.awaitingEmailOtp}
-              emailOtp={dual.emailOtp}
-              idPrefix="totp-disable"
-              onEmailOtpChange={dual.setEmailOtp}
-              onTotpChange={dual.setTotpCode}
-              totpCode={dual.totpCode}
+            <DualFactorSteps
+              busy={busy}
+              dual={dual}
+              onBack={() => {
+                setMode("summary");
+                dual.reset();
+              }}
+              onPrefetchEmail={() =>
+                dual.prefetchEmail(() =>
+                  fetch("/api/user/totp/disable", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({}),
+                  })
+                )
+              }
+              onResendEmail={() =>
+                dual.resendEmail(() =>
+                  fetch("/api/user/totp/disable", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({}),
+                  })
+                )
+              }
+              onSubmit={handleDisable}
+              submitLabel="Disable two-factor"
+              submitVariant="destructive"
             />
-            <DialogFooter>
-              <Button
-                disabled={busy}
-                onClick={() => {
-                  setMode("summary");
-                  dual.reset();
-                }}
-                variant="outline"
-              >
-                Back
-              </Button>
-              <Button
-                disabled={busy || !dual.isReady}
-                onClick={handleDisable}
-                variant="destructive"
-              >
-                {(() => {
-                  if (busy) {
-                    return "Working...";
-                  }
-                  return dual.awaitingEmailOtp ? "Confirm disable" : "Disable";
-                })()}
-              </Button>
-            </DialogFooter>
           </div>
         )}
 

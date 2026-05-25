@@ -186,25 +186,15 @@ export async function POST(request: Request): Promise<NextResponse> {
     return unauthorized("Invalid authenticator code", "invalid_totp");
   }
 
-  // 5. All three factors verified. Consume the email-OTP row, then
-  // chain Better Auth's standard flow to mint the session cookie.
+  // 5. All three factors verified. Chain Better Auth's standard flow
+  // to mint the session cookie before consuming the email-OTP row.
   // signInEmail returns a Response with two_factor cookie; we extract
   // that and pass it into verifyTOTP, which then returns a Response
-  // with the session cookie. Only the final session cookie is
-  // forwarded to the client.
-  try {
-    await db
-      .delete(verifications)
-      .where(eq(verifications.id, emailOtpResult.rowId));
-  } catch (err) {
-    logSystemError(
-      ErrorCategory.DATABASE,
-      "[strict-signin] Failed to consume email OTP row",
-      err,
-      { endpoint: "/api/auth/strict-signin", user_id: user.id }
-    );
-  }
-
+  // with the session cookie. The OTP row is only deleted AFTER both
+  // calls succeed so a transient Better Auth failure (network flake,
+  // cookie roundtrip mismatch, etc.) leaves the row in place and the
+  // user can retry instead of being permanently locked out with an
+  // invalid_email_otp loop.
   let twoFactorCookie = "";
   try {
     const signInRes = await auth.api.signInEmail({
@@ -297,6 +287,23 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json(
       { error: "Sign-in failed at session step", code: "session_failed" },
       { status: 500 }
+    );
+  }
+
+  // Both Better Auth steps succeeded. Consume the email-OTP row now;
+  // if the delete itself fails we still return success since the
+  // session is already minted, and the row expires in 5 minutes
+  // anyway.
+  try {
+    await db
+      .delete(verifications)
+      .where(eq(verifications.id, emailOtpResult.rowId));
+  } catch (err) {
+    logSystemError(
+      ErrorCategory.DATABASE,
+      "[strict-signin] Failed to consume email OTP row after successful sign-in",
+      err,
+      { endpoint: "/api/auth/strict-signin", user_id: user.id }
     );
   }
 

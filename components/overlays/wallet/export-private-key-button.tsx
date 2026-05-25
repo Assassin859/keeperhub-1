@@ -4,7 +4,7 @@ import { Copy, Eye, EyeOff, KeyRound, ShieldAlert } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
-import { DualFactorInput } from "@/components/auth/dual-factor-input";
+import { DualFactorSteps } from "@/components/auth/dual-factor-steps";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { SettingsOverlay } from "@/components/overlays/settings-overlay";
 import { Button } from "@/components/ui/button";
@@ -210,46 +210,33 @@ export function ExportPrivateKeyButton(): React.ReactElement | null {
 
           {(step === "totp" || step === "verifying") && (
             <div className="space-y-4 py-2">
-              <DualFactorInput
-                autoFocusTotp
-                awaitingEmailOtp={dual.awaitingEmailOtp}
-                disabled={step === "verifying"}
-                emailOtp={dual.emailOtp}
-                idPrefix="export"
-                onEmailOtpChange={dual.setEmailOtp}
-                onTotpChange={dual.setTotpCode}
-                totpCode={dual.totpCode}
+              <DualFactorSteps
+                busy={step === "verifying"}
+                dual={dual}
+                onBack={handleClose}
+                onPrefetchEmail={() =>
+                  dual.prefetchEmail(() =>
+                    fetch("/api/user/wallet/export-key/verify", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({}),
+                    })
+                  )
+                }
+                onResendEmail={() =>
+                  dual.resendEmail(() =>
+                    fetch("/api/user/wallet/export-key/verify", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({}),
+                    })
+                  )
+                }
+                onSubmit={handleVerify}
+                submitLabel="Export private key"
+                submitVariant="destructive"
               />
               {error && <p className="text-destructive text-sm">{error}</p>}
-              <div className="flex gap-2">
-                <Button
-                  className="flex-1"
-                  disabled={step === "verifying"}
-                  onClick={handleClose}
-                  variant="outline"
-                >
-                  Cancel
-                </Button>
-                <Button
-                  className="flex-1"
-                  disabled={step === "verifying" || !dual.isReady}
-                  onClick={handleVerify}
-                >
-                  {(() => {
-                    if (step === "verifying") {
-                      return (
-                        <>
-                          <Spinner className="mr-2 h-4 w-4" />
-                          Verifying...
-                        </>
-                      );
-                    }
-                    return dual.awaitingEmailOtp
-                      ? "Confirm & Export"
-                      : "Continue";
-                  })()}
-                </Button>
-              </div>
             </div>
           )}
 

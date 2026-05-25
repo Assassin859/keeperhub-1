@@ -1,30 +1,43 @@
 "use client";
 
-import { ShieldAlert } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { DualFactorSteps } from "@/components/auth/dual-factor-steps";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
 
 type Props = {
   next: string;
 };
 
+/**
+ * Step-up MFA modal. Renders as a Dialog (not an inline card) so the
+ * underlying page can't be visually composed with the prompt and there
+ * is no ambiguity that the user has to confirm before reaching the
+ * app. The Dialog is locked open; the only way out is to complete
+ * verification (router.replace) or sign out (handled elsewhere).
+ */
 export function VerifyMfaForm({ next }: Props): React.ReactElement {
   const router = useRouter();
-  const [code, setCode] = useState("");
+  const dual = useDualFactorState();
   const [busy, setBusy] = useState(false);
 
-  const handleSubmit = async (event: React.FormEvent): Promise<void> => {
-    event.preventDefault();
+  const emptyCodesFetch = (): Promise<Response> =>
+    fetch("/api/user/totp/verify-stepup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+  const handleSubmit = async (): Promise<void> => {
     if (busy) {
-      return;
-    }
-    const trimmed = code.trim();
-    if (trimmed.length < 6) {
       return;
     }
     setBusy(true);
@@ -32,14 +45,22 @@ export function VerifyMfaForm({ next }: Props): React.ReactElement {
       const response = await fetch("/api/user/totp/verify-stepup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: trimmed }),
+        body: JSON.stringify({
+          code: dual.totpCode.trim(),
+          emailOtp: dual.emailOtp.trim() || undefined,
+        }),
       });
       if (!response.ok) {
         const data = (await response.json().catch(() => ({}))) as {
           error?: string;
+          code?: string;
         };
+        if (
+          dual.handleResponse(data.code, data.error, (msg) => toast.error(msg))
+        ) {
+          return;
+        }
         toast.error(data.error ?? "Invalid code");
-        setCode("");
         return;
       }
       router.replace(next || "/");
@@ -50,45 +71,29 @@ export function VerifyMfaForm({ next }: Props): React.ReactElement {
   };
 
   return (
-    <Card className="w-full max-w-md">
-      <CardContent className="space-y-5 pt-6">
-        <div className="flex items-start gap-3">
-          <ShieldAlert
-            aria-hidden="true"
-            className="mt-0.5 size-5 text-amber-500"
-          />
-          <div className="space-y-1">
-            <h1 className="font-medium text-lg">Confirm it's you</h1>
-            <p className="text-muted-foreground text-sm">
-              We noticed this sign-in is from a new location. Enter a code from
-              your authenticator app to continue.
-            </p>
-          </div>
-        </div>
-
-        <form className="space-y-3" onSubmit={handleSubmit}>
-          <div className="space-y-2">
-            <Label htmlFor="stepup-code">Authenticator code</Label>
-            <Input
-              autoComplete="one-time-code"
-              autoFocus
-              id="stepup-code"
-              inputMode="numeric"
-              maxLength={6}
-              onChange={(event) => setCode(event.target.value)}
-              placeholder="123456"
-              value={code}
-            />
-          </div>
-          <Button
-            className="w-full"
-            disabled={busy || code.trim().length < 6}
-            type="submit"
-          >
-            {busy ? "Verifying..." : "Verify"}
-          </Button>
-        </form>
-      </CardContent>
-    </Card>
+    <Dialog open>
+      <DialogContent
+        className="sm:max-w-md [&>button[type='button']]:hidden"
+        onEscapeKeyDown={(event) => event.preventDefault()}
+        onInteractOutside={(event) => event.preventDefault()}
+      >
+        <DialogHeader>
+          <DialogTitle>Confirm it's you</DialogTitle>
+          <DialogDescription>
+            Enter the code we just emailed you and the current code from
+            your authenticator app to continue.
+          </DialogDescription>
+        </DialogHeader>
+        <DualFactorSteps
+          busy={busy}
+          dual={dual}
+          onBack={() => router.replace("/sign-in")}
+          onPrefetchEmail={() => dual.prefetchEmail(emptyCodesFetch)}
+          onResendEmail={() => dual.resendEmail(emptyCodesFetch)}
+          onSubmit={handleSubmit}
+          submitLabel="Verify"
+        />
+      </DialogContent>
+    </Dialog>
   );
 }

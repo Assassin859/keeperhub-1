@@ -3,8 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
-import { DualFactorInput } from "@/components/auth/dual-factor-input";
-import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
+import { DualFactorSteps } from "@/components/auth/dual-factor-steps";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import {
   AlertDialog,
@@ -21,10 +20,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Spinner } from "@/components/ui/spinner";
 import { authClient, useSession } from "@/lib/auth-client";
+import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
 
-export function DeactivateAccountSection() {
+export function DeactivateAccountSection(): React.ReactElement {
   const router = useRouter();
   const { closeAll: closeOverlays } = useOverlay();
   const session = useSession();
@@ -33,24 +32,25 @@ export function DeactivateAccountSection() {
     | undefined;
   const mfaEnrolled = sessionUser?.twoFactorEnabled === true;
   const [confirmation, setConfirmation] = useState("");
+  const [phase, setPhase] = useState<"confirmation" | "codes">("confirmation");
   const dual = useDualFactorState();
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
 
-  const handleDeactivate = async (): Promise<void> => {
-    if (confirmation !== "DEACTIVATE") {
-      toast.error("Please type DEACTIVATE to confirm");
-      return;
-    }
-    if (dual.totpCode.trim().length !== 6) {
-      toast.error("Enter the 6-digit code from your authenticator");
-      return;
-    }
-    if (dual.awaitingEmailOtp && dual.emailOtp.trim().length !== 6) {
-      toast.error("Enter the 6-digit code we emailed you");
-      return;
-    }
+  const emptyCodesFetch = (): Promise<Response> =>
+    fetch("/api/user/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmation }),
+    });
 
+  const resetAll = (): void => {
+    setConfirmation("");
+    setPhase("confirmation");
+    dual.reset();
+  };
+
+  const handleDeactivate = async (): Promise<void> => {
     setLoading(true);
     try {
       const response = await fetch("/api/user/delete", {
@@ -98,12 +98,20 @@ export function DeactivateAccountSection() {
           <div>
             <h3 className="font-medium text-destructive">Deactivate Account</h3>
             <p className="mt-1 text-muted-foreground text-sm">
-              Deactivate your account. You will be signed out and unable to sign
-              in until the account is reactivated.
+              Deactivate your account. You will be signed out and unable to
+              sign in until the account is reactivated.
             </p>
           </div>
 
-          <AlertDialog onOpenChange={setOpen} open={open}>
+          <AlertDialog
+            onOpenChange={(next) => {
+              setOpen(next);
+              if (!next) {
+                resetAll();
+              }
+            }}
+            open={open}
+          >
             <AlertDialogTrigger asChild>
               <Button variant="destructive">Deactivate Account</Button>
             </AlertDialogTrigger>
@@ -112,61 +120,63 @@ export function DeactivateAccountSection() {
                 <AlertDialogTitle>Deactivate your account?</AlertDialogTitle>
                 <AlertDialogDescription>
                   Your account will be deactivated and you will be signed out.
-                  Your data will be preserved, but you will not be able to sign
-                  in until the account is reactivated by an administrator.
+                  Your data will be preserved, but you will not be able to
+                  sign in until the account is reactivated by an
+                  administrator.
                 </AlertDialogDescription>
               </AlertDialogHeader>
 
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label htmlFor="deactivateConfirmation">
-                    Type{" "}
-                    <span className="font-mono font-semibold">DEACTIVATE</span>{" "}
-                    to confirm
-                  </Label>
-                  <Input
-                    autoComplete="off"
-                    id="deactivateConfirmation"
-                    onChange={(e) => setConfirmation(e.target.value)}
-                    placeholder="DEACTIVATE"
-                    value={confirmation}
+              {phase === "confirmation" && (
+                <>
+                  <div className="space-y-4 py-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="deactivateConfirmation">
+                        Type{" "}
+                        <span className="font-mono font-semibold">
+                          DEACTIVATE
+                        </span>{" "}
+                        to confirm
+                      </Label>
+                      <Input
+                        autoComplete="off"
+                        id="deactivateConfirmation"
+                        onChange={(e) => setConfirmation(e.target.value)}
+                        placeholder="DEACTIVATE"
+                        value={confirmation}
+                      />
+                    </div>
+                  </div>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel onClick={resetAll}>
+                      Cancel
+                    </AlertDialogCancel>
+                    <Button
+                      disabled={confirmation !== "DEACTIVATE" || !mfaEnrolled}
+                      onClick={() => setPhase("codes")}
+                      variant="destructive"
+                    >
+                      Continue
+                    </Button>
+                  </AlertDialogFooter>
+                </>
+              )}
+
+              {phase === "codes" && (
+                <div className="py-4">
+                  <DualFactorSteps
+                    busy={loading}
+                    dual={dual}
+                    onBack={() => setPhase("confirmation")}
+                    onPrefetchEmail={() =>
+                      dual.prefetchEmail(emptyCodesFetch)
+                    }
+                    onResendEmail={() => dual.resendEmail(emptyCodesFetch)}
+                    onSubmit={handleDeactivate}
+                    submitLabel="Deactivate account"
+                    submitVariant="destructive"
                   />
                 </div>
-                <DualFactorInput
-                  awaitingEmailOtp={dual.awaitingEmailOtp}
-                  emailOtp={dual.emailOtp}
-                  idPrefix="deactivate"
-                  onEmailOtpChange={dual.setEmailOtp}
-                  onTotpChange={dual.setTotpCode}
-                  totpCode={dual.totpCode}
-                />
-              </div>
-
-              <AlertDialogFooter>
-                <AlertDialogCancel
-                  onClick={() => {
-                    setConfirmation("");
-                    dual.reset();
-                  }}
-                >
-                  Cancel
-                </AlertDialogCancel>
-                <AlertDialogAction
-                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                  disabled={
-                    confirmation !== "DEACTIVATE" || loading || !dual.isReady
-                  }
-                  onClick={(e) => {
-                    e.preventDefault();
-                    handleDeactivate();
-                  }}
-                >
-                  {loading ? <Spinner className="mr-2 size-4" /> : null}
-                  {dual.awaitingEmailOtp
-                    ? "Confirm Deactivation"
-                    : "Deactivate Account"}
-                </AlertDialogAction>
-              </AlertDialogFooter>
+              )}
             </AlertDialogContent>
           </AlertDialog>
         </div>

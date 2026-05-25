@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { DualFactorInput } from "@/components/auth/dual-factor-input";
+import { DualFactorSteps } from "@/components/auth/dual-factor-steps";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -49,8 +50,16 @@ function CreateApiKeyOverlay({
   const { open: openOverlay, pop } = useOverlay();
   const router = useRouter();
   const [keyName, setKeyName] = useState("");
+  const [phase, setPhase] = useState<"label" | "codes">("label");
   const dual = useDualFactorState();
   const [creating, setCreating] = useState(false);
+
+  const emptyCodesFetch = (): Promise<Response> =>
+    fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: keyName.trim() || null }),
+    });
 
   const handleCreate = async (): Promise<void> => {
     setCreating(true);
@@ -59,7 +68,7 @@ function CreateApiKeyOverlay({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: keyName || null,
+          name: keyName.trim() || null,
           code: dual.totpCode.trim(),
           emailOtp: dual.emailOtp.trim() || undefined,
         }),
@@ -110,14 +119,36 @@ function CreateApiKeyOverlay({
       ? "Create a new API key for webhook authentication"
       : "Create a new API key for MCP server and external integrations";
 
+  if (phase === "codes") {
+    return (
+      <Overlay overlayId={overlayId} title="Create API Key">
+        <p className="mb-4 text-muted-foreground text-sm">
+          Confirm with both factors to mint{" "}
+          <span className="font-medium text-foreground">
+            {keyName.trim() || "this API key"}
+          </span>
+          .
+        </p>
+        <DualFactorSteps
+          busy={creating}
+          dual={dual}
+          onBack={() => setPhase("label")}
+          onPrefetchEmail={() => dual.prefetchEmail(emptyCodesFetch)}
+          onResendEmail={() => dual.resendEmail(emptyCodesFetch)}
+          onSubmit={handleCreate}
+          submitLabel="Create API key"
+        />
+      </Overlay>
+    );
+  }
+
   return (
     <Overlay
       actions={[
         {
-          label: dual.awaitingEmailOtp ? "Confirm Create" : "Create",
-          onClick: handleCreate,
-          loading: creating,
-          disabled: !keyName.trim() || !dual.isReady,
+          label: "Continue",
+          onClick: () => setPhase("codes"),
+          disabled: !keyName.trim(),
         },
       ]}
       overlayId={overlayId}
@@ -134,15 +165,6 @@ function CreateApiKeyOverlay({
             value={keyName}
           />
         </div>
-        <DualFactorInput
-          awaitingEmailOtp={dual.awaitingEmailOtp}
-          emailOtp={dual.emailOtp}
-          idPrefix="key"
-          onEmailOtpChange={dual.setEmailOtp}
-          onTotpChange={dual.setTotpCode}
-          totpCode={dual.totpCode}
-          totpHelp="Minting an API key requires a fresh code from your authenticator."
-        />
       </div>
     </Overlay>
   );
@@ -161,6 +183,7 @@ function DeleteApiKeyOverlay({
   overlayId,
   keyId,
   onDelete,
+  deleteEndpoint,
 }: {
   overlayId: string;
   keyId: string;
@@ -169,10 +192,18 @@ function DeleteApiKeyOverlay({
     code: string,
     emailOtp: string
   ) => Promise<{ ok: true } | { ok: false; code: string }>;
+  deleteEndpoint: (id: string) => string;
 }): React.ReactElement {
   const { pop } = useOverlay();
   const dual = useDualFactorState();
   const [submitting, setSubmitting] = useState(false);
+
+  const emptyCodesFetch = (): Promise<Response> =>
+    fetch(deleteEndpoint(keyId), {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
 
   const handleConfirm = async (): Promise<void> => {
     setSubmitting(true);
@@ -199,32 +230,20 @@ function DeleteApiKeyOverlay({
   };
 
   return (
-    <Overlay
-      actions={[
-        { label: "Cancel", variant: "outline", onClick: pop },
-        {
-          label: dual.awaitingEmailOtp ? "Confirm Revoke" : "Revoke",
-          onClick: handleConfirm,
-          loading: submitting,
-          disabled: !dual.isReady,
-          variant: "destructive",
-        },
-      ]}
-      overlayId={overlayId}
-      title="Revoke API Key"
-    >
+    <Overlay overlayId={overlayId} title="Revoke API Key">
       <p className="mb-4 text-muted-foreground text-sm">
-        Any integrations using this key will stop working immediately. Enter
-        a code from your authenticator to confirm.
+        Any integrations using this key will stop working immediately.
+        Confirm with both factors below.
       </p>
-      <DualFactorInput
-        autoFocusTotp
-        awaitingEmailOtp={dual.awaitingEmailOtp}
-        emailOtp={dual.emailOtp}
-        idPrefix="revoke"
-        onEmailOtpChange={dual.setEmailOtp}
-        onTotpChange={dual.setTotpCode}
-        totpCode={dual.totpCode}
+      <DualFactorSteps
+        busy={submitting}
+        dual={dual}
+        onBack={pop}
+        onPrefetchEmail={() => dual.prefetchEmail(emptyCodesFetch)}
+        onResendEmail={() => dual.resendEmail(emptyCodesFetch)}
+        onSubmit={handleConfirm}
+        submitLabel="Revoke key"
+        submitVariant="destructive"
       />
     </Overlay>
   );
@@ -237,6 +256,7 @@ function ApiKeysList({
   onDelete,
   onDismissNewKey,
   showCreator = false,
+  deleteEndpoint,
 }: {
   apiKeys: ApiKey[];
   newlyCreatedKey: string | null;
@@ -248,6 +268,7 @@ function ApiKeysList({
   ) => Promise<{ ok: true } | { ok: false; code: string }>;
   onDismissNewKey: () => void;
   showCreator?: boolean;
+  deleteEndpoint: (id: string) => string;
 }) {
   const { push } = useOverlay();
 
@@ -267,6 +288,7 @@ function ApiKeysList({
     push(DeleteApiKeyOverlay, {
       keyId,
       onDelete,
+      deleteEndpoint,
     });
   };
 
@@ -455,6 +477,7 @@ function useApiKeys(
     deleting,
     handleKeyCreated,
     handleDelete,
+    deleteEndpoint,
     dismissNewKey: () => setNewlyCreatedKey(null),
   };
 }
@@ -523,6 +546,7 @@ export function ApiKeysOverlay({ overlayId }: ApiKeysOverlayProps) {
           ) : (
             <ApiKeysList
               apiKeys={orgKeys.apiKeys}
+              deleteEndpoint={orgKeys.deleteEndpoint}
               deleting={orgKeys.deleting}
               newlyCreatedKey={orgKeys.newlyCreatedKey}
               onDelete={orgKeys.handleDelete}
@@ -544,6 +568,7 @@ export function ApiKeysOverlay({ overlayId }: ApiKeysOverlayProps) {
           ) : (
             <ApiKeysList
               apiKeys={webhookKeys.apiKeys}
+              deleteEndpoint={webhookKeys.deleteEndpoint}
               deleting={webhookKeys.deleting}
               newlyCreatedKey={webhookKeys.newlyCreatedKey}
               onDelete={webhookKeys.handleDelete}

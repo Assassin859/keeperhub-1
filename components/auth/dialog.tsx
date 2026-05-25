@@ -293,6 +293,65 @@ const SingleProviderButton = ({
   );
 };
 
+/**
+ * Two-step indicator for the credential sign-in flow (email OTP then
+ * authenticator code). Visually matches the wizard pattern in
+ * components/auth/dual-factor-steps.tsx + components/settings/totp-setup-dialog.tsx
+ * so every dual-factor surface looks the same.
+ */
+const SIGN_IN_STEPS: ReadonlyArray<{
+  key: "email" | "authenticator";
+  label: string;
+}> = [
+  { key: "email", label: "Email code" },
+  { key: "authenticator", label: "Authenticator" },
+] as const;
+
+function SignInStepIndicator({
+  current,
+}: {
+  current: "email" | "authenticator";
+}): React.ReactElement {
+  const currentIdx = SIGN_IN_STEPS.findIndex((s) => s.key === current);
+  return (
+    <ol className="flex items-center gap-2 px-1 pb-1 text-xs">
+      {SIGN_IN_STEPS.map((s, idx) => {
+        const status =
+          idx === currentIdx ? "current" : idx < currentIdx ? "done" : "pending";
+        const isLast = idx === SIGN_IN_STEPS.length - 1;
+        const bubble =
+          status === "current"
+            ? "border-primary bg-primary text-primary-foreground"
+            : status === "done"
+              ? "border-primary/40 bg-primary/10 text-primary"
+              : "border-border bg-muted/40 text-muted-foreground";
+        const labelClass =
+          status === "pending"
+            ? "text-muted-foreground"
+            : status === "current"
+              ? "font-medium text-foreground"
+              : "text-foreground";
+        return (
+          <li className="flex items-center gap-2" key={s.key}>
+            <span
+              className={`flex h-5 w-5 items-center justify-center rounded-full border font-medium text-[10px] ${bubble}`}
+            >
+              {idx + 1}
+            </span>
+            <span className={labelClass}>{s.label}</span>
+            {!isLast && (
+              <span
+                aria-hidden="true"
+                className={`h-px w-6 ${status === "done" ? "bg-primary/40" : "bg-border"}`}
+              />
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 // Helper functions
 const getViewTitle = (view: ModalView) => {
   switch (view) {
@@ -528,6 +587,7 @@ export const AuthDialog = ({
       };
       if (!startResponse.ok) {
         setError(startBody.error ?? "Sign in failed");
+        setLoading(false);
         return;
       }
       storeClaimIfNeeded(claimContext);
@@ -1229,6 +1289,7 @@ export const AuthDialog = ({
 
           {view === "signin-email-otp" && (
             <div className="space-y-4">
+              <SignInStepIndicator current="email" />
               <form className="space-y-4" onSubmit={handleSigninEmailOtp}>
                 <div className="space-y-2">
                   <Label className="ml-1" htmlFor="signin-email-otp-input">
@@ -1293,6 +1354,7 @@ export const AuthDialog = ({
 
           {view === "totp" && (
             <div className="space-y-4">
+              <SignInStepIndicator current="authenticator" />
               <form className="space-y-4" onSubmit={handleTotpVerify}>
                 <div className="space-y-2">
                   <Label className="ml-1" htmlFor="signin-totp">
