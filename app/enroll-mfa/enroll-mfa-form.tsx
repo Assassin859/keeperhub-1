@@ -58,8 +58,34 @@ export function EnrollMfaForm({ next, mode }: Props): React.ReactElement {
     setShowSuccess(true);
   };
 
-  const handleContinue = (): void => {
-    window.location.assign(target);
+  const handleContinue = async (): Promise<void> => {
+    // Confirm the freshly-minted session cookie is live on the
+    // server before navigating. A click within the first second or
+    // two after the enroll response can outrun the browser's cookie
+    // commit, leaving the user landing on `target` as anonymous. The
+    // get-session round-trip both proves the cookie is being sent
+    // and forces the browser to flush it before we leave the page.
+    try {
+      const res = await fetch("/api/auth/get-session", {
+        cache: "no-store",
+        credentials: "include",
+      });
+      if (res.ok) {
+        const data = (await res.json().catch(() => null)) as
+          | { user?: unknown }
+          | null;
+        if (data?.user) {
+          window.location.assign(target);
+          return;
+        }
+      }
+    } catch {
+      // fall through to the soft retry below
+    }
+    // Session not yet visible (cookie commit race). Give the browser
+    // a beat to commit, then navigate; the SSR on `target` will pick
+    // up the cookie on the actual request.
+    window.setTimeout(() => window.location.assign(target), 500);
   };
 
   useEffect(() => {

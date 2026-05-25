@@ -3,7 +3,10 @@ import { generateRandomString, symmetricEncrypt } from "better-auth/crypto";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { hashSessionToken } from "@/lib/auth-session-token-hash";
+import {
+  hashSessionToken,
+  signSessionCookieValue,
+} from "@/lib/auth-session-token-hash";
 import { db } from "@/lib/db";
 import { sessions, twoFactor as twoFactorTable, users } from "@/lib/db/schema";
 import { resolveEnrollMfaCaller } from "@/lib/enroll-mfa-caller";
@@ -35,7 +38,10 @@ function generatePlainBackupCodes(): string[] {
   return codes;
 }
 
-function buildSessionSetCookie(token: string, ttlMs: number): string {
+function buildSessionSetCookie(
+  signedValue: string,
+  ttlMs: number
+): string {
   const maxAge = Math.floor(ttlMs / 1000);
   const secureSegment =
     process.env.NODE_ENV === "production" ? " Secure;" : "";
@@ -43,7 +49,7 @@ function buildSessionSetCookie(token: string, ttlMs: number): string {
     process.env.NODE_ENV === "production"
       ? "__Secure-better-auth.session_token"
       : "better-auth.session_token";
-  return `${cookieName}=${encodeURIComponent(token)}; Path=/; HttpOnly;${secureSegment} SameSite=Lax; Max-Age=${maxAge}`;
+  return `${cookieName}=${encodeURIComponent(signedValue)}; Path=/; HttpOnly;${secureSegment} SameSite=Lax; Max-Age=${maxAge}`;
 }
 
 /**
@@ -222,7 +228,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     const response = NextResponse.json(responseBody);
     response.headers.append(
       "Set-Cookie",
-      buildSessionSetCookie(rawToken, DEFAULT_SESSION_TTL_MS)
+      buildSessionSetCookie(
+        signSessionCookieValue(rawToken, secret),
+        DEFAULT_SESSION_TTL_MS
+      )
     );
     response.headers.append("Set-Cookie", buildPendingSignupClearCookie());
     return response;
