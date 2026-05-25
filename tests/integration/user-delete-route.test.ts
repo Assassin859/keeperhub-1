@@ -4,16 +4,26 @@ vi.mock("server-only", () => ({}));
 
 const USER_ID = "user-1";
 
-const { mockGetSession, mockUsersFindFirst, txUpdateCalls, txDeleteCalls } =
-  vi.hoisted(() => ({
-    mockGetSession: vi.fn(),
-    mockUsersFindFirst: vi.fn(),
-    txUpdateCalls: [] as Array<{ table: unknown; value: unknown }>,
-    txDeleteCalls: [] as Array<{ table: unknown }>,
-  }));
+const {
+  mockGetSession,
+  mockUsersFindFirst,
+  mockRequireDualFactor,
+  txUpdateCalls,
+  txDeleteCalls,
+} = vi.hoisted(() => ({
+  mockGetSession: vi.fn(),
+  mockUsersFindFirst: vi.fn(),
+  mockRequireDualFactor: vi.fn(),
+  txUpdateCalls: [] as Array<{ table: unknown; value: unknown }>,
+  txDeleteCalls: [] as Array<{ table: unknown }>,
+}));
 
 vi.mock("@/lib/auth", () => ({
   auth: { api: { getSession: mockGetSession } },
+}));
+
+vi.mock("@/lib/mfa/dual-factor", () => ({
+  requireDualFactor: mockRequireDualFactor,
 }));
 
 // Track every tx.update / tx.delete call in order so the test asserts on
@@ -73,6 +83,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   txUpdateCalls.length = 0;
   txDeleteCalls.length = 0;
+  mockRequireDualFactor.mockResolvedValue({ ok: true });
 });
 
 describe("POST /api/user/delete", () => {

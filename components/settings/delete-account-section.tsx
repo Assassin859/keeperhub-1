@@ -32,6 +32,8 @@ export function DeactivateAccountSection() {
   const mfaEnrolled = sessionUser?.twoFactorEnabled === true;
   const [confirmation, setConfirmation] = useState("");
   const [totpCode, setTotpCode] = useState("");
+  const [emailOtp, setEmailOtp] = useState("");
+  const [awaitingEmailOtp, setAwaitingEmailOtp] = useState(false);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
 
@@ -40,8 +42,12 @@ export function DeactivateAccountSection() {
       toast.error("Please type DEACTIVATE to confirm");
       return;
     }
-    if (mfaEnrolled && totpCode.trim().length !== 6) {
+    if (totpCode.trim().length !== 6) {
       toast.error("Enter the 6-digit code from your authenticator");
+      return;
+    }
+    if (awaitingEmailOtp && emailOtp.trim().length !== 6) {
+      toast.error("Enter the 6-digit code we emailed you");
       return;
     }
 
@@ -52,7 +58,8 @@ export function DeactivateAccountSection() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           confirmation,
-          code: mfaEnrolled ? totpCode.trim() : undefined,
+          code: totpCode.trim(),
+          emailOtp: emailOtp.trim() || undefined,
         }),
       });
 
@@ -62,12 +69,20 @@ export function DeactivateAccountSection() {
       };
 
       if (!response.ok) {
-        if (
-          data.code === "mfa_code_invalid" ||
-          data.code === "mfa_code_required"
-        ) {
-          toast.error(data.error ?? "Invalid verification code");
+        if (data.code === "factors_required") {
+          setAwaitingEmailOtp(true);
+          setEmailOtp("");
+          toast.success("We just emailed you a confirmation code");
+          return;
+        }
+        if (data.code === "mfa_code_invalid") {
+          toast.error(data.error ?? "Invalid authenticator code");
           setTotpCode("");
+          return;
+        }
+        if (data.code === "email_code_invalid") {
+          toast.error(data.error ?? "Invalid email code");
+          setEmailOtp("");
           return;
         }
         throw new Error(data.error ?? "Failed to deactivate account");
@@ -128,21 +143,40 @@ export function DeactivateAccountSection() {
                     value={confirmation}
                   />
                 </div>
-                {mfaEnrolled && (
+                <div className="space-y-2">
+                  <Label htmlFor="deactivateTotp">Authenticator code</Label>
+                  <Input
+                    autoComplete="one-time-code"
+                    className="font-mono text-center text-lg tracking-[0.3em]"
+                    id="deactivateTotp"
+                    inputMode="numeric"
+                    maxLength={6}
+                    onChange={(e) =>
+                      setTotpCode(e.target.value.replace(/\D/g, ""))
+                    }
+                    placeholder="000000"
+                    value={totpCode}
+                  />
+                </div>
+                {awaitingEmailOtp && (
                   <div className="space-y-2">
-                    <Label htmlFor="deactivateTotp">Authenticator code</Label>
+                    <Label htmlFor="deactivateEmailOtp">Email code</Label>
                     <Input
                       autoComplete="one-time-code"
                       className="font-mono text-center text-lg tracking-[0.3em]"
-                      id="deactivateTotp"
+                      id="deactivateEmailOtp"
                       inputMode="numeric"
                       maxLength={6}
                       onChange={(e) =>
-                        setTotpCode(e.target.value.replace(/\D/g, ""))
+                        setEmailOtp(e.target.value.replace(/\D/g, ""))
                       }
                       placeholder="000000"
-                      value={totpCode}
+                      value={emailOtp}
                     />
+                    <p className="text-muted-foreground text-xs">
+                      We emailed a 6-digit confirmation code. Enter it
+                      above along with your authenticator code.
+                    </p>
                   </div>
                 )}
               </div>
@@ -152,6 +186,8 @@ export function DeactivateAccountSection() {
                   onClick={() => {
                     setConfirmation("");
                     setTotpCode("");
+                    setEmailOtp("");
+                    setAwaitingEmailOtp(false);
                   }}
                 >
                   Cancel
@@ -161,7 +197,8 @@ export function DeactivateAccountSection() {
                   disabled={
                     confirmation !== "DEACTIVATE" ||
                     loading ||
-                    (mfaEnrolled && totpCode.trim().length !== 6)
+                    totpCode.trim().length !== 6 ||
+                    (awaitingEmailOtp && emailOtp.trim().length !== 6)
                   }
                   onClick={(e) => {
                     e.preventDefault();
@@ -169,7 +206,9 @@ export function DeactivateAccountSection() {
                   }}
                 >
                   {loading ? <Spinner className="mr-2 size-4" /> : null}
-                  Deactivate Account
+                  {awaitingEmailOtp
+                    ? "Confirm Deactivation"
+                    : "Deactivate Account"}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>

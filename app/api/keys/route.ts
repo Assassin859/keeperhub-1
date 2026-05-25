@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { organizationApiKeys, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { requireDualFactor } from "@/lib/mfa/dual-factor";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { getOrgContext } from "@/lib/middleware/org-context";
 import { requireAdminOrOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
@@ -142,26 +143,22 @@ export async function POST(request: Request) {
     // Parse request body
     const body = await request.json().catch(() => ({}));
 
-    // Fresh TOTP challenge — minting a forever-bypass credential
-    // warrants a re-prompt at the exact moment, not just passive
-    // session MFA. Symmetric with withdraw / export-key.
-    const code =
-      typeof body.code === "string" ? body.code.trim() : "";
-    if (code.length !== 6) {
+    // Dual-factor challenge — minting a forever-bypass credential
+    // warrants both a fresh TOTP from the authenticator AND a fresh
+    // email OTP from the user's inbox. Symmetric with withdraw /
+    // export-key.
+    const dual = await requireDualFactor({
+      userId: session.user.id,
+      email: session.user.email,
+      action: "org_api_key_create",
+      code: typeof body.code === "string" ? body.code : undefined,
+      emailOtp: typeof body.emailOtp === "string" ? body.emailOtp : undefined,
+      headers: request.headers,
+    });
+    if (!dual.ok) {
       return NextResponse.json(
-        { error: "A 6-digit verification code is required", code: "mfa_code_required" },
-        { status: 400 }
-      );
-    }
-    try {
-      await auth.api.verifyTOTP({
-        body: { code },
-        headers: request.headers,
-      });
-    } catch {
-      return NextResponse.json(
-        { error: "Invalid verification code", code: "mfa_code_invalid" },
-        { status: 401 }
+        { error: dual.error, code: dual.code },
+        { status: dual.status }
       );
     }
     const name = body.name || null;

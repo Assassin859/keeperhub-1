@@ -97,6 +97,7 @@ const {
   mockResolveApprovalRequest,
   mockCheckApprovalForResolve,
   mockRequireMfaEnrolled,
+  mockRequireDualFactor,
 } = vi.hoisted(() => {
   const store = new Map<string, unknown>();
   return {
@@ -113,6 +114,7 @@ const {
     mockResolveApprovalRequest: vi.fn(),
     mockCheckApprovalForResolve: vi.fn(),
     mockRequireMfaEnrolled: vi.fn(),
+    mockRequireDualFactor: vi.fn(),
   };
 });
 
@@ -151,6 +153,10 @@ vi.mock("@/lib/auth", () => ({
 
 vi.mock("@/lib/middleware/owner-mfa-guard", () => ({
   requireMfaEnrolled: mockRequireMfaEnrolled,
+}));
+
+vi.mock("@/lib/mfa/dual-factor", () => ({
+  requireDualFactor: mockRequireDualFactor,
 }));
 
 // The `.where()` return value must support BOTH shapes: `.limit(1)` (used by
@@ -402,6 +408,8 @@ describe("agentic-wallet approval-request lifecycle", () => {
     mockDbSelectWhereAwait.mockReset();
     mockRequireMfaEnrolled.mockReset();
     mockRequireMfaEnrolled.mockResolvedValue({ ok: true });
+    mockRequireDualFactor.mockReset();
+    mockRequireDualFactor.mockResolvedValue({ ok: true });
     // Default secret resolver: SUB_ORG -> HMAC_SECRET, OTHER_SUB_ORG -> OTHER_HMAC_SECRET.
     mockLookupHmacSecret.mockImplementation(async (subOrgId: string) => {
       if (subOrgId === SUB_ORG) {

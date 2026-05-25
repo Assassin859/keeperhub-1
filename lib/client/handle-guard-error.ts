@@ -11,6 +11,7 @@ export type GuardErrorCode =
   | "not_owner"
   | "not_admin_or_owner"
   | "mfa_not_enrolled"
+  | "mfa_enrollment_required"
   | "mfa_pending";
 
 export type GuardErrorBody = {
@@ -20,16 +21,23 @@ export type GuardErrorBody = {
 
 type Handlers = {
   /**
-   * Called when the server says the user must enroll TOTP before
-   * doing this action. The callsite typically opens Settings -> Security
-   * (where the TwoFactorSection lives) so the user can take action
-   * from the toast.
+   * Called when an action-scoped guard says the user must enroll TOTP
+   * before doing this specific action (mfa_not_enrolled). The callsite
+   * typically opens Settings -> Security so the user can self-serve.
    */
   onEnrollMfa?: () => void;
   /**
-   * Called when the server says the session is flagged by login-risk
-   * detection and step-up has not been completed. The callsite
-   * typically routes to /verify-mfa, optionally with a `next` query.
+   * Called when the proxy-level mandate gate refuses any further
+   * action because the account itself has no TOTP enrolled
+   * (mfa_enrollment_required). The callsite typically routes to
+   * /enroll-mfa, optionally with a `next` query, where the user lands
+   * in an undismissable enrollment wizard.
+   */
+  onForceEnroll?: (currentPath: string) => void;
+  /**
+   * Called when the server says the session is flagged and step-up has
+   * not been completed (mfa_pending). The callsite typically routes to
+   * /verify-mfa, optionally with a `next` query.
    */
   onPendingMfa?: (currentPath: string) => void;
 };
@@ -66,6 +74,18 @@ export async function handleGuardError(
         "Enable two-factor authentication on your account before this action."
     );
     handlers.onEnrollMfa?.();
+    return true;
+  }
+  if (code === "mfa_enrollment_required") {
+    toast.error(
+      body.error ??
+        "Two-factor authentication is required on your account. Set it up to continue."
+    );
+    const currentPath =
+      typeof window === "undefined"
+        ? "/"
+        : window.location.pathname + window.location.search;
+    handlers.onForceEnroll?.(currentPath);
     return true;
   }
   if (code === "mfa_pending") {

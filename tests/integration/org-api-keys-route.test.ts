@@ -6,23 +6,23 @@ const USER_ID = "user-123";
 const {
   mockResolveOrganizationId,
   mockGetSession,
-  mockVerifyTotp,
   mockGetOrgContext,
   mockOrgKeysFindMany,
   mockUsersFindMany,
   mockInsertReturning,
   mockUpdateReturning,
   mockRequireAdminOrOwnerWithMfa,
+  mockRequireDualFactor,
 } = vi.hoisted(() => ({
   mockResolveOrganizationId: vi.fn(),
   mockGetSession: vi.fn(),
-  mockVerifyTotp: vi.fn(),
   mockGetOrgContext: vi.fn(),
   mockOrgKeysFindMany: vi.fn(),
   mockUsersFindMany: vi.fn(),
   mockInsertReturning: vi.fn(),
   mockUpdateReturning: vi.fn(),
   mockRequireAdminOrOwnerWithMfa: vi.fn(),
+  mockRequireDualFactor: vi.fn(),
 }));
 
 vi.mock("@/lib/middleware/auth-helpers", () => ({
@@ -33,13 +33,16 @@ vi.mock("@/lib/auth", () => ({
   auth: {
     api: {
       getSession: mockGetSession,
-      verifyTOTP: mockVerifyTotp,
     },
   },
 }));
 
 vi.mock("@/lib/middleware/owner-mfa-guard", () => ({
   requireAdminOrOwnerWithMfa: mockRequireAdminOrOwnerWithMfa,
+}));
+
+vi.mock("@/lib/mfa/dual-factor", () => ({
+  requireDualFactor: mockRequireDualFactor,
 }));
 
 vi.mock("@/lib/middleware/org-context", () => ({
@@ -258,7 +261,7 @@ describe("POST /api/keys", () => {
       organization: { id: ORG_ID },
     });
     mockRequireAdminOrOwnerWithMfa.mockResolvedValue({ ok: true });
-    mockVerifyTotp.mockResolvedValue({ valid: true });
+    mockRequireDualFactor.mockResolvedValue({ ok: true });
     mockInsertReturning.mockResolvedValue([
       {
         id: "new-key-id",
@@ -289,7 +292,7 @@ describe("POST /api/keys", () => {
       organization: { id: ORG_ID },
     });
     mockRequireAdminOrOwnerWithMfa.mockResolvedValue({ ok: true });
-    mockVerifyTotp.mockResolvedValue({ valid: true });
+    mockRequireDualFactor.mockResolvedValue({ ok: true });
     mockInsertReturning.mockResolvedValue([
       {
         id: "new-key-id",
@@ -322,7 +325,7 @@ describe("POST /api/keys", () => {
       organization: { id: ORG_ID },
     });
     mockRequireAdminOrOwnerWithMfa.mockResolvedValue({ ok: true });
-    mockVerifyTotp.mockResolvedValue({ valid: true });
+    mockRequireDualFactor.mockResolvedValue({ ok: true });
     mockInsertReturning.mockRejectedValue(new Error("Insert failed"));
 
     const response = await POST(
@@ -361,7 +364,7 @@ describe("DELETE /api/keys/:keyId (revoke)", () => {
       session: { requiresMfa: false },
     });
     mockRequireAdminOrOwnerWithMfa.mockResolvedValue({ ok: true });
-    mockVerifyTotp.mockResolvedValue({ valid: true });
+    mockRequireDualFactor.mockResolvedValue({ ok: true });
     mockUpdateReturning.mockResolvedValue([{ id: "key-1" }]);
 
     const response = await DELETE(
@@ -382,7 +385,7 @@ describe("DELETE /api/keys/:keyId (revoke)", () => {
       session: { requiresMfa: false },
     });
     mockRequireAdminOrOwnerWithMfa.mockResolvedValue({ ok: true });
-    mockVerifyTotp.mockResolvedValue({ valid: true });
+    mockRequireDualFactor.mockResolvedValue({ ok: true });
     mockUpdateReturning.mockResolvedValue([]);
 
     const response = await DELETE(
@@ -403,7 +406,7 @@ describe("DELETE /api/keys/:keyId (revoke)", () => {
       session: { requiresMfa: false },
     });
     mockRequireAdminOrOwnerWithMfa.mockResolvedValue({ ok: true });
-    mockVerifyTotp.mockResolvedValue({ valid: true });
+    mockRequireDualFactor.mockResolvedValue({ ok: true });
     mockUpdateReturning.mockResolvedValue([]);
 
     const response = await DELETE(
@@ -422,7 +425,7 @@ describe("DELETE /api/keys/:keyId (revoke)", () => {
       session: { requiresMfa: false },
     });
     mockRequireAdminOrOwnerWithMfa.mockResolvedValue({ ok: true });
-    mockVerifyTotp.mockResolvedValue({ valid: true });
+    mockRequireDualFactor.mockResolvedValue({ ok: true });
     mockUpdateReturning.mockRejectedValue(new Error("Update failed"));
 
     const response = await DELETE(

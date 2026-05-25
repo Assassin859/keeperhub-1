@@ -7,26 +7,37 @@ type AccountSettingsProps = {
   accountEmail: string;
   /**
    * Set when the user has TOTP enrolled AND the email field has
-   * diverged from its loaded value. Triggers the inline 6-digit
-   * code prompt — the server requires a fresh TOTP code on email
-   * changes for enrolled users to defend against account-takeover
-   * via the password-reset path.
+   * diverged from its loaded value. Triggers the inline TOTP and
+   * (after the server emails an OTP) the email-code prompt. The
+   * server requires both factors for email change so a stolen
+   * session alone cannot redirect password-reset to an attacker
+   * mailbox.
    */
   showMfaCode?: boolean;
+  /**
+   * True after the server has emailed a confirmation code in
+   * response to a first save attempt. Reveals the email-code input.
+   */
+  awaitingEmailOtp?: boolean;
   totpCode?: string;
+  emailOtp?: string;
   onNameChange: (name: string) => void;
   onEmailChange: (email: string) => void;
   onTotpChange?: (code: string) => void;
+  onEmailOtpChange?: (code: string) => void;
 };
 
 export function AccountSettings({
   accountName,
   accountEmail,
   showMfaCode,
+  awaitingEmailOtp,
   totpCode,
+  emailOtp,
   onNameChange,
   onEmailChange,
   onTotpChange,
+  onEmailOtpChange,
 }: AccountSettingsProps) {
   return (
     <Card className="border-0 py-0 shadow-none">
@@ -73,6 +84,30 @@ export function AccountSettings({
               placeholder="000000"
               value={totpCode ?? ""}
             />
+          </div>
+        )}
+
+        {awaitingEmailOtp && (
+          <div className="space-y-2">
+            <Label className="ml-1" htmlFor="accountEmailOtp">
+              Email code (required to change email)
+            </Label>
+            <Input
+              autoComplete="one-time-code"
+              className="font-mono text-center text-lg tracking-[0.3em]"
+              id="accountEmailOtp"
+              inputMode="numeric"
+              maxLength={6}
+              onChange={(e) =>
+                onEmailOtpChange?.(e.target.value.replace(/\D/g, ""))
+              }
+              placeholder="000000"
+              value={emailOtp ?? ""}
+            />
+            <p className="ml-1 text-muted-foreground text-xs">
+              We emailed a 6-digit confirmation code. Enter it along with
+              your authenticator code.
+            </p>
           </div>
         )}
       </CardContent>

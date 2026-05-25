@@ -28,6 +28,8 @@ export function SettingsOverlay({ overlayId }: SettingsOverlayProps) {
   const [originalEmail, setOriginalEmail] = useState("");
   const [providerId, setProviderId] = useState<string | null>(null);
   const [totpCode, setTotpCode] = useState("");
+  const [emailOtp, setEmailOtp] = useState("");
+  const [awaitingEmailOtp, setAwaitingEmailOtp] = useState(false);
 
   const session = useSession();
   const sessionUser = session.data?.user as
@@ -68,26 +70,55 @@ export function SettingsOverlay({ overlayId }: SettingsOverlayProps) {
       toast.error("Enter the 6-digit code from your authenticator");
       return;
     }
+    if (showMfaCode && awaitingEmailOtp && emailOtp.trim().length !== 6) {
+      toast.error("Enter the 6-digit code we emailed you");
+      return;
+    }
     try {
       setSaving(true);
-      await api.user.update({
-        name: accountName,
-        email: accountEmail,
-        code: showMfaCode ? totpCode.trim() : undefined,
+      // Switch to raw fetch for the email-change path so the
+      // dual-factor response codes (factors_required / *_invalid) can
+      // be inspected directly rather than parsed out of a thrown
+      // Error message.
+      const response = await fetch("/api/user", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: accountName,
+          email: accountEmail,
+          code: showMfaCode ? totpCode.trim() : undefined,
+          emailOtp:
+            showMfaCode && emailOtp.trim() ? emailOtp.trim() : undefined,
+        }),
       });
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as {
+          error?: string;
+          code?: string;
+        };
+        if (data.code === "factors_required") {
+          setAwaitingEmailOtp(true);
+          setEmailOtp("");
+          toast.success("We just emailed you a confirmation code");
+          return;
+        }
+        if (data.code === "mfa_code_invalid") {
+          toast.error(data.error ?? "Invalid authenticator code");
+          setTotpCode("");
+          return;
+        }
+        if (data.code === "email_code_invalid") {
+          toast.error(data.error ?? "Invalid email code");
+          setEmailOtp("");
+          return;
+        }
+        throw new Error(data.error ?? "Failed to save settings");
+      }
       await loadAccount();
       toast.success("Settings saved");
       closeAll();
     } catch (error) {
-      // apiCall throws on non-2xx; parse the json body if possible to
-      // route MFA failures back to the input instead of bailing to a
-      // generic toast.
       const message = error instanceof Error ? error.message : "";
-      if (message.toLowerCase().includes("verification code")) {
-        toast.error(message || "Invalid verification code");
-        setTotpCode("");
-        return;
-      }
       console.error("Failed to save account:", error);
       toast.error(message || "Failed to save settings");
     } finally {
@@ -128,7 +159,10 @@ export function SettingsOverlay({ overlayId }: SettingsOverlayProps) {
             <AccountSettings
               accountEmail={accountEmail}
               accountName={accountName}
+              awaitingEmailOtp={awaitingEmailOtp && showMfaCode}
+              emailOtp={emailOtp}
               onEmailChange={setAccountEmail}
+              onEmailOtpChange={setEmailOtp}
               onNameChange={setAccountName}
               onTotpChange={setTotpCode}
               showMfaCode={showMfaCode}

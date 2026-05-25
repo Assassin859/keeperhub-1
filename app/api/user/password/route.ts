@@ -2,8 +2,9 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { accounts, users } from "@/lib/db/schema";
+import { accounts } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { requireDualFactor } from "@/lib/mfa/dual-factor";
 import { hashPassword, verifyPassword } from "@/lib/password";
 
 const OAUTH_PROVIDERS = ["github", "google"];
@@ -56,8 +57,9 @@ export async function POST(request: Request): Promise<NextResponse> {
       currentPassword?: string;
       newPassword?: string;
       code?: string;
+      emailOtp?: string;
     };
-    const { currentPassword, newPassword, code } = body;
+    const { currentPassword, newPassword, code, emailOtp } = body;
 
     if (!(currentPassword && newPassword)) {
       return NextResponse.json(
@@ -92,42 +94,22 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    // Fresh TOTP challenge for users who have MFA enrolled. Phished
-    // current password alone must not rotate the account password —
-    // the second factor is what stops the takeover from completing.
-    // Users without MFA enrolled stay on the current-password-only
-    // flow (no downgrade for early adopters; they get this protection
-    // automatically the moment they enroll).
-    const [userRow] = await db
-      .select({ twoFactorEnabled: users.twoFactorEnabled })
-      .from(users)
-      .where(eq(users.id, session.user.id))
-      .limit(1);
-    if (userRow?.twoFactorEnabled === true) {
-      const totpCode = typeof code === "string" ? code.trim() : "";
-      if (totpCode.length !== 6) {
-        return NextResponse.json(
-          {
-            error: "A 6-digit verification code is required",
-            code: "mfa_code_required",
-          },
-          { status: 400 }
-        );
-      }
-      try {
-        await auth.api.verifyTOTP({
-          body: { code: totpCode },
-          headers: request.headers,
-        });
-      } catch {
-        return NextResponse.json(
-          {
-            error: "Invalid verification code",
-            code: "mfa_code_invalid",
-          },
-          { status: 401 }
-        );
-      }
+    // Dual-factor challenge. Phished current password alone must not
+    // rotate the account password — TOTP + email OTP together stop
+    // the takeover.
+    const dual = await requireDualFactor({
+      userId: session.user.id,
+      email: session.user.email,
+      action: "password_change",
+      code,
+      emailOtp,
+      headers: request.headers,
+    });
+    if (!dual.ok) {
+      return NextResponse.json(
+        { error: dual.error, code: dual.code },
+        { status: dual.status }
+      );
     }
 
     // Hash and update new password

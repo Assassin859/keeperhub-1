@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { apiKeys } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { requireDualFactor } from "@/lib/mfa/dual-factor";
 import { requireMfaEnrolled } from "@/lib/middleware/owner-mfa-guard";
 
 // Generate a secure API key
@@ -98,24 +99,20 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => ({}));
     const name = body.name || null;
 
-    // Fresh TOTP at mint time. Same rationale as the org API key
-    // flow: long-lived bypass credentials warrant a re-prompt.
-    const totpCode = typeof body.code === "string" ? body.code.trim() : "";
-    if (totpCode.length !== 6) {
+    // Dual-factor at mint time. Long-lived bypass credentials warrant
+    // a fresh challenge on BOTH factors at the exact moment of issue.
+    const dual = await requireDualFactor({
+      userId: session.user.id,
+      email: session.user.email,
+      action: "user_api_key_create",
+      code: typeof body.code === "string" ? body.code : undefined,
+      emailOtp: typeof body.emailOtp === "string" ? body.emailOtp : undefined,
+      headers: request.headers,
+    });
+    if (!dual.ok) {
       return NextResponse.json(
-        { error: "A 6-digit verification code is required", code: "mfa_code_required" },
-        { status: 400 }
-      );
-    }
-    try {
-      await auth.api.verifyTOTP({
-        body: { code: totpCode },
-        headers: request.headers,
-      });
-    } catch {
-      return NextResponse.json(
-        { error: "Invalid verification code", code: "mfa_code_invalid" },
-        { status: 401 }
+        { error: dual.error, code: dual.code },
+        { status: dual.status }
       );
     }
 

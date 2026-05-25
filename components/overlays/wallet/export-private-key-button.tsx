@@ -28,6 +28,8 @@ export function ExportPrivateKeyButton(): React.ReactElement | null {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<ExportStep>("idle");
   const [totpCode, setTotpCode] = useState("");
+  const [emailOtp, setEmailOtp] = useState("");
+  const [awaitingEmailOtp, setAwaitingEmailOtp] = useState(false);
   const [privateKey, setPrivateKey] = useState<string | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -83,6 +85,10 @@ export function ExportPrivateKeyButton(): React.ReactElement | null {
       setError("Enter the 6-digit code from your authenticator app");
       return;
     }
+    if (awaitingEmailOtp && emailOtp.length !== 6) {
+      setError("Enter the 6-digit code we emailed you");
+      return;
+    }
 
     setStep("verifying");
     setError(null);
@@ -90,7 +96,10 @@ export function ExportPrivateKeyButton(): React.ReactElement | null {
       const res = await fetch("/api/user/wallet/export-key/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: totpCode }),
+        body: JSON.stringify({
+          code: totpCode,
+          emailOtp: emailOtp || undefined,
+        }),
       });
 
       if (!res.ok) {
@@ -99,7 +108,26 @@ export function ExportPrivateKeyButton(): React.ReactElement | null {
           setStep("totp");
           return;
         }
-        const data: { error?: string } = await res.json();
+        const data: { error?: string; code?: string } = await res.json();
+        if (data.code === "factors_required") {
+          setAwaitingEmailOtp(true);
+          setEmailOtp("");
+          setStep("totp");
+          toast.success("We just emailed you a confirmation code");
+          return;
+        }
+        if (data.code === "mfa_code_invalid") {
+          setTotpCode("");
+          setError(data.error ?? "Invalid authenticator code");
+          setStep("totp");
+          return;
+        }
+        if (data.code === "email_code_invalid") {
+          setEmailOtp("");
+          setError(data.error ?? "Invalid email code");
+          setStep("totp");
+          return;
+        }
         throw new Error(data.error ?? "Verification failed");
       }
 
@@ -129,6 +157,8 @@ export function ExportPrivateKeyButton(): React.ReactElement | null {
     setOpen(false);
     setStep("idle");
     setTotpCode("");
+    setEmailOtp("");
+    setAwaitingEmailOtp(false);
     setPrivateKey(null);
     setRevealed(false);
     setError(null);
@@ -205,7 +235,7 @@ export function ExportPrivateKeyButton(): React.ReactElement | null {
                 <Label htmlFor="export-totp">Authenticator code</Label>
                 <Input
                   autoComplete="one-time-code"
-                  autoFocus
+                  autoFocus={!awaitingEmailOtp}
                   className="font-mono text-center text-lg tracking-[0.3em]"
                   id="export-totp"
                   inputMode="numeric"
@@ -216,8 +246,30 @@ export function ExportPrivateKeyButton(): React.ReactElement | null {
                   placeholder="000000"
                   value={totpCode}
                 />
-                {error && <p className="text-destructive text-sm">{error}</p>}
               </div>
+              {awaitingEmailOtp && (
+                <div className="space-y-2">
+                  <Label htmlFor="export-email-otp">Email code</Label>
+                  <Input
+                    autoComplete="one-time-code"
+                    autoFocus
+                    className="font-mono text-center text-lg tracking-[0.3em]"
+                    id="export-email-otp"
+                    inputMode="numeric"
+                    maxLength={6}
+                    onChange={(e) =>
+                      setEmailOtp(e.target.value.replace(/\D/g, ""))
+                    }
+                    placeholder="000000"
+                    value={emailOtp}
+                  />
+                  <p className="text-muted-foreground text-xs">
+                    We emailed a 6-digit confirmation code. Enter it above
+                    along with your authenticator code.
+                  </p>
+                </div>
+              )}
+              {error && <p className="text-destructive text-sm">{error}</p>}
               <div className="flex gap-2">
                 <Button
                   className="flex-1"
@@ -229,7 +281,11 @@ export function ExportPrivateKeyButton(): React.ReactElement | null {
                 </Button>
                 <Button
                   className="flex-1"
-                  disabled={step === "verifying" || totpCode.length !== 6}
+                  disabled={
+                    step === "verifying" ||
+                    totpCode.length !== 6 ||
+                    (awaitingEmailOtp && emailOtp.length !== 6)
+                  }
                   onClick={handleVerify}
                 >
                   {step === "verifying" ? (
@@ -237,8 +293,10 @@ export function ExportPrivateKeyButton(): React.ReactElement | null {
                       <Spinner className="mr-2 h-4 w-4" />
                       Verifying...
                     </>
+                  ) : awaitingEmailOtp ? (
+                    "Confirm & Export"
                   ) : (
-                    "Verify & Export"
+                    "Continue"
                   )}
                 </Button>
               </div>

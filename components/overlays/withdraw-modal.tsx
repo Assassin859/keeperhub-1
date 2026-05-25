@@ -93,6 +93,8 @@ export function WithdrawModal({
   const [amount, setAmount] = useState("");
   const [recipient, setRecipient] = useState("");
   const [mfaCode, setMfaCode] = useState("");
+  const [emailOtp, setEmailOtp] = useState("");
+  const [awaitingEmailOtp, setAwaitingEmailOtp] = useState(false);
   const [state, setState] = useState<WithdrawState>("input");
   const [txHash, setTxHash] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -323,6 +325,10 @@ export function WithdrawModal({
       toast.error("Enter the 6-digit code from your authenticator");
       return;
     }
+    if (awaitingEmailOtp && emailOtp.trim().length !== 6) {
+      toast.error("Enter the 6-digit code we emailed to you");
+      return;
+    }
 
     setState("confirming");
     setErrorMessage(null);
@@ -347,6 +353,7 @@ export function WithdrawModal({
           fromMax: useServerMax,
           safeId: source.kind === "safe" ? source.safeId : undefined,
           code: mfaCode.trim(),
+          emailOtp: emailOtp.trim() || undefined,
         }),
       });
 
@@ -367,15 +374,28 @@ export function WithdrawModal({
           return;
         }
         const data = await response.json();
-        // 401 with mfa_code_invalid or 400 with mfa_code_required:
-        // bring the user back to the MFA step instead of dropping
-        // them into the red error screen with no way to retry.
-        if (
-          data.code === "mfa_code_invalid" ||
-          data.code === "mfa_code_required"
-        ) {
-          toast.error(data.error || "Invalid verification code");
+        // factors_required: server just emailed a fresh code. Reveal
+        // the email field and let the user finish the dual-factor.
+        if (data.code === "factors_required") {
+          setAwaitingEmailOtp(true);
+          setEmailOtp("");
+          setState("mfa-code");
+          toast.success("We just emailed you a confirmation code");
+          return;
+        }
+        // mfa_code_invalid / email_code_invalid: bring the user back
+        // to the MFA step instead of dropping them into the red error
+        // screen with no way to retry. For email_code_invalid we keep
+        // the TOTP so they only re-enter what changed.
+        if (data.code === "mfa_code_invalid") {
+          toast.error(data.error || "Invalid authenticator code");
           setMfaCode("");
+          setState("mfa-code");
+          return;
+        }
+        if (data.code === "email_code_invalid") {
+          toast.error(data.error || "Invalid email code");
+          setEmailOtp("");
           setState("mfa-code");
           return;
         }
@@ -517,22 +537,29 @@ export function WithdrawModal({
     );
   }
 
-  // MFA code step: shown after the user clicks "Withdraw" on the
-  // input form. The owner+MFA-enrolled checks have already passed by
-  // this point; we just need a fresh TOTP code to confirm the action.
+  // MFA code step: dual-factor confirmation. First click sends the
+  // TOTP and triggers the server to email a fresh OTP; the email field
+  // reveals once that response lands. The second click submits both.
   if (state === "mfa-code") {
+    const submitDisabled =
+      mfaCode.trim().length !== 6 ||
+      (awaitingEmailOtp && emailOtp.trim().length !== 6);
     return (
       <Overlay
         actions={[
           {
             label: "Back",
             variant: "outline",
-            onClick: () => setState("input"),
+            onClick: () => {
+              setAwaitingEmailOtp(false);
+              setEmailOtp("");
+              setState("input");
+            },
           },
           {
-            label: "Confirm withdraw",
+            label: awaitingEmailOtp ? "Confirm withdraw" : "Continue",
             onClick: handleSubmit,
-            disabled: mfaCode.trim().length !== 6,
+            disabled: submitDisabled,
           },
         ]}
         overlayId={overlayId}
@@ -543,21 +570,45 @@ export function WithdrawModal({
           confirm sending {amount} {selectedAsset?.symbol} to{" "}
           {truncateAddress(recipient)}.
         </p>
-        <div className="space-y-2">
-          <Label htmlFor="withdraw-mfa-code">Authenticator code</Label>
-          <Input
-            autoComplete="one-time-code"
-            autoFocus
-            className="font-mono text-center text-lg tracking-[0.3em]"
-            id="withdraw-mfa-code"
-            inputMode="numeric"
-            maxLength={6}
-            onChange={(event) =>
-              setMfaCode(event.target.value.replace(/\D/g, ""))
-            }
-            placeholder="000000"
-            value={mfaCode}
-          />
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="withdraw-mfa-code">Authenticator code</Label>
+            <Input
+              autoComplete="one-time-code"
+              autoFocus={!awaitingEmailOtp}
+              className="font-mono text-center text-lg tracking-[0.3em]"
+              id="withdraw-mfa-code"
+              inputMode="numeric"
+              maxLength={6}
+              onChange={(event) =>
+                setMfaCode(event.target.value.replace(/\D/g, ""))
+              }
+              placeholder="000000"
+              value={mfaCode}
+            />
+          </div>
+          {awaitingEmailOtp && (
+            <div className="space-y-2">
+              <Label htmlFor="withdraw-email-otp">Email code</Label>
+              <Input
+                autoComplete="one-time-code"
+                autoFocus
+                className="font-mono text-center text-lg tracking-[0.3em]"
+                id="withdraw-email-otp"
+                inputMode="numeric"
+                maxLength={6}
+                onChange={(event) =>
+                  setEmailOtp(event.target.value.replace(/\D/g, ""))
+                }
+                placeholder="000000"
+                value={emailOtp}
+              />
+              <p className="text-muted-foreground text-xs">
+                We emailed a 6-digit confirmation code. Enter it above
+                along with your authenticator code.
+              </p>
+            </div>
+          )}
         </div>
       </Overlay>
     );

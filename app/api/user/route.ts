@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { accounts, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { requireDualFactor } from "@/lib/mfa/dual-factor";
 import {
   auditFromAuth,
   type DualAuthContext,
@@ -119,42 +120,27 @@ export async function PATCH(request: Request) {
 
     // Email change is account-takeover surface — if an attacker can
     // swap the email to one they control, every subsequent password-
-    // reset path mints them a session as the victim. Require a fresh
-    // TOTP for the email path specifically when the user is enrolled.
+    // reset path mints them a session as the victim. Require dual-
+    // factor (TOTP + email OTP) for the email path specifically. Note:
+    // the email OTP is sent to the CURRENT email so the attacker
+    // cannot satisfy the inbox factor unless they already control it.
     // Name-only updates skip the gate (low risk, frequent).
     const isEmailChange =
       updates.email !== undefined && updates.email !== session.user.email;
     if (isEmailChange) {
-      const userRow = await db.query.users.findFirst({
-        where: eq(users.id, session.user.id),
-        columns: { twoFactorEnabled: true },
+      const dual = await requireDualFactor({
+        userId: session.user.id,
+        email: session.user.email,
+        action: "email_change",
+        code: typeof body.code === "string" ? body.code : undefined,
+        emailOtp: typeof body.emailOtp === "string" ? body.emailOtp : undefined,
+        headers: request.headers,
       });
-      if (userRow?.twoFactorEnabled === true) {
-        const totpCode =
-          typeof body.code === "string" ? body.code.trim() : "";
-        if (totpCode.length !== 6) {
-          return NextResponse.json(
-            {
-              error: "A 6-digit verification code is required",
-              code: "mfa_code_required",
-            },
-            { status: 400 }
-          );
-        }
-        try {
-          await auth.api.verifyTOTP({
-            body: { code: totpCode },
-            headers: request.headers,
-          });
-        } catch {
-          return NextResponse.json(
-            {
-              error: "Invalid verification code",
-              code: "mfa_code_invalid",
-            },
-            { status: 401 }
-          );
-        }
+      if (!dual.ok) {
+        return NextResponse.json(
+          { error: dual.error, code: dual.code },
+          { status: dual.status }
+        );
       }
     }
 

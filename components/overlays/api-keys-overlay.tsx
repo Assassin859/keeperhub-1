@@ -48,6 +48,8 @@ function CreateApiKeyOverlay({
   const router = useRouter();
   const [keyName, setKeyName] = useState("");
   const [totpCode, setTotpCode] = useState("");
+  const [emailOtp, setEmailOtp] = useState("");
+  const [awaitingEmailOtp, setAwaitingEmailOtp] = useState(false);
   const [creating, setCreating] = useState(false);
 
   const handleCreate = async (): Promise<void> => {
@@ -59,6 +61,7 @@ function CreateApiKeyOverlay({
         body: JSON.stringify({
           name: keyName || null,
           code: totpCode.trim(),
+          emailOtp: emailOtp.trim() || undefined,
         }),
       });
 
@@ -80,12 +83,20 @@ function CreateApiKeyOverlay({
           error?: string;
           code?: string;
         };
-        if (
-          data.code === "mfa_code_invalid" ||
-          data.code === "mfa_code_required"
-        ) {
-          toast.error(data.error || "Invalid verification code");
+        if (data.code === "factors_required") {
+          setAwaitingEmailOtp(true);
+          setEmailOtp("");
+          toast.success("We just emailed you a confirmation code");
+          return;
+        }
+        if (data.code === "mfa_code_invalid") {
+          toast.error(data.error || "Invalid authenticator code");
           setTotpCode("");
+          return;
+        }
+        if (data.code === "email_code_invalid") {
+          toast.error(data.error || "Invalid email code");
+          setEmailOtp("");
           return;
         }
         throw new Error(data.error || "Failed to create API key");
@@ -114,10 +125,13 @@ function CreateApiKeyOverlay({
     <Overlay
       actions={[
         {
-          label: "Create",
+          label: awaitingEmailOtp ? "Confirm Create" : "Create",
           onClick: handleCreate,
           loading: creating,
-          disabled: !keyName.trim() || totpCode.trim().length !== 6,
+          disabled:
+            !keyName.trim() ||
+            totpCode.trim().length !== 6 ||
+            (awaitingEmailOtp && emailOtp.trim().length !== 6),
         },
       ]}
       overlayId={overlayId}
@@ -150,6 +164,28 @@ function CreateApiKeyOverlay({
             Minting an API key requires a fresh code from your authenticator.
           </p>
         </div>
+        {awaitingEmailOtp && (
+          <div className="space-y-2">
+            <Label htmlFor="key-email-otp">Email code</Label>
+            <Input
+              autoComplete="one-time-code"
+              autoFocus
+              className="font-mono text-center text-lg tracking-[0.3em]"
+              id="key-email-otp"
+              inputMode="numeric"
+              maxLength={6}
+              onChange={(e) =>
+                setEmailOtp(e.target.value.replace(/\D/g, ""))
+              }
+              placeholder="000000"
+              value={emailOtp}
+            />
+            <p className="text-muted-foreground text-xs">
+              We emailed a 6-digit confirmation code. Enter it above
+              along with your authenticator code.
+            </p>
+          </div>
+        )}
       </div>
     </Overlay>
   );
@@ -171,16 +207,43 @@ function DeleteApiKeyOverlay({
 }: {
   overlayId: string;
   keyId: string;
-  onDelete: (keyId: string, code: string) => Promise<void>;
+  onDelete: (
+    keyId: string,
+    code: string,
+    emailOtp: string
+  ) => Promise<{ ok: true } | { ok: false; code: string }>;
 }) {
   const { pop } = useOverlay();
   const [totpCode, setTotpCode] = useState("");
+  const [emailOtp, setEmailOtp] = useState("");
+  const [awaitingEmailOtp, setAwaitingEmailOtp] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const handleConfirm = async (): Promise<void> => {
     setSubmitting(true);
     try {
-      await onDelete(keyId, totpCode.trim());
+      const result = await onDelete(keyId, totpCode.trim(), emailOtp.trim());
+      if (result.ok) {
+        pop();
+        return;
+      }
+      if (result.code === "factors_required") {
+        setAwaitingEmailOtp(true);
+        setEmailOtp("");
+        toast.success("We just emailed you a confirmation code");
+        return;
+      }
+      if (result.code === "mfa_code_invalid") {
+        toast.error("Invalid authenticator code");
+        setTotpCode("");
+        return;
+      }
+      if (result.code === "email_code_invalid") {
+        toast.error("Invalid email code");
+        setEmailOtp("");
+        return;
+      }
+      // "guarded" or "unknown": parent helper already toasted; just close.
       pop();
     } finally {
       setSubmitting(false);
@@ -192,10 +255,12 @@ function DeleteApiKeyOverlay({
       actions={[
         { label: "Cancel", variant: "outline", onClick: pop },
         {
-          label: "Revoke",
+          label: awaitingEmailOtp ? "Confirm Revoke" : "Revoke",
           onClick: handleConfirm,
           loading: submitting,
-          disabled: totpCode.trim().length !== 6,
+          disabled:
+            totpCode.trim().length !== 6 ||
+            (awaitingEmailOtp && emailOtp.trim().length !== 6),
           variant: "destructive",
         },
       ]}
@@ -206,19 +271,45 @@ function DeleteApiKeyOverlay({
         Any integrations using this key will stop working immediately. Enter
         a code from your authenticator to confirm.
       </p>
-      <div className="space-y-2">
-        <Label htmlFor="revoke-totp">Authenticator code</Label>
-        <Input
-          autoComplete="one-time-code"
-          autoFocus
-          className="font-mono text-center text-lg tracking-[0.3em]"
-          id="revoke-totp"
-          inputMode="numeric"
-          maxLength={6}
-          onChange={(event) => setTotpCode(event.target.value.replace(/\D/g, ""))}
-          placeholder="000000"
-          value={totpCode}
-        />
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor="revoke-totp">Authenticator code</Label>
+          <Input
+            autoComplete="one-time-code"
+            autoFocus={!awaitingEmailOtp}
+            className="font-mono text-center text-lg tracking-[0.3em]"
+            id="revoke-totp"
+            inputMode="numeric"
+            maxLength={6}
+            onChange={(event) =>
+              setTotpCode(event.target.value.replace(/\D/g, ""))
+            }
+            placeholder="000000"
+            value={totpCode}
+          />
+        </div>
+        {awaitingEmailOtp && (
+          <div className="space-y-2">
+            <Label htmlFor="revoke-email-otp">Email code</Label>
+            <Input
+              autoComplete="one-time-code"
+              autoFocus
+              className="font-mono text-center text-lg tracking-[0.3em]"
+              id="revoke-email-otp"
+              inputMode="numeric"
+              maxLength={6}
+              onChange={(event) =>
+                setEmailOtp(event.target.value.replace(/\D/g, ""))
+              }
+              placeholder="000000"
+              value={emailOtp}
+            />
+            <p className="text-muted-foreground text-xs">
+              We emailed a 6-digit confirmation code. Enter it above
+              along with your authenticator code.
+            </p>
+          </div>
+        )}
       </div>
     </Overlay>
   );
@@ -235,7 +326,11 @@ function ApiKeysList({
   apiKeys: ApiKey[];
   newlyCreatedKey: string | null;
   deleting: string | null;
-  onDelete: (keyId: string, code: string) => Promise<void>;
+  onDelete: (
+    keyId: string,
+    code: string,
+    emailOtp: string
+  ) => Promise<{ ok: true } | { ok: false; code: string }>;
   onDismissNewKey: () => void;
   showCreator?: boolean;
 }) {
@@ -382,13 +477,17 @@ function useApiKeys(
     setApiKeys((prev) => [newKey, ...prev]);
   };
 
-  const handleDelete = async (keyId: string, code: string): Promise<void> => {
+  const handleDelete = async (
+    keyId: string,
+    code: string,
+    emailOtp: string
+  ): Promise<{ ok: true } | { ok: false; code: string }> => {
     setDeleting(keyId);
     try {
       const response = await fetch(deleteEndpoint(keyId), {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code }),
+        body: JSON.stringify({ code, emailOtp: emailOtp || undefined }),
       });
 
       if (!response.ok) {
@@ -403,29 +502,32 @@ function useApiKeys(
           },
         });
         if (guarded) {
-          return;
+          return { ok: false, code: "guarded" };
         }
         const data = (await response.json().catch(() => ({}))) as {
           error?: string;
           code?: string;
         };
         if (
+          data.code === "factors_required" ||
           data.code === "mfa_code_invalid" ||
-          data.code === "mfa_code_required"
+          data.code === "email_code_invalid"
         ) {
-          toast.error(data.error || "Invalid verification code");
-          return;
+          return { ok: false, code: data.code };
         }
-        throw new Error(data.error || "Failed to delete API key");
+        toast.error(data.error || "Failed to delete API key");
+        return { ok: false, code: "unknown" };
       }
 
       setApiKeys((prev) => prev.filter((k) => k.id !== keyId));
       toast.success("API key revoked");
+      return { ok: true };
     } catch (error) {
       console.error("Failed to delete API key:", error);
       toast.error(
         error instanceof Error ? error.message : "Failed to delete API key"
       );
+      return { ok: false, code: "unknown" };
     } finally {
       setDeleting(null);
     }

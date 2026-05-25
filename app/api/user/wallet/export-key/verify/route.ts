@@ -6,6 +6,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { organizationWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { requireDualFactor } from "@/lib/mfa/dual-factor";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
 import { requireOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
 import { exportTurnkeyPrivateKey } from "@/lib/turnkey/turnkey-client";
@@ -79,24 +80,19 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    const body: { code?: string } = await request.json();
-    const code = typeof body.code === "string" ? body.code.trim() : "";
-    if (code.length !== 6) {
+    const body: { code?: string; emailOtp?: string } = await request.json();
+    const dual = await requireDualFactor({
+      userId: session.user.id,
+      email: session.user.email,
+      action: "wallet_export_key",
+      code: body.code,
+      emailOtp: body.emailOtp,
+      headers: request.headers,
+    });
+    if (!dual.ok) {
       return NextResponse.json(
-        { error: "A valid 6-digit code is required" },
-        { status: 400 }
-      );
-    }
-
-    try {
-      await auth.api.verifyTOTP({
-        body: { code },
-        headers: request.headers,
-      });
-    } catch {
-      return NextResponse.json(
-        { error: "Invalid verification code" },
-        { status: 401 }
+        { error: dual.error, code: dual.code },
+        { status: dual.status }
       );
     }
 

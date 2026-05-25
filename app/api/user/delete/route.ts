@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { organizationApiKeys, sessions, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { requireDualFactor } from "@/lib/mfa/dual-factor";
 
 /**
  * POST /api/user/delete
@@ -22,8 +23,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     const body = (await request.json()) as {
       confirmation?: string;
       code?: string;
+      emailOtp?: string;
     };
-    const { confirmation, code } = body;
+    const { confirmation, code, emailOtp } = body;
 
     if (confirmation !== "DEACTIVATE") {
       return NextResponse.json(
@@ -56,38 +58,23 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    // Fresh TOTP challenge for users who have MFA enrolled. Account
-    // deletion is irreversible (from the user's perspective — it
-    // cascades to sessions + revokes API keys + flips deactivatedAt
-    // which the deactivation trigger then uses to cascade to wallets
-    // etc.). A stolen session must not be able to nuke the account
-    // without proving the second factor. Users without MFA enrolled
-    // keep the DEACTIVATE-typed-confirmation as the only gate.
-    if (user.twoFactorEnabled === true) {
-      const totpCode = typeof code === "string" ? code.trim() : "";
-      if (totpCode.length !== 6) {
-        return NextResponse.json(
-          {
-            error: "A 6-digit verification code is required",
-            code: "mfa_code_required",
-          },
-          { status: 400 }
-        );
-      }
-      try {
-        await auth.api.verifyTOTP({
-          body: { code: totpCode },
-          headers: request.headers,
-        });
-      } catch {
-        return NextResponse.json(
-          {
-            error: "Invalid verification code",
-            code: "mfa_code_invalid",
-          },
-          { status: 401 }
-        );
-      }
+    // Dual-factor challenge. Account deletion cascades to sessions,
+    // revokes API keys, and flips deactivatedAt which cascades to
+    // wallets — a stolen session must not be able to nuke the account
+    // without proving BOTH the authenticator and the inbox.
+    const dual = await requireDualFactor({
+      userId,
+      email: session.user.email,
+      action: "account_deactivate",
+      code,
+      emailOtp,
+      headers: request.headers,
+    });
+    if (!dual.ok) {
+      return NextResponse.json(
+        { error: dual.error, code: dual.code },
+        { status: dual.status }
+      );
     }
 
     // Run the deactivation writes in one transaction so a partial failure

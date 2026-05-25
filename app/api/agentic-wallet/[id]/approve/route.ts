@@ -32,6 +32,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { agenticWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { requireDualFactor } from "@/lib/mfa/dual-factor";
 import { requireMfaEnrolled } from "@/lib/middleware/owner-mfa-guard";
 
 export const dynamic = "force-dynamic";
@@ -85,6 +86,29 @@ export async function POST(
     return NextResponse.json(
       { error: mfa.error, code: mfa.code },
       { status: mfa.status }
+    );
+  }
+
+  // Dual-factor: the human approver must prove both the authenticator
+  // and the inbox at the exact moment of approval. The HMAC create
+  // path that brought the row in is bot-signed; this is where the
+  // human says yes to the fund-moving operation.
+  const body = (await request.json().catch(() => ({}))) as {
+    code?: string;
+    emailOtp?: string;
+  };
+  const dual = await requireDualFactor({
+    userId: session.user.id,
+    email: session.user.email,
+    action: "agentic_wallet_approve",
+    code: body.code,
+    emailOtp: body.emailOtp,
+    headers: request.headers,
+  });
+  if (!dual.ok) {
+    return NextResponse.json(
+      { error: dual.error, code: dual.code },
+      { status: dual.status }
     );
   }
 

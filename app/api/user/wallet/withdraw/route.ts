@@ -8,6 +8,7 @@ import { chains } from "@/lib/db/schema";
 import { safeWallets } from "@/lib/db/schema-extensions";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { recordSafeWithdraw } from "@/lib/metrics/instrumentation/safe";
+import { requireDualFactor } from "@/lib/mfa/dual-factor";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
 import { requireOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
 import {
@@ -103,18 +104,17 @@ async function executeNativeTransfer(
 
 // Withdraw is the highest-leverage action a session cookie can trigger:
 // it moves funds off the org's wallet. Gated on:
-//   1. owner-only role via requireOwnerWithMfa (admin not accepted —
-//      widening the role would let any admin-session compromise drain
-//      the wallet)
-//   2. MFA enrolled + step-up cleared (passive gate)
-//   3. Fresh TOTP challenge at the exact moment of withdrawal. The
-//      client passes `code` in the body; we verify it via the same
-//      auth.api.verifyTOTP primitive used by /verify-mfa and the
-//      manage dialog. Without this, a session that was authenticated
-//      hours ago can still drain funds without a re-challenge.
+//   1. owner-only role via requireOwnerWithMfa (admin not accepted)
+//   2. MFA enrolled + session step-up cleared (passive gate)
+//   3. Dual-factor at request time via requireDualFactor: the client
+//      must submit BOTH a fresh TOTP from the authenticator and the
+//      6-digit code emailed at this moment. The first call (no codes)
+//      mints + sends the email OTP; the second call (both codes)
+//      verifies and consumes them.
 async function validateUserAndOrganization(
   request: Request,
-  code: string | undefined
+  code: string | undefined,
+  emailOtp: string | undefined
 ) {
   const session = await auth.api.getSession({
     headers: request.headers,
@@ -143,25 +143,16 @@ async function validateUserAndOrganization(
     return { error: guard.error, status: guard.status, code: guard.code };
   }
 
-  const trimmedCode = typeof code === "string" ? code.trim() : "";
-  if (trimmedCode.length !== 6) {
-    return {
-      error: "A 6-digit verification code is required",
-      status: 400,
-      code: "mfa_code_required",
-    };
-  }
-  try {
-    await auth.api.verifyTOTP({
-      body: { code: trimmedCode },
-      headers: request.headers,
-    });
-  } catch {
-    return {
-      error: "Invalid verification code",
-      status: 401,
-      code: "mfa_code_invalid",
-    };
+  const dual = await requireDualFactor({
+    userId: session.user.id,
+    email: session.user.email,
+    action: "wallet_withdraw",
+    code,
+    emailOtp,
+    headers: request.headers,
+  });
+  if (!dual.ok) {
+    return { error: dual.error, status: dual.status, code: dual.code };
   }
 
   return { user: session.user, organizationId: activeOrgId };
@@ -180,10 +171,15 @@ export async function POST(request: Request) {
       fromMax?: boolean;
       safeId?: string;
       code?: string;
+      emailOtp?: string;
     };
 
-    // 1. Validate user and permissions (includes fresh TOTP challenge).
-    const validation = await validateUserAndOrganization(request, body.code);
+    // 1. Validate user and permissions (includes dual-factor challenge).
+    const validation = await validateUserAndOrganization(
+      request,
+      body.code,
+      body.emailOtp
+    );
     if ("error" in validation) {
       return NextResponse.json(
         { error: validation.error, code: validation.code },
