@@ -12,6 +12,10 @@ import {
   verifications,
 } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import {
+  checkDualFactorRateLimit,
+  resetDualFactor,
+} from "@/lib/mfa/dual-factor-rate-limit";
 import { verifyPassword } from "@/lib/password";
 import {
   buildPendingIpSetCookie,
@@ -128,6 +132,25 @@ export async function POST(request: Request): Promise<NextResponse> {
     return badRequest("Authenticator code is required", "missing_totp");
   }
 
+  // Per-email sliding window. Keys on the lowercased email so an
+  // attacker cannot run high-rate TOTP guesses against a known
+  // account, and so the counter ticks even when the user-id lookup
+  // would have failed (otherwise the endpoint becomes a free
+  // unrate-limited brute-force surface for any non-existent email).
+  // resetDualFactor at the success branches wipes the window so a
+  // confused user with typos still gets to land.
+  const rateLimit = checkDualFactorRateLimit(email, "strict_signin");
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      {
+        error: "Too many attempts. Wait and try again.",
+        code: "rate_limited",
+        retryAfter: rateLimit.retryAfter,
+      },
+      { status: 429 }
+    );
+  }
+
   const serverSecret = process.env.BETTER_AUTH_SECRET;
   if (!serverSecret) {
     logSystemError(
@@ -228,6 +251,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       },
       serverSecret
     );
+    resetDualFactor(email, "strict_signin");
     const response = NextResponse.json({ ok: true, redirect: "/verify-ip" });
     response.headers.append(
       "set-cookie",
@@ -377,6 +401,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
+  resetDualFactor(email, "strict_signin");
   const response = NextResponse.json({ ok: true });
   for (const cookie of sessionSetCookies) {
     response.headers.append("set-cookie", cookie);
