@@ -10,6 +10,10 @@ import {
   buildPendingOauthMfaSetCookie,
   encodePendingOauthMfaCookie,
 } from "@/lib/oauth-mfa-cookie";
+import {
+  buildPendingSignupSetCookie,
+  encodePendingSignupCookie,
+} from "@/lib/pending-signup-cookie";
 
 const handlers = toNextJsHandler(auth);
 
@@ -105,14 +109,11 @@ async function interceptOauthCallback(
     .from(users)
     .where(eq(users.id, row.userId))
     .limit(1);
-  if (!user || user.twoFactorEnabled !== true) {
-    return res;
-  }
-  if (!user.email) {
-    // Without an email we have no inbox to deliver the OTP to. Fall
-    // through to Better Auth's default response so the user at least
-    // gets a session; the proxy MFA gate will still send them to
-    // /enroll-mfa or /verify-mfa.
+  if (!user || !user.email) {
+    // Without an email we have no inbox to deliver an OTP to, so we
+    // cannot defer the session for either flow. Fall through to
+    // Better Auth's default response; the proxy MFA gate will still
+    // send the user to /enroll-mfa via the existing path.
     return res;
   }
 
@@ -133,25 +134,62 @@ async function interceptOauthCallback(
   await db.delete(sessions).where(eq(sessions.id, row.id));
 
   const originalRedirect = res.headers.get("location") ?? "/";
-  const verifyTarget = new URL("/verify-mfa", url.origin);
-  verifyTarget.searchParams.set("next", originalRedirect);
+  const clearSessionCookies = buildSessionClearCookies();
 
-  const pendingValue = encodePendingOauthMfaCookie(
+  // Two paths depending on whether the user already has TOTP:
+  //
+  //   * twoFactorEnabled = true  -> they completed enrollment in a
+  //     prior session. Defer via pending_oauth_mfa and route them to
+  //     /verify-mfa where they prove email + TOTP via
+  //     /api/auth/oauth-mfa-finalize, which mints the session for the
+  //     first time post-MFA.
+  //
+  //   * twoFactorEnabled = false -> brand-new OAuth user (or existing
+  //     OAuth user who never enrolled). Defer via pending_signup_mfa
+  //     and route them to /enroll-mfa. The first-time TOTP enrollment
+  //     mints the real session inside the enroll route once the user
+  //     finishes the wizard. No usable session exists until that.
+  if (user.twoFactorEnabled === true) {
+    const pendingValue = encodePendingOauthMfaCookie(
+      {
+        userId: user.id,
+        email: user.email,
+        redirect: originalRedirect,
+      },
+      secret
+    );
+    const verifyTarget = new URL("/verify-mfa", url.origin);
+    verifyTarget.searchParams.set("next", originalRedirect);
+    const response = NextResponse.redirect(verifyTarget);
+    for (const clear of clearSessionCookies) {
+      response.headers.append("Set-Cookie", clear);
+    }
+    response.headers.append(
+      "Set-Cookie",
+      buildPendingOauthMfaSetCookie(pendingValue)
+    );
+    return response;
+  }
+
+  const provider = url.pathname.split("/").pop() ?? "oauth";
+  const pendingSignupValue = encodePendingSignupCookie(
     {
       userId: user.id,
       email: user.email,
+      provider,
       redirect: originalRedirect,
     },
     secret
   );
-
-  const response = NextResponse.redirect(verifyTarget);
-  for (const clear of buildSessionClearCookies()) {
+  const enrollTarget = new URL("/enroll-mfa", url.origin);
+  enrollTarget.searchParams.set("next", originalRedirect);
+  const response = NextResponse.redirect(enrollTarget);
+  for (const clear of clearSessionCookies) {
     response.headers.append("Set-Cookie", clear);
   }
   response.headers.append(
     "Set-Cookie",
-    buildPendingOauthMfaSetCookie(pendingValue)
+    buildPendingSignupSetCookie(pendingSignupValue)
   );
   return response;
 }

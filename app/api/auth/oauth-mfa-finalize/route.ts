@@ -1,6 +1,9 @@
 import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
-import { hashSessionToken } from "@/lib/auth-session-token-hash";
+import {
+  hashSessionToken,
+  signSessionCookieValue,
+} from "@/lib/auth-session-token-hash";
 import { db } from "@/lib/db";
 import { sessions } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
@@ -156,7 +159,10 @@ export async function POST(request: Request): Promise<NextResponse> {
   });
   response.headers.append(
     "Set-Cookie",
-    buildSessionSetCookie(rawToken, DEFAULT_SESSION_TTL_MS)
+    buildSessionSetCookie(
+      signSessionCookieValue(rawToken, secret),
+      DEFAULT_SESSION_TTL_MS
+    )
   );
   response.headers.append("Set-Cookie", buildPendingOauthMfaClearCookie());
   return response;

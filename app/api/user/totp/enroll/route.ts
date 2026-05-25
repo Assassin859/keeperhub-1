@@ -1,22 +1,37 @@
+import { randomBytes } from "node:crypto";
 import { generateRandomString, symmetricEncrypt } from "better-auth/crypto";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { isAnonymousUserShape } from "@/lib/auth-anonymous-guard";
+import {
+  hashSessionToken,
+  signSessionCookieValue,
+} from "@/lib/auth-session-token-hash";
 import { db } from "@/lib/db";
-import { sessions, twoFactor as twoFactorTable } from "@/lib/db/schema";
+import { sessions, twoFactor as twoFactorTable, users } from "@/lib/db/schema";
+import { resolveEnrollMfaCaller } from "@/lib/enroll-mfa-caller";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import {
+  checkDualFactorRateLimit,
+  resetDualFactor,
+} from "@/lib/mfa/dual-factor-rate-limit";
+import {
+  buildPendingSignupClearCookie,
+} from "@/lib/pending-signup-cookie";
+import { verifyUserTotp } from "@/lib/security/totp-verify";
 
 type RequestBody = {
   code?: string;
 };
 
-type Response = {
+type EnrollResponse = {
   backupCodes: string[];
+  redirect?: string;
 };
 
 const BACKUP_CODE_COUNT = 10;
 const BACKUP_CODE_LENGTH = 10;
+const DEFAULT_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function generatePlainBackupCodes(): string[] {
   const codes: string[] = [];
@@ -27,63 +42,57 @@ function generatePlainBackupCodes(): string[] {
   return codes;
 }
 
+function buildSessionSetCookie(
+  signedValue: string,
+  ttlMs: number
+): string {
+  const maxAge = Math.floor(ttlMs / 1000);
+  const secureSegment =
+    process.env.NODE_ENV === "production" ? " Secure;" : "";
+  const cookieName =
+    process.env.NODE_ENV === "production"
+      ? "__Secure-better-auth.session_token"
+      : "better-auth.session_token";
+  return `${cookieName}=${encodeURIComponent(signedValue)}; Path=/; HttpOnly;${secureSegment} SameSite=Lax; Max-Age=${maxAge}`;
+}
+
 /**
  * POST /api/user/totp/enroll
  *
- * Atomic completion of TOTP enrollment: verifies the user's first TOTP
- * code (which also flips users.two_factor_enabled = true via the
- * plugin) and immediately mints + persists backup codes, returning the
- * plaintext set exactly once.
+ * Two auth shapes converge here:
  *
- * This exists because backup-code generation is too important to leave
- * as a user-initiated follow-up step. A user who closes the dialog
- * after TOTP verify but before code generation would end up enrolled
- * with no recovery path. By coupling both writes into one endpoint, the
- * UI can guarantee that any enrolled user always had codes shown to
- * them at least once.
+ *   - Sessioned caller: existing user upgrading from no-MFA to TOTP.
+ *     Better Auth's verifyTOTP path is used so its session rotation
+ *     + flip of users.two_factor_enabled = true are atomic with the
+ *     plugin's own state. We also clear requires_mfa on every session
+ *     this user holds, because the freshest possible TOTP proof is
+ *     the one we just verified.
  *
- * Regenerate-later (replacing existing codes) still goes through the
- * separate /api/user/totp/backup-codes endpoint, which gates on a
- * fresh TOTP code because that flow invalidates a previously-shown set.
+ *   - Pending-signup caller: brand-new credential or OAuth user who
+ *     carries only the signed pending_signup_mfa cookie, no session.
+ *     We verify the TOTP code directly against the encrypted secret
+ *     stored at /setup time, flip users.two_factor_enabled = true,
+ *     and mint a fresh session for the first time. The session
+ *     cookie returned here is the FIRST usable session for the
+ *     account.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: two converging auth shapes
 export async function POST(request: Request): Promise<NextResponse> {
-  const session = await auth.api.getSession({ headers: request.headers });
-  if (!session?.user) {
+  const caller = await resolveEnrollMfaCaller(request.headers);
+  if (caller.kind === "anonymous") {
+    if (caller.reason === "anonymous_user") {
+      return NextResponse.json(
+        { error: "Sign in with a real account to enable two-factor" },
+        { status: 403 }
+      );
+    }
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  if (isAnonymousUserShape(session.user)) {
-    return NextResponse.json(
-      { error: "Sign in with a real account to enable two-factor" },
-      { status: 403 }
-    );
   }
 
   const body = (await request.json().catch(() => ({}))) as RequestBody;
   const code = typeof body.code === "string" ? body.code.trim() : "";
   if (!code) {
     return NextResponse.json({ error: "Code is required" }, { status: 400 });
-  }
-
-  // On first-time enrollment Better Auth's verifyTOTP rotates the
-  // session (deletes the pre-2FA session and mints a new one, then
-  // calls setSessionCookie on its internal response). returnHeaders:true
-  // makes that Set-Cookie observable so we can forward it on our
-  // NextResponse — without this the user is signed out the instant
-  // they enter their first code because the new cookie never reaches
-  // the browser.
-  let verifyHeaders: Headers;
-  try {
-    const result = await auth.api.verifyTOTP({
-      body: { code },
-      headers: request.headers,
-      returnHeaders: true,
-    });
-    verifyHeaders = result.headers;
-  } catch {
-    return NextResponse.json(
-      { error: "Invalid verification code" },
-      { status: 401 }
-    );
   }
 
   const secret = process.env.BETTER_AUTH_SECRET;
@@ -100,52 +109,173 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  const userId = session.user.id;
+  const userId = caller.userId;
+
+  // Sessioned path: route through Better Auth so its rotation +
+  // two_factor_enabled flip stay atomic with the plugin's state.
+  if (caller.kind === "session") {
+    let verifyHeaders: Headers;
+    try {
+      const result = await auth.api.verifyTOTP({
+        body: { code },
+        headers: request.headers,
+        returnHeaders: true,
+      });
+      verifyHeaders = result.headers;
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid verification code" },
+        { status: 401 }
+      );
+    }
+
+    try {
+      const backupCodes = generatePlainBackupCodes();
+      const encryptedBackupCodes = await symmetricEncrypt({
+        key: secret,
+        data: JSON.stringify(backupCodes),
+      });
+      await db
+        .update(twoFactorTable)
+        .set({ backupCodes: encryptedBackupCodes })
+        .where(eq(twoFactorTable.userId, userId));
+      await db
+        .update(sessions)
+        .set({ requiresMfa: false, mfaVerifiedAt: new Date() })
+        .where(eq(sessions.userId, userId));
+      const responseBody: EnrollResponse = { backupCodes };
+      const response = NextResponse.json(responseBody);
+      for (const [name, value] of verifyHeaders.entries()) {
+        if (name.toLowerCase() === "set-cookie") {
+          response.headers.append("set-cookie", value);
+        }
+      }
+      return response;
+    } catch (error) {
+      logSystemError(
+        ErrorCategory.AUTH,
+        "[TOTP Enroll] Failed to persist backup codes (session path)",
+        error,
+        { endpoint: "/api/user/totp/enroll", user_id: userId }
+      );
+      return NextResponse.json(
+        { error: "Verification accepted but backup-code mint failed" },
+        { status: 500 }
+      );
+    }
+  }
+
+  // Pending-signup path: no session yet. Sliding-window rate limit
+  // on the TOTP verify because the caller is unauthenticated by
+  // session and Better Auth's per-route plugin rate limiter does not
+  // wrap this code path. Without this, an attacker holding a stolen
+  // pending_signup_mfa cookie could brute the 6-digit code for the
+  // entire 30-min cookie TTL. Same sliding-window primitive used by
+  // requireDualFactor; the counter is wiped on a successful verify
+  // so a typo burst does not lock out a legitimate user.
+  const rate = checkDualFactorRateLimit(userId, "totp_enroll");
+  if (!rate.allowed) {
+    return NextResponse.json(
+      {
+        error: "Too many attempts. Wait and try again.",
+        code: "rate_limited",
+        retryAfter: rate.retryAfter,
+      },
+      { status: 429 }
+    );
+  }
+
+  const [enrollment] = await db
+    .select({ secret: twoFactorTable.secret })
+    .from(twoFactorTable)
+    .where(eq(twoFactorTable.userId, userId))
+    .limit(1);
+  if (!enrollment) {
+    return NextResponse.json(
+      { error: "No enrollment in progress for this user" },
+      { status: 400 }
+    );
+  }
+  const codeOk = await verifyUserTotp(enrollment.secret, code, secret);
+  if (!codeOk) {
+    return NextResponse.json(
+      { error: "Invalid verification code" },
+      { status: 401 }
+    );
+  }
+
+  resetDualFactor(userId, "totp_enroll");
+
   try {
     const backupCodes = generatePlainBackupCodes();
     const encryptedBackupCodes = await symmetricEncrypt({
       key: secret,
       data: JSON.stringify(backupCodes),
     });
-    await db
-      .update(twoFactorTable)
-      .set({ backupCodes: encryptedBackupCodes })
-      .where(eq(twoFactorTable.userId, userId));
 
-    // Better Auth's verifyTOTP flips users.two_factor_enabled = true
-    // and rotates the session. The new session row goes through
-    // session.create.before which now sees two_factor_enabled = true
-    // and sets requires_mfa = true. Without this clear the user gets
-    // immediately bounced to /verify-mfa after enrollment, even
-    // though they JUST proved TOTP in the same request. We update
-    // every session this user holds because there should only be one
-    // post-rotation and we want this user-initiated factor proof to
-    // satisfy the step-up gate on each of them.
-    await db
-      .update(sessions)
-      .set({ requiresMfa: false, mfaVerifiedAt: new Date() })
-      .where(eq(sessions.userId, userId));
+    const rawToken = randomBytes(32).toString("base64url");
+    const tokenHash = hashSessionToken(rawToken);
+    const expiresAt = new Date(Date.now() + DEFAULT_SESSION_TTL_MS);
+    const sessionId = `sess_${randomBytes(16).toString("base64url")}`;
+    const userAgent = request.headers.get("user-agent") ?? null;
+    const ipAddress =
+      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+      request.headers.get("x-real-ip") ??
+      null;
 
-    const responseBody: Response = { backupCodes };
+    // Single transaction across the three writes so a mid-flight
+    // failure cannot leave the account in a "twoFactorEnabled = true
+    // but no session row" state. A partial commit would brick the
+    // user: the next request would route them through MFA gates
+    // they can satisfy, but no session means they would never
+    // authenticate, while the absence of the pending cookie (which
+    // we are about to clear) means they could not retry enrollment.
+    await db.transaction(async (tx) => {
+      await tx
+        .update(twoFactorTable)
+        .set({ backupCodes: encryptedBackupCodes })
+        .where(eq(twoFactorTable.userId, userId));
+      await tx
+        .update(users)
+        .set({ twoFactorEnabled: true })
+        .where(eq(users.id, userId));
+      await tx.insert(sessions).values({
+        id: sessionId,
+        userId,
+        token: tokenHash,
+        expiresAt,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        ipAddress,
+        userAgent,
+        requiresMfa: false,
+        mfaVerifiedAt: new Date(),
+      });
+    });
+
+    const responseBody: EnrollResponse = {
+      backupCodes,
+      redirect: caller.redirect || "/",
+    };
     const response = NextResponse.json(responseBody);
-    // Forward Better Auth's Set-Cookie (rotated session) to the
-    // browser. We use append, not set, so multiple cookies (session
-    // + session_data) are preserved.
-    for (const [name, value] of verifyHeaders.entries()) {
-      if (name.toLowerCase() === "set-cookie") {
-        response.headers.append("set-cookie", value);
-      }
-    }
+    response.headers.append(
+      "Set-Cookie",
+      buildSessionSetCookie(
+        signSessionCookieValue(rawToken, secret),
+        DEFAULT_SESSION_TTL_MS
+      )
+    );
+    response.headers.append("Set-Cookie", buildPendingSignupClearCookie());
     return response;
   } catch (error) {
     logSystemError(
       ErrorCategory.AUTH,
-      "[TOTP Enroll] Failed to persist backup codes",
+      "[TOTP Enroll] Failed to finalize pending-signup enrollment",
       error,
       { endpoint: "/api/user/totp/enroll", user_id: userId }
     );
     return NextResponse.json(
-      { error: "Verification accepted but backup-code mint failed" },
+      { error: "Verification accepted but enrollment finalize failed" },
       { status: 500 }
     );
   }
