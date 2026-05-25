@@ -122,7 +122,10 @@ async function databaseQuery(
   }
 
   const credentials = input.integrationId
-    ? await fetchCredentials(input.integrationId)
+    ? await fetchCredentials(input.integrationId, {
+        userId: input._context?.ownerId ?? null,
+        organizationId: input._context?.organizationId ?? null,
+      })
     : {};
 
   const databaseUrl = credentials.DATABASE_URL;

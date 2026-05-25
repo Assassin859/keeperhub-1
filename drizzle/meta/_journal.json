@@ -610,6 +610,13 @@
       "when": 1779430610634,
       "tag": "0086_drop_employee_only_signup_block",
       "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1779670685294,
+      "tag": "0087_integration_visibility_grants",
+      "breakpoints": true
     }
   ]
 }
