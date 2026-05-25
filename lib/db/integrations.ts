@@ -1,8 +1,9 @@
 import "server-only";
 
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { toChecksumAddress } from "@/lib/address-utils";
+import { filterUnauthorizedIntegrationIds } from "@/lib/integrations/authorization";
 import {
   getOrganizationWallet,
   organizationHasWallet,
@@ -636,15 +637,19 @@ export function extractIntegrationIds(
 }
 
 /**
- * Validate that all integration IDs in workflow nodes either:
- * 1. Belong to the specified user (or organization), or
- * 2. Don't exist (deleted integrations - stale references are allowed)
+ * Validate that the executing/saving principal is authorized to use every
+ * integration referenced by a workflow's nodes.
  *
- * This prevents users from accessing other users' credentials by embedding
- * foreign integration IDs in their workflows, while allowing workflows
- * with references to deleted integrations to still be saved.
+ * Authorization is per-integration against the principal's grant (owner,
+ * organization visibility + membership, or an explicit specific_members
+ * grant) - not merely "same organization". This is what closes the
+ * lateral-movement path where any org member could run a workflow that
+ * referenced another member's credential. Non-existent ids (deleted
+ * integrations) stay valid so stale references remain savable.
  *
- * Updated to support organization context
+ * `userId` + `organizationId` together are the effective principal: the
+ * authenticated caller for interactive executions and saves, or the workflow
+ * owner for owner-context executions (webhook, scheduler, internal, MCP).
  *
  * @returns Object with `valid` boolean and optional `invalidIds` array
  */
@@ -659,29 +664,10 @@ export async function validateWorkflowIntegrations(
     return { valid: true };
   }
 
-  // Query for ALL integrations with these IDs (regardless of user/org)
-  // to check if any belong to other users/orgs
-  const existingIntegrations = await db
-    .select({
-      id: integrations.id,
-      userId: integrations.userId,
-      organizationId: integrations.organizationId,
-    })
-    .from(integrations)
-    .where(inArray(integrations.id, integrationIds));
-
-  // Find integrations that exist but belong to a different user/org
-  // (deleted integrations won't appear here, which is fine)
-  const invalidIds = existingIntegrations
-    .filter((i) => {
-      if (organizationId) {
-        // For org workflows, check org membership
-        return i.organizationId !== organizationId;
-      }
-      // For anonymous workflows, check user ownership
-      return i.userId !== userId;
-    })
-    .map((i) => i.id);
+  const invalidIds = await filterUnauthorizedIntegrationIds(integrationIds, {
+    userId,
+    organizationId: organizationId ?? null,
+  });
 
   if (invalidIds.length > 0) {
     return { valid: false, invalidIds };
