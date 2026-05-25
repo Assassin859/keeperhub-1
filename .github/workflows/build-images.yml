@@ -34,13 +34,16 @@ jobs:
       ENVIRONMENT_TAG: ${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
       # INCLUDE_TEST_ENDPOINTS is derived from ENVIRONMENT_TAG in the
       # "Derive build flags" step below (KEEP-237).
+      # Static NEXT_PUBLIC_* flags with no Parameter Store backing stay as
+      # GHA environment vars.
       NEXT_PUBLIC_AUTH_PROVIDERS: ${{ vars.NEXT_PUBLIC_AUTH_PROVIDERS }}
-      NEXT_PUBLIC_GITHUB_CLIENT_ID: ${{ vars.NEXT_PUBLIC_GITHUB_CLIENT_ID }}
-      NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${{ vars.NEXT_PUBLIC_GOOGLE_CLIENT_ID }}
       NEXT_PUBLIC_BILLING_ENABLED: ${{ vars.NEXT_PUBLIC_BILLING_ENABLED }}
       NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED: ${{ vars.NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED }}
-      NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ vars.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}
-      NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
+      # NEXT_PUBLIC_GITHUB_CLIENT_ID, NEXT_PUBLIC_GOOGLE_CLIENT_ID,
+      # NEXT_PUBLIC_TURNSTILE_SITE_KEY and NEXT_PUBLIC_SENTRY_DSN are read from
+      # SSM Parameter Store in the "Fetch NEXT_PUBLIC_* from SSM" step so the
+      # values baked into the client bundle match what the running pods read at
+      # runtime via External Secrets (single source of truth, no drift).
       SENTRY_ORG: ${{ vars.SENTRY_ORG }}
       SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
@@ -111,6 +114,36 @@ jobs:
         run: |
           echo "::error::Cannot skip build: one or more images for ${{ steps.vars.outputs.sha_short }} do not exist in ECR. Remove [skip build] from the commit message or push a build first."
           exit 1
+
+      # Source the SSM-backed NEXT_PUBLIC_* values at build time so the values
+      # inlined into the client bundle are identical to what the running pods
+      # read from the same Parameter Store paths via External Secrets. Runs in
+      # the per-environment GitHub Environment (prod|staging) so vars/secrets -
+      # including the AWS creds configured above - resolve to the right account.
+      #
+      # Path is per-environment via ${ENVIRONMENT_TAG} (prod|staging).
+      # Region is NOT the cluster/ECR region (TO_REGION): SSM is centralized in
+      # us-east-2 (staging clusters run in us-east-1, prod in us-east-2), so the
+      # read uses a dedicated SSM_REGION that defaults to us-east-2 and can be
+      # overridden per environment via the SSM_REGION variable if that changes.
+      - name: Fetch NEXT_PUBLIC_* from SSM
+        if: steps.skip.outputs.skip_build != 'true' && steps.check-image.outputs.exists != 'true'
+        env:
+          SSM_PREFIX: /eks/techops-${{ env.ENVIRONMENT_TAG }}/keeperhub
+          SSM_REGION: ${{ vars.SSM_REGION || 'us-east-2' }}
+        run: |
+          set -euo pipefail
+          fetch() {
+            local var="$1" path="$2" val
+            val=$(aws ssm get-parameter --name "$path" --with-decryption \
+              --query 'Parameter.Value' --output text --region "$SSM_REGION")
+            echo "::add-mask::$val"
+            echo "$var=$val" >> "$GITHUB_ENV"
+          }
+          fetch NEXT_PUBLIC_TURNSTILE_SITE_KEY "$SSM_PREFIX/turnstile-site-key"
+          fetch NEXT_PUBLIC_GITHUB_CLIENT_ID   "$SSM_PREFIX/github-client-id"
+          fetch NEXT_PUBLIC_GOOGLE_CLIENT_ID   "$SSM_PREFIX/google-client-id"
+          fetch NEXT_PUBLIC_SENTRY_DSN         "$SSM_PREFIX/next-public-sentry-dsn"
 
       - name: Set up Docker Buildx
         if: steps.skip.outputs.skip_build != 'true' && steps.check-image.outputs.exists != 'true'
