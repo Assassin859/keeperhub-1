@@ -1,4 +1,4 @@
-import { randomInt } from "node:crypto";
+import { randomInt, timingSafeEqual } from "node:crypto";
 import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
 import { and, eq, gt } from "drizzle-orm";
 import { auth } from "@/lib/auth";
@@ -7,6 +7,22 @@ import { verifications } from "@/lib/db/schema";
 import { sendVerificationOTP } from "@/lib/email";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { generateId } from "@/lib/utils/id";
+import {
+  checkDualFactorRateLimit,
+  resetDualFactor,
+} from "@/lib/mfa/dual-factor-rate-limit";
+
+/**
+ * Constant-time compare for 6-digit OTP values. Both sides are
+ * Buffer-encoded under the same charset; length check up front
+ * because timingSafeEqual throws on mismatched lengths.
+ */
+function constantTimeEquals(a: string, b: string): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
 
 /**
  * Dual-factor gate for the highest-risk actions. Both factors must
@@ -37,14 +53,16 @@ const EMAIL_OTP_TTL_MINUTES = 5;
 export type DualFactorOk = { ok: true };
 export type DualFactorError = {
   ok: false;
-  status: 401 | 500 | 503;
+  status: 401 | 429 | 500 | 503;
   error: string;
   code:
     | "factors_required"
     | "mfa_code_invalid"
     | "email_code_invalid"
     | "email_send_failed"
-    | "server_misconfigured";
+    | "server_misconfigured"
+    | "rate_limited";
+  retryAfter?: number;
 };
 export type DualFactorResult = DualFactorOk | DualFactorError;
 
@@ -82,6 +100,23 @@ export async function requireDualFactor(
       status: 500,
       error: "Server misconfigured",
       code: "server_misconfigured",
+    };
+  }
+
+  // Sliding-window guard covers both attack surfaces:
+  //   - empty-body floods that mint email OTPs at the victim's inbox
+  //   - brute-force guesses against a live verifications row
+  // Every entry into requireDualFactor counts toward the window; the
+  // counter is wiped on a successful both-factor verify so a typo
+  // burst doesn't lock out the legitimate user.
+  const rateLimit = checkDualFactorRateLimit(userId, action);
+  if (!rateLimit.allowed) {
+    return {
+      ok: false,
+      status: 429,
+      error: "Too many attempts. Wait and try again.",
+      code: "rate_limited",
+      retryAfter: rateLimit.retryAfter,
     };
   }
 
@@ -190,7 +225,7 @@ export async function requireDualFactor(
       code: "server_misconfigured",
     };
   }
-  if (decrypted !== inboxCode) {
+  if (!constantTimeEquals(decrypted, inboxCode)) {
     return {
       ok: false,
       status: 401,
@@ -202,5 +237,6 @@ export async function requireDualFactor(
   // Single-use: consume the row once both factors match. Subsequent
   // calls for the same (user, action) must mint a new code.
   await db.delete(verifications).where(eq(verifications.id, row.id));
+  resetDualFactor(userId, action);
   return { ok: true };
 }

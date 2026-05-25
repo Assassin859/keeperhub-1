@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { symmetricDecrypt } from "better-auth/crypto";
 import { and, desc, eq, gt } from "drizzle-orm";
 import { NextResponse } from "next/server";
@@ -12,6 +13,13 @@ import {
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { verifyPassword } from "@/lib/password";
 import { verifyUserTotp } from "@/lib/security/totp-verify";
+
+function constantTimeEquals(a: string, b: string): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
 
 /**
  * Atomic strict dual-factor sign-in.
@@ -81,7 +89,7 @@ async function validateEmailOtp(
       key: serverSecret,
       data: ciphertext,
     });
-    if (decrypted !== providedOtp) {
+    if (!constantTimeEquals(decrypted, providedOtp)) {
       return { ok: false };
     }
     return { ok: true, rowId: row.id };
