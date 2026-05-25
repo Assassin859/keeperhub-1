@@ -1,6 +1,7 @@
 # Helm values for the keeperhub-sandbox release (prod cluster) via
 # techops-services/common@0.2.1. See
-# deploy/keeperhub-sandbox/staging/values.yaml for commentary.
+# deploy/keeperhub-sandbox/staging/values.yaml for the full commentary
+# on the security boundary this release enforces.
 #
 # Prod differences:
 # - replicaCount: 2 (HA)
@@ -27,6 +28,11 @@ image:
 
 deployment:
   enabled: true
+  volumes:
+    - name: tmp
+      mountPath: /tmp
+      emptyDir:
+        sizeLimit: 64Mi
 
 serviceAccount:
   create: false
@@ -50,6 +56,21 @@ env:
   SANDBOX_PORT:
     type: kv
     value: "8787"
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  runAsGroup: 1001
+  fsGroup: 1001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
 
 livenessProbe:
   httpGet:
