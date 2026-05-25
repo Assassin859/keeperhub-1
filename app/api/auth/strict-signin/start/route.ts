@@ -77,10 +77,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     .select({ password: accounts.password })
     .from(accounts)
     .where(
-      and(
-        eq(accounts.userId, user.id),
-        eq(accounts.providerId, "credential")
-      )
+      and(eq(accounts.userId, user.id), eq(accounts.providerId, "credential"))
     )
     .limit(1);
   if (!credentialAccount?.password) {
@@ -163,7 +160,10 @@ export async function POST(request: Request): Promise<NextResponse> {
         { endpoint: "/api/auth/strict-signin/start", user_id: user.id }
       );
       return NextResponse.json(
-        { error: "Failed to send confirmation email", code: "email_send_failed" },
+        {
+          error: "Failed to send confirmation email",
+          code: "email_send_failed",
+        },
         { status: 503 }
       );
     }

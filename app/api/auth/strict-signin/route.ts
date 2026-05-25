@@ -1,5 +1,5 @@
-import { and, desc, eq, gt } from "drizzle-orm";
 import { symmetricDecrypt } from "better-auth/crypto";
+import { and, desc, eq, gt } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -128,14 +128,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  // biome-ignore lint/suspicious/noConsole: diagnostic while wiring strict signin
-  console.log("[strict-signin] received", {
-    email,
-    passwordLen: password.length,
-    emailOtpLen: emailOtp.length,
-    totpCodeLen: totpCode.length,
-  });
-
   // 1. Look up the user. Single not-found-or-mismatch response so this
   // endpoint cannot be used as a user-enumeration oracle.
   const [user] = await db
@@ -143,11 +135,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     .from(users)
     .where(eq(users.email, email))
     .limit(1);
-  // biome-ignore lint/suspicious/noConsole: diagnostic while wiring strict signin
-  console.log("[strict-signin] user lookup", {
-    found: Boolean(user),
-    userId: user?.id,
-  });
   if (!user) {
     return unauthorized("Invalid sign-in", "invalid_signin");
   }
@@ -157,41 +144,19 @@ export async function POST(request: Request): Promise<NextResponse> {
     .select({ password: accounts.password })
     .from(accounts)
     .where(
-      and(
-        eq(accounts.userId, user.id),
-        eq(accounts.providerId, "credential")
-      )
+      and(eq(accounts.userId, user.id), eq(accounts.providerId, "credential"))
     )
     .limit(1);
-  // biome-ignore lint/suspicious/noConsole: diagnostic while wiring strict signin
-  console.log("[strict-signin] credential account lookup", {
-    found: Boolean(credentialAccount?.password),
-    hashLen: credentialAccount?.password?.length ?? 0,
-  });
   if (!credentialAccount?.password) {
     return unauthorized("Invalid sign-in", "invalid_signin");
   }
-  const passwordOk = await verifyPassword(
-    password,
-    credentialAccount.password
-  );
-  // biome-ignore lint/suspicious/noConsole: diagnostic while wiring strict signin
-  console.log("[strict-signin] password verify", { passwordOk });
+  const passwordOk = await verifyPassword(password, credentialAccount.password);
   if (!passwordOk) {
     return unauthorized("Invalid sign-in", "invalid_signin");
   }
 
   // 3. Validate the email OTP. Look-up only; do NOT consume yet.
-  const emailOtpResult = await validateEmailOtp(
-    email,
-    emailOtp,
-    serverSecret
-  );
-  // biome-ignore lint/suspicious/noConsole: diagnostic while wiring strict signin
-  console.log("[strict-signin] email OTP verify", {
-    ok: emailOtpResult.ok,
-    rowId: emailOtpResult.ok ? emailOtpResult.rowId : null,
-  });
+  const emailOtpResult = await validateEmailOtp(email, emailOtp, serverSecret);
   if (!emailOtpResult.ok) {
     return unauthorized("Invalid email code", "invalid_email_otp");
   }
@@ -202,29 +167,16 @@ export async function POST(request: Request): Promise<NextResponse> {
     .from(twoFactorTable)
     .where(eq(twoFactorTable.userId, user.id))
     .limit(1);
-  // biome-ignore lint/suspicious/noConsole: diagnostic while wiring strict signin
-  console.log("[strict-signin] totp row lookup", {
-    found: Boolean(totpRow),
-    secretLen: totpRow?.secret.length ?? 0,
-  });
   if (!totpRow) {
     return unauthorized(
       "Two-factor not configured on this account",
       "totp_not_configured"
     );
   }
-  const totpOk = await verifyUserTotp(
-    totpRow.secret,
-    totpCode,
-    serverSecret
-  );
-  // biome-ignore lint/suspicious/noConsole: diagnostic while wiring strict signin
-  console.log("[strict-signin] totp verify", { totpOk });
+  const totpOk = await verifyUserTotp(totpRow.secret, totpCode, serverSecret);
   if (!totpOk) {
     return unauthorized("Invalid authenticator code", "invalid_totp");
   }
-  // biome-ignore lint/suspicious/noConsole: diagnostic while wiring strict signin
-  console.log("[strict-signin] all three factors passed, minting session");
 
   // 5. All three factors verified. Consume the email-OTP row, then
   // chain Better Auth's standard flow to mint the session cookie.
@@ -233,7 +185,9 @@ export async function POST(request: Request): Promise<NextResponse> {
   // with the session cookie. Only the final session cookie is
   // forwarded to the client.
   try {
-    await db.delete(verifications).where(eq(verifications.id, emailOtpResult.rowId));
+    await db
+      .delete(verifications)
+      .where(eq(verifications.id, emailOtpResult.rowId));
   } catch (err) {
     logSystemError(
       ErrorCategory.DATABASE,
@@ -250,20 +204,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       headers: request.headers,
       returnHeaders: true,
     });
-    // biome-ignore lint/suspicious/noConsole: diagnostic while wiring strict signin
-    console.log("[strict-signin] signInEmail returned", {
-      hasHeaders: Boolean(signInRes?.headers),
-      responseShape: Object.keys(signInRes ?? {}),
-    });
-    twoFactorCookie =
-      signInRes.headers?.get?.("set-cookie") ?? "";
-    // biome-ignore lint/suspicious/noConsole: diagnostic while wiring strict signin
-    console.log("[strict-signin] two_factor cookie extracted", {
-      cookieLength: twoFactorCookie.length,
-    });
+    twoFactorCookie = signInRes.headers?.get?.("set-cookie") ?? "";
   } catch (err) {
-    // biome-ignore lint/suspicious/noConsole: diagnostic while wiring strict signin
-    console.log("[strict-signin] signInEmail threw", err);
     logSystemError(
       ErrorCategory.AUTH,
       "[strict-signin] signInEmail chain failed after password validation",
@@ -276,8 +218,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
   if (!twoFactorCookie) {
-    // biome-ignore lint/suspicious/noConsole: diagnostic while wiring strict signin
-    console.log("[strict-signin] no two_factor cookie in signInEmail response");
     return NextResponse.json(
       { error: "Sign-in failed at session step", code: "session_failed" },
       { status: 500 }
@@ -309,11 +249,6 @@ export async function POST(request: Request): Promise<NextResponse> {
   // Replace any incoming cookie header so we don't accidentally pass
   // an old session cookie.
   chainedHeaders.set("cookie", setCookieToCookieHeader(twoFactorCookie));
-  // biome-ignore lint/suspicious/noConsole: diagnostic while wiring strict signin
-  console.log("[strict-signin] chained cookie header", {
-    rawSetCookieLen: twoFactorCookie.length,
-    cookieHeader: chainedHeaders.get("cookie"),
-  });
 
   let sessionSetCookies: string[] = [];
   try {
@@ -321,11 +256,6 @@ export async function POST(request: Request): Promise<NextResponse> {
       body: { code: totpCode },
       headers: chainedHeaders,
       returnHeaders: true,
-    });
-    // biome-ignore lint/suspicious/noConsole: diagnostic while wiring strict signin
-    console.log("[strict-signin] verifyTOTP returned", {
-      hasHeaders: Boolean(totpRes?.headers),
-      responseShape: Object.keys(totpRes ?? {}),
     });
     // Better Auth's verifyTOTP returns multiple Set-Cookie headers (a
     // new session_token plus a clearing entry for the two_factor
@@ -343,14 +273,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         sessionSetCookies = [single];
       }
     }
-    // biome-ignore lint/suspicious/noConsole: diagnostic while wiring strict signin
-    console.log("[strict-signin] session cookies extracted", {
-      count: sessionSetCookies.length,
-      names: sessionSetCookies.map((c) => c.split("=")[0]),
-    });
   } catch (err) {
-    // biome-ignore lint/suspicious/noConsole: diagnostic while wiring strict signin
-    console.log("[strict-signin] verifyTOTP threw", err);
     logSystemError(
       ErrorCategory.AUTH,
       "[strict-signin] verifyTOTP chain failed after TOTP validation",
@@ -363,8 +286,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
   if (sessionSetCookies.length === 0) {
-    // biome-ignore lint/suspicious/noConsole: diagnostic while wiring strict signin
-    console.log("[strict-signin] no session cookies in verifyTOTP response");
     return NextResponse.json(
       { error: "Sign-in failed at session step", code: "session_failed" },
       { status: 500 }

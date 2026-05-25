@@ -371,11 +371,6 @@ export const AuthDialog = ({
   const [view, setView] = useState<ModalView>(() =>
     pendingVerifyEmail === null ? "signin" : "verify"
   );
-  // biome-ignore lint/correctness/useExhaustiveDependencies: diagnostic-only
-  useEffect(() => {
-    // biome-ignore lint/suspicious/noConsole: diagnostic while wiring 2FA
-    console.log("[Auth] view changed", { view, open });
-  }, [view, open]);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [verifyEmail, setVerifyEmail] = useState(
@@ -455,12 +450,6 @@ export const AuthDialog = ({
   };
 
   const handleOpenChange = (newOpen: boolean) => {
-    // biome-ignore lint/suspicious/noConsole: diagnostic while wiring 2FA
-    console.log(
-      "[Auth] handleOpenChange",
-      { newOpen, currentView: view },
-      new Error("stack").stack
-    );
     setOpen(newOpen);
     if (!newOpen) {
       pendingVerifyEmail = null;
@@ -513,12 +502,6 @@ export const AuthDialog = ({
         code?: string;
         signedIn?: boolean;
       };
-      // biome-ignore lint/suspicious/noConsole: diagnostic while wiring strict signin
-      console.log("[Auth] strict-signin/start", {
-        status: startResponse.status,
-        code: startBody.code,
-        signedIn: startBody.signedIn,
-      });
       if (!startResponse.ok) {
         setError(startBody.error ?? "Sign in failed");
         return;
@@ -638,11 +621,6 @@ export const AuthDialog = ({
       const completeBody = (await completeResponse
         .json()
         .catch(() => ({}))) as { error?: string; code?: string };
-      // biome-ignore lint/suspicious/noConsole: diagnostic while wiring strict signin
-      console.log("[Auth] strict-signin/complete", {
-        status: completeResponse.status,
-        code: completeBody.code,
-      });
       if (!completeResponse.ok) {
         if (completeBody.code === "invalid_email_otp") {
           setError("Invalid email code");

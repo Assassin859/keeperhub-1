@@ -80,8 +80,7 @@ export function EnrollMfaForm({ next }: Props): React.ReactElement {
                 </h1>
                 <p className="text-muted-foreground text-sm">
                   Your account is protected. Your backup codes are saved.
-                  Redirecting in {secondsLeft}s, or click Continue to go
-                  now.
+                  Redirecting in {secondsLeft}s, or click Continue to go now.
                 </p>
               </div>
             </div>
@@ -108,9 +107,9 @@ export function EnrollMfaForm({ next }: Props): React.ReactElement {
                 Enable two-factor authentication
               </h1>
               <p className="text-muted-foreground text-sm">
-                Two-factor authentication is required on your account. Scan
-                the QR with an authenticator app, verify a code, and save
-                your backup codes to continue.
+                Two-factor authentication is required on your account. Scan the
+                QR with an authenticator app, verify a code, and save your
+                backup codes to continue.
               </p>
             </div>
           </div>

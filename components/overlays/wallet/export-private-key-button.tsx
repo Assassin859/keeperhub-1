@@ -4,6 +4,7 @@ import { Copy, Eye, EyeOff, KeyRound, ShieldAlert } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
+import { DualFactorInput } from "@/components/auth/dual-factor-input";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { SettingsOverlay } from "@/components/overlays/settings-overlay";
 import { Button } from "@/components/ui/button";
@@ -15,21 +16,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { useSession } from "@/lib/auth-client";
 import { handleGuardError } from "@/lib/client/handle-guard-error";
 import { useActiveMember } from "@/lib/hooks/use-organization";
+import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
 
 type ExportStep = "idle" | "totp" | "verifying" | "done" | "needs-mfa";
 
 export function ExportPrivateKeyButton(): React.ReactElement | null {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<ExportStep>("idle");
-  const [totpCode, setTotpCode] = useState("");
-  const [emailOtp, setEmailOtp] = useState("");
-  const [awaitingEmailOtp, setAwaitingEmailOtp] = useState(false);
+  const dual = useDualFactorState();
   const [privateKey, setPrivateKey] = useState<string | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -70,22 +68,18 @@ export function ExportPrivateKeyButton(): React.ReactElement | null {
   const handleOpen = (): void => {
     setOpen(true);
     setError(null);
-    setTotpCode("");
+    dual.reset();
     setPrivateKey(null);
     setRevealed(false);
-    // If the owner hasn't enrolled MFA yet, send them to the
-    // "enable MFA first" view instead of asking for a TOTP code
-    // they don't have. They can hit Settings from this dialog and
-    // resume the export afterwards.
     setStep(mfaEnrolled ? "totp" : "needs-mfa");
   };
 
   const handleVerify = async (): Promise<void> => {
-    if (totpCode.length !== 6) {
+    if (dual.totpCode.length !== 6) {
       setError("Enter the 6-digit code from your authenticator app");
       return;
     }
-    if (awaitingEmailOtp && emailOtp.length !== 6) {
+    if (dual.awaitingEmailOtp && dual.emailOtp.length !== 6) {
       setError("Enter the 6-digit code we emailed you");
       return;
     }
@@ -97,8 +91,8 @@ export function ExportPrivateKeyButton(): React.ReactElement | null {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          code: totpCode,
-          emailOtp: emailOtp || undefined,
+          code: dual.totpCode,
+          emailOtp: dual.emailOtp || undefined,
         }),
       });
 
@@ -109,22 +103,9 @@ export function ExportPrivateKeyButton(): React.ReactElement | null {
           return;
         }
         const data: { error?: string; code?: string } = await res.json();
-        if (data.code === "factors_required") {
-          setAwaitingEmailOtp(true);
-          setEmailOtp("");
-          setStep("totp");
-          toast.success("We just emailed you a confirmation code");
-          return;
-        }
-        if (data.code === "mfa_code_invalid") {
-          setTotpCode("");
-          setError(data.error ?? "Invalid authenticator code");
-          setStep("totp");
-          return;
-        }
-        if (data.code === "email_code_invalid") {
-          setEmailOtp("");
-          setError(data.error ?? "Invalid email code");
+        if (
+          dual.handleResponse(data.code, data.error, (msg) => setError(msg))
+        ) {
           setStep("totp");
           return;
         }
@@ -156,9 +137,7 @@ export function ExportPrivateKeyButton(): React.ReactElement | null {
   const handleClose = (): void => {
     setOpen(false);
     setStep("idle");
-    setTotpCode("");
-    setEmailOtp("");
-    setAwaitingEmailOtp(false);
+    dual.reset();
     setPrivateKey(null);
     setRevealed(false);
     setError(null);
@@ -231,44 +210,16 @@ export function ExportPrivateKeyButton(): React.ReactElement | null {
 
           {(step === "totp" || step === "verifying") && (
             <div className="space-y-4 py-2">
-              <div className="space-y-2">
-                <Label htmlFor="export-totp">Authenticator code</Label>
-                <Input
-                  autoComplete="one-time-code"
-                  autoFocus={!awaitingEmailOtp}
-                  className="font-mono text-center text-lg tracking-[0.3em]"
-                  id="export-totp"
-                  inputMode="numeric"
-                  maxLength={6}
-                  onChange={(e) =>
-                    setTotpCode(e.target.value.replace(/\D/g, ""))
-                  }
-                  placeholder="000000"
-                  value={totpCode}
-                />
-              </div>
-              {awaitingEmailOtp && (
-                <div className="space-y-2">
-                  <Label htmlFor="export-email-otp">Email code</Label>
-                  <Input
-                    autoComplete="one-time-code"
-                    autoFocus
-                    className="font-mono text-center text-lg tracking-[0.3em]"
-                    id="export-email-otp"
-                    inputMode="numeric"
-                    maxLength={6}
-                    onChange={(e) =>
-                      setEmailOtp(e.target.value.replace(/\D/g, ""))
-                    }
-                    placeholder="000000"
-                    value={emailOtp}
-                  />
-                  <p className="text-muted-foreground text-xs">
-                    We emailed a 6-digit confirmation code. Enter it above
-                    along with your authenticator code.
-                  </p>
-                </div>
-              )}
+              <DualFactorInput
+                autoFocusTotp
+                awaitingEmailOtp={dual.awaitingEmailOtp}
+                disabled={step === "verifying"}
+                emailOtp={dual.emailOtp}
+                idPrefix="export"
+                onEmailOtpChange={dual.setEmailOtp}
+                onTotpChange={dual.setTotpCode}
+                totpCode={dual.totpCode}
+              />
               {error && <p className="text-destructive text-sm">{error}</p>}
               <div className="flex gap-2">
                 <Button
@@ -281,23 +232,22 @@ export function ExportPrivateKeyButton(): React.ReactElement | null {
                 </Button>
                 <Button
                   className="flex-1"
-                  disabled={
-                    step === "verifying" ||
-                    totpCode.length !== 6 ||
-                    (awaitingEmailOtp && emailOtp.length !== 6)
-                  }
+                  disabled={step === "verifying" || !dual.isReady}
                   onClick={handleVerify}
                 >
-                  {step === "verifying" ? (
-                    <>
-                      <Spinner className="mr-2 h-4 w-4" />
-                      Verifying...
-                    </>
-                  ) : awaitingEmailOtp ? (
-                    "Confirm & Export"
-                  ) : (
-                    "Continue"
-                  )}
+                  {(() => {
+                    if (step === "verifying") {
+                      return (
+                        <>
+                          <Spinner className="mr-2 h-4 w-4" />
+                          Verifying...
+                        </>
+                      );
+                    }
+                    return dual.awaitingEmailOtp
+                      ? "Confirm & Export"
+                      : "Continue";
+                  })()}
                 </Button>
               </div>
             </div>

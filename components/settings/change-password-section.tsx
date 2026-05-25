@@ -4,6 +4,7 @@ import { AlertTriangle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
+import { DualFactorInput } from "@/components/auth/dual-factor-input";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -12,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { authClient, useSession } from "@/lib/auth-client";
+import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
 
 type ChangePasswordSectionProps = {
   providerId: string | null;
@@ -30,14 +32,12 @@ export function ChangePasswordSection({
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [totpCode, setTotpCode] = useState("");
-  const [emailOtp, setEmailOtp] = useState("");
-  const [awaitingEmailOtp, setAwaitingEmailOtp] = useState(false);
+  const dual = useDualFactorState();
   const [loading, setLoading] = useState(false);
 
   const isOAuthUser = providerId !== null && providerId !== "credential";
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
 
     if (newPassword !== confirmPassword) {
@@ -50,11 +50,11 @@ export function ChangePasswordSection({
       return;
     }
 
-    if (totpCode.trim().length !== 6) {
+    if (dual.totpCode.trim().length !== 6) {
       toast.error("Enter the 6-digit code from your authenticator");
       return;
     }
-    if (awaitingEmailOtp && emailOtp.trim().length !== 6) {
+    if (dual.awaitingEmailOtp && dual.emailOtp.trim().length !== 6) {
       toast.error("Enter the 6-digit code we emailed you");
       return;
     }
@@ -67,8 +67,8 @@ export function ChangePasswordSection({
         body: JSON.stringify({
           currentPassword,
           newPassword,
-          code: totpCode.trim(),
-          emailOtp: emailOtp.trim() || undefined,
+          code: dual.totpCode.trim(),
+          emailOtp: dual.emailOtp.trim() || undefined,
         }),
       });
 
@@ -78,26 +78,14 @@ export function ChangePasswordSection({
       };
 
       if (!response.ok) {
-        if (data.code === "factors_required") {
-          setAwaitingEmailOtp(true);
-          setEmailOtp("");
-          toast.success("We just emailed you a confirmation code");
-          return;
-        }
-        if (data.code === "mfa_code_invalid") {
-          toast.error(data.error ?? "Invalid authenticator code");
-          setTotpCode("");
-          return;
-        }
-        if (data.code === "email_code_invalid") {
-          toast.error(data.error ?? "Invalid email code");
-          setEmailOtp("");
+        if (
+          dual.handleResponse(data.code, data.error, (msg) => toast.error(msg))
+        ) {
           return;
         }
         throw new Error(data.error ?? "Failed to change password");
       }
 
-      // Sign out user after password change for security
       await authClient.signOut();
       toast.success("Password changed successfully. Please sign in again.");
       closeOverlays();
@@ -186,62 +174,28 @@ export function ChangePasswordSection({
             />
           </div>
 
-          <div className="space-y-2">
-            <Label className="ml-1" htmlFor="passwordTotp">
-              Authenticator code
-            </Label>
-            <Input
-              autoComplete="one-time-code"
-              className="font-mono text-center text-lg tracking-[0.3em]"
-              id="passwordTotp"
-              inputMode="numeric"
-              maxLength={6}
-              onChange={(e) =>
-                setTotpCode(e.target.value.replace(/\D/g, ""))
-              }
-              placeholder="000000"
-              value={totpCode}
-            />
-          </div>
-
-          {awaitingEmailOtp && (
-            <div className="space-y-2">
-              <Label className="ml-1" htmlFor="passwordEmailOtp">
-                Email code
-              </Label>
-              <Input
-                autoComplete="one-time-code"
-                className="font-mono text-center text-lg tracking-[0.3em]"
-                id="passwordEmailOtp"
-                inputMode="numeric"
-                maxLength={6}
-                onChange={(e) =>
-                  setEmailOtp(e.target.value.replace(/\D/g, ""))
-                }
-                placeholder="000000"
-                value={emailOtp}
-              />
-              <p className="ml-1 text-muted-foreground text-xs">
-                We emailed a 6-digit confirmation code. Enter it above
-                along with your authenticator code.
-              </p>
-            </div>
-          )}
+          <DualFactorInput
+            awaitingEmailOtp={dual.awaitingEmailOtp}
+            emailOtp={dual.emailOtp}
+            idPrefix="password"
+            onEmailOtpChange={dual.setEmailOtp}
+            onTotpChange={dual.setTotpCode}
+            totpCode={dual.totpCode}
+          />
 
           <Button
             className="w-full"
             disabled={
               loading ||
-              !currentPassword ||
-              !newPassword ||
-              !confirmPassword ||
-              totpCode.trim().length !== 6 ||
-              (awaitingEmailOtp && emailOtp.trim().length !== 6)
+              !(currentPassword && newPassword && confirmPassword) ||
+              !dual.isReady
             }
             type="submit"
           >
             {loading ? <Spinner className="mr-2 size-4" /> : null}
-            {awaitingEmailOtp ? "Confirm & Change Password" : "Change Password"}
+            {dual.awaitingEmailOtp
+              ? "Confirm & Change Password"
+              : "Change Password"}
           </Button>
         </form>
       </CardContent>

@@ -491,13 +491,6 @@ export const auth = betterAuth({
             .where(eq(users.id, userId))
             .limit(1);
           const twoFactorEnabled = userRow?.twoFactorEnabled === true;
-          // biome-ignore lint/suspicious/noConsole: diagnostic while wiring mandatory MFA
-          console.log("[Auth.session.create.before]", {
-            userId,
-            twoFactorEnabled,
-            willRequireMfa: twoFactorEnabled,
-            riskCountry: risk.country ?? null,
-          });
           return {
             data: {
               requiresMfa: twoFactorEnabled,

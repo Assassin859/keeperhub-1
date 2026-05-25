@@ -5,11 +5,13 @@ import { AlertCircle, CheckCircle2, Loader2, ShieldAlert } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ChangeEvent, ChangeEventHandler, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { DualFactorInput } from "@/components/auth/dual-factor-input";
 import { Overlay } from "@/components/overlays/overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { SettingsOverlay } from "@/components/overlays/settings-overlay";
 import { useSession } from "@/lib/auth-client";
 import { handleGuardError } from "@/lib/client/handle-guard-error";
+import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
 import { useActiveMember } from "@/lib/hooks/use-organization";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -92,9 +94,7 @@ export function WithdrawModal({
     useState(initialAssetIndex);
   const [amount, setAmount] = useState("");
   const [recipient, setRecipient] = useState("");
-  const [mfaCode, setMfaCode] = useState("");
-  const [emailOtp, setEmailOtp] = useState("");
-  const [awaitingEmailOtp, setAwaitingEmailOtp] = useState(false);
+  const dual = useDualFactorState();
   const [state, setState] = useState<WithdrawState>("input");
   const [txHash, setTxHash] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -308,7 +308,7 @@ export function WithdrawModal({
       setState("needs-mfa");
       return;
     }
-    setMfaCode("");
+    dual.reset();
     setErrorMessage(null);
     setState("mfa-code");
   };
@@ -321,11 +321,11 @@ export function WithdrawModal({
       }
       return;
     }
-    if (mfaCode.trim().length !== 6) {
+    if (dual.totpCode.trim().length !== 6) {
       toast.error("Enter the 6-digit code from your authenticator");
       return;
     }
-    if (awaitingEmailOtp && emailOtp.trim().length !== 6) {
+    if (dual.awaitingEmailOtp && dual.emailOtp.trim().length !== 6) {
       toast.error("Enter the 6-digit code we emailed to you");
       return;
     }
@@ -352,18 +352,12 @@ export function WithdrawModal({
           recipient,
           fromMax: useServerMax,
           safeId: source.kind === "safe" ? source.safeId : undefined,
-          code: mfaCode.trim(),
-          emailOtp: emailOtp.trim() || undefined,
+          code: dual.totpCode.trim(),
+          emailOtp: dual.emailOtp.trim() || undefined,
         }),
       });
 
       if (!response.ok) {
-        // Owner+MFA gate (lib/middleware/owner-mfa-guard.ts) returns a
-        // discriminated 403. handleGuardError routes the user to the
-        // right next step (enroll MFA / verify step-up / role
-        // explanation) and tells us it handled the response — we then
-        // stop the withdraw flow without surfacing a duplicate error
-        // toast on top of the helper's.
         const guarded = await handleGuardError(response, {
           onEnrollMfa: () => openOverlay(SettingsOverlay),
           onPendingMfa: (next) =>
@@ -374,28 +368,12 @@ export function WithdrawModal({
           return;
         }
         const data = await response.json();
-        // factors_required: server just emailed a fresh code. Reveal
-        // the email field and let the user finish the dual-factor.
-        if (data.code === "factors_required") {
-          setAwaitingEmailOtp(true);
-          setEmailOtp("");
-          setState("mfa-code");
-          toast.success("We just emailed you a confirmation code");
-          return;
-        }
-        // mfa_code_invalid / email_code_invalid: bring the user back
-        // to the MFA step instead of dropping them into the red error
-        // screen with no way to retry. For email_code_invalid we keep
-        // the TOTP so they only re-enter what changed.
-        if (data.code === "mfa_code_invalid") {
-          toast.error(data.error || "Invalid authenticator code");
-          setMfaCode("");
-          setState("mfa-code");
-          return;
-        }
-        if (data.code === "email_code_invalid") {
-          toast.error(data.error || "Invalid email code");
-          setEmailOtp("");
+        // Dual-factor outcomes (factors_required / *_invalid) bring
+        // the user back to the MFA step rather than the red error
+        // screen so they can finish the flow.
+        if (
+          dual.handleResponse(data.code, data.error, (msg) => toast.error(msg))
+        ) {
           setState("mfa-code");
           return;
         }
@@ -541,9 +519,6 @@ export function WithdrawModal({
   // TOTP and triggers the server to email a fresh OTP; the email field
   // reveals once that response lands. The second click submits both.
   if (state === "mfa-code") {
-    const submitDisabled =
-      mfaCode.trim().length !== 6 ||
-      (awaitingEmailOtp && emailOtp.trim().length !== 6);
     return (
       <Overlay
         actions={[
@@ -551,15 +526,14 @@ export function WithdrawModal({
             label: "Back",
             variant: "outline",
             onClick: () => {
-              setAwaitingEmailOtp(false);
-              setEmailOtp("");
+              dual.reset();
               setState("input");
             },
           },
           {
-            label: awaitingEmailOtp ? "Confirm withdraw" : "Continue",
+            label: dual.awaitingEmailOtp ? "Confirm withdraw" : "Continue",
             onClick: handleSubmit,
-            disabled: submitDisabled,
+            disabled: !dual.isReady,
           },
         ]}
         overlayId={overlayId}
@@ -570,46 +544,15 @@ export function WithdrawModal({
           confirm sending {amount} {selectedAsset?.symbol} to{" "}
           {truncateAddress(recipient)}.
         </p>
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="withdraw-mfa-code">Authenticator code</Label>
-            <Input
-              autoComplete="one-time-code"
-              autoFocus={!awaitingEmailOtp}
-              className="font-mono text-center text-lg tracking-[0.3em]"
-              id="withdraw-mfa-code"
-              inputMode="numeric"
-              maxLength={6}
-              onChange={(event) =>
-                setMfaCode(event.target.value.replace(/\D/g, ""))
-              }
-              placeholder="000000"
-              value={mfaCode}
-            />
-          </div>
-          {awaitingEmailOtp && (
-            <div className="space-y-2">
-              <Label htmlFor="withdraw-email-otp">Email code</Label>
-              <Input
-                autoComplete="one-time-code"
-                autoFocus
-                className="font-mono text-center text-lg tracking-[0.3em]"
-                id="withdraw-email-otp"
-                inputMode="numeric"
-                maxLength={6}
-                onChange={(event) =>
-                  setEmailOtp(event.target.value.replace(/\D/g, ""))
-                }
-                placeholder="000000"
-                value={emailOtp}
-              />
-              <p className="text-muted-foreground text-xs">
-                We emailed a 6-digit confirmation code. Enter it above
-                along with your authenticator code.
-              </p>
-            </div>
-          )}
-        </div>
+        <DualFactorInput
+          autoFocusTotp
+          awaitingEmailOtp={dual.awaitingEmailOtp}
+          emailOtp={dual.emailOtp}
+          idPrefix="withdraw"
+          onEmailOtpChange={dual.setEmailOtp}
+          onTotpChange={dual.setTotpCode}
+          totpCode={dual.totpCode}
+        />
       </Overlay>
     );
   }

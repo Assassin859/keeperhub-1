@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
+import { DualFactorInput } from "@/components/auth/dual-factor-input";
+import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import {
   AlertDialog,
@@ -31,9 +33,7 @@ export function DeactivateAccountSection() {
     | undefined;
   const mfaEnrolled = sessionUser?.twoFactorEnabled === true;
   const [confirmation, setConfirmation] = useState("");
-  const [totpCode, setTotpCode] = useState("");
-  const [emailOtp, setEmailOtp] = useState("");
-  const [awaitingEmailOtp, setAwaitingEmailOtp] = useState(false);
+  const dual = useDualFactorState();
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
 
@@ -42,11 +42,11 @@ export function DeactivateAccountSection() {
       toast.error("Please type DEACTIVATE to confirm");
       return;
     }
-    if (totpCode.trim().length !== 6) {
+    if (dual.totpCode.trim().length !== 6) {
       toast.error("Enter the 6-digit code from your authenticator");
       return;
     }
-    if (awaitingEmailOtp && emailOtp.trim().length !== 6) {
+    if (dual.awaitingEmailOtp && dual.emailOtp.trim().length !== 6) {
       toast.error("Enter the 6-digit code we emailed you");
       return;
     }
@@ -58,8 +58,8 @@ export function DeactivateAccountSection() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           confirmation,
-          code: totpCode.trim(),
-          emailOtp: emailOtp.trim() || undefined,
+          code: dual.totpCode.trim(),
+          emailOtp: dual.emailOtp.trim() || undefined,
         }),
       });
 
@@ -69,20 +69,9 @@ export function DeactivateAccountSection() {
       };
 
       if (!response.ok) {
-        if (data.code === "factors_required") {
-          setAwaitingEmailOtp(true);
-          setEmailOtp("");
-          toast.success("We just emailed you a confirmation code");
-          return;
-        }
-        if (data.code === "mfa_code_invalid") {
-          toast.error(data.error ?? "Invalid authenticator code");
-          setTotpCode("");
-          return;
-        }
-        if (data.code === "email_code_invalid") {
-          toast.error(data.error ?? "Invalid email code");
-          setEmailOtp("");
+        if (
+          dual.handleResponse(data.code, data.error, (msg) => toast.error(msg))
+        ) {
           return;
         }
         throw new Error(data.error ?? "Failed to deactivate account");
@@ -143,51 +132,21 @@ export function DeactivateAccountSection() {
                     value={confirmation}
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="deactivateTotp">Authenticator code</Label>
-                  <Input
-                    autoComplete="one-time-code"
-                    className="font-mono text-center text-lg tracking-[0.3em]"
-                    id="deactivateTotp"
-                    inputMode="numeric"
-                    maxLength={6}
-                    onChange={(e) =>
-                      setTotpCode(e.target.value.replace(/\D/g, ""))
-                    }
-                    placeholder="000000"
-                    value={totpCode}
-                  />
-                </div>
-                {awaitingEmailOtp && (
-                  <div className="space-y-2">
-                    <Label htmlFor="deactivateEmailOtp">Email code</Label>
-                    <Input
-                      autoComplete="one-time-code"
-                      className="font-mono text-center text-lg tracking-[0.3em]"
-                      id="deactivateEmailOtp"
-                      inputMode="numeric"
-                      maxLength={6}
-                      onChange={(e) =>
-                        setEmailOtp(e.target.value.replace(/\D/g, ""))
-                      }
-                      placeholder="000000"
-                      value={emailOtp}
-                    />
-                    <p className="text-muted-foreground text-xs">
-                      We emailed a 6-digit confirmation code. Enter it
-                      above along with your authenticator code.
-                    </p>
-                  </div>
-                )}
+                <DualFactorInput
+                  awaitingEmailOtp={dual.awaitingEmailOtp}
+                  emailOtp={dual.emailOtp}
+                  idPrefix="deactivate"
+                  onEmailOtpChange={dual.setEmailOtp}
+                  onTotpChange={dual.setTotpCode}
+                  totpCode={dual.totpCode}
+                />
               </div>
 
               <AlertDialogFooter>
                 <AlertDialogCancel
                   onClick={() => {
                     setConfirmation("");
-                    setTotpCode("");
-                    setEmailOtp("");
-                    setAwaitingEmailOtp(false);
+                    dual.reset();
                   }}
                 >
                   Cancel
@@ -195,10 +154,7 @@ export function DeactivateAccountSection() {
                 <AlertDialogAction
                   className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                   disabled={
-                    confirmation !== "DEACTIVATE" ||
-                    loading ||
-                    totpCode.trim().length !== 6 ||
-                    (awaitingEmailOtp && emailOtp.trim().length !== 6)
+                    confirmation !== "DEACTIVATE" || loading || !dual.isReady
                   }
                   onClick={(e) => {
                     e.preventDefault();
@@ -206,7 +162,7 @@ export function DeactivateAccountSection() {
                   }}
                 >
                   {loading ? <Spinner className="mr-2 size-4" /> : null}
-                  {awaitingEmailOtp
+                  {dual.awaitingEmailOtp
                     ? "Confirm Deactivation"
                     : "Deactivate Account"}
                 </AlertDialogAction>

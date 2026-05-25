@@ -1,3 +1,4 @@
+import { DualFactorInput } from "@/components/auth/dual-factor-input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -38,7 +39,7 @@ export function AccountSettings({
   onEmailChange,
   onTotpChange,
   onEmailOtpChange,
-}: AccountSettingsProps) {
+}: AccountSettingsProps): React.ReactElement {
   return (
     <Card className="border-0 py-0 shadow-none">
       <CardContent className="space-y-4 p-0">
@@ -68,47 +69,17 @@ export function AccountSettings({
         </div>
 
         {showMfaCode && (
-          <div className="space-y-2">
-            <Label className="ml-1" htmlFor="accountTotp">
-              Authenticator code (required to change email)
-            </Label>
-            <Input
-              autoComplete="one-time-code"
-              className="font-mono text-center text-lg tracking-[0.3em]"
-              id="accountTotp"
-              inputMode="numeric"
-              maxLength={6}
-              onChange={(e) =>
-                onTotpChange?.(e.target.value.replace(/\D/g, ""))
-              }
-              placeholder="000000"
-              value={totpCode ?? ""}
-            />
-          </div>
-        )}
-
-        {awaitingEmailOtp && (
-          <div className="space-y-2">
-            <Label className="ml-1" htmlFor="accountEmailOtp">
-              Email code (required to change email)
-            </Label>
-            <Input
-              autoComplete="one-time-code"
-              className="font-mono text-center text-lg tracking-[0.3em]"
-              id="accountEmailOtp"
-              inputMode="numeric"
-              maxLength={6}
-              onChange={(e) =>
-                onEmailOtpChange?.(e.target.value.replace(/\D/g, ""))
-              }
-              placeholder="000000"
-              value={emailOtp ?? ""}
-            />
-            <p className="ml-1 text-muted-foreground text-xs">
-              We emailed a 6-digit confirmation code. Enter it along with
-              your authenticator code.
-            </p>
-          </div>
+          <DualFactorInput
+            awaitingEmailOtp={awaitingEmailOtp === true}
+            emailHelp="We emailed a 6-digit confirmation code. Enter it along with your authenticator code."
+            emailLabel="Email code (required to change email)"
+            emailOtp={emailOtp ?? ""}
+            idPrefix="account"
+            onEmailOtpChange={(value) => onEmailOtpChange?.(value)}
+            onTotpChange={(value) => onTotpChange?.(value)}
+            totpCode={totpCode ?? ""}
+            totpLabel="Authenticator code (required to change email)"
+          />
         )}
       </CardContent>
     </Card>

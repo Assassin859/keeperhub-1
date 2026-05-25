@@ -4,12 +4,14 @@ import { Copy, Key, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { DualFactorInput } from "@/components/auth/dual-factor-input";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { handleGuardError } from "@/lib/client/handle-guard-error";
+import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
 import { ConfirmOverlay } from "./confirm-overlay";
 import { Overlay } from "./overlay";
 import { useOverlay } from "./overlay-provider";
@@ -43,13 +45,11 @@ function CreateApiKeyOverlay({
   onCreated: (key: ApiKey) => void;
   endpoint: string;
   keyType: "webhook" | "organisation";
-}) {
+}): React.ReactElement {
   const { open: openOverlay, pop } = useOverlay();
   const router = useRouter();
   const [keyName, setKeyName] = useState("");
-  const [totpCode, setTotpCode] = useState("");
-  const [emailOtp, setEmailOtp] = useState("");
-  const [awaitingEmailOtp, setAwaitingEmailOtp] = useState(false);
+  const dual = useDualFactorState();
   const [creating, setCreating] = useState(false);
 
   const handleCreate = async (): Promise<void> => {
@@ -60,8 +60,8 @@ function CreateApiKeyOverlay({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: keyName || null,
-          code: totpCode.trim(),
-          emailOtp: emailOtp.trim() || undefined,
+          code: dual.totpCode.trim(),
+          emailOtp: dual.emailOtp.trim() || undefined,
         }),
       });
 
@@ -83,20 +83,9 @@ function CreateApiKeyOverlay({
           error?: string;
           code?: string;
         };
-        if (data.code === "factors_required") {
-          setAwaitingEmailOtp(true);
-          setEmailOtp("");
-          toast.success("We just emailed you a confirmation code");
-          return;
-        }
-        if (data.code === "mfa_code_invalid") {
-          toast.error(data.error || "Invalid authenticator code");
-          setTotpCode("");
-          return;
-        }
-        if (data.code === "email_code_invalid") {
-          toast.error(data.error || "Invalid email code");
-          setEmailOtp("");
+        if (
+          dual.handleResponse(data.code, data.error, (msg) => toast.error(msg))
+        ) {
           return;
         }
         throw new Error(data.error || "Failed to create API key");
@@ -125,13 +114,10 @@ function CreateApiKeyOverlay({
     <Overlay
       actions={[
         {
-          label: awaitingEmailOtp ? "Confirm Create" : "Create",
+          label: dual.awaitingEmailOtp ? "Confirm Create" : "Create",
           onClick: handleCreate,
           loading: creating,
-          disabled:
-            !keyName.trim() ||
-            totpCode.trim().length !== 6 ||
-            (awaitingEmailOtp && emailOtp.trim().length !== 6),
+          disabled: !keyName.trim() || !dual.isReady,
         },
       ]}
       overlayId={overlayId}
@@ -148,44 +134,15 @@ function CreateApiKeyOverlay({
             value={keyName}
           />
         </div>
-        <div className="space-y-2">
-          <Label htmlFor="key-totp">Authenticator code</Label>
-          <Input
-            autoComplete="one-time-code"
-            className="font-mono text-center text-lg tracking-[0.3em]"
-            id="key-totp"
-            inputMode="numeric"
-            maxLength={6}
-            onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, ""))}
-            placeholder="000000"
-            value={totpCode}
-          />
-          <p className="text-muted-foreground text-xs">
-            Minting an API key requires a fresh code from your authenticator.
-          </p>
-        </div>
-        {awaitingEmailOtp && (
-          <div className="space-y-2">
-            <Label htmlFor="key-email-otp">Email code</Label>
-            <Input
-              autoComplete="one-time-code"
-              autoFocus
-              className="font-mono text-center text-lg tracking-[0.3em]"
-              id="key-email-otp"
-              inputMode="numeric"
-              maxLength={6}
-              onChange={(e) =>
-                setEmailOtp(e.target.value.replace(/\D/g, ""))
-              }
-              placeholder="000000"
-              value={emailOtp}
-            />
-            <p className="text-muted-foreground text-xs">
-              We emailed a 6-digit confirmation code. Enter it above
-              along with your authenticator code.
-            </p>
-          </div>
-        )}
+        <DualFactorInput
+          awaitingEmailOtp={dual.awaitingEmailOtp}
+          emailOtp={dual.emailOtp}
+          idPrefix="key"
+          onEmailOtpChange={dual.setEmailOtp}
+          onTotpChange={dual.setTotpCode}
+          totpCode={dual.totpCode}
+          totpHelp="Minting an API key requires a fresh code from your authenticator."
+        />
       </div>
     </Overlay>
   );
@@ -212,35 +169,26 @@ function DeleteApiKeyOverlay({
     code: string,
     emailOtp: string
   ) => Promise<{ ok: true } | { ok: false; code: string }>;
-}) {
+}): React.ReactElement {
   const { pop } = useOverlay();
-  const [totpCode, setTotpCode] = useState("");
-  const [emailOtp, setEmailOtp] = useState("");
-  const [awaitingEmailOtp, setAwaitingEmailOtp] = useState(false);
+  const dual = useDualFactorState();
   const [submitting, setSubmitting] = useState(false);
 
   const handleConfirm = async (): Promise<void> => {
     setSubmitting(true);
     try {
-      const result = await onDelete(keyId, totpCode.trim(), emailOtp.trim());
+      const result = await onDelete(
+        keyId,
+        dual.totpCode.trim(),
+        dual.emailOtp.trim()
+      );
       if (result.ok) {
         pop();
         return;
       }
-      if (result.code === "factors_required") {
-        setAwaitingEmailOtp(true);
-        setEmailOtp("");
-        toast.success("We just emailed you a confirmation code");
-        return;
-      }
-      if (result.code === "mfa_code_invalid") {
-        toast.error("Invalid authenticator code");
-        setTotpCode("");
-        return;
-      }
-      if (result.code === "email_code_invalid") {
-        toast.error("Invalid email code");
-        setEmailOtp("");
+      if (
+        dual.handleResponse(result.code, undefined, (msg) => toast.error(msg))
+      ) {
         return;
       }
       // "guarded" or "unknown": parent helper already toasted; just close.
@@ -255,12 +203,10 @@ function DeleteApiKeyOverlay({
       actions={[
         { label: "Cancel", variant: "outline", onClick: pop },
         {
-          label: awaitingEmailOtp ? "Confirm Revoke" : "Revoke",
+          label: dual.awaitingEmailOtp ? "Confirm Revoke" : "Revoke",
           onClick: handleConfirm,
           loading: submitting,
-          disabled:
-            totpCode.trim().length !== 6 ||
-            (awaitingEmailOtp && emailOtp.trim().length !== 6),
+          disabled: !dual.isReady,
           variant: "destructive",
         },
       ]}
@@ -271,46 +217,15 @@ function DeleteApiKeyOverlay({
         Any integrations using this key will stop working immediately. Enter
         a code from your authenticator to confirm.
       </p>
-      <div className="space-y-4">
-        <div className="space-y-2">
-          <Label htmlFor="revoke-totp">Authenticator code</Label>
-          <Input
-            autoComplete="one-time-code"
-            autoFocus={!awaitingEmailOtp}
-            className="font-mono text-center text-lg tracking-[0.3em]"
-            id="revoke-totp"
-            inputMode="numeric"
-            maxLength={6}
-            onChange={(event) =>
-              setTotpCode(event.target.value.replace(/\D/g, ""))
-            }
-            placeholder="000000"
-            value={totpCode}
-          />
-        </div>
-        {awaitingEmailOtp && (
-          <div className="space-y-2">
-            <Label htmlFor="revoke-email-otp">Email code</Label>
-            <Input
-              autoComplete="one-time-code"
-              autoFocus
-              className="font-mono text-center text-lg tracking-[0.3em]"
-              id="revoke-email-otp"
-              inputMode="numeric"
-              maxLength={6}
-              onChange={(event) =>
-                setEmailOtp(event.target.value.replace(/\D/g, ""))
-              }
-              placeholder="000000"
-              value={emailOtp}
-            />
-            <p className="text-muted-foreground text-xs">
-              We emailed a 6-digit confirmation code. Enter it above
-              along with your authenticator code.
-            </p>
-          </div>
-        )}
-      </div>
+      <DualFactorInput
+        autoFocusTotp
+        awaitingEmailOtp={dual.awaitingEmailOtp}
+        emailOtp={dual.emailOtp}
+        idPrefix="revoke"
+        onEmailOtpChange={dual.setEmailOtp}
+        onTotpChange={dual.setTotpCode}
+        totpCode={dual.totpCode}
+      />
     </Overlay>
   );
 }

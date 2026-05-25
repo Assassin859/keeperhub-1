@@ -3,13 +3,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AccountSettings } from "@/components/settings/account-settings";
-import { Spinner } from "@/components/ui/spinner";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ChangePasswordSection } from "@/components/settings/change-password-section";
 import { DeactivateAccountSection } from "@/components/settings/delete-account-section";
 import { TwoFactorSection } from "@/components/settings/two-factor-section";
+import { Spinner } from "@/components/ui/spinner";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/lib/api-client";
 import { useSession } from "@/lib/auth-client";
+import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
 import { Overlay } from "./overlay";
 import { useOverlay } from "./overlay-provider";
 
@@ -17,19 +18,18 @@ type SettingsOverlayProps = {
   overlayId: string;
 };
 
-export function SettingsOverlay({ overlayId }: SettingsOverlayProps) {
+export function SettingsOverlay({
+  overlayId,
+}: SettingsOverlayProps): React.ReactElement {
   const { closeAll } = useOverlay();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  // Account state
   const [accountName, setAccountName] = useState("");
   const [accountEmail, setAccountEmail] = useState("");
   const [originalEmail, setOriginalEmail] = useState("");
   const [providerId, setProviderId] = useState<string | null>(null);
-  const [totpCode, setTotpCode] = useState("");
-  const [emailOtp, setEmailOtp] = useState("");
-  const [awaitingEmailOtp, setAwaitingEmailOtp] = useState(false);
+  const dual = useDualFactorState();
 
   const session = useSession();
   const sessionUser = session.data?.user as
@@ -39,20 +39,23 @@ export function SettingsOverlay({ overlayId }: SettingsOverlayProps) {
   const emailChanged = accountEmail.trim() !== originalEmail;
   const showMfaCode = mfaEnrolled && emailChanged;
 
-  const loadAccount = useCallback(async () => {
+  const loadAccount = useCallback(async (): Promise<void> => {
     try {
       const data = await api.user.get();
       setAccountName(data.name || "");
       setAccountEmail(data.email || "");
       setOriginalEmail(data.email || "");
-      setTotpCode("");
+      dual.reset();
       setProviderId(data.providerId ?? null);
     } catch (error) {
       console.error("Failed to load account:", error);
     }
+    // dual.reset is a stable closure over useState setters; intentionally
+    // excluded from deps to keep this callback referentially stable.
+    // biome-ignore lint/correctness/useExhaustiveDependencies: see comment above
   }, []);
 
-  const loadAll = useCallback(async () => {
+  const loadAll = useCallback(async (): Promise<void> => {
     setLoading(true);
     try {
       await loadAccount();
@@ -65,30 +68,32 @@ export function SettingsOverlay({ overlayId }: SettingsOverlayProps) {
     loadAll();
   }, [loadAll]);
 
-  const saveAccount = async () => {
-    if (showMfaCode && totpCode.trim().length !== 6) {
+  const saveAccount = async (): Promise<void> => {
+    if (showMfaCode && dual.totpCode.trim().length !== 6) {
       toast.error("Enter the 6-digit code from your authenticator");
       return;
     }
-    if (showMfaCode && awaitingEmailOtp && emailOtp.trim().length !== 6) {
+    if (
+      showMfaCode &&
+      dual.awaitingEmailOtp &&
+      dual.emailOtp.trim().length !== 6
+    ) {
       toast.error("Enter the 6-digit code we emailed you");
       return;
     }
     try {
       setSaving(true);
-      // Switch to raw fetch for the email-change path so the
-      // dual-factor response codes (factors_required / *_invalid) can
-      // be inspected directly rather than parsed out of a thrown
-      // Error message.
       const response = await fetch("/api/user", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: accountName,
           email: accountEmail,
-          code: showMfaCode ? totpCode.trim() : undefined,
+          code: showMfaCode ? dual.totpCode.trim() : undefined,
           emailOtp:
-            showMfaCode && emailOtp.trim() ? emailOtp.trim() : undefined,
+            showMfaCode && dual.emailOtp.trim()
+              ? dual.emailOtp.trim()
+              : undefined,
         }),
       });
       if (!response.ok) {
@@ -96,20 +101,9 @@ export function SettingsOverlay({ overlayId }: SettingsOverlayProps) {
           error?: string;
           code?: string;
         };
-        if (data.code === "factors_required") {
-          setAwaitingEmailOtp(true);
-          setEmailOtp("");
-          toast.success("We just emailed you a confirmation code");
-          return;
-        }
-        if (data.code === "mfa_code_invalid") {
-          toast.error(data.error ?? "Invalid authenticator code");
-          setTotpCode("");
-          return;
-        }
-        if (data.code === "email_code_invalid") {
-          toast.error(data.error ?? "Invalid email code");
-          setEmailOtp("");
+        if (
+          dual.handleResponse(data.code, data.error, (msg) => toast.error(msg))
+        ) {
           return;
         }
         throw new Error(data.error ?? "Failed to save settings");
@@ -159,14 +153,14 @@ export function SettingsOverlay({ overlayId }: SettingsOverlayProps) {
             <AccountSettings
               accountEmail={accountEmail}
               accountName={accountName}
-              awaitingEmailOtp={awaitingEmailOtp && showMfaCode}
-              emailOtp={emailOtp}
+              awaitingEmailOtp={dual.awaitingEmailOtp && showMfaCode}
+              emailOtp={dual.emailOtp}
               onEmailChange={setAccountEmail}
-              onEmailOtpChange={setEmailOtp}
+              onEmailOtpChange={dual.setEmailOtp}
               onNameChange={setAccountName}
-              onTotpChange={setTotpCode}
+              onTotpChange={dual.setTotpCode}
               showMfaCode={showMfaCode}
-              totpCode={totpCode}
+              totpCode={dual.totpCode}
             />
             <DeactivateAccountSection />
           </TabsContent>
