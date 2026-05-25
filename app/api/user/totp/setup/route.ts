@@ -1,10 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { generateRandomString, symmetricEncrypt } from "better-auth/crypto";
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { isAnonymousUserShape } from "@/lib/auth-anonymous-guard";
 import { db } from "@/lib/db";
 import { twoFactor as twoFactorTable } from "@/lib/db/schema";
+import { resolveEnrollMfaCaller } from "@/lib/enroll-mfa-caller";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 
 const ISSUER = "KeeperHub";
@@ -102,24 +101,24 @@ function buildTotpUri(secret: string, account: string): string {
  * enrollment; it is the supported way to rotate a lost authenticator.
  */
 export async function POST(request: Request): Promise<NextResponse> {
-  const session = await auth.api.getSession({ headers: request.headers });
-  if (!session?.user) {
+  const caller = await resolveEnrollMfaCaller(request.headers);
+  if (caller.kind === "anonymous") {
+    if (caller.reason === "anonymous_user") {
+      return NextResponse.json(
+        { error: "Sign in with a real account to enable two-factor" },
+        { status: 403 }
+      );
+    }
+    if (caller.reason === "no_email") {
+      return NextResponse.json(
+        { error: "Account missing email" },
+        { status: 400 }
+      );
+    }
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (isAnonymousUserShape(session.user)) {
-    return NextResponse.json(
-      { error: "Sign in with a real account to enable two-factor" },
-      { status: 403 }
-    );
-  }
-  const userId = session.user.id;
-  const userEmail = session.user.email;
-  if (!userEmail) {
-    return NextResponse.json(
-      { error: "Account missing email" },
-      { status: 400 }
-    );
-  }
+  const userId = caller.userId;
+  const userEmail = caller.email;
 
   const secret = process.env.BETTER_AUTH_SECRET;
   if (!secret) {

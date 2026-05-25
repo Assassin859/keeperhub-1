@@ -875,36 +875,49 @@ export const AuthDialog = ({
       pendingVerifyEmail = null;
       pendingVerifyPassword = null;
 
-      // Auto sign-in after verification using stored password
-      if (verifyPassword) {
-        const signInResponse = await signIn.email({
-          email: verifyEmail,
-          password: verifyPassword,
-        });
-
-        if (signInResponse.error) {
-          // Verification succeeded but sign-in failed - redirect to sign in
-          toast.success("Email verified! Please sign in.");
-          setView("signin");
-          setEmail(verifyEmail);
-          setPassword("");
-          setOtp("");
-          setLoading(false);
-          return;
+      // Do NOT call signIn.email here. New signups must enroll TOTP
+      // before any session row is minted. /api/auth/finish-credential-signup
+      // re-verifies the password, confirms email_verified, and issues
+      // a signed pending_signup_mfa cookie that only unlocks
+      // /enroll-mfa. The real session is created for the first time
+      // inside /api/user/totp/enroll once the user finishes the
+      // 3-step wizard. No usable session exists in between.
+      if (!verifyPassword) {
+        setError("Missing password state. Sign in again to continue.");
+        setView("signin");
+        setEmail(verifyEmail);
+        setOtp("");
+        setLoading(false);
+        return;
+      }
+      const finishResponse = await fetch(
+        "/api/auth/finish-credential-signup",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: verifyEmail,
+            password: verifyPassword,
+          }),
         }
+      );
+      const finishBody = (await finishResponse.json().catch(() => ({}))) as {
+        error?: string;
+        code?: string;
+        redirect?: string;
+      };
+      if (!finishResponse.ok) {
+        setError(finishBody.error ?? "Could not finish signup");
+        setLoading(false);
+        return;
       }
 
-      // Store claim context after successful sign-in
       storeClaimIfNeeded(claimContext);
-
-      // Refresh session
-      await authClient.getSession();
-      refetchOrganizations();
-
-      toast.success("Email verified! You're now signed in.");
-      setOpen(false);
-      resetForm();
+      toast.success("Email verified! Set up your authenticator to continue.");
       window.dispatchEvent(new CustomEvent(AUTH_SUCCESS_EVENT));
+      if (typeof window !== "undefined") {
+        window.location.assign(finishBody.redirect ?? "/enroll-mfa");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Verification failed");
       setLoading(false);

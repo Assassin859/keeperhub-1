@@ -6,8 +6,20 @@ import { TotpSetupDialog } from "@/components/settings/totp-setup-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
+type Mode = "signed-in" | "pending-signup";
+
 type Props = {
   next: string;
+  /**
+   * - "signed-in": user has a normal session with two_factor_enabled
+   *   = false. The setup/enroll endpoints authenticate them via the
+   *   session cookie.
+   * - "pending-signup": user is brand-new and carries only the signed
+   *   `pending_signup_mfa` cookie. No session exists yet. The
+   *   setup/enroll endpoints authenticate them via that cookie and
+   *   mint the session for the first time when enrollment completes.
+   */
+  mode: Mode;
 };
 
 const REDIRECT_COUNTDOWN_SECONDS = 10;
@@ -23,7 +35,7 @@ const REDIRECT_COUNTDOWN_SECONDS = 10;
  * swaps to a success card with a 10-second auto-redirect plus a
  * Continue button so the redirect is acknowledged rather than abrupt.
  */
-export function EnrollMfaForm({ next }: Props): React.ReactElement {
+export function EnrollMfaForm({ next, mode }: Props): React.ReactElement {
   const target = next || "/";
   const [dialogOpen, setDialogOpen] = useState(true);
   const [enrolled, setEnrolled] = useState(false);
