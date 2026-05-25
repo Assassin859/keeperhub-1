@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { captureMessage } from "@sentry/nextjs";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import {
@@ -581,6 +582,28 @@ export const auth = betterAuth({
             return;
           }
           if (await isUserDeactivated(userId)) {
+            // KEEP-612 detection signal. Better Auth has no per-request
+            // audit hook, so emit here right before refusing the session
+            // write. Tag is the alert key; user id lets triage pivot to
+            // the row that's deactivated. No PII beyond the user id.
+            captureMessage("security.deactivated_login_attempt", {
+              level: "warning",
+              tags: {
+                security: "deactivated_login_attempt",
+                surface: "session",
+              },
+              user: { id: userId },
+            });
+            // Structured stdout line so Loki / log-only alert rules pick
+            // up the signal even when SENTRY_DSN is unset (local dev) or
+            // when the Sentry transport drops.
+            console.warn(
+              JSON.stringify({
+                event: "security.deactivated_login_attempt",
+                surface: "session",
+                userId,
+              })
+            );
             return false;
           }
           const risk = await assessLoginRisk(userId);
@@ -685,6 +708,21 @@ export const auth = betterAuth({
           const userId =
             typeof account.userId === "string" ? account.userId : null;
           if (userId && (await isUserDeactivated(userId))) {
+            captureMessage("security.deactivated_login_attempt", {
+              level: "warning",
+              tags: {
+                security: "deactivated_login_attempt",
+                surface: "account",
+              },
+              user: { id: userId },
+            });
+            console.warn(
+              JSON.stringify({
+                event: "security.deactivated_login_attempt",
+                surface: "account",
+                userId,
+              })
+            );
             return false;
           }
         },

@@ -18,6 +18,7 @@ import {
   recordWorkflowComplete,
 } from "@/lib/metrics/instrumentation/workflow";
 import { LabelKeys, MetricNames } from "@/lib/metrics/types";
+import { scanAndReport } from "@/lib/security/content-scanner";
 import {
   getActionLabel,
   getStepImporter,
@@ -1586,6 +1587,16 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     org_slug: organizationSlug,
     plan: organizationPlan,
     owner_id: ownerId,
+  });
+
+  // KEEP-612 detection signal. Single pass over node configs at run start
+  // emits one Sentry event per execution summarising any pattern hits
+  // (IMDS IPv4, information_schema, pg_catalog, neon_auth, refresh_token,
+  // client_secret, DATABASE_URL). Alert-only -- never blocks execution.
+  scanAndReport(nodes, {
+    workflowId,
+    executionId,
+    organizationId,
   });
 
   const outputs: NodeOutputs = {};
