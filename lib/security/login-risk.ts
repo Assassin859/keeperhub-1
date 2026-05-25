@@ -168,6 +168,29 @@ export function serializeRiskFlags(signal: LoginRiskSignal): string {
  *                                         TOTP yet). The IP is added
  *                                         to user_trusted_ips by the
  *                                         session.create.after hook.
+ *
+ *                                         Migration caveat: when this
+ *                                         feature ships, every existing
+ *                                         user has zero rows in
+ *                                         user_trusted_ips, so their
+ *                                         FIRST sign-in after deploy
+ *                                         auto-trusts the IP they happen
+ *                                         to be on. /verify-ip only kicks
+ *                                         in for SUBSEQUENT new IPs after
+ *                                         that. We accept this rather
+ *                                         than backfilling because the
+ *                                         backfill would have to read
+ *                                         sessions.ip_address, which is
+ *                                         the raw value Better Auth
+ *                                         records (no CF attestation)
+ *                                         and is null for sessions
+ *                                         created before the IP-risk
+ *                                         work landed, so seeding from
+ *                                         it would either lock those
+ *                                         users out or trust whatever
+ *                                         their proxy decided to log
+ *                                         which is no stronger than
+ *                                         what we do here.
  *   - subsequent unknown ip            -> trusted = false. Caller sets
  *                                         requires_ip_verification on
  *                                         the new session.
