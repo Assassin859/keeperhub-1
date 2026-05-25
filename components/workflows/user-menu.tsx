@@ -53,12 +53,26 @@ export const UserMenu = (): React.ReactElement => {
   // Check if user's email is verified
   const isEmailVerified = session?.user?.emailVerified === true;
 
-  // Don't render anything while session is loading to prevent flash
-  // BUT if sign-in is in progress, keep showing the AuthDialog with loading state
-  if (isPending && !signInInProgress) {
-    return (
-      <div className="h-9 w-9" /> // Placeholder to maintain layout
-    );
+  // Only show the placeholder when the session loader is pending AND we
+  // are confident the AuthDialog is not currently driving a sign-in flow
+  // (single-provider auto-sign-in OR an anonymous user is the one whose
+  // session refetch is pending). The original placeholder branch
+  // unconditionally returned a stub div during isPending. That
+  // unmounted the AuthDialog whenever Better Auth refetched the session
+  // after a credential submit, which dropped the post-credential view
+  // (`totp`) before the user could see it. Falling through to the
+  // AuthDialog branch on the anonymous side keeps the modal mounted
+  // across the brief refetch window. NAV-04: the authenticated dropdown
+  // still waits on the loader to avoid firing its protected fetches
+  // before the session is known.
+  const sessionResolvedAndAuthed =
+    !isPending && !isAnonymousUser && isEmailVerified;
+  if (isPending && !signInInProgress && sessionResolvedAndAuthed === false) {
+    if (isAnonymousUser) {
+      // Anonymous + pending: fall through and keep AuthDialog mounted.
+    } else {
+      return <div className="h-9 w-9" />;
+    }
   }
 
   // NAV-04: only mount the authenticated dropdown when the user is signed in

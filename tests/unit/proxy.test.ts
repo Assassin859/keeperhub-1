@@ -399,14 +399,30 @@ describe("MFA gate", () => {
     }
   });
 
-  it("does not block public pages (root, pricing, docs)", async () => {
+  it("does not block public marketing + docs pages for signed-in users", async () => {
     mockGetSession.mockResolvedValue({
       user: { id: "u1", twoFactorEnabled: false },
       session: { requiresMfa: false },
     });
-    for (const path of ["/", "/pricing", "/docs/getting-started"]) {
+    for (const path of ["/pricing", "/docs/getting-started"]) {
       const res = await proxy(make(path, { headers: sessionCookieHeaders() }));
       expect(res.status).toBe(200);
     }
+  });
+
+  it("gates signed-in users on the root path", async () => {
+    mockGetSession.mockResolvedValue({
+      user: { id: "u1", twoFactorEnabled: false },
+      session: { requiresMfa: false },
+    });
+    const res = await proxy(make("/", { headers: sessionCookieHeaders() }));
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toContain("/enroll-mfa");
+  });
+
+  it("does not block the root path for signed-out visitors", async () => {
+    mockGetSession.mockResolvedValue(null);
+    const res = await proxy(make("/"));
+    expect(res.status).toBe(200);
   });
 });

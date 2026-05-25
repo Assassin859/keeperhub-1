@@ -130,6 +130,21 @@ const plugins = [
   // sign in via OAuth or email OTP.
   twoFactor({
     issuer: "KeeperHub",
+    // Mandatory-MFA mode: do not remember the device. The plugin's
+    // default `trustDeviceMaxAge` is 30 days, which lets a user skip
+    // the TOTP step on the same browser for that window. Setting it
+    // to 0 forces a TOTP prompt on every login, matching the
+    // proxy-level requires_mfa=true-on-every-session policy.
+    trustDeviceMaxAge: 0,
+    // The plugin exposes an inert email-OTP-as-second-factor path
+    // (no sendOTP wired, see comment above). If we ever turn it on,
+    // store the OTP encrypted rather than the plugin default of
+    // plaintext. Same primitive that the emailOTP plugin uses for
+    // its own OTPs (KEEP-625). Defense in depth; sets the right
+    // default ahead of any future flip.
+    otpOptions: {
+      storeOTP: "encrypted",
+    },
   }),
   // end keeperhub code //
   emailOTP({
@@ -476,6 +491,13 @@ export const auth = betterAuth({
             .where(eq(users.id, userId))
             .limit(1);
           const twoFactorEnabled = userRow?.twoFactorEnabled === true;
+          // biome-ignore lint/suspicious/noConsole: diagnostic while wiring mandatory MFA
+          console.log("[Auth.session.create.before]", {
+            userId,
+            twoFactorEnabled,
+            willRequireMfa: twoFactorEnabled,
+            riskCountry: risk.country ?? null,
+          });
           return {
             data: {
               requiresMfa: twoFactorEnabled,
@@ -559,11 +581,19 @@ export const auth = betterAuth({
       clientId: process.env.GITHUB_CLIENT_ID || "",
       clientSecret: process.env.GITHUB_CLIENT_SECRET || "",
       enabled: !!process.env.GITHUB_CLIENT_ID,
+      // Force the provider to re-prompt at every sign-in rather than
+      // silently reusing an existing IdP session. Combined with the
+      // session.create.before hook setting requires_mfa=true on every
+      // TOTP-enrolled session, this gives the closest practical match
+      // to "MFA on every login" for the OAuth path. The IdP itself
+      // still owns the second-factor step on its side.
+      prompt: "login",
     },
     google: {
       clientId: process.env.GOOGLE_CLIENT_ID || "",
       clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
       enabled: !!process.env.GOOGLE_CLIENT_ID,
+      prompt: "login",
     },
   },
   rateLimit: {

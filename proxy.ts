@@ -123,9 +123,14 @@ const MFA_EXEMPT_API_PREFIXES: readonly string[] = [
   "/api/cron/",
 ];
 
-/** Public page routes plus the gate pages themselves. */
+/**
+ * Marketing / standalone page routes plus the gate pages themselves.
+ * `/` is intentionally NOT in this set: signed-out visitors land
+ * there and `hasSessionCookie` short-circuits the gate for them, but
+ * signed-in users on `/` must still be routed through enrollment /
+ * step-up before any other navigation.
+ */
 const MFA_EXEMPT_PAGES = new Set<string>([
-  "/",
   "/pricing",
   "/about",
   "/terms",
@@ -196,12 +201,24 @@ async function mfaBlock(request: NextRequest): Promise<NextResponse | null> {
 
   const session = await auth.api.getSession({ headers: request.headers });
   if (!session?.user) {
+    // biome-ignore lint/suspicious/noConsole: diagnostic while wiring mandatory MFA
+    console.log("[proxy.mfa]", {
+      path: pathname,
+      result: "session-cookie-present-but-no-session",
+    });
     return null;
   }
 
   const apiPath = pathname.startsWith("/api/");
   const user = session.user as { twoFactorEnabled?: boolean | null };
   const sess = session.session as { requiresMfa?: boolean | null };
+  // biome-ignore lint/suspicious/noConsole: diagnostic while wiring mandatory MFA
+  console.log("[proxy.mfa]", {
+    path: pathname,
+    userId: (session.user as { id?: string }).id,
+    twoFactorEnabled: user.twoFactorEnabled,
+    requiresMfa: sess.requiresMfa,
+  });
 
   if (user.twoFactorEnabled !== true) {
     if (apiPath) {
