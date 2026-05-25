@@ -72,6 +72,18 @@ securityContext:
     drop:
       - ALL
 
+# Pin to the dedicated sandbox NodePool (see commentary in
+# deploy/keeperhub-sandbox/staging/values.yaml and the infrastructure
+# repo karpenter-sandbox.tf).
+nodeSelector:
+  node-role.keeperhub.io/sandbox-only: "true"
+
+tolerations:
+  - key: node-role.keeperhub.io/sandbox-only
+    operator: Equal
+    value: "true"
+    effect: NoSchedule
+
 livenessProbe:
   httpGet:
     path: /healthz

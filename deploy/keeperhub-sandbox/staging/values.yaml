@@ -111,6 +111,27 @@ securityContext:
     drop:
       - ALL
 
+# Pin the sandbox Pod to the dedicated Karpenter NodePool whose nodes
+# carry a stripped IAM role (no SSM, no S3, no SecretsManager, no KMS).
+# The NodePool and EC2NodeClass are defined in the infrastructure repo
+# (staging/eks-cluster/karpenter-sandbox.tf, prod/eks-cluster/karpenter-sandbox.tf).
+#
+# Even if a future kernel exploit lets an attacker escape this container
+# to the host node, the instance-profile credentials reachable via IMDS
+# carry no permissions reusable against any other workload.
+#
+# nodeSelector restricts scheduling to nodes labeled by the sandbox
+# NodePool template. tolerations let the Pod be scheduled despite the
+# NoSchedule taint that keeps non-sandbox workloads off these nodes.
+nodeSelector:
+  node-role.keeperhub.io/sandbox-only: "true"
+
+tolerations:
+  - key: node-role.keeperhub.io/sandbox-only
+    operator: Equal
+    value: "true"
+    effect: NoSchedule
+
 livenessProbe:
   httpGet:
     path: /healthz
