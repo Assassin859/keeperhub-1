@@ -13,24 +13,42 @@ import {
 } from "@/components/ui/dialog";
 import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
 
+type Mode = "stepup" | "oauth";
+
 type Props = {
   next: string;
+  mode: Mode;
 };
 
 /**
- * Step-up MFA modal. Renders as a Dialog (not an inline card) so the
- * underlying page can't be visually composed with the prompt and there
- * is no ambiguity that the user has to confirm before reaching the
- * app. The Dialog is locked open; the only way out is to complete
- * verification (router.replace) or sign out (handled elsewhere).
+ * Step-up MFA modal. Routes the codes to one of two endpoints
+ * depending on how the user landed here:
+ *
+ *   - mode="stepup": already-signed-in user with sessions.requires_mfa
+ *     = true. POSTs /api/user/totp/verify-stepup which clears the flag
+ *     on the existing session.
+ *   - mode="oauth": user just finished an OAuth callback that we
+ *     intercepted because they have TOTP enrolled. They carry only
+ *     the signed `pending_oauth_mfa` cookie, no session. POSTs
+ *     /api/auth/oauth-mfa-finalize which atomically verifies both
+ *     codes AND mints the session for the first time.
+ *
+ * Rendered as a locked-open Dialog (no Esc, no outside-click,
+ * close button hidden) so the underlying page can't be visually
+ * composed with the prompt.
  */
-export function VerifyMfaForm({ next }: Props): React.ReactElement {
+export function VerifyMfaForm({ next, mode }: Props): React.ReactElement {
   const router = useRouter();
   const dual = useDualFactorState();
   const [busy, setBusy] = useState(false);
 
+  const endpoint =
+    mode === "oauth"
+      ? "/api/auth/oauth-mfa-finalize"
+      : "/api/user/totp/verify-stepup";
+
   const emptyCodesFetch = (): Promise<Response> =>
-    fetch("/api/user/totp/verify-stepup", {
+    fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
@@ -42,7 +60,7 @@ export function VerifyMfaForm({ next }: Props): React.ReactElement {
     }
     setBusy(true);
     try {
-      const response = await fetch("/api/user/totp/verify-stepup", {
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -50,11 +68,12 @@ export function VerifyMfaForm({ next }: Props): React.ReactElement {
           emailOtp: dual.emailOtp.trim() || undefined,
         }),
       });
+      const data = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        code?: string;
+        redirect?: string;
+      };
       if (!response.ok) {
-        const data = (await response.json().catch(() => ({}))) as {
-          error?: string;
-          code?: string;
-        };
         if (
           dual.handleResponse(data.code, data.error, (msg) => toast.error(msg))
         ) {
@@ -63,7 +82,12 @@ export function VerifyMfaForm({ next }: Props): React.ReactElement {
         toast.error(data.error ?? "Invalid code");
         return;
       }
-      router.replace(next || "/");
+      const target = data.redirect || next || "/";
+      if (typeof window !== "undefined") {
+        window.location.assign(target);
+        return;
+      }
+      router.replace(target);
       router.refresh();
     } finally {
       setBusy(false);
