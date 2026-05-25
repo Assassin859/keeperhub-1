@@ -5,19 +5,25 @@ import { isAnonymousUserShape } from "@/lib/auth-anonymous-guard";
 import { db } from "@/lib/db";
 import { twoFactor as twoFactorTable, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { requireDualFactor } from "@/lib/mfa/dual-factor";
 
 type RequestBody = {
   code?: string;
+  emailOtp?: string;
 };
 
 /**
  * POST /api/user/totp/disable
  *
- * Disables TOTP for the signed-in user. Requires a currently-valid
- * TOTP code as proof that the caller holds the second factor
- * (otherwise a stolen session cookie could trivially turn off MFA).
+ * Disables TOTP for the signed-in user. Gated by requireDualFactor
+ * (authenticator + email OTP) so a stolen session plus one factor
+ * cannot lower the security floor. The same dual-factor primitive
+ * we use for withdraw / export-key / api-keys applies here because
+ * disabling MFA is at least as high-impact as those actions.
+ *
  * Better Auth's built-in /two-factor/disable requires a password and
- * is unusable for our OAuth / email-OTP users.
+ * is unusable for our OAuth / email-OTP users, hence the custom
+ * endpoint.
  */
 export async function POST(request: Request): Promise<NextResponse> {
   const session = await auth.api.getSession({ headers: request.headers });
@@ -33,19 +39,21 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const body = (await request.json().catch(() => ({}))) as RequestBody;
   const code = typeof body.code === "string" ? body.code.trim() : "";
-  if (!code) {
-    return NextResponse.json({ error: "Code is required" }, { status: 400 });
-  }
+  const emailOtp =
+    typeof body.emailOtp === "string" ? body.emailOtp.trim() : "";
 
-  try {
-    await auth.api.verifyTOTP({
-      body: { code },
-      headers: request.headers,
-    });
-  } catch {
+  const dual = await requireDualFactor({
+    userId: session.user.id,
+    email: session.user.email,
+    action: "totp_disable",
+    code,
+    emailOtp,
+    headers: request.headers,
+  });
+  if (!dual.ok) {
     return NextResponse.json(
-      { error: "Invalid verification code" },
-      { status: 401 }
+      { error: dual.error, code: dual.code },
+      { status: dual.status }
     );
   }
 

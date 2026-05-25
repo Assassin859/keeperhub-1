@@ -28,9 +28,9 @@ function constantTimeEquals(a: string, b: string): boolean {
  * Dual-factor gate for the highest-risk actions. Both factors must
  * succeed in the same request before the action runs:
  *
- *  1. TOTP (`code` field) — proves possession of the user's authenticator
+ *  1. TOTP (`code` field): proves possession of the user's authenticator
  *     secret. Verified via Better Auth's verifyTOTP endpoint.
- *  2. Email OTP (`emailOtp` field) — proves control of the user's
+ *  2. Email OTP (`emailOtp` field): proves control of the user's
  *     inbox. Stored encrypted in verifications, identified by
  *     `mfa:<action>:<userId>`, 5-minute TTL.
  *
@@ -129,8 +129,8 @@ export async function requireDualFactor(
   // can submit empty codes on first render to trigger the email,
   // then submit again with both codes filled in. Resubmitting with
   // one missing code re-issues the email rather than returning a
-  // narrow "you forgot the other field" error — fewer client states
-  // to model, and the user always sees the same prompt.
+  // narrow "you forgot the other field" error, since fewer client
+  // states to model, and the user always sees the same prompt.
   if (!bothPresent) {
     const otp = generateEmailOtp();
     const encrypted = await symmetricEncrypt({
@@ -174,7 +174,7 @@ export async function requireDualFactor(
     };
   }
 
-  // TOTP first — cheaper than the DB read for the email OTP.
+  // TOTP first since it is cheaper than the DB read for the email OTP.
   try {
     await auth.api.verifyTOTP({
       body: { code: totpCode },

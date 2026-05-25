@@ -3,6 +3,7 @@
 import { ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { DualFactorInput } from "@/components/auth/dual-factor-input";
 import { TotpBackupCodesPanel } from "@/components/settings/totp-backup-codes-panel";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
 
 type Mode = "summary" | "generate-codes" | "viewing-codes" | "disable";
 
@@ -54,6 +56,10 @@ export function TotpManageDialog({
   const [code, setCode] = useState("");
   const [generatedCodes, setGeneratedCodes] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
+  // Disable is gated by the same dual-factor primitive used for
+  // withdraw / export-key / api-keys, so disabling MFA can't be done
+  // with a stolen session plus a single TOTP code.
+  const dual = useDualFactorState();
 
   // Locked: backup codes are on-screen but the user hasn't completed
   // copy + download + retype-confirm yet. Closing the dialog, navigating
@@ -84,13 +90,14 @@ export function TotpManageDialog({
     setCode("");
     setGeneratedCodes(null);
     setBusy(false);
+    dual.reset();
     onOpenChange(false);
   };
 
   const attemptClose = (): void => {
     if (locked) {
       toast.error(
-        "Finish saving your backup codes — copy, download, and confirm two — before closing."
+        "Finish saving your backup codes (copy, download, and confirm two) before closing."
       );
       return;
     }
@@ -128,12 +135,21 @@ export function TotpManageDialog({
       const response = await fetch("/api/user/totp/disable", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: code.trim() }),
+        body: JSON.stringify({
+          code: dual.totpCode.trim(),
+          emailOtp: dual.emailOtp.trim() || undefined,
+        }),
       });
       if (!response.ok) {
         const data = (await response.json().catch(() => ({}))) as {
           error?: string;
+          code?: string;
         };
+        if (
+          dual.handleResponse(data.code, data.error, (msg) => toast.error(msg))
+        ) {
+          return;
+        }
         toast.error(data.error ?? "Failed to disable");
         return;
       }
@@ -251,7 +267,7 @@ export function TotpManageDialog({
           </div>
         )}
 
-        {(mode === "generate-codes" || mode === "disable") && (
+        {mode === "generate-codes" && (
           <div className="space-y-3">
             <div className="space-y-2">
               <Label htmlFor="manage-code">Verification code</Label>
@@ -279,16 +295,47 @@ export function TotpManageDialog({
               </Button>
               <Button
                 disabled={busy || code.trim().length < 6}
-                onClick={
-                  mode === "disable" ? handleDisable : handleGenerateCodes
-                }
-                variant={mode === "disable" ? "destructive" : "default"}
+                onClick={handleGenerateCodes}
               >
-                {busy
-                  ? "Working..."
-                  : mode === "disable"
-                    ? "Disable"
-                    : "Generate codes"}
+                {busy ? "Working..." : "Generate codes"}
+              </Button>
+            </DialogFooter>
+          </div>
+        )}
+
+        {mode === "disable" && (
+          <div className="space-y-3">
+            <DualFactorInput
+              autoFocusTotp
+              awaitingEmailOtp={dual.awaitingEmailOtp}
+              emailOtp={dual.emailOtp}
+              idPrefix="totp-disable"
+              onEmailOtpChange={dual.setEmailOtp}
+              onTotpChange={dual.setTotpCode}
+              totpCode={dual.totpCode}
+            />
+            <DialogFooter>
+              <Button
+                disabled={busy}
+                onClick={() => {
+                  setMode("summary");
+                  dual.reset();
+                }}
+                variant="outline"
+              >
+                Back
+              </Button>
+              <Button
+                disabled={busy || !dual.isReady}
+                onClick={handleDisable}
+                variant="destructive"
+              >
+                {(() => {
+                  if (busy) {
+                    return "Working...";
+                  }
+                  return dual.awaitingEmailOtp ? "Confirm disable" : "Disable";
+                })()}
               </Button>
             </DialogFooter>
           </div>
