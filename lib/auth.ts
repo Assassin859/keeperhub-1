@@ -445,13 +445,21 @@ export const auth = betterAuth({
         // of users.deactivated_at. Returning false aborts the write before
         // the sessions row exists, so no cookie ever ships to the client.
         //
-        // Risk-based step-up: when Cloudflare-attested geo signals a new
-        // country and the user has TOTP enrolled, we mark the new session
-        // requires_mfa=true rather than rejecting it. App middleware then
-        // restricts the quarantined session to the verify-mfa endpoints
-        // only. Sessions where TOTP is not enrolled pass through (we have
-        // nothing to step up to); the anomaly is still recorded in
-        // sessions.risk_flags_json for downstream detection alerting.
+        // Mandatory step-up on every TOTP-enrolled login: every new
+        // session for a user with two_factor_enabled = true starts with
+        // requires_mfa = true. The per-action guards in
+        // lib/middleware/owner-mfa-guard.ts then refuse sensitive actions
+        // until the user completes /verify-mfa, which clears the flag.
+        // Previously the flag was only set when login-risk detection
+        // flagged a country anomaly; flipping it on unconditionally makes
+        // step-up uniform across every fresh login rather than only the
+        // risk-flagged subset. The geo risk signal is still recorded in
+        // sessions.risk_flags_json when present, for detection / alerting.
+        //
+        // Forced enrollment for users without TOTP is intentionally not
+        // wired here: a session for a non-TOTP user gets requires_mfa =
+        // false because there is nothing to step up to. Mandating the
+        // enrollment wizard is a separate follow-up.
         before: async (session) => {
           const userId =
             typeof session.userId === "string" ? session.userId : null;
@@ -462,20 +470,16 @@ export const auth = betterAuth({
             return false;
           }
           const risk = await assessLoginRisk(userId);
-          if (!risk.country) {
-            return;
-          }
           const [userRow] = await db
             .select({ twoFactorEnabled: users.twoFactorEnabled })
             .from(users)
             .where(eq(users.id, userId))
             .limit(1);
           const twoFactorEnabled = userRow?.twoFactorEnabled === true;
-          const requiresMfa = risk.anomaly && twoFactorEnabled;
           return {
             data: {
-              requiresMfa,
-              riskFlagsJson: serializeRiskFlags(risk),
+              requiresMfa: twoFactorEnabled,
+              riskFlagsJson: risk.country ? serializeRiskFlags(risk) : null,
             },
           };
         },
