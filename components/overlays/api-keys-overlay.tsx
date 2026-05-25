@@ -1,16 +1,21 @@
 "use client";
 
 import { Copy, Key, Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { DualFactorInput } from "@/components/auth/dual-factor-input";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { handleGuardError } from "@/lib/client/handle-guard-error";
+import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
 import { ConfirmOverlay } from "./confirm-overlay";
 import { Overlay } from "./overlay";
 import { useOverlay } from "./overlay-provider";
+import { SettingsOverlay } from "./settings-overlay";
 
 type ApiKey = {
   id: string;
@@ -40,23 +45,50 @@ function CreateApiKeyOverlay({
   onCreated: (key: ApiKey) => void;
   endpoint: string;
   keyType: "webhook" | "organisation";
-}) {
-  const { pop } = useOverlay();
+}): React.ReactElement {
+  const { open: openOverlay, pop } = useOverlay();
+  const router = useRouter();
   const [keyName, setKeyName] = useState("");
+  const dual = useDualFactorState();
   const [creating, setCreating] = useState(false);
 
-  const handleCreate = async () => {
+  const handleCreate = async (): Promise<void> => {
     setCreating(true);
     try {
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: keyName || null }),
+        body: JSON.stringify({
+          name: keyName || null,
+          code: dual.totpCode.trim(),
+          emailOtp: dual.emailOtp.trim() || undefined,
+        }),
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to create API key");
+        const guarded = await handleGuardError(response, {
+          onEnrollMfa: () => {
+            pop();
+            openOverlay(SettingsOverlay);
+          },
+          onPendingMfa: (next) => {
+            pop();
+            router.push(`/verify-mfa?next=${encodeURIComponent(next)}`);
+          },
+        });
+        if (guarded) {
+          return;
+        }
+        const data = (await response.json().catch(() => ({}))) as {
+          error?: string;
+          code?: string;
+        };
+        if (
+          dual.handleResponse(data.code, data.error, (msg) => toast.error(msg))
+        ) {
+          return;
+        }
+        throw new Error(data.error || "Failed to create API key");
       }
 
       const newKey = await response.json();
@@ -82,23 +114,34 @@ function CreateApiKeyOverlay({
     <Overlay
       actions={[
         {
-          label: "Create",
+          label: dual.awaitingEmailOtp ? "Confirm Create" : "Create",
           onClick: handleCreate,
           loading: creating,
-          disabled: !keyName.trim(),
+          disabled: !keyName.trim() || !dual.isReady,
         },
       ]}
       overlayId={overlayId}
       title="Create API Key"
     >
       <p className="mb-4 text-muted-foreground text-sm">{description}</p>
-      <div className="space-y-2">
-        <Label htmlFor="key-name">Label</Label>
-        <Input
-          id="key-name"
-          onChange={(e) => setKeyName(e.target.value)}
-          placeholder="e.g., Production, Testing"
-          value={keyName}
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor="key-name">Label</Label>
+          <Input
+            id="key-name"
+            onChange={(e) => setKeyName(e.target.value)}
+            placeholder="e.g., Production, Testing"
+            value={keyName}
+          />
+        </div>
+        <DualFactorInput
+          awaitingEmailOtp={dual.awaitingEmailOtp}
+          emailOtp={dual.emailOtp}
+          idPrefix="key"
+          onEmailOtpChange={dual.setEmailOtp}
+          onTotpChange={dual.setTotpCode}
+          totpCode={dual.totpCode}
+          totpHelp="Minting an API key requires a fresh code from your authenticator."
         />
       </div>
     </Overlay>
@@ -108,6 +151,85 @@ function CreateApiKeyOverlay({
 /**
  * Shared component for displaying and managing API keys list
  */
+/**
+ * Confirm-and-revoke dialog. Replaces the older ConfirmOverlay path
+ * because revocation now requires a fresh TOTP code in addition to
+ * a confirmation click; the generic ConfirmOverlay can't collect a
+ * second factor without bloating its API.
+ */
+function DeleteApiKeyOverlay({
+  overlayId,
+  keyId,
+  onDelete,
+}: {
+  overlayId: string;
+  keyId: string;
+  onDelete: (
+    keyId: string,
+    code: string,
+    emailOtp: string
+  ) => Promise<{ ok: true } | { ok: false; code: string }>;
+}): React.ReactElement {
+  const { pop } = useOverlay();
+  const dual = useDualFactorState();
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleConfirm = async (): Promise<void> => {
+    setSubmitting(true);
+    try {
+      const result = await onDelete(
+        keyId,
+        dual.totpCode.trim(),
+        dual.emailOtp.trim()
+      );
+      if (result.ok) {
+        pop();
+        return;
+      }
+      if (
+        dual.handleResponse(result.code, undefined, (msg) => toast.error(msg))
+      ) {
+        return;
+      }
+      // "guarded" or "unknown": parent helper already toasted; just close.
+      pop();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Overlay
+      actions={[
+        { label: "Cancel", variant: "outline", onClick: pop },
+        {
+          label: dual.awaitingEmailOtp ? "Confirm Revoke" : "Revoke",
+          onClick: handleConfirm,
+          loading: submitting,
+          disabled: !dual.isReady,
+          variant: "destructive",
+        },
+      ]}
+      overlayId={overlayId}
+      title="Revoke API Key"
+    >
+      <p className="mb-4 text-muted-foreground text-sm">
+        Any integrations using this key will stop working immediately. Enter
+        a code from your authenticator to confirm.
+      </p>
+      <DualFactorInput
+        autoFocusTotp
+        awaitingEmailOtp={dual.awaitingEmailOtp}
+        emailOtp={dual.emailOtp}
+        idPrefix="revoke"
+        onEmailOtpChange={dual.setEmailOtp}
+        onTotpChange={dual.setTotpCode}
+        totpCode={dual.totpCode}
+      />
+    </Overlay>
+  );
+}
+
 function ApiKeysList({
   apiKeys,
   newlyCreatedKey,
@@ -119,7 +241,11 @@ function ApiKeysList({
   apiKeys: ApiKey[];
   newlyCreatedKey: string | null;
   deleting: string | null;
-  onDelete: (keyId: string) => void;
+  onDelete: (
+    keyId: string,
+    code: string,
+    emailOtp: string
+  ) => Promise<{ ok: true } | { ok: false; code: string }>;
   onDismissNewKey: () => void;
   showCreator?: boolean;
 }) {
@@ -138,14 +264,9 @@ function ApiKeysList({
     });
 
   const openDeleteConfirm = (keyId: string) => {
-    push(ConfirmOverlay, {
-      title: "Delete API Key",
-      message:
-        "Are you sure you want to delete this API key? Any integrations using this key will stop working immediately.",
-      confirmLabel: "Delete",
-      confirmVariant: "destructive" as const,
-      destructive: true,
-      onConfirm: () => onDelete(keyId),
+    push(DeleteApiKeyOverlay, {
+      keyId,
+      onDelete,
     });
   };
 
@@ -238,6 +359,8 @@ function useApiKeys(
   listEndpoint: string,
   deleteEndpoint: (id: string) => string
 ) {
+  const { open: openOverlay, closeAll } = useOverlay();
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(null);
@@ -269,22 +392,57 @@ function useApiKeys(
     setApiKeys((prev) => [newKey, ...prev]);
   };
 
-  const handleDelete = async (keyId: string) => {
+  const handleDelete = async (
+    keyId: string,
+    code: string,
+    emailOtp: string
+  ): Promise<{ ok: true } | { ok: false; code: string }> => {
     setDeleting(keyId);
     try {
       const response = await fetch(deleteEndpoint(keyId), {
         method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, emailOtp: emailOtp || undefined }),
       });
 
       if (!response.ok) {
-        throw new Error("Failed to delete API key");
+        const guarded = await handleGuardError(response, {
+          onEnrollMfa: () => {
+            closeAll();
+            openOverlay(SettingsOverlay);
+          },
+          onPendingMfa: (next) => {
+            closeAll();
+            router.push(`/verify-mfa?next=${encodeURIComponent(next)}`);
+          },
+        });
+        if (guarded) {
+          return { ok: false, code: "guarded" };
+        }
+        const data = (await response.json().catch(() => ({}))) as {
+          error?: string;
+          code?: string;
+        };
+        if (
+          data.code === "factors_required" ||
+          data.code === "mfa_code_invalid" ||
+          data.code === "email_code_invalid"
+        ) {
+          return { ok: false, code: data.code };
+        }
+        toast.error(data.error || "Failed to delete API key");
+        return { ok: false, code: "unknown" };
       }
 
       setApiKeys((prev) => prev.filter((k) => k.id !== keyId));
-      toast.success("API key deleted");
+      toast.success("API key revoked");
+      return { ok: true };
     } catch (error) {
       console.error("Failed to delete API key:", error);
-      toast.error("Failed to delete API key");
+      toast.error(
+        error instanceof Error ? error.message : "Failed to delete API key"
+      );
+      return { ok: false, code: "unknown" };
     } finally {
       setDeleting(null);
     }

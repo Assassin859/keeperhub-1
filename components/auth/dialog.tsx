@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -53,6 +54,8 @@ type ModalView =
   | "signin"
   | "signup"
   | "verify"
+  | "signin-email-otp"
+  | "totp"
   | "forgot-password"
   | "reset-password";
 
@@ -298,6 +301,10 @@ const getViewTitle = (view: ModalView) => {
       return "Create account";
     case "verify":
       return "Verify your email";
+    case "signin-email-otp":
+      return "Check your email";
+    case "totp":
+      return "Confirm with your authenticator";
     case "forgot-password":
       return "Reset password";
     case "reset-password":
@@ -317,6 +324,12 @@ const getViewDescription = (view: ModalView, email?: string) => {
       return email
         ? `Enter the 6-digit code sent to ${email}`
         : "Enter the verification code sent to your email.";
+    case "signin-email-otp":
+      return email
+        ? `Enter the 6-digit code emailed to ${email}. After this we'll ask for your authenticator code.`
+        : "Enter the 6-digit code emailed to you. After this we'll ask for your authenticator code.";
+    case "totp":
+      return "Enter the current 6-digit code from your authenticator app to finish signing in.";
     case "forgot-password":
       return "Enter your email to receive a password reset code.";
     case "reset-password":
@@ -354,6 +367,7 @@ export const AuthDialog = ({
       setInternalOpen(next);
     }
   };
+  const router = useRouter();
   const [view, setView] = useState<ModalView>(() =>
     pendingVerifyEmail === null ? "signin" : "verify"
   );
@@ -371,6 +385,12 @@ export const AuthDialog = ({
   const [forgotEmail, setForgotEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  // Optional second factor on the password-reset path. Server only
+  // requires it when the target user has TOTP enrolled; we ask for
+  // it preemptively so the user doesn't have to round-trip.
+  const [forgotTotp, setForgotTotp] = useState("");
+  const [forgotNeedsMfa, setForgotNeedsMfa] = useState(false);
+  const [totpCode, setTotpCode] = useState("");
   const [loadingProvider, setLoadingProvider] = useState<
     "github" | "google" | null
   >(null);
@@ -404,6 +424,8 @@ export const AuthDialog = ({
     setForgotEmail("");
     setNewPassword("");
     setConfirmNewPassword("");
+    setForgotTotp("");
+    setForgotNeedsMfa(false);
   };
 
   const getClaimContext = async () => {
@@ -460,71 +482,174 @@ export const AuthDialog = ({
     const claimContext = await getClaimContext();
 
     try {
-      const response = await signIn.email({ email, password });
-      if (response.error) {
-        const errorMsg = response.error.message || "Sign in failed";
-
-        // Check if error is about unverified email
-        if (
-          errorMsg.toLowerCase().includes("verify") ||
-          errorMsg.toLowerCase().includes("verification") ||
-          errorMsg.toLowerCase().includes("not verified")
-        ) {
-          // Send new OTP and switch to verify view
-          try {
-            const otpResponse = await authClient.emailOtp.sendVerificationOtp({
-              email,
-              type: "email-verification",
-            });
-
-            if (otpResponse.error) {
-              toast.error(
-                otpResponse.error.message || "Failed to send verification code"
-              );
-              setError(
-                otpResponse.error.message || "Failed to send verification code"
-              );
-              setLoading(false);
-              return;
-            }
-
-            setVerifyEmail(email);
-            setVerifyPassword(password);
-            setView("verify");
-            setOtp("");
-            pendingVerifyEmail = email;
-            pendingVerifyPassword = password;
-
-            toast.info("Please verify your email. A new code has been sent.", {
-              duration: 5000,
-            });
-          } catch (otpErr) {
-            const otpErrMsg =
-              otpErr instanceof Error
-                ? otpErr.message
-                : "Failed to send verification code";
-            toast.error(otpErrMsg);
-            setError(otpErrMsg);
-          }
-          setLoading(false);
-          return;
-        }
-
-        setError(errorMsg);
+      // Strict atomic dual-factor sign-in:
+      //   /strict-signin/start validates the password against the
+      //   credential account directly (no Better Auth session minted)
+      //   and triggers the email-OTP send. The user then provides the
+      //   email OTP and TOTP across the next two dialog steps, and
+      //   /api/auth/strict-signin verifies all three factors before
+      //   any session is created. Better Auth's signIn.email is NOT
+      //   called from the dialog because that path leaves a
+      //   two_factor cookie that the standalone signIn.emailOtp path
+      //   can convert into a session without TOTP.
+      const startResponse = await fetch("/api/auth/strict-signin/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const startBody = (await startResponse.json().catch(() => ({}))) as {
+        error?: string;
+        code?: string;
+        signedIn?: boolean;
+      };
+      if (!startResponse.ok) {
+        setError(startBody.error ?? "Sign in failed");
         return;
       }
-
       storeClaimIfNeeded(claimContext);
-
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      await authClient.getSession();
-      refetchOrganizations();
-
-      toast.success("Signed in successfully!");
-      setOpen(false);
-      window.dispatchEvent(new CustomEvent(AUTH_SUCCESS_EVENT));
+      // Users without TOTP enrolled get a session minted directly by
+      // /strict-signin/start; the response carries the session cookies
+      // and we hard-reload to pick them up. Users with TOTP enrolled
+      // get signedIn=false and proceed to the email-OTP step.
+      if (startBody.signedIn) {
+        toast.success("Signed in successfully!");
+        window.dispatchEvent(new CustomEvent(AUTH_SUCCESS_EVENT));
+        if (typeof window !== "undefined") {
+          window.location.assign("/");
+        }
+        return;
+      }
+      setOtp("");
+      setVerifyEmail(email);
+      setView("signin-email-otp");
+      setLoading(false);
+      return;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign in failed");
+      setLoading(false);
+    }
+  };
+
+  /**
+   * Re-send the sign-in email OTP from the same email-otp view.
+   * Mirrors authClient.emailOtp.sendVerificationOtp call we make in
+   * handleSignIn so the user can rerequest without bouncing back to
+   * the password screen.
+   */
+  const handleResendSigninEmailOtp = async (): Promise<void> => {
+    const targetEmail = verifyEmail || email;
+    if (!targetEmail) {
+      setError("Missing email, start sign-in again");
+      return;
+    }
+    setError("");
+    setLoading(true);
+    try {
+      const sendResult = await authClient.emailOtp.sendVerificationOtp({
+        email: targetEmail,
+        type: "sign-in",
+      });
+      if (sendResult.error) {
+        setError(sendResult.error.message ?? "Failed to resend code");
+        return;
+      }
+      toast.success("Code resent");
+      setOtp("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to resend code");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /**
+   * Submit the email OTP that finishes the FIRST factor of a
+   * mandatory dual-factor sign-in (password → email → TOTP). Calls
+   * signIn.emailOtp; for users with TOTP enrolled Better Auth then
+   * returns twoFactorRedirect again, which routes us to the totp
+   * view. Users without TOTP (shouldn't exist under the mandate, but
+   * defensive) would get a fully-signed-in session here.
+   */
+  const handleSigninEmailOtp = (e: React.FormEvent): void => {
+    e.preventDefault();
+    if (otp.trim().length !== 6) {
+      setError("Enter the 6-digit code from your email");
+      return;
+    }
+    // Strict atomic dual-factor: do NOT verify the email OTP here.
+    // Hold onto it (already in `otp` state) and move to the TOTP
+    // step. The atomic /api/auth/strict-signin endpoint will verify
+    // email OTP and TOTP together, mint the session only if both
+    // pass, and reject otherwise. Verifying email OTP separately at
+    // this step would either bypass TOTP (the security bug we're
+    // fixing) or require holding partial state on the server.
+    setError("");
+    setTotpCode("");
+    setView("totp");
+  };
+
+  /**
+   * Submit the TOTP code that finishes a sign-in that paused on
+   * Better Auth's twoFactorRedirect step. The plugin's verifyTotp
+   * endpoint converts the `better-auth.two_factor` challenge cookie
+   * into a real session cookie on success.
+   */
+  const handleTotpVerify = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    if (totpCode.trim().length !== 6) {
+      setError("Enter the 6-digit code from your authenticator");
+      return;
+    }
+    if (otp.trim().length !== 6) {
+      setError("Missing email code. Start sign-in again.");
+      setView("signin");
+      return;
+    }
+    setError("");
+    setLoading(true);
+    try {
+      const completeResponse = await fetch("/api/auth/strict-signin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: verifyEmail || email,
+          password,
+          emailOtp: otp.trim(),
+          totpCode: totpCode.trim(),
+        }),
+      });
+      const completeBody = (await completeResponse
+        .json()
+        .catch(() => ({}))) as { error?: string; code?: string };
+      if (!completeResponse.ok) {
+        if (completeBody.code === "invalid_email_otp") {
+          setError("Invalid email code");
+          setOtp("");
+          setView("signin-email-otp");
+          return;
+        }
+        if (completeBody.code === "invalid_totp") {
+          setError("Invalid authenticator code");
+          setTotpCode("");
+          return;
+        }
+        setError(completeBody.error ?? "Sign in failed");
+        return;
+      }
+      toast.success("Signed in successfully!");
+      setTotpCode("");
+      setOtp("");
+      window.dispatchEvent(new CustomEvent(AUTH_SUCCESS_EVENT));
+      // Hard reload so the server re-renders with the new
+      // better-auth.session_token cookie. authClient.getSession()
+      // does refresh the atom but the user-menu/useSession subtree
+      // races the AuthDialog unmount that happens once the dialog
+      // closes; the cleanest signal is a real navigation.
+      if (typeof window !== "undefined") {
+        window.location.assign("/");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Verification failed");
     } finally {
       setLoading(false);
     }
@@ -781,12 +906,32 @@ export const AuthDialog = ({
           email: forgotEmail,
           otp,
           newPassword,
+          code: forgotTotp ? forgotTotp.trim() : undefined,
         }),
       });
 
-      const data = (await response.json()) as { error?: string };
+      const data = (await response.json()) as {
+        error?: string;
+        code?: string;
+      };
 
       if (!response.ok) {
+        // Server signaled the user has TOTP enrolled: reveal the
+        // code field and let them retry without losing the OTP /
+        // password they already typed.
+        if (data.code === "mfa_code_required") {
+          setForgotNeedsMfa(true);
+          setError(
+            data.error ??
+              "This account has two-factor enabled. Enter a code from your authenticator."
+          );
+          return;
+        }
+        if (data.code === "mfa_code_invalid") {
+          setForgotTotp("");
+          setError(data.error ?? "Invalid verification code");
+          return;
+        }
         throw new Error(data.error ?? "Failed to reset password");
       }
 
@@ -1035,6 +1180,121 @@ export const AuthDialog = ({
             </div>
           )}
 
+          {view === "signin-email-otp" && (
+            <div className="space-y-4">
+              <form className="space-y-4" onSubmit={handleSigninEmailOtp}>
+                <div className="space-y-2">
+                  <Label className="ml-1" htmlFor="signin-email-otp-input">
+                    Email code
+                  </Label>
+                  <Input
+                    autoComplete="one-time-code"
+                    autoFocus
+                    className="text-center font-mono text-2xl tracking-[0.5em]"
+                    id="signin-email-otp-input"
+                    inputMode="numeric"
+                    maxLength={6}
+                    onChange={(e) =>
+                      setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))
+                    }
+                    pattern="[0-9]*"
+                    placeholder="000000"
+                    required
+                    value={otp}
+                  />
+                </div>
+                {error && (
+                  <div className="text-destructive text-sm">{error}</div>
+                )}
+                <Button
+                  className="w-full"
+                  disabled={loading || otp.length !== 6}
+                  type="submit"
+                >
+                  {loading ? <Spinner className="mr-2 size-4" /> : null}
+                  Continue
+                </Button>
+              </form>
+              <div className="flex items-center justify-center gap-1 text-sm">
+                <span className="text-muted-foreground">
+                  Didn't receive your code?
+                </span>
+                <button
+                  className="font-medium text-foreground underline underline-offset-2 hover:text-foreground/80"
+                  disabled={loading}
+                  onClick={handleResendSigninEmailOtp}
+                  type="button"
+                >
+                  Resend email
+                </button>
+              </div>
+              <div className="flex items-center justify-center gap-1 text-sm">
+                <button
+                  className="font-medium text-muted-foreground underline underline-offset-2 hover:text-foreground/80"
+                  onClick={() => {
+                    setView("signin");
+                    setError("");
+                    setOtp("");
+                  }}
+                  type="button"
+                >
+                  Back to sign in
+                </button>
+              </div>
+            </div>
+          )}
+
+          {view === "totp" && (
+            <div className="space-y-4">
+              <form className="space-y-4" onSubmit={handleTotpVerify}>
+                <div className="space-y-2">
+                  <Label className="ml-1" htmlFor="signin-totp">
+                    Authenticator code
+                  </Label>
+                  <Input
+                    autoComplete="one-time-code"
+                    autoFocus
+                    className="text-center font-mono text-2xl tracking-[0.5em]"
+                    id="signin-totp"
+                    inputMode="numeric"
+                    maxLength={6}
+                    onChange={(e) =>
+                      setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6))
+                    }
+                    pattern="[0-9]*"
+                    placeholder="000000"
+                    required
+                    value={totpCode}
+                  />
+                </div>
+                {error && (
+                  <div className="text-destructive text-sm">{error}</div>
+                )}
+                <Button
+                  className="w-full"
+                  disabled={loading || totpCode.length !== 6}
+                  type="submit"
+                >
+                  {loading ? <Spinner className="mr-2 size-4" /> : null}
+                  Verify
+                </Button>
+              </form>
+              <div className="flex items-center justify-center gap-1 text-sm">
+                <button
+                  className="font-medium text-muted-foreground underline underline-offset-2 hover:text-foreground/80"
+                  onClick={() => {
+                    setView("signin");
+                    setError("");
+                    setTotpCode("");
+                  }}
+                  type="button"
+                >
+                  Back to sign in
+                </button>
+              </div>
+            </div>
+          )}
+
           {view === "forgot-password" && (
             <div className="space-y-4">
               <form
@@ -1129,6 +1389,33 @@ export const AuthDialog = ({
                     value={confirmNewPassword}
                   />
                 </div>
+                {forgotNeedsMfa && (
+                  <div className="space-y-2">
+                    <Label className="ml-1" htmlFor="forgot-totp">
+                      Authenticator code
+                    </Label>
+                    <Input
+                      autoComplete="one-time-code"
+                      className="text-center font-mono text-2xl tracking-[0.5em]"
+                      id="forgot-totp"
+                      inputMode="numeric"
+                      maxLength={6}
+                      onChange={(e) =>
+                        setForgotTotp(
+                          e.target.value.replace(/\D/g, "").slice(0, 6)
+                        )
+                      }
+                      pattern="[0-9]*"
+                      placeholder="000000"
+                      required
+                      value={forgotTotp}
+                    />
+                    <p className="text-muted-foreground text-xs">
+                      Your account has two-factor enabled. Enter the current
+                      code from your authenticator app.
+                    </p>
+                  </div>
+                )}
                 {error && (
                   <div className="text-destructive text-sm">{error}</div>
                 )}

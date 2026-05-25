@@ -5,6 +5,8 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { apiKeys } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { requireDualFactor } from "@/lib/mfa/dual-factor";
+import { requireMfaEnrolled } from "@/lib/middleware/owner-mfa-guard";
 
 // Generate a secure API key
 function generateApiKey(): { key: string; hash: string; prefix: string } {
@@ -77,8 +79,42 @@ export async function POST(request: Request) {
       );
     }
 
+    // User-scoped key creation is the highest-leverage forever-bypass
+    // a session can mint. Even though the apiKeys table has no org
+    // column to gate on, we require MFA enrolled + step-up cleared so
+    // a stolen session alone can't issue a key that survives any
+    // future MFA enforcement.
+    const sessionRow = session.session as { requiresMfa?: boolean | null };
+    const guard = await requireMfaEnrolled(
+      session.user.id,
+      sessionRow.requiresMfa === true
+    );
+    if (!guard.ok) {
+      return NextResponse.json(
+        { error: guard.error, code: guard.code },
+        { status: guard.status }
+      );
+    }
+
     const body = await request.json().catch(() => ({}));
     const name = body.name || null;
+
+    // Dual-factor at mint time. Long-lived bypass credentials warrant
+    // a fresh challenge on BOTH factors at the exact moment of issue.
+    const dual = await requireDualFactor({
+      userId: session.user.id,
+      email: session.user.email,
+      action: "user_api_key_create",
+      code: typeof body.code === "string" ? body.code : undefined,
+      emailOtp: typeof body.emailOtp === "string" ? body.emailOtp : undefined,
+      headers: request.headers,
+    });
+    if (!dual.ok) {
+      return NextResponse.json(
+        { error: dual.error, code: dual.code },
+        { status: dual.status }
+      );
+    }
 
     // Generate new API key
     const { key, hash, prefix } = generateApiKey();

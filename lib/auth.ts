@@ -130,6 +130,21 @@ const plugins = [
   // sign in via OAuth or email OTP.
   twoFactor({
     issuer: "KeeperHub",
+    // Mandatory-MFA mode: do not remember the device. The plugin's
+    // default `trustDeviceMaxAge` is 30 days, which lets a user skip
+    // the TOTP step on the same browser for that window. Setting it
+    // to 0 forces a TOTP prompt on every login, matching the
+    // proxy-level requires_mfa=true-on-every-session policy.
+    trustDeviceMaxAge: 0,
+    // The plugin exposes an inert email-OTP-as-second-factor path
+    // (no sendOTP wired, see comment above). If we ever turn it on,
+    // store the OTP encrypted rather than the plugin default of
+    // plaintext. Same primitive that the emailOTP plugin uses for
+    // its own OTPs (KEEP-625). Defense in depth; sets the right
+    // default ahead of any future flip.
+    otpOptions: {
+      storeOTP: "encrypted",
+    },
   }),
   // end keeperhub code //
   emailOTP({
@@ -152,6 +167,15 @@ const plugins = [
     otpLength: 6,
     expiresIn: 300, // 5 minutes
     sendVerificationOnSignUp: true,
+    // KEEP-625: the better-auth emailOTP plugin defaults to storing
+    // OTPs in plaintext in the verifications table. With "encrypted"
+    // the value is symmetric-encrypted with BETTER_AUTH_SECRET via
+    // the same symmetricEncrypt used elsewhere, so a DB-read alone
+    // can't reveal a live 6-digit code — the attacker also needs
+    // the server secret. "hashed" would be cryptographically
+    // brute-forceable in seconds for a 6-digit space; "encrypted"
+    // is the right primitive for short, low-entropy secrets.
+    storeOTP: "encrypted",
   }),
   anonymous({
     async onLinkAccount(data) {
@@ -436,13 +460,21 @@ export const auth = betterAuth({
         // of users.deactivated_at. Returning false aborts the write before
         // the sessions row exists, so no cookie ever ships to the client.
         //
-        // Risk-based step-up: when Cloudflare-attested geo signals a new
-        // country and the user has TOTP enrolled, we mark the new session
-        // requires_mfa=true rather than rejecting it. App middleware then
-        // restricts the quarantined session to the verify-mfa endpoints
-        // only. Sessions where TOTP is not enrolled pass through (we have
-        // nothing to step up to); the anomaly is still recorded in
-        // sessions.risk_flags_json for downstream detection alerting.
+        // Mandatory step-up on every TOTP-enrolled login: every new
+        // session for a user with two_factor_enabled = true starts with
+        // requires_mfa = true. The per-action guards in
+        // lib/middleware/owner-mfa-guard.ts then refuse sensitive actions
+        // until the user completes /verify-mfa, which clears the flag.
+        // Previously the flag was only set when login-risk detection
+        // flagged a country anomaly; flipping it on unconditionally makes
+        // step-up uniform across every fresh login rather than only the
+        // risk-flagged subset. The geo risk signal is still recorded in
+        // sessions.risk_flags_json when present, for detection / alerting.
+        //
+        // Forced enrollment for users without TOTP is intentionally not
+        // wired here: a session for a non-TOTP user gets requires_mfa =
+        // false because there is nothing to step up to. Mandating the
+        // enrollment wizard is a separate follow-up.
         before: async (session) => {
           const userId =
             typeof session.userId === "string" ? session.userId : null;
@@ -453,20 +485,16 @@ export const auth = betterAuth({
             return false;
           }
           const risk = await assessLoginRisk(userId);
-          if (!risk.country) {
-            return;
-          }
           const [userRow] = await db
             .select({ twoFactorEnabled: users.twoFactorEnabled })
             .from(users)
             .where(eq(users.id, userId))
             .limit(1);
           const twoFactorEnabled = userRow?.twoFactorEnabled === true;
-          const requiresMfa = risk.anomaly && twoFactorEnabled;
           return {
             data: {
-              requiresMfa,
-              riskFlagsJson: serializeRiskFlags(risk),
+              requiresMfa: twoFactorEnabled,
+              riskFlagsJson: risk.country ? serializeRiskFlags(risk) : null,
             },
           };
         },
@@ -546,11 +574,19 @@ export const auth = betterAuth({
       clientId: process.env.GITHUB_CLIENT_ID || "",
       clientSecret: process.env.GITHUB_CLIENT_SECRET || "",
       enabled: !!process.env.GITHUB_CLIENT_ID,
+      // Force the provider to re-prompt at every sign-in rather than
+      // silently reusing an existing IdP session. Combined with the
+      // session.create.before hook setting requires_mfa=true on every
+      // TOTP-enrolled session, this gives the closest practical match
+      // to "MFA on every login" for the OAuth path. The IdP itself
+      // still owns the second-factor step on its side.
+      prompt: "login",
     },
     google: {
       clientId: process.env.GOOGLE_CLIENT_ID || "",
       clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
       enabled: !!process.env.GOOGLE_CLIENT_ID,
+      prompt: "login",
     },
   },
   rateLimit: {

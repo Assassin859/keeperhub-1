@@ -4,6 +4,7 @@ import { AlertTriangle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
+import { DualFactorInput } from "@/components/auth/dual-factor-input";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -11,7 +12,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
-import { authClient } from "@/lib/auth-client";
+import { authClient, useSession } from "@/lib/auth-client";
+import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
 
 type ChangePasswordSectionProps = {
   providerId: string | null;
@@ -22,14 +24,20 @@ export function ChangePasswordSection({
 }: ChangePasswordSectionProps) {
   const router = useRouter();
   const { closeAll: closeOverlays } = useOverlay();
+  const session = useSession();
+  const sessionUser = session.data?.user as
+    | { twoFactorEnabled?: boolean | null }
+    | undefined;
+  const mfaEnrolled = sessionUser?.twoFactorEnabled === true;
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const dual = useDualFactorState();
   const [loading, setLoading] = useState(false);
 
   const isOAuthUser = providerId !== null && providerId !== "credential";
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
 
     if (newPassword !== confirmPassword) {
@@ -42,21 +50,42 @@ export function ChangePasswordSection({
       return;
     }
 
+    if (dual.totpCode.trim().length !== 6) {
+      toast.error("Enter the 6-digit code from your authenticator");
+      return;
+    }
+    if (dual.awaitingEmailOtp && dual.emailOtp.trim().length !== 6) {
+      toast.error("Enter the 6-digit code we emailed you");
+      return;
+    }
+
     setLoading(true);
     try {
       const response = await fetch("/api/user/password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ currentPassword, newPassword }),
+        body: JSON.stringify({
+          currentPassword,
+          newPassword,
+          code: dual.totpCode.trim(),
+          emailOtp: dual.emailOtp.trim() || undefined,
+        }),
       });
 
-      const data = (await response.json()) as { error?: string };
+      const data = (await response.json()) as {
+        error?: string;
+        code?: string;
+      };
 
       if (!response.ok) {
+        if (
+          dual.handleResponse(data.code, data.error, (msg) => toast.error(msg))
+        ) {
+          return;
+        }
         throw new Error(data.error ?? "Failed to change password");
       }
 
-      // Sign out user after password change for security
       await authClient.signOut();
       toast.success("Password changed successfully. Please sign in again.");
       closeOverlays();
@@ -145,15 +174,28 @@ export function ChangePasswordSection({
             />
           </div>
 
+          <DualFactorInput
+            awaitingEmailOtp={dual.awaitingEmailOtp}
+            emailOtp={dual.emailOtp}
+            idPrefix="password"
+            onEmailOtpChange={dual.setEmailOtp}
+            onTotpChange={dual.setTotpCode}
+            totpCode={dual.totpCode}
+          />
+
           <Button
             className="w-full"
             disabled={
-              loading || !currentPassword || !newPassword || !confirmPassword
+              loading ||
+              !(currentPassword && newPassword && confirmPassword) ||
+              !dual.isReady
             }
             type="submit"
           >
             {loading ? <Spinner className="mr-2 size-4" /> : null}
-            Change Password
+            {dual.awaitingEmailOtp
+              ? "Confirm & Change Password"
+              : "Change Password"}
           </Button>
         </form>
       </CardContent>

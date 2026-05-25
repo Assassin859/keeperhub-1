@@ -1,77 +1,86 @@
 "use client";
 
-import { Copy, Eye, EyeOff, KeyRound } from "lucide-react";
+import { Copy, Eye, EyeOff, KeyRound, ShieldAlert } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
+import { DualFactorInput } from "@/components/auth/dual-factor-input";
+import { useOverlay } from "@/components/overlays/overlay-provider";
+import { SettingsOverlay } from "@/components/overlays/settings-overlay";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import { useSession } from "@/lib/auth-client";
+import { handleGuardError } from "@/lib/client/handle-guard-error";
+import { useActiveMember } from "@/lib/hooks/use-organization";
+import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
 
-type ExportStep = "idle" | "requesting" | "otp" | "verifying" | "done";
+type ExportStep = "idle" | "totp" | "verifying" | "done" | "needs-mfa";
 
-function getDescription(
-  step: ExportStep,
-  recipientEmail: string | null
-): string {
-  if (step === "done") {
-    return "Your private key is shown below. Copy it and store it securely.";
-  }
-  if (step === "requesting") {
-    return "Sending a verification code to the wallet's recovery email...";
-  }
-  if (recipientEmail) {
-    return `A verification code has been sent to ${recipientEmail} (the wallet's recovery email).`;
-  }
-  return "A verification code has been sent to the wallet's recovery email.";
-}
-
-export function ExportPrivateKeyButton(): React.ReactElement {
+export function ExportPrivateKeyButton(): React.ReactElement | null {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<ExportStep>("idle");
-  const [otpCode, setOtpCode] = useState("");
+  const dual = useDualFactorState();
   const [privateKey, setPrivateKey] = useState<string | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [recipientEmail, setRecipientEmail] = useState<string | null>(null);
+  const { open: openOverlay } = useOverlay();
+  const router = useRouter();
 
-  const handleOpen = async (): Promise<void> => {
+  // Client-side pre-check: hide the button entirely for non-owners
+  // and route owners-without-MFA to enrollment instead of the TOTP
+  // dialog. Server still enforces the same rules via
+  // requireOwnerWithMfa, so this is purely UX hardening — never the
+  // sole source of authorization.
+  const { role, isLoading: memberLoading } = useActiveMember();
+  const session = useSession();
+  const sessionUser = session.data?.user as
+    | { twoFactorEnabled?: boolean | null }
+    | undefined;
+  const isOwner = role === "owner";
+  const mfaEnrolled = sessionUser?.twoFactorEnabled === true;
+
+  if (memberLoading || session.isPending) {
+    return null;
+  }
+  if (!isOwner) {
+    return null;
+  }
+
+  const guardOptions = {
+    onEnrollMfa: () => {
+      setOpen(false);
+      openOverlay(SettingsOverlay);
+    },
+    onPendingMfa: (next: string) => {
+      setOpen(false);
+      router.push(`/verify-mfa?next=${encodeURIComponent(next)}`);
+    },
+  };
+
+  const handleOpen = (): void => {
     setOpen(true);
-    setStep("requesting");
     setError(null);
-    setOtpCode("");
+    dual.reset();
     setPrivateKey(null);
     setRevealed(false);
-    setRecipientEmail(null);
-    try {
-      const res = await fetch("/api/user/wallet/export-key/request", {
-        method: "POST",
-      });
-      const data: { error?: string; email?: string } = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error ?? "Failed to send verification code");
-      }
-
-      setRecipientEmail(data.email ?? null);
-      setStep("otp");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to send code");
-      setOpen(false);
-      setStep("idle");
-    }
+    setStep(mfaEnrolled ? "totp" : "needs-mfa");
   };
 
   const handleVerify = async (): Promise<void> => {
-    if (otpCode.length !== 6) {
-      setError("Enter the 6-digit code from your email");
+    if (dual.totpCode.length !== 6) {
+      setError("Enter the 6-digit code from your authenticator app");
+      return;
+    }
+    if (dual.awaitingEmailOtp && dual.emailOtp.length !== 6) {
+      setError("Enter the 6-digit code we emailed you");
       return;
     }
 
@@ -81,14 +90,29 @@ export function ExportPrivateKeyButton(): React.ReactElement {
       const res = await fetch("/api/user/wallet/export-key/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: otpCode }),
+        body: JSON.stringify({
+          code: dual.totpCode,
+          emailOtp: dual.emailOtp || undefined,
+        }),
       });
-      const data: { privateKey?: string; error?: string } = await res.json();
 
       if (!res.ok) {
+        const guarded = await handleGuardError(res, guardOptions);
+        if (guarded) {
+          setStep("totp");
+          return;
+        }
+        const data: { error?: string; code?: string } = await res.json();
+        if (
+          dual.handleResponse(data.code, data.error, (msg) => setError(msg))
+        ) {
+          setStep("totp");
+          return;
+        }
         throw new Error(data.error ?? "Verification failed");
       }
 
+      const data: { privateKey?: string } = await res.json();
       if (!data.privateKey) {
         throw new Error("No private key returned");
       }
@@ -98,7 +122,7 @@ export function ExportPrivateKeyButton(): React.ReactElement {
       setStep("done");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Verification failed");
-      setStep("otp");
+      setStep("totp");
     }
   };
 
@@ -113,12 +137,21 @@ export function ExportPrivateKeyButton(): React.ReactElement {
   const handleClose = (): void => {
     setOpen(false);
     setStep("idle");
-    setOtpCode("");
+    dual.reset();
     setPrivateKey(null);
     setRevealed(false);
     setError(null);
-    setRecipientEmail(null);
   };
+
+  const description = (() => {
+    if (step === "done") {
+      return "Your private key is shown below. Copy it and store it securely.";
+    }
+    if (step === "needs-mfa") {
+      return "Enable two-factor authentication on your account before exporting a private key.";
+    }
+    return "Enter the current 6-digit code from your authenticator app to confirm.";
+  })();
 
   return (
     <>
@@ -143,31 +176,51 @@ export function ExportPrivateKeyButton(): React.ReactElement {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Export Private Key</DialogTitle>
-            <DialogDescription>{getDescription(step, recipientEmail)}</DialogDescription>
+            <DialogDescription>{description}</DialogDescription>
           </DialogHeader>
 
-          {step === "requesting" && (
-            <div className="flex items-center justify-center py-8">
-              <Spinner className="h-6 w-6" />
+          {step === "needs-mfa" && (
+            <div className="space-y-4 py-2">
+              <div className="flex items-start gap-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-4">
+                <ShieldAlert
+                  aria-hidden="true"
+                  className="mt-0.5 size-5 shrink-0 text-amber-500"
+                />
+                <p className="text-sm">
+                  Exporting a private key requires a second factor. Open
+                  Settings to enroll your authenticator, then come back to
+                  finish the export.
+                </p>
+              </div>
+              <DialogFooter>
+                <Button onClick={handleClose} variant="outline">
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => {
+                    handleClose();
+                    openOverlay(SettingsOverlay);
+                  }}
+                >
+                  Open Settings
+                </Button>
+              </DialogFooter>
             </div>
           )}
 
-          {(step === "otp" || step === "verifying") && (
+          {(step === "totp" || step === "verifying") && (
             <div className="space-y-4 py-2">
-              <div className="space-y-2">
-                <Label htmlFor="export-otp">Verification Code</Label>
-                <Input
-                  className="font-mono text-center text-lg tracking-[0.3em]"
-                  id="export-otp"
-                  maxLength={6}
-                  onChange={(e) =>
-                    setOtpCode(e.target.value.replace(/\D/g, ""))
-                  }
-                  placeholder="000000"
-                  value={otpCode}
-                />
-                {error && <p className="text-destructive text-sm">{error}</p>}
-              </div>
+              <DualFactorInput
+                autoFocusTotp
+                awaitingEmailOtp={dual.awaitingEmailOtp}
+                disabled={step === "verifying"}
+                emailOtp={dual.emailOtp}
+                idPrefix="export"
+                onEmailOtpChange={dual.setEmailOtp}
+                onTotpChange={dual.setTotpCode}
+                totpCode={dual.totpCode}
+              />
+              {error && <p className="text-destructive text-sm">{error}</p>}
               <div className="flex gap-2">
                 <Button
                   className="flex-1"
@@ -179,17 +232,22 @@ export function ExportPrivateKeyButton(): React.ReactElement {
                 </Button>
                 <Button
                   className="flex-1"
-                  disabled={step === "verifying" || otpCode.length !== 6}
+                  disabled={step === "verifying" || !dual.isReady}
                   onClick={handleVerify}
                 >
-                  {step === "verifying" ? (
-                    <>
-                      <Spinner className="mr-2 h-4 w-4" />
-                      Verifying...
-                    </>
-                  ) : (
-                    "Verify & Export"
-                  )}
+                  {(() => {
+                    if (step === "verifying") {
+                      return (
+                        <>
+                          <Spinner className="mr-2 h-4 w-4" />
+                          Verifying...
+                        </>
+                      );
+                    }
+                    return dual.awaitingEmailOtp
+                      ? "Confirm & Export"
+                      : "Continue";
+                  })()}
                 </Button>
               </div>
             </div>
@@ -228,7 +286,7 @@ export function ExportPrivateKeyButton(): React.ReactElement {
                   </div>
                 </div>
                 <code className="block break-all font-mono text-sm">
-                  {revealed ? privateKey : privateKey.replace(/./g, "\u2022")}
+                  {revealed ? privateKey : privateKey.replace(/./g, "•")}
                 </code>
               </div>
               <Button className="w-full" onClick={handleClose}>
