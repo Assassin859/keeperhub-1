@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { isAnonymousUserShape } from "@/lib/auth-anonymous-guard";
 import { db } from "@/lib/db";
-import { twoFactor as twoFactorTable } from "@/lib/db/schema";
+import { sessions, twoFactor as twoFactorTable } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 
 type RequestBody = {
@@ -111,6 +111,20 @@ export async function POST(request: Request): Promise<NextResponse> {
       .update(twoFactorTable)
       .set({ backupCodes: encryptedBackupCodes })
       .where(eq(twoFactorTable.userId, userId));
+
+    // Better Auth's verifyTOTP flips users.two_factor_enabled = true
+    // and rotates the session. The new session row goes through
+    // session.create.before which now sees two_factor_enabled = true
+    // and sets requires_mfa = true. Without this clear the user gets
+    // immediately bounced to /verify-mfa after enrollment, even
+    // though they JUST proved TOTP in the same request. We update
+    // every session this user holds because there should only be one
+    // post-rotation and we want this user-initiated factor proof to
+    // satisfy the step-up gate on each of them.
+    await db
+      .update(sessions)
+      .set({ requiresMfa: false, mfaVerifiedAt: new Date() })
+      .where(eq(sessions.userId, userId));
 
     const responseBody: Response = { backupCodes };
     const response = NextResponse.json(responseBody);
