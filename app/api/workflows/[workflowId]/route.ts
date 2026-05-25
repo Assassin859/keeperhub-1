@@ -13,7 +13,11 @@ import {
   findBareAtLiterals,
   isInputSchemaPresent,
 } from "@/lib/mcp/listing-validators";
-import { syncWorkflowSchedule } from "@/lib/schedule-service";
+import { IntervalTooSmallError } from "@/lib/cron-utils";
+import {
+  extractScheduleConfig,
+  syncWorkflowSchedule,
+} from "@/lib/schedule-service";
 import { sanitizeDescription } from "@/lib/sanitize-description";
 import { getWorkflowAccess } from "@/lib/workflow/access";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
@@ -337,6 +341,28 @@ export async function PATCH(
           },
           { status: 400 }
         );
+      }
+
+      // KEEP-581: schedule interval pre-check. Runs before the DB update so
+      // a rejected sub-60s value never lands as persisted nodes paired with
+      // an unsynced schedule. extractScheduleConfig is the only thing that
+      // throws here; bad timezones/cron strings still take the warn-and-
+      // continue path in handlePostUpdateSideEffects.
+      try {
+        extractScheduleConfig(
+          body.nodes as Parameters<typeof extractScheduleConfig>[0]
+        );
+      } catch (error) {
+        if (error instanceof IntervalTooSmallError) {
+          return NextResponse.json(
+            {
+              error: "SCHEDULE_INTERVAL_TOO_SMALL",
+              message: error.message,
+            },
+            { status: 400 }
+          );
+        }
+        throw error;
       }
     }
 
