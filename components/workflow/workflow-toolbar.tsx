@@ -1732,6 +1732,76 @@ function RunButtonGroup({
 }
 
 // Read-only badge - pill with a strong accent outline on the toolbar
+// Editable workflow name shown at the top of the editor. Saves on blur.
+function WorkflowNameField({
+  workflowId,
+  name,
+  canEdit,
+  onRename,
+}: {
+  workflowId: string;
+  name: string;
+  canEdit: boolean;
+  onRename: (next: string) => void;
+}) {
+  const [draft, setDraft] = useState(name);
+  const [isSaving, setIsSaving] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Re-sync when the loaded workflow changes or a rename lands from elsewhere.
+  useEffect(() => {
+    setDraft(name);
+  }, [name]);
+
+  const commit = async () => {
+    const trimmed = draft.trim();
+    if (!trimmed || trimmed === name) {
+      setDraft(name);
+      return;
+    }
+    onRename(trimmed);
+    setIsSaving(true);
+    try {
+      await api.workflow.update(workflowId, { name: trimmed });
+    } catch (error) {
+      console.error("Failed to rename workflow:", error);
+      toast.error("Failed to rename workflow. Please try again.");
+      onRename(name);
+      setDraft(name);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  if (!canEdit) {
+    return (
+      <span className="hidden max-w-48 truncate font-medium text-foreground text-sm lg:inline-block">
+        {name}
+      </span>
+    );
+  }
+
+  return (
+    <input
+      aria-label="Workflow name"
+      className="hidden h-8 max-w-48 rounded-md border border-transparent bg-transparent px-2 font-medium text-foreground text-sm transition-colors hover:border-border focus-visible:border-border focus-visible:bg-background focus-visible:outline-none disabled:opacity-50 lg:inline-block"
+      disabled={isSaving}
+      onBlur={commit}
+      onChange={(event) => setDraft(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          inputRef.current?.blur();
+        } else if (event.key === "Escape") {
+          setDraft(name);
+          inputRef.current?.blur();
+        }
+      }}
+      ref={inputRef}
+      value={draft}
+    />
+  );
+}
+
 function ReadOnlyBadge({ className }: { className?: string }) {
   return (
     <Badge
@@ -1858,6 +1928,14 @@ export const WorkflowToolbar = ({
             state={state}
             workflowId={effectiveWorkflowId}
           />
+          {isWorkflowRoute && state.currentWorkflowId && (
+            <WorkflowNameField
+              canEdit={state.isOwner}
+              name={state.workflowName}
+              onRename={state.setCurrentWorkflowName}
+              workflowId={state.currentWorkflowId}
+            />
+          )}
           {isWorkflowRoute &&
             effectiveWorkflowId &&
             !state.isOwner &&
