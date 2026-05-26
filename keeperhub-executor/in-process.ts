@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { validateWorkflowIntegrations } from "../lib/db/integrations";
 import { organization, workflows } from "../lib/db/schema";
+import { buildExecutorInput } from "../lib/workflow/executor/build-executor-input";
 import { executeWorkflow } from "../lib/workflow/executor/executor.workflow";
 import { calculateTotalSteps } from "../lib/workflow/executor/progress";
 import type { WorkflowEdge, WorkflowNode } from "../lib/workflow/store";
@@ -17,7 +18,6 @@ import {
  * Refactored from keeperhub-executor/workflow-runner.ts main() to be callable
  * from the executor without managing its own process lifecycle.
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: orchestrates multiple phases of workflow execution
 export async function executeInProcess(params: {
   workflowId: string;
   executionId: string;
@@ -89,15 +89,13 @@ export async function executeInProcess(params: {
     await initializeExecutionProgress(db, executionId, totalSteps);
 
     console.log("[Executor:InProcess] Executing workflow...");
-    const result = await executeWorkflow({
-      nodes,
-      edges,
-      triggerInput: input,
-      executionId,
-      workflowId,
-      organizationId: workflow.organizationId ?? undefined,
-      organizationName,
-    });
+    const result = await executeWorkflow(
+      buildExecutorInput(workflow, {
+        triggerInput: input,
+        executionId,
+        organizationName,
+      })
+    );
 
     const duration = Date.now() - startTime;
     console.log(`[Executor:InProcess] Completed in ${duration}ms`);

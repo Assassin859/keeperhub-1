@@ -29,9 +29,9 @@ import {
   CALL_ROUTE_COLUMNS,
   type CallRouteWorkflow,
 } from "@/lib/payments/x402/types";
+import { buildExecutorInput } from "@/lib/workflow/executor/build-executor-input";
 import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
 import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
-import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -156,16 +156,12 @@ async function startExecutionInBackground(
     getOrgPlanLabel(workflow.organizationId),
   ]);
   start(executeWorkflow, [
-    {
-      nodes: workflow.nodes as WorkflowNode[],
-      edges: workflow.edges as WorkflowEdge[],
+    buildExecutorInput(workflow, {
       triggerInput: body,
       executionId,
-      workflowId: workflow.id,
-      organizationId: workflow.organizationId ?? undefined,
       organizationSlug,
       organizationPlan,
-    },
+    }),
   ]).catch((err: unknown) => {
     logSystemError(
       ErrorCategory.WORKFLOW_ENGINE,
