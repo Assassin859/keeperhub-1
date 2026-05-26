@@ -34,9 +34,26 @@ const CACHE = new Map<
   string,
   { location: ResolvedLocation; expiresAt: number }
 >();
+// In-flight requests are tracked separately so two concurrent
+// resolveLocationFromIp calls for the same IP coalesce onto one
+// outbound fetch instead of double-charging the free-tier rate
+// limit at ipapi.co.
+const IN_FLIGHT = new Map<string, Promise<ResolvedLocation>>();
 const TTL_MS = 24 * 60 * 60 * 1000;
+// +/- 10% jitter on every cache write so a burst of distinct IPs
+// resolved in the same minute doesn't all expire together a day
+// later and trigger a thundering-herd refetch. RandomInt-like with
+// Math.random is fine here: the goal is decorrelation, not
+// cryptographic unpredictability.
+const TTL_JITTER_MS = 0.1 * TTL_MS;
 const LOOKUP_TIMEOUT_MS = 2000;
 const COUNTRY_CODE_RE = /^[A-Z]{2}$/;
+
+function nextExpiry(): number {
+  return (
+    Date.now() + TTL_MS + Math.floor((Math.random() * 2 - 1) * TTL_JITTER_MS)
+  );
+}
 
 type IpapiResponse = {
   country_code?: unknown;
@@ -54,6 +71,35 @@ function pickString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+async function fetchLocation(ip: string): Promise<ResolvedLocation> {
+  try {
+    const res = await fetch(
+      `https://ipapi.co/${encodeURIComponent(ip)}/json/`,
+      {
+        headers: { accept: "application/json" },
+        signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS),
+      }
+    );
+    if (!res.ok) {
+      return NULL_LOCATION;
+    }
+    const data = (await res.json()) as IpapiResponse;
+    if (data.error) {
+      return NULL_LOCATION;
+    }
+    const countryRaw = pickString(data.country_code)?.toUpperCase() ?? null;
+    return {
+      country:
+        countryRaw && COUNTRY_CODE_RE.test(countryRaw) ? countryRaw : null,
+      region: pickString(data.region_code) ?? pickString(data.region) ?? null,
+      city: pickString(data.city),
+    };
+  } catch {
+    // Network / abort / parse failures fall through to NULL_LOCATION.
+    return NULL_LOCATION;
+  }
+}
+
 export async function resolveLocationFromIp(
   ip: string | null
 ): Promise<ResolvedLocation> {
@@ -64,33 +110,21 @@ export async function resolveLocationFromIp(
   if (cached && cached.expiresAt > Date.now()) {
     return cached.location;
   }
-  let location: ResolvedLocation = NULL_LOCATION;
-  try {
-    const res = await fetch(
-      `https://ipapi.co/${encodeURIComponent(ip)}/json/`,
-      {
-        headers: { accept: "application/json" },
-        signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS),
-      }
-    );
-    if (res.ok) {
-      const data = (await res.json()) as IpapiResponse;
-      if (!data.error) {
-        const countryRaw = pickString(data.country_code)?.toUpperCase() ?? null;
-        location = {
-          country:
-            countryRaw && COUNTRY_CODE_RE.test(countryRaw) ? countryRaw : null,
-          region:
-            pickString(data.region_code) ?? pickString(data.region) ?? null,
-          city: pickString(data.city),
-        };
-      }
-    }
-  } catch {
-    // Network / abort / parse failures fall through to NULL_LOCATION.
+  // Coalesce concurrent calls for the same IP onto one outbound
+  // fetch. Without this, N parallel sign-ins from the same address
+  // would fire N requests at ipapi.co simultaneously and burn the
+  // free-tier rate limit for no reason.
+  const inFlight = IN_FLIGHT.get(ip);
+  if (inFlight) {
+    return await inFlight;
   }
-  CACHE.set(ip, { location, expiresAt: Date.now() + TTL_MS });
-  return location;
+  const promise = fetchLocation(ip).then((location) => {
+    CACHE.set(ip, { location, expiresAt: nextExpiry() });
+    IN_FLIGHT.delete(ip);
+    return location;
+  });
+  IN_FLIGHT.set(ip, promise);
+  return await promise;
 }
 
 /**
