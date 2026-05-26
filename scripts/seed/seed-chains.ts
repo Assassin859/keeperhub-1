@@ -491,6 +491,7 @@ const DEFAULT_CHAINS: NewChain[] = [
     }),
     isTestnet: getChainConfigValue("0g-mainnet", "isTestnet", false),
     isEnabled: getChainConfigValue("0g-mainnet", "isEnabled", true),
+    status: "experimental",
     usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "0g-mainnet" }),
     defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "0g-mainnet" }),
   },
@@ -513,6 +514,7 @@ const DEFAULT_CHAINS: NewChain[] = [
     }),
     isTestnet: getChainConfigValue("0g-galileo", "isTestnet", true),
     isEnabled: getChainConfigValue("0g-galileo", "isEnabled", true),
+    status: "experimental",
     usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "0g-galileo" }),
     defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "0g-galileo" }),
   },
@@ -828,6 +830,7 @@ async function seedChains() {
           defaultPrivateRpcUrl: chain.defaultPrivateRpcUrl ?? null,
           isTestnet: chain.isTestnet,
           isEnabled: chain.isEnabled,
+          status: chain.status ?? "stable",
           updatedAt: new Date(),
         })
         .where(eq(chains.chainId, chain.chainId));

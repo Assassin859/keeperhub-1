@@ -163,6 +163,9 @@ type ChainInfo = {
   symbol: string;
   chainType: string;
   isTestnet: boolean;
+  // Support maturity: "stable" | "experimental" | "deprecated". Agents should
+  // avoid experimental/deprecated chains for production writes.
+  status: string;
   explorerUrl: string | null;
 };
 
@@ -226,6 +229,7 @@ export async function GET(request: Request) {
         symbol: chain.symbol,
         chainType: chain.chainType,
         isTestnet: chain.isTestnet ?? false,
+        status: chain.status,
         explorerUrl: explorer?.explorerUrl ?? null,
       }));
     } catch (error) {
