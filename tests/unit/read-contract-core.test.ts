@@ -1,3 +1,4 @@
+import { ethers } from "ethers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -330,7 +331,7 @@ describe("read-contract-core - tuple output decoding", () => {
     BigInt("0"), // isolationModeTotalDebt
   ];
 
-  it("preserves all 15 tuple components for Aave V3 getReserveData", async () => {
+  it("names all 15 tuple components for Aave V3 getReserveData", async () => {
     setupRpcMocks();
     mockContractFunction.mockResolvedValueOnce(RESERVE_DATA_TUPLE);
 
@@ -347,21 +348,78 @@ describe("read-contract-core - tuple output decoding", () => {
       return;
     }
 
-    // Output has empty name, so structuredResult should be the unwrapped
-    // tuple itself (the 15-element array), NOT just the first sub-field.
-    expect(Array.isArray(result.result)).toBe(true);
-    expect((result.result as unknown[]).length).toBe(15);
+    // The unnamed single tuple is structured into an object keyed by its ABI
+    // component names; downstream steps read result.liquidityIndex instead of
+    // reverse-engineering positional indices. No component is dropped.
+    expect(result.result).toEqual({
+      configuration: { data: "12345" },
+      liquidityIndex: "1000000000000000000000000000",
+      currentLiquidityRate: "10000000000000000000000000",
+      variableBorrowIndex: "1000000000000000000000000000",
+      currentVariableBorrowRate: "20000000000000000000000000",
+      currentStableBorrowRate: "0",
+      lastUpdateTimestamp: "1700000000",
+      id: "3",
+      aTokenAddress: "0x1111111111111111111111111111111111111111",
+      stableDebtTokenAddress: "0x2222222222222222222222222222222222222222",
+      variableDebtTokenAddress: "0x3333333333333333333333333333333333333333",
+      interestRateStrategyAddress: "0x4444444444444444444444444444444444444444",
+      accruedToTreasury: "500",
+      unbacked: "0",
+      isolationModeTotalDebt: "0",
+    });
+  });
 
-    const tuple = result.result as unknown[];
-    // First element is the nested ReserveConfigurationMap tuple -- it must
-    // remain a tuple (array), not collapse to its lone "data" field.
-    expect(Array.isArray(tuple[0])).toBe(true);
-    expect((tuple[0] as unknown[])[0]).toBe("12345");
-    // Remaining fields must be preserved (BigInts serialized to strings).
-    expect(tuple[1]).toBe("1000000000000000000000000000");
-    expect(tuple[7]).toBe("3");
-    expect(tuple[8]).toBe("0x1111111111111111111111111111111111111111");
-    expect(tuple[14]).toBe("0");
+  it("structures a genuine ethers v6 Result (encode -> decode -> serialize)", async () => {
+    setupRpcMocks();
+
+    // Build a real auto-unwrapped ethers Result the way the chain adapter
+    // would, so the JSON.stringify round-trip in production is exercised
+    // rather than a hand-built plain array.
+    const iface = new ethers.Interface(AAVE_GET_RESERVE_DATA_ABI);
+    const encoded = iface.encodeFunctionResult("getReserveData", [
+      [
+        [BigInt(12_345)],
+        BigInt("1000000000000000000000000000"),
+        BigInt(0),
+        BigInt(0),
+        BigInt(0),
+        BigInt(0),
+        BigInt(0),
+        BigInt(3),
+        "0x1111111111111111111111111111111111111111",
+        "0x2222222222222222222222222222222222222222",
+        "0x3333333333333333333333333333333333333333",
+        "0x4444444444444444444444444444444444444444",
+        BigInt(0),
+        BigInt(0),
+        BigInt(0),
+      ],
+    ]);
+    const decoded = iface.decodeFunctionResult("getReserveData", encoded);
+    // Contract methods auto-unwrap a single output to its Result.
+    mockContractFunction.mockResolvedValueOnce(decoded[0]);
+
+    const result = await readContractCore({
+      contractAddress: VALID_ADDRESS,
+      network: "ethereum",
+      abi: JSON.stringify(AAVE_GET_RESERVE_DATA_ABI),
+      abiFunction: "getReserveData",
+      functionArgs: JSON.stringify([VALID_ADDRESS]),
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+    const reserve = result.result as Record<string, unknown>;
+    expect(reserve.configuration).toEqual({ data: "12345" });
+    expect(reserve.liquidityIndex).toBe("1000000000000000000000000000");
+    expect(reserve.id).toBe("3");
+    expect(reserve.aTokenAddress).toBe(
+      "0x1111111111111111111111111111111111111111"
+    );
+    expect(reserve.isolationModeTotalDebt).toBe("0");
   });
 });
 
