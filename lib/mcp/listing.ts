@@ -144,32 +144,39 @@ export async function listWorkflow(
   if (metadata.outputMapping !== undefined) {
     updateSet.outputMapping = metadata.outputMapping;
   }
-  if (metadata.workflowType !== undefined) {
-    updateSet.workflowType = metadata.workflowType as "read" | "write";
-  }
+  // Auto-derive workflowType from content. A workflow that contains a callable
+  // write node (write-contract / protocol-write) is unconditionally "write":
+  // this fills in an unset type and overrides a curator-supplied "read" that
+  // conflicts with the content. Detection deliberately matches the calldata
+  // generator (findFirstWriteActionNode) so a listed "write" can always be
+  // served by call_workflow. Value transfers and token approvals mutate chain
+  // state but are not calldata-generatable, so they do not qualify as "write"
+  // here -- labelling them write would make the call route fail at runtime.
+  const hasWriteNode = findFirstWriteActionNode(current.nodes) !== undefined;
+  const requestedWorkflowType: "read" | "write" =
+    (metadata.workflowType as "read" | "write" | undefined) ??
+    current.workflowType;
+  const resolvedWorkflowType: "read" | "write" = hasWriteNode
+    ? "write"
+    : requestedWorkflowType;
+  updateSet.workflowType = resolvedWorkflowType;
 
   // Bump listingVersion whenever we are transitioning to listed OR whenever
   // any of the schema-defining fields changes on an already-listed workflow.
   const isSchemaTouched =
     metadata.inputSchema !== undefined ||
     metadata.outputMapping !== undefined ||
-    metadata.workflowType !== undefined;
+    resolvedWorkflowType !== current.workflowType;
   if (!current.isListed || isSchemaTouched) {
     // biome-ignore lint/suspicious/noExplicitAny: Drizzle sql template tag produces a typed SQL expression that satisfies the column type at runtime
     (updateSet as any).listingVersion = sql`${workflows.listingVersion} + 1`;
   }
 
-  // A write workflow must contain at least one node whose actionType matches
-  // the calldata matcher; otherwise call_workflow would later fail at runtime
-  // with "No write action node found in workflow". Reject at publish time so
-  // the listing can never reach search results in a broken state.
-  const resolvedWorkflowType: "read" | "write" =
-    (updateSet.workflowType as "read" | "write" | undefined) ??
-    current.workflowType;
-  if (
-    resolvedWorkflowType === "write" &&
-    findFirstWriteActionNode(current.nodes) === undefined
-  ) {
+  // A "write" workflow must contain a calldata-generatable write node;
+  // otherwise call_workflow would later fail at runtime with "No write action
+  // node found in workflow". With auto-derive above, this can only trigger when
+  // a curator forces "write" on content that has no callable write node.
+  if (resolvedWorkflowType === "write" && !hasWriteNode) {
     return { ok: false, error: "MISSING_WRITE_ACTION" };
   }
 
@@ -297,8 +304,20 @@ export async function updateWorkflowListing(
   if (patch.outputMapping !== undefined) {
     updateSet.outputMapping = patch.outputMapping;
   }
-  if (patch.workflowType !== undefined) {
-    updateSet.workflowType = patch.workflowType;
+  // Auto-derive workflowType from content (see listWorkflow for the rationale):
+  // a callable write node forces "write" and overrides a conflicting "read".
+  // Transfers/approvals mutate chain state but are not calldata-generatable, so
+  // they do not qualify here.
+  const hasWriteNode = findFirstWriteActionNode(current.nodes) !== undefined;
+  const requestedWorkflowType: "read" | "write" =
+    (patch.workflowType as "read" | "write" | undefined) ??
+    current.workflowType;
+  const resolvedWorkflowType: "read" | "write" = hasWriteNode
+    ? "write"
+    : requestedWorkflowType;
+  const workflowTypeChanged = resolvedWorkflowType !== current.workflowType;
+  if (patch.workflowType !== undefined || workflowTypeChanged) {
+    updateSet.workflowType = resolvedWorkflowType;
   }
   if (patch.priceUsdcPerCall !== undefined) {
     // Only reachable when isListed === false (price-change-while-listed guard above)
@@ -310,22 +329,18 @@ export async function updateWorkflowListing(
   const isUpdateSchemaTouched =
     patch.inputSchema !== undefined ||
     patch.outputMapping !== undefined ||
-    patch.workflowType !== undefined;
+    workflowTypeChanged;
   if (current.isListed && isUpdateSchemaTouched) {
     updateSet.listingVersion = sql`${workflows.listingVersion} + 1`;
   }
 
-  // Same write-workflow guard as listWorkflow: only validate when the row is
-  // (or is becoming) listed AND resolves to write. An unlisted draft is allowed
-  // to be in a read state with a "write" type still set, but a listed write
-  // must have a matching action node.
-  const resolvedWorkflowType: "read" | "write" =
-    (patch.workflowType as "read" | "write" | undefined) ??
-    current.workflowType;
+  // Same write-workflow guard as listWorkflow: a listed "write" must contain a
+  // calldata-generatable write node. An unlisted draft may still carry a "write"
+  // type without one. resolvedWorkflowType already reflects the auto-derive.
   if (
     current.isListed === true &&
     resolvedWorkflowType === "write" &&
-    findFirstWriteActionNode(current.nodes) === undefined
+    !hasWriteNode
   ) {
     return { ok: false, error: "MISSING_WRITE_ACTION" };
   }
