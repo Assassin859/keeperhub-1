@@ -226,9 +226,14 @@ export function scanAndReport(
       },
   context: ScanContext
 ): void {
-  const nodes = Array.isArray(input) ? input : input.nodes;
-  const triggerInput =
-    Array.isArray(input) || input === null ? undefined : input.triggerInput;
+  // `Array.isArray` does not narrow `readonly` arrays inside a union, so
+  // discriminate via the `nodes` property instead. The object branch is
+  // the only one that carries a `nodes` field.
+  const isBareArray = !(input !== null && typeof input === "object" && "nodes" in input);
+  const nodes = isBareArray
+    ? (input as readonly WorkflowNodeLike[])
+    : input.nodes;
+  const triggerInput = isBareArray ? undefined : input.triggerInput;
   const hits = [...scanNodes(nodes), ...scanTriggerInput(triggerInput)];
   emitScanReport(hits, context);
 }
