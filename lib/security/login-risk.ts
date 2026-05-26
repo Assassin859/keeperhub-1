@@ -178,6 +178,35 @@ export function serializeRiskFlags(signal: LoginRiskSignal): string {
 }
 
 /**
+ * Builds a sessions.risk_flags_json blob for a session that wasn't
+ * minted through the session.create.before path (the /verify-ip
+ * Drizzle insert is the only such caller today). Resolves the
+ * geographic location for the IP via the shared IP-to-location
+ * provider abstraction and serializes via the same
+ * `serializeRiskFlags` shape Better Auth's adapter writes, so
+ * downstream readers (the active-sessions panel, future audit
+ * tooling) don't have to special-case the source of the row.
+ *
+ * `attestedCountry` is an optional override for the country field —
+ * pass the CF-attested code captured at strict-signin time when
+ * available, otherwise the resolver fills it from the lookup.
+ */
+export async function buildRiskFlagsJsonForIp(
+  ip: string | null,
+  attestedCountry: string | null = null
+): Promise<string> {
+  const location = await resolveLocationFromIp(ip);
+  return serializeRiskFlags({
+    anomaly: false,
+    reasons: [],
+    country: attestedCountry ?? location.country,
+    region: location.region,
+    city: location.city,
+    recentCountries: [],
+  });
+}
+
+/**
  * Trust decision for the in-flight session's source IP. Called from
  * databaseHooks.session.create.before alongside assessLoginRisk so
  * the row written for the new session captures both signals.

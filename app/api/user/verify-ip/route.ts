@@ -24,8 +24,10 @@ import {
   decodePendingIpCookie,
   readPendingIpCookie,
 } from "@/lib/pending-ip-cookie";
-import { assessIpTrust } from "@/lib/security/login-risk";
-import { resolveLocationFromIp } from "@/lib/security/resolve-country";
+import {
+  assessIpTrust,
+  buildRiskFlagsJsonForIp,
+} from "@/lib/security/login-risk";
 import { verifyUserTotp } from "@/lib/security/totp-verify";
 import { generateId } from "@/lib/utils/id";
 
@@ -299,19 +301,15 @@ export async function POST(request: Request): Promise<NextResponse> {
   const ipAddress = decoded.payload.ip;
 
   // Capture geolocation for the active-sessions panel. The pending
-  // cookie carries the country attested at strict-signin time; layer
-  // city + region on top via the cached IP-to-location lookup so the
-  // session row stores the same enriched shape Better Auth's
-  // session.create.before path writes.
-  const enriched = await resolveLocationFromIp(ipAddress);
-  const riskFlagsJson = JSON.stringify({
-    anomaly: false,
-    reasons: [],
-    country: decoded.payload.country ?? enriched.country,
-    region: enriched.region,
-    city: enriched.city,
-    recentCountries: [],
-  });
+  // cookie carries the country attested at strict-signin time; the
+  // shared helper layers region + city via the IP-to-location
+  // provider abstraction and serializes the same JSON shape Better
+  // Auth's session.create.before path writes, so downstream readers
+  // don't have to special-case rows minted on this path.
+  const riskFlagsJson = await buildRiskFlagsJsonForIp(
+    ipAddress,
+    decoded.payload.country
+  );
 
   try {
     await db.transaction(async (tx) => {
