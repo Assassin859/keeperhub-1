@@ -2,6 +2,10 @@ import { and, desc, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { db } from "@/lib/db";
 import { sessions, userTrustedIps } from "@/lib/db/schema";
+import {
+  type ResolvedLocation,
+  resolveLocationFromIp,
+} from "@/lib/security/resolve-country";
 
 /**
  * Risk signal emitted by the login-time anomaly check. `anomaly: true`
@@ -19,6 +23,8 @@ export type LoginRiskSignal = {
   anomaly: boolean;
   reasons: readonly string[];
   country: string | null;
+  region: string | null;
+  city: string | null;
   recentCountries: readonly string[];
 };
 
@@ -27,31 +33,43 @@ const NULL_RISK: LoginRiskSignal = {
   anomaly: false,
   reasons: [],
   country: null,
+  region: null,
+  city: null,
   recentCountries: [],
 };
 
 /**
- * Reads CF-IPCountry from the current request. Trusted only when
- * CF-Connecting-IP is also present, which only Cloudflare sets and our
- * origin is fronted by Cloudflare in staging/prod. Untrusted requests
- * (no CF headers) return null and the caller treats geo as unknown.
+ * Resolves the geographic location of the current request. CF-IPCountry
+ * is authoritative at our edge and gets trusted whenever
+ * CF-Connecting-IP is also present. When CF didn't attest a country
+ * (no edge in the path, or it returned XX/T1), fall back to an
+ * external IP-to-location lookup so the active-sessions panel still
+ * shows a useful label for VPN / tunnel / local-dev sessions. The
+ * fallback also enriches the response with region + city, which CF
+ * never provides on its own. Cached per IP so repeated sign-ins
+ * from the same address don't refetch.
  */
-async function resolveLoginCountry(): Promise<string | null> {
+async function resolveLoginLocation(): Promise<ResolvedLocation> {
   let header: Awaited<ReturnType<typeof headers>>;
   try {
     header = await headers();
   } catch {
-    return null;
+    return { country: null, region: null, city: null };
   }
   const cfConnectingIp = header.get("cf-connecting-ip");
-  if (!cfConnectingIp) {
-    return null;
+  const cfCountry = header.get("cf-ipcountry");
+  const ip = await resolveLoginIp();
+  if (cfConnectingIp && cfCountry && cfCountry !== "XX" && cfCountry !== "T1") {
+    // CF gave us country at the edge. We still want region + city for
+    // the active-sessions panel, so layer the external lookup on top.
+    const fallback = await resolveLocationFromIp(ip);
+    return {
+      country: cfCountry.toUpperCase(),
+      region: fallback.region,
+      city: fallback.city,
+    };
   }
-  const country = header.get("cf-ipcountry");
-  if (!country || country === "XX" || country === "T1") {
-    return null;
-  }
-  return country.toUpperCase();
+  return await resolveLocationFromIp(ip);
 }
 
 /**
@@ -104,7 +122,8 @@ async function loadRecentCountries(userId: string): Promise<string[]> {
 export async function assessLoginRisk(
   userId: string
 ): Promise<LoginRiskSignal> {
-  const country = await resolveLoginCountry();
+  const location = await resolveLoginLocation();
+  const { country, region, city } = location;
   if (!country) {
     return NULL_RISK;
   }
@@ -114,6 +133,8 @@ export async function assessLoginRisk(
       anomaly: false,
       reasons: ["first_geo_attestation"],
       country,
+      region,
+      city,
       recentCountries: [],
     };
   }
@@ -123,6 +144,8 @@ export async function assessLoginRisk(
       anomaly: false,
       reasons: [],
       country,
+      region,
+      city,
       recentCountries: others,
     };
   }
@@ -130,19 +153,25 @@ export async function assessLoginRisk(
     anomaly: true,
     reasons: ["new_country"],
     country,
+    region,
+    city,
     recentCountries: priorCountries,
   };
 }
 
 /**
  * Serializes a risk signal for storage in sessions.risk_flags_json.
- * Kept stable so prior-session lookups can decode older rows.
+ * Kept stable so prior-session lookups can decode older rows. The
+ * `region` and `city` fields were added later; absence on a stored
+ * blob is treated as null by callers, so older rows decode cleanly.
  */
 export function serializeRiskFlags(signal: LoginRiskSignal): string {
   return JSON.stringify({
     anomaly: signal.anomaly,
     reasons: signal.reasons,
     country: signal.country,
+    region: signal.region,
+    city: signal.city,
     recentCountries: signal.recentCountries,
   });
 }
@@ -234,7 +263,7 @@ async function resolveLoginIp(): Promise<string | null> {
 
 export async function assessIpTrust(userId: string): Promise<IpTrust> {
   const ip = await resolveLoginIp();
-  const country = await resolveLoginCountry();
+  const { country } = await resolveLoginLocation();
   if (!ip) {
     return { ip: null, trusted: true, country, reason: "no_cf" };
   }

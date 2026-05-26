@@ -4,12 +4,17 @@ import { auth } from "@/lib/auth";
 import { isAnonymousUserShape } from "@/lib/auth-anonymous-guard";
 import { db } from "@/lib/db";
 import { sessions } from "@/lib/db/schema";
+import {
+  formatLocation,
+  type ResolvedLocation,
+} from "@/lib/security/resolve-country";
 
 type SessionListItem = {
   id: string;
   ipAddress: string | null;
   userAgent: string | null;
   country: string | null;
+  location: string | null;
   createdAt: string;
   updatedAt: string;
   expiresAt: string;
@@ -20,19 +25,32 @@ type SessionListResponse = {
   sessions: SessionListItem[];
 };
 
-function decodeCountry(riskFlagsJson: string | null): string | null {
+function decodeLocation(riskFlagsJson: string | null): ResolvedLocation {
   if (!riskFlagsJson) {
-    return null;
+    return { country: null, region: null, city: null };
   }
   try {
-    const parsed = JSON.parse(riskFlagsJson) as { country?: unknown };
-    if (typeof parsed.country === "string" && parsed.country.length > 0) {
-      return parsed.country.toUpperCase();
-    }
+    const parsed = JSON.parse(riskFlagsJson) as {
+      country?: unknown;
+      region?: unknown;
+      city?: unknown;
+    };
+    const pick = (value: unknown): string | null => {
+      if (typeof value !== "string") {
+        return null;
+      }
+      const trimmed = value.trim();
+      return trimmed.length > 0 ? trimmed : null;
+    };
+    const countryRaw = pick(parsed.country);
+    return {
+      country: countryRaw ? countryRaw.toUpperCase() : null,
+      region: pick(parsed.region),
+      city: pick(parsed.city),
+    };
   } catch {
-    // Tolerate malformed rows.
+    return { country: null, region: null, city: null };
   }
-  return null;
 }
 
 /**
@@ -83,16 +101,20 @@ export async function GET(request: Request): Promise<NextResponse> {
     .orderBy(desc(sessions.updatedAt));
 
   const body: SessionListResponse = {
-    sessions: rows.map((row) => ({
-      id: row.id,
-      ipAddress: row.ipAddress,
-      userAgent: row.userAgent,
-      country: decodeCountry(row.riskFlagsJson),
-      createdAt: row.createdAt.toISOString(),
-      updatedAt: row.updatedAt.toISOString(),
-      expiresAt: row.expiresAt.toISOString(),
-      isCurrent: currentId === row.id,
-    })),
+    sessions: rows.map((row) => {
+      const decoded = decodeLocation(row.riskFlagsJson);
+      return {
+        id: row.id,
+        ipAddress: row.ipAddress,
+        userAgent: row.userAgent,
+        country: decoded.country,
+        location: formatLocation(decoded),
+        createdAt: row.createdAt.toISOString(),
+        updatedAt: row.updatedAt.toISOString(),
+        expiresAt: row.expiresAt.toISOString(),
+        isCurrent: currentId === row.id,
+      };
+    }),
   };
   return NextResponse.json(body);
 }

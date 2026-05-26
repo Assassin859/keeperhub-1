@@ -22,6 +22,7 @@ type SessionRow = {
   ipAddress: string | null;
   userAgent: string | null;
   country: string | null;
+  location: string | null;
   createdAt: string;
   updatedAt: string;
   expiresAt: string;
@@ -220,7 +221,7 @@ export function ActiveSessionsSection(): React.ReactElement {
                   </div>
                   <div className="text-muted-foreground text-xs">
                     {row.ipAddress ?? "IP unknown"}
-                    {row.country ? ` · ${row.country}` : ""}
+                    {row.location ? ` · ${row.location}` : ""}
                   </div>
                   <div className="text-muted-foreground text-xs">
                     Signed in {relativeTime(row.createdAt)} · last active{" "}
