@@ -1589,15 +1589,20 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     owner_id: ownerId,
   });
 
-  // KEEP-612 detection signal. Single pass over node configs at run start
-  // emits one Sentry event per execution summarising any pattern hits
-  // (IMDS IPv4, information_schema, pg_catalog, neon_auth, refresh_token,
-  // client_secret, DATABASE_URL). Alert-only -- never blocks execution.
-  scanAndReport(nodes, {
-    workflowId,
-    executionId,
-    organizationId,
-  });
+  // KEEP-612 detection signal. Single pass at run start covering both
+  // the static node configs and the runtime trigger payload, so an
+  // attacker who injects a pattern via webhook body or scheduled trigger
+  // input is caught at the boundary -- not just authors who bake the
+  // patterns into config. Emits one Sentry + structured-stdout event
+  // per execution. Alert-only -- never blocks.
+  scanAndReport(
+    { nodes, triggerInput },
+    {
+      workflowId,
+      executionId,
+      organizationId,
+    }
+  );
 
   const outputs: NodeOutputs = {};
   const results: Record<string, ExecutionResult> = {};

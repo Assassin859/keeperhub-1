@@ -1,14 +1,23 @@
 /**
- * Pre-execution content-pattern scanner. Walks every node's config JSON for
- * suspicious patterns and emits a single Sentry event per workflow run
- * summarising any hits. Alert-only in v0; the env flag
- * `CONTENT_SCANNER_ENFORCE` is reserved for a follow-up that converts
- * matches into hard blocks once baseline noise is understood.
+ * Pre-execution content-pattern scanner. Walks every node's config JSON AND
+ * the trigger input payload for suspicious patterns and emits a single
+ * Sentry / structured-stdout event per workflow run summarising any hits.
+ * Alert-only in v0; the env flag `CONTENT_SCANNER_ENFORCE` is reserved for
+ * a follow-up that converts matches into hard blocks once baseline noise
+ * is understood.
  *
  * The pattern names are the alert grouping key. The actual matched value
  * never leaves this module: alerts must be readable without exposing the
  * credentials they detect. Add patterns by appending to `PATTERNS` and
  * extending `tests/unit/content-scanner.test.ts`.
+ *
+ * Why scan trigger input separately from node config: an attacker can
+ * inject a malicious string via a webhook body or scheduled trigger payload
+ * that templating later renders into a downstream node's input. The static
+ * config alone misses this entry point. Scanning trigger input at workflow
+ * start catches the injection at the boundary; intermediate-node outputs
+ * are not scanned because they're more likely to surface benign third-party
+ * substrings (e.g. an OAuth provider's docs URL containing `refresh_token`).
  *
  * KEEP-612: bullet "Content-pattern alerts on workflow node config and
  * execution payloads: 169.254.169.254, information_schema, pg_catalog,
@@ -32,7 +41,10 @@ const PATTERNS: readonly Pattern[] = [
   { name: "database_url", regex: /\bDATABASE_URL\b/ },
 ];
 
+export type ContentScanHitSource = "config" | "trigger_input";
+
 export type ContentScanHit = {
+  source: ContentScanHitSource;
   pattern: string;
   nodeId: string;
   nodeType: string;
@@ -53,6 +65,9 @@ export type ScanContext = {
   organizationId?: string;
 };
 
+const TRIGGER_INPUT_PSEUDO_NODE_ID = "trigger_input";
+const TRIGGER_INPUT_PSEUDO_NODE_TYPE = "trigger";
+
 export function scanNodes(
   nodes: readonly WorkflowNodeLike[]
 ): ContentScanHit[] {
@@ -62,24 +77,58 @@ export function scanNodes(
     if (config === undefined || config === null) {
       continue;
     }
-    scanValue(config, `${node.id}.config`, node, hits);
+    scanValue(
+      config,
+      `${node.id}.config`,
+      {
+        source: "config",
+        nodeId: node.id,
+        nodeType: node.data?.type ?? "unknown",
+      },
+      hits
+    );
   }
   return hits;
 }
 
+export function scanTriggerInput(triggerInput: unknown): ContentScanHit[] {
+  if (triggerInput === undefined || triggerInput === null) {
+    return [];
+  }
+  const hits: ContentScanHit[] = [];
+  scanValue(
+    triggerInput,
+    TRIGGER_INPUT_PSEUDO_NODE_ID,
+    {
+      source: "trigger_input",
+      nodeId: TRIGGER_INPUT_PSEUDO_NODE_ID,
+      nodeType: TRIGGER_INPUT_PSEUDO_NODE_TYPE,
+    },
+    hits
+  );
+  return hits;
+}
+
+type HitMetadata = {
+  source: ContentScanHitSource;
+  nodeId: string;
+  nodeType: string;
+};
+
 function scanValue(
   value: unknown,
   path: string,
-  node: WorkflowNodeLike,
+  meta: HitMetadata,
   hits: ContentScanHit[]
 ): void {
   if (typeof value === "string") {
     for (const pattern of PATTERNS) {
       if (pattern.regex.test(value)) {
         hits.push({
+          source: meta.source,
           pattern: pattern.name,
-          nodeId: node.id,
-          nodeType: node.data?.type ?? "unknown",
+          nodeId: meta.nodeId,
+          nodeType: meta.nodeType,
           jsonPath: path,
         });
       }
@@ -88,7 +137,7 @@ function scanValue(
   }
   if (Array.isArray(value)) {
     for (const [index, item] of value.entries()) {
-      scanValue(item, `${path}[${index}]`, node, hits);
+      scanValue(item, `${path}[${index}]`, meta, hits);
     }
     return;
   }
@@ -96,22 +145,22 @@ function scanValue(
     for (const [key, child] of Object.entries(
       value as Record<string, unknown>
     )) {
-      scanValue(child, `${path}.${key}`, node, hits);
+      scanValue(child, `${path}.${key}`, meta, hits);
     }
   }
 }
 
 /**
- * Dedupe by (nodeId, pattern) so a config with the same pattern in 100
- * places contributes one tuple to the report rather than 100. Different
- * jsonPaths under the same (node, pattern) collapse to the first
- * occurrence, which is what triagers care about.
+ * Dedupe by (source, nodeId, pattern) so a config with the same pattern in
+ * 100 places contributes one tuple per source to the report rather than
+ * 100. Source is part of the key so a pattern that appears in both static
+ * config AND trigger input emits two rows (different attack surfaces).
  */
 function dedupeHits(hits: readonly ContentScanHit[]): ContentScanHit[] {
   const seen = new Set<string>();
   const unique: ContentScanHit[] = [];
   for (const hit of hits) {
-    const key = `${hit.nodeId}:${hit.pattern}`;
+    const key = `${hit.source}:${hit.nodeId}:${hit.pattern}`;
     if (seen.has(key)) {
       continue;
     }
@@ -164,13 +213,22 @@ export function emitScanReport(
 }
 
 /**
- * Convenience entry point: scan + report in one call. Use this from the
- * executor unless you need the raw hit list (tests do).
+ * Convenience entry point: scan static node config + trigger input in one
+ * pass and emit a single combined report. Use this from the executor
+ * unless you need the raw hit list (tests do).
  */
 export function scanAndReport(
-  nodes: readonly WorkflowNodeLike[],
+  input:
+    | readonly WorkflowNodeLike[]
+    | {
+        nodes: readonly WorkflowNodeLike[];
+        triggerInput?: unknown;
+      },
   context: ScanContext
 ): void {
-  const hits = scanNodes(nodes);
+  const nodes = Array.isArray(input) ? input : input.nodes;
+  const triggerInput =
+    Array.isArray(input) || input === null ? undefined : input.triggerInput;
+  const hits = [...scanNodes(nodes), ...scanTriggerInput(triggerInput)];
   emitScanReport(hits, context);
 }

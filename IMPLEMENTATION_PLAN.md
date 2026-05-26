@@ -80,16 +80,37 @@ This branch builds the substrate end-to-end so v0 alerts can ship as one or more
 **Tests**: Synthetic injection via `logger.warn` in staging; verify alert fires; verify routing.
 **Status**: Complete — `techops_infrastructure/alerts.tf` adds `keeperhub_security_signal_alerts` module with three Loki rules (`security.deactivated_login_attempt`, `security.backstop_execution_blocked`, `security.content_scanner_hit`). All three capture sites in the keeperhub repo now dual-emit (Sentry + structured `console.warn`) so the signal reaches Loki even when SENTRY_DSN is unset. Pagerduty escalation name `KeeperhubSecurityPagerduty` is a placeholder — needs to be created in PD before `terraform apply` will succeed. `SAFE_FETCH_ENFORCE=true` flip and the metric-based alert on `safe_fetch.blocks.total` are deferred to a separate small PR (env change + dashboard rule, no app code).
 
-## Open questions (resolve before Stage 4, don't block 1–3)
+## Stage 5: Follow-up sweep (post initial-substrate)
 
-1. **Alert routing**: PagerDuty (new service?), Slack channel, both? Existing `alerts.tf` only has Ajna Keeper PD. Need a security on-call destination.
-2. **Webhook IP attribution**: Behind Cloudflare — confirm we use `cf-connecting-ip` not `x-forwarded-for` for the canonical IP.
-3. **Content scanner false-positive budget**: any known workflows that legitimately use words like `client_secret` (e.g. an OAuth setup integration's display copy)? Need a one-pass scan of prod configs before turning the alert noisy.
-4. **`SAFE_FETCH_ENFORCE` flip**: separate small PR or rolled in? Recommend separate so it can be reverted independently.
+Round of deferred items knocked down after the first review pass.
 
-## Out of scope (defer)
+### 5a. Invitation rate limiter adopts trusted-proxy IP
+**Status**: Complete — `app/api/invitations/_lib/rate-limit.ts` now derives the bucket key from `getRequestSourceIp` instead of raw `x-forwarded-for`. 7 unit tests cover both the trusted-CF path and the spoofed-XFF collapse to the `unknown` bucket.
 
-- Behavioral alerts themselves (new-account→workflow rate, ASN tracking) — Stage 1 unblocks these but they're separate rules
-- API key audit log table — `triggered_by_api_key_id` on `workflow_executions` covers the most-asked question ("which key ran this?"); a dedicated audit table can come later if needed
-- ASN enrichment pipeline — needs a GeoIP/ASN data source decision (MaxMind, Cloudflare headers, etc.)
+### 5b. Runtime-payload content scanning
+**Status**: Complete — `lib/security/content-scanner.ts` now scans `triggerInput` alongside static node config. Each hit carries a `source: "config" | "trigger_input"` field so triage can disambiguate. Dedupe key is `(source, nodeId, pattern)` so the same pattern appearing in both surfaces emits separate rows. Tests: pattern matches in trigger input strings, nested objects, arrays; combined report shape; no-leak invariant for trigger input.
+
+Intermediate-node outputs (e.g. an HTTP response containing `refresh_token` in benign docs metadata) intentionally left out — too noisy and not the attacker entry point.
+
+### 5c. SAFE_FETCH_ENFORCE flip + Grafana alert
+**Status**: Complete (env was already done on `staging`). `SAFE_FETCH_ENFORCE=true` confirmed set in `deploy/keeperhub/{prod,staging}/values.yaml` and `deploy/executor/{prod,staging}/values.yaml`. New `safe_fetch_blocks_alert` Grafana rule added in `techops_infrastructure/grafana/keeperhub-dashboards/keeperhub_metrics_alerts.tf` — alerts on `sum by (reason, plugin_name) (increase(safe_fetch_blocks_total{shadow="false"}[5m])) > 0`, routes to `KeeperHubPagerdutyP2`.
+
+### 5d. Behavioral alert: new-account → first workflow
+**Status**: Complete for one of the three behavioral asks. New cron endpoint `app/api/cron/security-behavioral-scan` queries `workflow_executions ⨝ users` for any execution in the last 5 minutes owned by a user whose account is < 15 minutes old; emits `security.behavioral.new_account_first_workflow` structured stdout per row. Loki rule added in `techops_infrastructure/keeperhub-security-alerts.tf`. 5 integration tests cover auth and emit shape.
+
+Needs a Kubernetes CronJob in `techops_infrastructure` to invoke the endpoint every 5 minutes — same pattern as `agentic-wallet-sweeper`. That terraform is a small follow-up.
+
+**Other two behavioral asks remain deferred** with documented reasons:
+- **Per-owner throughput spike**: `keeperhub_workflow_executions_started_total` only has `trigger_type` and `chain` labels — no org. Need to add `org_slug` label (one app-side change), then a Grafana alert using `predict_linear` against per-org baseline.
+- **Org-API-key use from new country**: needs a per-key country-history table or a window function over `workflow_executions`. The substrate column `triggered_by_country` is in place; the alert query plus a small `api_key_seen_countries` table to keep it efficient is the missing piece.
+
+### 5e. ASN enrichment
+**Status**: Design doc only — see `specs/security/asn-enrichment.md`. Three options compared (MaxMind GeoLite2, CF Enterprise header, hybrid). Recommendation: ship hybrid when behavioral alerting is prioritized. Not a code change — needs a sourcing decision first.
+
+## Out of scope (still deferred)
+
 - Converting `content-scanner` from alert-only to blocking — explicit follow-up after baseline noise is understood
+- Per-owner throughput spike alert (needs org_slug metric label addition — small but separate)
+- Org-API-key country-drift alert (needs per-key country-history table)
+- Kubernetes CronJob to invoke `/api/cron/security-behavioral-scan` every 5 min
+- ASN enrichment — pending sourcing decision per the spec

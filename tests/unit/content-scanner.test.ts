@@ -7,7 +7,7 @@ vi.mock("@sentry/nextjs", () => ({
   },
 }));
 
-const { scanNodes, scanAndReport } = await import(
+const { scanNodes, scanTriggerInput, scanAndReport } = await import(
   "@/lib/security/content-scanner"
 );
 
@@ -194,5 +194,125 @@ describe("scanAndReport", () => {
         workflowId: "wf_4",
       })
     ).not.toThrow();
+  });
+});
+
+describe("scanTriggerInput — runtime payload coverage", () => {
+  it("returns empty for null/undefined input", () => {
+    expect(scanTriggerInput(null)).toEqual([]);
+    expect(scanTriggerInput(undefined)).toEqual([]);
+  });
+
+  it("returns empty for benign trigger input", () => {
+    expect(scanTriggerInput({ user: "alice", action: "create_order" })).toEqual(
+      []
+    );
+  });
+
+  it("flags IMDS IPv4 in a string trigger input", () => {
+    const hits = scanTriggerInput("ping http://169.254.169.254/latest/");
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toMatchObject({
+      source: "trigger_input",
+      pattern: "imds_metadata_ip",
+      nodeId: "trigger_input",
+      nodeType: "trigger",
+      jsonPath: "trigger_input",
+    });
+  });
+
+  it("flags information_schema injected via webhook body field", () => {
+    const hits = scanTriggerInput({
+      body: { q: "SELECT * FROM information_schema.tables" },
+    });
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toMatchObject({
+      source: "trigger_input",
+      pattern: "pg_information_schema",
+      jsonPath: "trigger_input.body.q",
+    });
+  });
+
+  it("flags DATABASE_URL inside an array element", () => {
+    const hits = scanTriggerInput({
+      headers: ["x-debug: DATABASE_URL=postgres://..."],
+    });
+    expect(hits[0]).toMatchObject({
+      source: "trigger_input",
+      pattern: "database_url",
+      jsonPath: "trigger_input.headers[0]",
+    });
+  });
+});
+
+describe("scanAndReport — combined config + trigger input", () => {
+  it("reports hits from both config and trigger_input in one event", () => {
+    scanAndReport(
+      {
+        nodes: [node("n1", { endpoint: "http://169.254.169.254/" })],
+        triggerInput: { body: "client_secret=topsecret" },
+      },
+      { workflowId: "wf_combo" }
+    );
+    expect(captureMessageMock).toHaveBeenCalledTimes(1);
+    const [, options] = captureMessageMock.mock.calls[0] as [
+      string,
+      {
+        extra: {
+          hitCount: number;
+          hits: Array<{ source: string; pattern: string }>;
+        };
+      },
+    ];
+    expect(options.extra.hitCount).toBe(2);
+    const tuples = options.extra.hits.map((h) => `${h.source}:${h.pattern}`);
+    expect(tuples.sort()).toEqual([
+      "config:imds_metadata_ip",
+      "trigger_input:client_secret",
+    ]);
+  });
+
+  it("keeps source as a dedupe key so same pattern in both surfaces emits two rows", () => {
+    scanAndReport(
+      {
+        nodes: [node("n1", { url: "http://169.254.169.254/" })],
+        triggerInput: { redirect: "http://169.254.169.254/admin" },
+      },
+      { workflowId: "wf_same_pattern_both" }
+    );
+    const [, options] = captureMessageMock.mock.calls[0] as [
+      string,
+      { extra: { hits: Array<{ source: string; pattern: string }> } },
+    ];
+    const sources = options.extra.hits
+      .filter((h) => h.pattern === "imds_metadata_ip")
+      .map((h) => h.source)
+      .sort();
+    expect(sources).toEqual(["config", "trigger_input"]);
+  });
+
+  it("accepts the legacy bare-nodes signature for backward compat", () => {
+    // Existing callers (and the test above) pass a plain array of nodes.
+    // New executor passes { nodes, triggerInput }. Both must work so this
+    // refactor doesn't ripple beyond the executor.
+    expect(() =>
+      scanAndReport([node("n1", { name: "safe" })], { workflowId: "wf_legacy" })
+    ).not.toThrow();
+    expect(captureMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("never includes matched values from trigger input either", () => {
+    scanAndReport(
+      {
+        nodes: [],
+        triggerInput: {
+          secret: "client_secret=NEVER_LEAK_THIS_TOKEN_VIA_ALERT",
+        },
+      },
+      { workflowId: "wf_no_leak_trigger" }
+    );
+    const payload = JSON.stringify(captureMessageMock.mock.calls[0][1]);
+    expect(payload).not.toContain("NEVER_LEAK_THIS_TOKEN_VIA_ALERT");
+    expect(payload).toContain("client_secret");
   });
 });

@@ -85,9 +85,7 @@ export function buildAttribution(input: {
     triggeredByUserApiKeyId: input.userApiKeyId ?? null,
     triggeredByOrgApiKeyId: input.orgApiKeyId ?? null,
     triggeredByIp: input.request ? getRequestSourceIp(input.request) : null,
-    triggeredByCountry: input.request
-      ? getRequestCountry(input.request)
-      : null,
+    triggeredByCountry: input.request ? getRequestCountry(input.request) : null,
     triggerSource: input.source,
   };
 }
