@@ -25,6 +25,7 @@ import {
   readPendingIpCookie,
 } from "@/lib/pending-ip-cookie";
 import { assessIpTrust } from "@/lib/security/login-risk";
+import { resolveLocationFromIp } from "@/lib/security/resolve-country";
 import { verifyUserTotp } from "@/lib/security/totp-verify";
 import { generateId } from "@/lib/utils/id";
 
@@ -297,6 +298,21 @@ export async function POST(request: Request): Promise<NextResponse> {
   const userAgent = request.headers.get("user-agent") ?? null;
   const ipAddress = decoded.payload.ip;
 
+  // Capture geolocation for the active-sessions panel. The pending
+  // cookie carries the country attested at strict-signin time; layer
+  // city + region on top via the cached IP-to-location lookup so the
+  // session row stores the same enriched shape Better Auth's
+  // session.create.before path writes.
+  const enriched = await resolveLocationFromIp(ipAddress);
+  const riskFlagsJson = JSON.stringify({
+    anomaly: false,
+    reasons: [],
+    country: decoded.payload.country ?? enriched.country,
+    region: enriched.region,
+    city: enriched.city,
+    recentCountries: [],
+  });
+
   try {
     await db.transaction(async (tx) => {
       await tx.insert(sessions).values({
@@ -310,6 +326,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         userAgent,
         requiresMfa: false,
         mfaVerifiedAt: new Date(),
+        riskFlagsJson,
       });
       await tx
         .insert(userTrustedIps)

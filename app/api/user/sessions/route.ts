@@ -4,9 +4,11 @@ import { auth } from "@/lib/auth";
 import { isAnonymousUserShape } from "@/lib/auth-anonymous-guard";
 import { db } from "@/lib/db";
 import { sessions } from "@/lib/db/schema";
+import { formatIpForDisplay } from "@/lib/security/ip-normalize";
 import {
   formatLocation,
   type ResolvedLocation,
+  resolveLocationFromIp,
 } from "@/lib/security/resolve-country";
 
 type SessionListItem = {
@@ -24,6 +26,17 @@ type SessionListItem = {
 type SessionListResponse = {
   sessions: SessionListItem[];
 };
+
+function mergeLocations(
+  primary: ResolvedLocation,
+  fallback: ResolvedLocation
+): ResolvedLocation {
+  return {
+    country: primary.country ?? fallback.country,
+    region: primary.region ?? fallback.region,
+    city: primary.city ?? fallback.city,
+  };
+}
 
 function decodeLocation(riskFlagsJson: string | null): ResolvedLocation {
   if (!riskFlagsJson) {
@@ -100,21 +113,33 @@ export async function GET(request: Request): Promise<NextResponse> {
     )
     .orderBy(desc(sessions.updatedAt));
 
-  const body: SessionListResponse = {
-    sessions: rows.map((row) => {
+  // Lazy enrichment for rows whose risk_flags_json predates the
+  // city/region fields (or is null, as on sessions minted by
+  // /verify-ip which inserts via Drizzle and skips the
+  // session.create.before hook). resolveLocationFromIp is cached
+  // per IP for 24h, so this is cheap on repeat panel loads.
+  const enriched = await Promise.all(
+    rows.map(async (row) => {
       const decoded = decodeLocation(row.riskFlagsJson);
+      const needsFallback =
+        (decoded.city === null || decoded.region === null) && row.ipAddress;
+      const merged = needsFallback
+        ? mergeLocations(decoded, await resolveLocationFromIp(row.ipAddress))
+        : decoded;
       return {
         id: row.id,
-        ipAddress: row.ipAddress,
+        ipAddress: row.ipAddress ? formatIpForDisplay(row.ipAddress) : null,
         userAgent: row.userAgent,
-        country: decoded.country,
-        location: formatLocation(decoded),
+        country: merged.country,
+        location: formatLocation(merged),
         createdAt: row.createdAt.toISOString(),
         updatedAt: row.updatedAt.toISOString(),
         expiresAt: row.expiresAt.toISOString(),
         isCurrent: currentId === row.id,
       };
-    }),
-  };
+    })
+  );
+
+  const body: SessionListResponse = { sessions: enriched };
   return NextResponse.json(body);
 }

@@ -125,11 +125,11 @@ export function VerifyIpForm({
         onInteractOutside={(event) => event.preventDefault()}
       >
         <DialogHeader>
-          <DialogTitle>Verify this new network</DialogTitle>
+          <DialogTitle>Confirm this new sign-in</DialogTitle>
           <DialogDescription>
-            We don't recognise the network you're signing in from. Enter the
-            code we just emailed to {email} and the current code from your
-            authenticator app to continue.
+            We noticed you're signing in from a new network. Please confirm it's
+            you by entering the code we just emailed to {email} and the current
+            code from your authenticator app.
           </DialogDescription>
         </DialogHeader>
         <div className="flex items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">

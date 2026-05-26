@@ -95,7 +95,29 @@ export function ActiveSessionsSection(): React.ReactElement {
   const [state, setState] = useState<ListState>({ kind: "loading" });
   const [revokeTarget, setRevokeTarget] = useState<SessionRow | null>(null);
   const [busy, setBusy] = useState(false);
+  const [copiedRowId, setCopiedRowId] = useState<string | null>(null);
   const dual = useDualFactorState();
+
+  useEffect(() => {
+    if (!copiedRowId) {
+      return;
+    }
+    const timer = window.setTimeout(() => setCopiedRowId(null), 2000);
+    return () => window.clearTimeout(timer);
+  }, [copiedRowId]);
+
+  const handleCopyIp = async (row: SessionRow): Promise<void> => {
+    if (!row.ipAddress || typeof navigator === "undefined") {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(row.ipAddress);
+      setCopiedRowId(row.id);
+      toast.success("IP copied to clipboard");
+    } catch {
+      toast.error("Couldn't copy IP");
+    }
+  };
 
   const load = useCallback(async (): Promise<void> => {
     setState({ kind: "loading" });
@@ -220,7 +242,22 @@ export function ActiveSessionsSection(): React.ReactElement {
                     )}
                   </div>
                   <div className="text-muted-foreground text-xs">
-                    {row.ipAddress ?? "IP unknown"}
+                    {row.ipAddress ? (
+                      <button
+                        className={`font-mono transition-colors ${
+                          copiedRowId === row.id
+                            ? "text-emerald-500"
+                            : "hover:text-foreground"
+                        }`}
+                        onClick={() => handleCopyIp(row)}
+                        title="Copy IP to clipboard"
+                        type="button"
+                      >
+                        {row.ipAddress}
+                      </button>
+                    ) : (
+                      "IP unknown"
+                    )}
                     {row.location ? ` · ${row.location}` : ""}
                   </div>
                   <div className="text-muted-foreground text-xs">
