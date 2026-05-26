@@ -35,7 +35,10 @@ export const workflowStepStatus = pgEnum("step_status", [
 // cross-schema by `workflow.workflow_waits.status`. Declared here so
 // `pnpm db:push` does not emit a DROP that Postgres rejects with
 // "cannot drop type wait_status because other objects depend on it".
-export const workflowWaitStatus = pgEnum("wait_status", ["waiting", "completed"]);
+export const workflowWaitStatus = pgEnum("wait_status", [
+  "waiting",
+  "completed",
+]);
 
 // Better Auth tables
 export const users = pgTable("users", {
@@ -49,6 +52,7 @@ export const users = pgTable("users", {
   // Anonymous user tracking
   isAnonymous: boolean("is_anonymous").default(false),
   deactivatedAt: timestamp("deactivated_at"),
+  twoFactorEnabled: boolean("two_factor_enabled").default(false),
 });
 
 export const sessions = pgTable(
@@ -65,8 +69,31 @@ export const sessions = pgTable(
       .notNull()
       .references(() => users.id),
     activeOrganizationId: text("active_organization_id"),
+    requiresMfa: boolean("requires_mfa").notNull().default(false),
+    mfaVerifiedAt: timestamp("mfa_verified_at"),
+    riskFlagsJson: text("risk_flags_json"),
   },
   (table) => [index("idx_sessions_user_id").on(table.userId)]
+);
+
+export const twoFactor = pgTable(
+  "two_factor",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .unique()
+      .references(() => users.id, { onDelete: "cascade" }),
+    secret: text("secret").notNull(),
+    // Nullable: backup codes are generated only when the user explicitly
+    // requests them via /api/user/totp/backup-codes, not at TOTP setup.
+    // A row with secret + null backup_codes is a valid enrolled user who
+    // simply hasn't generated codes yet.
+    backupCodes: text("backup_codes"),
+    name: text("name"),
+    enrolledAt: timestamp("enrolled_at").notNull().defaultNow(),
+  },
+  (table) => [index("idx_two_factor_user_id").on(table.userId)]
 );
 
 export const accounts = pgTable(
@@ -289,6 +316,17 @@ export const workflows = pgTable(
   ]
 );
 
+// Integration visibility controls which principals may use a credential at
+// workflow execution time (not just view it).
+// - private: only the owner (creator) may use it (default / opt-in)
+// - specific_members: the owner plus users with an integration_grants row
+// - organization: any current member of the owning organization may use it
+export const integrationVisibility = pgEnum("integration_visibility", [
+  "private",
+  "specific_members",
+  "organization",
+]);
+
 // Integrations table for storing user credentials
 export const integrations = pgTable(
   "integrations",
@@ -308,6 +346,9 @@ export const integrations = pgTable(
     config: jsonb("config").notNull().$type<any>(),
     // Whether this integration was created via OAuth (managed by app) vs manual entry
     isManaged: boolean("is_managed").default(false),
+    visibility: integrationVisibility("visibility")
+      .notNull()
+      .default("private"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
@@ -323,6 +364,36 @@ export const integrations = pgTable(
         sql`${table.type} = 'web3' AND ${table.organizationId} IS NOT NULL`
       ),
     index("idx_integrations_user_id").on(table.userId),
+  ]
+);
+
+// Per-user grants for integrations with visibility = 'specific_members'.
+// A row authorizes `userId` to use `integrationId` at execution time.
+// Rows are deleted (cascade) when the integration or grantee user is removed,
+// which is the lazy-revocation mechanism: dropping the row fails execution closed.
+export const integrationGrants = pgTable(
+  "integration_grants",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    integrationId: text("integration_id")
+      .notNull()
+      .references(() => integrations.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    grantedBy: text("granted_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("idx_integration_grants_integration_user").on(
+      table.integrationId,
+      table.userId
+    ),
+    index("idx_integration_grants_user").on(table.userId),
   ]
 );
 
@@ -416,32 +487,32 @@ export const workflowExecutionLogs = pgTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => generateId()),
-  executionId: text("execution_id")
-    .notNull()
-    .references(() => workflowExecutions.id),
-  nodeId: text("node_id").notNull(),
-  nodeName: text("node_name").notNull(),
-  nodeType: text("node_type").notNull(),
-  status: text("status")
-    .notNull()
-    .$type<"pending" | "running" | "success" | "error" | "cancelled">(),
-  // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
-  input: jsonb("input").$type<any>(),
-  // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
-  output: jsonb("output").$type<any>(),
-  // output_raw is the executor's authoritative source-of-truth for cross-process resume.
-  // `output` receives redactSensitiveData() for observability/UI display; `output_raw`
-  // stores the unredacted payload so downstream template rendering receives real values
-  // rather than "[REDACTED]" strings when a pod resumes across a process boundary.
-  // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
-  outputRaw: jsonb("output_raw").$type<any>(),
-  error: text("error"),
-  startedAt: timestamp("started_at").notNull().defaultNow(),
-  completedAt: timestamp("completed_at"),
-  duration: numeric("duration"), // Duration in milliseconds
-  timestamp: timestamp("timestamp").notNull().defaultNow(),
-  iterationIndex: integer("iteration_index"), // 0-based loop iteration (null for non-loop nodes)
-  forEachNodeId: text("for_each_node_id"), // parent For Each node ID (null for non-loop nodes)
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => workflowExecutions.id),
+    nodeId: text("node_id").notNull(),
+    nodeName: text("node_name").notNull(),
+    nodeType: text("node_type").notNull(),
+    status: text("status")
+      .notNull()
+      .$type<"pending" | "running" | "success" | "error" | "cancelled">(),
+    // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
+    input: jsonb("input").$type<any>(),
+    // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
+    output: jsonb("output").$type<any>(),
+    // output_raw is the executor's authoritative source-of-truth for cross-process resume.
+    // `output` receives redactSensitiveData() for observability/UI display; `output_raw`
+    // stores the unredacted payload so downstream template rendering receives real values
+    // rather than "[REDACTED]" strings when a pod resumes across a process boundary.
+    // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
+    outputRaw: jsonb("output_raw").$type<any>(),
+    error: text("error"),
+    startedAt: timestamp("started_at").notNull().defaultNow(),
+    completedAt: timestamp("completed_at"),
+    duration: numeric("duration"), // Duration in milliseconds
+    timestamp: timestamp("timestamp").notNull().defaultNow(),
+    iterationIndex: integer("iteration_index"), // 0-based loop iteration (null for non-loop nodes)
+    forEachNodeId: text("for_each_node_id"), // parent For Each node ID (null for non-loop nodes)
   },
   (table) => [index("idx_exec_logs_started_at").on(table.startedAt)]
 );
@@ -885,6 +956,10 @@ export type ListedWorkflowView = Pick<
 >;
 export type Integration = typeof integrations.$inferSelect;
 export type NewIntegration = typeof integrations.$inferInsert;
+export type IntegrationVisibility =
+  (typeof integrationVisibility.enumValues)[number];
+export type IntegrationGrant = typeof integrationGrants.$inferSelect;
+export type NewIntegrationGrant = typeof integrationGrants.$inferInsert;
 export type WorkflowExecution = typeof workflowExecutions.$inferSelect;
 export type NewWorkflowExecution = typeof workflowExecutions.$inferInsert;
 export type WorkflowExecutionLog = typeof workflowExecutionLogs.$inferSelect;

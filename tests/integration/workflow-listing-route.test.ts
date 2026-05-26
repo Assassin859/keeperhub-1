@@ -75,9 +75,16 @@ vi.mock("@/lib/features/route-guard", () => ({
     "This workflow uses features that require a paid plan.",
 }));
 
-vi.mock("@/lib/schedule-service", () => ({
-  syncWorkflowSchedule: vi.fn().mockResolvedValue({ synced: true }),
-}));
+vi.mock("@/lib/schedule-service", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/lib/schedule-service")>(
+      "@/lib/schedule-service"
+    );
+  return {
+    ...actual,
+    syncWorkflowSchedule: vi.fn().mockResolvedValue({ synced: true }),
+  };
+});
 
 vi.mock("@/lib/sanitize-description", () => ({
   sanitizeDescription: vi.fn((raw: string) => `SANITIZED:${raw}`),
