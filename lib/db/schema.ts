@@ -72,23 +72,6 @@ export const sessions = pgTable(
     requiresMfa: boolean("requires_mfa").notNull().default(false),
     mfaVerifiedAt: timestamp("mfa_verified_at"),
     riskFlagsJson: text("risk_flags_json"),
-    /**
-     * Flipped true at session creation when the IP attestation is
-     * not present in this user's user_trusted_ips list. The proxy
-     * gate routes every request to /verify-ip until the user clicks
-     * the signed email link AND proves authenticator + email OTP at
-     * that page. Mirrors how `requires_mfa` gates /verify-mfa.
-     */
-    requiresIpVerification: boolean("requires_ip_verification")
-      .notNull()
-      .default(false),
-    /**
-     * The IP the session was created from. Captured so /verify-ip
-     * knows which IP to add to user_trusted_ips on success and the
-     * signed email link can be bound to it. Null once verified or
-     * when verification was never required.
-     */
-    pendingIp: text("pending_ip"),
   },
   (table) => [index("idx_sessions_user_id").on(table.userId)]
 );

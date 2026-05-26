@@ -19,6 +19,7 @@ import { rateLimitBypassRule, testEndpointsEnabled } from "@/lib/admin-auth";
 import { isUserDeactivated } from "@/lib/auth-deactivation-guard";
 import { isFreshSignup } from "@/lib/auth-notification-guard";
 import { sendInvitationEmail, sendVerificationOTP } from "@/lib/email";
+import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
   assessIpTrust,
   assessLoginRisk,
@@ -577,7 +578,12 @@ export const auth = betterAuth({
               // the insert fails the next sign-in from the same IP
               // will hit the /verify-ip gate, which is the correct
               // fail-closed direction.
-              console.error("[ip-trust] failed to upsert trusted IP", err);
+              logSystemError(
+                ErrorCategory.DATABASE,
+                "[ip-trust] failed to upsert trusted IP",
+                err,
+                { user_id: userId, ip: ipTrust.ip }
+              );
             }
           }
           const [userRow] = await db
@@ -590,15 +596,12 @@ export const auth = betterAuth({
           // cookie expires before a legitimate user finishes the
           // /verify-mfa flow.
           const PRE_STEPUP_TTL_MS = 10 * 60 * 1000;
-          // IP-verification (`requires_ip_verification`, `pending_ip`)
-          // is intentionally NOT set on the session row. The atomic
-          // flow used by the manual session-minting routes
-          // (strict-signin, oauth-mfa-finalize, totp/enroll) checks
-          // IP trust BEFORE the row is written; an untrusted IP
-          // never produces a session in the first place, only a
-          // signed `pending_ip_verify` cookie that routes the user
-          // to /verify-ip. The schema columns exist for forensic
-          // capture in case we later wire a stepup-style fallback.
+          // IP-verification does not write to the session row. The
+          // atomic flow in strict-signin / oauth-mfa-finalize / the
+          // /verify-ip endpoint resolves IP trust BEFORE any session
+          // is minted: an untrusted IP produces a signed
+          // `pending_ip_verify` cookie and no session, and a trusted
+          // IP mints the session as-is.
           return {
             data: twoFactorEnabled
               ? {
@@ -685,16 +688,6 @@ export const auth = betterAuth({
       requiresMfa: { type: "boolean", defaultValue: false },
       mfaVerifiedAt: { type: "date", required: false },
       riskFlagsJson: { type: "string", required: false },
-      // Mirrors the MFA gate but for new-IP detection. Set true at
-      // session.create.before when the request IP is not in this
-      // user's user_trusted_ips list. The proxy gate routes every
-      // request to /verify-ip until the user clears the flag via the
-      // signed email link + dual-factor verify.
-      requiresIpVerification: { type: "boolean", defaultValue: false },
-      // The IP that needs verifying for this session, captured at
-      // session creation so the /verify-ip route knows which IP to
-      // promote into user_trusted_ips on success.
-      pendingIp: { type: "string", required: false },
     },
   },
   emailAndPassword: {

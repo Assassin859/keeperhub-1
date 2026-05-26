@@ -101,7 +101,6 @@ describe("RPC Preferences API Routes", () => {
     ipAddress: null,
     userAgent: null,
     requiresMfa: false,
-    requiresIpVerification: false,
   };
   const mockSession = { session: mockSessionData, user: mockUser };
 
