@@ -22,7 +22,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AUTH_SUCCESS_EVENT } from "@/lib/auth-events";
 
-// Test the AUTH_SUCCESS_EVENT constant shape (commit db2e7ebe introduced it).
+// Test the AUTH_SUCCESS_EVENT constant shape (commit db2e7ebe).
 describe("lib/auth-events.ts (commit db2e7ebe)", () => {
   it("exports AUTH_SUCCESS_EVENT as a non-empty string", () => {
     expect(typeof AUTH_SUCCESS_EVENT).toBe("string");
@@ -163,15 +163,15 @@ describe("PendingTemplateRunner — sessionStorage idempotency guard (HUB-05)", 
     return null;
   }
 
-  function isFlagFresh(flag: { at: number }): boolean {
-    return Date.now() - flag.at < TTL_MS;
+  function isFlagFresh(flag: { at: number }, refTime: number): boolean {
+    return refTime - flag.at < TTL_MS;
   }
 
   it("a flag written now is considered fresh (within TTL)", () => {
     writeFlag("wf_fresh", Date.now());
     const flag = readFlag("wf_fresh");
     expect(flag).not.toBeNull();
-    expect(isFlagFresh(flag!)).toBe(true);
+    expect(isFlagFresh(flag!, Date.now())).toBe(true);
   });
 
   it("a flag written more than 30 seconds ago is considered stale", () => {
@@ -179,7 +179,7 @@ describe("PendingTemplateRunner — sessionStorage idempotency guard (HUB-05)", 
     writeFlag("wf_stale", thirtyOneSecondsAgo);
     const flag = readFlag("wf_stale");
     expect(flag).not.toBeNull();
-    expect(isFlagFresh(flag!)).toBe(false);
+    expect(isFlagFresh(flag!, Date.now())).toBe(false);
   });
 
   it("absent flag returns null", () => {
@@ -200,16 +200,18 @@ describe("PendingTemplateRunner — sessionStorage idempotency guard (HUB-05)", 
   });
 
   it("TTL boundary: flag at exactly TTL_MS old is stale (exclusive upper bound)", () => {
-    // The check is `Date.now() - flag.at < TTL_MS` — at exactly TTL_MS the
+    // The check is `refTime - flag.at < TTL_MS` — at exactly TTL_MS the
     // flag is NOT fresh. This prevents boundary confusion between < and <=.
-    const atMs = Date.now() - TTL_MS;
+    const now = Date.now();
+    const atMs = now - TTL_MS;
     const flag: { at: number } = { at: atMs };
-    expect(isFlagFresh(flag)).toBe(false);
+    expect(isFlagFresh(flag, now)).toBe(false);
   });
 
   it("TTL boundary: flag at TTL_MS - 1ms old is still fresh", () => {
-    const atMs = Date.now() - (TTL_MS - 1);
+    const now = Date.now();
+    const atMs = now - (TTL_MS - 1);
     const flag: { at: number } = { at: atMs };
-    expect(isFlagFresh(flag)).toBe(true);
+    expect(isFlagFresh(flag, now)).toBe(true);
   });
 });
