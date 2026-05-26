@@ -222,7 +222,15 @@ const plugins = [
     },
     otpLength: 6,
     expiresIn: 300, // 5 minutes
-    sendVerificationOnSignUp: true,
+    // OTP delivery for credential signups is driven from
+    // databaseHooks.user.create.after, which fires only when a new
+    // user row is actually written. The plugin's
+    // sendVerificationOnSignUp hook would otherwise fire on Better
+    // Auth's synthetic-success response (returned anti-enumeration
+    // when the email already belongs to an account), which would
+    // dispatch an OTP to that inbox even though no DB write
+    // happened.
+    sendVerificationOnSignUp: false,
     // KEEP-625: the better-auth emailOTP plugin defaults to storing
     // OTPs in plaintext in the verifications table. With "encrypted"
     // the value is symmetric-encrypted with BETTER_AUTH_SECRET via
@@ -510,6 +518,28 @@ export const auth = betterAuth({
           if (user.emailVerified && isFreshSignup(user)) {
             await notifyDiscordSignup(user);
             await subscribeToMailerLite(user);
+          }
+
+          // Credential signup: dispatch the verification OTP here
+          // rather than via emailOTP.sendVerificationOnSignUp. This
+          // hook only runs on a real user-row insert, so the OTP
+          // can never reach the inbox of a pre-existing account
+          // when an attacker POSTs /sign-up/email with that email.
+          // OAuth users come pre-verified (provider attested), so
+          // skip them — the `!user.emailVerified` guard separates
+          // the two paths cleanly.
+          if (!user.emailVerified && user.email) {
+            try {
+              await auth.api.sendVerificationOTP({
+                body: { email: user.email, type: "email-verification" },
+                headers: new Headers(),
+              });
+            } catch (error) {
+              console.error(
+                "[Auth] Failed to dispatch signup verification OTP",
+                error
+              );
+            }
           }
         },
       },
