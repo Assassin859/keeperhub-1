@@ -71,16 +71,6 @@ type Props = {
   onEnrolled: () => void;
 };
 
-/**
- * Horizontal numbered stepper. Two phases:
- *
- *   1. setup   — QR scan + manual key + TOTP code verification in one
- *                step. POSTing /enroll succeeds when the code matches
- *                and returns the backup codes.
- *   2. codes   — display the freshly minted backup codes with Download
- *                + Skip. Either choice closes the dialog; users who
- *                skip can regenerate from settings later.
- */
 function StepIndicator({ current }: { current: Phase }): React.ReactElement {
   const currentIdx = STEP_DEFS.findIndex((s) => s.key === current);
   return (
