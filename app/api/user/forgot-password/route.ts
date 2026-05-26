@@ -124,16 +124,20 @@ async function handleRequest(email: string): Promise<NextResponse> {
     (acc) => acc.providerId === "credential"
   );
 
-  // If user only has OAuth, send a helpful email instead
+  // If user only has OAuth, send a helpful email instead. Pick the
+  // OAuth account they most recently signed in with so the reminder
+  // names the provider they actually used. Before this fix,
+  // multi-linked accounts (Google + GitHub) named whichever was first
+  // in OAUTH_PROVIDERS, which surfaced "uses GitHub" to users who had
+  // been signing in with Google.
   if (!credentialAccount) {
-    const oauthAccount = userAccounts.find((acc) =>
-      OAUTH_PROVIDERS.includes(acc.providerId)
-    );
-
-    if (oauthAccount) {
+    const mostRecentOauth = userAccounts
+      .filter((acc) => OAUTH_PROVIDERS.includes(acc.providerId))
+      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())[0];
+    if (mostRecentOauth) {
       const providerName =
-        oauthAccount.providerId.charAt(0).toUpperCase() +
-        oauthAccount.providerId.slice(1);
+        mostRecentOauth.providerId.charAt(0).toUpperCase() +
+        mostRecentOauth.providerId.slice(1);
       await sendOAuthPasswordResetEmail({ email, providerName });
     }
 
