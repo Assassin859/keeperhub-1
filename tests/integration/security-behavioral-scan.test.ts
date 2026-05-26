@@ -11,8 +11,15 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockSelectChain } = vi.hoisted(() => ({
+const { mockSelectChain, mockCaptureMessage } = vi.hoisted(() => ({
   mockSelectChain: vi.fn(),
+  mockCaptureMessage: vi.fn(),
+}));
+
+vi.mock("@sentry/nextjs", () => ({
+  captureMessage: (message: string, context: unknown): void => {
+    mockCaptureMessage(message, context);
+  },
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -50,6 +57,7 @@ const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
 beforeEach(() => {
   warnSpy.mockClear();
   mockSelectChain.mockReset();
+  mockCaptureMessage.mockReset();
 });
 
 afterEach(() => {
@@ -103,7 +111,7 @@ describe("security-behavioral-scan response shape", () => {
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
-  it("emits one structured warn per matched row", async () => {
+  it("emits one structured warn and one Sentry capture per matched row", async () => {
     const userCreatedAt = new Date("2026-05-26T10:00:00Z");
     const executionStartedAt = new Date("2026-05-26T10:00:42Z");
     mockSelectChain.mockResolvedValueOnce([
@@ -122,6 +130,7 @@ describe("security-behavioral-scan response shape", () => {
       newAccountFirstWorkflowEvents: number;
     };
     expect(body.newAccountFirstWorkflowEvents).toBe(1);
+
     expect(warnSpy).toHaveBeenCalledTimes(1);
     const logged = JSON.parse(warnSpy.mock.calls[0][0] as string);
     expect(logged).toMatchObject({
@@ -133,5 +142,67 @@ describe("security-behavioral-scan response shape", () => {
       triggeredByCountry: "US",
       ageSecondsSinceSignup: 42,
     });
+
+    // Dual-emit pattern: Sentry mirrors the stdout signal so triage gets
+    // both transports for free. Asserts the tag / extra shape so an
+    // accidental shape change doesn't silently break Sentry grouping.
+    expect(mockCaptureMessage).toHaveBeenCalledTimes(1);
+    const [message, options] = mockCaptureMessage.mock.calls[0] as [
+      string,
+      {
+        level: string;
+        tags: Record<string, string>;
+        user: { id: string };
+        extra: Record<string, unknown>;
+      },
+    ];
+    expect(message).toBe("security.behavioral.new_account_first_workflow");
+    expect(options).toMatchObject({
+      level: "warning",
+      tags: {
+        security: "behavioral.new_account_first_workflow",
+        trigger_source: "manual",
+      },
+      user: { id: "user_freshly_signed_up" },
+      extra: {
+        workflowId: "wf_1",
+        executionId: "exec_1",
+        triggeredByCountry: "US",
+        ageSecondsSinceSignup: 42,
+      },
+    });
+  });
+
+  it("survives a Sentry transport failure without dropping the stdout signal", async () => {
+    mockCaptureMessage.mockImplementationOnce(() => {
+      throw new Error("sentry down");
+    });
+    mockSelectChain.mockResolvedValueOnce([
+      {
+        userId: "u_1",
+        workflowId: "wf_1",
+        executionId: "exec_1",
+        triggerSource: "manual",
+        triggeredByCountry: null,
+        userCreatedAt: new Date("2026-05-26T10:00:00Z"),
+        executionStartedAt: new Date("2026-05-26T10:00:30Z"),
+      },
+    ]);
+    const res = await GET(makeRequest());
+    expect(res.status).toBe(200);
+    // Sentry threw but stdout still emitted -- the signal is durable.
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("security-behavioral-scan auth hardening (KEEP-612 review-round-2)", () => {
+  it("enforces CRON_SECRET even when NODE_ENV=test, if the secret is set", async () => {
+    // The pre-fix behaviour bypassed auth in test env unconditionally.
+    // After the fix, a configured secret always wins -- defends against
+    // "container booted with NODE_ENV=test in prod" misconfigurations.
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("CRON_SECRET", "expected-token");
+    const res = await GET(makeRequest({ authorization: "Bearer wrong" }));
+    expect(res.status).toBe(401);
   });
 });

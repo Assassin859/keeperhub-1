@@ -21,7 +21,8 @@
  * not from this endpoint.
  */
 
-import { and, gt, isNotNull, sql } from "drizzle-orm";
+import { captureMessage } from "@sentry/nextjs";
+import { and, eq, gt, isNotNull } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { users, workflowExecutions } from "@/lib/db/schema";
 
@@ -36,18 +37,18 @@ type BehavioralScanResponse = {
 };
 
 function isAuthorized(request: Request): boolean {
-  if (
-    process.env.NODE_ENV === "development" ||
-    process.env.NODE_ENV === "test"
-  ) {
-    return true;
-  }
   const expected = process.env.CRON_SECRET;
-  if (!expected) {
-    return false;
+  // If a secret is configured, always enforce it -- defends against the
+  // misconfiguration shape "container booted with NODE_ENV=test in prod".
+  if (expected) {
+    const header = request.headers.get("authorization");
+    return header === `Bearer ${expected}`;
   }
-  const header = request.headers.get("authorization");
-  return header === `Bearer ${expected}`;
+  // No secret configured -- only safe to bypass in dev/test environments
+  // where local tooling needs to hit the endpoint via curl.
+  return (
+    process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test"
+  );
 }
 
 export async function GET(request: Request): Promise<Response> {
@@ -75,7 +76,7 @@ export async function GET(request: Request): Promise<Response> {
       executionStartedAt: workflowExecutions.startedAt,
     })
     .from(workflowExecutions)
-    .innerJoin(users, sql`${users.id} = ${workflowExecutions.userId}`)
+    .innerJoin(users, eq(users.id, workflowExecutions.userId))
     .where(
       and(
         gt(workflowExecutions.startedAt, executionFloor),
@@ -91,6 +92,28 @@ export async function GET(request: Request): Promise<Response> {
         (row.executionStartedAt.getTime() - row.userCreatedAt.getTime()) / 1000
       )
     );
+    // Dual emit (Sentry + structured stdout) mirrors the pattern used by
+    // the other detection signals in lib/security/* -- alert lands even if
+    // one transport fails, and Sentry's UI gives triagers richer pivots
+    // than raw Loki JSON.
+    try {
+      captureMessage("security.behavioral.new_account_first_workflow", {
+        level: "warning",
+        tags: {
+          security: "behavioral.new_account_first_workflow",
+          trigger_source: row.triggerSource ?? "unknown",
+        },
+        user: { id: row.userId },
+        extra: {
+          workflowId: row.workflowId,
+          executionId: row.executionId,
+          triggeredByCountry: row.triggeredByCountry,
+          ageSecondsSinceSignup: ageSeconds,
+        },
+      });
+    } catch {
+      // swallow; observability must not interrupt the scan
+    }
     console.warn(
       JSON.stringify({
         event: "security.behavioral.new_account_first_workflow",
