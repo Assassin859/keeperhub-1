@@ -17,6 +17,7 @@ import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { rateLimitBypassRule, testEndpointsEnabled } from "@/lib/admin-auth";
 import { isUserDeactivated } from "@/lib/auth-deactivation-guard";
+import { isFreshSignup } from "@/lib/auth-notification-guard";
 import { sendInvitationEmail, sendVerificationOTP } from "@/lib/email";
 import { assessLoginRisk, serializeRiskFlags } from "@/lib/security/login-risk";
 import { TRUSTED_ORIGINS } from "@/lib/trusted-origins";
@@ -500,8 +501,10 @@ export const auth = betterAuth({
             console.error(error);
           }
 
-          // Notify external services for OAuth signups (already verified at creation)
-          if (user.emailVerified) {
+          // Notify external services for OAuth signups (already verified at creation).
+          // Freshness guard: defends against any future hook reroute that delivers
+          // an already-existing user into this path.
+          if (user.emailVerified && isFreshSignup(user)) {
             await notifyDiscordSignup(user);
             await subscribeToMailerLite(user);
           }
@@ -656,7 +659,13 @@ export const auth = betterAuth({
   },
   emailVerification: {
     afterEmailVerification: async (user) => {
-      console.log("[Auth] afterEmailVerification fired", { email: user.email });
+      // Only fire signup-channel notifications on first-time verification of a
+      // freshly-created user. Re-verification flows (and any provider that
+      // re-asserts emailVerified for an existing user) must not page the
+      // signup channel.
+      if (!isFreshSignup(user)) {
+        return;
+      }
       await notifyDiscordSignup(user);
       await subscribeToMailerLite(user);
     },
