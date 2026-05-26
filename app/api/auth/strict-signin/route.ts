@@ -10,6 +10,7 @@ import {
 import { db } from "@/lib/db";
 import {
   accounts,
+  sessions,
   twoFactor as twoFactorTable,
   users,
   verifications,
@@ -258,6 +259,26 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json(
       { error: "Sign-in failed at session step", code: "session_failed" },
       { status: 500 }
+    );
+  }
+
+  // The session.create.before hook in lib/auth.ts stamps requires_mfa
+  // = true on every new session for users with two_factor_enabled.
+  // That gate is for the legacy single-factor sign-in path;
+  // strict-signin has already verified password + email OTP + TOTP
+  // atomically, so the freshly minted session is fully MFA-verified
+  // and should not be bounced to /verify-mfa for a redundant step-up.
+  try {
+    await db
+      .update(sessions)
+      .set({ requiresMfa: false, mfaVerifiedAt: new Date() })
+      .where(eq(sessions.userId, user.id));
+  } catch (err) {
+    logSystemError(
+      ErrorCategory.AUTH,
+      "[strict-signin] failed to clear requires_mfa after dual-factor verification",
+      err,
+      { endpoint: "/api/auth/strict-signin", user_id: user.id }
     );
   }
 
