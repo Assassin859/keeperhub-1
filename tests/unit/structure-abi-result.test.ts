@@ -101,6 +101,20 @@ describe("structureAbiOutputs", () => {
     });
   });
 
+  it("structures a nested tuple[][] without flattening dimensions", () => {
+    const outputs: AbiOutputParam[] = [
+      {
+        name: "grid",
+        type: "tuple[][]",
+        components: [{ name: "a", type: "uint256" }],
+      },
+    ];
+    const value = [[["1"], ["2"]], [["3"]]];
+    expect(structureAbiOutputs([value], outputs)).toEqual({
+      grid: [[{ a: "1" }, { a: "2" }], [{ a: "3" }]],
+    });
+  });
+
   it("passes primitive arrays through untouched", () => {
     const outputs: AbiOutputParam[] = [{ name: "amounts", type: "uint256[]" }];
     expect(structureAbiOutputs([["1", "2", "3"]], outputs)).toEqual({

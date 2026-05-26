@@ -253,9 +253,14 @@ export async function readContractCore(
 
     let structuredResult: unknown = serializedResult;
     if (outputs.length > 0) {
-      // ethers v6 Contract methods auto-unwrap a single output, so wrap it back
-      // into a one-element positional array; multi-output calls already arrive
-      // as a positional array.
+      // The EVM adapter calls contract.getFunction(name)(...) / .staticCall(),
+      // and ethers v6 auto-unwraps a single output: a scalar arrives as the
+      // scalar (not a 1-element array) and a tuple arrives as its component
+      // array. We therefore wrap the single output back into a one-element
+      // positional array for structureAbiOutputs; multi-output calls already
+      // arrive as a positional array. If the adapter ever stops auto-unwrapping
+      // (e.g. switching to decodeFunctionResult), this normalization must move
+      // to match batch-read-contract, which passes the N-element Result as-is.
       const outputValues =
         outputs.length === 1
           ? [serializedResult]

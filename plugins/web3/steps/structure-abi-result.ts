@@ -23,6 +23,10 @@ function isArrayType(type: string): boolean {
   return type.endsWith("]");
 }
 
+// Strips the trailing array dimension from a type: "tuple[][]" -> "tuple[]",
+// "tuple[]" -> "tuple", "tuple[2]" -> "tuple".
+const TRAILING_ARRAY_DIM = /\[\d*\]$/;
+
 function structureTuple(value: unknown, components: AbiOutputParam[]): unknown {
   if (!Array.isArray(value)) {
     // Defensive: shape did not decode as a positional tuple; pass through.
@@ -39,7 +43,8 @@ function structureTuple(value: unknown, components: AbiOutputParam[]): unknown {
 /**
  * Structure a single decoded value against its ABI parameter. Primitives and
  * primitive arrays pass through unchanged; tuples and tuple arrays recurse so
- * nested component names are attached.
+ * nested component names are attached. Arbitrary array depth (e.g. tuple[][])
+ * is handled by stripping one dimension per recursion.
  */
 export function structureAbiValue(
   value: unknown,
@@ -54,7 +59,14 @@ export function structureAbiValue(
     if (!Array.isArray(value)) {
       return value;
     }
-    return value.map((element) => structureTuple(element, components));
+    const elementType = type.replace(TRAILING_ARRAY_DIM, "");
+    return value.map((element) =>
+      structureAbiValue(element, {
+        name: param.name,
+        type: elementType,
+        components,
+      })
+    );
   }
   return structureTuple(value, components);
 }
