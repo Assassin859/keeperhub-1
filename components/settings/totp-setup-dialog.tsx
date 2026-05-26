@@ -196,9 +196,7 @@ export function TotpSetupDialog({
 
   const attemptClose = (): void => {
     if (locked) {
-      toast.error(
-        "Save your backup codes first — copy, download, and confirm two."
-      );
+      toast.error("Download your backup codes first.");
       return;
     }
     closeAndReset();
@@ -265,13 +263,13 @@ export function TotpSetupDialog({
         onEscapeKeyDown={(event) => {
           if (locked) {
             event.preventDefault();
-            toast.error("Save your backup codes before closing.");
+            toast.error("Download your backup codes before closing.");
           }
         }}
         onInteractOutside={(event) => {
           if (locked) {
             event.preventDefault();
-            toast.error("Save your backup codes before closing.");
+            toast.error("Download your backup codes before closing.");
           }
         }}
       >
