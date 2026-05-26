@@ -2,6 +2,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { db } from "@/lib/db";
 import { sessions, userTrustedIps } from "@/lib/db/schema";
+import { normalizeIpForTrust } from "@/lib/security/ip-normalize";
 import {
   type ResolvedLocation,
   resolveLocationFromIp,
@@ -228,7 +229,7 @@ export type IpTrust = {
   ip: string | null;
   trusted: boolean;
   country: string | null;
-  reason: "no_cf" | "known" | "first" | "unknown";
+  reason: "no_cf" | "known" | "first" | "untrusted";
 };
 
 async function resolveLoginIp(): Promise<string | null> {
@@ -262,11 +263,18 @@ async function resolveLoginIp(): Promise<string | null> {
 }
 
 export async function assessIpTrust(userId: string): Promise<IpTrust> {
-  const ip = await resolveLoginIp();
+  const rawIp = await resolveLoginIp();
   const { country } = await resolveLoginLocation();
-  if (!ip) {
+  if (!rawIp) {
     return { ip: null, trusted: true, country, reason: "no_cf" };
   }
+
+  // IPv6 trust is bucketed at /64 to handle CF's lower-64-bits
+  // zeroing for privacy and any SLAAC reshuffles on the same
+  // network. IPv4 passes through unchanged. Callers (cookie
+  // payload, /verify-ip insert) use the normalized form too so
+  // the same string is what ever lands in user_trusted_ips.
+  const ip = normalizeIpForTrust(rawIp);
 
   const [hit] = await db
     .select({ id: userTrustedIps.id })
@@ -286,5 +294,5 @@ export async function assessIpTrust(userId: string): Promise<IpTrust> {
     return { ip, trusted: true, country, reason: "first" };
   }
 
-  return { ip, trusted: false, country, reason: "unknown" };
+  return { ip, trusted: false, country, reason: "untrusted" };
 }

@@ -43,10 +43,11 @@ const SESSION_COOKIE_NAMES = [
 
 /**
  * Read the raw session token Better Auth wrote into one of the
- * Set-Cookie headers returned by verifyTOTP. Same shape as the
- * OAuth-callback interceptor uses to find the just-minted session
- * row, so the requires_mfa clear below targets a single row by
- * token rather than all sessions for the user.
+ * Set-Cookie headers returned by verifyTOTP. Better Auth signs the
+ * cookie via hono's setSignedCookie, so the cookie value is
+ * `<rawToken>.<base64HmacSignature>`. We strip the signature suffix
+ * because `sessions.token` stores `hashSessionToken(rawToken)` and
+ * we need the raw token to reproduce that hash.
  */
 function extractNewSessionToken(setCookies: readonly string[]): string | null {
   for (const raw of setCookies) {
@@ -61,7 +62,9 @@ function extractNewSessionToken(setCookies: readonly string[]): string | null {
     const name = firstPair.slice(0, eqIdx);
     const value = firstPair.slice(eqIdx + 1);
     if ((SESSION_COOKIE_NAMES as readonly string[]).includes(name)) {
-      return decodeURIComponent(value);
+      const decoded = decodeURIComponent(value);
+      const dotIdx = decoded.lastIndexOf(".");
+      return dotIdx > 0 ? decoded.slice(0, dotIdx) : decoded;
     }
   }
   return null;
