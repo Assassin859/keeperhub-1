@@ -7,6 +7,7 @@ import {
   readAllSetCookies,
   setCookiesToCookieHeader,
 } from "@/lib/auth-cookie-chain";
+import { hashSessionToken } from "@/lib/auth-session-token-hash";
 import { db } from "@/lib/db";
 import {
   accounts,
@@ -33,6 +34,37 @@ function constantTimeEquals(a: string, b: string): boolean {
     return false;
   }
   return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
+
+const SESSION_COOKIE_NAMES = [
+  "better-auth.session_token",
+  "__Secure-better-auth.session_token",
+] as const;
+
+/**
+ * Read the raw session token Better Auth wrote into one of the
+ * Set-Cookie headers returned by verifyTOTP. Same shape as the
+ * OAuth-callback interceptor uses to find the just-minted session
+ * row, so the requires_mfa clear below targets a single row by
+ * token rather than all sessions for the user.
+ */
+function extractNewSessionToken(setCookies: readonly string[]): string | null {
+  for (const raw of setCookies) {
+    const firstPair = raw.split(";")[0]?.trim();
+    if (!firstPair) {
+      continue;
+    }
+    const eqIdx = firstPair.indexOf("=");
+    if (eqIdx <= 0) {
+      continue;
+    }
+    const name = firstPair.slice(0, eqIdx);
+    const value = firstPair.slice(eqIdx + 1);
+    if ((SESSION_COOKIE_NAMES as readonly string[]).includes(name)) {
+      return decodeURIComponent(value);
+    }
+  }
+  return null;
 }
 
 /**
@@ -341,16 +373,31 @@ export async function POST(request: Request): Promise<NextResponse> {
   // strict-signin has already verified password + email OTP + TOTP
   // atomically, so the freshly minted session is fully MFA-verified
   // and should not be bounced to /verify-mfa for a redundant step-up.
-  try {
-    await db
-      .update(sessions)
-      .set({ requiresMfa: false, mfaVerifiedAt: new Date() })
-      .where(eq(sessions.userId, user.id));
-  } catch (err) {
+  //
+  // Scope the clear to the new session row by hashing the raw token
+  // from the just-emitted Set-Cookie. A WHERE on user_id would lift
+  // the gate on every other session this user has, including any
+  // pending step-up sessions sitting unverified on another browser.
+  const newRawToken = extractNewSessionToken(sessionSetCookies);
+  if (newRawToken) {
+    try {
+      await db
+        .update(sessions)
+        .set({ requiresMfa: false, mfaVerifiedAt: new Date() })
+        .where(eq(sessions.token, hashSessionToken(newRawToken)));
+    } catch (err) {
+      logSystemError(
+        ErrorCategory.AUTH,
+        "[strict-signin] failed to clear requires_mfa after dual-factor verification",
+        err,
+        { endpoint: "/api/auth/strict-signin", user_id: user.id }
+      );
+    }
+  } else {
     logSystemError(
       ErrorCategory.AUTH,
-      "[strict-signin] failed to clear requires_mfa after dual-factor verification",
-      err,
+      "[strict-signin] new session token missing from Set-Cookie",
+      new Error("session_token cookie not found"),
       { endpoint: "/api/auth/strict-signin", user_id: user.id }
     );
   }
