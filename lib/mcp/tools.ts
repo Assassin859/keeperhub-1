@@ -941,7 +941,7 @@ export function registerTools(
         .string()
         .optional()
         .describe(
-          "ETH value to send with the call in wei (for payable functions)"
+          "Native value to send with the call, as a decimal string in ether units (e.g. '0.1'). For payable functions."
         ),
       gas_limit_multiplier: z
         .string()

@@ -1,17 +1,19 @@
 /**
  * KEEP-495: the MCP execution tools standardise their field names -
  * `chain_id` (was `network`) across all three, and `to_address`
- * (was `recipient_address`) on execute_transfer. The old names stay as
- * deprecated aliases for one release.
+ * (was `recipient_address`) on execute_transfer.
+ *
+ * This is a hard rename, not an aliased migration: MCP clients read the tool
+ * schema on every discovery, so the old names are dropped outright and the
+ * renamed fields stay required.
  *
  * Two layers of coverage:
  *   - Handler level: invokes the registered callback directly to pin the
- *     schema keys and the canonical-then-alias normalisation onto the route's
- *     camelCase body contract (`chainId`, `recipientAddress`).
+ *     schema keys (canonical present, old names gone) and the mapping onto the
+ *     route's camelCase body contract (`chainId`, `recipientAddress`).
  *   - SDK level: drives a real Client <-> McpServer over an in-memory transport
- *     so the MCP SDK's own Zod validation runs end to end - proving the renamed
- *     schema actually accepts new + deprecated payloads and still rejects a
- *     payload missing a required field.
+ *     so the MCP SDK's own Zod validation runs end to end - proving the schema
+ *     accepts the new names and rejects payloads using the dropped old names.
  */
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -28,7 +30,7 @@ type RegisteredTool = {
 
 type FetchMock = ReturnType<typeof vi.fn>;
 
-const VALIDATION_ERROR_PATTERN = /amount|Invalid arguments|validation/i;
+const VALIDATION_ERROR_PATTERN = /required|Invalid arguments|validation/i;
 
 let fetchMock: FetchMock;
 
@@ -101,24 +103,24 @@ function getTool(name: string): RegisteredTool {
   return tool;
 }
 
-describe("MCP execute tools field aliases - handler level (KEEP-495)", () => {
-  it("execute_transfer schema exposes canonical names and keeps deprecated aliases", () => {
+describe("MCP execute tools field naming - handler level (KEEP-495)", () => {
+  it("execute_transfer schema exposes canonical names and drops the old ones", () => {
     const keys = Object.keys(getTool("execute_transfer").schema);
     expect(keys).toContain("chain_id");
     expect(keys).toContain("to_address");
-    expect(keys).toContain("network");
-    expect(keys).toContain("recipient_address");
+    expect(keys).not.toContain("network");
+    expect(keys).not.toContain("recipient_address");
   });
 
-  it("execute_contract_call and execute_check_and_execute expose chain_id with network alias", () => {
+  it("execute_contract_call and execute_check_and_execute use chain_id and drop network", () => {
     for (const name of ["execute_contract_call", "execute_check_and_execute"]) {
       const keys = Object.keys(getTool(name).schema);
       expect(keys).toContain("chain_id");
-      expect(keys).toContain("network");
+      expect(keys).not.toContain("network");
     }
   });
 
-  it("execute_transfer: canonical names map to chainId + recipientAddress", async () => {
+  it("execute_transfer: chain_id + to_address map to chainId + recipientAddress", async () => {
     await getTool("execute_transfer").handler({
       chain_id: "8453",
       to_address: "0xabc",
@@ -129,67 +131,22 @@ describe("MCP execute tools field aliases - handler level (KEEP-495)", () => {
     expect(body.recipientAddress).toBe("0xabc");
   });
 
-  it("execute_transfer: deprecated aliases still resolve", async () => {
-    await getTool("execute_transfer").handler({
-      network: "1",
-      recipient_address: "0xdef",
-      amount: "0.2",
-    });
-    const body = lastBody();
-    expect(body.chainId).toBe("1");
-    expect(body.recipientAddress).toBe("0xdef");
-  });
-
-  it("execute_transfer: canonical name wins when both are sent", async () => {
-    await getTool("execute_transfer").handler({
-      chain_id: "8453",
-      network: "1",
-      to_address: "0xabc",
-      recipient_address: "0xdef",
-      amount: "0.1",
-    });
-    const body = lastBody();
-    expect(body.chainId).toBe("8453");
-    expect(body.recipientAddress).toBe("0xabc");
-  });
-
-  it("execute_contract_call: chain_id and network both map to chainId", async () => {
-    const tool = getTool("execute_contract_call");
-    await tool.handler({
+  it("execute_contract_call: chain_id maps to chainId", async () => {
+    await getTool("execute_contract_call").handler({
       contract_address: "0xc",
       chain_id: "10",
       function_name: "foo",
     });
     expect(lastBody().chainId).toBe("10");
-
-    await tool.handler({
-      contract_address: "0xc",
-      network: "137",
-      function_name: "foo",
-    });
-    expect(lastBody().chainId).toBe("137");
   });
 
-  it("execute_check_and_execute: chain_id and network both map to chainId", async () => {
-    const tool = getTool("execute_check_and_execute");
-    const condition = { operator: "gt", value: "1000" };
-    const action = { contract_address: "0xa", function_name: "bar" };
-
-    await tool.handler({
+  it("execute_check_and_execute: chain_id maps to chainId", async () => {
+    await getTool("execute_check_and_execute").handler({
       contract_address: "0xc",
       chain_id: "42161",
       function_name: "baz",
-      condition,
-      action,
-    });
-    expect(lastBody().chainId).toBe("42161");
-
-    await tool.handler({
-      contract_address: "0xc",
-      network: "42161",
-      function_name: "baz",
-      condition,
-      action,
+      condition: { operator: "gt", value: "1000" },
+      action: { contract_address: "0xa", function_name: "bar" },
     });
     expect(lastBody().chainId).toBe("42161");
   });
@@ -229,8 +186,8 @@ type ToolCallResult = {
   content?: Array<{ type: string; text?: string }>;
 };
 
-describe("MCP execute tools field aliases - SDK level (KEEP-495)", () => {
-  it("accepts execute_transfer with canonical field names through SDK validation", async () => {
+describe("MCP execute tools field naming - SDK level (KEEP-495)", () => {
+  it("accepts execute_transfer with the canonical field names through SDK validation", async () => {
     const { client, close } = await connectedClient();
     try {
       const result = (await client.callTool({
@@ -247,34 +204,17 @@ describe("MCP execute tools field aliases - SDK level (KEEP-495)", () => {
     }
   });
 
-  it("accepts execute_transfer with deprecated aliases through SDK validation", async () => {
+  it("rejects execute_transfer that uses the dropped old field names (SDK schema runs)", async () => {
     const { client, close } = await connectedClient();
     try {
       const result = (await client.callTool({
         name: "execute_transfer",
+        // network / recipient_address are no longer in the schema, so the
+        // required chain_id + to_address are missing -> validation fails
+        // before the handler runs.
         arguments: { network: "1", recipient_address: "0xdef", amount: "0.2" },
       })) as ToolCallResult;
 
-      expect(result.isError).toBeFalsy();
-      const body = lastBody();
-      expect(body.chainId).toBe("1");
-      expect(body.recipientAddress).toBe("0xdef");
-    } finally {
-      await close();
-    }
-  });
-
-  it("rejects execute_transfer when the required amount is missing (SDK schema runs)", async () => {
-    const { client, close } = await connectedClient();
-    try {
-      const result = (await client.callTool({
-        name: "execute_transfer",
-        arguments: { chain_id: "1", to_address: "0xabc" },
-      })) as ToolCallResult;
-
-      // The SDK surfaces a Zod validation failure as an error tool result
-      // (isError: true) carrying the validation message, not a thrown
-      // protocol error. Either way the request never reaches the handler.
       expect(result.isError).toBe(true);
       expect(result.content?.[0]?.text ?? "").toMatch(VALIDATION_ERROR_PATTERN);
       expect(fetchMock).not.toHaveBeenCalled();
