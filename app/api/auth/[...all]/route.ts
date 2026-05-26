@@ -89,6 +89,19 @@ async function interceptOauthCallback(
       : [];
   const sessionToken = extractSessionToken(setCookies);
   if (!sessionToken) {
+    // Better Auth's callback returned a redirect without a session
+    // cookie. Either the OAuth dance failed silently or the runtime
+    // does not expose getSetCookie. Log so we can tell the two apart
+    // when a user reports "signed in with Google but no session".
+    // biome-ignore lint/suspicious/noConsole: prod diagnostic for OAuth race
+    console.warn("[oauth-callback] no session token in Set-Cookie", {
+      pathname: url.pathname,
+      status: res.status,
+      setCookieCount: setCookies.length,
+      hasGetSetCookie:
+        typeof (res.headers as Headers & { getSetCookie?: () => string[] })
+          .getSetCookie === "function",
+    });
     return res;
   }
   const tokenHash = hashSessionToken(sessionToken);
