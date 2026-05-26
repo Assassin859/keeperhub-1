@@ -1,6 +1,7 @@
 "use client";
 
 import { useSetAtom } from "jotai";
+import { Copy, ExternalLink } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -8,6 +9,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { toChecksumAddress } from "@/lib/address-utils";
 import { useSession } from "@/lib/auth-client";
 import { integrationsVersionAtom } from "@/lib/integrations-store";
+import { TESTNET_FAUCETS } from "@/lib/web3/faucets";
 
 type Web3WalletSectionProps = {
   onSuccess?: (integrationId: string) => void;
@@ -175,15 +177,61 @@ export function Web3WalletSection({
         }
 
         if (hasWallet) {
+          const checksummedAddress = walletAddress
+            ? toChecksumAddress(walletAddress)
+            : null;
           return (
             <div className="space-y-3">
               <div className="rounded-lg border bg-muted/50 p-3">
-                <div className="mb-1 text-muted-foreground text-xs">
-                  Wallet Address
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <span className="text-muted-foreground text-xs">
+                    Wallet Address
+                  </span>
+                  {checksummedAddress && (
+                    <button
+                      aria-label="Copy wallet address"
+                      className="inline-flex items-center gap-1 text-muted-foreground text-xs transition-colors hover:text-foreground"
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(
+                            checksummedAddress
+                          );
+                          toast.success("Address copied");
+                        } catch {
+                          toast.error("Failed to copy address");
+                        }
+                      }}
+                      type="button"
+                    >
+                      <Copy className="size-3" />
+                      Copy
+                    </button>
+                  )}
                 </div>
                 <code className="break-all font-mono text-xs">
-                  {walletAddress ? toChecksumAddress(walletAddress) : null}
+                  {checksummedAddress}
                 </code>
+              </div>
+              <div className="rounded-lg border bg-muted/50 p-3">
+                <div className="font-medium text-sm">Fund this wallet</div>
+                <p className="mt-1 text-muted-foreground text-xs">
+                  New wallets start empty. Use a testnet faucet to add gas before
+                  running Web3 workflows.
+                </p>
+                <div className="mt-2 flex flex-col gap-1">
+                  {TESTNET_FAUCETS.map((faucet) => (
+                    <a
+                      className="inline-flex items-center gap-1.5 text-primary text-xs hover:underline"
+                      href={faucet.url}
+                      key={faucet.chainId}
+                      rel="noopener noreferrer"
+                      target="_blank"
+                    >
+                      <ExternalLink className="size-3" />
+                      {faucet.name} faucet
+                    </a>
+                  ))}
+                </div>
               </div>
               {showDelete && (
                 <Button
