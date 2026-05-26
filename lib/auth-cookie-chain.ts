@@ -26,11 +26,18 @@ type HeadersWithGetSetCookie = Headers & {
 
 export function readAllSetCookies(headers: Headers): string[] {
   const h = headers as HeadersWithGetSetCookie;
-  if (typeof h.getSetCookie === "function") {
-    return h.getSetCookie();
+  if (typeof h.getSetCookie !== "function") {
+    // Falling back to headers.get("set-cookie") here would return the
+    // comma-joined string of every Set-Cookie value, and the downstream
+    // attribute-strip would silently drop every cookie after the first
+    // — exactly the failure mode this module exists to prevent. Throw
+    // instead, so a runtime without getSetCookie() surfaces loudly
+    // rather than reintroducing INVALID_TWO_FACTOR_COOKIE in prod.
+    throw new Error(
+      "readAllSetCookies requires Headers.getSetCookie() (Node 20+/undici 5+). The current runtime does not expose it."
+    );
   }
-  const single = headers.get?.("set-cookie");
-  return single ? [single] : [];
+  return h.getSetCookie();
 }
 
 export function setCookiesToCookieHeader(setCookies: string[]): string {

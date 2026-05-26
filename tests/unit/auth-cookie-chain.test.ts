@@ -4,6 +4,8 @@ import {
   setCookiesToCookieHeader,
 } from "@/lib/auth-cookie-chain";
 
+const GET_SET_COOKIE_PATTERN = /getSetCookie/;
+
 describe("readAllSetCookies", () => {
   test("returns every Set-Cookie as a separate string", () => {
     const h = new Headers();
@@ -14,6 +16,20 @@ describe("readAllSetCookies", () => {
 
   test("returns empty array when no Set-Cookie present", () => {
     expect(readAllSetCookies(new Headers())).toEqual([]);
+  });
+
+  test("throws when Headers lacks getSetCookie() rather than degrading silently", () => {
+    // A runtime without getSetCookie() would force the helper into a
+    // comma-joined fallback that this module exists to prevent. The
+    // helper throws so the failure is loud and obvious, not a silent
+    // reintroduction of INVALID_TWO_FACTOR_COOKIE in prod.
+    const fakeHeaders = {
+      get: (name: string) =>
+        name === "set-cookie" ? "a=1; Path=/, b=2; Path=/" : null,
+    } as unknown as Headers;
+    expect(() => readAllSetCookies(fakeHeaders)).toThrow(
+      GET_SET_COOKIE_PATTERN
+    );
   });
 });
 
@@ -66,7 +82,13 @@ describe("end-to-end chain (Headers -> Cookie header)", () => {
       "set-cookie",
       "__Secure-better-auth.two_factor=signed-token; Max-Age=600; Path=/; HttpOnly; Secure; SameSite=Lax"
     );
-    const cookieHeader = setCookiesToCookieHeader(readAllSetCookies(headers));
+    const setCookies = readAllSetCookies(headers);
+    // Asserting cardinality guards against a future refactor that
+    // reintroduces a join-then-split round trip. The original bug
+    // surfaced because a 2-element array got joined and re-parsed
+    // into 1 element.
+    expect(setCookies).toHaveLength(2);
+    const cookieHeader = setCookiesToCookieHeader(setCookies);
     expect(cookieHeader).toContain(
       "__Secure-better-auth.two_factor=signed-token"
     );
