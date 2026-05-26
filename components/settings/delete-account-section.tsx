@@ -166,7 +166,10 @@ export function DeactivateAccountSection(): React.ReactElement {
                   <DualFactorSteps
                     busy={loading}
                     dual={dual}
-                    onBack={() => setPhase("confirmation")}
+                    onBack={() => {
+                      setOpen(false);
+                      resetAll();
+                    }}
                     onPrefetchEmail={() =>
                       dual.prefetchEmail(emptyCodesFetch)
                     }

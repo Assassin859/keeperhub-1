@@ -554,7 +554,7 @@ export function WithdrawModal({
           dual={dual}
           onBack={() => {
             dual.reset();
-            setState("input");
+            closeAll();
           }}
           onPrefetchEmail={() => dual.prefetchEmail(withdrawEmptyCodes)}
           onResendEmail={() => dual.resendEmail(withdrawEmptyCodes)}

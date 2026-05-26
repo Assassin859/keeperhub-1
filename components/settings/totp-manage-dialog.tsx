@@ -311,6 +311,7 @@ export function TotpManageDialog({
               onBack={() => {
                 setMode("summary");
                 dual.reset();
+                onOpenChange(false);
               }}
               onPrefetchEmail={() =>
                 dual.prefetchEmail(() =>
@@ -338,10 +339,14 @@ export function TotpManageDialog({
         )}
 
         {mode === "viewing-codes" && generatedCodes && (
-          <TotpBackupCodesPanel
-            codes={generatedCodes}
-            onConfirmed={resetAndClose}
-          />
+          <div className="space-y-4">
+            <TotpBackupCodesPanel codes={generatedCodes} />
+            <DialogFooter>
+              <Button onClick={resetAndClose} variant="outline">
+                Done
+              </Button>
+            </DialogFooter>
+          </div>
         )}
       </DialogContent>
     </Dialog>
