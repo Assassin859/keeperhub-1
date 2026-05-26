@@ -319,6 +319,41 @@ describe("MFA gate", () => {
     expect(res.status).toBe(200);
   });
 
+  it("passes anonymous API requests despite twoFactorEnabled being false", async () => {
+    mockGetSession.mockResolvedValue({
+      user: {
+        id: "anon1",
+        name: "Anonymous",
+        email: "temp-abc@keeperhub.local",
+        isAnonymous: true,
+        twoFactorEnabled: false,
+      },
+      session: { requiresMfa: false },
+    });
+    const res = await proxy(
+      make("/api/workflows", {
+        method: "POST",
+        headers: sessionCookieHeaders(),
+      })
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("does not redirect anonymous page requests to /enroll-mfa", async () => {
+    mockGetSession.mockResolvedValue({
+      user: {
+        id: "anon1",
+        name: "Anonymous",
+        email: "temp-abc@keeperhub.local",
+        isAnonymous: true,
+        twoFactorEnabled: false,
+      },
+      session: { requiresMfa: false },
+    });
+    const res = await proxy(make("/", { headers: sessionCookieHeaders() }));
+    expect(res.status).toBe(200);
+  });
+
   it("redirects authenticated page requests to /enroll-mfa when not enrolled", async () => {
     mockGetSession.mockResolvedValue({
       user: { id: "u1", twoFactorEnabled: false },

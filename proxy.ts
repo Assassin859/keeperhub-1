@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { isAnonymousUserShape } from "@/lib/auth-anonymous-guard";
 import {
   hasSessionCookie,
   isTrustedOrigin,
@@ -204,6 +205,13 @@ async function mfaBlock(request: NextRequest): Promise<NextResponse | null> {
 
   const session = await auth.api.getSession({ headers: request.headers });
   if (!session?.user) {
+    return null;
+  }
+
+  // Anonymous sessions have no permanent identity to protect, so gating
+  // them on MFA is incoherent (see lib/auth-anonymous-guard). Let them
+  // through so landing-page visitors can build a workflow before signing up.
+  if (isAnonymousUserShape(session.user)) {
     return null;
   }
 
