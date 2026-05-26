@@ -156,11 +156,14 @@ function checkBracketExpressions(expression: string): ValidationResult {
     const beforeBracket = match[1];
     const insideBracket = match[2].trim();
 
-    // Check if the part before the bracket is a valid variable (__v0, __v1, etc.)
+    // Check if the part before the bracket is a valid variable (__v0, __v1, etc.).
+    // Bare references like `step2[1]` reach here when an author uses an
+    // unsupported reference grammar instead of the stored template format.
+    // Index access IS supported, but inside the template field path.
     if (!VALID_BRACKET_ACCESS_PATTERN.test(beforeBracket)) {
       return {
         valid: false,
-        error: `Bracket notation is only allowed on workflow variables. Found: "${beforeBracket}[...]"`,
+        error: `Cannot index "${beforeBracket}[...]". Reference step outputs with the {{@nodeId:Label.field}} template format - array and tuple indexing belongs inside the field path, e.g. {{@nodeId:Label.result[1]}}.`,
       };
     }
 

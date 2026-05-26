@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
 import { evaluateConditionExpression } from "@/lib/workflow/executor/executor.workflow";
+import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
+import { validateConditionExpression } from "@/lib/workflow/nodes/condition/validator";
 
 const NO_EXPRESSION_REGEX = /no expression configured/;
+const BARE_INDEX_REGEX = /\{\{@nodeId:Label\.field\}\} template format/;
 
 /**
  * Tests for KEEP-1520: Condition node losing expression at runtime
@@ -799,5 +801,42 @@ describe("condition evaluation edge cases", () => {
       const result = evaluateConditionExpression(expression, outputs);
       expect(result.result).toBe(true);
     });
+  });
+});
+
+describe("condition bracket-notation grammar", () => {
+  it("resolves an array/tuple index inside the stored-format field path", () => {
+    const outputs = {
+      step2: { label: "Read", data: { result: ["a", "x", "z"] } },
+    };
+
+    const result = evaluateConditionExpression(
+      '{{@step2:Read.result[1]}} === "x"',
+      outputs
+    );
+    expect(result.result).toBe(true);
+  });
+
+  it("allows index access on a substituted variable token (__vN[n])", () => {
+    expect(validateConditionExpression('__v0[1] === "x"')).toEqual({
+      valid: true,
+    });
+  });
+
+  it("rejects a bare indexed reference with an actionable grammar hint", () => {
+    const result = validateConditionExpression('step2[1] === "x"');
+    expect(result.valid).toBe(false);
+    if (result.valid) {
+      return;
+    }
+    expect(result.error).toMatch(BARE_INDEX_REGEX);
+  });
+
+  it("surfaces the grammar hint through the executor for a bare reference", () => {
+    expect(() =>
+      evaluateConditionExpression('step2[1] === "x"', {
+        step2: { label: "Read", data: { result: ["a", "x"] } },
+      })
+    ).toThrow(BARE_INDEX_REGEX);
   });
 });

@@ -248,6 +248,11 @@ export const TEMPLATE_SYNTAX = {
       description: "Reference 'price' from HTTP request response data",
     },
     {
+      template: "{{@read-1:Read Contract.result[1]}}",
+      description:
+        "Index 1 of a tuple/array output. Bracket indexing belongs inside the field path, not on a bare reference (step2[1] is invalid)",
+    },
+    {
       template: `{{@${BUILTIN_NODE_ID}:${BUILTIN_NODE_LABEL}.unixTimestamp}}`,
       description:
         "Current Unix timestamp in seconds (built-in, evaluated at execution time)",
@@ -257,6 +262,8 @@ export const TEMPLATE_SYNTAX = {
     "nodeId is the unique identifier of the node (visible in node settings)",
     "Label is the human-readable name shown on the node",
     "Nested fields use dot notation (e.g., data.nested.value)",
+    "Array and tuple outputs are indexed with [n] inside the field path (e.g., result[1]); numeric indices only",
+    "Condition expressions use this same reference and path grammar - reference outputs as {{@nodeId:Label.field[index]}}, never as a bare step2[1]",
     "Templates are resolved at runtime before each step executes",
   ],
 };
