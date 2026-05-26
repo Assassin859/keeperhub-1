@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { readAllSetCookies } from "@/lib/auth-cookie-chain";
 import { db } from "@/lib/db";
 import { accounts, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
@@ -107,19 +108,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         headers: request.headers,
         returnHeaders: true,
       });
-      const headersWithGetSetCookie = signInRes.headers as Headers & {
-        getSetCookie?: () => string[];
-      };
-      const sessionCookies =
-        typeof headersWithGetSetCookie.getSetCookie === "function"
-          ? headersWithGetSetCookie.getSetCookie()
-          : [];
-      if (sessionCookies.length === 0) {
-        const fallback = signInRes.headers?.get?.("set-cookie");
-        if (fallback) {
-          sessionCookies.push(fallback);
-        }
-      }
+      const sessionCookies = readAllSetCookies(signInRes.headers);
       const response = NextResponse.json({ ok: true, signedIn: true });
       for (const cookie of sessionCookies) {
         response.headers.append("Set-Cookie", cookie);

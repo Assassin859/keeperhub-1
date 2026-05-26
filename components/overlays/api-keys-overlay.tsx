@@ -132,7 +132,7 @@ function CreateApiKeyOverlay({
         <DualFactorSteps
           busy={creating}
           dual={dual}
-          onBack={() => setPhase("label")}
+          onBack={pop}
           onPrefetchEmail={() => dual.prefetchEmail(emptyCodesFetch)}
           onResendEmail={() => dual.resendEmail(emptyCodesFetch)}
           onSubmit={handleCreate}

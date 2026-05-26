@@ -3,6 +3,10 @@ import { symmetricDecrypt } from "better-auth/crypto";
 import { and, desc, eq, gt } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import {
+  readAllSetCookies,
+  setCookiesToCookieHeader,
+} from "@/lib/auth-cookie-chain";
 import { db } from "@/lib/db";
 import {
   accounts,
@@ -108,7 +112,6 @@ async function validateEmailOtp(
   }
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: atomic 3-factor validation with explicit early returns is the safest shape
 export async function POST(request: Request): Promise<NextResponse> {
   let body: Body;
   try {
@@ -262,21 +265,21 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   // 5. All three factors verified. Chain Better Auth's standard flow
   // to mint the session cookie before consuming the email-OTP row.
-  // signInEmail returns a Response with two_factor cookie; we extract
-  // that and pass it into verifyTOTP, which then returns a Response
-  // with the session cookie. The OTP row is only deleted AFTER both
-  // calls succeed so a transient Better Auth failure (network flake,
-  // cookie roundtrip mismatch, etc.) leaves the row in place and the
-  // user can retry instead of being permanently locked out with an
+  // signInEmail mints a two_factor cookie for TOTP-enrolled users;
+  // we forward those Set-Cookie values into verifyTOTP, which
+  // completes the flow and returns the session cookie. The OTP row
+  // is only deleted AFTER both calls succeed so a transient Better
+  // Auth failure leaves the row in place and the user can retry
+  // instead of being permanently locked out with an
   // invalid_email_otp loop.
-  let twoFactorCookie = "";
+  let twoFactorSetCookies: string[] = [];
   try {
     const signInRes = await auth.api.signInEmail({
       body: { email, password },
       headers: request.headers,
       returnHeaders: true,
     });
-    twoFactorCookie = signInRes.headers?.get?.("set-cookie") ?? "";
+    twoFactorSetCookies = readAllSetCookies(signInRes.headers);
   } catch (err) {
     logSystemError(
       ErrorCategory.AUTH,
@@ -289,38 +292,21 @@ export async function POST(request: Request): Promise<NextResponse> {
       { status: 500 }
     );
   }
-  if (!twoFactorCookie) {
+  if (twoFactorSetCookies.length === 0) {
     return NextResponse.json(
       { error: "Sign-in failed at session step", code: "session_failed" },
       { status: 500 }
     );
   }
 
-  // Build a header set carrying the two_factor cookie that signInEmail
-  // just minted, then call verifyTOTP with the user's authenticator
-  // code. Better Auth's verifyTOTP completes the flow and returns the
-  // session cookie. We must convert the Set-Cookie response header
-  // value (`name=value; Path=/; HttpOnly; ...`) into a Cookie request
-  // header value (`name=value`) by stripping every attribute after
-  // the first `;` of each pair. A single Set-Cookie value can carry
-  // multiple cookies if comma-joined, so split on `, ` boundaries that
-  // are not inside an Expires date.
-  function setCookieToCookieHeader(setCookieValue: string): string {
-    // Split on comma followed by a space and a token-y char. This is
-    // good enough for Better Auth's cookies which are simple ASCII
-    // names; the more sophisticated split-set-cookie packages handle
-    // Expires=Wed, 21 Oct 2015 7:28:00 GMT but Better Auth's cookies
-    // use Max-Age, not Expires, so the simple split is safe here.
-    const cookies = setCookieValue.split(/,(?=\s*[A-Za-z][A-Za-z0-9_.-]*=)/);
-    return cookies
-      .map((c) => c.split(";")[0].trim())
-      .filter((p) => p.length > 0)
-      .join("; ");
-  }
+  // Build a Cookie header from every Set-Cookie value returned by
+  // signInEmail and pass it into verifyTOTP. The session-clearing
+  // cookies ride along harmlessly; verifyTOTP reads only the
+  // two_factor cookie. Using the Set-Cookie array directly avoids
+  // the parse step that previously broke on production's
+  // `__Secure-*` cookie names.
   const chainedHeaders = new Headers(request.headers);
-  // Replace any incoming cookie header so we don't accidentally pass
-  // an old session cookie.
-  chainedHeaders.set("cookie", setCookieToCookieHeader(twoFactorCookie));
+  chainedHeaders.set("cookie", setCookiesToCookieHeader(twoFactorSetCookies));
 
   let sessionSetCookies: string[] = [];
   try {
@@ -329,22 +315,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       headers: chainedHeaders,
       returnHeaders: true,
     });
-    // Better Auth's verifyTOTP returns multiple Set-Cookie headers (a
-    // new session_token plus a clearing entry for the two_factor
-    // cookie). Headers.get only returns the first / joined value; the
-    // browser needs them as discrete Set-Cookie headers on the
-    // outgoing response. Use getSetCookie() which gives us the array.
-    const headersWithGetSetCookie = totpRes.headers as Headers & {
-      getSetCookie?: () => string[];
-    };
-    if (typeof headersWithGetSetCookie.getSetCookie === "function") {
-      sessionSetCookies = headersWithGetSetCookie.getSetCookie();
-    } else {
-      const single = totpRes.headers?.get?.("set-cookie");
-      if (single) {
-        sessionSetCookies = [single];
-      }
-    }
+    sessionSetCookies = readAllSetCookies(totpRes.headers);
   } catch (err) {
     logSystemError(
       ErrorCategory.AUTH,
@@ -364,12 +335,12 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  // The session.create.before hook in lib/auth.ts stamps requires_mfa=true
-  // on every new session for users with two_factor_enabled. That gate is
-  // for the legacy single-factor sign-in path; strict-signin has already
-  // verified password + email OTP + TOTP atomically, so the freshly minted
-  // session is fully MFA-verified. Clear the flag now so the proxy does
-  // not bounce the user to /verify-mfa for a redundant step-up.
+  // The session.create.before hook in lib/auth.ts stamps requires_mfa
+  // = true on every new session for users with two_factor_enabled.
+  // That gate is for the legacy single-factor sign-in path;
+  // strict-signin has already verified password + email OTP + TOTP
+  // atomically, so the freshly minted session is fully MFA-verified
+  // and should not be bounced to /verify-mfa for a redundant step-up.
   try {
     await db
       .update(sessions)

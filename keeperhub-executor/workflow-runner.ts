@@ -33,6 +33,7 @@ import {
   workflowSchedules,
   workflows,
 } from "../lib/db/schema";
+import { buildExecutorInput } from "../lib/workflow/executor/build-executor-input";
 import { executeWorkflow } from "../lib/workflow/executor/executor.workflow";
 import { calculateTotalSteps } from "../lib/workflow/executor/progress";
 import { SHUTDOWN_TIMEOUT_MS } from "../lib/workflow/executor/runner-constants";
@@ -154,7 +155,6 @@ async function handleGracefulShutdown(signal: string): Promise<void> {
 process.on("SIGTERM", () => handleGracefulShutdown("SIGTERM"));
 process.on("SIGINT", () => handleGracefulShutdown("SIGINT"));
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Main runner orchestrates multiple phases of workflow execution
 async function main(): Promise<void> {
   const startTime = Date.now();
   const { workflowId, executionId, input, scheduleId } = validateEnv();
@@ -237,15 +237,13 @@ async function main(): Promise<void> {
     }
 
     console.log("[Runner] Executing workflow...");
-    const result = await executeWorkflow({
-      nodes,
-      edges: workflow.edges as WorkflowEdge[],
-      triggerInput: input,
-      executionId,
-      workflowId,
-      organizationId: workflow.organizationId ?? undefined,
-      organizationName,
-    });
+    const result = await executeWorkflow(
+      buildExecutorInput(workflow, {
+        triggerInput: input,
+        executionId,
+        organizationName,
+      })
+    );
 
     const duration = Date.now() - startTime;
     console.log(`[Runner] Workflow completed in ${duration}ms`);
