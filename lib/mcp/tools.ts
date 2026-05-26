@@ -882,17 +882,8 @@ export function registerTools(
     {
       chain_id: z
         .string()
-        .optional()
         .describe("Chain ID (e.g., '1' for Ethereum, '8453' for Base)"),
-      network: z.string().optional().describe("Deprecated alias for chain_id."),
-      to_address: z
-        .string()
-        .optional()
-        .describe("Recipient wallet address (0x...)"),
-      recipient_address: z
-        .string()
-        .optional()
-        .describe("Deprecated alias for to_address."),
+      to_address: z.string().describe("Recipient wallet address (0x...)"),
       amount: z
         .string()
         .describe("Amount to transfer in human-readable units (e.g., '0.1')"),
@@ -912,8 +903,8 @@ export function registerTools(
           "/api/execute/transfer",
           "POST",
           {
-            chainId: args.chain_id ?? args.network,
-            recipientAddress: args.to_address ?? args.recipient_address,
+            chainId: args.chain_id,
+            recipientAddress: args.to_address,
             amount: args.amount,
             tokenAddress: args.token_address,
           }
@@ -930,11 +921,7 @@ export function registerTools(
     "Call a smart contract function. For view/pure functions, returns the result directly. For state-changing functions, submits a transaction and returns the execution ID. Requires a wallet integration for write calls.",
     {
       contract_address: z.string().describe("Contract address (0x...)"),
-      chain_id: z
-        .string()
-        .optional()
-        .describe("Chain ID (e.g., '1' for Ethereum)"),
-      network: z.string().optional().describe("Deprecated alias for chain_id."),
+      chain_id: z.string().describe("Chain ID (e.g., '1' for Ethereum)"),
       function_name: z
         .string()
         .describe("Solidity function name (e.g., 'balanceOf', 'transfer')"),
@@ -977,7 +964,7 @@ export function registerTools(
           "POST",
           {
             contractAddress: args.contract_address,
-            chainId: args.chain_id ?? args.network,
+            chainId: args.chain_id,
             functionName: args.function_name,
             functionArgs: args.function_args,
             abi: args.abi,
@@ -1000,11 +987,7 @@ export function registerTools(
       contract_address: z
         .string()
         .describe("Contract address to read the check value from (0x...)"),
-      chain_id: z
-        .string()
-        .optional()
-        .describe("Chain ID (e.g., '1' for Ethereum)"),
-      network: z.string().optional().describe("Deprecated alias for chain_id."),
+      chain_id: z.string().describe("Chain ID (e.g., '1' for Ethereum)"),
       function_name: z
         .string()
         .describe("Function to call for the check (e.g., 'balanceOf')"),
@@ -1050,7 +1033,7 @@ export function registerTools(
           "POST",
           {
             contractAddress: args.contract_address,
-            chainId: args.chain_id ?? args.network,
+            chainId: args.chain_id,
             functionName: args.function_name,
             functionArgs: args.function_args,
             abi: args.abi,
