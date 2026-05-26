@@ -311,6 +311,7 @@ export function TotpManageDialog({
               onBack={() => {
                 setMode("summary");
                 dual.reset();
+                onOpenChange(false);
               }}
               onPrefetchEmail={() =>
                 dual.prefetchEmail(() =>
