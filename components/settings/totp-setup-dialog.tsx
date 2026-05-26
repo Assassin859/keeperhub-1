@@ -1,5 +1,6 @@
 "use client";
 
+import { Copy } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { TotpBackupCodesPanel } from "@/components/settings/totp-backup-codes-panel";
@@ -25,12 +26,11 @@ type EnrollResponse = {
   backupCodes: string[];
 };
 
-type Phase = "scan" | "verify" | "save";
+type Phase = "setup" | "codes";
 
 const STEP_DEFS: ReadonlyArray<{ key: Phase; label: string }> = [
-  { key: "scan", label: "Scan" },
-  { key: "verify", label: "Verify" },
-  { key: "save", label: "Save codes" },
+  { key: "setup", label: "Scan & verify" },
+  { key: "codes", label: "Download codes" },
 ] as const;
 
 type StepStatus = "current" | "done" | "pending";
@@ -72,10 +72,14 @@ type Props = {
 };
 
 /**
- * Horizontal numbered stepper, mirrors the deploy-safe wizard
- * (components/safe/deploy-safe-card.tsx:StepIndicator). Same bubble
- * styling, same connector treatment — visual consistency with the
- * existing wizard pattern in the codebase.
+ * Horizontal numbered stepper. Two phases:
+ *
+ *   1. setup   — QR scan + manual key + TOTP code verification in one
+ *                step. POSTing /enroll succeeds when the code matches
+ *                and returns the backup codes.
+ *   2. codes   — display the freshly minted backup codes with Download
+ *                + Skip. Either choice closes the dialog; users who
+ *                skip can regenerate from settings later.
  */
 function StepIndicator({ current }: { current: Phase }): React.ReactElement {
   const currentIdx = STEP_DEFS.findIndex((s) => s.key === current);
@@ -105,25 +109,17 @@ function StepIndicator({ current }: { current: Phase }): React.ReactElement {
   );
 }
 
-/**
- * Single modal, single step content at a time, horizontal progress
- * indicator at the top. Pattern matches a standard wizard: stepper
- * shows current/done/pending; body swaps per phase; Back/Continue at
- * the bottom move between phases.
- *
- * Phases: scan -> verify -> save. The save phase locks the dialog
- * until the user has copied + downloaded + retyped two backup codes.
- */
 export function TotpSetupDialog({
   open,
   onOpenChange,
   onEnrolled,
 }: Props): React.ReactElement {
-  const [phase, setPhase] = useState<Phase>("scan");
+  const [phase, setPhase] = useState<Phase>("setup");
   const [setupData, setSetupData] = useState<SetupResponse | null>(null);
   const [code, setCode] = useState("");
   const [backupCodes, setBackupCodes] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [keyJustCopied, setKeyJustCopied] = useState(false);
 
   useEffect(() => {
     if (!open || setupData) {
@@ -165,24 +161,8 @@ export function TotpSetupDialog({
     };
   }, [open, setupData, onOpenChange]);
 
-  const locked = phase === "save" && backupCodes !== null;
-
-  useEffect(() => {
-    if (!locked) {
-      return;
-    }
-    const handler = (event: BeforeUnloadEvent): string => {
-      event.preventDefault();
-      event.returnValue =
-        "You have unsaved backup codes. Leaving now means losing them.";
-      return event.returnValue;
-    };
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
-  }, [locked]);
-
   const reset = (): void => {
-    setPhase("scan");
+    setPhase("setup");
     setSetupData(null);
     setCode("");
     setBackupCodes(null);
@@ -192,14 +172,6 @@ export function TotpSetupDialog({
   const closeAndReset = (): void => {
     reset();
     onOpenChange(false);
-  };
-
-  const attemptClose = (): void => {
-    if (locked) {
-      toast.error("Download your backup codes first.");
-      return;
-    }
-    closeAndReset();
   };
 
   const handleVerifyAndEnroll = async (): Promise<void> => {
@@ -219,16 +191,11 @@ export function TotpSetupDialog({
       }
       const data = (await response.json()) as EnrollResponse;
       setBackupCodes(data.backupCodes);
-      setPhase("save");
+      setPhase("codes");
       onEnrolled();
     } finally {
       setBusy(false);
     }
-  };
-
-  const handleBackupCodesConfirmed = (): void => {
-    toast.success("Two-factor authentication is enabled");
-    closeAndReset();
   };
 
   const handleCopyKey = async (): Promise<void> => {
@@ -237,53 +204,49 @@ export function TotpSetupDialog({
     }
     try {
       await navigator.clipboard.writeText(setupData.manualEntryKey);
-      toast.success("Setup key copied");
+      toast.success("Setup key copied to clipboard");
+      setKeyJustCopied(true);
     } catch {
       toast.error("Copy failed");
     }
+  };
+
+  useEffect(() => {
+    if (!keyJustCopied) {
+      return;
+    }
+    const timer = window.setTimeout(() => setKeyJustCopied(false), 3000);
+    return () => window.clearTimeout(timer);
+  }, [keyJustCopied]);
+
+  const handleDone = (): void => {
+    toast.success("Two-factor authentication is enabled");
+    closeAndReset();
   };
 
   return (
     <Dialog
       onOpenChange={(next) => {
         if (!next) {
-          attemptClose();
+          closeAndReset();
           return;
         }
         onOpenChange(next);
       }}
       open={open}
     >
-      <DialogContent
-        className={
-          locked
-            ? "max-h-[90vh] overflow-y-auto sm:max-w-lg [&>button[type='button']]:hidden"
-            : "max-h-[90vh] overflow-y-auto sm:max-w-lg"
-        }
-        onEscapeKeyDown={(event) => {
-          if (locked) {
-            event.preventDefault();
-            toast.error("Download your backup codes before closing.");
-          }
-        }}
-        onInteractOutside={(event) => {
-          if (locked) {
-            event.preventDefault();
-            toast.error("Download your backup codes before closing.");
-          }
-        }}
-      >
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Set up two-factor authentication</DialogTitle>
           <DialogDescription>
-            Three steps. The dialog stays open until your backup codes are
-            saved.
+            Scan the QR with an authenticator app and verify a code. Save
+            your backup codes after.
           </DialogDescription>
         </DialogHeader>
 
         <StepIndicator current={phase} />
 
-        {phase === "scan" && (
+        {phase === "setup" && (
           <div className="space-y-4">
             <p className="text-muted-foreground text-sm">
               Scan the QR code in your authenticator app (Google
@@ -299,63 +262,56 @@ export function TotpSetupDialog({
               )}
             </div>
             {setupData && (
-              <div className="space-y-2">
-                <Label>Setup key (manual entry)</Label>
-                <div className="flex gap-2">
-                  <Input
-                    className="font-mono text-xs"
-                    readOnly
-                    value={setupData.manualEntryKey}
-                  />
-                  <Button onClick={handleCopyKey} size="sm" variant="outline">
-                    Copy
-                  </Button>
-                </div>
+              <div className="flex items-center gap-2 text-muted-foreground text-sm">
+                <span>Setup key</span>
+                <button
+                  aria-label="Copy setup key"
+                  className={`h-7 flex-1 cursor-pointer truncate rounded border bg-muted/30 px-2 text-left font-mono text-foreground text-xs transition-colors ${
+                    keyJustCopied
+                      ? "border-emerald-500"
+                      : "border-border hover:border-foreground/30"
+                  }`}
+                  onClick={handleCopyKey}
+                  type="button"
+                >
+                  {setupData.manualEntryKey}
+                </button>
+                <Button
+                  aria-label="Copy setup key"
+                  className="size-7"
+                  onClick={handleCopyKey}
+                  size="icon"
+                  variant="ghost"
+                >
+                  <Copy aria-hidden="true" className="size-3.5" />
+                </Button>
               </div>
             )}
-            <DialogFooter>
-              <Button onClick={attemptClose} variant="outline">
-                Cancel
-              </Button>
-              <Button
-                disabled={!setupData || busy}
-                onClick={() => setPhase("verify")}
-              >
-                Continue
-              </Button>
-            </DialogFooter>
-          </div>
-        )}
-
-        {phase === "verify" && (
-          <div className="space-y-4">
-            <p className="text-muted-foreground text-sm">
-              Open your authenticator and enter the 6-digit code it's
-              showing right now.
-            </p>
             <div className="space-y-2">
               <Label htmlFor="totp-verify-code">Verification code</Label>
               <Input
                 autoComplete="one-time-code"
-                autoFocus
+                disabled={busy || !setupData}
                 id="totp-verify-code"
                 inputMode="numeric"
                 maxLength={6}
-                onChange={(event) => setCode(event.target.value)}
+                onChange={(event) =>
+                  setCode(event.target.value.replace(/\D/g, "").slice(0, 6))
+                }
                 placeholder="123456"
                 value={code}
               />
+              <p className="text-muted-foreground text-xs">
+                Open your authenticator app and enter the code it is
+                showing right now.
+              </p>
             </div>
             <DialogFooter>
-              <Button
-                disabled={busy}
-                onClick={() => setPhase("scan")}
-                variant="outline"
-              >
-                Back
+              <Button onClick={closeAndReset} variant="outline">
+                Cancel
               </Button>
               <Button
-                disabled={busy || code.trim().length < 6}
+                disabled={busy || !setupData || code.trim().length < 6}
                 onClick={handleVerifyAndEnroll}
               >
                 {busy ? "Verifying..." : "Continue"}
@@ -364,16 +320,18 @@ export function TotpSetupDialog({
           </div>
         )}
 
-        {phase === "save" && backupCodes && (
+        {phase === "codes" && backupCodes && (
           <div className="space-y-4">
             <p className="text-muted-foreground text-sm">
-              Two-factor is now active. Save these recovery codes — without
-              them, losing your authenticator means losing access.
+              Two-factor is enabled. Save these codes for recovery if you
+              lose your authenticator. Regenerate later from settings.
             </p>
-            <TotpBackupCodesPanel
-              codes={backupCodes}
-              onConfirmed={handleBackupCodesConfirmed}
-            />
+            <TotpBackupCodesPanel codes={backupCodes} />
+            <DialogFooter>
+              <Button onClick={handleDone} variant="outline">
+                Skip for now
+              </Button>
+            </DialogFooter>
           </div>
         )}
       </DialogContent>

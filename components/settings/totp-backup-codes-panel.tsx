@@ -10,7 +10,6 @@ type Props = {
   codes: string[] | null;
   onGenerate?: () => Promise<void> | void;
   generateLabel?: string;
-  onConfirmed: () => void;
 };
 
 function downloadAsText(codes: string[]): void {
@@ -45,18 +44,17 @@ function downloadAsText(codes: string[]): void {
  *      provided (the regenerate-later flow); the enrollment flow
  *      receives pre-fetched codes and skips this phase.
  *
- *   2. EXPORT — codes are visible. Download is the gating action;
- *      once the user clicks Download, the confirm button unlocks.
- *      Copy is offered as a convenience but is not required.
- *
- * The container dialog refuses to close while this panel is showing
- * the codes and hasn't yet called onConfirmed.
+ *   2. EXPORT — codes are visible with Copy + Download buttons. A
+ *      successful Download fires `onConfirmed` so the container can
+ *      close the dialog. Copy is offered as a convenience but does
+ *      not fire `onConfirmed`. The container is expected to provide
+ *      a separate Skip control for users who want to dismiss without
+ *      downloading.
  */
 export function TotpBackupCodesPanel({
   codes,
   onGenerate,
   generateLabel,
-  onConfirmed,
 }: Props): React.ReactElement {
   const [copied, setCopied] = useState(false);
   const [downloaded, setDownloaded] = useState(false);
@@ -123,13 +121,6 @@ export function TotpBackupCodesPanel({
 
   return (
     <div className="space-y-4">
-      <Alert>
-        <AlertDescription>
-          Save these codes before continuing. They are shown only once. Each
-          code can be used to sign in if you lose your authenticator.
-        </AlertDescription>
-      </Alert>
-
       <div className="grid grid-cols-2 gap-2 rounded-md border bg-muted/30 p-3 font-mono text-xs">
         {codes.map((code, idx) => (
           <div className="flex gap-2" key={code}>
@@ -165,12 +156,6 @@ export function TotpBackupCodesPanel({
             <Download aria-hidden="true" className="mr-2 size-4" />
           )}
           {downloaded ? "Downloaded" : "Download .txt"}
-        </Button>
-      </div>
-
-      <div className="flex justify-end">
-        <Button disabled={!downloaded} onClick={onConfirmed}>
-          I've saved my codes
         </Button>
       </div>
     </div>
