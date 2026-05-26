@@ -502,8 +502,11 @@ export const auth = betterAuth({
           }
 
           // Notify external services for OAuth signups (already verified at creation).
-          // Freshness guard: defends against any future hook reroute that delivers
-          // an already-existing user into this path.
+          // `databaseHooks.user.create.after` only fires on actual user-row
+          // inserts in current better-auth, so the freshness guard here is
+          // belt-and-suspenders against any future adapter or hook reroute
+          // that delivers an already-existing user into this path. Real
+          // OAuth signups have createdAt = now and pass it trivially.
           if (user.emailVerified && isFreshSignup(user)) {
             await notifyDiscordSignup(user);
             await subscribeToMailerLite(user);
@@ -566,15 +569,11 @@ export const auth = betterAuth({
               ? {
                   requiresMfa: true,
                   expiresAt: new Date(Date.now() + PRE_STEPUP_TTL_MS),
-                  riskFlagsJson: risk.country
-                    ? serializeRiskFlags(risk)
-                    : null,
+                  riskFlagsJson: risk.country ? serializeRiskFlags(risk) : null,
                 }
               : {
                   requiresMfa: false,
-                  riskFlagsJson: risk.country
-                    ? serializeRiskFlags(risk)
-                    : null,
+                  riskFlagsJson: risk.country ? serializeRiskFlags(risk) : null,
                 },
           };
         },
