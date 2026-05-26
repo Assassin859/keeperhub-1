@@ -1,6 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { isAnonymousUserShape } from "@/lib/auth-anonymous-guard";
 import {
   hasSessionCookie,
   isTrustedOrigin,
@@ -209,9 +208,13 @@ async function mfaBlock(request: NextRequest): Promise<NextResponse | null> {
   }
 
   // Anonymous sessions have no permanent identity to protect, so gating
-  // them on MFA is incoherent (see lib/auth-anonymous-guard). Let them
-  // through so landing-page visitors can build a workflow before signing up.
-  if (isAnonymousUserShape(session.user)) {
+  // them on MFA is incoherent. Let them through so landing-page visitors
+  // can build a workflow before signing up. Key off the authoritative
+  // is_anonymous column only - the name/email heuristics in
+  // auth-anonymous-guard are user-controllable (name is editable via
+  // /api/user), and using them here would let a real user bypass the gate
+  // by renaming themselves "Anonymous".
+  if ((session.user as { isAnonymous?: boolean | null }).isAnonymous === true) {
     return null;
   }
 

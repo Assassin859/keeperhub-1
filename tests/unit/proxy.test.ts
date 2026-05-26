@@ -354,6 +354,28 @@ describe("MFA gate", () => {
     expect(res.status).toBe(200);
   });
 
+  it("still blocks a real user who set their name to 'Anonymous' (not isAnonymous)", async () => {
+    mockGetSession.mockResolvedValue({
+      user: {
+        id: "u1",
+        name: "Anonymous",
+        email: "real@example.com",
+        isAnonymous: false,
+        twoFactorEnabled: false,
+      },
+      session: { requiresMfa: false },
+    });
+    const res = await proxy(
+      make("/api/workflows", {
+        method: "POST",
+        headers: sessionCookieHeaders(),
+      })
+    );
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { code: string };
+    expect(body.code).toBe("mfa_enrollment_required");
+  });
+
   it("redirects authenticated page requests to /enroll-mfa when not enrolled", async () => {
     mockGetSession.mockResolvedValue({
       user: { id: "u1", twoFactorEnabled: false },
