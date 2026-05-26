@@ -151,3 +151,7 @@ packages/*/dist/
 reports/
 
 .mcp.json
+
+# Understand-Anything (commit knowledge-graph.json; ignore scratch + dashboard local state)
+.understand-anything/intermediate/
+.understand-anything/diff-overlay.json
