@@ -312,8 +312,11 @@ export function TotpSetupDialog({
             </p>
             <TotpBackupCodesPanel codes={backupCodes} />
             <DialogFooter>
-              <Button onClick={handleDone} variant="outline">
-                Skip for now
+              <Button
+                className="bg-keeperhub-green text-foreground hover:bg-keeperhub-green-dark dark:text-background"
+                onClick={handleDone}
+              >
+                Skip
               </Button>
             </DialogFooter>
           </div>

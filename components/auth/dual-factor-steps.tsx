@@ -183,7 +183,12 @@ export function DualFactorSteps({
       {phase === "email" && (
         <div className="space-y-3">
           <div className="space-y-2">
-            <Label htmlFor="dfs-email">Email code</Label>
+            <Label
+              className="font-medium text-keeperhub-green-dark"
+              htmlFor="dfs-email"
+            >
+              Email code
+            </Label>
             <Input
               autoComplete="one-time-code"
               autoFocus
@@ -232,7 +237,12 @@ export function DualFactorSteps({
       {phase === "authenticator" && (
         <div className="space-y-3">
           <div className="space-y-2">
-            <Label htmlFor="dfs-totp">Authenticator code</Label>
+            <Label
+              className="font-medium text-keeperhub-green-dark"
+              htmlFor="dfs-totp"
+            >
+              Authenticator code
+            </Label>
             <Input
               autoComplete="one-time-code"
               autoFocus
