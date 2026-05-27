@@ -5,7 +5,7 @@ import { auth } from "@/lib/auth";
 import { hashSessionToken } from "@/lib/auth-session-token-hash";
 import { db } from "@/lib/db";
 import { sessions, users } from "@/lib/db/schema";
-import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { ErrorCategory, logSystemError, logSystemWarn } from "@/lib/logging";
 import {
   buildPendingOauthMfaSetCookie,
   encodePendingOauthMfaCookie,
@@ -79,16 +79,39 @@ async function interceptOauthCallback(
   if (!/^\/api\/auth\/callback\/[^/]+$/.test(url.pathname)) {
     return res;
   }
+  const provider = url.pathname.split("/").pop() ?? "oauth";
   if (res.status < 300 || res.status >= 400) {
+    logSystemWarn(
+      ErrorCategory.AUTH,
+      "[oauth-callback] non-redirect response; skipping intercept",
+      new Error("non_redirect_response"),
+      {
+        provider,
+        status: String(res.status),
+      }
+    );
     return res;
   }
-  const setCookies =
-    typeof (res.headers as Headers & { getSetCookie?: () => string[] })
-      .getSetCookie === "function"
-      ? (res.headers as Headers & { getSetCookie: () => string[] }).getSetCookie()
-      : [];
+  const headersWithGetSetCookie = res.headers as Headers & {
+    getSetCookie?: () => string[];
+  };
+  const hasGetSetCookie = typeof headersWithGetSetCookie.getSetCookie === "function";
+  const setCookies = hasGetSetCookie
+    ? (headersWithGetSetCookie.getSetCookie as () => string[])()
+    : [];
   const sessionToken = extractSessionToken(setCookies);
   if (!sessionToken) {
+    logSystemWarn(
+      ErrorCategory.AUTH,
+      "[oauth-callback] no session token in Set-Cookie",
+      new Error("no_session_token_in_set_cookie"),
+      {
+        provider,
+        status: String(res.status),
+        set_cookie_count: String(setCookies.length),
+        has_get_set_cookie: String(hasGetSetCookie),
+      }
+    );
     return res;
   }
   const tokenHash = hashSessionToken(sessionToken);
@@ -98,6 +121,15 @@ async function interceptOauthCallback(
     .where(eq(sessions.token, tokenHash))
     .limit(1);
   if (!row) {
+    logSystemWarn(
+      ErrorCategory.AUTH,
+      "[oauth-callback] session row not found for emitted token",
+      new Error("session_row_not_found"),
+      {
+        provider,
+        token_hash_prefix: tokenHash.slice(0, 8),
+      }
+    );
     return res;
   }
   const [user] = await db
@@ -114,6 +146,16 @@ async function interceptOauthCallback(
     // cannot defer the session for either flow. Fall through to
     // Better Auth's default response; the proxy MFA gate will still
     // send the user to /enroll-mfa via the existing path.
+    logSystemWarn(
+      ErrorCategory.AUTH,
+      "[oauth-callback] user has no email; skipping intercept",
+      new Error("user_email_missing"),
+      {
+        provider,
+        user_id: row.userId,
+        user_found: String(Boolean(user)),
+      }
+    );
     return res;
   }
 
@@ -168,10 +210,18 @@ async function interceptOauthCallback(
       "Set-Cookie",
       buildPendingOauthMfaSetCookie(pendingValue)
     );
+    logSystemWarn(
+      ErrorCategory.AUTH,
+      "[oauth-callback] deferring session via pending_oauth_mfa",
+      new Error("pending_oauth_mfa_path"),
+      {
+        provider,
+        user_id: user.id,
+      }
+    );
     return response;
   }
 
-  const provider = url.pathname.split("/").pop() ?? "oauth";
   const pendingSignupValue = encodePendingSignupCookie(
     {
       userId: user.id,
@@ -190,6 +240,15 @@ async function interceptOauthCallback(
   response.headers.append(
     "Set-Cookie",
     buildPendingSignupSetCookie(pendingSignupValue)
+  );
+  logSystemWarn(
+    ErrorCategory.AUTH,
+    "[oauth-callback] deferring session via pending_signup_mfa",
+    new Error("pending_signup_mfa_path"),
+    {
+      provider,
+      user_id: user.id,
+    }
   );
   return response;
 }
