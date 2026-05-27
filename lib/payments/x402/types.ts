@@ -16,6 +16,10 @@ export type CallRouteWorkflow = {
   outputMapping: Record<string, unknown> | null;
   priceUsdcPerCall: string | null;
   isListed: boolean;
+  // Gated in-memory after the lookup so a listed-but-disabled workflow can be
+  // surfaced as "temporarily unavailable" rather than 404. The lookup's SQL
+  // filters the hard-gone states (deleted, deactivated owner) instead.
+  enabled: boolean;
   workflowType: "read" | "write";
   nodes: unknown[];
   edges: unknown[];
@@ -39,6 +43,7 @@ export const CALL_ROUTE_COLUMNS = {
   outputMapping: workflows.outputMapping,
   priceUsdcPerCall: workflows.priceUsdcPerCall,
   isListed: workflows.isListed,
+  enabled: workflows.enabled,
   workflowType: workflows.workflowType,
   nodes: workflows.nodes,
   edges: workflows.edges,

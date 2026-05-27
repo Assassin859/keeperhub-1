@@ -32,6 +32,7 @@ import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import {
+  users,
   workflowExecutions,
   workflowSchedules,
   workflows,
@@ -39,6 +40,8 @@ import {
 import { getMetricsCollector } from "../lib/metrics";
 import { LabelKeys, MetricNames } from "../lib/metrics/types";
 import { generateId } from "../lib/utils/id";
+import { checkConcurrencyLimit } from "../lib/workflow/concurrency";
+import { getWorkflowExecutability } from "../lib/workflow/executable";
 import type { WorkflowNode } from "../lib/workflow/store";
 import { type ApiExecuteTriggerType, executeViaApi } from "./api-execute";
 import { checkExecutionLimitForExecutor } from "./billing-guard";
@@ -217,24 +220,33 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     `[Executor] Processing ${triggerType} trigger for workflow ${workflowId}`
   );
 
-  const workflow = await db.query.workflows.findFirst({
-    where: eq(workflows.id, workflowId),
-  });
+  // Load the workflow and its owner's deactivation state in one round-trip.
+  const [row] = await db
+    .select()
+    .from(workflows)
+    .leftJoin(users, eq(users.id, workflows.userId))
+    .where(eq(workflows.id, workflowId))
+    .limit(1);
+  const workflow = row?.workflows;
 
   if (!workflow) {
     console.error(`[Executor] Workflow not found: ${workflowId}`);
     return;
   }
 
-  // KEEP-440: a soft-deleted workflow must never execute, even if a stale
-  // schedule or queued message still references it.
-  if (workflow.deletedAt) {
-    console.log(`[Executor] Workflow deleted, skipping: ${workflowId}`);
-    return;
-  }
-
-  if (!workflow.enabled) {
-    console.log(`[Executor] Workflow disabled, skipping: ${workflowId}`);
+  // A soft-deleted workflow, a disabled workflow, or one whose owner is
+  // deactivated must never execute, even if a stale schedule or queued
+  // message still references it. The block_executions DB trigger is the
+  // INSERT-time backstop; this skips the work before it gets that far.
+  const executability = getWorkflowExecutability({
+    enabled: workflow.enabled,
+    deletedAt: workflow.deletedAt,
+    ownerDeactivatedAt: row?.users?.deactivatedAt ?? null,
+  });
+  if (!executability.executable) {
+    console.log(
+      `[Executor] Workflow not executable (${executability.reason}), skipping: ${workflowId}`
+    );
     return;
   }
 
@@ -294,6 +306,17 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
       completedAt: new Date(),
     });
     return;
+  }
+
+  // Concurrency back-pressure: enforce the same running-execution cap the API
+  // routes apply, regardless of dispatch target. Throw rather than drop so the
+  // SQS message is redelivered after the visibility timeout once capacity frees,
+  // and do it before creating the row so a requeue does not leave orphans.
+  const concurrency = await checkConcurrencyLimit(db);
+  if (!concurrency.allowed) {
+    throw new Error(
+      `Concurrency limit reached (${concurrency.running}/${concurrency.limit}); requeueing workflow ${workflowId}`
+    );
   }
 
   const executionId = generateId();
