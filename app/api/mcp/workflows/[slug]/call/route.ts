@@ -6,7 +6,7 @@ import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { priceQualifiesForMarketplaceExemption } from "@/lib/billing/marketplace-billing";
 import { db } from "@/lib/db";
 import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
-import { tags, workflowExecutions, workflows } from "@/lib/db/schema";
+import { tags, users, workflowExecutions, workflows } from "@/lib/db/schema";
 import { classifyExecutionError } from "@/lib/errors/classify";
 import { recordExecutionErrorFinalized } from "@/lib/errors/finalize-error";
 import { extractActionTypeNodes } from "@/lib/features";
@@ -29,9 +29,9 @@ import {
   CALL_ROUTE_COLUMNS,
   type CallRouteWorkflow,
 } from "@/lib/payments/x402/types";
+import { workflowExecutableConditions } from "@/lib/workflow/executable";
 import { buildExecutorInput } from "@/lib/workflow/executor/build-executor-input";
 import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
-import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -198,11 +198,12 @@ async function lookupWorkflow(slug: string): Promise<CallRouteWorkflow | null> {
     .select({ ...CALL_ROUTE_COLUMNS, tagName: tags.name })
     .from(workflows)
     .leftJoin(tags, eq(workflows.tagId, tags.id))
+    .innerJoin(users, eq(workflows.userId, users.id))
     .where(
       and(
         eq(workflows.listedSlug, slug),
         eq(workflows.isListed, true),
-        workflowNotDeleted()
+        workflowExecutableConditions()
       )
     )
     .limit(1);

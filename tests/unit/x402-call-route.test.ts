@@ -65,9 +65,13 @@ vi.mock("@/lib/db/schema", () => ({
     listedSlug: "listed_slug",
     isListed: "is_listed",
     tagId: "tag_id",
+    enabled: "enabled",
+    deletedAt: "deleted_at",
+    userId: "user_id",
   },
   workflowExecutions: { id: "id" },
   tags: { id: "id", name: "name" },
+  users: { id: "id", deactivatedAt: "deactivated_at" },
 }));
 
 vi.mock("@/lib/payments/x402/payment-gate", () => ({
@@ -166,14 +170,17 @@ const FREE_WORKFLOW_NULL_PRICE = { ...LISTED_WORKFLOW, priceUsdcPerCall: null };
 const CREATOR_WALLET = "0xCREATOR_WALLET";
 
 function setupDbSelectWorkflow(row: unknown) {
-  // lookupWorkflow joins the tags table to project tagName into the row, so
-  // the chain is: select().from().leftJoin().where().limit(). Mirror that
-  // shape here or the real code throws on the missing .leftJoin().
+  // lookupWorkflow joins tags (for tagName) and users (for the owner-active
+  // executability clause), so the chain is:
+  // select().from().leftJoin().innerJoin().where().limit(). Mirror that shape
+  // here or the real code throws on the missing .innerJoin().
   mockDbSelect.mockReturnValue({
     from: vi.fn().mockReturnValue({
       leftJoin: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          limit: vi.fn().mockResolvedValue(row ? [row] : []),
+        innerJoin: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue(row ? [row] : []),
+          }),
         }),
       }),
     }),

@@ -23,9 +23,10 @@ import {
   enforceWorkflowFeatures,
   FEATURE_UPGRADE_REQUIRED_ERROR,
 } from "@/lib/features/route-guard";
-import { apiKeys, workflowExecutions, workflows } from "@/lib/db/schema";
+import { apiKeys, users, workflowExecutions, workflows } from "@/lib/db/schema";
 import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
 import { getWorkflowAccess } from "@/lib/workflow/access";
+import { getWorkflowExecutability } from "@/lib/workflow/executable";
 import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 type ValidateApiKeyResult = {
@@ -239,11 +240,26 @@ export async function POST(
       return failResponse(workflowId, timer, 404, "Workflow not found");
     }
 
-    // Aligned with schedule/event/block trigger paths, which all gate on
-    // workflows.enabled. Without this check a disabled workflow keeps
-    // executing every time the caller hits the URL.
-    if (!workflow.enabled) {
-      return failResponse(workflowId, timer, 410, "Workflow is disabled");
+    // Gate on workflow lifecycle (enabled, not soft-deleted, owner active)
+    // using the shared executability predicate, before API-key
+    // validation so a non-executable workflow never triggers an auth round-trip.
+    // A disabled workflow stays a 410; a deleted or deactivated-owner workflow
+    // is reported as gone (404).
+    const [owner] = await db
+      .select({ deactivatedAt: users.deactivatedAt })
+      .from(users)
+      .where(eq(users.id, workflow.userId))
+      .limit(1);
+    const executability = getWorkflowExecutability({
+      enabled: workflow.enabled,
+      deletedAt: workflow.deletedAt,
+      ownerDeactivatedAt: owner?.deactivatedAt ?? null,
+    });
+    if (!executability.executable) {
+      if (executability.reason === "disabled") {
+        return failResponse(workflowId, timer, 410, "Workflow is disabled");
+      }
+      return failResponse(workflowId, timer, 404, "Workflow not found");
     }
 
     // Validate API key - must belong to the workflow owner
@@ -266,8 +282,7 @@ export async function POST(
       authMethod: "webhook",
     });
 
-    // KEEP-440: a soft-deleted workflow must never execute via its webhook URL.
-    if (!access.hasFullAccess || access.isDeleted) {
+    if (!access.hasFullAccess) {
       return failResponse(workflowId, timer, 404, "Workflow not found");
     }
 

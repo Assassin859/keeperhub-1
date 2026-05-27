@@ -15,8 +15,9 @@ import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { extractActionTypeNodes } from "@/lib/features";
 import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
 import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
-import { workflowExecutions, workflows } from "@/lib/db/schema";
+import { users, workflowExecutions, workflows } from "@/lib/db/schema";
 import { getWorkflowAccess } from "@/lib/workflow/access";
+import { getWorkflowExecutability } from "@/lib/workflow/executable";
 import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
@@ -177,6 +178,24 @@ export async function POST(
       }
 
       userId = authContext.userId ?? workflow.userId;
+    }
+
+    // Gate on workflow lifecycle (enabled, not soft-deleted, owner active)
+    // using the shared executability predicate so this route cannot
+    // drift from the scheduler/executor. All non-executable reasons collapse to
+    // 404 here, matching the route's existing not-found behavior.
+    const [owner] = await db
+      .select({ deactivatedAt: users.deactivatedAt })
+      .from(users)
+      .where(eq(users.id, workflow.userId))
+      .limit(1);
+    const executability = getWorkflowExecutability({
+      enabled: workflow.enabled,
+      deletedAt: workflow.deletedAt,
+      ownerDeactivatedAt: owner?.deactivatedAt ?? null,
+    });
+    if (!executability.executable) {
+      return NextResponse.json({ error: "Workflow not found" }, { status: 404 });
     }
 
     // Validate that all integrationIds in workflow nodes belong to the user or org

@@ -32,6 +32,7 @@ import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import {
+  users,
   workflowExecutions,
   workflowSchedules,
   workflows,
@@ -39,6 +40,7 @@ import {
 import { getMetricsCollector } from "../lib/metrics";
 import { LabelKeys, MetricNames } from "../lib/metrics/types";
 import { generateId } from "../lib/utils/id";
+import { getWorkflowExecutability } from "../lib/workflow/executable";
 import type { WorkflowNode } from "../lib/workflow/store";
 import { type ApiExecuteTriggerType, executeViaApi } from "./api-execute";
 import { checkExecutionLimitForExecutor } from "./billing-guard";
@@ -226,15 +228,24 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     return;
   }
 
-  // KEEP-440: a soft-deleted workflow must never execute, even if a stale
-  // schedule or queued message still references it.
-  if (workflow.deletedAt) {
-    console.log(`[Executor] Workflow deleted, skipping: ${workflowId}`);
-    return;
-  }
-
-  if (!workflow.enabled) {
-    console.log(`[Executor] Workflow disabled, skipping: ${workflowId}`);
+  // A soft-deleted workflow, a disabled workflow, or one whose owner is
+  // deactivated must never execute, even if a stale schedule or queued
+  // message still references it. The block_executions DB trigger is the
+  // INSERT-time backstop; this skips the work before it gets that far.
+  const [owner] = await db
+    .select({ deactivatedAt: users.deactivatedAt })
+    .from(users)
+    .where(eq(users.id, workflow.userId))
+    .limit(1);
+  const executability = getWorkflowExecutability({
+    enabled: workflow.enabled,
+    deletedAt: workflow.deletedAt,
+    ownerDeactivatedAt: owner?.deactivatedAt ?? null,
+  });
+  if (!executability.executable) {
+    console.log(
+      `[Executor] Workflow not executable (${executability.reason}), skipping: ${workflowId}`
+    );
     return;
   }
 

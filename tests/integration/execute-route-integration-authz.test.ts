@@ -30,8 +30,23 @@ vi.mock("@/lib/workflow/access", () => ({
 vi.mock("@/lib/db/integrations", () => ({
   validateWorkflowIntegrations: mockValidateWorkflowIntegrations,
 }));
+const mockOwnerLimit = vi.fn().mockResolvedValue([{ deactivatedAt: null }]);
 vi.mock("@/lib/db", () => ({
-  db: { query: { workflows: { findFirst: mockFindWorkflow } } },
+  db: {
+    query: { workflows: { findFirst: mockFindWorkflow } },
+    // The route now loads the owner's deactivatedAt to gate executability.
+    // Default to an active owner.
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({ limit: mockOwnerLimit })),
+      })),
+    })),
+  },
+}));
+vi.mock("@/lib/db/schema", () => ({
+  users: { id: "id", deactivatedAt: "deactivated_at" },
+  workflows: { id: "id", userId: "user_id" },
+  workflowExecutions: { id: "id" },
 }));
 vi.mock("@/lib/logging", () => ({
   ErrorCategory: { WORKFLOW_ENGINE: "workflow_engine" },
@@ -43,6 +58,7 @@ const workflow = {
   id: "wf_1",
   userId: "owner_a",
   organizationId: "org_1",
+  enabled: true,
   nodes: [
     {
       id: "node-1",
