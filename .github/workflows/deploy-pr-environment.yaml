@@ -542,7 +542,13 @@ jobs:
       - name: Deploy satellite services (parallel)
         run: |
           set -euo pipefail
-          COMMON_ARGS=(--namespace "${NAMESPACE}" --timeout 5m0s --atomic --version 0.2.1)
+          # 10m (not 5m): satellite env secrets are provisioned asynchronously by
+          # external-secrets (parameterStore -> ExternalSecret -> Secret). The
+          # executor needs 8 such secrets (Optional: false); when ESO is slow to
+          # reconcile, the pod sits in CreateContainerConfigError and the 5m
+          # --atomic window rolled back before the secrets landed - the deploy's
+          # intermittent "context deadline exceeded". Match the app's 10m budget.
+          COMMON_ARGS=(--namespace "${NAMESPACE}" --timeout 10m0s --atomic --version 0.2.1)
           LOGDIR=$(mktemp -d)
 
           (
