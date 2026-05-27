@@ -27,6 +27,7 @@ import {
 import {
   assessIpTrust,
   buildRiskFlagsJsonForIp,
+  clearTrustCacheEntry,
 } from "@/lib/security/login-risk";
 import { verifyUserTotp } from "@/lib/security/totp-verify";
 import { generateId } from "@/lib/utils/id";
@@ -350,6 +351,11 @@ export async function POST(request: Request): Promise<NextResponse> {
       { status: 500 }
     );
   }
+
+  // Same-pod cache invalidation so the next request on this pod sees the
+  // freshly-trusted IP without waiting for the UNTRUSTED_TTL_MS window in
+  // the proxy gate. Cross-pod stale entries age out on their own.
+  clearTrustCacheEntry(decoded.payload.userId, decoded.payload.ip);
 
   const response = NextResponse.json({
     ok: true,

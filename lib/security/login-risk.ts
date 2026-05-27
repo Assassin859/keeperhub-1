@@ -303,6 +303,56 @@ export type RequestIpGate =
   | { kind: "no_ip" };
 
 /**
+ * Per-pod TTL cache for gate results. A single page navigation in the
+ * KeeperHub app fans out into ~20 parallel API requests, each of which
+ * passes through the proxy. Without caching the gate would do one DB
+ * round-trip per request, plus a redundant evaluation of every header
+ * lookup. The cache collapses those to one DB hit per (user, ip) per
+ * TTL window.
+ *
+ * Trusted results get a long TTL because the trust list rarely changes
+ * for an active user. Untrusted gets a short TTL so that once the user
+ * completes /verify-ip the next request picks up the new trust quickly
+ * without requiring cross-pod invalidation; same-pod invalidation is
+ * driven explicitly from /api/user/verify-ip via clearTrustCacheEntry.
+ * `no_ip` is rare and stable (only fires when CF-Connecting-IP is
+ * missing) so it gets the long TTL too.
+ */
+type CachedTrust = { result: RequestIpGate; expiresAt: number };
+const TRUST_CACHE = new Map<string, CachedTrust>();
+const TRUST_CACHE_LIMIT = 10_000;
+const TRUSTED_TTL_MS = 300_000;
+const UNTRUSTED_TTL_MS = 30_000;
+
+function trustCacheKey(userId: string, ip: string): string {
+  return `${userId}:${ip}`;
+}
+
+function rememberTrust(key: string, entry: CachedTrust): void {
+  if (TRUST_CACHE.size >= TRUST_CACHE_LIMIT) {
+    const retained = Array.from(TRUST_CACHE.entries()).slice(
+      -Math.floor(TRUST_CACHE_LIMIT / 2)
+    );
+    TRUST_CACHE.clear();
+    for (const [k, v] of retained) {
+      TRUST_CACHE.set(k, v);
+    }
+  }
+  TRUST_CACHE.set(key, entry);
+}
+
+/**
+ * Drop the cached gate result for this (user, ip). Called by
+ * /api/user/verify-ip after a successful upsert so the next request on
+ * the same pod sees the freshly-trusted IP without waiting for the
+ * untrusted TTL to expire. Cross-pod stale entries age out on their own
+ * within UNTRUSTED_TTL_MS.
+ */
+export function clearTrustCacheEntry(userId: string, ip: string): void {
+  TRUST_CACHE.delete(trustCacheKey(userId, ip));
+}
+
+/**
  * Per-request IP gate consulted by the root proxy on every authenticated
  * request. Unlike assessIpTrust (used at sign-in time), this never
  * grants a first-attestation: if the user has zero trusted IPs we still
@@ -317,16 +367,25 @@ export type RequestIpGate =
 export async function gateRequestIp(userId: string): Promise<RequestIpGate> {
   const rawIp = await resolveLoginIp();
   if (!rawIp) {
-    return { kind: "no_ip" };
+    const result: RequestIpGate = { kind: "no_ip" };
+    return result;
   }
   const ip = normalizeIpForTrust(rawIp);
+  const key = trustCacheKey(userId, ip);
+  const now = Date.now();
+  const cached = TRUST_CACHE.get(key);
+  if (cached && cached.expiresAt > now) {
+    return cached.result;
+  }
   const [hit] = await db
     .select({ id: userTrustedIps.id })
     .from(userTrustedIps)
     .where(and(eq(userTrustedIps.userId, userId), eq(userTrustedIps.ip, ip)))
     .limit(1);
   if (hit) {
-    return { kind: "trusted" };
+    const result: RequestIpGate = { kind: "trusted" };
+    rememberTrust(key, { result, expiresAt: now + TRUSTED_TTL_MS });
+    return result;
   }
   // CF-attested country only on the hot path; the external IP-to-location
   // lookup has a 2-second timeout and isn't wanted here.
@@ -337,7 +396,9 @@ export async function gateRequestIp(userId: string): Promise<RequestIpGate> {
   } catch {
     country = null;
   }
-  return { kind: "untrusted", ip, country };
+  const result: RequestIpGate = { kind: "untrusted", ip, country };
+  rememberTrust(key, { result, expiresAt: now + UNTRUSTED_TTL_MS });
+  return result;
 }
 
 export async function assessIpTrust(userId: string): Promise<IpTrust> {
