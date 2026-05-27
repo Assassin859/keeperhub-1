@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AccountSettings } from "@/components/settings/account-settings";
+import { ActiveSessionsSection } from "@/components/settings/active-sessions-section";
 import { ChangePasswordSection } from "@/components/settings/change-password-section";
 import { DeactivateAccountSection } from "@/components/settings/delete-account-section";
 import { TwoFactorSection } from "@/components/settings/two-factor-section";
@@ -168,6 +169,7 @@ export function SettingsOverlay({
           <TabsContent className="space-y-6" value="security">
             <TwoFactorSection />
             <ChangePasswordSection providerId={providerId} />
+            <ActiveSessionsSection />
           </TabsContent>
         </Tabs>
       )}

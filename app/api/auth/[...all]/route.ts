@@ -42,7 +42,14 @@ function extractSessionToken(setCookies: string[]): string | null {
     const name = firstPair.slice(0, eq2);
     const value = firstPair.slice(eq2 + 1);
     if ((SESSION_COOKIE_NAMES as readonly string[]).includes(name)) {
-      return decodeURIComponent(value);
+      // Better Auth signs the session cookie via hono's
+      // setSignedCookie, so the wire value is
+      // `<rawToken>.<base64HmacSignature>`. The adapter stores
+      // `hashSessionToken(rawToken)` in sessions.token, so we
+      // need the raw token without the signature suffix.
+      const decoded = decodeURIComponent(value);
+      const dotIdx = decoded.lastIndexOf(".");
+      return dotIdx > 0 ? decoded.slice(0, dotIdx) : decoded;
     }
   }
   return null;

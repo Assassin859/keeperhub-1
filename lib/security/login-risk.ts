@@ -1,7 +1,12 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { db } from "@/lib/db";
-import { sessions } from "@/lib/db/schema";
+import { sessions, userTrustedIps } from "@/lib/db/schema";
+import { normalizeIpForTrust } from "@/lib/security/ip-normalize";
+import {
+  type ResolvedLocation,
+  resolveLocationFromIp,
+} from "@/lib/security/resolve-country";
 
 /**
  * Risk signal emitted by the login-time anomaly check. `anomaly: true`
@@ -19,6 +24,8 @@ export type LoginRiskSignal = {
   anomaly: boolean;
   reasons: readonly string[];
   country: string | null;
+  region: string | null;
+  city: string | null;
   recentCountries: readonly string[];
 };
 
@@ -27,31 +34,43 @@ const NULL_RISK: LoginRiskSignal = {
   anomaly: false,
   reasons: [],
   country: null,
+  region: null,
+  city: null,
   recentCountries: [],
 };
 
 /**
- * Reads CF-IPCountry from the current request. Trusted only when
- * CF-Connecting-IP is also present, which only Cloudflare sets and our
- * origin is fronted by Cloudflare in staging/prod. Untrusted requests
- * (no CF headers) return null and the caller treats geo as unknown.
+ * Resolves the geographic location of the current request. CF-IPCountry
+ * is authoritative at our edge and gets trusted whenever
+ * CF-Connecting-IP is also present. When CF didn't attest a country
+ * (no edge in the path, or it returned XX/T1), fall back to an
+ * external IP-to-location lookup so the active-sessions panel still
+ * shows a useful label for VPN / tunnel / local-dev sessions. The
+ * fallback also enriches the response with region + city, which CF
+ * never provides on its own. Cached per IP so repeated sign-ins
+ * from the same address don't refetch.
  */
-async function resolveLoginCountry(): Promise<string | null> {
+async function resolveLoginLocation(): Promise<ResolvedLocation> {
   let header: Awaited<ReturnType<typeof headers>>;
   try {
     header = await headers();
   } catch {
-    return null;
+    return { country: null, region: null, city: null };
   }
   const cfConnectingIp = header.get("cf-connecting-ip");
-  if (!cfConnectingIp) {
-    return null;
+  const cfCountry = header.get("cf-ipcountry");
+  const ip = await resolveLoginIp();
+  if (cfConnectingIp && cfCountry && cfCountry !== "XX" && cfCountry !== "T1") {
+    // CF gave us country at the edge. We still want region + city for
+    // the active-sessions panel, so layer the external lookup on top.
+    const fallback = await resolveLocationFromIp(ip);
+    return {
+      country: cfCountry.toUpperCase(),
+      region: fallback.region,
+      city: fallback.city,
+    };
   }
-  const country = header.get("cf-ipcountry");
-  if (!country || country === "XX" || country === "T1") {
-    return null;
-  }
-  return country.toUpperCase();
+  return await resolveLocationFromIp(ip);
 }
 
 /**
@@ -104,7 +123,8 @@ async function loadRecentCountries(userId: string): Promise<string[]> {
 export async function assessLoginRisk(
   userId: string
 ): Promise<LoginRiskSignal> {
-  const country = await resolveLoginCountry();
+  const location = await resolveLoginLocation();
+  const { country, region, city } = location;
   if (!country) {
     return NULL_RISK;
   }
@@ -114,6 +134,8 @@ export async function assessLoginRisk(
       anomaly: false,
       reasons: ["first_geo_attestation"],
       country,
+      region,
+      city,
       recentCountries: [],
     };
   }
@@ -123,6 +145,8 @@ export async function assessLoginRisk(
       anomaly: false,
       reasons: [],
       country,
+      region,
+      city,
       recentCountries: others,
     };
   }
@@ -130,19 +154,174 @@ export async function assessLoginRisk(
     anomaly: true,
     reasons: ["new_country"],
     country,
+    region,
+    city,
     recentCountries: priorCountries,
   };
 }
 
 /**
  * Serializes a risk signal for storage in sessions.risk_flags_json.
- * Kept stable so prior-session lookups can decode older rows.
+ * Kept stable so prior-session lookups can decode older rows. The
+ * `region` and `city` fields were added later; absence on a stored
+ * blob is treated as null by callers, so older rows decode cleanly.
  */
 export function serializeRiskFlags(signal: LoginRiskSignal): string {
   return JSON.stringify({
     anomaly: signal.anomaly,
     reasons: signal.reasons,
     country: signal.country,
+    region: signal.region,
+    city: signal.city,
     recentCountries: signal.recentCountries,
   });
+}
+
+/**
+ * Builds a sessions.risk_flags_json blob for a session that wasn't
+ * minted through the session.create.before path (the /verify-ip
+ * Drizzle insert is the only such caller today). Resolves the
+ * geographic location for the IP via the shared IP-to-location
+ * provider abstraction and serializes via the same
+ * `serializeRiskFlags` shape Better Auth's adapter writes, so
+ * downstream readers (the active-sessions panel, future audit
+ * tooling) don't have to special-case the source of the row.
+ *
+ * `attestedCountry` is an optional override for the country field —
+ * pass the CF-attested code captured at strict-signin time when
+ * available, otherwise the resolver fills it from the lookup.
+ */
+export async function buildRiskFlagsJsonForIp(
+  ip: string | null,
+  attestedCountry: string | null = null
+): Promise<string> {
+  const location = await resolveLocationFromIp(ip);
+  return serializeRiskFlags({
+    anomaly: false,
+    reasons: [],
+    country: attestedCountry ?? location.country,
+    region: location.region,
+    city: location.city,
+    recentCountries: [],
+  });
+}
+
+/**
+ * Trust decision for the in-flight session's source IP. Called from
+ * databaseHooks.session.create.before alongside assessLoginRisk so
+ * the row written for the new session captures both signals.
+ *
+ *   - `ip: null`                       -> request did not arrive via
+ *                                         Cloudflare; no IP signal to
+ *                                         act on. Treat as trusted to
+ *                                         avoid locking out local-dev
+ *                                         and self-hosted setups.
+ *   - `trusted: true`                  -> ip appears in user_trusted_ips
+ *                                         for this user. No /verify-ip
+ *                                         needed.
+ *   - first attestation for this user  -> trusted = true. Mirrors the
+ *                                         "first-geo-attestation" rule
+ *                                         in assessLoginRisk: a brand
+ *                                         new user cannot satisfy
+ *                                         /verify-ip (they have no
+ *                                         TOTP yet). The IP is added
+ *                                         to user_trusted_ips by the
+ *                                         session.create.after hook.
+ *
+ *                                         Migration caveat: when this
+ *                                         feature ships, every existing
+ *                                         user has zero rows in
+ *                                         user_trusted_ips, so their
+ *                                         FIRST sign-in after deploy
+ *                                         auto-trusts the IP they happen
+ *                                         to be on. /verify-ip only kicks
+ *                                         in for SUBSEQUENT new IPs after
+ *                                         that. We accept this rather
+ *                                         than backfilling because the
+ *                                         backfill would have to read
+ *                                         sessions.ip_address, which is
+ *                                         the raw value Better Auth
+ *                                         records (no CF attestation)
+ *                                         and is null for sessions
+ *                                         created before the IP-risk
+ *                                         work landed, so seeding from
+ *                                         it would either lock those
+ *                                         users out or trust whatever
+ *                                         their proxy decided to log
+ *                                         which is no stronger than
+ *                                         what we do here.
+ *   - subsequent unknown ip            -> trusted = false. Caller sets
+ *                                         requires_ip_verification on
+ *                                         the new session.
+ */
+export type IpTrust = {
+  ip: string | null;
+  trusted: boolean;
+  country: string | null;
+  reason: "no_cf" | "known" | "first" | "untrusted";
+};
+
+async function resolveLoginIp(): Promise<string | null> {
+  try {
+    const header = await headers();
+    const cfConnectingIp = header.get("cf-connecting-ip");
+    if (cfConnectingIp) {
+      return cfConnectingIp;
+    }
+    // Cloudflare is the trusted source in staging/prod. In other
+    // environments we fall back to the first X-Forwarded-For hop and
+    // then to X-Real-IP so VPN / NAT changes during local dev still
+    // exercise the new-IP gate. NODE_ENV-gated because in CF-fronted
+    // environments these headers are caller-controlled and must not
+    // be trusted.
+    if (process.env.NODE_ENV !== "production") {
+      const xff = header.get("x-forwarded-for");
+      const xffFirst = xff?.split(",")[0]?.trim();
+      if (xffFirst) {
+        return xffFirst;
+      }
+      const xRealIp = header.get("x-real-ip");
+      if (xRealIp) {
+        return xRealIp;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export async function assessIpTrust(userId: string): Promise<IpTrust> {
+  const rawIp = await resolveLoginIp();
+  const { country } = await resolveLoginLocation();
+  if (!rawIp) {
+    return { ip: null, trusted: true, country, reason: "no_cf" };
+  }
+
+  // IPv6 trust is bucketed at /64 to handle CF's lower-64-bits
+  // zeroing for privacy and any SLAAC reshuffles on the same
+  // network. IPv4 passes through unchanged. Callers (cookie
+  // payload, /verify-ip insert) use the normalized form too so
+  // the same string is what ever lands in user_trusted_ips.
+  const ip = normalizeIpForTrust(rawIp);
+
+  const [hit] = await db
+    .select({ id: userTrustedIps.id })
+    .from(userTrustedIps)
+    .where(and(eq(userTrustedIps.userId, userId), eq(userTrustedIps.ip, ip)))
+    .limit(1);
+  if (hit) {
+    return { ip, trusted: true, country, reason: "known" };
+  }
+
+  const [anyTrusted] = await db
+    .select({ id: userTrustedIps.id })
+    .from(userTrustedIps)
+    .where(eq(userTrustedIps.userId, userId))
+    .limit(1);
+  if (!anyTrusted) {
+    return { ip, trusted: true, country, reason: "first" };
+  }
+
+  return { ip, trusted: false, country, reason: "untrusted" };
 }
