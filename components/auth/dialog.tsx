@@ -320,17 +320,11 @@ function SignInStepIndicator({
           idx === currentIdx ? "current" : idx < currentIdx ? "done" : "pending";
         const isLast = idx === SIGN_IN_STEPS.length - 1;
         const bubble =
-          status === "current"
-            ? "border-primary bg-primary text-primary-foreground"
-            : status === "done"
-              ? "border-primary/40 bg-primary/10 text-primary"
-              : "border-border bg-muted/40 text-muted-foreground";
+          status === "current" || status === "done"
+            ? "border-keeperhub-green-dark bg-keeperhub-green text-foreground dark:text-background"
+            : "border-border text-foreground";
         const labelClass =
-          status === "pending"
-            ? "text-muted-foreground"
-            : status === "current"
-              ? "font-medium text-foreground"
-              : "text-foreground";
+          status === "current" ? "font-medium text-foreground" : "text-foreground";
         return (
           <li className="flex items-center gap-2" key={s.key}>
             <span
@@ -342,7 +336,7 @@ function SignInStepIndicator({
             {!isLast && (
               <span
                 aria-hidden="true"
-                className={`h-px w-6 ${status === "done" ? "bg-primary/40" : "bg-border"}`}
+                className={`h-px w-6 ${status === "done" ? "bg-keeperhub-green" : "bg-border"}`}
               />
             )}
           </li>
@@ -1484,6 +1478,40 @@ export const AuthDialog = ({
                   />
                 </div>
                 <div className="space-y-2">
+                  <Label className="ml-1" htmlFor="forgot-totp">
+                    Authenticator code{" "}
+                    <span className="font-normal text-muted-foreground">
+                      (if 2FA is enabled)
+                    </span>
+                  </Label>
+                  <Input
+                    autoComplete="one-time-code"
+                    className="text-center font-mono text-2xl tracking-[0.5em]"
+                    id="forgot-totp"
+                    inputMode="numeric"
+                    maxLength={6}
+                    onChange={(e) =>
+                      setForgotTotp(
+                        e.target.value.replace(/\D/g, "").slice(0, 6)
+                      )
+                    }
+                    pattern="[0-9]*"
+                    placeholder="000000"
+                    value={forgotTotp}
+                  />
+                  {forgotNeedsMfa ? (
+                    <p className="text-muted-foreground text-xs">
+                      Your account has two-factor enabled. Enter the current
+                      code from your authenticator app.
+                    </p>
+                  ) : (
+                    <p className="text-muted-foreground text-xs">
+                      Leave empty if you don't have an authenticator app set
+                      up for this account.
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-2">
                   <Label className="ml-1" htmlFor="new-password">
                     New Password
                   </Label>
@@ -1511,33 +1539,6 @@ export const AuthDialog = ({
                     value={confirmNewPassword}
                   />
                 </div>
-                {forgotNeedsMfa && (
-                  <div className="space-y-2">
-                    <Label className="ml-1" htmlFor="forgot-totp">
-                      Authenticator code
-                    </Label>
-                    <Input
-                      autoComplete="one-time-code"
-                      className="text-center font-mono text-2xl tracking-[0.5em]"
-                      id="forgot-totp"
-                      inputMode="numeric"
-                      maxLength={6}
-                      onChange={(e) =>
-                        setForgotTotp(
-                          e.target.value.replace(/\D/g, "").slice(0, 6)
-                        )
-                      }
-                      pattern="[0-9]*"
-                      placeholder="000000"
-                      required
-                      value={forgotTotp}
-                    />
-                    <p className="text-muted-foreground text-xs">
-                      Your account has two-factor enabled. Enter the current
-                      code from your authenticator app.
-                    </p>
-                  </div>
-                )}
                 {error && (
                   <div className="text-destructive text-sm">{error}</div>
                 )}

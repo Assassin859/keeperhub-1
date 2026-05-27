@@ -76,23 +76,17 @@ const STEP_DEFS: ReadonlyArray<{ key: Phase; label: string }> = [
 type StepStatus = "current" | "done" | "pending";
 
 function bubbleClassFor(status: StepStatus): string {
-  if (status === "current") {
-    return "border-primary bg-primary text-primary-foreground";
+  if (status === "current" || status === "done") {
+    return "border-keeperhub-green-dark bg-keeperhub-green text-foreground dark:text-background";
   }
-  if (status === "done") {
-    return "border-primary/40 bg-primary/10 text-primary";
-  }
-  return "border-border bg-muted/40 text-muted-foreground";
+  return "border-border text-foreground";
 }
 
 function labelClassFor(status: StepStatus): string {
   if (status === "current") {
     return "font-medium text-foreground";
   }
-  if (status === "done") {
-    return "text-foreground";
-  }
-  return "text-muted-foreground";
+  return "text-foreground";
 }
 
 function statusFor(idx: number, currentIdx: number): StepStatus {
@@ -127,7 +121,7 @@ function StepIndicator({
             {!isLast && (
               <span
                 aria-hidden="true"
-                className={`h-px w-6 ${status === "done" ? "bg-primary/40" : "bg-border"}`}
+                className={`h-px w-6 ${status === "done" ? "bg-keeperhub-green" : "bg-border"}`}
               />
             )}
           </li>
