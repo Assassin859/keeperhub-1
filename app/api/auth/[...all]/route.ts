@@ -210,15 +210,11 @@ async function interceptOauthCallback(
       "Set-Cookie",
       buildPendingOauthMfaSetCookie(pendingValue)
     );
-    logSystemWarn(
-      ErrorCategory.AUTH,
-      "[oauth-callback] deferring session via pending_oauth_mfa",
-      new Error("pending_oauth_mfa_path"),
-      {
-        provider,
-        user_id: user.id,
-      }
-    );
+    // biome-ignore lint/suspicious/noConsole: success-path trace; Sentry warn would be noise on every login
+    console.info("[oauth-callback] pending_oauth_mfa_path", {
+      provider,
+      user_id: user.id,
+    });
     return response;
   }
 
@@ -241,15 +237,11 @@ async function interceptOauthCallback(
     "Set-Cookie",
     buildPendingSignupSetCookie(pendingSignupValue)
   );
-  logSystemWarn(
-    ErrorCategory.AUTH,
-    "[oauth-callback] deferring session via pending_signup_mfa",
-    new Error("pending_signup_mfa_path"),
-    {
-      provider,
-      user_id: user.id,
-    }
-  );
+  // biome-ignore lint/suspicious/noConsole: success-path trace; Sentry warn would be noise on every login
+  console.info("[oauth-callback] pending_signup_mfa_path", {
+    provider,
+    user_id: user.id,
+  });
   return response;
 }
 
