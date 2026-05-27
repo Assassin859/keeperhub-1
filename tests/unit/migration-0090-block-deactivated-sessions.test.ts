@@ -38,7 +38,7 @@ describe("migration 0090: block sessions for deactivated owners", () => {
 
   it("checks the owning user's deactivated_at via user_id", () => {
     const ddl = READ_SQL_DDL_ONLY();
-    expect(ddl).toMatch(/FROM users u/);
+    expect(ddl).toMatch(/FROM public\.users u/);
     expect(ddl).toMatch(/WHERE u\.id = NEW\.user_id/);
     expect(ddl).toMatch(/v_owner_deactivated_at IS NOT NULL/);
   });

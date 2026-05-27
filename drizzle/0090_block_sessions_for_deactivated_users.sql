@@ -34,7 +34,7 @@ DECLARE
 BEGIN
   SELECT u.deactivated_at
     INTO v_owner_deactivated_at
-  FROM users u
+  FROM public.users u
   WHERE u.id = NEW.user_id;
 
   IF v_owner_deactivated_at IS NOT NULL THEN
