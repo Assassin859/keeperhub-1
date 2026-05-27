@@ -12,6 +12,12 @@
 -- that deletes existing sessions when a user is deactivated; this prevents
 -- new ones from being minted afterwards.
 --
+-- Limitation: this is a backstop, not an airtight guarantee. The check reads
+-- the committed deactivated_at under READ COMMITTED, so a session insert that
+-- races a not-yet-committed deactivation (landing after 0085's cascade DELETE
+-- but before the deactivating transaction commits) can still succeed. The
+-- app-layer gate is the primary control; this closes the common case.
+--
 -- Detection signal contract (consumed by the future detection layer):
 --   SQLSTATE 'KH001'
 --   MESSAGE  'Session owner is deactivated; new sessions are not allowed.'
