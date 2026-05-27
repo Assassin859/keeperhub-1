@@ -19,7 +19,12 @@ import { rateLimitBypassRule, testEndpointsEnabled } from "@/lib/admin-auth";
 import { isUserDeactivated } from "@/lib/auth-deactivation-guard";
 import { isFreshSignup } from "@/lib/auth-notification-guard";
 import { sendInvitationEmail, sendVerificationOTP } from "@/lib/email";
-import { assessLoginRisk, serializeRiskFlags } from "@/lib/security/login-risk";
+import { ErrorCategory, logSystemError } from "@/lib/logging";
+import {
+  assessIpTrust,
+  assessLoginRisk,
+  serializeRiskFlags,
+} from "@/lib/security/login-risk";
 import { TRUSTED_ORIGINS } from "@/lib/trusted-origins";
 import { wrapWithSessionTokenHash } from "./auth-session-token-hash";
 import { db } from "./db";
@@ -36,6 +41,7 @@ import {
   organization as organizationTable,
   sessions,
   twoFactor as twoFactorTable,
+  userTrustedIps,
   users,
   verifications,
   workflowExecutionLogs,
@@ -577,6 +583,39 @@ export const auth = betterAuth({
             return false;
           }
           const risk = await assessLoginRisk(userId);
+          const ipTrust = await assessIpTrust(userId);
+          // When the session is being created from a trusted IP (or
+          // for the user's first-ever attestation) record/refresh it
+          // in user_trusted_ips. This is the only path that auto-adds
+          // an IP without going through /verify-ip; the unique
+          // (user_id, ip) constraint makes the upsert idempotent so a
+          // repeat sign-in from a known IP just bumps last_seen_at.
+          if (ipTrust.ip && ipTrust.trusted) {
+            try {
+              await db
+                .insert(userTrustedIps)
+                .values({
+                  userId,
+                  ip: ipTrust.ip,
+                  country: ipTrust.country,
+                })
+                .onConflictDoUpdate({
+                  target: [userTrustedIps.userId, userTrustedIps.ip],
+                  set: { lastSeenAt: new Date() },
+                });
+            } catch (err) {
+              // Trust list bookkeeping must never block sign-in. If
+              // the insert fails the next sign-in from the same IP
+              // will hit the /verify-ip gate, which is the correct
+              // fail-closed direction.
+              logSystemError(
+                ErrorCategory.DATABASE,
+                "[ip-trust] failed to upsert trusted IP",
+                err,
+                { user_id: userId, ip: ipTrust.ip }
+              );
+            }
+          }
           const [userRow] = await db
             .select({ twoFactorEnabled: users.twoFactorEnabled })
             .from(users)
@@ -585,15 +624,14 @@ export const auth = betterAuth({
           const twoFactorEnabled = userRow?.twoFactorEnabled === true;
           // Sessions that still need step-up get a short TTL so a stolen
           // cookie expires before a legitimate user finishes the
-          // /verify-mfa flow. The flag is cleared and the expiry is
-          // extended back to the default in either
-          //   - app/api/auth/strict-signin/route.ts (credential flow:
-          //     all three factors were just verified atomically)
-          //   - app/api/user/totp/verify-stepup/route.ts (OAuth flow:
-          //     user proves email + TOTP from /verify-mfa)
-          // Without one of those clears, the session expires in 10 min
-          // and the user has to re-sign-in.
+          // /verify-mfa flow.
           const PRE_STEPUP_TTL_MS = 10 * 60 * 1000;
+          // IP-verification does not write to the session row. The
+          // atomic flow in strict-signin / oauth-mfa-finalize / the
+          // /verify-ip endpoint resolves IP trust BEFORE any session
+          // is minted: an untrusted IP produces a signed
+          // `pending_ip_verify` cookie and no session, and a trusted
+          // IP mints the session as-is.
           return {
             data: twoFactorEnabled
               ? {

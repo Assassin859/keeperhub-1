@@ -24,7 +24,6 @@ import {
   getSingleProvider,
 } from "@/lib/auth-providers";
 import { setPendingClaim } from "@/lib/hooks/use-claim-workflow";
-import { refetchOrganizations } from "@/lib/refetch-organizations";
 
 const WORKFLOW_PATH_REGEX = /^\/workflows\/([^/]+)$/;
 
@@ -317,20 +316,18 @@ function SignInStepIndicator({
     <ol className="flex items-center gap-2 px-1 pb-1 text-xs">
       {SIGN_IN_STEPS.map((s, idx) => {
         const status =
-          idx === currentIdx ? "current" : idx < currentIdx ? "done" : "pending";
+          idx === currentIdx
+            ? "current"
+            : idx < currentIdx
+              ? "done"
+              : "pending";
         const isLast = idx === SIGN_IN_STEPS.length - 1;
         const bubble =
-          status === "current"
-            ? "border-primary bg-primary text-primary-foreground"
-            : status === "done"
-              ? "border-primary/40 bg-primary/10 text-primary"
-              : "border-border bg-muted/40 text-muted-foreground";
+          status === "current" || status === "done"
+            ? "border-keeperhub-green-dark bg-keeperhub-green text-foreground dark:text-background"
+            : "border-border text-foreground";
         const labelClass =
-          status === "pending"
-            ? "text-muted-foreground"
-            : status === "current"
-              ? "font-medium text-foreground"
-              : "text-foreground";
+          status === "current" ? "font-medium text-foreground" : "text-foreground";
         return (
           <li className="flex items-center gap-2" key={s.key}>
             <span
@@ -342,7 +339,7 @@ function SignInStepIndicator({
             {!isLast && (
               <span
                 aria-hidden="true"
-                className={`h-px w-6 ${status === "done" ? "bg-primary/40" : "bg-border"}`}
+                className={`h-px w-6 ${status === "done" ? "bg-keeperhub-green" : "bg-border"}`}
               />
             )}
           </li>
@@ -449,7 +446,6 @@ export const AuthDialog = ({
   // requires it when the target user has TOTP enrolled; we ask for
   // it preemptively so the user doesn't have to round-trip.
   const [forgotTotp, setForgotTotp] = useState("");
-  const [forgotNeedsMfa, setForgotNeedsMfa] = useState(false);
   const [totpCode, setTotpCode] = useState("");
   const [loadingProvider, setLoadingProvider] = useState<
     "github" | "google" | null
@@ -491,7 +487,6 @@ export const AuthDialog = ({
     setNewPassword("");
     setConfirmNewPassword("");
     setForgotTotp("");
-    setForgotNeedsMfa(false);
     setCaptchaToken("");
     captchaRef.current?.reset();
   };
@@ -704,7 +699,11 @@ export const AuthDialog = ({
       });
       const completeBody = (await completeResponse
         .json()
-        .catch(() => ({}))) as { error?: string; code?: string };
+        .catch(() => ({}))) as {
+        error?: string;
+        code?: string;
+        redirect?: string;
+      };
       if (!completeResponse.ok) {
         if (completeBody.code === "invalid_email_otp") {
           setError("Invalid email code");
@@ -720,9 +719,22 @@ export const AuthDialog = ({
         setError(completeBody.error ?? "Sign in failed");
         return;
       }
-      toast.success("Signed in successfully!");
       setTotpCode("");
       setOtp("");
+      // The atomic strict-signin endpoint can defer the session and
+      // return a redirect when the request came from an IP that the
+      // user has never signed in from. In that case a signed
+      // pending_ip_verify cookie has just been set, no session row
+      // exists yet, and /verify-ip is the page that will ask for a
+      // fresh email+TOTP dual factor against the same IP and only
+      // then mint the session.
+      if (completeBody.redirect === "/verify-ip") {
+        if (typeof window !== "undefined") {
+          window.location.assign("/verify-ip");
+        }
+        return;
+      }
+      toast.success("Signed in successfully!");
       window.dispatchEvent(new CustomEvent(AUTH_SUCCESS_EVENT));
       // Hard reload so the server re-renders with the new
       // better-auth.session_token cookie. authClient.getSession()
@@ -890,17 +902,14 @@ export const AuthDialog = ({
         setLoading(false);
         return;
       }
-      const finishResponse = await fetch(
-        "/api/auth/finish-credential-signup",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            email: verifyEmail,
-            password: verifyPassword,
-          }),
-        }
-      );
+      const finishResponse = await fetch("/api/auth/finish-credential-signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: verifyEmail,
+          password: verifyPassword,
+        }),
+      });
       const finishBody = (await finishResponse.json().catch(() => ({}))) as {
         error?: string;
         code?: string;
@@ -974,7 +983,7 @@ export const AuthDialog = ({
         throw new Error(data.error ?? "Failed to send reset code");
       }
 
-      toast.success("If an account exists, a reset code has been sent.");
+      toast.success("Check your inbox for the reset code.");
       setView("reset-password");
       setOtp("");
     } catch (err) {
@@ -1022,11 +1031,7 @@ export const AuthDialog = ({
       };
 
       if (!response.ok) {
-        // Server signaled the user has TOTP enrolled: reveal the
-        // code field and let them retry without losing the OTP /
-        // password they already typed.
         if (data.code === "mfa_code_required") {
-          setForgotNeedsMfa(true);
           setError(
             data.error ??
               "This account has two-factor enabled. Enter a code from your authenticator."
@@ -1305,7 +1310,10 @@ export const AuthDialog = ({
               <SignInStepIndicator current="email" />
               <form className="space-y-4" onSubmit={handleSigninEmailOtp}>
                 <div className="space-y-2">
-                  <Label className="ml-1" htmlFor="signin-email-otp-input">
+                  <Label
+                    className="ml-1 font-medium text-keeperhub-green-dark"
+                    htmlFor="signin-email-otp-input"
+                  >
                     Email code
                   </Label>
                   <Input
@@ -1370,7 +1378,10 @@ export const AuthDialog = ({
               <SignInStepIndicator current="authenticator" />
               <form className="space-y-4" onSubmit={handleTotpVerify}>
                 <div className="space-y-2">
-                  <Label className="ml-1" htmlFor="signin-totp">
+                  <Label
+                    className="ml-1 font-medium text-keeperhub-green-dark"
+                    htmlFor="signin-totp"
+                  >
                     Authenticator code
                   </Label>
                   <Input
@@ -1484,6 +1495,29 @@ export const AuthDialog = ({
                   />
                 </div>
                 <div className="space-y-2">
+                  <Label
+                    className="ml-1 font-medium text-keeperhub-green-dark"
+                    htmlFor="forgot-totp"
+                  >
+                    Authenticator code
+                  </Label>
+                  <Input
+                    autoComplete="one-time-code"
+                    className="text-center font-mono text-2xl tracking-[0.5em]"
+                    id="forgot-totp"
+                    inputMode="numeric"
+                    maxLength={6}
+                    onChange={(e) =>
+                      setForgotTotp(
+                        e.target.value.replace(/\D/g, "").slice(0, 6)
+                      )
+                    }
+                    pattern="[0-9]*"
+                    placeholder="000000"
+                    value={forgotTotp}
+                  />
+                </div>
+                <div className="space-y-2">
                   <Label className="ml-1" htmlFor="new-password">
                     New Password
                   </Label>
@@ -1511,33 +1545,6 @@ export const AuthDialog = ({
                     value={confirmNewPassword}
                   />
                 </div>
-                {forgotNeedsMfa && (
-                  <div className="space-y-2">
-                    <Label className="ml-1" htmlFor="forgot-totp">
-                      Authenticator code
-                    </Label>
-                    <Input
-                      autoComplete="one-time-code"
-                      className="text-center font-mono text-2xl tracking-[0.5em]"
-                      id="forgot-totp"
-                      inputMode="numeric"
-                      maxLength={6}
-                      onChange={(e) =>
-                        setForgotTotp(
-                          e.target.value.replace(/\D/g, "").slice(0, 6)
-                        )
-                      }
-                      pattern="[0-9]*"
-                      placeholder="000000"
-                      required
-                      value={forgotTotp}
-                    />
-                    <p className="text-muted-foreground text-xs">
-                      Your account has two-factor enabled. Enter the current
-                      code from your authenticator app.
-                    </p>
-                  </div>
-                )}
                 {error && (
                   <div className="text-destructive text-sm">{error}</div>
                 )}

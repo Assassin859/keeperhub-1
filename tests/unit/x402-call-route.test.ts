@@ -65,9 +65,13 @@ vi.mock("@/lib/db/schema", () => ({
     listedSlug: "listed_slug",
     isListed: "is_listed",
     tagId: "tag_id",
+    enabled: "enabled",
+    deletedAt: "deleted_at",
+    userId: "user_id",
   },
   workflowExecutions: { id: "id" },
   tags: { id: "id", name: "name" },
+  users: { id: "id", deactivatedAt: "deactivated_at" },
 }));
 
 vi.mock("@/lib/payments/x402/payment-gate", () => ({
@@ -154,6 +158,7 @@ const LISTED_WORKFLOW = {
   outputMapping: null,
   priceUsdcPerCall: "1.50",
   isListed: true,
+  enabled: true,
   nodes: [],
   edges: [],
   userId: "user-1",
@@ -166,14 +171,17 @@ const FREE_WORKFLOW_NULL_PRICE = { ...LISTED_WORKFLOW, priceUsdcPerCall: null };
 const CREATOR_WALLET = "0xCREATOR_WALLET";
 
 function setupDbSelectWorkflow(row: unknown) {
-  // lookupWorkflow joins the tags table to project tagName into the row, so
-  // the chain is: select().from().leftJoin().where().limit(). Mirror that
-  // shape here or the real code throws on the missing .leftJoin().
+  // lookupWorkflow joins tags (for tagName) and users (for the owner-active
+  // executability clause), so the chain is:
+  // select().from().leftJoin().innerJoin().where().limit(). Mirror that shape
+  // here or the real code throws on the missing .innerJoin().
   mockDbSelect.mockReturnValue({
     from: vi.fn().mockReturnValue({
       leftJoin: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          limit: vi.fn().mockResolvedValue(row ? [row] : []),
+        innerJoin: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue(row ? [row] : []),
+          }),
         }),
       }),
     }),
@@ -336,6 +344,20 @@ describe("POST /api/mcp/workflows/[slug]/call", () => {
     const params = Promise.resolve({ slug: "unlisted-wf" });
     const response = await POST(request, { params });
     expect(response.status).toBe(404);
+  });
+
+  it("Test 2b: returns 503 (not 404) for a listed-but-disabled workflow", async () => {
+    // The lookup's SQL no longer filters `enabled`, so a disabled-but-listed
+    // row loads and is gated in-memory as temporarily unavailable. 404 would
+    // misreport a paused workflow as gone.
+    setupDbSelectWorkflow({ ...LISTED_WORKFLOW, enabled: false });
+    const { POST } = await import("@/app/api/mcp/workflows/[slug]/call/route");
+    const request = makeRequest("test-workflow");
+    const params = Promise.resolve({ slug: "test-workflow" });
+    const response = await POST(request, { params });
+    expect(response.status).toBe(503);
+    const body = await response.json();
+    expect(body.error.toLowerCase()).toContain("temporarily unavailable");
   });
 
   it("Test 3: free workflow (price=0) executes immediately without payment gate", async () => {

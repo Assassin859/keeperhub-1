@@ -631,6 +631,20 @@
       "when": 1779670685296,
       "tag": "0089_two_factor_and_session_mfa",
       "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1779843819653,
+      "tag": "0090_block_sessions_for_deactivated_users",
+      "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
+      "when": 1779843819654,
+      "tag": "0091_ip_verification",
+      "breakpoints": true
     }
   ]
 }
