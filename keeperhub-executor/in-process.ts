@@ -93,6 +93,12 @@ export async function executeInProcess(params: {
     await initializeExecutionProgress(db, executionId, totalSteps);
 
     console.log("[Executor:InProcess] Executing workflow...");
+    // Intentional direct call (not start() from workflow/api): the executor and
+    // K8s runner are standalone processes with no DevKit run-processor, so they
+    // run the workflow synchronously to completion here. The DevKit editor hint
+    // to "use start()" only applies inside the Next runtime. Tradeoff: there is
+    // no checkpoint/resume, so a crash mid-run leaves the row "running" until a
+    // sweeper closes it - tracked separately from this dedup work.
     const result = await executeWorkflow(
       buildExecutorInput(workflow, {
         triggerInput: input,

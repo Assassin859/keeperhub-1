@@ -242,6 +242,12 @@ async function main(): Promise<void> {
     }
 
     console.log("[Runner] Executing workflow...");
+    // Intentional direct call (not start() from workflow/api): this runner is a
+    // standalone K8s-job process with no DevKit run-processor, so the pod itself
+    // is the execution boundary and runs the workflow synchronously here. The
+    // DevKit editor hint to "use start()" only applies inside the Next runtime.
+    // Tradeoff: no checkpoint/resume - with backoffLimit:0 a crashed pod leaves
+    // the row "running" until a sweeper closes it, tracked separately.
     const result = await executeWorkflow(
       buildExecutorInput(workflow, {
         triggerInput: input,
