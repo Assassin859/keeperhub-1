@@ -292,42 +292,44 @@ async function resolveLoginIp(): Promise<string | null> {
 }
 
 /**
- * Module-level dedup of (userId, ip) tuples we've already upserted this pod
- * lifetime. The trust upsert is called on every authenticated request, so the
- * cache avoids hammering the DB with one write per page navigation. Pods
- * restart often enough that perfect eviction is unnecessary; the simple
- * size-bound halving below is plenty for production traffic shape (small
- * number of IPs per user, low cardinality overall).
+ * Per-request gate result. `trusted` means the current request's IP is
+ * in the user's `user_trusted_ips` list. `untrusted` carries the IP and
+ * CF-attested country so the caller can build the pending_ip_verify
+ * cookie + notification email without re-resolving the headers.
  */
-const TRUST_RECORDED: Set<string> = new Set();
-const TRUST_RECORDED_LIMIT = 10_000;
+export type RequestIpGate =
+  | { kind: "trusted" }
+  | { kind: "untrusted"; ip: string; country: string | null }
+  | { kind: "no_ip" };
 
 /**
- * Append the current request's IP to user_trusted_ips for the given user,
- * keyed by the same /64-normalised form assessIpTrust uses. Called from
- * the request proxy on every authenticated request so the trust list
- * tracks every network the user has actively used, not just the ones
- * they used at sign-in time. The unique (user_id, ip) constraint makes
- * the upsert idempotent.
+ * Per-request IP gate consulted by the root proxy on every authenticated
+ * request. Unlike assessIpTrust (used at sign-in time), this never
+ * grants a first-attestation: if the user has zero trusted IPs we still
+ * return untrusted, on the theory that a session that exists with no
+ * trust rows means the sign-in path's bookkeeping failed and we should
+ * fail closed.
  *
- * Fail-closed semantics: if the write fails, the IP stays missing from
- * the trust list and a future sign-in from it will require /verify-ip,
- * which is the safe direction.
+ * No DB writes here. The trust list only grows via sign-in events
+ * (session.create.before first-attestation) and explicit /verify-ip
+ * confirmation; the proxy gate is read-only.
  */
-export async function recordIpTrust(userId: string): Promise<void> {
+export async function gateRequestIp(userId: string): Promise<RequestIpGate> {
   const rawIp = await resolveLoginIp();
   if (!rawIp) {
-    return;
+    return { kind: "no_ip" };
   }
   const ip = normalizeIpForTrust(rawIp);
-  const cacheKey = `${userId}:${ip}`;
-  if (TRUST_RECORDED.has(cacheKey)) {
-    return;
+  const [hit] = await db
+    .select({ id: userTrustedIps.id })
+    .from(userTrustedIps)
+    .where(and(eq(userTrustedIps.userId, userId), eq(userTrustedIps.ip, ip)))
+    .limit(1);
+  if (hit) {
+    return { kind: "trusted" };
   }
-  // CF-attested country only; the external IP-to-location lookup in
-  // resolveLoginLocation has a 2-second timeout that we don't want on the
-  // hot request path. The /verify-ip and login-risk paths still enrich
-  // region/city via the slower lookup.
+  // CF-attested country only on the hot path; the external IP-to-location
+  // lookup has a 2-second timeout and isn't wanted here.
   let country: string | null = null;
   try {
     const header = await headers();
@@ -335,28 +337,7 @@ export async function recordIpTrust(userId: string): Promise<void> {
   } catch {
     country = null;
   }
-  try {
-    await db
-      .insert(userTrustedIps)
-      .values({ userId, ip, country })
-      .onConflictDoUpdate({
-        target: [userTrustedIps.userId, userTrustedIps.ip],
-        set: { lastSeenAt: new Date() },
-      });
-    if (TRUST_RECORDED.size >= TRUST_RECORDED_LIMIT) {
-      const retained = Array.from(TRUST_RECORDED).slice(
-        -Math.floor(TRUST_RECORDED_LIMIT / 2)
-      );
-      TRUST_RECORDED.clear();
-      for (const key of retained) {
-        TRUST_RECORDED.add(key);
-      }
-    }
-    TRUST_RECORDED.add(cacheKey);
-  } catch {
-    // Swallow: failure leaves the IP missing from trust list, which
-    // makes the next sign-in from it require /verify-ip. Safe direction.
-  }
+  return { kind: "untrusted", ip, country };
 }
 
 export async function assessIpTrust(userId: string): Promise<IpTrust> {
