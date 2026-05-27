@@ -40,6 +40,7 @@ import {
 import { getMetricsCollector } from "../lib/metrics";
 import { LabelKeys, MetricNames } from "../lib/metrics/types";
 import { generateId } from "../lib/utils/id";
+import { checkConcurrencyLimit } from "../lib/workflow/concurrency";
 import { getWorkflowExecutability } from "../lib/workflow/executable";
 import type { WorkflowNode } from "../lib/workflow/store";
 import { type ApiExecuteTriggerType, executeViaApi } from "./api-execute";
@@ -305,6 +306,17 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
       completedAt: new Date(),
     });
     return;
+  }
+
+  // Concurrency back-pressure: enforce the same running-execution cap the API
+  // routes apply, regardless of dispatch target. Throw rather than drop so the
+  // SQS message is redelivered after the visibility timeout once capacity frees,
+  // and do it before creating the row so a requeue does not leave orphans.
+  const concurrency = await checkConcurrencyLimit(db);
+  if (!concurrency.allowed) {
+    throw new Error(
+      `Concurrency limit reached (${concurrency.running}/${concurrency.limit}); requeueing workflow ${workflowId}`
+    );
   }
 
   const executionId = generateId();

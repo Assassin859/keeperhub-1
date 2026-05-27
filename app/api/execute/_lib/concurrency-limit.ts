@@ -1,44 +1,17 @@
 import "server-only";
 
-import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { workflowExecutions } from "@/lib/db/schema";
+import {
+  checkConcurrencyLimit as checkConcurrencyLimitCore,
+  type ConcurrencyLimitResult,
+} from "@/lib/workflow/concurrency";
 
-const DEFAULT_LIMIT = 500;
+export type { ConcurrencyLimitResult };
 
-function parseMaxConcurrent(): number {
-  const envValue = process.env.MAX_CONCURRENT_WORKFLOW_EXECUTIONS;
-  if (!envValue) {
-    return DEFAULT_LIMIT;
-  }
-  const parsed = Number.parseInt(envValue, 10);
-  return Number.isNaN(parsed) ? DEFAULT_LIMIT : parsed;
-}
-
-const MAX_CONCURRENT = parseMaxConcurrent();
-
-export type ConcurrencyLimitResult =
-  | { allowed: true }
-  | { allowed: false; running: number; limit: number };
-
-// Soft cap: the count-then-admit check is not atomic, so under burst load
-// concurrent requests may all pass before any new execution is inserted.
-// This is acceptable -- the goal is back-pressure, not a hard guarantee.
-export async function checkConcurrencyLimit(): Promise<ConcurrencyLimitResult> {
-  const limit = MAX_CONCURRENT;
-
-  const [result] = await db
-    .select({
-      count: sql<number>`COUNT(*)::int`,
-    })
-    .from(workflowExecutions)
-    .where(eq(workflowExecutions.status, "running"));
-
-  const running = result?.count ?? 0;
-
-  if (running >= limit) {
-    return { allowed: false, running, limit };
-  }
-
-  return { allowed: true };
+/**
+ * Route-side concurrency check, bound to the app db. Shares its implementation
+ * with the executor via lib/workflow/concurrency so both enforce the same cap.
+ */
+export function checkConcurrencyLimit(): Promise<ConcurrencyLimitResult> {
+  return checkConcurrencyLimitCore(db);
 }
