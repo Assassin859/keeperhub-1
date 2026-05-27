@@ -78,6 +78,25 @@ function buildSessionClearCookies(): string[] {
  * MFA codes. No usable session exists between OAuth and the finalize
  * step, so a stolen cookie in this window carries no auth power.
  */
+/**
+ * Resolve the public origin we should redirect the browser back to.
+ * `req.url` is unreliable here: Next.js in standalone mode behind a proxy
+ * sometimes reflects the server's bound interface (HOSTNAME=0.0.0.0) instead
+ * of the public host, producing http://0.0.0.0:3000 redirects that the browser
+ * cannot follow. Better Auth's own redirect logic uses the configured baseURL
+ * for exactly this reason; the interceptor has to mirror that precedence
+ * rather than rebuild URLs from req.url.
+ */
+function resolveOriginForRedirect(req: Request): string {
+  if (process.env.BETTER_AUTH_URL) {
+    return new URL(process.env.BETTER_AUTH_URL).origin;
+  }
+  if (process.env.NEXT_PUBLIC_APP_URL) {
+    return new URL(process.env.NEXT_PUBLIC_APP_URL).origin;
+  }
+  return new URL(req.url).origin;
+}
+
 async function interceptOauthCallback(
   req: Request,
   res: Response
@@ -86,6 +105,7 @@ async function interceptOauthCallback(
   if (!/^\/api\/auth\/callback\/[^/]+$/.test(url.pathname)) {
     return res;
   }
+  const publicOrigin = resolveOriginForRedirect(req);
   const provider = url.pathname.split("/").pop() ?? "oauth";
   if (res.status < 300 || res.status >= 400) {
     logSystemWarn(
@@ -207,7 +227,7 @@ async function interceptOauthCallback(
       },
       secret
     );
-    const verifyTarget = new URL("/verify-mfa", url.origin);
+    const verifyTarget = new URL("/verify-mfa", publicOrigin);
     verifyTarget.searchParams.set("next", originalRedirect);
     const response = NextResponse.redirect(verifyTarget);
     for (const clear of clearSessionCookies) {
@@ -234,7 +254,7 @@ async function interceptOauthCallback(
     },
     secret
   );
-  const enrollTarget = new URL("/enroll-mfa", url.origin);
+  const enrollTarget = new URL("/enroll-mfa", publicOrigin);
   enrollTarget.searchParams.set("next", originalRedirect);
   const response = NextResponse.redirect(enrollTarget);
   for (const clear of clearSessionCookies) {

@@ -1,5 +1,12 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { sendNewIpAttemptEmail } from "@/lib/email";
+import { describeUserAgentLabel } from "@/lib/security/device-label";
+import { gateRequestIp } from "@/lib/security/login-risk";
+import {
+  buildPendingIpSetCookie,
+  encodePendingIpCookie,
+} from "@/lib/pending-ip-cookie";
 import {
   hasSessionCookie,
   isTrustedOrigin,
@@ -7,7 +14,7 @@ import {
 } from "@/lib/trusted-origins";
 
 /**
- * Root request proxy. Two gates run in order on every matched request:
+ * Root request proxy. Three gates run in order on every matched request:
  *
  *  1. CSRF defence: enforce Origin against trustedOrigins on state-
  *     changing /api/** requests that carry a better-auth session cookie.
@@ -25,10 +32,23 @@ import {
  *       b. session.requires_mfa = false.
  *     Failing (a) yields 403 mfa_enrollment_required on API responses
  *     and 302 → /enroll-mfa on page navigation. Failing (b) yields 403
- *     mfa_pending and 302 → /verify-mfa. Unauthenticated requests pass
- *     through untouched — route handlers remain responsible for their
- *     own auth/authorization, and API-key-based requests carry no
- *     session cookie so they bypass the MFA gate by construction.
+ *     mfa_pending and 302 → /verify-mfa.
+ *
+ *  3. IP trust gate: refuse to serve an authenticated request whose
+ *     source IP is not in the user's `user_trusted_ips` list. Page
+ *     navigations get 302 → /verify-ip with a signed pending_ip_verify
+ *     cookie; API calls get 403 ip_verification_required. The trust list
+ *     only grows via explicit sign-in events (first-attestation in
+ *     session.create.before, or /verify-ip OTP confirmation), so an
+ *     attacker who steals a session cookie cannot reuse it from a
+ *     different network without going through the email-OTP step. The
+ *     legitimate user gets a notification email naming the new IP,
+ *     country, and device the first time we see that (user, ip) pair.
+ *
+ * Unauthenticated requests pass through untouched - route handlers
+ * remain responsible for their own auth/authorization, and API-key
+ * callers carry no session cookie so they bypass the gates by
+ * construction.
  */
 
 // ---------------------------------------------------------------------------
@@ -191,22 +211,28 @@ function mfaRedirect(
   return NextResponse.redirect(url);
 }
 
-async function mfaBlock(request: NextRequest): Promise<NextResponse | null> {
+type GatedUser = { id: string; email: string };
+
+type MfaResult =
+  | { kind: "block"; response: NextResponse }
+  | { kind: "pass"; user: GatedUser | null };
+
+async function mfaBlock(request: NextRequest): Promise<MfaResult> {
   const { pathname } = request.nextUrl;
 
   if (isMfaExemptPath(pathname)) {
-    return null;
+    return { kind: "pass", user: null };
   }
   // No session cookie at all → no session → nothing to gate on. Route
   // handlers + public pages serve themselves; API-key callers skip the
   // gate naturally because they don't carry the session cookie.
   if (!hasSessionCookie(request.headers)) {
-    return null;
+    return { kind: "pass", user: null };
   }
 
   const session = await auth.api.getSession({ headers: request.headers });
   if (!session?.user) {
-    return null;
+    return { kind: "pass", user: null };
   }
 
   // Anonymous sessions have no permanent identity to protect, so gating
@@ -217,36 +243,156 @@ async function mfaBlock(request: NextRequest): Promise<NextResponse | null> {
   // /api/user), and using them here would let a real user bypass the gate
   // by renaming themselves "Anonymous".
   if ((session.user as { isAnonymous?: boolean | null }).isAnonymous === true) {
-    return null;
+    return { kind: "pass", user: null };
   }
 
   const apiPath = pathname.startsWith("/api/");
-  const user = session.user as { twoFactorEnabled?: boolean | null };
+  const user = session.user as {
+    twoFactorEnabled?: boolean | null;
+    email?: string | null;
+  };
   const sess = session.session as { requiresMfa?: boolean | null };
 
   if (user.twoFactorEnabled !== true) {
     if (apiPath) {
-      return mfaApiError(
-        403,
-        "mfa_enrollment_required",
-        "Enable two-factor authentication on your account before continuing."
-      );
+      return {
+        kind: "block",
+        response: mfaApiError(
+          403,
+          "mfa_enrollment_required",
+          "Enable two-factor authentication on your account before continuing."
+        ),
+      };
     }
-    return mfaRedirect(request, "/enroll-mfa", "enroll");
+    return {
+      kind: "block",
+      response: mfaRedirect(request, "/enroll-mfa", "enroll"),
+    };
   }
 
   if (sess.requiresMfa === true) {
     if (apiPath) {
-      return mfaApiError(
-        403,
-        "mfa_pending",
-        "Verify your second factor to continue."
-      );
+      return {
+        kind: "block",
+        response: mfaApiError(
+          403,
+          "mfa_pending",
+          "Verify your second factor to continue."
+        ),
+      };
     }
-    return mfaRedirect(request, "/verify-mfa", "verify");
+    return {
+      kind: "block",
+      response: mfaRedirect(request, "/verify-mfa", "verify"),
+    };
   }
 
-  return null;
+  if (!user.email) {
+    return { kind: "pass", user: null };
+  }
+
+  return { kind: "pass", user: { id: session.user.id, email: user.email } };
+}
+
+// ---------------------------------------------------------------------------
+// IP gate
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-pod dedup of (userId, ip) pairs we've already alerted on. Prevents
+ * a single new network from generating one email per page navigation
+ * while the user is mid-verification. Same shape and eviction approach
+ * as the trust caches in lib/security/login-risk.ts.
+ */
+const NEW_IP_NOTIFIED: Set<string> = new Set();
+const NEW_IP_NOTIFIED_LIMIT = 10_000;
+
+function rememberNotified(key: string): void {
+  if (NEW_IP_NOTIFIED.size >= NEW_IP_NOTIFIED_LIMIT) {
+    const retained = Array.from(NEW_IP_NOTIFIED).slice(
+      -Math.floor(NEW_IP_NOTIFIED_LIMIT / 2)
+    );
+    NEW_IP_NOTIFIED.clear();
+    for (const k of retained) {
+      NEW_IP_NOTIFIED.add(k);
+    }
+  }
+  NEW_IP_NOTIFIED.add(key);
+}
+
+async function ipGateBlock(
+  request: NextRequest,
+  user: GatedUser
+): Promise<NextResponse | null> {
+  // The exempt set already lets /verify-ip, /api/user/verify-ip,
+  // /api/auth/*, and the marketing pages through. Reusing it here keeps
+  // the two gates from contradicting each other.
+  if (isMfaExemptPath(request.nextUrl.pathname)) {
+    return null;
+  }
+
+  const secret = process.env.BETTER_AUTH_SECRET;
+  if (!secret) {
+    // No secret means we can't sign the pending cookie, and a fail-closed
+    // 500 here would lock the whole app out. Fail open: the gate is a
+    // defence-in-depth layer on top of MFA, and the operator alerting on
+    // the missing secret is the right corrective signal.
+    return null;
+  }
+
+  const gate = await gateRequestIp(user.id);
+  if (gate.kind === "trusted" || gate.kind === "no_ip") {
+    return null;
+  }
+
+  const notifyKey = `${user.id}:${gate.ip}`;
+  if (!NEW_IP_NOTIFIED.has(notifyKey)) {
+    rememberNotified(notifyKey);
+    const userAgent = request.headers.get("user-agent");
+    // Fire-and-forget. SendGrid failures are already logged inside
+    // sendNewIpAttemptEmail and must not block the gate response.
+    sendNewIpAttemptEmail({
+      email: user.email,
+      ip: gate.ip,
+      country: gate.country,
+      device: describeUserAgentLabel(userAgent),
+      when: new Date(),
+    }).catch(() => {
+      // Already logged inside the email helper; swallow at the boundary.
+    });
+  }
+
+  const apiPath = request.nextUrl.pathname.startsWith("/api/");
+  if (apiPath) {
+    return NextResponse.json(
+      {
+        error: "Verify this network in your browser to continue.",
+        code: "ip_verification_required",
+      },
+      { status: 403 }
+    );
+  }
+
+  const cookieValue = encodePendingIpCookie(
+    {
+      userId: user.id,
+      email: user.email,
+      ip: gate.ip,
+      country: gate.country,
+      redirect: request.nextUrl.pathname + request.nextUrl.search,
+    },
+    secret
+  );
+  const target = request.nextUrl.clone();
+  target.pathname = "/verify-ip";
+  target.search = "";
+  target.searchParams.set(
+    "next",
+    request.nextUrl.pathname + request.nextUrl.search
+  );
+  const response = NextResponse.redirect(target);
+  response.headers.append("Set-Cookie", buildPendingIpSetCookie(cookieValue));
+  return response;
 }
 
 // ---------------------------------------------------------------------------
@@ -258,9 +404,15 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
   if (csrfResponse) {
     return csrfResponse;
   }
-  const mfaResponse = await mfaBlock(request);
-  if (mfaResponse) {
-    return mfaResponse;
+  const mfaResult = await mfaBlock(request);
+  if (mfaResult.kind === "block") {
+    return mfaResult.response;
+  }
+  if (mfaResult.user) {
+    const ipResponse = await ipGateBlock(request, mfaResult.user);
+    if (ipResponse) {
+      return ipResponse;
+    }
   }
   return NextResponse.next();
 }

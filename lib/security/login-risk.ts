@@ -291,6 +291,55 @@ async function resolveLoginIp(): Promise<string | null> {
   }
 }
 
+/**
+ * Per-request gate result. `trusted` means the current request's IP is
+ * in the user's `user_trusted_ips` list. `untrusted` carries the IP and
+ * CF-attested country so the caller can build the pending_ip_verify
+ * cookie + notification email without re-resolving the headers.
+ */
+export type RequestIpGate =
+  | { kind: "trusted" }
+  | { kind: "untrusted"; ip: string; country: string | null }
+  | { kind: "no_ip" };
+
+/**
+ * Per-request IP gate consulted by the root proxy on every authenticated
+ * request. Unlike assessIpTrust (used at sign-in time), this never
+ * grants a first-attestation: if the user has zero trusted IPs we still
+ * return untrusted, on the theory that a session that exists with no
+ * trust rows means the sign-in path's bookkeeping failed and we should
+ * fail closed.
+ *
+ * No DB writes here. The trust list only grows via sign-in events
+ * (session.create.before first-attestation) and explicit /verify-ip
+ * confirmation; the proxy gate is read-only.
+ */
+export async function gateRequestIp(userId: string): Promise<RequestIpGate> {
+  const rawIp = await resolveLoginIp();
+  if (!rawIp) {
+    return { kind: "no_ip" };
+  }
+  const ip = normalizeIpForTrust(rawIp);
+  const [hit] = await db
+    .select({ id: userTrustedIps.id })
+    .from(userTrustedIps)
+    .where(and(eq(userTrustedIps.userId, userId), eq(userTrustedIps.ip, ip)))
+    .limit(1);
+  if (hit) {
+    return { kind: "trusted" };
+  }
+  // CF-attested country only on the hot path; the external IP-to-location
+  // lookup has a 2-second timeout and isn't wanted here.
+  let country: string | null = null;
+  try {
+    const header = await headers();
+    country = header.get("cf-ipcountry") ?? null;
+  } catch {
+    country = null;
+  }
+  return { kind: "untrusted", ip, country };
+}
+
 export async function assessIpTrust(userId: string): Promise<IpTrust> {
   const rawIp = await resolveLoginIp();
   const { country } = await resolveLoginLocation();
