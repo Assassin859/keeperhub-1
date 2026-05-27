@@ -18,11 +18,15 @@ import { generateId } from "@/lib/utils/id";
  * dropped/renamed/weakened trigger fails CI rather than silently re-opening the
  * bypass.
  *
- * The rejection raises SQLSTATE 'KH001' (postgres-js surfaces it on err.code),
- * which is the signal a future detection layer keys off. Asserting the code
- * here locks that contract at runtime.
+ * The rejection raises SQLSTATE 'KH001', which is the signal a future detection
+ * layer keys off. drizzle wraps the driver error in DrizzleQueryError and puts
+ * the postgres-js PostgresError (carrying the SQLSTATE) on `.cause`, so the
+ * assertion reads err.cause.code. Asserting it here locks that contract at
+ * runtime.
  *
- * Skipped when no DATABASE_URL is configured.
+ * tests/setup.ts sets a default DATABASE_URL, so the no-URL branch below rarely
+ * fires in practice; set SKIP_INFRA_TESTS=true to opt out when no Postgres is
+ * reachable.
  */
 
 const shouldSkip =
