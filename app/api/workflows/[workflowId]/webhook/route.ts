@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { start } from "workflow/api";
 import {
   createTimer,
   getMetricsCollector,
@@ -12,8 +11,6 @@ import {
   enforceExecutionLimit,
 } from "@/lib/billing/execution-guard";
 import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit";
-import { classifyExecutionError } from "@/lib/errors/classify";
-import { recordExecutionErrorFinalized } from "@/lib/errors/finalize-error";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { recordWebhookMetrics } from "@/lib/metrics/instrumentation/api";
 import { db } from "@/lib/db";
@@ -27,7 +24,7 @@ import { apiKeys, users, workflowExecutions, workflows } from "@/lib/db/schema";
 import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
 import { getWorkflowAccess } from "@/lib/workflow/access";
 import { getWorkflowExecutability } from "@/lib/workflow/executable";
-import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
+import { executeWorkflowInBackground } from "@/lib/workflow/execute-in-background";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 type ValidateApiKeyResult = {
   valid: boolean;
@@ -146,76 +143,6 @@ async function failResponse(
     { error: message, ...extraBody },
     { status: statusCode, headers: corsHeaders }
   );
-}
-
-async function executeWorkflowBackground(
-  executionId: string,
-  workflowId: string,
-  nodes: WorkflowNode[],
-  edges: WorkflowEdge[],
-  input: Record<string, unknown>,
-  organizationId?: string | null,
-  ownerId?: string,
-  organizationSlug?: string,
-  organizationPlan?: string
-): Promise<void> {
-  try {
-    console.log("[Webhook] Starting execution:", executionId);
-
-    console.log("[Webhook] Calling executeWorkflow with:", {
-      nodeCount: nodes.length,
-      edgeCount: edges.length,
-      hasExecutionId: !!executionId,
-      workflowId,
-    });
-
-    const run = await start(executeWorkflow, [
-      {
-        nodes,
-        edges,
-        triggerInput: input,
-        executionId,
-        workflowId,
-        organizationId: organizationId ?? undefined,
-        ownerId,
-        organizationSlug,
-        organizationPlan,
-      },
-    ]);
-
-    console.log("[Webhook] Workflow started, runId:", run.runId);
-
-    await db
-      .update(workflowExecutions)
-      .set({ runId: run.runId })
-      .where(eq(workflowExecutions.id, executionId));
-  } catch (error) {
-    logSystemError(ErrorCategory.WORKFLOW_ENGINE, "[Webhook] Error during execution", error, { endpoint: "/api/workflows/[workflowId]/webhook", operation: "executeWorkflow" });
-
-    // KEEP-545: classify and increment per-execution counter.
-    const errorMessage =
-      error instanceof Error ? error.message : "Unknown error";
-    const classification = classifyExecutionError(errorMessage);
-
-    const updated = await db
-      .update(workflowExecutions)
-      .set({
-        status: "error",
-        error: errorMessage,
-        errorCategory: classification.errorCategory,
-        errorType: classification.errorType,
-        completedAt: new Date(),
-      })
-      .where(eq(workflowExecutions.id, executionId))
-      .returning({ workflowId: workflowExecutions.workflowId });
-
-    if (updated.length > 0) {
-      await recordExecutionErrorFinalized({
-        workflowId: updated[0].workflowId,
-        errorMessage,
-      });
-    }
-  }
 }
 
 export function OPTIONS() {
@@ -401,12 +328,16 @@ export async function POST(
     ]);
 
     // Execute the workflow in the background (don't await)
-    executeWorkflowBackground(
+    executeWorkflowInBackground(
       execution.id,
       workflowId,
       workflow.nodes as WorkflowNode[],
       workflow.edges as WorkflowEdge[],
       body,
+      {
+        logPrefix: "[Webhook]",
+        endpoint: "/api/workflows/[workflowId]/webhook",
+      },
       workflow.organizationId,
       workflow.userId,
       organizationSlug,

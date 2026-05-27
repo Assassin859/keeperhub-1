@@ -1,9 +1,6 @@
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { start } from "workflow/api";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
-import { classifyExecutionError } from "@/lib/errors/classify";
-import { recordExecutionErrorFinalized } from "@/lib/errors/finalize-error";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
 import { getMetricsCollector } from "@/lib/metrics";
@@ -18,83 +15,8 @@ import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
 import { users, workflowExecutions, workflows } from "@/lib/db/schema";
 import { getWorkflowAccess } from "@/lib/workflow/access";
 import { getWorkflowExecutability } from "@/lib/workflow/executable";
-import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
+import { executeWorkflowInBackground } from "@/lib/workflow/execute-in-background";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
-
-async function executeWorkflowBackground(
-  executionId: string,
-  workflowId: string,
-  nodes: WorkflowNode[],
-  edges: WorkflowEdge[],
-  input: Record<string, unknown>,
-  organizationId?: string | null,
-  ownerId?: string,
-  organizationSlug?: string,
-  organizationPlan?: string
-): Promise<void> {
-  try {
-    console.log("[Workflow Execute] Starting execution:", executionId);
-
-    // SECURITY: We pass only the workflowId as a reference
-    // Steps will fetch credentials internally using fetchWorkflowCredentials(workflowId)
-    // This prevents credentials from being logged in workflow observability output
-    console.log("[Workflow Execute] Calling executeWorkflow with:", {
-      nodeCount: nodes.length,
-      edgeCount: edges.length,
-      hasExecutionId: !!executionId,
-      workflowId,
-    });
-
-    // Use start() from workflow/api to properly execute the workflow
-    const run = await start(executeWorkflow, [
-      {
-        nodes,
-        edges,
-        triggerInput: input,
-        executionId,
-        workflowId,
-        organizationId: organizationId ?? undefined,
-        ownerId,
-        organizationSlug,
-        organizationPlan,
-      },
-    ]);
-
-    console.log("[Workflow Execute] Workflow started, runId:", run.runId);
-
-    await db
-      .update(workflowExecutions)
-      .set({ runId: run.runId })
-      .where(eq(workflowExecutions.id, executionId));
-  } catch (error) {
-    logSystemError(ErrorCategory.WORKFLOW_ENGINE, "[Workflow Execute] Error during execution", error, { endpoint: "/api/workflow/[workflowId]/execute", operation: "executeWorkflow" });
-
-    // KEEP-545: classify the error so the row carries error_category and
-    // error_type and so the per-execution counter is incremented post-update.
-    const errorMessage =
-      error instanceof Error ? error.message : "Unknown error";
-    const classification = classifyExecutionError(errorMessage);
-
-    const updated = await db
-      .update(workflowExecutions)
-      .set({
-        status: "error",
-        error: errorMessage,
-        errorCategory: classification.errorCategory,
-        errorType: classification.errorType,
-        completedAt: new Date(),
-      })
-      .where(eq(workflowExecutions.id, executionId))
-      .returning({ workflowId: workflowExecutions.workflowId });
-
-    if (updated.length > 0) {
-      await recordExecutionErrorFinalized({
-        workflowId: updated[0].workflowId,
-        errorMessage,
-      });
-    }
-  }
-}
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Workflow execution requires complex error handling and validation
 export async function POST(
@@ -320,12 +242,16 @@ export async function POST(
     ]);
 
     // Execute the workflow in the background (don't await)
-    executeWorkflowBackground(
+    executeWorkflowInBackground(
       executionId,
       workflowId,
       workflow.nodes as WorkflowNode[],
       workflow.edges as WorkflowEdge[],
       input,
+      {
+        logPrefix: "[Workflow Execute]",
+        endpoint: "/api/workflow/[workflowId]/execute",
+      },
       workflow.organizationId,
       workflow.userId,
       organizationSlug,
