@@ -29,7 +29,7 @@ import {
   CALL_ROUTE_COLUMNS,
   type CallRouteWorkflow,
 } from "@/lib/payments/x402/types";
-import { workflowExecutableConditions } from "@/lib/workflow/executable";
+import { workflowReachableConditions } from "@/lib/workflow/executable";
 import { buildExecutorInput } from "@/lib/workflow/executor/build-executor-input";
 import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
 
@@ -203,7 +203,7 @@ async function lookupWorkflow(slug: string): Promise<CallRouteWorkflow | null> {
       and(
         eq(workflows.listedSlug, slug),
         eq(workflows.isListed, true),
-        workflowExecutableConditions()
+        workflowReachableConditions()
       )
     )
     .limit(1);
@@ -469,6 +469,21 @@ export async function POST(
       return NextResponse.json(
         { error: "Workflow not found" },
         { status: 404, headers: corsHeaders }
+      );
+    }
+
+    // The lookup already excluded the hard-gone states (soft-deleted, owner
+    // deactivated) as 404. A listed-but-disabled workflow still exists and is
+    // publicly discoverable, so report it as temporarily unavailable rather
+    // than a misleading "not found" - mirrors the webhook's disabled-vs-gone
+    // split, and leaks nothing since the listing is already public.
+    if (!workflow.enabled) {
+      return NextResponse.json(
+        {
+          error: "Workflow temporarily unavailable",
+          message: "The workflow owner has disabled this workflow.",
+        },
+        { status: 503, headers: corsHeaders }
       );
     }
 

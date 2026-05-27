@@ -21,15 +21,26 @@ import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
  */
 
 /**
- * Drizzle WHERE fragment for the SELECT sites. The caller MUST have joined
- * `users` on `workflows.userId` (an inner join is safe - `workflows.userId` is
- * non-null) so the owner clause can resolve.
+ * Drizzle WHERE fragment for "exists and is not gone": not soft-deleted and
+ * owned by an active user, but WITHOUT the `enabled` clause. Used by the
+ * agent-call lookup, which surfaces a listed-but-disabled workflow as
+ * "temporarily unavailable" rather than 404, so it gates `enabled` in-memory
+ * after the row loads. The caller MUST have joined `users` on `workflows.userId`
+ * (an inner join is safe - `workflows.userId` is non-null) so the owner clause
+ * can resolve.
+ */
+export function workflowReachableConditions(): SQL {
+  return and(workflowNotDeleted(), isNull(users.deactivatedAt)) as SQL;
+}
+
+/**
+ * Drizzle WHERE fragment for the fully-runnable SELECT sites (scheduler select):
+ * reachable AND enabled. Same join requirement as `workflowReachableConditions`.
  */
 export function workflowExecutableConditions(): SQL {
   return and(
     eq(workflows.enabled, true),
-    workflowNotDeleted(),
-    isNull(users.deactivatedAt)
+    workflowReachableConditions()
   ) as SQL;
 }
 

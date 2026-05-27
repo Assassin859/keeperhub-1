@@ -12,6 +12,7 @@ vi.mock("@/lib/db/schema", () => ({
 import {
   getWorkflowExecutability,
   workflowExecutableConditions,
+  workflowReachableConditions,
 } from "@/lib/workflow/executable";
 
 describe("getWorkflowExecutability", () => {
@@ -80,6 +81,18 @@ describe("workflowExecutableConditions", () => {
   it("returns a fresh predicate instance per call (no shared mutable state)", () => {
     expect(workflowExecutableConditions()).not.toBe(
       workflowExecutableConditions()
+    );
+  });
+});
+
+describe("workflowReachableConditions", () => {
+  it("returns a defined SQL predicate", () => {
+    expect(workflowReachableConditions()).toBeDefined();
+  });
+
+  it("returns a fresh predicate instance per call (no shared mutable state)", () => {
+    expect(workflowReachableConditions()).not.toBe(
+      workflowReachableConditions()
     );
   });
 });
