@@ -104,11 +104,10 @@ export async function executeInProcess(params: {
     const duration = Date.now() - startTime;
     console.log(`[Executor:InProcess] Completed in ${duration}ms`);
 
+    // executeWorkflow is the authoritative writer of the terminal execution
+    // status (with reconciliation and richer fields); do not re-write it here.
+    // Only the schedule bookkeeping remains.
     if (result.success) {
-      await updateExecutionStatus(db, executionId, "success", {
-        output: result.outputs,
-      });
-
       if (scheduleId) {
         await updateScheduleStatus(db, scheduleId, "success");
       }
@@ -119,11 +118,6 @@ export async function executeInProcess(params: {
         result.error ||
         Object.values(result.results || {}).find((r) => !r.success)?.error ||
         "Unknown error";
-
-      await updateExecutionStatus(db, executionId, "error", {
-        error: errorMessage,
-        output: result.outputs,
-      });
 
       if (scheduleId) {
         await updateScheduleStatus(db, scheduleId, "error", errorMessage);

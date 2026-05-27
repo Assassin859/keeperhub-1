@@ -1,5 +1,5 @@
 import { CronExpressionParser } from "cron-parser";
-import { eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import {
   workflowExecutions,
@@ -35,10 +35,21 @@ export async function updateExecutionStatus(
     updateData.error = result.error;
   }
 
+  // Never overwrite a row that already reached a terminal good state. The
+  // workflow engine (logWorkflowCompleteDb) is the authoritative writer of the
+  // final status - including its error->success reconciliation - and runs
+  // before the runner/in-process caller returns. This guard (matching that
+  // path's KEEP-431 guard) keeps these writes from clobbering it.
   await db
     .update(workflowExecutions)
     .set(updateData)
-    .where(eq(workflowExecutions.id, executionId));
+    .where(
+      and(
+        eq(workflowExecutions.id, executionId),
+        ne(workflowExecutions.status, "success"),
+        ne(workflowExecutions.status, "cancelled")
+      )
+    );
 }
 
 export async function initializeExecutionProgress(
