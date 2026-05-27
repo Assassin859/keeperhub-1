@@ -137,3 +137,72 @@ describe("execute route - per-integration authorization", () => {
     );
   });
 });
+
+describe("execute route - lifecycle executability gate", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAuthenticateInternalService.mockReturnValue({ authenticated: false });
+    mockFindWorkflow.mockResolvedValue(workflow);
+    mockGetWorkflowAccess.mockResolvedValue({
+      isCreatorWithCurrentAccess: false,
+      isSameOrg: true,
+      hasFullAccess: true,
+      isDeleted: false,
+    });
+    mockOwnerLimit.mockResolvedValue([{ deactivatedAt: null }]);
+    mockGetDualAuthContext.mockResolvedValue({
+      userId: "owner_a",
+      organizationId: "org_1",
+      authMethod: "session",
+      apiKeyId: null,
+    });
+    mockValidateWorkflowIntegrations.mockResolvedValue({ valid: true });
+  });
+
+  it("blocks a disabled workflow on the internal (automated) path with 404", async () => {
+    mockAuthenticateInternalService.mockReturnValue({
+      authenticated: true,
+      service: "scheduler",
+    });
+    mockFindWorkflow.mockResolvedValue({ ...workflow, enabled: false });
+
+    const response = await callExecute();
+
+    expect(response.status).toBe(404);
+    // Gate rejected before any integration check ran.
+    expect(mockValidateWorkflowIntegrations).not.toHaveBeenCalled();
+  });
+
+  it("allows a disabled workflow on the interactive path (editor test run)", async () => {
+    mockFindWorkflow.mockResolvedValue({ ...workflow, enabled: false });
+    // Force a 403 downstream so we can prove the disabled gate did NOT short
+    // -circuit: reaching the integration check means the workflow passed.
+    mockValidateWorkflowIntegrations.mockResolvedValue({
+      valid: false,
+      invalidIds: ["int_priv"],
+    });
+
+    const response = await callExecute();
+
+    expect(mockValidateWorkflowIntegrations).toHaveBeenCalled();
+    expect(response.status).toBe(403);
+  });
+
+  it("blocks a soft-deleted workflow on the interactive path with 404", async () => {
+    mockFindWorkflow.mockResolvedValue({ ...workflow, deletedAt: new Date() });
+
+    const response = await callExecute();
+
+    expect(response.status).toBe(404);
+    expect(mockValidateWorkflowIntegrations).not.toHaveBeenCalled();
+  });
+
+  it("blocks a deactivated-owner workflow on the interactive path with 404", async () => {
+    mockOwnerLimit.mockResolvedValue([{ deactivatedAt: new Date() }]);
+
+    const response = await callExecute();
+
+    expect(response.status).toBe(404);
+    expect(mockValidateWorkflowIntegrations).not.toHaveBeenCalled();
+  });
+});

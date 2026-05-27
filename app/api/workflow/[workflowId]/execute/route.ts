@@ -136,8 +136,7 @@ export async function POST(
         authMethod: "internal",
       });
 
-      // KEEP-440: a soft-deleted workflow can never be executed.
-      if (!access.hasFullAccess || access.isDeleted) {
+      if (!access.hasFullAccess) {
         return NextResponse.json(
           { error: "Workflow not found" },
           { status: 404 }
@@ -169,8 +168,7 @@ export async function POST(
         authMethod: authContext.authMethod,
       });
 
-      // KEEP-440: a soft-deleted workflow can never be executed.
-      if (!access.hasFullAccess || access.isDeleted) {
+      if (!access.hasFullAccess) {
         return NextResponse.json(
           { error: "Workflow not found" },
           { status: 404 }
@@ -180,10 +178,12 @@ export async function POST(
       userId = authContext.userId ?? workflow.userId;
     }
 
-    // Gate on workflow lifecycle (enabled, not soft-deleted, owner active)
-    // using the shared executability predicate so this route cannot
-    // drift from the scheduler/executor. All non-executable reasons collapse to
-    // 404 here, matching the route's existing not-found behavior.
+    // Gate on workflow lifecycle using the shared executability predicate so
+    // this route cannot drift from the scheduler/executor. A soft-deleted or
+    // deactivated-owner workflow is never runnable. The `enabled` flag gates
+    // automated dispatch only: interactive callers (the editor "Run" button)
+    // must still be able to test a not-yet-enabled workflow, so a disabled
+    // workflow is allowed through the dual-auth branch.
     const [owner] = await db
       .select({ deactivatedAt: users.deactivatedAt })
       .from(users)
@@ -194,7 +194,10 @@ export async function POST(
       deletedAt: workflow.deletedAt,
       ownerDeactivatedAt: owner?.deactivatedAt ?? null,
     });
-    if (!executability.executable) {
+    const blockedByExecutability =
+      !executability.executable &&
+      (isInternalExecution || executability.reason !== "disabled");
+    if (blockedByExecutability) {
       return NextResponse.json({ error: "Workflow not found" }, { status: 404 });
     }
 
