@@ -219,9 +219,14 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     `[Executor] Processing ${triggerType} trigger for workflow ${workflowId}`
   );
 
-  const workflow = await db.query.workflows.findFirst({
-    where: eq(workflows.id, workflowId),
-  });
+  // Load the workflow and its owner's deactivation state in one round-trip.
+  const [row] = await db
+    .select()
+    .from(workflows)
+    .leftJoin(users, eq(users.id, workflows.userId))
+    .where(eq(workflows.id, workflowId))
+    .limit(1);
+  const workflow = row?.workflows;
 
   if (!workflow) {
     console.error(`[Executor] Workflow not found: ${workflowId}`);
@@ -232,15 +237,10 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
   // deactivated must never execute, even if a stale schedule or queued
   // message still references it. The block_executions DB trigger is the
   // INSERT-time backstop; this skips the work before it gets that far.
-  const [owner] = await db
-    .select({ deactivatedAt: users.deactivatedAt })
-    .from(users)
-    .where(eq(users.id, workflow.userId))
-    .limit(1);
   const executability = getWorkflowExecutability({
     enabled: workflow.enabled,
     deletedAt: workflow.deletedAt,
-    ownerDeactivatedAt: owner?.deactivatedAt ?? null,
+    ownerDeactivatedAt: row?.users?.deactivatedAt ?? null,
   });
   if (!executability.executable) {
     console.log(
