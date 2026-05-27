@@ -532,7 +532,7 @@ export const auth = betterAuth({
           // can never reach the inbox of a pre-existing account
           // when an attacker POSTs /sign-up/email with that email.
           // OAuth users come pre-verified (provider attested), so
-          // skip them — the `!user.emailVerified` guard separates
+          // skip them. The `!user.emailVerified` guard separates
           // the two paths cleanly.
           if (!user.emailVerified && user.email) {
             try {
@@ -543,6 +543,7 @@ export const auth = betterAuth({
             } catch (error) {
               console.error(
                 "[Auth] Failed to dispatch signup verification OTP",
+                { email: user.email, userId: user.id },
                 error
               );
             }
