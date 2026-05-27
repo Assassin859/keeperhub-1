@@ -260,10 +260,16 @@ async function main(): Promise<void> {
     console.log(`[Runner] Workflow completed in ${duration}ms`);
     console.log(`[Runner] Success: ${result.success}`);
 
-    // executeWorkflow is the authoritative writer of the terminal execution
-    // status (with reconciliation and richer fields); do not re-write it here.
-    // Only the schedule bookkeeping remains.
+    // executeWorkflow is the authoritative writer of the terminal status (with
+    // reconciliation and richer fields). These updateExecutionStatus calls are
+    // a guarded backstop: the WHERE clause in updateExecutionStatus makes them
+    // a no-op once the engine's own write landed, and only closes the row if
+    // that write was lost - so a finished run is never left stuck "running".
     if (result.success) {
+      await updateExecutionStatus(db, executionId, "success", {
+        output: result.outputs,
+      });
+
       if (scheduleId) {
         await updateScheduleStatus(db, scheduleId, "success");
       }
@@ -275,6 +281,11 @@ async function main(): Promise<void> {
         result.error ||
         Object.values(result.results || {}).find((r) => !r.success)?.error ||
         "Unknown error";
+
+      await updateExecutionStatus(db, executionId, "error", {
+        error: errorMessage,
+        output: result.outputs,
+      });
 
       if (scheduleId) {
         await updateScheduleStatus(db, scheduleId, "error", errorMessage);

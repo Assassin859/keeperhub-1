@@ -35,11 +35,16 @@ export async function updateExecutionStatus(
     updateData.error = result.error;
   }
 
-  // Never overwrite a row that already reached a terminal good state. The
-  // workflow engine (logWorkflowCompleteDb) is the authoritative writer of the
-  // final status - including its error->success reconciliation - and runs
-  // before the runner/in-process caller returns. This guard (matching that
-  // path's KEEP-431 guard) keeps these writes from clobbering it.
+  // Only transition a row that has not already reached a terminal state. The
+  // workflow engine (logWorkflowCompleteDb, via triggerStep _workflowComplete)
+  // is the authoritative writer of the final status - including its
+  // error->success reconciliation - and runs from inside executeWorkflow. The
+  // runner/in-process callers re-issue success/error through here as a
+  // backstop: if the engine's own write landed, the row is already
+  // success/error/cancelled and this update is a no-op; if that write was lost
+  // (it can throw and only be logged), this closes the row instead of leaving
+  // it stuck "running". Excluding all three terminal states keeps the backstop
+  // from clobbering the engine's richer fields (KEEP-431).
   await db
     .update(workflowExecutions)
     .set(updateData)
@@ -47,6 +52,7 @@ export async function updateExecutionStatus(
       and(
         eq(workflowExecutions.id, executionId),
         ne(workflowExecutions.status, "success"),
+        ne(workflowExecutions.status, "error"),
         ne(workflowExecutions.status, "cancelled")
       )
     );
