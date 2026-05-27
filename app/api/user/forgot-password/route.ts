@@ -1,4 +1,5 @@
-import { randomInt } from "node:crypto";
+import { randomInt, timingSafeEqual } from "node:crypto";
+import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
 import { and, eq, gt } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
@@ -21,6 +22,35 @@ const OTP_EXPIRY_MINUTES = 5;
 
 function generateOTP(): string {
   return randomInt(100_000, 999_999).toString();
+}
+
+function constantTimeEquals(a: string, b: string): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
+
+async function encryptOtp(otp: string, secret: string): Promise<string> {
+  const ciphertext = await symmetricEncrypt({ key: secret, data: otp });
+  return `${ciphertext}:0`;
+}
+
+async function matchEncryptedOtp(
+  storedValue: string,
+  providedOtp: string,
+  secret: string
+): Promise<boolean> {
+  const ciphertext = storedValue.split(":")[0];
+  if (!ciphertext) {
+    return false;
+  }
+  try {
+    const decrypted = await symmetricDecrypt({ key: secret, data: ciphertext });
+    return constantTimeEquals(decrypted, providedOtp);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -109,8 +139,7 @@ async function handleRequest(email: string): Promise<NextResponse> {
   if (!user) {
     return NextResponse.json({
       success: true,
-      message:
-        "If an account exists with this email, a reset code has been sent.",
+      message: "Check your inbox for the reset code.",
     });
   }
 
@@ -143,46 +172,59 @@ async function handleRequest(email: string): Promise<NextResponse> {
 
     return NextResponse.json({
       success: true,
-      message:
-        "If an account exists with this email, a reset code has been sent.",
+      message: "Check your inbox for the reset code.",
     });
   }
 
-  // Generate OTP
+  const secret = process.env.BETTER_AUTH_SECRET;
+  if (!secret) {
+    logSystemError(
+      ErrorCategory.CONFIGURATION,
+      "[Forgot Password] BETTER_AUTH_SECRET is not configured",
+      new Error("BETTER_AUTH_SECRET missing"),
+      { endpoint: "/api/user/forgot-password" }
+    );
+    return NextResponse.json(
+      { error: "Server misconfigured" },
+      { status: 500 }
+    );
+  }
+
   const otp = generateOTP();
+  const storedValue = await encryptOtp(otp, secret);
   const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
 
-  // Delete any existing verification for this email
+  // Wipe any prior in-flight OTP for this identifier; the rate limit
+  // upstream already prevents spam. The bare-email identifier is only
+  // used by this route, so this doesn't collide with better-auth's
+  // prefixed identifiers (sign-in-otp-..., etc.).
   await db.delete(verifications).where(eq(verifications.identifier, email));
 
-  // Store verification
   await db.insert(verifications).values({
     id: generateId(),
     identifier: email,
-    value: otp,
+    value: storedValue,
     expiresAt,
     createdAt: new Date(),
     updatedAt: new Date(),
   });
 
-  // Send OTP email
-  const emailSent = await sendVerificationOTP({
+  // Send OTP email. We intentionally do NOT propagate a send failure
+  // to the response: the row is already in `verifications`, the
+  // per-email/per-IP rate limit upstream has already debited, and a
+  // 500 here would also leak the "this email exists" bit that the
+  // earlier user-not-found / OAuth-only branches go out of their way
+  // to hide. sendVerificationOTP already logs failures via
+  // logUserError so observability is not lost.
+  await sendVerificationOTP({
     email,
     otp,
     type: "forget-password",
   });
 
-  if (!emailSent) {
-    return NextResponse.json(
-      { error: "Failed to send verification email" },
-      { status: 500 }
-    );
-  }
-
   return NextResponse.json({
     success: true,
-    message:
-      "If an account exists with this email, a reset code has been sent.",
+    message: "Check your inbox for the reset code.",
   });
 }
 
@@ -206,16 +248,32 @@ async function handleReset(
     );
   }
 
-  // Find and verify OTP
+  const secret = process.env.BETTER_AUTH_SECRET;
+  if (!secret) {
+    logSystemError(
+      ErrorCategory.CONFIGURATION,
+      "[Forgot Password] BETTER_AUTH_SECRET is not configured",
+      new Error("BETTER_AUTH_SECRET missing"),
+      { endpoint: "/api/user/forgot-password" }
+    );
+    return NextResponse.json(
+      { error: "Server misconfigured" },
+      { status: 500 }
+    );
+  }
+
   const verification = await db.query.verifications.findFirst({
     where: and(
       eq(verifications.identifier, email),
-      eq(verifications.value, otp),
       gt(verifications.expiresAt, new Date())
     ),
   });
 
-  if (!verification) {
+  if (
+    !(
+      verification && (await matchEncryptedOtp(verification.value, otp, secret))
+    )
+  ) {
     return NextResponse.json(
       { error: "Invalid or expired verification code" },
       { status: 400 }
