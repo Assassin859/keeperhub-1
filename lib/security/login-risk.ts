@@ -321,7 +321,7 @@ export type RequestIpGate =
 type CachedTrust = { result: RequestIpGate; expiresAt: number };
 const TRUST_CACHE = new Map<string, CachedTrust>();
 const TRUST_CACHE_LIMIT = 10_000;
-const TRUSTED_TTL_MS = 60_000;
+const TRUSTED_TTL_MS = 300_000;
 const UNTRUSTED_TTL_MS = 30_000;
 
 function trustCacheKey(userId: string, ip: string): string {
