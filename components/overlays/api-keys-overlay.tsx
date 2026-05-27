@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { handleGuardError } from "@/lib/client/handle-guard-error";
+import { useActiveMember } from "@/lib/hooks/use-organization";
 import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
 import { ConfirmOverlay } from "./confirm-overlay";
 import { Overlay } from "./overlay";
@@ -257,6 +258,8 @@ function ApiKeysList({
   onDismissNewKey,
   showCreator = false,
   deleteEndpoint,
+  canDelete = true,
+  readOnlyReason,
 }: {
   apiKeys: ApiKey[];
   newlyCreatedKey: string | null;
@@ -269,6 +272,8 @@ function ApiKeysList({
   onDismissNewKey: () => void;
   showCreator?: boolean;
   deleteEndpoint: (id: string) => string;
+  canDelete?: boolean;
+  readOnlyReason?: string;
 }) {
   const { push } = useOverlay();
 
@@ -355,9 +360,10 @@ function ApiKeysList({
                 </p>
               </div>
               <Button
-                disabled={deleting === apiKey.id}
+                disabled={!canDelete || deleting === apiKey.id}
                 onClick={() => openDeleteConfirm(apiKey.id)}
                 size="sm"
+                title={canDelete ? undefined : readOnlyReason}
                 variant="ghost"
               >
                 {deleting === apiKey.id ? (
@@ -487,6 +493,7 @@ function useApiKeys(
  */
 export function ApiKeysOverlay({ overlayId }: ApiKeysOverlayProps) {
   const { push, closeAll } = useOverlay();
+  const { isAdmin } = useActiveMember();
   const [activeTab, setActiveTab] = useState("organisation");
 
   // Webhook (User) keys
@@ -504,6 +511,12 @@ export function ApiKeysOverlay({ overlayId }: ApiKeysOverlayProps) {
   const currentKeys = activeTab === "webhook" ? webhookKeys : orgKeys;
   const createEndpoint =
     activeTab === "webhook" ? "/api/api-keys" : "/api/keys";
+  // Org keys are admin/owner-only at the API layer. Mirror that on the
+  // UI so members see the list (useful context) but can't mint or
+  // revoke. Personal webhook keys stay fully writable for every user.
+  const canManageOrgKeys = isAdmin;
+  const orgReadOnlyReason =
+    "Only organization admins or owners can manage these keys.";
 
   return (
     <Overlay
@@ -511,6 +524,7 @@ export function ApiKeysOverlay({ overlayId }: ApiKeysOverlayProps) {
         {
           label: "New API Key",
           variant: "outline",
+          disabled: activeTab === "organisation" && !canManageOrgKeys,
           onClick: () =>
             push(CreateApiKeyOverlay, {
               onCreated: currentKeys.handleKeyCreated,
@@ -539,6 +553,11 @@ export function ApiKeysOverlay({ overlayId }: ApiKeysOverlayProps) {
             integrations. These keys provide access to all workflows in the
             organisation.
           </p>
+          {!canManageOrgKeys && (
+            <p className="mb-3 rounded-md border border-border bg-muted/40 p-2 text-muted-foreground text-xs">
+              {orgReadOnlyReason}
+            </p>
+          )}
           {orgKeys.loading ? (
             <div className="flex items-center justify-center py-8">
               <Spinner />
@@ -546,11 +565,13 @@ export function ApiKeysOverlay({ overlayId }: ApiKeysOverlayProps) {
           ) : (
             <ApiKeysList
               apiKeys={orgKeys.apiKeys}
+              canDelete={canManageOrgKeys}
               deleteEndpoint={orgKeys.deleteEndpoint}
               deleting={orgKeys.deleting}
               newlyCreatedKey={orgKeys.newlyCreatedKey}
               onDelete={orgKeys.handleDelete}
               onDismissNewKey={orgKeys.dismissNewKey}
+              readOnlyReason={orgReadOnlyReason}
               showCreator
             />
           )}
