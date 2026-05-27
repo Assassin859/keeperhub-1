@@ -29,10 +29,12 @@ import postgres from "postgres";
 import { validateWorkflowIntegrations } from "../lib/db/integrations";
 import {
   organization,
+  users,
   workflowExecutions,
   workflowSchedules,
   workflows,
 } from "../lib/db/schema";
+import { getWorkflowExecutability } from "../lib/workflow/executable";
 import { buildExecutorInput } from "../lib/workflow/executor/build-executor-input";
 import { executeWorkflow } from "../lib/workflow/executor/executor.workflow";
 import { calculateTotalSteps } from "../lib/workflow/executor/progress";
@@ -183,19 +185,22 @@ async function main(): Promise<void> {
       throw new Error(`Workflow not found: ${workflowId}`);
     }
 
-    // KEEP-440: a soft-deleted workflow must never execute, even if a stale
-    // schedule or queued message still references it.
-    if (workflow.deletedAt) {
+    // Defensive re-check: the dispatcher already gated lifecycle state, but the
+    // workflow could have been disabled, soft-deleted, or its owner deactivated
+    // between dispatch and pod startup. Cancel rather than run.
+    const [owner] = await db
+      .select({ deactivatedAt: users.deactivatedAt })
+      .from(users)
+      .where(eq(users.id, workflow.userId))
+      .limit(1);
+    const executability = getWorkflowExecutability({
+      enabled: workflow.enabled,
+      deletedAt: workflow.deletedAt,
+      ownerDeactivatedAt: owner?.deactivatedAt ?? null,
+    });
+    if (!executability.executable) {
       console.log(
-        `[Runner] Workflow deleted, skipping execution: ${workflowId}`
-      );
-      await updateExecutionStatus(db, executionId, "cancelled");
-      return;
-    }
-
-    if (workflow.enabled === false) {
-      console.log(
-        `[Runner] Workflow disabled, skipping execution: ${workflowId}`
+        `[Runner] Workflow not executable (${executability.reason}), skipping execution: ${workflowId}`
       );
       await updateExecutionStatus(db, executionId, "cancelled");
       return;
