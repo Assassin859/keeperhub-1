@@ -1,5 +1,10 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import {
+  countMonthlyExecutions,
+  decideExecutionLimit,
+  effectiveExecutionLimit,
+} from "../lib/billing/execution-limit-core";
 import {
   getPlanLimits,
   PLANS,
@@ -8,14 +13,9 @@ import {
   parseTierKey,
 } from "../lib/billing/plans";
 import {
-  directExecutions,
   executionDebt,
   organizationSubscriptions,
-  workflowExecutions,
-  workflows,
 } from "../lib/db/schema";
-
-const MINIMUM_EXECUTION_FLOOR = 100;
 
 export type BillingGuardResult =
   | {
@@ -89,67 +89,45 @@ export async function checkExecutionLimitForExecutor(
       )
     );
   const debtExecutions = debtRows.reduce((sum, r) => sum + (r.debt ?? 0), 0);
-  const effectiveLimit = Math.max(
-    MINIMUM_EXECUTION_FLOOR,
-    limits.maxExecutionsPerMonth - debtExecutions
+  const effectiveLimit = effectiveExecutionLimit(
+    limits.maxExecutionsPerMonth,
+    debtExecutions
   );
 
-  if (debtExecutions > 0 && planDef.overage.enabled) {
-    return {
-      allowed: false,
-      reason: "active_debt",
-      plan,
-      used: 0,
-      limit: limits.maxExecutionsPerMonth,
-      debtExecutions,
-      effectiveLimit,
-    };
-  }
+  const used = await countMonthlyExecutions(db, organizationId);
 
-  const now = new Date();
-  const startOfMonth = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)
-  );
-
-  const [workflowCountRow] = await db
-    .select({ count: sql<number>`COUNT(*)::int` })
-    .from(workflowExecutions)
-    .innerJoin(workflows, eq(workflows.id, workflowExecutions.workflowId))
-    .where(
-      and(
-        eq(workflows.organizationId, organizationId),
-        sql`${workflowExecutions.startedAt} >= ${startOfMonth.toISOString()}`,
-        eq(workflowExecutions.billable, true)
-      )
-    );
-
-  const [directCountRow] = await db
-    .select({ count: sql<number>`COUNT(*)::int` })
-    .from(directExecutions)
-    .where(
-      and(
-        eq(directExecutions.organizationId, organizationId),
-        sql`${directExecutions.createdAt} >= ${startOfMonth.toISOString()}`
-      )
-    );
-
-  const used = (workflowCountRow?.count ?? 0) + (directCountRow?.count ?? 0);
-
-  if (used < limits.maxExecutionsPerMonth) {
-    return { allowed: true, reason: "within_limit" };
-  }
-
-  if (planDef.overage.enabled && sub?.status === "active") {
-    return { allowed: true, reason: "overage_billed" };
-  }
-
-  return {
-    allowed: false,
-    reason: "free_limit_exceeded",
-    plan,
+  const outcome = decideExecutionLimit({
+    maxExecutionsPerMonth: limits.maxExecutionsPerMonth,
     used,
-    limit: limits.maxExecutionsPerMonth,
     debtExecutions,
-    effectiveLimit,
-  };
+    overageEnabled: planDef.overage.enabled,
+    subscriptionActive: sub?.status === "active",
+  });
+
+  switch (outcome) {
+    case "within_limit":
+      return { allowed: true, reason: "within_limit" };
+    case "overage":
+      return { allowed: true, reason: "overage_billed" };
+    case "blocked_debt":
+      return {
+        allowed: false,
+        reason: "active_debt",
+        plan,
+        used,
+        limit: limits.maxExecutionsPerMonth,
+        debtExecutions,
+        effectiveLimit,
+      };
+    default:
+      return {
+        allowed: false,
+        reason: "free_limit_exceeded",
+        plan,
+        used,
+        limit: limits.maxExecutionsPerMonth,
+        debtExecutions,
+        effectiveLimit,
+      };
+  }
 }
