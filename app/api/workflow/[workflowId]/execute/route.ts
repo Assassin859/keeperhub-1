@@ -190,7 +190,7 @@ export async function POST(
           id: executionId,
           workflowId,
           userId,
-          status: "running",
+          status: "pending",
           input,
         });
         console.log("[API] Created execution with provided ID:", executionId);
@@ -203,7 +203,7 @@ export async function POST(
         .values({
           workflowId,
           userId,
-          status: "running",
+          status: "pending",
           input,
         })
         .returning();

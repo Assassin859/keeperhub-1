@@ -306,7 +306,7 @@ export async function POST(
       .values({
         workflowId,
         userId: workflow.userId,
-        status: "running",
+        status: "pending",
         input: body,
       })
       .returning();

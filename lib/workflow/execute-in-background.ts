@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { start } from "workflow/api";
 import { db } from "@/lib/db";
 import { workflowExecutions } from "@/lib/db/schema";
@@ -39,6 +39,20 @@ export async function executeWorkflowInBackground(
 ): Promise<void> {
   try {
     console.log(`${context.logPrefix} Starting execution:`, executionId);
+
+    // Flip the pre-created row from "pending" to "running" so every execution
+    // path shares the same pending -> running -> terminal lifecycle. Guarded on
+    // the current status so a fast run that already wrote a terminal status is
+    // never clobbered back to running.
+    await db
+      .update(workflowExecutions)
+      .set({ status: "running" })
+      .where(
+        and(
+          eq(workflowExecutions.id, executionId),
+          eq(workflowExecutions.status, "pending")
+        )
+      );
 
     const run = await start(executeWorkflow, [
       {
