@@ -132,4 +132,43 @@ describe.skipIf(shouldSkip)("sessions deactivated-owner block trigger", () => {
       .where(eq(sessions.userId, deactivatedUserId));
     expect(rows).toHaveLength(0);
   });
+
+  it("allows a session insert again after the owner is reactivated", async () => {
+    // Self-contained: proves the trigger reads the live deactivated_at, not a
+    // one-time state. Uses its own user with explicit cleanup so it does not
+    // depend on the order of the cases above.
+    const userId = `test-reactivated-${generateId()}`;
+    const now = new Date();
+    await db.insert(users).values({
+      id: userId,
+      email: `${userId}@techops.services`,
+      emailVerified: false,
+      createdAt: now,
+      updatedAt: now,
+      deactivatedAt: now,
+    });
+    await db
+      .update(users)
+      .set({ deactivatedAt: null })
+      .where(eq(users.id, userId));
+
+    const sessionId = `sess-${generateId()}`;
+    await db.insert(sessions).values({
+      id: sessionId,
+      token: `token-${generateId()}`,
+      expiresAt: new Date(Date.now() + ONE_DAY_MS),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      userId,
+    });
+
+    const [row] = await db
+      .select({ id: sessions.id })
+      .from(sessions)
+      .where(eq(sessions.id, sessionId));
+    expect(row?.id).toBe(sessionId);
+
+    await db.delete(sessions).where(eq(sessions.userId, userId));
+    await db.delete(users).where(eq(users.id, userId));
+  });
 });
