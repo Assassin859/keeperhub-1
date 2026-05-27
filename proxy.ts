@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { recordIpTrust } from "@/lib/security/login-risk";
 import {
   hasSessionCookie,
   isTrustedOrigin,
@@ -191,22 +192,26 @@ function mfaRedirect(
   return NextResponse.redirect(url);
 }
 
-async function mfaBlock(request: NextRequest): Promise<NextResponse | null> {
+type MfaResult =
+  | { kind: "block"; response: NextResponse }
+  | { kind: "pass"; userId: string | null };
+
+async function mfaBlock(request: NextRequest): Promise<MfaResult> {
   const { pathname } = request.nextUrl;
 
   if (isMfaExemptPath(pathname)) {
-    return null;
+    return { kind: "pass", userId: null };
   }
   // No session cookie at all → no session → nothing to gate on. Route
   // handlers + public pages serve themselves; API-key callers skip the
   // gate naturally because they don't carry the session cookie.
   if (!hasSessionCookie(request.headers)) {
-    return null;
+    return { kind: "pass", userId: null };
   }
 
   const session = await auth.api.getSession({ headers: request.headers });
   if (!session?.user) {
-    return null;
+    return { kind: "pass", userId: null };
   }
 
   // Anonymous sessions have no permanent identity to protect, so gating
@@ -217,7 +222,7 @@ async function mfaBlock(request: NextRequest): Promise<NextResponse | null> {
   // /api/user), and using them here would let a real user bypass the gate
   // by renaming themselves "Anonymous".
   if ((session.user as { isAnonymous?: boolean | null }).isAnonymous === true) {
-    return null;
+    return { kind: "pass", userId: null };
   }
 
   const apiPath = pathname.startsWith("/api/");
@@ -226,27 +231,39 @@ async function mfaBlock(request: NextRequest): Promise<NextResponse | null> {
 
   if (user.twoFactorEnabled !== true) {
     if (apiPath) {
-      return mfaApiError(
-        403,
-        "mfa_enrollment_required",
-        "Enable two-factor authentication on your account before continuing."
-      );
+      return {
+        kind: "block",
+        response: mfaApiError(
+          403,
+          "mfa_enrollment_required",
+          "Enable two-factor authentication on your account before continuing."
+        ),
+      };
     }
-    return mfaRedirect(request, "/enroll-mfa", "enroll");
+    return {
+      kind: "block",
+      response: mfaRedirect(request, "/enroll-mfa", "enroll"),
+    };
   }
 
   if (sess.requiresMfa === true) {
     if (apiPath) {
-      return mfaApiError(
-        403,
-        "mfa_pending",
-        "Verify your second factor to continue."
-      );
+      return {
+        kind: "block",
+        response: mfaApiError(
+          403,
+          "mfa_pending",
+          "Verify your second factor to continue."
+        ),
+      };
     }
-    return mfaRedirect(request, "/verify-mfa", "verify");
+    return {
+      kind: "block",
+      response: mfaRedirect(request, "/verify-mfa", "verify"),
+    };
   }
 
-  return null;
+  return { kind: "pass", userId: session.user.id };
 }
 
 // ---------------------------------------------------------------------------
@@ -258,9 +275,21 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
   if (csrfResponse) {
     return csrfResponse;
   }
-  const mfaResponse = await mfaBlock(request);
-  if (mfaResponse) {
-    return mfaResponse;
+  const mfaResult = await mfaBlock(request);
+  if (mfaResult.kind === "block") {
+    return mfaResult.response;
+  }
+  // Authenticated request that passed every gate: append the current IP
+  // to the user's trust list. The recorder is idempotent and deduped
+  // per-pod so this runs at most once per (user, ip) pod lifetime, and
+  // doesn't block the request on failure.
+  if (mfaResult.userId) {
+    try {
+      await recordIpTrust(mfaResult.userId);
+    } catch {
+      // Already swallowed inside recordIpTrust; this catch is belt-and-
+      // suspenders so a future regression there cannot 500 the proxy.
+    }
   }
   return NextResponse.next();
 }

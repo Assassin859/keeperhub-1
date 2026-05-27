@@ -291,6 +291,74 @@ async function resolveLoginIp(): Promise<string | null> {
   }
 }
 
+/**
+ * Module-level dedup of (userId, ip) tuples we've already upserted this pod
+ * lifetime. The trust upsert is called on every authenticated request, so the
+ * cache avoids hammering the DB with one write per page navigation. Pods
+ * restart often enough that perfect eviction is unnecessary; the simple
+ * size-bound halving below is plenty for production traffic shape (small
+ * number of IPs per user, low cardinality overall).
+ */
+const TRUST_RECORDED: Set<string> = new Set();
+const TRUST_RECORDED_LIMIT = 10_000;
+
+/**
+ * Append the current request's IP to user_trusted_ips for the given user,
+ * keyed by the same /64-normalised form assessIpTrust uses. Called from
+ * the request proxy on every authenticated request so the trust list
+ * tracks every network the user has actively used, not just the ones
+ * they used at sign-in time. The unique (user_id, ip) constraint makes
+ * the upsert idempotent.
+ *
+ * Fail-closed semantics: if the write fails, the IP stays missing from
+ * the trust list and a future sign-in from it will require /verify-ip,
+ * which is the safe direction.
+ */
+export async function recordIpTrust(userId: string): Promise<void> {
+  const rawIp = await resolveLoginIp();
+  if (!rawIp) {
+    return;
+  }
+  const ip = normalizeIpForTrust(rawIp);
+  const cacheKey = `${userId}:${ip}`;
+  if (TRUST_RECORDED.has(cacheKey)) {
+    return;
+  }
+  // CF-attested country only; the external IP-to-location lookup in
+  // resolveLoginLocation has a 2-second timeout that we don't want on the
+  // hot request path. The /verify-ip and login-risk paths still enrich
+  // region/city via the slower lookup.
+  let country: string | null = null;
+  try {
+    const header = await headers();
+    country = header.get("cf-ipcountry") ?? null;
+  } catch {
+    country = null;
+  }
+  try {
+    await db
+      .insert(userTrustedIps)
+      .values({ userId, ip, country })
+      .onConflictDoUpdate({
+        target: [userTrustedIps.userId, userTrustedIps.ip],
+        set: { lastSeenAt: new Date() },
+      });
+    if (TRUST_RECORDED.size >= TRUST_RECORDED_LIMIT) {
+      const retained = Array.from(TRUST_RECORDED).slice(
+        -Math.floor(TRUST_RECORDED_LIMIT / 2)
+      );
+      TRUST_RECORDED.clear();
+      for (const key of retained) {
+        TRUST_RECORDED.add(key);
+      }
+    }
+    TRUST_RECORDED.add(cacheKey);
+  } catch {
+    // Swallow: failure leaves the IP missing from trust list, which
+    // makes the next sign-in from it require /verify-ip. Safe direction.
+  }
+}
+
 export async function assessIpTrust(userId: string): Promise<IpTrust> {
   const rawIp = await resolveLoginIp();
   const { country } = await resolveLoginLocation();
