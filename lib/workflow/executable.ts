@@ -5,9 +5,9 @@ import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 /**
  * The single source of truth for "is this workflow live enough to run". A
  * workflow is executable only when it is enabled, not soft-deleted, and
- * its owner is not deactivated. Every execution entry point (scheduler select,
- * executor dispatch, HTTP execute, webhook, agent-call lookup) must gate on
- * this so the four sites cannot drift apart again.
+ * its owner is not deactivated. All five execution entry points (scheduler
+ * select, executor dispatch, HTTP execute, webhook, agent-call lookup) must
+ * gate on this so they cannot drift apart again.
  *
  * Two shapes are exported because the entry points come in two flavours:
  * - SELECT sites compose `workflowExecutableConditions()` into their WHERE.
