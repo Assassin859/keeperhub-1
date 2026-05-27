@@ -42,7 +42,7 @@ export async function countMonthlyExecutions<
   const result = await db.execute<{ count: number }>(
     sql`SELECT
           (
-            SELECT COUNT(*)
+            SELECT COUNT(*)::int
               FROM workflow_executions we
               JOIN workflows w ON we.workflow_id = w.id
              WHERE w.organization_id = ${organizationId}
@@ -51,7 +51,7 @@ export async function countMonthlyExecutions<
           )
           +
           (
-            SELECT COUNT(*)
+            SELECT COUNT(*)::int
               FROM direct_executions de
              WHERE de.organization_id = ${organizationId}
                AND de.created_at >= ${since.toISOString()}
