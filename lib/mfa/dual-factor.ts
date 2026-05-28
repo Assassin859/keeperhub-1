@@ -1,16 +1,16 @@
 import { randomInt, timingSafeEqual } from "node:crypto";
 import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
 import { and, eq, gt } from "drizzle-orm";
-import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { verifications } from "@/lib/db/schema";
+import { twoFactor as twoFactorTable, verifications } from "@/lib/db/schema";
 import { sendVerificationOTP } from "@/lib/email";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { generateId } from "@/lib/utils/id";
 import {
   checkDualFactorRateLimit,
   resetDualFactor,
 } from "@/lib/mfa/dual-factor-rate-limit";
+import { verifyUserTotp } from "@/lib/security/totp-verify";
+import { generateId } from "@/lib/utils/id";
 
 /**
  * Constant-time compare for 6-digit OTP values. Both sides are
@@ -29,7 +29,9 @@ function constantTimeEquals(a: string, b: string): boolean {
  * succeed in the same request before the action runs:
  *
  *  1. TOTP (`code` field): proves possession of the user's authenticator
- *     secret. Verified via Better Auth's verifyTOTP endpoint.
+ *     secret. Verified session-lessly against the user's two_factor row
+ *     via verifyUserTotp (see comment at the verify call for why we can
+ *     not call auth.api.verifyTOTP from this gate).
  *  2. Email OTP (`emailOtp` field): proves control of the user's
  *     inbox. Stored encrypted in verifications, identified by
  *     `mfa:<action>:<userId>`, 5-minute TTL.
@@ -86,7 +88,7 @@ function identifierFor(userId: string, action: string): string {
 export async function requireDualFactor(
   args: DualFactorArgs
 ): Promise<DualFactorResult> {
-  const { userId, email, action, code, emailOtp, headers } = args;
+  const { userId, email, action, code, emailOtp } = args;
   const serverSecret = process.env.BETTER_AUTH_SECRET;
   if (!serverSecret) {
     logSystemError(
@@ -174,13 +176,27 @@ export async function requireDualFactor(
     };
   }
 
-  // TOTP first since it is cheaper than the DB read for the email OTP.
-  try {
-    await auth.api.verifyTOTP({
-      body: { code: totpCode },
-      headers,
-    });
-  } catch {
+  // Session-less TOTP verify against the user's two_factor row. We can't
+  // call auth.api.verifyTOTP from this gate: the OAuth-MFA finalize path
+  // runs after interceptOauthCallback has destroyed the session, leaving
+  // only the pending_oauth_mfa cookie — verifyTOTP requires either an
+  // active session or the TWO_FACTOR_COOKIE_NAME cookie, neither of
+  // which exists here. Same approach as the strict-signin route.
+  const [tfRow] = await db
+    .select({ secret: twoFactorTable.secret })
+    .from(twoFactorTable)
+    .where(eq(twoFactorTable.userId, userId))
+    .limit(1);
+  if (!tfRow) {
+    return {
+      ok: false,
+      status: 401,
+      error: "Invalid authenticator code",
+      code: "mfa_code_invalid",
+    };
+  }
+  const totpOk = await verifyUserTotp(tfRow.secret, totpCode, serverSecret);
+  if (!totpOk) {
     return {
       ok: false,
       status: 401,
