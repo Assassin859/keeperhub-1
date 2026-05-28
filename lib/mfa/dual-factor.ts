@@ -29,7 +29,9 @@ function constantTimeEquals(a: string, b: string): boolean {
  * succeed in the same request before the action runs:
  *
  *  1. TOTP (`code` field): proves possession of the user's authenticator
- *     secret. Verified via Better Auth's verifyTOTP endpoint.
+ *     secret. Verified session-lessly against the user's two_factor row
+ *     via verifyUserTotp (see comment at the verify call for why we can
+ *     not call auth.api.verifyTOTP from this gate).
  *  2. Email OTP (`emailOtp` field): proves control of the user's
  *     inbox. Stored encrypted in verifications, identified by
  *     `mfa:<action>:<userId>`, 5-minute TTL.

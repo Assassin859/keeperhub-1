@@ -45,9 +45,13 @@ vi.mock("@/lib/utils/id", () => ({
   generateId: (): string => "test-id",
 }));
 
+const { mockResetDualFactor } = vi.hoisted(() => ({
+  mockResetDualFactor: vi.fn(),
+}));
+
 vi.mock("@/lib/mfa/dual-factor-rate-limit", () => ({
   checkDualFactorRateLimit: (): { allowed: true } => ({ allowed: true }),
-  resetDualFactor: vi.fn(),
+  resetDualFactor: mockResetDualFactor,
 }));
 
 import { requireDualFactor } from "@/lib/mfa/dual-factor";
@@ -135,6 +139,10 @@ describe("requireDualFactor", () => {
     });
 
     expect(result).toEqual({ ok: true });
+    expect(mockResetDualFactor).toHaveBeenCalledWith(
+      "user_1",
+      "oauth_mfa_finalize"
+    );
   });
 
   it("returns mfa_code_invalid when the TOTP code is wrong", async () => {
@@ -172,7 +180,7 @@ describe("requireDualFactor", () => {
       userId: "user_3",
       email: "user@example.com",
       action: "oauth_mfa_finalize",
-      code: totpForNow(TOTP_SECRET),
+      code: "000000",
       emailOtp: "123456",
       headers: new Headers(),
     });
