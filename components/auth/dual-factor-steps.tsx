@@ -264,6 +264,14 @@ export function DualFactorSteps({
                   dual.setEmailOtp(next);
                 }
               }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  if (!busy && emailReady) {
+                    setPhase("authenticator");
+                  }
+                }
+              }}
               onPaste={(event) => {
                 event.preventDefault();
                 const pasted = event.clipboardData.getData("text");
