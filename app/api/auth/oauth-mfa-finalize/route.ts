@@ -13,6 +13,7 @@ import {
   decodePendingOauthMfaCookie,
   readPendingOauthMfaCookie,
 } from "@/lib/oauth-mfa-cookie";
+import { sanitizeNextPath } from "@/lib/sanitize-next-path";
 
 /**
  * Finishes the deferred OAuth sign-in.
@@ -37,8 +38,7 @@ const DEFAULT_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function buildSessionSetCookie(token: string, ttlMs: number): string {
   const maxAge = Math.floor(ttlMs / 1000);
-  const secureSegment =
-    process.env.NODE_ENV === "production" ? " Secure;" : "";
+  const secureSegment = process.env.NODE_ENV === "production" ? " Secure;" : "";
   const cookieName =
     process.env.NODE_ENV === "production"
       ? "__Secure-better-auth.session_token"
@@ -155,7 +155,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const response = NextResponse.json({
     ok: true,
-    redirect: decoded.payload.redirect || "/",
+    redirect: sanitizeNextPath(decoded.payload.redirect),
   });
   response.headers.append(
     "Set-Cookie",
