@@ -103,7 +103,6 @@ vi.mock("@/lib/db/schema", () => ({
     status: "status",
   },
   safeWallets: {},
-  paraWallets: {},
 }));
 
 vi.mock("drizzle-orm", () => ({
@@ -181,14 +180,13 @@ vi.mock("@/lib/rpc/rpc-config", async () => {
 // Wallet helpers: bypass Turnkey, return an ethers.Wallet bound to our
 // fork as the org's "Turnkey EOA". The orchestrator treats it as opaque
 // (it just calls signer.sendTransaction etc.) so this works.
-vi.mock("@/lib/para/wallet-helpers", () => ({
+vi.mock("@/lib/web3/wallet-helpers", () => ({
   initializeWalletSigner: () => Promise.resolve(getFork().wallet),
   getOrganizationWallet: () =>
     Promise.resolve({
       id: "test-wallet-row",
       organizationId: TEST_ORG_ID,
       walletAddress: getFork().ownerAddress,
-      provider: "turnkey",
       turnkeySubOrgId: "test-suborg",
       isActive: true,
     }),

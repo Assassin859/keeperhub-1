@@ -14,7 +14,7 @@ import { requireOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
 import {
   getOrganizationWalletAddress,
   initializeWalletSigner,
-} from "@/lib/para/wallet-helpers";
+} from "@/lib/web3/wallet-helpers";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import {
   executeContractCallAsSafe,
@@ -291,7 +291,7 @@ export async function POST(request: Request) {
         const nonceManager = getNonceManager();
         const gasStrategy = getGasStrategy();
 
-        // Initialize Para signer
+        // Initialize wallet signer
         console.log(
           `[Withdraw] Initializing signer for org ${organizationId} on chain ${chain.name}`
         );

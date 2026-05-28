@@ -2,7 +2,7 @@
 
 ## Overview
 
-**Organization wallets are used during workflow execution**, enabling teams to collaborate on Web3 workflows without sharing private keys. Each organization has one Para wallet that all members can use for signing transactions.
+**Organization wallets are used during workflow execution**, enabling teams to collaborate on Web3 workflows without sharing private keys. Each organization has one wallet that all members can use for signing transactions.
 
 **Key Principles:**
 - Wallets are **organization-scoped**, not user-scoped
@@ -17,29 +17,29 @@ This enables true team collaboration: any member can run workflows, but wallet m
 ## Current State (As of 2026-01-12)
 
 ### ✅ Implemented
-- `keeperhub/lib/para/wallet-helpers.ts` - Helpers use `organizationId`
+- `lib/web3/wallet-helpers.ts` - Helpers use `organizationId`
 - `keeperhub/api/user/wallet/route.ts` - API scoped by organization
 - `keeperhub/components/overlays/wallet-overlay.tsx` - UI checks admin permissions
-- Database schema includes `para_wallets.organization_id` column
+- Database schema includes `organization_wallets.organization_id` column
 
 ### ⚠️ Needs Update
 - **Web3 plugin steps** still query by `userId` instead of `organizationId`
   - `keeperhub/plugins/web3/steps/transfer-funds.ts`
   - `keeperhub/plugins/web3/steps/write-contract.ts`
-  - Any other steps that call `initializeParaSigner()`
+  - Any other steps that call `initializeWalletSigner()`
 
 **Problem**: Steps currently do:
 ```typescript
 // ❌ OLD: Gets userId, but wallets are now org-scoped
 userId = await getUserIdFromExecution(_context.executionId);
-signer = await initializeParaSigner(userId, rpcUrl);
+signer = await initializeWalletSigner(userId, rpcUrl);
 ```
 
 **Solution**: Steps should do:
 ```typescript
 // ✅ NEW: Get organizationId instead
 organizationId = await getOrganizationIdFromExecution(_context.executionId);
-signer = await initializeParaSigner(organizationId, rpcUrl);
+signer = await initializeWalletSigner(organizationId, rpcUrl);
 ```
 
 ---
@@ -52,17 +52,17 @@ WorkflowExecution (has executionId)
     ↓
 Workflow (has organizationId)
     ↓
-Organization (has one ParaWallet)
+Organization (has one Wallet)
     ↓
-ParaWallet (used for signing)
+Wallet (used for signing)
 ```
 
 ### Lookup Pattern
 1. **Step receives**: `_context.executionId` (automatically passed by workflow engine)
 2. **Step queries**: `workflow_executions` table to get `workflowId`
 3. **Step queries**: `workflows` table to get `organizationId`
-4. **Step queries**: `para_wallets` table to get wallet for org
-5. **Step initializes**: Para signer with org's wallet
+4. **Step queries**: `organization_wallets` table to get wallet for org
+5. **Step initializes**: Turnkey signer with org's wallet
 6. **Step executes**: Transaction using org wallet
 
 ---
@@ -89,7 +89,7 @@ ParaWallet (used for signing)
 }
 ```
 
-### para_wallets
+### organization_wallets
 ```typescript
 {
   id: string,
@@ -119,7 +119,7 @@ Create `getOrganizationIdFromExecution()` in a shared location (e.g., `lib/workf
 
 ### Step 2: Update Plugin Steps
 
-For each web3 step that uses `initializeParaSigner()`:
+For each web3 step that uses `initializeWalletSigner()`:
 
 1. Replace `getUserIdFromExecution()` with `getOrganizationIdFromExecution()`
 2. Update variable names (userId → organizationId)
@@ -128,7 +128,7 @@ For each web3 step that uses `initializeParaSigner()`:
 
 ### Step 3: Update Wallet Helpers (If Needed)
 
-The `initializeParaSigner()` function already supports organizationId since it calls `getOrganizationWallet()`. No changes needed to helper functions.
+The `initializeWalletSigner()` function already supports organizationId since it calls `getOrganizationWallet()`. No changes needed to helper functions.
 
 ### Step 4: Handle Edge Cases
 
@@ -148,7 +148,7 @@ The `initializeParaSigner()` function already supports organizationId since it c
 
 ## Migration Checklist for Plugin Steps
 
-For each step file that uses Para wallet:
+For each step file that uses wallet:
 
 - [ ] Import/create `getOrganizationIdFromExecution()` helper
 - [ ] Replace `getUserIdFromExecution()` call with `getOrganizationIdFromExecution()`
@@ -170,7 +170,7 @@ For each step file that uses Para wallet:
 
 ### 1. Happy Path - Org with Wallet
 - Create organization
-- Create Para wallet (as admin)
+- Create wallet (as admin)
 - Create workflow with web3 step (transfer/write-contract)
 - Execute workflow
 - **Expect**: Transaction succeeds using org wallet
@@ -207,7 +207,7 @@ SELECT
   pw.organization_id AS wallet_org_id
 FROM workflow_executions we
 JOIN workflows w ON we.workflow_id = w.id
-LEFT JOIN para_wallets pw ON w.organization_id = pw.organization_id
+LEFT JOIN organization_wallets pw ON w.organization_id = pw.organization_id
 WHERE we.id = '<execution_id>';
 
 -- Verify wallet_org_id matches organization_id
@@ -238,7 +238,7 @@ Please contact support or check your wallet configuration."
 
 ### Bad Error Messages (Avoid)
 
-❌ "No Para wallet found for user"
+❌ "No wallet found for user"
 ❌ "User ID is required"
 ❌ "getUserWallet() failed"
 
@@ -253,9 +253,9 @@ Current: One wallet per organization
 Future: Organization could have multiple wallets (e.g., treasury wallet, operations wallet)
 
 **Required Changes:**
-- Update schema: Remove unique constraint on `para_wallets.organization_id`
+- Update schema: Remove unique constraint on `organization_wallets.organization_id`
 - Add wallet selection UI in workflow step configuration
-- Update `initializeParaSigner()` to accept optional `walletId`
+- Update `initializeWalletSigner()` to accept optional `walletId`
 
 ### 2. Wallet Permissions per Member
 Current: All members can use org wallet

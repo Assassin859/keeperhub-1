@@ -5,7 +5,7 @@ vi.mock("server-only", () => ({}));
 const mockOrganizationHasWallet = vi.fn();
 const mockGetOrganizationWallet = vi.fn();
 
-vi.mock("@/lib/para/wallet-helpers", () => ({
+vi.mock("@/lib/web3/wallet-helpers", () => ({
   organizationHasWallet: (...args: unknown[]) =>
     mockOrganizationHasWallet(...args),
   getOrganizationWallet: (...args: unknown[]) =>

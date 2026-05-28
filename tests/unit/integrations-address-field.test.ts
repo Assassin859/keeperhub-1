@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-vi.mock("@/lib/para/wallet-helpers", () => ({
+vi.mock("@/lib/web3/wallet-helpers", () => ({
   organizationHasWallet: vi.fn(),
   getOrganizationWallet: vi.fn(),
 }));

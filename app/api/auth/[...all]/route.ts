@@ -1,5 +1,5 @@
-import { eq } from "drizzle-orm";
 import { toNextJsHandler } from "better-auth/next-js";
+import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { hashSessionToken } from "@/lib/auth-session-token-hash";
@@ -14,6 +14,7 @@ import {
   buildPendingSignupSetCookie,
   encodePendingSignupCookie,
 } from "@/lib/pending-signup-cookie";
+import { sanitizeNextPath } from "@/lib/sanitize-next-path";
 
 const handlers = toNextJsHandler(auth);
 
@@ -62,10 +63,10 @@ function extractSessionToken(setCookies: string[]): string | null {
  * prefixed variant is left behind.
  */
 function buildSessionClearCookies(): string[] {
-  const secureSegment =
-    process.env.NODE_ENV === "production" ? " Secure;" : "";
+  const secureSegment = process.env.NODE_ENV === "production" ? " Secure;" : "";
   return SESSION_COOKIE_NAMES.map(
-    (name) => `${name}=; Path=/; HttpOnly;${secureSegment} SameSite=Lax; Max-Age=0`
+    (name) =>
+      `${name}=; Path=/; HttpOnly;${secureSegment} SameSite=Lax; Max-Age=0`
   );
 }
 
@@ -122,7 +123,8 @@ async function interceptOauthCallback(
   const headersWithGetSetCookie = res.headers as Headers & {
     getSetCookie?: () => string[];
   };
-  const hasGetSetCookie = typeof headersWithGetSetCookie.getSetCookie === "function";
+  const hasGetSetCookie =
+    typeof headersWithGetSetCookie.getSetCookie === "function";
   const setCookies = hasGetSetCookie
     ? (headersWithGetSetCookie.getSetCookie as () => string[])()
     : [];
@@ -168,7 +170,7 @@ async function interceptOauthCallback(
     .from(users)
     .where(eq(users.id, row.userId))
     .limit(1);
-  if (!user || !user.email) {
+  if (!(user && user.email)) {
     // Without an email we have no inbox to deliver an OTP to, so we
     // cannot defer the session for either flow. Fall through to
     // Better Auth's default response; the proxy MFA gate will still
@@ -202,7 +204,7 @@ async function interceptOauthCallback(
   // construction: subsequent getSession lookups will miss the row.
   await db.delete(sessions).where(eq(sessions.id, row.id));
 
-  const originalRedirect = res.headers.get("location") ?? "/";
+  const originalRedirect = sanitizeNextPath(res.headers.get("location"));
   const clearSessionCookies = buildSessionClearCookies();
 
   // Two paths depending on whether the user already has TOTP:

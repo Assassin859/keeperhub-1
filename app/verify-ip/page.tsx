@@ -4,6 +4,7 @@ import {
   decodePendingIpCookie,
   readPendingIpCookie,
 } from "@/lib/pending-ip-cookie";
+import { sanitizeNextPath } from "@/lib/sanitize-next-path";
 import { formatIpForDisplay } from "@/lib/security/ip-normalize";
 import { VerifyIpForm } from "./verify-ip-form";
 
@@ -41,7 +42,7 @@ export default async function VerifyIpPage(): Promise<React.ReactElement> {
         country={decoded.payload.country}
         email={decoded.payload.email}
         ip={formatIpForDisplay(decoded.payload.ip)}
-        next={decoded.payload.redirect || "/"}
+        next={sanitizeNextPath(decoded.payload.redirect)}
       />
     </main>
   );

@@ -47,7 +47,7 @@ vi.mock("drizzle-orm", () => ({
 const getOrganizationWalletAddressMock = vi.fn();
 const getOrganizationWalletMock = vi.fn();
 
-vi.mock("@/lib/para/wallet-helpers", () => ({
+vi.mock("@/lib/web3/wallet-helpers", () => ({
   getOrganizationWallet: getOrganizationWalletMock,
   getOrganizationWalletAddress: getOrganizationWalletAddressMock,
 }));

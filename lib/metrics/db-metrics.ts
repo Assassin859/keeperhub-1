@@ -26,7 +26,7 @@ import {
   member,
   organization,
   organizationSubscriptions,
-  paraWallets,
+  organizationWallets,
   sessions,
   users,
   workflowExecutionLogs,
@@ -738,16 +738,7 @@ export type InfraStats = {
   apiKeysTotal: number;
   chainsTotal: number;
   chainsEnabled: number;
-  /**
-   * @deprecated Counts all active org wallets regardless of provider.
-   * Kept for backward compatibility with the `keeperhub_para_wallet_total`
-   * gauge. Use `walletsByProvider` instead.
-   */
-  paraWalletsTotal: number;
-  walletsByProvider: {
-    para: number;
-    turnkey: number;
-  };
+  walletsTotal: number;
   sessionsActive: number;
 };
 
@@ -765,7 +756,6 @@ export async function getInfraStatsFromDb(): Promise<InfraStats> {
       chainsResult,
       chainsEnabledResult,
       walletsResult,
-      walletsByProviderResult,
       sessionsResult,
     ] = await Promise.all([
       db.select({ count: count() }).from(apiKeys),
@@ -776,32 +766,19 @@ export async function getInfraStatsFromDb(): Promise<InfraStats> {
         .where(eq(chains.isEnabled, true)),
       db
         .select({ count: count() })
-        .from(paraWallets)
-        .where(eq(paraWallets.isActive, true)),
-      db
-        .select({ provider: paraWallets.provider, count: count() })
-        .from(paraWallets)
-        .where(eq(paraWallets.isActive, true))
-        .groupBy(paraWallets.provider),
+        .from(organizationWallets)
+        .where(eq(organizationWallets.isActive, true)),
       db
         .select({ count: count() })
         .from(sessions)
         .where(gte(sessions.expiresAt, now)),
     ]);
 
-    const walletsByProvider = { para: 0, turnkey: 0 };
-    for (const row of walletsByProviderResult) {
-      if (row.provider === "para" || row.provider === "turnkey") {
-        walletsByProvider[row.provider] = Number(row.count) || 0;
-      }
-    }
-
     return {
       apiKeysTotal: Number(apiKeysResult[0]?.count) || 0,
       chainsTotal: Number(chainsResult[0]?.count) || 0,
       chainsEnabled: Number(chainsEnabledResult[0]?.count) || 0,
-      paraWalletsTotal: Number(walletsResult[0]?.count) || 0,
-      walletsByProvider,
+      walletsTotal: Number(walletsResult[0]?.count) || 0,
       sessionsActive: Number(sessionsResult[0]?.count) || 0,
     };
   } catch (error) {
@@ -810,8 +787,7 @@ export async function getInfraStatsFromDb(): Promise<InfraStats> {
       apiKeysTotal: 0,
       chainsTotal: 0,
       chainsEnabled: 0,
-      paraWalletsTotal: 0,
-      walletsByProvider: { para: 0, turnkey: 0 },
+      walletsTotal: 0,
       sessionsActive: 0,
     };
   }

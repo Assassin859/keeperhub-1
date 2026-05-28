@@ -3,9 +3,9 @@ import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import ERC20_ABI from "@/lib/contracts/abis/erc20.json";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
-import { getOrganizationWalletAddress } from "@/lib/para/wallet-helpers";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import { getChainGasDefaults } from "@/lib/web3/gas-defaults";
+import { getOrganizationWalletAddress } from "@/lib/web3/wallet-helpers";
 
 type EstimateConfig = {
   contractAddress?: string;

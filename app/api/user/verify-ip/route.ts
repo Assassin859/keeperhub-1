@@ -24,6 +24,7 @@ import {
   decodePendingIpCookie,
   readPendingIpCookie,
 } from "@/lib/pending-ip-cookie";
+import { sanitizeNextPath } from "@/lib/sanitize-next-path";
 import {
   assessIpTrust,
   buildRiskFlagsJsonForIp,
@@ -359,7 +360,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const response = NextResponse.json({
     ok: true,
-    redirect: decoded.payload.redirect || "/",
+    redirect: sanitizeNextPath(decoded.payload.redirect),
   });
   response.headers.append(
     "Set-Cookie",

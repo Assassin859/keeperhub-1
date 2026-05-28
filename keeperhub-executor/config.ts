@@ -26,9 +26,6 @@ export const CONFIG = {
   healthPort: Number(process.env.HEALTH_PORT) || 3080,
   integrationEncryptionKey: process.env.INTEGRATION_ENCRYPTION_KEY || "",
 
-  paraApiKey: process.env.PARA_API_KEY || "",
-  paraEnvironment: process.env.PARA_ENVIRONMENT || "beta",
-  walletEncryptionKey: process.env.WALLET_ENCRYPTION_KEY || "",
   chainRpcConfig: process.env.CHAIN_RPC_CONFIG || "",
   etherscanApiKey: process.env.ETHERSCAN_API_KEY || "",
 

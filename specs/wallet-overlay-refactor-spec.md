@@ -74,7 +74,7 @@ Block explorer URLs are already seeded in the database via `scripts/seed/seed-ch
 
 ## 3. Instant Withdrawal Feature
 
-**Current**: No withdrawal functionality exists. Users cannot move funds out of their Para wallet.
+**Current**: No withdrawal functionality exists. Users cannot move funds out of their wallet.
 
 **Target**: Allow users to withdraw funds instantly without creating a workflow.
 
@@ -82,19 +82,19 @@ Block explorer URLs are already seeded in the database via `scripts/seed/seed-ch
 
 - Add "Withdraw" button per token balance row (or per network section)
 - Open withdrawal modal with:
-  - Source: Para wallet (read-only)
+  - Source: wallet (read-only)
   - Token selection (if multiple tokens on that chain)
   - Amount input (with "Max" button)
   - Destination address input (validate format)
   - Gas estimate display
   - Confirm button
-- Execute transfer directly using Para signer
+- Execute transfer directly using Turnkey signer
 - Show transaction status (pending, confirmed, failed)
 - Link to block explorer after success
 
 ### Technical Approach
 
-- Use existing Para signer: `keeperhub/lib/para/wallet-helpers.ts` > `initializeParaSigner()`
+- Use existing Turnkey signer: `lib/web3/wallet-helpers.ts` > `initializeWalletSigner()`
 - Create new API route: `keeperhub/api/user/wallet/withdraw/route.ts`
 - Handle both native token transfers and ERC20 transfers
 - Admin-only access (consistent with other wallet management)

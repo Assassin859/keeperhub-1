@@ -7,7 +7,7 @@ import { filterUnauthorizedIntegrationIds } from "@/lib/integrations/authorizati
 import {
   getOrganizationWallet,
   organizationHasWallet,
-} from "@/lib/para/wallet-helpers";
+} from "@/lib/web3/wallet-helpers";
 import {
   findActionById,
   getIntegration as getPluginDefinition,
