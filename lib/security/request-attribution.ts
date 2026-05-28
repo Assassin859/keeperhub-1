@@ -19,10 +19,21 @@ import { resolveTrustedClientIp } from "./trusted-proxies";
 /**
  * `trigger_source` label written to `workflow_executions.trigger_source`.
  *
- * Aligns with `TriggerType` in `lib/metrics/types.ts` for the values that
- * can come from the `x-trigger-type` header (manual, webhook, scheduled,
- * schedule, block, event), and adds `mcp` and `internal` to distinguish
- * auth paths that the metric label set conflates.
+ * Relationship to `TriggerType` (lib/metrics/types.ts): this union is a
+ * strict superset. TriggerType is the Prometheus-label vocabulary for the
+ * `keeperhub_workflow_executions_started_total` metric and contains
+ * (manual | webhook | scheduled | schedule | block | event). TriggerSource
+ * adds `mcp` and `internal` to distinguish auth paths the metric label set
+ * intentionally conflates -- a workflow with a manual trigger node can be
+ * invoked via the MCP marketplace path OR a direct API call, and the
+ * security attribution column wants to tell them apart even though both
+ * report `manual` to Prometheus.
+ *
+ * If a new value is added here that doesn't also belong in TriggerType,
+ * the `triggerType as TriggerSource` cast in
+ * `app/api/workflow/[workflowId]/execute/route.ts` will be unsound. Keep
+ * the cast direction (TriggerType -> TriggerSource) and add new values
+ * to whichever union actually needs them; do not invert.
  */
 export type TriggerSource =
   | "manual"
