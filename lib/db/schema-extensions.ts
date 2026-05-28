@@ -5,7 +5,7 @@
  * These are extensions to the base workflow-builder schema.
  *
  * Tables defined here:
- * - organizationWallets: Stores wallet information for Web3 operations (aliased as paraWallets)
+ * - organizationWallets: Stores wallet information for Web3 operations
  * - organizationApiKeys: Stores organization-scoped API keys for MCP server authentication
  * - organizationTokens: Tracks ERC20 tokens per organization/chain for balance display
  * - supportedTokens: System-wide default tokens (stablecoins) available on each chain
@@ -36,18 +36,14 @@ import { generateId } from "@/lib/utils/id";
 /**
  * Organization Wallets table
  *
- * Stores wallet information for Web3 integration. Supports multiple providers
- * (Para MPC, Turnkey secure enclaves). Each organization can have one wallet
- * (enforced by unique constraint on organizationId).
- *
- * Provider-specific columns are nullable since each row only uses one provider's fields.
- * The `provider` column determines which fields are relevant.
+ * Stores Turnkey wallet information for Web3 integration.
+ * Each organization can have one active wallet (enforced by unique partial index on organizationId).
  *
  * NOTE: userId tracks who created the wallet, but the wallet belongs to the organization.
  * Only organization admins and owners can create/manage wallets.
  */
 export const organizationWallets = pgTable(
-  "para_wallets",
+  "organization_wallets",
   {
     id: text("id")
       .primaryKey()
@@ -58,13 +54,8 @@ export const organizationWallets = pgTable(
     organizationId: text("organization_id").references(() => organization.id, {
       onDelete: "cascade",
     }),
-    provider: text("provider").notNull().$type<"para" | "turnkey">(),
     email: text("email").notNull(),
     walletAddress: text("wallet_address").notNull(),
-    // Para-specific fields
-    paraWalletId: text("para_wallet_id"),
-    userShare: text("user_share"), // Encrypted MPC keyshare (Para only)
-    // Turnkey-specific fields
     turnkeySubOrgId: text("turnkey_sub_org_id"),
     turnkeyWalletId: text("turnkey_wallet_id"),
     turnkeyPrivateKeyId: text("turnkey_private_key_id"),
@@ -72,27 +63,22 @@ export const organizationWallets = pgTable(
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("para_wallets_org_active_unique")
+    uniqueIndex("organization_wallets_org_active_unique")
       .on(table.organizationId)
       .where(sql`${table.isActive} = true`),
   ]
 );
 
-// Backward compatibility alias
-export const paraWallets = organizationWallets;
-
 // Type exports
 export type OrganizationWallet = typeof organizationWallets.$inferSelect;
 export type NewOrganizationWallet = typeof organizationWallets.$inferInsert;
-export type ParaWallet = OrganizationWallet;
-export type NewParaWallet = NewOrganizationWallet;
 
 /**
  * Safe Wallets table
  *
  * One row per (organization, chain). A Safe is a smart-contract wallet
  * deployed on a specific chain and owned by the organization's active EOA
- * (Turnkey or Para row in organizationWallets). The Safe itself holds funds;
+ * (Turnkey row in organizationWallets). The Safe itself holds funds;
  * the EOA signs transactions on its behalf.
  *
  * Addresses are deterministic: same (org, chain) always resolves to the

@@ -49,8 +49,7 @@ The script also seeds a **Para wallet** (EVM) linked to the test organization, r
 | Variable | Purpose |
 |----------|---------|
 | `DATABASE_URL` | PostgreSQL connection |
-| `TEST_PARA_USER_SHARE` | Raw Para user share (base64) |
-| `WALLET_ENCRYPTION_KEY` | Encrypts user share at rest |
+| `TURNKEY_API_PUBLIC_KEY` / `TURNKEY_API_PRIVATE_KEY` / `TURNKEY_ORGANIZATION_ID` | Parent-org credentials used by `createTurnkeyWallet` to provision the test wallet |
 
 If these env vars are missing, the user + org are still created but the wallet step is skipped.
 
@@ -311,8 +310,9 @@ docker build -t act-runner:local -f /tmp/Dockerfile.act /tmp
 
 ```bash
 # /tmp/act-secrets.env
-TEST_WALLET_ENCRYPTION_KEY=<32-byte hex key>
-TEST_PARA_USER_SHARE=<base64 user share>
+TURNKEY_API_PUBLIC_KEY=<parent-org public key>
+TURNKEY_API_PRIVATE_KEY=<parent-org private key>
+TURNKEY_ORGANIZATION_ID=<parent-org id>
 ```
 
 ### Run the e2e-vitest job

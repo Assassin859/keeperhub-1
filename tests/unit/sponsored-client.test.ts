@@ -63,8 +63,8 @@ vi.mock("@/lib/metrics/types", () => ({
   LabelKeys: {},
   MetricNames: {},
 }));
-vi.mock("@/lib/para/viem-account-adapter", () => ({
-  createParaViemAccount: vi.fn().mockResolvedValue({
+vi.mock("@/lib/web3/turnkey-viem-account", () => ({
+  createTurnkeyViemAccount: vi.fn().mockResolvedValue({
     account: { address: "0xabc" },
     walletRecord: { walletAddress: "0xabc" },
   }),

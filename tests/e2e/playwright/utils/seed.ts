@@ -672,8 +672,8 @@ export async function cleanupPersistentTestUsers(): Promise<void> {
       await sql`DELETE FROM workflows WHERE id IN ${sql(workflowIds)}`;
     }
 
-    // 2. Para wallets (DB only, no API cleanup needed for seeded users)
-    await sql`DELETE FROM para_wallets WHERE user_id IN ${sql(userIds)}`;
+    // 2. Organization wallets (DB only)
+    await sql`DELETE FROM organization_wallets WHERE user_id IN ${sql(userIds)}`;
 
     // 3. Integrations, API keys, preferences
     await sql`DELETE FROM integrations WHERE user_id IN ${sql(userIds)}`;

@@ -93,7 +93,7 @@ vi.mock("@/lib/web3/resolve-org-context", () => ({
 // Mock wallet helpers
 const mockGetWalletAddress = vi.fn();
 const mockInitializeSigner = vi.fn();
-vi.mock("@/lib/para/wallet-helpers", () => ({
+vi.mock("@/lib/web3/wallet-helpers", () => ({
   getOrganizationWalletAddress: (...args: unknown[]) =>
     mockGetWalletAddress(...args),
   initializeWalletSigner: (...args: unknown[]) => mockInitializeSigner(...args),

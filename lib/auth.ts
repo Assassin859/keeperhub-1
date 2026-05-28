@@ -54,7 +54,7 @@ import {
 const statement = {
   workflow: ["create", "read", "update", "delete"],
   credential: ["create", "read", "update", "delete"],
-  wallet: ["create", "read", "update", "delete"], // ParaWallet
+  wallet: ["create", "read", "update", "delete"],
   organization: ["read", "update", "delete"],
   member: ["create", "read", "update", "delete"],
   invitation: ["create", "cancel"],
