@@ -594,10 +594,6 @@ export const AuthDialog = ({
       // and we hard-reload to pick them up. Users with TOTP enrolled
       // get signedIn=false and proceed to the email-OTP step.
       if (startBody.signedIn) {
-        // biome-ignore lint/suspicious/noConsole: signin-flow trace; remove before merge
-        console.info(
-          "[signin-flow] strict-signin/start signed in directly (no MFA)"
-        );
         toast.success("Signed in successfully!");
         window.dispatchEvent(new CustomEvent(AUTH_SUCCESS_EVENT));
         if (typeof window !== "undefined") {
@@ -605,10 +601,6 @@ export const AuthDialog = ({
         }
         return;
       }
-      // biome-ignore lint/suspicious/noConsole: signin-flow trace; remove before merge
-      console.info(
-        "[signin-flow] strict-signin/start ok, advancing to signin-email-otp"
-      );
       setOtp("");
       setVerifyEmail(email);
       setView("signin-email-otp");
@@ -662,10 +654,6 @@ export const AuthDialog = ({
    */
   const handleSigninEmailOtp = (e: React.FormEvent): void => {
     e.preventDefault();
-    // biome-ignore lint/suspicious/noConsole: signin-flow trace; remove before merge
-    console.info("[signin-flow] handleSigninEmailOtp invoked", {
-      otpLength: otp.trim().length,
-    });
     if (otp.trim().length !== 6) {
       setError("Enter the 6-digit code from your email");
       return;
@@ -679,10 +667,6 @@ export const AuthDialog = ({
     // fixing) or require holding partial state on the server.
     setError("");
     setTotpCode("");
-    // biome-ignore lint/suspicious/noConsole: signin-flow trace; remove before merge
-    console.info(
-      "[signin-flow] advancing to totp view with email OTP held client-side"
-    );
     setView("totp");
   };
 
@@ -694,20 +678,11 @@ export const AuthDialog = ({
    */
   const handleTotpVerify = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
-    // biome-ignore lint/suspicious/noConsole: signin-flow trace; remove before merge
-    console.info("[signin-flow] handleTotpVerify invoked", {
-      totpLength: totpCode.trim().length,
-      emailOtpLength: otp.trim().length,
-    });
     if (totpCode.trim().length !== 6) {
       setError("Enter the 6-digit code from your authenticator");
       return;
     }
     if (otp.trim().length !== 6) {
-      // biome-ignore lint/suspicious/noConsole: signin-flow trace; remove before merge
-      console.info(
-        "[signin-flow] missing email OTP at TOTP submit; bouncing to signin"
-      );
       setError("Missing email code. Start sign-in again.");
       setView("signin");
       return;
@@ -1495,26 +1470,15 @@ export const AuthDialog = ({
           {view === "reset-password" && (
             <div className="space-y-4">
               <form className="space-y-4" onSubmit={handlePasswordReset}>
-                <div className="space-y-2">
-                  <Label className="ml-1" htmlFor="reset-otp">
-                    Reset Code
-                  </Label>
-                  <Input
-                    autoComplete="one-time-code"
-                    autoFocus
-                    className="text-center font-mono text-2xl tracking-[0.5em]"
-                    id="reset-otp"
-                    inputMode="numeric"
-                    maxLength={6}
-                    onChange={(e) =>
-                      setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))
-                    }
-                    pattern="[0-9]*"
-                    placeholder="000000"
-                    required
-                    value={otp}
-                  />
-                </div>
+                <EmailOtpField
+                  autoFocus
+                  disabled={loading}
+                  id="reset-otp"
+                  label="Reset Code"
+                  labelClassName="ml-1"
+                  onChange={setOtp}
+                  value={otp}
+                />
                 <div className="space-y-2">
                   <Label
                     className="ml-1 font-medium text-keeperhub-green-dark"
