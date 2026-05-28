@@ -33,7 +33,6 @@ vi.mock("@/lib/db/schema", () => ({
     roleType: "roleType",
   },
   safeWallets: {},
-  paraWallets: {},
 }));
 
 vi.mock("drizzle-orm", () => ({

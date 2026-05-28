@@ -67,7 +67,7 @@ import { createAccessControl } from "better-auth/plugins/access";
 const statement = {
   workflow: ["create", "read", "update", "delete"],
   credential: ["create", "read", "update", "delete"],
-  wallet: ["create", "read", "update", "delete"], // ParaWallet
+  wallet: ["create", "read", "update", "delete"], // Wallet
   organization: ["update", "delete"],
   member: ["create", "update", "delete"],
   invitation: ["create", "cancel"],
@@ -1340,7 +1340,7 @@ export default function DashboardPage() {
 
 ---
 
-## Phase 5: ParaWallet Organization Integration
+## Phase 5: Wallet Organization Integration
 
 ### Modify Wallet Credential Form
 
@@ -1352,7 +1352,7 @@ import { useActiveMember } from "@/keeperhub/lib/hooks/use-organization";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 // end keeperhub code //
 
-export function ParaWalletCredentialForm() {
+export function WalletCredentialForm() {
   // start custom keeperhub code //
   const { isAdmin } = useActiveMember();
 
@@ -1779,7 +1779,7 @@ test("complete organization flow", async ({ page, context }) => {
    - Test user registration → org creation
    - Test invite flow
    - Test org switching
-   - Test ParaWallet access control
+   - Test Wallet access control
    - Test workflow scoping
 
 ---
@@ -1819,7 +1819,7 @@ test("complete organization flow", async ({ page, context }) => {
 ### Core Integration
 - [ ] Scope workflows by organization
 - [ ] Scope credentials by organization
-- [ ] Update ParaWallet credential form (admin-only)
+- [ ] Update Wallet credential form (admin-only)
 - [ ] Apply org guards to protected pages
 - [ ] Update anonymous account linking (delete trial data)
 
@@ -1861,7 +1861,7 @@ test("complete organization flow", async ({ page, context }) => {
 - Settings page
 
 ### Sprint 4: Integration
-- ParaWallet integration
+- Wallet integration
 - Anonymous user handling
 - Trial banner
 

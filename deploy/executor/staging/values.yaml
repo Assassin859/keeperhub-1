@@ -104,13 +104,6 @@ env:
   WORKFLOW_RUNNER_COLLECT_MONITORING:
     type: kv
     value: "false"
-  PARA_API_KEY:
-    type: parameterStore
-    name: para-api-key
-    parameter_name: /eks/techops-staging/keeperhub/para-api-key
-  PARA_ENVIRONMENT:
-    type: kv
-    value: "beta"
   TURNKEY_API_PUBLIC_KEY:
     type: parameterStore
     name: turnkey-api-public-key

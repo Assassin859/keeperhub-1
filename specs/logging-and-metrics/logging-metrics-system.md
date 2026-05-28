@@ -103,14 +103,14 @@ try {
 
 ### Infrastructure Error
 ```typescript
-if (!process.env.PARA_API_KEY) {
+if (!process.env.TURNKEY_API_PUBLIC_KEY) {
   logSystemError(
     ErrorCategory.INFRASTRUCTURE,
-    "[Para] PARA_API_KEY not configured",
-    new Error("PARA_API_KEY environment variable is not configured"),
-    { component: "para-service" }
+    "[Turnkey] TURNKEY_API_PUBLIC_KEY not configured",
+    new Error("TURNKEY_API_PUBLIC_KEY environment variable is not configured"),
+    { component: "turnkey-service" }
   );
-  throw new Error("PARA_API_KEY not configured");
+  throw new Error("TURNKEY_API_PUBLIC_KEY not configured");
 }
 ```
 
@@ -137,7 +137,7 @@ All messages should follow the pattern: `"[Context] Description"`
 - `"[Discord] Failed to send message"`
 - `"[Etherscan] API rate limit exceeded"`
 - `"[DB] Connection timeout"`
-- `"[Para] PARA_API_KEY not configured"`
+- `"[Turnkey] TURNKEY_API_PUBLIC_KEY not configured"`
 
 The context (part in brackets) is automatically extracted and added as the `error_context` label.
 
@@ -146,7 +146,7 @@ The context (part in brackets) is automatically extracted and added as the `erro
 ### Common Labels
 - `service` - External service name (e.g., "etherscan", "sendgrid")
 - `endpoint` - API endpoint path (e.g., "/api/workflows")
-- `component` - System component (e.g., "para-service", "events-service")
+- `component` - System component (e.g., "turnkey-service", "events-service")
 - `chain_id` - Blockchain chain ID (as string)
 - `plugin_name` - Plugin identifier (e.g., "web3", "discord")
 - `action_name` - Plugin action (e.g., "send-message", "check-balance")

@@ -87,19 +87,6 @@ env:
   AI_MODEL:
     type: kv
     value: "gpt-4o"
-  # Para Wallet Configuration
-  PARA_API_KEY:
-    type: kv
-    value: "PLACEHOLDER_PARA_API_KEY"
-  PARA_ENVIRONMENT:
-    type: kv
-    value: "beta"
-  NEXT_PUBLIC_PARA_API_KEY:
-    type: kv
-    value: "PLACEHOLDER_PARA_API_KEY"
-  NEXT_PUBLIC_PARA_ENVIRONMENT:
-    type: kv
-    value: "beta"
   # Turnkey Wallet Configuration
   TURNKEY_API_PUBLIC_KEY:
     type: kv
