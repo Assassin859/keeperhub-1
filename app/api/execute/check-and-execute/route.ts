@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { resolveAbi } from "@/lib/abi/cache";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
+import { simulateContractCall } from "@/lib/execute/simulate";
 import { getErrorMessage } from "@/lib/utils";
 import { readContractCore } from "@/plugins/web3/steps/read-contract-core";
 import { writeContractCore } from "@/plugins/web3/steps/write-contract-core";
@@ -71,6 +72,31 @@ async function executeConditionalRead(
   return NextResponse.json(
     { executed: true, conditionResult, result: readResult.result },
     { status: 200 }
+  );
+}
+
+async function simulateConditionalWrite(
+  action: ActionBody,
+  network: string,
+  resolvedWriteAbi: string,
+  organizationId: string,
+  conditionResult: ConditionResult
+): Promise<NextResponse> {
+  const walletError = await requireWallet(organizationId);
+  if (walletError) {
+    return walletError;
+  }
+  const result = await simulateContractCall({
+    organizationId,
+    network,
+    contractAddress: action.contractAddress,
+    abi: resolvedWriteAbi,
+    functionName: action.functionName,
+    functionArgs: action.functionArgs,
+  });
+  return NextResponse.json(
+    { ...result, executed: true, conditionResult },
+    { status: result.wouldRevert ? 400 : 200 }
   );
 }
 
@@ -243,6 +269,22 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   if (isReadOnly) {
     return executeConditionalRead(
+      action,
+      network,
+      writeAbiResult.abi,
+      apiKeyCtx.organizationId,
+      conditionResult
+    );
+  }
+
+  // Dry-run path on the action: still evaluates the condition (which is
+  // read-only), but simulates the write instead of broadcasting.
+  // Triggered by `?simulate=true` or `{"simulate": true}` body field.
+  const url = new URL(request.url);
+  const shouldSimulate =
+    body.simulate === true || url.searchParams.get("simulate") === "true";
+  if (shouldSimulate) {
+    return simulateConditionalWrite(
       action,
       network,
       writeAbiResult.abi,

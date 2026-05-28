@@ -5,6 +5,7 @@ import { resolveAbi } from "@/lib/abi/cache";
 import { type AbiItem, findAbiFunction } from "@/lib/abi/utils";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
+import { simulateContractCall } from "@/lib/execute/simulate";
 import { getErrorMessage } from "@/lib/utils";
 import { readContractCore } from "@/plugins/web3/steps/read-contract-core";
 import { writeContractCore } from "@/plugins/web3/steps/write-contract-core";
@@ -83,6 +84,31 @@ async function handleReadCall(
   }
 
   return NextResponse.json({ error: result.error }, { status: 400 });
+}
+
+async function handleSimulateCall(
+  body: Record<string, unknown>,
+  resolvedAbi: string,
+  organizationId: string
+): Promise<NextResponse> {
+  const walletError = await requireWallet(organizationId);
+  if (walletError) {
+    return walletError;
+  }
+
+  const result = await simulateContractCall({
+    organizationId,
+    network: body.network as string,
+    contractAddress: body.contractAddress as string,
+    abi: resolvedAbi,
+    functionName: body.functionName as string,
+    functionArgs: body.functionArgs as string | undefined,
+    value: body.value as string | undefined,
+  });
+
+  return NextResponse.json(result, {
+    status: result.wouldRevert ? 400 : 200,
+  });
 }
 
 async function handleWriteCall(
@@ -206,6 +232,16 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   if (isReadOnly) {
     return handleReadCall(body, resolvedAbi, apiKeyCtx.organizationId);
+  }
+
+  // Dry-run path: validate inputs, simulate via provider.call + estimateGas,
+  // never broadcast, never reserve a directExecutions row. Triggered by
+  // `?simulate=true` or `{"simulate": true}` body field.
+  const url = new URL(request.url);
+  const shouldSimulate =
+    body.simulate === true || url.searchParams.get("simulate") === "true";
+  if (shouldSimulate) {
+    return handleSimulateCall(body, resolvedAbi, apiKeyCtx.organizationId);
   }
 
   return handleWriteCall(
