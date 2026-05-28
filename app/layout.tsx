@@ -47,6 +47,14 @@ export const metadata: Metadata = {
       "Build powerful blockchain workflow automations with a visual, node-based editor.",
     images: ["/api/og/default"],
   },
+  // Discourage automatic translation of the app shell. External
+  // translators (Chrome's built-in translator, browser extensions) swap
+  // text nodes in-place, which leaves React's fiber tree referencing
+  // the original parents and throws `NotFoundError` on the next
+  // insertBefore/removeChild. See facebook/react#11538.
+  other: {
+    google: "notranslate",
+  },
 };
 
 export const viewport: Viewport = {
@@ -102,6 +110,7 @@ const RootLayout = async ({ children }: RootLayoutProps) => {
       lang="en"
       style={{ "--nav-sidebar-width": navSidebarWidth } as React.CSSProperties}
       suppressHydrationWarning
+      translate="no"
     >
       <body className={cn(sans.variable, mono.variable, "antialiased")}>
         <KeeperHubExtensionLoader />
