@@ -8,6 +8,19 @@
  * has been bypassed (bug or attack), so it's the kind of event that should
  * page an on-call, not get buried as a generic 500.
  *
+ * Detection keys off ERRCODE 42501 alone. The earlier draft also gated on
+ * a message-substring match against the trigger's RAISE text, which made
+ * the capture silently break if the trigger message was ever reworded.
+ * 42501 ("insufficient_privilege") is rare enough on a `workflow_executions`
+ * INSERT path that the false-positive risk is acceptable.
+ *
+ * Scope: this wrapper is for `workflow_executions` insert sites only. The
+ * sessions backstop installed in migration 0090 uses a dedicated custom
+ * SQLSTATE 'KH001' and fires inside better-auth's session create flow,
+ * which we don't directly wrap here -- if/when we add Sentry coverage for
+ * that path it would live in `lib/auth.ts` around the better-auth call,
+ * not in this helper.
+ *
  * The wrapper catches the rejection, emits a structured Sentry event with
  * enough context to triage (which workflow, which user, which entry path),
  * then re-throws so callers preserve their existing error responses. The
@@ -19,28 +32,14 @@ import { captureMessage } from "@sentry/nextjs";
 import type { TriggerSource } from "./request-attribution";
 
 const PG_RAISE_INSUFFICIENT_PRIVILEGE = "42501";
-const BACKSTOP_MESSAGE_FRAGMENTS = [
-  "Workflow owner is deactivated",
-  "workflow is soft-deleted",
-] as const;
 
-type PgError = { code?: unknown; message?: unknown };
+type PgError = { code?: unknown };
 
 function isBackstopRejection(err: unknown): err is PgError {
   if (!err || typeof err !== "object") {
     return false;
   }
-  const code = (err as PgError).code;
-  if (code !== PG_RAISE_INSUFFICIENT_PRIVILEGE) {
-    return false;
-  }
-  const message = (err as PgError).message;
-  if (typeof message !== "string") {
-    return false;
-  }
-  return BACKSTOP_MESSAGE_FRAGMENTS.some((fragment) =>
-    message.includes(fragment)
-  );
+  return (err as PgError).code === PG_RAISE_INSUFFICIENT_PRIVILEGE;
 }
 
 export type BackstopRejectContext = {

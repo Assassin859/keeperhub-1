@@ -62,12 +62,17 @@ describe("withBackstopCapture", () => {
     expect(captureMessageMock).toHaveBeenCalledTimes(1);
   });
 
-  it("does NOT capture for unrelated errors with same ERRCODE", async () => {
+  it("captures any 42501 reject on a wrapped insert (ERRCODE-only gate)", async () => {
+    // Detection no longer gates on message substring -- the earlier
+    // message-fragment match would silently break if the trigger text was
+    // ever reworded. ERRCODE 42501 is rare enough on a workflow_executions
+    // INSERT path that the false-positive risk is acceptable; the wrapper
+    // is intentionally only applied to those insert sites.
     const err = makeBackstopError("Some other 42501 error");
     await expect(
       withBackstopCapture(ctx, () => Promise.reject(err))
     ).rejects.toBe(err);
-    expect(captureMessageMock).not.toHaveBeenCalled();
+    expect(captureMessageMock).toHaveBeenCalledTimes(1);
   });
 
   it("does NOT capture for different ERRCODE", async () => {
