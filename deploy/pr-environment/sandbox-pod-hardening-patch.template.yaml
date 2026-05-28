@@ -23,6 +23,15 @@
 #   envsubst < deploy/pr-environment/sandbox-pod-hardening-patch.template.yaml \
 #     | kubectl -n pr-${PR_NUMBER} patch deployment \
 #       keeperhub-sandbox-pr-${PR_NUMBER}-common --patch-file /dev/stdin
+#
+# CRITICAL: the volumes[].name below must exactly match the chart-rendered
+# volume name. Strategic merge keys on `name`; on a mismatch it APPENDS a
+# new orphan volume rather than overlaying medium: Memory, and the chart's
+# original disk-backed emptyDir wins for the /tmp mount. The deploy-pr-
+# environment.yaml workflow's sandbox subshell runs a kubectl-get
+# jsonpath assertion after the patch to catch this; if a chart upgrade
+# changes the fullname template, this file AND that assertion must move
+# in lockstep.
 spec:
   template:
     spec:
