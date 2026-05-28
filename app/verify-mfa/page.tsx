@@ -5,6 +5,7 @@ import {
   decodePendingOauthMfaCookie,
   readPendingOauthMfaCookie,
 } from "@/lib/oauth-mfa-cookie";
+import { sanitizeNextPath } from "@/lib/sanitize-next-path";
 import { VerifyMfaForm } from "./verify-mfa-form";
 
 /**
@@ -30,7 +31,7 @@ export default async function VerifyMfaPage({
 }): Promise<React.ReactElement> {
   const requestHeaders = await headers();
   const params = await searchParams;
-  const next = typeof params.next === "string" ? params.next : "/";
+  const next = sanitizeNextPath(params.next);
 
   // 1. OAuth-deferred path. Pending cookie present + valid + unexpired.
   const pendingValue = readPendingOauthMfaCookie(requestHeaders);
@@ -41,7 +42,10 @@ export default async function VerifyMfaPage({
       if (decoded.ok) {
         return (
           <main className="flex min-h-screen items-center justify-center bg-background p-6">
-            <VerifyMfaForm mode="oauth" next={decoded.payload.redirect} />
+            <VerifyMfaForm
+              mode="oauth"
+              next={sanitizeNextPath(decoded.payload.redirect)}
+            />
           </main>
         );
       }
