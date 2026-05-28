@@ -39,6 +39,13 @@ body {
   line-height: 1.6;
 }
 
+/* Guard against accidental page-level horizontal scroll. clip (not hidden)
+   avoids creating a scroll container, so position: sticky keeps working. */
+html,
+body {
+  overflow-x: clip;
+}
+
 /* ----------------------------------------------------------------
    Dark mode: Background foundation
    ---------------------------------------------------------------- */
@@ -188,7 +195,6 @@ html.dark .nextra-navbar::after {
   bottom: 0;
   left: 0;
   right: 0;
-  width: 100vw;
   height: 1px;
   background-color: rgb(var(--kh-border));
 }

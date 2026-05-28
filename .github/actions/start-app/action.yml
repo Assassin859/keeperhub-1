@@ -47,10 +47,6 @@ inputs:
     description: 'INTEGRATION_ENCRYPTION_KEY for decrypting integration config (must match the key used by tests when seeding integrations)'
     required: false
     default: ''
-  wallet_encryption_key:
-    description: 'WALLET_ENCRYPTION_KEY for decrypting encrypted wallet shares from the DB (lib/encryption.ts)'
-    required: false
-    default: ''
   turnkey_api_public_key:
     description: 'TURNKEY_API_PUBLIC_KEY for the Turnkey-managed org wallet path (lib/turnkey/turnkey-operations.ts)'
     required: false
@@ -92,7 +88,6 @@ runs:
         TEST_API_KEY: ${{ inputs.test_api_key }}
         CHAIN_RPC_CONFIG: ${{ inputs.chain_rpc_config }}
         INTEGRATION_ENCRYPTION_KEY: ${{ inputs.integration_encryption_key }}
-        WALLET_ENCRYPTION_KEY: ${{ inputs.wallet_encryption_key }}
         TURNKEY_API_PUBLIC_KEY: ${{ inputs.turnkey_api_public_key }}
         TURNKEY_API_PRIVATE_KEY: ${{ inputs.turnkey_api_private_key }}
         TURNKEY_ORGANIZATION_ID: ${{ inputs.turnkey_organization_id }}
@@ -117,13 +112,12 @@ runs:
         # via -e rather than the env-file, which parses literally and breaks on
         # such values. INTEGRATION_ENCRYPTION_KEY must match the test process's
         # key so getIntegrationById's decryptConfig can read seeded rows.
-        # WALLET_ENCRYPTION_KEY + TURNKEY_* are required for the Turnkey-managed
-        # org-wallet path the protocol-coverage suites exercise.
+        # TURNKEY_* are required for the Turnkey-managed org-wallet path the
+        # protocol-coverage suites exercise.
         docker run -d --name keeperhub-app --network host \
           --env-file /tmp/keeperhub-app.env \
           -e "CHAIN_RPC_CONFIG=${CHAIN_RPC_CONFIG}" \
           -e "INTEGRATION_ENCRYPTION_KEY=${INTEGRATION_ENCRYPTION_KEY}" \
-          -e "WALLET_ENCRYPTION_KEY=${WALLET_ENCRYPTION_KEY}" \
           -e "TURNKEY_API_PUBLIC_KEY=${TURNKEY_API_PUBLIC_KEY}" \
           -e "TURNKEY_API_PRIVATE_KEY=${TURNKEY_API_PRIVATE_KEY}" \
           -e "TURNKEY_ORGANIZATION_ID=${TURNKEY_ORGANIZATION_ID}" \
@@ -191,7 +185,6 @@ runs:
         INTEGRATION_ENCRYPTION_KEY: ${{ inputs.integration_encryption_key }}
         WORKFLOW_TARGET_WORLD: "@workflow/world-postgres"
         CHAIN_RPC_CONFIG: ${{ inputs.chain_rpc_config }}
-        WALLET_ENCRYPTION_KEY: ${{ inputs.wallet_encryption_key }}
         TURNKEY_API_PUBLIC_KEY: ${{ inputs.turnkey_api_public_key }}
         TURNKEY_API_PRIVATE_KEY: ${{ inputs.turnkey_api_private_key }}
         TURNKEY_ORGANIZATION_ID: ${{ inputs.turnkey_organization_id }}

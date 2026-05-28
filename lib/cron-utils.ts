@@ -13,7 +13,32 @@ const RANGE_PATTERN = /^(\d+)-(\d+)$/;
  * Lives in cron-utils (not schedule-service) so client components can
  * import it without dragging the server-only DB connection into the
  * browser bundle.
+ *
+ * KEEP-581: throw IntervalTooSmallError for sub-MIN_INTERVAL_SECONDS
+ * values. The scheduler dispatcher polls every 60 seconds, so the
+ * effective firing resolution is 60 seconds regardless of what's stored.
+ * A row with `interval_seconds = 30` fires every poll cycle (every 60s),
+ * not every 30s -- silent under-firing. The UI minimum is 1 minute so UI
+ * traffic never hits this path; only API / DB-direct writes can land
+ * sub-60s values. Throwing (rather than returning null) forces callers
+ * to surface a 400 to the user instead of silently demoting the
+ * schedule to the cron path.
  */
+export const MIN_INTERVAL_SECONDS = 60;
+
+export class IntervalTooSmallError extends Error {
+  readonly raw: number;
+  readonly minimum: number;
+  constructor(raw: number) {
+    super(
+      `scheduleIntervalSeconds must be >= ${MIN_INTERVAL_SECONDS} (got ${raw})`
+    );
+    this.name = "IntervalTooSmallError";
+    this.raw = raw;
+    this.minimum = MIN_INTERVAL_SECONDS;
+  }
+}
+
 export function parseIntervalSeconds(raw: unknown): number | null {
   if (raw === undefined || raw === null || raw === "") {
     return null;
@@ -22,7 +47,11 @@ export function parseIntervalSeconds(raw: unknown): number | null {
   if (!Number.isFinite(n) || n <= 0) {
     return null;
   }
-  return Math.floor(n);
+  const floored = Math.floor(n);
+  if (floored < MIN_INTERVAL_SECONDS) {
+    throw new IntervalTooSmallError(floored);
+  }
+  return floored;
 }
 
 const DAY_NAMES = [

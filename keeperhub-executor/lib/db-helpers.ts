@@ -1,5 +1,5 @@
 import { CronExpressionParser } from "cron-parser";
-import { eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import {
   workflowExecutions,
@@ -35,10 +35,27 @@ export async function updateExecutionStatus(
     updateData.error = result.error;
   }
 
+  // Only transition a row that has not already reached a terminal state. The
+  // workflow engine (logWorkflowCompleteDb, via triggerStep _workflowComplete)
+  // is the authoritative writer of the final status - including its
+  // error->success reconciliation - and runs from inside executeWorkflow. The
+  // runner/in-process callers re-issue success/error through here as a
+  // backstop: if the engine's own write landed, the row is already
+  // success/error/cancelled and this update is a no-op; if that write was lost
+  // (it can throw and only be logged), this closes the row instead of leaving
+  // it stuck "running". Excluding all three terminal states keeps the backstop
+  // from clobbering the engine's richer fields (KEEP-431).
   await db
     .update(workflowExecutions)
     .set(updateData)
-    .where(eq(workflowExecutions.id, executionId));
+    .where(
+      and(
+        eq(workflowExecutions.id, executionId),
+        ne(workflowExecutions.status, "success"),
+        ne(workflowExecutions.status, "error"),
+        ne(workflowExecutions.status, "cancelled")
+      )
+    );
 }
 
 export async function initializeExecutionProgress(

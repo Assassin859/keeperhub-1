@@ -4,14 +4,15 @@ import { AlertTriangle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
+import { DualFactorSteps } from "@/components/auth/dual-factor-steps";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Spinner } from "@/components/ui/spinner";
-import { authClient } from "@/lib/auth-client";
+import { authClient, useSession } from "@/lib/auth-client";
+import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
 
 type ChangePasswordSectionProps = {
   providerId: string | null;
@@ -19,44 +20,63 @@ type ChangePasswordSectionProps = {
 
 export function ChangePasswordSection({
   providerId,
-}: ChangePasswordSectionProps) {
+}: ChangePasswordSectionProps): React.ReactElement {
   const router = useRouter();
   const { closeAll: closeOverlays } = useOverlay();
+  const session = useSession();
+  const sessionUser = session.data?.user as
+    | { twoFactorEnabled?: boolean | null }
+    | undefined;
+  const mfaEnrolled = sessionUser?.twoFactorEnabled === true;
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [phase, setPhase] = useState<"passwords" | "codes">("passwords");
+  const dual = useDualFactorState();
   const [loading, setLoading] = useState(false);
 
   const isOAuthUser = providerId !== null && providerId !== "credential";
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const emptyCodesFetch = (): Promise<Response> =>
+    fetch("/api/user/password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
 
-    if (newPassword !== confirmPassword) {
-      toast.error("New passwords do not match");
-      return;
-    }
+  const passwordsValid =
+    currentPassword.length > 0 &&
+    newPassword.length >= 8 &&
+    newPassword === confirmPassword;
 
-    if (newPassword.length < 8) {
-      toast.error("Password must be at least 8 characters");
-      return;
-    }
-
+  const handleSubmit = async (): Promise<void> => {
     setLoading(true);
     try {
       const response = await fetch("/api/user/password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ currentPassword, newPassword }),
+        body: JSON.stringify({
+          currentPassword,
+          newPassword,
+          code: dual.totpCode.trim(),
+          emailOtp: dual.emailOtp.trim() || undefined,
+        }),
       });
 
-      const data = (await response.json()) as { error?: string };
+      const data = (await response.json()) as {
+        error?: string;
+        code?: string;
+      };
 
       if (!response.ok) {
+        if (
+          dual.handleResponse(data.code, data.error, (msg) => toast.error(msg))
+        ) {
+          return;
+        }
         throw new Error(data.error ?? "Failed to change password");
       }
 
-      // Sign out user after password change for security
       await authClient.signOut();
       toast.success("Password changed successfully. Please sign in again.");
       closeOverlays();
@@ -88,10 +108,57 @@ export function ChangePasswordSection({
     );
   }
 
+  if (phase === "codes") {
+    return (
+      <Card className="border-0 py-0 shadow-none">
+        <CardContent className="p-0">
+          <Alert variant="default">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              Confirm with both factors. You will be signed out after the
+              password change.
+            </AlertDescription>
+          </Alert>
+          <div className="pt-4">
+            <DualFactorSteps
+              busy={loading}
+              dual={dual}
+              onBack={() => setPhase("passwords")}
+              onPrefetchEmail={() => dual.prefetchEmail(emptyCodesFetch)}
+              onResendEmail={() => dual.resendEmail(emptyCodesFetch)}
+              onSubmit={handleSubmit}
+              submitLabel="Change password"
+            />
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <Card className="border-0 py-0 shadow-none">
       <CardContent className="p-0">
-        <form className="space-y-4" onSubmit={handleSubmit}>
+        <form
+          className="space-y-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!mfaEnrolled) {
+              toast.error("Enable two-factor authentication first");
+              return;
+            }
+            if (!passwordsValid) {
+              if (newPassword !== confirmPassword) {
+                toast.error("New passwords do not match");
+              } else if (newPassword.length < 8) {
+                toast.error("Password must be at least 8 characters");
+              } else {
+                toast.error("Enter your current and new password");
+              }
+              return;
+            }
+            setPhase("codes");
+          }}
+        >
           <Alert variant="default">
             <AlertTriangle className="h-4 w-4" />
             <AlertDescription>
@@ -147,13 +214,10 @@ export function ChangePasswordSection({
 
           <Button
             className="w-full"
-            disabled={
-              loading || !currentPassword || !newPassword || !confirmPassword
-            }
+            disabled={loading || !passwordsValid}
             type="submit"
           >
-            {loading ? <Spinner className="mr-2 size-4" /> : null}
-            Change Password
+            Continue
           </Button>
         </form>
       </CardContent>

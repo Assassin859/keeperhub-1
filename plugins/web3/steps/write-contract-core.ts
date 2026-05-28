@@ -29,7 +29,7 @@ import {
   executeContractCallAsRole,
   executeContractCallAsSafe,
 } from "@/lib/safe/execute-as-safe";
-import { resolveSignerMode } from "@/lib/safe/signer-resolver";
+import { resolveSignerForNode } from "@/lib/safe/signer-resolver";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import {
   classifyRevert,
@@ -67,6 +67,9 @@ export type WriteContractCoreInput = {
   // When true and usePrivateMempool is true, failing to reach the private RPC
   // does NOT fall back to the public mempool. Ignored when usePrivateMempool is false.
   strict?: boolean;
+  // Per-node Web3 Connection field. See ParsedWeb3Connection / parseWeb3Connection
+  // in lib/safe/signer-resolver.ts. Missing -> "default" -> org-policy resolver.
+  web3Connection?: string;
   _context?: {
     executionId?: string;
     organizationId?: string;
@@ -105,8 +108,22 @@ export async function writeContractCore(
     priorityFeeGwei,
     usePrivateMempool,
     strict,
+    web3Connection,
     _context,
   } = input;
+
+  if (!abiFunction || abiFunction.trim() === "") {
+    logUserError(
+      ErrorCategory.VALIDATION,
+      "[Write Contract] Missing abiFunction",
+      { abiFunction },
+      { plugin_name: "web3", action_name: "write-contract" }
+    );
+    return {
+      success: false,
+      error: "Missing `abiFunction` in the step config",
+    };
+  }
 
   const { multiplierOverride, gasLimitOverride } =
     resolveGasLimitOverrides(gasLimitMultiplier);
@@ -242,7 +259,19 @@ export async function writeContractCore(
   // Decide whether to route this write through the org's Safe on this chain.
   // In "safe" mode msg.sender at the target contract becomes the Safe address;
   // the Turnkey EOA still signs the outer tx and pays gas.
-  const signerMode = await resolveSignerMode(organizationId, chainId);
+  let signerMode: Awaited<ReturnType<typeof resolveSignerForNode>>;
+  try {
+    signerMode = await resolveSignerForNode({
+      organizationId,
+      chainId,
+      web3Connection,
+    });
+  } catch (error) {
+    return {
+      success: false,
+      error: `Failed to resolve Web3 Connection: ${getErrorMessage(error)}`,
+    };
+  }
 
   // Get workflow ID for transaction tracking (only for workflow executions)
   let workflowId: string | undefined;

@@ -158,7 +158,13 @@ export function useWalletBalances(): UseWalletBalancesReturn {
 
         for (const entry of data.balances) {
           const meta = chainsByid.get(entry.chainId);
-          for (const token of entry.tokens) {
+          // Defensive null-coalescing: some server paths (e.g. when a
+          // chain's RPC errors) return the entry with `tokens` /
+          // `supportedTokens` absent from the payload. `for...of`
+          // throws on undefined, which silently fails the whole
+          // setSupportedTokenBalances call and leaves every chain
+          // stuck on the "Loading tokens..." empty-state fallback.
+          for (const token of entry.tokens ?? []) {
             nextTokens.push({
               tokenId: `${entry.chainId}:${token.address}`,
               chainId: entry.chainId,
@@ -169,7 +175,7 @@ export function useWalletBalances(): UseWalletBalancesReturn {
               loading: false,
             });
           }
-          for (const token of entry.supportedTokens) {
+          for (const token of entry.supportedTokens ?? []) {
             nextSupported.push({
               chainId: entry.chainId,
               tokenAddress: token.tokenAddress,

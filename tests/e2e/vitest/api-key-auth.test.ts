@@ -106,7 +106,7 @@ describe.skipIf(shouldSkip)("API Key Authentication", () => {
       await db.insert(users).values({
         id: otherUserId,
         name: "Other Test User",
-        email: `e2e-other-${Date.now()}@keeperhub.test`,
+        email: `e2e-other-${Date.now()}@techops.services`,
         emailVerified: true,
         createdAt: new Date(),
         updatedAt: new Date(),

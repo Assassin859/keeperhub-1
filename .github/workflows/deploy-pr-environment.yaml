@@ -198,7 +198,19 @@ jobs:
           target: ${{ matrix.image.target }}
           push: true
           provenance: false
-          build-args: ${{ matrix.image.build_args == true && format('NEXT_PUBLIC_AUTH_PROVIDERS={0}\nNEXT_PUBLIC_GITHUB_CLIENT_ID={1}\nNEXT_PUBLIC_GOOGLE_CLIENT_ID={2}\nNEXT_PUBLIC_BILLING_ENABLED={3}\nNEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED={4}', vars.NEXT_PUBLIC_AUTH_PROVIDERS, vars.NEXT_PUBLIC_GITHUB_CLIENT_ID, vars.NEXT_PUBLIC_GOOGLE_CLIENT_ID, vars.NEXT_PUBLIC_BILLING_ENABLED, vars.NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED) || '' }}
+          # One arg per line via a YAML block scalar. A previous version used
+          # format('...\n...') in a single expression, but GitHub Actions does
+          # not interpret \n as a newline, so every NEXT_PUBLIC_* collapsed into
+          # the value of the first build-arg and the rest (incl. the Turnstile
+          # site key) were never set - the signup captcha never rendered. Blank
+          # lines (migrator image, build_args=false) are ignored by buildx.
+          build-args: |
+            ${{ matrix.image.build_args == true && format('NEXT_PUBLIC_AUTH_PROVIDERS={0}', vars.NEXT_PUBLIC_AUTH_PROVIDERS) || '' }}
+            ${{ matrix.image.build_args == true && format('NEXT_PUBLIC_GITHUB_CLIENT_ID={0}', vars.NEXT_PUBLIC_GITHUB_CLIENT_ID) || '' }}
+            ${{ matrix.image.build_args == true && format('NEXT_PUBLIC_GOOGLE_CLIENT_ID={0}', vars.NEXT_PUBLIC_GOOGLE_CLIENT_ID) || '' }}
+            ${{ matrix.image.build_args == true && format('NEXT_PUBLIC_BILLING_ENABLED={0}', vars.NEXT_PUBLIC_BILLING_ENABLED) || '' }}
+            ${{ matrix.image.build_args == true && format('NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED={0}', vars.NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED) || '' }}
+            ${{ matrix.image.build_args == true && 'NEXT_PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA' || '' }}
           tags: |
             ${{ steps.login-ecr.outputs.registry }}/${{ env.AWS_ECR_NAME }}:${{ matrix.image.tag_prefix }}-${{ steps.vars.outputs.sha_short }}
           cache-from: |
@@ -470,9 +482,22 @@ jobs:
           ) > "${LOGDIR}/redis.log" 2>&1 &
           REDIS_PID=$!
 
-          # Wait for all three, print logs for failures
+          # Sandbox prerequisites - ServiceAccount and NetworkPolicy must
+          # exist before the helm install in the satellite step so the
+          # chart's serviceAccount: { create: false, name: ... } finds
+          # the SA and so a restarted Pod cannot have a brief window of
+          # wide-open egress. The Helm release itself runs in the
+          # "Deploy satellite services (parallel)" step below.
+          (
+            envsubst '$PR_NUMBER' < deploy/pr-environment/sandbox-sa.template.yaml | kubectl apply -f -
+            envsubst '$PR_NUMBER' < deploy/pr-environment/sandbox-networkpolicy.template.yaml | kubectl apply -f -
+            echo "Sandbox SA and NetworkPolicy applied."
+          ) > "${LOGDIR}/sandbox-pre.log" 2>&1 &
+          SANDBOX_PRE_PID=$!
+
+          # Wait for all four, print logs for failures
           FAILED=0
-          for COMPONENT in postgres:$PG_PID localstack:$LS_PID redis:$REDIS_PID; do
+          for COMPONENT in postgres:$PG_PID localstack:$LS_PID redis:$REDIS_PID sandbox-pre:$SANDBOX_PRE_PID; do
             NAME="${COMPONENT%%:*}"
             PID="${COMPONENT##*:}"
             if wait "$PID"; then
@@ -517,6 +542,7 @@ jobs:
           envsubst < deploy/pr-environment/block-dispatcher.template.yaml > ${{ github.workspace }}/block-pr-${{ env.PR_NUMBER }}.yaml
           envsubst < deploy/pr-environment/event-tracker.template.yaml > ${{ github.workspace }}/event-pr-${{ env.PR_NUMBER }}.yaml
           envsubst < deploy/pr-environment/executor.template.yaml > ${{ github.workspace }}/executor-pr-${{ env.PR_NUMBER }}.yaml
+          envsubst < deploy/pr-environment/sandbox.template.yaml > ${{ github.workspace }}/sandbox-pr-${{ env.PR_NUMBER }}.yaml
 
       - name: Clean up stale Helm releases
         run: |
@@ -541,7 +567,13 @@ jobs:
       - name: Deploy satellite services (parallel)
         run: |
           set -euo pipefail
-          COMMON_ARGS=(--namespace "${NAMESPACE}" --timeout 5m0s --atomic --version 0.2.1)
+          # 10m (not 5m): satellite env secrets are provisioned asynchronously by
+          # external-secrets (parameterStore -> ExternalSecret -> Secret). The
+          # executor needs 8 such secrets (Optional: false); when ESO is slow to
+          # reconcile, the pod sits in CreateContainerConfigError and the 5m
+          # --atomic window rolled back before the secrets landed - the deploy's
+          # intermittent "context deadline exceeded". Match the app's 10m budget.
+          COMMON_ARGS=(--namespace "${NAMESPACE}" --timeout 10m0s --atomic --version 0.2.1)
           LOGDIR=$(mktemp -d)
 
           (
@@ -576,8 +608,52 @@ jobs:
           ) > "${LOGDIR}/executor.log" 2>&1 &
           PID4=$!
 
+          # Sandbox - the techops-services/common chart does not expose
+          # automountServiceAccountToken on the Pod template or
+          # emptyDir.medium on the tmp volume, so layer those on after
+          # helm upgrade via a strategic-merge patch, wait for the
+          # patched Deployment to roll out, then verify the patch
+          # actually merged. The verification defends against chart
+          # fullname-template drift silently no-op'ing the strategic
+          # merge (volume-name mismatch -> patch appends a new orphan
+          # volume instead of overlaying medium: Memory on the chart's
+          # one, /tmp ends up on node disk with no deploy signal).
+          # Staging's deploy-sandbox.yaml has an exec-based WORK-03
+          # smoke check, but the sandbox image is distroless (no /bin/sh)
+          # so an exec into it always fails - we read the Deployment
+          # spec instead.
+          (
+            helm upgrade --install keeperhub-sandbox-pr-${PR_NUMBER} \
+              techops-services/common \
+              -f ${GITHUB_WORKSPACE}/sandbox-pr-${PR_NUMBER}.yaml \
+              "${COMMON_ARGS[@]}"
+            envsubst '$PR_NUMBER' < deploy/pr-environment/sandbox-pod-hardening-patch.template.yaml \
+              | kubectl -n "${NAMESPACE}" patch deployment "keeperhub-sandbox-pr-${PR_NUMBER}-common" \
+                --patch-file /dev/stdin
+            kubectl -n "${NAMESPACE}" rollout status \
+              deployment/"keeperhub-sandbox-pr-${PR_NUMBER}-common" --timeout=3m
+
+            # Verify pod-hardening patch merged into the Deployment spec.
+            AUTOMOUNT=$(kubectl -n "${NAMESPACE}" get deployment \
+              "keeperhub-sandbox-pr-${PR_NUMBER}-common" \
+              -o jsonpath='{.spec.template.spec.automountServiceAccountToken}')
+            if [ "$AUTOMOUNT" != "false" ]; then
+              echo "::error::Pod-level automountServiceAccountToken expected 'false', got '${AUTOMOUNT:-<empty>}' - pod-hardening patch did not apply."
+              exit 1
+            fi
+            MEDIUM=$(kubectl -n "${NAMESPACE}" get deployment \
+              "keeperhub-sandbox-pr-${PR_NUMBER}-common" \
+              -o jsonpath="{.spec.template.spec.volumes[?(@.name=='keeperhub-sandbox-pr-${PR_NUMBER}-common-tmp-volume')].emptyDir.medium}")
+            if [ "$MEDIUM" != "Memory" ]; then
+              echo "::error::tmp volume medium expected 'Memory', got '${MEDIUM:-<empty>}' - strategic-merge likely appended a new volume instead of merging (chart fullname-template drift?). Check sandbox-pod-hardening-patch.template.yaml volumes[].name against the chart-rendered name."
+              exit 1
+            fi
+            echo "Sandbox hardening verified: automountServiceAccountToken=false, /tmp medium=Memory"
+          ) > "${LOGDIR}/sandbox.log" 2>&1 &
+          PID5=$!
+
           FAILED=0
-          for COMPONENT in schedule:$PID1 block:$PID2 event:$PID3 executor:$PID4; do
+          for COMPONENT in schedule:$PID1 block:$PID2 event:$PID3 executor:$PID4 sandbox:$PID5; do
             NAME="${COMPONENT%%:*}"
             PID="${COMPONENT##*:}"
             if wait "$PID"; then

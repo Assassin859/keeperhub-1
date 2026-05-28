@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { IntervalTooSmallError } from "@/lib/cron-utils";
 import {
   computeNextIntervalRunTime,
   computeNextRunTime,
@@ -363,6 +364,52 @@ describe("schedule-service", () => {
         ]);
 
         expect(result?.mode).toBe("cron");
+      });
+
+      // KEEP-581: anything below the dispatcher's 60s poll resolution
+      // would silently fire every 60s instead of every N -- the same
+      // class of "UI says X, schedule does Y" bug KEEP-575 fixes. The
+      // parser throws IntervalTooSmallError for sub-60s values; callers
+      // must catch it and surface a 400 rather than letting the
+      // workflow save through with a sub-60s value stored.
+      it("throws IntervalTooSmallError when scheduleIntervalSeconds is below 60 (under poll resolution)", () => {
+        expect(() =>
+          extractScheduleConfig([
+            makeIntervalTrigger(30, "UTC", { scheduleCron: "0 9 * * *" }),
+          ])
+        ).toThrow(IntervalTooSmallError);
+      });
+
+      it("throws IntervalTooSmallError when scheduleIntervalSeconds is 59 (one below the floor)", () => {
+        expect(() =>
+          extractScheduleConfig([
+            makeIntervalTrigger(59, "UTC", { scheduleCron: "0 9 * * *" }),
+          ])
+        ).toThrow(IntervalTooSmallError);
+      });
+
+      it("attaches raw and minimum on the thrown error so callers can render structured 400 bodies", () => {
+        try {
+          extractScheduleConfig([makeIntervalTrigger(30)]);
+          expect.fail("expected IntervalTooSmallError to be thrown");
+        } catch (error) {
+          expect(error).toBeInstanceOf(IntervalTooSmallError);
+          if (error instanceof IntervalTooSmallError) {
+            expect(error.raw).toBe(30);
+            expect(error.minimum).toBe(60);
+          }
+        }
+      });
+
+      it("accepts scheduleIntervalSeconds at exactly the 60s floor", () => {
+        const result = extractScheduleConfig([
+          makeIntervalTrigger(60, "UTC", { scheduleCron: "0 9 * * *" }),
+        ]);
+
+        expect(result?.mode).toBe("interval");
+        if (result?.mode === "interval") {
+          expect(result.intervalSeconds).toBe(60);
+        }
       });
     });
   });

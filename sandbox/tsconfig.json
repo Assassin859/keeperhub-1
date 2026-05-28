@@ -16,6 +16,10 @@
     "baseUrl": ".",
     "paths": { "@/*": ["./src/*"] }
   },
-  "include": ["src/**/*", "../lib/sandbox/child-source.ts"],
+  "include": [
+    "src/**/*",
+    "../lib/sandbox/child-source.ts",
+    "../lib/ssrf-blocklist.json"
+  ],
   "exclude": ["node_modules", "dist"]
 }

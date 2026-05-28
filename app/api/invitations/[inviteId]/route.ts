@@ -3,23 +3,47 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { invitation, organization, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import {
+  checkInviteFetchRateLimit,
+  getInviteFetchRateLimitKey,
+} from "../_lib/rate-limit";
 
 type RouteParams = {
   params: Promise<{ inviteId: string }>;
 };
 
+// Invite details are tied to a single high-entropy bearer token; never cache
+// them in shared or browser caches.
+const NO_STORE_HEADERS = { "Cache-Control": "no-store" } as const;
+
 /**
  * GET /api/invitations/[inviteId]
  * Fetch invitation details by ID (public endpoint for accept-invite page)
  */
-export async function GET(_request: Request, { params }: RouteParams) {
+export async function GET(request: Request, { params }: RouteParams) {
   try {
+    const rateLimit = checkInviteFetchRateLimit(
+      getInviteFetchRateLimitKey(request)
+    );
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { error: "Too many requests" },
+        {
+          status: 429,
+          headers: {
+            ...NO_STORE_HEADERS,
+            "Retry-After": String(rateLimit.retryAfter),
+          },
+        }
+      );
+    }
+
     const { inviteId } = await params;
 
     if (!inviteId) {
       return NextResponse.json(
         { error: "Invitation ID is required" },
-        { status: 400 }
+        { status: 400, headers: NO_STORE_HEADERS }
       );
     }
 
@@ -34,7 +58,6 @@ export async function GET(_request: Request, { params }: RouteParams) {
         organizationId: invitation.organizationId,
         organizationName: organization.name,
         inviterName: users.name,
-        inviterEmail: users.email,
       })
       .from(invitation)
       .leftJoin(organization, eq(invitation.organizationId, organization.id))
@@ -45,7 +68,7 @@ export async function GET(_request: Request, { params }: RouteParams) {
     if (result.length === 0) {
       return NextResponse.json(
         { error: "Invitation not found" },
-        { status: 404 }
+        { status: 404, headers: NO_STORE_HEADERS }
       );
     }
 
@@ -62,7 +85,7 @@ export async function GET(_request: Request, { params }: RouteParams) {
             organizationName: inv.organizationName,
           },
         },
-        { status: 410 }
+        { status: 410, headers: NO_STORE_HEADERS }
       );
     }
 
@@ -77,7 +100,7 @@ export async function GET(_request: Request, { params }: RouteParams) {
             organizationName: inv.organizationName,
           },
         },
-        { status: 410 }
+        { status: 410, headers: NO_STORE_HEADERS }
       );
     }
 
@@ -92,32 +115,25 @@ export async function GET(_request: Request, { params }: RouteParams) {
             organizationName: inv.organizationName,
           },
         },
-        { status: 410 }
+        { status: 410, headers: NO_STORE_HEADERS }
       );
     }
 
-    // Check if user with this email already exists
-    const existingUser = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.email, inv.email))
-      .limit(1);
-
-    const userExists = existingUser.length > 0;
-
     // Return invitation details
-    return NextResponse.json({
-      invitation: {
-        id: inv.id,
-        email: inv.email,
-        role: inv.role,
-        status: inv.status,
-        expiresAt: inv.expiresAt,
-        organizationName: inv.organizationName,
-        inviterName: inv.inviterName || "A team member",
-        userExists,
+    return NextResponse.json(
+      {
+        invitation: {
+          id: inv.id,
+          email: inv.email,
+          role: inv.role,
+          status: inv.status,
+          expiresAt: inv.expiresAt,
+          organizationName: inv.organizationName,
+          inviterName: inv.inviterName || "A team member",
+        },
       },
-    });
+      { headers: NO_STORE_HEADERS }
+    );
   } catch (error) {
     logSystemError(
       ErrorCategory.DATABASE,
@@ -127,7 +143,7 @@ export async function GET(_request: Request, { params }: RouteParams) {
     );
     return NextResponse.json(
       { error: "Failed to fetch invitation" },
-      { status: 500 }
+      { status: 500, headers: NO_STORE_HEADERS }
     );
   }
 }

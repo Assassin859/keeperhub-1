@@ -170,6 +170,10 @@ vi.mock("@/lib/safe/signer-resolver", () => ({
     kind: "eoa",
     ownerAddress: "0xwalletaddress",
   }),
+  resolveSignerForNode: vi.fn().mockResolvedValue({
+    kind: "eoa",
+    ownerAddress: "0xwalletaddress",
+  }),
 }));
 
 vi.mock("@/lib/safe/execute-as-safe", () => ({

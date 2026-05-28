@@ -10,6 +10,17 @@ on:
         default: ''
 
 name: deploy-keeperhub
+
+# Serialize app deploys per target so two near-simultaneous pushes to the same
+# branch never run `helm upgrade` against the same release at once. Without this
+# the second run fails with "another operation (install/upgrade/rollback) is in
+# progress". cancel-in-progress is false: the second deploy queues behind the
+# first rather than cancelling an in-flight helm operation (cancelling mid-upgrade
+# is what leaves a release stuck in pending-*). Mirrors deploy-executor.yaml.
+concurrency:
+  group: deploy-keeperhub-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   deploy:
     environment: ${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
@@ -85,6 +96,11 @@ jobs:
         if: steps.skip.outputs.skip_deploy != 'true'
         run: |
           kubectl apply -f deploy/keeperhub/${{ vars.TO_HELM_VALUES_DIR }}/rbac.yaml
+
+      - name: Apply NetworkPolicy for workflow runner egress hardening
+        if: steps.skip.outputs.skip_deploy != 'true'
+        run: |
+          kubectl apply -f deploy/keeperhub/${{ vars.TO_HELM_VALUES_DIR }}/networkpolicy.yaml
 
       - name: Deploying Service to Kubernetes with Helm
         id: deploy

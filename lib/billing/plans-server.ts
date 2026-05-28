@@ -1,9 +1,14 @@
 import "server-only";
 
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { organizationSubscriptions } from "@/lib/db/schema";
 import { getActiveDebtExecutions } from "./execution-debt";
+import {
+  countMonthlyExecutions,
+  decideExecutionLimit,
+  effectiveExecutionLimit,
+} from "./execution-limit-core";
 import {
   type BillingInterval,
   getPlanLimits,
@@ -16,8 +21,6 @@ import {
   parseTierKey,
   type TierKey,
 } from "./plans";
-
-const MINIMUM_EXECUTION_FLOOR = 100;
 
 // -- Price ID mapping (server-only, env vars not available in client bundles) --
 
@@ -242,80 +245,47 @@ export async function checkExecutionLimit(
   }
 
   const debtExecutions = await getActiveDebtExecutions(organizationId);
-  const effectiveLimit = Math.max(
-    MINIMUM_EXECUTION_FLOOR,
-    limits.maxExecutionsPerMonth - debtExecutions
+  const effectiveLimit = effectiveExecutionLimit(
+    limits.maxExecutionsPerMonth,
+    debtExecutions
   );
 
-  const now = new Date();
-  const startOfMonth = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)
-  );
-
-  const result = await db.execute<{ count: number }>(
-    sql`SELECT
-          (
-            SELECT COUNT(*)
-              FROM workflow_executions we
-              JOIN workflows w ON we.workflow_id = w.id
-             WHERE w.organization_id = ${organizationId}
-               AND we.started_at >= ${startOfMonth.toISOString()}
-               AND we.billable = TRUE
-          )
-          +
-          (
-            SELECT COUNT(*)
-              FROM direct_executions de
-             WHERE de.organization_id = ${organizationId}
-               AND de.created_at >= ${startOfMonth.toISOString()}
-          ) AS count`
-  );
-
-  const used = result[0]?.count ?? 0;
+  const used = await countMonthlyExecutions(db, organizationId);
   const planDef = PLANS[plan];
 
-  // Paid plans with active debt (unpaid overage past 15-day grace period) are blocked
-  if (debtExecutions > 0 && planDef.overage.enabled) {
-    return {
-      allowed: false,
-      limit: limits.maxExecutionsPerMonth,
-      used,
-      plan,
-      debtExecutions,
-      effectiveLimit,
-    };
-  }
-
-  // Under limit: always allowed, no overage
-  if (used < limits.maxExecutionsPerMonth) {
-    return {
-      allowed: true,
-      isOverage: false,
-      debtExecutions,
-      effectiveLimit,
-    };
-  }
-
-  // Paid plans over limit: allowed with overage billing
-  if (planDef.overage.enabled && sub?.status === "active") {
-    return {
-      allowed: true,
-      isOverage: true,
-      limit: limits.maxExecutionsPerMonth,
-      used,
-      overageRate: planDef.overage.ratePerThousand,
-      debtExecutions,
-      effectiveLimit,
-    };
-  }
-
-  // Free plans and inactive subscriptions are blocked at the limit
-  return {
-    allowed: false,
-    limit: limits.maxExecutionsPerMonth,
+  const outcome = decideExecutionLimit({
+    maxExecutionsPerMonth: limits.maxExecutionsPerMonth,
     used,
-    plan,
     debtExecutions,
-    effectiveLimit,
-  };
+    overageEnabled: planDef.overage.enabled,
+    subscriptionActive: sub?.status === "active",
+  });
+
+  switch (outcome) {
+    // Under limit: always allowed, no overage.
+    case "within_limit":
+      return { allowed: true, isOverage: false, debtExecutions, effectiveLimit };
+    // Paid plans over limit: allowed with overage billing.
+    case "overage":
+      return {
+        allowed: true,
+        isOverage: true,
+        limit: limits.maxExecutionsPerMonth,
+        used,
+        overageRate: planDef.overage.ratePerThousand,
+        debtExecutions,
+        effectiveLimit,
+      };
+    // blocked_debt (unpaid overage past grace) and blocked_limit (free plan or
+    // inactive subscription at the cap) both reject.
+    default:
+      return {
+        allowed: false,
+        limit: limits.maxExecutionsPerMonth,
+        used,
+        plan,
+        debtExecutions,
+        effectiveLimit,
+      };
+  }
 }

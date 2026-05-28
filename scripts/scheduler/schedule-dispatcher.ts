@@ -116,13 +116,17 @@ async function dispatch(): Promise<{
     `[${runId}] Starting dispatch run at ${new Date().toISOString()}`
   );
 
-  // Query all enabled schedules for enabled workflows
-  const schedules = await db
+  // Query all enabled schedules for enabled workflows. KEEP-581: also
+  // select intervalSeconds so we can partition cron-mode vs interval-mode
+  // rows in JS and skip the interval ones (this script only knows the
+  // cron path; the prod dispatcher in keeperhub-scheduler handles both).
+  const allEnabled = await db
     .select({
       id: workflowSchedules.id,
       workflowId: workflowSchedules.workflowId,
       cronExpression: workflowSchedules.cronExpression,
       timezone: workflowSchedules.timezone,
+      intervalSeconds: workflowSchedules.intervalSeconds,
     })
     .from(workflowSchedules)
     .innerJoin(workflows, eq(workflowSchedules.workflowId, workflows.id))
@@ -130,7 +134,34 @@ async function dispatch(): Promise<{
       and(eq(workflowSchedules.enabled, true), eq(workflows.enabled, true))
     );
 
-  console.log(`[${runId}] Found ${schedules.length} enabled schedules`);
+  // KEEP-581: `=== null` is intentional, not `!= null && >= 60`. A row
+  // with intervalSeconds = 0 is excluded from the cron bucket (treated as
+  // an anomalous interval-mode row and skipped) rather than passed to
+  // the cron path, which would parse the `0 0 1 1 *` sentinel and fire
+  // once a year. The API layer doesn't write 0, and parseIntervalSeconds
+  // turns 0 into null at sync time, so we don't expect to see this row
+  // in practice -- the strict null check is the defensive layer for
+  // anything that bypassed the API. A DB CHECK constraint enforcing
+  // `interval_seconds IS NULL OR interval_seconds >= 60` would make
+  // this concern impossible to express at all.
+  const schedules = allEnabled.filter((s) => s.intervalSeconds === null);
+  const skippedIntervalCount = allEnabled.length - schedules.length;
+  if (skippedIntervalCount > 0) {
+    // Interval-mode rows store a fixed `0 0 1 1 *` sentinel in
+    // cron_expression. If this script parsed it, the schedule would
+    // "fire" once a year. Skip them explicitly with a warn-level log
+    // -- "you wanted X scheduled rows, you got X-N" is information
+    // operators should see (matches the equivalent skip in
+    // scripts/runtime/workflow_runtime_analysis/workflow-runner-profiled.ts).
+    console.warn(
+      `[${runId}] Skipping ${skippedIntervalCount} interval-mode schedule(s); ` +
+        "this standalone script only dispatches cron-mode rows"
+    );
+  }
+
+  console.log(
+    `[${runId}] Found ${schedules.length} enabled cron-mode schedules`
+  );
 
   const now = new Date();
   let triggered = 0;

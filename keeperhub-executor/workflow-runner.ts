@@ -29,10 +29,13 @@ import postgres from "postgres";
 import { validateWorkflowIntegrations } from "../lib/db/integrations";
 import {
   organization,
+  users,
   workflowExecutions,
   workflowSchedules,
   workflows,
 } from "../lib/db/schema";
+import { getWorkflowExecutability } from "../lib/workflow/executable";
+import { buildExecutorInput } from "../lib/workflow/executor/build-executor-input";
 import { executeWorkflow } from "../lib/workflow/executor/executor.workflow";
 import { calculateTotalSteps } from "../lib/workflow/executor/progress";
 import { SHUTDOWN_TIMEOUT_MS } from "../lib/workflow/executor/runner-constants";
@@ -154,7 +157,6 @@ async function handleGracefulShutdown(signal: string): Promise<void> {
 process.on("SIGTERM", () => handleGracefulShutdown("SIGTERM"));
 process.on("SIGINT", () => handleGracefulShutdown("SIGINT"));
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Main runner orchestrates multiple phases of workflow execution
 async function main(): Promise<void> {
   const startTime = Date.now();
   const { workflowId, executionId, input, scheduleId } = validateEnv();
@@ -183,19 +185,22 @@ async function main(): Promise<void> {
       throw new Error(`Workflow not found: ${workflowId}`);
     }
 
-    // KEEP-440: a soft-deleted workflow must never execute, even if a stale
-    // schedule or queued message still references it.
-    if (workflow.deletedAt) {
+    // Defensive re-check: the dispatcher already gated lifecycle state, but the
+    // workflow could have been disabled, soft-deleted, or its owner deactivated
+    // between dispatch and pod startup. Cancel rather than run.
+    const [owner] = await db
+      .select({ deactivatedAt: users.deactivatedAt })
+      .from(users)
+      .where(eq(users.id, workflow.userId))
+      .limit(1);
+    const executability = getWorkflowExecutability({
+      enabled: workflow.enabled,
+      deletedAt: workflow.deletedAt,
+      ownerDeactivatedAt: owner?.deactivatedAt ?? null,
+    });
+    if (!executability.executable) {
       console.log(
-        `[Runner] Workflow deleted, skipping execution: ${workflowId}`
-      );
-      await updateExecutionStatus(db, executionId, "cancelled");
-      return;
-    }
-
-    if (workflow.enabled === false) {
-      console.log(
-        `[Runner] Workflow disabled, skipping execution: ${workflowId}`
+        `[Runner] Workflow not executable (${executability.reason}), skipping execution: ${workflowId}`
       );
       await updateExecutionStatus(db, executionId, "cancelled");
       return;
@@ -237,20 +242,29 @@ async function main(): Promise<void> {
     }
 
     console.log("[Runner] Executing workflow...");
-    const result = await executeWorkflow({
-      nodes,
-      edges: workflow.edges as WorkflowEdge[],
-      triggerInput: input,
-      executionId,
-      workflowId,
-      organizationId: workflow.organizationId ?? undefined,
-      organizationName,
-    });
+    // Intentional direct call (not start() from workflow/api): this runner is a
+    // standalone K8s-job process with no DevKit run-processor, so the pod itself
+    // is the execution boundary and runs the workflow synchronously here. The
+    // DevKit editor hint to "use start()" only applies inside the Next runtime.
+    // Tradeoff: no checkpoint/resume - with backoffLimit:0 a crashed pod leaves
+    // the row "running" until a sweeper closes it, tracked separately.
+    const result = await executeWorkflow(
+      buildExecutorInput(workflow, {
+        triggerInput: input,
+        executionId,
+        organizationName,
+      })
+    );
 
     const duration = Date.now() - startTime;
     console.log(`[Runner] Workflow completed in ${duration}ms`);
     console.log(`[Runner] Success: ${result.success}`);
 
+    // executeWorkflow is the authoritative writer of the terminal status (with
+    // reconciliation and richer fields). These updateExecutionStatus calls are
+    // a guarded backstop: the WHERE clause in updateExecutionStatus makes them
+    // a no-op once the engine's own write landed, and only closes the row if
+    // that write was lost - so a finished run is never left stuck "running".
     if (result.success) {
       await updateExecutionStatus(db, executionId, "success", {
         output: result.outputs,

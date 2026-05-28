@@ -54,10 +54,14 @@ export async function createWorkflowJob(params: {
       name: "INTEGRATION_ENCRYPTION_KEY",
       value: CONFIG.integrationEncryptionKey,
     },
-    { name: "PARA_API_KEY", value: CONFIG.paraApiKey },
-    { name: "PARA_ENVIRONMENT", value: CONFIG.paraEnvironment },
-    { name: "WALLET_ENCRYPTION_KEY", value: CONFIG.walletEncryptionKey },
     { name: "CHAIN_RPC_CONFIG", value: CONFIG.chainRpcConfig },
+    // SSRF guard: force-enable on every workflow runner pod regardless
+    // of controller env. Hardcoded (rather than forwarded via
+    // RUNNER_SYSTEM_ENV_VARS) so the runner enforces even if the
+    // controller's Helm values drift or a deploy omits the entry.
+    // Flipping back to shadow mode is a deliberate code change here,
+    // which is the intended posture for SSRF protection.
+    { name: "SAFE_FETCH_ENFORCE", value: "true" },
     ...(CONFIG.etherscanApiKey
       ? [{ name: "ETHERSCAN_API_KEY", value: CONFIG.etherscanApiKey }]
       : []),

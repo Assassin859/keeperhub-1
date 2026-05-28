@@ -20,6 +20,7 @@ import {
   validateWorkflow,
 } from "@/lib/mcp/validate-workflow";
 import { VALIDATION_WARNING_CODES } from "@/lib/mcp/validate-workflow-codes";
+import { isTemplateReference } from "@/lib/mcp/validate-workflow-web3";
 
 export type ValidateWorkflowDeepOptions = {
   /** Chain IDs to consider valid (passed through to the fast tier when 48-02 lands). */
@@ -111,6 +112,12 @@ export function collectContractRefs(nodes: unknown): ContractRef[] {
       network.length === 0 ||
       declaredAbi.length === 0
     ) {
+      continue;
+    }
+    // A template-valued contractAddress (e.g. {{@prep:Prep.addr}}) resolves
+    // to a real address only at execution time; feeding the literal template
+    // to resolveAbi would always mismatch and emit a spurious warning.
+    if (isTemplateReference(contractAddress)) {
       continue;
     }
     const isWeb3 =

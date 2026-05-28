@@ -1,21 +1,40 @@
-import crypto from "node:crypto";
-import { and, eq, gt, sql } from "drizzle-orm";
-import { headers } from "next/headers";
+import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { toChecksumAddress } from "@/lib/address-utils";
 import { apiError } from "@/lib/api-error";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { keyExportCodes, organizationWallets } from "@/lib/db/schema";
+import { organizationWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { requireDualFactor } from "@/lib/mfa/dual-factor";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
+import { requireOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
 import { exportTurnkeyPrivateKey } from "@/lib/turnkey/turnkey-client";
 import { checkVerifyRateLimit } from "../_lib/rate-limit";
 
-function hashCode(code: string): string {
-  return crypto.createHash("sha256").update(code).digest("hex");
-}
-
+/**
+ * POST /api/user/wallet/export-key/verify
+ *
+ * Exports a Turnkey wallet's private key in plaintext. Authorization
+ * stack (every check must pass):
+ *
+ *   1. requireOwnerWithMfa  — org role = owner, users.two_factor_enabled
+ *                              = true, sessions.requires_mfa = false.
+ *   2. Wallet-creator check  — wallet.userId === session.user.id. The
+ *                               TOTP secret belongs to the user, but the
+ *                               wallet might have been created by a
+ *                               different owner of the same org.
+ *   3. Fresh TOTP challenge  — auth.api.verifyTOTP validates the code
+ *                               the user just typed into the dialog.
+ *                               This is the "step up at action time"
+ *                               factor; passive session MFA is not
+ *                               enough for an action that exfiltrates
+ *                               signing material in plaintext.
+ *
+ * Replaces the previous wallet-inbox email-OTP factor. The old
+ * /request endpoint that emailed a 6-digit code is gone; the UI now
+ * prompts directly for a TOTP code from the user's authenticator.
+ */
 export async function POST(request: Request): Promise<NextResponse> {
   try {
     const session = await auth.api.getSession({
@@ -34,14 +53,16 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    const activeMember = await auth.api.getActiveMember({
-      headers: await headers(),
-    });
-
-    if (!activeMember) {
+    const sessionRow = session.session as { requiresMfa?: boolean | null };
+    const guard = await requireOwnerWithMfa(
+      session.user.id,
+      activeOrgId,
+      sessionRow.requiresMfa === true
+    );
+    if (!guard.ok) {
       return NextResponse.json(
-        { error: "You are not a member of the active organization" },
-        { status: 403 }
+        { error: guard.error, code: guard.code },
+        { status: guard.status }
       );
     }
 
@@ -59,78 +80,21 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    const body: { code?: string } = await request.json();
-    const { code } = body;
-
-    if (!code || typeof code !== "string" || code.length !== 6) {
+    const body: { code?: string; emailOtp?: string } = await request.json();
+    const dual = await requireDualFactor({
+      userId: session.user.id,
+      email: session.user.email,
+      action: "wallet_export_key",
+      code: body.code,
+      emailOtp: body.emailOtp,
+      headers: request.headers,
+    });
+    if (!dual.ok) {
       return NextResponse.json(
-        { error: "A valid 6-digit code is required" },
-        { status: 400 }
+        { error: dual.error, code: dual.code },
+        { status: dual.status }
       );
     }
-
-    // Find valid (non-expired) code for this org
-    const now = new Date();
-    const storedCodes = await db
-      .select()
-      .from(keyExportCodes)
-      .where(
-        and(
-          eq(keyExportCodes.organizationId, activeOrgId),
-          gt(keyExportCodes.expiresAt, now)
-        )
-      )
-      .limit(1);
-
-    if (storedCodes.length === 0) {
-      return NextResponse.json(
-        {
-          error: "No valid verification code found. Please request a new one.",
-        },
-        { status: 400 }
-      );
-    }
-
-    const storedCode = storedCodes[0];
-
-    const MAX_ATTEMPTS = 5;
-
-    // Atomic increment-and-return: Postgres serialises per-row UPDATEs, so N
-    // concurrent attempts each get a unique post-UPDATE value. Gating on the
-    // returned counter (rather than the pre-read one) prevents concurrent
-    // callers from all passing the lockout check with stale values.
-    const [updated] = await db
-      .update(keyExportCodes)
-      .set({ attempts: sql`${keyExportCodes.attempts} + 1` })
-      .where(eq(keyExportCodes.id, storedCode.id))
-      .returning({ attempts: keyExportCodes.attempts });
-
-    if (!updated || updated.attempts >= MAX_ATTEMPTS) {
-      await db
-        .delete(keyExportCodes)
-        .where(eq(keyExportCodes.id, storedCode.id));
-      return NextResponse.json(
-        { error: "Too many attempts. Please request a new code." },
-        { status: 429 }
-      );
-    }
-
-    const providedHash = hashCode(code);
-    const providedBuffer = Buffer.from(providedHash, "hex");
-    const storedBuffer = Buffer.from(storedCode.codeHash, "hex");
-
-    if (
-      providedBuffer.length !== storedBuffer.length ||
-      !crypto.timingSafeEqual(providedBuffer, storedBuffer)
-    ) {
-      return NextResponse.json(
-        { error: "Invalid verification code" },
-        { status: 400 }
-      );
-    }
-
-    // Delete used code (single-use)
-    await db.delete(keyExportCodes).where(eq(keyExportCodes.id, storedCode.id));
 
     const wallets = await db
       .select()
@@ -147,7 +111,6 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     const wallet = wallets[0];
 
-    // Export must be completed by the wallet creator, not just any org admin.
     if (wallet.userId !== session.user.id) {
       return NextResponse.json(
         { error: "Only the wallet creator can export its private key" },

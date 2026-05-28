@@ -1,6 +1,6 @@
 import { CronExpressionParser } from "cron-parser";
 import { eq } from "drizzle-orm";
-import { parseIntervalSeconds } from "@/lib/cron-utils";
+import { IntervalTooSmallError, parseIntervalSeconds } from "@/lib/cron-utils";
 import { db } from "@/lib/db";
 import { workflowSchedules } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
@@ -182,16 +182,48 @@ export function extractScheduleConfig(
   return { mode: "cron", cronExpression, timezone };
 }
 
+/**
+ * Outcome of a schedule sync.
+ *
+ * `kind: "hard"` failures MUST be surfaced to the API caller as a 400.
+ * `kind: "soft"` failures are warn-logged; the save itself still
+ * succeeds. The discriminator is required (not optional) so that
+ * adding a new failure category forces every call site to handle it
+ * via exhaustiveness checks instead of silently falling into the
+ * default branch.
+ */
+export type ScheduleSyncResult =
+  | { synced: true }
+  | { synced: false; kind: "soft"; error: string }
+  | {
+      synced: false;
+      kind: "hard";
+      code: "interval_too_small";
+      error: string;
+    };
 
 /**
- * Sync workflow schedule based on trigger configuration
- * Called when a workflow is saved
+ * Sync workflow schedule based on trigger configuration.
+ * Called when a workflow is saved.
  */
 export async function syncWorkflowSchedule(
   workflowId: string,
   nodes: WorkflowNode[]
-): Promise<{ synced: boolean; error?: string }> {
-  const scheduleConfig = extractScheduleConfig(nodes);
+): Promise<ScheduleSyncResult> {
+  let scheduleConfig: ExtractedScheduleConfig | null;
+  try {
+    scheduleConfig = extractScheduleConfig(nodes);
+  } catch (error) {
+    if (error instanceof IntervalTooSmallError) {
+      return {
+        synced: false,
+        kind: "hard",
+        code: "interval_too_small",
+        error: error.message,
+      };
+    }
+    throw error;
+  }
 
   if (!scheduleConfig) {
     // No schedule trigger - delete any existing schedule
@@ -210,7 +242,11 @@ export async function syncWorkflowSchedule(
     console.warn(
       `[Schedule] Invalid timezone for workflow ${workflowId}: ${timezone}`
     );
-    return { synced: false, error: `Invalid timezone: ${timezone}` };
+    return {
+      synced: false,
+      kind: "soft",
+      error: `Invalid timezone: ${timezone}`,
+    };
   }
 
   // Validate the mode-specific payload up front so we never write a half-
@@ -223,7 +259,11 @@ export async function syncWorkflowSchedule(
       console.warn(
         `[Schedule] Invalid cron for workflow ${workflowId}: ${cronValidation.error}`
       );
-      return { synced: false, error: cronValidation.error };
+      return {
+        synced: false,
+        kind: "soft",
+        error: cronValidation.error ?? "Invalid cron expression",
+      };
     }
   }
 

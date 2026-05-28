@@ -8,7 +8,18 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
-    include: ["**/*.test.ts", "**/*.test.tsx"],
+    include: [
+      "**/*.test.ts",
+      "**/*.test.tsx",
+      // The sandbox-escape suite intentionally uses `*.spec.ts` so it
+      // never runs as part of the default `pnpm test` (which would point
+      // at staging without the planted canary). The dedicated workflow
+      // `sandbox-escape-matrix.yaml` invokes `vitest run <path>` against
+      // these files explicitly with the staging env wired in - that
+      // positional filter only resolves when the include glob below
+      // matches.
+      "tests/e2e/sandbox-escape/**/*.spec.ts",
+    ],
     exclude: [
       "node_modules",
       ".next",

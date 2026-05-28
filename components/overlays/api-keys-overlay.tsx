@@ -1,16 +1,23 @@
 "use client";
 
 import { Copy, Key, Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { DualFactorInput } from "@/components/auth/dual-factor-input";
+import { DualFactorSteps } from "@/components/auth/dual-factor-steps";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { handleGuardError } from "@/lib/client/handle-guard-error";
+import { useActiveMember } from "@/lib/hooks/use-organization";
+import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
 import { ConfirmOverlay } from "./confirm-overlay";
 import { Overlay } from "./overlay";
 import { useOverlay } from "./overlay-provider";
+import { SettingsOverlay } from "./settings-overlay";
 
 type ApiKey = {
   id: string;
@@ -40,23 +47,58 @@ function CreateApiKeyOverlay({
   onCreated: (key: ApiKey) => void;
   endpoint: string;
   keyType: "webhook" | "organisation";
-}) {
-  const { pop } = useOverlay();
+}): React.ReactElement {
+  const { open: openOverlay, pop } = useOverlay();
+  const router = useRouter();
   const [keyName, setKeyName] = useState("");
+  const [phase, setPhase] = useState<"label" | "codes">("label");
+  const dual = useDualFactorState();
   const [creating, setCreating] = useState(false);
 
-  const handleCreate = async () => {
+  const emptyCodesFetch = (): Promise<Response> =>
+    fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: keyName.trim() || null }),
+    });
+
+  const handleCreate = async (): Promise<void> => {
     setCreating(true);
     try {
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: keyName || null }),
+        body: JSON.stringify({
+          name: keyName.trim() || null,
+          code: dual.totpCode.trim(),
+          emailOtp: dual.emailOtp.trim() || undefined,
+        }),
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to create API key");
+        const guarded = await handleGuardError(response, {
+          onEnrollMfa: () => {
+            pop();
+            openOverlay(SettingsOverlay);
+          },
+          onPendingMfa: (next) => {
+            pop();
+            router.push(`/verify-mfa?next=${encodeURIComponent(next)}`);
+          },
+        });
+        if (guarded) {
+          return;
+        }
+        const data = (await response.json().catch(() => ({}))) as {
+          error?: string;
+          code?: string;
+        };
+        if (
+          dual.handleResponse(data.code, data.error, (msg) => toast.error(msg))
+        ) {
+          return;
+        }
+        throw new Error(data.error || "Failed to create API key");
       }
 
       const newKey = await response.json();
@@ -78,13 +120,35 @@ function CreateApiKeyOverlay({
       ? "Create a new API key for webhook authentication"
       : "Create a new API key for MCP server and external integrations";
 
+  if (phase === "codes") {
+    return (
+      <Overlay overlayId={overlayId} title="Create API Key">
+        <p className="mb-4 text-muted-foreground text-sm">
+          Confirm with both factors to mint{" "}
+          <span className="font-medium text-foreground">
+            {keyName.trim() || "this API key"}
+          </span>
+          .
+        </p>
+        <DualFactorSteps
+          busy={creating}
+          dual={dual}
+          onBack={pop}
+          onPrefetchEmail={() => dual.prefetchEmail(emptyCodesFetch)}
+          onResendEmail={() => dual.resendEmail(emptyCodesFetch)}
+          onSubmit={handleCreate}
+          submitLabel="Create API key"
+        />
+      </Overlay>
+    );
+  }
+
   return (
     <Overlay
       actions={[
         {
-          label: "Create",
-          onClick: handleCreate,
-          loading: creating,
+          label: "Continue",
+          onClick: () => setPhase("codes"),
           disabled: !keyName.trim(),
         },
       ]}
@@ -92,14 +156,16 @@ function CreateApiKeyOverlay({
       title="Create API Key"
     >
       <p className="mb-4 text-muted-foreground text-sm">{description}</p>
-      <div className="space-y-2">
-        <Label htmlFor="key-name">Label</Label>
-        <Input
-          id="key-name"
-          onChange={(e) => setKeyName(e.target.value)}
-          placeholder="e.g., Production, Testing"
-          value={keyName}
-        />
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor="key-name">Label</Label>
+          <Input
+            id="key-name"
+            onChange={(e) => setKeyName(e.target.value)}
+            placeholder="e.g., Production, Testing"
+            value={keyName}
+          />
+        </div>
       </div>
     </Overlay>
   );
@@ -108,6 +174,82 @@ function CreateApiKeyOverlay({
 /**
  * Shared component for displaying and managing API keys list
  */
+/**
+ * Confirm-and-revoke dialog. Replaces the older ConfirmOverlay path
+ * because revocation now requires a fresh TOTP code in addition to
+ * a confirmation click; the generic ConfirmOverlay can't collect a
+ * second factor without bloating its API.
+ */
+function DeleteApiKeyOverlay({
+  overlayId,
+  keyId,
+  onDelete,
+  deleteEndpoint,
+}: {
+  overlayId: string;
+  keyId: string;
+  onDelete: (
+    keyId: string,
+    code: string,
+    emailOtp: string
+  ) => Promise<{ ok: true } | { ok: false; code: string }>;
+  deleteEndpoint: (id: string) => string;
+}): React.ReactElement {
+  const { pop } = useOverlay();
+  const dual = useDualFactorState();
+  const [submitting, setSubmitting] = useState(false);
+
+  const emptyCodesFetch = (): Promise<Response> =>
+    fetch(deleteEndpoint(keyId), {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+  const handleConfirm = async (): Promise<void> => {
+    setSubmitting(true);
+    try {
+      const result = await onDelete(
+        keyId,
+        dual.totpCode.trim(),
+        dual.emailOtp.trim()
+      );
+      if (result.ok) {
+        pop();
+        return;
+      }
+      if (
+        dual.handleResponse(result.code, undefined, (msg) => toast.error(msg))
+      ) {
+        return;
+      }
+      // "guarded" or "unknown": parent helper already toasted; just close.
+      pop();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Overlay overlayId={overlayId} title="Revoke API Key">
+      <p className="mb-4 text-muted-foreground text-sm">
+        Any integrations using this key will stop working immediately.
+        Confirm with both factors below.
+      </p>
+      <DualFactorSteps
+        busy={submitting}
+        dual={dual}
+        onBack={pop}
+        onPrefetchEmail={() => dual.prefetchEmail(emptyCodesFetch)}
+        onResendEmail={() => dual.resendEmail(emptyCodesFetch)}
+        onSubmit={handleConfirm}
+        submitLabel="Revoke key"
+        submitVariant="destructive"
+      />
+    </Overlay>
+  );
+}
+
 function ApiKeysList({
   apiKeys,
   newlyCreatedKey,
@@ -115,13 +257,23 @@ function ApiKeysList({
   onDelete,
   onDismissNewKey,
   showCreator = false,
+  deleteEndpoint,
+  canDelete = true,
+  readOnlyReason,
 }: {
   apiKeys: ApiKey[];
   newlyCreatedKey: string | null;
   deleting: string | null;
-  onDelete: (keyId: string) => void;
+  onDelete: (
+    keyId: string,
+    code: string,
+    emailOtp: string
+  ) => Promise<{ ok: true } | { ok: false; code: string }>;
   onDismissNewKey: () => void;
   showCreator?: boolean;
+  deleteEndpoint: (id: string) => string;
+  canDelete?: boolean;
+  readOnlyReason?: string;
 }) {
   const { push } = useOverlay();
 
@@ -138,14 +290,10 @@ function ApiKeysList({
     });
 
   const openDeleteConfirm = (keyId: string) => {
-    push(ConfirmOverlay, {
-      title: "Delete API Key",
-      message:
-        "Are you sure you want to delete this API key? Any integrations using this key will stop working immediately.",
-      confirmLabel: "Delete",
-      confirmVariant: "destructive" as const,
-      destructive: true,
-      onConfirm: () => onDelete(keyId),
+    push(DeleteApiKeyOverlay, {
+      keyId,
+      onDelete,
+      deleteEndpoint,
     });
   };
 
@@ -212,9 +360,10 @@ function ApiKeysList({
                 </p>
               </div>
               <Button
-                disabled={deleting === apiKey.id}
+                disabled={!canDelete || deleting === apiKey.id}
                 onClick={() => openDeleteConfirm(apiKey.id)}
                 size="sm"
+                title={canDelete ? undefined : readOnlyReason}
                 variant="ghost"
               >
                 {deleting === apiKey.id ? (
@@ -238,6 +387,8 @@ function useApiKeys(
   listEndpoint: string,
   deleteEndpoint: (id: string) => string
 ) {
+  const { open: openOverlay, closeAll } = useOverlay();
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(null);
@@ -269,22 +420,57 @@ function useApiKeys(
     setApiKeys((prev) => [newKey, ...prev]);
   };
 
-  const handleDelete = async (keyId: string) => {
+  const handleDelete = async (
+    keyId: string,
+    code: string,
+    emailOtp: string
+  ): Promise<{ ok: true } | { ok: false; code: string }> => {
     setDeleting(keyId);
     try {
       const response = await fetch(deleteEndpoint(keyId), {
         method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, emailOtp: emailOtp || undefined }),
       });
 
       if (!response.ok) {
-        throw new Error("Failed to delete API key");
+        const guarded = await handleGuardError(response, {
+          onEnrollMfa: () => {
+            closeAll();
+            openOverlay(SettingsOverlay);
+          },
+          onPendingMfa: (next) => {
+            closeAll();
+            router.push(`/verify-mfa?next=${encodeURIComponent(next)}`);
+          },
+        });
+        if (guarded) {
+          return { ok: false, code: "guarded" };
+        }
+        const data = (await response.json().catch(() => ({}))) as {
+          error?: string;
+          code?: string;
+        };
+        if (
+          data.code === "factors_required" ||
+          data.code === "mfa_code_invalid" ||
+          data.code === "email_code_invalid"
+        ) {
+          return { ok: false, code: data.code };
+        }
+        toast.error(data.error || "Failed to delete API key");
+        return { ok: false, code: "unknown" };
       }
 
       setApiKeys((prev) => prev.filter((k) => k.id !== keyId));
-      toast.success("API key deleted");
+      toast.success("API key revoked");
+      return { ok: true };
     } catch (error) {
       console.error("Failed to delete API key:", error);
-      toast.error("Failed to delete API key");
+      toast.error(
+        error instanceof Error ? error.message : "Failed to delete API key"
+      );
+      return { ok: false, code: "unknown" };
     } finally {
       setDeleting(null);
     }
@@ -297,6 +483,7 @@ function useApiKeys(
     deleting,
     handleKeyCreated,
     handleDelete,
+    deleteEndpoint,
     dismissNewKey: () => setNewlyCreatedKey(null),
   };
 }
@@ -306,6 +493,7 @@ function useApiKeys(
  */
 export function ApiKeysOverlay({ overlayId }: ApiKeysOverlayProps) {
   const { push, closeAll } = useOverlay();
+  const { isAdmin } = useActiveMember();
   const [activeTab, setActiveTab] = useState("organisation");
 
   // Webhook (User) keys
@@ -323,6 +511,12 @@ export function ApiKeysOverlay({ overlayId }: ApiKeysOverlayProps) {
   const currentKeys = activeTab === "webhook" ? webhookKeys : orgKeys;
   const createEndpoint =
     activeTab === "webhook" ? "/api/api-keys" : "/api/keys";
+  // Org keys are admin/owner-only at the API layer. Mirror that on the
+  // UI so members see the list (useful context) but can't mint or
+  // revoke. Personal webhook keys stay fully writable for every user.
+  const canManageOrgKeys = isAdmin;
+  const orgReadOnlyReason =
+    "Only organization admins or owners can manage these keys.";
 
   return (
     <Overlay
@@ -330,6 +524,7 @@ export function ApiKeysOverlay({ overlayId }: ApiKeysOverlayProps) {
         {
           label: "New API Key",
           variant: "outline",
+          disabled: activeTab === "organisation" && !canManageOrgKeys,
           onClick: () =>
             push(CreateApiKeyOverlay, {
               onCreated: currentKeys.handleKeyCreated,
@@ -358,6 +553,11 @@ export function ApiKeysOverlay({ overlayId }: ApiKeysOverlayProps) {
             integrations. These keys provide access to all workflows in the
             organisation.
           </p>
+          {!canManageOrgKeys && (
+            <p className="mb-3 rounded-md border border-border bg-muted/40 p-2 text-muted-foreground text-xs">
+              {orgReadOnlyReason}
+            </p>
+          )}
           {orgKeys.loading ? (
             <div className="flex items-center justify-center py-8">
               <Spinner />
@@ -365,10 +565,13 @@ export function ApiKeysOverlay({ overlayId }: ApiKeysOverlayProps) {
           ) : (
             <ApiKeysList
               apiKeys={orgKeys.apiKeys}
+              canDelete={canManageOrgKeys}
+              deleteEndpoint={orgKeys.deleteEndpoint}
               deleting={orgKeys.deleting}
               newlyCreatedKey={orgKeys.newlyCreatedKey}
               onDelete={orgKeys.handleDelete}
               onDismissNewKey={orgKeys.dismissNewKey}
+              readOnlyReason={orgReadOnlyReason}
               showCreator
             />
           )}
@@ -386,6 +589,7 @@ export function ApiKeysOverlay({ overlayId }: ApiKeysOverlayProps) {
           ) : (
             <ApiKeysList
               apiKeys={webhookKeys.apiKeys}
+              deleteEndpoint={webhookKeys.deleteEndpoint}
               deleting={webhookKeys.deleting}
               newlyCreatedKey={webhookKeys.newlyCreatedKey}
               onDelete={webhookKeys.handleDelete}

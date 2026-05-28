@@ -20,7 +20,7 @@ import {
 import { generateId } from "../../lib/utils/id";
 
 const TEST_ORG_SLUG = "x402-test-org";
-const TEST_USER_EMAIL = "x402-test@localhost";
+const TEST_USER_EMAIL = "x402-test@techops.services";
 const TEST_PASSWORD = "TestPassword123!";
 const TEST_PRIVATE_KEY =
   process.env.MPP_TEST_PRIVATE_KEY ?? process.env.X402_TEST_PRIVATE_KEY;

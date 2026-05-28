@@ -1,6 +1,5 @@
 import { and, eq } from "drizzle-orm";
 import { ethers } from "ethers";
-import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { auth } from "@/lib/auth";
@@ -9,7 +8,13 @@ import { chains } from "@/lib/db/schema";
 import { safeWallets } from "@/lib/db/schema-extensions";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { recordSafeWithdraw } from "@/lib/metrics/instrumentation/safe";
+import { requireDualFactor } from "@/lib/mfa/dual-factor";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
+import { requireOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
+import {
+  getOrganizationWalletAddress,
+  initializeWalletSigner,
+} from "@/lib/web3/wallet-helpers";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import {
   executeContractCallAsSafe,
@@ -21,10 +26,6 @@ import {
   type TransactionContext,
   withNonceSession,
 } from "@/lib/web3/transaction-manager";
-import {
-  getOrganizationWalletAddress,
-  initializeWalletSigner,
-} from "@/lib/web3/wallet-helpers";
 
 const ERC20_TRANSFER_ABI = [
   "function transfer(address to, uint256 amount) returns (bool)",
@@ -101,8 +102,20 @@ async function executeNativeTransfer(
   return receipt?.hash || tx.hash;
 }
 
-// Validate user authentication and admin permissions
-async function validateUserAndOrganization(request: Request) {
+// Withdraw is the highest-leverage action a session cookie can trigger:
+// it moves funds off the org's wallet. Gated on:
+//   1. owner-only role via requireOwnerWithMfa (admin not accepted)
+//   2. MFA enrolled + session step-up cleared (passive gate)
+//   3. Dual-factor at request time via requireDualFactor: the client
+//      must submit BOTH a fresh TOTP from the authenticator and the
+//      6-digit code emailed at this moment. The first call (no codes)
+//      mints + sends the email OTP; the second call (both codes)
+//      verifies and consumes them.
+async function validateUserAndOrganization(
+  request: Request,
+  code: string | undefined,
+  emailOtp: string | undefined
+) {
   const session = await auth.api.getSession({
     headers: request.headers,
   });
@@ -120,23 +133,26 @@ async function validateUserAndOrganization(request: Request) {
     };
   }
 
-  const activeMember = await auth.api.getActiveMember({
-    headers: await headers(),
-  });
-
-  if (!activeMember) {
-    return {
-      error: "You are not a member of the active organization",
-      status: 403,
-    };
+  const sessionRow = session.session as { requiresMfa?: boolean | null };
+  const guard = await requireOwnerWithMfa(
+    session.user.id,
+    activeOrgId,
+    sessionRow.requiresMfa === true
+  );
+  if (!guard.ok) {
+    return { error: guard.error, status: guard.status, code: guard.code };
   }
 
-  const role = activeMember.role;
-  if (role !== "admin" && role !== "owner") {
-    return {
-      error: "Only organization admins and owners can withdraw funds",
-      status: 403,
-    };
+  const dual = await requireDualFactor({
+    userId: session.user.id,
+    email: session.user.email,
+    action: "wallet_withdraw",
+    code,
+    emailOtp,
+    headers: request.headers,
+  });
+  if (!dual.ok) {
+    return { error: dual.error, status: dual.status, code: dual.code };
   }
 
   return { user: session.user, organizationId: activeOrgId };
@@ -144,17 +160,9 @@ async function validateUserAndOrganization(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    // 1. Validate user and permissions
-    const validation = await validateUserAndOrganization(request);
-    if ("error" in validation) {
-      return NextResponse.json(
-        { error: validation.error },
-        { status: validation.status }
-      );
-    }
-    const { organizationId, user } = validation;
-
-    // 2. Parse request body
+    // Parse body up-front so the validator can pull the TOTP code out
+    // for the fresh-challenge step. Everything else still gets
+    // re-destructured below for the action itself.
     const body = (await request.json()) as {
       chainId?: number | string;
       tokenAddress?: string;
@@ -162,7 +170,24 @@ export async function POST(request: Request) {
       recipient?: string;
       fromMax?: boolean;
       safeId?: string;
+      code?: string;
+      emailOtp?: string;
     };
+
+    // 1. Validate user and permissions (includes dual-factor challenge).
+    const validation = await validateUserAndOrganization(
+      request,
+      body.code,
+      body.emailOtp
+    );
+    if ("error" in validation) {
+      return NextResponse.json(
+        { error: validation.error, code: validation.code },
+        { status: validation.status }
+      );
+    }
+    const { organizationId, user } = validation;
+
     const { chainId: rawChainId, tokenAddress, amount, fromMax, safeId } = body;
     const recipient = body.recipient;
 

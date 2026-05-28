@@ -119,7 +119,22 @@ export type DualAuthContext =
       authMethod: AuthMethod;
       apiKeyId: string | null;
     }
-  | { error: string; status: number };
+  | { error: string; status: number; code?: "mfa_required" };
+
+/**
+ * Sentinel error returned by getDualAuthContext when the user holds a
+ * session that login-risk detection flagged and they have TOTP enrolled.
+ * The session itself is valid (and the cookie still authenticates them
+ * for step-up routes), but every other route refuses the request until
+ * the step-up flow at /verify-mfa flips sessions.requires_mfa back off.
+ * Client code branches on `code === "mfa_required"` to redirect to the
+ * verify page rather than treating it as a generic 403.
+ */
+export const MFA_REQUIRED_ERROR = {
+  error: "MFA verification required",
+  status: 403,
+  code: "mfa_required",
+} as const satisfies { error: string; status: number; code: "mfa_required" };
 
 /**
  * Stable label set to attach to log entries on dual-auth routes so we can
@@ -230,6 +245,17 @@ export async function getDualAuthContext(
       authMethod: "session",
       apiKeyId: null,
     };
+  }
+
+  // Quarantined session: login risk detection flagged the sign-in and the
+  // user has TOTP enrolled. Refuse the request until /verify-mfa clears
+  // the flag. The session is still usable on the step-up endpoints
+  // themselves; those resolve auth directly via auth.api.getSession
+  // rather than getDualAuthContext.
+  const sessionRow = (session as { session?: { requiresMfa?: boolean } })
+    .session;
+  if (sessionRow?.requiresMfa === true) {
+    return MFA_REQUIRED_ERROR;
   }
 
   const orgContext = await getOrgContext();

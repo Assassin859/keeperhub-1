@@ -200,7 +200,6 @@ jobs:
           test_api_key: ${{ secrets.TEST_API_KEY }}
           chain_rpc_config: ${{ secrets.CHAIN_RPC_CONFIG }}
           integration_encryption_key: ${{ secrets.TEST_INTEGRATION_ENCRYPTION_KEY }}
-          wallet_encryption_key: ${{ secrets.TEST_WALLET_ENCRYPTION_KEY }}
           turnkey_api_public_key: ${{ secrets.TURNKEY_API_PUBLIC_KEY }}
           turnkey_api_private_key: ${{ secrets.TURNKEY_API_PRIVATE_KEY }}
           turnkey_organization_id: ${{ secrets.TURNKEY_ORGANIZATION_ID }}
@@ -324,7 +323,6 @@ jobs:
           test_api_key: ${{ secrets.TEST_API_KEY }}
           chain_rpc_config: ${{ secrets.CHAIN_RPC_CONFIG }}
           integration_encryption_key: ${{ secrets.TEST_INTEGRATION_ENCRYPTION_KEY }}
-          wallet_encryption_key: ${{ secrets.TEST_WALLET_ENCRYPTION_KEY }}
           turnkey_api_public_key: ${{ secrets.TURNKEY_API_PUBLIC_KEY }}
           turnkey_api_private_key: ${{ secrets.TURNKEY_API_PRIVATE_KEY }}
           turnkey_organization_id: ${{ secrets.TURNKEY_ORGANIZATION_ID }}

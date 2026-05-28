@@ -82,7 +82,7 @@ Call any smart contract function. Automatically detects read vs write operations
   "functionName": "balanceOf",
   "functionArgs": "[\"0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb\"]",
   "abi": "[{...}]",
-  "value": "0",
+  "value": "0.1",
   "gasLimitMultiplier": "1.2"
 }
 ```
@@ -94,7 +94,7 @@ Call any smart contract function. Automatically detects read vs write operations
 - `functionName` (required): Name of the function to call
 - `functionArgs` (optional): JSON array string of function arguments (e.g., `"[\"0x...\", \"1000\"]"`)
 - `abi` (optional): Contract ABI as JSON string. Auto-fetched from block explorer if omitted.
-- `value` (optional): ETH value to send with the call in wei (for payable functions)
+- `value` (optional): Native value to send with the call, as a decimal string in ether units (e.g. `0.1`) (for payable functions)
 - `gasLimitMultiplier` (optional): Gas limit multiplier
 
 ### Response

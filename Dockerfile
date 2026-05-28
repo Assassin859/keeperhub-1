@@ -74,11 +74,13 @@ ARG NEXT_PUBLIC_GITHUB_CLIENT_ID
 ARG NEXT_PUBLIC_GOOGLE_CLIENT_ID
 ARG NEXT_PUBLIC_BILLING_ENABLED
 ARG NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED
+ARG NEXT_PUBLIC_TURNSTILE_SITE_KEY
 ENV NEXT_PUBLIC_AUTH_PROVIDERS=$NEXT_PUBLIC_AUTH_PROVIDERS
 ENV NEXT_PUBLIC_GITHUB_CLIENT_ID=$NEXT_PUBLIC_GITHUB_CLIENT_ID
 ENV NEXT_PUBLIC_GOOGLE_CLIENT_ID=$NEXT_PUBLIC_GOOGLE_CLIENT_ID
 ENV NEXT_PUBLIC_BILLING_ENABLED=$NEXT_PUBLIC_BILLING_ENABLED
 ENV NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED=$NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED
+ENV NEXT_PUBLIC_TURNSTILE_SITE_KEY=$NEXT_PUBLIC_TURNSTILE_SITE_KEY
 
 # Sentry DSN baked into client bundle for error reporting.
 # SENTRY_ORG/PROJECT/AUTH_TOKEN/RELEASE are intentionally NOT set here
@@ -92,6 +94,13 @@ ENV CI=true
 # so those routes are excluded from the bundle entirely.
 ARG INCLUDE_TEST_ENDPOINTS
 ENV INCLUDE_TEST_ENDPOINTS=$INCLUDE_TEST_ENDPOINTS
+
+# plugins/code/steps/run-code.ts asserts SANDBOX_BACKEND=remote and
+# SANDBOX_URL set when NODE_ENV=production. next build sets NODE_ENV=production
+# during page metadata collection, so the build must have both. Runtime env
+# in deploy/*/values.yaml takes precedence over these defaults.
+ENV SANDBOX_BACKEND=remote
+ENV SANDBOX_URL=http://keeperhub-sandbox-common.keeperhub.svc.cluster.local:8787
 
 # Build the application with Turbopack (source maps generated but not uploaded).
 # Cache mount persists .next/cache across builds on the same BuildKit instance,

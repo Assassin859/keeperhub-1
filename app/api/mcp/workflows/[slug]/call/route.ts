@@ -6,9 +6,11 @@ import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { priceQualifiesForMarketplaceExemption } from "@/lib/billing/marketplace-billing";
 import { db } from "@/lib/db";
 import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
-import { tags, workflowExecutions, workflows } from "@/lib/db/schema";
+import { tags, users, workflowExecutions, workflows } from "@/lib/db/schema";
 import { classifyExecutionError } from "@/lib/errors/classify";
 import { recordExecutionErrorFinalized } from "@/lib/errors/finalize-error";
+import { extractActionTypeNodes } from "@/lib/features";
+import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
 import { hashMppCredential } from "@/lib/payments/mpp/server";
@@ -27,9 +29,9 @@ import {
   CALL_ROUTE_COLUMNS,
   type CallRouteWorkflow,
 } from "@/lib/payments/x402/types";
+import { workflowReachableConditions } from "@/lib/workflow/executable";
+import { buildExecutorInput } from "@/lib/workflow/executor/build-executor-input";
 import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
-import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
-import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -88,6 +90,20 @@ async function prepareExecution(
   workflow: CallRouteWorkflow,
   body: Record<string, unknown>
 ): Promise<{ executionId: string } | { error: NextResponse }> {
+  const featureGuard = await enforceWorkflowFeatures(
+    extractActionTypeNodes(workflow.nodes as unknown[]),
+    workflow.organizationId
+  );
+  if (featureGuard.blocked) {
+    const guardBody = await featureGuard.response.json();
+    return {
+      error: NextResponse.json(guardBody, {
+        status: 402,
+        headers: corsHeaders,
+      }),
+    };
+  }
+
   const executionGuard = await enforceExecutionLimit(workflow.organizationId);
   if (executionGuard.blocked) {
     const guardBody = await executionGuard.response.json();
@@ -140,16 +156,12 @@ async function startExecutionInBackground(
     getOrgPlanLabel(workflow.organizationId),
   ]);
   start(executeWorkflow, [
-    {
-      nodes: workflow.nodes as WorkflowNode[],
-      edges: workflow.edges as WorkflowEdge[],
+    buildExecutorInput(workflow, {
       triggerInput: body,
       executionId,
-      workflowId: workflow.id,
-      organizationId: workflow.organizationId ?? undefined,
       organizationSlug,
       organizationPlan,
-    },
+    }),
   ]).catch((err: unknown) => {
     logSystemError(
       ErrorCategory.WORKFLOW_ENGINE,
@@ -186,11 +198,12 @@ async function lookupWorkflow(slug: string): Promise<CallRouteWorkflow | null> {
     .select({ ...CALL_ROUTE_COLUMNS, tagName: tags.name })
     .from(workflows)
     .leftJoin(tags, eq(workflows.tagId, tags.id))
+    .innerJoin(users, eq(workflows.userId, users.id))
     .where(
       and(
         eq(workflows.listedSlug, slug),
         eq(workflows.isListed, true),
-        workflowNotDeleted()
+        workflowReachableConditions()
       )
     )
     .limit(1);
@@ -456,6 +469,21 @@ export async function POST(
       return NextResponse.json(
         { error: "Workflow not found" },
         { status: 404, headers: corsHeaders }
+      );
+    }
+
+    // The lookup already excluded the hard-gone states (soft-deleted, owner
+    // deactivated) as 404. A listed-but-disabled workflow still exists and is
+    // publicly discoverable, so report it as temporarily unavailable rather
+    // than a misleading "not found" - mirrors the webhook's disabled-vs-gone
+    // split, and leaks nothing since the listing is already public.
+    if (!workflow.enabled) {
+      return NextResponse.json(
+        {
+          error: "Workflow temporarily unavailable",
+          message: "The workflow owner has disabled this workflow.",
+        },
+        { status: 503, headers: corsHeaders }
       );
     }
 

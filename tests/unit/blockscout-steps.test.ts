@@ -307,3 +307,60 @@ describe("blockscout get-address-counters", () => {
     expect(result).toEqual({ success: false, error: "Address is required." });
   });
 });
+
+describe("blockscout chain selection", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("queries the selected chain's hosted instance (Base)", async () => {
+    mockFetchOnce({ hash: "0xabc" });
+
+    await getAddressInfoStep({ address: "0xabc", network: "8453" });
+
+    expect(lastFetchUrl()).toContain("https://base.blockscout.com/api/v2/addresses/0xabc");
+  });
+
+  it("maps Optimism to its canonical instance", async () => {
+    mockFetchOnce({});
+
+    await getAddressCountersStep({ address: "0xabc", network: "10" });
+
+    expect(lastFetchUrl()).toContain("https://explorer.optimism.io/api/v2/addresses/0xabc/counters");
+  });
+
+  it("defaults to Ethereum mainnet when no chain is selected", async () => {
+    mockFetchOnce({ hash: "0xabc" });
+
+    await getAddressInfoStep({ address: "0xabc" });
+
+    expect(lastFetchUrl()).toContain("https://eth.blockscout.com/");
+  });
+
+  it("errors for a chain with no hosted instance and no connection", async () => {
+    global.fetch = vi.fn() as unknown as typeof fetch;
+
+    const result = await getAddressInfoStep({ address: "0xabc", network: "999999" });
+
+    expect(result.success).toBe(false);
+    expect(global.fetch).not.toHaveBeenCalled();
+    if (result.success === false) {
+      expect(result.error).toContain("No hosted Blockscout instance");
+    }
+  });
+
+  it("lets a connection instance URL override the selected chain", async () => {
+    mockFetchCredentials.mockResolvedValue({
+      BLOCKSCOUT_API_URL: "https://custom.blockscout.example",
+    });
+    mockFetchOnce({ hash: "0xabc" });
+
+    await getAddressInfoStep({
+      address: "0xabc",
+      network: "8453",
+      integrationId: "int-1",
+    });
+
+    expect(lastFetchUrl()).toContain("https://custom.blockscout.example/api/v2/addresses/0xabc");
+  });
+});

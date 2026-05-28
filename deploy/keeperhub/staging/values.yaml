@@ -206,6 +206,23 @@ env:
     type: parameterStore
     name: next-public-google-client-id
     parameter_name: /eks/techops-staging/keeperhub/google-client-id
+  # Cloudflare Turnstile (signup captcha). Site key is also baked into the
+  # client bundle at build time (build-images.yml); this runtime entry covers
+  # server-side reads. Secret key is server-only (lib/auth.ts).
+  NEXT_PUBLIC_TURNSTILE_SITE_KEY:
+    type: parameterStore
+    name: next-public-turnstile-site-key
+    parameter_name: /eks/techops-staging/keeperhub/turnstile-site-key
+  TURNSTILE_SECRET_KEY:
+    type: parameterStore
+    name: turnstile-secret-key
+    parameter_name: /eks/techops-staging/keeperhub/turnstile-secret-key
+  # Opt staging into enforcing the captcha plugin (it is otherwise skipped
+  # where admin test endpoints are enabled). Lets us exercise the real
+  # Turnstile flow before prod. Disables the X-Test-API-Key signup bypass.
+  TURNSTILE_ENFORCE:
+    type: kv
+    value: "true"
   OPENAI_API_KEY:
     type: parameterStore
     name: openai-api-key
@@ -230,10 +247,6 @@ env:
     type: parameterStore
     name: agentic-wallet-hmac-kms-key
     parameter_name: /eks/techops-staging/keeperhub/agentic-wallet-hmac-kms-key
-  WALLET_ENCRYPTION_KEY:
-    type: parameterStore
-    name: wallet-encryption-key
-    parameter_name: /eks/techops-staging/keeperhub/wallet-encryption-key
   INTEGRATION_ENCRYPTION_KEY:
     type: parameterStore
     name: integration-encryption-key
@@ -311,6 +324,12 @@ env:
   NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED:
     type: kv
     value: "true"
+  # AI Prompt feature flag - disabled
+  # (gates UI render in components/workflow/workflow-canvas.tsx
+  #  and /api/ai/generate route)
+  NEXT_PUBLIC_AI_PROMPT_ENABLED:
+    type: kv
+    value: "false"
   STRIPE_SECRET_KEY:
     type: parameterStore
     name: stripe-secret-key

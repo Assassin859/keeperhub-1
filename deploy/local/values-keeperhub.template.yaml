@@ -111,9 +111,6 @@ env:
     type: kv
     value: ""
   # Encryption keys - set via environment variables before deploy
-  WALLET_ENCRYPTION_KEY:
-    type: kv
-    value: "${WALLET_ENCRYPTION_KEY}"
   INTEGRATION_ENCRYPTION_KEY:
     type: kv
     value: "${INTEGRATION_ENCRYPTION_KEY}"

@@ -5,8 +5,10 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { organizationApiKeys, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { requireDualFactor } from "@/lib/mfa/dual-factor";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { getOrgContext } from "@/lib/middleware/org-context";
+import { requireAdminOrOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
 
 // Generate a secure API key with KeeperHub prefix
 function generateApiKey(): { key: string; hash: string; prefix: string } {
@@ -120,8 +122,45 @@ export async function POST(request: Request) {
       );
     }
 
+    // Creating an org API key mints a long-lived credential that
+    // bypasses session MFA forever afterward, so gate the act of
+    // minting with admin/owner role + MFA enrolled + step-up cleared.
+    // Once issued the key itself is not MFA-aware; the time to enforce
+    // is at creation.
+    const sessionRow = session.session as { requiresMfa?: boolean | null };
+    const guard = await requireAdminOrOwnerWithMfa(
+      session.user.id,
+      activeOrgId,
+      sessionRow.requiresMfa === true
+    );
+    if (!guard.ok) {
+      return NextResponse.json(
+        { error: guard.error, code: guard.code },
+        { status: guard.status }
+      );
+    }
+
     // Parse request body
     const body = await request.json().catch(() => ({}));
+
+    // Dual-factor challenge — minting a forever-bypass credential
+    // warrants both a fresh TOTP from the authenticator AND a fresh
+    // email OTP from the user's inbox. Symmetric with withdraw /
+    // export-key.
+    const dual = await requireDualFactor({
+      userId: session.user.id,
+      email: session.user.email,
+      action: "org_api_key_create",
+      code: typeof body.code === "string" ? body.code : undefined,
+      emailOtp: typeof body.emailOtp === "string" ? body.emailOtp : undefined,
+      headers: request.headers,
+    });
+    if (!dual.ok) {
+      return NextResponse.json(
+        { error: dual.error, code: dual.code },
+        { status: dual.status }
+      );
+    }
     const name = body.name || null;
     const expiresAt = body.expiresAt ? new Date(body.expiresAt) : null;
 

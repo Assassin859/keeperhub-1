@@ -88,7 +88,8 @@ vi.mock("@/lib/logging", () => ({
 }));
 
 // Import after mocks
-const { resolveSignerMode } = await import("@/lib/safe/signer-resolver");
+const { resolveSignerMode, resolveSignerForNode, parseWeb3Connection } =
+  await import("@/lib/safe/signer-resolver");
 
 const ORG_ID = "org_test";
 const CHAIN_ID = 8453;
@@ -185,6 +186,200 @@ describe("resolveSignerMode", () => {
       expect(mode.rolesModifierAddress).toBe("0xMOD");
       expect(mode.roleKey).toBe("0xkey");
     }
+  });
+});
+
+const SAFE_ID_EMPTY_RE = /safe id is empty/;
+const INVALID_WEB3_RE = /Invalid web3Connection/;
+const UNKNOWN_SAFE_RE = /unknown Safe/;
+const WRONG_ORG_RE = /does not belong to this organization/;
+const WRONG_CHAIN_RE = /is on chain 1/;
+const NOT_DEPLOYED_RE = /not deployed yet/;
+
+describe("parseWeb3Connection", () => {
+  it("treats undefined and empty as default (org-policy)", () => {
+    expect(parseWeb3Connection(undefined)).toEqual({ kind: "default" });
+    expect(parseWeb3Connection(null)).toEqual({ kind: "default" });
+    expect(parseWeb3Connection("")).toEqual({ kind: "default" });
+    expect(parseWeb3Connection("default")).toEqual({ kind: "default" });
+  });
+
+  it("parses eoa override", () => {
+    expect(parseWeb3Connection("eoa")).toEqual({ kind: "eoa" });
+  });
+
+  it("parses safe pin and pulls out the id", () => {
+    expect(parseWeb3Connection("safe:abc123")).toEqual({
+      kind: "safe",
+      safeWalletId: "abc123",
+    });
+  });
+
+  it("throws on empty safe id", () => {
+    expect(() => parseWeb3Connection("safe:")).toThrowError(SAFE_ID_EMPTY_RE);
+  });
+
+  it("throws on unrecognised prefix", () => {
+    expect(() => parseWeb3Connection("garbage")).toThrowError(INVALID_WEB3_RE);
+  });
+});
+
+describe("resolveSignerForNode", () => {
+  beforeEach(() => {
+    selectLimitMock.mockReset();
+    getOrganizationWalletAddressMock.mockReset();
+    getOrganizationWalletAddressMock.mockResolvedValue(OWNER);
+  });
+
+  it("default + no Safe -> eoa (delegates to resolveSignerMode)", async () => {
+    selectLimitMock.mockResolvedValue([]);
+    const mode = await resolveSignerForNode({
+      organizationId: ORG_ID,
+      chainId: CHAIN_ID,
+      web3Connection: "default",
+    });
+    expect(mode.kind).toBe("eoa");
+  });
+
+  it("explicit eoa short-circuits even when org Safe is active", async () => {
+    // selectLimitMock is NOT primed: the eoa branch must not touch the DB.
+    const mode = await resolveSignerForNode({
+      organizationId: ORG_ID,
+      chainId: CHAIN_ID,
+      web3Connection: "eoa",
+    });
+    expect(mode.kind).toBe("eoa");
+    if (mode.kind === "eoa") {
+      expect(mode.ownerAddress).toBe(OWNER.toLowerCase());
+    }
+    expect(selectLimitMock).not.toHaveBeenCalled();
+  });
+
+  it("safe:<id> resolves to plain safe mode when no role is active", async () => {
+    selectLimitMock
+      .mockResolvedValueOnce([
+        {
+          id: "safe-1",
+          organizationId: ORG_ID,
+          chainId: CHAIN_ID,
+          safeAddress: SAFE,
+          status: "deployed",
+          isSigningActive: true,
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    const mode = await resolveSignerForNode({
+      organizationId: ORG_ID,
+      chainId: CHAIN_ID,
+      web3Connection: "safe:safe-1",
+    });
+    expect(mode.kind).toBe("safe");
+    if (mode.kind === "safe") {
+      expect(mode.safeWalletId).toBe("safe-1");
+      expect(mode.safeAddress).toBe(SAFE);
+    }
+  });
+
+  it("safe:<id> auto-upgrades to safe-role when DB has an active role", async () => {
+    selectLimitMock
+      .mockResolvedValueOnce([
+        {
+          id: "safe-1",
+          organizationId: ORG_ID,
+          chainId: CHAIN_ID,
+          safeAddress: SAFE,
+          status: "deployed",
+          isSigningActive: true,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          rolesModifierAddress: "0xMOD",
+          roleKey: "0xkey",
+          delegateAddress: "0xdelegate",
+          status: "active",
+        },
+      ]);
+    const mode = await resolveSignerForNode({
+      organizationId: ORG_ID,
+      chainId: CHAIN_ID,
+      web3Connection: "safe:safe-1",
+    });
+    expect(mode.kind).toBe("safe-role");
+    if (mode.kind === "safe-role") {
+      expect(mode.rolesModifierAddress).toBe("0xMOD");
+    }
+  });
+
+  it("rejects safe:<id> when the Safe row is missing", async () => {
+    selectLimitMock.mockResolvedValueOnce([]);
+    await expect(
+      resolveSignerForNode({
+        organizationId: ORG_ID,
+        chainId: CHAIN_ID,
+        web3Connection: "safe:does-not-exist",
+      })
+    ).rejects.toThrow(UNKNOWN_SAFE_RE);
+  });
+
+  it("rejects safe:<id> when the Safe belongs to a different org", async () => {
+    selectLimitMock.mockResolvedValueOnce([
+      {
+        id: "safe-1",
+        organizationId: "org_other",
+        chainId: CHAIN_ID,
+        safeAddress: SAFE,
+        status: "deployed",
+        isSigningActive: true,
+      },
+    ]);
+    await expect(
+      resolveSignerForNode({
+        organizationId: ORG_ID,
+        chainId: CHAIN_ID,
+        web3Connection: "safe:safe-1",
+      })
+    ).rejects.toThrow(WRONG_ORG_RE);
+  });
+
+  it("rejects safe:<id> when the Safe is on a different chain", async () => {
+    selectLimitMock.mockResolvedValueOnce([
+      {
+        id: "safe-1",
+        organizationId: ORG_ID,
+        chainId: 1,
+        safeAddress: SAFE,
+        status: "deployed",
+        isSigningActive: true,
+      },
+    ]);
+    await expect(
+      resolveSignerForNode({
+        organizationId: ORG_ID,
+        chainId: CHAIN_ID,
+        web3Connection: "safe:safe-1",
+      })
+    ).rejects.toThrow(WRONG_CHAIN_RE);
+  });
+
+  it("rejects safe:<id> when the Safe is not yet deployed", async () => {
+    selectLimitMock.mockResolvedValueOnce([
+      {
+        id: "safe-1",
+        organizationId: ORG_ID,
+        chainId: CHAIN_ID,
+        safeAddress: SAFE,
+        status: "pending",
+        isSigningActive: false,
+      },
+    ]);
+    await expect(
+      resolveSignerForNode({
+        organizationId: ORG_ID,
+        chainId: CHAIN_ID,
+        web3Connection: "safe:safe-1",
+      })
+    ).rejects.toThrow(NOT_DEPLOYED_RE);
   });
 });
 
