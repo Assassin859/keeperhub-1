@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -99,11 +99,7 @@ function statusFor(idx: number, currentIdx: number): StepStatus {
   return "pending";
 }
 
-function StepIndicator({
-  current,
-}: {
-  current: Phase;
-}): React.ReactElement {
+function StepIndicator({ current }: { current: Phase }): React.ReactElement {
   const currentIdx = STEP_DEFS.findIndex((s) => s.key === current);
   return (
     <ol className="flex items-center gap-2 px-1 pb-1 text-xs">
@@ -130,7 +126,29 @@ function StepIndicator({
 
 const INPUT_CLASSES = "font-mono text-center text-lg tracking-[0.3em]";
 
+// Visual parity with components/ui/input.tsx so the contenteditable div
+// in the email step looks identical to a real <Input>.
+const EMAIL_FIELD_CLASSES =
+  "flex h-9 w-full min-w-0 items-center justify-center rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 md:text-sm font-mono text-lg tracking-[0.3em]";
+
 const numericOnly = (value: string): string => value.replace(/\D/g, "");
+
+const sanitizeEmailOtp = (raw: string): string => numericOnly(raw).slice(0, 6);
+
+function placeCaretAtEnd(node: HTMLElement): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  range.collapse(false);
+  const selection = window.getSelection();
+  if (!selection) {
+    return;
+  }
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
 
 export function DualFactorSteps({
   dual,
@@ -145,14 +163,36 @@ export function DualFactorSteps({
 }: DualFactorStepsProps): React.ReactElement {
   const [phase, setPhase] = useState<Phase>("email");
   const [resending, setResending] = useState(false);
+  const emailInputRef = useRef<HTMLDivElement>(null);
+  const totpInputRef = useRef<HTMLInputElement>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: prefetch must fire exactly once on mount; the hook guards against duplicate fires.
   useEffect(() => {
     onPrefetchEmail();
-    // onPrefetchEmail is intentionally excluded so the wizard fires
-    // it exactly once on mount; the hook already guards against
-    // duplicate fires for the same instance.
-    // biome-ignore lint/correctness/useExhaustiveDependencies: see comment above
   }, []);
+
+  useEffect(() => {
+    const target =
+      phase === "email" ? emailInputRef.current : totpInputRef.current;
+    target?.focus();
+  }, [phase]);
+
+  // The email step uses a contenteditable div, not an <input>, so password
+  // managers cannot fill it. Sync external value changes (e.g. resend
+  // clearing the code) into the DOM, but skip when the user is actively
+  // typing to avoid disrupting the caret.
+  useEffect(() => {
+    const node = emailInputRef.current;
+    if (!node) {
+      return;
+    }
+    if (typeof document !== "undefined" && document.activeElement === node) {
+      return;
+    }
+    if (node.textContent !== dual.emailOtp) {
+      node.textContent = dual.emailOtp;
+    }
+  }, [dual.emailOtp]);
 
   const handleResend = async (): Promise<void> => {
     setResending(true);
@@ -173,114 +213,145 @@ export function DualFactorSteps({
     <div className="space-y-4">
       <StepIndicator current={phase} />
 
-      {context && (
-        <p className="text-muted-foreground text-sm">{context}</p>
-      )}
+      {context && <p className="text-muted-foreground text-sm">{context}</p>}
 
-      {phase === "email" && (
-        <div className="space-y-3">
-          <div className="space-y-2">
-            <Label
-              className="font-medium text-keeperhub-green-dark"
-              htmlFor="dfs-email"
-            >
-              Email code
-            </Label>
-            <Input
-              autoComplete="off"
-              autoFocus
-              className={INPUT_CLASSES}
-              data-1p-ignore
-              data-bwignore
-              data-form-type="other"
-              data-lpignore="true"
-              disabled={busy}
-              id="dfs-email"
-              inputMode="numeric"
-              maxLength={6}
-              onChange={(event) =>
-                dual.setEmailOtp(numericOnly(event.target.value))
-              }
-              placeholder="000000"
-              value={dual.emailOtp}
-            />
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-muted-foreground text-xs">
-                {dual.awaitingEmailOtp
-                  ? "We just emailed you a 6-digit code. It expires in 5 minutes."
-                  : "Sending the code to your email..."}
-              </p>
-              <Button
-                disabled={busy || resending}
-                onClick={handleResend}
-                size="sm"
-                type="button"
-                variant="ghost"
+      <div className={phase === "email" ? "space-y-3" : "hidden"}>
+        <div className="space-y-2">
+          <Label
+            className="font-medium text-keeperhub-green-dark"
+            htmlFor="dfs-email-verify"
+          >
+            Email code
+          </Label>
+          <div className="relative">
+            {dual.emailOtp.length === 0 && (
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 flex select-none items-center justify-center font-mono text-lg text-muted-foreground tracking-[0.3em]"
               >
-                {resending ? "Sending..." : "Resend"}
-              </Button>
-            </div>
-          </div>
-          <div className="flex justify-between">
-            <Button disabled={busy} onClick={onBack} variant="outline">
-              Cancel
-            </Button>
-            <Button
-              disabled={busy || !emailReady}
-              onClick={() => setPhase("authenticator")}
-            >
-              Continue
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {phase === "authenticator" && (
-        <div className="space-y-3">
-          <div className="space-y-2">
-            <Label
-              className="font-medium text-keeperhub-green-dark"
-              htmlFor="dfs-totp"
-            >
-              Authenticator code
-            </Label>
-            <Input
-              autoComplete="one-time-code"
-              autoFocus
-              className={INPUT_CLASSES}
-              disabled={busy}
-              id="dfs-totp"
+                000000
+              </span>
+            )}
+            {/*
+              Not an <input>: password managers (1Password, Bitwarden,
+              LastPass, Dashlane, etc.) only target input/textarea/select.
+              A contenteditable div is fundamentally invisible to their
+              autofill, including TOTP-fill, which kept landing the
+              authenticator code in this slot.
+            */}
+            {/* biome-ignore lint/a11y/useSemanticElements: input-equivalent semantics intentionally avoided so password managers cannot fill this field */}
+            <div
+              aria-label="Email code"
+              aria-required="true"
+              className={`${EMAIL_FIELD_CLASSES} ${
+                busy
+                  ? "pointer-events-none cursor-not-allowed opacity-50"
+                  : "cursor-text"
+              }`}
+              contentEditable={!busy}
+              id="dfs-email-verify"
               inputMode="numeric"
-              maxLength={6}
-              onChange={(event) =>
-                dual.setTotpCode(numericOnly(event.target.value))
-              }
-              placeholder="000000"
-              value={dual.totpCode}
+              onInput={(event) => {
+                const node = event.currentTarget;
+                const next = sanitizeEmailOtp(node.textContent ?? "");
+                if (node.textContent !== next) {
+                  node.textContent = next;
+                  placeCaretAtEnd(node);
+                }
+                if (next !== dual.emailOtp) {
+                  dual.setEmailOtp(next);
+                }
+              }}
+              onPaste={(event) => {
+                event.preventDefault();
+                const pasted = event.clipboardData.getData("text");
+                const sanitized = sanitizeEmailOtp(pasted);
+                const node = event.currentTarget;
+                node.textContent = sanitized;
+                placeCaretAtEnd(node);
+                dual.setEmailOtp(sanitized);
+              }}
+              ref={emailInputRef}
+              role="textbox"
+              spellCheck={false}
+              suppressContentEditableWarning
+              tabIndex={busy ? -1 : 0}
             />
-            <p className="text-muted-foreground text-xs">
-              Open your authenticator app and enter the code it is
-              showing right now.
-            </p>
           </div>
-          <div className="flex justify-between">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-muted-foreground text-xs">
+              {dual.awaitingEmailOtp
+                ? "We just emailed you a 6-digit code. It expires in 5 minutes."
+                : "Sending the code to your email..."}
+            </p>
             <Button
-              disabled={busy}
-              onClick={() => setPhase("email")}
-              variant="outline"
+              disabled={busy || resending}
+              onClick={handleResend}
+              size="sm"
+              type="button"
+              variant="ghost"
             >
-              Back
-            </Button>
-            <Button
-              disabled={busy || !(emailReady && totpReady)}
-              onClick={onSubmit}
-              variant={submitVariant}
-            >
-              {busy ? "Working..." : submitLabel}
+              {resending ? "Sending..." : "Resend"}
             </Button>
           </div>
         </div>
-      )}
+        <div className="flex justify-between">
+          <Button disabled={busy} onClick={onBack} variant="outline">
+            Cancel
+          </Button>
+          <Button
+            disabled={busy || !emailReady}
+            onClick={() => setPhase("authenticator")}
+          >
+            Continue
+          </Button>
+        </div>
+      </div>
+
+      <div className={phase === "authenticator" ? "space-y-3" : "hidden"}>
+        <div className="space-y-2">
+          <Label
+            className="font-medium text-keeperhub-green-dark"
+            htmlFor="dfs-totp"
+          >
+            Authenticator code
+          </Label>
+          <Input
+            autoComplete="one-time-code"
+            className={INPUT_CLASSES}
+            disabled={busy}
+            id="dfs-totp"
+            inputMode="numeric"
+            maxLength={6}
+            onChange={(event) =>
+              dual.setTotpCode(numericOnly(event.target.value))
+            }
+            placeholder="000000"
+            ref={totpInputRef}
+            value={dual.totpCode}
+          />
+          <p className="text-muted-foreground text-xs">
+            Open your authenticator app and enter the code it is showing right
+            now.
+          </p>
+        </div>
+        <div className="flex justify-between">
+          <Button
+            disabled={busy}
+            onClick={() => setPhase("email")}
+            variant="outline"
+          >
+            Back
+          </Button>
+          <Button
+            disabled={busy || !(emailReady && totpReady)}
+            onClick={onSubmit}
+            variant={submitVariant}
+          >
+            {busy ? "Working..." : submitLabel}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
