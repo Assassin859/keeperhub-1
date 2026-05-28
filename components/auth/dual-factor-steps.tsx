@@ -76,7 +76,7 @@ const STEP_DEFS: ReadonlyArray<{ key: Phase; label: string }> = [
 type StepStatus = "current" | "done" | "pending";
 
 function bubbleClassFor(status: StepStatus): string {
-  if (status === "current" || status === "done") {
+  if (status === "current") {
     return "border-keeperhub-green-dark bg-keeperhub-green text-foreground dark:text-background";
   }
   return "border-border text-foreground";
@@ -119,10 +119,7 @@ function StepIndicator({
             </span>
             <span className={labelClassFor(status)}>{s.label}</span>
             {!isLast && (
-              <span
-                aria-hidden="true"
-                className={`h-px w-6 ${status === "done" ? "bg-keeperhub-green" : "bg-border"}`}
-              />
+              <span aria-hidden="true" className="h-px w-6 bg-border" />
             )}
           </li>
         );
@@ -190,9 +187,13 @@ export function DualFactorSteps({
               Email code
             </Label>
             <Input
-              autoComplete="one-time-code"
+              autoComplete="off"
               autoFocus
               className={INPUT_CLASSES}
+              data-1p-ignore
+              data-bwignore
+              data-form-type="other"
+              data-lpignore="true"
               disabled={busy}
               id="dfs-email"
               inputMode="numeric"

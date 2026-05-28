@@ -81,9 +81,29 @@ env:
   SQS_QUEUE_URL:
     type: kv
     value: "http://localstack.pr-${PR_NUMBER}.svc.cluster.local:4566/000000000000/keeperhub-workflow-queue"
+  # PR deploys do not build a workflow-runner image per-sha (see commit
+  # message of the matrix-trim: "satellite services use pre-built
+  # staging images"). The runner therefore points at the rolling
+  # workflow-runner-latest tag, mirroring how the executor falls back
+  # to executor-latest without the deploy-pr-executor label. If
+  # PR-specific runner code changes need testing, add a deploy-pr-runner
+  # label and a build-runner-image job mirroring build-executor-image.
   RUNNER_IMAGE:
     type: kv
-    value: "${ECR_REGISTRY}/keeperhub-staging:workflow-runner-${IMAGE_TAG}"
+    value: "${ECR_REGISTRY}/keeperhub-staging:workflow-runner-latest"
+  # Code Node sandbox. Forwarded into runner Job pods via
+  # RUNNER_SYSTEM_ENV_VARS in keeperhub-executor/runner-env.ts. Without
+  # both set the runner trips the NODE_ENV=production assertion at
+  # plugins/code/steps/run-code.ts module load and the workflow never
+  # progresses. Each PR gets its own sandbox release in pr-${PR_NUMBER}
+  # (deploy/pr-environment/sandbox.template.yaml); the staging sandbox
+  # NetworkPolicy denies cross-namespace ingress.
+  SANDBOX_BACKEND:
+    type: kv
+    value: "remote"
+  SANDBOX_URL:
+    type: kv
+    value: "http://keeperhub-sandbox-pr-${PR_NUMBER}-common.pr-${PR_NUMBER}.svc.cluster.local:8787"
   IMAGE_PULL_POLICY:
     type: kv
     value: "Always"

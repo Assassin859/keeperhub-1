@@ -76,6 +76,38 @@ export const sessions = pgTable(
   (table) => [index("idx_sessions_user_id").on(table.userId)]
 );
 
+/**
+ * Per-user allowlist of trusted IPs. A successful /verify-ip flow
+ * inserts the request IP here; subsequent sessions originating from
+ * the same IP pass `assessLoginRisk` without prompting the user.
+ *
+ * `country` is captured at the moment of trust for forensic audit but
+ * is not used to decide trust: a user crossing a border on the same
+ * laptop should still be trusted once the IP is in the list.
+ *
+ * The (user_id, ip) pair is unique so a re-verify of a known IP
+ * upserts the `last_seen_at` rather than duplicating rows.
+ */
+export const userTrustedIps = pgTable(
+  "user_trusted_ips",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    ip: text("ip").notNull(),
+    country: text("country"),
+    firstSeenAt: timestamp("first_seen_at").notNull().defaultNow(),
+    lastSeenAt: timestamp("last_seen_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("idx_user_trusted_ips_user_id").on(table.userId),
+    uniqueIndex("idx_user_trusted_ips_user_ip").on(table.userId, table.ip),
+  ]
+);
+
 export const twoFactor = pgTable(
   "two_factor",
   {

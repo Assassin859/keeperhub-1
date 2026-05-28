@@ -57,6 +57,8 @@ describe("assessLoginRisk", () => {
       anomaly: false,
       reasons: [],
       country: null,
+      region: null,
+      city: null,
       recentCountries: [],
     });
     expect(mockSelect).not.toHaveBeenCalled();
@@ -167,6 +169,8 @@ describe("serializeRiskFlags", () => {
       anomaly: true,
       reasons: ["new_country"] as const,
       country: "KR",
+      region: "11",
+      city: "Seoul",
       recentCountries: ["AU"] as const,
     };
     const serialized = serializeRiskFlags(signal);
@@ -174,6 +178,8 @@ describe("serializeRiskFlags", () => {
       anomaly: true,
       reasons: ["new_country"],
       country: "KR",
+      region: "11",
+      city: "Seoul",
       recentCountries: ["AU"],
     });
   });

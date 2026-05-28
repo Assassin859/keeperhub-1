@@ -7,6 +7,7 @@ import {
   readAllSetCookies,
   setCookiesToCookieHeader,
 } from "@/lib/auth-cookie-chain";
+import { hashSessionToken } from "@/lib/auth-session-token-hash";
 import { db } from "@/lib/db";
 import {
   accounts,
@@ -16,7 +17,16 @@ import {
   verifications,
 } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import {
+  checkDualFactorRateLimit,
+  resetDualFactor,
+} from "@/lib/mfa/dual-factor-rate-limit";
 import { verifyPassword } from "@/lib/password";
+import {
+  buildPendingIpSetCookie,
+  encodePendingIpCookie,
+} from "@/lib/pending-ip-cookie";
+import { assessIpTrust } from "@/lib/security/login-risk";
 import { verifyUserTotp } from "@/lib/security/totp-verify";
 
 function constantTimeEquals(a: string, b: string): boolean {
@@ -24,6 +34,40 @@ function constantTimeEquals(a: string, b: string): boolean {
     return false;
   }
   return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
+
+const SESSION_COOKIE_NAMES = [
+  "better-auth.session_token",
+  "__Secure-better-auth.session_token",
+] as const;
+
+/**
+ * Read the raw session token Better Auth wrote into one of the
+ * Set-Cookie headers returned by verifyTOTP. Better Auth signs the
+ * cookie via hono's setSignedCookie, so the cookie value is
+ * `<rawToken>.<base64HmacSignature>`. We strip the signature suffix
+ * because `sessions.token` stores `hashSessionToken(rawToken)` and
+ * we need the raw token to reproduce that hash.
+ */
+function extractNewSessionToken(setCookies: readonly string[]): string | null {
+  for (const raw of setCookies) {
+    const firstPair = raw.split(";")[0]?.trim();
+    if (!firstPair) {
+      continue;
+    }
+    const eqIdx = firstPair.indexOf("=");
+    if (eqIdx <= 0) {
+      continue;
+    }
+    const name = firstPair.slice(0, eqIdx);
+    const value = firstPair.slice(eqIdx + 1);
+    if ((SESSION_COOKIE_NAMES as readonly string[]).includes(name)) {
+      const decoded = decodeURIComponent(value);
+      const dotIdx = decoded.lastIndexOf(".");
+      return dotIdx > 0 ? decoded.slice(0, dotIdx) : decoded;
+    }
+  }
+  return null;
 }
 
 /**
@@ -126,6 +170,25 @@ export async function POST(request: Request): Promise<NextResponse> {
     return badRequest("Authenticator code is required", "missing_totp");
   }
 
+  // Per-email sliding window. Keys on the lowercased email so an
+  // attacker cannot run high-rate TOTP guesses against a known
+  // account, and so the counter ticks even when the user-id lookup
+  // would have failed (otherwise the endpoint becomes a free
+  // unrate-limited brute-force surface for any non-existent email).
+  // resetDualFactor at the success branches wipes the window so a
+  // confused user with typos still gets to land.
+  const rateLimit = checkDualFactorRateLimit(email, "strict_signin");
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      {
+        error: "Too many attempts. Wait and try again.",
+        code: "rate_limited",
+        retryAfter: rateLimit.retryAfter,
+      },
+      { status: 429 }
+    );
+  }
+
   const serverSecret = process.env.BETTER_AUTH_SECRET;
   if (!serverSecret) {
     logSystemError(
@@ -188,6 +251,51 @@ export async function POST(request: Request): Promise<NextResponse> {
   const totpOk = await verifyUserTotp(totpRow.secret, totpCode, serverSecret);
   if (!totpOk) {
     return unauthorized("Invalid authenticator code", "invalid_totp");
+  }
+
+  // Three factors are now valid but we have not minted a session
+  // yet. Consult assessIpTrust before doing so. If the request comes
+  // from an IP this user has never signed in from, defer the session:
+  // consume the email-OTP row, set a signed `pending_ip_verify`
+  // cookie carrying the resolved identity + IP, and route the user
+  // to /verify-ip where they must satisfy another email+TOTP dual
+  // factor against the very same IP. No session row exists in
+  // between, so a stolen cookie alone cannot unlock the account on a
+  // new network. assessIpTrust returns trusted=true for the user's
+  // first-ever attestation and for requests that did not arrive via
+  // Cloudflare (no_cf), so local dev and self-hosted setups still
+  // sign in normally.
+  const ipTrust = await assessIpTrust(user.id);
+  if (!ipTrust.trusted && ipTrust.ip) {
+    try {
+      await db
+        .delete(verifications)
+        .where(eq(verifications.id, emailOtpResult.rowId));
+    } catch (err) {
+      logSystemError(
+        ErrorCategory.DATABASE,
+        "[strict-signin] failed to consume email OTP row before /verify-ip handoff",
+        err,
+        { endpoint: "/api/auth/strict-signin", user_id: user.id }
+      );
+    }
+    const pendingCookieValue = encodePendingIpCookie(
+      {
+        userId: user.id,
+        email,
+        ip: ipTrust.ip,
+        country: ipTrust.country,
+        redirect: "/",
+      },
+      serverSecret
+    );
+    resetDualFactor(email, "strict_signin");
+    const response = NextResponse.json({ ok: true, redirect: "/verify-ip" });
+    response.headers.append(
+      "set-cookie",
+      buildPendingIpSetCookie(pendingCookieValue)
+    );
+    return response;
   }
 
   // 5. All three factors verified. Chain Better Auth's standard flow
@@ -268,16 +376,31 @@ export async function POST(request: Request): Promise<NextResponse> {
   // strict-signin has already verified password + email OTP + TOTP
   // atomically, so the freshly minted session is fully MFA-verified
   // and should not be bounced to /verify-mfa for a redundant step-up.
-  try {
-    await db
-      .update(sessions)
-      .set({ requiresMfa: false, mfaVerifiedAt: new Date() })
-      .where(eq(sessions.userId, user.id));
-  } catch (err) {
+  //
+  // Scope the clear to the new session row by hashing the raw token
+  // from the just-emitted Set-Cookie. A WHERE on user_id would lift
+  // the gate on every other session this user has, including any
+  // pending step-up sessions sitting unverified on another browser.
+  const newRawToken = extractNewSessionToken(sessionSetCookies);
+  if (newRawToken) {
+    try {
+      await db
+        .update(sessions)
+        .set({ requiresMfa: false, mfaVerifiedAt: new Date() })
+        .where(eq(sessions.token, hashSessionToken(newRawToken)));
+    } catch (err) {
+      logSystemError(
+        ErrorCategory.AUTH,
+        "[strict-signin] failed to clear requires_mfa after dual-factor verification",
+        err,
+        { endpoint: "/api/auth/strict-signin", user_id: user.id }
+      );
+    }
+  } else {
     logSystemError(
       ErrorCategory.AUTH,
-      "[strict-signin] failed to clear requires_mfa after dual-factor verification",
-      err,
+      "[strict-signin] new session token missing from Set-Cookie",
+      new Error("session_token cookie not found"),
       { endpoint: "/api/auth/strict-signin", user_id: user.id }
     );
   }
@@ -299,6 +422,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
+  resetDualFactor(email, "strict_signin");
   const response = NextResponse.json({ ok: true });
   for (const cookie of sessionSetCookies) {
     response.headers.append("set-cookie", cookie);

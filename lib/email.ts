@@ -443,3 +443,112 @@ KeeperHub - Blockchain Workflow Automation
 
   return success;
 }
+
+type NewIpAttemptData = {
+  email: string;
+  ip: string;
+  country: string | null;
+  device: string;
+  when: Date;
+};
+
+/**
+ * Notify the account owner that an authenticated request reached them
+ * from an IP not in their trust list. The IP gate in the root proxy
+ * fires this once per (user, ip) per pod lifetime so a legitimate
+ * network change does not flood the inbox.
+ */
+export async function sendNewIpAttemptEmail(
+  data: NewIpAttemptData
+): Promise<boolean> {
+  const { email, ip, country, device, when } = data;
+
+  const logoUrl =
+    "https://raw.githubusercontent.com/KeeperHub/keeperhub/staging/public/keeperhub_logo_email.png";
+
+  const subject = "New sign-in location detected - KeeperHub";
+
+  const whenFormatted = when.toUTCString();
+  const countryLabel = country ?? "Unknown";
+
+  const text = `
+Hi,
+
+An authenticated request to your KeeperHub account just reached us from a network we have not seen on this account before. If this was you, confirm the new IP by completing the verification step in your browser. If this was not you, change your password and remove the IP from your active sessions immediately.
+
+IP: ${ip}
+Country: ${countryLabel}
+Device: ${device}
+When: ${whenFormatted}
+
+---
+KeeperHub - Blockchain Workflow Automation
+`.trim();
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
+    <img src="${logoUrl}" alt="KeeperHub" style="max-width: 200px; height: auto;" />
+  </div>
+
+  <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e5e5; border-top: none; border-radius: 0 0 12px 12px;">
+    <h2 style="color: #1a1a2e; margin-top: 0;">New sign-in location detected</h2>
+
+    <p>An authenticated request to your KeeperHub account just reached us from a network we have not seen on this account before.</p>
+
+    <div style="background: #f5f5f5; border-radius: 8px; padding: 20px; margin: 20px 0; font-family: monospace; font-size: 14px;">
+      <div><strong>IP:</strong> ${ip}</div>
+      <div><strong>Country:</strong> ${countryLabel}</div>
+      <div><strong>Device:</strong> ${device}</div>
+      <div><strong>When:</strong> ${whenFormatted}</div>
+    </div>
+
+    <p>If this was you, confirm the new IP by completing the verification step in your browser.</p>
+
+    <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 20px; margin: 20px 0;">
+      <p style="margin: 0; color: #991b1b;">
+        <strong>If this was not you</strong>, change your password and remove the IP from your active sessions immediately.
+      </p>
+    </div>
+
+    <hr style="border: none; border-top: 1px solid #e5e5e5; margin: 30px 0;">
+
+    <p style="color: #999; font-size: 12px; margin-bottom: 0;">
+      You're receiving this because a new network attempted to access your account. To stop these alerts, sign in only from networks you've verified.
+    </p>
+  </div>
+
+  <div style="text-align: center; padding: 20px; color: #999; font-size: 12px;">
+    <p style="margin: 0;">KeeperHub - Blockchain Workflow Automation</p>
+  </div>
+</body>
+</html>
+`.trim();
+
+  const success = await sendEmail({
+    to: email,
+    subject,
+    text,
+    html,
+  });
+
+  if (!(success || isTestEnv)) {
+    logUserError(
+      ErrorCategory.EXTERNAL_SERVICE,
+      `[Email] Failed to send new-IP notification to ${email}`,
+      new Error("Failed to send new-IP notification"),
+      {
+        service: "sendgrid",
+        ip,
+      }
+    );
+  }
+
+  return success;
+}
