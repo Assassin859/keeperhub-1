@@ -11,9 +11,12 @@
  * having to re-run the query.
  *
  * Deployment: invoked by an external scheduler (Kubernetes CronJob)
- * every 5 minutes. Authorized via `Authorization: Bearer $CRON_SECRET`
- * the same way `app/api/cron/agentic-wallet-sweeper` is. Dev/test
- * bypasses the check.
+ * every 5 minutes. Authorized via `Authorization: Bearer $CRON_SECRET`,
+ * mirroring `app/api/cron/agentic-wallet-sweeper`. The endpoint fails
+ * closed when `CRON_SECRET` is unset -- there is no NODE_ENV dev/test
+ * bypass, so a prod container that boots with `NODE_ENV=test` (the
+ * misconfig the v2 review flagged) cannot accidentally open the
+ * endpoint. Local dev sets `CRON_SECRET` in `.env` to invoke via curl.
  *
  * Detection windows are deliberately overlapping so a transient blip in
  * scheduler timing doesn't drop an event. Idempotency comes from the
@@ -38,17 +41,13 @@ type BehavioralScanResponse = {
 
 function isAuthorized(request: Request): boolean {
   const expected = process.env.CRON_SECRET;
-  // If a secret is configured, always enforce it -- defends against the
-  // misconfiguration shape "container booted with NODE_ENV=test in prod".
-  if (expected) {
-    const header = request.headers.get("authorization");
-    return header === `Bearer ${expected}`;
+  // Fail closed when CRON_SECRET is unset -- mirrors
+  // app/api/cron/agentic-wallet-sweeper. No NODE_ENV bypass; local dev
+  // sets CRON_SECRET in .env to invoke via curl.
+  if (!expected) {
+    return false;
   }
-  // No secret configured -- only safe to bypass in dev/test environments
-  // where local tooling needs to hit the endpoint via curl.
-  return (
-    process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test"
-  );
+  return request.headers.get("authorization") === `Bearer ${expected}`;
 }
 
 export async function GET(request: Request): Promise<Response> {

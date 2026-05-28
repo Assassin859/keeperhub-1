@@ -4,8 +4,9 @@
  * other `tests/integration/*-sweeper.test.ts`); this file covers the
  * shape contract that the cron scheduler and the Loki alert depend on:
  *
- *   - 401 when called without CRON_SECRET in non-dev/test environments
- *   - Returns BehavioralScanResponse JSON shape on success
+ *   - 401 when CRON_SECRET is unset (fails closed; no NODE_ENV bypass)
+ *   - 401 when the header secret doesn't match
+ *   - 200 + correct response body when the secret matches
  *   - Emits one structured `console.warn` per detected row
  */
 
@@ -46,9 +47,7 @@ vi.mock("@/lib/db/schema", () => ({
   },
 }));
 
-const { GET } = await import(
-  "@/app/api/cron/security-behavioral-scan/route"
-);
+const { GET } = await import("@/app/api/cron/security-behavioral-scan/route");
 
 const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
   // suppress test noise; we assert against the spy below
@@ -65,43 +64,64 @@ afterEach(() => {
 });
 
 function makeRequest(headers: Record<string, string> = {}): Request {
-  return new Request("http://localhost:3000/api/cron/security-behavioral-scan", {
-    method: "GET",
-    headers,
-  });
+  return new Request(
+    "http://localhost:3000/api/cron/security-behavioral-scan",
+    {
+      method: "GET",
+      headers,
+    }
+  );
 }
 
 describe("security-behavioral-scan auth", () => {
-  it("returns 401 in production without CRON_SECRET match", async () => {
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("CRON_SECRET", "expected-token");
-    const res = await GET(makeRequest({ authorization: "Bearer wrong" }));
-    expect(res.status).toBe(401);
-  });
-
-  it("returns 401 in production when CRON_SECRET is unset", async () => {
-    vi.stubEnv("NODE_ENV", "production");
+  it("returns 401 when CRON_SECRET is unset (fails closed)", async () => {
+    // No NODE_ENV bypass any more -- mirrors the agentic-wallet-sweeper
+    // pattern. Local dev sets CRON_SECRET in .env to invoke via curl.
     vi.stubEnv("CRON_SECRET", "");
     const res = await GET(makeRequest({ authorization: "Bearer anything" }));
     expect(res.status).toBe(401);
   });
 
-  it("bypasses auth in test environment", async () => {
+  it("returns 401 when the bearer secret doesn't match", async () => {
+    vi.stubEnv("CRON_SECRET", "expected-token");
+    const res = await GET(makeRequest({ authorization: "Bearer wrong" }));
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 401 when NODE_ENV=test and CRON_SECRET is unset", async () => {
+    // Closes the misconfig path the v2 review flagged: prod container
+    // boots with NODE_ENV=test and no secret -> previously bypassed;
+    // now refused. Use a plain unauth'd request -- the point is the
+    // env shape, not the header.
     vi.stubEnv("NODE_ENV", "test");
-    mockSelectChain.mockResolvedValueOnce([]);
+    vi.stubEnv("CRON_SECRET", "");
     const res = await GET(makeRequest());
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 200 when the secret matches", async () => {
+    vi.stubEnv("CRON_SECRET", "expected-token");
+    mockSelectChain.mockResolvedValueOnce([]);
+    const res = await GET(
+      makeRequest({ authorization: "Bearer expected-token" })
+    );
     expect(res.status).toBe(200);
   });
 });
 
 describe("security-behavioral-scan response shape", () => {
   beforeEach(() => {
-    vi.stubEnv("NODE_ENV", "test");
+    // All tests below need authenticated GET; set the secret once.
+    vi.stubEnv("CRON_SECRET", "test-secret");
   });
+
+  function authedRequest(): Request {
+    return makeRequest({ authorization: "Bearer test-secret" });
+  }
 
   it("returns 0 events when no rows match", async () => {
     mockSelectChain.mockResolvedValueOnce([]);
-    const res = await GET(makeRequest());
+    const res = await GET(authedRequest());
     const body = (await res.json()) as {
       newAccountFirstWorkflowEvents: number;
       durationMs: number;
@@ -125,7 +145,7 @@ describe("security-behavioral-scan response shape", () => {
         executionStartedAt,
       },
     ]);
-    const res = await GET(makeRequest());
+    const res = await GET(authedRequest());
     const body = (await res.json()) as {
       newAccountFirstWorkflowEvents: number;
     };
@@ -188,21 +208,9 @@ describe("security-behavioral-scan response shape", () => {
         executionStartedAt: new Date("2026-05-26T10:00:30Z"),
       },
     ]);
-    const res = await GET(makeRequest());
+    const res = await GET(authedRequest());
     expect(res.status).toBe(200);
     // Sentry threw but stdout still emitted -- the signal is durable.
     expect(warnSpy).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("security-behavioral-scan auth hardening (KEEP-612 review-round-2)", () => {
-  it("enforces CRON_SECRET even when NODE_ENV=test, if the secret is set", async () => {
-    // The pre-fix behaviour bypassed auth in test env unconditionally.
-    // After the fix, a configured secret always wins -- defends against
-    // "container booted with NODE_ENV=test in prod" misconfigurations.
-    vi.stubEnv("NODE_ENV", "test");
-    vi.stubEnv("CRON_SECRET", "expected-token");
-    const res = await GET(makeRequest({ authorization: "Bearer wrong" }));
-    expect(res.status).toBe(401);
   });
 });
