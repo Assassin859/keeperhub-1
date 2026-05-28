@@ -198,7 +198,19 @@ jobs:
           target: ${{ matrix.image.target }}
           push: true
           provenance: false
-          build-args: ${{ matrix.image.build_args == true && format('NEXT_PUBLIC_AUTH_PROVIDERS={0}\nNEXT_PUBLIC_GITHUB_CLIENT_ID={1}\nNEXT_PUBLIC_GOOGLE_CLIENT_ID={2}\nNEXT_PUBLIC_BILLING_ENABLED={3}\nNEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED={4}\nNEXT_PUBLIC_TURNSTILE_SITE_KEY={5}', vars.NEXT_PUBLIC_AUTH_PROVIDERS, vars.NEXT_PUBLIC_GITHUB_CLIENT_ID, vars.NEXT_PUBLIC_GOOGLE_CLIENT_ID, vars.NEXT_PUBLIC_BILLING_ENABLED, vars.NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED, vars.NEXT_PUBLIC_TURNSTILE_SITE_KEY) || '' }}
+          # One arg per line via a YAML block scalar. A previous version used
+          # format('...\n...') in a single expression, but GitHub Actions does
+          # not interpret \n as a newline, so every NEXT_PUBLIC_* collapsed into
+          # the value of the first build-arg and the rest (incl. the Turnstile
+          # site key) were never set - the signup captcha never rendered. Blank
+          # lines (migrator image, build_args=false) are ignored by buildx.
+          build-args: |
+            ${{ matrix.image.build_args == true && format('NEXT_PUBLIC_AUTH_PROVIDERS={0}', vars.NEXT_PUBLIC_AUTH_PROVIDERS) || '' }}
+            ${{ matrix.image.build_args == true && format('NEXT_PUBLIC_GITHUB_CLIENT_ID={0}', vars.NEXT_PUBLIC_GITHUB_CLIENT_ID) || '' }}
+            ${{ matrix.image.build_args == true && format('NEXT_PUBLIC_GOOGLE_CLIENT_ID={0}', vars.NEXT_PUBLIC_GOOGLE_CLIENT_ID) || '' }}
+            ${{ matrix.image.build_args == true && format('NEXT_PUBLIC_BILLING_ENABLED={0}', vars.NEXT_PUBLIC_BILLING_ENABLED) || '' }}
+            ${{ matrix.image.build_args == true && format('NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED={0}', vars.NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED) || '' }}
+            ${{ matrix.image.build_args == true && 'NEXT_PUBLIC_TURNSTILE_SITE_KEY=1x00000000000000000000AA' || '' }}
           tags: |
             ${{ steps.login-ecr.outputs.registry }}/${{ env.AWS_ECR_NAME }}:${{ matrix.image.tag_prefix }}-${{ steps.vars.outputs.sha_short }}
           cache-from: |
@@ -542,7 +554,13 @@ jobs:
       - name: Deploy satellite services (parallel)
         run: |
           set -euo pipefail
-          COMMON_ARGS=(--namespace "${NAMESPACE}" --timeout 5m0s --atomic --version 0.2.1)
+          # 10m (not 5m): satellite env secrets are provisioned asynchronously by
+          # external-secrets (parameterStore -> ExternalSecret -> Secret). The
+          # executor needs 8 such secrets (Optional: false); when ESO is slow to
+          # reconcile, the pod sits in CreateContainerConfigError and the 5m
+          # --atomic window rolled back before the secrets landed - the deploy's
+          # intermittent "context deadline exceeded". Match the app's 10m budget.
+          COMMON_ARGS=(--namespace "${NAMESPACE}" --timeout 10m0s --atomic --version 0.2.1)
           LOGDIR=$(mktemp -d)
 
           (
