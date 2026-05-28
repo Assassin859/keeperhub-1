@@ -395,11 +395,7 @@ In a fresh Claude Code session at the repo root:
 /plugin install understand-anything
 ```
 
-Restart Claude Code, then enable the post-commit hook so the graph stays in lockstep with `HEAD`:
-
-```
-/understand --auto-update
-```
+Restart Claude Code. The post-commit auto-update hook is **off** in this repo's `config.json` on purpose — auto-update couples the graph to every commit and pollutes PR diffs with regenerated JSON. Refresh on cadence instead (see "Update process" below). If you want personal incremental updates that you'll squash before pushing, enable it locally with `/understand --auto-update`.
 
 ### Daily usage
 
@@ -422,7 +418,7 @@ Run a fresh full index after large refactors or after pulling new `staging`:
 ### Update process
 
 - **Plugin itself**: `/plugin marketplace update understand-anything` (run periodically; harmless if no update is available).
-- **Knowledge graph**: the `--auto-update` post-commit hook keeps it current. Force a full re-index with `/understand --full` after wide-blast-radius refactors.
+- **Knowledge graph**: refresh weekly with `/understand` (incremental — only re-analyzes changed files) and after wide-blast-radius refactors with `/understand --full`. Auto-update is off (see above) to keep PR diffs clean. Refresh PRs land as their own commit, never bundled into feature PRs.
 
 ### Output and gitignore
 

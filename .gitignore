@@ -152,6 +152,9 @@ reports/
 
 .mcp.json
 
-# Understand-Anything (commit knowledge-graph.json; ignore scratch + dashboard local state)
+# Understand-Anything: commit knowledge-graph.json + config.json + .understandignore.
+# Ignore meta (timestamp churn) and fingerprints (per-machine incremental cache).
 .understand-anything/intermediate/
 .understand-anything/diff-overlay.json
+.understand-anything/meta.json
+.understand-anything/fingerprints.json
