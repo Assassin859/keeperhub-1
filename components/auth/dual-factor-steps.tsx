@@ -127,9 +127,14 @@ function StepIndicator({ current }: { current: Phase }): React.ReactElement {
 const INPUT_CLASSES = "font-mono text-center text-lg tracking-[0.3em]";
 
 // Visual parity with components/ui/input.tsx so the contenteditable div
-// in the email step looks identical to a real <Input>.
+// in the email step looks identical to a real <Input>. text-indent
+// compensates for tracking's trailing letter-space so centered text
+// (and the caret) sit visually centered, not slightly right of center.
 const EMAIL_FIELD_CLASSES =
-  "flex h-9 w-full min-w-0 items-center justify-center rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 md:text-sm font-mono text-lg tracking-[0.3em]";
+  "block h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1 text-center shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 font-mono text-lg tracking-[0.3em] [text-indent:-0.3em]";
+
+const EMAIL_PLACEHOLDER_CLASSES =
+  "pointer-events-none absolute inset-0 block select-none px-3 py-1 text-center font-mono text-lg text-muted-foreground tracking-[0.3em] [text-indent:-0.3em]";
 
 const numericOnly = (value: string): string => value.replace(/\D/g, "");
 
@@ -225,12 +230,9 @@ export function DualFactorSteps({
           </Label>
           <div className="relative">
             {dual.emailOtp.length === 0 && (
-              <span
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-0 flex select-none items-center justify-center font-mono text-lg text-muted-foreground tracking-[0.3em]"
-              >
+              <div aria-hidden="true" className={EMAIL_PLACEHOLDER_CLASSES}>
                 000000
-              </span>
+              </div>
             )}
             {/*
               Not an <input>: password managers (1Password, Bitwarden,
