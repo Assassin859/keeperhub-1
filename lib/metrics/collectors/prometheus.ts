@@ -1204,10 +1204,14 @@ const DEFAULT_DB_METRICS_CACHE_TTL_MS = 60_000;
 
 function getDbMetricsCacheTtlMs(): number {
   const raw = process.env.DB_METRICS_CACHE_TTL_MS;
-  if (raw === undefined) {
+  if (raw === undefined || raw === "") {
     return DEFAULT_DB_METRICS_CACHE_TTL_MS;
   }
-  const parsed = Number.parseInt(raw, 10);
+  // Use Number() (not parseInt) so trailing junk like "60s" or "60000abc"
+  // is rejected outright instead of silently parsed as 60 / 60000. A
+  // malformed env var that silently degrades to the wrong TTL is harder
+  // to notice than one that falls back to the documented default.
+  const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed >= 0
     ? parsed
     : DEFAULT_DB_METRICS_CACHE_TTL_MS;

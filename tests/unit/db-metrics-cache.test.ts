@@ -171,6 +171,25 @@ describe("updateDbMetrics TTL cache", () => {
     expect(dbMocks.getBillingStatsFromDb).toHaveBeenCalledTimes(2);
   });
 
+  it("falls back to default TTL when env var is malformed", async () => {
+    // "60s" with a unit suffix would have been silently parsed as 60ms by
+    // parseInt, giving the wrong cache behavior. Number() rejects it, so
+    // the default 60000ms is used and only one DB hit happens within 30s.
+    process.env.DB_METRICS_CACHE_TTL_MS = "60s";
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    try {
+      await updateDbMetrics();
+      vi.setSystemTime(new Date("2026-01-01T00:00:30Z"));
+      await updateDbMetrics();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(dbMocks.getWorkflowStatsFromDb).toHaveBeenCalledTimes(1);
+  });
+
   it("disables caching when DB_METRICS_CACHE_TTL_MS=0", async () => {
     process.env.DB_METRICS_CACHE_TTL_MS = "0";
 
