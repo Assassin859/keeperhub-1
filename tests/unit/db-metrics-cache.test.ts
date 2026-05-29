@@ -11,13 +11,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-// Stub every helper updateDbMetrics() imports so the test never touches the
-// real DB. Each stub is a vi.fn we can assert call counts on.
-const stub = (returnValue: unknown): ReturnType<typeof vi.fn> =>
-  vi.fn(async () => returnValue);
-
-const dbMocks = {
-  getWorkflowStatsFromDb: stub({
+// Stub return shapes for every helper updateDbMetrics() imports. Kept
+// in a map so rebindDefaultDbMockImplementations() can re-apply them
+// after mockReset() wipes the default implementation between tests.
+const DEFAULT_DB_RETURNS: Record<string, unknown> = {
+  getWorkflowStatsFromDb: {
     totalSuccess: 0,
     totalError: 0,
     totalRunning: 0,
@@ -27,65 +25,76 @@ const dbMocks = {
     durationBuckets: [0, 0, 0, 0, 0, 0, 0, 0, 0],
     durationSum: 0,
     durationCount: 0,
-  }),
-  getStepStatsFromDb: stub({
+  },
+  getStepStatsFromDb: {
     countsByType: {},
     durationBuckets: [0, 0, 0, 0, 0, 0, 0, 0],
     durationSum: 0,
     durationCount: 0,
-  }),
-  getDailyActiveUsersFromDb: stub(0),
-  getUserStatsFromDb: stub({
+  },
+  getDailyActiveUsersFromDb: 0,
+  getUserStatsFromDb: {
     total: 0,
     verified: 0,
     anonymous: 0,
     withWorkflows: 0,
     withIntegrations: 0,
-  }),
-  getOrgStatsFromDb: stub({
+  },
+  getOrgStatsFromDb: {
     total: 0,
     membersTotal: 0,
     membersByRole: {},
     invitationsPending: 0,
     withWorkflows: 0,
-  }),
-  getWorkflowDefinitionStatsFromDb: stub({
+  },
+  getWorkflowDefinitionStatsFromDb: {
     total: 0,
     public: 0,
     private: 0,
     anonymous: 0,
-  }),
-  getScheduleStatsFromDb: stub({
+  },
+  getScheduleStatsFromDb: {
     total: 0,
     enabled: 0,
     disabled: 0,
     byLastStatus: {},
-  }),
-  getIntegrationStatsFromDb: stub({ total: 0, managed: 0, byType: {} }),
-  getInfraStatsFromDb: stub({
+  },
+  getIntegrationStatsFromDb: { total: 0, managed: 0, byType: {} },
+  getInfraStatsFromDb: {
     apiKeysTotal: 0,
     chainsTotal: 0,
     chainsEnabled: 0,
     walletsTotal: 0,
     sessionsActive: 0,
-  }),
-  getUserListFromDb: stub([]),
-  getOrgListFromDb: stub([]),
-  getVoteStatsFromDb: stub({
+  },
+  getUserListFromDb: [],
+  getOrgListFromDb: [],
+  getVoteStatsFromDb: {
     totalVotes: 0,
     totalUpvotes: 0,
     totalDownvotes: 0,
     topWorkflows: [],
     mostClonedWorkflows: [],
     topVoters: [],
-  }),
-  getBillingStatsFromDb: stub({
+  },
+  getBillingStatsFromDb: {
     orgsByPlan: [],
     orgsExecutions: [],
     mrrCentsByPlan: [],
     mrrCentsTotal: 0,
-  }),
+  },
 };
+
+const dbMocks: Record<string, ReturnType<typeof vi.fn>> = Object.fromEntries(
+  Object.keys(DEFAULT_DB_RETURNS).map((name) => [name, vi.fn()])
+);
+
+function rebindDefaultDbMockImplementations(): void {
+  for (const [name, ret] of Object.entries(DEFAULT_DB_RETURNS)) {
+    dbMocks[name].mockImplementation(async () => ret);
+  }
+}
+rebindDefaultDbMockImplementations();
 
 vi.mock("@/lib/metrics/db-metrics", () => dbMocks);
 
@@ -123,9 +132,15 @@ describe("updateDbMetrics TTL cache", () => {
 
   beforeEach(() => {
     __resetDbMetricsCacheForTest();
+    // mockReset (not mockClear) so any pending mockImplementationOnce /
+    // mockRejectedValueOnce queue from a prior test cannot leak in.
+    // mockClear only resets call history.
     for (const fn of Object.values(dbMocks)) {
-      fn.mockClear();
+      fn.mockReset();
     }
+    // mockReset also wipes the default implementation; re-establish it
+    // so non-overridden helpers return the resolved stub shape again.
+    rebindDefaultDbMockImplementations();
   });
 
   afterEach(() => {
