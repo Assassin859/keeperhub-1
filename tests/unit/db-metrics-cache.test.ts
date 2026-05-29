@@ -139,11 +139,12 @@ describe("updateDbMetrics TTL cache", () => {
   it("hits the DB once when called twice inside the TTL window", async () => {
     process.env.DB_METRICS_CACHE_TTL_MS = "60000";
 
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    // toFake includes "performance" because the cache uses performance.now()
+    // for its TTL math (monotonic; immune to NTP step adjustments).
+    vi.useFakeTimers({ toFake: ["Date", "performance"] });
     try {
       await updateDbMetrics();
-      vi.setSystemTime(new Date("2026-01-01T00:00:30Z"));
+      vi.advanceTimersByTime(30_000);
       await updateDbMetrics();
     } finally {
       vi.useRealTimers();
@@ -157,11 +158,10 @@ describe("updateDbMetrics TTL cache", () => {
   it("refreshes after the TTL elapses", async () => {
     process.env.DB_METRICS_CACHE_TTL_MS = "60000";
 
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    vi.useFakeTimers({ toFake: ["Date", "performance"] });
     try {
       await updateDbMetrics();
-      vi.setSystemTime(new Date("2026-01-01T00:01:01Z"));
+      vi.advanceTimersByTime(61_000);
       await updateDbMetrics();
     } finally {
       vi.useRealTimers();
@@ -177,11 +177,10 @@ describe("updateDbMetrics TTL cache", () => {
     // the default 60000ms is used and only one DB hit happens within 30s.
     process.env.DB_METRICS_CACHE_TTL_MS = "60s";
 
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    vi.useFakeTimers({ toFake: ["Date", "performance"] });
     try {
       await updateDbMetrics();
-      vi.setSystemTime(new Date("2026-01-01T00:00:30Z"));
+      vi.advanceTimersByTime(30_000);
       await updateDbMetrics();
     } finally {
       vi.useRealTimers();
@@ -251,8 +250,7 @@ describe("updateDbMetrics TTL cache", () => {
         })
     );
 
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    vi.useFakeTimers({ toFake: ["Date", "performance"] });
     let first: Promise<void>;
     let second: Promise<void>;
     try {
@@ -261,7 +259,7 @@ describe("updateDbMetrics TTL cache", () => {
       // so resolveWorkflow gets bound before we manipulate it below.
       await flushMicrotasks();
       // Advance well past the TTL while the first refresh is still hanging.
-      vi.setSystemTime(new Date("2026-01-01T00:02:00Z"));
+      vi.advanceTimersByTime(120_000);
       second = updateDbMetrics();
     } finally {
       vi.useRealTimers();
@@ -286,13 +284,12 @@ describe("updateDbMetrics TTL cache", () => {
   it("emits cache_lookups{result} and refresh{outcome} counters", async () => {
     process.env.DB_METRICS_CACHE_TTL_MS = "60000";
 
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    vi.useFakeTimers({ toFake: ["Date", "performance"] });
     try {
       // miss + refresh success
       await updateDbMetrics();
       // hit (no refresh)
-      vi.setSystemTime(new Date("2026-01-01T00:00:30Z"));
+      vi.advanceTimersByTime(30_000);
       await updateDbMetrics();
     } finally {
       vi.useRealTimers();

@@ -1218,6 +1218,9 @@ function getDbMetricsCacheTtlMs(): number {
 }
 
 type DbMetricsCacheEntry = {
+  // Monotonic timestamps from performance.now(), not Date.now() — wall
+  // clock can step backwards on NTP adjustments and invalidate the
+  // TTL math. performance.now() is process-monotonic.
   startedAt: number;
   completedAt: number | null;
   promise: Promise<void>;
@@ -1287,7 +1290,7 @@ export function updateDbMetrics(): Promise<void> {
       return lastDbMetricsRefresh.promise;
     }
     // Completed: serve cached if within TTL of completion (not start).
-    if (Date.now() - lastDbMetricsRefresh.completedAt < ttl) {
+    if (performance.now() - lastDbMetricsRefresh.completedAt < ttl) {
       dbMetricsCacheLookupsTotal.inc({ result: "hit" });
       return lastDbMetricsRefresh.promise;
     }
@@ -1299,7 +1302,7 @@ export function updateDbMetrics(): Promise<void> {
     // Already logged inside refreshDbMetricsNow.
   });
   const entry: DbMetricsCacheEntry = {
-    startedAt: Date.now(),
+    startedAt: performance.now(),
     completedAt: null,
     promise: wrapped,
   };
@@ -1311,7 +1314,7 @@ export function updateDbMetrics(): Promise<void> {
   // (which would surface as an unhandled rejection).
   raw.then(
     () => {
-      entry.completedAt = Date.now();
+      entry.completedAt = performance.now();
       dbMetricsRefreshTotal.inc({ outcome: "success" });
     },
     () => {
