@@ -223,6 +223,11 @@ export type PluginAction = {
   // Output fields for template autocomplete (what this action returns)
   outputFields?: OutputField[];
 
+  // Optional JSON-Schema description of the action output. When omitted,
+  // list_action_schemas synthesizes one from `outputFields`. Declare this on
+  // actions whose output shape is richer than a flat key/description map.
+  outputSchema?: Record<string, unknown>;
+
   // Output display configuration (how to render output in workflow runs panel)
   outputConfig?: OutputDisplayConfig;
 

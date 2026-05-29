@@ -2,10 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
 import { evaluateConditionExpression } from "@/lib/workflow/executor/executor.workflow";
+import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
+import { validateConditionExpression } from "@/lib/workflow/nodes/condition/validator";
 
 const NO_EXPRESSION_REGEX = /no expression configured/;
+const AVAILABLE_FIELDS_REGEX = /Available fields/;
+const BARE_INDEX_REGEX = /\{\{@nodeId:Label\.field\}\} template format/;
 
 /**
  * Tests for KEEP-1520: Condition node losing expression at runtime
@@ -799,5 +802,131 @@ describe("condition evaluation edge cases", () => {
       const result = evaluateConditionExpression(expression, outputs);
       expect(result.result).toBe(true);
     });
+  });
+});
+
+/**
+ * Trigger nodes store their output as `{ success: true, data: triggerData }`
+ * (see executor.workflow.ts trigger branch). Action-config templates already
+ * unwrap that shape transparently via resolveFromOutputData, but condition
+ * expressions historically walked output.data directly with no wrapper
+ * fallback, causing `args.value` (the natural author-intent path for a
+ * Transfer event) to fail with `"args does not exist on the data. Available
+ * fields: success, data"`. These tests pin the new parity behavior.
+ */
+describe("condition resolver: trigger { success, data } wrapper unwrap", () => {
+  it("resolves event-trigger args through the wrapper (parity with action templates)", () => {
+    const triggerOutput = {
+      success: true,
+      data: {
+        args: { from: "0xA", to: "0xB", value: "8200" },
+        address: "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599",
+        eventName: "Transfer",
+      },
+    };
+    const outputs = {
+      trigger1: { label: "Event", data: triggerOutput },
+    };
+    const expression = "{{@trigger1:Event.args.value}} > 100";
+
+    const result = evaluateConditionExpression(expression, outputs);
+    expect(result.result).toBe(true);
+  });
+
+  it("resolves a wrapped top-level field (e.g. eventName)", () => {
+    const triggerOutput = {
+      success: true,
+      data: {
+        args: { value: "1" },
+        eventName: "Transfer",
+      },
+    };
+    const outputs = {
+      trigger1: { label: "Event", data: triggerOutput },
+    };
+    const expression = "{{@trigger1:Event.eventName}} === 'Transfer'";
+
+    const result = evaluateConditionExpression(expression, outputs);
+    expect(result.result).toBe(true);
+  });
+
+  it("still throws 'Available fields' when path misses on BOTH wrapper and inner", () => {
+    const outputs = {
+      trigger1: {
+        label: "Event",
+        data: {
+          success: true,
+          data: { args: { value: "1" } },
+        },
+      },
+    };
+    const expression = "{{@trigger1:Event.nonexistent}} > 0";
+
+    expect(() => evaluateConditionExpression(expression, outputs)).toThrow(
+      AVAILABLE_FIELDS_REGEX
+    );
+  });
+
+  it("does not regress direct-path resolution on non-wrapped action outputs", () => {
+    const outputs = {
+      httpNode: { label: "HTTP", data: { status: 200, body: "ok" } },
+    };
+    const expression = "{{@httpNode:HTTP.status}} === 200";
+
+    const result = evaluateConditionExpression(expression, outputs);
+    expect(result.result).toBe(true);
+  });
+
+  it("prefers a top-level match over the wrapped-inner match when both exist", () => {
+    // Belt-and-braces: if a node ever produces data that has the field at
+    // BOTH the top level and inside `.data`, the top-level value should win
+    // (the wrapper unwrap is a fallback, not an override).
+    const outputs = {
+      n: {
+        label: "N",
+        data: { value: "outer", data: { value: "inner" } },
+      },
+    };
+    const expression = "{{@n:N.value}} === 'outer'";
+
+    const result = evaluateConditionExpression(expression, outputs);
+    expect(result.result).toBe(true);
+  });
+});
+
+describe("condition bracket-notation grammar", () => {
+  it("resolves an array/tuple index inside the stored-format field path", () => {
+    const outputs = {
+      step2: { label: "Read", data: { result: ["a", "x", "z"] } },
+    };
+
+    const result = evaluateConditionExpression(
+      '{{@step2:Read.result[1]}} === "x"',
+      outputs
+    );
+    expect(result.result).toBe(true);
+  });
+
+  it("allows index access on a substituted variable token (__vN[n])", () => {
+    expect(validateConditionExpression('__v0[1] === "x"')).toEqual({
+      valid: true,
+    });
+  });
+
+  it("rejects a bare indexed reference with an actionable grammar hint", () => {
+    const result = validateConditionExpression('step2[1] === "x"');
+    expect(result.valid).toBe(false);
+    if (result.valid) {
+      return;
+    }
+    expect(result.error).toMatch(BARE_INDEX_REGEX);
+  });
+
+  it("surfaces the grammar hint through the executor for a bare reference", () => {
+    expect(() =>
+      evaluateConditionExpression('step2[1] === "x"', {
+        step2: { label: "Read", data: { result: ["a", "x"] } },
+      })
+    ).toThrow(BARE_INDEX_REGEX);
   });
 });

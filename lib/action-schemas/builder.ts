@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { chains, explorerConfigs } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { synthesizeOutputSchema } from "@/lib/mcp/output-schema";
 import {
   SYSTEM_ACTIONS,
   TEMPLATE_SYNTAX,
@@ -32,6 +33,9 @@ type ChainInfo = {
   symbol: string;
   chainType: string;
   isTestnet: boolean;
+  // Support maturity: "stable" | "experimental" | "deprecated". Agents
+  // should avoid experimental/deprecated chains for production writes.
+  status: string;
   explorerUrl: string | null;
 };
 
@@ -45,6 +49,7 @@ export type ActionSchema = {
   requiredFields: Record<string, string>;
   optionalFields: Record<string, string>;
   outputFields: Record<string, string>;
+  outputSchema?: Record<string, unknown>;
 };
 
 export type BuildActionSchemasOptions = {
@@ -117,6 +122,8 @@ export function transformPluginAction(
     }
   }
 
+  const outputSchema = synthesizeOutputSchema(action);
+
   return {
     actionType,
     label: action.label,
@@ -128,6 +135,7 @@ export function transformPluginAction(
     requiredFields,
     optionalFields,
     outputFields,
+    ...(outputSchema ? { outputSchema } : {}),
   };
 }
 
@@ -190,6 +198,7 @@ async function fetchEnabledChains(endpointLabel: string): Promise<ChainInfo[]> {
       symbol: chain.symbol,
       chainType: chain.chainType,
       isTestnet: chain.isTestnet ?? false,
+      status: chain.status,
       explorerUrl: explorer?.explorerUrl ?? null,
     }));
   } catch (error) {

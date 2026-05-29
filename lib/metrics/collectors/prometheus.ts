@@ -756,6 +756,20 @@ const workflowExecutionsStartedTotal = getOrCreateCounter(
   ["trigger_type", "chain"]
 );
 
+// KEEP-612 detection signal. lib/safe-fetch.ts increments this every time
+// a SSRF-blocklisted destination (or DNS-resolve-mismatch) is refused. The
+// `shadow` label distinguishes enforce-mode rejects (shadow=false, the
+// actionable signal) from observe-only logs (shadow=true). Grafana alerts
+// on this metric live in
+// techops_infrastructure/grafana/keeperhub-dashboards/keeperhub_metrics_alerts.tf
+// as `safe_fetch_blocks_alert`.
+const safeFetchBlocks = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_safe_fetch_blocks_total",
+  "safe_fetch refused outbound HTTP requests, labelled by reason / plugin_name / shadow",
+  ["reason", "plugin_name", "shadow"]
+);
+
 // Error counters
 const pluginErrors = getOrCreateCounter(
   apiRegistry,
@@ -1004,6 +1018,8 @@ const counterMap: Record<string, Counter> = {
   "billing.invoice.paid": billingInvoicePaid,
   "billing.invoice.failed": billingInvoiceFailed,
   "billing.overage.charged": billingOverageCharged,
+  // KEEP-612: see safeFetchBlocks definition above for rationale.
+  "safe_fetch.blocks.total": safeFetchBlocks,
 };
 
 const errorCounterMap: Record<string, Counter> = {
@@ -1176,13 +1192,157 @@ const WORKFLOW_DURATION_BUCKETS = [
 ];
 const STEP_DURATION_BUCKETS = [50, 100, 250, 500, 1000, 2000, 5000];
 
+// Module-level TTL cache for updateDbMetrics. The scrape path runs ~35
+// aggregate queries (including unindexed seq scans over workflow_executions
+// and workflow_execution_logs) and the ServiceMonitor scrapes every 30s per
+// pod. Without this cache, each pod hits the DB on every scrape; with it,
+// concurrent scrapes share an in-flight refresh and back-to-back scrapes
+// within DB_METRICS_CACHE_TTL_MS reuse the prior result.
+//
+// Set DB_METRICS_CACHE_TTL_MS=0 to disable the cache (refresh on every call).
+const DEFAULT_DB_METRICS_CACHE_TTL_MS = 60_000;
+
+function getDbMetricsCacheTtlMs(): number {
+  const raw = process.env.DB_METRICS_CACHE_TTL_MS;
+  if (raw === undefined || raw === "") {
+    return DEFAULT_DB_METRICS_CACHE_TTL_MS;
+  }
+  // Use Number() (not parseInt) so trailing junk like "60s" or "60000abc"
+  // is rejected outright instead of silently parsed as 60 / 60000. A
+  // malformed env var that silently degrades to the wrong TTL is harder
+  // to notice than one that falls back to the documented default.
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0
+    ? parsed
+    : DEFAULT_DB_METRICS_CACHE_TTL_MS;
+}
+
+type DbMetricsCacheEntry = {
+  // Monotonic timestamps from performance.now(), not Date.now() — wall
+  // clock can step backwards on NTP adjustments and invalidate the
+  // TTL math. performance.now() is process-monotonic.
+  startedAt: number;
+  completedAt: number | null;
+  promise: Promise<void>;
+};
+
+let lastDbMetricsRefresh: DbMetricsCacheEntry | null = null;
+
+// Per-pod observability for the cache itself. Without these, the only
+// post-deploy signal for whether the cache is working is the indirect
+// "DB CPU went down" reading on CloudWatch. The two counters split cache
+// lookup outcomes (every updateDbMetrics call) from refresh outcomes
+// (every actual DB round-trip) so PromQL can express both
+// "cache hit rate" and "refresh failure rate" cleanly.
+const dbMetricsCacheLookupsTotal = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_db_metrics_cache_lookups_total",
+  "Outcomes of /api/metrics/db cache lookups (per pod)",
+  ["result"]
+);
+
+const dbMetricsRefreshTotal = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_db_metrics_refresh_total",
+  "Outcomes of /api/metrics/db DB round-trips (per pod)",
+  ["outcome"]
+);
+
 /**
- * Update DB-sourced metrics from database
- *
- * Called before each metrics scrape to ensure fresh data from the database.
- * This is necessary because workflow runner jobs exit before Prometheus can scrape them.
+ * Reset the cache. Test-only — throws if called outside NODE_ENV=test.
+ * Exported because tests need to clear the module-level state between
+ * cases. Gated so production code that accidentally calls it fails loud
+ * instead of silently invalidating the cache mid-flight.
  */
-export async function updateDbMetrics(): Promise<void> {
+export function __resetDbMetricsCacheForTest(): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error(
+      "__resetDbMetricsCacheForTest is test-only; do not call in production"
+    );
+  }
+  lastDbMetricsRefresh = null;
+}
+
+/**
+ * Update DB-sourced metrics from database.
+ *
+ * Wraps the underlying refresh in a per-process TTL cache so two scrapes
+ * within the TTL share one DB round-trip. Concurrent callers during an
+ * in-flight refresh receive the same promise, even past the TTL — this
+ * prevents the cache from amplifying load when a refresh under DB stress
+ * takes longer than the TTL itself. Once the refresh completes, TTL is
+ * measured from completion. On rejection the cache slot is cleared so the
+ * next caller retries instead of seeing a stale failure.
+ */
+export function updateDbMetrics(): Promise<void> {
+  const ttl = getDbMetricsCacheTtlMs();
+  if (ttl <= 0) {
+    dbMetricsCacheLookupsTotal.inc({ result: "disabled" });
+    // No caching, but still swallow so the route doesn't 500. The inner
+    // refresh already logged the error before rethrowing.
+    return refreshDbMetricsNow().then(
+      () => {
+        dbMetricsRefreshTotal.inc({ outcome: "success" });
+      },
+      () => {
+        dbMetricsRefreshTotal.inc({ outcome: "error" });
+        // Already logged inside refreshDbMetricsNow.
+      }
+    );
+  }
+  if (lastDbMetricsRefresh) {
+    // In-flight: share the promise regardless of TTL to avoid starting a
+    // second concurrent refresh when the first hasn't finished yet.
+    if (lastDbMetricsRefresh.completedAt === null) {
+      dbMetricsCacheLookupsTotal.inc({ result: "in_flight_dedup" });
+      return lastDbMetricsRefresh.promise;
+    }
+    // Completed: serve cached if within TTL of completion (not start).
+    if (performance.now() - lastDbMetricsRefresh.completedAt < ttl) {
+      dbMetricsCacheLookupsTotal.inc({ result: "hit" });
+      return lastDbMetricsRefresh.promise;
+    }
+  }
+  dbMetricsCacheLookupsTotal.inc({ result: "miss" });
+  const raw = refreshDbMetricsNow();
+  // Public promise swallows so the metrics endpoint doesn't 500.
+  const wrapped = raw.catch(() => {
+    // Already logged inside refreshDbMetricsNow.
+  });
+  const entry: DbMetricsCacheEntry = {
+    startedAt: performance.now(),
+    completedAt: null,
+    promise: wrapped,
+  };
+  lastDbMetricsRefresh = entry;
+  // Combined settle handler in two-arg form: stamps completion on success
+  // so subsequent TTL checks measure from there, and evicts the slot on
+  // failure so the next scrape retries instead of holding a poisoned
+  // entry. The two-arg form avoids creating an orphan rejected promise
+  // (which would surface as an unhandled rejection). The trailing .catch
+  // guards against the settle callbacks themselves throwing (e.g. if
+  // prom-client is in a bad state), which would otherwise produce a second
+  // unhandled rejection from the returned promise.
+  raw
+    .then(
+      () => {
+        entry.completedAt = performance.now();
+        dbMetricsRefreshTotal.inc({ outcome: "success" });
+      },
+      () => {
+        if (lastDbMetricsRefresh === entry) {
+          lastDbMetricsRefresh = null;
+        }
+        dbMetricsRefreshTotal.inc({ outcome: "error" });
+      }
+    )
+    .catch(() => {
+      // settle callback threw; counters are best-effort
+    });
+  return wrapped;
+}
+
+async function refreshDbMetricsNow(): Promise<void> {
   try {
     // Dynamic import to avoid circular dependencies
     const {
@@ -1429,7 +1589,10 @@ export async function updateDbMetrics(): Promise<void> {
     updateHubVoteMetrics(voteStats);
   } catch (error) {
     console.error("[Prometheus] Failed to update DB metrics:", error);
-    // Don't throw - allow other metrics to still be returned
+    // Propagate so the TTL cache wrapper evicts the failed entry instead
+    // of pinning it; updateDbMetrics() catches before returning to callers,
+    // preserving the previous "metrics endpoint never 500s" behavior.
+    throw error;
   }
 }
 
