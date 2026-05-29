@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-const { mockUsersFindFirst } = vi.hoisted(() => ({
+const { mockUsersFindFirst, mockCaptureMessage } = vi.hoisted(() => ({
   mockUsersFindFirst: vi.fn(),
+  mockCaptureMessage: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -11,6 +12,12 @@ vi.mock("@/lib/db", () => ({
 }));
 
 vi.mock("@/lib/db/schema", () => ({ users: { id: "id" } }));
+
+vi.mock("@sentry/nextjs", () => ({
+  captureMessage: (message: string, context: unknown): void => {
+    mockCaptureMessage(message, context);
+  },
+}));
 
 const TEST_SECRET = "test-secret-32-bytes-long-enough-for-hs256";
 process.env.OAUTH_JWT_SECRET = TEST_SECRET;
@@ -65,6 +72,18 @@ describe("authenticateOAuthToken -- deactivated user handling", () => {
     expect(result.authenticated).toBe(false);
     expect(result.statusCode).toBe(401);
     expect(result.error).toBe("User account is deactivated");
+    // KEEP-612: the MCP OAuth path is the 4th deactivated-login surface and
+    // must emit the detection signal, mirroring session/account/api-key.
+    expect(mockCaptureMessage).toHaveBeenCalledTimes(1);
+    const [message, options] = mockCaptureMessage.mock.calls[0] as [
+      string,
+      { tags: Record<string, string>; user: { id: string } },
+    ];
+    expect(message).toBe("security.deactivated_login_attempt");
+    expect(options).toMatchObject({
+      tags: { security: "deactivated_login_attempt", surface: "mcp_oauth" },
+      user: { id: "user-1" },
+    });
   });
 
   it("rejects a kh_-prefixed bearer token (handled by API-key auth instead)", async () => {

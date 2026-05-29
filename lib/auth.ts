@@ -42,8 +42,8 @@ import {
   organization as organizationTable,
   sessions,
   twoFactor as twoFactorTable,
-  userTrustedIps,
   users,
+  userTrustedIps,
   verifications,
   workflowExecutionLogs,
   workflowExecutions,
@@ -745,6 +745,32 @@ export const auth = betterAuth({
   },
   onAPIError: {
     onError: (error, ctx) => {
+      // KEEP-612: the sessions backstop trigger (migration 0090) raises
+      // SQLSTATE 'KH001' when a session insert is attempted for a
+      // deactivated user. The session.create.before hook above is the
+      // primary gate and normally prevents the insert; KH001 only fires
+      // when that hook is bypassed (future OAuth provider, direct insert,
+      // a hook regression) -- i.e. an app-path-bypassed backstop, exactly
+      // what the detection layer must page on. Better Auth owns the
+      // session insert, so this central error handler is the only seam to
+      // observe it. Best-effort; never alters the error response.
+      const code =
+        error && typeof error === "object" && "code" in error
+          ? (error as { code?: unknown }).code
+          : undefined;
+      if (code === "KH001") {
+        try {
+          captureMessage("security.backstop_session_blocked", {
+            level: "warning",
+            tags: { security: "backstop_session_blocked", surface: "session" },
+          });
+        } catch {
+          // swallow; observability must not affect auth error handling
+        }
+        console.warn(
+          JSON.stringify({ event: "security.backstop_session_blocked" })
+        );
+      }
       console.error("[Better Auth API Error]", {
         error:
           error instanceof Error
