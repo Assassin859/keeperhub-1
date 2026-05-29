@@ -32,3 +32,18 @@ export function isWorkflowDeleted(workflow: {
 export function softDeleteValues(): { deletedAt: Date; isListed: boolean } {
   return { deletedAt: new Date(), isListed: false };
 }
+
+/**
+ * Filter the owner-facing workflow list down to entries that belong in the
+ * sidebar picker. Soft-deleted rows are dropped (audit/recovery still keeps
+ * them in the API payload for other surfaces) and the internal `__current__`
+ * stub is excluded. Disabled rows are intentionally kept -- the picker greys
+ * them out and tags them rather than hiding them.
+ */
+export function filterPickerVisible<
+  T extends { name: string; deletedAt?: Date | string | null },
+>(entries: T[]): T[] {
+  return entries.filter(
+    (entry) => entry.name !== "__current__" && !entry.deletedAt
+  );
+}
