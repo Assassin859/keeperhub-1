@@ -1,5 +1,17 @@
-import { describe, expect, it } from "vitest";
-import { isKh001SessionBackstop } from "@/lib/security/session-backstop";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { mockCaptureMessage } = vi.hoisted(() => ({
+  mockCaptureMessage: vi.fn(),
+}));
+vi.mock("@sentry/nextjs", () => ({
+  captureMessage: (message: string, context: unknown): void => {
+    mockCaptureMessage(message, context);
+  },
+}));
+
+const { isKh001SessionBackstop, reportSessionBackstop } = await import(
+  "@/lib/security/session-backstop"
+);
 
 describe("isKh001SessionBackstop", () => {
   it("matches a top-level KH001 SQLSTATE", () => {
@@ -58,5 +70,59 @@ describe("isKh001SessionBackstop", () => {
     const a: { code: string; cause?: unknown } = { code: "nope" };
     a.cause = a;
     expect(isKh001SessionBackstop(a)).toBe(false);
+  });
+});
+
+describe("reportSessionBackstop (onAPIError emit wiring)", () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    mockCaptureMessage.mockReset();
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+      // assert against the spy, suppress noise
+    });
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
+
+  it("emits Sentry + structured stdout and returns true on a wrapped KH001", () => {
+    const wrapped = new Error("Failed to create session");
+    (wrapped as Error & { cause: unknown }).cause = { code: "KH001" };
+
+    const fired = reportSessionBackstop(wrapped);
+
+    expect(fired).toBe(true);
+    expect(mockCaptureMessage).toHaveBeenCalledTimes(1);
+    const [message, options] = mockCaptureMessage.mock.calls[0] as [
+      string,
+      { tags: Record<string, string> },
+    ];
+    expect(message).toBe("security.backstop_session_blocked");
+    expect(options.tags).toMatchObject({
+      security: "backstop_session_blocked",
+      surface: "session",
+    });
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(warnSpy.mock.calls[0][0] as string)).toEqual({
+      event: "security.backstop_session_blocked",
+    });
+  });
+
+  it("no-ops and returns false on an unrelated error", () => {
+    const fired = reportSessionBackstop({ code: "23505" });
+    expect(fired).toBe(false);
+    expect(mockCaptureMessage).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("still logs + returns true when Sentry capture throws", () => {
+    mockCaptureMessage.mockImplementationOnce(() => {
+      throw new Error("sentry down");
+    });
+    const fired = reportSessionBackstop({ code: "KH001" });
+    expect(fired).toBe(true);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
   });
 });

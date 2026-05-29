@@ -26,7 +26,7 @@ import {
   assessLoginRisk,
   serializeRiskFlags,
 } from "@/lib/security/login-risk";
-import { isKh001SessionBackstop } from "@/lib/security/session-backstop";
+import { reportSessionBackstop } from "@/lib/security/session-backstop";
 import { TRUSTED_ORIGINS } from "@/lib/trusted-origins";
 import { wrapWithSessionTokenHash } from "./auth-session-token-hash";
 import { db } from "./db";
@@ -746,33 +746,12 @@ export const auth = betterAuth({
   },
   onAPIError: {
     onError: (error, ctx) => {
-      // KEEP-612: the sessions backstop trigger (migration 0090) raises
-      // SQLSTATE 'KH001' when a session insert is attempted for a
-      // deactivated user. The session.create.before hook above is the
-      // primary gate and normally prevents the insert; KH001 only fires
-      // when that hook is bypassed (future OAuth provider, direct insert,
-      // a hook regression) -- i.e. an app-path-bypassed backstop, exactly
-      // what the detection layer must page on. Better Auth owns the
-      // session insert, so this central error handler is the only seam to
-      // observe it. Best-effort; never alters the error response.
-      //
-      // Better Auth wraps adapter errors, so the postgres SQLSTATE may sit
-      // on a nested `cause` rather than the top-level error. Walk the cause
-      // chain (bounded), and fall back to the trigger's fixed message text
-      // since the SQLSTATE could be normalised away entirely by a wrapper.
-      if (isKh001SessionBackstop(error)) {
-        try {
-          captureMessage("security.backstop_session_blocked", {
-            level: "warning",
-            tags: { security: "backstop_session_blocked", surface: "session" },
-          });
-        } catch {
-          // swallow; observability must not affect auth error handling
-        }
-        console.warn(
-          JSON.stringify({ event: "security.backstop_session_blocked" })
-        );
-      }
+      // KEEP-612: emit the sessions-backstop detection signal if this error
+      // is the migration-0090 KH001 reject (a deactivated-user session insert
+      // that bypassed the session.create.before gate). reportSessionBackstop
+      // walks the wrapped-error cause chain + message fallback and is
+      // unit-tested independently of the Better Auth config.
+      reportSessionBackstop(error);
       console.error("[Better Auth API Error]", {
         error:
           error instanceof Error

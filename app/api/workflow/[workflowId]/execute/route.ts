@@ -4,14 +4,14 @@ import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
 import { getMetricsCollector } from "@/lib/metrics";
-import { isTriggerType, LabelKeys, MetricNames, type TriggerType } from "@/lib/metrics/types";
+import { LabelKeys, MetricNames } from "@/lib/metrics/types";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit";
 import { db } from "@/lib/db";
 import { withBackstopCapture } from "@/lib/security/backstop-capture";
 import {
   buildAttribution,
-  type TriggerSource,
+  resolveTriggerLabels,
 } from "@/lib/security/request-attribution";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { extractActionTypeNodes } from "@/lib/features";
@@ -175,36 +175,14 @@ export async function POST(
     const body = await request.json().catch(() => ({}));
     const input = body.input || {};
 
-    // Resolve trigger source up front so attribution and metrics use the same
-    // value. Internal callers (scheduler, events, MCP-internal) refine via
-    // `x-trigger-type` (block / event / schedule); only fall back when they
-    // did not pass a recognised header. External callers default to "manual"
-    // and honour any explicit `x-trigger-type` they send.
-    //
-    // The internal fallback metric value is "schedule" (NOT "scheduled") so it
-    // converges with the executor's emit (keeperhub-executor/index.ts) on a
-    // single canonical value -- the prior "scheduled" fragmented the
-    // keeperhub_workflow_executions_started_total trigger_type series, papered
-    // over by the Grafana rule's `=~"schedule|scheduled"` regex. In practice
-    // internal callers always send x-trigger-type, so this fallback is
-    // defensive.
-    const headerTrigger = request.headers.get("x-trigger-type");
-    const triggerType: TriggerType = isTriggerType(headerTrigger)
-      ? headerTrigger
-      : isInternalExecution
-        ? "schedule"
-        : "manual";
-    // trigger_source intentionally carries MORE precision than the metric's
-    // trigger_type: it records the auth path ("internal", "mcp") so detection
-    // can tell an internal-service dispatch apart from a human "manual" run
-    // even when both map to the same coarse metric label. The divergence
-    // between trigger_source ("internal") and triggerType ("schedule") for the
-    // header-less internal case is by design, not drift.
-    const triggerSource: TriggerSource = isTriggerType(headerTrigger)
-      ? (headerTrigger as TriggerSource)
-      : isInternalExecution
-        ? "internal"
-        : "manual";
+    // Resolve the (metric, audit) trigger labels in one place -- see
+    // resolveTriggerLabels for the schedule/scheduled convergence and the
+    // intentional triggerType-vs-triggerSource divergence. Extracted +
+    // unit-tested so a value typo can't silently re-fragment the metric.
+    const { triggerType, triggerSource } = resolveTriggerLabels(
+      request.headers.get("x-trigger-type"),
+      isInternalExecution
+    );
     const attribution = buildAttribution({
       request,
       source: triggerSource,

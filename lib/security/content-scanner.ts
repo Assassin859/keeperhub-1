@@ -47,11 +47,13 @@ const PATTERNS: readonly Pattern[] = [
 // controllable (webhook body via request.json()), so an adversarial deeply
 // nested payload could otherwise stack-overflow scanValue or build an
 // unbounded hits array. 64 levels is far deeper than any real workflow
-// config; 1000 hits is far more than any genuine match set. Hitting either
-// cap is itself suspicious, so we record a truncation marker rather than
-// silently dropping signal.
+// config; 1000 hits is far more than any genuine match set. When the hit
+// cap is reached we append a single `scan_truncated` marker hit and stop,
+// so the report is bounded AND the truncation is observable (hitting the
+// cap is itself suspicious) rather than silently dropped.
 const MAX_SCAN_DEPTH = 64;
 const MAX_HITS = 1000;
+const TRUNCATION_PATTERN = "scan_truncated";
 
 export type ContentScanHitSource = "config" | "trigger_input";
 
@@ -138,21 +140,36 @@ function scanValue(
 ): void {
   // Hard caps: triggerInput is attacker-controllable, so refuse to recurse
   // past MAX_SCAN_DEPTH (stack-overflow guard) or accumulate past MAX_HITS.
-  // Both are far beyond any legitimate workflow config.
-  if (depth > MAX_SCAN_DEPTH || hits.length >= MAX_HITS) {
+  // `> MAX_HITS` (strict) so the single appended truncation marker, which
+  // takes the count to MAX_HITS + 1, terminates all further scanning.
+  if (depth > MAX_SCAN_DEPTH || hits.length > MAX_HITS) {
     return;
   }
   if (typeof value === "string") {
     for (const pattern of PATTERNS) {
-      if (pattern.regex.test(value)) {
+      if (!pattern.regex.test(value)) {
+        continue;
+      }
+      // Enforce the cap at the push site (a single string can match several
+      // patterns). On reaching it, append exactly one observable marker and
+      // stop -- the report stays bounded and truncation is not silent.
+      if (hits.length >= MAX_HITS) {
         hits.push({
           source: meta.source,
-          pattern: pattern.name,
+          pattern: TRUNCATION_PATTERN,
           nodeId: meta.nodeId,
           nodeType: meta.nodeType,
           jsonPath: path,
         });
+        return;
       }
+      hits.push({
+        source: meta.source,
+        pattern: pattern.name,
+        nodeId: meta.nodeId,
+        nodeType: meta.nodeType,
+        jsonPath: path,
+      });
     }
     return;
   }

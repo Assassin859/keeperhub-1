@@ -18,6 +18,8 @@
  * constructing the Better Auth config.
  */
 
+import { captureMessage } from "@sentry/nextjs";
+
 export const KH001_SQLSTATE = "KH001";
 
 // Owned by migration 0090's RAISE EXCEPTION message. Keep in sync if the
@@ -47,4 +49,29 @@ export function isKh001SessionBackstop(error: unknown): boolean {
     current = (current as { cause?: unknown }).cause;
   }
   return false;
+}
+
+/**
+ * If `error` is a KH001 sessions-backstop reject, emit the detection signal
+ * (Sentry + structured stdout) and return true. No-op + false otherwise.
+ *
+ * Called from the Better Auth `onAPIError` handler in lib/auth.ts. Extracted
+ * here so the emit wiring -- not just the predicate -- is unit-testable
+ * without constructing the Better Auth config. Best-effort: a Sentry
+ * transport failure never propagates (the caller is an error handler).
+ */
+export function reportSessionBackstop(error: unknown): boolean {
+  if (!isKh001SessionBackstop(error)) {
+    return false;
+  }
+  try {
+    captureMessage("security.backstop_session_blocked", {
+      level: "warning",
+      tags: { security: "backstop_session_blocked", surface: "session" },
+    });
+  } catch {
+    // swallow; observability must not affect auth error handling
+  }
+  console.warn(JSON.stringify({ event: "security.backstop_session_blocked" }));
+  return true;
 }

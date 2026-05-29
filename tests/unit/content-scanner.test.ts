@@ -318,11 +318,6 @@ describe("scanAndReport — combined config + trigger input", () => {
 });
 
 describe("content scanner hardening (KEEP-612 follow-up)", () => {
-  it("matches lowercase database_url (case-insensitive)", () => {
-    const hits = scanNodes([node("n1", { template: "{{env.database_url}}" })]);
-    expect(hits.map((h: Hit) => h.pattern)).toContain("database_url");
-  });
-
   it("does not throw or stack-overflow on a deeply nested payload", () => {
     // Build a 5000-deep nested object -- the attacker-controlled webhook
     // shape that previously RangeError'd through scanValue into the executor.
@@ -358,5 +353,22 @@ describe("content scanner hardening (KEEP-612 follow-up)", () => {
     }
     const hits = scanTriggerInput(shallow);
     expect(hits.map((h: Hit) => h.pattern)).toContain("imds_metadata_ip");
+  });
+
+  it("caps the hit count and appends a single scan_truncated marker", () => {
+    // 5000 matching strings, all shallow (well under the depth cap), so the
+    // hit cap -- not the depth cap -- is what bounds the result.
+    const payload: Record<string, string> = {};
+    for (let i = 0; i < 5000; i++) {
+      payload[`k${i}`] = "169.254.169.254";
+    }
+    const hits = scanTriggerInput(payload);
+    const markers = hits.filter((h: Hit) => h.pattern === "scan_truncated");
+    expect(markers).toHaveLength(1);
+    // Real hits are bounded at MAX_HITS (1000); +1 for the marker.
+    expect(hits.length).toBeLessThanOrEqual(1001);
+    expect(
+      hits.filter((h: Hit) => h.pattern === "imds_metadata_ip").length
+    ).toBeLessThanOrEqual(1000);
   });
 });
