@@ -1221,6 +1221,26 @@ type DbMetricsCacheEntry = {
 
 let lastDbMetricsRefresh: DbMetricsCacheEntry | null = null;
 
+// Per-pod observability for the cache itself. Without these, the only
+// post-deploy signal for whether the cache is working is the indirect
+// "DB CPU went down" reading on CloudWatch. The two counters split cache
+// lookup outcomes (every updateDbMetrics call) from refresh outcomes
+// (every actual DB round-trip) so PromQL can express both
+// "cache hit rate" and "refresh failure rate" cleanly.
+const dbMetricsCacheLookupsTotal = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_db_metrics_cache_lookups_total",
+  "Outcomes of /api/metrics/db cache lookups (per pod)",
+  ["result"]
+);
+
+const dbMetricsRefreshTotal = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_db_metrics_refresh_total",
+  "Outcomes of /api/metrics/db DB round-trips (per pod)",
+  ["outcome"]
+);
+
 /**
  * Reset the cache. Intended for tests; not exported from the package barrel.
  */
@@ -1242,23 +1262,33 @@ export function __resetDbMetricsCacheForTest(): void {
 export function updateDbMetrics(): Promise<void> {
   const ttl = getDbMetricsCacheTtlMs();
   if (ttl <= 0) {
+    dbMetricsCacheLookupsTotal.inc({ result: "disabled" });
     // No caching, but still swallow so the route doesn't 500. The inner
     // refresh already logged the error before rethrowing.
-    return refreshDbMetricsNow().catch(() => {
-      // Already logged.
-    });
+    return refreshDbMetricsNow().then(
+      () => {
+        dbMetricsRefreshTotal.inc({ outcome: "success" });
+      },
+      () => {
+        dbMetricsRefreshTotal.inc({ outcome: "error" });
+        // Already logged inside refreshDbMetricsNow.
+      }
+    );
   }
   if (lastDbMetricsRefresh) {
     // In-flight: share the promise regardless of TTL to avoid starting a
     // second concurrent refresh when the first hasn't finished yet.
     if (lastDbMetricsRefresh.completedAt === null) {
+      dbMetricsCacheLookupsTotal.inc({ result: "in_flight_dedup" });
       return lastDbMetricsRefresh.promise;
     }
     // Completed: serve cached if within TTL of completion (not start).
     if (Date.now() - lastDbMetricsRefresh.completedAt < ttl) {
+      dbMetricsCacheLookupsTotal.inc({ result: "hit" });
       return lastDbMetricsRefresh.promise;
     }
   }
+  dbMetricsCacheLookupsTotal.inc({ result: "miss" });
   const raw = refreshDbMetricsNow();
   // Public promise swallows so the metrics endpoint doesn't 500.
   const wrapped = raw.catch(() => {
@@ -1278,11 +1308,13 @@ export function updateDbMetrics(): Promise<void> {
   raw.then(
     () => {
       entry.completedAt = Date.now();
+      dbMetricsRefreshTotal.inc({ outcome: "success" });
     },
     () => {
       if (lastDbMetricsRefresh === entry) {
         lastDbMetricsRefresh = null;
       }
+      dbMetricsRefreshTotal.inc({ outcome: "error" });
     }
   );
   return wrapped;

@@ -89,8 +89,16 @@ const dbMocks = {
 
 vi.mock("@/lib/metrics/db-metrics", () => dbMocks);
 
+// getApiProcessMetrics starts an RPC health probe (background interval).
+// Stub it so the test doesn't leak timers.
+vi.mock("@/lib/metrics/rpc-health-probe", () => ({
+  startRpcHealthProbe: vi.fn(),
+  stopRpcHealthProbe: vi.fn(),
+}));
+
 import {
   __resetDbMetricsCacheForTest,
+  getApiProcessMetrics,
   updateDbMetrics,
 } from "@/lib/metrics/collectors/prometheus";
 
@@ -102,6 +110,13 @@ async function flushMicrotasks(times = 20): Promise<void> {
     await Promise.resolve();
   }
 }
+
+const CACHE_LOOKUP_MISS_RE =
+  /keeperhub_db_metrics_cache_lookups_total\{result="miss"\}\s+\d+/;
+const CACHE_LOOKUP_HIT_RE =
+  /keeperhub_db_metrics_cache_lookups_total\{result="hit"\}\s+\d+/;
+const REFRESH_SUCCESS_RE =
+  /keeperhub_db_metrics_refresh_total\{outcome="success"\}\s+\d+/;
 
 describe("updateDbMetrics TTL cache", () => {
   const originalTtl = process.env.DB_METRICS_CACHE_TTL_MS;
@@ -247,6 +262,27 @@ describe("updateDbMetrics TTL cache", () => {
 
     await Promise.all([first, second]);
     expect(dbMocks.getWorkflowStatsFromDb).toHaveBeenCalledTimes(1);
+  });
+
+  it("emits cache_lookups{result} and refresh{outcome} counters", async () => {
+    process.env.DB_METRICS_CACHE_TTL_MS = "60000";
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    try {
+      // miss + refresh success
+      await updateDbMetrics();
+      // hit (no refresh)
+      vi.setSystemTime(new Date("2026-01-01T00:00:30Z"));
+      await updateDbMetrics();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const out = await getApiProcessMetrics();
+    expect(out).toMatch(CACHE_LOOKUP_MISS_RE);
+    expect(out).toMatch(CACHE_LOOKUP_HIT_RE);
+    expect(out).toMatch(REFRESH_SUCCESS_RE);
   });
 
   it("clears the cache slot on rejection so the next call retries", async () => {
