@@ -199,6 +199,58 @@ jobs:
           CF_ACCESS_CLIENT_ID: ${{ secrets.TO_CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.TO_CF_ACCESS_CLIENT_SECRET }}
 
+      - name: Probe documented API endpoints
+        # Walks specs/api-coverage.json (committed by the PR-time
+        # check:api-docs guard) and sends a HEAD to every documented GET
+        # endpoint on the deployed env. Treats 200/401/403 as reachable
+        # (auth gates the response); 404/5xx as drift. Warn-only on the
+        # first deploy after merge so we can see what fires before it
+        # gates a release - flip continue-on-error to false once a clean
+        # run is recorded.
+        continue-on-error: true
+        run: |
+          if [ ! -f specs/api-coverage.json ]; then
+            echo "specs/api-coverage.json not found; skipping endpoint probe"
+            exit 0
+          fi
+          HEADERS=(-H "X-API-Key: ${TEST_API_KEY}")
+          if [[ -n "$CF_ACCESS_CLIENT_ID" && -n "$CF_ACCESS_CLIENT_SECRET" ]]; then
+            HEADERS+=(-H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}")
+          fi
+          # Concrete fixtures for the {param} placeholders in documented
+          # paths. We do not invent ids per env; we ask the API to look
+          # up a known-invalid value and accept the 401/403/404 that
+          # comes back as "the route is reachable". A 5xx or HTML 404
+          # from the catch-all is the actual signal.
+          FIXTURE="probe-fixture"
+          FAILED=0
+          REACHED=0
+          # jq filter: only GET endpoints, output one line each.
+          while IFS=$'\t' read -r METHOD PATH_TEMPLATE; do
+            [ "$METHOD" = "GET" ] || continue
+            URL_PATH=$(printf '%s' "$PATH_TEMPLATE" | sed -E "s/\{[^}]+\}/${FIXTURE}/g")
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" -L \
+              -X HEAD "${HEADERS[@]}" \
+              "${{ env.BASE_URL }}${URL_PATH}" || echo "000")
+            case "$STATUS" in
+              200|401|403)
+                REACHED=$((REACHED+1))
+                ;;
+              *)
+                FAILED=$((FAILED+1))
+                echo "::warning::endpoint drift: GET ${PATH_TEMPLATE} returned ${STATUS} on ${{ env.BASE_URL }}"
+                ;;
+            esac
+          done < <(jq -r '.endpoints[] | [.method, .path] | @tsv' specs/api-coverage.json)
+          echo "Reached ${REACHED} documented GET endpoints; ${FAILED} drift."
+          if [ "$FAILED" -gt 0 ]; then
+            exit 1
+          fi
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.TO_CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.TO_CF_ACCESS_CLIENT_SECRET }}
+          TEST_API_KEY: ${{ env.TEST_API_KEY }}
+
       - name: Run Playwright tests against deployed environment
         run: pnpm exec playwright test --grep-invert "happy-paths"
         env:
