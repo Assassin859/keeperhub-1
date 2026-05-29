@@ -783,6 +783,9 @@ export const chains = pgTable(
     defaultPrivateRpcUrl: text("default_private_rpc_url"),
     isTestnet: boolean("is_testnet").default(false),
     isEnabled: boolean("is_enabled").default(true), // Can disable chains
+    // Support maturity signal surfaced to agents via list_action_schemas:
+    // "stable" | "experimental" | "deprecated". Orthogonal to isEnabled.
+    status: text("status").notNull().default("stable"),
     // KEEP-1240: Chain-specific gas configuration
     gasConfig: jsonb("gas_config").default({}),
     createdAt: timestamp("created_at").notNull().defaultNow(),
