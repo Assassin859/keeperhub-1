@@ -177,15 +177,29 @@ export async function POST(
 
     // Resolve trigger source up front so attribution and metrics use the same
     // value. Internal callers (scheduler, events, MCP-internal) refine via
-    // `x-trigger-type` (block / event / schedule); only fall back to
-    // "internal" when they did not pass a recognised header. External callers
-    // default to "manual" and honour any explicit `x-trigger-type` they send.
+    // `x-trigger-type` (block / event / schedule); only fall back when they
+    // did not pass a recognised header. External callers default to "manual"
+    // and honour any explicit `x-trigger-type` they send.
+    //
+    // The internal fallback metric value is "schedule" (NOT "scheduled") so it
+    // converges with the executor's emit (keeperhub-executor/index.ts) on a
+    // single canonical value -- the prior "scheduled" fragmented the
+    // keeperhub_workflow_executions_started_total trigger_type series, papered
+    // over by the Grafana rule's `=~"schedule|scheduled"` regex. In practice
+    // internal callers always send x-trigger-type, so this fallback is
+    // defensive.
     const headerTrigger = request.headers.get("x-trigger-type");
     const triggerType: TriggerType = isTriggerType(headerTrigger)
       ? headerTrigger
       : isInternalExecution
-        ? "scheduled"
+        ? "schedule"
         : "manual";
+    // trigger_source intentionally carries MORE precision than the metric's
+    // trigger_type: it records the auth path ("internal", "mcp") so detection
+    // can tell an internal-service dispatch apart from a human "manual" run
+    // even when both map to the same coarse metric label. The divergence
+    // between trigger_source ("internal") and triggerType ("schedule") for the
+    // header-less internal case is by design, not drift.
     const triggerSource: TriggerSource = isTriggerType(headerTrigger)
       ? (headerTrigger as TriggerSource)
       : isInternalExecution
