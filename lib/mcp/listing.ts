@@ -1,7 +1,10 @@
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
-import { findFirstWriteActionNode } from "@/lib/mcp/calldata";
+import {
+  deriveWorkflowType,
+  findFirstWriteActionNode,
+} from "@/lib/mcp/calldata";
 import {
   findBareAtLiterals,
   isInputSchemaPresent,
@@ -144,21 +147,17 @@ export async function listWorkflow(
   if (metadata.outputMapping !== undefined) {
     updateSet.outputMapping = metadata.outputMapping;
   }
-  // Auto-derive workflowType from content. A workflow that contains a callable
-  // write node (write-contract / protocol-write) is unconditionally "write":
-  // this fills in an unset type and overrides a curator-supplied "read" that
-  // conflicts with the content. Detection deliberately matches the calldata
-  // generator (findFirstWriteActionNode) so a listed "write" can always be
-  // served by call_workflow. Value transfers and token approvals mutate chain
-  // state but are not calldata-generatable, so they do not qualify as "write"
-  // here -- labelling them write would make the call route fail at runtime.
-  const hasWriteNode = findFirstWriteActionNode(current.nodes) !== undefined;
+  // Auto-derive workflowType from content via the shared helper
+  // (lib/mcp/calldata.ts::deriveWorkflowType). A callable write node forces
+  // "write" and overrides a curator-supplied "read" that conflicts with
+  // the content.
   const requestedWorkflowType: "read" | "write" =
     (metadata.workflowType as "read" | "write" | undefined) ??
     current.workflowType;
-  const resolvedWorkflowType: "read" | "write" = hasWriteNode
-    ? "write"
-    : requestedWorkflowType;
+  const resolvedWorkflowType = deriveWorkflowType(
+    current.nodes,
+    requestedWorkflowType
+  );
   updateSet.workflowType = resolvedWorkflowType;
 
   // Bump listingVersion whenever we are transitioning to listed OR whenever
@@ -176,7 +175,10 @@ export async function listWorkflow(
   // otherwise call_workflow would later fail at runtime with "No write action
   // node found in workflow". With auto-derive above, this can only trigger when
   // a curator forces "write" on content that has no callable write node.
-  if (resolvedWorkflowType === "write" && !hasWriteNode) {
+  if (
+    resolvedWorkflowType === "write" &&
+    findFirstWriteActionNode(current.nodes) === undefined
+  ) {
     return { ok: false, error: "MISSING_WRITE_ACTION" };
   }
 
@@ -304,17 +306,15 @@ export async function updateWorkflowListing(
   if (patch.outputMapping !== undefined) {
     updateSet.outputMapping = patch.outputMapping;
   }
-  // Auto-derive workflowType from content (see listWorkflow for the rationale):
-  // a callable write node forces "write" and overrides a conflicting "read".
-  // Transfers/approvals mutate chain state but are not calldata-generatable, so
-  // they do not qualify here.
-  const hasWriteNode = findFirstWriteActionNode(current.nodes) !== undefined;
+  // Auto-derive workflowType from content via the shared helper
+  // (lib/mcp/calldata.ts::deriveWorkflowType). See listWorkflow for rationale.
   const requestedWorkflowType: "read" | "write" =
     (patch.workflowType as "read" | "write" | undefined) ??
     current.workflowType;
-  const resolvedWorkflowType: "read" | "write" = hasWriteNode
-    ? "write"
-    : requestedWorkflowType;
+  const resolvedWorkflowType = deriveWorkflowType(
+    current.nodes,
+    requestedWorkflowType
+  );
   const workflowTypeChanged = resolvedWorkflowType !== current.workflowType;
   if (patch.workflowType !== undefined || workflowTypeChanged) {
     updateSet.workflowType = resolvedWorkflowType;
@@ -340,7 +340,7 @@ export async function updateWorkflowListing(
   if (
     current.isListed === true &&
     resolvedWorkflowType === "write" &&
-    !hasWriteNode
+    findFirstWriteActionNode(current.nodes) === undefined
   ) {
     return { ok: false, error: "MISSING_WRITE_ACTION" };
   }
