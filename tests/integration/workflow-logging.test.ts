@@ -102,6 +102,10 @@ let allLogs: LogRow[] = [];
 let updateCalls: UpdateCall[] = [];
 let updateShouldThrow = false;
 let mockExecution: ExecutionRow | null = null;
+// pickOrphanCloseErrorMessage issues a separate findMany scoped to columns:{id:true}
+// (status='error' siblings carrying a non-orphan error). Default empty so existing
+// tests keep observing the legacy "Step did not record completion" message.
+let siblingErrorRows: Array<{ id: string }> = [];
 
 // KEEP-545: the workflow_executions UPDATE in logWorkflowCompleteDb now chains
 // `.returning({workflowId})` on the where() result so the per-execution error
@@ -149,11 +153,27 @@ function buildUpdate(target: unknown): UpdateChain {
   };
 }
 
+type FindManyOpts = {
+  columns?: Record<string, boolean>;
+};
+
 vi.mock("@/lib/db", () => ({
   db: {
     query: {
       workflowExecutionLogs: {
-        findMany: vi.fn(() => Promise.resolve(allLogs)),
+        // Discriminate by `columns` shape so the new
+        // pickOrphanCloseErrorMessage SELECT (which only requests `id`) can be
+        // controlled independently of the listTrulyFailedNodes SELECT (which
+        // requests `nodeId` + `status`) -- they share this single mock entry
+        // but answer different questions.
+        findMany: vi.fn((opts: FindManyOpts) => {
+          const cols = opts?.columns ?? {};
+          const isOrphanSiblingProbe =
+            cols.id === true && cols.nodeId !== true && cols.status !== true;
+          return Promise.resolve(
+            isOrphanSiblingProbe ? siblingErrorRows : allLogs
+          );
+        }),
       },
       workflowExecutions: {
         findFirst: vi.fn(() => Promise.resolve(mockExecution)),
@@ -188,6 +208,7 @@ describe("logWorkflowCompleteDb", () => {
     allLogs = [];
     updateCalls = [];
     updateShouldThrow = false;
+    siblingErrorRows = [];
     vi.clearAllMocks();
   });
 
@@ -382,6 +403,64 @@ describe("logWorkflowCompleteDb", () => {
     );
   });
 
+  it("attributes orphaned running rows to a peer's real error instead of the misleading generic message", async () => {
+    // Scenario: the Condition step threw with a configuration error and the
+    // executor finalized the workflow as error before the trigger step's
+    // "use step" boundary committed -- the same shape that surfaced as the
+    // confusing "Step did not record completion" on the Event/trigger row.
+    //
+    // listTrulyFailedNodes runs first and needs at least one truly-failed
+    // node so the workflow stays in error status (no spurious-error override).
+    // pickOrphanCloseErrorMessage runs next and must observe the sibling
+    // error row through the columns:{id:true} probe.
+    allLogs = [
+      { id: "log_trigger_running", nodeId: "trigger", status: "running" },
+      { id: "log_condition_error", nodeId: "condition", status: "error" },
+    ];
+    siblingErrorRows = [{ id: "log_condition_error" }];
+
+    await logWorkflowCompleteDb({
+      executionId: "exec_with_peer_error",
+      status: "error",
+      error:
+        'Condition references field "args.value" but "args" does not exist',
+      startTime: Date.now() - 1000,
+    });
+
+    const logUpdate = getLogUpdate();
+    expect(logUpdate?.set).toEqual(
+      expect.objectContaining({
+        status: "error",
+        error: "Cancelled: workflow stopped because another step errored",
+        completedAt: expect.any(Date),
+      })
+    );
+  });
+
+  it("keeps the legacy 'Step did not record completion' message when no peer carries a real error (worker-killed shape)", async () => {
+    // No sibling error row exists -- the orphan IS the only failure signal,
+    // matching the worker-died-mid-step case. The original message is the
+    // most informative thing we can say.
+    allLogs = [{ id: "log_running", nodeId: "node_a", status: "running" }];
+    siblingErrorRows = [];
+
+    await logWorkflowCompleteDb({
+      executionId: "exec_worker_killed",
+      status: "error",
+      error: "worker killed",
+      startTime: Date.now() - 1000,
+    });
+
+    const logUpdate = getLogUpdate();
+    expect(logUpdate?.set).toEqual(
+      expect.objectContaining({
+        status: "error",
+        error: "Step did not record completion",
+        completedAt: expect.any(Date),
+      })
+    );
+  });
+
   it("closes orphaned running logs as success when workflow succeeded", async () => {
     // Spurious SDK error reconciled to success; any running rows should
     // match the reconciled status so the UI is consistent.
@@ -474,6 +553,7 @@ describe("logWorkflowCompleteDb transactionHashes (KEEP-470)", () => {
     allLogs = [];
     updateCalls = [];
     updateShouldThrow = false;
+    siblingErrorRows = [];
     vi.clearAllMocks();
   });
 

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { captureMessage } from "@sentry/nextjs";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { APIError } from "better-auth/api";
 import {
   anonymous,
   // start custom keeperhub code //
@@ -18,6 +19,8 @@ import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { rateLimitBypassRule, testEndpointsEnabled } from "@/lib/admin-auth";
 import { isUserDeactivated } from "@/lib/auth-deactivation-guard";
+import { isDisposableEmailDomain } from "@/lib/auth-disposable-emails";
+import { DISPOSABLE_EMAIL_REJECTION_MESSAGE } from "@/lib/auth-disposable-emails-message";
 import { isFreshSignup } from "@/lib/auth-notification-guard";
 import { sendInvitationEmail, sendVerificationOTP } from "@/lib/email";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
@@ -42,8 +45,8 @@ import {
   organization as organizationTable,
   sessions,
   twoFactor as twoFactorTable,
-  userTrustedIps,
   users,
+  userTrustedIps,
   verifications,
   workflowExecutionLogs,
   workflowExecutions,
@@ -476,6 +479,24 @@ export const auth = betterAuth({
   databaseHooks: {
     user: {
       create: {
+        before: async (user) => {
+          // Reject signups from disposable / temporary email domains on both
+          // paths -- email+password and OAuth callbacks both flow through
+          // user.create. Throwing APIError surfaces the shared rejection
+          // message to the client verbatim so the dialog can render a
+          // specific UX instead of better-auth's generic "Failed to create
+          // user" string.
+          await Promise.resolve();
+          const email = typeof user.email === "string" ? user.email : null;
+          if (email && isDisposableEmailDomain(email)) {
+            console.warn(
+              `[Auth] Rejected signup for disposable email domain: ${email}`
+            );
+            throw new APIError("BAD_REQUEST", {
+              message: DISPOSABLE_EMAIL_REJECTION_MESSAGE,
+            });
+          }
+        },
         after: async (user) => {
           // Skip organization creation for anonymous users
           // Anonymous users have name "Anonymous" and temp- prefixed emails
