@@ -346,9 +346,7 @@ describe("updateDbMetrics TTL cache", () => {
     await updateDbMetrics();
     await updateDbMetrics();
 
-    expect(
-      dbMocks.getWorkflowStatsFromDb.mock.calls.length
-    ).toBeGreaterThanOrEqual(2);
+    expect(dbMocks.getWorkflowStatsFromDb).toHaveBeenCalledTimes(2);
 
     errSpy.mockRestore();
   });

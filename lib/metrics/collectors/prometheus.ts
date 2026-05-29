@@ -1319,19 +1319,26 @@ export function updateDbMetrics(): Promise<void> {
   // so subsequent TTL checks measure from there, and evicts the slot on
   // failure so the next scrape retries instead of holding a poisoned
   // entry. The two-arg form avoids creating an orphan rejected promise
-  // (which would surface as an unhandled rejection).
-  raw.then(
-    () => {
-      entry.completedAt = performance.now();
-      dbMetricsRefreshTotal.inc({ outcome: "success" });
-    },
-    () => {
-      if (lastDbMetricsRefresh === entry) {
-        lastDbMetricsRefresh = null;
+  // (which would surface as an unhandled rejection). The trailing .catch
+  // guards against the settle callbacks themselves throwing (e.g. if
+  // prom-client is in a bad state), which would otherwise produce a second
+  // unhandled rejection from the returned promise.
+  raw
+    .then(
+      () => {
+        entry.completedAt = performance.now();
+        dbMetricsRefreshTotal.inc({ outcome: "success" });
+      },
+      () => {
+        if (lastDbMetricsRefresh === entry) {
+          lastDbMetricsRefresh = null;
+        }
+        dbMetricsRefreshTotal.inc({ outcome: "error" });
       }
-      dbMetricsRefreshTotal.inc({ outcome: "error" });
-    }
-  );
+    )
+    .catch(() => {
+      // settle callback threw; counters are best-effort
+    });
   return wrapped;
 }
 
