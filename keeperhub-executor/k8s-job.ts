@@ -43,7 +43,13 @@ export async function createWorkflowJob(params: {
   scheduleId?: string;
 }): Promise<V1Job> {
   const { workflowId, executionId, input, triggerType, scheduleId } = params;
-  const jobName = `workflow-${executionId.substring(0, 8)}-${Date.now()}`;
+  // Prefix with "keeperhub-" so the runner pod is captured by the Loki
+  // security alert rules, which match pod=~".*keeperhub.*" (KEEP-612).
+  // executeWorkflow -- and its content-scanner emit -- runs inside this pod
+  // for web3-write (k8s-job-dispatched) workflows; without the prefix the
+  // pod name "workflow-..." fell outside the matcher and those
+  // security.content_scanner_hit signals never reached the alert.
+  const jobName = `keeperhub-workflow-${executionId.substring(0, 8)}-${Date.now()}`;
 
   const envVars = [
     { name: "WORKFLOW_ID", value: workflowId },
