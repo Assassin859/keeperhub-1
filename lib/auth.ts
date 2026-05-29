@@ -26,6 +26,7 @@ import {
   assessLoginRisk,
   serializeRiskFlags,
 } from "@/lib/security/login-risk";
+import { isKh001SessionBackstop } from "@/lib/security/session-backstop";
 import { TRUSTED_ORIGINS } from "@/lib/trusted-origins";
 import { wrapWithSessionTokenHash } from "./auth-session-token-hash";
 import { db } from "./db";
@@ -754,11 +755,12 @@ export const auth = betterAuth({
       // what the detection layer must page on. Better Auth owns the
       // session insert, so this central error handler is the only seam to
       // observe it. Best-effort; never alters the error response.
-      const code =
-        error && typeof error === "object" && "code" in error
-          ? (error as { code?: unknown }).code
-          : undefined;
-      if (code === "KH001") {
+      //
+      // Better Auth wraps adapter errors, so the postgres SQLSTATE may sit
+      // on a nested `cause` rather than the top-level error. Walk the cause
+      // chain (bounded), and fall back to the trigger's fixed message text
+      // since the SQLSTATE could be normalised away entirely by a wrapper.
+      if (isKh001SessionBackstop(error)) {
         try {
           captureMessage("security.backstop_session_blocked", {
             level: "warning",
