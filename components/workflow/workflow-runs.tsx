@@ -723,23 +723,6 @@ function ForEachLogGroup({
     </div>
   );
 }
-// Human-readable explanation for each run/step status, surfaced as a tooltip
-// so a grey or non-success dot isn't ambiguous about why a step is in that state.
-function getStatusLabel(status: string): string {
-  switch (status) {
-    case "success":
-      return "Completed successfully";
-    case "error":
-      return "Failed - expand for the error";
-    case "running":
-      return "Running";
-    case "cancelled":
-      return "Cancelled before it finished";
-    default:
-      return "Pending - has not run yet";
-  }
-}
-
 // Component for rendering individual execution log entries
 function ExecutionLogEntry({
   log,
@@ -770,7 +753,6 @@ function ExecutionLogEntry({
             "z-10 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-0",
             getStatusDotClass(log.status)
           )}
-          title={getStatusLabel(log.status)}
         >
           {getStatusIcon(log.status)}
         </div>
@@ -1207,7 +1189,6 @@ export function WorkflowRuns({
                     "flex size-5 items-center justify-center rounded-full border-0",
                     getStatusDotClass(execution.status)
                   )}
-                  title={getStatusLabel(execution.status)}
                 >
                   {getStatusIcon(execution.status)}
                 </div>
