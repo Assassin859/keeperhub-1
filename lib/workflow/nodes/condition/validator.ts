@@ -159,11 +159,10 @@ function checkBracketExpressions(expression: string): ValidationResult {
     // Check if the part before the bracket is a valid variable (__v0, __v1, etc.).
     // Bare references like `step2[1]` reach here when an author uses an
     // unsupported reference grammar instead of the stored template format.
-    // Index access IS supported, but inside the template field path.
     if (!VALID_BRACKET_ACCESS_PATTERN.test(beforeBracket)) {
       return {
         valid: false,
-        error: `Cannot index "${beforeBracket}[...]". Reference step outputs with the {{@nodeId:Label.field}} template format - array and tuple indexing belongs inside the field path, e.g. {{@nodeId:Label.result[1]}}.`,
+        error: `Cannot index "${beforeBracket}[...]". Reference step outputs with the {{@nodeId:Label.field}} template format - use the component name for tuple/struct outputs (e.g. {{@nodeId:Label.result.liquidityIndex}}) and bracket indexing only inside the field path for arrays (e.g. {{@nodeId:Label.result.items[0]}}).`,
       };
     }
 

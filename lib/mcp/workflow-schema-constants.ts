@@ -248,9 +248,14 @@ export const TEMPLATE_SYNTAX = {
       description: "Reference 'price' from HTTP request response data",
     },
     {
-      template: "{{@read-1:Read Contract.result[1]}}",
+      template: "{{@read-1:Read Contract.result.liquidityIndex}}",
       description:
-        "Index 1 of a tuple/array output. Bracket indexing belongs inside the field path, not on a bare reference (step2[1] is invalid)",
+        "Named-field access into a tuple/struct read-contract output. Tuple components surface as named keys (configuration, liquidityIndex, etc.); positional indexing like result[1] does NOT work on tuple outputs and a bare step2[1] is never valid",
+    },
+    {
+      template: "{{@read-1:Read Contract.result.holders[0]}}",
+      description:
+        "Bracket indexing is only valid for ARRAY fields, inside the field path - here `holders` is an address[] output and [0] picks the first element",
     },
     {
       template: `{{@${BUILTIN_NODE_ID}:${BUILTIN_NODE_LABEL}.unixTimestamp}}`,
@@ -262,8 +267,9 @@ export const TEMPLATE_SYNTAX = {
     "nodeId is the unique identifier of the node (visible in node settings)",
     "Label is the human-readable name shown on the node",
     "Nested fields use dot notation (e.g., data.nested.value)",
-    "Array and tuple outputs are indexed with [n] inside the field path (e.g., result[1]); numeric indices only",
-    "Condition expressions use this same reference and path grammar - reference outputs as {{@nodeId:Label.field[index]}}, never as a bare step2[1]",
+    "Tuple/struct outputs surface their components as NAMED fields - use result.<componentName> (e.g. result.liquidityIndex), NOT positional result[1]",
+    "Bracket indexing [n] is only for ARRAY fields, applied inside the field path (e.g. result.items[0]); numeric indices only",
+    "Condition expressions use this same reference and path grammar - never a bare step2[1] (this fails validation with an actionable error)",
     "Templates are resolved at runtime before each step executes",
   ],
 };
