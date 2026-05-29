@@ -661,6 +661,13 @@ export {
   workflowRatings,
 } from "./schema-extensions";
 export { feedback, feedbackStatus } from "./schema-feedback";
+// Internal-service HMAC secrets (versioned, encrypted at rest). See
+// lib/internal-service-auth.ts for the verifier that consumes these.
+export {
+  type InternalServiceHmacSecret,
+  internalServiceHmacSecrets,
+  type NewInternalServiceHmacSecret,
+} from "./schema-internal-auth";
 export {
   type McpOauthAuthCode,
   type McpOauthClient,

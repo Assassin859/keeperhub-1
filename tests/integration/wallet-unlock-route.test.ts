@@ -6,10 +6,15 @@ vi.mock("server-only", () => ({}));
 
 const mockAuthResult = {
   authenticated: true,
-  service: "scheduler" as const,
+  caller: "scheduler" as const,
+  scheme: "hmac" as const,
+  // Failure-path fields populated up front so tests that flip
+  // `authenticated` to false still produce a well-formed 401 response.
+  error: "Unauthorized",
+  status: 401,
 };
 vi.mock("@/lib/internal-service-auth", () => ({
-  authenticateInternalService: vi.fn(() => mockAuthResult),
+  authenticateInternalService: vi.fn(async () => mockAuthResult),
 }));
 
 vi.mock("@/lib/logging", () => ({
