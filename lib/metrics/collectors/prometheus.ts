@@ -1249,9 +1249,17 @@ const dbMetricsRefreshTotal = getOrCreateCounter(
 );
 
 /**
- * Reset the cache. Intended for tests; not exported from the package barrel.
+ * Reset the cache. Test-only — throws if called outside NODE_ENV=test.
+ * Exported because tests need to clear the module-level state between
+ * cases. Gated so production code that accidentally calls it fails loud
+ * instead of silently invalidating the cache mid-flight.
  */
 export function __resetDbMetricsCacheForTest(): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error(
+      "__resetDbMetricsCacheForTest is test-only; do not call in production"
+    );
+  }
   lastDbMetricsRefresh = null;
 }
 
