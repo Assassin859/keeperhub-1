@@ -518,13 +518,39 @@ export async function PATCH(
       !isTransitioningToUnlisted &&
       (isTransitioningToListed || existingWorkflow.isListed === true);
 
+    // `finalNodes` is `unknown` (updateData.nodes is unknown after the generic
+    // Record cast). Both code paths actually hold an array — the body branch
+    // went through `sanitizeWorkflowData`, the existing branch is `nodes`
+    // declared `$type<any[]>` in lib/db/schema.ts. The cast is honest and
+    // matches how lib/mcp/listing.ts calls the same function.
+    const finalNodes =
+      updateData.nodes !== undefined ? updateData.nodes : existingWorkflow.nodes;
+    const hasWriteNode =
+      findFirstWriteActionNode(finalNodes as unknown[]) !== undefined;
+
+    // Auto-derive workflowType from content. A callable write node
+    // (write-contract / protocol-write) forces "write", overriding a
+    // previously-persisted "read". Detection matches the calldata generator
+    // (findFirstWriteActionNode) so a "write"-typed workflow can always be
+    // served by call_workflow. Value transfers and token approvals mutate
+    // chain state but are not calldata-generatable, so they do not qualify
+    // as "write" here — labelling them write would make the call route fail
+    // at runtime with "No write action node found in workflow".
+    //
+    // This intentionally replaces the historical "workflowType is curator-
+    // only" model. A body's `workflowType` is still dropped at the
+    // persistence layer (it is not in `buildUpdateData`'s allowlist); the
+    // value is now solely a function of node content. The curator listing
+    // path (lib/mcp/listing.ts) applies the same derivation for symmetry.
+    const workflowTypeChanged =
+      hasWriteNode && existingWorkflow.workflowType !== "write";
+    if (workflowTypeChanged) {
+      updateData.workflowType = "write";
+    }
+
     if (willBeListed) {
       const checkNodes =
         updateData.nodes !== undefined || isTransitioningToListed;
-      const finalNodes =
-        updateData.nodes !== undefined
-          ? updateData.nodes
-          : existingWorkflow.nodes;
       const checkSchema =
         updateData.inputSchema !== undefined || isTransitioningToListed;
       const finalSchema =
@@ -535,24 +561,14 @@ export async function PATCH(
       // Gate ordering matches the publish path (lib/mcp/listing.ts::listWorkflow):
       // write-action -> bare-@ -> input-schema. Same DB state therefore yields
       // the same error code regardless of which gate-bearing route the caller
-      // hits, which keeps client-side error handling consistent.
-      //
-      // workflowType is curator-only — it's not in `buildUpdateData`'s field
-      // allowlist (lines 156-170 above), so a body's `workflowType` is silently
-      // dropped at the persistence layer. We read it directly from
-      // `existingWorkflow.workflowType` (no fallback chain) so the gate truly
-      // reflects what will be persisted. Type changes flow through
-      // updateWorkflowListing (lib/mcp/listing.ts), which is unconditionally
-      // strict.
-      // `finalNodes` is `unknown` (updateData.nodes is unknown after the
-      // generic Record cast). Both code paths actually hold an array — the
-      // body branch went through `sanitizeWorkflowData`, the existing branch
-      // is `nodes` declared `$type<any[]>` in lib/db/schema.ts. The cast is
-      // honest and matches how lib/mcp/listing.ts:151 calls the same function.
+      // hits, which keeps client-side error handling consistent. The gate uses
+      // `existingWorkflow.workflowType` because the auto-flip above only flips
+      // to "write" (never back to "read"), so a workflow that WAS write and
+      // now has no write node still trips this guard correctly.
       if (
         checkNodes &&
         existingWorkflow.workflowType === "write" &&
-        findFirstWriteActionNode(finalNodes as unknown[]) === undefined
+        !hasWriteNode
       ) {
         return NextResponse.json(
           {
@@ -591,14 +607,16 @@ export async function PATCH(
     }
 
     // Bump listingVersion when a listed (or about-to-be-listed) workflow has
-    // its schema-defining fields changed via this route. Keeps per-workflow
-    // MCP consumers in sync without a dedicated version endpoint.
+    // its schema-defining fields changed via this route — including an
+    // auto-flip of workflowType. Keeps per-workflow MCP consumers in sync
+    // without a dedicated version endpoint.
     if (
       willBeListed &&
       (body.nodes !== undefined ||
         body.edges !== undefined ||
         body.inputSchema !== undefined ||
-        body.outputMapping !== undefined)
+        body.outputMapping !== undefined ||
+        workflowTypeChanged)
     ) {
       updateData.listingVersion = sql`${workflows.listingVersion} + 1`;
     }
