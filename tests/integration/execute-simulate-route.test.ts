@@ -5,9 +5,11 @@
  * The simulate cores themselves are unit-tested in
  * tests/unit/execute-simulate.test.ts. Here we only care that:
  *
- *   - body.simulate=true (or ?simulate=true) is detected
- *   - checkAndReserveExecution is NOT called
- *   - markRunning is NOT called
+ *   - body.simulate === true (strict boolean) routes to the simulator
+ *   - any non-boolean simulate value is rejected with 400 before any
+ *     reserve / broadcast happens
+ *   - checkAndReserveExecution is NOT called on the simulate path
+ *   - markRunning is NOT called on the simulate path
  *   - the broadcast cores (writeContractCore, transferFundsCore,
  *     transferTokenCore) are NOT called
  *   - the route returns the simulate response shape
@@ -206,9 +208,59 @@ describe("/api/execute/contract-call simulate", () => {
     expect(writeContractCore).not.toHaveBeenCalled();
   });
 
-  it("?simulate=true (query) is also honoured", async () => {
+  it("rejects simulate as a string (must be strict boolean)", async () => {
     resetSpies();
-    simulateContractCallMock.mockResolvedValueOnce(HAPPY_SIMULATE);
+    const res = await contractCallPOST(
+      jsonRequest("/api/execute/contract-call", {
+        contractAddress: "0xbb0000000000000000000000000000000000bb00",
+        network: "1",
+        functionName: "setValue",
+        abi: WRITE_ABI,
+        functionArgs: JSON.stringify(["1"]),
+        // Common mistake: stringly-typed flag. Must NOT silently
+        // fall through to a real broadcast.
+        simulate: "true" as unknown as boolean,
+      })
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.field).toBe("simulate");
+    expect(simulateContractCallMock).not.toHaveBeenCalled();
+    expect(checkAndReserveExecution).not.toHaveBeenCalled();
+    expect(writeContractCore).not.toHaveBeenCalled();
+  });
+
+  it("rejects truthy non-boolean simulate values (e.g. 1)", async () => {
+    resetSpies();
+    const res = await contractCallPOST(
+      jsonRequest("/api/execute/contract-call", {
+        contractAddress: "0xbb0000000000000000000000000000000000bb00",
+        network: "1",
+        functionName: "setValue",
+        abi: WRITE_ABI,
+        functionArgs: JSON.stringify(["1"]),
+        simulate: 1 as unknown as boolean,
+      })
+    );
+    expect(res.status).toBe(400);
+    expect(writeContractCore).not.toHaveBeenCalled();
+  });
+
+  it("query-string simulate is ignored (one shape per input)", async () => {
+    resetSpies();
+    // Without body.simulate, the query string must NOT be honoured —
+    // there is exactly one way to ask for a dry-run.
+    writeContractCore.mockResolvedValueOnce({
+      success: true,
+      transactionHash: "0xabc",
+      transactionLink: null,
+      gasUsed: "21000",
+      effectiveGasPrice: "1",
+    });
+    checkAndReserveExecution.mockResolvedValueOnce({
+      allowed: true,
+      executionId: "exec_1",
+    });
 
     const res = await contractCallPOST(
       jsonRequest("/api/execute/contract-call?simulate=true", {
@@ -220,10 +272,10 @@ describe("/api/execute/contract-call simulate", () => {
       })
     );
 
-    expect(res.status).toBe(200);
-    expect(simulateContractCallMock).toHaveBeenCalledTimes(1);
-    expect(checkAndReserveExecution).not.toHaveBeenCalled();
-    expect(writeContractCore).not.toHaveBeenCalled();
+    expect(res.status).toBe(202);
+    expect(simulateContractCallMock).not.toHaveBeenCalled();
+    expect(checkAndReserveExecution).toHaveBeenCalledTimes(1);
+    expect(writeContractCore).toHaveBeenCalledTimes(1);
   });
 
   it("returns HTTP 400 when the simulator reports a revert", async () => {
@@ -299,22 +351,34 @@ describe("/api/execute/transfer simulate", () => {
     expect(transferTokenCore).not.toHaveBeenCalled();
   });
 
-  it("400s when a token simulate is requested without tokenAddress", async () => {
+  it("passes tokenConfig + decimals through to simulateTokenTransfer (no preflight 400)", async () => {
     resetSpies();
+    simulateTokenTransferMock.mockResolvedValueOnce(HAPPY_SIMULATE);
+
     const res = await transferPOST(
       jsonRequest("/api/execute/transfer", {
         recipientAddress: "0xcc0000000000000000000000000000000000cc00",
         amount: "100",
-        // No tokenAddress; a stringified tokenConfig without customToken triggers
-        // the isTokenTransfer branch but cannot resolve to a real address.
-        tokenConfig: JSON.stringify({ mode: "popular" }),
+        // tokenConfig without customToken.address: the route hands this
+        // off to simulateTokenTransfer, which uses parseTokenAddress
+        // (the same helper the broadcast path uses) to resolve the
+        // address. The route does not 400 on shape alone.
+        tokenConfig: JSON.stringify({ supportedTokenId: "usdc-mainnet" }),
         chainId: 1,
         simulate: true,
       })
     );
 
-    expect(res.status).toBe(400);
-    expect(simulateTokenTransferMock).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(simulateTokenTransferMock).toHaveBeenCalledTimes(1);
+    const call = simulateTokenTransferMock.mock.calls[0]?.[0] as {
+      tokenConfig?: unknown;
+      decimals?: number;
+    };
+    expect(call.tokenConfig).toBeDefined();
+    expect(call.decimals).toBeUndefined();
+    expect(checkAndReserveExecution).not.toHaveBeenCalled();
+    expect(transferTokenCore).not.toHaveBeenCalled();
   });
 });
 

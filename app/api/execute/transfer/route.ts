@@ -17,34 +17,10 @@ import {
   redactInput,
 } from "../_lib/execution-service";
 import { checkRateLimit } from "../_lib/rate-limit";
+import { parseSimulateFlag } from "../_lib/simulate-flag";
 import { checkAndReserveExecution } from "../_lib/spending-cap";
 import { validateTokenFields, validateTransferInput } from "../_lib/validate";
 import { requireWallet } from "../_lib/wallet-check";
-
-function extractTokenAddress(
-  body: Record<string, unknown>
-): string | undefined {
-  if (typeof body.tokenAddress === "string" && body.tokenAddress !== "") {
-    return body.tokenAddress;
-  }
-  const tokenConfig = body.tokenConfig;
-  if (typeof tokenConfig === "string" && tokenConfig !== "") {
-    try {
-      const parsed = JSON.parse(tokenConfig) as {
-        customToken?: { address?: string };
-      };
-      return parsed.customToken?.address;
-    } catch {
-      return;
-    }
-  }
-  if (tokenConfig && typeof tokenConfig === "object") {
-    const custom = (tokenConfig as { customToken?: { address?: string } })
-      .customToken;
-    return custom?.address;
-  }
-  return;
-}
 
 export async function POST(request: Request): Promise<NextResponse> {
   // 1. Auth
@@ -110,35 +86,30 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   // 5.5 Dry-run path: validate inputs, simulate via estimateGas only,
-  // never broadcast, never reserve. Triggered by `?simulate=true` or
-  // `{"simulate": true}` body field.
-  const url = new URL(request.url);
-  const shouldSimulate =
-    body.simulate === true || url.searchParams.get("simulate") === "true";
-  if (shouldSimulate) {
+  // never broadcast, never reserve. Triggered by strict boolean
+  // `simulate: true` on the body. Token-transfer simulates resolve the
+  // token address via the same parseTokenAddress helper the broadcast
+  // path uses and fetch on-chain decimals when not provided.
+  const simulateFlag = parseSimulateFlag(body);
+  if (!simulateFlag.ok) {
+    return NextResponse.json(
+      { error: simulateFlag.error, field: "simulate" },
+      { status: 400 }
+    );
+  }
+  if (simulateFlag.simulate) {
     if (isTokenTransfer) {
-      const decimals =
-        typeof body.decimals === "number"
-          ? body.decimals
-          : Number(body.decimals ?? 18);
-      const tokenAddress =
-        (body.tokenAddress as string | undefined) ?? extractTokenAddress(body);
-      if (!tokenAddress) {
-        return NextResponse.json(
-          {
-            error:
-              "Simulating a token transfer requires `tokenAddress` (or a `tokenConfig` with a custom token address)",
-          },
-          { status: 400 }
-        );
-      }
       const result = await simulateTokenTransfer({
         organizationId: apiKeyCtx.organizationId,
         network,
-        tokenAddress,
+        tokenAddress: body.tokenAddress as string | undefined,
+        tokenConfig: body.tokenConfig as
+          | string
+          | Record<string, unknown>
+          | undefined,
         recipientAddress,
         amount,
-        decimals,
+        decimals: typeof body.decimals === "number" ? body.decimals : undefined,
       });
       return NextResponse.json(result, {
         status: result.wouldRevert ? 400 : 200,

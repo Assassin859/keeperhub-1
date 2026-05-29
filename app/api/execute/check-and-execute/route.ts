@@ -18,6 +18,7 @@ import {
   redactInput,
 } from "../_lib/execution-service";
 import { checkRateLimit } from "../_lib/rate-limit";
+import { parseSimulateFlag } from "../_lib/simulate-flag";
 import { checkAndReserveExecution } from "../_lib/spending-cap";
 import { validateCheckAndExecuteInput } from "../_lib/validate";
 import { requireWallet } from "../_lib/wallet-check";
@@ -279,11 +280,15 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   // Dry-run path on the action: still evaluates the condition (which is
   // read-only), but simulates the write instead of broadcasting.
-  // Triggered by `?simulate=true` or `{"simulate": true}` body field.
-  const url = new URL(request.url);
-  const shouldSimulate =
-    body.simulate === true || url.searchParams.get("simulate") === "true";
-  if (shouldSimulate) {
+  // Triggered by strict boolean `simulate: true` on the body.
+  const simulateFlag = parseSimulateFlag(body);
+  if (!simulateFlag.ok) {
+    return NextResponse.json(
+      { error: simulateFlag.error, field: "simulate" },
+      { status: 400 }
+    );
+  }
+  if (simulateFlag.simulate) {
     return simulateConditionalWrite(
       action,
       network,

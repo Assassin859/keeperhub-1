@@ -5,9 +5,11 @@ import { coerceArgsForAbi, reshapeArgsForAbi } from "@/lib/abi/struct-args";
 import { type AbiItem, findAbiFunction } from "@/lib/abi/utils";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
+import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { getErrorMessage } from "@/lib/utils";
 import { decodeRevertReason } from "@/lib/web3/decode-revert-error";
 import { getOrganizationWalletAddress } from "@/lib/web3/wallet-helpers";
+import { parseTokenAddress } from "@/plugins/web3/steps/transfer-token-core";
 
 /**
  * Read-only execution-path simulator.
@@ -17,6 +19,10 @@ import { getOrganizationWalletAddress } from "@/lib/web3/wallet-helpers";
  * signs or sends a transaction. The result reports the gas the network
  * would charge, the decoded return value (if any), and whether the
  * call would revert with the decoded reason.
+ *
+ * Every chain call is routed through rpcManager.executeWithFailover so
+ * a primary-RPC blip falls over to the chain's configured fallback,
+ * matching the behaviour of read paths in the broadcast cores.
  *
  * Known limitation: `from` is resolved via getOrganizationWalletAddress
  * (the org's EOA / smart account address). Orgs that route writes
@@ -38,6 +44,10 @@ const ERC20_TRANSFER_ABI_JSON = JSON.stringify([
     stateMutability: "nonpayable",
   },
 ]);
+
+const ERC20_DECIMALS_ABI = [
+  "function decimals() view returns (uint8)",
+] as const;
 
 export type SimulateSuccess = {
   success: true;
@@ -85,11 +95,22 @@ export type SimulateNativeTransferInput = {
 export type SimulateTokenTransferInput = {
   organizationId: string;
   network: string;
-  tokenAddress: string;
+  /**
+   * Either a bare token address, or a `tokenConfig` payload (string or
+   * object) accepted by the broadcast path. When both are missing the
+   * call fails with a 400-style result.
+   */
+  tokenAddress?: string;
+  tokenConfig?: string | Record<string, unknown>;
   recipientAddress: string;
-  /** Token unit amount (decimal). The caller decides decimals beforehand. */
+  /** Decimal token-unit amount. */
   amount: string;
-  decimals: number;
+  /**
+   * Optional explicit decimals override. If omitted the simulator
+   * looks up the token's `decimals()` on-chain (with RPC failover) so
+   * USDC / USDT etc. do not get parsed at the default 18.
+   */
+  decimals?: number;
 };
 
 function serializeForJson(value: unknown): unknown {
@@ -127,10 +148,12 @@ function failure(
   };
 }
 
-async function getProviderForChain(network: string): Promise<ethers.Provider> {
+async function getRpcManagerForChain(
+  network: string
+): Promise<{ rpc: RpcProviderManager; chainId: number }> {
   const chainId = getChainIdFromNetwork(network);
   const rpc = await getRpcProvider({ chainId });
-  return rpc.getProvider();
+  return { rpc, chainId };
 }
 
 function parseFunctionArgs(raw: string | undefined): unknown[] | string {
@@ -204,9 +227,9 @@ export async function simulateContractCall(
     return failure(from, to, value, argsOrError);
   }
 
+  const iface = new ethers.Interface(abiArray as ethers.InterfaceAbi);
   let encodedData: string;
   try {
-    const iface = new ethers.Interface(abiArray as ethers.InterfaceAbi);
     const coerced = coerceArgsForAbi(argsOrError, abiFn);
     const reshaped = reshapeArgsForAbi(coerced, abiFn);
     encodedData = iface.encodeFunctionData(input.functionName, reshaped);
@@ -219,17 +242,19 @@ export async function simulateContractCall(
     );
   }
 
-  const provider = await getProviderForChain(input.network);
+  const { rpc } = await getRpcManagerForChain(input.network);
   const tx: ethers.TransactionRequest = { from, to, data: encodedData, value };
-  const iface = new ethers.Interface(abiArray as ethers.InterfaceAbi);
 
   let gasEstimate: bigint;
   let returnData: string;
   try {
-    [gasEstimate, returnData] = await Promise.all([
-      provider.estimateGas(tx),
-      provider.call(tx),
-    ]);
+    // executeWithFailover routes the read through the chain's
+    // fallback RPC when the primary blips, matching the read path
+    // in the broadcast cores.
+    [gasEstimate, returnData] = await rpc.executeWithFailover(
+      (p) => Promise.all([p.estimateGas(tx), p.call(tx)]),
+      "read"
+    );
   } catch (err) {
     const reason =
       decodeRevertReason(err, iface) ??
@@ -275,12 +300,15 @@ export async function simulateNativeTransfer(
   }
   const value = valueOrError;
 
-  const provider = await getProviderForChain(input.network);
+  const { rpc } = await getRpcManagerForChain(input.network);
   const tx: ethers.TransactionRequest = { from, to, value };
 
   let gasEstimate: bigint;
   try {
-    gasEstimate = await provider.estimateGas(tx);
+    gasEstimate = await rpc.executeWithFailover(
+      (p) => p.estimateGas(tx),
+      "read"
+    );
   } catch (err) {
     return failure(
       from,
@@ -302,25 +330,59 @@ export async function simulateNativeTransfer(
   };
 }
 
+async function fetchTokenDecimals(
+  rpc: RpcProviderManager,
+  tokenAddress: string
+): Promise<number> {
+  const decimals = await rpc.executeWithFailover((p) => {
+    const contract = new ethers.Contract(tokenAddress, ERC20_DECIMALS_ABI, p);
+    return contract.decimals() as Promise<bigint>;
+  }, "preflight");
+  return Number(decimals);
+}
+
 export async function simulateTokenTransfer(
   input: SimulateTokenTransferInput
 ): Promise<SimulateResult> {
+  const { rpc, chainId } = await getRpcManagerForChain(input.network);
+
+  const resolvedTokenAddress = await parseTokenAddress(
+    {
+      tokenConfig: input.tokenConfig ?? "",
+      tokenAddress: input.tokenAddress,
+    },
+    chainId
+  );
+  if (!resolvedTokenAddress) {
+    const from = await getOrganizationWalletAddress(input.organizationId);
+    return failure(
+      from,
+      input.tokenAddress ?? "",
+      BigInt(0),
+      "Simulating a token transfer requires a resolvable `tokenAddress` or `tokenConfig`"
+    );
+  }
+
+  const decimals =
+    input.decimals ?? (await fetchTokenDecimals(rpc, resolvedTokenAddress));
+
   let amountUnits: bigint;
   try {
-    amountUnits = ethers.parseUnits(input.amount, input.decimals);
+    amountUnits = ethers.parseUnits(input.amount, decimals);
   } catch {
     const from = await getOrganizationWalletAddress(input.organizationId);
     return failure(
       from,
-      input.tokenAddress,
+      resolvedTokenAddress,
       BigInt(0),
-      `Invalid amount for ${input.decimals} decimals: ${input.amount}`
+      `Invalid amount for ${decimals} decimals: ${input.amount}`
     );
   }
+
   return simulateContractCall({
     organizationId: input.organizationId,
     network: input.network,
-    contractAddress: input.tokenAddress,
+    contractAddress: resolvedTokenAddress,
     abi: ERC20_TRANSFER_ABI_JSON,
     functionName: "transfer",
     functionArgs: JSON.stringify([
