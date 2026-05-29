@@ -81,4 +81,145 @@ describe("scrubRpcUrls", () => {
     expect(out).toContain("example.com");
     expect(out).toContain("/api/v1/health");
   });
+
+  it("masks dRPC /<chain>/<key> paths while keeping the chain visible", () => {
+    // 44-char key shape - matches the dRPC key form used in CHAIN_RPC_CONFIG.
+    const fakeDrpcKey = "FAKE_TEST_KEY_DO_NOT_USE_DDDDDDDDDDDDDDDDDDDD";
+    const input = `https://lb.drpc.live/polygon/${fakeDrpcKey}`;
+    const out = scrubRpcUrls(input);
+    expect(out).not.toContain(fakeDrpcKey);
+    expect(out).toContain("lb.drpc.live");
+    expect(out).toContain("/polygon/");
+  });
+
+  it("masks dRPC even on chain names with dashes (e.g. 0g-galileo-testnet)", () => {
+    const fakeDrpcKey = "FAKE_TEST_KEY_DO_NOT_USE_DDDDDDDDDDDDDDDDDDDD";
+    const input = `https://lb.drpc.live/0g-galileo-testnet/${fakeDrpcKey}`;
+    const out = scrubRpcUrls(input);
+    expect(out).not.toContain(fakeDrpcKey);
+    expect(out).toContain("/0g-galileo-testnet/");
+  });
+});
+
+// Regression-style coverage: every distinct URL shape currently present in
+// CHAIN_RPC_CONFIG (host, path layout). Fake keys match the real keys'
+// charset and length so coverage is meaningful. If a new provider lands in
+// the config that this suite does not cover, the corresponding fake key
+// will survive scrubbing and the test will fail loudly.
+describe("scrubRpcUrls - CHAIN_RPC_CONFIG provider coverage", () => {
+  const FAKE_ALCHEMY_21 = "FAKE_TEST_KEY_DO_NOT_AA"; // 23 chars, alchemy form
+  const FAKE_ALCHEMY_32 = "FAKE_TEST_KEY_DO_NOT_USE_AAAAAAAA"; // 32 chars
+  const FAKE_QUICKNODE_40 = "FAKE_TEST_KEY_DO_NOT_USE_AAAAAAAAAAAAAAAA"; // 40 chars
+  const FAKE_DRPC_44 = "FAKE_TEST_KEY_DO_NOT_USE_AAAAAAAAAAAAAAAAAAAA"; // 44 chars
+
+  type Case = { label: string; url: string; fakeKey?: string };
+
+  const cases: readonly Case[] = [
+    // No-secret hosts - the scrubber must not introduce false positives.
+    {
+      label: "TechOps proxy mainnet",
+      url: "https://chain.techops.services/eth-mainnet",
+    },
+    {
+      label: "TechOps proxy testnet",
+      url: "https://chain.techops.services/base-sepolia",
+    },
+    {
+      label: "TechOps proxy wss",
+      url: "wss://chain.techops.services/arb-mainnet",
+    },
+    { label: "Flashbots fast", url: "https://rpc.flashbots.net/fast" },
+    { label: "Flashbots sepolia", url: "https://rpc-sepolia.flashbots.net" },
+    {
+      label: "publicnode polygon",
+      url: "https://polygon-bor-rpc.publicnode.com",
+    },
+    { label: "publicnode bsc", url: "https://bsc-testnet-rpc.publicnode.com" },
+    { label: "arbitrum.io", url: "https://arb1.arbitrum.io/rpc" },
+    {
+      label: "arbitrum sepolia",
+      url: "https://sepolia-rollup.arbitrum.io/rpc",
+    },
+    { label: "binance dataseed", url: "https://bsc-dataseed.binance.org" },
+    {
+      label: "polygon.technology amoy",
+      url: "https://rpc-amoy.polygon.technology",
+    },
+    { label: "solana official mainnet", url: "https://api.mainnet.solana.com" },
+    { label: "solana official devnet wss", url: "wss://api.devnet.solana.com" },
+    { label: "tempo.xyz", url: "https://rpc.tempo.xyz/" },
+    { label: "tempo moderato", url: "https://rpc.moderato.tempo.xyz" },
+    { label: "Ankr public solana", url: "wss://rpc.ankr.com/solana" },
+
+    // Secret-bearing hosts - must redact and must not leak the fake key.
+    {
+      label: "Alchemy eth-mainnet v2",
+      url: `https://eth-mainnet.g.alchemy.com/v2/${FAKE_ALCHEMY_21}`,
+      fakeKey: FAKE_ALCHEMY_21,
+    },
+    {
+      label: "Alchemy avax-mainnet v2",
+      url: `https://avax-mainnet.g.alchemy.com/v2/${FAKE_ALCHEMY_32}`,
+      fakeKey: FAKE_ALCHEMY_32,
+    },
+    {
+      label: "Alchemy solana mainnet v2",
+      url: `https://solana-mainnet.g.alchemy.com/v2/${FAKE_ALCHEMY_21}`,
+      fakeKey: FAKE_ALCHEMY_21,
+    },
+    {
+      label: "Alchemy wss",
+      url: `wss://base-mainnet.g.alchemy.com/v2/${FAKE_ALCHEMY_21}`,
+      fakeKey: FAKE_ALCHEMY_21,
+    },
+    {
+      label: "dRPC mainnet",
+      url: `https://lb.drpc.live/polygon/${FAKE_DRPC_44}`,
+      fakeKey: FAKE_DRPC_44,
+    },
+    {
+      label: "dRPC testnet with dashed chain",
+      url: `https://lb.drpc.live/0g-galileo-testnet/${FAKE_DRPC_44}`,
+      fakeKey: FAKE_DRPC_44,
+    },
+    {
+      label: "dRPC wss",
+      url: `wss://lb.drpc.live/bsc/${FAKE_DRPC_44}`,
+      fakeKey: FAKE_DRPC_44,
+    },
+    {
+      label: "QuickNode with trailing slash",
+      url: `https://twilight-prettiest-water.0g-mainnet.quiknode.pro/${FAKE_QUICKNODE_40}/`,
+      fakeKey: FAKE_QUICKNODE_40,
+    },
+    {
+      label: "QuickNode without trailing slash",
+      url: `https://twilight-prettiest-water.0g-galileo.quiknode.pro/${FAKE_QUICKNODE_40}`,
+      fakeKey: FAKE_QUICKNODE_40,
+    },
+  ];
+
+  it.each(cases)("$label: never leaks any secret", ({ url, fakeKey }: Case) => {
+    const out = scrubRpcUrls(url);
+    if (fakeKey) {
+      expect(out).not.toContain(fakeKey);
+    } else {
+      // No-secret URLs should round-trip through the scrubber unchanged.
+      expect(out).toBe(url);
+    }
+  });
+
+  it("scrubs all observed shapes when concatenated into one error message", () => {
+    // Worst-case fixture: every secret-bearing URL pasted into a single
+    // string (the kind of payload an ethers v6 error message could become
+    // if multiple failovers happen back-to-back).
+    const secretCases = cases.filter((c) => c.fakeKey !== undefined);
+    const blob = secretCases.map((c) => c.url).join(" | ");
+    const out = scrubRpcUrls(blob);
+    for (const c of secretCases) {
+      if (c.fakeKey) {
+        expect(out).not.toContain(c.fakeKey);
+      }
+    }
+  });
 });

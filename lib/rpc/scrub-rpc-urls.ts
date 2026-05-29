@@ -28,13 +28,19 @@ const URL_RE = /\bhttps?:\/\/[^\s)'"<>]+|wss?:\/\/[^\s)'"<>]+/gi;
 // query-stripped URL; the trailing secret is masked while the provider-
 // identifying prefix is kept.
 const PROVIDER_KEY_PATTERNS: readonly RegExp[] = [
-  // Alchemy:  https://eth-mainnet.g.alchemy.com/v2/<KEY>
+  // Alchemy:  https://<network>.g.alchemy.com/v2/<KEY>
   // Infura:   https://mainnet.infura.io/v3/<KEY>
   /\/v[23]\/[A-Za-z0-9_-]{16,}/g,
-  // QuickNode: https://<name>.quiknode.pro/<KEY>/
+  // QuickNode: https://<name>.<chain>.quiknode.pro/<KEY>/
   /\.quiknode\.pro\/[A-Za-z0-9_-]{16,}/g,
   // Ankr premium: https://rpc.ankr.com/<chain>/<KEY>
   /rpc\.ankr\.com\/[a-z-]+\/[A-Za-z0-9_-]{16,}/g,
+  // dRPC load balancer: https://lb.drpc.live/<chain>/<KEY>
+  //                     wss://lb.drpc.live/<chain>/<KEY>
+  // Explicit pattern (rather than relying on the generic 32+ fallback below)
+  // so a future shorter dRPC key still gets caught and the chain segment
+  // stays visible in masked output.
+  /lb\.drpc\.live\/[a-z0-9-]+\/[A-Za-z0-9_-]{16,}/g,
   // Generic 32+ char opaque path segment as a last-resort mask. Anchored
   // on the leading "/" so it does not eat into hostnames.
   /\/[A-Za-z0-9_-]{32,}(?=\/|$)/g,
