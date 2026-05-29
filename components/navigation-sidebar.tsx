@@ -951,6 +951,12 @@ export function NavigationSidebar(): React.ReactNode {
             );
           })}
           {(() => {
+            // Feedback widget is disabled by default. Re-enable by setting
+            // NEXT_PUBLIC_FEEDBACK_ENABLED=true (the POST /api/feedback route
+            // gates on the same flag).
+            if (process.env.NEXT_PUBLIC_FEEDBACK_ENABLED !== "true") {
+              return null;
+            }
             const reportButton = (
               <button
                 aria-label="Report an issue"
