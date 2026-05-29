@@ -73,32 +73,6 @@ export function findFirstWriteActionNode(
   return undefined;
 }
 
-/**
- * Returns the workflowType that should be persisted given current node content.
- *
- * A workflow containing a callable write node (write-contract / protocol-write)
- * is unconditionally "write" - this auto-flips a "read" and overrides a
- * conflicting requested "read". When no callable write node is present, the
- * requested type (or the current type when no explicit request is made) is
- * preserved unchanged.
- *
- * Detection is intentionally narrow and matches the calldata generator so a
- * "write"-typed workflow can always be served by call_workflow. Value
- * transfers and token approvals mutate chain state but are not calldata-
- * generatable, so they do not qualify here - labelling them "write" would
- * make the call route fail at runtime with "No write action node found in
- * workflow".
- */
-export function deriveWorkflowType(
-  nodes: unknown[],
-  requestedType: "read" | "write"
-): "read" | "write" {
-  if (findFirstWriteActionNode(nodes) !== undefined) {
-    return "write";
-  }
-  return requestedType;
-}
-
 export function resolveTriggerTemplates(
   value: string,
   triggerInputs: Record<string, unknown>
