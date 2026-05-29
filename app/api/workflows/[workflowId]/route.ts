@@ -8,7 +8,10 @@ import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { extractActionTypeNodes } from "@/lib/features";
 import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
 import { projects, publicTags, tags, workflowExecutions, workflowPublicTags, workflowSchedules, workflows } from "@/lib/db/schema";
-import { findFirstWriteActionNode } from "@/lib/mcp/calldata";
+import {
+  deriveWorkflowType,
+  findFirstWriteActionNode,
+} from "@/lib/mcp/calldata";
 import {
   findBareAtLiterals,
   isInputSchemaPresent,
@@ -525,27 +528,22 @@ export async function PATCH(
     // matches how lib/mcp/listing.ts calls the same function.
     const finalNodes =
       updateData.nodes !== undefined ? updateData.nodes : existingWorkflow.nodes;
-    const hasWriteNode =
-      findFirstWriteActionNode(finalNodes as unknown[]) !== undefined;
 
-    // Auto-derive workflowType from content. A callable write node
-    // (write-contract / protocol-write) forces "write", overriding a
-    // previously-persisted "read". Detection matches the calldata generator
-    // (findFirstWriteActionNode) so a "write"-typed workflow can always be
-    // served by call_workflow. Value transfers and token approvals mutate
-    // chain state but are not calldata-generatable, so they do not qualify
-    // as "write" here — labelling them write would make the call route fail
-    // at runtime with "No write action node found in workflow".
-    //
-    // This intentionally replaces the historical "workflowType is curator-
-    // only" model. A body's `workflowType` is still dropped at the
-    // persistence layer (it is not in `buildUpdateData`'s allowlist); the
-    // value is now solely a function of node content. The curator listing
-    // path (lib/mcp/listing.ts) applies the same derivation for symmetry.
+    // Auto-derive workflowType from content via the shared helper
+    // (lib/mcp/calldata.ts::deriveWorkflowType). This intentionally replaces
+    // the historical "workflowType is curator-only" model: a body's
+    // `workflowType` is still dropped at the persistence layer (not in
+    // `buildUpdateData`'s allowlist), so the requested type passed to the
+    // helper is the row's current value. The curator listing path
+    // (lib/mcp/listing.ts) calls the same helper for symmetry.
+    const resolvedWorkflowType = deriveWorkflowType(
+      finalNodes as unknown[],
+      existingWorkflow.workflowType
+    );
     const workflowTypeChanged =
-      hasWriteNode && existingWorkflow.workflowType !== "write";
+      resolvedWorkflowType !== existingWorkflow.workflowType;
     if (workflowTypeChanged) {
-      updateData.workflowType = "write";
+      updateData.workflowType = resolvedWorkflowType;
     }
 
     if (willBeListed) {
@@ -568,7 +566,7 @@ export async function PATCH(
       if (
         checkNodes &&
         existingWorkflow.workflowType === "write" &&
-        !hasWriteNode
+        findFirstWriteActionNode(finalNodes as unknown[]) === undefined
       ) {
         return NextResponse.json(
           {
