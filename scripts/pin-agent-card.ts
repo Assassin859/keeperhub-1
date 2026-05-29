@@ -22,6 +22,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ethers } from "ethers";
+import { formatSanitizedRpcError } from "../lib/rpc/sanitize-rpc-error";
 
 const DEFAULT_AGENT_ID = "31875";
 const DEFAULT_REGISTRY = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432";
@@ -106,7 +107,7 @@ async function readOnchainAgentURI(
       console.log(`[pin] Drift check via ${rpcUrl}`);
       return result;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatSanitizedRpcError(err);
       console.warn(`[pin] RPC ${rpcUrl} unavailable: ${message.split("\n")[0]}`);
     }
   }
@@ -174,7 +175,7 @@ const isMain =
 
 if (isMain) {
   pinAgentCard().catch((err) => {
-    console.error("[pin] Failed:", err instanceof Error ? err.message : err);
+    console.error("[pin] Failed:", formatSanitizedRpcError(err));
     process.exit(1);
   });
 }

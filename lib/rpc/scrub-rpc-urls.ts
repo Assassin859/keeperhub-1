@@ -1,0 +1,65 @@
+/**
+ * Strip secrets out of any URL substrings inside an arbitrary string.
+ *
+ * Defense-in-depth pipeline:
+ *   1. Drop query strings on any http(s)/ws(s) URL.
+ *   2. Mask path segments that look like API keys for known providers
+ *      (Alchemy /v2/<key>, Infura /v3/<key>, QuickNode .quiknode.pro/<key>,
+ *      Ankr rpc.ankr.com/<chain>/<key>).
+ *   3. As a generic fallback, mask any path segment that looks opaque
+ *      (32+ chars of base58/base64).
+ *
+ * The host and the path prefix up to the secret are preserved on purpose so
+ * debug output still tells an operator which provider failed. We mask the
+ * trailing secret, not the whole URL.
+ *
+ * Failure mode: if a vendor inlines its key in a shape none of these
+ * patterns match (e.g. an opaque 8-char host prefix, or a custom header
+ * echoed into a multi-line error body), this helper passes the string
+ * through unchanged. The mitigation for that residual risk is a Sentry
+ * `beforeSend` hook (tracked as a follow-up) plus the higher-level
+ * guidance to log `code` + `shortMessage` instead of full messages
+ * (ethers v6 today does not inline `requestUrl` into `shortMessage`).
+ */
+
+const URL_RE = /\bhttps?:\/\/[^\s)'"<>]+|wss?:\/\/[^\s)'"<>]+/gi;
+
+// Patterns whose match ends at the secret segment. Each is applied to the
+// query-stripped URL; the trailing secret is masked while the provider-
+// identifying prefix is kept.
+const PROVIDER_KEY_PATTERNS: readonly RegExp[] = [
+  // Alchemy:  https://eth-mainnet.g.alchemy.com/v2/<KEY>
+  // Infura:   https://mainnet.infura.io/v3/<KEY>
+  /\/v[23]\/[A-Za-z0-9_-]{16,}/g,
+  // QuickNode: https://<name>.quiknode.pro/<KEY>/
+  /\.quiknode\.pro\/[A-Za-z0-9_-]{16,}/g,
+  // Ankr premium: https://rpc.ankr.com/<chain>/<KEY>
+  /rpc\.ankr\.com\/[a-z-]+\/[A-Za-z0-9_-]{16,}/g,
+  // Generic 32+ char opaque path segment as a last-resort mask. Anchored
+  // on the leading "/" so it does not eat into hostnames.
+  /\/[A-Za-z0-9_-]{32,}(?=\/|$)/g,
+];
+
+function maskUrl(url: string): string {
+  const queryIdx = url.indexOf("?");
+  const base = queryIdx === -1 ? url : url.slice(0, queryIdx);
+
+  let masked = base;
+  for (const pattern of PROVIDER_KEY_PATTERNS) {
+    masked = masked.replace(pattern, (match) => {
+      const slash = match.lastIndexOf("/");
+      return slash >= 0
+        ? `${match.slice(0, slash + 1)}[REDACTED]`
+        : "[REDACTED]";
+    });
+  }
+
+  return queryIdx === -1 ? masked : `${masked}?[REDACTED-QUERY]`;
+}
+
+export function scrubRpcUrls(text: string): string {
+  if (!text) {
+    return text;
+  }
+  return text.replace(URL_RE, maskUrl);
+}

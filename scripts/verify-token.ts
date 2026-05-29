@@ -22,6 +22,7 @@ import "dotenv/config";
 import { ethers } from "ethers";
 import ERC20_ABI from "../lib/contracts/abis/erc20.json";
 import { getRpcUrlByChainId } from "../lib/rpc/rpc-config";
+import { formatSanitizedRpcError } from "../lib/rpc/sanitize-rpc-error";
 
 type TokenMetadata = {
   symbol: string;
@@ -77,7 +78,7 @@ async function main(): Promise<void> {
     const fallbackUrl = getRpcUrlByChainId(chainId, "fallback");
     if (fallbackUrl === primaryUrl) {
       console.error(
-        `  primary RPC failed and no distinct fallback is configured: ${(primaryError as Error).message}`
+        `  primary RPC failed and no distinct fallback is configured: ${formatSanitizedRpcError(primaryError)}`
       );
       process.exit(1);
     }
@@ -88,7 +89,7 @@ async function main(): Promise<void> {
       metadata = await fetchMetadata(fallbackUrl, lower);
     } catch (fallbackError) {
       console.error(
-        `  fallback RPC also failed: ${(fallbackError as Error).message}`
+        `  fallback RPC also failed: ${formatSanitizedRpcError(fallbackError)}`
       );
       process.exit(1);
     }
