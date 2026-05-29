@@ -39,6 +39,11 @@ import { isAnonymousUser } from "@/lib/is-anonymous";
 import { registerSidebarRefetch } from "@/lib/refetch-sidebar";
 import { cn } from "@/lib/utils";
 import { filterPickerVisible } from "@/lib/workflow/soft-delete";
+import {
+  getWorkflowTriggerType,
+  shouldShowDisabledBadge,
+  type WorkflowTriggerType,
+} from "@/lib/workflow/store";
 import { FLYOUT_WIDTH, FlyoutPanel, STRIP_WIDTH } from "./flyout-panel";
 
 export const COLLAPSED_WIDTH = 60;
@@ -56,8 +61,13 @@ type WorkflowEntry = {
   // recovery surfaces (executions history, marketplace listings) can render
   // them.
   deletedAt?: string | null;
-  // When false, the picker greys the row out and tags it "Disabled" without
-  // strikethrough. The row stays selectable.
+  // The trigger type drives whether the "Disabled" label is meaningful --
+  // see shouldShowDisabledBadge. Derived once at the SavedWorkflow boundary
+  // so WorkflowItem doesn't have to carry the full nodes payload.
+  triggerType?: WorkflowTriggerType;
+  // When false on a trigger that supports the enable switch, the picker
+  // greys the row out and tags it "Disabled" without strikethrough. The row
+  // stays selectable.
   enabled?: boolean;
 };
 
@@ -90,7 +100,7 @@ function WorkflowItem({
   activeWorkflowId: string | undefined;
 }): React.ReactNode {
   const router = useRouter();
-  const isDisabled = workflow.enabled === false;
+  const showDisabled = shouldShowDisabledBadge(workflow);
   const isActive = workflow.id === activeWorkflowId;
   return (
     <button
@@ -101,15 +111,15 @@ function WorkflowItem({
       onClick={() => router.push(`/workflows/${workflow.id}`)}
       type="button"
     >
-      <span className={cn("truncate", isDisabled && "text-muted-foreground")}>
+      <span className={cn("truncate", showDisabled && "text-muted-foreground")}>
         {workflow.name}
       </span>
-      {isDisabled && (
+      {showDisabled && (
         <span className="ml-2 shrink-0 text-muted-foreground text-xs">
           Disabled
         </span>
       )}
-      {!isDisabled && isActive && (
+      {!showDisabled && isActive && (
         <Check className="ml-2 size-3.5 shrink-0 text-muted-foreground" />
       )}
     </button>
@@ -625,7 +635,10 @@ export function NavigationSidebar(): React.ReactNode {
 
   const isAnonymous = isAnonymousUser(session?.user);
 
-  const visibleWorkflows = filterPickerVisible(workflows);
+  const visibleWorkflows = filterPickerVisible(workflows).map((w) => ({
+    ...w,
+    triggerType: getWorkflowTriggerType(w.nodes),
+  }));
 
   const workflowId =
     typeof params.workflowId === "string" ? params.workflowId : undefined;

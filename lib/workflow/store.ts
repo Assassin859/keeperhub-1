@@ -1,9 +1,9 @@
 import type { Edge, EdgeChange, Node, NodeChange } from "@xyflow/react";
 import { applyEdgeChanges, applyNodeChanges } from "@xyflow/react";
 import { atom } from "jotai";
+import { api } from "@/lib/api-client";
 import { computeAutoLayout } from "@/lib/workflow/editor/auto-layout";
 import { buildExecutionLogsMap } from "@/lib/workflow/editor/template-helpers";
-import { api } from "@/lib/api-client";
 
 export type WorkflowNodeType = "trigger" | "action" | "add";
 
@@ -31,6 +31,36 @@ export function shouldShowEnableSwitch(
     triggerType === WorkflowTriggerEnum.BLOCK ||
     triggerType === WorkflowTriggerEnum.WEBHOOK
   );
+}
+
+/**
+ * Pull the trigger type off the trigger node in a workflow's node list.
+ * Used by surfaces that need to gate behavior on what fires the workflow
+ * without dragging the full editor store into view -- e.g. the sidebar
+ * picker deciding whether to surface a "Disabled" label.
+ */
+export function getWorkflowTriggerType(
+  nodes: Array<{ data?: { type?: string; config?: Record<string, unknown> } }>
+): WorkflowTriggerType | undefined {
+  const triggerNode = nodes.find((node) => node.data?.type === "trigger");
+  const raw = triggerNode?.data?.config?.triggerType;
+  return typeof raw === "string" ? (raw as WorkflowTriggerType) : undefined;
+}
+
+/**
+ * Show the "Disabled" label in the sidebar picker only when the workflow has
+ * a trigger type whose schedule the user can actually flip with the enable
+ * switch. Manual workflows persist `enabled = false` by default but can't be
+ * disabled through the UI -- labeling them would be noise.
+ */
+export function shouldShowDisabledBadge(workflow: {
+  enabled?: boolean | null;
+  triggerType?: WorkflowTriggerType | null;
+}): boolean {
+  if (workflow.enabled !== false) {
+    return false;
+  }
+  return shouldShowEnableSwitch(workflow.triggerType ?? undefined);
 }
 
 export type WorkflowNodeData = {
