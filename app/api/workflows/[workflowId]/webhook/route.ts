@@ -22,6 +22,8 @@ import {
 } from "@/lib/features/route-guard";
 import { apiKeys, users, workflowExecutions, workflows } from "@/lib/db/schema";
 import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
+import { withBackstopCapture } from "@/lib/security/backstop-capture";
+import { buildAttribution } from "@/lib/security/request-attribution";
 import { getWorkflowAccess } from "@/lib/workflow/access";
 import { getWorkflowExecutability } from "@/lib/workflow/executable";
 import { executeWorkflowInBackground } from "@/lib/workflow/execute-in-background";
@@ -29,6 +31,7 @@ import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 type ValidateApiKeyResult = {
   valid: boolean;
   userId?: string;
+  apiKeyId?: string;
   error?: string;
   statusCode?: number;
   errorBody?: Record<string, unknown>;
@@ -112,7 +115,7 @@ async function validateApiKey(
       // Fire and forget - ignore errors
     });
 
-  return { valid: true, userId: apiKey.userId };
+  return { valid: true, userId: apiKey.userId, apiKeyId: apiKey.id };
 }
 
 const corsHeaders = {
@@ -300,16 +303,27 @@ export async function POST(
     // Parse request body
     const body = await request.json().catch(() => ({}));
 
+    const attribution = buildAttribution({
+      request,
+      source: "webhook",
+      userApiKeyId: apiKeyValidation.apiKeyId ?? null,
+    });
+
     // Create execution record
-    const [execution] = await db
-      .insert(workflowExecutions)
-      .values({
-        workflowId,
-        userId: workflow.userId,
-        status: "pending",
-        input: body,
-      })
-      .returning();
+    const [execution] = await withBackstopCapture(
+      { workflowId, userId: workflow.userId, source: "webhook" },
+      () =>
+        db
+          .insert(workflowExecutions)
+          .values({
+            workflowId,
+            userId: workflow.userId,
+            status: "pending",
+            input: body,
+            ...attribution,
+          })
+          .returning()
+    );
 
     console.log("[Webhook] Created execution:", execution.id);
 

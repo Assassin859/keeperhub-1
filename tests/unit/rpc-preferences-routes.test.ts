@@ -117,6 +117,7 @@ describe("RPC Preferences API Routes", () => {
     usePrivateMempoolRpc: false,
     defaultPrivateRpcUrl: null,
     isEnabled: true,
+    status: "stable",
     createdAt: new Date("2026-01-01"),
     updatedAt: new Date("2026-01-01"),
     isTestnet: false,

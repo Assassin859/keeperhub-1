@@ -756,6 +756,20 @@ const workflowExecutionsStartedTotal = getOrCreateCounter(
   ["trigger_type", "chain"]
 );
 
+// KEEP-612 detection signal. lib/safe-fetch.ts increments this every time
+// a SSRF-blocklisted destination (or DNS-resolve-mismatch) is refused. The
+// `shadow` label distinguishes enforce-mode rejects (shadow=false, the
+// actionable signal) from observe-only logs (shadow=true). Grafana alerts
+// on this metric live in
+// techops_infrastructure/grafana/keeperhub-dashboards/keeperhub_metrics_alerts.tf
+// as `safe_fetch_blocks_alert`.
+const safeFetchBlocks = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_safe_fetch_blocks_total",
+  "safe_fetch refused outbound HTTP requests, labelled by reason / plugin_name / shadow",
+  ["reason", "plugin_name", "shadow"]
+);
+
 // Error counters
 const pluginErrors = getOrCreateCounter(
   apiRegistry,
@@ -1004,6 +1018,8 @@ const counterMap: Record<string, Counter> = {
   "billing.invoice.paid": billingInvoicePaid,
   "billing.invoice.failed": billingInvoiceFailed,
   "billing.overage.charged": billingOverageCharged,
+  // KEEP-612: see safeFetchBlocks definition above for rationale.
+  "safe_fetch.blocks.total": safeFetchBlocks,
 };
 
 const errorCounterMap: Record<string, Counter> = {

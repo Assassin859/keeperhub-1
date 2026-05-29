@@ -3,15 +3,16 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { chains, explorerConfigs } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import {
-  BUILTIN_NODE_ID,
-  BUILTIN_NODE_LABEL,
-} from "@/lib/workflow/editor/builtin-variables";
+import { synthesizeOutputSchema } from "@/lib/mcp/output-schema";
 import {
   SYSTEM_ACTIONS,
   TEMPLATE_SYNTAX,
   TRIGGERS,
 } from "@/lib/mcp/workflow-schema-constants";
+import {
+  BUILTIN_NODE_ID,
+  BUILTIN_NODE_LABEL,
+} from "@/lib/workflow/editor/builtin-variables";
 import {
   type ActionConfigFieldBase,
   computeActionId,
@@ -64,6 +65,7 @@ function transformPluginAction(
   requiredFields: Record<string, string>;
   optionalFields: Record<string, string>;
   outputFields: Record<string, string>;
+  outputSchema?: Record<string, unknown>;
 } {
   const actionType = computeActionId(plugin.type, action.slug);
   const flatFields = flattenConfigFields(action.configFields);
@@ -88,6 +90,8 @@ function transformPluginAction(
     }
   }
 
+  const outputSchema = synthesizeOutputSchema(action);
+
   return {
     actionType,
     label: action.label,
@@ -99,6 +103,7 @@ function transformPluginAction(
     requiredFields,
     optionalFields,
     outputFields,
+    ...(outputSchema ? { outputSchema } : {}),
   };
 }
 
@@ -163,6 +168,9 @@ type ChainInfo = {
   symbol: string;
   chainType: string;
   isTestnet: boolean;
+  // Support maturity: "stable" | "experimental" | "deprecated". Agents should
+  // avoid experimental/deprecated chains for production writes.
+  status: string;
   explorerUrl: string | null;
 };
 
@@ -226,6 +234,7 @@ export async function GET(request: Request) {
         symbol: chain.symbol,
         chainType: chain.chainType,
         isTestnet: chain.isTestnet ?? false,
+        status: chain.status,
         explorerUrl: explorer?.explorerUrl ?? null,
       }));
     } catch (error) {

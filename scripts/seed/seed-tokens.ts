@@ -22,6 +22,7 @@ import { supportedTokens } from "@/lib/db/schema-extensions";
 import ERC20_ABI from "../../lib/contracts/abis/erc20.json";
 import { getDatabaseUrl } from "../../lib/db/connection-utils";
 import { getRpcUrlByChainId } from "../../lib/rpc/rpc-config";
+import { formatSanitizedRpcError } from "../../lib/rpc/sanitize-rpc-error";
 
 // Token logo URLs (using popular token list sources)
 const LOGOS = {
@@ -423,7 +424,7 @@ async function seedTokens() {
     } catch (error) {
       console.error(
         `  ✗ Failed to process ${config.tokenAddress} on chain ${config.chainId}:`,
-        error instanceof Error ? error.message : error
+        formatSanitizedRpcError(error)
       );
       console.log("");
     }
@@ -435,6 +436,6 @@ async function seedTokens() {
 }
 
 seedTokens().catch((err) => {
-  console.error("Error seeding tokens:", err);
+  console.error("Error seeding tokens:", formatSanitizedRpcError(err));
   process.exit(1);
 });
