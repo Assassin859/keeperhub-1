@@ -1192,13 +1192,75 @@ const WORKFLOW_DURATION_BUCKETS = [
 ];
 const STEP_DURATION_BUCKETS = [50, 100, 250, 500, 1000, 2000, 5000];
 
+// Module-level TTL cache for updateDbMetrics. The scrape path runs ~35
+// aggregate queries (including unindexed seq scans over workflow_executions
+// and workflow_execution_logs) and the ServiceMonitor scrapes every 30s per
+// pod. Without this cache, each pod hits the DB on every scrape; with it,
+// concurrent scrapes share an in-flight refresh and back-to-back scrapes
+// within DB_METRICS_CACHE_TTL_MS reuse the prior result.
+//
+// Set DB_METRICS_CACHE_TTL_MS=0 to disable the cache (refresh on every call).
+const DEFAULT_DB_METRICS_CACHE_TTL_MS = 60_000;
+
+function getDbMetricsCacheTtlMs(): number {
+  const raw = process.env.DB_METRICS_CACHE_TTL_MS;
+  if (raw === undefined) {
+    return DEFAULT_DB_METRICS_CACHE_TTL_MS;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0
+    ? parsed
+    : DEFAULT_DB_METRICS_CACHE_TTL_MS;
+}
+
+let lastDbMetricsRefresh: { at: number; promise: Promise<void> } | null = null;
+
 /**
- * Update DB-sourced metrics from database
- *
- * Called before each metrics scrape to ensure fresh data from the database.
- * This is necessary because workflow runner jobs exit before Prometheus can scrape them.
+ * Reset the cache. Intended for tests; not exported from the package barrel.
  */
-export async function updateDbMetrics(): Promise<void> {
+export function __resetDbMetricsCacheForTest(): void {
+  lastDbMetricsRefresh = null;
+}
+
+/**
+ * Update DB-sourced metrics from database.
+ *
+ * Wraps the underlying refresh in a per-process TTL cache so two scrapes
+ * within the TTL share one DB round-trip. Concurrent callers during an
+ * in-flight refresh receive the same promise. On rejection the cache slot
+ * is cleared so the next caller retries instead of seeing a stale failure.
+ */
+export function updateDbMetrics(): Promise<void> {
+  const ttl = getDbMetricsCacheTtlMs();
+  if (ttl <= 0) {
+    // No caching, but still swallow so the route doesn't 500. The inner
+    // refresh already logged the error before rethrowing.
+    return refreshDbMetricsNow().catch(() => {
+      // Already logged.
+    });
+  }
+  const now = Date.now();
+  if (lastDbMetricsRefresh && now - lastDbMetricsRefresh.at < ttl) {
+    return lastDbMetricsRefresh.promise;
+  }
+  const raw = refreshDbMetricsNow();
+  // Public promise swallows so the metrics endpoint doesn't 500.
+  const wrapped = raw.catch(() => {
+    // Already logged inside refreshDbMetricsNow.
+  });
+  const entry = { at: now, promise: wrapped };
+  lastDbMetricsRefresh = entry;
+  // On the raw (unswallowed) rejection, evict the slot so the next scrape
+  // retries immediately instead of holding a poisoned-but-resolved entry.
+  raw.catch(() => {
+    if (lastDbMetricsRefresh === entry) {
+      lastDbMetricsRefresh = null;
+    }
+  });
+  return wrapped;
+}
+
+async function refreshDbMetricsNow(): Promise<void> {
   try {
     // Dynamic import to avoid circular dependencies
     const {
@@ -1445,7 +1507,10 @@ export async function updateDbMetrics(): Promise<void> {
     updateHubVoteMetrics(voteStats);
   } catch (error) {
     console.error("[Prometheus] Failed to update DB metrics:", error);
-    // Don't throw - allow other metrics to still be returned
+    // Propagate so the TTL cache wrapper evicts the failed entry instead
+    // of pinning it; updateDbMetrics() catches before returning to callers,
+    // preserving the previous "metrics endpoint never 500s" behavior.
+    throw error;
   }
 }
 
