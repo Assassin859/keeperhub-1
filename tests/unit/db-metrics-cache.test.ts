@@ -203,6 +203,52 @@ describe("updateDbMetrics TTL cache", () => {
     expect(dbMocks.getWorkflowStatsFromDb).toHaveBeenCalledTimes(1);
   });
 
+  it("shares an in-flight refresh even after the TTL has elapsed", async () => {
+    // Guards against the cache amplifying load when a refresh under DB
+    // stress takes longer than the TTL: the second scrape must share the
+    // first in-flight refresh instead of starting a concurrent one.
+    process.env.DB_METRICS_CACHE_TTL_MS = "60000";
+
+    let resolveWorkflow: ((value: unknown) => void) | undefined;
+    dbMocks.getWorkflowStatsFromDb.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveWorkflow = resolve;
+        })
+    );
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    let first: Promise<void>;
+    let second: Promise<void>;
+    try {
+      first = updateDbMetrics();
+      // Let the dynamic import and Promise.all reach the controlled mock
+      // so resolveWorkflow gets bound before we manipulate it below.
+      await flushMicrotasks();
+      // Advance well past the TTL while the first refresh is still hanging.
+      vi.setSystemTime(new Date("2026-01-01T00:02:00Z"));
+      second = updateDbMetrics();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    resolveWorkflow?.({
+      totalSuccess: 0,
+      totalError: 0,
+      totalRunning: 0,
+      totalPending: 0,
+      totalCancelled: 0,
+      executionsByStatusAndOrgSlug: [],
+      durationBuckets: [0, 0, 0, 0, 0, 0, 0, 0, 0],
+      durationSum: 0,
+      durationCount: 0,
+    });
+
+    await Promise.all([first, second]);
+    expect(dbMocks.getWorkflowStatsFromDb).toHaveBeenCalledTimes(1);
+  });
+
   it("clears the cache slot on rejection so the next call retries", async () => {
     process.env.DB_METRICS_CACHE_TTL_MS = "60000";
 

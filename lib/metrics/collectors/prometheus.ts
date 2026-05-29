@@ -1213,7 +1213,13 @@ function getDbMetricsCacheTtlMs(): number {
     : DEFAULT_DB_METRICS_CACHE_TTL_MS;
 }
 
-let lastDbMetricsRefresh: { at: number; promise: Promise<void> } | null = null;
+type DbMetricsCacheEntry = {
+  startedAt: number;
+  completedAt: number | null;
+  promise: Promise<void>;
+};
+
+let lastDbMetricsRefresh: DbMetricsCacheEntry | null = null;
 
 /**
  * Reset the cache. Intended for tests; not exported from the package barrel.
@@ -1227,8 +1233,11 @@ export function __resetDbMetricsCacheForTest(): void {
  *
  * Wraps the underlying refresh in a per-process TTL cache so two scrapes
  * within the TTL share one DB round-trip. Concurrent callers during an
- * in-flight refresh receive the same promise. On rejection the cache slot
- * is cleared so the next caller retries instead of seeing a stale failure.
+ * in-flight refresh receive the same promise, even past the TTL — this
+ * prevents the cache from amplifying load when a refresh under DB stress
+ * takes longer than the TTL itself. Once the refresh completes, TTL is
+ * measured from completion. On rejection the cache slot is cleared so the
+ * next caller retries instead of seeing a stale failure.
  */
 export function updateDbMetrics(): Promise<void> {
   const ttl = getDbMetricsCacheTtlMs();
@@ -1239,24 +1248,43 @@ export function updateDbMetrics(): Promise<void> {
       // Already logged.
     });
   }
-  const now = Date.now();
-  if (lastDbMetricsRefresh && now - lastDbMetricsRefresh.at < ttl) {
-    return lastDbMetricsRefresh.promise;
+  if (lastDbMetricsRefresh) {
+    // In-flight: share the promise regardless of TTL to avoid starting a
+    // second concurrent refresh when the first hasn't finished yet.
+    if (lastDbMetricsRefresh.completedAt === null) {
+      return lastDbMetricsRefresh.promise;
+    }
+    // Completed: serve cached if within TTL of completion (not start).
+    if (Date.now() - lastDbMetricsRefresh.completedAt < ttl) {
+      return lastDbMetricsRefresh.promise;
+    }
   }
   const raw = refreshDbMetricsNow();
   // Public promise swallows so the metrics endpoint doesn't 500.
   const wrapped = raw.catch(() => {
     // Already logged inside refreshDbMetricsNow.
   });
-  const entry = { at: now, promise: wrapped };
+  const entry: DbMetricsCacheEntry = {
+    startedAt: Date.now(),
+    completedAt: null,
+    promise: wrapped,
+  };
   lastDbMetricsRefresh = entry;
-  // On the raw (unswallowed) rejection, evict the slot so the next scrape
-  // retries immediately instead of holding a poisoned-but-resolved entry.
-  raw.catch(() => {
-    if (lastDbMetricsRefresh === entry) {
-      lastDbMetricsRefresh = null;
+  // Combined settle handler in two-arg form: stamps completion on success
+  // so subsequent TTL checks measure from there, and evicts the slot on
+  // failure so the next scrape retries instead of holding a poisoned
+  // entry. The two-arg form avoids creating an orphan rejected promise
+  // (which would surface as an unhandled rejection).
+  raw.then(
+    () => {
+      entry.completedAt = Date.now();
+    },
+    () => {
+      if (lastDbMetricsRefresh === entry) {
+        lastDbMetricsRefresh = null;
+      }
     }
-  });
+  );
   return wrapped;
 }
 
