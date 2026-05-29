@@ -245,6 +245,22 @@ function replaceTemplateVariable(
     );
   } else {
     const fieldPath = rest.substring(dotIndex + 1);
+
+    // Wrapper-aware lookup: matches resolveFromOutputData's three-shape walk
+    // (top-level → { data: ... } → { result: ... }) so paths like
+    // "args.value" resolve through the trigger node's
+    // { success: true, data: triggerData } wrapper -- the same unwrap that
+    // action-config templates already get. Falls back to the strict inline
+    // walk below for legitimate misses so the user still sees the existing
+    // "Available fields" error against the top-level shape.
+    const checked = resolveFromOutputDataChecked(output.data, fieldPath);
+    if (checked.found) {
+      const varName = `__v${varCounter.value}`;
+      varCounter.value += 1;
+      evalContext[varName] = checked.value;
+      return varName;
+    }
+
     const fields = fieldPath.split(".");
     // biome-ignore lint/suspicious/noExplicitAny: Dynamic data traversal
     let current: any = output.data;
