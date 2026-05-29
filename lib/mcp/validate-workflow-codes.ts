@@ -21,6 +21,9 @@ export const VALIDATION_WARNING_CODES = {
   WRITE_ACTION_ON_READ_WORKFLOW: "write-action-on-read-workflow",
   // ABI deep-check code added in Plan 48-03:
   LOW_CONFIDENCE_ABI_MATCH: "low-confidence-abi-match",
+  // Configure-time hint: write-contract uses an allowance-consuming method
+  // (transferFrom / redeem / withdrawFrom) with no check-allowance node.
+  MISSING_ALLOWANCE_PREFLIGHT: "missing-allowance-preflight",
 } as const;
 
 export type ValidationErrorCode =
