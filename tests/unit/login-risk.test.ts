@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockHeaders = vi.fn();
 const mockSelect = vi.fn();
+const mockResolveLocationFromIp = vi.fn();
 
 vi.mock("next/headers", () => ({
   headers: () => mockHeaders(),
@@ -11,6 +12,15 @@ vi.mock("@/lib/db", () => ({
   db: {
     select: (...args: unknown[]) => mockSelect(...args),
   },
+}));
+
+// Mock the IP-to-location resolver so location (including coordinates) is
+// deterministic in tests instead of depending on a live provider lookup.
+// The CF path still overrides the country with CF-IPCountry; region, city,
+// and coordinates come from here.
+vi.mock("@/lib/security/resolve-country", () => ({
+  resolveLocationFromIp: (...args: unknown[]) =>
+    mockResolveLocationFromIp(...args),
 }));
 
 function setHeaders(values: Record<string, string | null>): void {
@@ -23,14 +33,11 @@ function setHeaders(values: Record<string, string | null>): void {
 }
 
 function setRecentSessionCountries(countries: (string | null)[]): void {
-  // assessLoginRisk makes one select call: loadRecentCountries(userId).
-  // Returns rows with riskFlagsJson; the function parses out `country`.
   const recentRows = countries.map((country) =>
     country === null
       ? { riskFlagsJson: null }
       : { riskFlagsJson: JSON.stringify({ country }) }
   );
-
   mockSelect.mockReturnValueOnce({
     from: () => ({
       where: () => ({
@@ -42,11 +49,52 @@ function setRecentSessionCountries(countries: (string | null)[]): void {
   });
 }
 
+type LocatedRow = {
+  latitude: number;
+  longitude: number;
+  createdAtMsAgo: number;
+};
+
+// Second select in assessLoginRisk: loadMostRecentLocatedSession. Only
+// queried when the current login resolved coordinates.
+function setMostRecentLocatedSession(row: LocatedRow | null): void {
+  const rows = row
+    ? [
+        {
+          riskFlagsJson: JSON.stringify({
+            latitude: row.latitude,
+            longitude: row.longitude,
+          }),
+          createdAt: new Date(Date.now() - row.createdAtMsAgo),
+        },
+      ]
+    : [];
+  mockSelect.mockReturnValueOnce({
+    from: () => ({
+      where: () => ({
+        orderBy: () => ({
+          limit: () => Promise.resolve(rows),
+        }),
+      }),
+    }),
+  });
+}
+
 import { assessLoginRisk, serializeRiskFlags } from "@/lib/security/login-risk";
+
+const NO_LOCATION = {
+  country: null,
+  region: null,
+  city: null,
+  latitude: null,
+  longitude: null,
+};
 
 beforeEach(() => {
   mockHeaders.mockReset();
   mockSelect.mockReset();
+  mockResolveLocationFromIp.mockReset();
+  mockResolveLocationFromIp.mockResolvedValue(NO_LOCATION);
 });
 
 describe("assessLoginRisk", () => {
@@ -59,6 +107,8 @@ describe("assessLoginRisk", () => {
       country: null,
       region: null,
       city: null,
+      latitude: null,
+      longitude: null,
       recentCountries: [],
     });
     expect(mockSelect).not.toHaveBeenCalled();
@@ -163,6 +213,94 @@ describe("assessLoginRisk", () => {
   });
 });
 
+describe("assessLoginRisk impossible-travel", () => {
+  // Sydney and London are ~17,000 km apart: implausible in one hour,
+  // trivial over a fortnight.
+  const SYDNEY = { latitude: -33.8688, longitude: 151.2093 };
+  const LONDON = { latitude: 51.5074, longitude: -0.1278 };
+
+  function loginFrom(coords: { latitude: number; longitude: number }): void {
+    setHeaders({
+      "cf-connecting-ip": "203.0.113.1",
+      "cf-ipcountry": "AU",
+    });
+    mockResolveLocationFromIp.mockResolvedValue({
+      country: "AU",
+      region: null,
+      city: null,
+      latitude: coords.latitude,
+      longitude: coords.longitude,
+    });
+  }
+
+  it("flags impossible_travel for a far hop in too little time, even in a known country", async () => {
+    loginFrom(SYDNEY);
+    setRecentSessionCountries(["AU"]);
+    setMostRecentLocatedSession({
+      ...LONDON,
+      createdAtMsAgo: 60 * 60 * 1000,
+    });
+    const result = await assessLoginRisk("user_1");
+    expect(result.anomaly).toBe(true);
+    expect(result.reasons).toContain("impossible_travel");
+    expect(result.reasons).not.toContain("new_country");
+  });
+
+  it("does not flag when the same distance is covered over enough time", async () => {
+    loginFrom(SYDNEY);
+    setRecentSessionCountries(["AU"]);
+    setMostRecentLocatedSession({
+      ...LONDON,
+      createdAtMsAgo: 14 * 24 * 60 * 60 * 1000,
+    });
+    const result = await assessLoginRisk("user_1");
+    expect(result.anomaly).toBe(false);
+    expect(result.reasons).not.toContain("impossible_travel");
+  });
+
+  it("does not flag short same-city hops as travel (geo-IP jitter)", async () => {
+    loginFrom(SYDNEY);
+    setRecentSessionCountries(["AU"]);
+    setMostRecentLocatedSession({
+      latitude: SYDNEY.latitude + 0.05,
+      longitude: SYDNEY.longitude + 0.05,
+      createdAtMsAgo: 60 * 1000,
+    });
+    const result = await assessLoginRisk("user_1");
+    expect(result.anomaly).toBe(false);
+    expect(result.reasons).not.toContain("impossible_travel");
+  });
+
+  it("stacks new_country and impossible_travel when both fire", async () => {
+    setHeaders({
+      "cf-connecting-ip": "203.0.113.1",
+      "cf-ipcountry": "AU",
+    });
+    mockResolveLocationFromIp.mockResolvedValue({
+      country: "AU",
+      region: null,
+      city: null,
+      ...SYDNEY,
+    });
+    setRecentSessionCountries(["GB"]);
+    setMostRecentLocatedSession({ ...LONDON, createdAtMsAgo: 60 * 60 * 1000 });
+    const result = await assessLoginRisk("user_1");
+    expect(result.anomaly).toBe(true);
+    expect(result.reasons).toEqual(
+      expect.arrayContaining(["new_country", "impossible_travel"])
+    );
+  });
+
+  it("stays silent when there is no prior located session to compare against", async () => {
+    loginFrom(SYDNEY);
+    setRecentSessionCountries(["AU"]);
+    setMostRecentLocatedSession(null);
+    const result = await assessLoginRisk("user_1");
+    expect(result.anomaly).toBe(false);
+    expect(result.reasons).not.toContain("impossible_travel");
+  });
+});
+
 describe("serializeRiskFlags", () => {
   it("round-trips through JSON without losing fields", () => {
     const signal = {
@@ -171,6 +309,8 @@ describe("serializeRiskFlags", () => {
       country: "KR",
       region: "11",
       city: "Seoul",
+      latitude: 37.5665,
+      longitude: 126.978,
       recentCountries: ["AU"] as const,
     };
     const serialized = serializeRiskFlags(signal);
@@ -180,6 +320,8 @@ describe("serializeRiskFlags", () => {
       country: "KR",
       region: "11",
       city: "Seoul",
+      latitude: 37.5665,
+      longitude: 126.978,
       recentCountries: ["AU"],
     });
   });

@@ -15,6 +15,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { MemberSessionsDialog } from "@/components/organization/member-sessions-dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -183,6 +184,7 @@ type MembersListContentProps = {
   currentUserId?: string;
   onUpdateMemberRole?: (memberId: string, role: string) => Promise<void>;
   updatingRoleMemberId?: string | null;
+  organizationId?: string | null;
 };
 
 function MembersListContent({
@@ -200,6 +202,7 @@ function MembersListContent({
   currentUserId,
   onUpdateMemberRole,
   updatingRoleMemberId,
+  organizationId,
 }: MembersListContentProps) {
   const [pendingAction, setPendingAction] = useState<{
     type: "revoke" | "remove" | "resend" | "remove-member";
@@ -271,6 +274,13 @@ function MembersListContent({
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-1">
+            {entry.kind === "member" && canInvite && organizationId && (
+              <MemberSessionsDialog
+                email={entry.email}
+                memberId={entry.id}
+                organizationId={organizationId}
+              />
+            )}
             {entry.kind === "member" &&
               entry.userId !== currentUserId &&
               (canChangeRole ||
@@ -1469,6 +1479,7 @@ export function ManageOrgsModal({
                         onRemoveMember={handleRemoveMember}
                         onResendInvitation={handleResendInvitation}
                         onUpdateMemberRole={handleUpdateMemberRole}
+                        organizationId={managedOrgId}
                         removingMember={removingMember}
                         sentInvitations={sentInvitations}
                         updatingRoleMemberId={updatingRoleMemberId}

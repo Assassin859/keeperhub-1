@@ -26,16 +26,33 @@ export type LoginRiskSignal = {
   country: string | null;
   region: string | null;
   city: string | null;
+  latitude: number | null;
+  longitude: number | null;
   recentCountries: readonly string[];
 };
 
 const RECENT_SESSION_LOOKBACK = 25;
+// Impossible-travel thresholds. We only consider a hop suspicious once it
+// covers real ground (city-level geo-IP jitters within a metro, so a
+// sub-100km delta is noise) AND would require a speed no commercial
+// itinerary sustains. 800 km/h is comfortably above airliner cruise once
+// door-to-door time is included, so anything past it implies the two
+// logins are not the same physical traveller.
+const MIN_TRAVEL_DISTANCE_KM = 100;
+const MAX_PLAUSIBLE_VELOCITY_KMH = 800;
+// Floor on the elapsed time so a near-simultaneous pair of logins from
+// far-apart coordinates yields a huge (correctly flagged) velocity
+// instead of dividing by zero.
+const MIN_ELAPSED_HOURS = 1 / 3600;
+const EARTH_RADIUS_KM = 6371;
 const NULL_RISK: LoginRiskSignal = {
   anomaly: false,
   reasons: [],
   country: null,
   region: null,
   city: null,
+  latitude: null,
+  longitude: null,
   recentCountries: [],
 };
 
@@ -55,19 +72,29 @@ async function resolveLoginLocation(): Promise<ResolvedLocation> {
   try {
     header = await headers();
   } catch {
-    return { country: null, region: null, city: null };
+    return {
+      country: null,
+      region: null,
+      city: null,
+      latitude: null,
+      longitude: null,
+    };
   }
   const cfConnectingIp = header.get("cf-connecting-ip");
   const cfCountry = header.get("cf-ipcountry");
   const ip = await resolveLoginIp();
   if (cfConnectingIp && cfCountry && cfCountry !== "XX" && cfCountry !== "T1") {
-    // CF gave us country at the edge. We still want region + city for
-    // the active-sessions panel, so layer the external lookup on top.
+    // CF gave us country at the edge. We still want region, city, and
+    // coordinates (CF provides none of those) for the active-sessions
+    // panel and impossible-travel detection, so layer the provider
+    // chain on top and keep CF's authoritative country.
     const fallback = await resolveLocationFromIp(ip);
     return {
       country: cfCountry.toUpperCase(),
       region: fallback.region,
       city: fallback.city,
+      latitude: fallback.latitude,
+      longitude: fallback.longitude,
     };
   }
   return await resolveLocationFromIp(ip);
@@ -108,6 +135,106 @@ async function loadRecentCountries(userId: string): Promise<string[]> {
   return [...countries];
 }
 
+type LocatedSession = {
+  latitude: number;
+  longitude: number;
+  createdAt: Date;
+};
+
+/**
+ * Returns the most recent prior session that recorded coordinates, the
+ * anchor impossible-travel measures the current login against. Reads the
+ * same `risk_flags_json` blobs as loadRecentCountries; sessions minted
+ * before coordinates were captured (or via paths that don't resolve
+ * them) carry none and are skipped. Rows come back newest-first, so the
+ * first one with valid coordinates is the freshest reference point.
+ */
+async function loadMostRecentLocatedSession(
+  userId: string
+): Promise<LocatedSession | null> {
+  const rows = await db
+    .select({
+      riskFlagsJson: sessions.riskFlagsJson,
+      createdAt: sessions.createdAt,
+    })
+    .from(sessions)
+    .where(eq(sessions.userId, userId))
+    .orderBy(desc(sessions.createdAt))
+    .limit(RECENT_SESSION_LOOKBACK);
+  for (const row of rows) {
+    if (!row.riskFlagsJson) {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(row.riskFlagsJson) as {
+        latitude?: unknown;
+        longitude?: unknown;
+      };
+      if (
+        typeof parsed.latitude === "number" &&
+        typeof parsed.longitude === "number" &&
+        Number.isFinite(parsed.latitude) &&
+        Number.isFinite(parsed.longitude)
+      ) {
+        return {
+          latitude: parsed.latitude,
+          longitude: parsed.longitude,
+          createdAt: row.createdAt,
+        };
+      }
+    } catch {
+      // Tolerate malformed rows — risk_flags_json is best-effort.
+    }
+  }
+  return null;
+}
+
+/** Great-circle distance between two coordinates, in kilometres. */
+function haversineKm(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number {
+  const toRad = (deg: number): number => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/**
+ * True when reaching `current` from `prior` in the elapsed wall-clock
+ * time would require a physically implausible speed. Short hops (within
+ * MIN_TRAVEL_DISTANCE_KM) are ignored so city-level geo-IP jitter doesn't
+ * masquerade as travel. `nowMs` is the current login's timestamp; the
+ * elapsed time is floored so a near-instant teleport divides cleanly.
+ */
+function isImpossibleTravel(
+  prior: LocatedSession,
+  currentLat: number,
+  currentLon: number,
+  nowMs: number
+): boolean {
+  const distanceKm = haversineKm(
+    prior.latitude,
+    prior.longitude,
+    currentLat,
+    currentLon
+  );
+  if (distanceKm < MIN_TRAVEL_DISTANCE_KM) {
+    return false;
+  }
+  const elapsedHours = Math.max(
+    (nowMs - prior.createdAt.getTime()) / 3_600_000,
+    MIN_ELAPSED_HOURS
+  );
+  const velocityKmh = distanceKm / elapsedHours;
+  return velocityKmh > MAX_PLAUSIBLE_VELOCITY_KMH;
+}
+
 /**
  * Computes a risk signal for the in-flight login. Called from
  * databaseHooks.session.create.before in lib/auth.ts. Pure read; never
@@ -115,56 +242,68 @@ async function loadRecentCountries(userId: string): Promise<string[]> {
  * decide whether to flip sessions.requires_mfa based on the user's TOTP
  * enrollment state.
  *
- * Decision table once we have a CF-attested country:
- *  - prior history empty           -> first_geo_attestation, no anomaly
- *  - history includes this country -> known location, no anomaly
- *  - history exists, no match      -> new_country, anomaly
+ * Two independent signals are merged into one `anomaly`:
+ *  - Country: empty history -> first_geo_attestation; known country ->
+ *    clean; unseen country -> new_country anomaly.
+ *  - Impossible travel: when the current login carries coordinates and a
+ *    prior located session exists, an implausible velocity between them
+ *    flags impossible_travel — even when the country is familiar, which
+ *    is the same-country-different-city gap country-only detection misses.
  */
 export async function assessLoginRisk(
   userId: string
 ): Promise<LoginRiskSignal> {
   const location = await resolveLoginLocation();
-  const { country, region, city } = location;
+  const { country, region, city, latitude, longitude } = location;
   if (!country) {
     return NULL_RISK;
   }
   const priorCountries = await loadRecentCountries(userId);
+  const reasons: string[] = [];
+  let anomaly = false;
+  let recentCountries: string[] = [];
+
   if (priorCountries.length === 0) {
-    return {
-      anomaly: false,
-      reasons: ["first_geo_attestation"],
-      country,
-      region,
-      city,
-      recentCountries: [],
-    };
+    reasons.push("first_geo_attestation");
+  } else if (priorCountries.includes(country)) {
+    recentCountries = priorCountries.filter((c) => c !== country);
+  } else {
+    anomaly = true;
+    reasons.push("new_country");
+    recentCountries = priorCountries;
   }
-  if (priorCountries.includes(country)) {
-    const others = priorCountries.filter((c) => c !== country);
-    return {
-      anomaly: false,
-      reasons: [],
-      country,
-      region,
-      city,
-      recentCountries: others,
-    };
+
+  // Impossible-travel runs regardless of the country verdict so a
+  // same-country hop (familiar country, distant city) is still caught.
+  // Needs coordinates on both ends; absent either, we stay silent rather
+  // than flag on a missing signal — the same philosophy as the country
+  // check skipping null attestations.
+  if (latitude !== null && longitude !== null) {
+    const prior = await loadMostRecentLocatedSession(userId);
+    if (prior && isImpossibleTravel(prior, latitude, longitude, Date.now())) {
+      anomaly = true;
+      reasons.push("impossible_travel");
+    }
   }
+
   return {
-    anomaly: true,
-    reasons: ["new_country"],
+    anomaly,
+    reasons,
     country,
     region,
     city,
-    recentCountries: priorCountries,
+    latitude,
+    longitude,
+    recentCountries,
   };
 }
 
 /**
  * Serializes a risk signal for storage in sessions.risk_flags_json.
  * Kept stable so prior-session lookups can decode older rows. The
- * `region` and `city` fields were added later; absence on a stored
- * blob is treated as null by callers, so older rows decode cleanly.
+ * `region`/`city` and later `latitude`/`longitude` fields were added
+ * over time; absence on a stored blob is treated as null by callers, so
+ * older rows decode cleanly and contribute no coordinate anchor.
  */
 export function serializeRiskFlags(signal: LoginRiskSignal): string {
   return JSON.stringify({
@@ -173,6 +312,8 @@ export function serializeRiskFlags(signal: LoginRiskSignal): string {
     country: signal.country,
     region: signal.region,
     city: signal.city,
+    latitude: signal.latitude,
+    longitude: signal.longitude,
     recentCountries: signal.recentCountries,
   });
 }
@@ -202,6 +343,8 @@ export async function buildRiskFlagsJsonForIp(
     country: attestedCountry ?? location.country,
     region: location.region,
     city: location.city,
+    latitude: location.latitude,
+    longitude: location.longitude,
     recentCountries: [],
   });
 }
