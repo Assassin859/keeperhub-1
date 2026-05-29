@@ -74,9 +74,15 @@ export function resolveTriggerLabels(
   isInternal: boolean
 ): TriggerLabels {
   if (isTriggerType(headerTrigger)) {
+    // Normalise the legacy "scheduled" alias to the canonical "schedule" so
+    // an explicit `x-trigger-type: scheduled` header can't re-fragment the
+    // metric/audit series -- TriggerType still accepts "scheduled" for back-
+    // compat, but nothing downstream should ever see it.
+    const normalized: TriggerType =
+      headerTrigger === "scheduled" ? "schedule" : headerTrigger;
     return {
-      triggerType: headerTrigger,
-      triggerSource: headerTrigger as TriggerSource,
+      triggerType: normalized,
+      triggerSource: normalized as TriggerSource,
     };
   }
   if (isInternal) {

@@ -82,10 +82,14 @@ export type ScanContext = {
 const TRIGGER_INPUT_PSEUDO_NODE_ID = "trigger_input";
 const TRIGGER_INPUT_PSEUDO_NODE_TYPE = "trigger";
 
+// Both scanners accept an optional shared `hits` accumulator so a single
+// execution's config + trigger-input scan share ONE MAX_HITS budget (the cap
+// is enforced in scanValue against hits.length). Called standalone in tests
+// they default to a fresh array.
 export function scanNodes(
-  nodes: readonly WorkflowNodeLike[]
+  nodes: readonly WorkflowNodeLike[],
+  hits: ContentScanHit[] = []
 ): ContentScanHit[] {
-  const hits: ContentScanHit[] = [];
   for (const node of nodes) {
     const config = node.data?.config;
     if (config === undefined || config === null) {
@@ -106,11 +110,13 @@ export function scanNodes(
   return hits;
 }
 
-export function scanTriggerInput(triggerInput: unknown): ContentScanHit[] {
+export function scanTriggerInput(
+  triggerInput: unknown,
+  hits: ContentScanHit[] = []
+): ContentScanHit[] {
   if (triggerInput === undefined || triggerInput === null) {
-    return [];
+    return hits;
   }
-  const hits: ContentScanHit[] = [];
   scanValue(
     triggerInput,
     TRIGGER_INPUT_PSEUDO_NODE_ID,
@@ -282,7 +288,11 @@ export function scanAndReport(
       ? (input as readonly WorkflowNodeLike[])
       : input.nodes;
     const triggerInput = isBareArray ? undefined : input.triggerInput;
-    const hits = [...scanNodes(nodes), ...scanTriggerInput(triggerInput)];
+    // One shared accumulator so config + trigger-input scans share a single
+    // MAX_HITS budget (a saturating config can't be doubled by trigger input).
+    const hits: ContentScanHit[] = [];
+    scanNodes(nodes, hits);
+    scanTriggerInput(triggerInput, hits);
     emitScanReport(hits, context);
   } catch {
     // swallow: detection must not affect execution semantics

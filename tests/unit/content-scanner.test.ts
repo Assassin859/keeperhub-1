@@ -371,4 +371,24 @@ describe("content scanner hardening (KEEP-612 follow-up)", () => {
       hits.filter((h: Hit) => h.pattern === "imds_metadata_ip").length
     ).toBeLessThanOrEqual(1000);
   });
+
+  it("shares ONE hit budget across config + trigger input (no doubling)", () => {
+    // Both sources individually saturate; scanAndReport must bound the
+    // COMBINED payload to MAX_HITS, not 2x. Regression for the
+    // concatenate-after-each-caps bug.
+    const big: Record<string, string> = {};
+    for (let i = 0; i < 5000; i++) {
+      big[`k${i}`] = "169.254.169.254";
+    }
+    scanAndReport(
+      { nodes: [node("n1", big)], triggerInput: big },
+      { workflowId: "wf_combined_sat" }
+    );
+    const [, options] = captureMessageMock.mock.calls[0] as [
+      string,
+      { extra: { hitCount: number; hits: Hit[] } },
+    ];
+    // Combined real hits stay within MAX_HITS (+1 marker), not ~2x.
+    expect(options.extra.hits.length).toBeLessThanOrEqual(1001);
+  });
 });

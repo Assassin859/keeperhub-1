@@ -42,6 +42,20 @@ describe("resolveTriggerLabels", () => {
     });
   });
 
+  it("normalises a legacy 'scheduled' header to canonical 'schedule'", () => {
+    // An explicit x-trigger-type: scheduled must NOT pass through as
+    // "scheduled" -- that would re-fragment the metric/audit series the
+    // header-less path already converges on "schedule".
+    expect(resolveTriggerLabels("scheduled", false)).toEqual({
+      triggerType: "schedule",
+      triggerSource: "schedule",
+    });
+    expect(resolveTriggerLabels("scheduled", true)).toEqual({
+      triggerType: "schedule",
+      triggerSource: "schedule",
+    });
+  });
+
   it("ignores an unrecognised header value and falls back", () => {
     expect(resolveTriggerLabels("garbage", false)).toEqual({
       triggerType: "manual",
