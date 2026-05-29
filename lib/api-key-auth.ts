@@ -18,6 +18,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { captureMessage } from "@sentry/nextjs";
 import { and, eq, gt, isNull, or } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { member, organizationApiKeys, users } from "@/lib/db/schema";
@@ -131,6 +132,34 @@ export async function authenticateApiKey(
     // creator (legacy rows where createdBy IS NULL) are passed through --
     // there is no user to be deactivated.
     if (apiKey.createdBy && apiKey.creatorDeactivatedAt) {
+      // KEEP-612: signal the third deactivated-login surface (session and
+      // account are handled in lib/auth.ts). Best-effort, never blocks.
+      try {
+        captureMessage("security.deactivated_login_attempt", {
+          level: "warning",
+          tags: {
+            security: "deactivated_login_attempt",
+            surface: "api_key",
+          },
+          user: { id: apiKey.createdBy },
+          extra: { apiKeyId: apiKey.id, organizationId: apiKey.organizationId },
+        });
+      } catch {
+        // swallow; observability must not block auth response
+      }
+      try {
+        console.warn(
+          JSON.stringify({
+            event: "security.deactivated_login_attempt",
+            surface: "api_key",
+            userId: apiKey.createdBy,
+            apiKeyId: apiKey.id,
+            organizationId: apiKey.organizationId,
+          })
+        );
+      } catch {
+        // swallow; logging must not block auth response
+      }
       return {
         authenticated: false,
         error: "API key creator account is deactivated",

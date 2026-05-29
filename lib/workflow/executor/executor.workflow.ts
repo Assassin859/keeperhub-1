@@ -18,6 +18,7 @@ import {
   recordWorkflowComplete,
 } from "@/lib/metrics/instrumentation/workflow";
 import { LabelKeys, MetricNames } from "@/lib/metrics/types";
+import { scanAndReport } from "@/lib/security/content-scanner";
 import {
   getActionLabel,
   getStepImporter,
@@ -1587,6 +1588,21 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     plan: organizationPlan,
     owner_id: ownerId,
   });
+
+  // KEEP-612 detection signal. Single pass at run start covering both
+  // the static node configs and the runtime trigger payload, so an
+  // attacker who injects a pattern via webhook body or scheduled trigger
+  // input is caught at the boundary -- not just authors who bake the
+  // patterns into config. Emits one Sentry + structured-stdout event
+  // per execution. Alert-only -- never blocks.
+  scanAndReport(
+    { nodes, triggerInput },
+    {
+      workflowId,
+      executionId,
+      organizationId,
+    }
+  );
 
   const outputs: NodeOutputs = {};
   const results: Record<string, ExecutionResult> = {};
