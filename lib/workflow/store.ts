@@ -44,7 +44,13 @@ export function getWorkflowTriggerType(
 ): WorkflowTriggerType | undefined {
   const triggerNode = nodes.find((node) => node.data?.type === "trigger");
   const raw = triggerNode?.data?.config?.triggerType;
-  return typeof raw === "string" ? (raw as WorkflowTriggerType) : undefined;
+  if (typeof raw !== "string") {
+    return undefined;
+  }
+  // "Scheduled" is a legacy spelling that still lives in some workflow rows;
+  // executor / metrics / mcp normalize it the same way before comparing.
+  const normalized = raw === "Scheduled" ? "Schedule" : raw;
+  return normalized as WorkflowTriggerType;
 }
 
 /**

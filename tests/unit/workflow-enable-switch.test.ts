@@ -54,6 +54,18 @@ describe("getWorkflowTriggerType", () => {
   it("returns undefined for an empty node list", () => {
     expect(getWorkflowTriggerType([])).toBeUndefined();
   });
+
+  it("normalizes the legacy 'Scheduled' spelling to 'Schedule'", () => {
+    // Older workflow rows persist `triggerType: "Scheduled"`; executor,
+    // metrics, and mcp call sites all canonicalize the same way before
+    // comparing, so the picker has to as well or it misses the badge.
+    const nodes = [
+      {
+        data: { type: "trigger", config: { triggerType: "Scheduled" } },
+      },
+    ];
+    expect(getWorkflowTriggerType(nodes)).toBe(WorkflowTriggerEnum.SCHEDULE);
+  });
 });
 
 describe("shouldShowDisabledBadge", () => {

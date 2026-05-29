@@ -44,6 +44,8 @@ export function filterPickerVisible<
   T extends { name: string; deletedAt?: Date | string | null },
 >(entries: T[]): T[] {
   return entries.filter(
-    (entry) => entry.name !== "__current__" && !entry.deletedAt
+    // `== null` matches both null and undefined without coercing the
+    // `Date | string` arms, which would mis-handle a `new Date(0)` or "".
+    (entry) => entry.name !== "__current__" && entry.deletedAt == null
   );
 }
