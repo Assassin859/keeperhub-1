@@ -111,13 +111,24 @@ import {
   updateDbMetrics,
 } from "@/lib/metrics/collectors/prometheus";
 
-// Flush enough microtasks for refreshDbMetricsNow()'s dynamic import +
-// Promise.all of 13 helpers to settle. Vitest fake timers don't drive
-// microtask queues, so we just yield to the runtime.
-async function flushMicrotasks(times = 20): Promise<void> {
-  for (let i = 0; i < times; i++) {
+// Poll microtask turns until a mock has been invoked at least once.
+// Used to wait for refreshDbMetricsNow()'s dynamic import + Promise.all
+// of 13 helpers to settle before we manipulate a controlled mock.
+// Replaces a magic-number "await Promise.resolve() 20 times" pattern
+// that broke implicit if the chain length changed.
+async function waitForMockCall(
+  fn: ReturnType<typeof vi.fn>,
+  maxTicks = 100
+): Promise<void> {
+  for (let i = 0; i < maxTicks; i++) {
+    if (fn.mock.calls.length > 0) {
+      return;
+    }
     await Promise.resolve();
   }
+  throw new Error(
+    "waitForMockCall: mock was not invoked within the tick budget"
+  );
 }
 
 const CACHE_LOOKUP_MISS_RE =
@@ -228,10 +239,10 @@ describe("updateDbMetrics TTL cache", () => {
     const first = updateDbMetrics();
     const second = updateDbMetrics();
 
-    // Drain enough microtasks that the dynamic import inside
-    // refreshDbMetricsNow has resolved and Promise.all has started its
-    // 13 helper calls, before we assert how many of them fired.
-    await flushMicrotasks();
+    // Wait for the helper to actually be invoked rather than guessing how
+    // many microtask turns it takes to get past the dynamic import +
+    // Promise.all wiring inside refreshDbMetricsNow.
+    await waitForMockCall(dbMocks.getWorkflowStatsFromDb);
 
     expect(dbMocks.getWorkflowStatsFromDb).toHaveBeenCalledTimes(1);
 
@@ -272,7 +283,7 @@ describe("updateDbMetrics TTL cache", () => {
       first = updateDbMetrics();
       // Let the dynamic import and Promise.all reach the controlled mock
       // so resolveWorkflow gets bound before we manipulate it below.
-      await flushMicrotasks();
+      await waitForMockCall(dbMocks.getWorkflowStatsFromDb);
       // Advance well past the TTL while the first refresh is still hanging.
       vi.advanceTimersByTime(120_000);
       second = updateDbMetrics();
