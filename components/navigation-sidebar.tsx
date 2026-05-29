@@ -3,7 +3,6 @@
 import {
   BarChart3,
   Bookmark,
-  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -118,9 +117,6 @@ function WorkflowItem({
         <span className="ml-2 shrink-0 text-muted-foreground text-xs">
           Disabled
         </span>
-      )}
-      {!showDisabled && isActive && (
-        <Check className="ml-2 size-3.5 shrink-0 text-muted-foreground" />
       )}
     </button>
   );
