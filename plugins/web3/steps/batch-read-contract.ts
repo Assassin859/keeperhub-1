@@ -12,6 +12,10 @@ import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
+import {
+  type AbiOutputParam,
+  structureAbiOutputs,
+} from "@/plugins/web3/steps/structure-abi-result";
 
 const LOG_PREFIX = "[Batch Read Contract]";
 const DEFAULT_BATCH_SIZE = 100;
@@ -265,42 +269,23 @@ function serializeBigInts(value: unknown): unknown {
 }
 
 /**
- * Structure a decoded result based on ABI function outputs
+ * Structure a decoded result based on ABI function outputs.
+ *
+ * decodeFunctionResult returns an N-element Result (one entry per output, no
+ * auto-unwrap), so the serialized value is already the positional output list
+ * that structureAbiOutputs consumes.
  */
 function structureDecodedResult(
   decodedResult: ethers.Result,
-  functionAbi: { outputs?: { name?: string; type?: string }[] }
+  functionAbi: { outputs?: AbiOutputParam[] }
 ): unknown {
   const serialized = serializeBigInts(decodedResult);
-
-  const outputs = functionAbi.outputs;
-  if (!outputs || outputs.length === 0) {
+  const outputs = functionAbi.outputs ?? [];
+  if (outputs.length === 0) {
     return serialized;
   }
-
-  if (outputs.length === 1) {
-    const singleOutput = outputs[0];
-    const outputName = singleOutput.name?.trim();
-    const outputType = singleOutput.type ?? "";
-    const isArrayType = outputType.endsWith("[]");
-    const singleValue =
-      Array.isArray(serialized) && !isArrayType ? serialized[0] : serialized;
-    if (outputName) {
-      return { [outputName]: singleValue };
-    }
-    return singleValue;
-  }
-
-  if (Array.isArray(serialized)) {
-    const structured: Record<string, unknown> = {};
-    for (const [index, output] of outputs.entries()) {
-      const fieldName = output.name?.trim() || `unnamedOutput${index}`;
-      structured[fieldName] = serialized[index];
-    }
-    return structured;
-  }
-
-  return serialized;
+  const outputValues = Array.isArray(serialized) ? serialized : [serialized];
+  return structureAbiOutputs(outputValues, outputs);
 }
 
 /**

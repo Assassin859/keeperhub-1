@@ -2,9 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-const { mockUsersFindFirst } = vi.hoisted(() => ({
-  mockUsersFindFirst: vi.fn(),
-}));
+const { mockUsersFindFirst, mockCaptureMessage, mockConsoleWarn } = vi.hoisted(
+  () => ({
+    mockUsersFindFirst: vi.fn(),
+    mockCaptureMessage: vi.fn(),
+    mockConsoleWarn: vi.fn(),
+  })
+);
 
 vi.mock("@/lib/db", () => ({
   db: { query: { users: { findFirst: mockUsersFindFirst } } },
@@ -12,10 +16,22 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@/lib/db/schema", () => ({ users: { id: "id" } }));
 
+vi.mock("@sentry/nextjs", () => ({
+  captureMessage: (message: string, context: unknown): void => {
+    mockCaptureMessage(message, context);
+  },
+}));
+
+import { captureMessage } from "@sentry/nextjs";
 import { isUserDeactivated } from "@/lib/auth-deactivation-guard";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Spy on console.warn so the structured stdout signal can be asserted.
+  // Restored after each test by vi.clearAllMocks.
+  vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
+    mockConsoleWarn(...args);
+  });
 });
 
 describe("isUserDeactivated", () => {
@@ -52,6 +68,21 @@ async function sessionCreateBefore(
 ): Promise<boolean | undefined> {
   const userId = typeof session.userId === "string" ? session.userId : null;
   if (userId && (await isUserDeactivated(userId))) {
+    captureMessage("security.deactivated_login_attempt", {
+      level: "warning",
+      tags: {
+        security: "deactivated_login_attempt",
+        surface: "session",
+      },
+      user: { id: userId },
+    });
+    console.warn(
+      JSON.stringify({
+        event: "security.deactivated_login_attempt",
+        surface: "session",
+        userId,
+      })
+    );
     return false;
   }
   return;
@@ -62,6 +93,21 @@ async function accountCreateBefore(
 ): Promise<boolean | undefined> {
   const userId = typeof account.userId === "string" ? account.userId : null;
   if (userId && (await isUserDeactivated(userId))) {
+    captureMessage("security.deactivated_login_attempt", {
+      level: "warning",
+      tags: {
+        security: "deactivated_login_attempt",
+        surface: "account",
+      },
+      user: { id: userId },
+    });
+    console.warn(
+      JSON.stringify({
+        event: "security.deactivated_login_attempt",
+        surface: "account",
+        userId,
+      })
+    );
     return false;
   }
   return;
@@ -88,6 +134,25 @@ describe("databaseHooks.session.create.before -- OAuth callback path", () => {
     const result = await sessionCreateBefore({ userId: "user-deactivated" });
 
     expect(result).toBe(false);
+    // KEEP-612: hook must also emit the detection signal on both surfaces.
+    expect(mockCaptureMessage).toHaveBeenCalledTimes(1);
+    const [sentryMessage, sentryOptions] = mockCaptureMessage.mock.calls[0];
+    expect(sentryMessage).toBe("security.deactivated_login_attempt");
+    expect(sentryOptions).toMatchObject({
+      level: "warning",
+      tags: {
+        security: "deactivated_login_attempt",
+        surface: "session",
+      },
+      user: { id: "user-deactivated" },
+    });
+    expect(mockConsoleWarn).toHaveBeenCalledTimes(1);
+    const stdoutPayload = JSON.parse(mockConsoleWarn.mock.calls[0][0]);
+    expect(stdoutPayload).toEqual({
+      event: "security.deactivated_login_attempt",
+      surface: "session",
+      userId: "user-deactivated",
+    });
   });
 
   it("allows session creation when userId is missing or non-string", async () => {
@@ -123,6 +188,20 @@ describe("databaseHooks.account.create.before -- OAuth re-link path", () => {
     const result = await accountCreateBefore({ userId: "user-deactivated" });
 
     expect(result).toBe(false);
+    // KEEP-612: account surface gets its own tag so triage can disambiguate
+    // session-create vs OAuth-relink attempts.
+    expect(mockCaptureMessage).toHaveBeenCalledTimes(1);
+    const [, sentryOptions] = mockCaptureMessage.mock.calls[0];
+    expect(sentryOptions).toMatchObject({
+      tags: {
+        security: "deactivated_login_attempt",
+        surface: "account",
+      },
+      user: { id: "user-deactivated" },
+    });
+    expect(mockConsoleWarn).toHaveBeenCalledTimes(1);
+    const stdoutPayload = JSON.parse(mockConsoleWarn.mock.calls[0][0]);
+    expect(stdoutPayload.surface).toBe("account");
   });
 
   it("allows account creation when userId is missing", async () => {

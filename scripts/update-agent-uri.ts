@@ -21,6 +21,7 @@
 
 import "dotenv/config";
 import { ethers } from "ethers";
+import { formatSanitizedRpcError } from "../lib/rpc/sanitize-rpc-error";
 
 const DEFAULT_AGENT_ID = "31875";
 const DEFAULT_REGISTRY = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432";
@@ -131,7 +132,7 @@ const isMain =
 
 if (isMain) {
   updateAgentURI().catch((err) => {
-    console.error("Update failed:", err instanceof Error ? err.message : err);
+    console.error("Update failed:", formatSanitizedRpcError(err));
     process.exit(1);
   });
 }

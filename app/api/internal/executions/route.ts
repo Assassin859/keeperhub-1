@@ -7,6 +7,8 @@ import { workflowExecutions, workflows } from "@/lib/db/schema";
 import { extractActionTypeNodes } from "@/lib/features";
 import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
+import { withBackstopCapture } from "@/lib/security/backstop-capture";
+import { buildAttribution } from "@/lib/security/request-attribution";
 
 export async function POST(request: Request): Promise<NextResponse> {
   const auth = authenticateInternalService(request);
@@ -54,15 +56,22 @@ export async function POST(request: Request): Promise<NextResponse> {
     return executionGuard.response;
   }
 
-  const [execution] = await db
-    .insert(workflowExecutions)
-    .values({
-      workflowId,
-      userId,
-      status: "running",
-      input: input || {},
-    })
-    .returning({ id: workflowExecutions.id });
+  const attribution = buildAttribution({ request, source: "internal" });
+
+  const [execution] = await withBackstopCapture(
+    { workflowId, userId, source: "internal" },
+    () =>
+      db
+        .insert(workflowExecutions)
+        .values({
+          workflowId,
+          userId,
+          status: "running",
+          input: input || {},
+          ...attribution,
+        })
+        .returning({ id: workflowExecutions.id })
+  );
 
   return NextResponse.json({ executionId: execution.id }, { status: 201 });
 }

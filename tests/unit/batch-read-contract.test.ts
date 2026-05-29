@@ -1091,13 +1091,13 @@ describe("batch-read-contract - array-type outputs", () => {
       abiFunction: "getHolders",
     });
 
-    // Single array-type output: isArrayType=true prevents unwrapping the Result tuple,
-    // so holders is [[addr1, addr2]] (the full Result preserved as-is).
-    const resultValue = result.results[0].result as { holders: string[][] };
+    // Single array-type output is named under its ABI name and exposed as the
+    // flat address list (no spurious extra wrapping).
+    const resultValue = result.results[0].result as { holders: string[] };
     expect(resultValue).toHaveProperty("holders");
     expect(Array.isArray(resultValue.holders)).toBe(true);
-    // The inner array should contain the 2 addresses
-    expect(resultValue.holders[0]).toHaveLength(2);
+    expect(resultValue.holders).toHaveLength(2);
+    expect(resultValue.holders[0]).toBe(VALID_ADDRESS);
   });
 });
 

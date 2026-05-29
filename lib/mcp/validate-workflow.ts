@@ -77,6 +77,10 @@ export function validateWorkflow(
   // VALID-04 write-action consistency
   runWriteActionCheck(workflow, errors, warnings);
 
+  // Allowance preflight hint: a write-contract node calling an
+  // allowance-consuming method with no check-allowance node in the workflow.
+  runAllowancePreflightCheck(workflow, warnings);
+
   // VALID-05: chain ID existence — only when caller pre-fetched chainIds.
   // Per-node check mitigates Pitfall 12 (multi-chain WETH false positives).
   if (opts.chainIds !== undefined) {
@@ -297,5 +301,91 @@ function runWriteActionCheck(
         'workflowType is "read" but workflow contains a write-action node. Confirm this is intentional.',
       parameterPath: "workflowType",
     });
+  }
+}
+
+// ERC-20 transferFrom and ERC-4626 redeem / withdrawFrom move tokens the
+// contract must already be approved to spend. Configuring one on a
+// write-contract node without a prior allowance check is the common cause of
+// runtime "insufficient allowance" reverts. Kept to the methods with explicit
+// hackathon evidence — a conservative set avoids false positives.
+const ALLOWANCE_SPEND_METHODS = new Set([
+  "transferFrom",
+  "redeem",
+  "withdrawFrom",
+]);
+
+// Strips the argument list from an ABI function reference, which may be either
+// a bare name ("redeem") or a full signature ("redeem(uint256,address,address)").
+const FUNCTION_SIGNATURE_ARGS_PATTERN = /\(.*$/;
+
+type NodeActionConfig = { actionType: unknown; abiFunction: unknown };
+
+function readNodeActionConfig(node: unknown): NodeActionConfig | null {
+  if (node === null || typeof node !== "object" || !("data" in node)) {
+    return null;
+  }
+  const { data } = node as { data?: unknown };
+  if (data === null || typeof data !== "object" || !("config" in data)) {
+    return null;
+  }
+  const { config } = data as { config?: unknown };
+  if (config === null || typeof config !== "object") {
+    return null;
+  }
+  const cfg = config as Record<string, unknown>;
+  const actionType =
+    cfg.actionType ?? (data as Record<string, unknown>).actionType;
+  return { actionType, abiFunction: cfg.abiFunction };
+}
+
+function bareMethodName(abiFunction: unknown): string | null {
+  if (typeof abiFunction !== "string") {
+    return null;
+  }
+  const name = abiFunction.replace(FUNCTION_SIGNATURE_ARGS_PATTERN, "").trim();
+  return name === "" ? null : name;
+}
+
+function workflowHasCheckAllowanceNode(nodes: unknown[]): boolean {
+  for (const node of nodes) {
+    const cfg = readNodeActionConfig(node);
+    if (
+      typeof cfg?.actionType === "string" &&
+      cfg.actionType.includes("check-allowance")
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function runAllowancePreflightCheck(
+  workflow: ValidatorWorkflow,
+  warnings: ValidationIssue[]
+): void {
+  if (!Array.isArray(workflow.nodes)) {
+    return;
+  }
+  if (workflowHasCheckAllowanceNode(workflow.nodes)) {
+    return;
+  }
+  for (const [idx, node] of workflow.nodes.entries()) {
+    const cfg = readNodeActionConfig(node);
+    if (
+      cfg === null ||
+      typeof cfg.actionType !== "string" ||
+      !cfg.actionType.includes("write-contract")
+    ) {
+      continue;
+    }
+    const method = bareMethodName(cfg.abiFunction);
+    if (method !== null && ALLOWANCE_SPEND_METHODS.has(method)) {
+      warnings.push({
+        code: VALIDATION_WARNING_CODES.MISSING_ALLOWANCE_PREFLIGHT,
+        message: `nodes[${idx}].config calls "${method}", which moves tokens via an existing allowance, but the workflow has no web3/check-allowance node. Add an upstream web3/check-allowance node before this write to avoid an "insufficient allowance" revert at execution time.`,
+        parameterPath: `nodes[${idx}].config.abiFunction`,
+      });
+    }
   }
 }

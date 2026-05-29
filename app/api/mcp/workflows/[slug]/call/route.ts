@@ -29,6 +29,8 @@ import {
   CALL_ROUTE_COLUMNS,
   type CallRouteWorkflow,
 } from "@/lib/payments/x402/types";
+import { withBackstopCapture } from "@/lib/security/backstop-capture";
+import { buildAttribution } from "@/lib/security/request-attribution";
 import { workflowReachableConditions } from "@/lib/workflow/executable";
 import { buildExecutorInput } from "@/lib/workflow/executor/build-executor-input";
 import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
@@ -87,6 +89,7 @@ function validateInputSchema(
  * separately so the paid path can record payment between insert and start.
  */
 async function prepareExecution(
+  request: Request,
   workflow: CallRouteWorkflow,
   body: Record<string, unknown>
 ): Promise<{ executionId: string } | { error: NextResponse }> {
@@ -129,15 +132,25 @@ async function prepareExecution(
     };
   }
 
-  const [execution] = await db
-    .insert(workflowExecutions)
-    .values({
-      workflowId: workflow.id,
-      userId: workflow.userId,
-      status: "running",
-      input: body,
-    })
-    .returning();
+  // Marketplace call path is anonymous (no API key resolves here -- the
+  // caller pays via x402 / MPP or hits a free public workflow), so only the
+  // source IP and trigger source are recorded.
+  const attribution = buildAttribution({ request, source: "mcp" });
+
+  const [execution] = await withBackstopCapture(
+    { workflowId: workflow.id, userId: workflow.userId, source: "mcp" },
+    () =>
+      db
+        .insert(workflowExecutions)
+        .values({
+          workflowId: workflow.id,
+          userId: workflow.userId,
+          status: "running",
+          input: body,
+          ...attribution,
+        })
+        .returning()
+  );
 
   return { executionId: execution.id };
 }
@@ -178,10 +191,11 @@ async function startExecutionInBackground(
  * falls back to `{executionId, status: "running"}` on timeout.
  */
 async function createAndStartExecution(
+  request: Request,
   workflow: CallRouteWorkflow,
   body: Record<string, unknown>
 ): Promise<NextResponse> {
-  const prepared = await prepareExecution(workflow, body);
+  const prepared = await prepareExecution(request, workflow, body);
   if ("error" in prepared) {
     return prepared.error;
   }
@@ -326,7 +340,7 @@ async function handlePaidWorkflow(
     creatorWalletAddress,
     (meta: PaymentMeta) => {
       return async (_req: NextRequest): Promise<NextResponse> => {
-        const prepared = await prepareExecution(workflow, body);
+        const prepared = await prepareExecution(request, workflow, body);
         if ("error" in prepared) {
           return prepared.error;
         }
@@ -449,7 +463,7 @@ async function handleReadWorkflow(
   if (isPaid) {
     return handlePaidWorkflow(request, workflow, body);
   }
-  return createAndStartExecution(workflow, body);
+  return createAndStartExecution(request, workflow, body);
 }
 
 export async function POST(
