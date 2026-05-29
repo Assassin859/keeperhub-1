@@ -17,9 +17,24 @@
  */
 import type { NextRequest } from "next/server";
 import { ApiErrorCodes, apiError } from "@/lib/errors/api-envelope";
+import { ErrorCategory, logSystemWarn } from "@/lib/logging";
 
 function notFoundResponse(request: NextRequest) {
   const { pathname } = new URL(request.url);
+  // Emit a structured warn so Loki and Sentry surface frequently-probed
+  // unknown routes. Without this, the catch-all silently absorbs every
+  // misrouted client - which is exactly the diagnostic gap that
+  // motivated the ticket. Bots probe noisily, so consider sampling here
+  // if log volume becomes a concern.
+  logSystemWarn(
+    ErrorCategory.VALIDATION,
+    "[api-catch-all] unknown route",
+    new Error("api_route_not_found"),
+    {
+      path: pathname,
+      method: request.method,
+    }
+  );
   return apiError({
     status: 404,
     code: ApiErrorCodes.NOT_FOUND,

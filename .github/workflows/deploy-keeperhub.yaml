@@ -201,39 +201,43 @@ jobs:
 
       - name: Probe documented API endpoints
         # Walks specs/api-coverage.json (committed by the PR-time
-        # check:api-docs guard) and sends a HEAD to every documented GET
-        # endpoint on the deployed env. Treats 200/401/403 as reachable
-        # (auth gates the response); 404/5xx as drift. Warn-only on the
-        # first deploy after merge so we can see what fires before it
-        # gates a release - flip continue-on-error to false once a clean
-        # run is recorded.
+        # check:api-docs guard) and sends a GET to every documented GET
+        # endpoint on the deployed env. We deliberately use GET (not
+        # HEAD): many Next.js App Router handlers and any middleware
+        # that branches on request.method do not implement HEAD, so a
+        # 405 from a healthy GET handler would look like drift. Also
+        # avoids the curl -L + -X HEAD redirect-to-GET footgun.
+        #
+        # Reachable statuses include 400 because path-param routes
+        # validate the fixture string ("probe-fixture") and return 400;
+        # that proves the route exists and parsed the input. The actual
+        # drift signals are 404 (no route file shipped or wrong path)
+        # and 5xx (route exists but blew up).
+        #
+        # Warn-only on the first deploy after merge so we can see what
+        # fires before it gates a release - flip continue-on-error to
+        # false once a clean run is recorded.
         continue-on-error: true
         run: |
           if [ ! -f specs/api-coverage.json ]; then
-            echo "specs/api-coverage.json not found; skipping endpoint probe"
-            exit 0
+            echo "::error::specs/api-coverage.json not found; PR-time check:api-docs should have produced this"
+            exit 1
           fi
           HEADERS=(-H "X-API-Key: ${TEST_API_KEY}")
           if [[ -n "$CF_ACCESS_CLIENT_ID" && -n "$CF_ACCESS_CLIENT_SECRET" ]]; then
             HEADERS+=(-H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}")
           fi
-          # Concrete fixtures for the {param} placeholders in documented
-          # paths. We do not invent ids per env; we ask the API to look
-          # up a known-invalid value and accept the 401/403/404 that
-          # comes back as "the route is reachable". A 5xx or HTML 404
-          # from the catch-all is the actual signal.
           FIXTURE="probe-fixture"
           FAILED=0
           REACHED=0
-          # jq filter: only GET endpoints, output one line each.
           while IFS=$'\t' read -r METHOD PATH_TEMPLATE; do
             [ "$METHOD" = "GET" ] || continue
             URL_PATH=$(printf '%s' "$PATH_TEMPLATE" | sed -E "s/\{[^}]+\}/${FIXTURE}/g")
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" -L \
-              -X HEAD "${HEADERS[@]}" \
+              "${HEADERS[@]}" \
               "${{ env.BASE_URL }}${URL_PATH}" || echo "000")
             case "$STATUS" in
-              200|401|403)
+              200|400|401|403)
                 REACHED=$((REACHED+1))
                 ;;
               *)
@@ -242,7 +246,16 @@ jobs:
                 ;;
             esac
           done < <(jq -r '.endpoints[] | [.method, .path] | @tsv' specs/api-coverage.json)
-          echo "Reached ${REACHED} documented GET endpoints; ${FAILED} drift."
+          TOTAL=$((REACHED + FAILED))
+          echo "Reached ${REACHED} documented GET endpoints; ${FAILED} drift; ${TOTAL} probed."
+          # Schema sanity guard: if 0 endpoints were probed at all, the
+          # artifact shape changed (renamed field, empty array, jq filter
+          # silently producing nothing) and the probe is meaningless.
+          # We fail rather than greenlight a deploy with no signal.
+          if [ "$TOTAL" -eq 0 ]; then
+            echo "::error::api-coverage probe walked zero endpoints; specs/api-coverage.json may have changed shape"
+            exit 1
+          fi
           if [ "$FAILED" -gt 0 ]; then
             exit 1
           fi
