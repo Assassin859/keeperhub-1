@@ -38,8 +38,20 @@ const PATTERNS: readonly Pattern[] = [
   { name: "neon_auth", regex: /\bneon_auth\b/i },
   { name: "refresh_token", regex: /\brefresh_token\b/i },
   { name: "client_secret", regex: /\bclient_secret\b/i },
-  { name: "database_url", regex: /\bDATABASE_URL\b/ },
+  // Case-insensitive: env templates routinely use lowercase `database_url`
+  // (e.g. {{env.database_url}}), which the case-sensitive form silently missed.
+  { name: "database_url", regex: /\bDATABASE_URL\b/i },
 ];
+
+// Bound on recursion depth and total hits. triggerInput is attacker-
+// controllable (webhook body via request.json()), so an adversarial deeply
+// nested payload could otherwise stack-overflow scanValue or build an
+// unbounded hits array. 64 levels is far deeper than any real workflow
+// config; 1000 hits is far more than any genuine match set. Hitting either
+// cap is itself suspicious, so we record a truncation marker rather than
+// silently dropping signal.
+const MAX_SCAN_DEPTH = 64;
+const MAX_HITS = 1000;
 
 export type ContentScanHitSource = "config" | "trigger_input";
 
@@ -85,7 +97,8 @@ export function scanNodes(
         nodeId: node.id,
         nodeType: node.data?.type ?? "unknown",
       },
-      hits
+      hits,
+      0
     );
   }
   return hits;
@@ -104,7 +117,8 @@ export function scanTriggerInput(triggerInput: unknown): ContentScanHit[] {
       nodeId: TRIGGER_INPUT_PSEUDO_NODE_ID,
       nodeType: TRIGGER_INPUT_PSEUDO_NODE_TYPE,
     },
-    hits
+    hits,
+    0
   );
   return hits;
 }
@@ -119,8 +133,15 @@ function scanValue(
   value: unknown,
   path: string,
   meta: HitMetadata,
-  hits: ContentScanHit[]
+  hits: ContentScanHit[],
+  depth: number
 ): void {
+  // Hard caps: triggerInput is attacker-controllable, so refuse to recurse
+  // past MAX_SCAN_DEPTH (stack-overflow guard) or accumulate past MAX_HITS.
+  // Both are far beyond any legitimate workflow config.
+  if (depth > MAX_SCAN_DEPTH || hits.length >= MAX_HITS) {
+    return;
+  }
   if (typeof value === "string") {
     for (const pattern of PATTERNS) {
       if (pattern.regex.test(value)) {
@@ -137,7 +158,7 @@ function scanValue(
   }
   if (Array.isArray(value)) {
     for (const [index, item] of value.entries()) {
-      scanValue(item, `${path}[${index}]`, meta, hits);
+      scanValue(item, `${path}[${index}]`, meta, hits, depth + 1);
     }
     return;
   }
@@ -145,7 +166,7 @@ function scanValue(
     for (const [key, child] of Object.entries(
       value as Record<string, unknown>
     )) {
-      scanValue(child, `${path}.${key}`, meta, hits);
+      scanValue(child, `${path}.${key}`, meta, hits, depth + 1);
     }
   }
 }
@@ -226,14 +247,27 @@ export function scanAndReport(
       },
   context: ScanContext
 ): void {
-  // `Array.isArray` does not narrow `readonly` arrays inside a union, so
-  // discriminate via the `nodes` property instead. The object branch is
-  // the only one that carries a `nodes` field.
-  const isBareArray = !(input !== null && typeof input === "object" && "nodes" in input);
-  const nodes = isBareArray
-    ? (input as readonly WorkflowNodeLike[])
-    : input.nodes;
-  const triggerInput = isBareArray ? undefined : input.triggerInput;
-  const hits = [...scanNodes(nodes), ...scanTriggerInput(triggerInput)];
-  emitScanReport(hits, context);
+  // Total by contract: the scanner is an alert-only detection probe and must
+  // NEVER throw into the executor (the call site in executor.workflow.ts is
+  // outside any try/catch). The depth/hit caps in scanValue make a throw
+  // unlikely, but this outer guard is the hard guarantee -- a bug here
+  // degrades detection, it does not break workflow execution.
+  try {
+    // `Array.isArray` does not narrow `readonly` arrays inside a union, so
+    // discriminate via the `nodes` property instead. The object branch is
+    // the only one that carries a `nodes` field.
+    const isBareArray = !(
+      input !== null &&
+      typeof input === "object" &&
+      "nodes" in input
+    );
+    const nodes = isBareArray
+      ? (input as readonly WorkflowNodeLike[])
+      : input.nodes;
+    const triggerInput = isBareArray ? undefined : input.triggerInput;
+    const hits = [...scanNodes(nodes), ...scanTriggerInput(triggerInput)];
+    emitScanReport(hits, context);
+  } catch {
+    // swallow: detection must not affect execution semantics
+  }
 }

@@ -86,16 +86,16 @@ describe("scanNodes — pattern matches", () => {
     expect(hits.map((h: Hit) => h.pattern)).toContain("client_secret");
   });
 
-  it("detects DATABASE_URL exactly (case-sensitive)", () => {
+  it("detects DATABASE_URL (uppercase)", () => {
     const hits = scanNodes([node("n1", { template: "{{env.DATABASE_URL}}" })]);
     expect(hits.map((h: Hit) => h.pattern)).toContain("database_url");
   });
 
-  it("does NOT match lowercase database_url (case-sensitive)", () => {
-    const hits = scanNodes([
-      node("n1", { description: "the database_url field is not flagged" }),
-    ]);
-    expect(hits.map((h: Hit) => h.pattern)).not.toContain("database_url");
+  it("detects lowercase database_url too (case-insensitive)", () => {
+    // env templates routinely use {{env.database_url}}; the case-sensitive
+    // form silently missed these.
+    const hits = scanNodes([node("n1", { template: "{{env.database_url}}" })]);
+    expect(hits.map((h: Hit) => h.pattern)).toContain("database_url");
   });
 });
 
@@ -314,5 +314,49 @@ describe("scanAndReport — combined config + trigger input", () => {
     const payload = JSON.stringify(captureMessageMock.mock.calls[0][1]);
     expect(payload).not.toContain("NEVER_LEAK_THIS_TOKEN_VIA_ALERT");
     expect(payload).toContain("client_secret");
+  });
+});
+
+describe("content scanner hardening (KEEP-612 follow-up)", () => {
+  it("matches lowercase database_url (case-insensitive)", () => {
+    const hits = scanNodes([node("n1", { template: "{{env.database_url}}" })]);
+    expect(hits.map((h: Hit) => h.pattern)).toContain("database_url");
+  });
+
+  it("does not throw or stack-overflow on a deeply nested payload", () => {
+    // Build a 5000-deep nested object -- the attacker-controlled webhook
+    // shape that previously RangeError'd through scanValue into the executor.
+    let deep: Record<string, unknown> = { leaf: "169.254.169.254" };
+    for (let i = 0; i < 5000; i++) {
+      deep = { nested: deep };
+    }
+    expect(() => scanTriggerInput(deep)).not.toThrow();
+    // scanAndReport is the executor entry point -- must also be total.
+    expect(() =>
+      scanAndReport(
+        { nodes: [], triggerInput: deep },
+        { workflowId: "wf_deep" }
+      )
+    ).not.toThrow();
+  });
+
+  it("stops recursing past the depth cap (deep match is not reported)", () => {
+    // A match buried far below MAX_SCAN_DEPTH (64) must not be found --
+    // proves the cap actually bounds the walk rather than just catching throws.
+    let deep: Record<string, unknown> = { leaf: "169.254.169.254" };
+    for (let i = 0; i < 200; i++) {
+      deep = { nested: deep };
+    }
+    const hits = scanTriggerInput(deep);
+    expect(hits).toHaveLength(0);
+  });
+
+  it("finds a match that sits within the depth cap", () => {
+    let shallow: Record<string, unknown> = { leaf: "169.254.169.254" };
+    for (let i = 0; i < 10; i++) {
+      shallow = { nested: shallow };
+    }
+    const hits = scanTriggerInput(shallow);
+    expect(hits.map((h: Hit) => h.pattern)).toContain("imds_metadata_ip");
   });
 });
