@@ -202,6 +202,59 @@ Note: a shell-set `DATABASE_URL` overrides the value in `.env` (drizzle.config.t
 
 ---
 
+## Local Dev Sign-in
+
+To get a fresh worktree to a signed-in browser without going through the
+signup -> OTP -> MFA -> TOTP UI loop, run one command:
+
+```bash
+pnpm dev:login                                # default dev@keeperhub.local
+pnpm dev:login some-other@example.com         # any seeded email
+```
+
+This bootstraps the DB (idempotent), mints a Better Auth session via the
+same helpers (`signSessionCookieValue`, `hashSessionToken`) the production
+OAuth-MFA finalize path uses, ensures a dev server is serving
+`http://localhost:3000` (reuses one if it is already up, otherwise spawns
+`pnpm dev` detached -- logs to `.claude/.dev-server-LOCAL.log` -- and waits
+for it to respond), seeds the signed cookie into a Playwright-managed
+Chromium profile, and launches Chromium detached at the now-serving URL.
+When a server is already running the terminal returns as soon as the
+browser launches; on a cold start it blocks until the server is ready. The
+Chromium instance has its own user-data-dir under
+`.claude/.dev-chrome-profile/`, so it does not touch the user's normal
+Chrome.
+
+Lower-level commands for headless / scripted use:
+
+- `pnpm dev:bootstrap` -- DB setup only. Backfills the drizzle journal
+  only if the schema was bootstrapped via `db:push`, runs `pnpm db:migrate`,
+  seeds the persistent e2e users plus a dev user/org, pre-trusts
+  `127.0.0.1` + `::1`, marks the dev user `twoFactorEnabled=true`, binds
+  the local `kh` CLI token from `~/.config/kh/hosts.yml`, and upserts 8
+  workflow fixtures (Manual/Schedule/Webhook/Event triggers, on+off, plus
+  a soft-deleted row).
+- `KEEPERHUB_DEV_MINT=1 pnpm dev:mint-cookie <email>` -- mints a cookie
+  file at `.claude/.dev-session-cookie-LOCAL` without opening a browser.
+
+**Hard boundaries -- do not relax these:**
+
+- All three scripts refuse to run unless `DATABASE_URL` host is
+  `localhost`, `127.0.0.1`, `::1`, `db`, or `postgres`. The standalone
+  `dev:mint-cookie` additionally requires `KEEPERHUB_DEV_MINT=1`;
+  `dev:login` sets that env var for its mint child because invoking
+  `dev:login` is itself the explicit acknowledgement. Do not add other
+  bypass envs.
+- None of these scripts edit `lib/auth.ts`,
+  `lib/auth-session-token-hash.ts` (imported only), or any `app/api/**`
+  route. The whole point is to avoid any production runtime change for
+  local convenience. If a future task needs to weaken production auth,
+  do it in production auth and review it there -- not here.
+- `.claude/.dev-session-cookie-LOCAL`, `.claude/.dev-chrome-profile/`, and
+  `.claude/.dev-server-LOCAL.log` are gitignored. Do not commit them.
+
+---
+
 ## Plugin Development
 
 **Context**: Building Web3 integrations for the workflow system. Plugins go in `plugins/`.
