@@ -131,13 +131,19 @@ function probeServer(url: string): Promise<boolean> {
 
 function startDevServerDetached(): void {
   const logFd = fs.openSync(DEV_SERVER_LOG, "a");
-  const child = spawn("pnpm", ["dev"], {
-    detached: true,
-    stdio: ["ignore", logFd, logFd],
-    cwd: REPO_ROOT,
-    env: process.env,
-  });
-  child.unref();
+  try {
+    const child = spawn("pnpm", ["dev"], {
+      detached: true,
+      stdio: ["ignore", logFd, logFd],
+      cwd: REPO_ROOT,
+      env: process.env,
+    });
+    child.unref();
+  } finally {
+    // The child has its own dup'd descriptor for stdout/stderr; close the
+    // parent's copy so we don't leak it for the parent's remaining lifetime.
+    fs.closeSync(logFd);
+  }
 }
 
 async function waitForServer(url: string): Promise<void> {
@@ -193,12 +199,15 @@ function launchBrowserDetached(rawSignedValue: string): void {
   // newly-spawned Chromium would see an empty cookie store. Keeping the
   // browser inside a Playwright context (in a separate Node process)
   // sidesteps the persistence race entirely.
+  // Pass the signed cookie (a live bearer credential) via env, not argv:
+  // process argv is world-readable via ps / /proc/<pid>/cmdline, whereas
+  // /proc/<pid>/environ is owner-only. URL and profile dir are not secret,
+  // so they stay as positional args.
   const child = spawn(
     "pnpm",
     [
       "tsx",
       path.join("scripts", "dev-login-browser.ts"),
-      rawSignedValue,
       DEV_URL,
       CHROME_PROFILE_DIR,
     ],
@@ -206,6 +215,7 @@ function launchBrowserDetached(rawSignedValue: string): void {
       detached: true,
       stdio: "ignore",
       cwd: REPO_ROOT,
+      env: { ...process.env, KEEPERHUB_DEV_COOKIE: rawSignedValue },
     }
   );
   child.unref();

@@ -5,9 +5,10 @@
  *
  * Sub-process spawned (detached, background) by scripts/dev-login.ts.
  * Owns the Playwright Chromium window: receives the signed cookie value
- * via argv[2], the URL via argv[3], and the profile dir via argv[4],
- * launches a persistent context, sets the cookie, opens the URL, and
- * waits for the browser to close before exiting.
+ * via the KEEPERHUB_DEV_COOKIE env var (owner-only, unlike world-readable
+ * argv), the URL via argv[2], and the profile dir via argv[3], launches a
+ * persistent context, sets the cookie, opens the URL, and waits for the
+ * browser to close before exiting.
  *
  * Lives in its own process so the parent (dev:login) can return the
  * terminal to the user immediately while the browser stays alive.
@@ -22,12 +23,14 @@ import "dotenv/config";
 import { chromium } from "@playwright/test";
 
 async function main(): Promise<void> {
-  const rawSignedValue = process.argv[2];
-  const url = process.argv[3];
-  const profileDir = process.argv[4];
+  // The signed cookie arrives via env (owner-only) rather than argv
+  // (world-readable); see launchBrowserDetached in scripts/dev-login.ts.
+  const rawSignedValue = process.env.KEEPERHUB_DEV_COOKIE;
+  const url = process.argv[2];
+  const profileDir = process.argv[3];
   if (!(rawSignedValue && url && profileDir)) {
     throw new Error(
-      "dev-login-browser: expected argv: <signedCookie> <url> <profileDir>"
+      "dev-login-browser: expected KEEPERHUB_DEV_COOKIE env and argv: <url> <profileDir>"
     );
   }
 
