@@ -4,6 +4,7 @@ import { Turnstile, type TurnstileInstance } from "@marsidev/react-turnstile";
 import { useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { EmailOtpField } from "@/components/auth/email-otp-field";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -18,6 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { authClient, signIn, signUp } from "@/lib/auth-client";
+import { DISPOSABLE_EMAIL_REJECTION_MESSAGE } from "@/lib/auth-disposable-emails-message";
 import { AUTH_SUCCESS_EVENT } from "@/lib/auth-events";
 import {
   getEnabledAuthProviders,
@@ -323,11 +325,13 @@ function SignInStepIndicator({
               : "pending";
         const isLast = idx === SIGN_IN_STEPS.length - 1;
         const bubble =
-          status === "current" || status === "done"
+          status === "current"
             ? "border-keeperhub-green-dark bg-keeperhub-green text-foreground dark:text-background"
             : "border-border text-foreground";
         const labelClass =
-          status === "current" ? "font-medium text-foreground" : "text-foreground";
+          status === "current"
+            ? "font-medium text-foreground"
+            : "text-foreground";
         return (
           <li className="flex items-center gap-2" key={s.key}>
             <span
@@ -771,6 +775,17 @@ export const AuthDialog = ({
 
       if (signUpResponse.error) {
         const errorMsg = signUpResponse.error.message || "Sign up failed";
+
+        // Server-side disposable-email rejection: the better-auth
+        // databaseHooks.user.create.before hook throws an APIError
+        // carrying DISPOSABLE_EMAIL_REJECTION_MESSAGE. Match the constant
+        // directly so the surfaced text never drifts out of sync.
+        if (errorMsg === DISPOSABLE_EMAIL_REJECTION_MESSAGE) {
+          setError(DISPOSABLE_EMAIL_REJECTION_MESSAGE);
+          resetCaptcha();
+          setLoading(false);
+          return;
+        }
 
         // Check if error is about existing user (might be unverified)
         if (
@@ -1309,29 +1324,22 @@ export const AuthDialog = ({
             <div className="space-y-4">
               <SignInStepIndicator current="email" />
               <form className="space-y-4" onSubmit={handleSigninEmailOtp}>
-                <div className="space-y-2">
-                  <Label
-                    className="ml-1 font-medium text-keeperhub-green-dark"
-                    htmlFor="signin-email-otp-input"
-                  >
-                    Email code
-                  </Label>
-                  <Input
-                    autoComplete="one-time-code"
-                    autoFocus
-                    className="text-center font-mono text-2xl tracking-[0.5em]"
-                    id="signin-email-otp-input"
-                    inputMode="numeric"
-                    maxLength={6}
-                    onChange={(e) =>
-                      setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))
+                <EmailOtpField
+                  autoFocus
+                  disabled={loading}
+                  id="signin-email-otp-input"
+                  label="Email code"
+                  labelClassName="ml-1 font-medium text-keeperhub-green-dark"
+                  onChange={setOtp}
+                  onEnter={() => {
+                    if (otp.length === 6 && !loading) {
+                      handleSigninEmailOtp({
+                        preventDefault: () => undefined,
+                      } as React.FormEvent);
                     }
-                    pattern="[0-9]*"
-                    placeholder="000000"
-                    required
-                    value={otp}
-                  />
-                </div>
+                  }}
+                  value={otp}
+                />
                 {error && (
                   <div className="text-destructive text-sm">{error}</div>
                 )}
@@ -1474,26 +1482,15 @@ export const AuthDialog = ({
           {view === "reset-password" && (
             <div className="space-y-4">
               <form className="space-y-4" onSubmit={handlePasswordReset}>
-                <div className="space-y-2">
-                  <Label className="ml-1" htmlFor="reset-otp">
-                    Reset Code
-                  </Label>
-                  <Input
-                    autoComplete="one-time-code"
-                    autoFocus
-                    className="text-center font-mono text-2xl tracking-[0.5em]"
-                    id="reset-otp"
-                    inputMode="numeric"
-                    maxLength={6}
-                    onChange={(e) =>
-                      setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))
-                    }
-                    pattern="[0-9]*"
-                    placeholder="000000"
-                    required
-                    value={otp}
-                  />
-                </div>
+                <EmailOtpField
+                  autoFocus
+                  disabled={loading}
+                  id="reset-otp"
+                  label="Reset Code"
+                  labelClassName="ml-1"
+                  onChange={setOtp}
+                  value={otp}
+                />
                 <div className="space-y-2">
                   <Label
                     className="ml-1 font-medium text-keeperhub-green-dark"

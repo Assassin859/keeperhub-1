@@ -1,6 +1,7 @@
 "use client";
 
 import { toast } from "sonner";
+import { sanitizeNextPath } from "@/lib/sanitize-next-path";
 
 /**
  * Server-side guard error codes returned by the helpers in
@@ -84,7 +85,7 @@ export async function handleGuardError(
     const currentPath =
       typeof window === "undefined"
         ? "/"
-        : window.location.pathname + window.location.search;
+        : sanitizeNextPath(window.location.pathname + window.location.search);
     handlers.onForceEnroll?.(currentPath);
     return true;
   }
@@ -95,7 +96,7 @@ export async function handleGuardError(
     const currentPath =
       typeof window === "undefined"
         ? "/"
-        : window.location.pathname + window.location.search;
+        : sanitizeNextPath(window.location.pathname + window.location.search);
     handlers.onPendingMfa?.(currentPath);
     return true;
   }

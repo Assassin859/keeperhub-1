@@ -9,12 +9,12 @@ const {
   mockGetDualAuthContext,
   mockUsersFindFirst,
   mockAccountsFindFirst,
-  mockGetUserWallet,
+  mockGetOrganizationWallet,
 } = vi.hoisted(() => ({
   mockGetDualAuthContext: vi.fn(),
   mockUsersFindFirst: vi.fn(),
   mockAccountsFindFirst: vi.fn(),
-  mockGetUserWallet: vi.fn(),
+  mockGetOrganizationWallet: vi.fn(),
 }));
 
 vi.mock("@/lib/middleware/auth-helpers", () => ({
@@ -49,8 +49,8 @@ vi.mock("@/lib/db/schema", () => ({
   accounts: { userId: "user_id" },
 }));
 
-vi.mock("@/lib/para/wallet-helpers", () => ({
-  getUserWallet: mockGetUserWallet,
+vi.mock("@/lib/web3/wallet-helpers", () => ({
+  getOrganizationWallet: mockGetOrganizationWallet,
 }));
 
 vi.mock("@/lib/logging", () => ({
@@ -118,7 +118,7 @@ describe("GET /api/user", () => {
       isAnonymous: false,
     });
     mockAccountsFindFirst.mockResolvedValue({ providerId: "credential" });
-    mockGetUserWallet.mockResolvedValue({ walletAddress: "0xabc" });
+    mockGetOrganizationWallet.mockResolvedValue({ walletAddress: "0xabc" });
 
     const response = await GET(buildRequest());
     expect(response.status).toBe(200);
@@ -142,7 +142,7 @@ describe("GET /api/user", () => {
       isAnonymous: false,
     });
     mockAccountsFindFirst.mockResolvedValue({ providerId: "credential" });
-    mockGetUserWallet.mockRejectedValue(new Error("no wallet"));
+    mockGetOrganizationWallet.mockRejectedValue(new Error("no wallet"));
 
     const response = await GET(buildRequest());
     expect(response.status).toBe(200);

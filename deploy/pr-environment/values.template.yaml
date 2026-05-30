@@ -66,15 +66,9 @@ deployment:
           pnpm db:migrate
           echo "Seeding chains and tokens..."
           pnpm db:seed
-          echo "Seeding persistent test account..."
-          pnpm db:seed-test-wallet
           echo "Migrations and seeding completed successfully"
       env:
         <<: *shared_env
-        PARA_API_KEY:
-          type: parameterStore
-          name: para-api-key
-          parameter_name: /eks/techops-staging/keeperhub/para-api-key
         TURNKEY_API_PUBLIC_KEY:
           type: parameterStore
           name: turnkey-api-public-key
@@ -87,16 +81,6 @@ deployment:
           type: parameterStore
           name: turnkey-organization-id
           parameter_name: /eks/techops-staging/keeperhub/turnkey-organization-id
-        PARA_ENVIRONMENT:
-          type: kv
-          value: "beta"
-        WALLET_ENCRYPTION_KEY:
-          type: parameterStore
-          name: wallet-encryption-key
-          parameter_name: /eks/techops-staging/keeperhub/wallet-encryption-key
-        TEST_PARA_USER_SHARE:
-          type: kv
-          value: "${TEST_PARA_USER_SHARE}"
 
 serviceAccount:
   create: true
@@ -150,9 +134,6 @@ env:
   HOSTNAME:
     type: kv
     value: "0.0.0.0"
-  PARA_ENVIRONMENT:
-    type: kv
-    value: "beta"
   WORKFLOW_TARGET_WORLD:
     type: kv
     value: "@workflow/world-postgres"
@@ -229,10 +210,6 @@ env:
   AI_MODEL:
     type: kv
     value: "gpt-4o-mini"
-  PARA_API_KEY:
-    type: parameterStore
-    name: para-api-key
-    parameter_name: /eks/techops-staging/keeperhub/para-api-key
   TURNKEY_API_PUBLIC_KEY:
     type: parameterStore
     name: turnkey-api-public-key
@@ -245,10 +222,6 @@ env:
     type: parameterStore
     name: turnkey-organization-id
     parameter_name: /eks/techops-staging/keeperhub/turnkey-organization-id
-  WALLET_ENCRYPTION_KEY:
-    type: parameterStore
-    name: wallet-encryption-key
-    parameter_name: /eks/techops-staging/keeperhub/wallet-encryption-key
   INTEGRATION_ENCRYPTION_KEY:
     type: parameterStore
     name: integration-encryption-key

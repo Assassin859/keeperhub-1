@@ -8,9 +8,9 @@ import { db } from "@/lib/db";
 import { chains } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
-import { getOrganizationWalletAddress } from "@/lib/para/wallet-helpers";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import { getGasStrategy } from "@/lib/web3/gas-strategy";
+import { getOrganizationWalletAddress } from "@/lib/web3/wallet-helpers";
 
 const ERC20_TRANSFER_ABI = [
   "function transfer(address to, uint256 amount) returns (bool)",

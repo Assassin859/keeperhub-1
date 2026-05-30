@@ -29,15 +29,15 @@ show_help() {
     echo "  --help                Show this help message"
     echo ""
     echo "Environment variables (or set in .env file):"
-    echo "  PARA_API_KEY              Para wallet API key"
-    echo "  WALLET_ENCRYPTION_KEY     Wallet encryption key"
+    echo "  TURNKEY_API_PUBLIC_KEY     Turnkey parent-org API public key"
+    echo "  TURNKEY_API_PRIVATE_KEY    Turnkey parent-org API private key"
+    echo "  TURNKEY_ORGANIZATION_ID    Turnkey parent-org id"
     echo "  INTEGRATION_ENCRYPTION_KEY Integration encryption key"
     echo ""
     echo "Examples:"
     echo "  $0                                    # Build and deploy"
     echo "  $0 --skip-build                       # Deploy only (use existing image)"
     echo "  $0 --dry-run                          # Show what would happen"
-    echo "  PARA_API_KEY=xyz $0                   # Deploy with Para API key"
 }
 
 for arg in "$@"; do
@@ -248,8 +248,6 @@ if [ "$DRY_RUN" = true ]; then
     echo "[DRY RUN] Would process template: values-keeperhub.template.yaml -> values-keeperhub.yaml"
 else
     sed -e "s/\${IMAGE_TAG}/$IMAGE_TAG/g" \
-        -e "s/PLACEHOLDER_PARA_API_KEY/${PARA_API_KEY:-PLACEHOLDER_PARA_API_KEY}/g" \
-        -e "s/\${WALLET_ENCRYPTION_KEY}/${WALLET_ENCRYPTION_KEY:-}/g" \
         -e "s/\${INTEGRATION_ENCRYPTION_KEY}/${INTEGRATION_ENCRYPTION_KEY:-}/g" \
         ./deploy/local/values-keeperhub.template.yaml > ./deploy/local/values-keeperhub.yaml
 fi

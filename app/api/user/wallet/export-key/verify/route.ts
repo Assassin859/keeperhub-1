@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { toChecksumAddress } from "@/lib/address-utils";
 import { apiError } from "@/lib/api-error";
@@ -99,12 +99,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     const wallets = await db
       .select()
       .from(organizationWallets)
-      .where(
-        and(
-          eq(organizationWallets.organizationId, activeOrgId),
-          eq(organizationWallets.provider, "turnkey")
-        )
-      )
+      .where(eq(organizationWallets.organizationId, activeOrgId))
       .limit(1);
 
     if (wallets.length === 0) {

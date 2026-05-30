@@ -21,7 +21,7 @@ import { ErrorCategory, logUserError } from "@/lib/logging";
 import {
   getOrganizationWalletAddress,
   initializeWalletSigner,
-} from "@/lib/para/wallet-helpers";
+} from "@/lib/web3/wallet-helpers";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import { getErrorMessage } from "@/lib/utils";
@@ -432,7 +432,7 @@ export async function transferTokenCore(
   const adapter = getChainAdapter(chainId);
 
   return withNonceSession(txContext, walletAddress, async (session) => {
-    // Initialize Para signer
+    // Initialize wallet signer
     let signer: Awaited<ReturnType<typeof initializeWalletSigner>>;
     let signerAddress: string;
     try {

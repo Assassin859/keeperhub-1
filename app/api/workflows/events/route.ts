@@ -143,6 +143,7 @@ export async function GET(request: Request) {
         defaultPrivateRpcUrl: chains.defaultPrivateRpcUrl,
         isTestnet: chains.isTestnet,
         isEnabled: chains.isEnabled,
+        status: chains.status,
         createdAt: chains.createdAt,
         updatedAt: chains.updatedAt,
         gasConfig: chains.gasConfig,

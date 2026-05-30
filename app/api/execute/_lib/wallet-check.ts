@@ -1,7 +1,7 @@
 import "server-only";
 
 import { NextResponse } from "next/server";
-import { organizationHasWallet } from "@/lib/para/wallet-helpers";
+import { organizationHasWallet } from "@/lib/web3/wallet-helpers";
 
 /**
  * Check if the organization has a wallet configured.

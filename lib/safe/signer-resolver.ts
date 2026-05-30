@@ -13,7 +13,7 @@ import {
 import {
   getOrganizationWallet,
   getOrganizationWalletAddress,
-} from "@/lib/para/wallet-helpers";
+} from "@/lib/web3/wallet-helpers";
 import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 // reconcileSafeRoleFromChain is dynamically imported below to keep the

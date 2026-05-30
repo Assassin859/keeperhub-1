@@ -128,17 +128,6 @@ env:
   WORKFLOW_RUNNER_COLLECT_MONITORING:
     type: kv
     value: "false"
-  PARA_API_KEY:
-    type: parameterStore
-    name: para-api-key
-    parameter_name: /eks/techops-staging/keeperhub/para-api-key
-  PARA_ENVIRONMENT:
-    type: kv
-    value: "beta"
-  WALLET_ENCRYPTION_KEY:
-    type: parameterStore
-    name: wallet-encryption-key
-    parameter_name: /eks/techops-staging/keeperhub/wallet-encryption-key
   # Required by assertTurnkeyEnvForActiveWallets at startup when the DB has
   # any active turnkey wallets; missing these would crash-loop the executor.
   TURNKEY_API_PUBLIC_KEY:

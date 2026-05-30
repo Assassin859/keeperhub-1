@@ -5,6 +5,7 @@ import {
   decodePendingSignupCookie,
   readPendingSignupCookie,
 } from "@/lib/pending-signup-cookie";
+import { sanitizeNextPath } from "@/lib/sanitize-next-path";
 import { EnrollMfaForm } from "./enroll-mfa-form";
 
 /**
@@ -25,7 +26,7 @@ export default async function EnrollMfaPage({
 }): Promise<React.ReactElement> {
   const requestHeaders = await headers();
   const params = await searchParams;
-  const next = typeof params.next === "string" ? params.next : "/";
+  const next = sanitizeNextPath(params.next);
 
   // 1. Pending-signup path. Valid signed cookie, no session yet.
   const pendingCookie = readPendingSignupCookie(requestHeaders);
@@ -36,7 +37,10 @@ export default async function EnrollMfaPage({
       if (decoded.ok) {
         return (
           <main className="flex min-h-screen items-center justify-center bg-background p-6">
-            <EnrollMfaForm mode="pending-signup" next={decoded.payload.redirect || next} />
+            <EnrollMfaForm
+              mode="pending-signup"
+              next={sanitizeNextPath(decoded.payload.redirect ?? next)}
+            />
           </main>
         );
       }

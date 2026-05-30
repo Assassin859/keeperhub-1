@@ -21,6 +21,10 @@ import { getErrorMessage } from "@/lib/utils";
 import { getAbiFunctionKey } from "@/lib/abi/function-key";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import { formatContractError } from "@/lib/web3/decode-revert-error";
+import {
+  type AbiOutputParam,
+  structureAbiOutputs,
+} from "@/plugins/web3/steps/structure-abi-result";
 
 export type ReadContractCoreInput = {
   contractAddress: string;
@@ -234,47 +238,34 @@ export async function readContractCore(
       isView,
     });
 
-    // Convert BigInt values to strings for JSON serialization
+    // Convert BigInt values to strings for JSON serialization. This also
+    // flattens the ethers Result into positional arrays (its named getters are
+    // non-enumerable and do not survive JSON), which is exactly the form
+    // structureAbiOutputs consumes to re-attach ABI component names.
     const serializedResult = JSON.parse(
       JSON.stringify(result, (_, value) =>
         typeof value === "bigint" ? value.toString() : value
       )
     );
 
-    // Transform array results into named objects based on ABI outputs
-    let structuredResult = serializedResult;
+    const outputs =
+      (functionAbi as { outputs?: AbiOutputParam[] }).outputs ?? [];
 
-    const outputs = (
-      functionAbi as { outputs?: Array<{ name?: string; type: string }> }
-    ).outputs;
-
-    if (outputs && outputs.length > 0) {
-      if (outputs.length === 1) {
-        const singleOutput = outputs[0];
-        const outputName = singleOutput.name?.trim();
-        const outputType = singleOutput.type ?? "";
-        const isArrayType = outputType.endsWith("[]");
-        // covers "tuple" and "tuple[]"
-        const isTupleType = outputType.startsWith("tuple");
-        // ethers v6 Contract methods auto-unwrap single-output Results; for
-        // tuples that means we already hold the tuple's components, NOT a
-        // wrapper array. Unwrapping again would discard sub-fields.
-        const singleValue =
-          Array.isArray(serializedResult) && !isArrayType && !isTupleType
-            ? serializedResult[0]
-            : serializedResult;
-        if (outputName) {
-          structuredResult = { [outputName]: singleValue };
-        } else {
-          structuredResult = singleValue;
-        }
-      } else if (Array.isArray(serializedResult)) {
-        structuredResult = {};
-        for (const [index, output] of outputs.entries()) {
-          const fieldName = output.name?.trim() || `unnamedOutput${index}`;
-          structuredResult[fieldName] = serializedResult[index];
-        }
-      }
+    let structuredResult: unknown = serializedResult;
+    if (outputs.length > 0) {
+      // The EVM adapter calls contract.getFunction(name)(...) / .staticCall(),
+      // and ethers v6 auto-unwraps a single output: a scalar arrives as the
+      // scalar (not a 1-element array) and a tuple arrives as its component
+      // array. We therefore wrap the single output back into a one-element
+      // positional array for structureAbiOutputs; multi-output calls already
+      // arrive as a positional array. If the adapter ever stops auto-unwrapping
+      // (e.g. switching to decodeFunctionResult), this normalization must move
+      // to match batch-read-contract, which passes the N-element Result as-is.
+      const outputValues =
+        outputs.length === 1
+          ? [serializedResult]
+          : (serializedResult as unknown[]);
+      structuredResult = structureAbiOutputs(outputValues, outputs);
     }
 
     const addressLink = await adapter.getAddressUrl(contractAddress);

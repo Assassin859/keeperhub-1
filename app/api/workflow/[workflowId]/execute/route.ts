@@ -8,6 +8,11 @@ import { isTriggerType, LabelKeys, MetricNames, type TriggerType } from "@/lib/m
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit";
 import { db } from "@/lib/db";
+import { withBackstopCapture } from "@/lib/security/backstop-capture";
+import {
+  buildAttribution,
+  type TriggerSource,
+} from "@/lib/security/request-attribution";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { extractActionTypeNodes } from "@/lib/features";
 import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
@@ -32,6 +37,7 @@ export async function POST(
 
     let userId: string;
     let workflow: typeof workflows.$inferSelect | undefined;
+    let orgApiKeyId: string | null = null;
 
     if (isInternalExecution) {
       // Internal execution from authenticated service
@@ -98,6 +104,9 @@ export async function POST(
       }
 
       userId = authContext.userId ?? workflow.userId;
+      if (authContext.authMethod === "api-key") {
+        orgApiKeyId = authContext.apiKeyId;
+      }
     }
 
     // Gate on workflow lifecycle using the shared executability predicate so
@@ -166,6 +175,28 @@ export async function POST(
     const body = await request.json().catch(() => ({}));
     const input = body.input || {};
 
+    // Resolve trigger source up front so attribution and metrics use the same
+    // value. Internal callers (scheduler, events, MCP-internal) refine via
+    // `x-trigger-type` (block / event / schedule); only fall back to
+    // "internal" when they did not pass a recognised header. External callers
+    // default to "manual" and honour any explicit `x-trigger-type` they send.
+    const headerTrigger = request.headers.get("x-trigger-type");
+    const triggerType: TriggerType = isTriggerType(headerTrigger)
+      ? headerTrigger
+      : isInternalExecution
+        ? "scheduled"
+        : "manual";
+    const triggerSource: TriggerSource = isTriggerType(headerTrigger)
+      ? (headerTrigger as TriggerSource)
+      : isInternalExecution
+        ? "internal"
+        : "manual";
+    const attribution = buildAttribution({
+      request,
+      source: triggerSource,
+      orgApiKeyId,
+    });
+
     // Check if executionId was provided (for scheduled executions)
     // This allows the executor to pre-create the execution record
     let executionId = body.executionId;
@@ -186,27 +217,37 @@ export async function POST(
         console.log("[API] Using existing execution:", executionId);
       } else {
         // Create new execution with provided ID
-        await db.insert(workflowExecutions).values({
-          id: executionId,
-          workflowId,
-          userId,
-          status: "pending",
-          input,
-        });
+        await withBackstopCapture(
+          { workflowId, userId, source: triggerSource },
+          () =>
+            db.insert(workflowExecutions).values({
+              id: executionId,
+              workflowId,
+              userId,
+              status: "pending",
+              input,
+              ...attribution,
+            })
+        );
         console.log("[API] Created execution with provided ID:", executionId);
         createdHere = true;
       }
     } else {
       // Create new execution record
-      const [execution] = await db
-        .insert(workflowExecutions)
-        .values({
-          workflowId,
-          userId,
-          status: "pending",
-          input,
-        })
-        .returning();
+      const [execution] = await withBackstopCapture(
+        { workflowId, userId, source: triggerSource },
+        () =>
+          db
+            .insert(workflowExecutions)
+            .values({
+              workflowId,
+              userId,
+              status: "pending",
+              input,
+              ...attribution,
+            })
+            .returning()
+      );
 
       executionId = execution.id;
       console.log("[API] Created execution:", executionId);
@@ -214,19 +255,10 @@ export async function POST(
     }
 
     // Record per-(trigger_type, chain) start of a workflow execution. Drives the
-    // Grafana "zero executions in N min" alert family (see KEEP-556). The
-    // trigger type is carried by the caller via the X-Trigger-Type header so
-    // internal callers can mark precise sources (block / schedule / event); we
-    // fall back to the legacy "scheduled" / "manual" defaults if the header is
-    // absent or invalid. Skipped when the executor pre-created the row - it
-    // already incremented on its side in that case.
+    // Grafana "zero executions in N min" alert family (see KEEP-556). Skipped
+    // when the executor pre-created the row - it already incremented on its
+    // side in that case.
     if (createdHere) {
-      const headerTrigger = request.headers.get("x-trigger-type");
-      const triggerType: TriggerType = isTriggerType(headerTrigger)
-        ? headerTrigger
-        : isInternalExecution
-          ? "scheduled"
-          : "manual";
       const chainLabel = workflow.chain ?? "_unknown";
       const metrics = getMetricsCollector();
       metrics.incrementCounter(MetricNames.WORKFLOW_EXECUTIONS_STARTED_TOTAL, {

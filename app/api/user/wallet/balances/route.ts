@@ -13,9 +13,9 @@ import {
 import { safeWallets } from "@/lib/db/schema-extensions";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
-import { getOrganizationWallet } from "@/lib/para/wallet-helpers";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import { formatWeiToBalance } from "@/lib/wallet/fetch-balances";
+import { getOrganizationWallet } from "@/lib/web3/wallet-helpers";
 
 const NATIVE_DECIMALS = 18;
 

@@ -1,6 +1,7 @@
 "use client";
 
 import type { ChangeEvent, ReactNode } from "react";
+import { EmailOtpField } from "@/components/auth/email-otp-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -74,9 +75,6 @@ export function DualFactorInput({
   const handleTotp = (event: ChangeEvent<HTMLInputElement>): void => {
     onTotpChange(numericOnly(event.target.value));
   };
-  const handleEmail = (event: ChangeEvent<HTMLInputElement>): void => {
-    onEmailOtpChange(numericOnly(event.target.value));
-  };
 
   const emailFieldDisabled = disabled === true || !awaitingEmailOtp;
 
@@ -101,17 +99,12 @@ export function DualFactorInput({
         )}
       </div>
       <div className="space-y-2">
-        <Label htmlFor={emailId}>{emailLabel}</Label>
-        <Input
-          autoComplete="one-time-code"
+        <EmailOtpField
           autoFocus={awaitingEmailOtp}
-          className={INPUT_CLASSES}
           disabled={emailFieldDisabled}
           id={emailId}
-          inputMode="numeric"
-          maxLength={6}
-          onChange={handleEmail}
-          placeholder="000000"
+          label={emailLabel}
+          onChange={onEmailOtpChange}
           value={emailOtp}
         />
         <p className="text-muted-foreground text-xs">

@@ -21,6 +21,7 @@ import postgres from "postgres";
 import { getDatabaseUrl } from "../lib/db/connection-utils";
 import { agentRegistrations } from "../lib/db/schema";
 import { getRpcUrlByChainId } from "../lib/rpc/rpc-config";
+import { formatSanitizedRpcError } from "../lib/rpc/sanitize-rpc-error";
 
 export const IDENTITY_REGISTRY_ADDRESS =
   "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432";
@@ -210,10 +211,7 @@ async function main(): Promise<void> {
   try {
     await registerAgent();
   } catch (err) {
-    console.error(
-      "Registration failed:",
-      err instanceof Error ? err.message : err
-    );
+    console.error("Registration failed:", formatSanitizedRpcError(err));
     process.exit(1);
   }
 }
