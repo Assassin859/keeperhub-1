@@ -26,7 +26,7 @@ import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
@@ -131,6 +131,7 @@ async function mintSession(email: string): Promise<MintResult> {
         .select({ organizationId: member.organizationId })
         .from(member)
         .where(eq(member.userId, userId))
+        .orderBy(asc(member.createdAt))
         .limit(1);
       activeOrganizationId = fallback[0]?.organizationId ?? null;
     }
