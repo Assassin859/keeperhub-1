@@ -142,6 +142,12 @@ packages/*/dist/
 .claude/test-*-output.txt
 .claude/worktrees/
 
+# Local dev session cookie minted by scripts/dev-mint-session.ts
+.claude/.dev-session-cookie-LOCAL
+
+# Chromium profile seeded by scripts/dev-login.ts (cookies + cache only)
+.claude/.dev-chrome-profile/
+
 # Playwright MCP screenshots
 .playwright/
 .playwright-cli/
@@ -151,6 +157,8 @@ packages/*/dist/
 reports/
 
 .mcp.json
+
+.claude/.dev-server-LOCAL.log
 
 # Understand-Anything: commit knowledge-graph.json + config.json + .understandignore.
 # Ignore meta (timestamp churn) and fingerprints (per-machine incremental cache).

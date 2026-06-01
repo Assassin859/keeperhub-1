@@ -4,8 +4,8 @@ import { db } from "@/lib/db";
 import { member, organization } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
-  type DualAuthContext,
   auditFromAuth,
+  type DualAuthContext,
   getDualAuthContext,
 } from "@/lib/middleware/auth-helpers";
 

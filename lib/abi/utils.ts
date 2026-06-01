@@ -19,7 +19,7 @@ type AbiInput = {
  * and a tuple[] becomes "(uint32,bytes32)[]"
  */
 function canonicalType(input: AbiInput): string {
-  if (!input.type.startsWith("tuple") || !input.components) {
+  if (!(input.type.startsWith("tuple") && input.components)) {
     return input.type;
   }
   const inner = input.components.map((c) => canonicalType(c)).join(",");

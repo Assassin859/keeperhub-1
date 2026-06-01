@@ -10,12 +10,10 @@ vi.mock("@/lib/mcp/listing", () => ({
   updateWorkflowListing: vi.fn(),
 }));
 
-import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { updateWorkflowListing } from "@/lib/mcp/listing";
+import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 
-const { PATCH } = await import(
-  "@/app/api/mcp/workflows/[slug]/listing/route"
-);
+const { PATCH } = await import("@/app/api/mcp/workflows/[slug]/listing/route");
 
 const makeRequest = (body: unknown) =>
   new Request("http://localhost/api/mcp/workflows/wf-123/listing", {
@@ -24,7 +22,9 @@ const makeRequest = (body: unknown) =>
     body: JSON.stringify(body),
   });
 
-const makeParams = (id = "wf-123") => ({ params: Promise.resolve({ slug: id }) });
+const makeParams = (id = "wf-123") => ({
+  params: Promise.resolve({ slug: id }),
+});
 
 const mockAuth = (orgId = "org-abc") =>
   vi.mocked(getDualAuthContext).mockResolvedValue({
@@ -46,7 +46,10 @@ describe("mcp curator routes — price change guard", () => {
       error: "PRICE_CHANGE_WHILE_LISTED",
     });
 
-    const res = await PATCH(makeRequest({ priceUsdcPerCall: "2.00" }), makeParams());
+    const res = await PATCH(
+      makeRequest({ priceUsdcPerCall: "2.00" }),
+      makeParams()
+    );
     expect(res.status).toBe(409);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("PRICE_CHANGE_WHILE_LISTED");
@@ -64,7 +67,10 @@ describe("mcp curator routes — price change guard", () => {
       } as never,
     });
 
-    const res = await PATCH(makeRequest({ priceUsdcPerCall: "2.00" }), makeParams());
+    const res = await PATCH(
+      makeRequest({ priceUsdcPerCall: "2.00" }),
+      makeParams()
+    );
     expect(res.status).toBe(200);
   });
 });

@@ -55,8 +55,7 @@ const BLOCK_THRESHOLD_CENTS = 100 * 100; // $100
 
 const MICRO_PER_CENT = BigInt(10_000);
 const ASK_THRESHOLD_MICRO = BigInt(ASK_THRESHOLD_CENTS) * MICRO_PER_CENT; // 50_000_000
-const BLOCK_THRESHOLD_MICRO =
-  BigInt(BLOCK_THRESHOLD_CENTS) * MICRO_PER_CENT; // 100_000_000
+const BLOCK_THRESHOLD_MICRO = BigInt(BLOCK_THRESHOLD_CENTS) * MICRO_PER_CENT; // 100_000_000
 
 /**
  * Parse a micro-USDC (6-decimal) decimal-integer string into a bigint count
