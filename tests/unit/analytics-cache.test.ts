@@ -1,4 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// cache.ts is a server-only module; stub the marker so it can be imported
+// under vitest (the package throws when resolved outside a Server Component).
+vi.mock("server-only", () => ({}));
+
 import {
   __resetAnalyticsCacheForTest,
   analyticsCacheKey,
