@@ -17,23 +17,24 @@
  */
 import type { NextRequest } from "next/server";
 import { ApiErrorCodes, apiError } from "@/lib/errors/api-envelope";
-import { ErrorCategory, logSystemWarn } from "@/lib/logging";
+import { ErrorCategory, logUserError } from "@/lib/logging";
 
 function notFoundResponse(request: NextRequest) {
   const { pathname } = new URL(request.url);
-  // Emit a structured warn so Loki and Sentry surface frequently-probed
-  // unknown routes. Without this, the catch-all silently absorbs every
-  // misrouted client - which is exactly the diagnostic gap that
-  // motivated the ticket. Bots probe noisily, so consider sampling here
-  // if log volume becomes a concern.
-  logSystemWarn(
+  // Emit a structured Loki line so frequently-probed unknown routes stay
+  // diagnosable. This is a public surface that bots hammer with random
+  // paths; a miss is a client error, not a system fault, so it must not
+  // page on-call or burn a Sentry event per request. logUserError with no
+  // error argument logs to console/Loki and bumps a bounded Prometheus
+  // counter but skips captureException entirely. The unbounded path lives
+  // in the message (extractContext keeps only the "[api-catch-all]"
+  // prefix as the metric context), never in a metric label, so Prometheus
+  // cardinality stays flat.
+  logUserError(
     ErrorCategory.VALIDATION,
-    "[api-catch-all] unknown route",
-    new Error("api_route_not_found"),
-    {
-      path: pathname,
-      method: request.method,
-    }
+    `[api-catch-all] unknown route ${request.method} ${pathname}`,
+    undefined,
+    { method: request.method }
   );
   return apiError({
     status: 404,
