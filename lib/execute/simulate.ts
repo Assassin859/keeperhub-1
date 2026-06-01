@@ -303,10 +303,15 @@ export async function simulateNativeTransfer(
   const { rpc } = await getRpcManagerForChain(input.network);
   const tx: ethers.TransactionRequest = { from, to, value };
 
+  // Run estimateGas + provider.call together so a contract recipient
+  // (fallback handler, precompile, etc.) surfaces its return bytes
+  // alongside the gas estimate. For an EOA recipient the call returns
+  // "0x" and simulatedReturnValue ends up null.
   let gasEstimate: bigint;
+  let returnData: string;
   try {
-    gasEstimate = await rpc.executeWithFailover(
-      (p) => p.estimateGas(tx),
+    [gasEstimate, returnData] = await rpc.executeWithFailover(
+      (p) => Promise.all([p.estimateGas(tx), p.call(tx)]),
       "read"
     );
   } catch (err) {
@@ -325,7 +330,7 @@ export async function simulateNativeTransfer(
     to,
     value: value.toString(),
     gasEstimate: gasEstimate.toString(),
-    simulatedReturnValue: null,
+    simulatedReturnValue: returnData && returnData !== "0x" ? returnData : null,
     wouldRevert: false,
   };
 }

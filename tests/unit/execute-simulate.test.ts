@@ -242,7 +242,9 @@ describe("simulateContractCall", () => {
 describe("simulateNativeTransfer", () => {
   it("returns gas estimate when the network accepts the transfer", async () => {
     resetSpies();
-    executeWithFailover.mockResolvedValueOnce(BigInt(21_000));
+    // EOA recipient: estimateGas returns 21000, provider.call returns
+    // "0x" (no return data), so simulatedReturnValue ends up null.
+    executeWithFailover.mockResolvedValueOnce([BigInt(21_000), "0x"]);
 
     const result = await simulateNativeTransfer({
       organizationId: "org_test",
@@ -263,6 +265,30 @@ describe("simulateNativeTransfer", () => {
       expect.any(Function),
       "read"
     );
+  });
+
+  it("surfaces return data when the recipient is a contract or precompile", async () => {
+    resetSpies();
+    // 32 bytes of zeros — what a SHA-256 precompile of empty input
+    // would return.
+    const precompileReturn = `0x${"00".repeat(32)}`;
+    executeWithFailover.mockResolvedValueOnce([
+      BigInt(24_338),
+      precompileReturn,
+    ]);
+
+    const result = await simulateNativeTransfer({
+      organizationId: "org_test",
+      network: "1",
+      recipientAddress: RECIPIENT_ADDRESS,
+      amount: "0.000005",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.gasEstimate).toBe("24338");
+      expect(result.simulatedReturnValue).toBe(precompileReturn);
+    }
   });
 
   it("returns wouldRevert when estimateGas throws", async () => {
