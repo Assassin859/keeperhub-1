@@ -40,6 +40,12 @@ async function main(): Promise<void> {
 
   const ctx = await chromium.launchPersistentContext(profileDir, {
     headless: false,
+    // Playwright defaults to a fixed 1280x720 viewport that does not track
+    // window resizing, so the UI renders letterboxed when the window is
+    // maximized or fullscreened. `viewport: null` makes the page follow the
+    // real OS window size; `--start-maximized` opens it filling the screen.
+    viewport: null,
+    args: ["--start-maximized"],
   });
 
   await ctx.addCookies([
