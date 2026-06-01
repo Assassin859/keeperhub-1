@@ -13,8 +13,9 @@
  *      (...))`. This is what allows the on-chain `feedbackHash` to verify
  *      against the JSON served at /api/feedback/[id] later.
  */
-import { describe, expect, it } from "vitest";
+
 import { keccak256, stringToBytes } from "viem";
+import { describe, expect, it } from "vitest";
 import {
   buildFeedbackUriContent,
   buildGiveFeedbackCalldata,
@@ -26,7 +27,7 @@ import {
 describe("buildGiveFeedbackCalldata", () => {
   it("encodes with selector 0x3c036a7e", () => {
     const calldata = buildGiveFeedbackCalldata({
-      agentId: BigInt(31875),
+      agentId: BigInt(31_875),
       value: BigInt(5),
       valueDecimals: 0,
       feedbackURI: "https://app.keeperhub.com/api/feedback/test123",
@@ -84,7 +85,7 @@ describe("buildFeedbackUriContent", () => {
   const fixedDate = new Date("2026-05-07T01:23:45.000Z");
   const args = {
     agentChainId: 1,
-    agentId: BigInt(31875),
+    agentId: BigInt(31_875),
     clientAddress: "0x8d56386b7beb7904072705def7d818aaa29c5421" as const,
     createdAt: fixedDate,
     value: BigInt(5),
@@ -174,7 +175,9 @@ describe("hashFeedbackContent", () => {
       value: "5",
       valueDecimals: 0,
     };
-    const expected = keccak256(stringToBytes(canonicaliseFeedbackContent(content)));
+    const expected = keccak256(
+      stringToBytes(canonicaliseFeedbackContent(content))
+    );
     expect(hashFeedbackContent(content)).toBe(expected);
   });
 

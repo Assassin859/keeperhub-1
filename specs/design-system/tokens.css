@@ -229,10 +229,7 @@
   --color-hub-gradient-center: var(--ds-hub-surface-3, #243548);
   --color-hub-overlay: var(--ds-hub-overlay, #171f2e);
   --color-hub-node-bg: var(--ds-hub-surface-muted, #3d4f63);
-  --color-row-stripe: var(
-    --ds-row-stripe,
-    oklch(0.2795 0.0368 260.03 / 0.4)
-  );
+  --color-row-stripe: var(--ds-row-stripe, oklch(0.2795 0.0368 260.03 / 0.4));
 
   /* --- Color: Badge (template) --- */
   --color-badge-blue-bg: var(--ds-blue-500-10, rgba(59, 130, 246, 0.1));

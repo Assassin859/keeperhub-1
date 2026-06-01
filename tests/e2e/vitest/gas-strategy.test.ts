@@ -31,8 +31,8 @@ vi.mock("server-only", () => ({}));
 vi.unmock("@/lib/db");
 
 import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
-import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
+import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 import { AdaptiveGasStrategy, resetGasStrategy } from "@/lib/web3/gas-strategy";
 
 // Skip if SKIP_INFRA_TESTS is true (no network access)

@@ -20,16 +20,20 @@ async function cleanupPass(): Promise<number> {
   const wfSubquery = sql`SELECT id FROM workflows WHERE user_id IN (${userSubquery})`;
 
   // Disable workflows to stop scheduler from creating new executions.
-  await db.execute(sql`
+  await db
+    .execute(sql`
     UPDATE workflows SET enabled = false
     WHERE user_id IN (${userSubquery})
-  `).catch(() => {});
+  `)
+    .catch(() => {});
 
   // Cancel running executions so rows aren't locked.
-  await db.execute(sql`
+  await db
+    .execute(sql`
     UPDATE workflow_executions SET status = 'cancelled'
     WHERE status = 'running' AND workflow_id IN (${wfSubquery})
-  `).catch(() => {});
+  `)
+    .catch(() => {});
 
   // Delete in FK-safe order. Each statement runs independently —
   // if one fails (lock, timeout), the next pass will retry.
@@ -76,30 +80,38 @@ async function cleanupPass(): Promise<number> {
     if (!(IDENT_RE.test(row.table_name) && IDENT_RE.test(row.column_name))) {
       continue;
     }
-    await db.execute(sql`
+    await db
+      .execute(sql`
       DELETE FROM ${sql.identifier(row.table_name)}
       WHERE ${sql.identifier(row.column_name)} IN (${userSubquery})
-    `).catch(() => {});
+    `)
+      .catch(() => {});
   }
 
   // Verifications by email pattern (no FK to users).
-  await db.execute(sql`
+  await db
+    .execute(sql`
     DELETE FROM verifications
     WHERE identifier LIKE ${VERIFICATION_PATTERN}
-  `).catch(() => {});
+  `)
+    .catch(() => {});
 
   // Organizations — cascade handles org-scoped tables.
-  await db.execute(sql`
+  await db
+    .execute(sql`
     DELETE FROM organization WHERE id IN (
       SELECT DISTINCT m.organization_id FROM member m
       WHERE m.user_id IN (${userSubquery})
     )
-  `).catch(() => {});
+  `)
+    .catch(() => {});
 
   // Users themselves.
-  await db.execute(sql`
+  await db
+    .execute(sql`
     DELETE FROM users WHERE email LIKE ${K6_EMAIL_PATTERN}
-  `).catch(() => {});
+  `)
+    .catch(() => {});
 
   // Count remaining.
   const remaining = await db
@@ -187,7 +199,8 @@ export async function POST(request: Request): Promise<NextResponse> {
           success: es,
           error: ee,
           running: er,
-          successRate: es + ee > 0 ? Math.round((10000 * es) / (es + ee)) / 100 : 100,
+          successRate:
+            es + ee > 0 ? Math.round((10_000 * es) / (es + ee)) / 100 : 100,
         },
         dryRun: true,
       });
@@ -248,7 +261,8 @@ export async function POST(request: Request): Promise<NextResponse> {
         error: execError,
         successRate:
           execSuccess + execError > 0
-            ? Math.round((10000 * execSuccess) / (execSuccess + execError)) / 100
+            ? Math.round((10_000 * execSuccess) / (execSuccess + execError)) /
+              100
             : 100,
       },
       emails,

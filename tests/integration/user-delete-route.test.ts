@@ -46,11 +46,9 @@ const txStub = {
 vi.mock("@/lib/db", () => ({
   db: {
     query: { users: { findFirst: mockUsersFindFirst } },
-    transaction: vi.fn(
-      async (cb: (tx: typeof txStub) => Promise<unknown>) => {
-        await cb(txStub);
-      }
-    ),
+    transaction: vi.fn(async (cb: (tx: typeof txStub) => Promise<unknown>) => {
+      await cb(txStub);
+    }),
   },
 }));
 
