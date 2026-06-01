@@ -11,7 +11,13 @@ export function MobileWarningDialog() {
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
-    const dismissed = localStorage.getItem(STORAGE_KEY);
+    let dismissed: string | null = null;
+    try {
+      dismissed = localStorage.getItem(STORAGE_KEY);
+    } catch {
+      // Safari Private Browsing / Lockdown Mode blocks storage access and
+      // throws SecurityError. Treat as not dismissed and show the warning.
+    }
     if (!dismissed && window.innerWidth < MOBILE_BREAKPOINT) {
       setOpen(true);
     }
@@ -22,7 +28,11 @@ export function MobileWarningDialog() {
   }
 
   const handleContinue = () => {
-    localStorage.setItem(STORAGE_KEY, "true");
+    try {
+      localStorage.setItem(STORAGE_KEY, "true");
+    } catch {
+      // Storage unavailable; dismiss for this session only.
+    }
     setOpen(false);
   };
 
