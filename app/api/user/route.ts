@@ -4,12 +4,13 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { accounts, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { requireDualFactor } from "@/lib/mfa/dual-factor";
 import {
   auditFromAuth,
   type DualAuthContext,
   getDualAuthContext,
 } from "@/lib/middleware/auth-helpers";
-import { getUserWallet } from "@/lib/para/wallet-helpers";
+import { getOrganizationWallet } from "@/lib/web3/wallet-helpers";
 
 export async function GET(request: Request): Promise<NextResponse> {
   let authContext: DualAuthContext | null = null;
@@ -22,7 +23,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       );
     }
 
-    const { userId } = authContext;
+    const { userId, organizationId } = authContext;
     if (!userId) {
       return NextResponse.json(
         { error: "Auth context missing user. Please recreate the API key." },
@@ -53,11 +54,13 @@ export async function GET(request: Request): Promise<NextResponse> {
     });
 
     let walletAddress: string | null = null;
-    try {
-      const wallet = await getUserWallet(userId);
-      walletAddress = wallet.walletAddress;
-    } catch {
-      walletAddress = null;
+    if (organizationId) {
+      try {
+        const wallet = await getOrganizationWallet(organizationId);
+        walletAddress = wallet.walletAddress;
+      } catch {
+        walletAddress = null;
+      }
     }
 
     return NextResponse.json({
@@ -115,6 +118,32 @@ export async function PATCH(request: Request) {
     }
     if (body.email !== undefined) {
       updates.email = body.email;
+    }
+
+    // Email change is account-takeover surface — if an attacker can
+    // swap the email to one they control, every subsequent password-
+    // reset path mints them a session as the victim. Require dual-
+    // factor (TOTP + email OTP) for the email path specifically. Note:
+    // the email OTP is sent to the CURRENT email so the attacker
+    // cannot satisfy the inbox factor unless they already control it.
+    // Name-only updates skip the gate (low risk, frequent).
+    const isEmailChange =
+      updates.email !== undefined && updates.email !== session.user.email;
+    if (isEmailChange) {
+      const dual = await requireDualFactor({
+        userId: session.user.id,
+        email: session.user.email,
+        action: "email_change",
+        code: typeof body.code === "string" ? body.code : undefined,
+        emailOtp: typeof body.emailOtp === "string" ? body.emailOtp : undefined,
+        headers: request.headers,
+      });
+      if (!dual.ok) {
+        return NextResponse.json(
+          { error: dual.error, code: dual.code },
+          { status: dual.status }
+        );
+      }
     }
 
     await db.update(users).set(updates).where(eq(users.id, session.user.id));

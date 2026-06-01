@@ -37,7 +37,7 @@ import { startSafeRoleInstallMetrics } from "@/lib/metrics/instrumentation/safe"
 import {
   getOrganizationWallet,
   initializeWalletSigner,
-} from "@/lib/para/wallet-helpers";
+} from "@/lib/web3/wallet-helpers";
 import { buildExecTransactionCalldata } from "@/lib/safe/allowance-module";
 import {
   TEMPLATE_SPECS,

@@ -592,7 +592,7 @@ export function registerTools(
 
   server.tool(
     "list_action_schemas",
-    "List all available action schemas, triggers, and supported chains. Use this to discover what actions and integrations are available for workflow creation.",
+    "List all available action schemas, triggers, and supported chains. Use this to discover what actions and integrations are available for workflow creation. Each chain includes a 'status' field (stable, experimental, or deprecated) - prefer stable chains for production writes and avoid experimental/deprecated ones unless the user explicitly opts in.",
     {
       category: z
         .string()
@@ -880,12 +880,10 @@ export function registerTools(
     "execute_transfer",
     "Transfer native tokens (ETH, MATIC) or ERC20 tokens from your wallet to a recipient address. Requires a wallet integration.",
     {
-      network: z
+      chain_id: z
         .string()
         .describe("Chain ID (e.g., '1' for Ethereum, '8453' for Base)"),
-      recipient_address: z
-        .string()
-        .describe("Recipient wallet address (0x...)"),
+      to_address: z.string().describe("Recipient wallet address (0x...)"),
       amount: z
         .string()
         .describe("Amount to transfer in human-readable units (e.g., '0.1')"),
@@ -905,8 +903,8 @@ export function registerTools(
           "/api/execute/transfer",
           "POST",
           {
-            network: args.network,
-            recipientAddress: args.recipient_address,
+            chainId: args.chain_id,
+            recipientAddress: args.to_address,
             amount: args.amount,
             tokenAddress: args.token_address,
           }
@@ -923,7 +921,7 @@ export function registerTools(
     "Call a smart contract function. For view/pure functions, returns the result directly. For state-changing functions, submits a transaction and returns the execution ID. Requires a wallet integration for write calls.",
     {
       contract_address: z.string().describe("Contract address (0x...)"),
-      network: z.string().describe("Chain ID (e.g., '1' for Ethereum)"),
+      chain_id: z.string().describe("Chain ID (e.g., '1' for Ethereum)"),
       function_name: z
         .string()
         .describe("Solidity function name (e.g., 'balanceOf', 'transfer')"),
@@ -943,7 +941,7 @@ export function registerTools(
         .string()
         .optional()
         .describe(
-          "ETH value to send with the call in wei (for payable functions)"
+          "Native value to send with the call, as a decimal string in ether units (e.g. '0.1'). For payable functions."
         ),
       gas_limit_multiplier: z
         .string()
@@ -966,7 +964,7 @@ export function registerTools(
           "POST",
           {
             contractAddress: args.contract_address,
-            network: args.network,
+            chainId: args.chain_id,
             functionName: args.function_name,
             functionArgs: args.function_args,
             abi: args.abi,
@@ -989,7 +987,7 @@ export function registerTools(
       contract_address: z
         .string()
         .describe("Contract address to read the check value from (0x...)"),
-      network: z.string().describe("Chain ID (e.g., '1' for Ethereum)"),
+      chain_id: z.string().describe("Chain ID (e.g., '1' for Ethereum)"),
       function_name: z
         .string()
         .describe("Function to call for the check (e.g., 'balanceOf')"),
@@ -1035,7 +1033,7 @@ export function registerTools(
           "POST",
           {
             contractAddress: args.contract_address,
-            network: args.network,
+            chainId: args.chain_id,
             functionName: args.function_name,
             functionArgs: args.function_args,
             abi: args.abi,

@@ -93,7 +93,7 @@ vi.mock("@/lib/web3/resolve-org-context", () => ({
 // Mock wallet helpers
 const mockGetWalletAddress = vi.fn();
 const mockInitializeSigner = vi.fn();
-vi.mock("@/lib/para/wallet-helpers", () => ({
+vi.mock("@/lib/web3/wallet-helpers", () => ({
   getOrganizationWalletAddress: (...args: unknown[]) =>
     mockGetWalletAddress(...args),
   initializeWalletSigner: (...args: unknown[]) => mockInitializeSigner(...args),
@@ -167,6 +167,10 @@ vi.mock("@/lib/web3/pimlico-config", () => ({
 
 vi.mock("@/lib/safe/signer-resolver", () => ({
   resolveSignerMode: vi.fn().mockResolvedValue({
+    kind: "eoa",
+    ownerAddress: "0xwalletaddress",
+  }),
+  resolveSignerForNode: vi.fn().mockResolvedValue({
     kind: "eoa",
     ownerAddress: "0xwalletaddress",
   }),

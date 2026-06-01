@@ -213,7 +213,7 @@ describe.skipIf(shouldSkip)("RPC Failover E2E", () => {
       const anotherUserId = `test_user_${Date.now()}_2`;
       await db.insert(users).values({
         id: anotherUserId,
-        email: `test-${Date.now()}-2@example.com`,
+        email: `test-${Date.now()}-2@techops.services`,
         createdAt: new Date(),
         updatedAt: new Date(),
       });
@@ -263,7 +263,7 @@ describe.skipIf(shouldSkip)("RPC Failover E2E", () => {
       const tempUserId = `temp_user_${Date.now()}`;
       await db.insert(users).values({
         id: tempUserId,
-        email: `temp-${Date.now()}@example.com`,
+        email: `temp-${Date.now()}@techops.services`,
         createdAt: new Date(),
         updatedAt: new Date(),
       });

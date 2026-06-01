@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { users, sessions, workflowExecutions, workflowExecutionLogs, integrations, organization, organizationApiKeys, accounts, workflows, workflowSchedules, paraWallets, organizationTokens, apiKeys, tags, invitation, member, addressBookEntry, projects, chains, explorerConfigs, userRpcPreferences } from "./schema";
+import { users, sessions, workflowExecutions, workflowExecutionLogs, integrations, organization, organizationApiKeys, accounts, workflows, workflowSchedules, organizationWallets, organizationTokens, apiKeys, tags, invitation, member, addressBookEntry, projects, chains, explorerConfigs, userRpcPreferences } from "./schema";
 
 export const sessionsRelations = relations(sessions, ({one}) => ({
 	user: one(users, {
@@ -14,7 +14,7 @@ export const usersRelations = relations(users, ({many}) => ({
 	organizationApiKeys: many(organizationApiKeys),
 	accounts: many(accounts),
 	workflowExecutions: many(workflowExecutions),
-	paraWallets: many(paraWallets),
+	organizationWallets: many(organizationWallets),
 	apiKeys: many(apiKeys),
 	tags: many(tags),
 	invitations: many(invitation),
@@ -58,7 +58,7 @@ export const integrationsRelations = relations(integrations, ({one}) => ({
 export const organizationRelations = relations(organization, ({many}) => ({
 	integrations: many(integrations),
 	organizationApiKeys: many(organizationApiKeys),
-	paraWallets: many(paraWallets),
+	organizationWallets: many(organizationWallets),
 	organizationTokens: many(organizationTokens),
 	tags: many(tags),
 	invitations: many(invitation),
@@ -114,13 +114,13 @@ export const workflowSchedulesRelations = relations(workflowSchedules, ({one}) =
 	}),
 }));
 
-export const paraWalletsRelations = relations(paraWallets, ({one}) => ({
+export const organizationWalletsRelations = relations(organizationWallets, ({one}) => ({
 	user: one(users, {
-		fields: [paraWallets.userId],
+		fields: [organizationWallets.userId],
 		references: [users.id]
 	}),
 	organization: one(organization, {
-		fields: [paraWallets.organizationId],
+		fields: [organizationWallets.organizationId],
 		references: [organization.id]
 	}),
 }));

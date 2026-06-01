@@ -194,15 +194,12 @@ export const workflowSchedules = pgTable("workflow_schedules", {
 	unique("workflow_schedules_workflow_id_unique").on(table.workflowId),
 ]);
 
-export const paraWallets = pgTable("para_wallets", {
+export const organizationWallets = pgTable("organization_wallets", {
 	id: text().primaryKey().notNull(),
 	userId: text("user_id").notNull(),
 	organizationId: text("organization_id"),
-	provider: text().notNull(),
 	email: text().notNull(),
 	walletAddress: text("wallet_address").notNull(),
-	paraWalletId: text("para_wallet_id"),
-	userShare: text("user_share"),
 	turnkeySubOrgId: text("turnkey_sub_org_id"),
 	turnkeyWalletId: text("turnkey_wallet_id"),
 	turnkeyPrivateKeyId: text("turnkey_private_key_id"),
@@ -211,14 +208,13 @@ export const paraWallets = pgTable("para_wallets", {
 	foreignKey({
 			columns: [table.userId],
 			foreignColumns: [users.id],
-			name: "para_wallets_user_id_users_id_fk"
+			name: "organization_wallets_user_id_users_id_fk"
 		}).onDelete("cascade"),
 	foreignKey({
 			columns: [table.organizationId],
 			foreignColumns: [organization.id],
-			name: "para_wallets_organization_id_organization_id_fk"
+			name: "organization_wallets_organization_id_organization_id_fk"
 		}).onDelete("cascade"),
-	unique("para_wallets_organization_id_unique").on(table.organizationId),
 ]);
 
 export const supportedTokens = pgTable("supported_tokens", {

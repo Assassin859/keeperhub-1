@@ -24,6 +24,17 @@ function makeDb(rows: Array<{ id: string }>): AssertDb {
   } as unknown as AssertDb;
 }
 
+function makeFailingDb(error: Error): AssertDb {
+  const chain: Chain = {
+    from: () => chain,
+    where: () => chain,
+    limit: () => Promise.reject(error),
+  };
+  return {
+    select: (): Chain => chain,
+  } as unknown as AssertDb;
+}
+
 describe("assertTurnkeyEnvForActiveWallets", () => {
   const originalEnv = process.env;
 
@@ -31,6 +42,7 @@ describe("assertTurnkeyEnvForActiveWallets", () => {
     const {
       TURNKEY_API_PUBLIC_KEY: _pub,
       TURNKEY_API_PRIVATE_KEY: _priv,
+      K8S_NAMESPACE: _ns,
       ...rest
     } = originalEnv;
     process.env = rest;
@@ -88,5 +100,27 @@ describe("assertTurnkeyEnvForActiveWallets", () => {
     await expect(assertTurnkeyEnvForActiveWallets(db)).rejects.toThrow(
       BOTH_KEYS_PATTERN
     );
+  });
+
+  it("does not throw on missing env in an ephemeral PR environment", async () => {
+    process.env.K8S_NAMESPACE = "pr-1373";
+    const db = makeDb([{ id: "wallet-1" }]);
+
+    await expect(assertTurnkeyEnvForActiveWallets(db)).resolves.toBeUndefined();
+  });
+
+  it("rethrows a query failure outside ephemeral environments", async () => {
+    const db = makeFailingDb(new Error("connection refused"));
+
+    await expect(assertTurnkeyEnvForActiveWallets(db)).rejects.toThrow(
+      /connection refused/
+    );
+  });
+
+  it("does not throw on a query failure in an ephemeral PR environment", async () => {
+    process.env.K8S_NAMESPACE = "pr-1373";
+    const db = makeFailingDb(new Error("connection refused"));
+
+    await expect(assertTurnkeyEnvForActiveWallets(db)).resolves.toBeUndefined();
   });
 });

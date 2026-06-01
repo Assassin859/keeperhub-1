@@ -19,7 +19,7 @@ vi.mock("@/lib/agentic-wallet/sign-typed-data", () => {
   };
 });
 
-vi.mock("@/lib/para/wallet-helpers", () => ({
+vi.mock("@/lib/web3/wallet-helpers", () => ({
   getOrganizationWallet: (...args: unknown[]) => mockGetOrgWallet(...args),
 }));
 

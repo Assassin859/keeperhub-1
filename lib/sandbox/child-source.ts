@@ -8,16 +8,30 @@
  * ~240 lines of this grandchild source verbatim; this module is the single
  * source of truth.
  *
- * DO NOT IMPORT anything into this module — the exported string is passed
- * intact to `node -e`, so any `import` statements would not propagate and
- * any value-level logic would not execute in the grandchild. Everything
- * the grandchild needs must be expressed inside the template literal.
+ * Module imports here are restricted to pure data. The exported string is
+ * passed intact to `node -e`, so any TypeScript-level import is only
+ * usable at template-render time via `JSON.stringify` interpolation - no
+ * runtime behaviour can cross into the grandchild because the grandchild
+ * has no access to npm or to the rest of this codebase. Importing pure
+ * data is the SSRF-blocklist sharing pattern used here (see
+ * `lib/ssrf-blocklist.ts`); importing anything with runtime side effects
+ * or third-party deps would not propagate to the grandchild.
  *
  * The grandchild uses only node: builtins (node:vm, node:v8, node:dns,
  * node:net) so the downstream sandbox package can remain zero-runtime-dep
  * by design. Adding third-party packages (e.g. undici) would enlarge the
  * supply-chain attack surface of the sandbox container.
  */
+// The blocklist data is imported as JSON (not as a `.ts` module) because
+// this file is compiled by two separate tsconfigs with incompatible
+// `.js`/`.ts` resolution conventions: the keeperhub app (Next.js
+// Turbopack) wants extension-less imports for `.ts` sources, while the
+// standalone @keeperhub/sandbox package is `"type": "module"` and its
+// strict ESM runtime requires explicit file extensions. A `.json`
+// extension resolves identically in both contexts, so the data lives in
+// `lib/ssrf-blocklist.json` and `lib/ssrf-blocklist.ts` is just a typed
+// re-export used by the keeperhub-side consumers.
+import blocklist from "../ssrf-blocklist.json" with { type: "json" };
 
 /**
  * Byte-sequence that prefixes the grandchild's final v8-serialized result
@@ -50,12 +64,18 @@ const { BlockList, isIP } = require("node:net");
 
 const MAX_LOG_ENTRIES = 200;
 
-// SSRF guard: ported from lib/safe-fetch.ts (KEEP-314). Modeled on the
-// main-app pattern but inlined here because the sandbox package is
+// SSRF guard: ported from lib/safe-fetch.ts. Modeled on the main-app
+// pattern but inlined here because the sandbox package is
 // zero-runtime-dep by design and the grandchild gets only node: builtins.
-// The defense here is DNS-resolved denylist — it catches hostnames that
-// resolve to RFC 1918, loopback, link-local (IMDS), CGNAT, and reserved
-// ranges, where the old substring check only caught named metadata hosts.
+// Two layers fire before the wrapped fetch dials anything:
+//   1. Pre-DNS hostname denylist (isBlockedHost) catches localhost and
+//      patterns like *.local, *.internal, *.svc.cluster.local,
+//      *.pod.cluster.local. Defense-in-depth on top of the IP check;
+//      also surfaces in error messages as the original hostname.
+//   2. DNS-resolved IP denylist catches hostnames that resolve to RFC
+//      1918, loopback, link-local (IMDS), CGNAT, reserved ranges, ULA,
+//      multicast, and the additional IPv6 transition prefixes
+//      (64:ff9b:1::/48, 2001::/32 Teredo, 2002::/16 6to4, 2001:db8::/32).
 // NAT64 (64:ff9b::/96): the well-known prefix is treated specially. In
 // dual-stack / IPv6-preferred pods (typical for our AWS prod VPC) the
 // resolver synthesises NAT64 AAAA records for every IPv4-only public
@@ -67,6 +87,11 @@ const MAX_LOG_ENTRIES = 200;
 // undici as a sandbox dep), so there is a small window between our
 // dns.lookup and the fetch's internal connect where the record could
 // change. NetworkPolicy is the real defense for that (tracked elsewhere).
+// Testing note: the sandbox guard is not unit-tested directly because
+// this entire file is a template literal executed in a subprocess via
+// "node -e". The parallel behavior in lib/safe-fetch.ts is unit-tested
+// (tests/unit/safe-fetch.test.ts) and these CIDR / hostname denylists
+// are kept in lockstep with that file by convention.
 const ALLOWED_SCHEMES = new Set(["http:", "https:"]);
 const IPV4_MAPPED_PREFIX = "::ffff:";
 const IPV4_MAPPED_HEX_REGEX = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/;
@@ -76,40 +101,38 @@ const NAT64_CANONICAL_REGEX = /^64:ff9b::([0-9a-f]{1,4}):([0-9a-f]{1,4})$/;
 const NAT64_UNCOMPRESSED_REGEX = /^64:ff9b:0:0:0:0:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/;
 const NAT64_DOTTED_REGEX = /^64:ff9b::(\\d+\\.\\d+\\.\\d+\\.\\d+)$/;
 
+// CIDR ranges and special prefixes interpolated from
+// lib/ssrf-blocklist.ts at module-render time. See that file for the
+// rationale on which ranges are blanket-blocked vs handled specially.
+// Note: ::ffff:0:0/96 (IPv4-mapped IPv6) is intentionally not added —
+// Node treats that subnet as "all IPv4" which would make every IPv4
+// check return true. IPv4-mapped IPv6 pointing at private IPv4 is
+// caught via the mapped extraction below. The NAT64 well-known prefix
+// (64:ff9b::/96) is also kept separate for the same reason - dual-stack
+// resolvers synthesise it for every IPv4-only public host, so we extract
+// the embedded IPv4 and recheck it against the IPv4 list.
+const SSRF_IPV4_CIDRS = ${JSON.stringify(blocklist.ipv4Cidrs)};
+const SSRF_IPV4_BROADCAST_ADDRESSES = ${JSON.stringify(blocklist.ipv4BroadcastAddresses)};
+const SSRF_IPV6_LITERAL_ADDRESSES = ${JSON.stringify(blocklist.ipv6LiteralAddresses)};
+const SSRF_IPV6_CIDRS = ${JSON.stringify(blocklist.ipv6Cidrs)};
+const SSRF_NAT64_PREFIX_CIDR = ${JSON.stringify(blocklist.nat64PrefixCidr)};
+
 const SSRF_BLOCK_LIST = new BlockList();
-SSRF_BLOCK_LIST.addSubnet("0.0.0.0", 8, "ipv4");
-SSRF_BLOCK_LIST.addSubnet("10.0.0.0", 8, "ipv4");
-SSRF_BLOCK_LIST.addSubnet("100.64.0.0", 10, "ipv4");
-SSRF_BLOCK_LIST.addSubnet("127.0.0.0", 8, "ipv4");
-SSRF_BLOCK_LIST.addSubnet("169.254.0.0", 16, "ipv4");
-SSRF_BLOCK_LIST.addSubnet("172.16.0.0", 12, "ipv4");
-SSRF_BLOCK_LIST.addSubnet("192.0.0.0", 24, "ipv4");
-SSRF_BLOCK_LIST.addSubnet("192.0.2.0", 24, "ipv4");
-SSRF_BLOCK_LIST.addSubnet("192.88.99.0", 24, "ipv4");
-SSRF_BLOCK_LIST.addSubnet("192.168.0.0", 16, "ipv4");
-SSRF_BLOCK_LIST.addSubnet("198.18.0.0", 15, "ipv4");
-SSRF_BLOCK_LIST.addSubnet("198.51.100.0", 24, "ipv4");
-SSRF_BLOCK_LIST.addSubnet("203.0.113.0", 24, "ipv4");
-SSRF_BLOCK_LIST.addSubnet("224.0.0.0", 4, "ipv4");
-SSRF_BLOCK_LIST.addSubnet("240.0.0.0", 4, "ipv4");
-SSRF_BLOCK_LIST.addAddress("255.255.255.255", "ipv4");
-SSRF_BLOCK_LIST.addAddress("::", "ipv6");
-SSRF_BLOCK_LIST.addAddress("::1", "ipv6");
-// Note: ::ffff:0:0/96 (IPv4-mapped IPv6) not added — Node treats that
-// subnet as "all IPv4" which would make every IPv4 check return true.
-// IPv4-mapped IPv6 pointing at private IPv4 is caught via the mapped
-// extraction below.
-// NAT64 (64:ff9b::/96) is intentionally separate: dual-stack networks
-// synthesise it for every IPv4-only public host, so blanket-blocking the
-// prefix would block legitimate destinations. The embedded IPv4 is
-// rechecked against the IPv4 list below.
-SSRF_BLOCK_LIST.addSubnet("100::", 64, "ipv6");
-SSRF_BLOCK_LIST.addSubnet("fc00::", 7, "ipv6");
-SSRF_BLOCK_LIST.addSubnet("fe80::", 10, "ipv6");
-SSRF_BLOCK_LIST.addSubnet("ff00::", 8, "ipv6");
+for (const cidr of SSRF_IPV4_CIDRS) {
+  SSRF_BLOCK_LIST.addSubnet(cidr[0], cidr[1], "ipv4");
+}
+for (const addr of SSRF_IPV4_BROADCAST_ADDRESSES) {
+  SSRF_BLOCK_LIST.addAddress(addr, "ipv4");
+}
+for (const addr of SSRF_IPV6_LITERAL_ADDRESSES) {
+  SSRF_BLOCK_LIST.addAddress(addr, "ipv6");
+}
+for (const cidr of SSRF_IPV6_CIDRS) {
+  SSRF_BLOCK_LIST.addSubnet(cidr[0], cidr[1], "ipv6");
+}
 
 const NAT64_BLOCK_LIST = new BlockList();
-NAT64_BLOCK_LIST.addSubnet("64:ff9b::", 96, "ipv6");
+NAT64_BLOCK_LIST.addSubnet(SSRF_NAT64_PREFIX_CIDR[0], SSRF_NAT64_PREFIX_CIDR[1], "ipv6");
 
 function hexGroupsToIpv4(highHex, lowHex) {
   const high = Number.parseInt(highHex, 16);
@@ -190,7 +213,38 @@ function stripIpv6Brackets(hostname) {
   return hostname;
 }
 
+// Pre-DNS hostname denylist interpolated from lib/ssrf-blocklist.ts at
+// module-render time. See that module for the rationale (case handling,
+// suffix semantics, cluster-domain assumption).
+const BLOCKED_HOST_EXACT = new Set(${JSON.stringify(blocklist.blockedHostExact)});
+const BLOCKED_HOST_SUFFIXES = ${JSON.stringify(blocklist.blockedHostSuffixes)};
+
+function isBlockedHost(host) {
+  if (host === "") {
+    return false;
+  }
+  let normalised = host.trim().toLowerCase();
+  if (normalised.endsWith(".")) {
+    normalised = normalised.slice(0, -1);
+  }
+  if (normalised === "") {
+    return false;
+  }
+  if (BLOCKED_HOST_EXACT.has(normalised)) {
+    return true;
+  }
+  for (const suffix of BLOCKED_HOST_SUFFIXES) {
+    if (normalised.endsWith(suffix)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 async function checkHostnameSsrf(hostname) {
+  if (isBlockedHost(hostname)) {
+    return { blocked: true, ip: hostname };
+  }
   if (isIP(hostname) !== 0) {
     return isBlockedIp(hostname);
   }

@@ -55,9 +55,15 @@ async function runUserCodeAgainstRemoteSandbox(
   return (await res.json()) as RunCodeApiResponse;
 }
 
-function assertNoSentinel(payload: string): void {
-  expect(payload).not.toContain(EXPECTED_SENTINEL);
-}
+// Regex literals hoisted to module scope to satisfy the
+// useTopLevelRegex lint rule (avoids per-call allocation) and to make
+// the assertions easy to scan as a group.
+const READ_FAILED_ENOENT_RX = /READ_FAILED:\s*(ENOENT|no such file)/i;
+const SHELL_SPAWN_ERROR_RX = /ENOENT|EACCES|EPERM/i;
+const READONLY_FS_ERROR_RX = /EROFS|EACCES|EPERM/i;
+const TCP_DROP_ERROR_RX =
+  /TIMEOUT|EHOSTUNREACH|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND/i;
+const TCP_NET_DROP_RX = /TIMEOUT|EHOSTUNREACH|ECONNREFUSED|ETIMEDOUT/i;
 
 describe.skipIf(!SHOULD_RUN)("Sandbox Escape Matrix (Phase 38 E2E)", () => {
   it("TEST-01: Error.constructor escape cannot read CHILD_ENV_ALLOWLIST-external vars", async () => {
@@ -67,7 +73,7 @@ describe.skipIf(!SHOULD_RUN)("Sandbox Escape Matrix (Phase 38 E2E)", () => {
     );
     expect(outcome.success).toBe(true);
     const serialized = JSON.stringify(outcome.result ?? {});
-    assertNoSentinel(serialized);
+    expect(serialized).not.toContain(EXPECTED_SENTINEL);
   });
 
   it("TEST-02: /proc/self/environ inside sandbox does not contain main-pod secret", async () => {
@@ -79,7 +85,7 @@ describe.skipIf(!SHOULD_RUN)("Sandbox Escape Matrix (Phase 38 E2E)", () => {
        } catch (e) { return "READ_FAILED: " + (e && e.message ? e.message : String(e)); }`
     );
     expect(outcome.success).toBe(true);
-    assertNoSentinel(String(outcome.result ?? ""));
+    expect(String(outcome.result ?? "")).not.toContain(EXPECTED_SENTINEL);
   });
 
   it("TEST-03: /proc/1/environ and /proc/<ppid>/environ do not reveal main-pod secrets", async () => {
@@ -94,7 +100,7 @@ describe.skipIf(!SHOULD_RUN)("Sandbox Escape Matrix (Phase 38 E2E)", () => {
     );
     expect(outcome.success).toBe(true);
     const payload = JSON.stringify(outcome.result ?? {});
-    assertNoSentinel(payload);
+    expect(payload).not.toContain(EXPECTED_SENTINEL);
   });
 
   it("TEST-04: /var/run/secrets/kubernetes.io/serviceaccount/token is ENOENT", async () => {
@@ -107,8 +113,8 @@ describe.skipIf(!SHOULD_RUN)("Sandbox Escape Matrix (Phase 38 E2E)", () => {
     );
     expect(outcome.success).toBe(true);
     const result = String(outcome.result ?? "");
-    expect(result).toMatch(/READ_FAILED:\s*(ENOENT|no such file)/i);
-    assertNoSentinel(result);
+    expect(result).toMatch(READ_FAILED_ENOENT_RX);
+    expect(result).not.toContain(EXPECTED_SENTINEL);
   });
 
   it("TEST-05: /var/run/secrets/eks.amazonaws.com/serviceaccount/token is ENOENT", async () => {
@@ -121,8 +127,168 @@ describe.skipIf(!SHOULD_RUN)("Sandbox Escape Matrix (Phase 38 E2E)", () => {
     );
     expect(outcome.success).toBe(true);
     const result = String(outcome.result ?? "");
-    expect(result).toMatch(/READ_FAILED:\s*(ENOENT|no such file)/i);
-    assertNoSentinel(result);
+    expect(result).toMatch(READ_FAILED_ENOENT_RX);
+    expect(result).not.toContain(EXPECTED_SENTINEL);
+  });
+
+  // TEST-06..10: post-Tier-1 hardening assertions. These assume the
+  // sandbox is running on the distroless runtime image
+  // (gcr.io/distroless/nodejs24-debian12), with readOnlyRootFilesystem,
+  // tmpfs /tmp, and the egress-deny NetworkPolicy. They fail loudly if
+  // any of those regress.
+
+  it("TEST-06: distroless image has no /bin/sh, no busybox, no spawnable shell", async () => {
+    // child_process.spawn returns a ChildProcess that emits "error" with
+    // code ENOENT when the binary does not exist. We try every common
+    // shell path; all must fail to spawn.
+    const outcome = await runUserCodeAgainstRemoteSandbox(
+      `const p = Error.constructor("return process")();
+       const cp = p.mainModule.require("child_process");
+       const candidates = ["/bin/sh", "/bin/bash", "/bin/ash", "/bin/busybox", "/usr/bin/sh"];
+       const results = await Promise.all(candidates.map(bin => new Promise(resolve => {
+         try {
+           const child = cp.spawn(bin, ["-c", "echo SHELL_PRESENT"], { stdio: ["ignore", "pipe", "pipe"] });
+           let spawned = false;
+           child.on("spawn", () => { spawned = true; });
+           child.on("error", e => resolve({ bin, ok: false, code: e && e.code ? e.code : "ERR" }));
+           child.on("close", code => resolve({ bin, ok: spawned, code }));
+         } catch (e) {
+           resolve({ bin, ok: false, code: e && e.code ? e.code : "THROW" });
+         }
+       })));
+       return results;`
+    );
+    expect(outcome.success).toBe(true);
+    const results = outcome.result as Array<{
+      bin: string;
+      ok: boolean;
+      code: string | number;
+    }>;
+    for (const r of results) {
+      expect(r.ok).toBe(false);
+      expect(String(r.code)).toMatch(SHELL_SPAWN_ERROR_RX);
+    }
+  });
+
+  it("TEST-07: readOnlyRootFilesystem blocks writes outside /tmp", async () => {
+    const outcome = await runUserCodeAgainstRemoteSandbox(
+      `const p = Error.constructor("return process")();
+       const fs = p.mainModule.require("fs");
+       const attempts = ["/etc/keeperhub-tampering-canary", "/usr/keeperhub-tampering-canary", "/keeperhub-tampering-canary"];
+       const results = attempts.map(path => {
+         try { fs.writeFileSync(path, "x"); return { path, ok: true, code: null }; }
+         catch (e) { return { path, ok: false, code: e && e.code ? e.code : String(e) }; }
+       });
+       // sanity: a write to the tmpfs /tmp must succeed (so we're not just blocked everywhere)
+       let tmpOk = false;
+       try { fs.writeFileSync("/tmp/keeperhub-tmpfs-canary", "x"); fs.unlinkSync("/tmp/keeperhub-tmpfs-canary"); tmpOk = true; } catch (_) {}
+       return { results, tmpOk };`
+    );
+    expect(outcome.success).toBe(true);
+    const payload = outcome.result as {
+      results: Array<{ path: string; ok: boolean; code: string | null }>;
+      tmpOk: boolean;
+    };
+    for (const r of payload.results) {
+      expect(r.ok).toBe(false);
+      expect(String(r.code)).toMatch(READONLY_FS_ERROR_RX);
+    }
+    expect(payload.tmpOk).toBe(true);
+  });
+
+  it("TEST-08: NetworkPolicy denies TCP to in-cluster Services (postgres, redis, main app)", async () => {
+    // Try to open raw TCP to canonical in-cluster ClusterIP targets via
+    // require("net"). Successful connect => NetworkPolicy regression.
+    const outcome = await runUserCodeAgainstRemoteSandbox(
+      `const p = Error.constructor("return process")();
+       const net = p.mainModule.require("net");
+       const targets = [
+         { host: "postgres.keeperhub.svc.cluster.local", port: 5432 },
+         { host: "redis.keeperhub.svc.cluster.local", port: 6379 },
+         { host: "keeperhub-staging-common.keeperhub.svc.cluster.local", port: 3000 },
+         { host: "keeperhub-prod-common.keeperhub.svc.cluster.local", port: 3000 },
+       ];
+       const probe = (t) => new Promise(resolve => {
+         const sock = net.createConnection({ host: t.host, port: t.port, timeout: 2500 });
+         let resolved = false;
+         const settle = (r) => { if (!resolved) { resolved = true; try { sock.destroy(); } catch (_) {} resolve(r); } };
+         sock.on("connect", () => settle({ ...t, connected: true, code: null }));
+         sock.on("error", e => settle({ ...t, connected: false, code: e && e.code ? e.code : "ERR" }));
+         sock.on("timeout", () => settle({ ...t, connected: false, code: "TIMEOUT" }));
+       });
+       return await Promise.all(targets.map(probe));`
+    );
+    expect(outcome.success).toBe(true);
+    const results = outcome.result as Array<{
+      host: string;
+      port: number;
+      connected: boolean;
+      code: string | null;
+    }>;
+    for (const r of results) {
+      expect(r.connected).toBe(false);
+      // VPC CNI NP enforces drop at the agent; common error codes are
+      // ETIMEDOUT (silent drop), EHOSTUNREACH, or ECONNREFUSED depending
+      // on which side rejects first. EAI_AGAIN/ENOTFOUND would mean DNS
+      // failed before TCP even tried (also acceptable since we deny
+      // resolution of in-cluster names that the policy blocks).
+      expect(String(r.code)).toMatch(TCP_DROP_ERROR_RX);
+    }
+  });
+
+  it("TEST-09: NetworkPolicy denies raw TCP to AWS IMDS (169.254.169.254)", async () => {
+    // SSRF guard catches fetch() to 169.254/16 (TEST in sandbox/src/run-code.test.ts).
+    // This case probes the network layer specifically: require("net") direct
+    // connect should be dropped by the NetworkPolicy egress except list.
+    const outcome = await runUserCodeAgainstRemoteSandbox(
+      `const p = Error.constructor("return process")();
+       const net = p.mainModule.require("net");
+       return await new Promise(resolve => {
+         const sock = net.createConnection({ host: "169.254.169.254", port: 80, timeout: 2500 });
+         let resolved = false;
+         const settle = (r) => { if (!resolved) { resolved = true; try { sock.destroy(); } catch (_) {} resolve(r); } };
+         sock.on("connect", () => settle({ connected: true, code: null }));
+         sock.on("error", e => settle({ connected: false, code: e && e.code ? e.code : "ERR" }));
+         sock.on("timeout", () => settle({ connected: false, code: "TIMEOUT" }));
+       });`
+    );
+    expect(outcome.success).toBe(true);
+    const r = outcome.result as { connected: boolean; code: string | null };
+    expect(r.connected).toBe(false);
+    expect(String(r.code)).toMatch(TCP_NET_DROP_RX);
+  });
+
+  it("TEST-10: NetworkPolicy denies HTTPS to private RFC1918 destinations", async () => {
+    // public 443 is allowed; private 443 is in the NP except list. A
+    // TCP connect to a private CIDR on port 443 must fail.
+    const outcome = await runUserCodeAgainstRemoteSandbox(
+      `const p = Error.constructor("return process")();
+       const net = p.mainModule.require("net");
+       const targets = [
+         { host: "10.0.0.1", port: 443 },
+         { host: "172.16.0.1", port: 443 },
+         { host: "192.168.0.1", port: 443 },
+       ];
+       const probe = (t) => new Promise(resolve => {
+         const sock = net.createConnection({ host: t.host, port: t.port, timeout: 2500 });
+         let resolved = false;
+         const settle = (r) => { if (!resolved) { resolved = true; try { sock.destroy(); } catch (_) {} resolve(r); } };
+         sock.on("connect", () => settle({ ...t, connected: true, code: null }));
+         sock.on("error", e => settle({ ...t, connected: false, code: e && e.code ? e.code : "ERR" }));
+         sock.on("timeout", () => settle({ ...t, connected: false, code: "TIMEOUT" }));
+       });
+       return await Promise.all(targets.map(probe));`
+    );
+    expect(outcome.success).toBe(true);
+    const results = outcome.result as Array<{
+      host: string;
+      connected: boolean;
+      code: string | null;
+    }>;
+    for (const r of results) {
+      expect(r.connected).toBe(false);
+      expect(String(r.code)).toMatch(TCP_NET_DROP_RX);
+    }
   });
 });
 

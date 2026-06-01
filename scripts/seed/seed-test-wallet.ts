@@ -37,7 +37,7 @@ import {
   accounts,
   member,
   organization,
-  paraWallets,
+  organizationWallets,
   users,
 } from "../../lib/db/schema";
 import { createTurnkeyWallet } from "../../lib/turnkey/turnkey-operations";
@@ -172,25 +172,15 @@ async function ensureTurnkeyWallet(
 ): Promise<void> {
   const existing = await db
     .select()
-    .from(paraWallets)
+    .from(organizationWallets)
     .where(
-      and(eq(paraWallets.organizationId, orgId), eq(paraWallets.isActive, true))
+      and(eq(organizationWallets.organizationId, orgId), eq(organizationWallets.isActive, true))
     )
     .limit(1);
 
   if (existing.length > 0) {
     const row = existing[0];
-    if (row.provider !== "turnkey") {
-      throw new Error(
-        `Refusing to seed: an active wallet exists for the test org with provider=${row.provider} ` +
-          "(Para is decommissioned). The executor will reject signing with this wallet. " +
-          `Mark the row inactive (UPDATE para_wallets SET is_active=false WHERE id='${row.id}') ` +
-          "and re-run to provision a Turnkey wallet."
-      );
-    }
-    console.log(
-      `Wallet already exists: ${row.walletAddress} (provider=${row.provider})`
-    );
+    console.log(`Wallet already exists: ${row.walletAddress}`);
     return;
   }
 
@@ -211,11 +201,10 @@ async function ensureTurnkeyWallet(
   console.log("Provisioning Turnkey sub-org and wallet for E2E test user...");
   const result = await createTurnkeyWallet(TEST_USER_EMAIL, TEST_ORG_SLUG);
 
-  await db.insert(paraWallets).values({
+  await db.insert(organizationWallets).values({
     id: generateId(),
     userId,
     organizationId: orgId,
-    provider: "turnkey",
     email: TEST_USER_EMAIL,
     walletAddress: result.walletAddress,
     turnkeySubOrgId: result.subOrgId,
@@ -278,8 +267,8 @@ async function seedTestWallet(): Promise<void> {
 
     const wallet = await db
       .select()
-      .from(paraWallets)
-      .where(eq(paraWallets.organizationId, orgId))
+      .from(organizationWallets)
+      .where(eq(organizationWallets.organizationId, orgId))
       .limit(1);
 
     console.log("\nE2E test account ready:");

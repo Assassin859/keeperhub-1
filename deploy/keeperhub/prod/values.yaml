@@ -153,9 +153,6 @@ env:
   HOSTNAME:
     type: kv
     value: "0.0.0.0"
-  PARA_ENVIRONMENT:
-    type: kv
-    value: "prod"
   WORKFLOW_TARGET_WORLD:
     type: kv
     value: "@workflow/world-postgres"
@@ -219,6 +216,24 @@ env:
     type: parameterStore
     name: next-public-google-client-id
     parameter_name: /eks/techops-prod/keeperhub/google-client-id
+  # Cloudflare Turnstile (signup captcha). Site key is also baked into the
+  # client bundle at build time (build-images.yml); this runtime entry covers
+  # server-side reads. Secret key is server-only (lib/auth.ts).
+  NEXT_PUBLIC_TURNSTILE_SITE_KEY:
+    type: parameterStore
+    name: next-public-turnstile-site-key
+    parameter_name: /eks/techops-prod/keeperhub/turnstile-site-key
+  TURNSTILE_SECRET_KEY:
+    type: parameterStore
+    name: turnstile-secret-key
+    parameter_name: /eks/techops-prod/keeperhub/turnstile-secret-key
+  # Enforce the captcha plugin explicitly rather than relying solely on
+  # NODE_ENV=production. Defense-in-depth: if NODE_ENV were ever misconfigured
+  # to non-production on a build that includes test endpoints, the plugin would
+  # otherwise silently skip. Keeps prod's captcha posture self-documenting.
+  TURNSTILE_ENFORCE:
+    type: kv
+    value: "true"
   OPENAI_API_KEY:
     type: parameterStore
     name: openai-api-key
@@ -226,10 +241,6 @@ env:
   AI_MODEL:
     type: kv
     value: "gpt-4o"
-  PARA_API_KEY:
-    type: parameterStore
-    name: para-api-key
-    parameter_name: /eks/techops-prod/keeperhub/para-api-key
   TURNKEY_API_PUBLIC_KEY:
     type: parameterStore
     name: turnkey-api-public-key
@@ -246,10 +257,6 @@ env:
     type: parameterStore
     name: agentic-wallet-hmac-kms-key
     parameter_name: /eks/techops-prod/keeperhub/agentic-wallet-hmac-kms-key
-  WALLET_ENCRYPTION_KEY:
-    type: parameterStore
-    name: wallet-encryption-key
-    parameter_name: /eks/techops-prod/keeperhub/wallet-encryption-key
   INTEGRATION_ENCRYPTION_KEY:
     type: parameterStore
     name: integration-encryption-key
@@ -317,6 +324,12 @@ env:
     type: kv
     value: "true"
   NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED:
+    type: kv
+    value: "false"
+  # AI Prompt feature flag - disabled
+  # (gates UI render in components/workflow/workflow-canvas.tsx
+  #  and /api/ai/generate route)
+  NEXT_PUBLIC_AI_PROMPT_ENABLED:
     type: kv
     value: "false"
   STRIPE_SECRET_KEY:

@@ -17,7 +17,7 @@ import { ErrorCategory, logUserError } from "@/lib/logging";
 import {
   getOrganizationWalletAddress,
   initializeWalletSigner,
-} from "@/lib/para/wallet-helpers";
+} from "@/lib/web3/wallet-helpers";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import { getErrorMessage } from "@/lib/utils";
@@ -26,7 +26,7 @@ import {
   executeContractCallAsRole,
   executeContractCallAsSafe,
 } from "@/lib/safe/execute-as-safe";
-import { resolveSignerMode } from "@/lib/safe/signer-resolver";
+import { resolveSignerForNode } from "@/lib/safe/signer-resolver";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import {
   classifyRevert,
@@ -57,6 +57,9 @@ export type ApproveTokenCoreInput = {
   // Strict mode: when true and usePrivateMempool is true, failing to reach the
   // private RPC does NOT fall back to the public mempool. Ignored otherwise.
   strict?: boolean;
+  // Per-node Web3 Connection field. See parseWeb3Connection in
+  // lib/safe/signer-resolver.ts. Missing -> "default" -> org-policy resolver.
+  web3Connection?: string;
   _context?: {
     executionId?: string;
     organizationId?: string;
@@ -104,6 +107,7 @@ export async function approveTokenCore(
     gasLimitMultiplier,
     usePrivateMempool,
     strict,
+    web3Connection,
     _context,
   } = input;
 
@@ -206,7 +210,19 @@ export async function approveTokenCore(
   }
 
   // Decide whether to route this write through the org's Safe on this chain.
-  const signerMode = await resolveSignerMode(organizationId, chainId);
+  let signerMode: Awaited<ReturnType<typeof resolveSignerForNode>>;
+  try {
+    signerMode = await resolveSignerForNode({
+      organizationId,
+      chainId,
+      web3Connection,
+    });
+  } catch (error) {
+    return {
+      success: false,
+      error: `Failed to resolve Web3 Connection: ${getErrorMessage(error)}`,
+    };
+  }
 
   // Get workflow ID for transaction tracking (only for workflow executions)
   let workflowId: string | undefined;
@@ -326,7 +342,7 @@ export async function approveTokenCore(
   const adapter = getChainAdapter(chainId);
 
   return withNonceSession(txContext, walletAddress, async (session) => {
-    // Initialize Para signer
+    // Initialize wallet signer
     let signer: Awaited<ReturnType<typeof initializeWalletSigner>>;
     try {
       signer = await initializeWalletSigner(organizationId, rpcUrl, chainId);

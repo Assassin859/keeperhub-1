@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { organizationApiKeys, sessions, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { requireDualFactor } from "@/lib/mfa/dual-factor";
 
 /**
  * POST /api/user/delete
@@ -19,8 +20,12 @@ export async function POST(request: Request): Promise<NextResponse> {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = (await request.json()) as { confirmation?: string };
-    const { confirmation } = body;
+    const body = (await request.json()) as {
+      confirmation?: string;
+      code?: string;
+      emailOtp?: string;
+    };
+    const { confirmation, code, emailOtp } = body;
 
     if (confirmation !== "DEACTIVATE") {
       return NextResponse.json(
@@ -50,6 +55,25 @@ export async function POST(request: Request): Promise<NextResponse> {
       return NextResponse.json(
         { error: "Account is already deactivated" },
         { status: 400 }
+      );
+    }
+
+    // Dual-factor challenge. Account deletion cascades to sessions,
+    // revokes API keys, and flips deactivatedAt which cascades to
+    // wallets — a stolen session must not be able to nuke the account
+    // without proving BOTH the authenticator and the inbox.
+    const dual = await requireDualFactor({
+      userId,
+      email: session.user.email,
+      action: "account_deactivate",
+      code,
+      emailOtp,
+      headers: request.headers,
+    });
+    if (!dual.ok) {
+      return NextResponse.json(
+        { error: dual.error, code: dual.code },
+        { status: dual.status }
       );
     }
 

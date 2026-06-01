@@ -13,7 +13,7 @@ import {
 import {
   getOrganizationWallet,
   getOrganizationWalletAddress,
-} from "@/lib/para/wallet-helpers";
+} from "@/lib/web3/wallet-helpers";
 import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 // reconcileSafeRoleFromChain is dynamically imported below to keep the
@@ -318,4 +318,191 @@ export async function resolveWalletAndSignerMode(
     resolveSignerMode(organizationId, chainId),
   ]);
   return { ownerWallet, signerMode };
+}
+
+/**
+ * Per-node Web3 Connection field, as persisted on `WorkflowNode.config.web3Connection`.
+ *
+ * Format:
+ *   - undefined | "default" : delegate to org policy (`resolveSignerMode`)
+ *   - "eoa"                  : force the Turnkey EOA, even if the org Safe is
+ *                              the default. Bypasses Zodiac Roles policy gating.
+ *   - "safe:<safeWalletId>"  : pin a specific Safe row. Resolver validates the
+ *                              Safe belongs to the org, is deployed, and lives
+ *                              on the same chain as the node.
+ *
+ * Two-segment string keeps the field human-inspectable in `workflows.nodes`
+ * JSONB and lint-friendly (no nested objects) without sacrificing typing.
+ */
+export type ParsedWeb3Connection =
+  | { kind: "default" }
+  | { kind: "eoa" }
+  | { kind: "safe"; safeWalletId: string };
+
+export function parseWeb3Connection(
+  value: string | null | undefined
+): ParsedWeb3Connection {
+  if (!value || value === "default") {
+    return { kind: "default" };
+  }
+  if (value === "eoa") {
+    return { kind: "eoa" };
+  }
+  if (value.startsWith("safe:")) {
+    const safeWalletId = value.slice("safe:".length);
+    if (safeWalletId.length === 0) {
+      throw new Error(
+        `Invalid web3Connection value '${value}': safe id is empty`
+      );
+    }
+    return { kind: "safe", safeWalletId };
+  }
+  throw new Error(`Invalid web3Connection value '${value}'`);
+}
+
+type ResolveSignerForNodeInput = {
+  organizationId: string;
+  chainId: number;
+  web3Connection?: string | null;
+};
+
+/**
+ * Per-node signer resolution. Looks at the node's `web3Connection` field and:
+ *
+ *   - "default" / missing -> delegates to `resolveSignerMode` (org-policy path).
+ *   - "eoa"               -> short-circuits to EOA mode. The org Safe (and its
+ *                             Zodiac Role, if any) is intentionally bypassed.
+ *   - "safe:<id>"         -> validates the Safe (same org, same chain, deployed),
+ *                             then resolves its role state the same way the
+ *                             policy path does. If a Roles modifier is active
+ *                             (DB row or chain probe) the resolver upgrades to
+ *                             `safe-role`; otherwise it returns plain `safe`.
+ *
+ * The "safe-role auto-upgrade" matches `resolveSignerModeImpl` behaviour so a
+ * node pinned to a Safe still enforces policy when one is installed, without
+ * exposing a separate "Safe with Role" UI option (per ticket design).
+ */
+export async function resolveSignerForNode(
+  input: ResolveSignerForNodeInput
+): Promise<SignerMode> {
+  const parsed = parseWeb3Connection(input.web3Connection);
+
+  if (parsed.kind === "default") {
+    return resolveSignerMode(input.organizationId, input.chainId);
+  }
+
+  if (parsed.kind === "eoa") {
+    const ownerAddress = normalizeAddressForStorage(
+      await getOrganizationWalletAddress(input.organizationId)
+    );
+    recordSignerMode({ kind: "eoa", chainId: input.chainId });
+    return { kind: "eoa", ownerAddress };
+  }
+
+  // safe:<id>
+  const rows = await db
+    .select({
+      id: safeWallets.id,
+      organizationId: safeWallets.organizationId,
+      chainId: safeWallets.chainId,
+      safeAddress: safeWallets.safeAddress,
+      status: safeWallets.status,
+      isSigningActive: safeWallets.isSigningActive,
+    })
+    .from(safeWallets)
+    .where(eq(safeWallets.id, parsed.safeWalletId))
+    .limit(1);
+
+  const safe = rows[0];
+  if (!safe) {
+    throw new Error(
+      `web3Connection refers to unknown Safe '${parsed.safeWalletId}'`
+    );
+  }
+  if (safe.organizationId !== input.organizationId) {
+    throw new Error(
+      `web3Connection refers to a Safe '${parsed.safeWalletId}' that does not belong to this organization`
+    );
+  }
+  if (safe.chainId !== input.chainId) {
+    throw new Error(
+      `web3Connection Safe '${parsed.safeWalletId}' is on chain ${safe.chainId}, but this node runs on chain ${input.chainId}`
+    );
+  }
+  if (safe.status !== "deployed") {
+    throw new Error(
+      `web3Connection Safe '${parsed.safeWalletId}' is not deployed yet (status=${safe.status})`
+    );
+  }
+
+  const ownerAddress = normalizeAddressForStorage(
+    await getOrganizationWalletAddress(input.organizationId)
+  );
+
+  // Mirror the role lookup in resolveSignerModeImpl so a pinned Safe still
+  // routes through `execTransactionWithRole` when a Roles modifier is active.
+  const roleRows = await db
+    .select({
+      rolesModifierAddress: safeRoles.rolesModifierAddress,
+      roleKey: safeRoles.roleKey,
+      delegateAddress: safeRoles.delegateAddress,
+      status: safeRoles.status,
+    })
+    .from(safeRoles)
+    .where(
+      and(
+        eq(safeRoles.safeWalletId, safe.id),
+        eq(safeRoles.roleType, "automation")
+      )
+    )
+    .limit(1);
+
+  const role = roleRows[0];
+  if (role && role.status === "active") {
+    recordSignerMode({ kind: "safe-role", chainId: input.chainId });
+    return {
+      kind: "safe-role",
+      ownerAddress,
+      safeAddress: safe.safeAddress,
+      safeWalletId: safe.id,
+      rolesModifierAddress: role.rolesModifierAddress,
+      roleKey: role.roleKey,
+      delegateAddress: role.delegateAddress,
+    };
+  }
+
+  const probedModifier = await probeRolesModifierFromChain({
+    id: safe.id,
+    chainId: input.chainId,
+    safeAddress: safe.safeAddress,
+  });
+  if (probedModifier) {
+    const safeForReconcile: SafeWallet = {
+      id: safe.id,
+      organizationId: safe.organizationId,
+      chainId: safe.chainId,
+      safeAddress: safe.safeAddress,
+      status: safe.status,
+      isSigningActive: safe.isSigningActive,
+    } as SafeWallet;
+    backfillRoleInBackground(safeForReconcile);
+    recordSignerMode({ kind: "safe-role", chainId: input.chainId });
+    return {
+      kind: "safe-role",
+      ownerAddress,
+      safeAddress: safe.safeAddress,
+      safeWalletId: safe.id,
+      rolesModifierAddress: normalizeAddressForStorage(probedModifier),
+      roleKey: orgAutomationRoleKey(input.organizationId, input.chainId),
+      delegateAddress: ownerAddress,
+    };
+  }
+
+  recordSignerMode({ kind: "safe", chainId: input.chainId });
+  return {
+    kind: "safe",
+    ownerAddress,
+    safeAddress: safe.safeAddress,
+    safeWalletId: safe.id,
+  };
 }

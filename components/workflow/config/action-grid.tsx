@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Eye,
   EyeOff,
+  Gem,
   Grid3X3,
   List,
   MoreHorizontal,
@@ -13,6 +14,7 @@ import {
 } from "lucide-react";
 import { useAtomValue } from "jotai";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { FeatureUpgradeDialog } from "@/components/billing/feature-upgrade-dialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -28,7 +30,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useFeatures } from "@/hooks/use-features";
 import { useIsTouch } from "@/hooks/use-touch";
+import type { FeatureDefinition } from "@/lib/features";
+import { getFeatureForActionType } from "@/lib/features";
 import { cn } from "@/lib/utils";
 import { nodesAtom } from "@/lib/workflow/store";
 import { getAllActions } from "@/plugins/registry";
@@ -212,6 +217,10 @@ export function ActionGrid({
   isNewlyCreated,
 }: ActionGridProps) {
   const actions = useAllActions();
+  const { snapshot: featureSnapshot } = useFeatures();
+  const [upgradeFeature, setUpgradeFeature] = useState<FeatureDefinition | null>(
+    null
+  );
   const [filter, setFilter] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
     () => new Set(actions.map((a) => a.category))
@@ -226,6 +235,35 @@ export function ActionGrid({
   const [viewMode, setViewMode] = useState<ViewMode>(getInitialViewMode);
   const inputRef = useRef<HTMLInputElement>(null);
   const isTouch = useIsTouch();
+
+  // Returns the gating info for a given action id (the actionType stored on
+  // saved workflow nodes). `feature` is undefined for non-gated actions; for
+  // gated actions, `enabled` reflects whether the org's plan unlocks it.
+  const getGate = (
+    actionId: string
+  ): { feature: FeatureDefinition | undefined; enabled: boolean } => {
+    const feature = getFeatureForActionType(actionId);
+    if (!feature) {
+      return { feature: undefined, enabled: true };
+    }
+    // While the snapshot is loading, treat gated actions as locked to avoid
+    // a flash of enabled state. Free users see the lock immediately; paid
+    // users see it for a few hundred ms until the fetch completes.
+    const enabled = featureSnapshot?.enabledFeatureIds.includes(feature.id) ?? false;
+    return { feature, enabled };
+  };
+
+  const handleActionClick = (actionId: string): void => {
+    if (disabled) {
+      return;
+    }
+    const gate = getGate(actionId);
+    if (gate.feature && !gate.enabled) {
+      setUpgradeFeature(gate.feature);
+      return;
+    }
+    onSelectAction(actionId);
+  };
 
   const toggleViewMode = () => {
     const newMode = viewMode === "list" ? "grid" : "list";
@@ -430,24 +468,38 @@ export function ActionGrid({
               .filter(
                 (action) => showHidden || !hiddenGroups.has(action.category)
               )
-              .map((action) => (
-                <button
-                  className={cn(
-                    "flex aspect-square flex-col items-center justify-center gap-1.5 rounded-lg border border-transparent p-2 text-center transition-colors hover:border-border hover:bg-muted",
-                    disabled && "pointer-events-none opacity-50"
-                  )}
-                  data-testid={`action-option-${action.id.toLowerCase().replace(/\s+/g, "-")}`}
-                  disabled={disabled}
-                  key={action.id}
-                  onClick={() => onSelectAction(action.id)}
-                  type="button"
-                >
-                  <ActionIcon action={action} className="size-6" />
-                  <span className="line-clamp-2 font-medium text-xs leading-tight">
-                    {action.label}
-                  </span>
-                </button>
-              ))}
+              .map((action) => {
+                const gate = getGate(action.id);
+                const isLocked = Boolean(gate.feature && !gate.enabled);
+                return (
+                  <button
+                    className={cn(
+                      "relative flex aspect-square flex-col items-center justify-center gap-1.5 rounded-lg border border-transparent p-2 text-center transition-colors hover:border-border hover:bg-muted",
+                      disabled && "pointer-events-none opacity-50",
+                      isLocked && "opacity-60"
+                    )}
+                    data-locked={isLocked ? "true" : undefined}
+                    data-testid={`action-option-${action.id.toLowerCase().replace(/\s+/g, "-")}`}
+                    disabled={disabled}
+                    key={action.id}
+                    onClick={() => handleActionClick(action.id)}
+                    title={
+                      isLocked && gate.feature
+                        ? `${gate.feature.name} requires ${gate.feature.requiredPlan}`
+                        : undefined
+                    }
+                    type="button"
+                  >
+                    {isLocked && (
+                      <Gem className="absolute top-1 right-1 size-3 text-[var(--color-text-accent)]" />
+                    )}
+                    <ActionIcon action={action} className="size-6" />
+                    <span className="line-clamp-2 font-medium text-xs leading-tight">
+                      {action.label}
+                    </span>
+                  </button>
+                );
+              })}
           </div>
         )}
 
@@ -459,30 +511,44 @@ export function ActionGrid({
             .filter(
               (action) => showHidden || !hiddenGroups.has(action.category)
             )
-            .map((action) => (
-              <button
-                className={cn(
-                  "flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-muted",
-                  disabled && "pointer-events-none opacity-50"
-                )}
-                data-testid={`action-option-${action.id.toLowerCase().replace(/\s+/g, "-")}`}
-                disabled={disabled}
-                key={action.id}
-                onClick={() => onSelectAction(action.id)}
-                type="button"
-              >
-                <ActionIcon action={action} className="size-4 shrink-0" />
-                <span className="min-w-0 flex-1 truncate">
-                  <span className="font-medium">{action.label}</span>
-                  {action.description && (
-                    <span className="text-muted-foreground text-xs">
-                      {" "}
-                      - {action.description}
-                    </span>
+            .map((action) => {
+              const gate = getGate(action.id);
+              const isLocked = Boolean(gate.feature && !gate.enabled);
+              return (
+                <button
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-muted",
+                    disabled && "pointer-events-none opacity-50",
+                    isLocked && "opacity-60"
                   )}
-                </span>
-              </button>
-            ))}
+                  data-locked={isLocked ? "true" : undefined}
+                  data-testid={`action-option-${action.id.toLowerCase().replace(/\s+/g, "-")}`}
+                  disabled={disabled}
+                  key={action.id}
+                  onClick={() => handleActionClick(action.id)}
+                  title={
+                    isLocked && gate.feature
+                      ? `${gate.feature.name} requires ${gate.feature.requiredPlan}`
+                      : undefined
+                  }
+                  type="button"
+                >
+                  <ActionIcon action={action} className="size-4 shrink-0" />
+                  <span className="min-w-0 flex-1 truncate">
+                    <span className="font-medium">{action.label}</span>
+                    {action.description && (
+                      <span className="text-muted-foreground text-xs">
+                        {" "}
+                        - {action.description}
+                      </span>
+                    )}
+                  </span>
+                  {isLocked && (
+                    <Gem className="size-3.5 shrink-0 text-[var(--color-text-accent)]" />
+                  )}
+                </button>
+              );
+            })}
 
         {/* List View - Grouped by super-category */}
         {viewMode === "list" &&
@@ -565,37 +631,62 @@ export function ActionGrid({
                       </DropdownMenu>
                     </div>
                     {!isCollapsed &&
-                      group.actions.map((action) => (
-                        <button
-                          className={cn(
-                            "flex w-full items-center rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-muted",
-                            disabled && "pointer-events-none opacity-50"
-                          )}
-                          data-testid={`action-option-${action.id.toLowerCase().replace(/\s+/g, "-")}`}
-                          disabled={disabled}
-                          key={action.id}
-                          onClick={() => onSelectAction(action.id)}
-                          type="button"
-                        >
-                          <span className="min-w-0 flex-1 truncate">
-                            <span className="font-medium">
-                              {action.label}
-                            </span>
-                            {action.description && (
-                              <span className="text-muted-foreground text-xs">
-                                {" "}
-                                - {action.description}
-                              </span>
+                      group.actions.map((action) => {
+                        const gate = getGate(action.id);
+                        const isLocked = Boolean(
+                          gate.feature && !gate.enabled
+                        );
+                        return (
+                          <button
+                            className={cn(
+                              "flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-muted",
+                              disabled && "pointer-events-none opacity-50",
+                              isLocked && "opacity-60"
                             )}
-                          </span>
-                        </button>
-                      ))}
+                            data-locked={isLocked ? "true" : undefined}
+                            data-testid={`action-option-${action.id.toLowerCase().replace(/\s+/g, "-")}`}
+                            disabled={disabled}
+                            key={action.id}
+                            onClick={() => handleActionClick(action.id)}
+                            title={
+                              isLocked && gate.feature
+                                ? `${gate.feature.name} requires ${gate.feature.requiredPlan}`
+                                : undefined
+                            }
+                            type="button"
+                          >
+                            <span className="min-w-0 flex-1 truncate">
+                              <span className="font-medium">
+                                {action.label}
+                              </span>
+                              {action.description && (
+                                <span className="text-muted-foreground text-xs">
+                                  {" "}
+                                  - {action.description}
+                                </span>
+                              )}
+                            </span>
+                            {isLocked && (
+                              <Gem className="size-3.5 shrink-0 text-[var(--color-text-accent)]" />
+                            )}
+                          </button>
+                        );
+                      })}
                   </div>
                 );
               })}
             </div>
           ))}
       </div>
+      <FeatureUpgradeDialog
+        feature={upgradeFeature}
+        onOpenChange={(open) => {
+          if (!open) {
+            setUpgradeFeature(null);
+          }
+        }}
+        open={upgradeFeature !== null}
+      />
     </div>
   );
 }

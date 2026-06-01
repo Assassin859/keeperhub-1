@@ -115,6 +115,7 @@ vi.mock("@/lib/db/schema", () => ({
   member: { id: "id", organizationId: "organizationId", userId: "userId" },
   workflows: { id: "id" },
   workflowExecutions: { id: "id" },
+  users: { id: "id", deactivatedAt: "deactivated_at" },
 }));
 
 vi.mock("@/lib/db/integrations", () => ({
@@ -124,6 +125,12 @@ vi.mock("@/lib/db/integrations", () => ({
 vi.mock("@/lib/billing/execution-guard", () => ({
   EXECUTION_LIMIT_ERROR: "Execution limit reached",
   enforceExecutionLimit: mockEnforceExecutionLimit,
+}));
+
+vi.mock("@/lib/features/route-guard", () => ({
+  enforceWorkflowFeatures: vi.fn().mockResolvedValue({ blocked: false }),
+  FEATURE_UPGRADE_REQUIRED_ERROR:
+    "This workflow uses features that require a paid plan.",
 }));
 
 vi.mock("@/app/api/execute/_lib/concurrency-limit", () => ({
@@ -240,6 +247,25 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
         createContext(WORKFLOW_ID)
       );
 
+      expect(mockApiKeysFindFirst).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("deactivated owner", () => {
+    it("should return 404 when the workflow owner is deactivated", async () => {
+      mockWorkflowsFindFirst.mockResolvedValue(webhookWorkflow);
+      // The owner lookup is the first db.select() the route makes; return a
+      // deactivated owner so the executability gate rejects before auth.
+      mockMemberLimit.mockResolvedValue([{ deactivatedAt: new Date() }]);
+
+      const response = await POST(
+        createWebhookRequest(VALID_API_KEY),
+        createContext(WORKFLOW_ID)
+      );
+
+      expect(response.status).toBe(404);
+      const data = await response.json();
+      expect(data.error).toBe("Workflow not found");
       expect(mockApiKeysFindFirst).not.toHaveBeenCalled();
     });
   });

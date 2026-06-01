@@ -38,6 +38,7 @@
 
 import { ethers } from "ethers";
 import fraxEtherV2Abi from "@/protocols/abis/frax-ether-v2.json";
+import { formatSanitizedRpcError } from "../lib/rpc/sanitize-rpc-error";
 
 const ANVIL_URL = process.env.ANVIL_URL ?? "http://localhost:8545";
 
@@ -137,7 +138,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-  const msg = err instanceof Error ? err.message : String(err);
-  console.error(`\nFAIL: ${msg}`);
+  console.error(`\nFAIL: ${formatSanitizedRpcError(err)}`);
   process.exit(1);
 });

@@ -1,18 +1,56 @@
-import { randomInt } from "node:crypto";
+import { randomInt, timingSafeEqual } from "node:crypto";
+import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
 import { and, eq, gt } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { accounts, users, verifications } from "@/lib/db/schema";
+import {
+  accounts,
+  twoFactor as twoFactorTable,
+  users,
+  verifications,
+} from "@/lib/db/schema";
 import { sendOAuthPasswordResetEmail, sendVerificationOTP } from "@/lib/email";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { hashPassword } from "@/lib/password";
+import { verifyUserTotp } from "@/lib/security/totp-verify";
+import { resolveTrustedClientIp } from "@/lib/security/trusted-proxies";
 import { generateId } from "@/lib/utils/id";
+import { checkForgotPasswordRateLimit } from "./_lib/rate-limit";
 
 const OAUTH_PROVIDERS = ["github", "google"];
 const OTP_EXPIRY_MINUTES = 5;
 
 function generateOTP(): string {
   return randomInt(100_000, 999_999).toString();
+}
+
+function constantTimeEquals(a: string, b: string): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
+
+async function encryptOtp(otp: string, secret: string): Promise<string> {
+  const ciphertext = await symmetricEncrypt({ key: secret, data: otp });
+  return `${ciphertext}:0`;
+}
+
+async function matchEncryptedOtp(
+  storedValue: string,
+  providedOtp: string,
+  secret: string
+): Promise<boolean> {
+  const ciphertext = storedValue.split(":")[0];
+  if (!ciphertext) {
+    return false;
+  }
+  try {
+    const decrypted = await symmetricDecrypt({ key: secret, data: ciphertext });
+    return constantTimeEquals(decrypted, providedOtp);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -27,6 +65,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       email?: string;
       otp?: string;
       newPassword?: string;
+      code?: string;
     };
 
     const { action, email } = body;
@@ -37,8 +76,35 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     const normalizedEmail = email.toLowerCase().trim();
 
+    // KEEP-625: rate limit BOTH legs of the flow. The /request leg
+    // mints reset codes (DoS / cost surface) and the /reset leg is
+    // where a stolen code is actually consumed; throttling both
+    // closes brute-force and email-flood paths.
+    const ip = resolveTrustedClientIp(
+      request,
+      request.headers.get("x-real-ip")
+    );
+    const limit = checkForgotPasswordRateLimit(normalizedEmail, ip);
+    if (!limit.allowed) {
+      return NextResponse.json(
+        {
+          error: `Too many requests. Try again in ${limit.retryAfterSeconds} seconds.`,
+          retryAfterSeconds: limit.retryAfterSeconds,
+        },
+        {
+          status: 429,
+          headers: { "Retry-After": String(limit.retryAfterSeconds) },
+        }
+      );
+    }
+
     if (action === "reset") {
-      return handleReset(normalizedEmail, body.otp, body.newPassword);
+      return handleReset(
+        normalizedEmail,
+        body.otp,
+        body.newPassword,
+        body.code
+      );
     }
 
     // Default to request action
@@ -73,8 +139,7 @@ async function handleRequest(email: string): Promise<NextResponse> {
   if (!user) {
     return NextResponse.json({
       success: true,
-      message:
-        "If an account exists with this email, a reset code has been sent.",
+      message: "Check your inbox for the reset code.",
     });
   }
 
@@ -88,68 +153,86 @@ async function handleRequest(email: string): Promise<NextResponse> {
     (acc) => acc.providerId === "credential"
   );
 
-  // If user only has OAuth, send a helpful email instead
+  // If user only has OAuth, send a helpful email instead. Pick the
+  // OAuth account they most recently signed in with so the reminder
+  // names the provider they actually used. Before this fix,
+  // multi-linked accounts (Google + GitHub) named whichever was first
+  // in OAUTH_PROVIDERS, which surfaced "uses GitHub" to users who had
+  // been signing in with Google.
   if (!credentialAccount) {
-    const oauthAccount = userAccounts.find((acc) =>
-      OAUTH_PROVIDERS.includes(acc.providerId)
-    );
-
-    if (oauthAccount) {
+    const mostRecentOauth = userAccounts
+      .filter((acc) => OAUTH_PROVIDERS.includes(acc.providerId))
+      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())[0];
+    if (mostRecentOauth) {
       const providerName =
-        oauthAccount.providerId.charAt(0).toUpperCase() +
-        oauthAccount.providerId.slice(1);
+        mostRecentOauth.providerId.charAt(0).toUpperCase() +
+        mostRecentOauth.providerId.slice(1);
       await sendOAuthPasswordResetEmail({ email, providerName });
     }
 
     return NextResponse.json({
       success: true,
-      message:
-        "If an account exists with this email, a reset code has been sent.",
+      message: "Check your inbox for the reset code.",
     });
   }
 
-  // Generate OTP
+  const secret = process.env.BETTER_AUTH_SECRET;
+  if (!secret) {
+    logSystemError(
+      ErrorCategory.CONFIGURATION,
+      "[Forgot Password] BETTER_AUTH_SECRET is not configured",
+      new Error("BETTER_AUTH_SECRET missing"),
+      { endpoint: "/api/user/forgot-password" }
+    );
+    return NextResponse.json(
+      { error: "Server misconfigured" },
+      { status: 500 }
+    );
+  }
+
   const otp = generateOTP();
+  const storedValue = await encryptOtp(otp, secret);
   const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
 
-  // Delete any existing verification for this email
+  // Wipe any prior in-flight OTP for this identifier; the rate limit
+  // upstream already prevents spam. The bare-email identifier is only
+  // used by this route, so this doesn't collide with better-auth's
+  // prefixed identifiers (sign-in-otp-..., etc.).
   await db.delete(verifications).where(eq(verifications.identifier, email));
 
-  // Store verification
   await db.insert(verifications).values({
     id: generateId(),
     identifier: email,
-    value: otp,
+    value: storedValue,
     expiresAt,
     createdAt: new Date(),
     updatedAt: new Date(),
   });
 
-  // Send OTP email
-  const emailSent = await sendVerificationOTP({
+  // Send OTP email. We intentionally do NOT propagate a send failure
+  // to the response: the row is already in `verifications`, the
+  // per-email/per-IP rate limit upstream has already debited, and a
+  // 500 here would also leak the "this email exists" bit that the
+  // earlier user-not-found / OAuth-only branches go out of their way
+  // to hide. sendVerificationOTP already logs failures via
+  // logUserError so observability is not lost.
+  await sendVerificationOTP({
     email,
     otp,
     type: "forget-password",
   });
 
-  if (!emailSent) {
-    return NextResponse.json(
-      { error: "Failed to send verification email" },
-      { status: 500 }
-    );
-  }
-
   return NextResponse.json({
     success: true,
-    message:
-      "If an account exists with this email, a reset code has been sent.",
+    message: "Check your inbox for the reset code.",
   });
 }
 
 async function handleReset(
   email: string,
   otp: string | undefined,
-  newPassword: string | undefined
+  newPassword: string | undefined,
+  code: string | undefined
 ): Promise<NextResponse> {
   if (!(otp && newPassword)) {
     return NextResponse.json(
@@ -165,16 +248,32 @@ async function handleReset(
     );
   }
 
-  // Find and verify OTP
+  const secret = process.env.BETTER_AUTH_SECRET;
+  if (!secret) {
+    logSystemError(
+      ErrorCategory.CONFIGURATION,
+      "[Forgot Password] BETTER_AUTH_SECRET is not configured",
+      new Error("BETTER_AUTH_SECRET missing"),
+      { endpoint: "/api/user/forgot-password" }
+    );
+    return NextResponse.json(
+      { error: "Server misconfigured" },
+      { status: 500 }
+    );
+  }
+
   const verification = await db.query.verifications.findFirst({
     where: and(
       eq(verifications.identifier, email),
-      eq(verifications.value, otp),
       gt(verifications.expiresAt, new Date())
     ),
   });
 
-  if (!verification) {
+  if (
+    !(
+      verification && (await matchEncryptedOtp(verification.value, otp, secret))
+    )
+  ) {
     return NextResponse.json(
       { error: "Invalid or expired verification code" },
       { status: 400 }
@@ -203,6 +302,63 @@ async function handleReset(
       { error: "This account uses social login and cannot reset password" },
       { status: 400 }
     );
+  }
+
+  // Step-up gate: users with TOTP enrolled must additionally prove
+  // possession of the second factor before the reset is honored. This
+  // closes the well-known reset-as-takeover vector — an attacker with
+  // mailbox access alone (or who can read plaintext OTPs from the DB,
+  // KEEP-625) can otherwise mint a new password and walk into the
+  // account. Users without MFA enrolled keep the email-OTP-only flow.
+  if (user.twoFactorEnabled === true) {
+    const totpCode = typeof code === "string" ? code.trim() : "";
+    if (totpCode.length !== 6) {
+      return NextResponse.json(
+        {
+          error:
+            "This account has two-factor enabled. Enter a code from your authenticator to continue.",
+          code: "mfa_code_required",
+        },
+        { status: 400 }
+      );
+    }
+    const [totpRow] = await db
+      .select({ secret: twoFactorTable.secret })
+      .from(twoFactorTable)
+      .where(eq(twoFactorTable.userId, user.id))
+      .limit(1);
+    if (!totpRow) {
+      logSystemError(
+        ErrorCategory.AUTH,
+        "[Forgot Password] user marked two-factor enabled but no row in two_factor table",
+        new Error("twoFactor row missing"),
+        { user_id: user.id }
+      );
+      return NextResponse.json(
+        { error: "Two-factor configuration is inconsistent" },
+        { status: 500 }
+      );
+    }
+    const serverSecret = process.env.BETTER_AUTH_SECRET;
+    if (!serverSecret) {
+      logSystemError(
+        ErrorCategory.CONFIGURATION,
+        "[Forgot Password] BETTER_AUTH_SECRET is not configured",
+        new Error("BETTER_AUTH_SECRET missing"),
+        { endpoint: "/api/user/forgot-password" }
+      );
+      return NextResponse.json(
+        { error: "Server misconfigured" },
+        { status: 500 }
+      );
+    }
+    const ok = await verifyUserTotp(totpRow.secret, totpCode, serverSecret);
+    if (!ok) {
+      return NextResponse.json(
+        { error: "Invalid verification code", code: "mfa_code_invalid" },
+        { status: 401 }
+      );
+    }
   }
 
   // Hash and update password

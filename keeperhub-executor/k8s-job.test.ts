@@ -27,9 +27,6 @@ vi.mock("./config", () => ({
   CONFIG: {
     databaseUrl: "postgres://localhost/test",
     integrationEncryptionKey: "test-enc-key",
-    paraApiKey: "test-para-key",
-    paraEnvironment: "beta",
-    walletEncryptionKey: "test-wallet-key",
     chainRpcConfig: '{"eth":"http://localhost:8545"}',
     etherscanApiKey: "test-etherscan-key",
     namespace: "test-ns",
@@ -237,9 +234,6 @@ describe("createWorkflowJob", () => {
     expect(getEnvVar(envVars, "INTEGRATION_ENCRYPTION_KEY")).toBe(
       "test-enc-key"
     );
-    expect(getEnvVar(envVars, "PARA_API_KEY")).toBe("test-para-key");
-    expect(getEnvVar(envVars, "PARA_ENVIRONMENT")).toBe("beta");
-    expect(getEnvVar(envVars, "WALLET_ENCRYPTION_KEY")).toBe("test-wallet-key");
     expect(getEnvVar(envVars, "CHAIN_RPC_CONFIG")).toBe(
       '{"eth":"http://localhost:8545"}'
     );

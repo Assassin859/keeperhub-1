@@ -96,8 +96,8 @@ export function SafeSigningToggle({
         </TooltipTrigger>
         <TooltipContent className="max-w-xs" side="bottom">
           {isActive
-            ? `Workflows on ${chainLabel} execute from the Safe; funds and msg.sender both come from the Safe. Flip off to route through the Turnkey EOA instead.`
-            : `Workflows on ${chainLabel} currently execute from the Turnkey EOA; funds come from the EOA's balance and msg.sender is the EOA. Flip on to route through the Safe (its address becomes msg.sender, funds come from the Safe).`}
+            ? `This Safe is the active SENDER on ${chainLabel}. Workflow nodes set to "Default Sender" sign through this Safe; funds and msg.sender come from the Safe. Flip off to route those nodes through the Turnkey EOA instead.`
+            : `No SENDER is active on ${chainLabel}. Workflow nodes set to "Default Sender" currently sign through the Turnkey EOA. Flip on to make this Safe the SENDER; msg.sender becomes the Safe and funds come from the Safe (the EOA still pays gas).`}
         </TooltipContent>
       </Tooltip>
     );
@@ -107,11 +107,14 @@ export function SafeSigningToggle({
     <div className="flex items-start justify-between gap-3 rounded-md border bg-muted/20 p-3">
       <div className="flex-1">
         <Label className="cursor-pointer font-medium text-xs" htmlFor={inputId}>
-          Sign workflow transactions as this Safe
+          Mark this Safe as Sender on {chainLabel}
         </Label>
         <p className="mt-0.5 text-muted-foreground text-xs">
-          Workflows on {chainLabel} will execute from the Safe address. Fund the
-          Safe before flipping this on; the Turnkey EOA still pays gas.
+          When ON, workflow nodes set to "Default Sender" route through this
+          Safe. The Safe is msg.sender, and its balance funds native sends,
+          ERC-20 transfers, approvals, swaps, and protocol deposits. The Turnkey
+          EOA still signs the outer transaction and pays gas. Fund the Safe
+          before turning this on.
         </p>
       </div>
       <div className="flex items-center gap-2 pt-0.5">

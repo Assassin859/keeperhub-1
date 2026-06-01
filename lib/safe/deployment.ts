@@ -11,7 +11,7 @@ import { startSafeDeployMetrics } from "@/lib/metrics/instrumentation/safe";
 import {
   getOrganizationWallet,
   initializeWalletSigner,
-} from "@/lib/para/wallet-helpers";
+} from "@/lib/web3/wallet-helpers";
 import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 import {

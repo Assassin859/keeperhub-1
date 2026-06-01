@@ -5,11 +5,11 @@ import { Web3Icon } from "./icon";
 const web3Plugin: IntegrationPlugin = {
   type: "web3",
   label: "Web3",
-  description: "Interact with blockchain networks using your Para wallet",
+  description: "Interact with blockchain networks using your KeeperHub wallet",
 
   icon: Web3Icon,
 
-  // Web3 uses Para wallet - one wallet per user
+  // One wallet per organization
   singleConnection: true,
 
   // Read-only actions (check balance, read contract) don't require a wallet

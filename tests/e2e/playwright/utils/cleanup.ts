@@ -6,69 +6,13 @@ const TEST_VERIFICATION_PATTERN = "%test+%@techops.services%";
 // Persistent test account with testnet ETH - NEVER delete
 const PROTECTED_EMAIL = "pr-test-do-not-delete@techops.services";
 
-const PARA_API_BASE = "https://api.getpara.com";
-
-type ParaPortalConfig = {
-  orgId: string;
-  projectId: string;
-  keyId: string;
-  apiKey: string;
-};
-
-function getParaPortalConfig(): ParaPortalConfig | null {
-  const orgId = process.env.PARA_PORTAL_ORG_ID;
-  const projectId = process.env.PARA_PORTAL_PROJECT_ID;
-  const keyId = process.env.PARA_PORTAL_KEY_ID;
-  const apiKey = process.env.PARA_PORTAL_API_KEY;
-
-  if (!(orgId && projectId && keyId && apiKey)) {
-    return null;
-  }
-
-  return { orgId, projectId, keyId, apiKey };
-}
-
-/**
- * Delete a pregenerated wallet from the Para Portal API.
- * Returns true if deleted (or already gone), false on failure.
- */
-async function deleteParaPregenWallet(
-  config: ParaPortalConfig,
-  walletId: string
-): Promise<boolean> {
-  const url = `${PARA_API_BASE}/organizations/${config.orgId}/projects/${config.projectId}/beta/keys/${config.keyId}/pregen/${walletId}`;
-
-  const response = await fetch(url, {
-    method: "DELETE",
-    headers: {
-      accept: "application/json",
-      origin: "https://developer.getpara.com",
-      "x-external-api-key": config.apiKey,
-    },
-  });
-
-  // 200/204 = deleted, 404 = already gone
-  if (!response.ok && response.status !== 404) {
-    const body = await response.text().catch(() => "");
-    process.stderr.write(
-      `[cleanup] Para DELETE ${walletId}: ${response.status} ${body}\n`
-    );
-    return false;
-  }
-  return true;
-}
-
 /**
  * Remove all ephemeral test users and their associated data.
  * Targets users matching `test+*@techops.services` (never the persistent
  * `pr-test-do-not-delete@techops.services` account).
  *
- * Deletes in FK-safe order: workflow data -> para wallets (API + DB) ->
- * invitations -> members -> sessions -> accounts -> organizations ->
- * users -> verifications.
- *
- * Para wallet API cleanup requires PARA_PORTAL_* env vars. If not
- * configured, only the DB rows are deleted.
+ * Deletes in FK-safe order: workflow data -> wallets -> invitations ->
+ * members -> sessions -> accounts -> organizations -> users -> verifications.
  */
 export async function cleanupTestUsers(): Promise<number> {
   const databaseUrl = process.env.DATABASE_URL;
@@ -123,36 +67,8 @@ export async function cleanupTestUsers(): Promise<number> {
       `;
     }
 
-    // 2. Para wallets - delete from API first, then DB
-    const paraWallets = await sql`
-      SELECT para_wallet_id FROM para_wallets WHERE user_id IN ${sql(userIds)}
-    `;
-
-    if (paraWallets.length > 0) {
-      const paraConfig = getParaPortalConfig();
-      if (paraConfig) {
-        const results = await Promise.allSettled(
-          paraWallets
-            .filter((w) => w.para_wallet_id != null)
-            .map((w) =>
-              deleteParaPregenWallet(paraConfig, w.para_wallet_id as string)
-            )
-        );
-        const failed = results.filter(
-          (r) =>
-            r.status === "rejected" || (r.status === "fulfilled" && !r.value)
-        );
-        if (failed.length > 0) {
-          process.stderr.write(
-            `[cleanup] ${failed.length}/${paraWallets.length} Para API deletions failed\n`
-          );
-        }
-      }
-
-      await sql`
-        DELETE FROM para_wallets WHERE user_id IN ${sql(userIds)}
-      `;
-    }
+    // 2. Wallets
+    await sql`DELETE FROM organization_wallets WHERE user_id IN ${sql(userIds)}`;
 
     // 3. Integrations, API keys, and org-scoped data
     await sql`DELETE FROM integrations WHERE user_id IN ${sql(userIds)}`;

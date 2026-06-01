@@ -13,14 +13,14 @@ import {
   accounts,
   member,
   organization,
-  paraWallets,
+  organizationWallets,
   users,
   workflows,
 } from "../../lib/db/schema";
 import { generateId } from "../../lib/utils/id";
 
 const TEST_ORG_SLUG = "x402-test-org";
-const TEST_USER_EMAIL = "x402-test@localhost";
+const TEST_USER_EMAIL = "x402-test@techops.services";
 const TEST_PASSWORD = "TestPassword123!";
 const TEST_PRIVATE_KEY =
   process.env.MPP_TEST_PRIVATE_KEY ?? process.env.X402_TEST_PRIVATE_KEY;
@@ -141,8 +141,8 @@ async function ensureWallet(
 ): Promise<void> {
   const existing = await db
     .select()
-    .from(paraWallets)
-    .where(eq(paraWallets.organizationId, orgId))
+    .from(organizationWallets)
+    .where(eq(organizationWallets.organizationId, orgId))
     .limit(1);
 
   if (existing.length > 0) {
@@ -150,11 +150,10 @@ async function ensureWallet(
     return;
   }
 
-  await db.insert(paraWallets).values({
+  await db.insert(organizationWallets).values({
     id: generateId(),
     userId,
     organizationId: orgId,
-    provider: "turnkey",
     email: TEST_USER_EMAIL,
     walletAddress: TEST_WALLET_ADDRESS,
     turnkeySubOrgId: "test-sub-org",

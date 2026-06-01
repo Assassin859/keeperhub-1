@@ -18,6 +18,7 @@ import {
   recordWorkflowComplete,
 } from "@/lib/metrics/instrumentation/workflow";
 import { LabelKeys, MetricNames } from "@/lib/metrics/types";
+import { scanAndReport } from "@/lib/security/content-scanner";
 import {
   getActionLabel,
   getStepImporter,
@@ -245,6 +246,22 @@ function replaceTemplateVariable(
     );
   } else {
     const fieldPath = rest.substring(dotIndex + 1);
+
+    // Wrapper-aware lookup: matches resolveFromOutputData's three-shape walk
+    // (top-level → { data: ... } → { result: ... }) so paths like
+    // "args.value" resolve through the trigger node's
+    // { success: true, data: triggerData } wrapper -- the same unwrap that
+    // action-config templates already get. Falls back to the strict inline
+    // walk below for legitimate misses so the user still sees the existing
+    // "Available fields" error against the top-level shape.
+    const checked = resolveFromOutputDataChecked(output.data, fieldPath);
+    if (checked.found) {
+      const varName = `__v${varCounter.value}`;
+      varCounter.value += 1;
+      evalContext[varName] = checked.value;
+      return varName;
+    }
+
     const fields = fieldPath.split(".");
     // biome-ignore lint/suspicious/noExplicitAny: Dynamic data traversal
     let current: any = output.data;
@@ -1587,6 +1604,21 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     plan: organizationPlan,
     owner_id: ownerId,
   });
+
+  // KEEP-612 detection signal. Single pass at run start covering both
+  // the static node configs and the runtime trigger payload, so an
+  // attacker who injects a pattern via webhook body or scheduled trigger
+  // input is caught at the boundary -- not just authors who bake the
+  // patterns into config. Emits one Sentry + structured-stdout event
+  // per execution. Alert-only -- never blocks.
+  scanAndReport(
+    { nodes, triggerInput },
+    {
+      workflowId,
+      executionId,
+      organizationId,
+    }
+  );
 
   const outputs: NodeOutputs = {};
   const results: Record<string, ExecutionResult> = {};

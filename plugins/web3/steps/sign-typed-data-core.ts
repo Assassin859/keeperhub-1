@@ -20,7 +20,7 @@ import {
   TurnkeyUpstreamError,
 } from "@/lib/agentic-wallet/sign-typed-data";
 import { toChecksumAddress } from "@/lib/address-utils";
-import { getOrganizationWallet } from "@/lib/para/wallet-helpers";
+import { getOrganizationWallet } from "@/lib/web3/wallet-helpers";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
 
 // Cap the typed-data payload. Turnkey rejects oversized payloads anyway;

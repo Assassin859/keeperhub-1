@@ -6,9 +6,11 @@ import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { priceQualifiesForMarketplaceExemption } from "@/lib/billing/marketplace-billing";
 import { db } from "@/lib/db";
 import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
-import { tags, workflowExecutions, workflows } from "@/lib/db/schema";
+import { tags, users, workflowExecutions, workflows } from "@/lib/db/schema";
 import { classifyExecutionError } from "@/lib/errors/classify";
 import { recordExecutionErrorFinalized } from "@/lib/errors/finalize-error";
+import { extractActionTypeNodes } from "@/lib/features";
+import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
 import { hashMppCredential } from "@/lib/payments/mpp/server";
@@ -27,9 +29,11 @@ import {
   CALL_ROUTE_COLUMNS,
   type CallRouteWorkflow,
 } from "@/lib/payments/x402/types";
+import { withBackstopCapture } from "@/lib/security/backstop-capture";
+import { buildAttribution } from "@/lib/security/request-attribution";
+import { workflowReachableConditions } from "@/lib/workflow/executable";
+import { buildExecutorInput } from "@/lib/workflow/executor/build-executor-input";
 import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
-import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
-import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -85,9 +89,24 @@ function validateInputSchema(
  * separately so the paid path can record payment between insert and start.
  */
 async function prepareExecution(
+  request: Request,
   workflow: CallRouteWorkflow,
   body: Record<string, unknown>
 ): Promise<{ executionId: string } | { error: NextResponse }> {
+  const featureGuard = await enforceWorkflowFeatures(
+    extractActionTypeNodes(workflow.nodes as unknown[]),
+    workflow.organizationId
+  );
+  if (featureGuard.blocked) {
+    const guardBody = await featureGuard.response.json();
+    return {
+      error: NextResponse.json(guardBody, {
+        status: 402,
+        headers: corsHeaders,
+      }),
+    };
+  }
+
   const executionGuard = await enforceExecutionLimit(workflow.organizationId);
   if (executionGuard.blocked) {
     const guardBody = await executionGuard.response.json();
@@ -113,15 +132,25 @@ async function prepareExecution(
     };
   }
 
-  const [execution] = await db
-    .insert(workflowExecutions)
-    .values({
-      workflowId: workflow.id,
-      userId: workflow.userId,
-      status: "running",
-      input: body,
-    })
-    .returning();
+  // Marketplace call path is anonymous (no API key resolves here -- the
+  // caller pays via x402 / MPP or hits a free public workflow), so only the
+  // source IP and trigger source are recorded.
+  const attribution = buildAttribution({ request, source: "mcp" });
+
+  const [execution] = await withBackstopCapture(
+    { workflowId: workflow.id, userId: workflow.userId, source: "mcp" },
+    () =>
+      db
+        .insert(workflowExecutions)
+        .values({
+          workflowId: workflow.id,
+          userId: workflow.userId,
+          status: "running",
+          input: body,
+          ...attribution,
+        })
+        .returning()
+  );
 
   return { executionId: execution.id };
 }
@@ -140,16 +169,12 @@ async function startExecutionInBackground(
     getOrgPlanLabel(workflow.organizationId),
   ]);
   start(executeWorkflow, [
-    {
-      nodes: workflow.nodes as WorkflowNode[],
-      edges: workflow.edges as WorkflowEdge[],
+    buildExecutorInput(workflow, {
       triggerInput: body,
       executionId,
-      workflowId: workflow.id,
-      organizationId: workflow.organizationId ?? undefined,
       organizationSlug,
       organizationPlan,
-    },
+    }),
   ]).catch((err: unknown) => {
     logSystemError(
       ErrorCategory.WORKFLOW_ENGINE,
@@ -166,10 +191,11 @@ async function startExecutionInBackground(
  * falls back to `{executionId, status: "running"}` on timeout.
  */
 async function createAndStartExecution(
+  request: Request,
   workflow: CallRouteWorkflow,
   body: Record<string, unknown>
 ): Promise<NextResponse> {
-  const prepared = await prepareExecution(workflow, body);
+  const prepared = await prepareExecution(request, workflow, body);
   if ("error" in prepared) {
     return prepared.error;
   }
@@ -186,11 +212,12 @@ async function lookupWorkflow(slug: string): Promise<CallRouteWorkflow | null> {
     .select({ ...CALL_ROUTE_COLUMNS, tagName: tags.name })
     .from(workflows)
     .leftJoin(tags, eq(workflows.tagId, tags.id))
+    .innerJoin(users, eq(workflows.userId, users.id))
     .where(
       and(
         eq(workflows.listedSlug, slug),
         eq(workflows.isListed, true),
-        workflowNotDeleted()
+        workflowReachableConditions()
       )
     )
     .limit(1);
@@ -313,7 +340,7 @@ async function handlePaidWorkflow(
     creatorWalletAddress,
     (meta: PaymentMeta) => {
       return async (_req: NextRequest): Promise<NextResponse> => {
-        const prepared = await prepareExecution(workflow, body);
+        const prepared = await prepareExecution(request, workflow, body);
         if ("error" in prepared) {
           return prepared.error;
         }
@@ -436,7 +463,7 @@ async function handleReadWorkflow(
   if (isPaid) {
     return handlePaidWorkflow(request, workflow, body);
   }
-  return createAndStartExecution(workflow, body);
+  return createAndStartExecution(request, workflow, body);
 }
 
 export async function POST(
@@ -456,6 +483,21 @@ export async function POST(
       return NextResponse.json(
         { error: "Workflow not found" },
         { status: 404, headers: corsHeaders }
+      );
+    }
+
+    // The lookup already excluded the hard-gone states (soft-deleted, owner
+    // deactivated) as 404. A listed-but-disabled workflow still exists and is
+    // publicly discoverable, so report it as temporarily unavailable rather
+    // than a misleading "not found" - mirrors the webhook's disabled-vs-gone
+    // split, and leaks nothing since the listing is already public.
+    if (!workflow.enabled) {
+      return NextResponse.json(
+        {
+          error: "Workflow temporarily unavailable",
+          message: "The workflow owner has disabled this workflow.",
+        },
+        { status: 503, headers: corsHeaders }
       );
     }
 

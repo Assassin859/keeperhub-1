@@ -21,7 +21,7 @@ import { db } from "@/lib/db";
 import { explorerConfigs } from "@/lib/db/schema";
 import { getTransactionUrl } from "@/lib/explorer";
 import { ErrorCategory, logUserError } from "@/lib/logging";
-import { initializeWalletSigner } from "@/lib/para/wallet-helpers";
+import { initializeWalletSigner } from "@/lib/web3/wallet-helpers";
 import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { getGasStrategy } from "./gas-strategy";

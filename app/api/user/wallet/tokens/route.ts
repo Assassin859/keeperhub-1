@@ -9,8 +9,8 @@ import { chains, organizationTokens, supportedTokens } from "@/lib/db/schema";
 import { safeWallets } from "@/lib/db/schema-extensions";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
-import { organizationHasWallet } from "@/lib/para/wallet-helpers";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
+import { organizationHasWallet } from "@/lib/web3/wallet-helpers";
 
 /**
  * Resolve an optional `safeId` to a validated row in `safe_wallets`. The

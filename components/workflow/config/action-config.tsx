@@ -1,8 +1,9 @@
 "use client";
 
 import { useAtomValue, useSetAtom } from "jotai";
-import { HelpCircle, Plus, Settings } from "lucide-react";
+import { Gem, HelpCircle, Plus, Settings } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { FeatureUpgradeDialog } from "@/components/billing/feature-upgrade-dialog";
 import { ConfigureConnectionOverlay } from "@/components/overlays/add-connection-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { Button } from "@/components/ui/button";
@@ -38,6 +39,9 @@ import {
 } from "@/lib/workflow/nodes/condition/builder-utils";
 import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
 import { validateConditionExpressionUI } from "@/lib/workflow/nodes/condition/validator";
+import { useFeatures } from "@/hooks/use-features";
+import type { FeatureDefinition } from "@/lib/features";
+import { getFeatureForActionType } from "@/lib/features";
 import {
   integrationsAtom,
   integrationsVersionAtom,
@@ -62,6 +66,7 @@ import {
 } from "@/plugins/registry";
 import { ActionConfigRenderer } from "./action-config-renderer";
 import { SchemaBuilder, type SchemaField } from "./schema-builder";
+import { Web3ConnectionSelect } from "./web3-connection-select";
 
 type ConfigValue = string | boolean | Record<string, unknown> | undefined;
 
@@ -797,16 +802,37 @@ export function ActionConfig({
     setCategory(newCategory || "");
   }, [actionType]);
 
-  const handleCategoryChange = (newCategory: string) => {
+  const { snapshot: featureSnapshot } = useFeatures();
+  const [upgradeFeature, setUpgradeFeature] = useState<FeatureDefinition | null>(
+    null
+  );
+
+  const isActionLocked = (actionId: string): FeatureDefinition | null => {
+    const feature = getFeatureForActionType(actionId);
+    if (!feature) {
+      return null;
+    }
+    const enabled =
+      featureSnapshot?.enabledFeatureIds.includes(feature.id) ?? false;
+    return enabled ? null : feature;
+  };
+
+  const handleCategoryChange = (newCategory: string): void => {
     setCategory(newCategory);
-    // Auto-select the first action in the new category
-    const firstAction = categories[newCategory]?.[0];
-    if (firstAction) {
-      onUpdateConfig("actionType", firstAction.id);
+    const firstAvailable = categories[newCategory]?.find(
+      (a) => isActionLocked(a.id) === null
+    );
+    if (firstAvailable) {
+      onUpdateConfig("actionType", firstAvailable.id);
     }
   };
 
-  const handleActionTypeChange = (value: string) => {
+  const handleActionTypeChange = (value: string): void => {
+    const lockedFeature = isActionLocked(value);
+    if (lockedFeature) {
+      setUpgradeFeature(lockedFeature);
+      return;
+    }
     onUpdateConfig("actionType", value);
   };
 
@@ -926,11 +952,27 @@ export function ActionConfig({
             </SelectTrigger>
             <SelectContent>
               {category &&
-                categories[category]?.map((action) => (
-                  <SelectItem key={action.id} value={action.id}>
-                    {action.label}
-                  </SelectItem>
-                ))}
+                categories[category]?.map((action) => {
+                  const lockedFeature = isActionLocked(action.id);
+                  return (
+                    <SelectItem
+                      data-locked={lockedFeature ? "true" : undefined}
+                      key={action.id}
+                      value={action.id}
+                    >
+                      <span className="flex items-center gap-1.5">
+                        {lockedFeature && (
+                          <Gem className="size-3 text-[var(--color-text-accent)]" />
+                        )}
+                        <span
+                          className={lockedFeature ? "opacity-70" : undefined}
+                        >
+                          {action.label}
+                        </span>
+                      </span>
+                    </SelectItem>
+                  );
+                })}
             </SelectContent>
           </Select>
           {pluginAction?.docUrl && (
@@ -959,19 +1001,26 @@ export function ActionConfig({
           <div className="space-y-2">
             <div className="ml-1 flex items-center justify-between">
               <div className="flex items-center gap-1">
-                <Label>Connection</Label>
+                <Label>
+                  {integrationType === "web3" ? "Web3 Connection" : "Connection"}
+                </Label>
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <HelpCircle className="size-3.5 text-muted-foreground" />
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>API key or OAuth credentials for this service</p>
+                      <p>
+                        {integrationType === "web3"
+                          ? "Which wallet is the sender (msg.sender) for this transaction. Your EOA always signs the outer tx and pays gas."
+                          : "API key or OAuth credentials for this service"}
+                      </p>
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
               </div>
-              {hasExistingConnections &&
+              {integrationType !== "web3" &&
+                hasExistingConnections &&
                 !getIntegration(integrationType)?.singleConnection && (
                   <Button
                     className="size-6"
@@ -984,12 +1033,21 @@ export function ActionConfig({
                   </Button>
                 )}
             </div>
-            <IntegrationSelector
-              disabled={disabled}
-              integrationType={integrationType}
-              onChange={(id) => onUpdateConfig("integrationId", id)}
-              value={(config?.integrationId as string) || ""}
-            />
+            {integrationType === "web3" ? (
+              <Web3ConnectionSelect
+                disabled={disabled}
+                network={(config?.network as string) || undefined}
+                onChange={(val) => onUpdateConfig("web3Connection", val)}
+                value={(config?.web3Connection as string) || undefined}
+              />
+            ) : (
+              <IntegrationSelector
+                disabled={disabled}
+                integrationType={integrationType}
+                onChange={(id) => onUpdateConfig("integrationId", id)}
+                value={(config?.integrationId as string) || ""}
+              />
+            )}
           </div>
         ))}
 
@@ -1013,6 +1071,15 @@ export function ActionConfig({
             onUpdateConfig={handlePluginUpdateConfig}
           />
         )}
+      <FeatureUpgradeDialog
+        feature={upgradeFeature}
+        onOpenChange={(open) => {
+          if (!open) {
+            setUpgradeFeature(null);
+          }
+        }}
+        open={upgradeFeature !== null}
+      />
     </>
   );
 }

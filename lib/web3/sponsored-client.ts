@@ -9,13 +9,13 @@ import { entryPoint08Address } from "viem/account-abstraction";
 import { db } from "@/lib/db";
 import { chains } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { createParaViemAccount } from "@/lib/para/viem-account-adapter";
 import { recordDelegationIfNeeded } from "@/lib/web3/eip7702-delegation";
 import {
   getPimlicoUrl,
   isSponsorshipSupported,
 } from "@/lib/web3/pimlico-config";
 import { clampSponsoredFees } from "@/lib/web3/sponsored-fee-clamp";
+import { createTurnkeyViemAccount } from "@/lib/web3/turnkey-viem-account";
 
 const LOG_PREFIX = "[Sponsorship]";
 
@@ -33,7 +33,7 @@ type SponsoredClientResult = {
  * Creates a sponsored smart account client for an organization.
  *
  * This:
- * 1. Creates a viem account backed by Para MPC signing
+ * 1. Creates a viem account backed by Turnkey signing
  * 2. Creates a Pimlico-sponsored smart account client with EIP-7702 support
  *
  * Returns the smart account client plus the account/publicClient needed for
@@ -53,7 +53,7 @@ export async function createSponsoredClient(
 
   try {
     const { account, walletRecord } =
-      await createParaViemAccount(organizationId);
+      await createTurnkeyViemAccount(organizationId);
     const walletAddress = walletRecord.walletAddress as Address;
     const chainRecord = await db.query.chains.findFirst({
       where: eq(chains.chainId, chainId),

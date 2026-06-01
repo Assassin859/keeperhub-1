@@ -97,7 +97,7 @@ describe.skipIf(shouldSkip)("incrementCompletedSteps atomicity", () => {
     await testDb.insert(users).values({
       id: testUserId,
       name: "Trace Race Test User",
-      email: `trace-race-${testUserId}@test.local`,
+      email: `trace-race-${testUserId}@techops.services`,
       emailVerified: false,
       createdAt: now,
       updatedAt: now,

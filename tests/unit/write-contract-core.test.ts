@@ -124,7 +124,7 @@ vi.mock("@/lib/web3/resolve-org-context", () => ({
   }),
 }));
 
-vi.mock("@/lib/para/wallet-helpers", () => ({
+vi.mock("@/lib/web3/wallet-helpers", () => ({
   getOrganizationWalletAddress: vi
     .fn()
     .mockResolvedValue("0xwalletaddress1234567890123456789012345678"),
@@ -137,6 +137,10 @@ vi.mock("@/lib/para/wallet-helpers", () => ({
 
 vi.mock("@/lib/safe/signer-resolver", () => ({
   resolveSignerMode: vi.fn().mockResolvedValue({
+    kind: "eoa",
+    ownerAddress: "0xwalletaddress",
+  }),
+  resolveSignerForNode: vi.fn().mockResolvedValue({
     kind: "eoa",
     ownerAddress: "0xwalletaddress",
   }),
@@ -168,10 +172,10 @@ vi.mock("@/lib/web3/transaction-manager", () => ({
   ),
 }));
 
-// Import mocks for assertion
-import { initializeWalletSigner } from "@/lib/para/wallet-helpers";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { parsePriorityFeeGwei } from "@/lib/web3/gas-defaults";
+// Import mocks for assertion
+import { initializeWalletSigner } from "@/lib/web3/wallet-helpers";
 
 // Import SUT after all mocks
 import { writeContractCore } from "@/plugins/web3/steps/write-contract-core";
