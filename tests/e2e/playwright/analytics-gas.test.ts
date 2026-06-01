@@ -108,4 +108,47 @@ test.describe("Analytics Gas Tracking", () => {
       expect(BigInt(network.totalGasWei)).toBeGreaterThan(BigInt(0));
     }
   });
+
+  test("workflow runs API attaches gas to the returned page", async ({
+    page,
+  }) => {
+    await signIn(page, ANALYTICS_EMAIL, ANALYTICS_PASSWORD);
+    await page.goto("/analytics", { waitUntil: "domcontentloaded" });
+
+    const response = await page.request.get(
+      "/api/analytics/runs?range=7d&source=workflow"
+    );
+    const responseBody = await response.text();
+    expect(
+      response.ok(),
+      `Runs API returned ${response.status()}: ${responseBody}`
+    ).toBe(true);
+
+    const data = JSON.parse(responseBody) as {
+      runs: { source: string; gasUsedWei: string | null }[];
+      total: number;
+      pageSize: number;
+    };
+
+    // Pagination metadata is present and the page is non-empty.
+    expect(data.pageSize).toBeGreaterThan(0);
+    expect(data.runs.length).toBeGreaterThan(0);
+
+    // The source filter is honoured for every returned row.
+    for (const run of data.runs) {
+      expect(run.source).toBe("workflow");
+    }
+
+    // Gas is now aggregated only for the executions on this page (the
+    // log_summary subquery is scoped to the paged execution IDs). At least one
+    // seeded web3-write run must still carry non-zero gas - this is what would
+    // regress if the page-scoped aggregation dropped or mis-joined gas.
+    const withGas = data.runs.filter(
+      (r) => r.gasUsedWei !== null && r.gasUsedWei !== "0"
+    );
+    expect(withGas.length).toBeGreaterThan(0);
+    for (const run of withGas) {
+      expect(BigInt(run.gasUsedWei as string)).toBeGreaterThan(BigInt(0));
+    }
+  });
 });

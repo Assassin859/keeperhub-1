@@ -4,7 +4,7 @@ import type {
   TimeRange,
 } from "@/lib/analytics/types";
 
-export const POLL_INTERVAL_MS = 2000;
+export const POLL_INTERVAL_MS = 5000;
 export const HEARTBEAT_INTERVAL_MS = 30_000;
 export const MAX_LIFETIME_MS = 5 * 60 * 1000;
 export const MIN_EVENT_INTERVAL_MS = 1000;

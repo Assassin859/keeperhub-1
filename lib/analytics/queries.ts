@@ -11,6 +11,7 @@ import {
   directExecutions,
   organizationSpendCaps,
 } from "@/lib/db/schema-extensions";
+import { analyticsCacheKey, cachedAnalytics } from "./cache";
 import {
   getBucketInterval,
   getPreviousPeriodStart,
@@ -102,9 +103,37 @@ function addBucketToMap(
 }
 
 /**
- * Fetch KPI summary for the analytics dashboard.
+ * Fetch KPI summary for the analytics dashboard. Cached per
+ * (org, range, project, window) - both the GET route and the SSE summary push
+ * go through here, so the cache covers the dominant recompute path.
  */
-export async function getAnalyticsSummary(
+export function getAnalyticsSummary(
+  organizationId: string,
+  range: TimeRange,
+  customStart?: string,
+  customEnd?: string,
+  projectId?: string
+): Promise<AnalyticsSummary> {
+  return cachedAnalytics(
+    analyticsCacheKey("summary", [
+      organizationId,
+      range,
+      projectId,
+      customStart,
+      customEnd,
+    ]),
+    () =>
+      computeAnalyticsSummary(
+        organizationId,
+        range,
+        customStart,
+        customEnd,
+        projectId
+      )
+  );
+}
+
+async function computeAnalyticsSummary(
   organizationId: string,
   range: TimeRange,
   customStart?: string,
@@ -396,9 +425,36 @@ async function getWorkflowGasTotal(
 }
 
 /**
- * Fetch time-series bucketed data for charts.
+ * Fetch time-series bucketed data for charts. Cached per
+ * (org, range, project, window).
  */
-export async function getTimeSeries(
+export function getTimeSeries(
+  organizationId: string,
+  range: TimeRange,
+  customStart?: string,
+  customEnd?: string,
+  projectId?: string
+): Promise<TimeSeriesBucket[]> {
+  return cachedAnalytics(
+    analyticsCacheKey("time-series", [
+      organizationId,
+      range,
+      projectId,
+      customStart,
+      customEnd,
+    ]),
+    () =>
+      computeTimeSeries(
+        organizationId,
+        range,
+        customStart,
+        customEnd,
+        projectId
+      )
+  );
+}
+
+async function computeTimeSeries(
   organizationId: string,
   range: TimeRange,
   customStart?: string,
@@ -514,9 +570,35 @@ function mergeBuckets(
 }
 
 /**
- * Fetch gas breakdown by network.
+ * Fetch gas breakdown by network. Cached per (org, range, project, window).
  */
-export async function getNetworkBreakdown(
+export function getNetworkBreakdown(
+  organizationId: string,
+  range: TimeRange,
+  customStart?: string,
+  customEnd?: string,
+  projectId?: string
+): Promise<NetworkBreakdown[]> {
+  return cachedAnalytics(
+    analyticsCacheKey("networks", [
+      organizationId,
+      range,
+      projectId,
+      customStart,
+      customEnd,
+    ]),
+    () =>
+      computeNetworkBreakdown(
+        organizationId,
+        range,
+        customStart,
+        customEnd,
+        projectId
+      )
+  );
+}
+
+async function computeNetworkBreakdown(
   organizationId: string,
   range: TimeRange,
   customStart?: string,
@@ -762,16 +844,19 @@ async function fetchWorkflowRuns(
     conditions.push(lt(workflowExecutions.startedAt, new Date(cursor)));
   }
 
-  const scopedExecutionIds = db
+  // Restrict the gas/network aggregation to the executions this page will
+  // actually return. The outer query selects the page via the same conditions
+  // + order + limit, and the leftJoin to log_summary does not change which rows
+  // come back - so narrowing the aggregate to those <= limit execution IDs is
+  // value-identical. The prior subquery scoped only to org + window, so the
+  // JSONB gas extraction ran over the whole slice on every load even though
+  // only `limit` rows are returned.
+  const pagedExecutionIds = db
     .select({ id: workflowExecutions.id })
     .from(workflowExecutions)
-    .where(
-      and(
-        sql`${workflowExecutions.workflowId} IN (${orgWorkflowIds})`,
-        gte(workflowExecutions.startedAt, rangeStart),
-        lt(workflowExecutions.startedAt, rangeEnd)
-      )
-    );
+    .where(and(...conditions))
+    .orderBy(desc(workflowExecutions.startedAt))
+    .limit(limit);
 
   // KEEP-470: gas + network still come from per-log aggregation (no top-level
   // column exists for them yet). Transaction hashes now come from the
@@ -798,7 +883,7 @@ async function fetchWorkflowRuns(
     .from(workflowExecutionLogs)
     .where(
       and(
-        sql`${workflowExecutionLogs.executionId} IN (${scopedExecutionIds})`,
+        sql`${workflowExecutionLogs.executionId} IN (${pagedExecutionIds})`,
         sql`${logOutputField("gasUsed")} IS NOT NULL`
       )
     )
