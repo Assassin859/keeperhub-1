@@ -141,22 +141,6 @@ function parseDocsFile(absPath: string): DocumentedEndpoint[] {
 }
 
 /**
- * Map a canonical docs path like /api/workflows/{workflowId}/execute to
- * the Next.js App Router file location, allowing the docs param name to
- * differ from the filesystem param name (`{executionId}` in docs vs
- * `[id]` on disk is fine; only the URL pattern shape matters).
- *
- * Returns null when no route file matches the shape.
- */
-function docsPathToRouteFile(
-  canonicalPath: string,
-  shapeIndex: Map<string, string>
-): string | null {
-  const shape = pathShape(canonicalPath);
-  return shapeIndex.get(shape) ?? null;
-}
-
-/**
  * Collapse every dynamic segment (`{x}`, `[x]`, `[...x]`) to a stable
  * wildcard so /api/runs/{id} and /api/runs/[executionId] hash to the
  * same shape. Static segments are preserved verbatim.
@@ -321,10 +305,22 @@ function writeCoverageArtifact(
   shapeIndex: Map<string, string>
 ) {
   mkdirSync(dirname(COVERAGE_OUT), { recursive: true });
-  // Stable ordering so the artifact diff is reviewable.
-  const sorted = [...endpoints].sort((a, b) =>
-    `${a.method} ${a.path}`.localeCompare(`${b.method} ${b.path}`)
-  );
+  // Stable ordering so the artifact diff is reviewable. Sort by raw code
+  // point, NOT localeCompare: the committed file is byte-compared by the
+  // CI drift check, and localeCompare's default collation depends on the
+  // runtime locale/ICU, so a contributor whose machine sorts differently
+  // from CI could regenerate a "stale" artifact that fails the build.
+  const sorted = [...endpoints].sort((a, b) => {
+    const ka = `${a.method} ${a.path}`;
+    const kb = `${b.method} ${b.path}`;
+    if (ka < kb) {
+      return -1;
+    }
+    if (ka > kb) {
+      return 1;
+    }
+    return 0;
+  });
   const json = {
     endpoints: sorted.map((ep) => ({
       method: ep.method,
