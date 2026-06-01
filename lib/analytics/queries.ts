@@ -103,9 +103,27 @@ function addBucketToMap(
 }
 
 /**
- * Fetch KPI summary for the analytics dashboard. Cached per
- * (org, range, project, window) - both the GET route and the SSE summary push
- * go through here, so the cache covers the dominant recompute path.
+ * Only named ranges are cached. A custom range carries caller-supplied
+ * start/end strings that are effectively single-use and unbounded, so keying
+ * the per-process cache on them would grow the Map without limit for no
+ * hit-rate benefit (and is a cheap memory-pressure vector). Recompute those
+ * directly; the named ranges are what the dashboard and SSE push hammer.
+ */
+export function isCacheableRange(
+  range: TimeRange,
+  customStart?: string,
+  customEnd?: string
+): boolean {
+  return (
+    range !== "custom" && customStart === undefined && customEnd === undefined
+  );
+}
+
+/**
+ * Fetch KPI summary for the analytics dashboard. Named ranges are cached per
+ * (org, range, project) - both the GET route and the SSE summary push go
+ * through here, so the cache covers the dominant recompute path. Custom ranges
+ * bypass the cache (see isCacheableRange).
  */
 export function getAnalyticsSummary(
   organizationId: string,
@@ -114,22 +132,20 @@ export function getAnalyticsSummary(
   customEnd?: string,
   projectId?: string
 ): Promise<AnalyticsSummary> {
-  return cachedAnalytics(
-    analyticsCacheKey("summary", [
+  const compute = () =>
+    computeAnalyticsSummary(
       organizationId,
       range,
-      projectId,
       customStart,
       customEnd,
-    ]),
-    () =>
-      computeAnalyticsSummary(
-        organizationId,
-        range,
-        customStart,
-        customEnd,
-        projectId
-      )
+      projectId
+    );
+  if (!isCacheableRange(range, customStart, customEnd)) {
+    return compute();
+  }
+  return cachedAnalytics(
+    analyticsCacheKey("summary", [organizationId, range, projectId]),
+    compute
   );
 }
 
@@ -425,8 +441,8 @@ async function getWorkflowGasTotal(
 }
 
 /**
- * Fetch time-series bucketed data for charts. Cached per
- * (org, range, project, window).
+ * Fetch time-series bucketed data for charts. Named ranges cached per
+ * (org, range, project); custom ranges bypass the cache (see isCacheableRange).
  */
 export function getTimeSeries(
   organizationId: string,
@@ -435,22 +451,14 @@ export function getTimeSeries(
   customEnd?: string,
   projectId?: string
 ): Promise<TimeSeriesBucket[]> {
+  const compute = () =>
+    computeTimeSeries(organizationId, range, customStart, customEnd, projectId);
+  if (!isCacheableRange(range, customStart, customEnd)) {
+    return compute();
+  }
   return cachedAnalytics(
-    analyticsCacheKey("time-series", [
-      organizationId,
-      range,
-      projectId,
-      customStart,
-      customEnd,
-    ]),
-    () =>
-      computeTimeSeries(
-        organizationId,
-        range,
-        customStart,
-        customEnd,
-        projectId
-      )
+    analyticsCacheKey("time-series", [organizationId, range, projectId]),
+    compute
   );
 }
 
@@ -570,7 +578,8 @@ function mergeBuckets(
 }
 
 /**
- * Fetch gas breakdown by network. Cached per (org, range, project, window).
+ * Fetch gas breakdown by network. Named ranges cached per (org, range,
+ * project); custom ranges bypass the cache (see isCacheableRange).
  */
 export function getNetworkBreakdown(
   organizationId: string,
@@ -579,22 +588,20 @@ export function getNetworkBreakdown(
   customEnd?: string,
   projectId?: string
 ): Promise<NetworkBreakdown[]> {
-  return cachedAnalytics(
-    analyticsCacheKey("networks", [
+  const compute = () =>
+    computeNetworkBreakdown(
       organizationId,
       range,
-      projectId,
       customStart,
       customEnd,
-    ]),
-    () =>
-      computeNetworkBreakdown(
-        organizationId,
-        range,
-        customStart,
-        customEnd,
-        projectId
-      )
+      projectId
+    );
+  if (!isCacheableRange(range, customStart, customEnd)) {
+    return compute();
+  }
+  return cachedAnalytics(
+    analyticsCacheKey("networks", [organizationId, range, projectId]),
+    compute
   );
 }
 
@@ -851,11 +858,17 @@ async function fetchWorkflowRuns(
   // value-identical. The prior subquery scoped only to org + window, so the
   // JSONB gas extraction ran over the whole slice on every load even though
   // only `limit` rows are returned.
+  //
+  // The order/limit here must match the outer query exactly, including the
+  // secondary `id` key: started_at alone is not unique, so without a stable
+  // tiebreaker the two independent ORDER BY ... LIMIT evaluations could select
+  // different rows at the boundary and drop a boundary row's gas. `id` is a
+  // unique total order, so both queries resolve ties identically.
   const pagedExecutionIds = db
     .select({ id: workflowExecutions.id })
     .from(workflowExecutions)
     .where(and(...conditions))
-    .orderBy(desc(workflowExecutions.startedAt))
+    .orderBy(desc(workflowExecutions.startedAt), desc(workflowExecutions.id))
     .limit(limit);
 
   // KEEP-470: gas + network still come from per-log aggregation (no top-level
@@ -909,7 +922,9 @@ async function fetchWorkflowRuns(
     .leftJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
     .leftJoin(logSummary, eq(workflowExecutions.id, logSummary.executionId))
     .where(and(...conditions))
-    .orderBy(desc(workflowExecutions.startedAt))
+    // Secondary `id` key must match pagedExecutionIds above so the page and the
+    // gas subquery resolve started_at ties to the same rows.
+    .orderBy(desc(workflowExecutions.startedAt), desc(workflowExecutions.id))
     .limit(limit);
 
   return result.map((row) => ({
