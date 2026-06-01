@@ -27,6 +27,11 @@
  */
 import type { EdgesBySourceHandle } from "@/lib/workflow/editor/edge-handle-utils";
 import { resolveBodyConditionTargets } from "@/lib/workflow/executor/executor.workflow";
+import {
+  EXCEEDED_MAX_RETRIES_REGEX,
+  FAILED_AFTER_RETRIES_REGEX,
+  NO_STEP_COMPLETION_REGEX,
+} from "@/lib/workflow/executor/runner-error-patterns";
 import type { StepContext } from "@/lib/workflow/executor/step-handler";
 import type { WorkflowNode } from "@/lib/workflow/store";
 
@@ -67,6 +72,17 @@ export type NestedForEachHandler = (params: {
   bodyVisited: Set<string>;
 }) => Promise<void>;
 
+/** KEEP-543: Resolver for spurious-max-retries inside iteration bodies. When
+ *  the Workflow DevKit throws "exceeded max retries" because it lost the
+ *  step_completed event under heavy fan-in, the body step's output may still
+ *  be persisted in the step-success-tracker / workflow_execution_logs. The
+ *  resolver consults that authority and returns the recovered output. Returns
+ *  null when no authority record exists -- the failure is real, not spurious. */
+export type SpuriousRecoveryResolver = (params: {
+  nodeId: string;
+  iterationMeta: IterationMeta;
+}) => Promise<{ output: unknown } | null>;
+
 export type RunBodyContext = {
   nodeMap: ReadonlyMap<string, WorkflowNode>;
   bodyEdgesBySource: Map<string, string[]>;
@@ -80,6 +96,18 @@ export type RunBodyContext = {
   /** Optional hook for nested For Each handling. Called instead of the generic
    *  downstream walk when the visited node is itself a For Each. */
   handleNestedForEach?: NestedForEachHandler;
+  /** Optional resolver for spurious "exceeded max retries" errors. When the
+   *  step body succeeded but the SDK lost its step_completed event, the
+   *  resolver returns the recovered output so the iteration treats the step
+   *  as a success and continues recursing downstream. Omitted in unit tests
+   *  that don't exercise the recovery path. */
+  resolveSpuriousRecovery?: SpuriousRecoveryResolver;
+  /** Optional hook fired when a spurious failure is recovered. Used by the
+   *  executor to emit observability metrics. */
+  onSpuriousRecovery?: (params: {
+    nodeId: string;
+    iterationMeta: IterationMeta;
+  }) => void;
   /** Process action config (template substitution, dbQuery rewriting, etc.). */
   processConfig: (
     config: Record<string, unknown>,
@@ -129,6 +157,126 @@ async function recurseInto(
   }
 }
 
+function isSpuriousMaxRetriesError(message: string): boolean {
+  return (
+    EXCEEDED_MAX_RETRIES_REGEX.test(message) ||
+    FAILED_AFTER_RETRIES_REGEX.test(message) ||
+    NO_STEP_COMPLETION_REGEX.test(message)
+  );
+}
+
+/**
+ * Continue the iteration downstream after a node has been successfully recorded
+ * (either normally or via spurious-recovery). Mirrors the routing decisions
+ * inside `runBodyNode`'s success path: For Each delegates to the nested handler
+ * AND falls through to its downstream, Condition consults handle-aware
+ * targets, plain actions recurse into every downstream edge.
+ */
+async function routeAfterSuccess(params: {
+  nodeId: string;
+  node: WorkflowNode;
+  actionType: string;
+  processedConfig: Record<string, unknown>;
+  result: BodyExecutionResult;
+  ctx: RunBodyContext;
+}): Promise<void> {
+  const { nodeId, node, actionType, processedConfig, result, ctx } = params;
+
+  if (actionType === "For Each") {
+    if (ctx.handleNestedForEach) {
+      await ctx.handleNestedForEach({
+        forEachNodeId: nodeId,
+        forEachNode: node,
+        processedConfig,
+        scopedOutputs: ctx.scopedOutputs,
+        bodyResults: ctx.bodyResults,
+        bodyVisited: ctx.bodyVisited,
+      });
+    }
+    const downstream = ctx.bodyEdgesBySource.get(nodeId) ?? [];
+    await recurseInto(downstream, ctx);
+    return;
+  }
+
+  if (actionType === "Condition") {
+    const conditionValue = (result.data as { condition?: boolean })?.condition;
+    const conditionTargets = resolveBodyConditionTargets(
+      conditionValue === true,
+      nodeId,
+      ctx.bodyEdgesBySourceHandle,
+      ctx.bodyEdgesBySource
+    );
+    await recurseInto(conditionTargets, ctx);
+    return;
+  }
+
+  const downstream = ctx.bodyEdgesBySource.get(nodeId) ?? [];
+  await recurseInto(downstream, ctx);
+}
+
+/**
+ * KEEP-543: Attempt iteration-scoped spurious-recovery for a body node that
+ * just threw. Returns true when the failure was recovered (caller should NOT
+ * record it as a failure); false when the failure is real and the caller
+ * should fall through to the standard failure path.
+ */
+async function attemptSpuriousRecovery(params: {
+  nodeId: string;
+  node: WorkflowNode;
+  actionType: string | undefined;
+  processedConfig: Record<string, unknown> | undefined;
+  errorMessage: string;
+  ctx: RunBodyContext;
+}): Promise<boolean> {
+  const { nodeId, node, actionType, processedConfig, errorMessage, ctx } =
+    params;
+
+  if (!ctx.iterationMeta) {
+    return false;
+  }
+  if (!ctx.resolveSpuriousRecovery) {
+    return false;
+  }
+  if (!actionType) {
+    return false;
+  }
+  if (!isSpuriousMaxRetriesError(errorMessage)) {
+    return false;
+  }
+
+  const recovered = await ctx.resolveSpuriousRecovery({
+    nodeId,
+    iterationMeta: ctx.iterationMeta,
+  });
+  if (recovered === null) {
+    return false;
+  }
+
+  const result: BodyExecutionResult = {
+    success: true,
+    data: recovered.output,
+  };
+  ctx.bodyResults[nodeId] = result;
+  const sanitizedId = sanitizeNodeId(nodeId);
+  ctx.scopedOutputs[sanitizedId] = {
+    label: ctx.getNodeName(node),
+    data: recovered.output,
+  };
+
+  ctx.onSpuriousRecovery?.({ nodeId, iterationMeta: ctx.iterationMeta });
+
+  await routeAfterSuccess({
+    nodeId,
+    node,
+    actionType,
+    processedConfig: processedConfig ?? {},
+    result,
+    ctx,
+  });
+
+  return true;
+}
+
 /**
  * Recursively execute a single body node and its downstream targets within a
  * For Each iteration. See module-level docstring for the contract.
@@ -163,10 +311,11 @@ export async function runBodyNode(
 
   ctx.injectBuiltinVariables(ctx.scopedOutputs);
 
-  try {
-    const config = node.data.config ?? {};
-    const actionType = config.actionType as string | undefined;
+  const config = node.data.config ?? {};
+  const actionType = config.actionType as string | undefined;
+  let processedConfig: Record<string, unknown> | undefined;
 
+  try {
     if (!actionType) {
       ctx.bodyResults[nodeId] = {
         success: false,
@@ -175,12 +324,10 @@ export async function runBodyNode(
       return;
     }
 
-    const processedConfig = ctx.processConfig(
-      config,
-      actionType,
-      ctx.scopedOutputs,
-      { nodeId: node.id, nodeLabel: ctx.getNodeName(node) }
-    );
+    processedConfig = ctx.processConfig(config, actionType, ctx.scopedOutputs, {
+      nodeId: node.id,
+      nodeLabel: ctx.getNodeName(node),
+    });
 
     const stepContext: StepContext = {
       ...ctx.baseStepContext,
@@ -220,48 +367,29 @@ export async function runBodyNode(
       return;
     }
 
-    if (actionType === "For Each") {
-      if (ctx.handleNestedForEach) {
-        await ctx.handleNestedForEach({
-          forEachNodeId: nodeId,
-          forEachNode: node,
-          processedConfig,
-          scopedOutputs: ctx.scopedOutputs,
-          bodyResults: ctx.bodyResults,
-          bodyVisited: ctx.bodyVisited,
-        });
-      }
-      // Fallthrough to generic downstream walk so any node sitting after a
-      // nested For Each still executes once the nested handler returns. The
-      // nested handler is responsible for marking its own body nodes as
-      // visited so we don't re-execute them here.
-      const downstream = ctx.bodyEdgesBySource.get(nodeId) ?? [];
-      await recurseInto(downstream, ctx);
-      return;
-    }
-
-    if (actionType === "Condition") {
-      const conditionValue = (result.data as { condition?: boolean })
-        ?.condition;
-      const conditionTargets = resolveBodyConditionTargets(
-        conditionValue === true,
-        nodeId,
-        ctx.bodyEdgesBySourceHandle,
-        ctx.bodyEdgesBySource
-      );
-      await recurseInto(conditionTargets, ctx);
-      return;
-    }
-
-    // Plain action: dispatch to every downstream target. This is the path
-    // that the Autoline Job Keeper regression depended on -- a successful
-    // web3/read-contract whose downstream edge points at a code/run-code
-    // node MUST recurse into that node, even though there is no condition
-    // gating the edge.
-    const downstream = ctx.bodyEdgesBySource.get(nodeId) ?? [];
-    await recurseInto(downstream, ctx);
+    await routeAfterSuccess({
+      nodeId,
+      node,
+      actionType,
+      processedConfig,
+      result,
+      ctx,
+    });
   } catch (error) {
     const errorMessage = await ctx.getErrorMessageAsync(error);
+
+    const recovered = await attemptSpuriousRecovery({
+      nodeId,
+      node,
+      actionType,
+      processedConfig,
+      errorMessage,
+      ctx,
+    });
+    if (recovered) {
+      return;
+    }
+
     ctx.bodyResults[nodeId] = { success: false, error: errorMessage };
   }
 }

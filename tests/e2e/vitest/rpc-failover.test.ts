@@ -30,11 +30,11 @@ import {
 vi.mock("server-only", () => ({}));
 
 import { type Chain, chains, userRpcPreferences, users } from "@/lib/db/schema";
-import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 import {
   clearRpcProviderManagerCache,
   RpcProviderManager,
 } from "@/lib/rpc/providers";
+import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 import { PERSISTENT_TEST_USER_EMAIL } from "../../utils/db";
 
 // Skip if DATABASE_URL not set or SKIP_INFRA_TESTS is true (CI environment without DB)

@@ -110,10 +110,7 @@ describe("identifyLoopBody — handle-aware mode (KEEP-520)", () => {
   });
 
   it("loop-only handle (no done edge) is still handle-aware", () => {
-    const nodes = [
-      action("fe", "For Each"),
-      action("body-1", "HTTP Request"),
-    ];
+    const nodes = [action("fe", "For Each"), action("body-1", "HTTP Request")];
     const { edgesBySource, edgesBySourceHandle } = buildEdgeMaps([
       { source: "fe", target: "body-1", sourceHandle: "loop" },
     ]);

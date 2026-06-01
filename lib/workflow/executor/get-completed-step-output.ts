@@ -3,10 +3,15 @@ import "server-only";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
 import {
+  fetchCompletedStepOutputAtIterationStep,
   fetchCompletedStepOutputStep,
   fetchCompletedStepOutputsBatchStep,
 } from "@/lib/workflow/executor/get-completed-step-output.step";
-import { getSuccessfulSteps } from "@/lib/workflow/executor/step-success-tracker";
+import {
+  getStepSuccess,
+  getSuccessfulSteps,
+  type IterationKey,
+} from "@/lib/workflow/executor/step-success-tracker";
 
 /**
  * Kill-switch: set KH_EXECUTOR_AUTHORITY_DB_FALLBACK=false to disable DB-backed
@@ -69,18 +74,41 @@ export function clearOutputCache(executionId: string): void {
  * Query `workflow_execution_logs` for a single (executionId, nodeId) success row
  * via the "use step" boundary. This keeps Node.js-only modules (postgres, nanoid)
  * out of the "use workflow" bundle.
+ *
+ * When iterationKey is provided, the iteration-scoped query is used so the row
+ * matches `(forEachNodeId, iterationIndex)` exactly. When omitted, the
+ * top-level query filters iteration rows out (legacy behaviour).
  */
 async function queryDb(
   executionId: string,
-  nodeId: string
+  nodeId: string,
+  iterationKey?: IterationKey
 ): Promise<CompletedStepOutput | null> {
-  const row = await fetchCompletedStepOutputStep(executionId, nodeId);
+  const row = iterationKey
+    ? await fetchCompletedStepOutputAtIterationStep(
+        executionId,
+        nodeId,
+        iterationKey.forEachNodeId,
+        iterationKey.iterationIndex
+      )
+    : await fetchCompletedStepOutputStep(executionId, nodeId);
 
   if (!row) {
     return null;
   }
 
   return { output: row.outputRaw, source: "db" };
+}
+
+function buildCacheKey(
+  executionId: string,
+  nodeId: string,
+  iterationKey?: IterationKey
+): string {
+  if (!iterationKey) {
+    return `${executionId}:${nodeId}`;
+  }
+  return `${executionId}:${nodeId}:${iterationKey.forEachNodeId}:${iterationKey.iterationIndex}`;
 }
 
 /**
@@ -105,12 +133,13 @@ async function queryDb(
  */
 export function getCompletedStepOutput(
   executionId: string,
-  nodeId: string
+  nodeId: string,
+  iterationKey?: IterationKey
 ): Promise<CompletedStepOutput | null> {
-  const trackerSteps = getSuccessfulSteps(executionId);
-  if (trackerSteps?.has(nodeId)) {
+  const trackerEntry = getStepSuccess(executionId, nodeId, iterationKey);
+  if (trackerEntry !== undefined) {
     return Promise.resolve({
-      output: trackerSteps.get(nodeId),
+      output: trackerEntry.output,
       source: "tracker" as const,
     });
   }
@@ -119,13 +148,13 @@ export function getCompletedStepOutput(
     return Promise.resolve(null);
   }
 
-  const cacheKey = `${executionId}:${nodeId}`;
+  const cacheKey = buildCacheKey(executionId, nodeId, iterationKey);
   const inflight = inflightQueries.get(cacheKey);
   if (inflight !== undefined) {
     return inflight;
   }
 
-  const query = queryDb(executionId, nodeId).then(
+  const query = queryDb(executionId, nodeId, iterationKey).then(
     (result) => {
       getMetricsCollector().incrementCounter(
         "workflow.executor.tracker_db_fallback.total",

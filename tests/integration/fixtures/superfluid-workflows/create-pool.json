@@ -36,7 +36,5 @@
       }
     }
   ],
-  "edges": [
-    { "id": "e1", "source": "trigger-1", "target": "step-1" }
-  ]
+  "edges": [{ "id": "e1", "source": "trigger-1", "target": "step-1" }]
 }

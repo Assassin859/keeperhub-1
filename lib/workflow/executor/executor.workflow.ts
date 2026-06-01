@@ -1846,6 +1846,39 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           outputs,
           context: stepContext,
         }),
+      // KEEP-543: Same KEEP-398/431 spurious-max-retries recovery pattern as
+      // the top-level node executor, scoped to the current iteration.
+      // getCompletedStepOutput is iteration-aware via the iterationKey arg:
+      // tracker is keyed on (nodeId, forEachNodeId, iterationIndex), and the
+      // DB fallback hits an iteration-scoped query that no longer filters
+      // forEach rows out. Returning null falls through to the standard
+      // failure path (the throw was real, not spurious).
+      resolveSpuriousRecovery: executionId
+        ? async ({ nodeId: bodyNodeId, iterationMeta: meta }) => {
+            const recovered = await getCompletedStepOutput(
+              executionId,
+              bodyNodeId,
+              {
+                forEachNodeId: meta.forEachNodeId,
+                iterationIndex: meta.iterationIndex,
+              }
+            );
+            return recovered ? { output: recovered.output } : null;
+          }
+        : undefined,
+      onSpuriousRecovery: ({ nodeId: bodyNodeId, iterationMeta: meta }) => {
+        getMetricsCollector().incrementCounter(
+          "workflow.executor.spurious_recovery.total",
+          {
+            source: "body_runner",
+            ...(workflowId ? { [LabelKeys.WORKFLOW_ID]: workflowId } : {}),
+            ...(organizationId ? { [LabelKeys.ORG_ID]: organizationId } : {}),
+            ...(organizationPlan ? { [LabelKeys.PLAN]: organizationPlan } : {}),
+            for_each_node_id: meta.forEachNodeId,
+            body_node_id: bodyNodeId,
+          }
+        );
+      },
       handleNestedForEach: async ({
         forEachNodeId: nestedForEachNodeId,
         forEachNode: nestedForEachNode,

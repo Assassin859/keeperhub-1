@@ -1,15 +1,15 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type AddressInfo, createServer as createNetServer } from "node:net";
 import { once } from "node:events";
 import {
+  createServer,
   type IncomingMessage,
   type ServerResponse,
-  createServer,
 } from "node:http";
+import { type AddressInfo, createServer as createNetServer } from "node:net";
 import {
   deserialize as v8Deserialize,
   serialize as v8Serialize,
 } from "node:v8";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { handleRequest } from "./index.js";
 
 const RESULT_SENTINEL = "\u0001RESULT\u0002";

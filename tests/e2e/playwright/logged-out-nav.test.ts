@@ -44,9 +44,7 @@ test.describe("Logged-out navigation sidebar (NAV-01..05, NAV-08)", () => {
     // bootstrap call and exclude it from the contract: NAV-04's intent is
     // that OUR persistent components (sidebar, toolbar, user menu, wallet
     // button, org switcher) do not fire protected fetches for anon users.
-    const UPSTREAM_ALLOWLIST = [
-      "/api/auth/organization/get-full-organization",
-    ];
+    const UPSTREAM_ALLOWLIST = ["/api/auth/organization/get-full-organization"];
 
     const status401: string[] = [];
     page.on("response", (response) => {

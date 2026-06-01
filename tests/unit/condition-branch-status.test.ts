@@ -3,12 +3,12 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import { buildEdgesBySourceHandle } from "@/lib/workflow/editor/edge-handle-utils";
+import { evaluateConditionExpression } from "@/lib/workflow/executor/executor.workflow";
 import {
   type ConditionDecision,
   collectAllSkippedTargets,
   collectSkippedTargets,
 } from "@/lib/workflow/nodes/condition/skipped-branch";
-import { evaluateConditionExpression } from "@/lib/workflow/executor/executor.workflow";
 
 type ExecutionResult = {
   success: boolean;

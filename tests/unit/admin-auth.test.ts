@@ -184,10 +184,7 @@ describe("rateLimitBypassRule", () => {
 
   it("should return default rule when X-Test-API-Key header is missing", () => {
     process.env.TEST_API_KEY = TEST_KEY;
-    const result = rateLimitBypassRule(
-      createRequestWithHeader(),
-      DEFAULT_RULE
-    );
+    const result = rateLimitBypassRule(createRequestWithHeader(), DEFAULT_RULE);
     expect(result).toBe(DEFAULT_RULE);
   });
 

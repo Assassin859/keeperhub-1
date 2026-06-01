@@ -318,37 +318,38 @@ const { SENTRY_ORG, SENTRY_PROJECT, SENTRY_RELEASE } = process.env;
 export default withSentryConfig(
   withWorkflow(nextConfig, { workflows: { lazyDiscovery: true } }),
   {
-  // For all available options, see:
-  // https://www.npmjs.com/package/@sentry/webpack-plugin#options
+    // For all available options, see:
+    // https://www.npmjs.com/package/@sentry/webpack-plugin#options
 
-  org: SENTRY_ORG,
-  project: SENTRY_PROJECT,
-  release: SENTRY_RELEASE ? { name: SENTRY_RELEASE } : undefined,
+    org: SENTRY_ORG,
+    project: SENTRY_PROJECT,
+    release: SENTRY_RELEASE ? { name: SENTRY_RELEASE } : undefined,
 
-  // Only print logs for uploading source maps in CI
-  silent: !process.env.CI,
+    // Only print logs for uploading source maps in CI
+    silent: !process.env.CI,
 
-  // For all available options, see:
-  // https://docs.sentry.io/platforms/javascript/guides/nextjs/manual-setup/
+    // For all available options, see:
+    // https://docs.sentry.io/platforms/javascript/guides/nextjs/manual-setup/
 
-  // Upload a larger set of source maps for prettier stack traces (increases build time)
-  widenClientFileUpload: true,
+    // Upload a larger set of source maps for prettier stack traces (increases build time)
+    widenClientFileUpload: true,
 
-  // No-op: source map upload moved to sentry-upload Docker stage (KEEP-280).
-  // Kept for safety in case SENTRY_AUTH_TOKEN is ever set during build.
-  sourcemaps: {
-    deleteSourcemapsAfterUpload: true,
-  },
-
-  // Route browser requests to Sentry through a Next.js rewrite to circumvent ad-blockers.
-  // This can increase your server load as well as your hosting bill.
-  // Note: Check that the configured route will not match with your Next.js middleware, otherwise reporting of client-
-  // side errors will fail.
-  tunnelRoute: "/monitoring",
-
-  webpack: {
-    treeshake: {
-      removeDebugLogging: true,
+    // No-op: source map upload moved to sentry-upload Docker stage (KEEP-280).
+    // Kept for safety in case SENTRY_AUTH_TOKEN is ever set during build.
+    sourcemaps: {
+      deleteSourcemapsAfterUpload: true,
     },
-  },
-});
+
+    // Route browser requests to Sentry through a Next.js rewrite to circumvent ad-blockers.
+    // This can increase your server load as well as your hosting bill.
+    // Note: Check that the configured route will not match with your Next.js middleware, otherwise reporting of client-
+    // side errors will fail.
+    tunnelRoute: "/monitoring",
+
+    webpack: {
+      treeshake: {
+        removeDebugLogging: true,
+      },
+    },
+  }
+);
