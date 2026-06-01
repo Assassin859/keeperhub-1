@@ -121,7 +121,7 @@ describe("simulateContractCall", () => {
     expect(executeWithFailover).toHaveBeenCalledTimes(1);
     expect(executeWithFailover).toHaveBeenCalledWith(
       expect.any(Function),
-      "read"
+      "preflight"
     );
   });
 
@@ -263,7 +263,7 @@ describe("simulateNativeTransfer", () => {
     }
     expect(executeWithFailover).toHaveBeenCalledWith(
       expect.any(Function),
-      "read"
+      "preflight"
     );
   });
 
@@ -355,7 +355,7 @@ describe("simulateTokenTransfer", () => {
     // decimals fetch + actual simulate = 2 failover invocations.
     expect(executeWithFailover).toHaveBeenCalledTimes(2);
     expect(executeWithFailover.mock.calls[0]?.[1]).toBe("preflight");
-    expect(executeWithFailover.mock.calls[1]?.[1]).toBe("read");
+    expect(executeWithFailover.mock.calls[1]?.[1]).toBe("preflight");
   });
 
   it("skips the on-chain decimals lookup when decimals is provided", async () => {
@@ -378,7 +378,7 @@ describe("simulateTokenTransfer", () => {
     expect(result.success).toBe(true);
     // Only the simulate call, no decimals preflight.
     expect(executeWithFailover).toHaveBeenCalledTimes(1);
-    expect(executeWithFailover.mock.calls[0]?.[1]).toBe("read");
+    expect(executeWithFailover.mock.calls[0]?.[1]).toBe("preflight");
   });
 
   it("rejects when parseTokenAddress cannot resolve a token", async () => {

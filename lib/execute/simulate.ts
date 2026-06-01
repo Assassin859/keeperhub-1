@@ -253,7 +253,7 @@ export async function simulateContractCall(
     // in the broadcast cores.
     [gasEstimate, returnData] = await rpc.executeWithFailover(
       (p) => Promise.all([p.estimateGas(tx), p.call(tx)]),
-      "read"
+      "preflight"
     );
   } catch (err) {
     const reason =
@@ -312,7 +312,7 @@ export async function simulateNativeTransfer(
   try {
     [gasEstimate, returnData] = await rpc.executeWithFailover(
       (p) => Promise.all([p.estimateGas(tx), p.call(tx)]),
-      "read"
+      "preflight"
     );
   } catch (err) {
     return failure(

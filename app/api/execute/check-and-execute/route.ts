@@ -95,8 +95,11 @@ async function simulateConditionalWrite(
     functionName: action.functionName,
     functionArgs: action.functionArgs,
   });
+  // `executed` reflects "the action would have run successfully" rather
+  // than "we reached the action step". A reverted simulate means a real
+  // broadcast would have reverted too, so executed is false.
   return NextResponse.json(
-    { ...result, executed: true, conditionResult },
+    { ...result, executed: !result.wouldRevert, conditionResult },
     { status: result.wouldRevert ? 400 : 200 }
   );
 }

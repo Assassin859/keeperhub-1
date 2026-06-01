@@ -41,6 +41,12 @@ const COMMON_ERROR_FRAGMENTS: string[] = [
 const COMMON_ERRORS_INTERFACE = new ethers.Interface(COMMON_ERROR_FRAGMENTS);
 
 function formatDecodedError(decoded: ethers.ErrorDescription): string {
+  // Standard Solidity `Error(string)` (selector 0x08c379a0) — unwrap to
+  // the bare message. The `Error(...)` wrapper added zero information
+  // and pushed the actual reason past the noise.
+  if (decoded.name === "Error" && decoded.args.length === 1) {
+    return String(decoded.args[0]);
+  }
   if (decoded.args.length === 0) {
     return decoded.name;
   }
