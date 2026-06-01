@@ -18,6 +18,7 @@ import {
 import {
   buildPendingSignupClearCookie,
 } from "@/lib/pending-signup-cookie";
+import { recordTrustedIpFromRequest } from "@/lib/security/login-risk";
 import { verifyUserTotp } from "@/lib/security/totp-verify";
 
 type RequestBody = {
@@ -252,6 +253,13 @@ export async function POST(request: Request): Promise<NextResponse> {
         mfaVerifiedAt: new Date(),
       });
     });
+
+    // This path mints the first session by hand, so the
+    // session.create.before hook that normally records the source IP in
+    // user_trusted_ips never runs. Trust the signup IP here (first
+    // attestation) so a later sign-in from the same network isn't
+    // bounced to /verify-ip for an IP the user already signed up from.
+    await recordTrustedIpFromRequest(userId);
 
     const responseBody: EnrollResponse = {
       backupCodes,

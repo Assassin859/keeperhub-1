@@ -2,6 +2,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { db } from "@/lib/db";
 import { sessions, userTrustedIps } from "@/lib/db/schema";
+import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { normalizeIpForTrust } from "@/lib/security/ip-normalize";
 import {
   type ResolvedLocation,
@@ -469,4 +470,59 @@ export async function assessIpTrust(userId: string): Promise<IpTrust> {
     reason: "untrusted",
   });
   return { ip, rawIp, trusted: false, country, reason: "untrusted" };
+}
+
+/**
+ * Idempotently record an IP in a user's trusted list. The unique
+ * (user_id, ip) constraint makes the upsert safe to repeat: a known IP
+ * just bumps last_seen_at. Best-effort by design. A failure is logged
+ * and swallowed because trust-list bookkeeping must never block the
+ * sign-in that triggered it. If the write is lost, the next sign-in
+ * from the same IP hits the /verify-ip gate, which is the correct
+ * fail-closed direction.
+ */
+export async function upsertTrustedIp(
+  userId: string,
+  ip: string,
+  country: string | null
+): Promise<void> {
+  try {
+    await db
+      .insert(userTrustedIps)
+      .values({ userId, ip, country })
+      .onConflictDoUpdate({
+        target: [userTrustedIps.userId, userTrustedIps.ip],
+        set: { lastSeenAt: new Date() },
+      });
+  } catch (err) {
+    logSystemError(
+      ErrorCategory.DATABASE,
+      "[ip-trust] failed to upsert trusted IP",
+      err,
+      { user_id: userId, ip }
+    );
+  }
+}
+
+/**
+ * Record the current request's source IP as trusted for this user,
+ * mirroring the databaseHooks.session.create.before path in lib/auth.ts.
+ * Called by the pending-signup TOTP enroll path, which mints a user's
+ * first session by inserting the row directly and so never runs that
+ * hook. Without it a credential signup never records its origin IP, so a
+ * later sign-in from that very network is treated as new and bounced to
+ * /verify-ip. (OAuth signup does not need this: its callback mints a
+ * Better Auth session first, which runs the hook before being discarded.)
+ *
+ * Records only on a positive trust decision: first-ever attestation or
+ * an already-known IP, exactly as the hook does. An untrusted IP is left
+ * for the /verify-ip gate to resolve.
+ */
+export async function recordTrustedIpFromRequest(
+  userId: string
+): Promise<void> {
+  const ipTrust = await assessIpTrust(userId);
+  if (ipTrust.ip && ipTrust.trusted) {
+    await upsertTrustedIp(userId, ipTrust.ip, ipTrust.country);
+  }
 }
