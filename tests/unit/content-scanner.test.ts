@@ -195,6 +195,29 @@ describe("scanAndReport", () => {
       })
     ).not.toThrow();
   });
+
+  it("emits a structured error signal when the scan itself throws", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+      // swallow the line in test
+    });
+    // Force a throw inside the scan: reading `.nodes` blows up, simulating a
+    // scanner bug. The probe must not throw into the executor AND must leave a
+    // signal, so a silently-broken scanner is itself detectable rather than
+    // dropping detection to zero.
+    const exploding = {
+      get nodes(): never {
+        throw new Error("scanner exploded");
+      },
+    } as unknown as { nodes: never };
+    expect(() => scanAndReport(exploding, { workflowId: "wf_err" })).not.toThrow();
+    const errorLine = warnSpy.mock.calls
+      .map((call) => String(call[0]))
+      .find((line) => line.includes("security.content_scanner_error"));
+    expect(errorLine).toBeDefined();
+    expect(errorLine).toContain("wf_err");
+    expect(errorLine).toContain("scanner exploded");
+    warnSpy.mockRestore();
+  });
 });
 
 describe("scanTriggerInput — runtime payload coverage", () => {

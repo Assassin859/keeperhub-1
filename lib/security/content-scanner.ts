@@ -294,7 +294,24 @@ export function scanAndReport(
     scanNodes(nodes, hits);
     scanTriggerInput(triggerInput, hits);
     emitScanReport(hits, context);
-  } catch {
-    // swallow: detection must not affect execution semantics
+  } catch (error) {
+    // The scan must never throw into the executor. But swallowing silently
+    // would drop detection to zero with no signal -- the exact "controls run
+    // but nobody is watching" blind spot this layer exists to remove. Emit
+    // one structured line (self-guarded so the failure-signal can't escape
+    // either) so a probe that quietly stopped working is itself observable.
+    try {
+      console.warn(
+        JSON.stringify({
+          event: "security.content_scanner_error",
+          workflowId: context.workflowId,
+          executionId: context.executionId,
+          organizationId: context.organizationId,
+          message: error instanceof Error ? error.message : String(error),
+        })
+      );
+    } catch {
+      // never let the failure-signal emission escape into the executor
+    }
   }
 }
