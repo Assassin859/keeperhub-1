@@ -9,6 +9,12 @@ const isTestEnv = !!process.env.CI || process.env.NODE_ENV === "test";
 
 const SENDGRID_API_URL = "https://api.sendgrid.com/v3/mail/send";
 
+// Cap the outbound SendGrid call so a stalled connection surfaces as a
+// failed send (returns false) instead of hanging the request that's
+// awaiting it -- otherwise a caller like the verify-IP OTP step spins
+// on "Sending..." indefinitely.
+const SENDGRID_TIMEOUT_MS = 10_000;
+
 type SendEmailOptions = {
   to: string;
   subject: string;
@@ -88,6 +94,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<boolean> {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(emailData),
+      signal: AbortSignal.timeout(SENDGRID_TIMEOUT_MS),
     });
 
     if (!response.ok) {

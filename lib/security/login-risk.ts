@@ -256,10 +256,25 @@ export async function buildRiskFlagsJsonForIp(
  */
 export type IpTrust = {
   ip: string | null;
+  rawIp: string | null;
   trusted: boolean;
   country: string | null;
   reason: "no_cf" | "known" | "first" | "untrusted";
 };
+
+/**
+ * Structured trace for the IP-verification gate. Logs the raw
+ * (pre-normalization) client IP alongside the normalized /24-or-/64
+ * trust key at every stage so a rotating egress IP -- the failure mode
+ * where a user gets the new-network modal but the codes never line up
+ * -- is greppable end to end via `[ip-verify]`.
+ */
+export function logIpVerify(
+  stage: string,
+  fields: Record<string, unknown>
+): void {
+  console.info(`[ip-verify] ${stage}`, fields);
+}
 
 async function resolveLoginIp(): Promise<string | null> {
   try {
@@ -398,6 +413,12 @@ export async function gateRequestIp(userId: string): Promise<RequestIpGate> {
   }
   const result: RequestIpGate = { kind: "untrusted", ip, country };
   rememberTrust(key, { result, expiresAt: now + UNTRUSTED_TTL_MS });
+  logIpVerify("gate-untrusted", {
+    userId,
+    rawIp,
+    normalizedIp: ip,
+    country,
+  });
   return result;
 }
 
@@ -405,7 +426,13 @@ export async function assessIpTrust(userId: string): Promise<IpTrust> {
   const rawIp = await resolveLoginIp();
   const { country } = await resolveLoginLocation();
   if (!rawIp) {
-    return { ip: null, trusted: true, country, reason: "no_cf" };
+    logIpVerify("assess", {
+      userId,
+      rawIp: null,
+      normalizedIp: null,
+      reason: "no_cf",
+    });
+    return { ip: null, rawIp: null, trusted: true, country, reason: "no_cf" };
   }
 
   // IPv6 trust is bucketed at /64 to handle CF's lower-64-bits
@@ -421,7 +448,8 @@ export async function assessIpTrust(userId: string): Promise<IpTrust> {
     .where(and(eq(userTrustedIps.userId, userId), eq(userTrustedIps.ip, ip)))
     .limit(1);
   if (hit) {
-    return { ip, trusted: true, country, reason: "known" };
+    logIpVerify("assess", { userId, rawIp, normalizedIp: ip, reason: "known" });
+    return { ip, rawIp, trusted: true, country, reason: "known" };
   }
 
   const [anyTrusted] = await db
@@ -430,8 +458,15 @@ export async function assessIpTrust(userId: string): Promise<IpTrust> {
     .where(eq(userTrustedIps.userId, userId))
     .limit(1);
   if (!anyTrusted) {
-    return { ip, trusted: true, country, reason: "first" };
+    logIpVerify("assess", { userId, rawIp, normalizedIp: ip, reason: "first" });
+    return { ip, rawIp, trusted: true, country, reason: "first" };
   }
 
-  return { ip, trusted: false, country, reason: "untrusted" };
+  logIpVerify("assess", {
+    userId,
+    rawIp,
+    normalizedIp: ip,
+    reason: "untrusted",
+  });
+  return { ip, rawIp, trusted: false, country, reason: "untrusted" };
 }

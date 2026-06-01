@@ -14,7 +14,7 @@ import {
   verifications,
 } from "@/lib/db/schema";
 import { sendVerificationOTP } from "@/lib/email";
-import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { ErrorCategory, logSystemError, logSystemWarn } from "@/lib/logging";
 import {
   checkDualFactorRateLimit,
   resetDualFactor,
@@ -29,6 +29,7 @@ import {
   assessIpTrust,
   buildRiskFlagsJsonForIp,
   clearTrustCacheEntry,
+  logIpVerify,
 } from "@/lib/security/login-risk";
 import { verifyUserTotp } from "@/lib/security/totp-verify";
 import { generateId } from "@/lib/utils/id";
@@ -104,6 +105,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const cookieValue = readPendingIpCookie(request.headers);
   if (!cookieValue) {
+    logIpVerify("verify-ip:no_pending_ip", { hasCookie: false });
     return NextResponse.json(
       {
         error: "No pending IP verification",
@@ -114,6 +116,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
   const decoded = decodePendingIpCookie(cookieValue, serverSecret);
   if (!decoded.ok) {
+    logIpVerify("verify-ip:bad_cookie", { reason: decoded.reason });
     return NextResponse.json(
       {
         error:
@@ -121,21 +124,6 @@ export async function POST(request: Request): Promise<NextResponse> {
             ? "Verification window expired. Sign in again."
             : "Invalid verification state. Sign in again.",
         code: decoded.reason,
-      },
-      { status: 401 }
-    );
-  }
-
-  // Bind the dual-factor exchange to the IP that the cookie was
-  // issued for. A thief on a different network cannot satisfy the
-  // gate even with valid factors because assessIpTrust here will
-  // resolve a different IP than the one stored in the payload.
-  const ipTrust = await assessIpTrust(decoded.payload.userId);
-  if (ipTrust.ip && ipTrust.ip !== decoded.payload.ip) {
-    return NextResponse.json(
-      {
-        error: "Verification must be completed from the same network.",
-        code: "ip_mismatch",
       },
       { status: 401 }
     );
@@ -156,6 +144,10 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const rateLimit = checkDualFactorRateLimit(decoded.payload.userId, ACTION);
   if (!rateLimit.allowed) {
+    logIpVerify("verify-ip:rate_limited", {
+      userId: decoded.payload.userId,
+      retryAfter: rateLimit.retryAfter,
+    });
     return NextResponse.json(
       {
         error: "Too many attempts. Wait and try again.",
@@ -168,6 +160,9 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const bothPresent = totpCode.length === 6 && inboxCode.length === 6;
 
+  // The email-OTP request is not gated on the IP re-check: the user may
+  // request the code from a rotating egress IP. Only the session-minting
+  // path below binds to the network pinned in the cookie.
   if (!bothPresent) {
     const otp = generateEmailOtp();
     const encrypted = await symmetricEncrypt({
@@ -193,6 +188,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       type: "confirm-action",
     });
     if (!sent) {
+      logIpVerify("verify-ip:email_send_failed", {
+        userId: decoded.payload.userId,
+        email: decoded.payload.email,
+      });
       return NextResponse.json(
         {
           error: "Failed to send confirmation email",
@@ -201,11 +200,50 @@ export async function POST(request: Request): Promise<NextResponse> {
         { status: 503 }
       );
     }
+    logIpVerify("verify-ip:otp_sent", {
+      userId: decoded.payload.userId,
+      email: decoded.payload.email,
+      cookieIp: decoded.payload.ip,
+    });
     return NextResponse.json(
       {
         error:
           "Enter the 6-digit code from your authenticator app and the code emailed to you.",
         code: "factors_required",
+      },
+      { status: 401 }
+    );
+  }
+
+  // Both codes present -> session-minting path. Bind the exchange to the
+  // network the cookie was issued for: a thief on a different network
+  // cannot finish even with valid factors because assessIpTrust resolves
+  // a different /24-or-/64 key than the one pinned in the payload. The
+  // raw (pre-normalization) IPs are logged so a rotating egress address
+  // is visible end to end.
+  const ipTrust = await assessIpTrust(decoded.payload.userId);
+  const ipMatch = !ipTrust.ip || ipTrust.ip === decoded.payload.ip;
+  logIpVerify("verify-ip:final_check", {
+    userId: decoded.payload.userId,
+    cookieIp: decoded.payload.ip,
+    currentRawIp: ipTrust.rawIp,
+    currentNormalizedIp: ipTrust.ip,
+    match: ipMatch,
+  });
+  if (!ipMatch) {
+    logSystemWarn(
+      ErrorCategory.AUTH,
+      "[verify-ip] ip_mismatch on session-minting attempt",
+      new Error("ip_mismatch"),
+      {
+        endpoint: "/api/user/verify-ip",
+        user_id: decoded.payload.userId,
+      }
+    );
+    return NextResponse.json(
+      {
+        error: "Verification must be completed from the same network.",
+        code: "ip_mismatch",
       },
       { status: 401 }
     );
