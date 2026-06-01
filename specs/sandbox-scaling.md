@@ -1,138 +1,61 @@
 # Code Sandbox Scaling Notes
 
-Reference for deciding how to scale the `keeperhub-sandbox` service. Captures
-what bounds today's capacity, the options, and their cost so the pod sizing
-call can be made on data rather than guesswork.
+Plain-language summary for deciding how to scale the code sandbox. The sandbox
+runs users' Code-node JavaScript, each run in its own short-lived process.
 
-## What exists today
+## The problem
 
-The sandbox runs user Code-node JavaScript. Each `/run` request spawns a fresh
-Node child process (`sandbox/src/run-code.ts`), runs the user code with a
-wall-clock timeout (default 60s, max 120s), and returns the result.
+Clients sometimes get a "rate limit" (429) error from Code nodes. That happens
+because the sandbox only allows a fixed number of code runs at the same time,
+and once that number is hit, extra runs are rejected.
 
-Concurrency is gated per pod by an in-flight counter
-(`sandbox/src/index.ts`). When in-flight runs reach the cap, the pod sheds
-load with `429 sandbox at capacity` plus `Retry-After: 1`, before it reads the
-body or spawns a child (so a shed request is cheap on the server).
+Today the limit is 16 runs at once across all of prod (8 per pod, 2 pods). A
+normal paid workload can trip that on a brief spike, which is too low.
 
-Current numbers:
+## Why the limit is 16 and not higher
 
-- Per-pod cap: `DEFAULT_MAX_CONCURRENT_RUNS = 8`, overridable via
-  `SANDBOX_MAX_CONCURRENT_RUNS`.
-- Prod `replicaCount: 2`, so effective cluster ceiling is `8 x 2 = 16`
-  concurrent runs. Staging runs 1 replica (ceiling 8).
-- Per-pod resources: requests `100m / 128Mi`, limits `500m / 512Mi`.
-- Pods are pinned to a dedicated, taint-isolated Karpenter nodepool.
+Each running pod has half a CPU core and 512MB of memory. Each code run is a
+full Node process that needs CPU to start up and some memory to run.
 
-## What actually binds the limit
+- CPU is the real ceiling: half a core can only handle about 8 runs at once
+  before they start fighting for CPU and slow down.
+- Memory is the hidden risk: 8 runs already use most of the 512MB. A heavy run
+  can push a pod over its memory limit, which crashes the pod and kills every
+  run on it at once.
 
-The `8` is CPU derived, not arbitrary, and memory is a secondary risk:
+So the 16 is not arbitrary. Just raising the number without giving the pods more
+CPU and memory makes runs slow and crash instead of fixing anything.
 
-- CPU: `500m` is half a core. Eight concurrent child processes, each paying an
-  ~80ms V8 startup and compile cost, already oversubscribe it. Raising
-  concurrency without raising CPU trades 429s for slow runs and wall-clock
-  timeouts, which is worse for the caller.
-- Memory: at 8 runs of roughly 60MB baseline each, a pod sits near 480MB of its
-  512Mi limit before user code allocates anything. There is no per-run heap
-  cap, so one run can grow until the pod-wide cgroup OOM-kills the container,
-  taking every in-flight run on that pod down with it.
+## The options
 
-Cost is driven by Kubernetes requests, not limits, because Karpenter bin-packs
-on requests. Today's requests are tiny, so the whole service is effectively one
-small mostly-idle node.
+| Option | What it does | Cost | Trade-off |
+| --- | --- | --- | --- |
+| Retry on 429 | Client waits a moment and retries instead of erroring | Free | Hides short spikes. Does not add real capacity. Shipping now. |
+| Bigger pods, "best effort" | Allow pods to use more CPU/memory if the machine has it free | Roughly free | Faster only when the machine is not busy. Unreliable under load. |
+| Bigger pods, "reserved" | Permanently reserve more CPU/memory per pod | About +45 to +90 / month | Reliable, but you pay for it 24/7 even when the sandbox is idle. Still a fixed ceiling. |
+| Autoscaling | Start with 2 pods, add more automatically during busy periods, remove them when quiet | Pay only for what you use | The best fit. Needs a bit more setup. |
 
-## Per concurrent run, the cost model
+## What we shipped now
 
-One concurrent slot is one full Node process:
+The retry. When the sandbox says "I'm full, try again in a moment," the client
+now waits and retries (up to 3 times) instead of failing. This is free and
+removes most of the errors clients see, because most of them are tiny spikes
+that pass in under a second. It does not add capacity on its own.
 
-- About 60 to 65m of CPU to hold the 8-per-500m ratio.
-- About 60MB of baseline memory plus whatever headroom user code needs.
-- No isolation beyond the OS process, one shared pod cgroup.
+## What to do next (recommended)
 
-To raise concurrency reliably, move CPU and memory together and keep those
-ratios. Sixteen runs per pod means roughly 1000m CPU and 1Gi memory.
+1. Keep the pods their current size.
+2. Turn on autoscaling: always keep 2 pods running, and automatically add more
+   when the sandbox gets busy, then scale back down when it quiets.
+3. Bump the per-pod memory limit from 512MB to 1GB (this part is free) so a
+   single heavy run can no longer crash a pod.
 
-## Options
+This matches cost to actual usage: cheap when idle, more capacity exactly when
+clients need it, and no fixed wall that a busy day can hit.
 
-### 1. Client retry on 429 (shipping in the linked PR)
+## One number to confirm first
 
-The main-app client now honors the `Retry-After` the sandbox already sends:
-bounded retries (default 3, via `SANDBOX_MAX_RETRIES`) with jitter, abort-aware.
-Only a capacity 429 is retried since the run never started, so resending is
-safe. Any other failure is terminal.
-
-- Cost: zero infra. The retry runs in the main app over the existing keep-alive
-  socket, and only fires on a 429.
-- Buys: absorbs sub-second micro-bursts (the overshoot cases) so they never
-  surface to the customer. Does not add capacity. Pairs with autoscaling by
-  covering the seconds while a new pod becomes ready.
-
-### 2. Vertical, burstable (raise limits only)
-
-Set per-pod limits to `1000m / 1Gi`, leave requests at `100m / 128Mi`.
-
-- Cost: about zero. Requests unchanged, so bin-packing and the node footprint do
-  not change.
-- Behavior: 16 per pod works only when the node happens to have spare CPU. Under
-  contention the kernel throttles the pod back toward its 100m request, so the
-  16 runs crawl. Burstable, not guaranteed.
-
-### 3. Vertical, guaranteed (raise requests to match limits)
-
-Set requests and limits both to `1000m / 1Gi`.
-
-- Cost: roughly +45 to +90 per month. Karpenter must reserve about 2 vCPU and
-  2Gi for the two pods, forcing a larger node that is paid for 24/7 even when
-  the sandbox is idle.
-- Behavior: 16 per pod always has the CPU reserved, predictable under load.
-- Downside: the reservation is sized for peak but the sandbox is mostly idle, so
-  you pay for headroom that sits unused most of the time. Still a fixed ceiling;
-  33 concurrent runs still hit 429, and one pod crash now drops 16 runs.
-
-### 4. Horizontal autoscaling (the durable answer)
-
-Keep pods at their current size. Scale replicas on saturation, not CPU.
-
-- The 429 is fired by the in-flight concurrency counter, which does not track
-  CPU or memory utilization. Code nodes are frequently I/O bound (user code
-  awaits external `fetch`), so a pod can be at full slots and shedding 429s
-  while CPU sits at 30 to 40 percent. A CPU based autoscaler would miss exactly
-  the moment capacity is needed.
-- Correct signal: pool saturation (`inFlightRuns / max`) or the 429 rate. The
-  sandbox already tracks `inFlightRuns` via `getInFlightRuns()`; it just needs a
-  `/metrics` endpoint to expose it, then KEDA or an HPA custom metric scaling on
-  it (target around 70 percent), with CPU as a secondary trigger.
-- Shape: `minReplicas: 2` for a small always-on floor, scale out during bursts,
-  scale back down after. Aggressive scale-up, conservative scale-down to avoid
-  flapping.
-- Cost: tracks actual load. You pay the small floor when idle and burst capacity
-  only while a burst is happening, instead of reserving peak around the clock.
-- Caveat: HPA plus pod cold start is 30 to 60s, while bursts are sub-second, so
-  option 1 (the retry) is what bridges the gap until a new pod is ready.
-
-### 5. Per-run heap cap (do regardless)
-
-Add `--max-old-space-size` to the child spawn so one run that balloons fails
-itself rather than OOM-killing the pod and every run on it. Also keeps a pod
-OOM from muddying the autoscaler signal. Small change, unconditionally correct.
-
-## Recommendation
-
-Layered, by value per effort:
-
-1. Client 429 retry. Zero cost, removes most customer-visible errors. Shipping
-   now.
-2. Per-child heap cap. Removes the pod-wide OOM blast radius.
-3. Memory limit bump `512Mi` to `1Gi`. Free (limit only), buys real headroom per
-   pod.
-4. Saturation-based autoscaling with `minReplicas: 2`. The real capacity fix,
-   sized to load instead of a fixed reservation. Needs the `/metrics` endpoint
-   first.
-
-Vertical scaling (options 2 and 3) is a reasonable stopgap if a quick bump is
-wanted, but it is a taller fixed wall, not elastic, and the guaranteed variant
-pays for idle peak capacity. Prefer horizontal.
-
-Before locking the autoscaler `maxReplicas` and saturation target, pull the
-actual peak concurrent runs and current 429 rate from metrics and Sentry. The
-numbers above are sized from the resource model, not live demand.
+Before picking how many pods to allow at the busiest point, pull the real
+numbers from monitoring: how many code runs actually happen at once on a busy
+day, and how often the 429 is currently firing. The plan above is sound, but the
+exact "max pods" should be set from that data, not a guess.
