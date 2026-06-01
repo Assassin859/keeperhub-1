@@ -34,63 +34,50 @@ const MAX_CAPACITY_RETRIES = Number.parseInt(
   10
 );
 
-// Fallback backoff when a 429 omits Retry-After. The server currently always
-// sends Retry-After: 1, but we do not depend on it.
-const DEFAULT_RETRY_AFTER_MS = 500;
+// Base backoff for the first retry. We deliberately compute the wait from a
+// fixed schedule rather than the response's Retry-After: deriving a timer
+// duration from an HTTP header is a resource-exhaustion risk, and our sandbox
+// always signals a 1s backoff anyway.
+const BASE_BACKOFF_MS = 500;
+
+// Hard ceiling on any single backoff so a sustained-saturation retry chain
+// cannot pin a workflow step on a long timer.
+const MAX_BACKOFF_MS = 5000;
 
 // Random spread added to each backoff so concurrent callers retrying the same
 // overflow do not resynchronize into a thundering herd against the sandbox.
 const RETRY_JITTER_MS = 250;
 
-// Hard ceiling on any single backoff. Retry-After comes off an HTTP response,
-// so a buggy or hostile value must never be able to pin a workflow step on a
-// long timer. Our sandbox only ever sends 1s; 5s is generous headroom.
-const MAX_BACKOFF_MS = 5000;
-
 const HTTP_TOO_MANY_REQUESTS = 429;
 
 /**
- * Carries the HTTP status (and parsed Retry-After) off a non-200 sandbox
- * response so runRemote can distinguish a retryable capacity 429 from a
- * terminal error without string-matching the message.
+ * Carries the HTTP status off a non-200 sandbox response so runRemote can
+ * distinguish a retryable capacity 429 from a terminal error without
+ * string-matching the message.
  */
 class SandboxHttpError extends Error {
   readonly statusCode: number;
-  readonly retryAfterMs: number | null;
 
-  constructor(
-    statusCode: number,
-    retryAfterMs: number | null,
-    message: string
-  ) {
+  constructor(statusCode: number, message: string) {
     super(message);
     this.name = "SandboxHttpError";
     this.statusCode = statusCode;
-    this.retryAfterMs = retryAfterMs;
   }
 }
 
-function parseRetryAfterMs(
-  headerValue: string | string[] | undefined
-): number | null {
-  const raw = Array.isArray(headerValue) ? headerValue[0] : headerValue;
-  if (!raw) {
-    return null;
-  }
-  const seconds = Number.parseInt(raw, 10);
-  if (!(Number.isFinite(seconds) && seconds >= 0)) {
-    return null;
-  }
-  return Math.min(seconds * 1000, MAX_BACKOFF_MS);
+/** Exponential backoff for the nth retry (0-indexed), capped and jittered.
+ * Derived only from constants so no response-controlled value reaches the
+ * timer. */
+function backoffForAttempt(attempt: number): number {
+  const exponential = BASE_BACKOFF_MS * 2 ** attempt;
+  const capped = Math.min(exponential, MAX_BACKOFF_MS);
+  return capped + Math.floor(Math.random() * RETRY_JITTER_MS);
 }
 
 /** Abort-aware delay used between capacity retries. Rejects if the caller's
  * signal fires while we are backing off so a client disconnect short-circuits
  * the wait instead of pinning the workflow step for the full backoff. */
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
-  // Bound the timer at the sink: never wait longer than the ceiling regardless
-  // of what the caller passes, so a tainted Retry-After cannot pin the step.
-  const boundedMs = Math.min(Math.max(0, ms), MAX_BACKOFF_MS);
   return new Promise<void>((resolve, reject) => {
     if (signal?.aborted) {
       reject(new Error("aborted"));
@@ -102,7 +89,7 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
         signal.removeEventListener("abort", onAbort);
       }
       resolve();
-    }, boundedMs);
+    }, ms);
     if (signal) {
       onAbort = (): void => {
         clearTimeout(timer);
@@ -202,13 +189,9 @@ function postOnce(
           settle(() => {
             const buf = Buffer.concat(chunks);
             if (res.statusCode !== 200) {
-              const retryAfterMs = parseRetryAfterMs(
-                res.headers["retry-after"]
-              );
               reject(
                 new SandboxHttpError(
                   res.statusCode ?? 0,
-                  retryAfterMs,
                   `sandbox returned ${res.statusCode ?? "no status"}: ${buf.toString("utf8").slice(0, 200)}`
                 )
               );
@@ -305,10 +288,7 @@ export async function runRemote(input: {
           err.statusCode === HTTP_TOO_MANY_REQUESTS &&
           attempt < MAX_CAPACITY_RETRIES
         ) {
-          const backoffMs =
-            (err.retryAfterMs ?? DEFAULT_RETRY_AFTER_MS) +
-            Math.floor(Math.random() * RETRY_JITTER_MS);
-          await delay(backoffMs, input.signal);
+          await delay(backoffForAttempt(attempt), input.signal);
           continue;
         }
         break;
