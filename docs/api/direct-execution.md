@@ -248,12 +248,12 @@ When the chain would have rejected the transaction, the endpoint returns HTTP 40
   "to": "0x...target",
   "value": "0",
   "wouldRevert": true,
-  "revertReason": "ERC20: transfer amount exceeds balance",
-  "error": "ERC20: transfer amount exceeds balance"
+  "revertReason": "Error(ERC20: transfer amount exceeds balance)",
+  "error": "Error(ERC20: transfer amount exceeds balance)"
 }
 ```
 
-Revert decoding tries (in order): the contract's own ABI custom errors, common OpenZeppelin / standard errors, then the standard `Error(string)` revert. If none match, the raw RPC error message is surfaced.
+Revert decoding tries (in order): the contract's own ABI custom errors, common OpenZeppelin / standard errors, then the standard `Error(string)` revert (which is surfaced as `Error(<message>)`). If none match, the raw RPC error message is surfaced.
 
 ### Token-transfer specifics
 
