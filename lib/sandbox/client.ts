@@ -24,6 +24,84 @@ const sandboxAgent = new Agent({
   maxSockets: 50,
 });
 
+// The sandbox sheds load with 429 + Retry-After before it reads the body or
+// spawns a child, so a momentary concurrency overshoot is cheap to retry: a
+// short backoff lets the in-flight runs on the pod drain instead of surfacing
+// a hard error to the caller. Bounded so sustained saturation still fails
+// fast rather than amplifying load on an already-full sandbox.
+const MAX_CAPACITY_RETRIES = Number.parseInt(
+  process.env.SANDBOX_MAX_RETRIES ?? "3",
+  10
+);
+
+// Fallback backoff when a 429 omits Retry-After. The server currently always
+// sends Retry-After: 1, but we do not depend on it.
+const DEFAULT_RETRY_AFTER_MS = 500;
+
+// Random spread added to each backoff so concurrent callers retrying the same
+// overflow do not resynchronize into a thundering herd against the sandbox.
+const RETRY_JITTER_MS = 250;
+
+const HTTP_TOO_MANY_REQUESTS = 429;
+
+/**
+ * Carries the HTTP status (and parsed Retry-After) off a non-200 sandbox
+ * response so runRemote can distinguish a retryable capacity 429 from a
+ * terminal error without string-matching the message.
+ */
+class SandboxHttpError extends Error {
+  readonly statusCode: number;
+  readonly retryAfterMs: number | null;
+
+  constructor(
+    statusCode: number,
+    retryAfterMs: number | null,
+    message: string
+  ) {
+    super(message);
+    this.name = "SandboxHttpError";
+    this.statusCode = statusCode;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+function parseRetryAfterMs(
+  headerValue: string | string[] | undefined
+): number | null {
+  const raw = Array.isArray(headerValue) ? headerValue[0] : headerValue;
+  if (!raw) {
+    return null;
+  }
+  const seconds = Number.parseInt(raw, 10);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : null;
+}
+
+/** Abort-aware delay used between capacity retries. Rejects if the caller's
+ * signal fires while we are backing off so a client disconnect short-circuits
+ * the wait instead of pinning the workflow step for the full backoff. */
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("aborted"));
+      return;
+    }
+    let onAbort: (() => void) | null = null;
+    const timer = setTimeout(() => {
+      if (signal && onAbort) {
+        signal.removeEventListener("abort", onAbort);
+      }
+      resolve();
+    }, ms);
+    if (signal) {
+      onAbort = (): void => {
+        clearTimeout(timer);
+        reject(new Error("aborted"));
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+  });
+}
+
 type LogEntry = {
   level: "log" | "warn" | "error";
   args: unknown[];
@@ -113,8 +191,13 @@ function postOnce(
           settle(() => {
             const buf = Buffer.concat(chunks);
             if (res.statusCode !== 200) {
+              const retryAfterMs = parseRetryAfterMs(
+                res.headers["retry-after"]
+              );
               reject(
-                new Error(
+                new SandboxHttpError(
+                  res.statusCode ?? 0,
+                  retryAfterMs,
                   `sandbox returned ${res.statusCode ?? "no status"}: ${buf.toString("utf8").slice(0, 200)}`
                 )
               );
@@ -195,9 +278,39 @@ export async function runRemote(input: {
       ),
       "ascii"
     );
-    const responseBuf = await postOnce(body, input.timeoutMs, input.signal);
-    const outcome = parseResponse(responseBuf);
-    return toRunCodeResult(outcome);
+
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= MAX_CAPACITY_RETRIES; attempt++) {
+      try {
+        const responseBuf = await postOnce(body, input.timeoutMs, input.signal);
+        const outcome = parseResponse(responseBuf);
+        return toRunCodeResult(outcome);
+      } catch (err) {
+        lastError = err;
+        // Only a capacity 429 is retryable: the run never started, so resending
+        // is safe. Any other failure (5xx, malformed, network) is terminal.
+        if (
+          err instanceof SandboxHttpError &&
+          err.statusCode === HTTP_TOO_MANY_REQUESTS &&
+          attempt < MAX_CAPACITY_RETRIES
+        ) {
+          const backoffMs =
+            (err.retryAfterMs ?? DEFAULT_RETRY_AFTER_MS) +
+            Math.floor(Math.random() * RETRY_JITTER_MS);
+          await delay(backoffMs, input.signal);
+          continue;
+        }
+        break;
+      }
+    }
+
+    const message =
+      lastError instanceof Error ? lastError.message : String(lastError);
+    return {
+      success: false,
+      error: `sandbox client error: ${message}`,
+      logs: [],
+    };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return {

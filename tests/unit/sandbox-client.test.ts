@@ -18,6 +18,7 @@ const RESULT_SENTINEL = "\u0001RESULT\u0002";
 type MockResponder = (req: { body: unknown }) => {
   status: number;
   body: string;
+  headers?: Record<string, string>;
 };
 
 let port = 0;
@@ -52,6 +53,7 @@ beforeAll(async () => {
       const result = currentResponder({ body: parsed });
       res.writeHead(result.status, {
         "Content-Type": "application/octet-stream",
+        ...result.headers,
       });
       res.end(result.body);
     }
@@ -327,6 +329,88 @@ describe("lib/sandbox-client runRemote", () => {
     expect(outcome.success).toBe(false);
     if (!outcome.success) {
       expect(outcome.error).toContain("sandbox client error");
+    }
+  });
+
+  it("retries a 429 capacity response and succeeds on the next attempt", async () => {
+    let attempts = 0;
+    currentResponder = (): {
+      status: number;
+      body: string;
+      headers?: Record<string, string>;
+    } => {
+      attempts += 1;
+      if (attempts === 1) {
+        return {
+          status: 429,
+          body: "sandbox at capacity",
+          headers: { "Retry-After": "0" },
+        };
+      }
+      return {
+        status: 200,
+        body: sentinelBody({ ok: true, result: 7, logs: [] }),
+      };
+    };
+    vi.resetModules();
+    process.env.SANDBOX_URL = `http://127.0.0.1:${port}`;
+    const { runRemote } = await import("@/lib/sandbox/client");
+    const outcome = await runRemote({ code: "return 7;", timeoutMs: 1000 });
+    expect(attempts).toBe(2);
+    expect(outcome).toEqual({ success: true, result: 7, logs: [] });
+  });
+
+  it("gives up after the bounded retries on sustained 429 and surfaces the error", async () => {
+    let attempts = 0;
+    currentResponder = (): {
+      status: number;
+      body: string;
+      headers?: Record<string, string>;
+    } => {
+      attempts += 1;
+      return {
+        status: 429,
+        body: "sandbox at capacity",
+        headers: { "Retry-After": "0" },
+      };
+    };
+    const saved = process.env.SANDBOX_MAX_RETRIES;
+    process.env.SANDBOX_MAX_RETRIES = "2";
+    try {
+      vi.resetModules();
+      process.env.SANDBOX_URL = `http://127.0.0.1:${port}`;
+      const { runRemote } = await import("@/lib/sandbox/client");
+      const outcome = await runRemote({ code: "return 1;", timeoutMs: 1000 });
+      // 2 retries on top of the initial attempt = 3 requests.
+      expect(attempts).toBe(3);
+      expect(outcome.success).toBe(false);
+      if (!outcome.success) {
+        expect(outcome.error).toContain("429");
+      }
+    } finally {
+      if (saved === undefined) {
+        delete process.env.SANDBOX_MAX_RETRIES;
+      } else {
+        process.env.SANDBOX_MAX_RETRIES = saved;
+      }
+      vi.resetModules();
+    }
+  });
+
+  it("does not retry a non-429 error response", async () => {
+    let attempts = 0;
+    currentResponder = (): { status: number; body: string } => {
+      attempts += 1;
+      return { status: 500, body: "sandbox internal error" };
+    };
+    vi.resetModules();
+    process.env.SANDBOX_URL = `http://127.0.0.1:${port}`;
+    const { runRemote } = await import("@/lib/sandbox/client");
+    const outcome = await runRemote({ code: "return 1;", timeoutMs: 1000 });
+    expect(attempts).toBe(1);
+    expect(outcome.success).toBe(false);
+    if (!outcome.success) {
+      expect(outcome.error).toContain("500");
     }
   });
 });
