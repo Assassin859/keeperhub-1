@@ -15,7 +15,7 @@
  * shipped, missing env var, etc.) does not get cached at the edge as a
  * permanent 404.
  */
-import type { NextRequest } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import { ApiErrorCodes, apiError } from "@/lib/errors/api-envelope";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 
@@ -66,7 +66,14 @@ export function DELETE(request: NextRequest) {
 }
 
 export function HEAD(request: NextRequest) {
-  return notFoundResponse(request);
+  // HEAD must not carry a response body (RFC 9110 9.3.2). Reuse the GET
+  // 404 so the status, correlation id, and cache headers stay identical,
+  // then return a body-less response with the same headers.
+  const response = notFoundResponse(request);
+  return new NextResponse(null, {
+    status: response.status,
+    headers: response.headers,
+  });
 }
 
 export function OPTIONS(request: NextRequest) {

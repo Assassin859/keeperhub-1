@@ -2,14 +2,15 @@
  * Catch-all 404 handler returns the canonical structured envelope.
  *
  * The envelope shape itself is exercised by api-error-envelope.test.ts;
- * this file pins the catch-all's contract: every HTTP method returns a
- * 404 with {error:"not_found", detail:"Route <METHOD> <path> not found",
+ * this file pins the catch-all's contract: every body-bearing verb returns
+ * a 404 with {error:"not_found", detail:"Route <METHOD> <path> not found",
  * request_id:<string>}, Content-Type: application/json, and
- * Cache-Control: no-store.
+ * Cache-Control: no-store. HEAD is special-cased: same status and headers,
+ * but no body (RFC 9110).
  *
  * Routing precedence (more specific routes win over [...slug]) is a
  * property of the Next.js App Router, not of this file; it is exercised
- * end-to-end by the live HEAD check in deploy-keeperhub.yaml. The repo's
+ * end-to-end by the live probe in deploy-keeperhub.yaml. The repo's
  * existing /api/auth/[...all] and /api/execute/[...slug] catch-alls live
  * at deeper segments and therefore take precedence by construction.
  */
@@ -36,13 +37,14 @@ function buildRequest(
   });
 }
 
+// HEAD is excluded here because it intentionally returns no body; it has
+// its own test below.
 const HANDLERS = {
   GET,
   POST,
   PUT,
   PATCH,
   DELETE,
-  HEAD,
   OPTIONS,
 } as const;
 
@@ -73,6 +75,16 @@ describe("/api/[...slug] catch-all 404", () => {
     const body = (await response.json()) as Record<string, unknown>;
     expect(body.request_id).toBe("trace-abc-123");
     expect(response.headers.get("x-request-id")).toBe("trace-abc-123");
+  });
+
+  it("HEAD returns a body-less 404 with the same status and cache headers", async () => {
+    const path = "/api/this-route-does-not-exist";
+    const response = HEAD(buildRequest("HEAD", path));
+    expect(response.status).toBe(404);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(typeof response.headers.get("x-request-id")).toBe("string");
+    const text = await response.text();
+    expect(text).toBe("");
   });
 
   it("encodes the request method and path verbatim in detail", async () => {
