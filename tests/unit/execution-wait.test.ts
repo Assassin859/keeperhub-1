@@ -128,14 +128,18 @@ describe("applyOutputMapping (KEEP-265)", () => {
   });
 
   it("returns raw workflow output when outputMapping is null", async () => {
-    const { applyOutputMapping } = await import("@/lib/payments/x402/execution-wait");
+    const { applyOutputMapping } = await import(
+      "@/lib/payments/x402/execution-wait"
+    );
     const result = await applyOutputMapping("exec-1", { balance: "1.5" }, null);
     expect(result).toEqual({ balance: "1.5" });
     expect(mockFindFirstLog).not.toHaveBeenCalled();
   });
 
   it("returns raw workflow output when outputMapping has no nodeId", async () => {
-    const { applyOutputMapping } = await import("@/lib/payments/x402/execution-wait");
+    const { applyOutputMapping } = await import(
+      "@/lib/payments/x402/execution-wait"
+    );
     const result = await applyOutputMapping(
       "exec-1",
       { balance: "1.5" },
@@ -152,7 +156,9 @@ describe("applyOutputMapping (KEEP-265)", () => {
         internalDebug: "ignore-me",
       },
     });
-    const { applyOutputMapping } = await import("@/lib/payments/x402/execution-wait");
+    const { applyOutputMapping } = await import(
+      "@/lib/payments/x402/execution-wait"
+    );
     const result = await applyOutputMapping("exec-1", null, {
       nodeId: "audit-1",
       fields: ["riskScore", "vulnerabilities"],
@@ -167,7 +173,9 @@ describe("applyOutputMapping (KEEP-265)", () => {
     mockFindFirstLog.mockResolvedValue({
       output: { a: 1, b: 2 },
     });
-    const { applyOutputMapping } = await import("@/lib/payments/x402/execution-wait");
+    const { applyOutputMapping } = await import(
+      "@/lib/payments/x402/execution-wait"
+    );
     const result = await applyOutputMapping("exec-1", null, {
       nodeId: "audit-1",
     });
@@ -176,7 +184,9 @@ describe("applyOutputMapping (KEEP-265)", () => {
 
   it("falls back to workflow output when the mapped node log is missing", async () => {
     mockFindFirstLog.mockResolvedValue(undefined);
-    const { applyOutputMapping } = await import("@/lib/payments/x402/execution-wait");
+    const { applyOutputMapping } = await import(
+      "@/lib/payments/x402/execution-wait"
+    );
     const result = await applyOutputMapping(
       "exec-1",
       { fallback: true },

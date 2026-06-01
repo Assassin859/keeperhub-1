@@ -505,6 +505,28 @@ export const workflowExecutions = pgTable(
      * app/api/mcp/workflows/[slug]/call/route.ts.
      */
     billable: boolean("billable").notNull().default(true),
+    /**
+     * KEEP-612 attribution columns. Populated on insert from the request
+     * context so detection alerts can group by source. Nullable on legacy
+     * rows and for internal callers without a request (e.g. scheduler).
+     *
+     * - `triggered_by_user_api_key_id` FKs `api_keys.id` (wfb_* webhook keys).
+     * - `triggered_by_org_api_key_id` FKs `organization_api_keys.id`
+     *   (kh_* org keys) — FK added in migration 0093 because that table
+     *   lives in schema-extensions.ts and would create a circular import.
+     * - `triggered_by_ip` is the canonical client IP (Cloudflare
+     *   `cf-connecting-ip` preferred). See lib/security/request-attribution.ts.
+     * - `trigger_source` records the entry point: manual | webhook |
+     *   scheduled | mcp | internal | block | event.
+     */
+    triggeredByUserApiKeyId: text("triggered_by_user_api_key_id").references(
+      () => apiKeys.id,
+      { onDelete: "set null" }
+    ),
+    triggeredByOrgApiKeyId: text("triggered_by_org_api_key_id"),
+    triggeredByIp: text("triggered_by_ip"),
+    triggeredByCountry: text("triggered_by_country"),
+    triggerSource: text("trigger_source"),
   },
   (table) => [
     index("idx_workflow_executions_status").on(table.status),
@@ -761,6 +783,9 @@ export const chains = pgTable(
     defaultPrivateRpcUrl: text("default_private_rpc_url"),
     isTestnet: boolean("is_testnet").default(false),
     isEnabled: boolean("is_enabled").default(true), // Can disable chains
+    // Support maturity signal surfaced to agents via list_action_schemas:
+    // "stable" | "experimental" | "deprecated". Orthogonal to isEnabled.
+    status: text("status").notNull().default("stable"),
     // KEEP-1240: Chain-specific gas configuration
     gasConfig: jsonb("gas_config").default({}),
     createdAt: timestamp("created_at").notNull().defaultNow(),

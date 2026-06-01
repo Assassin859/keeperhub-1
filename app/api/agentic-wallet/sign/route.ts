@@ -25,6 +25,7 @@
  * id -- never the raw body, the signature, or the HMAC secret.
  */
 import { eq } from "drizzle-orm";
+import { Challenge } from "mppx";
 import {
   createApprovalRequest,
   deriveApprovalBinding,
@@ -43,7 +44,6 @@ import {
   signX402Challenge,
   TurnkeyUpstreamError,
 } from "@/lib/agentic-wallet/sign";
-import { Challenge } from "mppx";
 import { verifyWorkflowBinding } from "@/lib/agentic-wallet/workflow-binding";
 import { db } from "@/lib/db";
 import { agenticWallets } from "@/lib/db/schema";
@@ -381,9 +381,7 @@ export async function POST(request: Request): Promise<Response> {
       // scheme prefix; signMppTransaction / signMppProof restore it
       // internally, so we peek at intent here with the client's form.
       const peeked = Challenge.deserialize(
-        serialized.startsWith("Payment ")
-          ? serialized
-          : `Payment ${serialized}`
+        serialized.startsWith("Payment ") ? serialized : `Payment ${serialized}`
       );
       if (peeked.intent === "charge") {
         signature = await signMppTransaction(auth.subOrgId, walletAddress, {

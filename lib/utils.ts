@@ -228,14 +228,30 @@ export function deserializeArg(
 /**
  * Deserialize a primitive value based on its type
  */
-export function deserializePrimitive(value: string, type: string): unknown {
+export function deserializePrimitive(value: unknown, type: string): unknown {
+  // Upstream event workers sometimes send the literal strings "undefined" /
+  // "null" / "" when a log field is missing (e.g. logIndex on pending blocks).
+  // Returning null here instead of letting the bad string fall through prevents
+  // a poisoned non-numeric value from reaching condition expressions and
+  // templates downstream, where it surfaces as an opaque BigInt error or a
+  // silent comparison miss. Applies to every type branch because a missing
+  // address/bool/etc. is still missing, not the literal word.
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (value === "undefined" || value === "null" || value === "") {
+    return null;
+  }
+
   // uint* and int* types → BigInt
   if (type.includes("uint") || type.includes("int")) {
     try {
-      return BigInt(value);
+      return BigInt(value as string | number | bigint | boolean);
     } catch {
-      // If BigInt conversion fails, return as string
-      return value;
+      // Unparseable numeric (e.g. "NaN", "not-a-number") -- return null rather
+      // than the original string so downstream comparisons fail loudly instead
+      // of silently mis-matching against a non-numeric.
+      return null;
     }
   }
 

@@ -44,6 +44,7 @@ import { useAuthPrompt } from "@/components/auth/provider";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import { api, ApiError, type Project, type Tag } from "@/lib/api-client";
 import { useSession } from "@/lib/auth-client";
+import { refetchSidebar } from "@/lib/refetch-sidebar";
 import { getCustomLogo } from "@/lib/workflow/editor/extension-registry";
 import { integrationsAtom } from "@/lib/integrations-store";
 import type { IntegrationType } from "@/lib/types/integration";
@@ -1173,6 +1174,9 @@ function useWorkflowActions(state: ReturnType<typeof useWorkflowState>) {
         enabled,
       });
       state.setIsEnabled(enabled);
+      // The sidebar picker derives its "Disabled" label from this column,
+      // so it needs a refetch to drop the stale row state.
+      refetchSidebar();
       toast.success(enabled ? "Workflow enabled" : "Workflow disabled");
     } catch (error) {
       console.error("Failed to update enabled state:", error);

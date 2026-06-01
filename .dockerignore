@@ -37,6 +37,14 @@ analysis/
 .cursor/
 .probes/
 
+# Local-dev sign-in tooling (pnpm dev:login). Never run in production and
+# dev-bootstrap.ts imports from tests/, which is excluded above.
+scripts/seed/dev-bootstrap.ts
+scripts/seed/fixtures/dev-workflows.ts
+scripts/dev-mint-session.ts
+scripts/dev-login.ts
+scripts/dev-login-browser.ts
+
 # Dev-only config files
 playwright.config.ts
 vitest.config.mts

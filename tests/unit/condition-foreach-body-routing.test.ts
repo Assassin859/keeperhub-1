@@ -276,13 +276,28 @@ describe("condition routing inside For Each body", () => {
       const bodyHandleMap = filterHandleMapToBody(fullHandleMap, bodyNodeIds);
       const bodyEdgesBySource = buildBodyEdgesBySource(edges);
 
-      const aTargets = resolveBodyConditionTargets(true, "cond-a", bodyHandleMap, bodyEdgesBySource);
+      const aTargets = resolveBodyConditionTargets(
+        true,
+        "cond-a",
+        bodyHandleMap,
+        bodyEdgesBySource
+      );
       expect(aTargets).toEqual(["cond-b"]);
 
-      const bTargets = resolveBodyConditionTargets(true, "cond-b", bodyHandleMap, bodyEdgesBySource);
+      const bTargets = resolveBodyConditionTargets(
+        true,
+        "cond-b",
+        bodyHandleMap,
+        bodyEdgesBySource
+      );
       expect(bTargets).toEqual(["cond-c"]);
 
-      const cTargets = resolveBodyConditionTargets(true, "cond-c", bodyHandleMap, bodyEdgesBySource);
+      const cTargets = resolveBodyConditionTargets(
+        true,
+        "cond-c",
+        bodyHandleMap,
+        bodyEdgesBySource
+      );
       expect(cTargets).toEqual(["final-action"]);
     });
 
@@ -291,7 +306,12 @@ describe("condition routing inside For Each body", () => {
       const bodyHandleMap = filterHandleMapToBody(fullHandleMap, bodyNodeIds);
       const bodyEdgesBySource = buildBodyEdgesBySource(edges);
 
-      const targets = resolveBodyConditionTargets(false, "cond-a", bodyHandleMap, bodyEdgesBySource);
+      const targets = resolveBodyConditionTargets(
+        false,
+        "cond-a",
+        bodyHandleMap,
+        bodyEdgesBySource
+      );
       expect(targets).toEqual([]);
     });
 
@@ -300,10 +320,20 @@ describe("condition routing inside For Each body", () => {
       const bodyHandleMap = filterHandleMapToBody(fullHandleMap, bodyNodeIds);
       const bodyEdgesBySource = buildBodyEdgesBySource(edges);
 
-      const aTargets = resolveBodyConditionTargets(true, "cond-a", bodyHandleMap, bodyEdgesBySource);
+      const aTargets = resolveBodyConditionTargets(
+        true,
+        "cond-a",
+        bodyHandleMap,
+        bodyEdgesBySource
+      );
       expect(aTargets).toEqual(["cond-b"]);
 
-      const bTargets = resolveBodyConditionTargets(false, "cond-b", bodyHandleMap, bodyEdgesBySource);
+      const bTargets = resolveBodyConditionTargets(
+        false,
+        "cond-b",
+        bodyHandleMap,
+        bodyEdgesBySource
+      );
       expect(bTargets).toEqual([]);
     });
 
@@ -312,13 +342,28 @@ describe("condition routing inside For Each body", () => {
       const bodyHandleMap = filterHandleMapToBody(fullHandleMap, bodyNodeIds);
       const bodyEdgesBySource = buildBodyEdgesBySource(edges);
 
-      const aTargets = resolveBodyConditionTargets(true, "cond-a", bodyHandleMap, bodyEdgesBySource);
+      const aTargets = resolveBodyConditionTargets(
+        true,
+        "cond-a",
+        bodyHandleMap,
+        bodyEdgesBySource
+      );
       expect(aTargets).toEqual(["cond-b"]);
 
-      const bTargets = resolveBodyConditionTargets(true, "cond-b", bodyHandleMap, bodyEdgesBySource);
+      const bTargets = resolveBodyConditionTargets(
+        true,
+        "cond-b",
+        bodyHandleMap,
+        bodyEdgesBySource
+      );
       expect(bTargets).toEqual(["cond-c"]);
 
-      const cTargets = resolveBodyConditionTargets(false, "cond-c", bodyHandleMap, bodyEdgesBySource);
+      const cTargets = resolveBodyConditionTargets(
+        false,
+        "cond-c",
+        bodyHandleMap,
+        bodyEdgesBySource
+      );
       expect(cTargets).toEqual([]);
     });
   });
@@ -336,7 +381,12 @@ describe("condition routing inside For Each body", () => {
       const bodyHandleMap = filterHandleMapToBody(fullHandleMap, bodyNodeIds);
       const bodyEdgesBySource = buildBodyEdgesBySource(edges);
 
-      const targets = resolveBodyConditionTargets(true, "cond-fan", bodyHandleMap, bodyEdgesBySource);
+      const targets = resolveBodyConditionTargets(
+        true,
+        "cond-fan",
+        bodyHandleMap,
+        bodyEdgesBySource
+      );
       expect(targets).toEqual(["action-1", "action-2", "action-3"]);
     });
 
@@ -345,7 +395,12 @@ describe("condition routing inside For Each body", () => {
       const bodyHandleMap = filterHandleMapToBody(fullHandleMap, bodyNodeIds);
       const bodyEdgesBySource = buildBodyEdgesBySource(edges);
 
-      const targets = resolveBodyConditionTargets(false, "cond-fan", bodyHandleMap, bodyEdgesBySource);
+      const targets = resolveBodyConditionTargets(
+        false,
+        "cond-fan",
+        bodyHandleMap,
+        bodyEdgesBySource
+      );
       expect(targets).toEqual([]);
     });
   });
@@ -358,17 +413,33 @@ describe("condition routing inside For Each body", () => {
       createEdge("cond-a", "notify-a", "true"),
       createEdge("cond-b", "notify-b", "true"),
     ];
-    const bodyNodeIds = ["action-read", "cond-a", "cond-b", "notify-a", "notify-b"];
+    const bodyNodeIds = [
+      "action-read",
+      "cond-a",
+      "cond-b",
+      "notify-a",
+      "notify-b",
+    ];
 
     it("cond-a=true, cond-b=false: only notify-a executes", () => {
       const fullHandleMap = buildEdgesBySourceHandle(edges);
       const bodyHandleMap = filterHandleMapToBody(fullHandleMap, bodyNodeIds);
       const bodyEdgesBySource = buildBodyEdgesBySource(edges);
 
-      const aTargets = resolveBodyConditionTargets(true, "cond-a", bodyHandleMap, bodyEdgesBySource);
+      const aTargets = resolveBodyConditionTargets(
+        true,
+        "cond-a",
+        bodyHandleMap,
+        bodyEdgesBySource
+      );
       expect(aTargets).toEqual(["notify-a"]);
 
-      const bTargets = resolveBodyConditionTargets(false, "cond-b", bodyHandleMap, bodyEdgesBySource);
+      const bTargets = resolveBodyConditionTargets(
+        false,
+        "cond-b",
+        bodyHandleMap,
+        bodyEdgesBySource
+      );
       expect(bTargets).toEqual([]);
     });
 
@@ -377,10 +448,20 @@ describe("condition routing inside For Each body", () => {
       const bodyHandleMap = filterHandleMapToBody(fullHandleMap, bodyNodeIds);
       const bodyEdgesBySource = buildBodyEdgesBySource(edges);
 
-      const aTargets = resolveBodyConditionTargets(false, "cond-a", bodyHandleMap, bodyEdgesBySource);
+      const aTargets = resolveBodyConditionTargets(
+        false,
+        "cond-a",
+        bodyHandleMap,
+        bodyEdgesBySource
+      );
       expect(aTargets).toEqual([]);
 
-      const bTargets = resolveBodyConditionTargets(true, "cond-b", bodyHandleMap, bodyEdgesBySource);
+      const bTargets = resolveBodyConditionTargets(
+        true,
+        "cond-b",
+        bodyHandleMap,
+        bodyEdgesBySource
+      );
       expect(bTargets).toEqual(["notify-b"]);
     });
 
@@ -389,8 +470,18 @@ describe("condition routing inside For Each body", () => {
       const bodyHandleMap = filterHandleMapToBody(fullHandleMap, bodyNodeIds);
       const bodyEdgesBySource = buildBodyEdgesBySource(edges);
 
-      const aTargets = resolveBodyConditionTargets(false, "cond-a", bodyHandleMap, bodyEdgesBySource);
-      const bTargets = resolveBodyConditionTargets(false, "cond-b", bodyHandleMap, bodyEdgesBySource);
+      const aTargets = resolveBodyConditionTargets(
+        false,
+        "cond-a",
+        bodyHandleMap,
+        bodyEdgesBySource
+      );
+      const bTargets = resolveBodyConditionTargets(
+        false,
+        "cond-b",
+        bodyHandleMap,
+        bodyEdgesBySource
+      );
 
       expect(aTargets).toEqual([]);
       expect(bTargets).toEqual([]);
@@ -401,8 +492,18 @@ describe("condition routing inside For Each body", () => {
       const bodyHandleMap = filterHandleMapToBody(fullHandleMap, bodyNodeIds);
       const bodyEdgesBySource = buildBodyEdgesBySource(edges);
 
-      const aTargets = resolveBodyConditionTargets(true, "cond-a", bodyHandleMap, bodyEdgesBySource);
-      const bTargets = resolveBodyConditionTargets(true, "cond-b", bodyHandleMap, bodyEdgesBySource);
+      const aTargets = resolveBodyConditionTargets(
+        true,
+        "cond-a",
+        bodyHandleMap,
+        bodyEdgesBySource
+      );
+      const bTargets = resolveBodyConditionTargets(
+        true,
+        "cond-b",
+        bodyHandleMap,
+        bodyEdgesBySource
+      );
 
       expect(aTargets).toEqual(["notify-a"]);
       expect(bTargets).toEqual(["notify-b"]);
@@ -603,7 +704,13 @@ describe("condition routing inside For Each body", () => {
       createEdge("cond-route", "path-b", "true"),
       createEdge("cond-route", "path-c", "false"),
     ];
-    const bodyNodeIds = ["cond-filter", "cond-route", "path-a", "path-b", "path-c"];
+    const bodyNodeIds = [
+      "cond-filter",
+      "cond-route",
+      "path-a",
+      "path-b",
+      "path-c",
+    ];
 
     it("filter=false blocks everything", () => {
       const fullHandleMap = buildEdgesBySourceHandle(edges);

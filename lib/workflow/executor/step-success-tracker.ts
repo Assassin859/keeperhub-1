@@ -11,31 +11,78 @@
  * returns without error -- the "max retries exceeded" error originates from
  * the SDK's durability layer, not from the step itself.
  *
+ * KEEP-543: tracker is now iteration-aware. Body nodes inside a parallel For
+ * Each loop execute once per iteration with the same nodeId; the iteration
+ * key (forEachNodeId + iterationIndex) disambiguates them so spurious-recovery
+ * inside the body runner returns the correct iteration's output instead of
+ * whichever iteration was last to record.
+ *
  * Lifecycle:
  *   1. withStepLogging calls recordStepSuccess() after each successful step
- *   2. The executor calls getSuccessfulSteps() during max-retries reconciliation
+ *      (with iterationKey when the step ran inside a For Each iteration)
+ *   2. The executor / body runner calls getStepSuccess() during max-retries
+ *      reconciliation, threading the iteration key when applicable
  *   3. The executor calls clearExecution() in a finally block to free memory
  */
 
 import type { TransactionHashEntry } from "@/lib/db/schema";
 import type { StepContext } from "./step-handler";
 
+export type IterationKey = {
+  forEachNodeId: string;
+  iterationIndex: number;
+};
+
 const executions = new Map<string, Map<string, unknown>>();
 const txHashEntries = new Map<string, TransactionHashEntry[]>();
+
+function composeKey(nodeId: string, iterationKey?: IterationKey): string {
+  if (!iterationKey) {
+    return nodeId;
+  }
+  return `${nodeId}::${iterationKey.forEachNodeId}::${iterationKey.iterationIndex}`;
+}
 
 export function recordStepSuccess(
   executionId: string,
   nodeId: string,
-  output: unknown
+  output: unknown,
+  iterationKey?: IterationKey
 ): void {
   let steps = executions.get(executionId);
   if (steps === undefined) {
     steps = new Map<string, unknown>();
     executions.set(executionId, steps);
   }
-  steps.set(nodeId, output);
+  steps.set(composeKey(nodeId, iterationKey), output);
 }
 
+/**
+ * Look up a tracked success for a specific (execution, node, iteration). When
+ * iterationKey is omitted, the top-level entry is returned. Returns undefined
+ * when no entry exists.
+ */
+export function getStepSuccess(
+  executionId: string,
+  nodeId: string,
+  iterationKey?: IterationKey
+): { output: unknown } | undefined {
+  const steps = executions.get(executionId);
+  if (steps === undefined) {
+    return;
+  }
+  const key = composeKey(nodeId, iterationKey);
+  if (!steps.has(key)) {
+    return;
+  }
+  return { output: steps.get(key) };
+}
+
+/**
+ * Returns the per-execution Map of tracked successes (composite-keyed). Used by
+ * cold-pod degradation detection at convergence sites -- callers only check
+ * presence, not key shape, so iteration entries don't affect their behaviour.
+ */
 export function getSuccessfulSteps(
   executionId: string
 ): Map<string, unknown> | undefined {

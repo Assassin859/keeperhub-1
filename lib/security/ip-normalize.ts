@@ -5,8 +5,12 @@
  * `user_trusted_ips` both go through this so a textual mismatch
  * never causes a false-negative.
  *
- *   - IPv4 (32 bits): returned unchanged. /32 is what the address
- *     itself already represents.
+ *   - IPv4 (32 bits): collapsed to the /24 prefix (last octet zeroed).
+ *     Consumer egress IPs routinely rotate within a provider's /24
+ *     (carrier-grade NAT, dual-WAN failover, corporate proxy pools),
+ *     so the same end user reaches us from several host addresses in
+ *     one network. The /24 is the network we track trust against --
+ *     the IPv4 analogue of the /64 bucketing applied to IPv6 below.
  *   - IPv6 (128 bits): collapsed to the /64 prefix with zero-padded
  *     groups. Cloudflare zeros out the lower 64 bits of an IPv6
  *     CF-Connecting-IP for privacy, so the same end user produces
@@ -38,14 +42,31 @@ function padGroup(group: string): string {
  */
 export function formatIpForDisplay(ip: string): string {
   if (!ip.includes(":")) {
-    return ip;
+    // Normalized IPv4 is the /24 network base (last octet zeroed), so
+    // render it as CIDR to read as a network rather than a host.
+    return ip.endsWith(".0") ? `${ip}/24` : ip;
   }
   return ip.replace(TRAILING_ZERO_GROUPS_RE, "");
 }
 
+const IPV4_OCTET_RE = /^\d{1,3}$/;
+
+function bucketIpv4ToSlash24(ip: string): string {
+  const octets = ip.split(".");
+  if (octets.length !== 4) {
+    return ip;
+  }
+  for (const octet of octets) {
+    if (!IPV4_OCTET_RE.test(octet) || Number(octet) > 255) {
+      return ip;
+    }
+  }
+  return `${octets[0]}.${octets[1]}.${octets[2]}.0`;
+}
+
 export function normalizeIpForTrust(ip: string): string {
   if (!ip.includes(":")) {
-    return ip;
+    return bucketIpv4ToSlash24(ip);
   }
   let expanded = ip.toLowerCase();
   if (expanded.includes("::")) {

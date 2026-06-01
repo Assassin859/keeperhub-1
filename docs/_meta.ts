@@ -1,6 +1,7 @@
 export default {
   index: "Overview",
   intro: "Introduction",
+  quickstart: "Hackathon Quickstart",
   "getting-started": "Getting Started",
   keepers: "Nodes",
   workflows: "Workflows",

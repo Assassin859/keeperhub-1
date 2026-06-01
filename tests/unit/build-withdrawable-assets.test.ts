@@ -270,9 +270,7 @@ describe("buildWithdrawableAssets", () => {
           balance: "0.01",
         }),
       ],
-      supportedTokenBalances: [
-        supportedTokenBalance({ balance: "2" }),
-      ],
+      supportedTokenBalances: [supportedTokenBalance({ balance: "2" })],
       supportedTokens: [supportedToken()],
       tokenBalances: [customTokenBalance()],
       tokens: [customToken()],

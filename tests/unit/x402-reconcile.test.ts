@@ -58,7 +58,9 @@ describe("pollForPaymentConfirmation", () => {
 
   it("Test 6: returns true when nonce is already used on first poll", async () => {
     mockAuthorizationState.mockResolvedValue(BigInt(1));
-    const { pollForPaymentConfirmation } = await import("@/lib/payments/x402/reconcile");
+    const { pollForPaymentConfirmation } = await import(
+      "@/lib/payments/x402/reconcile"
+    );
     const result = await pollForPaymentConfirmation({
       payerAddress: "0xPAYER",
       nonce: "0xNONCE",
@@ -73,7 +75,9 @@ describe("pollForPaymentConfirmation", () => {
       .mockResolvedValueOnce(BigInt(0))
       .mockResolvedValueOnce(BigInt(1));
 
-    const { pollForPaymentConfirmation } = await import("@/lib/payments/x402/reconcile");
+    const { pollForPaymentConfirmation } = await import(
+      "@/lib/payments/x402/reconcile"
+    );
 
     const resultPromise = pollForPaymentConfirmation({
       payerAddress: "0xPAYER",
@@ -90,7 +94,9 @@ describe("pollForPaymentConfirmation", () => {
   it("Test 8: returns false when nonce is never used within timeout", async () => {
     mockAuthorizationState.mockResolvedValue(BigInt(0));
 
-    const { pollForPaymentConfirmation } = await import("@/lib/payments/x402/reconcile");
+    const { pollForPaymentConfirmation } = await import(
+      "@/lib/payments/x402/reconcile"
+    );
 
     const resultPromise = pollForPaymentConfirmation({
       payerAddress: "0xPAYER",
@@ -107,7 +113,9 @@ describe("pollForPaymentConfirmation", () => {
   it("Test 9: returns false immediately when nonce is cancelled", async () => {
     mockAuthorizationState.mockResolvedValue(BigInt(2));
 
-    const { pollForPaymentConfirmation } = await import("@/lib/payments/x402/reconcile");
+    const { pollForPaymentConfirmation } = await import(
+      "@/lib/payments/x402/reconcile"
+    );
 
     const result = await pollForPaymentConfirmation({
       payerAddress: "0xPAYER",

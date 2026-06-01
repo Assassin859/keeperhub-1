@@ -111,7 +111,7 @@ export function VerifyMfaForm({ next, mode }: Props): React.ReactElement {
         <DualFactorSteps
           busy={busy}
           dual={dual}
-          onBack={() => router.replace("/sign-in")}
+          onBack={() => router.replace("/")}
           onPrefetchEmail={() => dual.prefetchEmail(emptyCodesFetch)}
           onResendEmail={() => dual.resendEmail(emptyCodesFetch)}
           onSubmit={handleSubmit}

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  auditFromAuth,
   type DualAuthContext,
   UNAUTHENTICATED_AUDIT,
-  auditFromAuth,
 } from "@/lib/middleware/auth-helpers";
 
 const sessionCtx: DualAuthContext = {

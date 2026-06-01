@@ -119,11 +119,8 @@ describe("GET /api/agent-registry", () => {
     const response = await GET(request);
     const json = await response.json();
     const mcpService = json.services.find(
-      (s: {
-        name: string;
-        version?: string;
-        mcpTools?: string[];
-      }) => s.name === "MCP"
+      (s: { name: string; version?: string; mcpTools?: string[] }) =>
+        s.name === "MCP"
     );
     expect(mcpService?.version).toBe("2025-06-18");
     expect(Array.isArray(mcpService?.mcpTools)).toBe(true);
