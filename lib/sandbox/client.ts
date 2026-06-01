@@ -42,6 +42,11 @@ const DEFAULT_RETRY_AFTER_MS = 500;
 // overflow do not resynchronize into a thundering herd against the sandbox.
 const RETRY_JITTER_MS = 250;
 
+// Hard ceiling on any single backoff. Retry-After comes off an HTTP response,
+// so a buggy or hostile value must never be able to pin a workflow step on a
+// long timer. Our sandbox only ever sends 1s; 5s is generous headroom.
+const MAX_BACKOFF_MS = 5000;
+
 const HTTP_TOO_MANY_REQUESTS = 429;
 
 /**
@@ -73,13 +78,19 @@ function parseRetryAfterMs(
     return null;
   }
   const seconds = Number.parseInt(raw, 10);
-  return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : null;
+  if (!(Number.isFinite(seconds) && seconds >= 0)) {
+    return null;
+  }
+  return Math.min(seconds * 1000, MAX_BACKOFF_MS);
 }
 
 /** Abort-aware delay used between capacity retries. Rejects if the caller's
  * signal fires while we are backing off so a client disconnect short-circuits
  * the wait instead of pinning the workflow step for the full backoff. */
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  // Bound the timer at the sink: never wait longer than the ceiling regardless
+  // of what the caller passes, so a tainted Retry-After cannot pin the step.
+  const boundedMs = Math.min(Math.max(0, ms), MAX_BACKOFF_MS);
   return new Promise<void>((resolve, reject) => {
     if (signal?.aborted) {
       reject(new Error("aborted"));
@@ -91,7 +102,7 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
         signal.removeEventListener("abort", onAbort);
       }
       resolve();
-    }, ms);
+    }, boundedMs);
     if (signal) {
       onAbort = (): void => {
         clearTimeout(timer);
