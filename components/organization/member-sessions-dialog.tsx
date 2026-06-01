@@ -126,9 +126,13 @@ export function MemberSessionsDialog({
   return (
     <Dialog onOpenChange={handleOpenChange} open={open}>
       <DialogTrigger asChild>
-        <Button size="sm" variant="ghost">
-          <History className="mr-1 h-4 w-4" />
-          Sessions
+        <Button
+          aria-label={`View ${email}'s sessions`}
+          size="icon"
+          title="View sessions"
+          variant="ghost"
+        >
+          <History className="h-4 w-4" />
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-lg">
