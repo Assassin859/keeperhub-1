@@ -14,6 +14,7 @@
  * sentinel.
  */
 
+import { isTriggerType, type TriggerType } from "@/lib/metrics/types";
 import { resolveTrustedClientIp } from "./trusted-proxies";
 
 /**
@@ -44,6 +45,51 @@ export type TriggerSource =
   | "internal"
   | "block"
   | "event";
+
+export type TriggerLabels = {
+  /** Prometheus metric label (keeperhub_workflow_executions_started_total). */
+  triggerType: TriggerType;
+  /** Audit column value (workflow_executions.trigger_source). */
+  triggerSource: TriggerSource;
+};
+
+/**
+ * Resolve the (metric, audit) trigger labels for an execution created by the
+ * manual/internal execute route, from the `x-trigger-type` header and whether
+ * the caller authenticated as an internal service.
+ *
+ * - A recognised header wins for BOTH labels (block / event / schedule).
+ * - Header-less internal callers: metric "schedule" (canonical, converges
+ *   with the executor's emit -- NOT "scheduled", which fragmented the
+ *   series), audit "internal" (more precise: records the auth path).
+ * - Everything else is a human "manual" run.
+ *
+ * The trigger_source can legitimately differ from triggerType ("internal"
+ * vs "schedule") because the audit column carries auth-path precision the
+ * coarse metric label intentionally omits. Pure + exported so the value
+ * mapping is unit-tested (a typo here silently re-fragments metrics).
+ */
+export function resolveTriggerLabels(
+  headerTrigger: string | null,
+  isInternal: boolean
+): TriggerLabels {
+  if (isTriggerType(headerTrigger)) {
+    // Normalise the legacy "scheduled" alias to the canonical "schedule" so
+    // an explicit `x-trigger-type: scheduled` header can't re-fragment the
+    // metric/audit series -- TriggerType still accepts "scheduled" for back-
+    // compat, but nothing downstream should ever see it.
+    const normalized: TriggerType =
+      headerTrigger === "scheduled" ? "schedule" : headerTrigger;
+    return {
+      triggerType: normalized,
+      triggerSource: normalized as TriggerSource,
+    };
+  }
+  if (isInternal) {
+    return { triggerType: "schedule", triggerSource: "internal" };
+  }
+  return { triggerType: "manual", triggerSource: "manual" };
+}
 
 export function getRequestSourceIp(request: Request): string | null {
   const cf = request.headers.get("cf-connecting-ip")?.trim();

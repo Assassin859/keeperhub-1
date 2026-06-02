@@ -32,14 +32,29 @@ import { captureMessage } from "@sentry/nextjs";
 import type { TriggerSource } from "./request-attribution";
 
 const PG_RAISE_INSUFFICIENT_PRIVILEGE = "42501";
+const MAX_CAUSE_DEPTH = 5;
 
 type PgError = { code?: unknown };
 
-function isBackstopRejection(err: unknown): err is PgError {
-  if (!err || typeof err !== "object") {
-    return false;
+function isBackstopRejection(err: unknown): boolean {
+  // Drizzle (and the underlying postgres driver) wrap the raised
+  // PostgresError before it reaches this catch, so the 42501 SQLSTATE sits
+  // on a nested `cause` rather than the top-level error -- a bare
+  // `err.code` check misses every real reject and the backstop never fires.
+  // Walk the cause chain (bounded), mirroring isKh001SessionBackstop in
+  // session-backstop.ts.
+  let current: unknown = err;
+  for (
+    let depth = 0;
+    depth < MAX_CAUSE_DEPTH && current && typeof current === "object";
+    depth++
+  ) {
+    if ((current as PgError).code === PG_RAISE_INSUFFICIENT_PRIVILEGE) {
+      return true;
+    }
+    current = (current as { cause?: unknown }).cause;
   }
-  return (err as PgError).code === PG_RAISE_INSUFFICIENT_PRIVILEGE;
+  return false;
 }
 
 export type BackstopRejectContext = {
