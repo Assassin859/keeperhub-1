@@ -2,6 +2,7 @@ import "server-only";
 
 import { and, count, desc, eq, gte, lt, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { logInputField, logOutputField } from "@/lib/db/execution-log-fields";
 import {
   workflowExecutionLogs,
   workflowExecutions,
@@ -381,34 +382,6 @@ function computeAvgDuration(sum: number, durationCount: number): number | null {
 
 function addBigIntStrings(a: string, b: string): string {
   return (BigInt(a || "0") + BigInt(b || "0")).toString();
-}
-
-/**
- * Build SQL to extract a field from workflow_execution_logs output JSONB.
- *
- * The output column is double-encoded: Drizzle stores a JSON string inside JSONB
- * (jsonb_typeof = 'string') rather than a JSONB object. To extract a nested key
- * we first unwrap the string with `#>> '{}'`, re-parse as jsonb, then extract.
- * Falls back to direct `->>` for any rows where output is already an object.
- */
-function logOutputField(field: string): ReturnType<typeof sql> {
-  return sql`CASE
-    WHEN jsonb_typeof(${workflowExecutionLogs.output}) = 'string'
-    THEN (${workflowExecutionLogs.output} #>> '{}')::jsonb->>${sql.raw(`'${field}'`)}
-    ELSE ${workflowExecutionLogs.output}->>${sql.raw(`'${field}'`)}
-  END`;
-}
-
-/**
- * Build SQL to extract a field from workflow_execution_logs input JSONB.
- * Same double-encoding handling as output.
- */
-function logInputField(field: string): ReturnType<typeof sql> {
-  return sql`CASE
-    WHEN jsonb_typeof(${workflowExecutionLogs.input}) = 'string'
-    THEN (${workflowExecutionLogs.input} #>> '{}')::jsonb->>${sql.raw(`'${field}'`)}
-    ELSE ${workflowExecutionLogs.input}->>${sql.raw(`'${field}'`)}
-  END`;
 }
 
 async function getWorkflowGasTotal(

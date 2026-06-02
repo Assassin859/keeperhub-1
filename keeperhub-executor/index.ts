@@ -39,6 +39,8 @@ import {
 } from "../lib/db/schema";
 import { getMetricsCollector } from "../lib/metrics";
 import { LabelKeys, MetricNames } from "../lib/metrics/types";
+import { withBackstopCapture } from "../lib/security/backstop-capture";
+import { buildAttribution } from "../lib/security/request-attribution";
 import { generateId } from "../lib/utils/id";
 import { checkConcurrencyLimit } from "../lib/workflow/concurrency";
 import { getWorkflowExecutability } from "../lib/workflow/executable";
@@ -293,18 +295,27 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     const blockedInput = buildInput(message);
     const blockedUserId =
       "userId" in message ? message.userId : workflow.userId;
-    await db.insert(workflowExecutions).values({
-      id: blockedExecutionId,
-      workflowId,
-      userId: blockedUserId,
-      status: "error",
-      input: toJsonSafe(blockedInput) as Record<string, unknown>,
-      error: errorMessage,
-      errorCategory: "billing",
-      errorType: "user",
-      startedAt: new Date(),
-      completedAt: new Date(),
-    });
+    // KEEP-612: attribute the source so blocked scheduled/block/event rows
+    // are not NULL in the audit columns. No client request here (SQS
+    // dispatch), so ip/country/key are correctly left null.
+    const blockedAttribution = buildAttribution({ source: triggerType });
+    await withBackstopCapture(
+      { workflowId, userId: blockedUserId, source: triggerType },
+      () =>
+        db.insert(workflowExecutions).values({
+          id: blockedExecutionId,
+          workflowId,
+          userId: blockedUserId,
+          status: "error",
+          input: toJsonSafe(blockedInput) as Record<string, unknown>,
+          error: errorMessage,
+          errorCategory: "billing",
+          errorType: "user",
+          startedAt: new Date(),
+          completedAt: new Date(),
+          ...blockedAttribution,
+        })
+    );
     return;
   }
 
@@ -323,13 +334,24 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
   const input = buildInput(message);
   const userId = "userId" in message ? message.userId : workflow.userId;
 
-  await db.insert(workflowExecutions).values({
-    id: executionId,
-    workflowId,
-    userId,
-    status: "pending",
-    input: toJsonSafe(input) as Record<string, unknown>,
-  });
+  // KEEP-612: this is the insert for ALL SQS-dispatched runs (schedule /
+  // block / event). The executor pre-creates the row and downstream
+  // dispatch (executeViaApi / k8s) reuses it, so the app-route attribution
+  // never runs here -- set it directly. Only trigger_source applies: SQS
+  // dispatch has no inbound client request, so ip/country/api-key stay null.
+  // withBackstopCapture emits security.backstop_execution_blocked if the
+  // 0082 trigger rejects (e.g. owner deactivated in the check->insert race).
+  const attribution = buildAttribution({ source: triggerType });
+  await withBackstopCapture({ workflowId, userId, source: triggerType }, () =>
+    db.insert(workflowExecutions).values({
+      id: executionId,
+      workflowId,
+      userId,
+      status: "pending",
+      input: toJsonSafe(input) as Record<string, unknown>,
+      ...attribution,
+    })
+  );
 
   console.log(`[Executor] Created execution record: ${executionId}`);
 

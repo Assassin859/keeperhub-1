@@ -1,6 +1,7 @@
 "use client";
 
 import { useSetAtom } from "jotai";
+import { Copy } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -175,14 +176,39 @@ export function Web3WalletSection({
         }
 
         if (hasWallet) {
+          const checksummedAddress = walletAddress
+            ? toChecksumAddress(walletAddress)
+            : null;
           return (
             <div className="space-y-3">
               <div className="rounded-lg border bg-muted/50 p-3">
-                <div className="mb-1 text-muted-foreground text-xs">
-                  Wallet Address
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <span className="text-muted-foreground text-xs">
+                    Wallet Address
+                  </span>
+                  {checksummedAddress && (
+                    <button
+                      aria-label="Copy wallet address"
+                      className="inline-flex items-center gap-1 text-muted-foreground text-xs transition-colors hover:text-foreground"
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(
+                            checksummedAddress
+                          );
+                          toast.success("Address copied");
+                        } catch {
+                          toast.error("Failed to copy address");
+                        }
+                      }}
+                      type="button"
+                    >
+                      <Copy className="size-3" />
+                      Copy
+                    </button>
+                  )}
                 </div>
                 <code className="break-all font-mono text-xs">
-                  {walletAddress ? toChecksumAddress(walletAddress) : null}
+                  {checksummedAddress}
                 </code>
               </div>
               {showDelete && (
