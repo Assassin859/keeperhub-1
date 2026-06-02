@@ -390,23 +390,29 @@ async function getWorkflowGasTotal(
   rangeEnd: Date,
   projectId?: string
 ): Promise<string> {
+  // Reads the denormalised run-total `gas_used_wei` written at finalize
+  // (lib/workflow/executor/logging.ts) instead of re-summing the per-step logs
+  // JSONB. No logs join, no JSONB parse, no TOAST detoast - the org+window slice
+  // is aggregated straight off workflow_executions. SUM skips NULL, so runs with
+  // no gas need no explicit filter.
+  //
+  // The window is now `workflow_executions.started_at` (when the run started),
+  // not the per-step `started_at`. Since the column is a run-level rollup that
+  // is the correct axis, and it matches every other summary metric, which is
+  // already keyed to run start. Boundary-straddling runs can reattribute by the
+  // gap between run start and a late step; immaterial at dashboard granularity.
   const result = await db
     .select({
-      totalGas: sql<string>`COALESCE(SUM(CAST(${logOutputField("gasUsed")} AS NUMERIC)), 0)::text`,
+      totalGas: sql<string>`COALESCE(SUM(CAST(${workflowExecutions.gasUsedWei} AS NUMERIC)), 0)::text`,
     })
-    .from(workflowExecutionLogs)
-    .innerJoin(
-      workflowExecutions,
-      eq(workflowExecutionLogs.executionId, workflowExecutions.id)
-    )
+    .from(workflowExecutions)
     .innerJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
     .where(
       and(
         eq(workflows.organizationId, organizationId),
         projectId ? eq(workflows.projectId, projectId) : undefined,
-        gte(workflowExecutionLogs.startedAt, rangeStart),
-        lt(workflowExecutionLogs.startedAt, rangeEnd),
-        sql`${logOutputField("gasUsed")} IS NOT NULL`
+        gte(workflowExecutions.startedAt, rangeStart),
+        lt(workflowExecutions.startedAt, rangeEnd)
       )
     );
 
@@ -1166,21 +1172,20 @@ export async function getSpendCapData(organizationId: string): Promise<{
           )
         ),
       db
+        // Same denormalised-column read as getWorkflowGasTotal: today's run
+        // gas straight off workflow_executions, no logs JSONB scan. gas_used_wei
+        // already reflects only gas-bearing (success) step output, so the
+        // previous log status='success' filter is subsumed. Windowed by run
+        // start rather than per-step time (see getWorkflowGasTotal).
         .select({
-          totalWei: sql<string>`COALESCE(SUM(CAST(${logOutputField("gasUsed")} AS NUMERIC)), 0)::text`,
+          totalWei: sql<string>`COALESCE(SUM(CAST(${workflowExecutions.gasUsedWei} AS NUMERIC)), 0)::text`,
         })
-        .from(workflowExecutionLogs)
-        .innerJoin(
-          workflowExecutions,
-          eq(workflowExecutionLogs.executionId, workflowExecutions.id)
-        )
+        .from(workflowExecutions)
         .innerJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
         .where(
           and(
             eq(workflows.organizationId, organizationId),
-            eq(workflowExecutionLogs.status, "success"),
-            gte(workflowExecutionLogs.startedAt, todayStart),
-            sql`${logOutputField("gasUsed")} IS NOT NULL`
+            gte(workflowExecutions.startedAt, todayStart)
           )
         ),
     ]
