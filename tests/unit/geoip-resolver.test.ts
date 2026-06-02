@@ -7,6 +7,18 @@ type JsonResponder = (url: string) => {
   body: Record<string, unknown>;
 };
 
+// Match on the exact hostname rather than a substring of the URL. A
+// substring check (`url.includes("ipapi.co")`) both trips CodeQL's
+// incomplete-URL-sanitization rule and collides on overlapping hosts
+// (freeipapi.com contains "ipapi.co").
+function hostIs(url: string, host: string): boolean {
+  try {
+    return new URL(url).hostname === host;
+  } catch {
+    return false;
+  }
+}
+
 function stubFetch(responder: JsonResponder): void {
   vi.stubGlobal(
     "fetch",
@@ -78,7 +90,7 @@ describe("resolveLocationFromIp provider chain", () => {
 
   it("resolves country + coordinates from ipapi.co (the keyless primary)", async () => {
     stubFetch((url) => {
-      if (url.includes("ipapi.co")) {
+      if (hostIs(url, "ipapi.co")) {
         return {
           ok: true,
           body: {
@@ -104,10 +116,10 @@ describe("resolveLocationFromIp provider chain", () => {
 
   it("falls through to ipwho.is when ipapi.co rate-limits (error body)", async () => {
     stubFetch((url) => {
-      if (url.includes("ipapi.co")) {
+      if (hostIs(url, "ipapi.co")) {
         return { ok: true, body: { error: true, reason: "RateLimited" } };
       }
-      if (url.includes("ipwho.is")) {
+      if (hostIs(url, "ipwho.is")) {
         return {
           ok: true,
           body: {
@@ -129,10 +141,8 @@ describe("resolveLocationFromIp provider chain", () => {
   });
 
   it("falls through to freeipapi when both ipapi.co and ipwho.is miss", async () => {
-    // freeipapi.com's host string contains the substring "ipapi.co", so
-    // match it before the ipapi.co branch to avoid misrouting in the stub.
     stubFetch((url) => {
-      if (url.includes("freeipapi.com")) {
+      if (hostIs(url, "freeipapi.com")) {
         return {
           ok: true,
           body: {
@@ -144,10 +154,10 @@ describe("resolveLocationFromIp provider chain", () => {
           },
         };
       }
-      if (url.includes("ipapi.co")) {
+      if (hostIs(url, "ipapi.co")) {
         return { ok: false, body: {} };
       }
-      if (url.includes("ipwho.is")) {
+      if (hostIs(url, "ipwho.is")) {
         return { ok: true, body: { success: false } };
       }
       return { ok: false, body: {} };
@@ -174,7 +184,7 @@ describe("resolveLocationFromIp provider chain", () => {
     const seen: string[] = [];
     stubFetch((url) => {
       seen.push(url);
-      if (url.includes("ipinfo.io")) {
+      if (hostIs(url, "ipinfo.io")) {
         return {
           ok: true,
           body: {
@@ -192,15 +202,15 @@ describe("resolveLocationFromIp provider chain", () => {
     expect(result.latitude).toBeCloseTo(48.8566);
     expect(result.longitude).toBeCloseTo(2.3522);
     // ipinfo answered first, so the chain never reached the keyless tier.
-    expect(seen.some((u) => u.includes("ipinfo.io"))).toBe(true);
-    expect(seen.some((u) => u.includes("ipapi.co"))).toBe(false);
+    expect(seen.some((u) => hostIs(u, "ipinfo.io"))).toBe(true);
+    expect(seen.some((u) => hostIs(u, "ipapi.co"))).toBe(false);
   });
 
   it("skips ipinfo.io entirely when no token is configured", async () => {
     const seen: string[] = [];
     stubFetch((url) => {
       seen.push(url);
-      if (url.includes("ipapi.co")) {
+      if (hostIs(url, "ipapi.co")) {
         return {
           ok: true,
           body: { country_code: "US", latitude: 1, longitude: 1 },
@@ -209,6 +219,6 @@ describe("resolveLocationFromIp provider chain", () => {
       return { ok: false, body: {} };
     });
     await resolveLocationFromIp(uniqueIp());
-    expect(seen.some((u) => u.includes("ipinfo.io"))).toBe(false);
+    expect(seen.some((u) => hostIs(u, "ipinfo.io"))).toBe(false);
   });
 });
