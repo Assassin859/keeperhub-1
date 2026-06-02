@@ -25,11 +25,16 @@
  * --after-id to resume from a known cursor. The heavy JSONB scan is paid once,
  * in controlled batches, so no single UPDATE takes a long lock.
  *
+ * A LIVE run against a non-local DB requires --yes; dry-runs and local DBs do
+ * not. This is a guard against an accidental prod write, not a security
+ * boundary.
+ *
  * Usage:
  *   pnpm tsx scripts/backfill-workflow-gas.ts --dry-run
- *   pnpm tsx scripts/backfill-workflow-gas.ts
- *   pnpm tsx scripts/backfill-workflow-gas.ts --batch-size 2000 --after-id <id>
- *   pnpm tsx scripts/backfill-workflow-gas.ts --max-batches 5   # bounded test run
+ *   pnpm tsx scripts/backfill-workflow-gas.ts                       # local DB
+ *   pnpm tsx scripts/backfill-workflow-gas.ts --yes                 # staging/prod
+ *   pnpm tsx scripts/backfill-workflow-gas.ts --yes --batch-size 2000 --after-id <id>
+ *   pnpm tsx scripts/backfill-workflow-gas.ts --dry-run --max-batches 5
  */
 
 import { sql } from "drizzle-orm";
@@ -44,6 +49,7 @@ type CliArgs = {
   batchSize: number;
   afterId: string;
   maxBatches: number | null;
+  yes: boolean;
 };
 
 function parseArgs(argv: string[]): CliArgs {
@@ -52,11 +58,14 @@ function parseArgs(argv: string[]): CliArgs {
     batchSize: DEFAULT_BATCH_SIZE,
     afterId: "",
     maxBatches: null,
+    yes: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--dry-run") {
       args.dryRun = true;
+    } else if (a === "--yes") {
+      args.yes = true;
     } else if (a === "--batch-size" && argv[i + 1]) {
       const parsed = Number.parseInt(argv[i + 1], 10);
       if (!Number.isNaN(parsed) && parsed > 0) {
@@ -74,7 +83,7 @@ function parseArgs(argv: string[]): CliArgs {
       i++;
     } else if (a === "--help" || a === "-h") {
       console.log(
-        "Usage: pnpm tsx scripts/backfill-workflow-gas.ts [--dry-run] [--batch-size N] [--after-id ID] [--max-batches N]"
+        "Usage: pnpm tsx scripts/backfill-workflow-gas.ts [--dry-run] [--batch-size N] [--after-id ID] [--max-batches N] [--yes]"
       );
       process.exit(0);
     }
@@ -100,7 +109,12 @@ async function fetchExecutionIdBatch(
  * Aggregate gas for one keyset batch and write it. Re-selects the same
  * batch inside a CTE (deterministic for a fixed cursor) so no id array has to be
  * marshalled into the statement. Returns the number of executions updated (i.e.
- * those that had at least one gas-bearing log).
+ * those that had at least one gas-bearing log and were not already populated).
+ *
+ * The `we.gas_used_wei IS NULL` guard means the backfill only ever fills empty
+ * rows, never overwrites a value. That keeps it off the hot recent rows the
+ * live finalize writer owns (no clobber race), makes re-runs cheap, and avoids
+ * redundant write churn on the multi-GB table.
  */
 async function applyBatch(afterId: string, batchSize: number): Promise<number> {
   const result = await db.execute(sql`
@@ -122,6 +136,7 @@ async function applyBatch(afterId: string, batchSize: number): Promise<number> {
     SET gas_used_wei = agg.gas_used_wei
     FROM agg
     WHERE we.id = agg.execution_id
+      AND we.gas_used_wei IS NULL
     RETURNING we.id
   `);
   // postgres-js: db.execute resolves to the RETURNING rows array.
@@ -132,7 +147,7 @@ async function applyBatch(afterId: string, batchSize: number): Promise<number> {
 async function countBatch(afterId: string, batchSize: number): Promise<number> {
   const result = await db.execute(sql`
     WITH batch AS (
-      SELECT id FROM workflow_executions
+      SELECT id, gas_used_wei FROM workflow_executions
       WHERE id > ${afterId}
       ORDER BY id
       LIMIT ${batchSize}
@@ -141,6 +156,7 @@ async function countBatch(afterId: string, batchSize: number): Promise<number> {
     FROM workflow_execution_logs
     JOIN batch ON batch.id = workflow_execution_logs.execution_id
     WHERE ${logOutputField("gasUsed")} IS NOT NULL
+      AND batch.gas_used_wei IS NULL
   `);
   // postgres-js: db.execute resolves to the rows array.
   return Number(result[0]?.n ?? 0);
@@ -154,11 +170,36 @@ function dbHost(): string {
   }
 }
 
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "db", "postgres"]);
+
+function isLocalDb(): boolean {
+  try {
+    // URL.hostname drops the port; strip the IPv6 brackets it keeps.
+    const hostname = new URL(process.env.DATABASE_URL ?? "").hostname.replace(
+      /^\[|\]$/g,
+      ""
+    );
+    return LOCAL_HOSTS.has(hostname);
+  } catch {
+    return false;
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   console.log(
     `[backfill-workflow-gas] mode=${args.dryRun ? "DRY-RUN" : "LIVE"} host=${dbHost()} batchSize=${args.batchSize} afterId=${args.afterId || "(start)"} maxBatches=${args.maxBatches ?? "all"}`
   );
+
+  // A LIVE run against a non-local DB (staging/prod) writes immediately. Require
+  // an explicit --yes so an operator cannot kick one off by reflex. Dry-runs and
+  // local DBs are unguarded.
+  if (!(args.dryRun || args.yes || isLocalDb())) {
+    console.error(
+      `[backfill-workflow-gas] refusing LIVE run against non-local host ${dbHost()} without --yes. Re-run with --yes to confirm, or add --dry-run.`
+    );
+    process.exit(1);
+  }
 
   let cursor = args.afterId;
   let batches = 0;
