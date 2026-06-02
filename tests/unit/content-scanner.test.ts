@@ -86,16 +86,16 @@ describe("scanNodes — pattern matches", () => {
     expect(hits.map((h: Hit) => h.pattern)).toContain("client_secret");
   });
 
-  it("detects DATABASE_URL exactly (case-sensitive)", () => {
+  it("detects DATABASE_URL (uppercase)", () => {
     const hits = scanNodes([node("n1", { template: "{{env.DATABASE_URL}}" })]);
     expect(hits.map((h: Hit) => h.pattern)).toContain("database_url");
   });
 
-  it("does NOT match lowercase database_url (case-sensitive)", () => {
-    const hits = scanNodes([
-      node("n1", { description: "the database_url field is not flagged" }),
-    ]);
-    expect(hits.map((h: Hit) => h.pattern)).not.toContain("database_url");
+  it("detects lowercase database_url too (case-insensitive)", () => {
+    // env templates routinely use {{env.database_url}}; the case-sensitive
+    // form silently missed these.
+    const hits = scanNodes([node("n1", { template: "{{env.database_url}}" })]);
+    expect(hits.map((h: Hit) => h.pattern)).toContain("database_url");
   });
 });
 
@@ -194,6 +194,29 @@ describe("scanAndReport", () => {
         workflowId: "wf_4",
       })
     ).not.toThrow();
+  });
+
+  it("emits a structured error signal when the scan itself throws", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+      // swallow the line in test
+    });
+    // Force a throw inside the scan: reading `.nodes` blows up, simulating a
+    // scanner bug. The probe must not throw into the executor AND must leave a
+    // signal, so a silently-broken scanner is itself detectable rather than
+    // dropping detection to zero.
+    const exploding = {
+      get nodes(): never {
+        throw new Error("scanner exploded");
+      },
+    } as unknown as { nodes: never };
+    expect(() => scanAndReport(exploding, { workflowId: "wf_err" })).not.toThrow();
+    const errorLine = warnSpy.mock.calls
+      .map((call) => String(call[0]))
+      .find((line) => line.includes("security.content_scanner_error"));
+    expect(errorLine).toBeDefined();
+    expect(errorLine).toContain("wf_err");
+    expect(errorLine).toContain("scanner exploded");
+    warnSpy.mockRestore();
   });
 });
 
@@ -314,5 +337,81 @@ describe("scanAndReport — combined config + trigger input", () => {
     const payload = JSON.stringify(captureMessageMock.mock.calls[0][1]);
     expect(payload).not.toContain("NEVER_LEAK_THIS_TOKEN_VIA_ALERT");
     expect(payload).toContain("client_secret");
+  });
+});
+
+describe("content scanner hardening (KEEP-612 follow-up)", () => {
+  it("does not throw or stack-overflow on a deeply nested payload", () => {
+    // Build a 5000-deep nested object -- the attacker-controlled webhook
+    // shape that previously RangeError'd through scanValue into the executor.
+    let deep: Record<string, unknown> = { leaf: "169.254.169.254" };
+    for (let i = 0; i < 5000; i++) {
+      deep = { nested: deep };
+    }
+    expect(() => scanTriggerInput(deep)).not.toThrow();
+    // scanAndReport is the executor entry point -- must also be total.
+    expect(() =>
+      scanAndReport(
+        { nodes: [], triggerInput: deep },
+        { workflowId: "wf_deep" }
+      )
+    ).not.toThrow();
+  });
+
+  it("stops recursing past the depth cap (deep match is not reported)", () => {
+    // A match buried far below MAX_SCAN_DEPTH (64) must not be found --
+    // proves the cap actually bounds the walk rather than just catching throws.
+    let deep: Record<string, unknown> = { leaf: "169.254.169.254" };
+    for (let i = 0; i < 200; i++) {
+      deep = { nested: deep };
+    }
+    const hits = scanTriggerInput(deep);
+    expect(hits).toHaveLength(0);
+  });
+
+  it("finds a match that sits within the depth cap", () => {
+    let shallow: Record<string, unknown> = { leaf: "169.254.169.254" };
+    for (let i = 0; i < 10; i++) {
+      shallow = { nested: shallow };
+    }
+    const hits = scanTriggerInput(shallow);
+    expect(hits.map((h: Hit) => h.pattern)).toContain("imds_metadata_ip");
+  });
+
+  it("caps the hit count and appends a single scan_truncated marker", () => {
+    // 5000 matching strings, all shallow (well under the depth cap), so the
+    // hit cap -- not the depth cap -- is what bounds the result.
+    const payload: Record<string, string> = {};
+    for (let i = 0; i < 5000; i++) {
+      payload[`k${i}`] = "169.254.169.254";
+    }
+    const hits = scanTriggerInput(payload);
+    const markers = hits.filter((h: Hit) => h.pattern === "scan_truncated");
+    expect(markers).toHaveLength(1);
+    // Real hits are bounded at MAX_HITS (1000); +1 for the marker.
+    expect(hits.length).toBeLessThanOrEqual(1001);
+    expect(
+      hits.filter((h: Hit) => h.pattern === "imds_metadata_ip").length
+    ).toBeLessThanOrEqual(1000);
+  });
+
+  it("shares ONE hit budget across config + trigger input (no doubling)", () => {
+    // Both sources individually saturate; scanAndReport must bound the
+    // COMBINED payload to MAX_HITS, not 2x. Regression for the
+    // concatenate-after-each-caps bug.
+    const big: Record<string, string> = {};
+    for (let i = 0; i < 5000; i++) {
+      big[`k${i}`] = "169.254.169.254";
+    }
+    scanAndReport(
+      { nodes: [node("n1", big)], triggerInput: big },
+      { workflowId: "wf_combined_sat" }
+    );
+    const [, options] = captureMessageMock.mock.calls[0] as [
+      string,
+      { extra: { hitCount: number; hits: Hit[] } },
+    ];
+    // Combined real hits stay within MAX_HITS (+1 marker), not ~2x.
+    expect(options.extra.hits.length).toBeLessThanOrEqual(1001);
   });
 });

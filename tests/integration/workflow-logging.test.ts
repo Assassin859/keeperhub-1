@@ -106,6 +106,10 @@ let mockExecution: ExecutionRow | null = null;
 // (status='error' siblings carrying a non-orphan error). Default empty so existing
 // tests keep observing the legacy "Step did not record completion" message.
 let siblingErrorRows: Array<{ id: string }> = [];
+// resolveGasTotal issues `db.select(...).from(...).where(...)` and reads
+// rows[0].gasUsedWei. Default to a no-gas run; tests that exercise the gas
+// denormalisation set this to a summed value.
+let mockGasRows: Array<{ gasUsedWei: string | null }> = [{ gasUsedWei: null }];
 
 // KEEP-545: the workflow_executions UPDATE in logWorkflowCompleteDb now chains
 // `.returning({workflowId})` on the where() result so the per-execution error
@@ -180,6 +184,12 @@ vi.mock("@/lib/db", () => ({
       },
     },
     update: vi.fn((target: unknown) => buildUpdate(target)),
+    // resolveGasTotal: db.select({...}).from(logs).where(...) -> rows[]
+    select: vi.fn(() => ({
+      from: () => ({
+        where: () => Promise.resolve(mockGasRows),
+      }),
+    })),
   },
 }));
 
@@ -209,6 +219,7 @@ describe("logWorkflowCompleteDb", () => {
     updateCalls = [];
     updateShouldThrow = false;
     siblingErrorRows = [];
+    mockGasRows = [{ gasUsedWei: null }];
     vi.clearAllMocks();
   });
 
@@ -226,6 +237,54 @@ describe("logWorkflowCompleteDb", () => {
         output: { ok: true },
       })
     );
+  });
+
+  // KEEP-683: the run-total gas is denormalised onto the same terminal UPDATE
+  // so the /analytics reads can aggregate a column instead of the logs JSONB.
+  it("denormalises run-total gas onto the terminal UPDATE on success", async () => {
+    mockGasRows = [{ gasUsedWei: "12345" }];
+
+    await logWorkflowCompleteDb({
+      executionId: "exec_1",
+      status: "success",
+      output: { ok: true },
+      startTime: Date.now() - 1000,
+    });
+
+    expect(getExecUpdate()?.set).toEqual(
+      expect.objectContaining({ status: "success", gasUsedWei: "12345" })
+    );
+  });
+
+  // KEEP-683: a gas-bearing step (e.g. an approve) can commit its gas before a
+  // later step fails the run. Today's gas total counts it regardless of status,
+  // so the column must be populated on error finalizes too.
+  it("denormalises gas on error finalizes, not only success", async () => {
+    mockGasRows = [{ gasUsedWei: "777" }];
+    allLogs = [{ id: "log_1", nodeId: "node_a", status: "error" }];
+
+    await logWorkflowCompleteDb({
+      executionId: "exec_1",
+      status: "error",
+      error: "Step failed",
+      startTime: Date.now() - 1000,
+    });
+
+    expect(getExecUpdate()?.set).toEqual(
+      expect.objectContaining({ status: "error", gasUsedWei: "777" })
+    );
+  });
+
+  it("writes null gas when the run produced no gas-bearing step", async () => {
+    // mockGasRows defaults to [{ gasUsedWei: null }]
+    await logWorkflowCompleteDb({
+      executionId: "exec_1",
+      status: "success",
+      output: { ok: true },
+      startTime: Date.now() - 1000,
+    });
+
+    expect(getExecUpdate()?.set.gasUsedWei).toBeNull();
   });
 
   it("keeps error status when a node log recorded an error and never succeeded", async () => {
@@ -554,6 +613,7 @@ describe("logWorkflowCompleteDb transactionHashes (KEEP-470)", () => {
     updateCalls = [];
     updateShouldThrow = false;
     siblingErrorRows = [];
+    mockGasRows = [{ gasUsedWei: null }];
     vi.clearAllMocks();
   });
 

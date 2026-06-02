@@ -156,6 +156,9 @@ packages/*/dist/
 # Local reports
 reports/
 
+# Codex / review-loop scratch output (carries absolute local paths)
+reviews/
+
 .mcp.json
 
 .claude/.dev-server-LOCAL.log

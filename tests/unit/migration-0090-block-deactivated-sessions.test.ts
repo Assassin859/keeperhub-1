@@ -1,6 +1,10 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  KH001_MESSAGE_FRAGMENT,
+  KH001_SQLSTATE,
+} from "@/lib/security/session-backstop";
 
 // Drift catch for the sessions deactivated-owner block trigger. This is a
 // defense-in-depth backstop for the deactivated-user auth bypass: it rejects
@@ -49,6 +53,19 @@ describe("migration 0090: block sessions for deactivated owners", () => {
     expect(sql).toMatch(
       /MESSAGE = 'Session owner is deactivated; new sessions are not allowed\.'/
     );
+  });
+
+  it("keeps the session-backstop runtime constants coupled to this migration", () => {
+    // lib/security/session-backstop.ts walks the cause chain for
+    // KH001_SQLSTATE and, as a last resort, matches KH001_MESSAGE_FRAGMENT in
+    // the error text. Both constants are owned by this migration's RAISE. The
+    // assertions above pin the literal SQL; this one pins the *runtime
+    // constants* against it, so editing the trigger text without updating the
+    // constants (or vice versa) fails here instead of silently rotting the
+    // fallback path.
+    const sql = READ_SQL();
+    expect(sql).toContain(`ERRCODE = '${KH001_SQLSTATE}'`);
+    expect(sql).toContain(KH001_MESSAGE_FRAGMENT);
   });
 
   it("installs a BEFORE INSERT row trigger on sessions by exact name", () => {
