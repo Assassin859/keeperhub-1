@@ -128,9 +128,7 @@ describe("EvmChainAdapter preflight signer address", () => {
 
     expect(mockEstimateGas).toHaveBeenCalledTimes(1);
     const gasOverrides =
-      mockEstimateGas.mock.calls[0][
-        mockEstimateGas.mock.calls[0].length - 1
-      ];
+      mockEstimateGas.mock.calls[0][mockEstimateGas.mock.calls[0].length - 1];
     expect(gasOverrides.from).toBe(SIGNER_ADDRESS);
   });
 
@@ -164,9 +162,7 @@ describe("EvmChainAdapter preflight signer address", () => {
     expect(staticOverrides.value).toBe(ethValue);
 
     const gasOverrides =
-      mockEstimateGas.mock.calls[0][
-        mockEstimateGas.mock.calls[0].length - 1
-      ];
+      mockEstimateGas.mock.calls[0][mockEstimateGas.mock.calls[0].length - 1];
     expect(gasOverrides.from).toBe(SIGNER_ADDRESS);
     expect(gasOverrides.value).toBe(ethValue);
   });

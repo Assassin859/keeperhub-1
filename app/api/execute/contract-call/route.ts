@@ -5,6 +5,7 @@ import { resolveAbi } from "@/lib/abi/cache";
 import { type AbiItem, findAbiFunction } from "@/lib/abi/utils";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
+import { simulateContractCall } from "@/lib/execute/simulate";
 import { getErrorMessage } from "@/lib/utils";
 import { readContractCore } from "@/plugins/web3/steps/read-contract-core";
 import { writeContractCore } from "@/plugins/web3/steps/write-contract-core";
@@ -16,6 +17,7 @@ import {
   redactInput,
 } from "../_lib/execution-service";
 import { checkRateLimit } from "../_lib/rate-limit";
+import { parseSimulateFlag } from "../_lib/simulate-flag";
 import { checkAndReserveExecution } from "../_lib/spending-cap";
 import { validateContractCallInput } from "../_lib/validate";
 import { requireWallet } from "../_lib/wallet-check";
@@ -83,6 +85,31 @@ async function handleReadCall(
   }
 
   return NextResponse.json({ error: result.error }, { status: 400 });
+}
+
+async function handleSimulateCall(
+  body: Record<string, unknown>,
+  resolvedAbi: string,
+  organizationId: string
+): Promise<NextResponse> {
+  const walletError = await requireWallet(organizationId);
+  if (walletError) {
+    return walletError;
+  }
+
+  const result = await simulateContractCall({
+    organizationId,
+    network: body.network as string,
+    contractAddress: body.contractAddress as string,
+    abi: resolvedAbi,
+    functionName: body.functionName as string,
+    functionArgs: body.functionArgs as string | undefined,
+    value: body.value as string | undefined,
+  });
+
+  return NextResponse.json(result, {
+    status: result.wouldRevert ? 400 : 200,
+  });
 }
 
 async function handleWriteCall(
@@ -206,6 +233,20 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   if (isReadOnly) {
     return handleReadCall(body, resolvedAbi, apiKeyCtx.organizationId);
+  }
+
+  // Dry-run path: validate inputs, simulate via provider.call + estimateGas,
+  // never broadcast, never reserve a directExecutions row. Triggered by
+  // strict boolean `simulate: true` on the body.
+  const simulateFlag = parseSimulateFlag(body);
+  if (!simulateFlag.ok) {
+    return NextResponse.json(
+      { error: simulateFlag.error, field: "simulate" },
+      { status: 400 }
+    );
+  }
+  if (simulateFlag.simulate) {
+    return handleSimulateCall(body, resolvedAbi, apiKeyCtx.organizationId);
   }
 
   return handleWriteCall(

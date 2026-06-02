@@ -46,11 +46,7 @@ type TestEdge = {
 
 let edgeCounter = 0;
 
-function edge(
-  source: string,
-  target: string,
-  sourceHandle?: string
-): TestEdge {
+function edge(source: string, target: string, sourceHandle?: string): TestEdge {
   edgeCounter++;
   return {
     id: `e-${edgeCounter}`,
@@ -89,7 +85,10 @@ function collectNode(id: string): TestNode {
  * Returns the full-workflow edgesBySource, edgesBySourceHandle,
  * and a nodeMap, ready for identifyLoopBody.
  */
-function buildMaps(nodes: TestNode[], edges: TestEdge[]): {
+function buildMaps(
+  nodes: TestNode[],
+  edges: TestEdge[]
+): {
   edgesBySource: Map<string, string[]>;
   edgesBySourceHandle: ReturnType<typeof buildEdgesBySourceHandle>;
   // biome-ignore lint/suspicious/noExplicitAny: TestNode is a minimal stand-in for WorkflowNode from xyflow
@@ -901,9 +900,7 @@ describe("topology 5: mixed structures across 5 For Each loops", () => {
     ...Array.from({ length: 5 }, (_, i) =>
       edge("l1-gate", `l1-t${i + 1}`, "true")
     ),
-    ...Array.from({ length: 5 }, (_, i) =>
-      edge(`l1-t${i + 1}`, "collect-1")
-    ),
+    ...Array.from({ length: 5 }, (_, i) => edge(`l1-t${i + 1}`, "collect-1")),
   ];
 
   // -- Loop 2: one-sided false gate -> 5 error handlers --
@@ -918,9 +915,7 @@ describe("topology 5: mixed structures across 5 For Each loops", () => {
     ...Array.from({ length: 5 }, (_, i) =>
       edge("l2-gate", `l2-f${i + 1}`, "false")
     ),
-    ...Array.from({ length: 5 }, (_, i) =>
-      edge(`l2-f${i + 1}`, "collect-2")
-    ),
+    ...Array.from({ length: 5 }, (_, i) => edge(`l2-f${i + 1}`, "collect-2")),
   ];
 
   // -- Loop 3: chain of 5 one-sided true conditions, each with a side action --
@@ -935,7 +930,9 @@ describe("topology 5: mixed structures across 5 For Each loops", () => {
   const l3Edges: TestEdge[] = [
     edge("fe-3", l3CondIds[0]),
     ...l3CondIds.map((id, i) => edge(id, l3ActionIds[i], "true")),
-    ...l3CondIds.slice(0, -1).map((id, i) => edge(id, l3CondIds[i + 1], "true")),
+    ...l3CondIds
+      .slice(0, -1)
+      .map((id, i) => edge(id, l3CondIds[i + 1], "true")),
     ...l3ActionIds.map((id) => edge(id, "collect-3")),
     edge(l3CondIds[4], "collect-3"),
   ];
@@ -1017,9 +1014,17 @@ describe("topology 5: mixed structures across 5 For Each loops", () => {
 
   describe("loop 1: one-sided true gate", () => {
     it("true dispatches all 5 targets", () => {
-      const body = identifyLoopBody("fe-1", edgesBySource, nodeMap, edgesBySourceHandle);
+      const body = identifyLoopBody(
+        "fe-1",
+        edgesBySource,
+        nodeMap,
+        edgesBySourceHandle
+      );
       const targets = resolveBodyConditionTargets(
-        true, "l1-gate", body.bodyEdgesBySourceHandle, body.bodyEdgesBySource
+        true,
+        "l1-gate",
+        body.bodyEdgesBySourceHandle,
+        body.bodyEdgesBySource
       );
       expect(targets).toHaveLength(5);
       for (let i = 1; i <= 5; i++) {
@@ -1028,9 +1033,17 @@ describe("topology 5: mixed structures across 5 For Each loops", () => {
     });
 
     it("false dispatches nothing", () => {
-      const body = identifyLoopBody("fe-1", edgesBySource, nodeMap, edgesBySourceHandle);
+      const body = identifyLoopBody(
+        "fe-1",
+        edgesBySource,
+        nodeMap,
+        edgesBySourceHandle
+      );
       const targets = resolveBodyConditionTargets(
-        false, "l1-gate", body.bodyEdgesBySourceHandle, body.bodyEdgesBySource
+        false,
+        "l1-gate",
+        body.bodyEdgesBySourceHandle,
+        body.bodyEdgesBySource
       );
       expect(targets).toEqual([]);
     });
@@ -1038,9 +1051,17 @@ describe("topology 5: mixed structures across 5 For Each loops", () => {
 
   describe("loop 2: one-sided false gate", () => {
     it("false dispatches all 5 error handlers", () => {
-      const body = identifyLoopBody("fe-2", edgesBySource, nodeMap, edgesBySourceHandle);
+      const body = identifyLoopBody(
+        "fe-2",
+        edgesBySource,
+        nodeMap,
+        edgesBySourceHandle
+      );
       const targets = resolveBodyConditionTargets(
-        false, "l2-gate", body.bodyEdgesBySourceHandle, body.bodyEdgesBySource
+        false,
+        "l2-gate",
+        body.bodyEdgesBySourceHandle,
+        body.bodyEdgesBySource
       );
       expect(targets).toHaveLength(5);
       for (let i = 1; i <= 5; i++) {
@@ -1049,9 +1070,17 @@ describe("topology 5: mixed structures across 5 For Each loops", () => {
     });
 
     it("true dispatches nothing", () => {
-      const body = identifyLoopBody("fe-2", edgesBySource, nodeMap, edgesBySourceHandle);
+      const body = identifyLoopBody(
+        "fe-2",
+        edgesBySource,
+        nodeMap,
+        edgesBySourceHandle
+      );
       const targets = resolveBodyConditionTargets(
-        true, "l2-gate", body.bodyEdgesBySourceHandle, body.bodyEdgesBySource
+        true,
+        "l2-gate",
+        body.bodyEdgesBySourceHandle,
+        body.bodyEdgesBySource
       );
       expect(targets).toEqual([]);
     });
@@ -1059,11 +1088,19 @@ describe("topology 5: mixed structures across 5 For Each loops", () => {
 
   describe("loop 3: chain of 5 one-sided true conditions", () => {
     it("all true: every condition dispatches its side action and next condition", () => {
-      const body = identifyLoopBody("fe-3", edgesBySource, nodeMap, edgesBySourceHandle);
+      const body = identifyLoopBody(
+        "fe-3",
+        edgesBySource,
+        nodeMap,
+        edgesBySourceHandle
+      );
 
       for (let i = 0; i < 5; i++) {
         const targets = resolveBodyConditionTargets(
-          true, l3CondIds[i], body.bodyEdgesBySourceHandle, body.bodyEdgesBySource
+          true,
+          l3CondIds[i],
+          body.bodyEdgesBySourceHandle,
+          body.bodyEdgesBySource
         );
         expect(targets).toContain(l3ActionIds[i]);
         if (i < 4) {
@@ -1073,45 +1110,78 @@ describe("topology 5: mixed structures across 5 For Each loops", () => {
     });
 
     it("false at position 0: entire chain is dead", () => {
-      const body = identifyLoopBody("fe-3", edgesBySource, nodeMap, edgesBySourceHandle);
+      const body = identifyLoopBody(
+        "fe-3",
+        edgesBySource,
+        nodeMap,
+        edgesBySourceHandle
+      );
       const targets = resolveBodyConditionTargets(
-        false, l3CondIds[0], body.bodyEdgesBySourceHandle, body.bodyEdgesBySource
+        false,
+        l3CondIds[0],
+        body.bodyEdgesBySourceHandle,
+        body.bodyEdgesBySource
       );
       expect(targets).toEqual([]);
     });
 
     it("false at position 2: first two conditions dispatch, rest dead", () => {
-      const body = identifyLoopBody("fe-3", edgesBySource, nodeMap, edgesBySourceHandle);
+      const body = identifyLoopBody(
+        "fe-3",
+        edgesBySource,
+        nodeMap,
+        edgesBySourceHandle
+      );
 
       const t0 = resolveBodyConditionTargets(
-        true, l3CondIds[0], body.bodyEdgesBySourceHandle, body.bodyEdgesBySource
+        true,
+        l3CondIds[0],
+        body.bodyEdgesBySourceHandle,
+        body.bodyEdgesBySource
       );
       expect(t0).toContain(l3CondIds[1]);
 
       const t1 = resolveBodyConditionTargets(
-        true, l3CondIds[1], body.bodyEdgesBySourceHandle, body.bodyEdgesBySource
+        true,
+        l3CondIds[1],
+        body.bodyEdgesBySourceHandle,
+        body.bodyEdgesBySource
       );
       expect(t1).toContain(l3CondIds[2]);
 
       const t2 = resolveBodyConditionTargets(
-        false, l3CondIds[2], body.bodyEdgesBySourceHandle, body.bodyEdgesBySource
+        false,
+        l3CondIds[2],
+        body.bodyEdgesBySourceHandle,
+        body.bodyEdgesBySource
       );
       expect(t2).toEqual([]);
     });
 
     it("false at position 4 (last): first four dispatch, last blocks", () => {
-      const body = identifyLoopBody("fe-3", edgesBySource, nodeMap, edgesBySourceHandle);
+      const body = identifyLoopBody(
+        "fe-3",
+        edgesBySource,
+        nodeMap,
+        edgesBySourceHandle
+      );
 
       for (let i = 0; i < 4; i++) {
         const t = resolveBodyConditionTargets(
-          true, l3CondIds[i], body.bodyEdgesBySourceHandle, body.bodyEdgesBySource
+          true,
+          l3CondIds[i],
+          body.bodyEdgesBySourceHandle,
+          body.bodyEdgesBySource
         );
         expect(t).toContain(l3ActionIds[i]);
         expect(t).toContain(l3CondIds[i + 1]);
       }
 
       const tLast = resolveBodyConditionTargets(
-        false, l3CondIds[4], body.bodyEdgesBySourceHandle, body.bodyEdgesBySource
+        false,
+        l3CondIds[4],
+        body.bodyEdgesBySourceHandle,
+        body.bodyEdgesBySource
       );
       expect(tLast).toEqual([]);
     });
@@ -1119,23 +1189,39 @@ describe("topology 5: mixed structures across 5 For Each loops", () => {
 
   describe("loop 4: 3 one-sided + 2 two-sided conditions in parallel", () => {
     it("all one-sided conditions false: no one-sided targets fire", () => {
-      const body = identifyLoopBody("fe-4", edgesBySource, nodeMap, edgesBySourceHandle);
+      const body = identifyLoopBody(
+        "fe-4",
+        edgesBySource,
+        nodeMap,
+        edgesBySourceHandle
+      );
 
       for (let c = 1; c <= 3; c++) {
         const targets = resolveBodyConditionTargets(
-          false, `l4-c${c}`, body.bodyEdgesBySourceHandle, body.bodyEdgesBySource
+          false,
+          `l4-c${c}`,
+          body.bodyEdgesBySourceHandle,
+          body.bodyEdgesBySource
         );
         expect(targets).toEqual([]);
       }
     });
 
     it("all one-sided conditions true: 15 targets fire", () => {
-      const body = identifyLoopBody("fe-4", edgesBySource, nodeMap, edgesBySourceHandle);
+      const body = identifyLoopBody(
+        "fe-4",
+        edgesBySource,
+        nodeMap,
+        edgesBySourceHandle
+      );
 
       const allTargets: string[] = [];
       for (let c = 1; c <= 3; c++) {
         const targets = resolveBodyConditionTargets(
-          true, `l4-c${c}`, body.bodyEdgesBySourceHandle, body.bodyEdgesBySource
+          true,
+          `l4-c${c}`,
+          body.bodyEdgesBySourceHandle,
+          body.bodyEdgesBySource
         );
         expect(targets).toHaveLength(5);
         allTargets.push(...targets);
@@ -1144,10 +1230,18 @@ describe("topology 5: mixed structures across 5 For Each loops", () => {
     });
 
     it("two-sided c4=true, c5=false: correct targets for each", () => {
-      const body = identifyLoopBody("fe-4", edgesBySource, nodeMap, edgesBySourceHandle);
+      const body = identifyLoopBody(
+        "fe-4",
+        edgesBySource,
+        nodeMap,
+        edgesBySourceHandle
+      );
 
       const c4Targets = resolveBodyConditionTargets(
-        true, "l4-c4", body.bodyEdgesBySourceHandle, body.bodyEdgesBySource
+        true,
+        "l4-c4",
+        body.bodyEdgesBySourceHandle,
+        body.bodyEdgesBySource
       );
       expect(c4Targets).toHaveLength(5);
       for (let t = 1; t <= 5; t++) {
@@ -1155,7 +1249,10 @@ describe("topology 5: mixed structures across 5 For Each loops", () => {
       }
 
       const c5Targets = resolveBodyConditionTargets(
-        false, "l4-c5", body.bodyEdgesBySourceHandle, body.bodyEdgesBySource
+        false,
+        "l4-c5",
+        body.bodyEdgesBySourceHandle,
+        body.bodyEdgesBySource
       );
       expect(c5Targets).toHaveLength(5);
       for (let t = 6; t <= 10; t++) {
@@ -1164,10 +1261,18 @@ describe("topology 5: mixed structures across 5 For Each loops", () => {
     });
 
     it("two-sided c4=false, c5=true: correct targets for each", () => {
-      const body = identifyLoopBody("fe-4", edgesBySource, nodeMap, edgesBySourceHandle);
+      const body = identifyLoopBody(
+        "fe-4",
+        edgesBySource,
+        nodeMap,
+        edgesBySourceHandle
+      );
 
       const c4Targets = resolveBodyConditionTargets(
-        false, "l4-c4", body.bodyEdgesBySourceHandle, body.bodyEdgesBySource
+        false,
+        "l4-c4",
+        body.bodyEdgesBySourceHandle,
+        body.bodyEdgesBySource
       );
       expect(c4Targets).toHaveLength(5);
       for (let t = 1; t <= 5; t++) {
@@ -1175,7 +1280,10 @@ describe("topology 5: mixed structures across 5 For Each loops", () => {
       }
 
       const c5Targets = resolveBodyConditionTargets(
-        true, "l4-c5", body.bodyEdgesBySourceHandle, body.bodyEdgesBySource
+        true,
+        "l4-c5",
+        body.bodyEdgesBySourceHandle,
+        body.bodyEdgesBySource
       );
       expect(c5Targets).toHaveLength(5);
       for (let t = 6; t <= 10; t++) {
@@ -1184,20 +1292,31 @@ describe("topology 5: mixed structures across 5 For Each loops", () => {
     });
 
     it("mixed: one-sided all false, two-sided all true: only two-sided true branches fire", () => {
-      const body = identifyLoopBody("fe-4", edgesBySource, nodeMap, edgesBySourceHandle);
+      const body = identifyLoopBody(
+        "fe-4",
+        edgesBySource,
+        nodeMap,
+        edgesBySourceHandle
+      );
 
       const allDispatched: string[] = [];
 
       for (let c = 1; c <= 3; c++) {
         const targets = resolveBodyConditionTargets(
-          false, `l4-c${c}`, body.bodyEdgesBySourceHandle, body.bodyEdgesBySource
+          false,
+          `l4-c${c}`,
+          body.bodyEdgesBySourceHandle,
+          body.bodyEdgesBySource
         );
         expect(targets).toEqual([]);
       }
 
       for (let c = 4; c <= 5; c++) {
         const targets = resolveBodyConditionTargets(
-          true, `l4-c${c}`, body.bodyEdgesBySourceHandle, body.bodyEdgesBySource
+          true,
+          `l4-c${c}`,
+          body.bodyEdgesBySourceHandle,
+          body.bodyEdgesBySource
         );
         expect(targets).toHaveLength(5);
         allDispatched.push(...targets);
@@ -1213,10 +1332,18 @@ describe("topology 5: mixed structures across 5 For Each loops", () => {
 
   describe("loop 5: two-sided outer + one-sided inner on true branch", () => {
     it("outer=false: 5 false targets, inner never reached", () => {
-      const body = identifyLoopBody("fe-5", edgesBySource, nodeMap, edgesBySourceHandle);
+      const body = identifyLoopBody(
+        "fe-5",
+        edgesBySource,
+        nodeMap,
+        edgesBySourceHandle
+      );
 
       const outerTargets = resolveBodyConditionTargets(
-        false, "l5-outer", body.bodyEdgesBySourceHandle, body.bodyEdgesBySource
+        false,
+        "l5-outer",
+        body.bodyEdgesBySourceHandle,
+        body.bodyEdgesBySource
       );
       expect(outerTargets).toHaveLength(5);
       for (let i = 1; i <= 5; i++) {
@@ -1226,10 +1353,18 @@ describe("topology 5: mixed structures across 5 For Each loops", () => {
     });
 
     it("outer=true: 4 true actions + inner condition dispatched", () => {
-      const body = identifyLoopBody("fe-5", edgesBySource, nodeMap, edgesBySourceHandle);
+      const body = identifyLoopBody(
+        "fe-5",
+        edgesBySource,
+        nodeMap,
+        edgesBySourceHandle
+      );
 
       const outerTargets = resolveBodyConditionTargets(
-        true, "l5-outer", body.bodyEdgesBySourceHandle, body.bodyEdgesBySource
+        true,
+        "l5-outer",
+        body.bodyEdgesBySourceHandle,
+        body.bodyEdgesBySource
       );
       expect(outerTargets).toHaveLength(5);
       for (let i = 1; i <= 4; i++) {
@@ -1244,10 +1379,18 @@ describe("topology 5: mixed structures across 5 For Each loops", () => {
     });
 
     it("outer=true, inner=true: inner dispatches 5 targets", () => {
-      const body = identifyLoopBody("fe-5", edgesBySource, nodeMap, edgesBySourceHandle);
+      const body = identifyLoopBody(
+        "fe-5",
+        edgesBySource,
+        nodeMap,
+        edgesBySourceHandle
+      );
 
       const innerTargets = resolveBodyConditionTargets(
-        true, "l5-inner", body.bodyEdgesBySourceHandle, body.bodyEdgesBySource
+        true,
+        "l5-inner",
+        body.bodyEdgesBySourceHandle,
+        body.bodyEdgesBySource
       );
       expect(innerTargets).toHaveLength(5);
       for (let i = 1; i <= 5; i++) {
@@ -1256,22 +1399,41 @@ describe("topology 5: mixed structures across 5 For Each loops", () => {
     });
 
     it("outer=true, inner=false: inner dispatches nothing (one-sided)", () => {
-      const body = identifyLoopBody("fe-5", edgesBySource, nodeMap, edgesBySourceHandle);
+      const body = identifyLoopBody(
+        "fe-5",
+        edgesBySource,
+        nodeMap,
+        edgesBySourceHandle
+      );
 
       const innerTargets = resolveBodyConditionTargets(
-        false, "l5-inner", body.bodyEdgesBySourceHandle, body.bodyEdgesBySource
+        false,
+        "l5-inner",
+        body.bodyEdgesBySourceHandle,
+        body.bodyEdgesBySource
       );
       expect(innerTargets).toEqual([]);
     });
 
     it("full walk outer=true inner=true: correct total dispatched set", () => {
-      const body = identifyLoopBody("fe-5", edgesBySource, nodeMap, edgesBySourceHandle);
+      const body = identifyLoopBody(
+        "fe-5",
+        edgesBySource,
+        nodeMap,
+        edgesBySourceHandle
+      );
 
       const outerTargets = resolveBodyConditionTargets(
-        true, "l5-outer", body.bodyEdgesBySourceHandle, body.bodyEdgesBySource
+        true,
+        "l5-outer",
+        body.bodyEdgesBySourceHandle,
+        body.bodyEdgesBySource
       );
       const innerTargets = resolveBodyConditionTargets(
-        true, "l5-inner", body.bodyEdgesBySourceHandle, body.bodyEdgesBySource
+        true,
+        "l5-inner",
+        body.bodyEdgesBySourceHandle,
+        body.bodyEdgesBySource
       );
 
       const allDispatched = new Set([...outerTargets, ...innerTargets]);
@@ -1285,10 +1447,18 @@ describe("topology 5: mixed structures across 5 For Each loops", () => {
     });
 
     it("full walk outer=false: zero nodes beyond outer false targets", () => {
-      const body = identifyLoopBody("fe-5", edgesBySource, nodeMap, edgesBySourceHandle);
+      const body = identifyLoopBody(
+        "fe-5",
+        edgesBySource,
+        nodeMap,
+        edgesBySourceHandle
+      );
 
       const outerTargets = resolveBodyConditionTargets(
-        false, "l5-outer", body.bodyEdgesBySourceHandle, body.bodyEdgesBySource
+        false,
+        "l5-outer",
+        body.bodyEdgesBySourceHandle,
+        body.bodyEdgesBySource
       );
 
       const allDispatched = new Set(outerTargets);
@@ -1324,18 +1494,34 @@ describe("topology 5: mixed structures across 5 For Each loops", () => {
     });
 
     it("condition decisions in one loop do not affect another loop's routing", () => {
-      const body1 = identifyLoopBody("fe-1", edgesBySource, nodeMap, edgesBySourceHandle);
-      const body2 = identifyLoopBody("fe-2", edgesBySource, nodeMap, edgesBySourceHandle);
+      const body1 = identifyLoopBody(
+        "fe-1",
+        edgesBySource,
+        nodeMap,
+        edgesBySourceHandle
+      );
+      const body2 = identifyLoopBody(
+        "fe-2",
+        edgesBySource,
+        nodeMap,
+        edgesBySourceHandle
+      );
 
       // Loop 1 gate = false (nothing dispatched)
       const l1Targets = resolveBodyConditionTargets(
-        false, "l1-gate", body1.bodyEdgesBySourceHandle, body1.bodyEdgesBySource
+        false,
+        "l1-gate",
+        body1.bodyEdgesBySourceHandle,
+        body1.bodyEdgesBySource
       );
       expect(l1Targets).toEqual([]);
 
       // Loop 2 gate = false (5 error handlers dispatched)
       const l2Targets = resolveBodyConditionTargets(
-        false, "l2-gate", body2.bodyEdgesBySourceHandle, body2.bodyEdgesBySource
+        false,
+        "l2-gate",
+        body2.bodyEdgesBySourceHandle,
+        body2.bodyEdgesBySource
       );
       expect(l2Targets).toHaveLength(5);
 

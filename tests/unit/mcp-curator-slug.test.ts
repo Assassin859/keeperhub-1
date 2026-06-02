@@ -10,8 +10,8 @@ vi.mock("@/lib/mcp/listing", () => ({
   updateWorkflowListing: vi.fn(),
 }));
 
-import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { listWorkflow, updateWorkflowListing } from "@/lib/mcp/listing";
+import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 
 const { POST, PATCH } = await import(
   "@/app/api/mcp/workflows/[slug]/listing/route"
@@ -24,7 +24,9 @@ const makeRequest = (body: unknown, method = "POST") =>
     body: JSON.stringify(body),
   });
 
-const makeParams = (id = "wf-123") => ({ params: Promise.resolve({ slug: id }) });
+const makeParams = (id = "wf-123") => ({
+  params: Promise.resolve({ slug: id }),
+});
 
 const mockAuth = (orgId = "org-abc") =>
   vi.mocked(getDualAuthContext).mockResolvedValue({
@@ -41,7 +43,10 @@ describe("mcp curator routes — slug collision and preservation", () => {
 
   it("slug collision: POST with duplicate slug returns 409 with SLUG_CONFLICT error code", async () => {
     mockAuth();
-    vi.mocked(listWorkflow).mockResolvedValue({ ok: false, error: "SLUG_CONFLICT" });
+    vi.mocked(listWorkflow).mockResolvedValue({
+      ok: false,
+      error: "SLUG_CONFLICT",
+    });
 
     const res = await POST(makeRequest({ slug: "taken-slug" }), makeParams());
     expect(res.status).toBe(409);
@@ -60,7 +65,10 @@ describe("mcp curator routes — slug collision and preservation", () => {
       } as never,
     });
 
-    const res = await PATCH(makeRequest({ category: "defi" }, "PATCH"), makeParams());
+    const res = await PATCH(
+      makeRequest({ category: "defi" }, "PATCH"),
+      makeParams()
+    );
     expect(res.status).toBe(200);
     expect(updateWorkflowListing).toHaveBeenCalledWith(
       "wf-123",

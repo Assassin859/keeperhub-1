@@ -48,10 +48,7 @@ if (typeof window !== "undefined") {
         );
       }
       return new Worker(
-        new URL(
-          "monaco-editor/esm/vs/editor/editor.worker",
-          import.meta.url
-        ),
+        new URL("monaco-editor/esm/vs/editor/editor.worker", import.meta.url),
         { type: "module" }
       );
     },

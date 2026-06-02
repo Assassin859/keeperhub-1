@@ -19,6 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { authClient, signIn, signUp } from "@/lib/auth-client";
+import { DISPOSABLE_EMAIL_REJECTION_MESSAGE } from "@/lib/auth-disposable-emails-message";
 import { AUTH_SUCCESS_EVENT } from "@/lib/auth-events";
 import {
   getEnabledAuthProviders,
@@ -774,6 +775,17 @@ export const AuthDialog = ({
 
       if (signUpResponse.error) {
         const errorMsg = signUpResponse.error.message || "Sign up failed";
+
+        // Server-side disposable-email rejection: the better-auth
+        // databaseHooks.user.create.before hook throws an APIError
+        // carrying DISPOSABLE_EMAIL_REJECTION_MESSAGE. Match the constant
+        // directly so the surfaced text never drifts out of sync.
+        if (errorMsg === DISPOSABLE_EMAIL_REJECTION_MESSAGE) {
+          setError(DISPOSABLE_EMAIL_REJECTION_MESSAGE);
+          resetCaptcha();
+          setLoading(false);
+          return;
+        }
 
         // Check if error is about existing user (might be unverified)
         if (

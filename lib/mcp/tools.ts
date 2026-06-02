@@ -592,7 +592,7 @@ export function registerTools(
 
   server.tool(
     "list_action_schemas",
-    "List all available action schemas, triggers, and supported chains. Use this to discover what actions and integrations are available for workflow creation.",
+    "List all available action schemas, triggers, and supported chains. Use this to discover what actions and integrations are available for workflow creation. Each chain includes a 'status' field (stable, experimental, or deprecated) - prefer stable chains for production writes and avoid experimental/deprecated ones unless the user explicitly opts in.",
     {
       category: z
         .string()

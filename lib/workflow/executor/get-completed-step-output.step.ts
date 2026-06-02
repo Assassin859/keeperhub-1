@@ -49,6 +49,47 @@ export async function fetchCompletedStepOutputStep(
 fetchCompletedStepOutputStep.maxRetries = 1;
 
 /**
+ * Fetch the success row for a step that ran inside a For Each iteration.
+ * Matches the iteration row exactly (forEachNodeId + iterationIndex) instead
+ * of filtering iteration rows out. Used by the body-runner spurious-recovery
+ * path so each iteration recovers its own output, not whichever iteration was
+ * last to write.
+ */
+// biome-ignore lint/suspicious/useAwait: workflow "use step" requires async
+export async function fetchCompletedStepOutputAtIterationStep(
+  executionId: string,
+  nodeId: string,
+  forEachNodeId: string,
+  iterationIndex: number
+): Promise<{ outputRaw: unknown } | null> {
+  "use step";
+
+  const row = await db.transaction(async (tx) => {
+    await tx.execute(sql`SET LOCAL statement_timeout = '2s'`);
+    return tx.query.workflowExecutionLogs.findFirst({
+      where: and(
+        eq(workflowExecutionLogs.executionId, executionId),
+        eq(workflowExecutionLogs.nodeId, nodeId),
+        eq(workflowExecutionLogs.forEachNodeId, forEachNodeId),
+        eq(workflowExecutionLogs.iterationIndex, iterationIndex),
+        eq(workflowExecutionLogs.status, "success"),
+        isNotNull(workflowExecutionLogs.outputRaw)
+      ),
+      orderBy: desc(workflowExecutionLogs.completedAt),
+      columns: { outputRaw: true },
+    });
+  });
+
+  if (!row) {
+    return null;
+  }
+
+  return { outputRaw: row.outputRaw as unknown };
+}
+
+fetchCompletedStepOutputAtIterationStep.maxRetries = 1;
+
+/**
  * Poll `workflow_execution_logs` for a step's recorded success for up to
  * `timeoutMs`. The wait runs INSIDE this step boundary so the workflow body
  * stays deterministic and the result is memoized on replay.

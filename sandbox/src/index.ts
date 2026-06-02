@@ -1,7 +1,7 @@
 import {
+  createServer,
   type IncomingMessage,
   type ServerResponse,
-  createServer,
 } from "node:http";
 import {
   deserialize as v8Deserialize,
@@ -194,7 +194,7 @@ async function handlePostRun(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message === "body too large") {
-      if (!res.headersSent && !res.destroyed) {
+      if (!(res.headersSent || res.destroyed)) {
         res.writeHead(413);
         res.end("body too large");
       }
@@ -202,7 +202,7 @@ async function handlePostRun(
     }
     // biome-ignore lint/suspicious/noConsole: sandbox runtime emits stderr for fatal paths so platform logs surface them
     console.error(`[Sandbox] /run failed: ${message}`);
-    if (!res.headersSent && !res.destroyed) {
+    if (!(res.headersSent || res.destroyed)) {
       res.writeHead(500);
       res.end("sandbox internal error");
     }

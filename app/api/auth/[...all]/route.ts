@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { hashSessionToken } from "@/lib/auth-session-token-hash";
 import { db } from "@/lib/db";
-import { sessions, users } from "@/lib/db/schema";
+import { sessions, twoFactor, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError, logSystemWarn } from "@/lib/logging";
 import {
   buildPendingOauthMfaSetCookie,
@@ -221,6 +221,24 @@ async function interceptOauthCallback(
   //     mints the real session inside the enroll route once the user
   //     finishes the wizard. No usable session exists until that.
   if (user.twoFactorEnabled === true) {
+    // [mfa-debug] KEEP-471 OAuth/TOTP investigation: confirm the session
+    // user the cookie points at actually owns a two_factor secret row.
+    // A mismatch (twoFactorEnabled=true but no/other secret) explains a
+    // correct authenticator code being rejected at oauth-mfa-finalize.
+    // Remove once root-caused.
+    const [tfDebug] = await db
+      .select({ secretUserId: twoFactor.userId })
+      .from(twoFactor)
+      .where(eq(twoFactor.userId, user.id))
+      .limit(1);
+    // biome-ignore lint/suspicious/noConsole: temporary KEEP-471 diagnostic
+    console.info("[mfa-debug] oauth verify-mfa path", {
+      provider,
+      resolvedUserId: user.id,
+      email: user.email,
+      twoFactorEnabled: user.twoFactorEnabled,
+      twoFactorRowFound: Boolean(tfDebug),
+    });
     const pendingValue = encodePendingOauthMfaCookie(
       {
         userId: user.id,

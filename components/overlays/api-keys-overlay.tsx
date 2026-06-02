@@ -1,6 +1,6 @@
 "use client";
 
-import { Copy, Key, Trash2 } from "lucide-react";
+import { Copy, Key, Server, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -489,6 +489,57 @@ function useApiKeys(
 }
 
 /**
+ * Read-only card surfacing the MCP server endpoint URL with a copy button.
+ * The endpoint is derived from NEXT_PUBLIC_APP_URL, falling back to the current
+ * origin (resolved after mount to avoid a hydration mismatch when the env var
+ * is unset).
+ */
+function McpEndpointCard() {
+  const [mcpUrl, setMcpUrl] = useState(
+    process.env.NEXT_PUBLIC_APP_URL
+      ? `${process.env.NEXT_PUBLIC_APP_URL}/mcp`
+      : ""
+  );
+
+  useEffect(() => {
+    if (!mcpUrl) {
+      setMcpUrl(`${window.location.origin}/mcp`);
+    }
+  }, [mcpUrl]);
+
+  const copyEndpoint = () => {
+    navigator.clipboard.writeText(mcpUrl);
+    toast.success("Copied to clipboard");
+  };
+
+  return (
+    <div className="mb-4 rounded-md border border-border bg-muted/40 p-3">
+      <div className="mb-2 flex items-center gap-2">
+        <Server className="size-4 text-muted-foreground" />
+        <p className="font-medium text-sm">MCP endpoint</p>
+      </div>
+      <p className="mb-2 text-muted-foreground text-xs">
+        Connect an agent or MCP client to this URL, authenticating with an
+        organisation API key.
+      </p>
+      <div className="flex items-center gap-2">
+        <code className="flex-1 break-all rounded bg-muted px-2 py-1 font-mono text-xs">
+          {mcpUrl}
+        </code>
+        <Button
+          disabled={!mcpUrl}
+          onClick={copyEndpoint}
+          size="sm"
+          variant="outline"
+        >
+          <Copy className="size-4" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Main API Keys management overlay with tabs for Webhook and Organisation keys.
  */
 export function ApiKeysOverlay({ overlayId }: ApiKeysOverlayProps) {
@@ -537,6 +588,7 @@ export function ApiKeysOverlay({ overlayId }: ApiKeysOverlayProps) {
       overlayId={overlayId}
       title="API Keys"
     >
+      <McpEndpointCard />
       <Tabs className="-mt-2" onValueChange={setActiveTab} value={activeTab}>
         <TabsList className="w-full">
           <TabsTrigger className="flex-1" value="organisation">

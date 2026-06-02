@@ -36,6 +36,7 @@ vi.mock("@/lib/db/schema", () => ({
 
 import { getWorkflowAccess } from "@/lib/workflow/access";
 import {
+  filterPickerVisible,
   isWorkflowDeleted,
   workflowNotDeleted,
 } from "@/lib/workflow/soft-delete";
@@ -100,5 +101,65 @@ describe("getWorkflowAccess soft-delete signal", () => {
     });
 
     expect(access.isDeleted).toBe(false);
+  });
+});
+
+describe("filterPickerVisible", () => {
+  type PickerRow = {
+    id: string;
+    name: string;
+    deletedAt?: Date | string | null;
+    enabled?: boolean;
+  };
+
+  it("excludes soft-deleted rows (deletedAt set)", () => {
+    const rows: PickerRow[] = [
+      { id: "a", name: "Alpha", deletedAt: null },
+      { id: "b", name: "Beta", deletedAt: new Date() },
+      { id: "c", name: "Gamma", deletedAt: "2026-05-29T00:00:00.000Z" },
+    ];
+
+    expect(filterPickerVisible(rows).map((row) => row.id)).toEqual(["a"]);
+  });
+
+  it("excludes the internal __current__ stub", () => {
+    const rows: PickerRow[] = [
+      { id: "current", name: "__current__", deletedAt: null },
+      { id: "a", name: "Alpha", deletedAt: null },
+    ];
+
+    expect(filterPickerVisible(rows).map((row) => row.id)).toEqual(["a"]);
+  });
+
+  it("keeps disabled rows visible (enabled: false)", () => {
+    const rows: PickerRow[] = [
+      { id: "a", name: "Alpha", deletedAt: null, enabled: true },
+      { id: "b", name: "Beta", deletedAt: null, enabled: false },
+    ];
+
+    expect(filterPickerVisible(rows).map((row) => row.id)).toEqual(["a", "b"]);
+  });
+
+  it("treats missing deletedAt the same as null", () => {
+    const rows: PickerRow[] = [
+      { id: "a", name: "Alpha" },
+      { id: "b", name: "Beta", deletedAt: null },
+    ];
+
+    expect(filterPickerVisible(rows).map((row) => row.id)).toEqual(["a", "b"]);
+  });
+
+  it("preserves input order", () => {
+    const rows: PickerRow[] = [
+      { id: "c", name: "Gamma", deletedAt: null },
+      { id: "a", name: "Alpha", deletedAt: null },
+      { id: "b", name: "Beta", deletedAt: null },
+    ];
+
+    expect(filterPickerVisible(rows).map((row) => row.id)).toEqual([
+      "c",
+      "a",
+      "b",
+    ]);
   });
 });

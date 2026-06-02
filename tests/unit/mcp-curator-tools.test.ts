@@ -10,8 +10,8 @@ vi.mock("@/lib/mcp/listing", () => ({
   updateWorkflowListing: vi.fn(),
 }));
 
-import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { listWorkflow, unlistWorkflow } from "@/lib/mcp/listing";
+import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 
 // Dynamic import after mocks are set up
 const { POST, DELETE } = await import(
@@ -22,7 +22,7 @@ const makePostRequest = (body?: unknown) =>
   new Request("http://localhost/api/mcp/workflows/wf-123/listing", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
 
 const makeDeleteRequest = () =>
@@ -30,7 +30,9 @@ const makeDeleteRequest = () =>
     method: "DELETE",
   });
 
-const makeParams = (id = "wf-123") => ({ params: Promise.resolve({ slug: id }) });
+const makeParams = (id = "wf-123") => ({
+  params: Promise.resolve({ slug: id }),
+});
 
 const mockAuth = (orgId = "org-abc") =>
   vi.mocked(getDualAuthContext).mockResolvedValue({
@@ -53,9 +55,15 @@ describe("mcp curator tools — org-scope and auth enforcement", () => {
 
   it("org-scope 404: POST returns 404 when listing helper returns NOT_FOUND", async () => {
     mockAuth();
-    vi.mocked(listWorkflow).mockResolvedValue({ ok: false, error: "NOT_FOUND" });
+    vi.mocked(listWorkflow).mockResolvedValue({
+      ok: false,
+      error: "NOT_FOUND",
+    });
 
-    const res = await POST(makePostRequest({ slug: "my-workflow" }), makeParams());
+    const res = await POST(
+      makePostRequest({ slug: "my-workflow" }),
+      makeParams()
+    );
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("Workflow not found");
@@ -63,7 +71,10 @@ describe("mcp curator tools — org-scope and auth enforcement", () => {
 
   it("org-scope 404: DELETE returns 404 when unlist helper returns NOT_FOUND", async () => {
     mockAuth();
-    vi.mocked(unlistWorkflow).mockResolvedValue({ ok: false, error: "NOT_FOUND" });
+    vi.mocked(unlistWorkflow).mockResolvedValue({
+      ok: false,
+      error: "NOT_FOUND",
+    });
 
     const res = await DELETE(makeDeleteRequest(), makeParams());
     expect(res.status).toBe(404);
@@ -74,7 +85,10 @@ describe("mcp curator tools — org-scope and auth enforcement", () => {
   it("unauthenticated POST returns 401", async () => {
     mockNoAuth();
 
-    const res = await POST(makePostRequest({ slug: "my-workflow" }), makeParams());
+    const res = await POST(
+      makePostRequest({ slug: "my-workflow" }),
+      makeParams()
+    );
     expect(res.status).toBe(401);
   });
 });

@@ -126,7 +126,12 @@ for (const n of nodes) {
   nodeMap.set(n.id, n);
 }
 
-const body = identifyLoopBody(FE_ID, edgesBySource, nodeMap, edgesBySourceHandle);
+const body = identifyLoopBody(
+  FE_ID,
+  edgesBySource,
+  nodeMap,
+  edgesBySourceHandle
+);
 
 function route(conditionValue: boolean, nodeId: string): string[] {
   return resolveBodyConditionTargets(
@@ -166,11 +171,17 @@ const HAT_TOKENS = {
 };
 
 const BATCH_CAST_TRUE = {
-  batchRead: { label: "Batch Read", data: { results: [true, "1749820800", "1749907200"] } },
+  batchRead: {
+    label: "Batch Read",
+    data: { results: [true, "1749820800", "1749907200"] },
+  },
 };
 
 const BATCH_CAST_FALSE = {
-  batchRead: { label: "Batch Read", data: { results: [false, "1749820800", "1749907200"] } },
+  batchRead: {
+    label: "Batch Read",
+    data: { results: [false, "1749820800", "1749907200"] },
+  },
 };
 
 const DB_FOUND = {
@@ -210,7 +221,7 @@ const CAN_CAST = {
     label: "Exec Status",
     data: { expiration: "1749993600", nextCastTime: "1749820800" },
   },
-  systemTime: { label: "System Time", data: { unixTimestamp: 1749907200 } },
+  systemTime: { label: "System Time", data: { unixTimestamp: 1_749_907_200 } },
 };
 
 const CANNOT_CAST = {
@@ -218,10 +229,11 @@ const CANNOT_CAST = {
     label: "Exec Status",
     data: { expiration: "1749993600", nextCastTime: "1749993700" },
   },
-  systemTime: { label: "System Time", data: { unixTimestamp: 1749907200 } },
+  systemTime: { label: "System Time", data: { unixTimestamp: 1_749_907_200 } },
 };
 
-const EXPR_COMPARE = "{{@spellTokens:Spell Tokens.amt}} > {{@hatTokens:Hat Tokens.amt}}";
+const EXPR_COMPARE =
+  "{{@spellTokens:Spell Tokens.amt}} > {{@hatTokens:Hat Tokens.amt}}";
 const EXPR_CAST_STATUS = "{{@batchRead:Batch Read.results[0]}} === true";
 const EXPR_DB_COUNT = "{{@dbResult:DB Result.count}} === 1";
 const EXPR_WHITELIST = "{{@dbRow:DB Row.success}} === true";
@@ -245,8 +257,13 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
 
     it("includes all 7 condition nodes", () => {
       for (const id of [
-        "compare-tokens", "already-done", "exists-in-db", "is-valid",
-        "has-prior-action", "state-ready", "meets-threshold",
+        "compare-tokens",
+        "already-done",
+        "exists-in-db",
+        "is-valid",
+        "has-prior-action",
+        "state-ready",
+        "meets-threshold",
       ]) {
         expect(body.bodyNodeIds).toContain(id);
       }
@@ -256,7 +273,9 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
   describe("C1 compare-tokens: 0 tokens vs 6.5e27 hat -> nothing runs", () => {
     it("evaluates false, dispatches nothing", () => {
       const { result, targets } = evaluateAndRoute(
-        EXPR_COMPARE, { ...SPELL_ZERO_TOKENS, ...HAT_TOKENS }, "compare-tokens"
+        EXPR_COMPARE,
+        { ...SPELL_ZERO_TOKENS, ...HAT_TOKENS },
+        "compare-tokens"
       );
       expect(result).toBe(false);
       expect(targets).toEqual([]);
@@ -266,7 +285,9 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
   describe("C1 compare-tokens: 8.2e27 spell vs 6.5e27 hat -> already-done runs", () => {
     it("evaluates true, dispatches to already-done", () => {
       const { result, targets } = evaluateAndRoute(
-        EXPR_COMPARE, { ...SPELL_HIGH_TOKENS, ...HAT_TOKENS }, "compare-tokens"
+        EXPR_COMPARE,
+        { ...SPELL_HIGH_TOKENS, ...HAT_TOKENS },
+        "compare-tokens"
       );
       expect(result).toBe(true);
       expect(targets).toEqual(["already-done"]);
@@ -278,7 +299,10 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
       const { result, targets } = evaluateAndRoute(
         EXPR_COMPARE,
         {
-          spellTokens: { label: "Spell Tokens", data: { amt: "6577716159627818993901156981" } },
+          spellTokens: {
+            label: "Spell Tokens",
+            data: { amt: "6577716159627818993901156981" },
+          },
           ...HAT_TOKENS,
         },
         "compare-tokens"
@@ -293,7 +317,10 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
       const { result, targets } = evaluateAndRoute(
         EXPR_COMPARE,
         {
-          spellTokens: { label: "Spell Tokens", data: { amt: "6577716159627818993901156982" } },
+          spellTokens: {
+            label: "Spell Tokens",
+            data: { amt: "6577716159627818993901156982" },
+          },
           ...HAT_TOKENS,
         },
         "compare-tokens"
@@ -308,7 +335,10 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
       const { result } = evaluateAndRoute(
         EXPR_COMPARE,
         {
-          spellTokens: { label: "Spell Tokens", data: { amt: "9007199254740993" } },
+          spellTokens: {
+            label: "Spell Tokens",
+            data: { amt: "9007199254740993" },
+          },
           hatTokens: { label: "Hat Tokens", data: { amt: "9007199254740992" } },
         },
         "compare-tokens"
@@ -324,11 +354,15 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
         {
           spellTokens: {
             label: "Spell Tokens",
-            data: { amt: "115792089237316195423570985008687907853269984665640564039457584007913129639935" },
+            data: {
+              amt: "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+            },
           },
           hatTokens: {
             label: "Hat Tokens",
-            data: { amt: "115792089237316195423570985008687907853269984665640564039457584007913129639934" },
+            data: {
+              amt: "115792089237316195423570985008687907853269984665640564039457584007913129639934",
+            },
           },
         },
         "compare-tokens"
@@ -354,7 +388,11 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
 
   describe("C2 already-done: cast=true -> nothing runs (already handled)", () => {
     it("evaluates true, dispatches nothing", () => {
-      const { result, targets } = evaluateAndRoute(EXPR_CAST_STATUS, BATCH_CAST_TRUE, "already-done");
+      const { result, targets } = evaluateAndRoute(
+        EXPR_CAST_STATUS,
+        BATCH_CAST_TRUE,
+        "already-done"
+      );
       expect(result).toBe(true);
       expect(targets).toEqual([]);
     });
@@ -362,7 +400,11 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
 
   describe("C2 already-done: cast=false -> search-db runs", () => {
     it("evaluates false, dispatches to search-db", () => {
-      const { result, targets } = evaluateAndRoute(EXPR_CAST_STATUS, BATCH_CAST_FALSE, "already-done");
+      const { result, targets } = evaluateAndRoute(
+        EXPR_CAST_STATUS,
+        BATCH_CAST_FALSE,
+        "already-done"
+      );
       expect(result).toBe(false);
       expect(targets).toEqual(["search-db"]);
     });
@@ -370,7 +412,11 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
 
   describe("C3 exists-in-db: count=1 -> is-valid runs, send-alert-2 does not", () => {
     it("evaluates true, dispatches to is-valid", () => {
-      const { result, targets } = evaluateAndRoute(EXPR_DB_COUNT, DB_FOUND, "exists-in-db");
+      const { result, targets } = evaluateAndRoute(
+        EXPR_DB_COUNT,
+        DB_FOUND,
+        "exists-in-db"
+      );
       expect(result).toBe(true);
       expect(targets).toEqual(["is-valid"]);
     });
@@ -378,7 +424,11 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
 
   describe("C3 exists-in-db: count=0 -> send-alert-2 runs, is-valid does not", () => {
     it("evaluates false, dispatches to send-alert-2", () => {
-      const { result, targets } = evaluateAndRoute(EXPR_DB_COUNT, DB_NOT_FOUND, "exists-in-db");
+      const { result, targets } = evaluateAndRoute(
+        EXPR_DB_COUNT,
+        DB_NOT_FOUND,
+        "exists-in-db"
+      );
       expect(result).toBe(false);
       expect(targets).toEqual(["send-alert-2"]);
     });
@@ -386,7 +436,11 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
 
   describe("C4 is-valid: whitelisted -> query-history runs, send-alert-1 does not", () => {
     it("evaluates true, dispatches to query-history", () => {
-      const { result, targets } = evaluateAndRoute(EXPR_WHITELIST, DB_WHITELISTED, "is-valid");
+      const { result, targets } = evaluateAndRoute(
+        EXPR_WHITELIST,
+        DB_WHITELISTED,
+        "is-valid"
+      );
       expect(result).toBe(true);
       expect(targets).toEqual(["query-history"]);
     });
@@ -394,7 +448,11 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
 
   describe("C4 is-valid: not whitelisted -> send-alert-1 runs, query-history does not", () => {
     it("evaluates false, dispatches to send-alert-1", () => {
-      const { result, targets } = evaluateAndRoute(EXPR_WHITELIST, DB_NOT_WHITELISTED, "is-valid");
+      const { result, targets } = evaluateAndRoute(
+        EXPR_WHITELIST,
+        DB_NOT_WHITELISTED,
+        "is-valid"
+      );
       expect(result).toBe(false);
       expect(targets).toEqual(["send-alert-1"]);
     });
@@ -402,7 +460,11 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
 
   describe("C5 has-prior-action: 3 events -> check-state runs, execute-action-a does not", () => {
     it("evaluates true, dispatches to check-state", () => {
-      const { result, targets } = evaluateAndRoute(EXPR_LIFT_COUNT, LIFT_EVENTS_FOUND, "has-prior-action");
+      const { result, targets } = evaluateAndRoute(
+        EXPR_LIFT_COUNT,
+        LIFT_EVENTS_FOUND,
+        "has-prior-action"
+      );
       expect(result).toBe(true);
       expect(targets).toEqual(["check-state"]);
     });
@@ -410,7 +472,11 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
 
   describe("C5 has-prior-action: 0 events -> execute-action-a runs, check-state does not", () => {
     it("evaluates false, dispatches to execute-action-a", () => {
-      const { result, targets } = evaluateAndRoute(EXPR_LIFT_COUNT, LIFT_EVENTS_NONE, "has-prior-action");
+      const { result, targets } = evaluateAndRoute(
+        EXPR_LIFT_COUNT,
+        LIFT_EVENTS_NONE,
+        "has-prior-action"
+      );
       expect(result).toBe(false);
       expect(targets).toEqual(["execute-action-a"]);
     });
@@ -418,7 +484,11 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
 
   describe("C6 state-ready: 2 txns -> meets-threshold runs, execute-action-b does not", () => {
     it("evaluates true, dispatches to meets-threshold", () => {
-      const { result, targets } = evaluateAndRoute(EXPR_SCHEDULE_COUNT, SCHEDULE_FOUND, "state-ready");
+      const { result, targets } = evaluateAndRoute(
+        EXPR_SCHEDULE_COUNT,
+        SCHEDULE_FOUND,
+        "state-ready"
+      );
       expect(result).toBe(true);
       expect(targets).toEqual(["meets-threshold"]);
     });
@@ -426,7 +496,11 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
 
   describe("C6 state-ready: 0 txns -> execute-action-b runs, meets-threshold does not", () => {
     it("evaluates false, dispatches to execute-action-b", () => {
-      const { result, targets } = evaluateAndRoute(EXPR_SCHEDULE_COUNT, SCHEDULE_NOT_FOUND, "state-ready");
+      const { result, targets } = evaluateAndRoute(
+        EXPR_SCHEDULE_COUNT,
+        SCHEDULE_NOT_FOUND,
+        "state-ready"
+      );
       expect(result).toBe(false);
       expect(targets).toEqual(["execute-action-b"]);
     });
@@ -434,7 +508,11 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
 
   describe("C7 meets-threshold: expiration valid + past cast time -> execute-action-c runs", () => {
     it("evaluates true, dispatches to execute-action-c", () => {
-      const { result, targets } = evaluateAndRoute(EXPR_CAN_CAST, CAN_CAST, "meets-threshold");
+      const { result, targets } = evaluateAndRoute(
+        EXPR_CAN_CAST,
+        CAN_CAST,
+        "meets-threshold"
+      );
       expect(result).toBe(true);
       expect(targets).toEqual(["execute-action-c"]);
     });
@@ -442,7 +520,11 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
 
   describe("C7 meets-threshold: cast time in future -> nothing runs", () => {
     it("evaluates false, dispatches nothing", () => {
-      const { result, targets } = evaluateAndRoute(EXPR_CAN_CAST, CANNOT_CAST, "meets-threshold");
+      const { result, targets } = evaluateAndRoute(
+        EXPR_CAN_CAST,
+        CANNOT_CAST,
+        "meets-threshold"
+      );
       expect(result).toBe(false);
       expect(targets).toEqual([]);
     });
@@ -450,10 +532,18 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
 
   describe("full path: all gates pass -> executes through to notify-2", () => {
     it("C1-C7 all favorable: every node in the happy path runs", () => {
-      const c1 = evaluateAndRoute(EXPR_COMPARE, { ...SPELL_HIGH_TOKENS, ...HAT_TOKENS }, "compare-tokens");
+      const c1 = evaluateAndRoute(
+        EXPR_COMPARE,
+        { ...SPELL_HIGH_TOKENS, ...HAT_TOKENS },
+        "compare-tokens"
+      );
       expect(c1.targets).toEqual(["already-done"]);
 
-      const c2 = evaluateAndRoute(EXPR_CAST_STATUS, BATCH_CAST_FALSE, "already-done");
+      const c2 = evaluateAndRoute(
+        EXPR_CAST_STATUS,
+        BATCH_CAST_FALSE,
+        "already-done"
+      );
       expect(c2.targets).toEqual(["search-db"]);
 
       const c3 = evaluateAndRoute(EXPR_DB_COUNT, DB_FOUND, "exists-in-db");
@@ -462,10 +552,18 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
       const c4 = evaluateAndRoute(EXPR_WHITELIST, DB_WHITELISTED, "is-valid");
       expect(c4.targets).toEqual(["query-history"]);
 
-      const c5 = evaluateAndRoute(EXPR_LIFT_COUNT, LIFT_EVENTS_FOUND, "has-prior-action");
+      const c5 = evaluateAndRoute(
+        EXPR_LIFT_COUNT,
+        LIFT_EVENTS_FOUND,
+        "has-prior-action"
+      );
       expect(c5.targets).toEqual(["check-state"]);
 
-      const c6 = evaluateAndRoute(EXPR_SCHEDULE_COUNT, SCHEDULE_FOUND, "state-ready");
+      const c6 = evaluateAndRoute(
+        EXPR_SCHEDULE_COUNT,
+        SCHEDULE_FOUND,
+        "state-ready"
+      );
       expect(c6.targets).toEqual(["meets-threshold"]);
 
       const c7 = evaluateAndRoute(EXPR_CAN_CAST, CAN_CAST, "meets-threshold");
@@ -475,7 +573,11 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
 
   describe("full path: 0 tokens -> nothing beyond C1 runs", () => {
     it("C1 false: search-db, exists-in-db, all downstream nodes are dead", () => {
-      const c1 = evaluateAndRoute(EXPR_COMPARE, { ...SPELL_ZERO_TOKENS, ...HAT_TOKENS }, "compare-tokens");
+      const c1 = evaluateAndRoute(
+        EXPR_COMPARE,
+        { ...SPELL_ZERO_TOKENS, ...HAT_TOKENS },
+        "compare-tokens"
+      );
       expect(c1.result).toBe(false);
       expect(c1.targets).toEqual([]);
     });
@@ -483,10 +585,18 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
 
   describe("full path: already cast -> nothing beyond C2 runs", () => {
     it("C1 true, C2 true: search-db never reached", () => {
-      const c1 = evaluateAndRoute(EXPR_COMPARE, { ...SPELL_HIGH_TOKENS, ...HAT_TOKENS }, "compare-tokens");
+      const c1 = evaluateAndRoute(
+        EXPR_COMPARE,
+        { ...SPELL_HIGH_TOKENS, ...HAT_TOKENS },
+        "compare-tokens"
+      );
       expect(c1.targets).toEqual(["already-done"]);
 
-      const c2 = evaluateAndRoute(EXPR_CAST_STATUS, BATCH_CAST_TRUE, "already-done");
+      const c2 = evaluateAndRoute(
+        EXPR_CAST_STATUS,
+        BATCH_CAST_TRUE,
+        "already-done"
+      );
       expect(c2.targets).toEqual([]);
     });
   });
@@ -503,20 +613,36 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
       const c3 = evaluateAndRoute(EXPR_DB_COUNT, DB_FOUND, "exists-in-db");
       expect(c3.targets).toEqual(["is-valid"]);
 
-      const c4 = evaluateAndRoute(EXPR_WHITELIST, DB_NOT_WHITELISTED, "is-valid");
+      const c4 = evaluateAndRoute(
+        EXPR_WHITELIST,
+        DB_NOT_WHITELISTED,
+        "is-valid"
+      );
       expect(c4.targets).toEqual(["send-alert-1"]);
     });
   });
 
   describe("full path: no lift, no schedule, cannot cast -> lifts, schedules, then stops at C7", () => {
     it("C5 false, C6 false, C7 false: execute-action-a and execute-action-b run, execute-action-c does not", () => {
-      const c5 = evaluateAndRoute(EXPR_LIFT_COUNT, LIFT_EVENTS_NONE, "has-prior-action");
+      const c5 = evaluateAndRoute(
+        EXPR_LIFT_COUNT,
+        LIFT_EVENTS_NONE,
+        "has-prior-action"
+      );
       expect(c5.targets).toEqual(["execute-action-a"]);
 
-      const c6 = evaluateAndRoute(EXPR_SCHEDULE_COUNT, SCHEDULE_NOT_FOUND, "state-ready");
+      const c6 = evaluateAndRoute(
+        EXPR_SCHEDULE_COUNT,
+        SCHEDULE_NOT_FOUND,
+        "state-ready"
+      );
       expect(c6.targets).toEqual(["execute-action-b"]);
 
-      const c7 = evaluateAndRoute(EXPR_CAN_CAST, CANNOT_CAST, "meets-threshold");
+      const c7 = evaluateAndRoute(
+        EXPR_CAN_CAST,
+        CANNOT_CAST,
+        "meets-threshold"
+      );
       expect(c7.targets).toEqual([]);
     });
   });
@@ -532,56 +658,100 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
       c7Runs: string[];
     }> = [
       {
-        c5Events: LIFT_EVENTS_FOUND, c6Txns: SCHEDULE_FOUND, c7Status: CAN_CAST,
+        c5Events: LIFT_EVENTS_FOUND,
+        c6Txns: SCHEDULE_FOUND,
+        c7Status: CAN_CAST,
         desc: "lifted + scheduled + castable -> check-state, meets-threshold, execute-action-c all run",
-        c5Runs: "check-state", c6Runs: "meets-threshold", c7Runs: ["execute-action-c"],
+        c5Runs: "check-state",
+        c6Runs: "meets-threshold",
+        c7Runs: ["execute-action-c"],
       },
       {
-        c5Events: LIFT_EVENTS_FOUND, c6Txns: SCHEDULE_FOUND, c7Status: CANNOT_CAST,
+        c5Events: LIFT_EVENTS_FOUND,
+        c6Txns: SCHEDULE_FOUND,
+        c7Status: CANNOT_CAST,
         desc: "lifted + scheduled + not castable -> check-state, meets-threshold run, execute-action-c does not",
-        c5Runs: "check-state", c6Runs: "meets-threshold", c7Runs: [],
+        c5Runs: "check-state",
+        c6Runs: "meets-threshold",
+        c7Runs: [],
       },
       {
-        c5Events: LIFT_EVENTS_FOUND, c6Txns: SCHEDULE_NOT_FOUND, c7Status: CAN_CAST,
+        c5Events: LIFT_EVENTS_FOUND,
+        c6Txns: SCHEDULE_NOT_FOUND,
+        c7Status: CAN_CAST,
         desc: "lifted + not scheduled + castable -> check-state, execute-action-b, execute-action-c run",
-        c5Runs: "check-state", c6Runs: "execute-action-b", c7Runs: ["execute-action-c"],
+        c5Runs: "check-state",
+        c6Runs: "execute-action-b",
+        c7Runs: ["execute-action-c"],
       },
       {
-        c5Events: LIFT_EVENTS_FOUND, c6Txns: SCHEDULE_NOT_FOUND, c7Status: CANNOT_CAST,
+        c5Events: LIFT_EVENTS_FOUND,
+        c6Txns: SCHEDULE_NOT_FOUND,
+        c7Status: CANNOT_CAST,
         desc: "lifted + not scheduled + not castable -> check-state, execute-action-b run, execute-action-c does not",
-        c5Runs: "check-state", c6Runs: "execute-action-b", c7Runs: [],
+        c5Runs: "check-state",
+        c6Runs: "execute-action-b",
+        c7Runs: [],
       },
       {
-        c5Events: LIFT_EVENTS_NONE, c6Txns: SCHEDULE_FOUND, c7Status: CAN_CAST,
+        c5Events: LIFT_EVENTS_NONE,
+        c6Txns: SCHEDULE_FOUND,
+        c7Status: CAN_CAST,
         desc: "not lifted + scheduled + castable -> execute-action-a, meets-threshold, execute-action-c run",
-        c5Runs: "execute-action-a", c6Runs: "meets-threshold", c7Runs: ["execute-action-c"],
+        c5Runs: "execute-action-a",
+        c6Runs: "meets-threshold",
+        c7Runs: ["execute-action-c"],
       },
       {
-        c5Events: LIFT_EVENTS_NONE, c6Txns: SCHEDULE_FOUND, c7Status: CANNOT_CAST,
+        c5Events: LIFT_EVENTS_NONE,
+        c6Txns: SCHEDULE_FOUND,
+        c7Status: CANNOT_CAST,
         desc: "not lifted + scheduled + not castable -> execute-action-a, meets-threshold run, execute-action-c does not",
-        c5Runs: "execute-action-a", c6Runs: "meets-threshold", c7Runs: [],
+        c5Runs: "execute-action-a",
+        c6Runs: "meets-threshold",
+        c7Runs: [],
       },
       {
-        c5Events: LIFT_EVENTS_NONE, c6Txns: SCHEDULE_NOT_FOUND, c7Status: CAN_CAST,
+        c5Events: LIFT_EVENTS_NONE,
+        c6Txns: SCHEDULE_NOT_FOUND,
+        c7Status: CAN_CAST,
         desc: "not lifted + not scheduled + castable -> execute-action-a, execute-action-b, execute-action-c all run",
-        c5Runs: "execute-action-a", c6Runs: "execute-action-b", c7Runs: ["execute-action-c"],
+        c5Runs: "execute-action-a",
+        c6Runs: "execute-action-b",
+        c7Runs: ["execute-action-c"],
       },
       {
-        c5Events: LIFT_EVENTS_NONE, c6Txns: SCHEDULE_NOT_FOUND, c7Status: CANNOT_CAST,
+        c5Events: LIFT_EVENTS_NONE,
+        c6Txns: SCHEDULE_NOT_FOUND,
+        c7Status: CANNOT_CAST,
         desc: "not lifted + not scheduled + not castable -> execute-action-a, execute-action-b run, execute-action-c does not",
-        c5Runs: "execute-action-a", c6Runs: "execute-action-b", c7Runs: [],
+        c5Runs: "execute-action-a",
+        c6Runs: "execute-action-b",
+        c7Runs: [],
       },
     ];
 
     for (const combo of combos) {
       it(combo.desc, () => {
-        const c5 = evaluateAndRoute(EXPR_LIFT_COUNT, combo.c5Events, "has-prior-action");
+        const c5 = evaluateAndRoute(
+          EXPR_LIFT_COUNT,
+          combo.c5Events,
+          "has-prior-action"
+        );
         expect(c5.targets).toEqual([combo.c5Runs]);
 
-        const c6 = evaluateAndRoute(EXPR_SCHEDULE_COUNT, combo.c6Txns, "state-ready");
+        const c6 = evaluateAndRoute(
+          EXPR_SCHEDULE_COUNT,
+          combo.c6Txns,
+          "state-ready"
+        );
         expect(c6.targets).toEqual([combo.c6Runs]);
 
-        const c7 = evaluateAndRoute(EXPR_CAN_CAST, combo.c7Status, "meets-threshold");
+        const c7 = evaluateAndRoute(
+          EXPR_CAN_CAST,
+          combo.c7Status,
+          "meets-threshold"
+        );
         expect(c7.targets).toEqual(combo.c7Runs);
       });
     }
@@ -600,7 +770,11 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
       const c3 = evaluateAndRoute(EXPR_DB_COUNT, DB_FOUND, "exists-in-db");
       expect(c3.targets).toEqual(["is-valid"]);
 
-      const c4 = evaluateAndRoute(EXPR_WHITELIST, DB_NOT_WHITELISTED, "is-valid");
+      const c4 = evaluateAndRoute(
+        EXPR_WHITELIST,
+        DB_NOT_WHITELISTED,
+        "is-valid"
+      );
       expect(c4.targets).toEqual(["send-alert-1"]);
     });
 
@@ -613,7 +787,9 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
   describe("one-sided gates never leak to wrong targets", () => {
     it("C1 false: already-done, search-db, exists-in-db never dispatched", () => {
       const { targets } = evaluateAndRoute(
-        EXPR_COMPARE, { ...SPELL_ZERO_TOKENS, ...HAT_TOKENS }, "compare-tokens"
+        EXPR_COMPARE,
+        { ...SPELL_ZERO_TOKENS, ...HAT_TOKENS },
+        "compare-tokens"
       );
       expect(targets).not.toContain("already-done");
       expect(targets).not.toContain("search-db");
@@ -621,14 +797,22 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
     });
 
     it("C2 true: search-db, exists-in-db, query-history never dispatched", () => {
-      const { targets } = evaluateAndRoute(EXPR_CAST_STATUS, BATCH_CAST_TRUE, "already-done");
+      const { targets } = evaluateAndRoute(
+        EXPR_CAST_STATUS,
+        BATCH_CAST_TRUE,
+        "already-done"
+      );
       expect(targets).not.toContain("search-db");
       expect(targets).not.toContain("exists-in-db");
       expect(targets).not.toContain("query-history");
     });
 
     it("C7 false: execute-action-c, get-receipt, notify-2 never dispatched", () => {
-      const { targets } = evaluateAndRoute(EXPR_CAN_CAST, CANNOT_CAST, "meets-threshold");
+      const { targets } = evaluateAndRoute(
+        EXPR_CAN_CAST,
+        CANNOT_CAST,
+        "meets-threshold"
+      );
       expect(targets).not.toContain("execute-action-c");
       expect(targets).not.toContain("get-receipt");
       expect(targets).not.toContain("notify-2");
@@ -640,8 +824,14 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
       const { result: r1 } = evaluateAndRoute(
         EXPR_COMPARE,
         {
-          spellTokens: { label: "Spell Tokens", data: { amt: "1000000000000000000000000000" } },
-          hatTokens: { label: "Hat Tokens", data: { amt: "1000000000000000000000000001" } },
+          spellTokens: {
+            label: "Spell Tokens",
+            data: { amt: "1000000000000000000000000000" },
+          },
+          hatTokens: {
+            label: "Hat Tokens",
+            data: { amt: "1000000000000000000000000001" },
+          },
         },
         "compare-tokens"
       );
@@ -650,8 +840,14 @@ describe("For Each body: 7 chained conditions with real web3 values", () => {
       const { result: r2 } = evaluateAndRoute(
         EXPR_COMPARE,
         {
-          spellTokens: { label: "Spell Tokens", data: { amt: "1000000000000000000000000002" } },
-          hatTokens: { label: "Hat Tokens", data: { amt: "1000000000000000000000000001" } },
+          spellTokens: {
+            label: "Spell Tokens",
+            data: { amt: "1000000000000000000000000002" },
+          },
+          hatTokens: {
+            label: "Hat Tokens",
+            data: { amt: "1000000000000000000000000001" },
+          },
         },
         "compare-tokens"
       );

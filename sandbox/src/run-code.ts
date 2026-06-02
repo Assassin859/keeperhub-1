@@ -150,9 +150,9 @@ async function runInChild(
       finish({
         ok: false,
         errorMessage:
-          parsed.errorMessage !== "Sandbox produced no result"
-            ? parsed.errorMessage
-            : `Sandbox process exited with code ${String(exitCode)}${stderr ? `: ${stderr.trim().slice(0, 500)}` : ""}`,
+          parsed.errorMessage === "Sandbox produced no result"
+            ? `Sandbox process exited with code ${String(exitCode)}${stderr ? `: ${stderr.trim().slice(0, 500)}` : ""}`
+            : parsed.errorMessage,
         logs: [],
       });
     });

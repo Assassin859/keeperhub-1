@@ -4,7 +4,7 @@
  */
 import "server-only";
 
-import { and, asc, eq, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   organization,
@@ -491,6 +491,38 @@ export type LogWorkflowCompleteParams = {
 };
 
 const STEP_INCOMPLETE_ERROR = "Step did not record completion";
+const CANCELLED_DUE_TO_SIBLING_ERROR =
+  "Cancelled: workflow stopped because another step errored";
+
+/**
+ * Pick the message attached to step rows that were still 'running' when the
+ * workflow finalized as error.
+ *
+ * Two distinct failure shapes share this code path:
+ *   1. The worker died mid-step. No sibling row carries a real error, so
+ *      the orphan IS the only failure signal -- keep STEP_INCOMPLETE_ERROR.
+ *   2. A peer step threw and the executor finalized the workflow before this
+ *      step's "use step" boundary committed. The peer carries the actionable
+ *      error; the orphan was just collateral. Attribute it clearly so the UI
+ *      doesn't mis-identify the trigger/peer as the failure source.
+ */
+async function pickOrphanCloseErrorMessage(
+  executionId: string
+): Promise<string> {
+  const siblings = await db.query.workflowExecutionLogs.findMany({
+    where: and(
+      eq(workflowExecutionLogs.executionId, executionId),
+      eq(workflowExecutionLogs.status, "error"),
+      isNotNull(workflowExecutionLogs.error),
+      ne(workflowExecutionLogs.error, STEP_INCOMPLETE_ERROR)
+    ),
+    columns: { id: true },
+    limit: 1,
+  });
+  return siblings.length > 0
+    ? CANCELLED_DUE_TO_SIBLING_ERROR
+    : STEP_INCOMPLETE_ERROR;
+}
 
 /**
  * Close any step log rows still in 'running' for the given execution.
@@ -502,13 +534,17 @@ async function closeOrphanedRunningLogs(
   finalStatus: "success" | "error"
 ): Promise<void> {
   const now = new Date();
+  const errorMessage =
+    finalStatus === "error"
+      ? await pickOrphanCloseErrorMessage(executionId)
+      : undefined;
   await db
     .update(workflowExecutionLogs)
     .set({
       status: finalStatus,
       completedAt: now,
       // Only attach an error message when closing as error
-      error: finalStatus === "error" ? STEP_INCOMPLETE_ERROR : undefined,
+      error: errorMessage,
     })
     .where(
       and(

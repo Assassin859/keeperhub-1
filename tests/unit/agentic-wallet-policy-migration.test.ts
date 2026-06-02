@@ -106,9 +106,7 @@ describe("reconcileBaselinePolicies", () => {
       subOrgId: "sub-1",
     });
 
-    const replaceActions = result.actions.filter(
-      (a) => a.action === "replace"
-    );
+    const replaceActions = result.actions.filter((a) => a.action === "replace");
     expect(replaceActions.length).toBe(1);
     expect(replaceActions[0]?.policyName).toBe(stalePolicyName);
 
