@@ -60,6 +60,9 @@ export function IntegrationsManager({
     const filterLower = filter.toLowerCase();
 
     return integrations
+      // Web3 wallets are managed in their own dedicated section, not as a
+      // generic connection. Keep them in the global store but hide them here.
+      .filter((integration) => integration.type !== "web3")
       .map((integration) => ({
         ...integration,
         label:
