@@ -6,7 +6,7 @@ import "server-only";
 
 import { and, asc, eq, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { logInputField, logOutputField } from "@/lib/db/execution-log-fields";
+import { logOutputField } from "@/lib/db/execution-log-fields";
 import {
   organization,
   type TransactionHashEntry,
@@ -198,31 +198,33 @@ async function resolveTransactionHashesForSuccess(
 }
 
 /**
- * Resolve the run-total gas (sum of per-step `gasUsed`, in wei) and a
- * representative network to persist when a workflow reaches a terminal state.
+ * Resolve the run-total gas (sum of per-step `gasUsed`, in wei) to persist when
+ * a workflow reaches a terminal state.
  *
  * Aggregates this one execution's durable logs (cheap via
  * idx_exec_logs_execution_id) using the same extraction the /analytics reads
- * and the backfill use, so the denormalised workflow_executions columns agree
- * value-for-value with a JSON recompute. `network` is MIN over the gas-bearing
- * rows - a single representative value matching the runs-table aggregation, not
- * a per-network split. Returns nulls when the run produced no gas-bearing step.
+ * and the backfill use, so the denormalised column agrees value-for-value with
+ * a JSON recompute. Returns null when the run produced no gas-bearing step.
  *
  * Resolved on error finalizes too, not just success: a gas-bearing step (e.g.
  * an approve) can commit its gas before a later step fails the run, and the
- * current /analytics gas total counts that gas regardless of run status. Gating
- * this on success would silently drop it once the reads move to the column.
+ * /analytics gas total counts that gas regardless of run status. Gating on
+ * success would silently drop it once the reads move to the column.
+ *
+ * Sourced from the DB, not the in-memory step-success-tracker, on purpose. The
+ * tracker holds raw step outputs whose gasUsed shape could diverge from the
+ * logged `output`; using it would fork gas computation into two paths and let
+ * writer-populated rows disagree with backfilled ones. A single extraction
+ * path - this query, shared with the backfill and the reads - is worth one
+ * indexed single-execution aggregate per finalize.
  */
-async function resolveGasAndNetwork(
-  executionId: string
-): Promise<{ gasUsedWei: string | null; network: string | null }> {
+async function resolveGasTotal(executionId: string): Promise<string | null> {
   try {
     const rows = await db
       .select({
         gasUsedWei: sql<
           string | null
         >`SUM(CAST(${logOutputField("gasUsed")} AS NUMERIC))`,
-        network: sql<string | null>`MIN(${logInputField("network")})`,
       })
       .from(workflowExecutionLogs)
       .where(
@@ -231,18 +233,15 @@ async function resolveGasAndNetwork(
           sql`${logOutputField("gasUsed")} IS NOT NULL`
         )
       );
-    return {
-      gasUsedWei: rows[0]?.gasUsedWei ?? null,
-      network: rows[0]?.network ?? null,
-    };
+    return rows[0]?.gasUsedWei ?? null;
   } catch (queryError) {
     logSystemError(
       ErrorCategory.WORKFLOW_ENGINE,
-      "[Workflow Logging] Failed to resolve gas/network at finalize",
+      "[Workflow Logging] Failed to resolve gas total at finalize",
       queryError,
       { execution_id: executionId }
     );
-    return { gasUsedWei: null, network: null };
+    return null;
   }
 }
 
@@ -330,9 +329,9 @@ async function selfHealWorkflowAfterLateStepCommit(
   // them now from durable logs so the success terminal state carries the
   // hashes that ran. Tracker may have been cleared on the originating pod;
   // loadHashesFromLogs is the durable source of truth at this point.
-  const [transactionHashes, gasAndNetwork] = await Promise.all([
+  const [transactionHashes, gasUsedWei] = await Promise.all([
     resolveTransactionHashesForSuccess(executionId),
-    resolveGasAndNetwork(executionId),
+    resolveGasTotal(executionId),
   ]);
 
   // CAS UPDATE: only flip if status is still 'error' (the state we just observed).
@@ -347,8 +346,7 @@ async function selfHealWorkflowAfterLateStepCommit(
       currentNodeId: null,
       currentNodeName: null,
       transactionHashes,
-      gasUsedWei: gasAndNetwork.gasUsedWei,
-      network: gasAndNetwork.network,
+      gasUsedWei,
     })
     .where(
       and(
@@ -701,16 +699,16 @@ export async function logWorkflowCompleteDb(
   // them. The resolver prefers the in-memory tracker but falls back to a
   // SELECT against workflow_execution_logs for the cross-pod resume case
   // (tracker on finalizing pod is empty after an SDK checkpoint).
-  // Gas + network are denormalised onto the same terminal UPDATE, sourced the
+  // Run-total gas is denormalised onto the same terminal UPDATE, sourced the
   // same way as the hashes, so the /analytics summary and spend-cap reads can
   // aggregate a first-class column instead of re-scanning the logs JSONB.
   // Hashes are success-only (error rows keep '[]'), but gas is resolved on
-  // error finalizes too - see resolveGasAndNetwork for why.
-  const [transactionHashes, gasAndNetwork] = await Promise.all([
+  // error finalizes too - see resolveGasTotal for why.
+  const [transactionHashes, gasUsedWei] = await Promise.all([
     resolvedStatus === "success"
       ? resolveTransactionHashesForSuccess(params.executionId)
       : Promise.resolve<TransactionHashEntry[]>([]),
-    resolveGasAndNetwork(params.executionId),
+    resolveGasTotal(params.executionId),
   ]);
 
   // KEEP-545: classify the error so the row carries error_category and
@@ -732,8 +730,7 @@ export async function logWorkflowCompleteDb(
       currentNodeId: null,
       currentNodeName: null,
       transactionHashes,
-      gasUsedWei: gasAndNetwork.gasUsedWei,
-      network: gasAndNetwork.network,
+      gasUsedWei,
     })
     .where(
       and(

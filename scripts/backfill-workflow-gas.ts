@@ -1,8 +1,8 @@
 /**
- * KEEP-683: one-time backfill of the denormalised `gas_used_wei` and `network`
- * columns on `workflow_executions`.
+ * KEEP-683: one-time backfill of the denormalised `gas_used_wei` column on
+ * `workflow_executions`.
  *
- * Migration 0096 adds the columns null. New rows are populated at finalize by
+ * Migration 0096 adds the column null. New rows are populated at finalize by
  * lib/workflow/executor/logging.ts. This script fills historical rows so the
  * /analytics reads can move off the per-row logs JSONB scan (PR2) without the
  * totals changing.
@@ -17,9 +17,9 @@
  * total counts that gas regardless of run status. Scoping to success would make
  * the backfilled column disagree with today's dashboard.
  *
- * The extraction uses the shared logOutputField / logInputField builders, the
- * same ones the executor writer and the /analytics reads use, so all three
- * agree value-for-value.
+ * The extraction uses the shared logOutputField builder, the same one the
+ * executor writer and the /analytics reads use, so all three agree
+ * value-for-value.
  *
  * Idempotent and resumable: re-running recomputes deterministically; pass
  * --after-id to resume from a known cursor. The heavy JSONB scan is paid once,
@@ -34,7 +34,7 @@
 
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { logInputField, logOutputField } from "@/lib/db/execution-log-fields";
+import { logOutputField } from "@/lib/db/execution-log-fields";
 import { workflowExecutions } from "@/lib/db/schema";
 
 const DEFAULT_BATCH_SIZE = 1000;
@@ -97,7 +97,7 @@ async function fetchExecutionIdBatch(
 }
 
 /**
- * Aggregate gas/network for one keyset batch and write it. Re-selects the same
+ * Aggregate gas for one keyset batch and write it. Re-selects the same
  * batch inside a CTE (deterministic for a fixed cursor) so no id array has to be
  * marshalled into the statement. Returns the number of executions updated (i.e.
  * those that had at least one gas-bearing log).
@@ -112,15 +112,14 @@ async function applyBatch(afterId: string, batchSize: number): Promise<number> {
     ), agg AS (
       SELECT
         workflow_execution_logs.execution_id AS execution_id,
-        SUM(CAST(${logOutputField("gasUsed")} AS NUMERIC)) AS gas_used_wei,
-        MIN(${logInputField("network")}) AS network
+        SUM(CAST(${logOutputField("gasUsed")} AS NUMERIC)) AS gas_used_wei
       FROM workflow_execution_logs
       JOIN batch ON batch.id = workflow_execution_logs.execution_id
       WHERE ${logOutputField("gasUsed")} IS NOT NULL
       GROUP BY workflow_execution_logs.execution_id
     )
     UPDATE workflow_executions we
-    SET gas_used_wei = agg.gas_used_wei, network = agg.network
+    SET gas_used_wei = agg.gas_used_wei
     FROM agg
     WHERE we.id = agg.execution_id
     RETURNING we.id
