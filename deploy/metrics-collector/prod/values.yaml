@@ -1,0 +1,94 @@
+# Metrics Collector - Prod (TECH-6484)
+# Single-replica service that serves the DB-sourced Prometheus gauges (the
+# former /api/metrics/db scrape) off the request-serving pods. Because it is a
+# single replica with its own release labels, the ServiceMonitor below scrapes
+# the DB gauges deterministically from exactly one pod -- no hashmod, no
+# duplicate DB load from the app pods.
+
+replicaCount: 1
+
+service:
+  enabled: true
+  name: keeperhub-metrics-collector-prod
+  type: ClusterIP
+  port: 9090
+  containerPort: 9090
+  tls:
+    enabled: false
+
+ingress:
+  enabled: false
+
+image:
+  repository: ${ECR_REGISTRY}/keeperhub-metrics-collector-prod
+  tag: collector-${IMAGE_TAG}
+  pullPolicy: Always
+
+deployment:
+  enabled: true
+
+serviceAccount:
+  create: false
+  name: keeperhub-prod
+
+podAnnotations:
+  reloader.stakater.com/auto: "true"
+
+# Scrapes the DB-sourced gauges from this single pod. Named db-metrics so it
+# reads the same on dashboards as the app monitor it replaces.
+serviceMonitors:
+  enabled: true
+  monitors:
+    - name: db-metrics
+      port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+
+resources:
+  limits:
+    memory: 512Mi
+    cpu: 500m
+  requests:
+    cpu: 50m
+    memory: 256Mi
+
+command: ["/bin/sh"]
+args:
+  - "-c"
+  - |
+    echo "$(date) - [MetricsCollector] Starting..."
+    tsx keeperhub-metrics-collector/index.ts
+
+env:
+  DATABASE_URL:
+    type: parameterStore
+    name: db-url
+    parameter_name: /eks/techops-prod/keeperhub/db-url
+  PORT:
+    type: kv
+    value: "9090"
+  METRICS_COLLECTOR:
+    type: kv
+    value: "prometheus"
+  NODE_ENV:
+    type: kv
+    value: "production"
+
+externalSecrets:
+  clusterSecretStoreName: techops-prod
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 9090
+  initialDelaySeconds: 20
+  periodSeconds: 30
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 9090
+  initialDelaySeconds: 10
+  periodSeconds: 10
