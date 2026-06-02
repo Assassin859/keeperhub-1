@@ -50,6 +50,7 @@ COPY drizzle/ ./drizzle/
 COPY hooks/ ./hooks/
 COPY keeperhub-events/ ./keeperhub-events/
 COPY keeperhub-executor/ ./keeperhub-executor/
+COPY keeperhub-metrics-collector/ ./keeperhub-metrics-collector/
 COPY keeperhub-scheduler/ ./keeperhub-scheduler/
 COPY lib/ ./lib/
 COPY plugins/ ./plugins/
@@ -317,8 +318,10 @@ CMD ["node", "server.js"]
 # former /api/metrics/db scrape) off the request-serving pods. Executor-style:
 # reuses lib/metrics + lib/db verbatim via tsx. Copies the full root
 # node_modules (the imported lib code has transitive deps beyond the
-# collector's own package.json) plus the generated lib files the import graph
-# may touch.
+# collector's own package.json). The metrics import graph touches no
+# builder-generated file at runtime -- lib/db/schema only references the
+# generated lib/types/integration via `import type`, which tsx erases -- so
+# this stage depends on source only, not the (expensive) Next builder stage.
 # ==============================================================================
 FROM node:24-alpine AS metrics-collector
 WORKDIR /app
@@ -330,13 +333,6 @@ COPY --link --from=source /app/keeperhub-metrics-collector ./keeperhub-metrics-c
 COPY --link --from=source /app/lib ./lib
 COPY --link --from=source /app/package.json ./package.json
 COPY --link --from=source /app/tsconfig.json ./tsconfig.json
-
-# Auto-generated files from the builder stage (referenced across lib/)
-COPY --link --from=builder /app/lib/step-registry.ts ./lib/step-registry.ts
-COPY --link --from=builder /app/lib/credential-map.ts ./lib/credential-map.ts
-COPY --link --from=builder /app/lib/workflow/codegen/registry.ts ./lib/workflow/codegen/registry.ts
-COPY --link --from=builder /app/lib/output-display-configs.ts ./lib/output-display-configs.ts
-COPY --link --from=builder /app/lib/types/integration.ts ./lib/types/integration.ts
 
 # Shim server-only (runs outside Next.js)
 SHELL ["/bin/ash", "-o", "pipefail", "-c"]
