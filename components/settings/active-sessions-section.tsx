@@ -1,9 +1,12 @@
 "use client";
 
-import { Laptop, Monitor, Smartphone, Tablet } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { DualFactorSteps } from "@/components/auth/dual-factor-steps";
+import {
+  describeUserAgent,
+  relativeTime,
+} from "@/components/settings/session-format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -33,63 +36,6 @@ type ListState =
   | { kind: "loading" }
   | { kind: "ready"; rows: SessionRow[] }
   | { kind: "error"; message: string };
-
-const RELATIVE_TIME = new Intl.RelativeTimeFormat(undefined, {
-  numeric: "auto",
-});
-
-function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) {
-    return "Unknown";
-  }
-  const deltaSeconds = Math.round((then - Date.now()) / 1000);
-  const absSeconds = Math.abs(deltaSeconds);
-  if (absSeconds < 60) {
-    return RELATIVE_TIME.format(deltaSeconds, "second");
-  }
-  if (absSeconds < 3600) {
-    return RELATIVE_TIME.format(Math.round(deltaSeconds / 60), "minute");
-  }
-  if (absSeconds < 86_400) {
-    return RELATIVE_TIME.format(Math.round(deltaSeconds / 3600), "hour");
-  }
-  return RELATIVE_TIME.format(Math.round(deltaSeconds / 86_400), "day");
-}
-
-function describeUserAgent(ua: string | null): {
-  label: string;
-  icon: typeof Laptop;
-} {
-  if (!ua) {
-    return { label: "Unknown device", icon: Monitor };
-  }
-  const lower = ua.toLowerCase();
-  const isMobile = /iphone|android.*mobile/.test(lower);
-  const isTablet = /ipad|android(?!.*mobile)/.test(lower);
-  const browser = lower.includes("firefox")
-    ? "Firefox"
-    : lower.includes("edg/")
-      ? "Edge"
-      : lower.includes("chrome")
-        ? "Chrome"
-        : lower.includes("safari")
-          ? "Safari"
-          : "Browser";
-  const os = lower.includes("mac os x")
-    ? "macOS"
-    : lower.includes("windows")
-      ? "Windows"
-      : lower.includes("linux")
-        ? "Linux"
-        : lower.includes("iphone") || lower.includes("ipad")
-          ? "iOS"
-          : lower.includes("android")
-            ? "Android"
-            : "Unknown OS";
-  const icon = isMobile ? Smartphone : isTablet ? Tablet : Laptop;
-  return { label: `${browser} on ${os}`, icon };
-}
 
 export function ActiveSessionsSection(): React.ReactElement {
   const [state, setState] = useState<ListState>({ kind: "loading" });
