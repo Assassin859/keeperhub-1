@@ -7,6 +7,7 @@ const {
   mockMemberLimit,
   mockSelectFrom,
   mockValidateWorkflowIntegrations,
+  capturedSet,
 } = vi.hoisted(() => ({
   mockGetDualAuthContext: vi.fn(),
   mockWorkflowsFindFirst: vi.fn(),
@@ -14,6 +15,11 @@ const {
   mockMemberLimit: vi.fn(),
   mockSelectFrom: vi.fn(),
   mockValidateWorkflowIntegrations: vi.fn(),
+  // Side-effect capture of the most recent db.update().set() argument so
+  // workflowType-auto-flip tests can verify what the route actually persisted
+  // (the response is the value returned by mockUpdateReturning, so it can't
+  // distinguish "auto-flipped" from "echoed by the mock").
+  capturedSet: { data: null as Record<string, unknown> | null },
 }));
 
 vi.mock("@/lib/middleware/auth-helpers", () => ({
@@ -28,11 +34,14 @@ vi.mock("@/lib/db", () => ({
       },
     },
     update: vi.fn(() => ({
-      set: vi.fn(() => ({
-        where: vi.fn(() => ({
-          returning: mockUpdateReturning,
-        })),
-      })),
+      set: vi.fn((data: Record<string, unknown>) => {
+        capturedSet.data = data;
+        return {
+          where: vi.fn(() => ({
+            returning: mockUpdateReturning,
+          })),
+        };
+      }),
     })),
     select: vi.fn(() => ({
       from: vi.fn(() => ({
@@ -1403,5 +1412,104 @@ describe("GET /api/workflows/[workflowId] — description sanitization", () => {
     const data = await response.json();
     expect(data.description).toBe("## Hello **world**");
     expect(data.description).not.toMatch(SANITIZED_PREFIX_RE);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// workflowType is auto-derived from content on every PATCH: a callable
+// write node forces "write", overriding a persisted "read". Detection
+// matches the calldata generator, so value transfers/approvals do not
+// qualify (labelling them write would make call_workflow fail at runtime).
+// ─────────────────────────────────────────────────────────────────────────
+
+describe("PATCH /api/workflows/[workflowId] — workflowType auto-flip", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedSet.data = null;
+    mockGetDualAuthContext.mockResolvedValue({
+      userId: "user-123",
+      organizationId: "org-123",
+      authMethod: "session",
+    });
+    mockValidateWorkflowIntegrations.mockResolvedValue({ valid: true });
+    mockSelectFrom.mockResolvedValue([]);
+    mockMemberLimit.mockResolvedValue([{ id: "member-1" }]);
+  });
+
+  const WRITE_CONTRACT_NODE = {
+    id: "write-1",
+    type: "action",
+    data: {
+      type: "action",
+      config: {
+        actionType: "web3/write-contract",
+        contractAddress: "0xabc",
+        network: "11155111",
+        abi: "[]",
+        abiFunction: "transfer",
+      },
+    },
+  };
+
+  it("auto-flips workflowType to 'write' when PATCH adds a write-contract node", async () => {
+    const existing = makeWorkflow({ workflowType: "read", nodes: [] });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+    mockUpdateReturning.mockResolvedValue([
+      makeWorkflow({ workflowType: "write", nodes: [WRITE_CONTRACT_NODE] }),
+    ]);
+
+    const response = await PATCH(
+      createRequest("PATCH", {
+        nodes: [WRITE_CONTRACT_NODE],
+        edges: [],
+      }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+    expect(capturedSet.data?.workflowType).toBe("write");
+  });
+
+  it("does NOT flip workflowType when PATCH has no callable write node", async () => {
+    // The narrow-detector decision (transfers/approvals don't qualify) is
+    // unit-tested in workflow-listing-lifecycle.test.ts. Here we just confirm
+    // the route doesn't spuriously touch workflowType when nothing in the
+    // node set matches the calldata detector.
+    const existing = makeWorkflow({ workflowType: "read", nodes: [] });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+    mockUpdateReturning.mockResolvedValue([
+      makeWorkflow({ workflowType: "read", nodes: [] }),
+    ]);
+
+    const response = await PATCH(
+      createRequest("PATCH", { nodes: [], edges: [] }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+    expect(capturedSet.data?.workflowType).toBeUndefined();
+  });
+
+  it("does NOT write workflowType when content matches existing 'write' type (no-op)", async () => {
+    const existing = makeWorkflow({
+      workflowType: "write",
+      nodes: [WRITE_CONTRACT_NODE],
+    });
+    mockWorkflowsFindFirst.mockResolvedValue(existing);
+    mockUpdateReturning.mockResolvedValue([
+      makeWorkflow({
+        workflowType: "write",
+        nodes: [WRITE_CONTRACT_NODE],
+        description: "updated",
+      }),
+    ]);
+
+    const response = await PATCH(
+      createRequest("PATCH", { description: "updated" }),
+      { params: mockParams }
+    );
+
+    expect(response.status).toBe(200);
+    expect(capturedSet.data?.workflowType).toBeUndefined();
   });
 });
