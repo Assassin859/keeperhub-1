@@ -490,6 +490,22 @@ export const workflowExecutions = pgTable(
       .notNull()
       .default(sql`'[]'::jsonb`),
     /**
+     * Run-total gas (sum of per-step `gasUsed`, in wei) and a representative
+     * network for the run, denormalised out of the per-step
+     * workflow_execution_logs.output JSONB. Populated atomically with the
+     * status='success' flip, alongside transaction_hashes
+     * (lib/workflow/executor/logging.ts), so org-scoped /analytics summary and
+     * spend-cap reads can aggregate a first-class column instead of full-scanning
+     * and detoasting the logs table.
+     *
+     * Nullable on legacy rows until backfilled, and on runs that produced no
+     * on-chain gas. `network` is a single representative value (matching the
+     * runs-table aggregation); a per-network breakdown still needs step-level
+     * data and is intentionally out of scope here.
+     */
+    gasUsedWei: numeric("gas_used_wei"),
+    network: text("network"),
+    /**
      * Whether this execution counts toward the owner organisation's monthly
      * execution quota and overage billing.
      *

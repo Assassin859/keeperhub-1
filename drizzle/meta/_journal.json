@@ -673,6 +673,13 @@
       "when": 1779843900002,
       "tag": "0095_keep_669_reconcile_incident_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "7",
+      "when": 1779843900003,
+      "tag": "0096_keep_683_workflow_gas_columns",
+      "breakpoints": true
     }
   ]
 }
