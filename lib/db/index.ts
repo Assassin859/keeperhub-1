@@ -106,9 +106,29 @@ export const db = globalForDb.db ?? drizzle(queryClient, { schema });
 // raise max without re-measuring the refresh against the scrapeTimeout (see
 // KEEP-682). Composes with the updateDbMetrics cache; idle_timeout releases
 // idle connections between scrape bursts.
+//
+// statement_timeout is set once on every metrics-pool connection (not per
+// query) as a backstop: a single runaway aggregation -- e.g. a query-plan
+// regression as workflow_executions grows -- is cancelled with 57014 and
+// caught per section (-> default gauges) instead of hanging the scrape past
+// its timeout. Kept below the db-metrics scrapeTimeout and overridable via
+// METRICS_STATEMENT_TIMEOUT_MS.
+const parsedMetricsTimeoutMs = Number.parseInt(
+  process.env.METRICS_STATEMENT_TIMEOUT_MS ?? "",
+  10
+);
+const METRICS_STATEMENT_TIMEOUT_MS =
+  Number.isFinite(parsedMetricsTimeoutMs) && parsedMetricsTimeoutMs > 0
+    ? parsedMetricsTimeoutMs
+    : 8000;
+
 const metricsClient =
   globalForDb.metricsClient ??
-  postgres(connectionString, { max: 2, idle_timeout: 20 });
+  postgres(connectionString, {
+    max: 2,
+    idle_timeout: 20,
+    connection: { statement_timeout: METRICS_STATEMENT_TIMEOUT_MS },
+  });
 export const metricsDb =
   globalForDb.metricsDb ?? drizzle(metricsClient, { schema });
 
