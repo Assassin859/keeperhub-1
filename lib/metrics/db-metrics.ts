@@ -17,7 +17,11 @@ import {
   parseTierKey,
   type TierKey,
 } from "@/lib/billing/plans";
-import { db } from "@/lib/db";
+// Every query in this module is a /api/metrics/db scrape aggregation, so they
+// all run on the dedicated metrics pool (metricsDb) rather than the app's
+// shared pool, which caps how many hit the DB at once - see metricsDb in
+// @/lib/db for why.
+import { metricsDb as db } from "@/lib/db";
 import {
   apiKeys,
   chains,
