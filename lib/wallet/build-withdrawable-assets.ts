@@ -54,7 +54,7 @@ function collectNativeAssets(
       symbol: balance.symbol,
       balance: balance.balance,
       decimals: 18,
-          explorerUrl: balance.explorerUrl,
+      explorerUrl: balance.explorerUrl,
     });
   }
   return assets;
@@ -87,7 +87,7 @@ function collectSupportedTokenAssets(
       balance: token.balance,
       tokenAddress: token.tokenAddress,
       decimals: tokenMeta?.decimals ?? DEFAULT_STABLECOIN_DECIMALS,
-          explorerUrl: nativeBalance?.explorerUrl ?? null,
+      explorerUrl: nativeBalance?.explorerUrl ?? null,
     });
   }
   return assets;
@@ -123,7 +123,7 @@ function collectCustomTokenAssets(
       balance: token.balance,
       tokenAddress: token.tokenAddress,
       decimals: tokenMeta.decimals,
-          explorerUrl: nativeBalance?.explorerUrl ?? null,
+      explorerUrl: nativeBalance?.explorerUrl ?? null,
     });
   }
   return assets;

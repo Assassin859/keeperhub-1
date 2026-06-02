@@ -18,15 +18,24 @@ import { ErrorCategory, logUserError } from "@/lib/logging";
 import {
   getOrganizationWalletAddress,
   initializeWalletSigner,
-} from "@/lib/para/wallet-helpers";
+} from "@/lib/web3/wallet-helpers";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import { findAbiFunction } from "@/lib/abi/utils";
 import { getErrorMessage } from "@/lib/utils";
 import { getAbiFunctionKey } from "@/lib/abi/function-key";
 import { generateId } from "@/lib/utils/id";
+import {
+  executeContractCallAsRole,
+  executeContractCallAsSafe,
+} from "@/lib/safe/execute-as-safe";
+import { resolveSignerForNode } from "@/lib/safe/signer-resolver";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
-import { formatContractError } from "@/lib/web3/decode-revert-error";
+import {
+  classifyRevert,
+  formatContractError,
+  type RevertKind,
+} from "@/lib/web3/decode-revert-error";
 import {
   parsePriorityFeeGwei,
   resolveGasLimitOverrides,
@@ -59,6 +68,9 @@ export type WriteContractCoreInput = {
   // When true and usePrivateMempool is true, failing to reach the private RPC
   // does NOT fall back to the public mempool. Ignored when usePrivateMempool is false.
   strict?: boolean;
+  // Per-node Web3 Connection field. See ParsedWeb3Connection / parseWeb3Connection
+  // in lib/safe/signer-resolver.ts. Missing -> "default" -> org-policy resolver.
+  web3Connection?: string;
   _context?: {
     executionId?: string;
     organizationId?: string;
@@ -75,7 +87,7 @@ export type WriteContractResult =
       effectiveGasPrice: string;
       result?: unknown;
     }
-  | { success: false; error: string };
+  | { success: false; error: string; rejection?: RevertKind };
 
 /**
  * Core write contract logic
@@ -97,8 +109,22 @@ export async function writeContractCore(
     priorityFeeGwei,
     usePrivateMempool,
     strict,
+    web3Connection,
     _context,
   } = input;
+
+  if (!abiFunction || abiFunction.trim() === "") {
+    logUserError(
+      ErrorCategory.VALIDATION,
+      "[Write Contract] Missing abiFunction",
+      { abiFunction },
+      { plugin_name: "web3", action_name: "write-contract" }
+    );
+    return {
+      success: false,
+      error: "Missing `abiFunction` in the step config",
+    };
+  }
 
   const { multiplierOverride, gasLimitOverride } =
     resolveGasLimitOverrides(gasLimitMultiplier);
@@ -231,6 +257,23 @@ export async function writeContractCore(
     };
   }
 
+  // Decide whether to route this write through the org's Safe on this chain.
+  // In "safe" mode msg.sender at the target contract becomes the Safe address;
+  // the Turnkey EOA still signs the outer tx and pays gas.
+  let signerMode: Awaited<ReturnType<typeof resolveSignerForNode>>;
+  try {
+    signerMode = await resolveSignerForNode({
+      organizationId,
+      chainId,
+      web3Connection,
+    });
+  } catch (error) {
+    return {
+      success: false,
+      error: `Failed to resolve Web3 Connection: ${getErrorMessage(error)}`,
+    };
+  }
+
   // Get workflow ID for transaction tracking (only for workflow executions)
   let workflowId: string | undefined;
   if (_context?.executionId && !_context?.organizationId) {
@@ -289,7 +332,13 @@ export async function writeContractCore(
   // Try gas-sponsored execution first via Turnkey Gas Station (KEEP-464).
   // KEEP-137: skip sponsorship when routing through a private mempool --
   // Turnkey broadcasts via its own infrastructure, which bypasses Flashbots Protect.
-  if (!usePrivateMempool && isGasSponsorshipEnabled()) {
+  // Also skip in Safe mode: the sponsored path sends from the org's EOA wallet,
+  // which would change msg.sender away from the Safe.
+  if (
+    !usePrivateMempool &&
+    signerMode.kind === "eoa" &&
+    isGasSponsorshipEnabled()
+  ) {
     try {
       const sponsoredResult = await executeSponsoredContractTransaction({
         organizationId,
@@ -370,7 +419,7 @@ export async function writeContractCore(
   const adapter = getChainAdapter(chainId);
 
   return withNonceSession(txContext, walletAddress, async (session) => {
-    // Initialize Para signer
+    // Initialize wallet signer
     let signer: Awaited<ReturnType<typeof initializeWalletSigner>>;
     try {
       signer = await initializeWalletSigner(organizationId, rpcUrl, chainId);
@@ -390,21 +439,69 @@ export async function writeContractCore(
     }
 
     try {
-      const receipt = await adapter.executeContractCall(signer, {
-        contractAddress,
-        abi: parsedAbi as ethers.InterfaceAbi,
-        functionKey: abiFunctionKey,
-        args,
-        value: parsedEthValue,
-      }, session, {
-        gasOverrides: {
-          multiplierOverride,
-          gasLimitOverride,
-          priorityFeeOverride,
-        },
-        workflowId,
-        rpcManager,
-      });
+      let receipt: Awaited<ReturnType<typeof adapter.executeContractCall>>;
+      if (signerMode.kind === "safe-role") {
+        receipt = await executeContractCallAsRole(
+          signer,
+          {
+            safeAddress: signerMode.safeAddress,
+            delegateAddress: signerMode.delegateAddress,
+            rolesModifierAddress: signerMode.rolesModifierAddress,
+            roleKey: signerMode.roleKey,
+            contractAddress,
+            abi: parsedAbi as ethers.InterfaceAbi,
+            functionKey: abiFunctionKey,
+            args,
+            value: parsedEthValue,
+          },
+          session,
+          {
+            chainId,
+            workflowId,
+            rpcManager,
+          }
+        );
+      } else if (signerMode.kind === "safe") {
+        receipt = await executeContractCallAsSafe(
+          signer,
+          {
+            safeAddress: signerMode.safeAddress,
+            ownerAddress: signerMode.ownerAddress,
+            contractAddress,
+            abi: parsedAbi as ethers.InterfaceAbi,
+            functionKey: abiFunctionKey,
+            args,
+            value: parsedEthValue,
+          },
+          session,
+          {
+            chainId,
+            workflowId,
+            rpcManager,
+          }
+        );
+      } else {
+        receipt = await adapter.executeContractCall(
+          signer,
+          {
+            contractAddress,
+            abi: parsedAbi as ethers.InterfaceAbi,
+            functionKey: abiFunctionKey,
+            args,
+            value: parsedEthValue,
+          },
+          session,
+          {
+            gasOverrides: {
+              multiplierOverride,
+              gasLimitOverride,
+              priorityFeeOverride,
+            },
+            workflowId,
+            rpcManager,
+          }
+        );
+      }
 
       const gasUsedUnits = receipt.gasUsed.toString();
       const effectiveGasPrice = receipt.effectiveGasPrice.toString();
@@ -431,9 +528,11 @@ export async function writeContractCore(
           chain_id: String(chainId),
         }
       );
+      const rejection = classifyRevert(error, contractInterface);
       return {
         success: false,
         error: formatContractError(error, contractInterface),
+        ...(rejection.kind !== "unknown" ? { rejection } : {}),
       };
     }
   });

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node dist/sandbox/src/index.js",
-    "build": "tsc",
+    "build": "tsc && cp ../lib/ssrf-blocklist.json dist/lib/ssrf-blocklist.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

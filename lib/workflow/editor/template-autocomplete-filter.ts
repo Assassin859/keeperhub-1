@@ -21,7 +21,9 @@ export function buildHaystack(opt: AutocompleteOption): string {
   return `${opt.nodeName} ${opt.field ?? ""} ${opt.description ?? ""}`.toLowerCase();
 }
 
-export function indexOption(opt: AutocompleteOption): IndexedAutocompleteOption {
+export function indexOption(
+  opt: AutocompleteOption
+): IndexedAutocompleteOption {
   return { ...opt, haystack: buildHaystack(opt) };
 }
 

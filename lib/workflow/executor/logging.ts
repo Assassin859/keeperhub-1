@@ -4,16 +4,27 @@
  */
 import "server-only";
 
-import { and, eq, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { workflowExecutionLogs, workflowExecutions } from "@/lib/db/schema";
+import { logOutputField } from "@/lib/db/execution-log-fields";
+import {
+  organization,
+  type TransactionHashEntry,
+  workflowExecutionLogs,
+  workflowExecutions,
+  workflows,
+} from "@/lib/db/schema";
+import { classifyExecutionError } from "@/lib/errors/classify";
 import { ErrorCategory, logSystemError, logSystemWarn } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
+import { recordWorkflowExecutionError } from "@/lib/metrics/collectors/prometheus";
+import { ANONYMOUS_ORG_SLUG } from "@/lib/metrics/db-metrics";
 import {
   EXCEEDED_MAX_RETRIES_REGEX,
   FAILED_AFTER_RETRIES_REGEX,
   NO_STEP_COMPLETION_REGEX,
 } from "@/lib/workflow/executor/runner-error-patterns";
+import { getTransactionHashes } from "@/lib/workflow/executor/step-success-tracker";
 
 const TERMINAL_STATUSES = new Set(["cancelled"]);
 
@@ -79,6 +90,159 @@ async function listTrulyFailedNodes(executionId: string): Promise<string[]> {
     }
   }
   return trulyFailedNodes;
+}
+
+/**
+ * Cross-pod fallback for TransactionHashEntry reconstruction.
+ *
+ * The in-memory tracker in step-success-tracker.ts is local to the Node
+ * process that ran each step. When the SDK resumes a workflow on a different
+ * pod, the tracker on the finalizing pod is empty. Reconstruct entries from
+ * the durable workflow_execution_logs rows so success terminations can still
+ * persist the full list.
+ *
+ * Ordered by started_at ASC so the array matches submission order even when
+ * an SDK fan-out completes out of submit order. Deduped by hash string so SDK
+ * retries that re-broadcast (same logical step, two distinct hashes) keep the
+ * first-seen entry. nodeId-keyed dedupe would incorrectly collapse legitimate
+ * For-Each iterations that share a nodeId.
+ *
+ * Optional fields are omitted from the entry when not present in output_raw
+ * (or, for iterationIndex, when the log row is for a non-loop node), matching
+ * the in-process harvester's shape so consumers see a uniform JSON regardless
+ * of which path populated the column.
+ *
+ * Returns [] on query failure -- losing the hash list is preferable to
+ * failing the UPDATE that flips status to success.
+ *
+ * The transactionHash IS NOT NULL filter is pushed into Postgres so a workflow
+ * that runs a non-tx step many times (e.g. a For-Each over hundreds of HTTP
+ * calls) does not stream every row back to Node just to discard it in JS.
+ * The JS-side type guard below stays as the authoritative check: SQL only
+ * confirms the key exists in output_raw, not that the value is a 0x string.
+ */
+async function loadHashesFromLogs(
+  executionId: string
+): Promise<TransactionHashEntry[]> {
+  try {
+    const rows = await db.query.workflowExecutionLogs.findMany({
+      where: and(
+        eq(workflowExecutionLogs.executionId, executionId),
+        eq(workflowExecutionLogs.status, "success"),
+        sql`${workflowExecutionLogs.outputRaw}->>'transactionHash' IS NOT NULL`
+      ),
+      columns: {
+        nodeId: true,
+        nodeName: true,
+        iterationIndex: true,
+        outputRaw: true,
+      },
+      orderBy: [asc(workflowExecutionLogs.startedAt)],
+    });
+
+    const seen = new Set<string>();
+    const entries: TransactionHashEntry[] = [];
+    for (const row of rows) {
+      const o = row.outputRaw as {
+        transactionHash?: unknown;
+        chainId?: unknown;
+        network?: unknown;
+      } | null;
+      if (
+        o === null ||
+        typeof o !== "object" ||
+        typeof o.transactionHash !== "string" ||
+        !o.transactionHash.startsWith("0x") ||
+        seen.has(o.transactionHash)
+      ) {
+        continue;
+      }
+      seen.add(o.transactionHash);
+      entries.push({
+        hash: o.transactionHash,
+        nodeId: row.nodeId,
+        nodeName: row.nodeName,
+        ...(typeof o.chainId === "number" && { chainId: o.chainId }),
+        ...(typeof o.network === "string" && { network: o.network }),
+        ...(row.iterationIndex !== null && {
+          iterationIndex: row.iterationIndex,
+        }),
+      });
+    }
+    return entries;
+  } catch (queryError) {
+    logSystemError(
+      ErrorCategory.WORKFLOW_ENGINE,
+      "[Workflow Logging] Failed to load transaction hashes from logs",
+      queryError,
+      { execution_id: executionId }
+    );
+    return [];
+  }
+}
+
+/**
+ * Resolve the TransactionHashEntry list to persist when a workflow finalizes
+ * as success. Prefers the in-memory tracker (populated by withStepLoggingInner
+ * during step execution); falls back to scanning workflow_execution_logs.outputRaw
+ * when the tracker is empty (cross-pod resume case).
+ */
+async function resolveTransactionHashesForSuccess(
+  executionId: string
+): Promise<TransactionHashEntry[]> {
+  const tracked = getTransactionHashes(executionId);
+  if (tracked.length > 0) {
+    return tracked;
+  }
+  return await loadHashesFromLogs(executionId);
+}
+
+/**
+ * Resolve the run-total gas (sum of per-step `gasUsed`, in wei) to persist when
+ * a workflow reaches a terminal state.
+ *
+ * Aggregates this one execution's durable logs (cheap via
+ * idx_exec_logs_execution_id) using the same extraction the /analytics reads
+ * and the backfill use, so the denormalised column agrees value-for-value with
+ * a JSON recompute. Returns null when the run produced no gas-bearing step.
+ *
+ * Resolved on error finalizes too, not just success: a gas-bearing step (e.g.
+ * an approve) can commit its gas before a later step fails the run, and the
+ * /analytics gas total counts that gas regardless of run status. Gating on
+ * success would silently drop it once the reads move to the column.
+ *
+ * Sourced from the DB, not the in-memory step-success-tracker, on purpose. The
+ * tracker holds raw step outputs whose gasUsed shape could diverge from the
+ * logged `output`; using it would fork gas computation into two paths and let
+ * writer-populated rows disagree with backfilled ones. A single extraction
+ * path - this query, shared with the backfill and the reads - is worth one
+ * indexed single-execution aggregate per finalize.
+ */
+async function resolveGasTotal(executionId: string): Promise<string | null> {
+  try {
+    const rows = await db
+      .select({
+        gasUsedWei: sql<
+          string | null
+        >`SUM(CAST(${logOutputField("gasUsed")} AS NUMERIC))`,
+      })
+      .from(workflowExecutionLogs)
+      .where(
+        and(
+          eq(workflowExecutionLogs.executionId, executionId),
+          sql`${logOutputField("gasUsed")} IS NOT NULL`
+        )
+      );
+    return rows[0]?.gasUsedWei ?? null;
+  } catch (queryError) {
+    logSystemError(
+      ErrorCategory.WORKFLOW_ENGINE,
+      "[Workflow Logging] Failed to resolve gas total at finalize",
+      queryError,
+      { execution_id: executionId }
+    );
+    return null;
+  }
 }
 
 /**
@@ -159,6 +323,17 @@ async function selfHealWorkflowAfterLateStepCommit(
     : Date.now();
   const newDuration = (Date.now() - startMs).toString();
 
+  // KEEP-470: when self-heal flips status='error' -> 'success' for a workflow
+  // that finalized before its tx-producing step's success row landed, the
+  // earlier logWorkflowCompleteDb call left transaction_hashes='[]'. Resolve
+  // them now from durable logs so the success terminal state carries the
+  // hashes that ran. Tracker may have been cleared on the originating pod;
+  // loadHashesFromLogs is the durable source of truth at this point.
+  const [transactionHashes, gasUsedWei] = await Promise.all([
+    resolveTransactionHashesForSuccess(executionId),
+    resolveGasTotal(executionId),
+  ]);
+
   // CAS UPDATE: only flip if status is still 'error' (the state we just observed).
   // Drizzle's update returns the affected row count -- we use it to drive metrics.
   const result = await db
@@ -170,6 +345,8 @@ async function selfHealWorkflowAfterLateStepCommit(
       duration: newDuration,
       currentNodeId: null,
       currentNodeName: null,
+      transactionHashes,
+      gasUsedWei,
     })
     .where(
       and(
@@ -214,7 +391,7 @@ async function selfHealWorkflowAfterLateStepCommit(
       { outcome: "flipped" }
     );
 
-    logSystemError(
+    logSystemWarn(
       ErrorCategory.WORKFLOW_ENGINE,
       "[Workflow Logging] Self-healed workflow status from spurious error to success after late step commit",
       execution.error ?? "unknown",
@@ -366,6 +543,38 @@ export type LogWorkflowCompleteParams = {
 };
 
 const STEP_INCOMPLETE_ERROR = "Step did not record completion";
+const CANCELLED_DUE_TO_SIBLING_ERROR =
+  "Cancelled: workflow stopped because another step errored";
+
+/**
+ * Pick the message attached to step rows that were still 'running' when the
+ * workflow finalized as error.
+ *
+ * Two distinct failure shapes share this code path:
+ *   1. The worker died mid-step. No sibling row carries a real error, so
+ *      the orphan IS the only failure signal -- keep STEP_INCOMPLETE_ERROR.
+ *   2. A peer step threw and the executor finalized the workflow before this
+ *      step's "use step" boundary committed. The peer carries the actionable
+ *      error; the orphan was just collateral. Attribute it clearly so the UI
+ *      doesn't mis-identify the trigger/peer as the failure source.
+ */
+async function pickOrphanCloseErrorMessage(
+  executionId: string
+): Promise<string> {
+  const siblings = await db.query.workflowExecutionLogs.findMany({
+    where: and(
+      eq(workflowExecutionLogs.executionId, executionId),
+      eq(workflowExecutionLogs.status, "error"),
+      isNotNull(workflowExecutionLogs.error),
+      ne(workflowExecutionLogs.error, STEP_INCOMPLETE_ERROR)
+    ),
+    columns: { id: true },
+    limit: 1,
+  });
+  return siblings.length > 0
+    ? CANCELLED_DUE_TO_SIBLING_ERROR
+    : STEP_INCOMPLETE_ERROR;
+}
 
 /**
  * Close any step log rows still in 'running' for the given execution.
@@ -377,13 +586,17 @@ async function closeOrphanedRunningLogs(
   finalStatus: "success" | "error"
 ): Promise<void> {
   const now = new Date();
+  const errorMessage =
+    finalStatus === "error"
+      ? await pickOrphanCloseErrorMessage(executionId)
+      : undefined;
   await db
     .update(workflowExecutionLogs)
     .set({
       status: finalStatus,
       completedAt: now,
       // Only attach an error message when closing as error
-      error: finalStatus === "error" ? STEP_INCOMPLETE_ERROR : undefined,
+      error: errorMessage,
     })
     .where(
       and(
@@ -479,17 +692,45 @@ export async function logWorkflowCompleteDb(
     );
   }
 
-  await db
+  // KEEP-470: populate transaction_hashes atomically with the status flip.
+  // Only resolve on success; error terminations keep the default '[]'::jsonb.
+  // The UPDATE writes status and hashes in the same statement so no consumer
+  // can observe status='success' with hashes missing for a run that produced
+  // them. The resolver prefers the in-memory tracker but falls back to a
+  // SELECT against workflow_execution_logs for the cross-pod resume case
+  // (tracker on finalizing pod is empty after an SDK checkpoint).
+  // Run-total gas is denormalised onto the same terminal UPDATE, sourced the
+  // same way as the hashes, so the /analytics summary and spend-cap reads can
+  // aggregate a first-class column instead of re-scanning the logs JSONB.
+  // Hashes are success-only (error rows keep '[]'), but gas is resolved on
+  // error finalizes too - see resolveGasTotal for why.
+  const [transactionHashes, gasUsedWei] = await Promise.all([
+    resolvedStatus === "success"
+      ? resolveTransactionHashesForSuccess(params.executionId)
+      : Promise.resolve<TransactionHashEntry[]>([]),
+    resolveGasTotal(params.executionId),
+  ]);
+
+  // KEEP-545: classify the error so the row carries error_category and
+  // error_type at write time. Success rows get null for both columns.
+  const classification =
+    resolvedStatus === "error" ? classifyExecutionError(resolvedError) : null;
+
+  const updated = await db
     .update(workflowExecutions)
     .set({
       status: resolvedStatus,
       output: params.output,
       error: resolvedError,
+      errorCategory: classification?.errorCategory ?? null,
+      errorType: classification?.errorType ?? null,
       completedAt: new Date(),
       duration: duration.toString(),
       // Clear current step on completion
       currentNodeId: null,
       currentNodeName: null,
+      transactionHashes,
+      gasUsedWei,
     })
     .where(
       and(
@@ -503,7 +744,41 @@ export async function logWorkflowCompleteDb(
         // a no-op once self-heal has won the race.
         ne(workflowExecutions.status, "success")
       )
-    );
+    )
+    .returning({ workflowId: workflowExecutions.workflowId });
+
+  // KEEP-545: increment the per-execution-error counter only when this
+  // UPDATE actually flipped a row to 'error'. The WHERE clause excludes
+  // already-cancelled/healed rows, so `updated` is empty in those races
+  // and we correctly skip the counter increment for the lost write.
+  if (resolvedStatus === "error" && updated.length > 0 && classification) {
+    const workflowId = updated[0].workflowId;
+    try {
+      const orgSlug = await resolveOrgSlugForCounter(workflowId);
+      recordWorkflowExecutionError({
+        orgSlug,
+        errorCategory: classification.errorCategory,
+        errorType: classification.errorType,
+      });
+    } catch {
+      // Counter emission must never break finalization.
+    }
+  }
+}
+
+/**
+ * Resolve the org slug that owns the workflow behind an execution, falling
+ * back to ANONYMOUS_ORG_SLUG for personal/anonymous workflows so the
+ * counter always emits a series (the SLA alert filters by `org_slug=~`).
+ */
+async function resolveOrgSlugForCounter(workflowId: string): Promise<string> {
+  const row = await db
+    .select({ slug: organization.slug })
+    .from(workflows)
+    .leftJoin(organization, eq(workflows.organizationId, organization.id))
+    .where(eq(workflows.id, workflowId))
+    .limit(1);
+  return row[0]?.slug ?? ANONYMOUS_ORG_SLUG;
 }
 
 // ============================================================================

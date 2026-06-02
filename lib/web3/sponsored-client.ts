@@ -13,8 +13,8 @@ import { isSponsorshipSupported } from "@/lib/web3/turnkey-sponsorship-config";
  * Returns null when sponsorship cannot be set up so callers fall back
  * to direct signing. Reasons for null:
  *   - chain is not in the Turnkey Gas Station allowlist
- *   - the org's active wallet is not a Turnkey wallet (legacy Para wallet)
- *   - the wallet row is missing required Turnkey identifiers
+ *   - the org has no active wallet
+ *   - the wallet row is missing its Turnkey sub-organization id
  *
  * This file intentionally does NOT call Turnkey itself -- it only assembles
  * the parameters the manager will pass to ethSendTransaction. Keeping the
@@ -37,7 +37,6 @@ export async function createSponsoredClient(
 
   const rows = await db
     .select({
-      provider: organizationWallets.provider,
       walletAddress: organizationWallets.walletAddress,
       turnkeySubOrgId: organizationWallets.turnkeySubOrgId,
     })
@@ -55,7 +54,7 @@ export async function createSponsoredClient(
     return null;
   }
 
-  if (wallet.provider !== "turnkey" || wallet.turnkeySubOrgId === null) {
+  if (wallet.turnkeySubOrgId === null) {
     return null;
   }
 

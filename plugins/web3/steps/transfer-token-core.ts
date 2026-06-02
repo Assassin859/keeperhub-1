@@ -21,13 +21,22 @@ import { ErrorCategory, logUserError } from "@/lib/logging";
 import {
   getOrganizationWalletAddress,
   initializeWalletSigner,
-} from "@/lib/para/wallet-helpers";
+} from "@/lib/web3/wallet-helpers";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import { getErrorMessage } from "@/lib/utils";
 import { generateId } from "@/lib/utils/id";
+import {
+  executeContractCallAsRole,
+  executeContractCallAsSafe,
+} from "@/lib/safe/execute-as-safe";
+import { resolveSignerForNode } from "@/lib/safe/signer-resolver";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
-import { formatContractError } from "@/lib/web3/decode-revert-error";
+import {
+  classifyRevert,
+  formatContractError,
+  type RevertKind,
+} from "@/lib/web3/decode-revert-error";
 import { resolveGasLimitOverrides } from "@/lib/web3/gas-defaults";
 import { isSponsorshipSupported } from "@/lib/web3/turnkey-sponsorship-config";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
@@ -52,6 +61,9 @@ export type TransferTokenCoreInput = {
   // Strict mode: when true and usePrivateMempool is true, failing to reach the
   // private RPC does NOT fall back to the public mempool. Ignored otherwise.
   strict?: boolean;
+  // Per-node Web3 Connection field. See parseWeb3Connection in
+  // lib/safe/signer-resolver.ts. Missing -> "default" -> org-policy resolver.
+  web3Connection?: string;
   _context?: {
     executionId?: string;
     organizationId?: string;
@@ -70,7 +82,7 @@ export type TransferTokenResult =
       symbol: string;
       recipient: string;
     }
-  | { success: false; error: string };
+  | { success: false; error: string; rejection?: RevertKind };
 
 /**
  * Parse token config from input and return a single token address.
@@ -195,6 +207,7 @@ export async function transferTokenCore(
     gasLimitMultiplier,
     usePrivateMempool,
     strict,
+    web3Connection,
     _context,
   } = input;
 
@@ -296,6 +309,21 @@ export async function transferTokenCore(
     };
   }
 
+  // Decide whether to route this write through the org's Safe on this chain.
+  let signerMode: Awaited<ReturnType<typeof resolveSignerForNode>>;
+  try {
+    signerMode = await resolveSignerForNode({
+      organizationId,
+      chainId,
+      web3Connection,
+    });
+  } catch (error) {
+    return {
+      success: false,
+      error: `Failed to resolve Web3 Connection: ${getErrorMessage(error)}`,
+    };
+  }
+
   // Get workflow ID for transaction tracking (only for workflow executions)
   let workflowId: string | undefined;
   if (_context.executionId && !_context.organizationId) {
@@ -324,9 +352,12 @@ export async function transferTokenCore(
   // Try gas-sponsored execution first via Turnkey Gas Station (KEEP-464).
   // KEEP-137: skip sponsorship when routing through a private mempool --
   // Turnkey broadcasts via its own infrastructure, which bypasses Flashbots Protect.
+  // Also skip in Safe mode: the sponsored path sends from the org's EOA wallet,
+  // which would change msg.sender away from the Safe.
   if (
     isSponsorshipSupported(chainId) &&
     !usePrivateMempool &&
+    signerMode.kind === "eoa" &&
     isGasSponsorshipEnabled()
   ) {
     try {
@@ -421,7 +452,7 @@ export async function transferTokenCore(
   const adapter = getChainAdapter(chainId);
 
   return withNonceSession(txContext, walletAddress, async (session) => {
-    // Initialize Para signer
+    // Initialize wallet signer
     let signer: Awaited<ReturnType<typeof initializeWalletSigner>>;
     let signerAddress: string;
     try {
@@ -438,14 +469,18 @@ export async function transferTokenCore(
     const contract = new ethers.Contract(tokenAddress, ERC20_ABI, signer);
 
     try {
-      // Get token decimals, symbol, and balance via failover
+      const tokenHolderAddress =
+        signerMode.kind === "safe-role" || signerMode.kind === "safe"
+          ? signerMode.safeAddress
+          : signerAddress;
+
       const [decimals, symbol, balance] =
         await rpcManager.executeWithFailover((p) => {
           const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, p);
           return Promise.all([
             tokenContract.decimals() as Promise<bigint>,
             tokenContract.symbol() as Promise<string>,
-            tokenContract.balanceOf(signerAddress) as Promise<bigint>,
+            tokenContract.balanceOf(tokenHolderAddress) as Promise<bigint>,
           ]);
         });
 
@@ -471,16 +506,62 @@ export async function transferTokenCore(
         };
       }
 
-      const receipt = await adapter.executeContractCall(signer, {
-        contractAddress: tokenAddress,
-        abi: ERC20_ABI,
-        functionKey: "transfer",
-        args: [recipientAddress, amountRaw],
-      }, session, {
-        gasOverrides: { multiplierOverride, gasLimitOverride },
-        workflowId,
-        rpcManager,
-      });
+      let receipt: Awaited<ReturnType<typeof adapter.executeContractCall>>;
+      if (signerMode.kind === "safe-role") {
+        receipt = await executeContractCallAsRole(
+          signer,
+          {
+            safeAddress: signerMode.safeAddress,
+            delegateAddress: signerMode.delegateAddress,
+            rolesModifierAddress: signerMode.rolesModifierAddress,
+            roleKey: signerMode.roleKey,
+            contractAddress: tokenAddress,
+            abi: ERC20_ABI,
+            functionKey: "transfer",
+            args: [recipientAddress, amountRaw],
+          },
+          session,
+          {
+            chainId,
+            workflowId,
+            rpcManager,
+          }
+        );
+      } else if (signerMode.kind === "safe") {
+        receipt = await executeContractCallAsSafe(
+          signer,
+          {
+            safeAddress: signerMode.safeAddress,
+            ownerAddress: signerMode.ownerAddress,
+            contractAddress: tokenAddress,
+            abi: ERC20_ABI,
+            functionKey: "transfer",
+            args: [recipientAddress, amountRaw],
+          },
+          session,
+          {
+            chainId,
+            workflowId,
+            rpcManager,
+          }
+        );
+      } else {
+        receipt = await adapter.executeContractCall(
+          signer,
+          {
+            contractAddress: tokenAddress,
+            abi: ERC20_ABI,
+            functionKey: "transfer",
+            args: [recipientAddress, amountRaw],
+          },
+          session,
+          {
+            gasOverrides: { multiplierOverride, gasLimitOverride },
+            workflowId,
+            rpcManager,
+          }
+        );
+      }
 
       const gasUsedUnits = receipt.gasUsed.toString();
       const effectiveGasPrice = receipt.effectiveGasPrice.toString();
@@ -509,6 +590,7 @@ export async function transferTokenCore(
           chain_id: String(chainId),
         }
       );
+      const rejection = classifyRevert(error, contract.interface);
       return {
         success: false,
         error: formatContractError(
@@ -516,6 +598,7 @@ export async function transferTokenCore(
           contract.interface,
           "Token transfer failed"
         ),
+        ...(rejection.kind !== "unknown" ? { rejection } : {}),
       };
     }
   });

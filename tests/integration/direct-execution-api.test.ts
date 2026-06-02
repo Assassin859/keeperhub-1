@@ -561,6 +561,27 @@ describe("Direct Execution API", () => {
         expect.objectContaining({ priorityFeeGwei: "5" })
       );
     });
+
+    it("forwards the `value` field to writeContractCore as ethValue for write calls", async () => {
+      setupPassingGuards();
+      mocks.writeContractCore.mockResolvedValue({
+        success: true,
+        transactionHash: "0xwrite",
+        transactionLink: "https://etherscan.io/tx/0xwrite",
+      });
+
+      const response = await contractCallPOST(
+        postRequest("/contract-call", {
+          ...validWriteBody,
+          value: "0.1",
+        })
+      );
+
+      expect(response.status).toBe(202);
+      expect(mocks.writeContractCore).toHaveBeenCalledWith(
+        expect.objectContaining({ ethValue: "0.1" })
+      );
+    });
   });
 
   // ==========================================================================

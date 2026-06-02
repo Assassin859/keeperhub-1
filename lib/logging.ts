@@ -12,7 +12,7 @@
  * - Logs to console (warn for user errors, error for system errors)
  * - Emits a Prometheus metric with proper categorization
  * - Extracts context from message prefix (e.g., "[Discord]" → "Discord")
- * - Includes standard labels (error_category, error_context, is_user_error)
+ * - Includes standard labels (error_category, error_context, error_type)
  *
  * @example
  * logUserError(ErrorCategory.VALIDATION, "[Check Balance] Invalid address:", address, { plugin_name: "web3" });
@@ -89,6 +89,64 @@ function buildLogTag(labels: Record<string, string>): string {
   return parts.length > 0 ? ` [${parts.join("][")}]` : "";
 }
 
+function buildErrPayload(
+  error: unknown
+): { message: string; name?: string; stack?: string } | undefined {
+  if (error instanceof Error) {
+    return {
+      message: error.message,
+      name: error.name,
+      stack: error.stack,
+    };
+  }
+  if (error === undefined || error === null || error === "") {
+    return;
+  }
+  return { message: String(error) };
+}
+
+/**
+ * KEEP-545: serialize an error/log event as a single-line JSON object so
+ * Grafana Cloud Loki can extract top-level keys via `| json`. Drilldown
+ * from the managed-client SLI alert to the failing execution requires
+ * `execution_id`, `error_type`, and `error_category` to be available as
+ * Loki labels, not just as text inside the message string.
+ *
+ * The human-readable `msg` field retains the original message and the
+ * `[org:Sky][exec:xyz]` tag so `kubectl logs` greps still work.
+ */
+function serializeStructuredLogLine(args: {
+  level: "warn" | "error";
+  message: string;
+  tag: string;
+  fullLabels: Record<string, string>;
+  category: ErrorCategory;
+  context: string;
+  errorType: "user" | "system" | undefined;
+  error: unknown;
+}): string {
+  const errPayload = buildErrPayload(args.error);
+
+  const payload: Record<string, unknown> = {
+    level: args.level,
+    msg: `${args.message}${args.tag}`,
+    error_category: args.category,
+    error_context: args.context,
+  };
+  if (args.errorType !== undefined) {
+    payload.error_type = args.errorType;
+  }
+  for (const [k, v] of Object.entries(args.fullLabels)) {
+    if (v !== undefined && !(k in payload)) {
+      payload[k] = v;
+    }
+  }
+  if (errPayload) {
+    payload.err = errPayload;
+  }
+  return JSON.stringify(payload);
+}
+
 /**
  * Error/warning categories for metrics classification
  */
@@ -99,6 +157,7 @@ export const ErrorCategory = {
   EXTERNAL_SERVICE: "external_service",
   NETWORK_RPC: "network_rpc",
   TRANSACTION: "transaction",
+  BILLING: "billing",
 
   // System-caused errors
   DATABASE: "database",
@@ -180,9 +239,22 @@ export function logUserError(
   // Merge async-local workflow context (org/owner/workflow ids).
   const fullLabels = mergeLabels(labels);
 
-  // Log as warning (user errors don't wake up DevOps)
+  // KEEP-545: emit structured JSON so Loki indexes error_type,
+  // error_category, execution_id, org_slug as queryable labels via `| json`.
+  // User errors are logged at warn level so they don't page on-call.
   const tag = buildLogTag(fullLabels);
-  console.warn(`${message}${tag}`, error ?? "");
+  console.warn(
+    serializeStructuredLogLine({
+      level: "warn",
+      message,
+      tag,
+      fullLabels,
+      category,
+      context,
+      errorType: "user",
+      error,
+    })
+  );
 
   // Emit metric (high-cardinality labels stripped to protect Prometheus)
   const metricLabels = stripHighCardinality(fullLabels);
@@ -193,7 +265,7 @@ export function logUserError(
       ...metricLabels,
       [LabelKeys.ERROR_CATEGORY]: category,
       [LabelKeys.ERROR_CONTEXT]: context,
-      [LabelKeys.IS_USER_ERROR]: "true",
+      [LabelKeys.ERROR_TYPE]: "user",
     }
   );
 
@@ -206,7 +278,7 @@ export function logUserError(
       tags: {
         error_category: category,
         error_context: context,
-        is_user_error: "true",
+        error_type: "user",
       },
       extra: fullLabels,
     });
@@ -242,9 +314,21 @@ export function logSystemError(
   // Merge async-local workflow context (org/owner/workflow ids).
   const fullLabels = mergeLabels(labels);
 
-  // Log as error (system failures are critical)
+  // KEEP-545: emit structured JSON so Loki indexes error_type,
+  // error_category, execution_id, org_slug as queryable labels via `| json`.
   const tag = buildLogTag(fullLabels);
-  console.error(`${message}${tag}`, error);
+  console.error(
+    serializeStructuredLogLine({
+      level: "error",
+      message,
+      tag,
+      fullLabels,
+      category,
+      context,
+      errorType: "system",
+      error,
+    })
+  );
 
   // Emit metric (high-cardinality labels stripped to protect Prometheus)
   const metricLabels = stripHighCardinality(fullLabels);
@@ -255,7 +339,7 @@ export function logSystemError(
       ...metricLabels,
       [LabelKeys.ERROR_CATEGORY]: category,
       [LabelKeys.ERROR_CONTEXT]: context,
-      [LabelKeys.IS_USER_ERROR]: "false",
+      [LabelKeys.ERROR_TYPE]: "system",
     }
   );
 
@@ -289,10 +373,10 @@ export function logSystemError(
  * | logUserError           | warn        | warning event   | counter+1 |
  *
  * Sentry tag policy:
- *   - is_user_error is intentionally NOT set. At the call sites where this
+ *   - error_type is intentionally NOT set. At the call sites where this
  *     helper fires we typically do not yet know whether the underlying
- *     failure is user-caused or engine-caused -- forcing the tag to "false"
- *     would let alerts filtering `is_user_error:false` match these events
+ *     failure is user-caused or engine-caused -- forcing the tag to "system"
+ *     would let alerts filtering `error_type:system` match these events
  *     and re-trip the same dashboards we are trying to keep quiet. The
  *     event's `level=warning` is the canonical filter.
  */
@@ -305,8 +389,25 @@ export function logSystemWarn(
   const context = extractContext(message);
   const fullLabels = mergeLabels(labels);
 
+  // KEEP-545: emit structured JSON so Loki indexes execution_id, org_slug,
+  // and error_category for the warn-level recovery/notice events. error_type
+  // is intentionally omitted on logSystemWarn (the call site does not yet
+  // know whether the underlying failure is user-caused or engine-caused);
+  // alerts that filter `error_type="system"` therefore won't re-trip on
+  // these events. See logSystemWarn jsdoc for full reasoning.
   const tag = buildLogTag(fullLabels);
-  console.warn(`${message}${tag}`, error);
+  console.warn(
+    serializeStructuredLogLine({
+      level: "warn",
+      message,
+      tag,
+      fullLabels,
+      category,
+      context,
+      errorType: undefined,
+      error,
+    })
+  );
 
   const sentryError = error instanceof Error ? error : new Error(String(error));
   captureException(sentryError, {

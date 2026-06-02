@@ -1,6 +1,20 @@
 import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// KEEP-545: route imports lib/errors/finalize-error which pulls in server-only
+// via the metrics collector. Stubbing server-only as an empty module lets the
+// test load the route without a Next runtime.
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/errors/classify", () => ({
+  classifyExecutionError: () => ({
+    errorCategory: "workflow_engine",
+    errorType: "system",
+  }),
+}));
+vi.mock("@/lib/errors/finalize-error", () => ({
+  recordExecutionErrorFinalized: vi.fn().mockResolvedValue(undefined),
+}));
+
 const VALID_API_KEY = "wfb_test-key-abc123";
 const VALID_KEY_HASH = createHash("sha256").update(VALID_API_KEY).digest("hex");
 const OWNER_USER_ID = "user-owner-123";
@@ -53,6 +67,7 @@ const manualWorkflow = {
 const {
   mockWorkflowsFindFirst,
   mockApiKeysFindFirst,
+  mockMemberLimit,
   mockInsertReturning,
   mockValidateIntegrations,
   mockEnforceExecutionLimit,
@@ -60,6 +75,7 @@ const {
 } = vi.hoisted(() => ({
   mockWorkflowsFindFirst: vi.fn(),
   mockApiKeysFindFirst: vi.fn(),
+  mockMemberLimit: vi.fn(),
   mockInsertReturning: vi.fn(),
   mockValidateIntegrations: vi.fn(),
   mockEnforceExecutionLimit: vi.fn(),
@@ -68,6 +84,13 @@ const {
 
 vi.mock("@/lib/db", () => ({
   db: {
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({
+          limit: mockMemberLimit,
+        })),
+      })),
+    })),
     query: {
       workflows: { findFirst: mockWorkflowsFindFirst },
       apiKeys: { findFirst: mockApiKeysFindFirst },
@@ -89,8 +112,10 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@/lib/db/schema", () => ({
   apiKeys: { keyHash: "key_hash", id: "id", lastUsedAt: "last_used_at" },
+  member: { id: "id", organizationId: "organizationId", userId: "userId" },
   workflows: { id: "id" },
   workflowExecutions: { id: "id" },
+  users: { id: "id", deactivatedAt: "deactivated_at" },
 }));
 
 vi.mock("@/lib/db/integrations", () => ({
@@ -100,6 +125,12 @@ vi.mock("@/lib/db/integrations", () => ({
 vi.mock("@/lib/billing/execution-guard", () => ({
   EXECUTION_LIMIT_ERROR: "Execution limit reached",
   enforceExecutionLimit: mockEnforceExecutionLimit,
+}));
+
+vi.mock("@/lib/features/route-guard", () => ({
+  enforceWorkflowFeatures: vi.fn().mockResolvedValue({ blocked: false }),
+  FEATURE_UPGRADE_REQUIRED_ERROR:
+    "This workflow uses features that require a paid plan.",
 }));
 
 vi.mock("@/app/api/execute/_lib/concurrency-limit", () => ({
@@ -166,6 +197,7 @@ function setupHappyPath(): void {
     userId: OWNER_USER_ID,
     keyHash: VALID_KEY_HASH,
   });
+  mockMemberLimit.mockResolvedValue([{ id: "member-1" }]);
   mockValidateIntegrations.mockResolvedValue({ valid: true });
   mockEnforceExecutionLimit.mockResolvedValue({ blocked: false });
   mockCheckConcurrency.mockResolvedValue({ allowed: true });
@@ -177,6 +209,7 @@ function setupHappyPath(): void {
 describe("POST /api/workflows/:workflowId/webhook", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockMemberLimit.mockResolvedValue([{ id: "member-1" }]);
   });
 
   describe("workflow lookup", () => {
@@ -214,6 +247,25 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
         createContext(WORKFLOW_ID)
       );
 
+      expect(mockApiKeysFindFirst).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("deactivated owner", () => {
+    it("should return 404 when the workflow owner is deactivated", async () => {
+      mockWorkflowsFindFirst.mockResolvedValue(webhookWorkflow);
+      // The owner lookup is the first db.select() the route makes; return a
+      // deactivated owner so the executability gate rejects before auth.
+      mockMemberLimit.mockResolvedValue([{ deactivatedAt: new Date() }]);
+
+      const response = await POST(
+        createWebhookRequest(VALID_API_KEY),
+        createContext(WORKFLOW_ID)
+      );
+
+      expect(response.status).toBe(404);
+      const data = await response.json();
+      expect(data.error).toBe("Workflow not found");
       expect(mockApiKeysFindFirst).not.toHaveBeenCalled();
     });
   });
@@ -292,6 +344,24 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
       expect(data.error).toBe(
         "You do not have permission to run this workflow"
       );
+    });
+
+    it("should return 404 when the owner key belongs to a removed org member", async () => {
+      mockWorkflowsFindFirst.mockResolvedValue(webhookWorkflow);
+      mockApiKeysFindFirst.mockResolvedValue({
+        id: "key-1",
+        userId: OWNER_USER_ID,
+        keyHash: VALID_KEY_HASH,
+      });
+      mockMemberLimit.mockResolvedValue([]);
+
+      const response = await POST(
+        createWebhookRequest(VALID_API_KEY),
+        createContext(WORKFLOW_ID)
+      );
+      expect(response.status).toBe(404);
+      const data = await response.json();
+      expect(data.error).toBe("Workflow not found");
     });
   });
 

@@ -3,7 +3,6 @@
 import {
   BarChart3,
   Bookmark,
-  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -38,6 +37,12 @@ import { usePersistedNavState } from "@/lib/hooks/use-persisted-nav-state";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import { registerSidebarRefetch } from "@/lib/refetch-sidebar";
 import { cn } from "@/lib/utils";
+import { filterPickerVisible } from "@/lib/workflow/soft-delete";
+import {
+  getWorkflowTriggerType,
+  shouldShowDisabledBadge,
+  type WorkflowTriggerType,
+} from "@/lib/workflow/store";
 import { FLYOUT_WIDTH, FlyoutPanel, STRIP_WIDTH } from "./flyout-panel";
 
 export const COLLAPSED_WIDTH = 60;
@@ -50,6 +55,19 @@ type WorkflowEntry = {
   updatedAt: string;
   projectId?: string | null;
   tagId?: string | null;
+  // Soft-delete timestamp. Hidden from the sidebar picker via
+  // filterPickerVisible(), but the API still returns these rows so audit /
+  // recovery surfaces (executions history, marketplace listings) can render
+  // them.
+  deletedAt?: string | null;
+  // The trigger type drives whether the "Disabled" label is meaningful --
+  // see shouldShowDisabledBadge. Derived once at the SavedWorkflow boundary
+  // so WorkflowItem doesn't have to carry the full nodes payload.
+  triggerType?: WorkflowTriggerType;
+  // When false on a trigger that supports the enable switch, the picker
+  // greys the row out and tags it "Disabled" without strikethrough. The row
+  // stays selectable.
+  enabled?: boolean;
 };
 
 function groupWorkflows(workflows: WorkflowEntry[]): {
@@ -81,18 +99,24 @@ function WorkflowItem({
   activeWorkflowId: string | undefined;
 }): React.ReactNode {
   const router = useRouter();
+  const showDisabled = shouldShowDisabledBadge(workflow);
+  const isActive = workflow.id === activeWorkflowId;
   return (
     <button
       className={cn(
         "flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted",
-        workflow.id === activeWorkflowId && "bg-muted"
+        isActive && "bg-muted"
       )}
       onClick={() => router.push(`/workflows/${workflow.id}`)}
       type="button"
     >
-      <span className="truncate">{workflow.name}</span>
-      {workflow.id === activeWorkflowId && (
-        <Check className="ml-2 size-3.5 shrink-0 text-muted-foreground" />
+      <span className={cn("truncate", showDisabled && "text-muted-foreground")}>
+        {workflow.name}
+      </span>
+      {showDisabled && (
+        <span className="ml-2 shrink-0 text-muted-foreground text-xs">
+          Disabled
+        </span>
       )}
     </button>
   );
@@ -607,7 +631,10 @@ export function NavigationSidebar(): React.ReactNode {
 
   const isAnonymous = isAnonymousUser(session?.user);
 
-  const visibleWorkflows = workflows.filter((w) => w.name !== "__current__");
+  const visibleWorkflows = filterPickerVisible(workflows).map((w) => ({
+    ...w,
+    triggerType: getWorkflowTriggerType(w.nodes),
+  }));
 
   const workflowId =
     typeof params.workflowId === "string" ? params.workflowId : undefined;
@@ -934,6 +961,12 @@ export function NavigationSidebar(): React.ReactNode {
             );
           })}
           {(() => {
+            // Feedback widget is disabled by default. Re-enable by setting
+            // NEXT_PUBLIC_FEEDBACK_ENABLED=true (the POST /api/feedback route
+            // gates on the same flag).
+            if (process.env.NEXT_PUBLIC_FEEDBACK_ENABLED !== "true") {
+              return null;
+            }
             const reportButton = (
               <button
                 aria-label="Report an issue"

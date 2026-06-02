@@ -31,8 +31,10 @@ import type { TemplateResolutionTracker } from "@/lib/workflow/executor/template
 
 type NodeOutputs = Record<string, { label: string; data: unknown }>;
 
-const DISPLAY_REF_ERROR = /unresolved template reference\(s\): \{\{Trigger\.value\}\}/;
-const DOLLAR_REF_ERROR = /unresolved template reference\(s\): \{\{\$n1\.value\}\}/;
+const DISPLAY_REF_ERROR =
+  /unresolved template reference\(s\): \{\{Trigger\.value\}\}/;
+const DOLLAR_REF_ERROR =
+  /unresolved template reference\(s\): \{\{\$n1\.value\}\}/;
 const MULTI_LEFTOVER_ERROR =
   /\{\{Trigger\.x\}\}.*\{\{Trigger\.y\}\}|\{\{Trigger\.y\}\}.*\{\{Trigger\.x\}\}/;
 

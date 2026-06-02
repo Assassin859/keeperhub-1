@@ -22,11 +22,11 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import { buildEdgesBySourceHandle } from "@/lib/workflow/editor/edge-handle-utils";
+import { buildEdgesBySource } from "@/lib/workflow/executor/convergence-barrier";
 import {
   identifyLoopBody,
   resolveBodyConditionTargets,
 } from "@/lib/workflow/executor/executor.workflow";
-import { buildEdgesBySource } from "@/lib/workflow/executor/convergence-barrier";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 type ActionResult = {
@@ -55,11 +55,7 @@ type SimulationResult = {
   perIteration: Array<Set<string>>;
 };
 
-function action(
-  id: string,
-  actionType: string,
-  label?: string
-): WorkflowNode {
+function action(id: string, actionType: string, label?: string): WorkflowNode {
   return {
     id,
     type: "action",
@@ -108,9 +104,7 @@ function edge(
  *    resolveBodyConditionTargets must be visited.
  * 3. A node is visited at most once per iteration (bodyVisited set).
  */
-async function simulate(
-  options: SimulationOptions
-): Promise<SimulationResult> {
+async function simulate(options: SimulationOptions): Promise<SimulationResult> {
   const { nodes, edges, forEachNodeId, items, runStep } = options;
   const nodeMap = new Map(nodes.map((n) => [n.id, n]));
   const edgesBySource = buildEdgesBySource(edges);
@@ -172,8 +166,7 @@ async function simulate(
       // Nested For Each: iterate over a fresh sub-array (test-only stub).
       // The real executor calls handleForEachExecution; we just ensure the
       // post-iteration continuation still fires for the parent.
-      const nestedItems =
-        (result.data as { items?: unknown[] })?.items ?? [];
+      const nestedItems = (result.data as { items?: unknown[] })?.items ?? [];
       for (const _item of nestedItems) {
         // No-op: we do not recurse into nested bodies in the simulator.
       }
@@ -276,9 +269,12 @@ describe("For Each body recursion: action -> condition -> action -> action chain
       items: ["MAKER"],
       runStep: async ({ nodeId, actionType }) => {
         if (actionType === "Condition") {
-          if (nodeId === "c-master") return { success: true, data: { condition: true } };
-          if (nodeId === "c-workable") return { success: true, data: { condition: false } };
-          if (nodeId === "c-line") return { success: true, data: { condition: false } };
+          if (nodeId === "c-master")
+            return { success: true, data: { condition: true } };
+          if (nodeId === "c-workable")
+            return { success: true, data: { condition: false } };
+          if (nodeId === "c-line")
+            return { success: true, data: { condition: false } };
         }
         return { success: true, data: { ok: true } };
       },

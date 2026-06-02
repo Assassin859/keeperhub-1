@@ -35,12 +35,12 @@ Understanding the user/org/wallet model helps interpret metrics correctly:
 | Entity | Description | Expected Relationships |
 |--------|-------------|------------------------|
 | **User** | Registered or anonymous account | Each registered user auto-gets a personal org |
-| **Organization** | Multi-tenant container for workflows/credentials | Each org auto-gets a Para wallet |
-| **Para Wallet** | MPC wallet for blockchain signing | 1:1 with organizations |
+| **Organization** | Multi-tenant container for workflows/credentials | Each org auto-gets a Turnkey wallet |
+| **Wallet** | Turnkey-backed signer for blockchain operations | 1:1 with organizations |
 | **Anonymous User** | Trial user without org | Can run workflows, but no chain operations |
 
 **Key metric relationships:**
-- `org.total` ≈ `sum(wallet.total)` (1:1 org-to-wallet; wallets split across `para` / `turnkey` providers)
+- `org.total` ≈ `wallet.total` (1:1 org-to-wallet)
 - `user.total` ≥ `org.total` (users can share orgs via invites)
 - `user.anonymous` = users without orgs (trial mode)
 - Web3 steps (`transfer-funds`, `write-contract`) require org + wallet
@@ -68,7 +68,7 @@ Counter/Gauge metrics tracking request/event counts.
 
 | Metric Name | Description | Labels | Unit | Source |
 |-------------|-------------|--------|------|--------|
-| `workflow.executions.total` | Total workflow executions by status (all-time) | `status` | gauge | DB |
+| `workflow.executions.total` | Total workflow executions by status (all-time) | `status`, `org_slug`, `error_type` (`user`/`system`/`unknown`/`na`) | gauge | DB |
 | `workflow.execution.errors.total` | Total failed workflow executions (all-time) | - | gauge | DB |
 | `plugin.invocations.total` | Plugin action invocations | `plugin_name`, `action_name` | count | API |
 | `user.active.daily` | Daily active users (24h) | - | gauge | DB |
@@ -96,6 +96,24 @@ Gauge metrics tracking resource usage and capacity.
 |-------------|-------------|--------|-----------|--------|
 | `workflow.queue.depth` | Pending workflow jobs | - | < 50 | DB |
 | `workflow.concurrent.count` | Concurrent workflow executions | - | gauge | DB |
+
+---
+
+## Safe Wallet Metrics
+
+Hot-path observability for the Safe smart-account integration. Emitted from `lib/metrics/instrumentation/safe.ts` and consumed by the Grafana alerts in the infrastructure repo's `keeperhub_metrics_alerts.tf` (section: Safe Wallet Alerts).
+
+| Metric Name | Type | Description | Labels | Fires on |
+|-------------|------|-------------|--------|----------|
+| `safe.deploy.total` | counter | Safe CREATE2 deploys via `SafeProxyFactory` | `chain_id`, `outcome` (`success` / `already_deployed` / `failure`) | `deployOrgSafe` |
+| `safe.deploy.duration_ms` | histogram | Wall-clock duration of the deploy | same | `deployOrgSafe` |
+| `safe.role_install.total` | counter | Zodiac Roles modifier proxy deploys + initial scope writes | `chain_id`, `outcome` | `installRolesWithInitialConfig` |
+| `safe.role_install.duration_ms` | histogram | Wall-clock duration of the install | same | `installRolesWithInitialConfig` |
+| `safe.tx.total` | counter | Safe-routed transactions (both `safe.execTransaction` and `rolesModifier.execTransactionWithRole`) | `chain_id`, `route` (`exec` / `role`), `kind` (`native` / `erc20` / `contract`), `outcome` | `executeContractCallAsSafe`, `executeNativeTransferAsSafe`, `executeContractCallAsRole`, `executeNativeTransferAsRole` |
+| `safe.tx.duration_ms` | histogram | Wall-clock duration of the inner Safe write | same | same |
+| `safe.withdraw.total` | counter | User-initiated Safe withdrawals (separate from workflow-driven Safe writes) | `chain_id`, `kind`, `outcome` | `/api/user/wallet/withdraw` when body carries `safeId` |
+
+`route` distinguishes owner-signed `safe.execTransaction` (`exec`) from Zodiac Roles modifier writes (`role`); `kind` splits native value transfers from ERC-20 transfers/approvals (`erc20`) from arbitrary contract calls (`contract`). The withdraw counter intentionally overlaps with `safe.tx.*` (every withdraw is also one safe.tx) so the user-driven surface can be alerted on independently from workflow traffic.
 
 ---
 
@@ -183,9 +201,50 @@ Billing-aware observability layered onto the org model. Plan distribution, per-o
 | `apikey.total` | Total API keys | - | DB |
 | `chain.total` | Total blockchain networks configured | - | DB |
 | `chain.enabled` | Enabled blockchain networks | - | DB |
-| `wallet.total` | Total active org wallets by provider | `provider` (`para`, `turnkey`) | DB |
-| `para_wallet.total` | [Deprecated] Total active org wallets (all providers). Use `wallet.total` instead. | - | DB |
+| `wallet.total` | Total active org wallets | - | DB |
 | `session.active` | Active (non-expired) sessions | - | DB |
+
+---
+
+## 6. BLOCK DISPATCHER
+
+Per-chain liveness, subscription health, and SQS enqueue signals from the block-dispatcher pod (`keeperhub-scheduler/block-dispatcher`). All metrics live in the dispatcher's own in-process Prometheus registry exposed at `:3000/metrics` (separate from the main app's `/api/metrics`). Source code: `keeperhub-scheduler/lib/metrics.ts`.
+
+The dashboard and alert rules for these metrics are defined in `techops-infrastructure/grafana/keeperhub-dashboards/` (separate Terraform PR).
+
+### Gauges
+
+| Metric Name | Description | Labels | Alert-worthy? |
+|-------------|-------------|--------|---------------|
+| `keeperhub_block_dispatcher_seconds_since_last_block` | Wall-clock seconds since this chain's lastProcessedBlock last advanced. THE primary alert signal — fires high when newHeads stops flowing even though the WSS appears alive. Computed at scrape time. | `chain` | YES — page if > 120s |
+| `keeperhub_block_dispatcher_socket_age_seconds` | Wall-clock seconds since the current WSS subscription was established. Resets to 0 on every reconnect. | `chain` | no (debug) |
+| `keeperhub_block_dispatcher_is_alive` | 0/1 mirroring `ChainMonitor.isAlive()`: running && hasSubscription && not stuck-reconnecting && not block-advance-stale. | `chain` | warn if 0 for >2 min |
+| `keeperhub_block_dispatcher_is_reconnecting` | 1 when mid reconnect-with-backoff, 0 otherwise. | `chain` | no (debug) |
+| `keeperhub_block_dispatcher_has_active_subscription` | 1 when eth_subscribe('newHeads') has completed and the callback is wired. | `chain` | no (debug) |
+| `keeperhub_block_dispatcher_current_url_index` | 0 = primary, 1 = fallback. Tracks KEEP-557 silent-subscription failovers and primary-probe recoveries. | `chain` | no (debug) |
+| `keeperhub_block_dispatcher_silent_reconnects_current` | Consecutive BLOCK_ADVANCE_TIMEOUT_MS firings on the current URL with no height advance in between. Resets to 0 on real height advance or URL flip. Early warning for upstream flakiness. | `chain` | warn if >= 1 for >5 min |
+| `keeperhub_block_dispatcher_last_processed_block` | Highest block number this monitor has processed on the chain. | `chain` | no (debug) |
+| `keeperhub_block_dispatcher_workflows_tracked` | Number of block-trigger workflows the monitor is tracking on this chain. | `chain` | no (debug) |
+| `keeperhub_block_dispatcher_chains_monitored` | Total chains the pod is monitoring. | - | warn if 0 |
+
+### Counters
+
+| Metric Name | Description | Labels |
+|-------------|-------------|--------|
+| `keeperhub_block_dispatcher_blocks_received_total` | Blocks processed after dedup (height-advance) per chain. `rate()` gives block delivery rate; flatline means subscription silent. | `chain` |
+| `keeperhub_block_dispatcher_blocks_matched_total` | Blocks that matched at least one workflow's `blockInterval`. `workflow_id` intentionally omitted to keep cardinality bounded. | `chain` |
+| `keeperhub_block_dispatcher_ws_closes_total` | WebSocket closures per chain by trigger reason. | `chain`, `reason` (`upstream_close`, `pong_timeout`, `block_advance_timeout`, `socket_age_recycle`, `silent_failover`, `ping_send_failure`, `primary_probe_recovered`) |
+| `keeperhub_block_dispatcher_reconnects_total` | Reconnect-with-backoff completions. | `chain`, `outcome` (`success`, `exhausted`) |
+| `keeperhub_block_dispatcher_url_flips_total` | Auto-failover URL flips (KEEP-557). | `chain`, `direction` (`to_fallback`, `to_primary`) |
+| `keeperhub_block_dispatcher_sqs_enqueue_total` | Workflow trigger enqueue attempts. Error rate climbing indicates an SQS/IAM/network issue downstream. | `chain`, `outcome` (`success`, `error`) |
+| `keeperhub_block_dispatcher_unhandled_rejections_total` | Process-level unhandled promise rejections absorbed by the safety-net handler. Most common source: ethers v6 destroyProvider eth_unsubscribe cancellation. | - |
+
+### Histograms
+
+| Metric Name | Description | Labels | Buckets (ms) |
+|-------------|-------------|--------|--------------|
+| `keeperhub_block_dispatcher_reconnect_duration_ms` | Time from `handleDisconnect()` to next `Block subscription active`. | `chain` | 100, 500, 1000, 2000, 5000, 10000, 30000, 60000, 120000 |
+| `keeperhub_block_dispatcher_block_lag_seconds` | `wall_clock - block.timestamp` when the block was received. p95 > 30s on a fast chain indicates upstream lag. | `chain` | 1, 2, 5, 10, 30, 60, 120, 300 |
 
 ---
 
@@ -274,7 +333,7 @@ The following tables are queried:
 - `workflow_schedules` - schedule counts, enabled status, last run status
 - `api_keys` - API key count
 - `chains` - blockchain network count
-- `para_wallets` - Active org wallet count (split by provider: `para`, `turnkey`)
+- `organization_wallets` - Active org wallet count
 
 ### Multi-Pod Aggregation (Important)
 
@@ -323,7 +382,7 @@ sum by (status) (keeperhub_workflow_executions_total{...})
 | Workflow | `workflow_total`, `workflow_by_visibility`, `workflow_anonymous_total`, `workflow_executions_total`, `workflow_execution_errors_total`, `workflow_queue_depth`, `workflow_concurrent_count` |
 | Schedule | `schedule_total`, `schedule_enabled_total`, `schedule_by_last_status` |
 | Integration | `integration_total`, `integration_managed_total`, `integration_by_type` |
-| Infrastructure | `apikey_total`, `wallet_total`, `para_wallet_total`, `chain_total`, `chain_enabled_total`, `session_active_total` |
+| Infrastructure | `apikey_total`, `wallet_total`, `chain_total`, `chain_enabled_total`, `session_active_total` |
 
 **Why this happens:** Each pod queries the same PostgreSQL database and reports the same gauge value. With 2 pods reporting 21 users each, `sum()` returns 42 while `max()` correctly returns 21.
 
@@ -493,7 +552,6 @@ Prometheus metrics are prefixed with `keeperhub_` and use snake_case:
 | `chain.total` | `keeperhub_chain_total` | gauge |
 | `chain.enabled` | `keeperhub_chain_enabled_total` | gauge |
 | `wallet.total` | `keeperhub_wallet_total` | gauge |
-| `para_wallet.total` | `keeperhub_para_wallet_total` | gauge (deprecated) |
 | `session.active` | `keeperhub_session_active_total` | gauge |
 | `api.webhook.latency_ms` | `keeperhub_api_webhook_latency_ms` | histogram |
 | `api.status.latency_ms` | `keeperhub_api_status_latency_ms` | histogram |

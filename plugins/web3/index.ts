@@ -5,11 +5,11 @@ import { Web3Icon } from "./icon";
 const web3Plugin: IntegrationPlugin = {
   type: "web3",
   label: "Web3",
-  description: "Interact with blockchain networks using your Para wallet",
+  description: "Interact with blockchain networks using your KeeperHub wallet",
 
   icon: Web3Icon,
 
-  // Web3 uses Para wallet - one wallet per user
+  // One wallet per organization
   singleConnection: true,
 
   // Read-only actions (check balance, read contract) don't require a wallet
@@ -1222,6 +1222,51 @@ const web3Plugin: IntegrationPlugin = {
           ],
         },
 
+      ],
+    },
+    {
+      slug: "sign-typed-data",
+      label: "Sign Typed Data (EIP-712)",
+      description:
+        "Produce an EIP-712 signature over a typed-data payload using the org's Turnkey-backed wallet. Suitable for x402 / EIP-3009 transferWithAuthorization, EIP-2612 permits, MPP proofs, and any other off-chain signed intent.",
+      category: "Web3",
+      requiresCredentials: true,
+      stepFunction: "signTypedDataStep",
+      stepImportPath: "sign-typed-data",
+      outputFields: [
+        {
+          field: "success",
+          description: "Whether the signing succeeded",
+        },
+        {
+          field: "signature",
+          description:
+            "65-byte 0x-prefixed secp256k1 signature with Ethereum v+27 parity offset",
+        },
+        {
+          field: "signer",
+          description:
+            "EIP-55 checksummed address of the signer (the org's wallet)",
+        },
+        {
+          field: "error",
+          description: "Error message if signing failed",
+        },
+        {
+          field: "code",
+          description:
+            "Machine-readable error code: VALIDATION | NO_WALLET | POLICY_BLOCKED | UPSTREAM | UNKNOWN",
+        },
+      ],
+      configFields: [
+        {
+          key: "typedData",
+          label: "EIP-712 Typed Data",
+          type: "json-editor",
+          placeholder:
+            '{"domain": {...}, "types": {...}, "primaryType": "...", "message": {...}}',
+          required: true,
+        },
       ],
     },
   ],

@@ -17,7 +17,6 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@/lib/db/schema-extensions", () => ({
   organizationWallets: {
-    provider: "provider",
     walletAddress: "walletAddress",
     turnkeySubOrgId: "turnkeySubOrgId",
     organizationId: "organizationId",
@@ -61,26 +60,10 @@ describe("createSponsoredClient", () => {
     expect(result).toBeNull();
   });
 
-  it("returns null for a legacy Para wallet so callers fall back to direct signing", async () => {
+  it("returns null when the wallet row is missing the sub-org id", async () => {
     mockIsSponsorshipSupported.mockReturnValue(true);
     mockLimit.mockResolvedValue([
       {
-        provider: "para",
-        walletAddress: "0xabc",
-        turnkeySubOrgId: null,
-      },
-    ]);
-
-    const result = await createSponsoredClient("org_1", 1);
-
-    expect(result).toBeNull();
-  });
-
-  it("returns null when a Turnkey wallet row is missing the sub-org id", async () => {
-    mockIsSponsorshipSupported.mockReturnValue(true);
-    mockLimit.mockResolvedValue([
-      {
-        provider: "turnkey",
         walletAddress: "0xabc",
         turnkeySubOrgId: null,
       },
@@ -95,7 +78,6 @@ describe("createSponsoredClient", () => {
     mockIsSponsorshipSupported.mockReturnValue(true);
     mockLimit.mockResolvedValue([
       {
-        provider: "turnkey",
         walletAddress: "0xabc",
         turnkeySubOrgId: "suborg-123",
       },

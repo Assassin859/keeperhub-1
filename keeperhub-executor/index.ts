@@ -32,16 +32,24 @@ import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import {
+  users,
   workflowExecutions,
   workflowSchedules,
   workflows,
 } from "../lib/db/schema";
+import { getMetricsCollector } from "../lib/metrics";
+import { LabelKeys, MetricNames } from "../lib/metrics/types";
+import { withBackstopCapture } from "../lib/security/backstop-capture";
+import { buildAttribution } from "../lib/security/request-attribution";
 import { generateId } from "../lib/utils/id";
+import { checkConcurrencyLimit } from "../lib/workflow/concurrency";
+import { getWorkflowExecutability } from "../lib/workflow/executable";
 import type { WorkflowNode } from "../lib/workflow/store";
-import { executeViaApi } from "./api-execute";
+import { type ApiExecuteTriggerType, executeViaApi } from "./api-execute";
 import { checkExecutionLimitForExecutor } from "./billing-guard";
 import { CONFIG } from "./config";
 import { resolveDispatchTarget } from "./execution-mode";
+import { checkWorkflowFeaturesForExecutor } from "./feature-guard";
 import { executeInProcess } from "./in-process";
 import { createWorkflowJob } from "./k8s-job";
 import { applyCounterDeltas, isIngestPayload } from "./lib/metrics-shipping";
@@ -149,7 +157,7 @@ async function dispatchExecution(params: {
   workflowId: string;
   executionId: string;
   input: Record<string, unknown>;
-  triggerType: string;
+  triggerType: ApiExecuteTriggerType;
   scheduleId?: string;
 }): Promise<void> {
   const { target, workflowId, executionId, input, triggerType, scheduleId } =
@@ -189,7 +197,7 @@ async function dispatchExecution(params: {
       break;
     }
     case "api": {
-      await executeViaApi({ workflowId, executionId, input });
+      await executeViaApi({ workflowId, executionId, input, triggerType });
       break;
     }
     case "in-process": {
@@ -214,17 +222,33 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     `[Executor] Processing ${triggerType} trigger for workflow ${workflowId}`
   );
 
-  const workflow = await db.query.workflows.findFirst({
-    where: eq(workflows.id, workflowId),
-  });
+  // Load the workflow and its owner's deactivation state in one round-trip.
+  const [row] = await db
+    .select()
+    .from(workflows)
+    .leftJoin(users, eq(users.id, workflows.userId))
+    .where(eq(workflows.id, workflowId))
+    .limit(1);
+  const workflow = row?.workflows;
 
   if (!workflow) {
     console.error(`[Executor] Workflow not found: ${workflowId}`);
     return;
   }
 
-  if (!workflow.enabled) {
-    console.log(`[Executor] Workflow disabled, skipping: ${workflowId}`);
+  // A soft-deleted workflow, a disabled workflow, or one whose owner is
+  // deactivated must never execute, even if a stale schedule or queued
+  // message still references it. The block_executions DB trigger is the
+  // INSERT-time backstop; this skips the work before it gets that far.
+  const executability = getWorkflowExecutability({
+    enabled: workflow.enabled,
+    deletedAt: workflow.deletedAt,
+    ownerDeactivatedAt: row?.users?.deactivatedAt ?? null,
+  });
+  if (!executability.executable) {
+    console.log(
+      `[Executor] Workflow not executable (${executability.reason}), skipping: ${workflowId}`
+    );
     return;
   }
 
@@ -248,19 +272,102 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     return;
   }
 
+  const featureResult = await checkWorkflowFeaturesForExecutor(
+    db,
+    workflow.organizationId,
+    workflow.nodes as unknown[]
+  );
+  if (!featureResult.allowed) {
+    const gatedFeatureIds = featureResult.violations
+      .map((v) => v.featureId)
+      .join(",");
+    const errorMessage = `Workflow uses features that require a paid plan: ${featureResult.violations
+      .map((v) => v.feature.name)
+      .join(", ")}`;
+    console.warn(
+      `[Executor] Feature guard blocked ${triggerType} trigger for workflow ${workflowId}: org=${workflow.organizationId} gated=${gatedFeatureIds}`
+    );
+    // Record a failed execution row so the user sees this in their dashboard
+    // instead of the trigger silently vanishing. Matches the shape of a regular
+    // step failure (status=error, completedAt set) so the rest of the UI
+    // and metrics pipeline pick it up uniformly.
+    const blockedExecutionId = generateId();
+    const blockedInput = buildInput(message);
+    const blockedUserId =
+      "userId" in message ? message.userId : workflow.userId;
+    // KEEP-612: attribute the source so blocked scheduled/block/event rows
+    // are not NULL in the audit columns. No client request here (SQS
+    // dispatch), so ip/country/key are correctly left null.
+    const blockedAttribution = buildAttribution({ source: triggerType });
+    await withBackstopCapture(
+      { workflowId, userId: blockedUserId, source: triggerType },
+      () =>
+        db.insert(workflowExecutions).values({
+          id: blockedExecutionId,
+          workflowId,
+          userId: blockedUserId,
+          status: "error",
+          input: toJsonSafe(blockedInput) as Record<string, unknown>,
+          error: errorMessage,
+          errorCategory: "billing",
+          errorType: "user",
+          startedAt: new Date(),
+          completedAt: new Date(),
+          ...blockedAttribution,
+        })
+    );
+    return;
+  }
+
+  // Concurrency back-pressure: enforce the same running-execution cap the API
+  // routes apply, regardless of dispatch target. Throw rather than drop so the
+  // SQS message is redelivered after the visibility timeout once capacity frees,
+  // and do it before creating the row so a requeue does not leave orphans.
+  const concurrency = await checkConcurrencyLimit(db);
+  if (!concurrency.allowed) {
+    throw new Error(
+      `Concurrency limit reached (${concurrency.running}/${concurrency.limit}); requeueing workflow ${workflowId}`
+    );
+  }
+
   const executionId = generateId();
   const input = buildInput(message);
   const userId = "userId" in message ? message.userId : workflow.userId;
 
-  await db.insert(workflowExecutions).values({
-    id: executionId,
-    workflowId,
-    userId,
-    status: "pending",
-    input: toJsonSafe(input) as Record<string, unknown>,
-  });
+  // KEEP-612: this is the insert for ALL SQS-dispatched runs (schedule /
+  // block / event). The executor pre-creates the row and downstream
+  // dispatch (executeViaApi / k8s) reuses it, so the app-route attribution
+  // never runs here -- set it directly. Only trigger_source applies: SQS
+  // dispatch has no inbound client request, so ip/country/api-key stay null.
+  // withBackstopCapture emits security.backstop_execution_blocked if the
+  // 0082 trigger rejects (e.g. owner deactivated in the check->insert race).
+  const attribution = buildAttribution({ source: triggerType });
+  await withBackstopCapture({ workflowId, userId, source: triggerType }, () =>
+    db.insert(workflowExecutions).values({
+      id: executionId,
+      workflowId,
+      userId,
+      status: "pending",
+      input: toJsonSafe(input) as Record<string, unknown>,
+      ...attribution,
+    })
+  );
 
   console.log(`[Executor] Created execution record: ${executionId}`);
+
+  // Counter for the "zero executions in N min" alert family (KEEP-556).
+  // Increments here for every SQS-triggered run regardless of dispatch target
+  // (k8s-job / in-process / api). The route.ts handler only increments when it
+  // creates the row itself - so manual and webhook flows go through there, and
+  // schedule / block / event go through here, with no double-count when the
+  // executor hands off via process mode and the API uses our pre-existing row.
+  getMetricsCollector().incrementCounter(
+    MetricNames.WORKFLOW_EXECUTIONS_STARTED_TOTAL,
+    {
+      [LabelKeys.TRIGGER_TYPE]: triggerType,
+      [LabelKeys.CHAIN]: workflow.chain ?? "_unknown",
+    }
+  );
 
   const nodes = workflow.nodes as WorkflowNode[];
   const target = resolveDispatchTarget(nodes);
@@ -348,6 +455,26 @@ async function listen(): Promise<void> {
   console.log(`[Executor] Queue URL: ${CONFIG.sqsQueueUrl}`);
   console.log(`[Executor] Runner image: ${CONFIG.runnerImage}`);
   console.log(`[Executor] K8s namespace: ${CONFIG.namespace}`);
+
+  // Wire up Prometheus dual-write. The Next.js app does this in
+  // instrumentation.ts; the executor is a separate tsx-launched process and
+  // never runs Next.js's instrumentation hook, so without this its
+  // getMetricsCollector() calls would only hit the console collector and the
+  // executor's /metrics endpoint would never see the counter series. See
+  // KEEP-556 for the missing-counter symptom this fixes.
+  if (process.env.METRICS_COLLECTOR === "prometheus") {
+    const { prometheusMetricsCollector } = await import(
+      "../lib/metrics/collectors/prometheus"
+    );
+    const { createDualWriteCollector } = await import(
+      "../lib/metrics/collectors/dual"
+    );
+    const { setMetricsCollector } = await import("../lib/metrics");
+    setMetricsCollector(createDualWriteCollector(prometheusMetricsCollector));
+    console.log(
+      "[Executor] Prometheus dual-write metrics collector initialized"
+    );
+  }
 
   await assertTurnkeyEnvForActiveWallets(db);
 

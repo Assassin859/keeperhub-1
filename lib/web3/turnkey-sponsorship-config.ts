@@ -1,4 +1,5 @@
 import "server-only";
+import { SPONSORSHIP_CHAIN_IDS } from "./sponsorship-chains-meta";
 
 /**
  * Chain IDs where gas sponsorship via Turnkey's native Transaction Management
@@ -6,22 +7,16 @@ import "server-only";
  * EVM transaction in a single API call -- there is no ERC-4337 bundler or
  * paymaster involved.
  *
- * Mainnet coverage confirmed by Turnkey: Ethereum, Base, Polygon, Arbitrum.
- * Optimism is absent from Turnkey's Gas Station and was dropped from this
- * allowlist during the Pimlico -> Turnkey migration (KEEP-464). The SDK
- * v5.2.0 CAIP-2 enum lags Turnkey's actual coverage and does not yet list
- * `eip155:42161`, so `toCaip2` widens the type at the call site in
- * `turnkey-sponsored-tx.ts` until the SDK regenerates.
+ * Derived from the shared sponsorship chain metadata so the runtime allowlist
+ * and the billing UI cannot drift. Turnkey covers four mainnets (Ethereum,
+ * Base, Polygon, Arbitrum) and their canonical testnets; Optimism and BNB are
+ * absent from the Gas Station. The SDK v5.2.0 CAIP-2 enum lags Turnkey's
+ * actual coverage and does not yet list `eip155:42161`, so `toCaip2` widens
+ * the type at the call site in `turnkey-sponsored-tx.ts` until the SDK
+ * regenerates.
  */
-export const SUPPORTED_SPONSORSHIP_CHAINS: ReadonlySet<number> = new Set([
-  1, // Ethereum Mainnet
-  11_155_111, // Sepolia
-  8453, // Base
-  84_532, // Base Sepolia
-  137, // Polygon
-  80_002, // Polygon Amoy
-  42_161, // Arbitrum One
-]);
+export const SUPPORTED_SPONSORSHIP_CHAINS: ReadonlySet<number> =
+  SPONSORSHIP_CHAIN_IDS;
 
 export function isSponsorshipSupported(chainId: number): boolean {
   return SUPPORTED_SPONSORSHIP_CHAINS.has(chainId);

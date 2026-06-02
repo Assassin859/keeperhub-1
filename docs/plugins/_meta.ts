@@ -4,6 +4,7 @@ export default {
   code: "Code",
   math: "Math",
   safe: "Safe",
+  blockscout: "Blockscout",
   "aave-v3": "Aave V3",
   aerodrome: "Aerodrome",
   ajna: "Ajna",
@@ -11,6 +12,7 @@ export default {
   compound: "Compound V3",
   cowswap: "CoW Swap",
   curve: "Curve",
+  "frax-ether-v2": "Frax Ether V2",
   lido: "Lido",
   morpho: "Morpho",
   pendle: "Pendle",
@@ -23,4 +25,5 @@ export default {
   telegram: "Telegram",
   sendgrid: "SendGrid",
   webhook: "Webhook",
+  hyperliquid: "Hyperliquid",
 };

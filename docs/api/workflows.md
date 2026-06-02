@@ -172,24 +172,38 @@ DELETE /api/workflows/{workflowId}?force=true
 ## Execute Workflow
 
 ```http
-POST /api/workflow/{workflowId}/execute
+POST /api/workflows/{workflowId}/execute
 ```
 
-> **Note:** This endpoint uses singular `/workflow/` in the path, unlike other endpoints which use plural `/workflows/`.
+Manually trigger a workflow execution. The singular form `POST /api/workflow/{workflowId}/execute` is also accepted for backward compatibility.
 
-Manually trigger a workflow execution.
+### Request Body
+
+```json
+{
+  "input": { "key": "value" }
+}
+```
+
+The `input` field is optional. It maps to the workflow's trigger input and is passed to the first node of the run.
+
+### Example
+
+```bash
+curl -X POST https://app.keeperhub.com/api/workflows/wf_123/execute \
+  -H "Authorization: Bearer $KEEPERHUB_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"input": {}}'
+```
 
 ### Response
 
 ```json
 {
   "executionId": "exec_123",
-  "runId": "run_abc123",
-  "status": "pending"
+  "status": "running"
 }
 ```
-
-The `runId` identifies the workflow execution run and is stored in the workflow execution record.
 
 ## Webhook Trigger
 

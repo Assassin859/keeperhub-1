@@ -28,7 +28,9 @@ describe("app/robots.ts", () => {
   it("disallows /hub? query-string variants and /marketplace? query-string variants (HUB-13)", async () => {
     const robotsModule = await import("@/app/robots");
     const result = robotsModule.default();
-    const firstRule = Array.isArray(result.rules) ? result.rules[0] : result.rules;
+    const firstRule = Array.isArray(result.rules)
+      ? result.rules[0]
+      : result.rules;
     const disallow = Array.isArray(firstRule.disallow)
       ? firstRule.disallow
       : [firstRule.disallow];
@@ -39,7 +41,9 @@ describe("app/robots.ts", () => {
   it("allows /hub, /hub/tags/, and /marketplace canonical paths", async () => {
     const robotsModule = await import("@/app/robots");
     const result = robotsModule.default();
-    const firstRule = Array.isArray(result.rules) ? result.rules[0] : result.rules;
+    const firstRule = Array.isArray(result.rules)
+      ? result.rules[0]
+      : result.rules;
     const allow = Array.isArray(firstRule.allow)
       ? firstRule.allow
       : [firstRule.allow];

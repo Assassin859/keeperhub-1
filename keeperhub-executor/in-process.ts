@@ -1,7 +1,9 @@
 import { eq } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { validateWorkflowIntegrations } from "../lib/db/integrations";
-import { organization, workflows } from "../lib/db/schema";
+import { organization, users, workflows } from "../lib/db/schema";
+import { getWorkflowExecutability } from "../lib/workflow/executable";
+import { buildExecutorInput } from "../lib/workflow/executor/build-executor-input";
 import { executeWorkflow } from "../lib/workflow/executor/executor.workflow";
 import { calculateTotalSteps } from "../lib/workflow/executor/progress";
 import type { WorkflowEdge, WorkflowNode } from "../lib/workflow/store";
@@ -17,7 +19,6 @@ import {
  * Refactored from keeperhub-executor/workflow-runner.ts main() to be callable
  * from the executor without managing its own process lifecycle.
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: orchestrates multiple phases of workflow execution
 export async function executeInProcess(params: {
   workflowId: string;
   executionId: string;
@@ -43,9 +44,22 @@ export async function executeInProcess(params: {
       throw new Error(`Workflow not found: ${workflowId}`);
     }
 
-    if (workflow.enabled === false) {
+    // Defensive re-check: the dispatcher already gated lifecycle state, but the
+    // workflow could have been disabled, soft-deleted, or its owner deactivated
+    // between dispatch and execution. Cancel rather than run.
+    const [owner] = await db
+      .select({ deactivatedAt: users.deactivatedAt })
+      .from(users)
+      .where(eq(users.id, workflow.userId))
+      .limit(1);
+    const executability = getWorkflowExecutability({
+      enabled: workflow.enabled,
+      deletedAt: workflow.deletedAt,
+      ownerDeactivatedAt: owner?.deactivatedAt ?? null,
+    });
+    if (!executability.executable) {
       console.log(
-        `[Executor:InProcess] Workflow disabled, skipping: ${workflowId}`
+        `[Executor:InProcess] Workflow not executable (${executability.reason}), skipping: ${workflowId}`
       );
       await updateExecutionStatus(db, executionId, "cancelled");
       return;
@@ -79,19 +93,28 @@ export async function executeInProcess(params: {
     await initializeExecutionProgress(db, executionId, totalSteps);
 
     console.log("[Executor:InProcess] Executing workflow...");
-    const result = await executeWorkflow({
-      nodes,
-      edges,
-      triggerInput: input,
-      executionId,
-      workflowId,
-      organizationId: workflow.organizationId ?? undefined,
-      organizationName,
-    });
+    // Intentional direct call (not start() from workflow/api): the executor and
+    // K8s runner are standalone processes with no DevKit run-processor, so they
+    // run the workflow synchronously to completion here. The DevKit editor hint
+    // to "use start()" only applies inside the Next runtime. Tradeoff: there is
+    // no checkpoint/resume, so a crash mid-run leaves the row "running" until a
+    // sweeper closes it - tracked separately from this dedup work.
+    const result = await executeWorkflow(
+      buildExecutorInput(workflow, {
+        triggerInput: input,
+        executionId,
+        organizationName,
+      })
+    );
 
     const duration = Date.now() - startTime;
     console.log(`[Executor:InProcess] Completed in ${duration}ms`);
 
+    // executeWorkflow is the authoritative writer of the terminal status (with
+    // reconciliation and richer fields). These updateExecutionStatus calls are
+    // a guarded backstop: the WHERE clause in updateExecutionStatus makes them
+    // a no-op once the engine's own write landed, and only closes the row if
+    // that write was lost - so a finished run is never left stuck "running".
     if (result.success) {
       await updateExecutionStatus(db, executionId, "success", {
         output: result.outputs,

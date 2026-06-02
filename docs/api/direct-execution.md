@@ -82,7 +82,7 @@ Call any smart contract function. Automatically detects read vs write operations
   "functionName": "balanceOf",
   "functionArgs": "[\"0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb\"]",
   "abi": "[{...}]",
-  "value": "0",
+  "value": "0.1",
   "gasLimitMultiplier": "1.2"
 }
 ```
@@ -94,7 +94,7 @@ Call any smart contract function. Automatically detects read vs write operations
 - `functionName` (required): Name of the function to call
 - `functionArgs` (optional): JSON array string of function arguments (e.g., `"[\"0x...\", \"1000\"]"`)
 - `abi` (optional): Contract ABI as JSON string. Auto-fetched from block explorer if omitted.
-- `value` (optional): ETH value to send with the call in wei (for payable functions)
+- `value` (optional): Native value to send with the call, as a decimal string in ether units (e.g. `0.1`) (for payable functions)
 - `gasLimitMultiplier` (optional): Gas limit multiplier
 
 ### Response
@@ -191,6 +191,97 @@ Read a contract value, evaluate a condition, and conditionally execute a write o
   }
 }
 ```
+
+## Dry-Run Simulation
+
+All three execute endpoints (`/api/execute/transfer`, `/api/execute/contract-call`, `/api/execute/check-and-execute`) accept a `simulate` flag on the body. When set to boolean `true`, the endpoint validates inputs, resolves the org's from-address, encodes the call, and runs `provider.estimateGas` + `provider.call` against the chain — **without** signing or broadcasting a transaction.
+
+No row is inserted into the execution audit table, no funds are reserved against the spending cap, and no transaction hash is produced. Use it to pre-flight a transaction (catch reverts, allowance mismatches, balance shortfalls, ABI mistakes) before spending gas.
+
+### Request
+
+Add `"simulate": true` to any of the standard request bodies:
+
+```json
+{
+  "contractAddress": "0x...",
+  "network": "ethereum",
+  "functionName": "transfer",
+  "functionArgs": "[\"0x...\", \"1000000\"]",
+  "abi": "[{...}]",
+  "simulate": true
+}
+```
+
+`simulate` must be a strict boolean — `true` or `false`. Strings (`"true"`), numbers (`1`), and other non-boolean values are rejected with HTTP 400 to prevent silent fall-through to a real broadcast. There is no query-string form; the body field is the only way to request a dry run.
+
+### Response — successful simulate
+
+```json
+{
+  "success": true,
+  "status": "simulated",
+  "from": "0x...orgWallet",
+  "to": "0x...target",
+  "value": "1000000000000000000",
+  "gasEstimate": "65000",
+  "simulatedReturnValue": true,
+  "wouldRevert": false
+}
+```
+
+- `from`: the org's wallet address used as the sender (see "Known limitation" below)
+- `value`: native value in wei sent with the call
+- `gasEstimate`: gas the network would charge, as a decimal string in wei
+- `simulatedReturnValue`: the decoded return value of the call (e.g. `true` for ERC-20 `transfer`, the read value for view functions, `null` for native transfers to an EOA recipient)
+- `wouldRevert`: always `false` on this path
+
+### Response — would-revert
+
+When the chain would have rejected the transaction, the endpoint returns HTTP 400 with the decoded reason:
+
+```json
+{
+  "success": false,
+  "status": "simulated",
+  "from": "0x...orgWallet",
+  "to": "0x...target",
+  "value": "0",
+  "wouldRevert": true,
+  "revertReason": "Error(ERC20: transfer amount exceeds balance)",
+  "error": "Error(ERC20: transfer amount exceeds balance)"
+}
+```
+
+Revert decoding tries (in order): the contract's own ABI custom errors, common OpenZeppelin / standard errors, then the standard `Error(string)` revert (which is surfaced as `Error(<message>)`). If none match, the raw RPC error message is surfaced.
+
+### Token-transfer specifics
+
+For ERC-20 transfers, `decimals` is optional — when omitted, the simulator looks up the token's `decimals()` on-chain. `tokenConfig` is resolved through the same helper the broadcast path uses, so `customToken`, `supportedTokenId`, and legacy `tokenConfig` shapes all work identically.
+
+### check-and-execute specifics
+
+`simulate: true` still evaluates the condition (which is read-only) and only swaps the **action's** write for a simulated call. The response wraps the simulate body in the existing `{ executed, conditionResult }` envelope:
+
+```json
+{
+  "success": true,
+  "status": "simulated",
+  "from": "0x...",
+  "to": "0x...",
+  "gasEstimate": "65000",
+  "simulatedReturnValue": true,
+  "wouldRevert": false,
+  "executed": true,
+  "conditionResult": { "met": true, "...": "..." }
+}
+```
+
+`executed` reflects whether the action would have successfully run, so a reverted simulate returns `executed: false`.
+
+### Known limitation
+
+The `from` address used during simulation is the org's wallet (`getOrganizationWalletAddress`). Organizations that route writes through a Safe will see a simulation that reflects the EOA sending the call, not the Safe. Most config-bug categories (bad ABI, bad args, insufficient balance, allowance mismatches) still surface; Safe-routed `msg.sender` semantics do not.
 
 ## Get Execution Status
 

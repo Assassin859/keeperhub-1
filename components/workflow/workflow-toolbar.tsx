@@ -6,6 +6,8 @@ import {
   Check,
   Copy,
   Download,
+  Globe,
+  Link2,
   Loader2,
   Lock,
   Share2,
@@ -42,6 +44,7 @@ import { useAuthPrompt } from "@/components/auth/provider";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import { api, ApiError, type Project, type Tag } from "@/lib/api-client";
 import { useSession } from "@/lib/auth-client";
+import { refetchSidebar } from "@/lib/refetch-sidebar";
 import { getCustomLogo } from "@/lib/workflow/editor/extension-registry";
 import { integrationsAtom } from "@/lib/integrations-store";
 import type { IntegrationType } from "@/lib/types/integration";
@@ -912,6 +915,7 @@ function useWorkflowActions(state: ReturnType<typeof useWorkflowState>) {
     setIsSaving,
     setHasUnsavedChanges,
     clearWorkflow,
+    workflowVisibility,
     setWorkflowVisibility,
     workflowPublicTags, // keeperhub custom field //
     setWorkflowPublicTags, // keeperhub custom field //
@@ -1086,6 +1090,7 @@ function useWorkflowActions(state: ReturnType<typeof useWorkflowState>) {
       openOverlay(GoLiveOverlay, {
         workflowId: currentWorkflowId,
         currentName: workflowName,
+        currentVisibility: workflowVisibility,
         orgTagNames: allTags.map((t) => t.name),
         onConfirm: ({ name, publicTags }) => {
           setWorkflowVisibility("public");
@@ -1120,10 +1125,12 @@ function useWorkflowActions(state: ReturnType<typeof useWorkflowState>) {
     openOverlay(GoLiveOverlay, {
       workflowId: currentWorkflowId,
       currentName: workflowName,
+      currentVisibility: workflowVisibility,
       orgTagNames: allTags.map((t) => t.name),
       initialTags: workflowPublicTags,
       isEditing: true,
-      onConfirm: ({ name, publicTags }) => {
+      onConfirm: ({ name, publicTags, visibility }) => {
+        setWorkflowVisibility(visibility);
         setWorkflowPublicTags(publicTags);
         if (name !== workflowName) {
           state.setCurrentWorkflowName(name);
@@ -1167,6 +1174,9 @@ function useWorkflowActions(state: ReturnType<typeof useWorkflowState>) {
         enabled,
       });
       state.setIsEnabled(enabled);
+      // The sidebar picker derives its "Disabled" label from this column,
+      // so it needs a refetch to drop the stale row state.
+      refetchSidebar();
       toast.success(enabled ? "Workflow enabled" : "Workflow disabled");
     } catch (error) {
       console.error("Failed to update enabled state:", error);
@@ -1281,12 +1291,12 @@ function ToolbarActions({
   const selectedEdge = edges.find((edge) => edge.id === selectedEdgeId);
   const hasSelection = selectedNode || selectedEdge;
 
-  // Hide toolbar actions (Run, Save, Edit, Settings) in preview context:
-  // either the viewer is not the owner, OR the workflow is publicly visible
-  // (preview surface). Owners viewing their own public templates see the
-  // Use-template CTA in the main toolbar instead.
-  const isPreviewContext =
-    !state.isOwner || state.workflowVisibility === "public";
+  // Hide owner-only toolbar actions (Run, Save, Edit, Settings) only for
+  // non-owners. Shared-link viewers of public/unlisted workflows still see
+  // the workflow exactly as the owner does (read-only canvas + the same
+  // visual chrome); the per-action buttons that mutate the workflow are
+  // already gated by ownership elsewhere.
+  const isPreviewContext = !state.isOwner;
   if (workflowId && isPreviewContext) {
     return null;
   }
@@ -1586,57 +1596,39 @@ function VisibilityButton({
   state: ReturnType<typeof useWorkflowState>;
   actions: ReturnType<typeof useWorkflowActions>;
 }) {
-  const isPublic = state.workflowVisibility === "public";
+  const visibility = state.workflowVisibility;
+  const isUnlisted = visibility === "unlisted";
+  const isPublic = visibility === "public";
+  const isShared = isUnlisted || isPublic;
+
+  let icon: React.ReactNode;
+  let tooltip: string;
+  if (isPublic) {
+    icon = <Globe className="size-4" />;
+    tooltip = "Listed on Hub";
+  } else if (isUnlisted) {
+    icon = <Link2 className="size-4" />;
+    tooltip = "Anyone with the link";
+  } else {
+    icon = <Lock className="size-4" />;
+    tooltip = "Private workflow";
+  }
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          className={
-            isPublic
-              ? "border border-keeperhub-green/20 text-keeperhub-green hover:bg-keeperhub-green/10"
-              : "border hover:bg-black/5 dark:hover:bg-white/5"
-          }
-          disabled={!state.currentWorkflowId || state.isGenerating}
-          size="icon"
-          title={isPublic ? "Shared workflow" : "Private workflow"}
-          variant="secondary"
-        >
-          {isPublic ? (
-            <Share2 className="size-4" />
-          ) : (
-            <Lock className="size-4" />
-          )}
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem
-          className="flex items-center gap-2"
-          onClick={() => actions.handleToggleVisibility("private")}
-        >
-          <Lock className="size-4" />
-          Private
-          {!isPublic && <Check className="ml-auto size-4" />}
-        </DropdownMenuItem>
-        {isPublic ? (
-          <DropdownMenuItem
-            className="flex items-center gap-2"
-            onClick={() => actions.handleEditPublicSettings()}
-          >
-            <Settings2 className="size-4" />
-            Share Settings
-          </DropdownMenuItem>
-        ) : (
-          <DropdownMenuItem
-            className="flex items-center gap-2"
-            onClick={() => actions.handleToggleVisibility("public")}
-          >
-            <Share2 className="size-4" />
-            Share
-          </DropdownMenuItem>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <Button
+      className={
+        isShared
+          ? "border border-keeperhub-green/20 text-keeperhub-green hover:bg-keeperhub-green/10"
+          : "border hover:bg-black/5 dark:hover:bg-white/5"
+      }
+      disabled={!state.currentWorkflowId || state.isGenerating}
+      onClick={() => actions.handleEditPublicSettings()}
+      size="icon"
+      title={tooltip}
+      variant="secondary"
+    >
+      {icon}
+    </Button>
   );
 }
 
@@ -1800,9 +1792,6 @@ function WorkflowMenuComponent({
 
   return (
     <div className="flex flex-col gap-1">
-      {isWorkflowRoute && workflowId && (state.workflowVisibility === "public" || !state.isOwner) && (
-        <ReadOnlyBadge className="lg:hidden" />
-      )}
     </div>
   );
 }
@@ -1869,9 +1858,15 @@ export const WorkflowToolbar = ({
             state={state}
             workflowId={effectiveWorkflowId}
           />
+          {isWorkflowRoute && state.currentWorkflowId && (
+            <span className="hidden max-w-48 truncate font-medium text-foreground text-sm lg:inline-block">
+              {state.workflowName}
+            </span>
+          )}
           {isWorkflowRoute &&
             effectiveWorkflowId &&
-            (state.workflowVisibility === "public" || !state.isOwner) && (
+            !state.isOwner &&
+            state.workflowVisibility === "public" && (
               <>
                 <ReadOnlyBadge className="hidden lg:inline-flex" />
                 <UseTemplateButton
@@ -1930,7 +1925,8 @@ export const WorkflowToolbar = ({
           />
           {isWorkflowRoute &&
             effectiveWorkflowId &&
-            (state.workflowVisibility === "public" || !state.isOwner) && (
+            !state.isOwner &&
+            state.workflowVisibility === "public" && (
               <>
                 <ReadOnlyBadge className="hidden lg:inline-flex" />
                 <UseTemplateButton

@@ -324,6 +324,63 @@ const DEFAULT_CHAINS: NewChain[] = [
     usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "arbitrum-sepolia" }),
     defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "arbitrum-sepolia" }),
   },
+  // Optimism chains
+  {
+    chainId: getChainConfigValue("op-mainnet", "chainId", 10),
+    name: "Optimism",
+    symbol: getChainConfigValue("op-mainnet", "symbol", "ETH"),
+    chainType: "evm",
+    defaultPrimaryRpc: getRpcUrlByChainId(10, "primary"),
+    defaultFallbackRpc: getRpcUrlByChainId(10, "fallback"),
+    defaultPrimaryWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[10].jsonKey,
+      type: "primary",
+    }),
+    defaultFallbackWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[10].jsonKey,
+      type: "fallback",
+    }),
+    isTestnet: getChainConfigValue("op-mainnet", "isTestnet", false),
+    isEnabled: getChainConfigValue("op-mainnet", "isEnabled", true),
+    usePrivateMempoolRpc: getUsePrivateMempoolRpc({
+      rpcConfig,
+      jsonKey: "op-mainnet",
+    }),
+    defaultPrivateRpcUrl: getPrivateRpcUrl({
+      rpcConfig,
+      jsonKey: "op-mainnet",
+    }),
+  },
+  {
+    chainId: getChainConfigValue("op-sepolia", "chainId", 11_155_420),
+    name: "Optimism Sepolia",
+    symbol: getChainConfigValue("op-sepolia", "symbol", "ETH"),
+    chainType: "evm",
+    defaultPrimaryRpc: getRpcUrlByChainId(11_155_420, "primary"),
+    defaultFallbackRpc: getRpcUrlByChainId(11_155_420, "fallback"),
+    defaultPrimaryWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[11_155_420].jsonKey,
+      type: "primary",
+    }),
+    defaultFallbackWss: getWssUrl({
+      rpcConfig,
+      jsonKey: CHAIN_CONFIG[11_155_420].jsonKey,
+      type: "fallback",
+    }),
+    isTestnet: getChainConfigValue("op-sepolia", "isTestnet", true),
+    isEnabled: getChainConfigValue("op-sepolia", "isEnabled", true),
+    usePrivateMempoolRpc: getUsePrivateMempoolRpc({
+      rpcConfig,
+      jsonKey: "op-sepolia",
+    }),
+    defaultPrivateRpcUrl: getPrivateRpcUrl({
+      rpcConfig,
+      jsonKey: "op-sepolia",
+    }),
+  },
   // Avalanche chains
   {
     chainId: getChainConfigValue("avax-mainnet", "chainId", 43_114),
@@ -434,6 +491,7 @@ const DEFAULT_CHAINS: NewChain[] = [
     }),
     isTestnet: getChainConfigValue("0g-mainnet", "isTestnet", false),
     isEnabled: getChainConfigValue("0g-mainnet", "isEnabled", true),
+    status: "experimental",
     usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "0g-mainnet" }),
     defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "0g-mainnet" }),
   },
@@ -456,6 +514,7 @@ const DEFAULT_CHAINS: NewChain[] = [
     }),
     isTestnet: getChainConfigValue("0g-galileo", "isTestnet", true),
     isEnabled: getChainConfigValue("0g-galileo", "isEnabled", true),
+    status: "experimental",
     usePrivateMempoolRpc: getUsePrivateMempoolRpc({ rpcConfig, jsonKey: "0g-galileo" }),
     defaultPrivateRpcUrl: getPrivateRpcUrl({ rpcConfig, jsonKey: "0g-galileo" }),
   },
@@ -634,6 +693,26 @@ const EXPLORER_CONFIG_TEMPLATES: Record<
     explorerAddressPath: "/address/{address}",
     explorerContractPath: "/address/{address}#code",
   },
+  // Optimism Mainnet - Etherscan V2 (OP Etherscan)
+  10: {
+    chainType: "evm",
+    explorerUrl: "https://optimistic.etherscan.io",
+    explorerApiType: "etherscan",
+    explorerApiUrl: "https://api.etherscan.io/v2/api",
+    explorerTxPath: "/tx/{hash}",
+    explorerAddressPath: "/address/{address}",
+    explorerContractPath: "/address/{address}#code",
+  },
+  // Optimism Sepolia - Etherscan V2
+  11155420: {
+    chainType: "evm",
+    explorerUrl: "https://sepolia-optimism.etherscan.io",
+    explorerApiType: "etherscan",
+    explorerApiUrl: "https://api.etherscan.io/v2/api",
+    explorerTxPath: "/tx/{hash}",
+    explorerAddressPath: "/address/{address}",
+    explorerContractPath: "/address/{address}#code",
+  },
   // Avalanche C-Chain - Etherscan V2 (Snowtrace)
   43114: {
     chainType: "evm",
@@ -751,6 +830,7 @@ async function seedChains() {
           defaultPrivateRpcUrl: chain.defaultPrivateRpcUrl ?? null,
           isTestnet: chain.isTestnet,
           isEnabled: chain.isEnabled,
+          status: chain.status ?? "stable",
           updatedAt: new Date(),
         })
         .where(eq(chains.chainId, chain.chainId));
@@ -778,6 +858,8 @@ async function seedChains() {
     "Arbitrum One": 42_161,
     "Polygon Amoy": 80_002,
     "Arbitrum Sepolia": 421_614,
+    Optimism: 10,
+    "Optimism Sepolia": 11_155_420,
     Avalanche: 43_114,
     "Avalanche Fuji": 43_113,
     Plasma: 9745,

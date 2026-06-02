@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { accounts } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { requireDualFactor } from "@/lib/mfa/dual-factor";
 import { hashPassword, verifyPassword } from "@/lib/password";
 
 const OAUTH_PROVIDERS = ["github", "google"];
@@ -55,8 +56,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     const body = (await request.json()) as {
       currentPassword?: string;
       newPassword?: string;
+      code?: string;
+      emailOtp?: string;
     };
-    const { currentPassword, newPassword } = body;
+    const { currentPassword, newPassword, code, emailOtp } = body;
 
     if (!(currentPassword && newPassword)) {
       return NextResponse.json(
@@ -88,6 +91,24 @@ export async function POST(request: Request): Promise<NextResponse> {
       return NextResponse.json(
         { error: "Current password is incorrect" },
         { status: 401 }
+      );
+    }
+
+    // Dual-factor challenge. Phished current password alone must not
+    // rotate the account password — TOTP + email OTP together stop
+    // the takeover.
+    const dual = await requireDualFactor({
+      userId: session.user.id,
+      email: session.user.email,
+      action: "password_change",
+      code,
+      emailOtp,
+      headers: request.headers,
+    });
+    if (!dual.ok) {
+      return NextResponse.json(
+        { error: dual.error, code: dual.code },
+        { status: dual.status }
       );
     }
 

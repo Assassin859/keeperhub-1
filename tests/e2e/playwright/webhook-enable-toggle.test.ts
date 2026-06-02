@@ -18,7 +18,9 @@ async function loadWorkflowWithTrigger(
     triggerType,
     enabled: false,
   });
-  await page.goto(`/workflows/${workflow.id}`, { waitUntil: "domcontentloaded" });
+  await page.goto(`/workflows/${workflow.id}`, {
+    waitUntil: "domcontentloaded",
+  });
   await waitForCanvas(page);
   return workflow.id;
 }

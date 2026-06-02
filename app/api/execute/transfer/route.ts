@@ -3,6 +3,10 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
+import {
+  simulateNativeTransfer,
+  simulateTokenTransfer,
+} from "@/lib/execute/simulate";
 import { transferFundsCore } from "@/plugins/web3/steps/transfer-funds-core";
 import { transferTokenCore } from "@/plugins/web3/steps/transfer-token-core";
 import { validateApiKey } from "../_lib/auth";
@@ -13,6 +17,7 @@ import {
   redactInput,
 } from "../_lib/execution-service";
 import { checkRateLimit } from "../_lib/rate-limit";
+import { parseSimulateFlag } from "../_lib/simulate-flag";
 import { checkAndReserveExecution } from "../_lib/spending-cap";
 import { validateTokenFields, validateTransferInput } from "../_lib/validate";
 import { requireWallet } from "../_lib/wallet-check";
@@ -61,8 +66,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json(tokenValidation.error, { status: 400 });
   }
 
-  const { network, recipientAddress, amount } = body as {
-    network: string;
+  // KEEP-490: accept `chainId` as canonical, `network` as deprecated alias.
+  // The core helper normalizes the value internally (chainId number / string,
+  // or a known chain name) so we just pick whichever field is present.
+  const network = String(
+    (body as Record<string, unknown>).chainId ?? body.network ?? ""
+  );
+  const { recipientAddress, amount } = body as {
     recipientAddress: string;
     amount: string;
   };
@@ -73,6 +83,47 @@ export async function POST(request: Request): Promise<NextResponse> {
   const walletError = await requireWallet(apiKeyCtx.organizationId);
   if (walletError) {
     return walletError;
+  }
+
+  // 5.5 Dry-run path: validate inputs, simulate via estimateGas only,
+  // never broadcast, never reserve. Triggered by strict boolean
+  // `simulate: true` on the body. Token-transfer simulates resolve the
+  // token address via the same parseTokenAddress helper the broadcast
+  // path uses and fetch on-chain decimals when not provided.
+  const simulateFlag = parseSimulateFlag(body);
+  if (!simulateFlag.ok) {
+    return NextResponse.json(
+      { error: simulateFlag.error, field: "simulate" },
+      { status: 400 }
+    );
+  }
+  if (simulateFlag.simulate) {
+    if (isTokenTransfer) {
+      const result = await simulateTokenTransfer({
+        organizationId: apiKeyCtx.organizationId,
+        network,
+        tokenAddress: body.tokenAddress as string | undefined,
+        tokenConfig: body.tokenConfig as
+          | string
+          | Record<string, unknown>
+          | undefined,
+        recipientAddress,
+        amount,
+        decimals: typeof body.decimals === "number" ? body.decimals : undefined,
+      });
+      return NextResponse.json(result, {
+        status: result.wouldRevert ? 400 : 200,
+      });
+    }
+    const nativeResult = await simulateNativeTransfer({
+      organizationId: apiKeyCtx.organizationId,
+      network,
+      recipientAddress,
+      amount,
+    });
+    return NextResponse.json(nativeResult, {
+      status: nativeResult.wouldRevert ? 400 : 200,
+    });
   }
 
   // 6. Spending cap + create execution atomically

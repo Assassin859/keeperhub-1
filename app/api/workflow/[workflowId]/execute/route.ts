@@ -1,6 +1,5 @@
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { start } from "workflow/api";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
@@ -9,71 +8,20 @@ import { LabelKeys, MetricNames } from "@/lib/metrics/types";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit";
 import { db } from "@/lib/db";
+import { withBackstopCapture } from "@/lib/security/backstop-capture";
+import {
+  buildAttribution,
+  resolveTriggerLabels,
+} from "@/lib/security/request-attribution";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
+import { extractActionTypeNodes } from "@/lib/features";
+import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
 import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
-import { workflowExecutions, workflows } from "@/lib/db/schema";
-import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
+import { users, workflowExecutions, workflows } from "@/lib/db/schema";
+import { getWorkflowAccess } from "@/lib/workflow/access";
+import { getWorkflowExecutability } from "@/lib/workflow/executable";
+import { executeWorkflowInBackground } from "@/lib/workflow/execute-in-background";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
-
-async function executeWorkflowBackground(
-  executionId: string,
-  workflowId: string,
-  nodes: WorkflowNode[],
-  edges: WorkflowEdge[],
-  input: Record<string, unknown>,
-  organizationId?: string | null,
-  ownerId?: string,
-  organizationSlug?: string,
-  organizationPlan?: string
-): Promise<void> {
-  try {
-    console.log("[Workflow Execute] Starting execution:", executionId);
-
-    // SECURITY: We pass only the workflowId as a reference
-    // Steps will fetch credentials internally using fetchWorkflowCredentials(workflowId)
-    // This prevents credentials from being logged in workflow observability output
-    console.log("[Workflow Execute] Calling executeWorkflow with:", {
-      nodeCount: nodes.length,
-      edgeCount: edges.length,
-      hasExecutionId: !!executionId,
-      workflowId,
-    });
-
-    // Use start() from workflow/api to properly execute the workflow
-    const run = await start(executeWorkflow, [
-      {
-        nodes,
-        edges,
-        triggerInput: input,
-        executionId,
-        workflowId,
-        organizationId: organizationId ?? undefined,
-        ownerId,
-        organizationSlug,
-        organizationPlan,
-      },
-    ]);
-
-    console.log("[Workflow Execute] Workflow started, runId:", run.runId);
-
-    await db
-      .update(workflowExecutions)
-      .set({ runId: run.runId })
-      .where(eq(workflowExecutions.id, executionId));
-  } catch (error) {
-    logSystemError(ErrorCategory.WORKFLOW_ENGINE, "[Workflow Execute] Error during execution", error, { endpoint: "/api/workflow/[workflowId]/execute", operation: "executeWorkflow" });
-
-    // Update execution record with error
-    await db
-      .update(workflowExecutions)
-      .set({
-        status: "error",
-        error: error instanceof Error ? error.message : "Unknown error",
-        completedAt: new Date(),
-      })
-      .where(eq(workflowExecutions.id, executionId));
-  }
-}
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Workflow execution requires complex error handling and validation
 export async function POST(
@@ -89,6 +37,7 @@ export async function POST(
 
     let userId: string;
     let workflow: typeof workflows.$inferSelect | undefined;
+    let orgApiKeyId: string | null = null;
 
     if (isInternalExecution) {
       // Internal execution from authenticated service
@@ -108,6 +57,19 @@ export async function POST(
       }
 
       userId = workflow.userId;
+
+      const access = await getWorkflowAccess(workflow, {
+        userId,
+        organizationId: null,
+        authMethod: "internal",
+      });
+
+      if (!access.hasFullAccess) {
+        return NextResponse.json(
+          { error: "Workflow not found" },
+          { status: 404 }
+        );
+      }
     } else {
       const authContext = await getDualAuthContext(request);
       if ("error" in authContext) {
@@ -128,17 +90,46 @@ export async function POST(
         );
       }
 
-      const isOwner = authContext.authMethod === "session" && workflow.userId === authContext.userId;
-      const isSameOrg =
-        !workflow.isAnonymous &&
-        workflow.organizationId &&
-        authContext.organizationId === workflow.organizationId;
+      const access = await getWorkflowAccess(workflow, {
+        userId: authContext.userId,
+        organizationId: authContext.organizationId,
+        authMethod: authContext.authMethod,
+      });
 
-      if (!(isOwner || isSameOrg)) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      if (!access.hasFullAccess) {
+        return NextResponse.json(
+          { error: "Workflow not found" },
+          { status: 404 }
+        );
       }
 
       userId = authContext.userId ?? workflow.userId;
+      if (authContext.authMethod === "api-key") {
+        orgApiKeyId = authContext.apiKeyId;
+      }
+    }
+
+    // Gate on workflow lifecycle using the shared executability predicate so
+    // this route cannot drift from the scheduler/executor. A soft-deleted or
+    // deactivated-owner workflow is never runnable. The `enabled` flag gates
+    // automated dispatch only: interactive callers (the editor "Run" button)
+    // must still be able to test a not-yet-enabled workflow, so a disabled
+    // workflow is allowed through the dual-auth branch.
+    const [owner] = await db
+      .select({ deactivatedAt: users.deactivatedAt })
+      .from(users)
+      .where(eq(users.id, workflow.userId))
+      .limit(1);
+    const executability = getWorkflowExecutability({
+      enabled: workflow.enabled,
+      deletedAt: workflow.deletedAt,
+      ownerDeactivatedAt: owner?.deactivatedAt ?? null,
+    });
+    const blockedByExecutability =
+      !executability.executable &&
+      (isInternalExecution || executability.reason !== "disabled");
+    if (blockedByExecutability) {
+      return NextResponse.json({ error: "Workflow not found" }, { status: 404 });
     }
 
     // Validate that all integrationIds in workflow nodes belong to the user or org
@@ -153,6 +144,14 @@ export async function POST(
         { error: "Workflow contains invalid integration references" },
         { status: 403 }
       );
+    }
+
+    const featureGuard = await enforceWorkflowFeatures(
+      extractActionTypeNodes(workflow.nodes as unknown[]),
+      workflow.organizationId
+    );
+    if (featureGuard.blocked) {
+      return featureGuard.response;
     }
 
     const executionGuard = await enforceExecutionLimit(workflow.organizationId);
@@ -176,9 +175,28 @@ export async function POST(
     const body = await request.json().catch(() => ({}));
     const input = body.input || {};
 
+    // Resolve the (metric, audit) trigger labels in one place -- see
+    // resolveTriggerLabels for the schedule/scheduled convergence and the
+    // intentional triggerType-vs-triggerSource divergence. Extracted +
+    // unit-tested so a value typo can't silently re-fragment the metric.
+    const { triggerType, triggerSource } = resolveTriggerLabels(
+      request.headers.get("x-trigger-type"),
+      isInternalExecution
+    );
+    const attribution = buildAttribution({
+      request,
+      source: triggerSource,
+      orgApiKeyId,
+    });
+
     // Check if executionId was provided (for scheduled executions)
     // This allows the executor to pre-create the execution record
     let executionId = body.executionId;
+    // Whether this request created the workflow_executions row itself, vs.
+    // reusing one that the executor pre-created. The KEEP-556 counter only
+    // increments here when we created the row, so the executor-side increment
+    // and this one never double-count.
+    let createdHere = false;
 
     if (executionId) {
       // Verify execution exists and is in running state
@@ -191,38 +209,55 @@ export async function POST(
         console.log("[API] Using existing execution:", executionId);
       } else {
         // Create new execution with provided ID
-        await db.insert(workflowExecutions).values({
-          id: executionId,
-          workflowId,
-          userId,
-          status: "running",
-          input,
-        });
+        await withBackstopCapture(
+          { workflowId, userId, source: triggerSource },
+          () =>
+            db.insert(workflowExecutions).values({
+              id: executionId,
+              workflowId,
+              userId,
+              status: "pending",
+              input,
+              ...attribution,
+            })
+        );
         console.log("[API] Created execution with provided ID:", executionId);
+        createdHere = true;
       }
     } else {
       // Create new execution record
-      const [execution] = await db
-        .insert(workflowExecutions)
-        .values({
-          workflowId,
-          userId,
-          status: "running",
-          input,
-        })
-        .returning();
+      const [execution] = await withBackstopCapture(
+        { workflowId, userId, source: triggerSource },
+        () =>
+          db
+            .insert(workflowExecutions)
+            .values({
+              workflowId,
+              userId,
+              status: "pending",
+              input,
+              ...attribution,
+            })
+            .returning()
+      );
 
       executionId = execution.id;
       console.log("[API] Created execution:", executionId);
+      createdHere = true;
     }
 
-    // Record workflow execution metric in API process (workflow runs in separate context)
-    const triggerType = isInternalExecution ? "scheduled" : "manual";
-    const metrics = getMetricsCollector();
-    metrics.incrementCounter(MetricNames.WORKFLOW_EXECUTIONS_TOTAL, {
-      [LabelKeys.TRIGGER_TYPE]: triggerType,
-      [LabelKeys.WORKFLOW_ID]: workflowId,
-    });
+    // Record per-(trigger_type, chain) start of a workflow execution. Drives the
+    // Grafana "zero executions in N min" alert family (see KEEP-556). Skipped
+    // when the executor pre-created the row - it already incremented on its
+    // side in that case.
+    if (createdHere) {
+      const chainLabel = workflow.chain ?? "_unknown";
+      const metrics = getMetricsCollector();
+      metrics.incrementCounter(MetricNames.WORKFLOW_EXECUTIONS_STARTED_TOTAL, {
+        [LabelKeys.TRIGGER_TYPE]: triggerType,
+        [LabelKeys.CHAIN]: chainLabel,
+      });
+    }
 
     // Resolve org slug + plan for log labels (cached per request)
     const [organizationSlug, organizationPlan] = await Promise.all([
@@ -231,12 +266,16 @@ export async function POST(
     ]);
 
     // Execute the workflow in the background (don't await)
-    executeWorkflowBackground(
+    executeWorkflowInBackground(
       executionId,
       workflowId,
       workflow.nodes as WorkflowNode[],
       workflow.edges as WorkflowEdge[],
       input,
+      {
+        logPrefix: "[Workflow Execute]",
+        endpoint: "/api/workflow/[workflowId]/execute",
+      },
       workflow.organizationId,
       workflow.userId,
       organizationSlug,

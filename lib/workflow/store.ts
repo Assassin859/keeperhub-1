@@ -1,9 +1,9 @@
 import type { Edge, EdgeChange, Node, NodeChange } from "@xyflow/react";
 import { applyEdgeChanges, applyNodeChanges } from "@xyflow/react";
 import { atom } from "jotai";
+import { api } from "@/lib/api-client";
 import { computeAutoLayout } from "@/lib/workflow/editor/auto-layout";
 import { buildExecutionLogsMap } from "@/lib/workflow/editor/template-helpers";
-import { api } from "@/lib/api-client";
 
 export type WorkflowNodeType = "trigger" | "action" | "add";
 
@@ -33,6 +33,42 @@ export function shouldShowEnableSwitch(
   );
 }
 
+/**
+ * Pull the trigger type off the trigger node in a workflow's node list.
+ * Used by surfaces that need to gate behavior on what fires the workflow
+ * without dragging the full editor store into view -- e.g. the sidebar
+ * picker deciding whether to surface a "Disabled" label.
+ */
+export function getWorkflowTriggerType(
+  nodes: Array<{ data?: { type?: string; config?: Record<string, unknown> } }>
+): WorkflowTriggerType | undefined {
+  const triggerNode = nodes.find((node) => node.data?.type === "trigger");
+  const raw = triggerNode?.data?.config?.triggerType;
+  if (typeof raw !== "string") {
+    return undefined;
+  }
+  // "Scheduled" is a legacy spelling that still lives in some workflow rows;
+  // executor / metrics / mcp normalize it the same way before comparing.
+  const normalized = raw === "Scheduled" ? "Schedule" : raw;
+  return normalized as WorkflowTriggerType;
+}
+
+/**
+ * Show the "Disabled" label in the sidebar picker only when the workflow has
+ * a trigger type whose schedule the user can actually flip with the enable
+ * switch. Manual workflows persist `enabled = false` by default but can't be
+ * disabled through the UI -- labeling them would be noise.
+ */
+export function shouldShowDisabledBadge(workflow: {
+  enabled?: boolean | null;
+  triggerType?: WorkflowTriggerType | null;
+}): boolean {
+  if (workflow.enabled !== false) {
+    return false;
+  }
+  return shouldShowEnableSwitch(workflow.triggerType ?? undefined);
+}
+
 export type WorkflowNodeData = {
   label: string;
   description?: string;
@@ -47,7 +83,10 @@ export type WorkflowNode = Node<WorkflowNodeData>;
 export type WorkflowEdge = Edge;
 
 // Workflow visibility type
-export type WorkflowVisibility = "private" | "public";
+// - private: only owner / org members can view (default)
+// - unlisted: anyone with the URL can view read-only; not surfaced in Hub feed
+// - public: viewable by anyone AND listed on the Hub
+export type WorkflowVisibility = "private" | "unlisted" | "public";
 
 // Atoms for workflow state (now backed by database)
 export const nodesAtom = atom<WorkflowNode[]>([]);

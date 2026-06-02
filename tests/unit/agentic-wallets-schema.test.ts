@@ -3,12 +3,12 @@ import { describe, expect, it } from "vitest";
 import {
   type AgenticWallet,
   type AgenticWalletCredit,
-  agenticWalletCredits as reexportedAgenticWalletCredits,
   approvalRiskLevel,
   approvalStatus,
   type NewAgenticWallet,
   type NewAgenticWalletCredit,
   type NewWalletApprovalRequest,
+  agenticWalletCredits as reexportedAgenticWalletCredits,
   agenticWallets as reexportedAgenticWallets,
   walletApprovalRequests as reexportedApprovalRequests,
   type WalletApprovalRequest,

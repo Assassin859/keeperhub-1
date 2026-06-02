@@ -1,12 +1,13 @@
 import "server-only";
 
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { and, eq, inArray } from "drizzle-orm";
-import { truncateAddress } from "@/lib/address-utils";
+import { and, eq } from "drizzle-orm";
+import { toChecksumAddress } from "@/lib/address-utils";
+import { filterUnauthorizedIntegrationIds } from "@/lib/integrations/authorization";
 import {
   getOrganizationWallet,
   organizationHasWallet,
-} from "@/lib/para/wallet-helpers";
+} from "@/lib/web3/wallet-helpers";
 import {
   findActionById,
   getIntegration as getPluginDefinition,
@@ -14,6 +15,7 @@ import {
 import type { IntegrationConfig, IntegrationType } from "../types/integration";
 import { db } from "./index";
 import { integrations, type NewIntegration } from "./schema";
+import { organizationWallets } from "./schema-extensions";
 
 // Encryption configuration
 const ALGORITHM = "aes-256-gcm";
@@ -157,7 +159,35 @@ export type DecryptedIntegration = {
   isManaged: boolean | null;
   createdAt: Date;
   updatedAt: Date;
+  /**
+   * Canonical wallet address for web3 integrations (EIP-55 checksummed).
+   * Always null for non-web3 integration types. Derived from
+   * `organization_wallets.wallet_address` (active wallet) via LEFT JOIN.
+   *
+   * KEEP-484: `name` was historically a UI-truncated display string for
+   * web3 rows (`0x5623...960C`), which callers passed verbatim as
+   * `onBehalfOf` to contract calls and reverted. Surfacing the canonical
+   * address as its own field removes that ambiguity for API consumers.
+   */
+  address: string | null;
 };
+
+function isWeb3Row(row: {
+  type: string;
+  walletAddress?: string | null;
+}): boolean {
+  return row.type === "web3";
+}
+
+function deriveAddress(row: {
+  type: string;
+  walletAddress?: string | null;
+}): string | null {
+  if (!isWeb3Row(row)) {
+    return null;
+  }
+  return row.walletAddress ? toChecksumAddress(row.walletAddress) : null;
+}
 
 /**
  * Get all integrations for a user, optionally filtered by type
@@ -177,15 +207,53 @@ export async function getIntegrations(
   }
 
   const results = await db
-    .select()
+    .select({
+      id: integrations.id,
+      userId: integrations.userId,
+      organizationId: integrations.organizationId,
+      name: integrations.name,
+      type: integrations.type,
+      config: integrations.config,
+      isManaged: integrations.isManaged,
+      createdAt: integrations.createdAt,
+      updatedAt: integrations.updatedAt,
+      walletAddress: organizationWallets.walletAddress,
+    })
     .from(integrations)
+    .leftJoin(
+      organizationWallets,
+      and(
+        eq(organizationWallets.organizationId, integrations.organizationId),
+        eq(organizationWallets.isActive, true)
+      )
+    )
     .where(and(...conditions));
 
-  return results.map((integration) => ({
-    ...integration,
-    config: decryptConfig(integration.config as string) as IntegrationConfig,
+  return results.map((row) => ({
+    id: row.id,
+    userId: row.userId,
+    name: row.name,
+    type: row.type,
+    config: decryptConfig(row.config as string) as IntegrationConfig,
+    isManaged: row.isManaged,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    address: deriveAddress(row),
   }));
 }
+
+const integrationWithWalletSelect = {
+  id: integrations.id,
+  userId: integrations.userId,
+  organizationId: integrations.organizationId,
+  name: integrations.name,
+  type: integrations.type,
+  config: integrations.config,
+  isManaged: integrations.isManaged,
+  createdAt: integrations.createdAt,
+  updatedAt: integrations.updatedAt,
+  walletAddress: organizationWallets.walletAddress,
+} as const;
 
 /**
  * Get a single integration by ID
@@ -204,8 +272,15 @@ export async function getIntegration(
     : [eq(integrations.id, integrationId), eq(integrations.userId, userId)];
 
   const result = await db
-    .select()
+    .select(integrationWithWalletSelect)
     .from(integrations)
+    .leftJoin(
+      organizationWallets,
+      and(
+        eq(organizationWallets.organizationId, integrations.organizationId),
+        eq(organizationWallets.isActive, true)
+      )
+    )
     .where(and(...conditions))
     .limit(1);
 
@@ -213,9 +288,17 @@ export async function getIntegration(
     return null;
   }
 
+  const row = result[0];
   return {
-    ...result[0],
-    config: decryptConfig(result[0].config as string) as IntegrationConfig,
+    id: row.id,
+    userId: row.userId,
+    name: row.name,
+    type: row.type,
+    config: decryptConfig(row.config as string) as IntegrationConfig,
+    isManaged: row.isManaged,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    address: deriveAddress(row),
   };
 }
 
@@ -226,8 +309,15 @@ export async function getIntegrationById(
   integrationId: string
 ): Promise<DecryptedIntegration | null> {
   const result = await db
-    .select()
+    .select(integrationWithWalletSelect)
     .from(integrations)
+    .leftJoin(
+      organizationWallets,
+      and(
+        eq(organizationWallets.organizationId, integrations.organizationId),
+        eq(organizationWallets.isActive, true)
+      )
+    )
     .where(eq(integrations.id, integrationId))
     .limit(1);
 
@@ -235,9 +325,17 @@ export async function getIntegrationById(
     return null;
   }
 
+  const row = result[0];
   return {
-    ...result[0],
-    config: decryptConfig(result[0].config as string) as IntegrationConfig,
+    id: row.id,
+    userId: row.userId,
+    name: row.name,
+    type: row.type,
+    config: decryptConfig(row.config as string) as IntegrationConfig,
+    isManaged: row.isManaged,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    address: deriveAddress(row),
   };
 }
 
@@ -253,6 +351,25 @@ type CreateIntegrationOptions = {
   organizationId?: string | null;
 };
 
+async function lookupWalletAddress(
+  organizationId: string | null | undefined
+): Promise<string | null> {
+  if (!organizationId) {
+    return null;
+  }
+  const [wallet] = await db
+    .select({ walletAddress: organizationWallets.walletAddress })
+    .from(organizationWallets)
+    .where(
+      and(
+        eq(organizationWallets.organizationId, organizationId),
+        eq(organizationWallets.isActive, true)
+      )
+    )
+    .limit(1);
+  return wallet?.walletAddress ?? null;
+}
+
 export async function createIntegration(
   options: CreateIntegrationOptions
 ): Promise<DecryptedIntegration> {
@@ -267,12 +384,21 @@ export async function createIntegration(
       type,
       config: encryptedConfig,
       organizationId,
+      // Org-scoped integrations are team-shared by default so collaborative
+      // workflows keep working without a grant step; personal (no-org)
+      // integrations stay owner-only. Matches the migration backfill. Owners
+      // can later tighten an org integration to private/specific_members.
+      visibility: organizationId ? "organization" : "private",
     })
     .returning();
+
+  const walletAddress =
+    type === "web3" ? await lookupWalletAddress(organizationId) : null;
 
   return {
     ...result,
     config,
+    address: deriveAddress({ type, walletAddress }),
   };
 }
 
@@ -290,7 +416,11 @@ export function buildWalletIntegrationPayload(
   return {
     userId,
     organizationId,
-    name: truncateAddress(walletAddress),
+    // KEEP-484: store the canonical EIP-55 checksummed address. Historical
+    // rows used a UI-truncated display string like `0x5623...960C`, which
+    // API consumers mistook for a real address and passed verbatim to
+    // contract calls. Truncation is a presentation concern handled by UI.
+    name: toChecksumAddress(walletAddress),
     type: "web3",
     config: {},
   };
@@ -346,7 +476,11 @@ export async function ensureWalletIntegration(
   // app/api/user/wallet/route.ts).
   try {
     await createIntegration(
-      buildWalletIntegrationPayload(userId, organizationId, wallet.walletAddress)
+      buildWalletIntegrationPayload(
+        userId,
+        organizationId,
+        wallet.walletAddress
+      )
     );
   } catch (err) {
     if (!isUniqueViolation(err)) {
@@ -412,9 +546,15 @@ export async function updateIntegration(
     return null;
   }
 
+  const walletAddress =
+    result.type === "web3"
+      ? await lookupWalletAddress(result.organizationId)
+      : null;
+
   return {
     ...result,
     config: decryptConfig(result.config as string) as IntegrationConfig,
+    address: deriveAddress({ type: result.type, walletAddress }),
   };
 }
 
@@ -502,15 +642,19 @@ export function extractIntegrationIds(
 }
 
 /**
- * Validate that all integration IDs in workflow nodes either:
- * 1. Belong to the specified user (or organization), or
- * 2. Don't exist (deleted integrations - stale references are allowed)
+ * Validate that the executing/saving principal is authorized to use every
+ * integration referenced by a workflow's nodes.
  *
- * This prevents users from accessing other users' credentials by embedding
- * foreign integration IDs in their workflows, while allowing workflows
- * with references to deleted integrations to still be saved.
+ * Authorization is per-integration against the principal's grant (owner,
+ * organization visibility + membership, or an explicit specific_members
+ * grant) - not merely "same organization". This is what closes the
+ * lateral-movement path where any org member could run a workflow that
+ * referenced another member's credential. Non-existent ids (deleted
+ * integrations) stay valid so stale references remain savable.
  *
- * Updated to support organization context
+ * `userId` + `organizationId` together are the effective principal: the
+ * authenticated caller for interactive executions and saves, or the workflow
+ * owner for owner-context executions (webhook, scheduler, internal, MCP).
  *
  * @returns Object with `valid` boolean and optional `invalidIds` array
  */
@@ -525,29 +669,10 @@ export async function validateWorkflowIntegrations(
     return { valid: true };
   }
 
-  // Query for ALL integrations with these IDs (regardless of user/org)
-  // to check if any belong to other users/orgs
-  const existingIntegrations = await db
-    .select({
-      id: integrations.id,
-      userId: integrations.userId,
-      organizationId: integrations.organizationId,
-    })
-    .from(integrations)
-    .where(inArray(integrations.id, integrationIds));
-
-  // Find integrations that exist but belong to a different user/org
-  // (deleted integrations won't appear here, which is fine)
-  const invalidIds = existingIntegrations
-    .filter((i) => {
-      if (organizationId) {
-        // For org workflows, check org membership
-        return i.organizationId !== organizationId;
-      }
-      // For anonymous workflows, check user ownership
-      return i.userId !== userId;
-    })
-    .map((i) => i.id);
+  const invalidIds = await filterUnauthorizedIntegrationIds(integrationIds, {
+    userId,
+    organizationId: organizationId ?? null,
+  });
 
   if (invalidIds.length > 0) {
     return { valid: false, invalidIds };

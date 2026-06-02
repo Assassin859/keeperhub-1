@@ -31,6 +31,14 @@ export const workflowStepStatus = pgEnum("step_status", [
   "failed",
   "cancelled",
 ]);
+// Created by @workflow/world-postgres migrations in `public` and referenced
+// cross-schema by `workflow.workflow_waits.status`. Declared here so
+// `pnpm db:push` does not emit a DROP that Postgres rejects with
+// "cannot drop type wait_status because other objects depend on it".
+export const workflowWaitStatus = pgEnum("wait_status", [
+  "waiting",
+  "completed",
+]);
 
 // Better Auth tables
 export const users = pgTable("users", {
@@ -44,39 +52,103 @@ export const users = pgTable("users", {
   // Anonymous user tracking
   isAnonymous: boolean("is_anonymous").default(false),
   deactivatedAt: timestamp("deactivated_at"),
+  twoFactorEnabled: boolean("two_factor_enabled").default(false),
 });
 
-export const sessions = pgTable("sessions", {
-  id: text("id").primaryKey(),
-  expiresAt: timestamp("expires_at").notNull(),
-  token: text("token").notNull().unique(),
-  createdAt: timestamp("created_at").notNull(),
-  updatedAt: timestamp("updated_at").notNull(),
-  ipAddress: text("ip_address"),
-  userAgent: text("user_agent"),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id),
-  activeOrganizationId: text("active_organization_id"),
-});
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: text("id").primaryKey(),
+    expiresAt: timestamp("expires_at").notNull(),
+    token: text("token").notNull().unique(),
+    createdAt: timestamp("created_at").notNull(),
+    updatedAt: timestamp("updated_at").notNull(),
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    activeOrganizationId: text("active_organization_id"),
+    requiresMfa: boolean("requires_mfa").notNull().default(false),
+    mfaVerifiedAt: timestamp("mfa_verified_at"),
+    riskFlagsJson: text("risk_flags_json"),
+  },
+  (table) => [index("idx_sessions_user_id").on(table.userId)]
+);
 
-export const accounts = pgTable("accounts", {
-  id: text("id").primaryKey(),
-  accountId: text("account_id").notNull(),
-  providerId: text("provider_id").notNull(),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id),
-  accessToken: text("access_token"),
-  refreshToken: text("refresh_token"),
-  idToken: text("id_token"),
-  accessTokenExpiresAt: timestamp("access_token_expires_at"),
-  refreshTokenExpiresAt: timestamp("refresh_token_expires_at"),
-  scope: text("scope"),
-  password: text("password"),
-  createdAt: timestamp("created_at").notNull(),
-  updatedAt: timestamp("updated_at").notNull(),
-});
+/**
+ * Per-user allowlist of trusted IPs. A successful /verify-ip flow
+ * inserts the request IP here; subsequent sessions originating from
+ * the same IP pass `assessLoginRisk` without prompting the user.
+ *
+ * `country` is captured at the moment of trust for forensic audit but
+ * is not used to decide trust: a user crossing a border on the same
+ * laptop should still be trusted once the IP is in the list.
+ *
+ * The (user_id, ip) pair is unique so a re-verify of a known IP
+ * upserts the `last_seen_at` rather than duplicating rows.
+ */
+export const userTrustedIps = pgTable(
+  "user_trusted_ips",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    ip: text("ip").notNull(),
+    country: text("country"),
+    firstSeenAt: timestamp("first_seen_at").notNull().defaultNow(),
+    lastSeenAt: timestamp("last_seen_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("idx_user_trusted_ips_user_id").on(table.userId),
+    uniqueIndex("idx_user_trusted_ips_user_ip").on(table.userId, table.ip),
+  ]
+);
+
+export const twoFactor = pgTable(
+  "two_factor",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .unique()
+      .references(() => users.id, { onDelete: "cascade" }),
+    secret: text("secret").notNull(),
+    // Nullable: backup codes are generated only when the user explicitly
+    // requests them via /api/user/totp/backup-codes, not at TOTP setup.
+    // A row with secret + null backup_codes is a valid enrolled user who
+    // simply hasn't generated codes yet.
+    backupCodes: text("backup_codes"),
+    name: text("name"),
+    enrolledAt: timestamp("enrolled_at").notNull().defaultNow(),
+  },
+  (table) => [index("idx_two_factor_user_id").on(table.userId)]
+);
+
+export const accounts = pgTable(
+  "accounts",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    providerId: text("provider_id").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    accessToken: text("access_token"),
+    refreshToken: text("refresh_token"),
+    idToken: text("id_token"),
+    accessTokenExpiresAt: timestamp("access_token_expires_at"),
+    refreshTokenExpiresAt: timestamp("refresh_token_expires_at"),
+    scope: text("scope"),
+    password: text("password"),
+    createdAt: timestamp("created_at").notNull(),
+    updatedAt: timestamp("updated_at").notNull(),
+  },
+  (table) => [index("idx_accounts_user_id").on(table.userId)]
+);
 
 export const verifications = pgTable("verifications", {
   id: text("id").primaryKey(),
@@ -97,17 +169,24 @@ export const organization = pgTable("organization", {
   metadata: text("metadata"),
 });
 
-export const member = pgTable("member", {
-  id: text("id").primaryKey(),
-  organizationId: text("organization_id")
-    .notNull()
-    .references(() => organization.id, { onDelete: "cascade" }),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  role: text("role").default("member").notNull(),
-  createdAt: timestamp("created_at").notNull(),
-});
+export const member = pgTable(
+  "member",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    role: text("role").default("member").notNull(),
+    createdAt: timestamp("created_at").notNull(),
+  },
+  (table) => [
+    index("idx_member_user_id").on(table.userId),
+    index("idx_member_organization_id").on(table.organizationId),
+  ]
+);
 
 export const invitation = pgTable("invitation", {
   id: text("id").primaryKey(),
@@ -141,7 +220,13 @@ export const addressBookEntry = pgTable(
       onDelete: "set null",
     }),
   },
-  (table) => [index("idx_address_book_org").on(table.organizationId)]
+  (table) => [
+    index("idx_address_book_org").on(table.organizationId),
+    uniqueIndex("idx_address_book_org_address").on(
+      table.organizationId,
+      table.address
+    ),
+  ]
 );
 
 export const projects = pgTable(
@@ -185,7 +270,10 @@ export const tags = pgTable(
   (table) => [index("idx_tags_org").on(table.organizationId)]
 );
 // Workflow visibility type
-export type WorkflowVisibility = "private" | "public";
+// - private: only owner / org members can view (default)
+// - unlisted: anyone with the URL can view read-only; not surfaced in Hub feed
+// - public: viewable by anyone AND listed on the Hub
+export type WorkflowVisibility = "private" | "unlisted" | "public";
 
 // Workflows table with user association
 export const workflows = pgTable(
@@ -225,6 +313,10 @@ export const workflows = pgTable(
     sourceWorkflowId: text("source_workflow_id"), // tracks which public template was duplicated
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    // KEEP-458: last time the row was written by scripts/seed/seed-protocol-workflows.
+    // Null for user-created rows. Lets the seeder detect post-seed user edits
+    // (updatedAt > seededAt + epsilon) without overloading createdAt/updatedAt.
+    seededAt: timestamp("seeded_at"),
     // v1.7: Workflow listing columns (INFRA-01)
     isListed: boolean("is_listed").default(false).notNull(),
     listedSlug: text("listed_slug"),
@@ -241,14 +333,31 @@ export const workflows = pgTable(
     chain: text("chain"),
     // v1.11: per-workflow MCP server versioning (incremented on listing schema changes)
     listingVersion: integer("listing_version").notNull().default(1),
+    // KEEP-440: soft-delete. Set instead of hard-deleting the row so the listed
+    // slug stays bound to this row and cannot be re-claimed by another workflow.
+    deletedAt: timestamp("deleted_at"),
   },
   (table) => [
     // INFRA-02: globally unique listed slug so external callers can invoke by slug alone
     uniqueIndex("idx_workflows_listed_slug")
       .on(table.listedSlug)
       .where(isNotNull(table.listedSlug)),
+    index("idx_workflows_user_id").on(table.userId),
+    index("idx_workflows_tag_id").on(table.tagId),
+    index("idx_workflows_project_id").on(table.projectId),
   ]
 );
+
+// Integration visibility controls which principals may use a credential at
+// workflow execution time (not just view it).
+// - private: only the owner (creator) may use it (default / opt-in)
+// - specific_members: the owner plus users with an integration_grants row
+// - organization: any current member of the owning organization may use it
+export const integrationVisibility = pgEnum("integration_visibility", [
+  "private",
+  "specific_members",
+  "organization",
+]);
 
 // Integrations table for storing user credentials
 export const integrations = pgTable(
@@ -269,6 +378,9 @@ export const integrations = pgTable(
     config: jsonb("config").notNull().$type<any>(),
     // Whether this integration was created via OAuth (managed by app) vs manual entry
     isManaged: boolean("is_managed").default(false),
+    visibility: integrationVisibility("visibility")
+      .notNull()
+      .default("private"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
@@ -283,10 +395,50 @@ export const integrations = pgTable(
       .where(
         sql`${table.type} = 'web3' AND ${table.organizationId} IS NOT NULL`
       ),
+    index("idx_integrations_user_id").on(table.userId),
+  ]
+);
+
+// Per-user grants for integrations with visibility = 'specific_members'.
+// A row authorizes `userId` to use `integrationId` at execution time.
+// Rows are deleted (cascade) when the integration or grantee user is removed,
+// which is the lazy-revocation mechanism: dropping the row fails execution closed.
+export const integrationGrants = pgTable(
+  "integration_grants",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    integrationId: text("integration_id")
+      .notNull()
+      .references(() => integrations.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    grantedBy: text("granted_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("idx_integration_grants_integration_user").on(
+      table.integrationId,
+      table.userId
+    ),
+    index("idx_integration_grants_user").on(table.userId),
   ]
 );
 
 // Workflow executions table to track workflow runs
+export type TransactionHashEntry = {
+  hash: string;
+  nodeId: string;
+  nodeName: string;
+  chainId?: number;
+  network?: string;
+  iterationIndex?: number;
+};
+
 export const workflowExecutions = pgTable(
   "workflow_executions",
   {
@@ -307,6 +459,20 @@ export const workflowExecutions = pgTable(
     // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
     output: jsonb("output").$type<any>(),
     error: text("error"),
+    errorCategory: text("error_category").$type<
+      | "validation"
+      | "configuration"
+      | "external_service"
+      | "network_rpc"
+      | "transaction"
+      | "billing"
+      | "database"
+      | "auth"
+      | "infrastructure"
+      | "workflow_engine"
+      | "unknown"
+    >(),
+    errorType: text("error_type").$type<"user" | "system">(),
     startedAt: timestamp("started_at").notNull().defaultNow(),
     completedAt: timestamp("completed_at"),
     duration: numeric("duration"), // Duration in milliseconds
@@ -319,6 +485,25 @@ export const workflowExecutions = pgTable(
     lastSuccessfulNodeName: text("last_successful_node_name"),
     executionTrace: jsonb("execution_trace").$type<string[]>(),
     runId: text("run_id"),
+    transactionHashes: jsonb("transaction_hashes")
+      .$type<TransactionHashEntry[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    /**
+     * Run-total gas (sum of per-step `gasUsed`, in wei), denormalised out of the
+     * per-step workflow_execution_logs.output JSONB. Populated at terminal
+     * finalize (success or error), alongside transaction_hashes
+     * (lib/workflow/executor/logging.ts), so org-scoped /analytics summary and
+     * spend-cap reads can aggregate a first-class column instead of full-scanning
+     * and detoasting the logs table.
+     *
+     * Nullable on legacy rows until backfilled, and on runs that produced no
+     * on-chain gas. Network is intentionally NOT denormalised here: it is a
+     * per-step property (each web3 node targets its own chain), so a run can
+     * span multiple networks and no single run-level value is correct. The
+     * per-network gas breakdown keeps reading step-level log data.
+     */
+    gasUsedWei: numeric("gas_used_wei"),
     /**
      * Whether this execution counts toward the owner organisation's monthly
      * execution quota and overage billing.
@@ -335,42 +520,71 @@ export const workflowExecutions = pgTable(
      * app/api/mcp/workflows/[slug]/call/route.ts.
      */
     billable: boolean("billable").notNull().default(true),
+    /**
+     * KEEP-612 attribution columns. Populated on insert from the request
+     * context so detection alerts can group by source. Nullable on legacy
+     * rows and for internal callers without a request (e.g. scheduler).
+     *
+     * - `triggered_by_user_api_key_id` FKs `api_keys.id` (wfb_* webhook keys).
+     * - `triggered_by_org_api_key_id` FKs `organization_api_keys.id`
+     *   (kh_* org keys) — FK added in migration 0093 because that table
+     *   lives in schema-extensions.ts and would create a circular import.
+     * - `triggered_by_ip` is the canonical client IP (Cloudflare
+     *   `cf-connecting-ip` preferred). See lib/security/request-attribution.ts.
+     * - `trigger_source` records the entry point: manual | webhook |
+     *   scheduled | mcp | internal | block | event.
+     */
+    triggeredByUserApiKeyId: text("triggered_by_user_api_key_id").references(
+      () => apiKeys.id,
+      { onDelete: "set null" }
+    ),
+    triggeredByOrgApiKeyId: text("triggered_by_org_api_key_id"),
+    triggeredByIp: text("triggered_by_ip"),
+    triggeredByCountry: text("triggered_by_country"),
+    triggerSource: text("trigger_source"),
   },
-  (table) => [index("idx_workflow_executions_status").on(table.status)]
+  (table) => [
+    index("idx_workflow_executions_status").on(table.status),
+    index("idx_workflow_executions_user_id").on(table.userId),
+  ]
 );
 
 // Workflow execution logs to track individual node executions
-export const workflowExecutionLogs = pgTable("workflow_execution_logs", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => generateId()),
-  executionId: text("execution_id")
-    .notNull()
-    .references(() => workflowExecutions.id),
-  nodeId: text("node_id").notNull(),
-  nodeName: text("node_name").notNull(),
-  nodeType: text("node_type").notNull(),
-  status: text("status")
-    .notNull()
-    .$type<"pending" | "running" | "success" | "error" | "cancelled">(),
-  // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
-  input: jsonb("input").$type<any>(),
-  // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
-  output: jsonb("output").$type<any>(),
-  // output_raw is the executor's authoritative source-of-truth for cross-process resume.
-  // `output` receives redactSensitiveData() for observability/UI display; `output_raw`
-  // stores the unredacted payload so downstream template rendering receives real values
-  // rather than "[REDACTED]" strings when a pod resumes across a process boundary.
-  // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
-  outputRaw: jsonb("output_raw").$type<any>(),
-  error: text("error"),
-  startedAt: timestamp("started_at").notNull().defaultNow(),
-  completedAt: timestamp("completed_at"),
-  duration: numeric("duration"), // Duration in milliseconds
-  timestamp: timestamp("timestamp").notNull().defaultNow(),
-  iterationIndex: integer("iteration_index"), // 0-based loop iteration (null for non-loop nodes)
-  forEachNodeId: text("for_each_node_id"), // parent For Each node ID (null for non-loop nodes)
-});
+export const workflowExecutionLogs = pgTable(
+  "workflow_execution_logs",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => workflowExecutions.id),
+    nodeId: text("node_id").notNull(),
+    nodeName: text("node_name").notNull(),
+    nodeType: text("node_type").notNull(),
+    status: text("status")
+      .notNull()
+      .$type<"pending" | "running" | "success" | "error" | "cancelled">(),
+    // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
+    input: jsonb("input").$type<any>(),
+    // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
+    output: jsonb("output").$type<any>(),
+    // output_raw is the executor's authoritative source-of-truth for cross-process resume.
+    // `output` receives redactSensitiveData() for observability/UI display; `output_raw`
+    // stores the unredacted payload so downstream template rendering receives real values
+    // rather than "[REDACTED]" strings when a pod resumes across a process boundary.
+    // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
+    outputRaw: jsonb("output_raw").$type<any>(),
+    error: text("error"),
+    startedAt: timestamp("started_at").notNull().defaultNow(),
+    completedAt: timestamp("completed_at"),
+    duration: numeric("duration"), // Duration in milliseconds
+    timestamp: timestamp("timestamp").notNull().defaultNow(),
+    iterationIndex: integer("iteration_index"), // 0-based loop iteration (null for non-loop nodes)
+    forEachNodeId: text("for_each_node_id"), // parent For Each node ID (null for non-loop nodes)
+  },
+  (table) => [index("idx_exec_logs_started_at").on(table.startedAt)]
+);
 
 export {
   type AgenticWalletCredit,
@@ -396,7 +610,7 @@ export {
   type WalletApprovalRequest,
   walletApprovalRequests,
 } from "./schema-agentic-wallets";
-// KeeperHub: Para Wallets, Organization API Keys, and Organization Tokens (imported from KeeperHub schema extensions)
+// KeeperHub: Organization Wallets, Organization API Keys, and Organization Tokens (imported from KeeperHub schema extensions)
 // Note: Using relative path instead of @/ alias for drizzle-kit compatibility
 export {
   type BillingEvent,
@@ -419,8 +633,12 @@ export {
   type NewOrganizationSubscription,
   type NewOrganizationToken,
   type NewOrganizationWallet,
-  type NewParaWallet,
   type NewPublicTag,
+  type NewSafeRole,
+  type NewSafeRoleAllowance,
+  type NewSafeRoleDirectRule,
+  type NewSafeRoleProtocol,
+  type NewSafeWallet,
   type NewSupportedToken,
   type NewWorkflowPublicTag,
   type OrganizationApiKey,
@@ -435,13 +653,21 @@ export {
   organizationTokens,
   organizationWallets,
   overageBillingRecords,
-  type ParaWallet,
   type PendingTransaction,
   type PublicTag,
-  paraWallets,
   pendingTransactions,
   publicTags,
+  type SafeRole,
+  type SafeRoleAllowance,
+  type SafeRoleDirectRule,
+  type SafeRoleProtocol,
+  type SafeWallet,
   type SupportedToken,
+  safeRoleAllowances,
+  safeRoleDirectRules,
+  safeRoleProtocols,
+  safeRoles,
+  safeWallets,
   supportedTokens,
   type WalletLock,
   type WorkflowPublicTag,
@@ -519,6 +745,17 @@ export const workflowSchedules = pgTable(
       .unique()
       .references(() => workflows.id, { onDelete: "cascade" }),
     cronExpression: text("cron_expression").notNull(),
+    // KEEP-575: true-interval scheduling. When intervalSeconds is set, the
+    // dispatcher fires on anchorAt + k * intervalSeconds instead of parsing
+    // cronExpression. This expresses "every 55 minutes" accurately, which
+    // a 5-field cron cannot when the period doesn't divide 60. In that mode
+    // cronExpression holds a fixed non-match sentinel (see
+    // INTERVAL_MODE_CRON_PLACEHOLDER) and `timezone` is unused by the
+    // dispatcher -- interval math is in raw milliseconds. The column is
+    // still populated for display purposes and stays meaningful for cron
+    // mode.
+    intervalSeconds: integer("interval_seconds"),
+    anchorAt: timestamp("anchor_at", { withTimezone: true }),
     timezone: text("timezone").notNull().default("UTC"),
     enabled: boolean("enabled").notNull().default(true),
     lastRunAt: timestamp("last_run_at", { withTimezone: true }),
@@ -561,6 +798,9 @@ export const chains = pgTable(
     defaultPrivateRpcUrl: text("default_private_rpc_url"),
     isTestnet: boolean("is_testnet").default(false),
     isEnabled: boolean("is_enabled").default(true), // Can disable chains
+    // Support maturity signal surfaced to agents via list_action_schemas:
+    // "stable" | "experimental" | "deprecated". Orthogonal to isEnabled.
+    status: text("status").notNull().default("stable"),
     // KEEP-1240: Chain-specific gas configuration
     gasConfig: jsonb("gas_config").default({}),
     createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -785,11 +1025,15 @@ export type ListedWorkflowView = Pick<
 >;
 export type Integration = typeof integrations.$inferSelect;
 export type NewIntegration = typeof integrations.$inferInsert;
+export type IntegrationVisibility =
+  (typeof integrationVisibility.enumValues)[number];
+export type IntegrationGrant = typeof integrationGrants.$inferSelect;
+export type NewIntegrationGrant = typeof integrationGrants.$inferInsert;
 export type WorkflowExecution = typeof workflowExecutions.$inferSelect;
 export type NewWorkflowExecution = typeof workflowExecutions.$inferInsert;
 export type WorkflowExecutionLog = typeof workflowExecutionLogs.$inferSelect;
 export type NewWorkflowExecutionLog = typeof workflowExecutionLogs.$inferInsert;
-// ParaWallet types are exported from ./schema-extensions
+// OrganizationWallet types are exported from ./schema-extensions
 export type ApiKey = typeof apiKeys.$inferSelect;
 export type NewApiKey = typeof apiKeys.$inferInsert;
 export type BetaAccessRequest = typeof betaAccessRequests.$inferSelect;

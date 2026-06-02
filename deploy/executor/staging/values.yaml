@@ -104,13 +104,6 @@ env:
   WORKFLOW_RUNNER_COLLECT_MONITORING:
     type: kv
     value: "false"
-  PARA_API_KEY:
-    type: parameterStore
-    name: para-api-key
-    parameter_name: /eks/techops-staging/keeperhub/para-api-key
-  PARA_ENVIRONMENT:
-    type: kv
-    value: "beta"
   TURNKEY_API_PUBLIC_KEY:
     type: parameterStore
     name: turnkey-api-public-key
@@ -119,10 +112,6 @@ env:
     type: parameterStore
     name: turnkey-api-private-key
     parameter_name: /eks/techops-staging/keeperhub/turnkey-api-private-key
-  WALLET_ENCRYPTION_KEY:
-    type: parameterStore
-    name: wallet-encryption-key
-    parameter_name: /eks/techops-staging/keeperhub/wallet-encryption-key
   CHAIN_RPC_CONFIG:
     type: parameterStore
     name: chain-rpc-config
@@ -174,6 +163,15 @@ env:
     type: parameterStore
     name: simple-account-7702-address
     parameter_name: /eks/techops-staging/keeperhub/simple-account-7702-address
+  SAFE_FETCH_ENFORCE:
+    type: kv
+    value: "true"
+  SANDBOX_BACKEND:
+    type: kv
+    value: "remote"
+  SANDBOX_URL:
+    type: kv
+    value: "http://keeperhub-sandbox-common.keeperhub.svc.cluster.local:8787"
 
 externalSecrets:
   clusterSecretStoreName: techops-staging

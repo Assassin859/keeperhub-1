@@ -395,8 +395,8 @@ describe("BASELINE_POLICIES — ERC-8004 coverage", () => {
 
 describe("FACILITATOR_ALLOWLIST — ERC-8004", () => {
   it("includes the ReputationRegistry contract", () => {
-    expect(
-      FACILITATOR_ALLOWLIST.map((a) => a.toLowerCase())
-    ).toContain(ERC_8004_REPUTATION_REGISTRY_LC);
+    expect(FACILITATOR_ALLOWLIST.map((a) => a.toLowerCase())).toContain(
+      ERC_8004_REPUTATION_REGISTRY_LC
+    );
   });
 });

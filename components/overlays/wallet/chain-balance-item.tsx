@@ -27,28 +27,11 @@ import type {
   TokenBalance,
 } from "@/lib/wallet/types";
 import {
+  getDisplayChainName,
   hasIndependentTokenList,
   isTempoChain,
   MAINNET_CHAIN_ID,
 } from "./chain-utils";
-
-function ChainBalanceDisplay({
-  balance,
-}: {
-  balance: ChainBalance;
-}): React.ReactElement {
-  if (balance.loading) {
-    return <div className="mt-1 text-muted-foreground text-xs">Loading...</div>;
-  }
-  if (balance.error) {
-    return <div className="mt-1 text-destructive text-xs">{balance.error}</div>;
-  }
-  return (
-    <div className="mt-1 text-muted-foreground text-xs">
-      {balance.balance} {balance.symbol}
-    </div>
-  );
-}
 
 function buildTokenExplorerUrl(
   chain: ChainData | undefined,
@@ -191,6 +174,59 @@ function TokenItemWithActions({
   );
 }
 
+function NativeTokenRow({
+  balance,
+}: {
+  balance: ChainBalance;
+}): React.ReactElement {
+  const numBalance = Number.parseFloat(balance.balance);
+  const hasPositive = Number.isFinite(numBalance) && numBalance > 0;
+
+  const renderBalance = (): React.ReactNode => {
+    if (balance.loading) {
+      return <Spinner className="h-3 w-3" />;
+    }
+    if (balance.error) {
+      return <span className="text-destructive">{balance.error}</span>;
+    }
+    return `${balance.balance} ${balance.symbol}`;
+  };
+
+  // Native assets have no token contract, so the only meaningful explorer
+  // link for this row is the account on the chain explorer (whatever wallet
+  // address the parent is showing balances for). The chain-balance fetcher
+  // already builds this URL via buildExplorerAddressUrl.
+  const accountExplorerUrl = balance.explorerUrl;
+  const rowOpacity = hasPositive ? "" : "opacity-70";
+
+  return (
+    <div className={`flex items-center gap-2 py-1.5 ${rowOpacity}`}>
+      <div className="flex h-4 w-4 items-center justify-center rounded-full bg-muted font-medium text-[9px]">
+        {balance.symbol.slice(0, 3)}
+      </div>
+      <span className="font-medium text-xs">{balance.symbol}</span>
+      <span className="text-[10px] text-muted-foreground uppercase tracking-wide">
+        Native
+      </span>
+      {accountExplorerUrl && (
+        <a
+          aria-label="View account on explorer"
+          className="text-muted-foreground hover:text-foreground"
+          href={accountExplorerUrl}
+          rel="noopener noreferrer"
+          target="_blank"
+          title="View account on explorer"
+        >
+          <ExternalLink className="h-3 w-3" />
+        </a>
+      )}
+      <span className="ml-auto text-muted-foreground text-xs">
+        {renderBalance()}
+      </span>
+    </div>
+  );
+}
+
 function AddTokenRow({
   chainId,
   onAdd,
@@ -305,6 +341,13 @@ export type ChainBalanceItemProps = {
   onWithdraw: (chainId: number, tokenAddress?: string) => void;
   supportedTokenBalances: SupportedTokenBalance[];
   tokenBalances: TokenBalance[];
+  /**
+   * When true, render the assets as a flat section (no outer card, no chain
+   * header, always expanded). Used by views where the parent already
+   * announces the chain — e.g. the per-Safe assets tab where the overlay
+   * title is "Safe · Ethereum" and the chain row would just duplicate it.
+   */
+  bare?: boolean;
 };
 
 export function ChainBalanceItem({
@@ -318,6 +361,7 @@ export function ChainBalanceItem({
   onWithdraw,
   supportedTokenBalances,
   tokenBalances,
+  bare = false,
 }: ChainBalanceItemProps): React.ReactElement {
   // Auto-expand once loading completes and the chain has a balance. Folded by
   // default and during fetch. Null means "follow auto"; once the user toggles
@@ -345,7 +389,11 @@ export function ChainBalanceItem({
   const isIndependentTokenList = hasIndependentTokenList(balance.chainId);
 
   const chainSupportedTokens = (() => {
-    if (isIndependentTokenList) {
+    // In `bare` mode the parent is a per-Safe view, so the balances feed
+    // only carries this chain's tokens (no Ethereum-mainnet fallback list
+    // exists in the response). Mirror the independent-token-list path so
+    // the row doesn't stall on the "Loading tokens..." placeholder.
+    if (isIndependentTokenList || bare) {
       return supportedTokenBalances.filter(
         (t) => t.chainId === balance.chainId
       );
@@ -388,34 +436,64 @@ export function ChainBalanceItem({
     />
   );
 
-  const chainLabel = isTempo ? "TEMPO" : balance.name;
+  const chainLabel = isTempo ? "TEMPO" : getDisplayChainName(balance.name);
 
-  const tokenList =
-    chainSupportedTokens.length > 0 || chainCustomTokens.length > 0 ? (
-      <div className="divide-y rounded border bg-background/50 px-2">
-        {chainSupportedTokens.map((token) => (
-          <TokenItemWithActions
-            isAdmin={isAdmin}
-            key={`supported-${token.chainId}-${token.tokenAddress}`}
-            onWithdraw={onWithdraw}
-            token={token}
-          />
-        ))}
-        {chainCustomTokens.map((token) => (
-          <TokenItemWithActions
-            customExplorerUrl={buildTokenExplorerUrl(chain, token.tokenAddress)}
-            isAdmin={isAdmin}
-            isCustom
-            key={`custom-${token.tokenId}`}
-            onDelete={onRemoveToken}
-            onWithdraw={onWithdraw}
-            token={token}
-          />
-        ))}
+  const tokenList = (
+    <div className="divide-y rounded border bg-background/50 px-2">
+      <NativeTokenRow balance={balance} />
+      {chainSupportedTokens.map((token) => (
+        <TokenItemWithActions
+          isAdmin={isAdmin}
+          key={`supported-${token.chainId}-${token.tokenAddress}`}
+          onWithdraw={onWithdraw}
+          token={token}
+        />
+      ))}
+      {chainCustomTokens.map((token) => (
+        <TokenItemWithActions
+          customExplorerUrl={buildTokenExplorerUrl(chain, token.tokenAddress)}
+          isAdmin={isAdmin}
+          isCustom
+          key={`custom-${token.tokenId}`}
+          onDelete={onRemoveToken}
+          onWithdraw={onWithdraw}
+          token={token}
+        />
+      ))}
+      {chainSupportedTokens.length === 0 && chainCustomTokens.length === 0 && (
+        <div className="py-1.5 text-muted-foreground text-xs">
+          {isLoadingBalances ? "Loading tokens..." : "No tokens on this chain"}
+        </div>
+      )}
+    </div>
+  );
+
+  if (bare) {
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="font-medium text-muted-foreground text-xs">
+            {tokenSectionLabel}
+          </div>
+          {!isTempo && isAdmin && hasNativeBalance && (
+            <Button
+              className="h-7 px-2 text-xs"
+              onClick={() => onWithdraw(balance.chainId)}
+              size="sm"
+              variant="ghost"
+            >
+              <SendHorizontal className="h-3 w-3" />
+              Withdraw
+            </Button>
+          )}
+        </div>
+        {tokenList}
+        {isAdmin && (
+          <AddTokenRow chainId={balance.chainId} onAdd={onAddToken} />
+        )}
       </div>
-    ) : (
-      <div className="text-muted-foreground text-xs">Loading tokens...</div>
     );
+  }
 
   return (
     <Collapsible
@@ -434,7 +512,6 @@ export function ChainBalanceItem({
               <span className="flex items-center gap-1">
                 <span className="font-medium text-sm">{chainLabel}</span>
               </span>
-              {!isTempo && <ChainBalanceDisplay balance={balance} />}
             </span>
           </button>
         </CollapsibleTrigger>

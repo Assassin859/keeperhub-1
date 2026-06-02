@@ -94,7 +94,7 @@ SELECT 'executions', count(*) FROM workflow_executions WHERE user_id = (SELECT i
 UNION ALL
 SELECT 'org_api_keys', count(*) FROM organization_api_keys WHERE organization_id IN (SELECT organization_id FROM member WHERE user_id = (SELECT id FROM users WHERE email = 'pr-test-do-not-delete@techops.services'))
 UNION ALL
-SELECT 'wallets', count(*) FROM para_wallets WHERE organization_id IN (SELECT organization_id FROM member WHERE user_id = (SELECT id FROM users WHERE email = 'pr-test-do-not-delete@techops.services'));"
+SELECT 'wallets', count(*) FROM organization_wallets WHERE organization_id IN (SELECT organization_id FROM member WHERE user_id = (SELECT id FROM users WHERE email = 'pr-test-do-not-delete@techops.services'));"
 
 echo "Verifying seeded data..."
 VERIFY_OUTPUT=$(echo "$VERIFY_SQL" | aws-vault exec sky -- kubectl run "$VERIFY_POD_NAME" \

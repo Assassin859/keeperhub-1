@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 
 // Switching the active wallet is disabled. Every organization signs with its
-// Turnkey wallet; the Para → Turnkey migration is one-way and no longer
-// user-driven. Kept as a 410 so old clients get a clear, non-generic error
+// Turnkey wallet. Kept as a 410 so old clients get a clear, non-generic error
 // instead of a silent 404.
 export function POST(): NextResponse {
   return NextResponse.json(

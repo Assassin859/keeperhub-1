@@ -2,6 +2,8 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
+import { extractActionTypeNodes } from "@/lib/features";
+import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getOrgContext } from "@/lib/middleware/org-context";
 
@@ -41,6 +43,26 @@ export async function POST(
         { error: "Cannot claim this workflow" },
         { status: 403 }
       );
+    }
+
+    // KEEP-440: a soft-deleted workflow cannot be claimed into an org.
+    if (workflow.deletedAt) {
+      return NextResponse.json(
+        { error: "Workflow not found" },
+        { status: 404 }
+      );
+    }
+
+    const featureGuard = await enforceWorkflowFeatures(
+      extractActionTypeNodes(workflow.nodes as unknown[]),
+      orgContext.organization.id,
+      {
+        errorMessage:
+          "Can't claim this workflow: it uses features your current organization's plan doesn't include. Upgrade to claim it here, or remove the gated nodes first.",
+      }
+    );
+    if (featureGuard.blocked) {
+      return featureGuard.response;
     }
 
     const [updatedWorkflow] = await db

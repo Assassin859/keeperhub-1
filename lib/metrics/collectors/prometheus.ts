@@ -94,26 +94,40 @@ function getOrCreateGauge(
 // All metrics are GAUGES (point-in-time snapshots). Use max() aggregation across pods.
 // For rate/delta queries, use PromQL delta() function: max(delta(metric[1h]))
 
-// Workflow execution counts by status and org_slug. Personal/anonymous
-// workflows are emitted under org_slug="_anonymous" so the sum across
-// org_slug for a given status equals the global per-status total.
+// Workflow execution counts by status, org_slug, and error_type. Personal/
+// anonymous workflows are emitted under org_slug="_anonymous" so the sum
+// across org_slug for a given status equals the global per-status total.
+//
+// error_type label values:
+//   "user"    - errored execution caused by user input/config/external service
+//   "system"  - errored execution caused by KeeperHub system/infrastructure
+//   "unknown" - errored row predating classification (NULL in DB)
+//   "na"      - non-error status (success/running/pending/cancelled)
+//
+// PromQL queries that do not filter on error_type continue to work — Prometheus
+// auto-aggregates across all label values when a label is unconstrained. The
+// label unlocks platform-side SLI queries (filter error_type="system") and
+// managed-client end-to-end SLI panels that need to separate system vs user
+// failures. Sourced from the DB scan via projection of the existing
+// `workflow_executions.error_type` column, so this metric stays
+// authoritative even when short-lived workflow runner processes exit before
+// Prometheus can scrape their in-memory counters.
 const workflowExecutionsTotal = getOrCreateGauge(
   dbRegistry,
   "keeperhub_workflow_executions_total",
-  "Total workflow executions by status, broken down by org_slug (all-time)",
-  ["status", "org_slug"]
+  "Total workflow executions by status, broken down by org_slug and error_type (all-time)",
+  ["status", "org_slug", "error_type"]
 );
 
-// Workflow errors total (convenience gauge for alerting). Labeled by org_slug
-// so alerts can scope to managed clients. Personal/anonymous workflows are
-// emitted under org_slug="_anonymous" so the sum across labels matches the
-// global error count.
-const workflowErrorsTotal = getOrCreateGauge(
-  dbRegistry,
-  "keeperhub_workflow_execution_errors_total",
-  "Total failed workflow executions (all-time), broken down by org_slug",
-  ["org_slug"]
-);
+// KEEP-545: the previous DB-sourced gauge `keeperhub_workflow_execution_errors_total`
+// has been removed. It was named with the `_total` counter suffix but was
+// actually a poll-driven gauge that overwrote itself on every scrape with the
+// all-time cumulative error count, which made every dashboard read it as a
+// huge static number instead of recent activity. The replacement is the
+// per-pod counter `keeperhub_workflow_execution_errors_created_total` below,
+// incremented at the workflow-execution finalization site (see
+// lib/workflow/finalize-error.ts) so it reflects actual new errors and
+// composes correctly with PromQL `rate()` / `increase()` over time ranges.
 
 // Workflow duration histogram as gauges (replaces histogram)
 const workflowDurationBucket = getOrCreateGauge(
@@ -277,46 +291,46 @@ const orgWithWorkflows = getOrCreateGauge(
   []
 );
 
-// Organization info gauge (DB-sourced, one series per org)
-// Includes plan + billing_status so the Organization Directory table panel
-// in Grafana can show those columns directly off this gauge without an
-// extra Prometheus join.
+// Organization info gauge (DB-sourced, one series per org).
+// Includes plan + tier + billing_status so the Organization Directory
+// table panel in Grafana can show those columns directly off this gauge
+// without an extra Prometheus join. tier is "" (empty string) for free
+// and enterprise orgs (no tier system).
 const orgInfo = getOrCreateGauge(
   dbRegistry,
   "keeperhub_org_info",
-  "Organization info with name, slug, plan, and billing_status labels",
-  ["org_name", "slug", "plan", "billing_status"]
+  "Organization info with name, slug, plan, tier, and billing_status labels",
+  ["org_name", "slug", "plan", "tier", "billing_status"]
 );
 
 // Billing-aware org metrics (DB-sourced)
 //
-// Org count broken down by (plan, billing_status). One series per
-// (plan, billing_status) combination — bounded cardinality (4 plans x
-// ~7 statuses).
+// Org count broken down by (plan, tier, billing_status). One series per
+// unique combination. tier="" for free / enterprise.
 const orgTotalByPlan = getOrCreateGauge(
   dbRegistry,
   "keeperhub_org_total_by_plan",
-  "Organizations grouped by plan and billing status",
-  ["plan", "billing_status"]
+  "Organizations grouped by plan, tier, and billing status",
+  ["plan", "tier", "billing_status"]
 );
 
-// Per-org execution counts (rolling 30-day window). Cardinality control:
-// paid orgs (pro/business/enterprise) emit individual series; free-tier
-// orgs aggregate into a single series with org_slug="_free".
+// Per-org execution counts (rolling 30-day window). Keyed only on
+// org_slug so the series identity stays stable when an org changes plan.
+// Join with keeperhub_org_info for plan/billing_status context.
 const orgExecutions30d = getOrCreateGauge(
   dbRegistry,
   "keeperhub_org_executions_30d",
-  'Workflow executions per org in the last 30 days (paid orgs individually; free orgs aggregated under org_slug="_free")',
-  ["org_slug", "plan"]
+  "Workflow executions per org in the last 30 days",
+  ["org_slug"]
 );
 
 // Per-org execution counts (current calendar month, used for plan limit
-// pressure). Same cardinality rules as orgExecutions30d.
+// pressure).
 const orgExecutionsMonth = getOrCreateGauge(
   dbRegistry,
   "keeperhub_org_executions_month",
   "Workflow executions per org since start of the current calendar month",
-  ["org_slug", "plan"]
+  ["org_slug"]
 );
 
 // Plan usage ratio: current-month executions / monthly limit. 0 when the
@@ -326,18 +340,18 @@ const orgPlanUsageRatio = getOrCreateGauge(
   dbRegistry,
   "keeperhub_org_plan_usage_ratio",
   "Current-month executions divided by the org's plan monthly limit (0 = no pressure or unlimited)",
-  ["org_slug", "plan"]
+  ["org_slug"]
 );
 
-// Directional MRR per plan in USD cents. Computed from PLANS[plan].tiers
-// monthlyPrice × current (plan, tier) of every active/trialing/past_due
+// Directional MRR per (plan, tier) in USD cents. Computed from
+// PLANS[plan].tiers[tier].monthlyPrice for every active/trialing/past_due
 // subscription. Stripe Dashboard remains the source of truth for actual
 // revenue accounting; this gauge is for trend/observability only.
 const mrrUsdCents = getOrCreateGauge(
   dbRegistry,
   "keeperhub_mrr_usd_cents",
-  "Approximate MRR in USD cents per plan (PLANS table * current tier)",
-  ["plan"]
+  "Approximate MRR in USD cents per (plan, tier)",
+  ["plan", "tier"]
 );
 
 const mrrUsdCentsTotal = getOrCreateGauge(
@@ -435,22 +449,11 @@ const chainEnabled = getOrCreateGauge(
   []
 );
 
-/**
- * @deprecated Counts all active org wallets (Para + Turnkey) and is retained
- * for backward compatibility. Use `keeperhub_wallet_total{provider}` instead.
- */
-const paraWalletTotal = getOrCreateGauge(
-  dbRegistry,
-  "keeperhub_para_wallet_total",
-  "[Deprecated] Total active org wallets (all providers). Use keeperhub_wallet_total{provider} instead.",
-  []
-);
-
-const walletTotalByProvider = getOrCreateGauge(
+const walletTotal = getOrCreateGauge(
   dbRegistry,
   "keeperhub_wallet_total",
-  "Total active org wallets by provider",
-  ["provider"]
+  "Total active org wallets",
+  []
 );
 
 const sessionActive = getOrCreateGauge(
@@ -738,6 +741,35 @@ const pluginInvocations = getOrCreateCounter(
   ["plugin_name", "action_name", "org_slug", "plan"]
 );
 
+// Runtime counter incremented exactly once per workflow_executions row creation,
+// labelled by trigger_type (block | schedule | event | manual | webhook | scheduled)
+// and chain (the workflows.chain column; "_unknown" when null). Used by the
+// Grafana "zero executions in N min" alert family - increase()[window] == 0 with
+// no_data_state="Alerting" fires when a (trigger_type, chain) pair stalls.
+//
+// Distinct from "workflow.executions.total" (a DB-sourced gauge of all-time counts
+// by status+org_slug) - that metric is computed via SQL in updateDbMetrics().
+const workflowExecutionsStartedTotal = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_workflow_executions_started_total",
+  "Workflow executions started (counter), labelled by trigger_type and chain",
+  ["trigger_type", "chain"]
+);
+
+// KEEP-612 detection signal. lib/safe-fetch.ts increments this every time
+// a SSRF-blocklisted destination (or DNS-resolve-mismatch) is refused. The
+// `shadow` label distinguishes enforce-mode rejects (shadow=false, the
+// actionable signal) from observe-only logs (shadow=true). Grafana alerts
+// on this metric live in
+// techops_infrastructure/grafana/keeperhub-dashboards/keeperhub_metrics_alerts.tf
+// as `safe_fetch_blocks_alert`.
+const safeFetchBlocks = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_safe_fetch_blocks_total",
+  "safe_fetch refused outbound HTTP requests, labelled by reason / plugin_name / shadow",
+  ["reason", "plugin_name", "shadow"]
+);
+
 // Error counters
 const pluginErrors = getOrCreateCounter(
   apiRegistry,
@@ -753,11 +785,12 @@ const apiErrors = getOrCreateCounter(
   ["endpoint", "status_code", "error_type", "org_slug", "plan"]
 );
 
-// Common labels for all error counters (allows any subset to be used)
-const ERROR_LABELS = [
+// Common labels for all error counters (allows any subset to be used).
+// Exported so the KEEP-545 regression test can snapshot the canonical set
+// and prevent any panel-affecting label from being removed silently.
+export const ERROR_LABELS = [
   "error_category",
   "error_context",
-  "is_user_error",
   "error_type",
   "plugin_name",
   "action_name",
@@ -838,6 +871,38 @@ const systemWorkflowEngineErrors = getOrCreateCounter(
   "System workflow engine errors",
   ERROR_LABELS
 );
+
+// KEEP-545: per-execution-row counter incremented exactly once when a
+// workflow execution is finalized with status='error'. Replaces the old
+// poll-driven `keeperhub_workflow_execution_errors_total` gauge that
+// overwrote itself with the all-time cumulative count on every scrape.
+//
+// Labels:
+//   org_slug       per-organization slug (or ANONYMOUS_ORG_SLUG for personal)
+//   error_category one of the ErrorCategory enum values (validation,
+//                  configuration, database, workflow_engine, etc.)
+//   error_type     "user" for workflow-author bugs, "system" for engine/infra
+//
+// Cardinality: ~200 active orgs * 10 categories * 2 = 4k worst case;
+// realistic ~1k (most orgs hit 1-2 categories).
+const workflowExecutionErrorsCreated = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_workflow_execution_errors_created_total",
+  "Workflow execution errors observed since pod start, by classification",
+  ["org_slug", "error_category", "error_type"]
+);
+
+export function recordWorkflowExecutionError(labels: {
+  orgSlug: string;
+  errorCategory: string;
+  errorType: "user" | "system";
+}): void {
+  workflowExecutionErrorsCreated.inc({
+    org_slug: labels.orgSlug,
+    error_category: labels.errorCategory,
+    error_type: labels.errorType,
+  });
+}
 
 const slowQueries = getOrCreateCounter(
   apiRegistry,
@@ -940,6 +1005,7 @@ const histogramMap: Record<string, Histogram> = {
 
 const counterMap: Record<string, Counter> = {
   "plugin.invocations.total": pluginInvocations,
+  "workflow.executions.started.total": workflowExecutionsStartedTotal,
   "db.query.slow_count": slowQueries,
   "sponsorship.transactions.total": sponsorshipTransactions,
   "sponsorship.gas_used.total": sponsorshipGasUsed,
@@ -952,6 +1018,8 @@ const counterMap: Record<string, Counter> = {
   "billing.invoice.paid": billingInvoicePaid,
   "billing.invoice.failed": billingInvoiceFailed,
   "billing.overage.charged": billingOverageCharged,
+  // KEEP-612: see safeFetchBlocks definition above for rationale.
+  "safe_fetch.blocks.total": safeFetchBlocks,
 };
 
 const errorCounterMap: Record<string, Counter> = {
@@ -1124,13 +1192,157 @@ const WORKFLOW_DURATION_BUCKETS = [
 ];
 const STEP_DURATION_BUCKETS = [50, 100, 250, 500, 1000, 2000, 5000];
 
+// Module-level TTL cache for updateDbMetrics. The scrape path runs ~35
+// aggregate queries (including unindexed seq scans over workflow_executions
+// and workflow_execution_logs) and the ServiceMonitor scrapes every 30s per
+// pod. Without this cache, each pod hits the DB on every scrape; with it,
+// concurrent scrapes share an in-flight refresh and back-to-back scrapes
+// within DB_METRICS_CACHE_TTL_MS reuse the prior result.
+//
+// Set DB_METRICS_CACHE_TTL_MS=0 to disable the cache (refresh on every call).
+const DEFAULT_DB_METRICS_CACHE_TTL_MS = 60_000;
+
+function getDbMetricsCacheTtlMs(): number {
+  const raw = process.env.DB_METRICS_CACHE_TTL_MS;
+  if (raw === undefined || raw === "") {
+    return DEFAULT_DB_METRICS_CACHE_TTL_MS;
+  }
+  // Use Number() (not parseInt) so trailing junk like "60s" or "60000abc"
+  // is rejected outright instead of silently parsed as 60 / 60000. A
+  // malformed env var that silently degrades to the wrong TTL is harder
+  // to notice than one that falls back to the documented default.
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0
+    ? parsed
+    : DEFAULT_DB_METRICS_CACHE_TTL_MS;
+}
+
+type DbMetricsCacheEntry = {
+  // Monotonic timestamps from performance.now(), not Date.now() — wall
+  // clock can step backwards on NTP adjustments and invalidate the
+  // TTL math. performance.now() is process-monotonic.
+  startedAt: number;
+  completedAt: number | null;
+  promise: Promise<void>;
+};
+
+let lastDbMetricsRefresh: DbMetricsCacheEntry | null = null;
+
+// Per-pod observability for the cache itself. Without these, the only
+// post-deploy signal for whether the cache is working is the indirect
+// "DB CPU went down" reading on CloudWatch. The two counters split cache
+// lookup outcomes (every updateDbMetrics call) from refresh outcomes
+// (every actual DB round-trip) so PromQL can express both
+// "cache hit rate" and "refresh failure rate" cleanly.
+const dbMetricsCacheLookupsTotal = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_db_metrics_cache_lookups_total",
+  "Outcomes of /api/metrics/db cache lookups (per pod)",
+  ["result"]
+);
+
+const dbMetricsRefreshTotal = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_db_metrics_refresh_total",
+  "Outcomes of /api/metrics/db DB round-trips (per pod)",
+  ["outcome"]
+);
+
 /**
- * Update DB-sourced metrics from database
- *
- * Called before each metrics scrape to ensure fresh data from the database.
- * This is necessary because workflow runner jobs exit before Prometheus can scrape them.
+ * Reset the cache. Test-only — throws if called outside NODE_ENV=test.
+ * Exported because tests need to clear the module-level state between
+ * cases. Gated so production code that accidentally calls it fails loud
+ * instead of silently invalidating the cache mid-flight.
  */
-export async function updateDbMetrics(): Promise<void> {
+export function __resetDbMetricsCacheForTest(): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error(
+      "__resetDbMetricsCacheForTest is test-only; do not call in production"
+    );
+  }
+  lastDbMetricsRefresh = null;
+}
+
+/**
+ * Update DB-sourced metrics from database.
+ *
+ * Wraps the underlying refresh in a per-process TTL cache so two scrapes
+ * within the TTL share one DB round-trip. Concurrent callers during an
+ * in-flight refresh receive the same promise, even past the TTL — this
+ * prevents the cache from amplifying load when a refresh under DB stress
+ * takes longer than the TTL itself. Once the refresh completes, TTL is
+ * measured from completion. On rejection the cache slot is cleared so the
+ * next caller retries instead of seeing a stale failure.
+ */
+export function updateDbMetrics(): Promise<void> {
+  const ttl = getDbMetricsCacheTtlMs();
+  if (ttl <= 0) {
+    dbMetricsCacheLookupsTotal.inc({ result: "disabled" });
+    // No caching, but still swallow so the route doesn't 500. The inner
+    // refresh already logged the error before rethrowing.
+    return refreshDbMetricsNow().then(
+      () => {
+        dbMetricsRefreshTotal.inc({ outcome: "success" });
+      },
+      () => {
+        dbMetricsRefreshTotal.inc({ outcome: "error" });
+        // Already logged inside refreshDbMetricsNow.
+      }
+    );
+  }
+  if (lastDbMetricsRefresh) {
+    // In-flight: share the promise regardless of TTL to avoid starting a
+    // second concurrent refresh when the first hasn't finished yet.
+    if (lastDbMetricsRefresh.completedAt === null) {
+      dbMetricsCacheLookupsTotal.inc({ result: "in_flight_dedup" });
+      return lastDbMetricsRefresh.promise;
+    }
+    // Completed: serve cached if within TTL of completion (not start).
+    if (performance.now() - lastDbMetricsRefresh.completedAt < ttl) {
+      dbMetricsCacheLookupsTotal.inc({ result: "hit" });
+      return lastDbMetricsRefresh.promise;
+    }
+  }
+  dbMetricsCacheLookupsTotal.inc({ result: "miss" });
+  const raw = refreshDbMetricsNow();
+  // Public promise swallows so the metrics endpoint doesn't 500.
+  const wrapped = raw.catch(() => {
+    // Already logged inside refreshDbMetricsNow.
+  });
+  const entry: DbMetricsCacheEntry = {
+    startedAt: performance.now(),
+    completedAt: null,
+    promise: wrapped,
+  };
+  lastDbMetricsRefresh = entry;
+  // Combined settle handler in two-arg form: stamps completion on success
+  // so subsequent TTL checks measure from there, and evicts the slot on
+  // failure so the next scrape retries instead of holding a poisoned
+  // entry. The two-arg form avoids creating an orphan rejected promise
+  // (which would surface as an unhandled rejection). The trailing .catch
+  // guards against the settle callbacks themselves throwing (e.g. if
+  // prom-client is in a bad state), which would otherwise produce a second
+  // unhandled rejection from the returned promise.
+  raw
+    .then(
+      () => {
+        entry.completedAt = performance.now();
+        dbMetricsRefreshTotal.inc({ outcome: "success" });
+      },
+      () => {
+        if (lastDbMetricsRefresh === entry) {
+          lastDbMetricsRefresh = null;
+        }
+        dbMetricsRefreshTotal.inc({ outcome: "error" });
+      }
+    )
+    .catch(() => {
+      // settle callback threw; counters are best-effort
+    });
+  return wrapped;
+}
+
+async function refreshDbMetricsNow(): Promise<void> {
   try {
     // Dynamic import to avoid circular dependencies
     const {
@@ -1178,26 +1390,24 @@ export async function updateDbMetrics(): Promise<void> {
       getBillingStatsFromDb(),
     ]);
 
-    // Update workflow execution counts per (status, org_slug). Reset before
-    // populating so series for orgs that no longer have executions in a given
-    // status clear out instead of going stale.
+    // Update workflow execution counts per (status, org_slug, error_type).
+    // Reset before populating so series for orgs that no longer have executions
+    // in a given bucket clear out instead of going stale.
     workflowExecutionsTotal.reset();
     for (const row of workflowStats.executionsByStatusAndOrgSlug) {
       workflowExecutionsTotal.set(
-        { status: row.status, org_slug: row.orgSlug },
+        {
+          status: row.status,
+          org_slug: row.orgSlug,
+          error_type: row.errorType,
+        },
         row.count
       );
     }
 
-    // Update workflow errors total per org_slug (convenience gauge for
-    // alerting). Reset before populating so series for orgs that no longer
-    // have errors clear out instead of going stale.
-    workflowErrorsTotal.reset();
-    for (const [orgSlug, errorCount] of Object.entries(
-      workflowStats.errorByOrgSlug
-    )) {
-      workflowErrorsTotal.set({ org_slug: orgSlug }, errorCount);
-    }
+    // KEEP-545: the per-org error gauge that used to live here was removed.
+    // See `keeperhub_workflow_execution_errors_created_total` (per-pod
+    // counter incremented at finalization time) for the replacement.
 
     // Update workflow duration histogram buckets
     for (let i = 0; i < WORKFLOW_DURATION_BUCKETS.length; i++) {
@@ -1300,6 +1510,7 @@ export async function updateDbMetrics(): Promise<void> {
           org_name: org.name,
           slug: org.slug,
           plan: org.plan,
+          tier: org.tier ?? "",
           billing_status: org.billingStatus,
         },
         1
@@ -1308,17 +1519,22 @@ export async function updateDbMetrics(): Promise<void> {
 
     // Update billing-aware metrics
     orgTotalByPlan.reset();
-    for (const [plan, byStatus] of Object.entries(billingStats.orgsByPlan)) {
-      for (const [billingStatus, orgCount] of Object.entries(byStatus)) {
-        orgTotalByPlan.set({ plan, billing_status: billingStatus }, orgCount);
-      }
+    for (const entry of billingStats.orgsByPlan) {
+      orgTotalByPlan.set(
+        {
+          plan: entry.plan,
+          tier: entry.tier ?? "",
+          billing_status: entry.billingStatus,
+        },
+        entry.count
+      );
     }
 
     orgExecutions30d.reset();
     orgExecutionsMonth.reset();
     orgPlanUsageRatio.reset();
     for (const row of billingStats.orgsExecutions) {
-      const labels = { org_slug: row.orgSlug, plan: row.plan };
+      const labels = { org_slug: row.orgSlug };
       orgExecutions30d.set(labels, row.exec30d);
       orgExecutionsMonth.set(labels, row.execMonth);
       // Unlimited plan (enterprise) -> ratio 0 to avoid alerting noise.
@@ -1328,8 +1544,11 @@ export async function updateDbMetrics(): Promise<void> {
     }
 
     mrrUsdCents.reset();
-    for (const [plan, cents] of Object.entries(billingStats.mrrCentsByPlan)) {
-      mrrUsdCents.set({ plan }, cents);
+    for (const entry of billingStats.mrrCentsByPlan) {
+      mrrUsdCents.set(
+        { plan: entry.plan, tier: entry.tier ?? "" },
+        entry.cents
+      );
     }
     mrrUsdCentsTotal.set(billingStats.mrrCentsTotal);
 
@@ -1364,21 +1583,16 @@ export async function updateDbMetrics(): Promise<void> {
     apiKeyTotal.set(infraStats.apiKeysTotal);
     chainTotal.set(infraStats.chainsTotal);
     chainEnabled.set(infraStats.chainsEnabled);
-    paraWalletTotal.set(infraStats.paraWalletsTotal);
-    walletTotalByProvider.set(
-      { provider: "para" },
-      infraStats.walletsByProvider.para
-    );
-    walletTotalByProvider.set(
-      { provider: "turnkey" },
-      infraStats.walletsByProvider.turnkey
-    );
+    walletTotal.set(infraStats.walletsTotal);
     sessionActive.set(infraStats.sessionsActive);
 
     updateHubVoteMetrics(voteStats);
   } catch (error) {
     console.error("[Prometheus] Failed to update DB metrics:", error);
-    // Don't throw - allow other metrics to still be returned
+    // Propagate so the TTL cache wrapper evicts the failed entry instead
+    // of pinning it; updateDbMetrics() catches before returning to callers,
+    // preserving the previous "metrics endpoint never 500s" behavior.
+    throw error;
   }
 }
 

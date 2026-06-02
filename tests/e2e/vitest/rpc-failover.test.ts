@@ -30,11 +30,11 @@ import {
 vi.mock("server-only", () => ({}));
 
 import { type Chain, chains, userRpcPreferences, users } from "@/lib/db/schema";
-import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 import {
   clearRpcProviderManagerCache,
   RpcProviderManager,
 } from "@/lib/rpc/providers";
+import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 import { PERSISTENT_TEST_USER_EMAIL } from "../../utils/db";
 
 // Skip if DATABASE_URL not set or SKIP_INFRA_TESTS is true (CI environment without DB)
@@ -213,7 +213,7 @@ describe.skipIf(shouldSkip)("RPC Failover E2E", () => {
       const anotherUserId = `test_user_${Date.now()}_2`;
       await db.insert(users).values({
         id: anotherUserId,
-        email: `test-${Date.now()}-2@example.com`,
+        email: `test-${Date.now()}-2@techops.services`,
         createdAt: new Date(),
         updatedAt: new Date(),
       });
@@ -263,7 +263,7 @@ describe.skipIf(shouldSkip)("RPC Failover E2E", () => {
       const tempUserId = `temp_user_${Date.now()}`;
       await db.insert(users).values({
         id: tempUserId,
-        email: `temp-${Date.now()}@example.com`,
+        email: `temp-${Date.now()}@techops.services`,
         createdAt: new Date(),
         updatedAt: new Date(),
       });

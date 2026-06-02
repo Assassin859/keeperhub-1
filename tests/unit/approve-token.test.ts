@@ -93,7 +93,7 @@ vi.mock("@/lib/web3/resolve-org-context", () => ({
 // Mock wallet helpers
 const mockGetWalletAddress = vi.fn();
 const mockInitializeSigner = vi.fn();
-vi.mock("@/lib/para/wallet-helpers", () => ({
+vi.mock("@/lib/web3/wallet-helpers", () => ({
   getOrganizationWalletAddress: (...args: unknown[]) =>
     mockGetWalletAddress(...args),
   initializeWalletSigner: (...args: unknown[]) => mockInitializeSigner(...args),
@@ -163,6 +163,22 @@ vi.mock("@/lib/web3/transaction-manager", () => ({
 // Mock sponsorship (disabled by default so tests exercise the direct signing path)
 vi.mock("@/lib/web3/turnkey-sponsorship-config", () => ({
   isSponsorshipSupported: () => false,
+}));
+
+vi.mock("@/lib/safe/signer-resolver", () => ({
+  resolveSignerMode: vi.fn().mockResolvedValue({
+    kind: "eoa",
+    ownerAddress: "0xwalletaddress",
+  }),
+  resolveSignerForNode: vi.fn().mockResolvedValue({
+    kind: "eoa",
+    ownerAddress: "0xwalletaddress",
+  }),
+}));
+
+vi.mock("@/lib/safe/execute-as-safe", () => ({
+  executeContractCallAsSafe: vi.fn(),
+  executeNativeTransferAsSafe: vi.fn(),
 }));
 
 vi.mock("@/lib/web3/sponsored-transaction-manager", () => ({

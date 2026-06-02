@@ -9,13 +9,17 @@ import "server-only";
 import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+import { fetchCredentials } from "@/lib/credential-fetcher";
+import { assertConnectionUrlIsPublic } from "@/lib/db/connection-host-guard";
 import {
   getDatabaseErrorMessage,
   getPostgresConnectionOptions,
   type PostgresSslOption,
 } from "@/lib/db/connection-utils";
-import { fetchCredentials } from "@/lib/credential-fetcher";
-import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
+import {
+  type StepInput,
+  withStepLogging,
+} from "@/lib/workflow/executor/step-handler";
 
 type DatabaseQueryResult =
   | { success: true; rows: unknown; count: number }
@@ -118,7 +122,10 @@ async function databaseQuery(
   }
 
   const credentials = input.integrationId
-    ? await fetchCredentials(input.integrationId)
+    ? await fetchCredentials(input.integrationId, {
+        userId: input._context?.ownerId ?? null,
+        organizationId: input._context?.organizationId ?? null,
+      })
     : {};
 
   const databaseUrl = credentials.DATABASE_URL;
@@ -135,6 +142,18 @@ async function databaseQuery(
     databaseUrl,
     credentials.DATABASE_SSL_MODE
   );
+
+  try {
+    await assertConnectionUrlIsPublic(normalizedUrl);
+  } catch (guardError) {
+    return {
+      success: false,
+      error:
+        guardError instanceof Error
+          ? guardError.message
+          : "Host is not allowed: must resolve to a public address",
+    };
+  }
 
   const queryString = (input.dbQuery || input.query) as string;
   let client: postgres.Sql | null = null;

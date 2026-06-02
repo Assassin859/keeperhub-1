@@ -38,16 +38,14 @@ describe("edge-helpers", () => {
 
   describe("hasDuplicateEdge", () => {
     it("returns false when no edges exist", () => {
-      expect(
-        hasDuplicateEdge([], { source: "a", target: "b" })
-      ).toBe(false);
+      expect(hasDuplicateEdge([], { source: "a", target: "b" })).toBe(false);
     });
 
     it("detects duplicate when both handles are null/undefined on both sides", () => {
       const existing = [edge("e1", "a", "b")];
-      expect(
-        hasDuplicateEdge(existing, { source: "a", target: "b" })
-      ).toBe(true);
+      expect(hasDuplicateEdge(existing, { source: "a", target: "b" })).toBe(
+        true
+      );
     });
 
     it("treats null, undefined, and empty string handles as equivalent", () => {
@@ -64,16 +62,16 @@ describe("edge-helpers", () => {
 
     it("allows different targets from the same source", () => {
       const existing = [edge("e1", "a", "b")];
-      expect(
-        hasDuplicateEdge(existing, { source: "a", target: "c" })
-      ).toBe(false);
+      expect(hasDuplicateEdge(existing, { source: "a", target: "c" })).toBe(
+        false
+      );
     });
 
     it("allows different sources to the same target", () => {
       const existing = [edge("e1", "a", "c")];
-      expect(
-        hasDuplicateEdge(existing, { source: "b", target: "c" })
-      ).toBe(false);
+      expect(hasDuplicateEdge(existing, { source: "b", target: "c" })).toBe(
+        false
+      );
     });
 
     it("allows same source->target on different source handles (Condition true/false)", () => {
@@ -115,9 +113,9 @@ describe("edge-helpers", () => {
         edge("e2", "a", "b"),
         edge("e3", "m", "n"),
       ];
-      expect(
-        hasDuplicateEdge(existing, { source: "a", target: "b" })
-      ).toBe(true);
+      expect(hasDuplicateEdge(existing, { source: "a", target: "b" })).toBe(
+        true
+      );
     });
   });
 

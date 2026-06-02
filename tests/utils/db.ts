@@ -14,6 +14,7 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import postgres from "postgres";
+import type { WorkflowEdgeJson, WorkflowNodeJson } from "@/lib/test-data/types";
 import {
   createManualWorkflow,
   createScheduledWorkflow,
@@ -63,6 +64,14 @@ export type CreateTestWorkflowOptions = {
   cronExpression?: string;
   timezone?: string;
   actionEndpoint?: string;
+  /**
+   * Inject programmatically built workflow nodes/edges verbatim, bypassing the
+   * synthetic-workflow branch. When both `nodes` and `edges` are provided, the
+   * caller's shape is used as-is. KEEP-458: the protocol-coverage runner
+   * passes builder output from `lib/test-data/build-workflow.ts` here.
+   */
+  nodes?: WorkflowNodeJson[];
+  edges?: WorkflowEdgeJson[];
 };
 
 export type TestWorkflow = {
@@ -173,11 +182,16 @@ export async function createTestWorkflow(
       cronExpression = "0 9 * * *",
       timezone = "UTC",
       actionEndpoint,
+      nodes: fixtureNodes,
+      edges: fixtureEdges,
     } = options;
 
-    // Get workflow structure based on trigger type
-    let workflow: ReturnType<typeof createWebhookWorkflow>;
-    if (triggerType === "schedule") {
+    // KEEP-458: when caller supplies a fixture's nodes/edges, insert them
+    // verbatim and skip the synthetic-workflow branch.
+    let workflow: { nodes: unknown[]; edges: unknown[] };
+    if (fixtureNodes && fixtureEdges) {
+      workflow = { nodes: fixtureNodes, edges: fixtureEdges };
+    } else if (triggerType === "schedule") {
       workflow = createScheduledWorkflow(cronExpression, timezone);
     } else if (triggerType === "manual") {
       workflow = createManualWorkflow(actionEndpoint);

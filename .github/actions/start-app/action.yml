@@ -47,6 +47,18 @@ inputs:
     description: 'INTEGRATION_ENCRYPTION_KEY for decrypting integration config (must match the key used by tests when seeding integrations)'
     required: false
     default: ''
+  turnkey_api_public_key:
+    description: 'TURNKEY_API_PUBLIC_KEY for the Turnkey-managed org wallet path (lib/turnkey/turnkey-operations.ts)'
+    required: false
+    default: ''
+  turnkey_api_private_key:
+    description: 'TURNKEY_API_PRIVATE_KEY for the Turnkey-managed org wallet path'
+    required: false
+    default: ''
+  turnkey_organization_id:
+    description: 'TURNKEY_ORGANIZATION_ID for the Turnkey-managed org wallet path'
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -76,6 +88,9 @@ runs:
         TEST_API_KEY: ${{ inputs.test_api_key }}
         CHAIN_RPC_CONFIG: ${{ inputs.chain_rpc_config }}
         INTEGRATION_ENCRYPTION_KEY: ${{ inputs.integration_encryption_key }}
+        TURNKEY_API_PUBLIC_KEY: ${{ inputs.turnkey_api_public_key }}
+        TURNKEY_API_PRIVATE_KEY: ${{ inputs.turnkey_api_private_key }}
+        TURNKEY_ORGANIZATION_ID: ${{ inputs.turnkey_organization_id }}
       run: |
         IMAGE="${ECR_REGISTRY}/${ECR_REPO}:app-${IMAGE_TAG}"
         echo "Pulling ${IMAGE}..."
@@ -93,16 +108,19 @@ runs:
           "WORKFLOW_TARGET_WORLD=@workflow/world-postgres" \
           > /tmp/keeperhub-app.env
 
-        # Pass CHAIN_RPC_CONFIG and INTEGRATION_ENCRYPTION_KEY via -e (not the
-        # env-file) because their values can contain JSON / characters that
-        # docker's env-file parser does not handle. INTEGRATION_ENCRYPTION_KEY
-        # must match the key the test process uses to encrypt integration
-        # config rows -- otherwise getIntegrationById's decryptConfig fails
-        # silently and credentials never reach step bundles.
+        # Pass values with potentially special chars (JSON / base64 / =-padding)
+        # via -e rather than the env-file, which parses literally and breaks on
+        # such values. INTEGRATION_ENCRYPTION_KEY must match the test process's
+        # key so getIntegrationById's decryptConfig can read seeded rows.
+        # TURNKEY_* are required for the Turnkey-managed org-wallet path the
+        # protocol-coverage suites exercise.
         docker run -d --name keeperhub-app --network host \
           --env-file /tmp/keeperhub-app.env \
           -e "CHAIN_RPC_CONFIG=${CHAIN_RPC_CONFIG}" \
           -e "INTEGRATION_ENCRYPTION_KEY=${INTEGRATION_ENCRYPTION_KEY}" \
+          -e "TURNKEY_API_PUBLIC_KEY=${TURNKEY_API_PUBLIC_KEY}" \
+          -e "TURNKEY_API_PRIVATE_KEY=${TURNKEY_API_PRIVATE_KEY}" \
+          -e "TURNKEY_ORGANIZATION_ID=${TURNKEY_ORGANIZATION_ID}" \
           "${IMAGE}"
 
         for i in $(seq 1 30); do
@@ -167,3 +185,6 @@ runs:
         INTEGRATION_ENCRYPTION_KEY: ${{ inputs.integration_encryption_key }}
         WORKFLOW_TARGET_WORLD: "@workflow/world-postgres"
         CHAIN_RPC_CONFIG: ${{ inputs.chain_rpc_config }}
+        TURNKEY_API_PUBLIC_KEY: ${{ inputs.turnkey_api_public_key }}
+        TURNKEY_API_PRIVATE_KEY: ${{ inputs.turnkey_api_private_key }}
+        TURNKEY_ORGANIZATION_ID: ${{ inputs.turnkey_organization_id }}

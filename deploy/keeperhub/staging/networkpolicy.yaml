@@ -1,0 +1,106 @@
+# Defense-in-depth egress hardening for workflow runner Jobs. Even if the
+# JS-level SSRF guard in lib/sandbox/child-source.ts or lib/safe-fetch.ts is
+# bypassed, runner pods must not be able to reach the EC2 instance metadata
+# service (IMDS, 169.254.169.254) or pivot to arbitrary in-VPC / RFC1918 /
+# CGNAT hosts (RDS admin ports, other pods, peered VPCs, the node itself).
+# Selector matches the `app: workflow-runner` label set by
+# keeperhub-executor/k8s-job.ts.
+#
+# Egress is a union of explicit allows; everything else is denied. The runner
+# legitimately needs exactly four destinations, so each gets its own rule:
+#   1. kube-dns        - resolve public + in-cluster hostnames
+#   2. keeperhub-sandbox (:8787) - delegated code-step execution
+#   3. keeperhub-executor (:3080) - metrics ingest (EXECUTOR_METRICS_INGEST_URL)
+#   4. RDS Postgres (:5432) - the runner writes execution state directly via
+#      DATABASE_URL; reached by IP in the dedicated DB subnets (not a Service,
+#      so it must be an ipBlock, not a podSelector)
+# Everything else is the public-internet rule: 0.0.0.0/0 (and ::/0 for NAT64)
+# with every private/CGNAT/loopback/link-local range stripped via `except`.
+# In-cluster Services are reached by ClusterIP; the VPC CNI Network Policy
+# Agent evaluates egress on the post-DNAT backend pod IP, so podSelector rules
+# match the real destination even though the Service CIDR sits inside an
+# excepted range. Public egress is intentionally left port-unrestricted so
+# blockchain RPC / webhook endpoints on non-443 ports keep working;
+# destination filtering at L7 is handled by SAFE_FETCH_ENFORCE.
+#
+# Enforced by the AWS VPC CNI Network Policy Agent on EKS (cluster runs
+# v1.21+ amazon-vpc-cni with NETWORK_POLICY_ENFORCING_MODE=standard).
+#
+# Staging VPC is 10.1.0.0/16; DB subnets are 10.1.100.0/24, 10.1.101.0/24,
+# 10.1.102.0/24 (us-east-1 a/b/c).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: workflow-runner-block-imds
+  namespace: keeperhub
+spec:
+  podSelector:
+    matchLabels:
+      app: workflow-runner
+  policyTypes:
+    - Egress
+  egress:
+    # 1. DNS resolution via kube-dns (CoreDNS) only.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # 2. keeperhub-sandbox Service - delegated code-step execution.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: keeperhub
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keeperhub-sandbox
+      ports:
+        - protocol: TCP
+          port: 8787
+    # 3. keeperhub-executor Service - counter-metric ingest.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: keeperhub
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keeperhub-executor
+      ports:
+        - protocol: TCP
+          port: 3080
+    # 4. RDS Postgres in the dedicated DB subnets only.
+    - to:
+        - ipBlock:
+            cidr: 10.1.100.0/24
+        - ipBlock:
+            cidr: 10.1.101.0/24
+        - ipBlock:
+            cidr: 10.1.102.0/24
+      ports:
+        - protocol: TCP
+          port: 5432
+    # 5. Public internet, all ports, with private/CGNAT/loopback/link-local
+    #    ranges stripped. IPv6 keeps NAT64 reachable while blocking link-local
+    #    and ULA (AWS IMDSv6 at fd00:ec2::254 falls inside fc00::/7).
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+        - ipBlock:
+            cidr: ::/0
+            except:
+              - fe80::/10
+              - fc00::/7

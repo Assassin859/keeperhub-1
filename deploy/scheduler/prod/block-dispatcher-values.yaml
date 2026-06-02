@@ -36,6 +36,19 @@ serviceAccount:
 podAnnotations:
   reloader.stakater.com/auto: "true"
 
+# Prod Alloy scrapes via ServiceMonitor CRDs, not prometheus.io/* annotations.
+# Same pattern the executor uses (deploy/executor/prod/values.yaml). Without
+# this block, the block-dispatcher /metrics endpoint is unreachable to Alloy
+# even with annotations set, so Grafana panels stay empty.
+serviceMonitors:
+  enabled: true
+  monitors:
+    - name: block-dispatcher-metrics
+      port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+
 resources:
   limits:
     memory: 512Mi
@@ -71,6 +84,11 @@ env:
   RECONCILE_INTERVAL_MS:
     type: kv
     value: "30000"
+  # Periodic socket recycle: force-reconnect each ChainMonitor's WSS at this
+  # cadence to guard against half-open / silently degraded upstream sockets.
+  SOCKET_MAX_AGE_MS:
+    type: kv
+    value: "3600000"
   # Health check server port
   HEALTH_PORT:
     type: kv

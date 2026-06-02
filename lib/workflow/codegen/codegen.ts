@@ -1,5 +1,6 @@
-import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
 import { buildEdgesBySourceHandle } from "@/lib/workflow/editor/edge-handle-utils";
+import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
+import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 import { findActionById, flattenConfigFields } from "@/plugins/registry";
 import {
   analyzeNodeUsage,
@@ -10,7 +11,6 @@ import {
   toFriendlyVarName,
   toTypeScriptLiteral,
 } from "./shared";
-import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 
 type CodeGenOptions = {
   functionName?: string;

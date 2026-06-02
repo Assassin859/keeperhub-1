@@ -5,7 +5,20 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 const FEEDBACK_SERVICE_URL = process.env.FEEDBACK_SERVICE_URL || "";
 const FEEDBACK_API_KEY = process.env.FEEDBACK_API_KEY || "";
 
+// Feedback widget is disabled by default. Re-enable by setting
+// NEXT_PUBLIC_FEEDBACK_ENABLED=true (the sidebar button gates on the same
+// flag). When disabled, the route short-circuits and never proxies to the
+// external feedback service.
+const FEEDBACK_ENABLED = process.env.NEXT_PUBLIC_FEEDBACK_ENABLED === "true";
+
 export async function POST(request: Request): Promise<NextResponse> {
+  if (!FEEDBACK_ENABLED) {
+    return NextResponse.json(
+      { error: "Feedback service is disabled" },
+      { status: 503 }
+    );
+  }
+
   try {
     // Validate configuration
     if (!FEEDBACK_SERVICE_URL) {

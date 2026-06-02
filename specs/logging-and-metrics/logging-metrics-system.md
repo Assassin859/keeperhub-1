@@ -28,7 +28,7 @@ Use for errors caused by user actions or external factors (not system failures).
 
 **Behavior:**
 - Logs to console using `console.warn` (user errors don't wake up DevOps)
-- Emits Prometheus metric with `is_user_error: "true"`
+- Emits Prometheus metric with `error_type: "user"`
 - Extracts context from message prefix (e.g., `"[Discord]"` becomes `"Discord"`)
 
 #### logSystemError
@@ -46,7 +46,7 @@ Use for errors caused by system failures (critical infrastructure issues).
 
 **Behavior:**
 - Logs to console using `console.error` (critical failures)
-- Emits Prometheus metric with `is_user_error: "false"`
+- Emits Prometheus metric with `error_type: "system"`
 - Extracts context from message prefix
 
 ## Usage Examples
@@ -103,14 +103,14 @@ try {
 
 ### Infrastructure Error
 ```typescript
-if (!process.env.PARA_API_KEY) {
+if (!process.env.TURNKEY_API_PUBLIC_KEY) {
   logSystemError(
     ErrorCategory.INFRASTRUCTURE,
-    "[Para] PARA_API_KEY not configured",
-    new Error("PARA_API_KEY environment variable is not configured"),
-    { component: "para-service" }
+    "[Turnkey] TURNKEY_API_PUBLIC_KEY not configured",
+    new Error("TURNKEY_API_PUBLIC_KEY environment variable is not configured"),
+    { component: "turnkey-service" }
   );
-  throw new Error("PARA_API_KEY not configured");
+  throw new Error("TURNKEY_API_PUBLIC_KEY not configured");
 }
 ```
 
@@ -137,7 +137,7 @@ All messages should follow the pattern: `"[Context] Description"`
 - `"[Discord] Failed to send message"`
 - `"[Etherscan] API rate limit exceeded"`
 - `"[DB] Connection timeout"`
-- `"[Para] PARA_API_KEY not configured"`
+- `"[Turnkey] TURNKEY_API_PUBLIC_KEY not configured"`
 
 The context (part in brackets) is automatically extracted and added as the `error_context` label.
 
@@ -146,7 +146,7 @@ The context (part in brackets) is automatically extracted and added as the `erro
 ### Common Labels
 - `service` - External service name (e.g., "etherscan", "sendgrid")
 - `endpoint` - API endpoint path (e.g., "/api/workflows")
-- `component` - System component (e.g., "para-service", "events-service")
+- `component` - System component (e.g., "turnkey-service", "events-service")
 - `chain_id` - Blockchain chain ID (as string)
 - `plugin_name` - Plugin identifier (e.g., "web3", "discord")
 - `action_name` - Plugin action (e.g., "send-message", "check-balance")
@@ -163,7 +163,7 @@ Every logging call automatically includes these labels:
 
 - `error_category` - The ErrorCategory value (e.g., "validation", "database")
 - `error_context` - Extracted from message prefix (e.g., "Discord", "Etherscan")
-- `is_user_error` - "true" for logUserError, "false" for logSystemError
+- `error_type` - "user" for logUserError, "system" for logSystemError
 
 ## Prometheus Metrics
 
@@ -273,7 +273,7 @@ logSystemError(ErrorCategory.DATABASE, message, error, labels);
 **Internal Functions:**
 - `extractContext(message)` - Extracts `[Context]` from message prefix using regex
 - `getMetricName(category)` - Maps ErrorCategory to Prometheus metric name
-- `isUserError(category)` - Determines if category is user-caused
+- `errorTypeForCategory(category)` - Determines whether category is "user" or "system"
 
 ## Testing
 

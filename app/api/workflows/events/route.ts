@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getProtocol } from "@/lib/protocol-registry";
@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { type Chain, chains, workflows } from "@/lib/db/schema";
 import type { WorkflowNode } from "@/lib/workflow/store";
 import { WorkflowTriggerEnum } from "@/lib/workflow/store";
+import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 
 /**
  * Internal endpoint for workers to fetch active Event-type workflows
@@ -56,9 +57,12 @@ export async function GET(request: Request) {
       })
       .from(workflows);
 
+    // KEEP-440: never hand a soft-deleted workflow to the events worker.
     const allWorkflows = filterActive
-      ? await query.where(eq(workflows.enabled, true))
-      : await query;
+      ? await query.where(
+          and(eq(workflows.enabled, true), workflowNotDeleted())
+        )
+      : await query.where(workflowNotDeleted());
 
     const eventWorkflows = allWorkflows
       .map((workflow) => {
@@ -139,6 +143,7 @@ export async function GET(request: Request) {
         defaultPrivateRpcUrl: chains.defaultPrivateRpcUrl,
         isTestnet: chains.isTestnet,
         isEnabled: chains.isEnabled,
+        status: chains.status,
         createdAt: chains.createdAt,
         updatedAt: chains.updatedAt,
         gasConfig: chains.gasConfig,

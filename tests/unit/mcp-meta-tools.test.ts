@@ -112,11 +112,11 @@ describe("registerMetaTools: tool registration", () => {
     vi.resetModules();
   });
 
-  it("Test 6: registerMetaTools registers all 8 meta-tools (4 protocol/marketplace + 4 curator)", async () => {
+  it("Test 6: registerMetaTools registers all 10 meta-tools (4 protocol/marketplace + 4 curator + validate_workflow + prepare_test_pin_data)", async () => {
     const { server, registeredTools } = makeMockServer();
     const { registerMetaTools } = await import("@/lib/mcp/tools");
     registerMetaTools(server, "http://localhost:3000", "Bearer test-token");
-    expect(registeredTools.length).toBe(8);
+    expect(registeredTools.length).toBe(10);
     expect(registeredTools.map((t) => t.name)).toEqual([
       "search_protocol_actions",
       "execute_protocol_action",
@@ -125,6 +125,8 @@ describe("registerMetaTools: tool registration", () => {
       "list_workflow",
       "unlist_workflow",
       "update_workflow_listing",
+      "validate_workflow",
+      "prepare_test_pin_data",
       "get_workflow_listing",
     ]);
   });
@@ -798,7 +800,7 @@ describe("call_workflow tool behavior", () => {
       content: Array<{ type: string; text: string }>;
     };
     const parsed = JSON.parse(result.content[0].text) as { error?: string };
-    expect(parsed.error).toBe("Forbidden");
+    expect(parsed.error).toBe("insufficient_scope");
   });
 
   it("Test 24: call_workflow encodes slug in URL", async () => {
@@ -883,9 +885,13 @@ describe("POST /api/mcp/workflows/[slug]/call: write workflow returns calldata",
       listedSlug: "listed_slug",
       isListed: "is_listed",
       tagId: "tag_id",
+      enabled: "enabled",
+      deletedAt: "deleted_at",
+      userId: "user_id",
     },
     workflowExecutions: { id: "id" },
     tags: { id: "id", name: "name" },
+    users: { id: "id", deactivatedAt: "deactivated_at" },
   }));
 
   vi.mock("@/lib/payments/x402/server", () => ({
@@ -923,6 +929,12 @@ describe("POST /api/mcp/workflows/[slug]/call: write workflow returns calldata",
     EXECUTION_LIMIT_ERROR: "Monthly execution limit exceeded",
   }));
 
+  vi.mock("@/lib/features/route-guard", () => ({
+    enforceWorkflowFeatures: vi.fn().mockResolvedValue({ blocked: false }),
+    FEATURE_UPGRADE_REQUIRED_ERROR:
+      "This workflow uses features that require a paid plan.",
+  }));
+
   vi.mock("@/app/api/execute/_lib/concurrency-limit", () => ({
     checkConcurrencyLimit: mockCheckConcurrencyLimit,
   }));
@@ -940,6 +952,16 @@ describe("POST /api/mcp/workflows/[slug]/call: write workflow returns calldata",
     generateCalldataForWorkflow: mockGenerateCalldata,
   }));
 
+  vi.mock("@/lib/errors/classify", () => ({
+    classifyExecutionError: () => ({
+      errorCategory: "workflow_engine",
+      errorType: "system",
+    }),
+  }));
+  vi.mock("@/lib/errors/finalize-error", () => ({
+    recordExecutionErrorFinalized: vi.fn().mockResolvedValue(undefined),
+  }));
+
   const WRITE_WORKFLOW = {
     id: "wf-write-1",
     name: "Write Workflow",
@@ -950,6 +972,7 @@ describe("POST /api/mcp/workflows/[slug]/call: write workflow returns calldata",
     outputMapping: null,
     priceUsdcPerCall: "0",
     isListed: true,
+    enabled: true,
     workflowType: "write",
     nodes: [
       {
@@ -969,14 +992,17 @@ describe("POST /api/mcp/workflows/[slug]/call: write workflow returns calldata",
   };
 
   function setupDbSelectWorkflow(row: unknown) {
-    // lookupWorkflow joins the tags table to project tagName into the row;
-    // the real chain is select().from().leftJoin().where().limit(). Mirror
-    // that shape here or the real code throws on the missing .leftJoin().
+    // lookupWorkflow joins tags (for tagName) and users (for the owner-active
+    // executability clause); the real chain is
+    // select().from().leftJoin().innerJoin().where().limit(). Mirror that shape
+    // here or the real code throws on the missing .innerJoin().
     mockDbSelect.mockReturnValue({
       from: vi.fn().mockReturnValue({
         leftJoin: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue(row ? [row] : []),
+          innerJoin: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue(row ? [row] : []),
+            }),
           }),
         }),
       }),
@@ -1078,6 +1104,7 @@ describe("POST /api/mcp/workflows/[slug]/call: write workflow returns calldata",
       outputMapping: null,
       priceUsdcPerCall: "0",
       isListed: true,
+      enabled: true,
       workflowType: "read",
       nodes: [],
       edges: [],

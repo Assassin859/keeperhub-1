@@ -17,7 +17,11 @@ import {
   parseTierKey,
   type TierKey,
 } from "@/lib/billing/plans";
-import { db } from "@/lib/db";
+// Every query in this module is a /api/metrics/db scrape aggregation, so they
+// all run on the dedicated metrics pool (metricsDb) rather than the app's
+// shared pool, which caps how many hit the DB at once - see metricsDb in
+// @/lib/db for why.
+import { metricsDb as db } from "@/lib/db";
 import {
   apiKeys,
   chains,
@@ -26,7 +30,7 @@ import {
   member,
   organization,
   organizationSubscriptions,
-  paraWallets,
+  organizationWallets,
   sessions,
   users,
   workflowExecutionLogs,
@@ -38,9 +42,11 @@ import {
 import type { BillingStatus } from "./types";
 
 // Label value used for workflow executions whose workflow has no organization
-// (personal/anonymous workflows). Keeps the per-org error gauge total equal
-// to the global error count instead of silently dropping these executions.
-const ANONYMOUS_ORG_SLUG = "_anonymous";
+// (personal/anonymous workflows). Keeps the per-(status, org_slug) execution
+// gauge total equal to the global total instead of silently dropping these
+// rows. Also re-exported for the runtime finalization counter so personal
+// workflows still produce a series rather than silently dropping increments.
+export const ANONYMOUS_ORG_SLUG = "_anonymous";
 
 // Histogram bucket boundaries in milliseconds (must match prometheus.ts)
 const WORKFLOW_DURATION_BUCKETS = [
@@ -56,16 +62,25 @@ export type WorkflowStats = {
   totalPending: number;
   totalCancelled: number;
 
-  // Error count per org slug. Personal/anonymous workflows are bucketed
-  // under ANONYMOUS_ORG_SLUG so the sum across this map matches totalError.
-  errorByOrgSlug: Record<string, number>;
-
-  // Per-(status, org_slug) execution counts. Personal/anonymous workflows
-  // are bucketed under ANONYMOUS_ORG_SLUG so the sum of counts for a given
-  // status across all orgs matches the corresponding total* above.
+  // Per-(status, org_slug, error_type) execution counts. Personal/anonymous
+  // workflows are bucketed under ANONYMOUS_ORG_SLUG so the sum of counts for
+  // a given status across all orgs matches the corresponding total* above.
+  //
+  // errorType is read directly from the workflow_executions.error_type text
+  // column (KEEP-545 rename — see drizzle/0077_error_type_label_rename.sql).
+  // For non-error rows and for rows that predate classification, the column
+  // is NULL; both cases are projected to a sentinel string so every gauge
+  // series carries a populated label.
+  //
+  // errorType values:
+  //   "user"    - errored row with error_type = 'user'
+  //   "system"  - errored row with error_type = 'system'
+  //   "unknown" - errored row with error_type IS NULL (predates classification)
+  //   "na"      - non-error status (success/running/pending/cancelled)
   executionsByStatusAndOrgSlug: Array<{
     status: string;
     orgSlug: string;
+    errorType: string;
     count: number;
   }>;
 
@@ -89,37 +104,47 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
       totalRunning: 0,
       totalPending: 0,
       totalCancelled: 0,
-      errorByOrgSlug: {},
       executionsByStatusAndOrgSlug: [],
       durationBuckets: new Array(WORKFLOW_DURATION_BUCKETS.length + 1).fill(0),
       durationSum: 0,
       durationCount: 0,
     };
 
-    // Per-(status, org_slug) execution breakdown: JOIN workflows + organization,
-    // LEFT JOIN so anonymous workflows still contribute (under ANONYMOUS_ORG_SLUG).
-    // GROUP BY uses the organization.slug column reference (not the COALESCE
-    // expression): Drizzle would otherwise bind ANONYMOUS_ORG_SLUG as separate
-    // parameters in SELECT and GROUP BY clauses, and Postgres rejects the query
-    // because the two COALESCE expressions are not textually identical. Postgres
-    // groups all NULL slugs into one group (NULLs are equal in GROUP BY), and
-    // the SELECT-side COALESCE renders that group as ANONYMOUS_ORG_SLUG.
+    // Per-(status, org_slug, error_type) execution breakdown: JOIN workflows +
+    // organization, LEFT JOIN so anonymous workflows still contribute (under
+    // ANONYMOUS_ORG_SLUG). GROUP BY uses the underlying columns (not the
+    // COALESCE/CASE expressions): Drizzle would otherwise bind constants as
+    // separate parameters in SELECT and GROUP BY clauses, and Postgres rejects
+    // the query because the two expressions are not textually identical.
+    // Postgres groups NULLs together (NULLs are equal in GROUP BY), and the
+    // SELECT-side expressions render those groups as ANONYMOUS_ORG_SLUG /
+    // "unknown" / "na" as appropriate.
     const breakdown = await db
       .select({
         status: workflowExecutions.status,
         orgSlug: sql<string>`COALESCE(${organization.slug}, ${ANONYMOUS_ORG_SLUG})`,
+        errorType: sql<string>`CASE
+          WHEN ${workflowExecutions.status} <> 'error' THEN 'na'
+          WHEN ${workflowExecutions.errorType} IS NULL THEN 'unknown'
+          ELSE ${workflowExecutions.errorType}
+        END`,
         count: count(),
       })
       .from(workflowExecutions)
       .innerJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
       .leftJoin(organization, eq(workflows.organizationId, organization.id))
-      .groupBy(workflowExecutions.status, organization.slug);
+      .groupBy(
+        workflowExecutions.status,
+        organization.slug,
+        workflowExecutions.errorType
+      );
 
     for (const row of breakdown) {
       const c = Number(row.count) || 0;
       stats.executionsByStatusAndOrgSlug.push({
         status: row.status,
         orgSlug: row.orgSlug,
+        errorType: row.errorType,
         count: c,
       });
       switch (row.status) {
@@ -128,7 +153,6 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
           break;
         case "error":
           stats.totalError += c;
-          stats.errorByOrgSlug[row.orgSlug] = c;
           break;
         case "running":
           stats.totalRunning += c;
@@ -196,7 +220,6 @@ export async function getWorkflowStatsFromDb(): Promise<WorkflowStats> {
       totalRunning: 0,
       totalPending: 0,
       totalCancelled: 0,
-      errorByOrgSlug: {},
       executionsByStatusAndOrgSlug: [],
       durationBuckets: new Array(WORKFLOW_DURATION_BUCKETS.length + 1).fill(0),
       durationSum: 0,
@@ -719,16 +742,7 @@ export type InfraStats = {
   apiKeysTotal: number;
   chainsTotal: number;
   chainsEnabled: number;
-  /**
-   * @deprecated Counts all active org wallets regardless of provider.
-   * Kept for backward compatibility with the `keeperhub_para_wallet_total`
-   * gauge. Use `walletsByProvider` instead.
-   */
-  paraWalletsTotal: number;
-  walletsByProvider: {
-    para: number;
-    turnkey: number;
-  };
+  walletsTotal: number;
   sessionsActive: number;
 };
 
@@ -746,7 +760,6 @@ export async function getInfraStatsFromDb(): Promise<InfraStats> {
       chainsResult,
       chainsEnabledResult,
       walletsResult,
-      walletsByProviderResult,
       sessionsResult,
     ] = await Promise.all([
       db.select({ count: count() }).from(apiKeys),
@@ -757,32 +770,19 @@ export async function getInfraStatsFromDb(): Promise<InfraStats> {
         .where(eq(chains.isEnabled, true)),
       db
         .select({ count: count() })
-        .from(paraWallets)
-        .where(eq(paraWallets.isActive, true)),
-      db
-        .select({ provider: paraWallets.provider, count: count() })
-        .from(paraWallets)
-        .where(eq(paraWallets.isActive, true))
-        .groupBy(paraWallets.provider),
+        .from(organizationWallets)
+        .where(eq(organizationWallets.isActive, true)),
       db
         .select({ count: count() })
         .from(sessions)
         .where(gte(sessions.expiresAt, now)),
     ]);
 
-    const walletsByProvider = { para: 0, turnkey: 0 };
-    for (const row of walletsByProviderResult) {
-      if (row.provider === "para" || row.provider === "turnkey") {
-        walletsByProvider[row.provider] = Number(row.count) || 0;
-      }
-    }
-
     return {
       apiKeysTotal: Number(apiKeysResult[0]?.count) || 0,
       chainsTotal: Number(chainsResult[0]?.count) || 0,
       chainsEnabled: Number(chainsEnabledResult[0]?.count) || 0,
-      paraWalletsTotal: Number(walletsResult[0]?.count) || 0,
-      walletsByProvider,
+      walletsTotal: Number(walletsResult[0]?.count) || 0,
       sessionsActive: Number(sessionsResult[0]?.count) || 0,
     };
   } catch (error) {
@@ -791,8 +791,7 @@ export async function getInfraStatsFromDb(): Promise<InfraStats> {
       apiKeysTotal: 0,
       chainsTotal: 0,
       chainsEnabled: 0,
-      paraWalletsTotal: 0,
-      walletsByProvider: { para: 0, turnkey: 0 },
+      walletsTotal: 0,
       sessionsActive: 0,
     };
   }
@@ -907,23 +906,21 @@ export async function getEnabledChainNamesFromDb(): Promise<string[]> {
   }
 }
 
-// Bucket label used for aggregating free-tier orgs in per-org execution
-// gauges. Free-tier orgs share a single series to keep Prometheus
-// cardinality bounded. Paid orgs (pro/business/enterprise) are emitted as
-// individual series so each one is filterable in Grafana.
-export const FREE_ORG_AGGREGATE_SLUG = "_free";
-
 // Subscription statuses that count toward MRR — kept inline in the SQL
 // query (active / trialing / past_due). Canceled / unpaid / paused
 // subscriptions do not contribute.
 
 export type BillingStats = {
-  // Org count per (plan, billing_status). Free orgs without a subscription
-  // row are reported under plan="free", billing_status="none".
-  orgsByPlan: Record<PlanName, Record<BillingStatus, number>>;
+  // Org count per (plan, tier, billing_status). One entry per unique
+  // combination. tier is null for free and enterprise (no tier system).
+  orgsByPlan: Array<{
+    plan: PlanName;
+    tier: TierKey | null;
+    billingStatus: BillingStatus;
+    count: number;
+  }>;
 
-  // Per-org execution counts. Paid orgs appear individually with their slug;
-  // all free-tier orgs are aggregated under FREE_ORG_AGGREGATE_SLUG.
+  // Per-org execution counts. One entry per org (free + paid).
   orgsExecutions: Array<{
     orgSlug: string;
     plan: PlanName;
@@ -934,31 +931,24 @@ export type BillingStats = {
     monthlyLimit: number;
   }>;
 
-  // Approximate MRR in USD cents per plan, computed from PLANS[plan].tiers
-  // matched by org's tier. Stripe remains the source of truth for accounting.
-  mrrCentsByPlan: Record<PlanName, number>;
+  // Approximate MRR in USD cents per (plan, tier), computed from
+  // PLANS[plan].tiers[tier].monthlyPrice. Stripe remains the source of
+  // truth for accounting.
+  mrrCentsByPlan: Array<{
+    plan: PlanName;
+    tier: TierKey | null;
+    cents: number;
+  }>;
 
-  // Total MRR in USD cents across all plans (sum of mrrCentsByPlan).
+  // Total MRR in USD cents across all plans and tiers.
   mrrCentsTotal: number;
 };
 
 function emptyBillingStats(): BillingStats {
-  const orgsByPlan: Record<PlanName, Record<BillingStatus, number>> = {
-    free: {} as Record<BillingStatus, number>,
-    pro: {} as Record<BillingStatus, number>,
-    business: {} as Record<BillingStatus, number>,
-    enterprise: {} as Record<BillingStatus, number>,
-  };
-  const mrrCentsByPlan: Record<PlanName, number> = {
-    free: 0,
-    pro: 0,
-    business: 0,
-    enterprise: 0,
-  };
   return {
-    orgsByPlan,
+    orgsByPlan: [],
     orgsExecutions: [],
-    mrrCentsByPlan,
+    mrrCentsByPlan: [],
     mrrCentsTotal: 0,
   };
 }
@@ -978,18 +968,16 @@ function tierMonthlyPriceCents(plan: PlanName, tier: TierKey | null): number {
  * Joins workflow_executions -> workflows -> organization -> organization_subscriptions
  * to produce per-org execution counts (30-day rolling and current-month-to-date),
  * org distribution by plan/billing status, and a directional MRR figure.
- *
- * Free-tier orgs are aggregated into a single FREE_ORG_AGGREGATE_SLUG series
- * for the per-org executions gauge to bound Prometheus cardinality.
  */
 export async function getBillingStatsFromDb(): Promise<BillingStats> {
   try {
-    // Aggregate counts: orgs by (plan, billing_status). LEFT JOIN handles
-    // legacy orgs without a subscription row (mapped to plan="free",
+    // Aggregate counts: orgs by (plan, tier, billing_status). LEFT JOIN
+    // handles legacy orgs without a subscription row (mapped to plan="free",
     // billing_status="none" via fallback in OrgListEntry parsing).
     const orgsByPlanResult = await db
       .select({
         plan: organizationSubscriptions.plan,
+        tier: organizationSubscriptions.tier,
         status: organizationSubscriptions.status,
         count: count(),
       })
@@ -1000,6 +988,7 @@ export async function getBillingStatsFromDb(): Promise<BillingStats> {
       )
       .groupBy(
         organizationSubscriptions.plan,
+        organizationSubscriptions.tier,
         organizationSubscriptions.status
       );
 
@@ -1045,29 +1034,32 @@ export async function getBillingStatsFromDb(): Promise<BillingStats> {
 
     const stats = emptyBillingStats();
 
-    // Tally orgs by plan + billing_status
+    // Tally orgs by plan + tier + billing_status
     for (const row of orgsByPlanResult) {
       const plan = parsePlanName(row.plan, "free");
-      const status: BillingStatus =
+      const tier = parseTierKey(row.tier);
+      const billingStatus: BillingStatus =
         row.status === null ? "none" : parseBillingStatus(row.status);
-      const planBucket = stats.orgsByPlan[plan];
-      planBucket[status] = (planBucket[status] ?? 0) + Number(row.count);
+      const count = Number(row.count);
+      const existing = stats.orgsByPlan.find(
+        (e) =>
+          e.plan === plan &&
+          e.tier === tier &&
+          e.billingStatus === billingStatus
+      );
+      if (existing) {
+        existing.count += count;
+      } else {
+        stats.orgsByPlan.push({ plan, tier, billingStatus, count });
+      }
     }
 
-    // Tally per-org executions, bucketing free orgs into a single series
-    let freeExec30d = 0;
-    let freeExecMonth = 0;
+    // Tally per-org executions — one entry per org (free + paid)
     for (const row of execByOrgResult) {
       const plan = parsePlanName(row.plan, "free");
       const tier = parseTierKey(row.tier);
       const exec30d = Number(row.exec30d) || 0;
       const execMonth = Number(row.execMonth) || 0;
-
-      if (plan === "free") {
-        freeExec30d += exec30d;
-        freeExecMonth += execMonth;
-        continue;
-      }
 
       const monthlyLimit = PLANS[plan].features.maxExecutionsPerMonth;
       const tierLimit =
@@ -1085,23 +1077,19 @@ export async function getBillingStatsFromDb(): Promise<BillingStats> {
       });
     }
 
-    // Free aggregate row: plan=free, monthlyLimit from free defaults
-    if (freeExec30d > 0 || freeExecMonth > 0) {
-      stats.orgsExecutions.push({
-        orgSlug: FREE_ORG_AGGREGATE_SLUG,
-        plan: "free",
-        exec30d: freeExec30d,
-        execMonth: freeExecMonth,
-        monthlyLimit: PLANS.free.features.maxExecutionsPerMonth,
-      });
-    }
-
-    // Compute MRR per plan from active subscriptions × tier price
+    // Compute MRR per (plan, tier) from active subscriptions × tier price
     for (const row of mrrSubsResult) {
       const plan = parsePlanName(row.plan, "free");
       const tier = parseTierKey(row.tier);
       const cents = tierMonthlyPriceCents(plan, tier);
-      stats.mrrCentsByPlan[plan] += cents;
+      const existing = stats.mrrCentsByPlan.find(
+        (e) => e.plan === plan && e.tier === tier
+      );
+      if (existing) {
+        existing.cents += cents;
+      } else {
+        stats.mrrCentsByPlan.push({ plan, tier, cents });
+      }
       stats.mrrCentsTotal += cents;
     }
 

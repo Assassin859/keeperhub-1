@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import type { DBAdapter, Where } from "better-auth";
 
 // KEEP-239: better-auth 1.5.6 stores `sessions.token` plaintext, which gives
@@ -46,6 +46,30 @@ type DeleteManyArgs = Parameters<DBAdapter["deleteMany"]>[0];
 
 export function hashSessionToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
+}
+
+/**
+ * Better Auth signs the `better-auth.session_token` cookie value via
+ * hono's setSignedCookie: HMAC-SHA256 of the raw token under the
+ * BETTER_AUTH_SECRET, base64-encoded, joined with a literal "." after
+ * the raw token. Reading the cookie (auth.api.getSession) verifies
+ * the signature and rejects the value when it does not match.
+ *
+ * Routes that mint a session manually (oauth-mfa-finalize,
+ * totp/enroll on the pending-signup path) must produce a cookie that
+ * passes this signature check, otherwise the freshly-issued cookie
+ * appears valid client-side but is rejected on the very next
+ * request and the user ends up anonymous despite the row existing
+ * in the sessions table.
+ */
+export function signSessionCookieValue(
+  rawToken: string,
+  secret: string
+): string {
+  const signature = createHmac("sha256", secret)
+    .update(rawToken)
+    .digest("base64");
+  return `${rawToken}.${signature}`;
 }
 
 function hashTokenWhere(where: Where[] | undefined): Where[] | undefined {

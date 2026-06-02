@@ -1,11 +1,15 @@
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
-import { findFirstWriteActionNode } from "@/lib/mcp/calldata";
+import {
+  deriveWorkflowType,
+  findFirstWriteActionNode,
+} from "@/lib/mcp/calldata";
 import {
   findBareAtLiterals,
   isInputSchemaPresent,
 } from "@/lib/mcp/listing-validators";
+import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 
 export type ListingErrorCode =
   | "NOT_FOUND"
@@ -62,6 +66,7 @@ const LISTING_COLUMNS = {
   category: workflows.category,
   chain: workflows.chain,
   listingVersion: workflows.listingVersion,
+  nodes: workflows.nodes,
 };
 
 type ListingRow = {
@@ -81,6 +86,7 @@ type ListingRow = {
   category: string | null;
   chain: string | null;
   listingVersion: number;
+  nodes: unknown[];
 };
 
 function isSlugConflict(err: unknown): boolean {
@@ -97,7 +103,11 @@ export async function listWorkflow(
     .select()
     .from(workflows)
     .where(
-      and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId))
+      and(
+        eq(workflows.id, workflowId),
+        eq(workflows.organizationId, orgId),
+        workflowNotDeleted()
+      )
     )
     .limit(1);
 
@@ -137,28 +147,34 @@ export async function listWorkflow(
   if (metadata.outputMapping !== undefined) {
     updateSet.outputMapping = metadata.outputMapping;
   }
-  if (metadata.workflowType !== undefined) {
-    updateSet.workflowType = metadata.workflowType as "read" | "write";
-  }
+  // Auto-derive workflowType from content via the shared helper
+  // (lib/mcp/calldata.ts::deriveWorkflowType). A callable write node forces
+  // "write" and overrides a curator-supplied "read" that conflicts with
+  // the content.
+  const requestedWorkflowType: "read" | "write" =
+    (metadata.workflowType as "read" | "write" | undefined) ??
+    current.workflowType;
+  const resolvedWorkflowType = deriveWorkflowType(
+    current.nodes,
+    requestedWorkflowType
+  );
+  updateSet.workflowType = resolvedWorkflowType;
 
   // Bump listingVersion whenever we are transitioning to listed OR whenever
   // any of the schema-defining fields changes on an already-listed workflow.
   const isSchemaTouched =
     metadata.inputSchema !== undefined ||
     metadata.outputMapping !== undefined ||
-    metadata.workflowType !== undefined;
+    resolvedWorkflowType !== current.workflowType;
   if (!current.isListed || isSchemaTouched) {
     // biome-ignore lint/suspicious/noExplicitAny: Drizzle sql template tag produces a typed SQL expression that satisfies the column type at runtime
     (updateSet as any).listingVersion = sql`${workflows.listingVersion} + 1`;
   }
 
-  // A write workflow must contain at least one node whose actionType matches
-  // the calldata matcher; otherwise call_workflow would later fail at runtime
-  // with "No write action node found in workflow". Reject at publish time so
-  // the listing can never reach search results in a broken state.
-  const resolvedWorkflowType: "read" | "write" =
-    (updateSet.workflowType as "read" | "write" | undefined) ??
-    current.workflowType;
+  // A "write" workflow must contain a calldata-generatable write node;
+  // otherwise call_workflow would later fail at runtime with "No write action
+  // node found in workflow". With auto-derive above, this can only trigger when
+  // a curator forces "write" on content that has no callable write node.
   if (
     resolvedWorkflowType === "write" &&
     findFirstWriteActionNode(current.nodes) === undefined
@@ -218,7 +234,11 @@ export async function unlistWorkflow(
     .select()
     .from(workflows)
     .where(
-      and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId))
+      and(
+        eq(workflows.id, workflowId),
+        eq(workflows.organizationId, orgId),
+        workflowNotDeleted()
+      )
     )
     .limit(1);
 
@@ -230,7 +250,11 @@ export async function unlistWorkflow(
     .update(workflows)
     .set({ isListed: false, updatedAt: new Date() })
     .where(
-      and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId))
+      and(
+        eq(workflows.id, workflowId),
+        eq(workflows.organizationId, orgId),
+        workflowNotDeleted()
+      )
     )
     .returning();
 
@@ -250,7 +274,11 @@ export async function updateWorkflowListing(
     .select()
     .from(workflows)
     .where(
-      and(eq(workflows.id, workflowId), eq(workflows.organizationId, orgId))
+      and(
+        eq(workflows.id, workflowId),
+        eq(workflows.organizationId, orgId),
+        workflowNotDeleted()
+      )
     )
     .limit(1);
 
@@ -278,8 +306,18 @@ export async function updateWorkflowListing(
   if (patch.outputMapping !== undefined) {
     updateSet.outputMapping = patch.outputMapping;
   }
-  if (patch.workflowType !== undefined) {
-    updateSet.workflowType = patch.workflowType;
+  // Auto-derive workflowType from content via the shared helper
+  // (lib/mcp/calldata.ts::deriveWorkflowType). See listWorkflow for rationale.
+  const requestedWorkflowType: "read" | "write" =
+    (patch.workflowType as "read" | "write" | undefined) ??
+    current.workflowType;
+  const resolvedWorkflowType = deriveWorkflowType(
+    current.nodes,
+    requestedWorkflowType
+  );
+  const workflowTypeChanged = resolvedWorkflowType !== current.workflowType;
+  if (patch.workflowType !== undefined || workflowTypeChanged) {
+    updateSet.workflowType = resolvedWorkflowType;
   }
   if (patch.priceUsdcPerCall !== undefined) {
     // Only reachable when isListed === false (price-change-while-listed guard above)
@@ -291,18 +329,14 @@ export async function updateWorkflowListing(
   const isUpdateSchemaTouched =
     patch.inputSchema !== undefined ||
     patch.outputMapping !== undefined ||
-    patch.workflowType !== undefined;
+    workflowTypeChanged;
   if (current.isListed && isUpdateSchemaTouched) {
     updateSet.listingVersion = sql`${workflows.listingVersion} + 1`;
   }
 
-  // Same write-workflow guard as listWorkflow: only validate when the row is
-  // (or is becoming) listed AND resolves to write. An unlisted draft is allowed
-  // to be in a read state with a "write" type still set, but a listed write
-  // must have a matching action node.
-  const resolvedWorkflowType: "read" | "write" =
-    (patch.workflowType as "read" | "write" | undefined) ??
-    current.workflowType;
+  // Same write-workflow guard as listWorkflow: a listed "write" must contain a
+  // calldata-generatable write node. An unlisted draft may still carry a "write"
+  // type without one. resolvedWorkflowType already reflects the auto-derive.
   if (
     current.isListed === true &&
     resolvedWorkflowType === "write" &&
@@ -373,7 +407,13 @@ export async function getWorkflowListing(
   const rows = await db
     .select(LISTING_COLUMNS)
     .from(workflows)
-    .where(and(eq(workflows.listedSlug, slug), eq(workflows.isListed, true)))
+    .where(
+      and(
+        eq(workflows.listedSlug, slug),
+        eq(workflows.isListed, true),
+        workflowNotDeleted()
+      )
+    )
     .limit(1);
 
   if (rows.length === 0) {

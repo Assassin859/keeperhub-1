@@ -28,7 +28,7 @@ vi.mock("server-only", () => ({}));
 import {
   chains,
   organization,
-  paraWallets,
+  organizationWallets,
   workflowExecutionLogs,
   workflowExecutions,
   workflows,
@@ -38,12 +38,12 @@ import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { generateId } from "@/lib/utils/id";
 import type { WriteContractInput } from "@/plugins/web3/steps/write-contract";
 
-// Skip if infrastructure not available (requires DB + Para API for tx signing)
+// Skip if infrastructure not available (requires DB + Turnkey for tx signing)
 const shouldSkip =
   !(
     process.env.DATABASE_URL &&
-    process.env.PARA_API_KEY &&
-    process.env.TEST_PARA_USER_SHARE
+    process.env.TURNKEY_API_PUBLIC_KEY &&
+    process.env.TURNKEY_API_PRIVATE_KEY
   ) || process.env.SKIP_INFRA_TESTS === "true";
 
 // SimpleStorage contract on Sepolia
@@ -135,8 +135,8 @@ describe.skipIf(shouldSkip)("Write Contract Workflow E2E", () => {
     // Look up Para wallet
     const wallet = await db
       .select()
-      .from(paraWallets)
-      .where(eq(paraWallets.organizationId, orgId))
+      .from(organizationWallets)
+      .where(eq(organizationWallets.organizationId, orgId))
       .limit(1);
 
     if (wallet.length === 0) {

@@ -10,6 +10,17 @@ on:
         default: ''
 
 name: deploy-keeperhub
+
+# Serialize app deploys per target so two near-simultaneous pushes to the same
+# branch never run `helm upgrade` against the same release at once. Without this
+# the second run fails with "another operation (install/upgrade/rollback) is in
+# progress". cancel-in-progress is false: the second deploy queues behind the
+# first rather than cancelling an in-flight helm operation (cancelling mid-upgrade
+# is what leaves a release stuck in pending-*). Mirrors deploy-executor.yaml.
+concurrency:
+  group: deploy-keeperhub-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   deploy:
     environment: ${{ github.ref_name == 'prod' && 'prod' || 'staging' }}
@@ -86,6 +97,11 @@ jobs:
         run: |
           kubectl apply -f deploy/keeperhub/${{ vars.TO_HELM_VALUES_DIR }}/rbac.yaml
 
+      - name: Apply NetworkPolicy for workflow runner egress hardening
+        if: steps.skip.outputs.skip_deploy != 'true'
+        run: |
+          kubectl apply -f deploy/keeperhub/${{ vars.TO_HELM_VALUES_DIR }}/networkpolicy.yaml
+
       - name: Deploying Service to Kubernetes with Helm
         id: deploy
         if: steps.skip.outputs.skip_deploy != 'true'
@@ -104,26 +120,29 @@ jobs:
       - name: Wait for deployment health check
         if: steps.skip.outputs.skip_deploy != 'true'
         run: |
-          HEALTH_URL="${{ vars.TO_HEALTH_URL }}/api/health"
-          echo "Waiting for ${HEALTH_URL} to return 200..."
-          CURL_ARGS=(-s -o /dev/null -w "%{http_code}" -L)
-          if [[ -n "$CF_ACCESS_CLIENT_ID" && -n "$CF_ACCESS_CLIENT_SECRET" ]]; then
-            CURL_ARGS+=(-H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}")
-          fi
-          for i in {1..30}; do
-            STATUS=$(curl "${CURL_ARGS[@]}" "${HEALTH_URL}" || echo "000")
-            if [[ "$STATUS" == "200" ]]; then
-              echo "Deployment is ready!"
-              exit 0
-            fi
-            echo "Attempt $i/30: got HTTP $STATUS, waiting 10s..."
-            sleep 10
-          done
-          echo "Deployment did not become ready in time"
-          exit 1
-        env:
-          CF_ACCESS_CLIENT_ID: ${{ secrets.TO_CF_ACCESS_CLIENT_ID }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.TO_CF_ACCESS_CLIENT_SECRET }}
+          HEALTH_URL="http://${SERVICE_NAME}-common.${NAMESPACE}.svc.cluster.local:3000/api/health"
+          echo "Checking ${HEALTH_URL} from inside the cluster..."
+          kubectl run "health-check-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --namespace "${NAMESPACE}" \
+            --restart=Never \
+            --attach \
+            --rm \
+            --quiet \
+            --image=curlimages/curl:8.11.0 \
+            --env="HEALTH_URL=${HEALTH_URL}" \
+            --command -- sh -c '
+              for i in $(seq 1 30); do
+                STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" || echo "000")
+                if [ "$STATUS" = "200" ]; then
+                  echo "Deployment is ready!"
+                  exit 0
+                fi
+                echo "Attempt $i/30: got HTTP $STATUS, waiting 10s..."
+                sleep 10
+              done
+              echo "Deployment did not become ready in time"
+              exit 1
+            '
 
   # DISABLED: remote E2E tests temporarily disabled while KEEP-1351 stabilises auth/rate-limit infrastructure
   e2e-playwright-remote:

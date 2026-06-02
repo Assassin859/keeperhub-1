@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { resolveAbi } from "@/lib/abi/cache";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
+import { simulateContractCall } from "@/lib/execute/simulate";
 import { getErrorMessage } from "@/lib/utils";
 import { readContractCore } from "@/plugins/web3/steps/read-contract-core";
 import { writeContractCore } from "@/plugins/web3/steps/write-contract-core";
@@ -17,6 +18,7 @@ import {
   redactInput,
 } from "../_lib/execution-service";
 import { checkRateLimit } from "../_lib/rate-limit";
+import { parseSimulateFlag } from "../_lib/simulate-flag";
 import { checkAndReserveExecution } from "../_lib/spending-cap";
 import { validateCheckAndExecuteInput } from "../_lib/validate";
 import { requireWallet } from "../_lib/wallet-check";
@@ -71,6 +73,34 @@ async function executeConditionalRead(
   return NextResponse.json(
     { executed: true, conditionResult, result: readResult.result },
     { status: 200 }
+  );
+}
+
+async function simulateConditionalWrite(
+  action: ActionBody,
+  network: string,
+  resolvedWriteAbi: string,
+  organizationId: string,
+  conditionResult: ConditionResult
+): Promise<NextResponse> {
+  const walletError = await requireWallet(organizationId);
+  if (walletError) {
+    return walletError;
+  }
+  const result = await simulateContractCall({
+    organizationId,
+    network,
+    contractAddress: action.contractAddress,
+    abi: resolvedWriteAbi,
+    functionName: action.functionName,
+    functionArgs: action.functionArgs,
+  });
+  // `executed` reflects "the action would have run successfully" rather
+  // than "we reached the action step". A reverted simulate means a real
+  // broadcast would have reverted too, so executed is false.
+  return NextResponse.json(
+    { ...result, executed: !result.wouldRevert, conditionResult },
+    { status: result.wouldRevert ? 400 : 200 }
   );
 }
 
@@ -170,7 +200,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json(validation.error, { status: 400 });
   }
 
-  const network = body.network as string;
+  // KEEP-490: chainId is the canonical input; network is a deprecated alias.
+  const network = String(body.chainId ?? body.network ?? "");
   const condition = body.condition as ConditionInput;
   const action = body.action as ActionBody;
 
@@ -242,6 +273,26 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   if (isReadOnly) {
     return executeConditionalRead(
+      action,
+      network,
+      writeAbiResult.abi,
+      apiKeyCtx.organizationId,
+      conditionResult
+    );
+  }
+
+  // Dry-run path on the action: still evaluates the condition (which is
+  // read-only), but simulates the write instead of broadcasting.
+  // Triggered by strict boolean `simulate: true` on the body.
+  const simulateFlag = parseSimulateFlag(body);
+  if (!simulateFlag.ok) {
+    return NextResponse.json(
+      { error: simulateFlag.error, field: "simulate" },
+      { status: 400 }
+    );
+  }
+  if (simulateFlag.simulate) {
+    return simulateConditionalWrite(
       action,
       network,
       writeAbiResult.abi,

@@ -56,7 +56,7 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@/lib/db/schema", () => ({
   workflows: { _table: "workflows" },
-  organizationWallets: { _table: "para_wallets" },
+  organizationWallets: { _table: "organization_wallets" },
 }));
 
 const { verifyWorkflowBinding, KNOWN_DATA_CHAIN_IDS } = await import(

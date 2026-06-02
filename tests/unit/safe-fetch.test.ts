@@ -42,6 +42,7 @@ vi.mock("@/lib/metrics", () => ({
 
 import {
   assertUrlIsPublic,
+  isBlockedHost,
   isBlockedIp,
   SsrfBlockedError,
   type SsrfBlockReason,
@@ -86,6 +87,19 @@ describe("isBlockedIp", () => {
     ["fc00::1", "private-ip"],
     ["fd00::1", "private-ip"],
     ["ff02::1", "multicast"],
+    // Site-local NAT64 (RFC 8215). Distinct from the well-known 64:ff9b::/96
+    // prefix, which is intentionally allowed when embedded IPv4 is public.
+    ["64:ff9b:1::1", "private-ip"],
+    ["64:ff9b:1:abcd::1", "private-ip"],
+    // Teredo tunneling (2001::/32). Deprecated transition mechanism.
+    ["2001::1", "private-ip"],
+    ["2001:0:abcd:ef01:1234:5678:9abc:def0", "private-ip"],
+    // 6to4 (2002::/16). Deprecated transition mechanism.
+    ["2002::1", "private-ip"],
+    ["2002:0102:0304::1", "private-ip"],
+    // Documentation (2001:db8::/32). No legitimate traffic.
+    ["2001:db8::1", "private-ip"],
+    ["2001:db8:abcd::1", "private-ip"],
   ];
 
   for (const [ip, reason] of blockedV6) {
@@ -111,6 +125,58 @@ describe("isBlockedIp", () => {
     expect(result.blocked).toBe(true);
   });
 
+  // NAT64 (RFC 6052, 64:ff9b::/96): dual-stack pods synthesise these for
+  // every IPv4-only public host. The wrapper is allowed; the embedded
+  // IPv4 is what we check.
+  it("allows NAT64-wrapped public IPv4 (64:ff9b::a29f:8ae8 -> 162.159.138.232 discord/cloudflare)", () => {
+    const result = isBlockedIp("64:ff9b::a29f:8ae8");
+    expect(result.blocked).toBe(false);
+  });
+
+  it("allows NAT64-wrapped public IPv4 dotted form (64:ff9b::1.1.1.1)", () => {
+    const result = isBlockedIp("64:ff9b::1.1.1.1");
+    expect(result.blocked).toBe(false);
+  });
+
+  it("blocks NAT64-wrapped link-local IPv4 (IMDS via NAT64)", () => {
+    const result = isBlockedIp("64:ff9b::a9fe:a9fe");
+    expect(result.blocked).toBe(true);
+    if (result.blocked) {
+      expect(result.reason).toBe("ipv4-nat64-private");
+    }
+  });
+
+  it("blocks NAT64-wrapped RFC 1918 IPv4 (64:ff9b::0a00:0001 -> 10.0.0.1)", () => {
+    const result = isBlockedIp("64:ff9b::a00:1");
+    expect(result.blocked).toBe(true);
+    if (result.blocked) {
+      expect(result.reason).toBe("ipv4-nat64-private");
+    }
+  });
+
+  it("blocks NAT64-wrapped loopback IPv4 dotted form (64:ff9b::127.0.0.1)", () => {
+    const result = isBlockedIp("64:ff9b::127.0.0.1");
+    expect(result.blocked).toBe(true);
+    if (result.blocked) {
+      expect(result.reason).toBe("ipv4-nat64-private");
+    }
+  });
+
+  // Uncompressed form. c-ares normalises to canonical, so this branch is
+  // mainly defensive — but the regex exists, so it should be exercised.
+  it("allows NAT64-wrapped public IPv4 uncompressed form (64:ff9b:0:0:0:0:a29f:8ae8)", () => {
+    const result = isBlockedIp("64:ff9b:0:0:0:0:a29f:8ae8");
+    expect(result.blocked).toBe(false);
+  });
+
+  it("blocks NAT64-wrapped IMDS uncompressed form (64:ff9b:0:0:0:0:a9fe:a9fe)", () => {
+    const result = isBlockedIp("64:ff9b:0:0:0:0:a9fe:a9fe");
+    expect(result.blocked).toBe(true);
+    if (result.blocked) {
+      expect(result.reason).toBe("ipv4-nat64-private");
+    }
+  });
+
   const allowedV4 = ["8.8.8.8", "1.1.1.1", "93.184.216.34", "185.60.216.35"];
   for (const ip of allowedV4) {
     it(`allows public IPv4 ${ip}`, () => {
@@ -131,6 +197,61 @@ describe("isBlockedIp", () => {
     expect(isBlockedIp("example.com").blocked).toBe(false);
     expect(isBlockedIp("").blocked).toBe(false);
     expect(isBlockedIp("not-an-ip").blocked).toBe(false);
+  });
+});
+
+describe("isBlockedHost", () => {
+  const blockedHosts = [
+    "localhost",
+    "LOCALHOST",
+    "localhost.",
+    "  localhost  ",
+    "foo.local",
+    "raspberrypi.local",
+    "service.internal",
+    "ip-10-0-0-5.us-east-2.compute.internal",
+    "ip-172-31-1-1.ec2.internal",
+    "instance-data.ec2.internal",
+    "keeperhub-common.keeperhub.svc.cluster.local",
+    "mypod.keeperhub.pod.cluster.local",
+  ];
+
+  for (const host of blockedHosts) {
+    it(`blocks "${host}"`, () => {
+      const result = isBlockedHost(host);
+      expect(result.blocked).toBe(true);
+      if (result.blocked) {
+        expect(result.reason).toBe("blocked-host");
+      }
+    });
+  }
+
+  const allowedHosts = [
+    "example.com",
+    "www.example.com",
+    "db.us-east-1.rds.amazonaws.com",
+    "discord.com",
+    "keeperhub.com",
+    "myinternal.com",
+    "mylocal.com",
+    // IP literals are out of scope for the hostname check - isBlockedIp
+    // catches them. isBlockedHost must not match them on the suffix rules.
+    "127.0.0.1",
+    "10.0.0.1",
+    "::1",
+    "fe80::1",
+  ];
+
+  for (const host of allowedHosts) {
+    it(`allows "${host}"`, () => {
+      expect(isBlockedHost(host).blocked).toBe(false);
+    });
+  }
+
+  it("returns not-blocked for empty input", () => {
+    expect(isBlockedHost("").blocked).toBe(false);
+    expect(isBlockedHost("   ").blocked).toBe(false);
+    expect(isBlockedHost(".").blocked).toBe(false);
   });
 });
 
@@ -179,6 +300,8 @@ describe("safeFetch (enforce mode)", () => {
     ["http://[fe80::1]/", "link-local"],
     ["http://[fc00::1]/", "private-ip"],
     ["http://[::ffff:169.254.169.254]/", "ipv4-mapped-private"],
+    ["http://[64:ff9b::a9fe:a9fe]/", "ipv4-nat64-private"],
+    ["http://[64:ff9b::a00:1]/", "ipv4-nat64-private"],
   ];
 
   for (const [url, reason] of blockedLiteralUrls) {
@@ -203,11 +326,14 @@ describe("safeFetch (enforce mode)", () => {
     );
   });
 
-  it("attributes plugin on DNS-resolved private IP (localhost)", async () => {
-    // `localhost` is not an IP literal, so it reaches the DNS path and is
-    // resolved inside the Agent's connector to 127.0.0.1 or ::1. The plugin
-    // label must propagate there via AsyncLocalStorage. Port 9999 avoids
-    // the WHATWG fetch "bad port" list (which includes port 1).
+  it("attributes plugin on hostname-pattern block (localhost)", async () => {
+    // `localhost` is caught by the pre-DNS hostname denylist (isBlockedHost)
+    // before any resolver runs, so the block is recorded synchronously with
+    // the directly-passed plugin label. The previous DNS-resolved-attribution
+    // path through AsyncLocalStorage is still present in the connector but
+    // is no longer reachable via `localhost`; covering it would require
+    // mocking the undici connector or using a non-pattern-matching
+    // hostname that resolves to a private IP.
     await expect(
       safeFetch("http://localhost:9999/", { plugin: "webhook" })
     ).rejects.toThrow();
@@ -215,10 +341,30 @@ describe("safeFetch (enforce mode)", () => {
       "safe_fetch.blocks.total",
       expect.objectContaining({
         plugin_name: "webhook",
-        reason: "loopback",
+        reason: "blocked-host",
       })
     );
   });
+
+  const blockedHostnames = [
+    "http://localhost/",
+    "http://localhost:9999/",
+    "http://foo.local/",
+    "http://service.internal/",
+    "http://ip-10-0-0-5.us-east-2.compute.internal/",
+    "http://keeperhub-common.keeperhub.svc.cluster.local/",
+    "http://mypod.keeperhub.pod.cluster.local/",
+  ];
+
+  for (const url of blockedHostnames) {
+    it(`rejects hostname-pattern ${url}`, async () => {
+      await expect(safeFetch(url)).rejects.toBeInstanceOf(SsrfBlockedError);
+      expect(incrementCounter).toHaveBeenCalledWith(
+        "safe_fetch.blocks.total",
+        expect.objectContaining({ reason: "blocked-host", shadow: "false" })
+      );
+    });
+  }
 
   it("throws TypeError for malformed URLs", async () => {
     await expect(safeFetch("not a url")).rejects.toBeInstanceOf(TypeError);
@@ -254,10 +400,17 @@ describe("safeFetch (shadow mode)", () => {
     } catch (err) {
       expect(err).not.toBeInstanceOf(SsrfBlockedError);
     }
-    expect(incrementCounter).toHaveBeenCalledWith(
-      "safe_fetch.blocks.total",
-      expect.objectContaining({ reason: "loopback", shadow: "true" })
+    const blockCalls = incrementCounter.mock.calls.filter(
+      (call) => call[0] === "safe_fetch.blocks.total"
     );
+    // Exactly one block per request, even though the connector's
+    // post-DNS check would otherwise re-fire on the resolved IP. See
+    // SafeFetchStore.initialBlockRecorded in safe-fetch.ts.
+    expect(blockCalls).toHaveLength(1);
+    expect(blockCalls[0]?.[1]).toMatchObject({
+      reason: "loopback",
+      shadow: "true",
+    });
     expect(captureException).toHaveBeenCalledWith(
       expect.any(Error),
       expect.objectContaining({
@@ -268,6 +421,31 @@ describe("safeFetch (shadow mode)", () => {
         }),
       })
     );
+  });
+
+  it("records exactly one block in shadow mode for a hostname-pattern URL", async () => {
+    // Regression: a single shadow-mode request to `http://localhost/` used
+    // to be counted twice - once for the pre-DNS isBlockedHost match
+    // (reason="blocked-host"), then again inside the connector's DNS
+    // callback after `localhost` resolved to 127.0.0.1 (reason="loopback").
+    // The fix threads `initialBlockRecorded` through pluginContext so the
+    // connector skips its recordBlock when the entry-point check already
+    // counted this request. The connect itself still happens, preserving
+    // shadow-mode "log and continue" semantics.
+    try {
+      await safeFetch("http://localhost:9999/", { plugin: "webhook" });
+    } catch (err) {
+      expect(err).not.toBeInstanceOf(SsrfBlockedError);
+    }
+    const blockCalls = incrementCounter.mock.calls.filter(
+      (call) => call[0] === "safe_fetch.blocks.total"
+    );
+    expect(blockCalls).toHaveLength(1);
+    expect(blockCalls[0]?.[1]).toMatchObject({
+      reason: "blocked-host",
+      plugin_name: "webhook",
+      shadow: "true",
+    });
   });
 
   it("records scheme block with shadow=true on non-http URL", async () => {
@@ -375,6 +553,7 @@ describe("assertUrlIsPublic", () => {
     ["https://[fe80::1]/", "link-local"],
     ["https://[fc00::1]/", "private-ip"],
     ["http://[::ffff:169.254.169.254]/", "ipv4-mapped-private"],
+    ["http://[64:ff9b::a9fe:a9fe]/", "ipv4-nat64-private"],
   ];
 
   for (const [url, reason] of blockedLiterals) {
@@ -396,6 +575,10 @@ describe("assertUrlIsPublic", () => {
     "http://1.1.1.1/",
     "https://8.8.8.8/",
     "https://[2606:4700:4700::1111]/",
+    // NAT64-wrapped public IPv4 (discord.com via Cloudflare). Dual-stack
+    // pods see this for IPv4-only hosts; the embedded IPv4 is public, so
+    // the wrapper is allowed.
+    "https://[64:ff9b::a29f:8ae8]/",
   ];
 
   for (const url of allowedLiterals) {
@@ -467,6 +650,31 @@ describe("assertUrlIsPublic", () => {
     expect((thrown as SsrfBlockedError).reason).toBe("private-ip");
   });
 
+  it("accepts a domain that resolves to NAT64-wrapped public IPv4", async () => {
+    // Dual-stack pod resolving discord.com gets a 64:ff9b::/96 AAAA
+    // synthesised from 162.159.138.232 (public Cloudflare). Must allow.
+    mockPromisesLookup.mockResolvedValue([
+      { address: "64:ff9b::a29f:8ae8", family: 6 },
+    ]);
+    await expect(
+      assertUrlIsPublic("https://discord.com/")
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects a domain that resolves to NAT64-wrapped private IPv4", async () => {
+    mockPromisesLookup.mockResolvedValue([
+      { address: "64:ff9b::a00:1", family: 6 },
+    ]);
+    let thrown: unknown;
+    try {
+      await assertUrlIsPublic("https://nat64-private.example.com/");
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(SsrfBlockedError);
+    expect((thrown as SsrfBlockedError).reason).toBe("ipv4-nat64-private");
+  });
+
   it("throws a plain Error when DNS resolution fails", async () => {
     mockPromisesLookup.mockRejectedValue(
       Object.assign(new Error("ENOTFOUND"), { code: "ENOTFOUND" })
@@ -481,4 +689,27 @@ describe("assertUrlIsPublic", () => {
     expect(thrown).not.toBeInstanceOf(SsrfBlockedError);
     expect(thrown).not.toBeInstanceOf(TypeError);
   });
+
+  const blockedHostnames = [
+    "http://localhost/",
+    "http://foo.local/",
+    "http://service.internal/",
+    "http://ip-10-0-0-5.us-east-2.compute.internal/",
+    "http://keeperhub-common.keeperhub.svc.cluster.local/",
+    "http://mypod.keeperhub.pod.cluster.local/",
+  ];
+
+  for (const url of blockedHostnames) {
+    it(`rejects hostname-pattern ${url} before any DNS lookup`, async () => {
+      let thrown: unknown;
+      try {
+        await assertUrlIsPublic(url);
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(SsrfBlockedError);
+      expect((thrown as SsrfBlockedError).reason).toBe("blocked-host");
+      expect(mockPromisesLookup).not.toHaveBeenCalled();
+    });
+  }
 });

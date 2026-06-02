@@ -43,7 +43,13 @@ export async function createWorkflowJob(params: {
   scheduleId?: string;
 }): Promise<V1Job> {
   const { workflowId, executionId, input, triggerType, scheduleId } = params;
-  const jobName = `workflow-${executionId.substring(0, 8)}-${Date.now()}`;
+  // Prefix with "keeperhub-" so the runner pod is captured by the Loki
+  // security alert rules, which match pod=~".*keeperhub.*" (KEEP-612).
+  // executeWorkflow -- and its content-scanner emit -- runs inside this pod
+  // for web3-write (k8s-job-dispatched) workflows; without the prefix the
+  // pod name "workflow-..." fell outside the matcher and those
+  // security.content_scanner_hit signals never reached the alert.
+  const jobName = `keeperhub-workflow-${executionId.substring(0, 8)}-${Date.now()}`;
 
   const envVars = [
     { name: "WORKFLOW_ID", value: workflowId },
@@ -54,10 +60,14 @@ export async function createWorkflowJob(params: {
       name: "INTEGRATION_ENCRYPTION_KEY",
       value: CONFIG.integrationEncryptionKey,
     },
-    { name: "PARA_API_KEY", value: CONFIG.paraApiKey },
-    { name: "PARA_ENVIRONMENT", value: CONFIG.paraEnvironment },
-    { name: "WALLET_ENCRYPTION_KEY", value: CONFIG.walletEncryptionKey },
     { name: "CHAIN_RPC_CONFIG", value: CONFIG.chainRpcConfig },
+    // SSRF guard: force-enable on every workflow runner pod regardless
+    // of controller env. Hardcoded (rather than forwarded via
+    // RUNNER_SYSTEM_ENV_VARS) so the runner enforces even if the
+    // controller's Helm values drift or a deploy omits the entry.
+    // Flipping back to shadow mode is a deliberate code change here,
+    // which is the intended posture for SSRF protection.
+    { name: "SAFE_FETCH_ENFORCE", value: "true" },
     ...(CONFIG.etherscanApiKey
       ? [{ name: "ETHERSCAN_API_KEY", value: CONFIG.etherscanApiKey }]
       : []),
@@ -138,8 +148,8 @@ export async function createWorkflowJob(params: {
               imagePullPolicy: CONFIG.imagePullPolicy,
               env: envVars,
               resources: {
-                requests: { memory: "128Mi", cpu: "100m" },
-                limits: { memory: "512Mi", cpu: "500m" },
+                requests: { memory: "160Mi", cpu: "200m" },
+                limits: { memory: "320Mi", cpu: "750m" },
               },
             },
           ],

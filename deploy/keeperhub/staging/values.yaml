@@ -121,14 +121,21 @@ serviceMonitors:
       port: http
       path: /api/metrics/db
       interval: 30s
-      scrapeTimeout: 10s
+      # 12s (not 10s): this endpoint blocks on the serialised db-metrics
+      # refresh. Staging refresh is well under this, but kept in parity with
+      # prod to avoid config drift. See KEEP-682.
+      scrapeTimeout: 12s
 
 resources:
   limits:
-    memory: 2Gi
+    # Must exceed NODE_OPTIONS --max-old-space-size by ~1 GiB to leave headroom
+    # for off-heap RSS (Buffers, source maps, native addons, worker threads).
+    # Setting these equal causes the kernel OOM-killer to fire before V8 GCs.
+    # Kept in lockstep with prod so staging is predictive of prod memory behaviour.
+    memory: 4Gi
   requests:
     cpu: 1m
-    memory: 256Mi
+    memory: 2Gi
 
 env:
   <<: *shared_env
@@ -146,16 +153,13 @@ env:
     value: "5000"
   NODE_OPTIONS:
     type: kv
-    value: "--enable-source-maps --trace-warnings --trace-uncaught --trace-exit"
+    value: "--enable-source-maps --max-old-space-size=3072 --trace-warnings --trace-uncaught --trace-exit"
   NODE_ENV:
     type: kv
     value: "development"
   HOSTNAME:
     type: kv
     value: "0.0.0.0"
-  PARA_ENVIRONMENT:
-    type: kv
-    value: "beta"
   WORKFLOW_TARGET_WORLD:
     type: kv
     value: "@workflow/world-postgres"
@@ -205,6 +209,23 @@ env:
     type: parameterStore
     name: next-public-google-client-id
     parameter_name: /eks/techops-staging/keeperhub/google-client-id
+  # Cloudflare Turnstile (signup captcha). Site key is also baked into the
+  # client bundle at build time (build-images.yml); this runtime entry covers
+  # server-side reads. Secret key is server-only (lib/auth.ts).
+  NEXT_PUBLIC_TURNSTILE_SITE_KEY:
+    type: parameterStore
+    name: next-public-turnstile-site-key
+    parameter_name: /eks/techops-staging/keeperhub/turnstile-site-key
+  TURNSTILE_SECRET_KEY:
+    type: parameterStore
+    name: turnstile-secret-key
+    parameter_name: /eks/techops-staging/keeperhub/turnstile-secret-key
+  # Opt staging into enforcing the captcha plugin (it is otherwise skipped
+  # where admin test endpoints are enabled). Lets us exercise the real
+  # Turnstile flow before prod. Disables the X-Test-API-Key signup bypass.
+  TURNSTILE_ENFORCE:
+    type: kv
+    value: "true"
   OPENAI_API_KEY:
     type: parameterStore
     name: openai-api-key
@@ -213,10 +234,6 @@ env:
   AI_MODEL:
     type: kv
     value: "gpt-4o"
-  PARA_API_KEY:
-    type: parameterStore
-    name: para-api-key
-    parameter_name: /eks/techops-staging/keeperhub/para-api-key
   TURNKEY_API_PUBLIC_KEY:
     type: parameterStore
     name: turnkey-api-public-key
@@ -233,10 +250,6 @@ env:
     type: parameterStore
     name: agentic-wallet-hmac-kms-key
     parameter_name: /eks/techops-staging/keeperhub/agentic-wallet-hmac-kms-key
-  WALLET_ENCRYPTION_KEY:
-    type: parameterStore
-    name: wallet-encryption-key
-    parameter_name: /eks/techops-staging/keeperhub/wallet-encryption-key
   INTEGRATION_ENCRYPTION_KEY:
     type: parameterStore
     name: integration-encryption-key
@@ -314,6 +327,12 @@ env:
   NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED:
     type: kv
     value: "true"
+  # AI Prompt feature flag - disabled
+  # (gates UI render in components/workflow/workflow-canvas.tsx
+  #  and /api/ai/generate route)
+  NEXT_PUBLIC_AI_PROMPT_ENABLED:
+    type: kv
+    value: "false"
   STRIPE_SECRET_KEY:
     type: parameterStore
     name: stripe-secret-key

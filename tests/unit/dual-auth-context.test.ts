@@ -5,11 +5,17 @@ const {
   mockAuthenticateOAuthToken,
   mockGetSession,
   mockGetOrgContext,
+  mockOrgLookup,
 } = vi.hoisted(() => ({
   mockAuthenticateApiKey: vi.fn(),
   mockAuthenticateOAuthToken: vi.fn(),
   mockGetSession: vi.fn(),
   mockGetOrgContext: vi.fn(),
+  // KEEP-563: resolveSessionOrg does a single org+member inner-join lookup.
+  // The select chain is select().from().innerJoin().where().limit(). The result
+  // is empty when either the org is unknown OR the caller is not a member --
+  // both cases must be indistinguishable to avoid org enumeration.
+  mockOrgLookup: vi.fn(),
 }));
 
 vi.mock("@/lib/api-key-auth", () => ({
@@ -30,6 +36,25 @@ vi.mock("@/lib/middleware/org-context", () => ({
 
 vi.mock("@/lib/mcp/oauth-auth", () => ({
   authenticateOAuthToken: mockAuthenticateOAuthToken,
+}));
+
+vi.mock("@/lib/db", () => ({
+  db: {
+    select: () => ({
+      from: () => ({
+        innerJoin: () => ({
+          where: () => ({
+            limit: () => mockOrgLookup(),
+          }),
+        }),
+      }),
+    }),
+  },
+}));
+
+vi.mock("@/lib/db/schema", () => ({
+  member: {},
+  organization: {},
 }));
 
 import {
@@ -189,6 +214,68 @@ describe("getDualAuthContext", () => {
         organizationId: null,
         authMethod: "session",
         apiKeyId: null,
+      });
+    });
+
+    describe("KEEP-563: X-Organization-Id override (session only)", () => {
+      beforeEach(() => {
+        mockGetSession.mockResolvedValue({ user: { id: "user_session" } });
+        mockGetOrgContext.mockResolvedValue({
+          organization: { id: "org_default" },
+        });
+      });
+
+      it("honors header pointing at a different org the user is a member of", async () => {
+        mockOrgLookup.mockResolvedValueOnce([{ id: "org_target" }]);
+
+        const result = await getDualAuthContext(
+          makeRequest({ "X-Organization-Id": "target-slug" })
+        );
+
+        expect(result).toEqual({
+          userId: "user_session",
+          organizationId: "org_target",
+          authMethod: "session",
+          apiKeyId: null,
+        });
+      });
+
+      it("returns 404 (no enumeration leak) when caller is not a member", async () => {
+        mockOrgLookup.mockResolvedValueOnce([]);
+
+        const result = await getDualAuthContext(
+          makeRequest({ "X-Organization-Id": "other-org" })
+        );
+
+        expect(result).toEqual({
+          error: "Organization not found",
+          status: 404,
+        });
+      });
+
+      it("returns 404 (no enumeration leak) when the org id/slug is unknown", async () => {
+        mockOrgLookup.mockResolvedValueOnce([]);
+
+        const result = await getDualAuthContext(
+          makeRequest({ "X-Organization-Id": "ghost-org" })
+        );
+
+        expect(result).toEqual({
+          error: "Organization not found",
+          status: 404,
+        });
+      });
+
+      it("falls back to session default when header is absent", async () => {
+        const result = await getDualAuthContext(makeRequest());
+
+        expect(result).toEqual({
+          userId: "user_session",
+          organizationId: "org_default",
+          authMethod: "session",
+          apiKeyId: null,
+        });
+        expect(mockOrgLookup).not.toHaveBeenCalled();
       });
     });
   });

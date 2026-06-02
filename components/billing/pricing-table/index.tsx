@@ -11,11 +11,12 @@ import {
 import type { BillingInterval, PlanName } from "@/lib/billing/plans";
 import { PLANS } from "@/lib/billing/plans";
 import { cn } from "@/lib/utils";
+import {
+  SPONSORSHIP_MAINNET_NAMES,
+  SPONSORSHIP_TESTNET_NAMES,
+} from "@/lib/web3/sponsorship-chains-meta";
 import { PlanCard } from "./plan-card";
 import type { PricingTableProps } from "./types";
-
-const SPONSORED_MAINNETS = ["Ethereum", "Base", "Polygon", "Arbitrum"] as const;
-const SPONSORED_TESTNETS = ["Sepolia", "Base Sepolia", "Polygon Amoy"] as const;
 
 type ComparisonRow = {
   label: string;
@@ -51,13 +52,13 @@ function buildSponsoredGasRow(
             <p className="text-[10px] uppercase tracking-wide opacity-70">
               Mainnets
             </p>
-            <p>{SPONSORED_MAINNETS.join(", ")}</p>
+            <p>{SPONSORSHIP_MAINNET_NAMES.join(", ")}</p>
           </div>
           <div className="space-y-1">
             <p className="text-[10px] uppercase tracking-wide opacity-70">
               Testnets
             </p>
-            <p>{SPONSORED_TESTNETS.join(", ")}</p>
+            <p>{SPONSORSHIP_TESTNET_NAMES.join(", ")}</p>
           </div>
           <p className="opacity-70">
             Monthly cap of sponsored gas credits in USD. Transactions on other

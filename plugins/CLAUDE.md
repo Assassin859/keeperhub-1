@@ -97,6 +97,12 @@ Key points:
 - Wrapped in `withPluginMetrics` and `withStepLogging`
 - Security-critical steps: set `stepFunction.maxRetries = 0` on the action definition
 
+## Signer Routing + RPC Failover
+
+Write steps (anything calling `signer.sendTransaction` / `contract.method({...})`) MUST route through `resolveSignerMode(organizationId, chainId)` and dispatch the three branches: `safe-role` → `executeContractCallAsRole`, `safe` → `executeContractCallAsSafe`, `eoa` → adapter direct. Gate ERC-4337 sponsorship to `eoa` only — bundlers swap `msg.sender`. Canonical example: `transfer-token-core.ts:308+`.
+
+Reads MUST NOT call `resolveSignerMode` but SHOULD route every chain call through `rpcManager.executeWithFailover((p) => ...)` so primary-RPC blips fail over to the chain's fallback.
+
 ## Plugin Registration
 
 After adding or modifying plugins, run:

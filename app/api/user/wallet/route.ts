@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
+import { recordWalletInAddressBook } from "@/lib/address-book/record-wallet";
 import { normalizeAddressForStorage } from "@/lib/address-utils";
 import { apiError } from "@/lib/api-error";
 import { auth } from "@/lib/auth";
@@ -12,8 +13,8 @@ import {
 import { integrations, organizationWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
-  type DualAuthContext,
   auditFromAuth,
+  type DualAuthContext,
   getDualAuthContext,
 } from "@/lib/middleware/auth-helpers";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
@@ -84,8 +85,7 @@ async function validateUserAndOrganization(request: Request) {
   return { user, organizationId: activeOrgId, member: activeMember };
 }
 
-// Helper: Check if a wallet already exists for this organization (one wallet per org at creation time;
-// Para → Turnkey dual state is only reached via the provisioning script, not via this endpoint).
+// Helper: Check if a wallet already exists for this organization.
 async function checkExistingWallet(
   organizationId: string
 ): Promise<{ error: string; status: number } | { valid: true }> {
@@ -183,7 +183,6 @@ async function storeTurnkeyWalletAndIntegration(options: {
   await db.insert(organizationWallets).values({
     userId,
     organizationId,
-    provider: "turnkey",
     email,
     walletAddress: normalizedWalletAddress,
     turnkeySubOrgId,
@@ -192,8 +191,19 @@ async function storeTurnkeyWalletAndIntegration(options: {
   });
 
   await createIntegration(
-    buildWalletIntegrationPayload(userId, organizationId, normalizedWalletAddress)
+    buildWalletIntegrationPayload(
+      userId,
+      organizationId,
+      normalizedWalletAddress
+    )
   );
+
+  await recordWalletInAddressBook({
+    organizationId,
+    address: normalizedWalletAddress,
+    label: "Org Wallet",
+    createdBy: userId,
+  });
 
   return { walletAddress: normalizedWalletAddress, walletId: turnkeyWalletId };
 }
@@ -217,9 +227,6 @@ export async function GET(request: Request): Promise<NextResponse> {
       );
     }
 
-    // Turnkey is the only signer. Inactive Para rows may still exist in the
-    // DB for historical reasons but are not returned: the org has a single
-    // wallet surface, full stop.
     const active = await db
       .select()
       .from(organizationWallets)
@@ -323,7 +330,6 @@ export async function POST(request: Request) {
         walletId,
         email: walletEmail,
         organizationId,
-        provider: "turnkey",
       },
     });
   } catch (error) {
@@ -343,9 +349,6 @@ export async function DELETE(request: Request) {
     }
     const { organizationId } = validation;
 
-    // 2. Delete only the active wallet for this organization.
-    // During Para → Turnkey migration both wallets may coexist; the inactive
-    // Para row must be removed via a dedicated admin flow (follow-up ticket).
     const deletedWallet = await db
       .delete(organizationWallets)
       .where(

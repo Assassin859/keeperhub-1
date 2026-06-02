@@ -31,11 +31,25 @@ const PAGES_TO_TEST = ["/hub", "/billing"] as const;
 test.describe(`back/forward hydration recovery (${buildModeLabel})`, () => {
   for (const targetPath of PAGES_TO_TEST) {
     test(`${targetPath}: hydrates after back navigation`, async ({ page }) => {
+      // Component-level fetches (e.g. <BillingDetails> on /billing) render
+      // conditional buttons only after their useEffect fetch resolves —
+      // hide their "Loading..." indicator at that point. The hydration
+      // sentinel below proves AuthProvider hydrated; it does NOT prove
+      // those fetches are done. Without this wait the baseline (fresh
+      // nav) usually wins the race and the rehydrated count (back nav)
+      // usually loses it, producing a deterministic off-by-one.
+      const settleClientDataFetches = async (): Promise<void> => {
+        await expect(page.getByText("Loading...", { exact: true })).toBeHidden({
+          timeout: 10_000,
+        });
+      };
+
       // 1. Navigate to target page first; wait for hydration sentinel.
       await page.goto(targetPath, { waitUntil: "domcontentloaded" });
       await expect(page.locator('button[role="combobox"]')).toBeVisible({
         timeout: 15_000,
       });
+      await settleClientDataFetches();
 
       // 2. Capture button count after fresh hydration as the baseline.
       const baselineButtonCount = await page.locator("button").count();
@@ -55,6 +69,7 @@ test.describe(`back/forward hydration recovery (${buildModeLabel})`, () => {
       await expect(page.locator('button[role="combobox"]')).toBeVisible({
         timeout: 15_000,
       });
+      await settleClientDataFetches();
 
       // 5. Behavior assertion: the rehydrated page has at least as many
       //    interactive buttons as the fresh-nav baseline. This is the proxy

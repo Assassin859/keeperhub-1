@@ -1,8 +1,9 @@
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { workflowSchedules, workflows } from "@/lib/db/schema";
+import { users, workflowSchedules, workflows } from "@/lib/db/schema";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
+import { workflowExecutableConditions } from "@/lib/workflow/executable";
 
 export async function GET(request: Request) {
   const auth = authenticateInternalService(request);
@@ -19,11 +20,17 @@ export async function GET(request: Request) {
       workflowId: workflowSchedules.workflowId,
       cronExpression: workflowSchedules.cronExpression,
       timezone: workflowSchedules.timezone,
+      // KEEP-575: interval-mode fields. When intervalSeconds is non-null
+      // the dispatcher fires on anchorAt + k * intervalSeconds instead of
+      // parsing cronExpression.
+      intervalSeconds: workflowSchedules.intervalSeconds,
+      anchorAt: workflowSchedules.anchorAt,
     })
     .from(workflowSchedules)
     .innerJoin(workflows, eq(workflowSchedules.workflowId, workflows.id))
+    .innerJoin(users, eq(workflows.userId, users.id))
     .where(
-      and(eq(workflowSchedules.enabled, true), eq(workflows.enabled, true))
+      and(eq(workflowSchedules.enabled, true), workflowExecutableConditions())
     );
 
   return NextResponse.json({ schedules });

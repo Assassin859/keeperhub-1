@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { start } from "workflow/api";
 import {
   createTimer,
   getMetricsCollector,
@@ -16,12 +15,23 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { recordWebhookMetrics } from "@/lib/metrics/instrumentation/api";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
-import { apiKeys, workflowExecutions, workflows } from "@/lib/db/schema";
+import { extractActionTypeNodes } from "@/lib/features";
+import {
+  enforceWorkflowFeatures,
+  FEATURE_UPGRADE_REQUIRED_ERROR,
+} from "@/lib/features/route-guard";
+import { apiKeys, users, workflowExecutions, workflows } from "@/lib/db/schema";
 import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
-import { executeWorkflow } from "@/lib/workflow/executor/executor.workflow";
+import { withBackstopCapture } from "@/lib/security/backstop-capture";
+import { buildAttribution } from "@/lib/security/request-attribution";
+import { getWorkflowAccess } from "@/lib/workflow/access";
+import { getWorkflowExecutability } from "@/lib/workflow/executable";
+import { executeWorkflowInBackground } from "@/lib/workflow/execute-in-background";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 type ValidateApiKeyResult = {
   valid: boolean;
+  userId?: string;
+  apiKeyId?: string;
   error?: string;
   statusCode?: number;
   errorBody?: Record<string, unknown>;
@@ -105,7 +115,7 @@ async function validateApiKey(
       // Fire and forget - ignore errors
     });
 
-  return { valid: true };
+  return { valid: true, userId: apiKey.userId, apiKeyId: apiKey.id };
 }
 
 const corsHeaders = {
@@ -119,14 +129,14 @@ const corsHeaders = {
  * metric in one call. Covers the simple-error gates (404, 410, 401, 403, 400,
  * 500). The two 429 variants have custom response bodies and stay inline.
  */
-function failResponse(
+async function failResponse(
   workflowId: string,
   timer: () => number,
   statusCode: number,
   message: string,
   extraBody?: Record<string, unknown>
-): NextResponse {
-  recordWebhookMetrics({
+): Promise<NextResponse> {
+  await recordWebhookMetrics({
     workflowId,
     durationMs: timer(),
     statusCode,
@@ -136,61 +146,6 @@ function failResponse(
     { error: message, ...extraBody },
     { status: statusCode, headers: corsHeaders }
   );
-}
-
-async function executeWorkflowBackground(
-  executionId: string,
-  workflowId: string,
-  nodes: WorkflowNode[],
-  edges: WorkflowEdge[],
-  input: Record<string, unknown>,
-  organizationId?: string | null,
-  ownerId?: string,
-  organizationSlug?: string,
-  organizationPlan?: string
-): Promise<void> {
-  try {
-    console.log("[Webhook] Starting execution:", executionId);
-
-    console.log("[Webhook] Calling executeWorkflow with:", {
-      nodeCount: nodes.length,
-      edgeCount: edges.length,
-      hasExecutionId: !!executionId,
-      workflowId,
-    });
-
-    const run = await start(executeWorkflow, [
-      {
-        nodes,
-        edges,
-        triggerInput: input,
-        executionId,
-        workflowId,
-        organizationId: organizationId ?? undefined,
-        ownerId,
-        organizationSlug,
-        organizationPlan,
-      },
-    ]);
-
-    console.log("[Webhook] Workflow started, runId:", run.runId);
-
-    await db
-      .update(workflowExecutions)
-      .set({ runId: run.runId })
-      .where(eq(workflowExecutions.id, executionId));
-  } catch (error) {
-    logSystemError(ErrorCategory.WORKFLOW_ENGINE, "[Webhook] Error during execution", error, { endpoint: "/api/workflows/[workflowId]/webhook", operation: "executeWorkflow" });
-
-    await db
-      .update(workflowExecutions)
-      .set({
-        status: "error",
-        error: error instanceof Error ? error.message : "Unknown error",
-        completedAt: new Date(),
-      })
-      .where(eq(workflowExecutions.id, executionId));
-  }
 }
 
 export function OPTIONS() {
@@ -215,11 +170,26 @@ export async function POST(
       return failResponse(workflowId, timer, 404, "Workflow not found");
     }
 
-    // Aligned with schedule/event/block trigger paths, which all gate on
-    // workflows.enabled. Without this check a disabled workflow keeps
-    // executing every time the caller hits the URL.
-    if (!workflow.enabled) {
-      return failResponse(workflowId, timer, 410, "Workflow is disabled");
+    // Gate on workflow lifecycle (enabled, not soft-deleted, owner active)
+    // using the shared executability predicate, before API-key
+    // validation so a non-executable workflow never triggers an auth round-trip.
+    // A disabled workflow stays a 410; a deleted or deactivated-owner workflow
+    // is reported as gone (404).
+    const [owner] = await db
+      .select({ deactivatedAt: users.deactivatedAt })
+      .from(users)
+      .where(eq(users.id, workflow.userId))
+      .limit(1);
+    const executability = getWorkflowExecutability({
+      enabled: workflow.enabled,
+      deletedAt: workflow.deletedAt,
+      ownerDeactivatedAt: owner?.deactivatedAt ?? null,
+    });
+    if (!executability.executable) {
+      if (executability.reason === "disabled") {
+        return failResponse(workflowId, timer, 410, "Workflow is disabled");
+      }
+      return failResponse(workflowId, timer, 404, "Workflow not found");
     }
 
     // Validate API key - must belong to the workflow owner
@@ -234,6 +204,16 @@ export async function POST(
         apiKeyValidation.error ?? "Invalid API key",
         apiKeyValidation.errorBody
       );
+    }
+
+    const access = await getWorkflowAccess(workflow, {
+      userId: apiKeyValidation.userId ?? null,
+      organizationId: null,
+      authMethod: "webhook",
+    });
+
+    if (!access.hasFullAccess) {
+      return failResponse(workflowId, timer, 404, "Workflow not found");
     }
 
     // Verify this is a webhook-triggered workflow
@@ -266,13 +246,33 @@ export async function POST(
       );
     }
 
+    const featureGuard = await enforceWorkflowFeatures(
+      extractActionTypeNodes(workflow.nodes as unknown[]),
+      workflow.organizationId
+    );
+    if (featureGuard.blocked) {
+      await recordWebhookMetrics({
+        workflowId,
+        durationMs: timer(),
+        statusCode: 402,
+        error: FEATURE_UPGRADE_REQUIRED_ERROR,
+        organizationId: workflow.organizationId,
+      });
+      const body = await featureGuard.response.json();
+      return NextResponse.json(body, {
+        status: 402,
+        headers: corsHeaders,
+      });
+    }
+
     const executionGuard = await enforceExecutionLimit(workflow.organizationId);
     if (executionGuard.blocked) {
-      recordWebhookMetrics({
+      await recordWebhookMetrics({
         workflowId,
         durationMs: timer(),
         statusCode: 429,
         error: EXECUTION_LIMIT_ERROR,
+        organizationId: workflow.organizationId,
       });
       const body = await executionGuard.response.json();
       return NextResponse.json(body, {
@@ -283,11 +283,12 @@ export async function POST(
 
     const concurrencyCheck = await checkConcurrencyLimit();
     if (!concurrencyCheck.allowed) {
-      recordWebhookMetrics({
+      await recordWebhookMetrics({
         workflowId,
         durationMs: timer(),
         statusCode: 429,
         error: "Too many concurrent workflow executions",
+        organizationId: workflow.organizationId,
       });
       return NextResponse.json(
         {
@@ -302,24 +303,36 @@ export async function POST(
     // Parse request body
     const body = await request.json().catch(() => ({}));
 
+    const attribution = buildAttribution({
+      request,
+      source: "webhook",
+      userApiKeyId: apiKeyValidation.apiKeyId ?? null,
+    });
+
     // Create execution record
-    const [execution] = await db
-      .insert(workflowExecutions)
-      .values({
-        workflowId,
-        userId: workflow.userId,
-        status: "running",
-        input: body,
-      })
-      .returning();
+    const [execution] = await withBackstopCapture(
+      { workflowId, userId: workflow.userId, source: "webhook" },
+      () =>
+        db
+          .insert(workflowExecutions)
+          .values({
+            workflowId,
+            userId: workflow.userId,
+            status: "pending",
+            input: body,
+            ...attribution,
+          })
+          .returning()
+    );
 
     console.log("[Webhook] Created execution:", execution.id);
 
-    // Record workflow execution metric in API process (workflow runs in separate context)
+    // Record per-(trigger_type, chain) start of a workflow execution. See KEEP-556.
+    const chainLabel = workflow.chain ?? "_unknown";
     const metrics = getMetricsCollector();
-    metrics.incrementCounter(MetricNames.WORKFLOW_EXECUTIONS_TOTAL, {
+    metrics.incrementCounter(MetricNames.WORKFLOW_EXECUTIONS_STARTED_TOTAL, {
       [LabelKeys.TRIGGER_TYPE]: "webhook",
-      [LabelKeys.WORKFLOW_ID]: workflowId,
+      [LabelKeys.CHAIN]: chainLabel,
     });
 
     // Resolve org slug + plan for log labels (cached per request)
@@ -329,19 +342,23 @@ export async function POST(
     ]);
 
     // Execute the workflow in the background (don't await)
-    executeWorkflowBackground(
+    executeWorkflowInBackground(
       execution.id,
       workflowId,
       workflow.nodes as WorkflowNode[],
       workflow.edges as WorkflowEdge[],
       body,
+      {
+        logPrefix: "[Webhook]",
+        endpoint: "/api/workflows/[workflowId]/webhook",
+      },
       workflow.organizationId,
       workflow.userId,
       organizationSlug,
       organizationPlan
     );
 
-    recordWebhookMetrics({
+    await recordWebhookMetrics({
       workflowId,
       executionId: execution.id,
       durationMs: timer(),

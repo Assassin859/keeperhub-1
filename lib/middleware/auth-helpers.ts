@@ -1,5 +1,8 @@
+import { and, eq, or } from "drizzle-orm";
 import { authenticateApiKey } from "@/lib/api-key-auth";
 import { auth } from "@/lib/auth";
+import { db } from "@/lib/db";
+import { member, organization } from "@/lib/db/schema";
 import { authenticateOAuthToken } from "@/lib/mcp/oauth-auth";
 import { getOrgContext } from "@/lib/middleware/org-context";
 import {
@@ -60,6 +63,55 @@ function checkSessionOrigin(
 
 export type AuthMethod = "oauth" | "api-key" | "session";
 
+const ORG_HEADER = "x-organization-id";
+
+/**
+ * KEEP-563: resolve the session-auth caller's effective organization, taking
+ * an optional `X-Organization-Id` request header into account.
+ *
+ * The header accepts either an organization id (`UvQQ...`) or a slug
+ * (`keeperhub-observability`). When set, we require the caller to be a
+ * member of the target org; otherwise we return an error so the route can
+ * reject the request rather than silently fall back to the session default.
+ *
+ * Hard org-scoping for API keys and OAuth tokens is unchanged: those callers
+ * never read this header. Only session auth honors it, because only session
+ * auth carries a multi-org identity.
+ */
+async function resolveSessionOrg(
+  request: Request,
+  userId: string,
+  defaultOrgId: string | null
+): Promise<
+  { organizationId: string | null } | { error: string; status: number }
+> {
+  const raw = request.headers.get(ORG_HEADER)?.trim();
+  if (!raw) {
+    return { organizationId: defaultOrgId };
+  }
+
+  // Single query joining organization to the caller's membership row. We can't
+  // branch on "org exists but you're not a member" vs "org does not exist"
+  // because the difference between those two responses would let any
+  // authenticated user enumerate org ids and slugs.
+  const match = await db
+    .select({ id: organization.id })
+    .from(organization)
+    .innerJoin(
+      member,
+      and(eq(member.organizationId, organization.id), eq(member.userId, userId))
+    )
+    .where(or(eq(organization.id, raw), eq(organization.slug, raw)))
+    .limit(1);
+
+  const targetOrgId = match[0]?.id;
+  if (!targetOrgId) {
+    return { error: "Organization not found", status: 404 };
+  }
+
+  return { organizationId: targetOrgId };
+}
+
 export type DualAuthContext =
   | {
       userId: string | null;
@@ -67,7 +119,22 @@ export type DualAuthContext =
       authMethod: AuthMethod;
       apiKeyId: string | null;
     }
-  | { error: string; status: number };
+  | { error: string; status: number; code?: "mfa_required" };
+
+/**
+ * Sentinel error returned by getDualAuthContext when the user holds a
+ * session that login-risk detection flagged and they have TOTP enrolled.
+ * The session itself is valid (and the cookie still authenticates them
+ * for step-up routes), but every other route refuses the request until
+ * the step-up flow at /verify-mfa flips sessions.requires_mfa back off.
+ * Client code branches on `code === "mfa_required"` to redirect to the
+ * verify page rather than treating it as a generic 403.
+ */
+export const MFA_REQUIRED_ERROR = {
+  error: "MFA verification required",
+  status: 403,
+  code: "mfa_required",
+} as const satisfies { error: string; status: number; code: "mfa_required" };
 
 /**
  * Stable label set to attach to log entries on dual-auth routes so we can
@@ -180,10 +247,29 @@ export async function getDualAuthContext(
     };
   }
 
+  // Quarantined session: login risk detection flagged the sign-in and the
+  // user has TOTP enrolled. Refuse the request until /verify-mfa clears
+  // the flag. The session is still usable on the step-up endpoints
+  // themselves; those resolve auth directly via auth.api.getSession
+  // rather than getDualAuthContext.
+  const sessionRow = (session as { session?: { requiresMfa?: boolean } })
+    .session;
+  if (sessionRow?.requiresMfa === true) {
+    return MFA_REQUIRED_ERROR;
+  }
+
   const orgContext = await getOrgContext();
+  const orgResult = await resolveSessionOrg(
+    request,
+    session.user.id,
+    orgContext.organization?.id ?? null
+  );
+  if ("error" in orgResult) {
+    return orgResult;
+  }
   return {
     userId: session.user.id,
-    organizationId: orgContext.organization?.id ?? null,
+    organizationId: orgResult.organizationId,
     authMethod: "session",
     apiKeyId: null,
   };
@@ -252,11 +338,22 @@ export async function resolveOrganizationId(
   }
 
   const orgContext = await getOrgContext();
-  const organizationId = orgContext.organization?.id;
-  if (!organizationId) {
+  const orgResult = await resolveSessionOrg(
+    request,
+    session.user.id,
+    orgContext.organization?.id ?? null
+  );
+  if ("error" in orgResult) {
+    return orgResult;
+  }
+  if (!orgResult.organizationId) {
     return { error: "No active organization", status: 400 };
   }
-  return { organizationId, authMethod: "session", apiKeyId: null };
+  return {
+    organizationId: orgResult.organizationId,
+    authMethod: "session",
+    apiKeyId: null,
+  };
 }
 
 /**
@@ -303,12 +400,19 @@ export async function resolveCreatorContext(request: Request): Promise<
   }
 
   const context = await getOrgContext();
-  const organizationId = context.organization?.id ?? null;
-  if (!organizationId) {
+  const orgResult = await resolveSessionOrg(
+    request,
+    session.user.id,
+    context.organization?.id ?? null
+  );
+  if ("error" in orgResult) {
+    return orgResult;
+  }
+  if (!orgResult.organizationId) {
     return { error: "No active organization", status: 400 };
   }
   return {
-    organizationId,
+    organizationId: orgResult.organizationId,
     userId: session.user.id,
     authMethod: "session",
     apiKeyId: null,

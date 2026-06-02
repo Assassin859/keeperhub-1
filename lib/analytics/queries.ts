@@ -2,6 +2,7 @@ import "server-only";
 
 import { and, count, desc, eq, gte, lt, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { logInputField, logOutputField } from "@/lib/db/execution-log-fields";
 import {
   workflowExecutionLogs,
   workflowExecutions,
@@ -11,6 +12,7 @@ import {
   directExecutions,
   organizationSpendCaps,
 } from "@/lib/db/schema-extensions";
+import { analyticsCacheKey, cachedAnalytics } from "./cache";
 import {
   getBucketInterval,
   getPreviousPeriodStart,
@@ -102,9 +104,53 @@ function addBucketToMap(
 }
 
 /**
- * Fetch KPI summary for the analytics dashboard.
+ * Only named ranges are cached. A custom range carries caller-supplied
+ * start/end strings that are effectively single-use and unbounded, so keying
+ * the per-process cache on them would grow the Map without limit for no
+ * hit-rate benefit (and is a cheap memory-pressure vector). Recompute those
+ * directly; the named ranges are what the dashboard and SSE push hammer.
  */
-export async function getAnalyticsSummary(
+export function isCacheableRange(
+  range: TimeRange,
+  customStart?: string,
+  customEnd?: string
+): boolean {
+  return (
+    range !== "custom" && customStart === undefined && customEnd === undefined
+  );
+}
+
+/**
+ * Fetch KPI summary for the analytics dashboard. Named ranges are cached per
+ * (org, range, project) - both the GET route and the SSE summary push go
+ * through here, so the cache covers the dominant recompute path. Custom ranges
+ * bypass the cache (see isCacheableRange).
+ */
+export function getAnalyticsSummary(
+  organizationId: string,
+  range: TimeRange,
+  customStart?: string,
+  customEnd?: string,
+  projectId?: string
+): Promise<AnalyticsSummary> {
+  const compute = () =>
+    computeAnalyticsSummary(
+      organizationId,
+      range,
+      customStart,
+      customEnd,
+      projectId
+    );
+  if (!isCacheableRange(range, customStart, customEnd)) {
+    return compute();
+  }
+  return cachedAnalytics(
+    analyticsCacheKey("summary", [organizationId, range, projectId]),
+    compute
+  );
+}
+
+async function computeAnalyticsSummary(
   organizationId: string,
   range: TimeRange,
   customStart?: string,
@@ -338,57 +384,35 @@ function addBigIntStrings(a: string, b: string): string {
   return (BigInt(a || "0") + BigInt(b || "0")).toString();
 }
 
-/**
- * Build SQL to extract a field from workflow_execution_logs output JSONB.
- *
- * The output column is double-encoded: Drizzle stores a JSON string inside JSONB
- * (jsonb_typeof = 'string') rather than a JSONB object. To extract a nested key
- * we first unwrap the string with `#>> '{}'`, re-parse as jsonb, then extract.
- * Falls back to direct `->>` for any rows where output is already an object.
- */
-function logOutputField(field: string): ReturnType<typeof sql> {
-  return sql`CASE
-    WHEN jsonb_typeof(${workflowExecutionLogs.output}) = 'string'
-    THEN (${workflowExecutionLogs.output} #>> '{}')::jsonb->>${sql.raw(`'${field}'`)}
-    ELSE ${workflowExecutionLogs.output}->>${sql.raw(`'${field}'`)}
-  END`;
-}
-
-/**
- * Build SQL to extract a field from workflow_execution_logs input JSONB.
- * Same double-encoding handling as output.
- */
-function logInputField(field: string): ReturnType<typeof sql> {
-  return sql`CASE
-    WHEN jsonb_typeof(${workflowExecutionLogs.input}) = 'string'
-    THEN (${workflowExecutionLogs.input} #>> '{}')::jsonb->>${sql.raw(`'${field}'`)}
-    ELSE ${workflowExecutionLogs.input}->>${sql.raw(`'${field}'`)}
-  END`;
-}
-
 async function getWorkflowGasTotal(
   organizationId: string,
   rangeStart: Date,
   rangeEnd: Date,
   projectId?: string
 ): Promise<string> {
+  // Reads the denormalised run-total `gas_used_wei` written at finalize
+  // (lib/workflow/executor/logging.ts) instead of re-summing the per-step logs
+  // JSONB. No logs join, no JSONB parse, no TOAST detoast - the org+window slice
+  // is aggregated straight off workflow_executions. SUM skips NULL, so runs with
+  // no gas need no explicit filter.
+  //
+  // The window is now `workflow_executions.started_at` (when the run started),
+  // not the per-step `started_at`. Since the column is a run-level rollup that
+  // is the correct axis, and it matches every other summary metric, which is
+  // already keyed to run start. Boundary-straddling runs can reattribute by the
+  // gap between run start and a late step; immaterial at dashboard granularity.
   const result = await db
     .select({
-      totalGas: sql<string>`COALESCE(SUM(CAST(${logOutputField("gasUsed")} AS NUMERIC)), 0)::text`,
+      totalGas: sql<string>`COALESCE(SUM(CAST(${workflowExecutions.gasUsedWei} AS NUMERIC)), 0)::text`,
     })
-    .from(workflowExecutionLogs)
-    .innerJoin(
-      workflowExecutions,
-      eq(workflowExecutionLogs.executionId, workflowExecutions.id)
-    )
+    .from(workflowExecutions)
     .innerJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
     .where(
       and(
         eq(workflows.organizationId, organizationId),
         projectId ? eq(workflows.projectId, projectId) : undefined,
-        gte(workflowExecutionLogs.startedAt, rangeStart),
-        lt(workflowExecutionLogs.startedAt, rangeEnd),
-        sql`${logOutputField("gasUsed")} IS NOT NULL`
+        gte(workflowExecutions.startedAt, rangeStart),
+        lt(workflowExecutions.startedAt, rangeEnd)
       )
     );
 
@@ -396,9 +420,28 @@ async function getWorkflowGasTotal(
 }
 
 /**
- * Fetch time-series bucketed data for charts.
+ * Fetch time-series bucketed data for charts. Named ranges cached per
+ * (org, range, project); custom ranges bypass the cache (see isCacheableRange).
  */
-export async function getTimeSeries(
+export function getTimeSeries(
+  organizationId: string,
+  range: TimeRange,
+  customStart?: string,
+  customEnd?: string,
+  projectId?: string
+): Promise<TimeSeriesBucket[]> {
+  const compute = () =>
+    computeTimeSeries(organizationId, range, customStart, customEnd, projectId);
+  if (!isCacheableRange(range, customStart, customEnd)) {
+    return compute();
+  }
+  return cachedAnalytics(
+    analyticsCacheKey("time-series", [organizationId, range, projectId]),
+    compute
+  );
+}
+
+async function computeTimeSeries(
   organizationId: string,
   range: TimeRange,
   customStart?: string,
@@ -514,9 +557,34 @@ function mergeBuckets(
 }
 
 /**
- * Fetch gas breakdown by network.
+ * Fetch gas breakdown by network. Named ranges cached per (org, range,
+ * project); custom ranges bypass the cache (see isCacheableRange).
  */
-export async function getNetworkBreakdown(
+export function getNetworkBreakdown(
+  organizationId: string,
+  range: TimeRange,
+  customStart?: string,
+  customEnd?: string,
+  projectId?: string
+): Promise<NetworkBreakdown[]> {
+  const compute = () =>
+    computeNetworkBreakdown(
+      organizationId,
+      range,
+      customStart,
+      customEnd,
+      projectId
+    );
+  if (!isCacheableRange(range, customStart, customEnd)) {
+    return compute();
+  }
+  return cachedAnalytics(
+    analyticsCacheKey("networks", [organizationId, range, projectId]),
+    compute
+  );
+}
+
+async function computeNetworkBreakdown(
   organizationId: string,
   range: TimeRange,
   customStart?: string,
@@ -762,17 +830,35 @@ async function fetchWorkflowRuns(
     conditions.push(lt(workflowExecutions.startedAt, new Date(cursor)));
   }
 
-  const scopedExecutionIds = db
+  // Restrict the gas/network aggregation to the executions this page will
+  // actually return. The outer query selects the page via the same conditions
+  // + order + limit, and the leftJoin to log_summary does not change which rows
+  // come back - so narrowing the aggregate to those <= limit execution IDs is
+  // value-identical. The prior subquery scoped only to org + window, so the
+  // JSONB gas extraction ran over the whole slice on every load even though
+  // only `limit` rows are returned.
+  //
+  // The order/limit here must match the outer query exactly, including the
+  // secondary `id` key: started_at alone is not unique, so without a stable
+  // tiebreaker the two independent ORDER BY ... LIMIT evaluations could select
+  // different rows at the boundary and drop a boundary row's gas. `id` is a
+  // unique total order, so both queries resolve ties identically.
+  const pagedExecutionIds = db
     .select({ id: workflowExecutions.id })
     .from(workflowExecutions)
-    .where(
-      and(
-        sql`${workflowExecutions.workflowId} IN (${orgWorkflowIds})`,
-        gte(workflowExecutions.startedAt, rangeStart),
-        lt(workflowExecutions.startedAt, rangeEnd)
-      )
-    );
+    .where(and(...conditions))
+    .orderBy(desc(workflowExecutions.startedAt), desc(workflowExecutions.id))
+    .limit(limit);
 
+  // KEEP-470: gas + network still come from per-log aggregation (no top-level
+  // column exists for them yet). Transaction hashes now come from the
+  // workflow_executions.transaction_hashes column directly - it carries the
+  // full ordered list (one entry per tx-producing step, including For-Each
+  // iterations), already populated atomically with the status='success' flip
+  // by lib/workflow/executor/logging.ts. The legacy MIN aggregate from
+  // workflow_execution_logs was a workaround that picked an arbitrary single
+  // hash per run; multi-tx workflows (approve+swap, fan-outs) silently lost
+  // every hash but one.
   const logSummary = db
     .select({
       executionId: workflowExecutionLogs.executionId,
@@ -785,17 +871,12 @@ async function fetchWorkflowRuns(
         THEN ${logInputField("network")}
         END
       )`.as("network"),
-      transactionHash: sql<string | null>`MIN(
-        CASE WHEN ${logOutputField("transactionHash")} IS NOT NULL
-        THEN ${logOutputField("transactionHash")}
-        END
-      )`.as("transactionHash"),
     })
     .from(workflowExecutionLogs)
     .where(
       and(
-        sql`${workflowExecutionLogs.executionId} IN (${scopedExecutionIds})`,
-        sql`(${logOutputField("gasUsed")} IS NOT NULL OR ${logOutputField("transactionHash")} IS NOT NULL)`
+        sql`${workflowExecutionLogs.executionId} IN (${pagedExecutionIds})`,
+        sql`${logOutputField("gasUsed")} IS NOT NULL`
       )
     )
     .groupBy(workflowExecutionLogs.executionId)
@@ -814,13 +895,15 @@ async function fetchWorkflowRuns(
       completedSteps: workflowExecutions.completedSteps,
       gasUsedWei: logSummary.gasUsedWei,
       network: logSummary.network,
-      transactionHash: logSummary.transactionHash,
+      transactionHashes: workflowExecutions.transactionHashes,
     })
     .from(workflowExecutions)
     .leftJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
     .leftJoin(logSummary, eq(workflowExecutions.id, logSummary.executionId))
     .where(and(...conditions))
-    .orderBy(desc(workflowExecutions.startedAt))
+    // Secondary `id` key must match pagedExecutionIds above so the page and the
+    // gas subquery resolve started_at ties to the same rows.
+    .orderBy(desc(workflowExecutions.startedAt), desc(workflowExecutions.id))
     .limit(limit);
 
   return result.map((row) => ({
@@ -834,7 +917,7 @@ async function fetchWorkflowRuns(
     workflowName: row.workflowName ?? "(Deleted)",
     directType: null,
     network: row.network ?? null,
-    transactionHash: row.transactionHash ?? null,
+    transactionHashes: row.transactionHashes,
     gasUsedWei:
       row.gasUsedWei && row.gasUsedWei !== "0" ? row.gasUsedWei : null,
     totalSteps: row.totalSteps ? Number(row.totalSteps) : null,
@@ -899,7 +982,22 @@ async function fetchDirectRuns(
     workflowName: null,
     directType: row.type as UnifiedRun["directType"],
     network: row.network,
-    transactionHash: row.transactionHash,
+    // Direct executions are genuinely single-tx. Synthesize the entry so
+    // consumers can render workflow + direct runs through the same array
+    // shape; nodeId/nodeName carry sentinel values since direct executions
+    // have no canvas node. Consumers must discriminate on `source === "direct"`
+    // rather than the nodeId/nodeName literals -- a workflow node could
+    // theoretically share the same id, and the sentinel is presentational.
+    transactionHashes: row.transactionHash
+      ? [
+          {
+            hash: row.transactionHash,
+            nodeId: "direct",
+            nodeName: "Direct execution",
+            ...(row.network ? { network: row.network } : {}),
+          },
+        ]
+      : [],
     gasUsedWei: row.gasUsedWei,
     totalSteps: null,
     completedSteps: null,
@@ -1074,21 +1172,20 @@ export async function getSpendCapData(organizationId: string): Promise<{
           )
         ),
       db
+        // Same denormalised-column read as getWorkflowGasTotal: today's run
+        // gas straight off workflow_executions, no logs JSONB scan. gas_used_wei
+        // already reflects only gas-bearing (success) step output, so the
+        // previous log status='success' filter is subsumed. Windowed by run
+        // start rather than per-step time (see getWorkflowGasTotal).
         .select({
-          totalWei: sql<string>`COALESCE(SUM(CAST(${logOutputField("gasUsed")} AS NUMERIC)), 0)::text`,
+          totalWei: sql<string>`COALESCE(SUM(CAST(${workflowExecutions.gasUsedWei} AS NUMERIC)), 0)::text`,
         })
-        .from(workflowExecutionLogs)
-        .innerJoin(
-          workflowExecutions,
-          eq(workflowExecutionLogs.executionId, workflowExecutions.id)
-        )
+        .from(workflowExecutions)
         .innerJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
         .where(
           and(
             eq(workflows.organizationId, organizationId),
-            eq(workflowExecutionLogs.status, "success"),
-            gte(workflowExecutionLogs.startedAt, todayStart),
-            sql`${logOutputField("gasUsed")} IS NOT NULL`
+            gte(workflowExecutions.startedAt, todayStart)
           )
         ),
     ]

@@ -4,6 +4,15 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { db } from "@/lib/db";
 import { workflowExecutions, workflows } from "@/lib/db/schema";
+import { getWorkflowAccess } from "@/lib/workflow/access";
+
+function parseIntOrNull(value: string | null): number | null {
+  if (value === null) {
+    return null;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isNaN(parsed) ? null : parsed;
+}
 
 export async function GET(
   request: Request,
@@ -33,13 +42,14 @@ export async function GET(
       );
     }
 
-    const isOwner = userId !== null && userId === workflow.userId;
-    const isSameOrg =
-      !workflow.isAnonymous &&
-      workflow.organizationId &&
-      organizationId === workflow.organizationId;
+    const access = await getWorkflowAccess(workflow, {
+      userId,
+      organizationId,
+      authMethod: authContext.authMethod,
+    });
 
-    if (!(isOwner || isSameOrg)) {
+    // KEEP-440: execution history is hidden once the workflow is soft-deleted.
+    if (!access.hasFullAccess || access.isDeleted) {
       return NextResponse.json(
         { error: "Workflow not found" },
         { status: 404 }
@@ -53,7 +63,19 @@ export async function GET(
       limit: 50,
     });
 
-    return NextResponse.json(executions);
+    // KEEP-481: `total_steps` and `completed_steps` are stored as TEXT and
+    // Drizzle returns them as strings, which leaks into the response as
+    // string-or-null and breaks type-checked SDK clients (Pydantic, Zod, Go).
+    // Coerce to `number | null` before serializing so the response matches the
+    // numeric shape clients expect; non-numeric strings (shouldn't happen) fall
+    // through as null rather than NaN.
+    const serialized = executions.map((execution) => ({
+      ...execution,
+      totalSteps: parseIntOrNull(execution.totalSteps),
+      completedSteps: parseIntOrNull(execution.completedSteps),
+    }));
+
+    return NextResponse.json(serialized);
   } catch (error) {
     logSystemError(ErrorCategory.DATABASE, "Failed to get executions", error, {
       endpoint: "/api/workflows/[workflowId]/executions",
@@ -97,13 +119,14 @@ export async function DELETE(
       );
     }
 
-    const isOwner = userId !== null && userId === workflow.userId;
-    const isSameOrg =
-      !workflow.isAnonymous &&
-      workflow.organizationId &&
-      organizationId === workflow.organizationId;
+    const access = await getWorkflowAccess(workflow, {
+      userId,
+      organizationId,
+      authMethod: authContext.authMethod,
+    });
 
-    if (!(isOwner || isSameOrg)) {
+    // KEEP-440: execution history is hidden once the workflow is soft-deleted.
+    if (!access.hasFullAccess || access.isDeleted) {
       return NextResponse.json(
         { error: "Workflow not found" },
         { status: 404 }

@@ -18,7 +18,7 @@ export function GET(request: Request): Response {
   const card = {
     name: "KeeperHub",
     description:
-      "Web3 workflow automation platform. Build and deploy on-chain automations through a visual builder. Workflows are callable by AI agents via MCP and x402 micropayments.",
+      "Execution layer for AI agents operating onchain. Discover and call DeFi workflows via MCP and ERC-8004, pay per execution in USDC over x402 on Base or MPP on Tempo. Managed DeFi 24/7 with onchain audit trail.",
     url: baseUrl,
     version: "1.0.0",
     provider: {
@@ -38,50 +38,57 @@ export function GET(request: Request): Response {
         id: "workflow_discovery",
         name: "Workflow Discovery",
         description:
-          "Search and list agent-callable workflows in the KeeperHub catalog by keyword, plugin, or chain.",
-        tags: ["discovery", "workflow", "catalog", "search"],
+          "Search and list KeeperHub-listed DeFi workflows by keyword, protocol, asset, chain, or pricing. Returns name, price, input schema, and supported payment rails (x402, MPP).",
+        tags: ["discovery", "search", "workflow", "marketplace", "defi"],
       },
       {
         id: "workflow_invocation",
         name: "Workflow Invocation",
         description:
-          "Invoke a listed workflow with structured inputs. Paid workflows settle via x402 micropayments on Base.",
-        tags: ["execution", "x402", "payments", "workflow"],
+          "Pay per execution and invoke a listed DeFi workflow with structured inputs. Paid workflows settle via x402 USDC on Base or MPP USDC.e on Tempo. Returns transaction hashes and a structured payment receipt.",
+        tags: ["execution", "x402", "mpp", "usdc", "base", "tempo", "payments"],
       },
       {
         id: "ai_workflow_generation",
         name: "AI Workflow Generation",
         description:
-          "Generate a new workflow from a natural-language description, including triggers, actions, and parameters.",
-        tags: ["generation", "ai", "workflow", "automation"],
+          "Generate a new automation workflow from a natural-language goal, including triggers, conditional logic, and multi-step protocol actions across chains.",
+        tags: ["ai", "generation", "natural-language", "workflow", "automation"],
       },
       {
         id: "protocol_actions",
         name: "Protocol Actions",
         description:
-          "Search and execute Web3 protocol actions (DeFi, governance, NFT, bridging) across supported chains.",
-        tags: ["defi", "web3", "protocol", "onchain"],
+          "Search and execute Web3 protocol actions (DeFi, governance, NFT, bridging, lending) across supported chains. Aave, Safe, swap routers, lending markets and more.",
+        tags: ["defi", "web3", "protocol", "onchain", "aave", "safe", "lending", "governance"],
       },
       {
         id: "onchain_execution",
-        name: "On-chain Execution",
+        name: "Onchain Execution",
         description:
-          "Execute token transfers, contract calls, and conditional check-and-execute transactions across supported chains.",
-        tags: ["transfer", "contract", "execution", "onchain"],
+          "Execute token transfers, swaps, bridges, stakes, contract calls, and conditional check-and-execute transactions across Base, Ethereum, Tempo and other supported chains.",
+        tags: ["transfer", "swap", "bridge", "stake", "contract", "execution", "onchain"],
       },
       {
         id: "templates",
         name: "Workflow Templates",
         description:
-          "Browse the template gallery and deploy pre-built workflows with parameter overrides.",
-        tags: ["templates", "deploy", "workflow"],
+          "Browse curated workflow templates (multisig automation, treasury management, DeFi position management) and deploy them with one call.",
+        tags: ["template", "deploy", "marketplace", "treasury", "multisig"],
       },
       {
         id: "execution_monitoring",
         name: "Execution Monitoring",
         description:
-          "Inspect workflow run status and logs for debugging and audit trails.",
-        tags: ["observability", "logs", "monitoring"],
+          "Stream or poll workflow execution status, transaction hashes, gas spent, and per-step logs for debugging and audit. Full onchain audit trail per execution.",
+        tags: ["monitoring", "status", "logs", "audit", "observability"],
+      },
+      {
+        id: "reputation_feedback",
+        name: "Reputation Feedback",
+        description:
+          "Record ERC-8004 ReputationRegistry feedback for a workflow execution. Wallet-signed and broadcast onchain. Feeds external scorers (Valiron, AgentScore, AgentSign).",
+        tags: ["reputation", "feedback", "erc-8004", "audit", "trust"],
       },
     ],
   };

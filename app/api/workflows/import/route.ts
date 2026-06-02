@@ -4,6 +4,8 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { workflows } from "@/lib/db/schema";
+import { extractActionTypeNodes } from "@/lib/features";
+import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
@@ -20,6 +22,10 @@ import {
   workflowExportV1Schema,
 } from "@/lib/workflow/export-schema";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
+import {
+  formatActionConfigValidationResponse,
+  validateWorkflowActionConfigs,
+} from "@/lib/workflow/validation/action-config";
 
 const versionedBodySchema = z
   .object({ version: z.unknown() })
@@ -122,6 +128,24 @@ export async function POST(request: Request): Promise<NextResponse> {
         { error: "Invalid integration references in workflow" },
         { status: 403 }
       );
+    }
+
+    const actionConfigValidation = validateWorkflowActionConfigs(
+      sanitized.nodes
+    );
+    if (!actionConfigValidation.valid) {
+      return NextResponse.json(
+        formatActionConfigValidationResponse(actionConfigValidation),
+        { status: 422 }
+      );
+    }
+
+    const featureGuard = await enforceWorkflowFeatures(
+      extractActionTypeNodes(sanitized.nodes),
+      organizationId
+    );
+    if (featureGuard.blocked) {
+      return featureGuard.response;
     }
 
     const workflowId = generateId();

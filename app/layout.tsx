@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 import { AppBanner } from "@/components/app-banner";
 import { AuthProvider } from "@/components/auth/provider";
 import { KeeperHubExtensionLoader } from "@/components/extension-loader";
+import { FeatureSessionInvalidator } from "@/components/feature-session-invalidator";
 import { GlobalModals } from "@/components/global-modals";
 import { PendingTemplateRunner } from "@/components/hub/pending-template-runner";
 import { LayoutContent } from "@/components/layout-content";
@@ -45,6 +46,14 @@ export const metadata: Metadata = {
     description:
       "Build powerful blockchain workflow automations with a visual, node-based editor.",
     images: ["/api/og/default"],
+  },
+  // Discourage automatic translation of the app shell. External
+  // translators (Chrome's built-in translator, browser extensions) swap
+  // text nodes in-place, which leaves React's fiber tree referencing
+  // the original parents and throws `NotFoundError` on the next
+  // insertBefore/removeChild. See facebook/react#11538.
+  other: {
+    google: "notranslate",
   },
 };
 
@@ -101,6 +110,7 @@ const RootLayout = async ({ children }: RootLayoutProps) => {
       lang="en"
       style={{ "--nav-sidebar-width": navSidebarWidth } as React.CSSProperties}
       suppressHydrationWarning
+      translate="no"
     >
       <body className={cn(sans.variable, mono.variable, "antialiased")}>
         <KeeperHubExtensionLoader />
@@ -111,6 +121,7 @@ const RootLayout = async ({ children }: RootLayoutProps) => {
         >
           <Provider>
             <AuthProvider>
+              <FeatureSessionInvalidator />
               <PendingTemplateRunner />
               <OverlayProvider>
                 <AppBanner />

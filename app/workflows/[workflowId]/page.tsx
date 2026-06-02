@@ -3,10 +3,19 @@
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { ChevronLeft, ChevronRight, Globe, Plus } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  use,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { NodeConfigPanel } from "@/components/workflow/node-config-panel";
+import { useGatedWorkflowWarning } from "@/hooks/use-features";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { api } from "@/lib/api-client";
 import { authClient, useSession } from "@/lib/auth-client";
@@ -21,6 +30,7 @@ import {
 } from "@/lib/integrations-store";
 import type { IntegrationType } from "@/lib/types/integration";
 import {
+  currentExecutionIdAtom,
   currentWorkflowDescriptionAtom,
   currentWorkflowIdAtom,
   currentWorkflowInputSchemaAtom,
@@ -37,6 +47,7 @@ import {
   edgesAtom,
   hasSidebarBeenShownAtom,
   hasUnsavedChangesAtom,
+  isExecutingAtom,
   isGeneratingAtom,
   isPanelAnimatingAtom,
   isSavingAtom,
@@ -137,9 +148,33 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
     () => nodes.some((node) => node.data.type === "trigger"),
     [nodes]
   );
+
   const [edges] = useAtom(edgesAtom);
   const [currentWorkflowId] = useAtom(currentWorkflowIdAtom);
-  const [selectedExecutionId] = useAtom(selectedExecutionIdAtom);
+  const workflowActionTypes = useMemo(
+    () =>
+      nodes
+        .filter((node) => node.data.type === "action")
+        .map((node) => {
+          const cfg = node.data.config;
+          const value =
+            cfg && typeof cfg === "object" && "actionType" in cfg
+              ? (cfg as { actionType?: unknown }).actionType
+              : undefined;
+          return typeof value === "string" ? value : "";
+        })
+        .filter((s) => s.length > 0),
+    [nodes]
+  );
+  useGatedWorkflowWarning(
+    currentWorkflowId === workflowId ? workflowId : null,
+    workflowActionTypes
+  );
+  const [selectedExecutionId, setSelectedExecutionId] = useAtom(
+    selectedExecutionIdAtom
+  );
+  const [isExecuting, setIsExecuting] = useAtom(isExecutingAtom);
+  const setCurrentExecutionId = useSetAtom(currentExecutionIdAtom);
   const setNodes = useSetAtom(nodesAtom);
   const setEdges = useSetAtom(edgesAtom);
   const setCurrentWorkflowId = useSetAtom(currentWorkflowIdAtom);
@@ -505,6 +540,52 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
     null
   );
 
+  // KEEP-542: workflow identity atoms are global Jotai singletons that persist
+  // across navigation. After viewing a hub workflow (isOwner=false,
+  // visibility=public), those values leak into the next workflow page until
+  // loadExistingWorkflow resolves — leaving the persistent toolbar showing
+  // "Use Template" for the user's own workflow, and worse, wiring its
+  // currentWorkflowId to the previously viewed hub template (so clicking
+  // "Use Template" duplicates the hub workflow). useLayoutEffect resets the
+  // identity/content atoms before paint so the toolbar never sees stale state.
+  const previousWorkflowIdRef = useRef<string | null>(null);
+  useLayoutEffect((): (() => void) => {
+    if (previousWorkflowIdRef.current !== workflowId) {
+      previousWorkflowIdRef.current = workflowId;
+      setCurrentWorkflowId(null);
+      setCurrentWorkflowName("");
+      setCurrentWorkflowDescription("");
+      setCurrentWorkflowVisibility("private");
+      setIsWorkflowOwner(true);
+      setNodes([]);
+      setEdges([]);
+      setSelectedNode(null);
+      setWorkflowNotFound(false);
+    }
+    return (): void => {
+      setCurrentWorkflowId(null);
+      setCurrentWorkflowName("");
+      setCurrentWorkflowDescription("");
+      setCurrentWorkflowVisibility("private");
+      setIsWorkflowOwner(true);
+      setNodes([]);
+      setEdges([]);
+      setSelectedNode(null);
+      setWorkflowNotFound(false);
+    };
+  }, [
+    workflowId,
+    setCurrentWorkflowId,
+    setCurrentWorkflowName,
+    setCurrentWorkflowDescription,
+    setCurrentWorkflowVisibility,
+    setIsWorkflowOwner,
+    setNodes,
+    setEdges,
+    setSelectedNode,
+    setWorkflowNotFound,
+  ]);
+
   useEffect(() => {
     const loadWorkflowData = async () => {
       const pendingClaim = getPendingClaim();
@@ -543,6 +624,97 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
     nodes.length,
     generateWorkflowFromAI,
     loadExistingWorkflow,
+  ]);
+
+  // KEEP-323: Rehydrate the Run/Stop button when the page loads while an
+  // execution is still in-flight. The toolbar's polling lives in component
+  // memory, so a refresh mid-run leaves isExecutingAtom at its default
+  // false and the button reverts to "Run". Here we detect a running
+  // execution server-side, restore the atoms, and poll until it ends so
+  // the button transitions back to "Run" automatically.
+  const rehydratedWorkflowIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!currentWorkflowId) {
+      return;
+    }
+    if (isExecuting) {
+      return;
+    }
+    if (rehydratedWorkflowIdRef.current === currentWorkflowId) {
+      return;
+    }
+
+    let cancelled = false;
+    let intervalId: NodeJS.Timeout | null = null;
+
+    const isInFlightStatus = (status: string): boolean =>
+      status === "running" || status === "pending";
+
+    const pollResumedExecution = (executionId: string): void => {
+      const poll = async (): Promise<void> => {
+        try {
+          const statusData = await api.workflow.getExecutionStatus(executionId);
+          if (isInFlightStatus(statusData.status)) {
+            return;
+          }
+          if (intervalId) {
+            clearInterval(intervalId);
+            intervalId = null;
+          }
+          if (executionPollingIntervalRef.current === intervalId) {
+            executionPollingIntervalRef.current = null;
+          }
+          setIsExecuting(false);
+          setCurrentExecutionId(null);
+        } catch (error) {
+          console.error("Failed to poll resumed execution:", error);
+        }
+      };
+
+      poll();
+      intervalId = setInterval(poll, 500);
+      executionPollingIntervalRef.current = intervalId;
+    };
+
+    const rehydrate = async (): Promise<void> => {
+      try {
+        const executions = await api.workflow.getExecutions(currentWorkflowId);
+        if (cancelled) {
+          return;
+        }
+        rehydratedWorkflowIdRef.current = currentWorkflowId;
+        const inFlight = executions.find((execution) =>
+          isInFlightStatus(execution.status)
+        );
+        if (!inFlight) {
+          return;
+        }
+        setCurrentExecutionId(inFlight.id);
+        setIsExecuting(true);
+        setSelectedExecutionId(inFlight.id);
+        pollResumedExecution(inFlight.id);
+      } catch (error) {
+        console.error("Failed to rehydrate execution state:", error);
+      }
+    };
+
+    rehydrate();
+
+    return (): void => {
+      cancelled = true;
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+      if (executionPollingIntervalRef.current === intervalId) {
+        executionPollingIntervalRef.current = null;
+      }
+    };
+  }, [
+    currentWorkflowId,
+    isExecuting,
+    setIsExecuting,
+    setCurrentExecutionId,
+    setSelectedExecutionId,
   ]);
 
   // Auto-fix invalid/missing integrations on workflow load or when integrations change

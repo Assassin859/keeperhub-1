@@ -17,13 +17,22 @@ import { ErrorCategory, logUserError } from "@/lib/logging";
 import {
   getOrganizationWalletAddress,
   initializeWalletSigner,
-} from "@/lib/para/wallet-helpers";
+} from "@/lib/web3/wallet-helpers";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import { getErrorMessage } from "@/lib/utils";
 import { generateId } from "@/lib/utils/id";
+import {
+  executeContractCallAsRole,
+  executeContractCallAsSafe,
+} from "@/lib/safe/execute-as-safe";
+import { resolveSignerForNode } from "@/lib/safe/signer-resolver";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
-import { formatContractError } from "@/lib/web3/decode-revert-error";
+import {
+  classifyRevert,
+  formatContractError,
+  type RevertKind,
+} from "@/lib/web3/decode-revert-error";
 import { resolveGasLimitOverrides } from "@/lib/web3/gas-defaults";
 import { isSponsorshipSupported } from "@/lib/web3/turnkey-sponsorship-config";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
@@ -49,6 +58,9 @@ export type ApproveTokenCoreInput = {
   // Strict mode: when true and usePrivateMempool is true, failing to reach the
   // private RPC does NOT fall back to the public mempool. Ignored otherwise.
   strict?: boolean;
+  // Per-node Web3 Connection field. See parseWeb3Connection in
+  // lib/safe/signer-resolver.ts. Missing -> "default" -> org-policy resolver.
+  web3Connection?: string;
   _context?: {
     executionId?: string;
     organizationId?: string;
@@ -67,7 +79,16 @@ export type ApproveTokenResult =
       spender: string;
       symbol: string;
     }
-  | { success: false; error: string };
+  | {
+      success: false;
+      error: string;
+      /**
+       * Structured classification of the revert when one was emitted.
+       * Omitted when the failure is pre-flight (validation, RPC) or when
+       * the revert payload was empty / unrecognised.
+       */
+      rejection?: RevertKind;
+    };
 
 /**
  * Core approve token logic
@@ -87,6 +108,7 @@ export async function approveTokenCore(
     gasLimitMultiplier,
     usePrivateMempool,
     strict,
+    web3Connection,
     _context,
   } = input;
 
@@ -188,6 +210,21 @@ export async function approveTokenCore(
     };
   }
 
+  // Decide whether to route this write through the org's Safe on this chain.
+  let signerMode: Awaited<ReturnType<typeof resolveSignerForNode>>;
+  try {
+    signerMode = await resolveSignerForNode({
+      organizationId,
+      chainId,
+      web3Connection,
+    });
+  } catch (error) {
+    return {
+      success: false,
+      error: `Failed to resolve Web3 Connection: ${getErrorMessage(error)}`,
+    };
+  }
+
   // Get workflow ID for transaction tracking (only for workflow executions)
   let workflowId: string | undefined;
   if (_context.executionId && !_context.organizationId) {
@@ -216,9 +253,12 @@ export async function approveTokenCore(
   // Try gas-sponsored execution first via Turnkey Gas Station (KEEP-464).
   // KEEP-137: skip sponsorship when routing through a private mempool --
   // Turnkey broadcasts via its own infrastructure, which bypasses Flashbots Protect.
+  // Also skip in Safe mode: the sponsored path sends from the org's EOA wallet,
+  // which would change msg.sender away from the Safe.
   if (
     isSponsorshipSupported(chainId) &&
     !usePrivateMempool &&
+    signerMode.kind === "eoa" &&
     isGasSponsorshipEnabled()
   ) {
     try {
@@ -322,7 +362,7 @@ export async function approveTokenCore(
   const adapter = getChainAdapter(chainId);
 
   return withNonceSession(txContext, walletAddress, async (session) => {
-    // Initialize Para signer
+    // Initialize wallet signer
     let signer: Awaited<ReturnType<typeof initializeWalletSigner>>;
     try {
       signer = await initializeWalletSigner(organizationId, rpcUrl, chainId);
@@ -368,16 +408,62 @@ export async function approveTokenCore(
         }
       }
 
-      const receipt = await adapter.executeContractCall(signer, {
-        contractAddress: tokenAddress,
-        abi: ERC20_ABI,
-        functionKey: "approve",
-        args: [spenderAddress, amountRaw],
-      }, session, {
-        gasOverrides: { multiplierOverride, gasLimitOverride },
-        workflowId,
-        rpcManager,
-      });
+      let receipt: Awaited<ReturnType<typeof adapter.executeContractCall>>;
+      if (signerMode.kind === "safe-role") {
+        receipt = await executeContractCallAsRole(
+          signer,
+          {
+            safeAddress: signerMode.safeAddress,
+            delegateAddress: signerMode.delegateAddress,
+            rolesModifierAddress: signerMode.rolesModifierAddress,
+            roleKey: signerMode.roleKey,
+            contractAddress: tokenAddress,
+            abi: ERC20_ABI,
+            functionKey: "approve",
+            args: [spenderAddress, amountRaw],
+          },
+          session,
+          {
+            chainId,
+            workflowId,
+            rpcManager,
+          }
+        );
+      } else if (signerMode.kind === "safe") {
+        receipt = await executeContractCallAsSafe(
+          signer,
+          {
+            safeAddress: signerMode.safeAddress,
+            ownerAddress: signerMode.ownerAddress,
+            contractAddress: tokenAddress,
+            abi: ERC20_ABI,
+            functionKey: "approve",
+            args: [spenderAddress, amountRaw],
+          },
+          session,
+          {
+            chainId,
+            workflowId,
+            rpcManager,
+          }
+        );
+      } else {
+        receipt = await adapter.executeContractCall(
+          signer,
+          {
+            contractAddress: tokenAddress,
+            abi: ERC20_ABI,
+            functionKey: "approve",
+            args: [spenderAddress, amountRaw],
+          },
+          session,
+          {
+            gasOverrides: { multiplierOverride, gasLimitOverride },
+            workflowId,
+            rpcManager,
+          }
+        );
+      }
 
       const gasUsedUnits = receipt.gasUsed.toString();
       const effectiveGasPrice = receipt.effectiveGasPrice.toString();
@@ -406,6 +492,7 @@ export async function approveTokenCore(
           chain_id: String(chainId),
         }
       );
+      const rejection = classifyRevert(error, contract.interface);
       return {
         success: false,
         error: formatContractError(
@@ -413,6 +500,7 @@ export async function approveTokenCore(
           contract.interface,
           "Token approval failed"
         ),
+        ...(rejection.kind !== "unknown" ? { rejection } : {}),
       };
     }
   });

@@ -108,6 +108,7 @@ lib/types/integration.ts
 lib/workflow/codegen/registry.ts
 lib/step-registry.ts
 lib/output-display-configs.ts
+public/.well-known/
 lib/credential-map.ts
 public/monaco/
 
@@ -136,10 +137,16 @@ packages/*/dist/
 .planning
 .prompts
 
-# Claude Code cached output
-.claude/lint-output.txt
-.claude/typecheck-output.txt
+# Claude Code cached output (lint, typecheck, test runs)
+.claude/*-output.txt
+.claude/test-*-output.txt
 .claude/worktrees/
+
+# Local dev session cookie minted by scripts/dev-mint-session.ts
+.claude/.dev-session-cookie-LOCAL
+
+# Chromium profile seeded by scripts/dev-login.ts (cookies + cache only)
+.claude/.dev-chrome-profile/
 
 # Playwright MCP screenshots
 .playwright/
@@ -149,4 +156,16 @@ packages/*/dist/
 # Local reports
 reports/
 
+# Codex / review-loop scratch output (carries absolute local paths)
+reviews/
+
 .mcp.json
+
+.claude/.dev-server-LOCAL.log
+
+# Understand-Anything: commit knowledge-graph.json + config.json + .understandignore.
+# Ignore meta (timestamp churn) and fingerprints (per-machine incremental cache).
+.understand-anything/intermediate/
+.understand-anything/diff-overlay.json
+.understand-anything/meta.json
+.understand-anything/fingerprints.json

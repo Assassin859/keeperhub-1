@@ -1,12 +1,35 @@
 "use client";
 
 import { ReactFlowProvider } from "@xyflow/react";
+import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { NavigationSidebar } from "@/components/navigation-sidebar";
 import { PersistentCanvas } from "@/components/workflow/persistent-canvas";
 import { WorkflowToolbar } from "@/components/workflow/workflow-toolbar";
 
-export function LayoutContent({ children }: { children: ReactNode }) {
+/**
+ * Routes that must render without any auth-aware shell. The MFA gates
+ * land here either with NO session at all (OAuth-deferred path, the
+ * pending_oauth_mfa cookie carries no auth power) or with a session
+ * that is intentionally restricted (`requires_mfa = true`). Rendering
+ * the navigation sidebar / workflow toolbar on these routes would
+ * leak auth-aware UI (user avatar, wallet, org name, etc.) before the
+ * user has proven both factors.
+ */
+const BARE_LAYOUT_PATHS: ReadonlySet<string> = new Set([
+  "/verify-mfa",
+  "/enroll-mfa",
+]);
+
+export function LayoutContent({
+  children,
+}: {
+  children: ReactNode;
+}): React.ReactElement {
+  const pathname = usePathname();
+  if (BARE_LAYOUT_PATHS.has(pathname)) {
+    return <div className="relative z-10">{children}</div>;
+  }
   return (
     <ReactFlowProvider>
       <WorkflowToolbar persistent />
