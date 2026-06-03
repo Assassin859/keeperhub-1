@@ -351,6 +351,10 @@ env:
     type: parameterStore
     name: hub-service-api-key
     parameter_name: /eks/techops-staging/keeperhub-hub/keeperhub-api-key
+  AGENTIC_WALLET_HMAC_KMS_KEY:
+    type: parameterStore
+    name: agentic-wallet-hmac-kms-key
+    parameter_name: /eks/techops-staging/keeperhub/agentic-wallet-hmac-kms-key
   TEST_API_KEY:
     type: parameterStore
     name: test-api-key

@@ -33,11 +33,11 @@ function getThresholdMinutes(): number {
  * Intended to be called by an external cron job (K8s CronJob).
  */
 export async function GET(request: Request): Promise<NextResponse> {
-  const auth = authenticateInternalService(request);
+  const auth = await authenticateInternalService(request);
   if (!auth.authenticated) {
     return NextResponse.json(
       { error: auth.error ?? "Unauthorized" },
-      { status: 401 }
+      { status: auth.status }
     );
   }
 

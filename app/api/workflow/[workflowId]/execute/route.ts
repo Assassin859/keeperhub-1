@@ -31,8 +31,14 @@ export async function POST(
   try {
     const { workflowId } = await context.params;
 
+    // Capture the raw body once. The internal-service HMAC verifier binds it
+    // into the signature, and the body parse at line 175 below needs to read
+    // from the same bytes -- request.body is a single-use stream so a later
+    // request.json() would throw "body already used".
+    const rawBody = await request.text();
+
     // Check for internal service authentication (MCP, Events, Scheduler)
-    const internalAuth = authenticateInternalService(request);
+    const internalAuth = await authenticateInternalService(request, rawBody);
     const isInternalExecution = internalAuth.authenticated;
 
     let userId: string;
@@ -42,7 +48,7 @@ export async function POST(
     if (isInternalExecution) {
       // Internal execution from authenticated service
       console.log(
-        `[Workflow Execute] Internal execution from service: ${internalAuth.service}`
+        `[Workflow Execute] Internal execution from service: ${internalAuth.caller}`
       );
 
       workflow = await db.query.workflows.findFirst({
@@ -171,9 +177,18 @@ export async function POST(
       );
     }
 
-    // Parse request body
-    const body = await request.json().catch(() => ({}));
-    const input = body.input || {};
+    // Parse request body from the captured raw bytes. Preserves the original
+    // "missing or invalid body becomes empty input" contract.
+    type ExecuteBody = { input?: unknown; executionId?: string };
+    let body: ExecuteBody = {};
+    if (rawBody) {
+      try {
+        body = JSON.parse(rawBody) as ExecuteBody;
+      } catch {
+        body = {};
+      }
+    }
+    const input = (body.input as Record<string, unknown> | undefined) ?? {};
 
     // Resolve the (metric, audit) trigger labels in one place -- see
     // resolveTriggerLabels for the schedule/scheduled convergence and the

@@ -2,42 +2,39 @@
  * IP-to-location resolver. Cloudflare's `CF-IPCountry` only gives a
  * 2-letter ISO code; the active-sessions panel wants a richer
  * "Buenos Aires, BA, AR" style string so users can recognise where
- * each session signed in from at a glance. CF still wins when it's
- * present (cheap, attested at the edge); this fallback fills in for
- * local-dev, tunnel, and XX/T1 cases, AND enriches the response
- * with city + region.
+ * each session signed in from at a glance, and impossible-travel
+ * detection needs coordinates CF never provides. CF still wins for the
+ * country when it's present (cheap, attested at the edge); this resolver
+ * fills in for local-dev, tunnel, and XX/T1 cases AND enriches every
+ * result with region, city, and lat/lon.
  *
- * `ipapi.co/<ip>/json/` returns a JSON blob including country_code,
- * region_code and city. Free tier, no API key, rate-limited to
- * ~1000 lookups per day across this pod. Backed by a 24h in-memory
- * cache keyed on IP since session creation only needs the resolve
- * once and IPs don't change country.
+ * Resolution is a fallback chain of pluggable providers (see
+ * `./geoip/providers.ts`): the first configured provider that returns a
+ * country wins, the rest are skipped. With no credentials the keyless
+ * providers (ipapi.co, ipwho.is, freeipapi) still answer, so a missing
+ * IPINFO_TOKEN / IPAPI_KEY degrades quota, not availability.
  *
- * 2 second timeout so the lookup can't block the sign-in critical
- * path; failures fall through to null and the caller treats the
- * location as unknown.
+ * Results are kept in a 24h in-memory cache keyed on IP, since session
+ * creation only needs the resolve once and IPs don't change location.
+ * Concurrent lookups for the same IP coalesce onto one chain walk.
  */
 
-export type ResolvedLocation = {
-  country: string | null;
-  region: string | null;
-  city: string | null;
-};
+import { GEOIP_PROVIDERS } from "./geoip/providers";
+import {
+  isUsableLocation,
+  NULL_LOCATION,
+  type ResolvedLocation,
+} from "./geoip/types";
 
-const NULL_LOCATION: ResolvedLocation = {
-  country: null,
-  region: null,
-  city: null,
-};
+export type { ResolvedLocation } from "./geoip/types";
 
 const CACHE = new Map<
   string,
   { location: ResolvedLocation; expiresAt: number }
 >();
 // In-flight requests are tracked separately so two concurrent
-// resolveLocationFromIp calls for the same IP coalesce onto one
-// outbound fetch instead of double-charging the free-tier rate
-// limit at ipapi.co.
+// resolveLocationFromIp calls for the same IP coalesce onto one chain
+// walk instead of double-charging each provider's rate limit.
 const IN_FLIGHT = new Map<string, Promise<ResolvedLocation>>();
 const TTL_MS = 24 * 60 * 60 * 1000;
 // +/- 10% jitter on every cache write so a burst of distinct IPs
@@ -46,8 +43,14 @@ const TTL_MS = 24 * 60 * 60 * 1000;
 // Math.random is fine here: the goal is decorrelation, not
 // cryptographic unpredictability.
 const TTL_JITTER_MS = 0.1 * TTL_MS;
-const LOOKUP_TIMEOUT_MS = 2000;
-const COUNTRY_CODE_RE = /^[A-Z]{2}$/;
+// Per-provider timeout. Kept tight because providers run in series and
+// the lookup sits on the sign-in critical path; the common case is the
+// first provider answering in a few hundred ms.
+const PROVIDER_TIMEOUT_MS = 1500;
+// Hard ceiling across the whole chain. Once exceeded we stop trying
+// further providers and return whatever we have, so a run of slow/dead
+// providers can't stack their timeouts onto the sign-in latency.
+const CHAIN_BUDGET_MS = 3000;
 
 function nextExpiry(): number {
   return (
@@ -55,49 +58,36 @@ function nextExpiry(): number {
   );
 }
 
-type IpapiResponse = {
-  country_code?: unknown;
-  region_code?: unknown;
-  region?: unknown;
-  city?: unknown;
-  error?: unknown;
-};
-
-function pickString(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-async function fetchLocation(ip: string): Promise<ResolvedLocation> {
-  try {
-    const res = await fetch(
-      `https://ipapi.co/${encodeURIComponent(ip)}/json/`,
-      {
-        headers: { accept: "application/json" },
-        signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS),
-      }
-    );
-    if (!res.ok) {
-      return NULL_LOCATION;
+/**
+ * Walks the configured provider chain in order, returning the first
+ * usable location (one with a country). Providers that aren't configured
+ * are skipped without a round-trip; each that runs gets its own abort
+ * timeout, and the whole walk is bounded by CHAIN_BUDGET_MS.
+ */
+async function resolveViaChain(ip: string): Promise<ResolvedLocation> {
+  const startedAt = Date.now();
+  for (const provider of GEOIP_PROVIDERS) {
+    if (!provider.isConfigured()) {
+      continue;
     }
-    const data = (await res.json()) as IpapiResponse;
-    if (data.error) {
-      return NULL_LOCATION;
+    if (Date.now() - startedAt >= CHAIN_BUDGET_MS) {
+      break;
     }
-    const countryRaw = pickString(data.country_code)?.toUpperCase() ?? null;
-    return {
-      country:
-        countryRaw && COUNTRY_CODE_RE.test(countryRaw) ? countryRaw : null,
-      region: pickString(data.region_code) ?? pickString(data.region) ?? null,
-      city: pickString(data.city),
-    };
-  } catch {
-    // Network / abort / parse failures fall through to NULL_LOCATION.
-    return NULL_LOCATION;
+    let location: ResolvedLocation | null = null;
+    try {
+      location = await provider.lookup(
+        ip,
+        AbortSignal.timeout(PROVIDER_TIMEOUT_MS)
+      );
+    } catch {
+      // A provider that throws past its own guard is treated as a miss.
+      location = null;
+    }
+    if (location && isUsableLocation(location)) {
+      return location;
+    }
   }
+  return NULL_LOCATION;
 }
 
 export async function resolveLocationFromIp(
@@ -110,15 +100,11 @@ export async function resolveLocationFromIp(
   if (cached && cached.expiresAt > Date.now()) {
     return cached.location;
   }
-  // Coalesce concurrent calls for the same IP onto one outbound
-  // fetch. Without this, N parallel sign-ins from the same address
-  // would fire N requests at ipapi.co simultaneously and burn the
-  // free-tier rate limit for no reason.
   const inFlight = IN_FLIGHT.get(ip);
   if (inFlight) {
     return await inFlight;
   }
-  const promise = fetchLocation(ip).then((location) => {
+  const promise = resolveViaChain(ip).then((location) => {
     CACHE.set(ip, { location, expiresAt: nextExpiry() });
     IN_FLIGHT.delete(ip);
     return location;

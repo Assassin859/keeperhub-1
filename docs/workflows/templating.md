@@ -108,14 +108,9 @@ Templates work in any string-valued config field. Common places:
 
 Templates do **not** work inside binary fields (images, file uploads) or inside the workflow's structural metadata (node ids, edge ids, position).
 
-## Runtime resolution mode
+## Runtime resolution
 
-The executor reads `KEEPERHUB_TEMPLATE_RESOLVE_MODE` once at process start:
-
-- `strict` (default): unresolved references abort the action with a clear error
-- `legacy`: unresolved references silently substitute empty string or pass the literal `{{...}}` token through, matching pre-strict behaviour. Operators get a structured warn so they can quantify exposure during a migration window.
-
-Use `legacy` only as a temporary opt-out while migrating an older workflow library; the failure mode it preserves is what produced the original on-chain corruption incident, so the goal is to leave it disabled.
+The executor always fails closed: any unresolved reference aborts the action with a clear error. Empty-string substitution and literal `{{...}}` pass-through are not allowed because the same behaviour previously produced on-chain corruption.
 
 ## Tips
 
