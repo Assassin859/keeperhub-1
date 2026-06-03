@@ -53,12 +53,8 @@ resources:
     cpu: 50m
     memory: 256Mi
 
-command: ["/bin/sh"]
-args:
-  - "-c"
-  - |
-    echo "$(date) - [MetricsCollector] Starting..."
-    tsx keeperhub-metrics-collector/index.ts
+# Startup comes from the Dockerfile CMD (tsx keeperhub-metrics-collector/index.ts);
+# no helm command/args override -- single source of truth.
 
 env:
   DATABASE_URL:
