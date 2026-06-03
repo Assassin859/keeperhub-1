@@ -420,31 +420,46 @@ export function logIpVerify(
   console.info(`[ip-verify] ${stage}`, fields);
 }
 
+/**
+ * Resolve the raw client IP from a set of request headers using the
+ * auth system's trust model. Behind the edge proxy (staging/prod) only
+ * CF-Connecting-IP is authoritative: it is set at the edge and cannot be
+ * forged by the caller, whereas X-Forwarded-For and X-Real-IP are
+ * caller-controlled and may be rewritten by intermediate hops, so they
+ * are not a reliable source of the client IP. Outside production we fall
+ * back to the first X-Forwarded-For hop and then X-Real-IP so VPN / NAT
+ * changes during local dev still exercise the new-IP gate. Returns null
+ * when no trusted source is present rather than an unreliable address, so
+ * callers persist an honest empty value instead of a misattributed one.
+ *
+ * Shared by resolveLoginIp (ambient headers) and the session-minting
+ * routes that write sessions.ip_address directly instead of through
+ * Better Auth's getIp, so every entrypoint resolves the client IP the
+ * same way.
+ */
+export function resolveClientIpFromHeaders(
+  header: Pick<Headers, "get">
+): string | null {
+  const cfConnectingIp = header.get("cf-connecting-ip");
+  if (cfConnectingIp) {
+    return cfConnectingIp;
+  }
+  if (process.env.NODE_ENV !== "production") {
+    const xffFirst = header.get("x-forwarded-for")?.split(",")[0]?.trim();
+    if (xffFirst) {
+      return xffFirst;
+    }
+    const xRealIp = header.get("x-real-ip");
+    if (xRealIp) {
+      return xRealIp;
+    }
+  }
+  return null;
+}
+
 async function resolveLoginIp(): Promise<string | null> {
   try {
-    const header = await headers();
-    const cfConnectingIp = header.get("cf-connecting-ip");
-    if (cfConnectingIp) {
-      return cfConnectingIp;
-    }
-    // Cloudflare is the trusted source in staging/prod. In other
-    // environments we fall back to the first X-Forwarded-For hop and
-    // then to X-Real-IP so VPN / NAT changes during local dev still
-    // exercise the new-IP gate. NODE_ENV-gated because in CF-fronted
-    // environments these headers are caller-controlled and must not
-    // be trusted.
-    if (process.env.NODE_ENV !== "production") {
-      const xff = header.get("x-forwarded-for");
-      const xffFirst = xff?.split(",")[0]?.trim();
-      if (xffFirst) {
-        return xffFirst;
-      }
-      const xRealIp = header.get("x-real-ip");
-      if (xRealIp) {
-        return xRealIp;
-      }
-    }
-    return null;
+    return resolveClientIpFromHeaders(await headers());
   } catch {
     return null;
   }

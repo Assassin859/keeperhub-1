@@ -14,6 +14,7 @@ import {
   readPendingOauthMfaCookie,
 } from "@/lib/oauth-mfa-cookie";
 import { sanitizeNextPath } from "@/lib/sanitize-next-path";
+import { resolveClientIpFromHeaders } from "@/lib/security/login-risk";
 
 /**
  * Finishes the deferred OAuth sign-in.
@@ -119,10 +120,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const expiresAt = new Date(Date.now() + DEFAULT_SESSION_TTL_MS);
   const sessionId = `sess_${randomBytes(16).toString("base64url")}`;
   const userAgent = request.headers.get("user-agent") ?? null;
-  const ipAddress =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    request.headers.get("x-real-ip") ??
-    null;
+  const ipAddress = resolveClientIpFromHeaders(request.headers);
 
   try {
     await db.insert(sessions).values({
