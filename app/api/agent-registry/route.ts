@@ -82,7 +82,7 @@ export async function GET(_request: Request): Promise<NextResponse> {
         { name: "ens", endpoint: "keeperhub.eth" },
         {
           name: "agentWallet",
-          endpoint: "eip155:1:0xc300b53616532fdb0116bce916c9307377362b51",
+          endpoint: "eip155:1:0xaa70faa583c0889164cfd9b45aa075f6c4388fee",
         },
       ],
       supportedTrust: ["reputation"],

@@ -495,9 +495,21 @@ jobs:
           ) > "${LOGDIR}/sandbox-pre.log" 2>&1 &
           SANDBOX_PRE_PID=$!
 
-          # Wait for all four, print logs for failures
+          # Workflow-runner ServiceAccount - the executor sets this dedicated
+          # zero-RBAC SA (with no projected token) on the runner Job pods it
+          # builds in code. It must exist in the PR namespace before any
+          # workflow runs, otherwise runner pods fail to schedule (SA not
+          # found). Staging/prod create it via deploy-executor.yaml; the PR
+          # env never runs that workflow, so apply it here.
+          (
+            envsubst '$PR_NUMBER' < deploy/pr-environment/runner-sa.template.yaml | kubectl apply -f -
+            echo "Workflow-runner SA applied."
+          ) > "${LOGDIR}/runner-pre.log" 2>&1 &
+          RUNNER_PRE_PID=$!
+
+          # Wait for all five, print logs for failures
           FAILED=0
-          for COMPONENT in postgres:$PG_PID localstack:$LS_PID redis:$REDIS_PID sandbox-pre:$SANDBOX_PRE_PID; do
+          for COMPONENT in postgres:$PG_PID localstack:$LS_PID redis:$REDIS_PID sandbox-pre:$SANDBOX_PRE_PID runner-pre:$RUNNER_PRE_PID; do
             NAME="${COMPONENT%%:*}"
             PID="${COMPONENT##*:}"
             if wait "$PID"; then
@@ -543,6 +555,20 @@ jobs:
           envsubst < deploy/pr-environment/event-tracker.template.yaml > ${{ github.workspace }}/event-pr-${{ env.PR_NUMBER }}.yaml
           envsubst < deploy/pr-environment/executor.template.yaml > ${{ github.workspace }}/executor-pr-${{ env.PR_NUMBER }}.yaml
           envsubst < deploy/pr-environment/sandbox.template.yaml > ${{ github.workspace }}/sandbox-pr-${{ env.PR_NUMBER }}.yaml
+
+          # Provision the runner's DATABASE_URL as a Secret. The hardened runner
+          # reads DATABASE_URL via secretKeyRef (RUNNER_SECRET_PREFIX), but the
+          # PR env injects the executor's DATABASE_URL as a kv literal pointing
+          # at the ephemeral per-PR Postgres - so no chart-managed db-url Secret
+          # exists. Create one matching the chart's <release>-common-<slug>
+          # naming and the executor's exact connection string. The executor
+          # Helm release does not manage this name (DATABASE_URL is kv there),
+          # so there is no ownership conflict.
+          RUNNER_DB_URL="postgresql://keeperhub:${ENCODED_DB_PASSWORD}@keeperhub-pr-${{ env.PR_NUMBER }}-db-rw.pr-${{ env.PR_NUMBER }}.svc.cluster.local:5432/keeperhub"
+          kubectl create secret generic "executor-pr-${{ env.PR_NUMBER }}-common-db-url" \
+            -n "${NAMESPACE}" \
+            --from-literal="executor-pr-${{ env.PR_NUMBER }}-common-db-url=${RUNNER_DB_URL}" \
+            --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Clean up stale Helm releases
         run: |

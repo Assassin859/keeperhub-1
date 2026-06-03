@@ -1,12 +1,13 @@
 /**
- * KEEP-468: regression tests for the strict-mode template resolution path.
+ * KEEP-468 / KEEP-525: regression tests for the strict template resolution
+ * path. Strict is now the only mode; the legacy env-var opt-out was removed.
  *
  * Coverage:
  *   - tracker collects each unresolved category (no-node, no-data, no-path)
  *     when callers thread it through processTemplate / processTemplates
  *     / processCodeTemplates / extractTemplateParameters
- *   - assertResolved throws TemplateResolutionError in strict mode and is a
- *     no-op in legacy mode (env-flag-gated)
+ *   - assertResolved always throws TemplateResolutionError on any unresolved
+ *     reference
  *   - the displayPattern literal-passthrough is detected by the post-scan
  *     even when the resolver returned a plain string with `{{...}}` left in
  *
@@ -15,7 +16,7 @@
  * not flow through to a downstream action.
  */
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
@@ -31,7 +32,6 @@ import {
   TemplateResolutionError,
 } from "@/lib/workflow/executor/template-resolution";
 
-const ENV_KEY = "KEEPERHUB_TEMPLATE_RESOLVE_MODE";
 const UNRESOLVED_REF_MESSAGE = /Unresolved template reference/;
 
 const baseOutputs = {
@@ -40,10 +40,6 @@ const baseOutputs = {
     data: { triggered: true, ts: 1_715_000_000 },
   },
 };
-
-afterEach(() => {
-  process.env[ENV_KEY] = undefined;
-});
 
 describe("processTemplate tracker (lib/utils/template)", () => {
   it("records no-node when the referenced node is absent", () => {
@@ -92,18 +88,6 @@ describe("assertResolved (executor strict gate)", () => {
     expect(() =>
       assertResolved(tracker, { value: "" }, { actionType: "Webhook" })
     ).toThrow(TemplateResolutionError);
-  });
-
-  it("does not throw in legacy mode but emits a warn (no throw)", () => {
-    process.env[ENV_KEY] = "legacy";
-    const tracker = createTracker();
-    tracker.unresolved.push({
-      token: "{{@missing:Foo}}",
-      reason: "no-node",
-    });
-    expect(() =>
-      assertResolved(tracker, { value: "" }, { actionType: "Webhook" })
-    ).not.toThrow();
   });
 
   it("detects displayPattern literal pass-through in strict mode", () => {

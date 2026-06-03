@@ -9,6 +9,7 @@ import "server-only";
 
 import { eq } from "drizzle-orm";
 import { ethers } from "ethers";
+import { safeFetch } from "@/lib/safe-fetch";
 import { db } from "@/lib/db";
 import { explorerConfigs } from "@/lib/db/schema";
 import { fetchContractAbi } from "@/lib/explorer";
@@ -118,8 +119,9 @@ type FourByteResponse = {
  */
 async function fetch4byteSignatures(selector: string): Promise<string[]> {
   try {
-    const response = await fetch(
-      `${FOURBYTE_API_URL}?hex_signature=${selector}&ordering=created_at`
+    const response = await safeFetch(
+      `${FOURBYTE_API_URL}?hex_signature=${selector}&ordering=created_at`,
+      { plugin: "web3" }
     );
     if (!response.ok) {
       return [];

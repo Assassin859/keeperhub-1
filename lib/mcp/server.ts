@@ -2,7 +2,35 @@ import {
   McpServer,
   ResourceTemplate,
 } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { PUBLIC_TOOLS, SCOPE_MCP_PUBLIC } from "./oauth-scopes";
 import { registerMetaTools, registerTools } from "./tools";
+
+/**
+ * Wrap an McpServer so `registerTools`/`registerMetaTools` can only register
+ * tools that are in PUBLIC_TOOLS. `tools/list` reflects *registered* tools
+ * (scope only gates calls), so for the anonymous public surface we must drop
+ * non-public tools at registration time -- otherwise an anonymous list would
+ * leak the full org/write catalog. All other server methods pass through bound
+ * to the real instance (so the SDK's private class fields keep working).
+ */
+export function publicToolRegistrar(server: McpServer): McpServer {
+  return new Proxy(server, {
+    get(target, prop, receiver) {
+      if (prop === "tool") {
+        const register = target.tool.bind(target);
+        return (name: string, ...rest: unknown[]): unknown => {
+          if (!PUBLIC_TOOLS.has(name)) {
+            return;
+          }
+          // biome-ignore lint/suspicious/noExplicitAny: forwarding the SDK's overloaded tool() signature verbatim
+          return (register as (...a: any[]) => unknown)(name, ...rest);
+        };
+      }
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
 
 async function fetchJson(
   internalApiBaseUrl: string,
@@ -91,9 +119,17 @@ export function createMcpServer(
     version: "1.2.0",
   });
 
-  registerTools(server, internalApiBaseUrl, authHeader, scope);
-  registerMetaTools(server, internalApiBaseUrl, authHeader, scope);
-  registerResources(server, internalApiBaseUrl, authHeader);
+  const isPublic = scope === SCOPE_MCP_PUBLIC;
+  const registrar = isPublic ? publicToolRegistrar(server) : server;
+
+  registerTools(registrar, internalApiBaseUrl, authHeader, scope);
+  registerMetaTools(registrar, internalApiBaseUrl, authHeader, scope);
+
+  // Resources (keeperhub://workflows*) read org-scoped data, so they are never
+  // registered on the anonymous public surface.
+  if (!isPublic) {
+    registerResources(server, internalApiBaseUrl, authHeader);
+  }
 
   return server;
 }

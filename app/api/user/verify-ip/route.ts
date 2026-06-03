@@ -391,9 +391,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  // Same-pod cache invalidation so the next request on this pod sees the
-  // freshly-trusted IP without waiting for the UNTRUSTED_TTL_MS window in
-  // the proxy gate. Cross-pod stale entries age out on their own.
+  // Same-pod cache invalidation: evict any stale entry so the next request on
+  // this pod reflects the fresh upsert immediately. Untrusted is not cached,
+  // so other pods just re-read the DB and see the trust right away.
   clearTrustCacheEntry(decoded.payload.userId, decoded.payload.ip);
 
   const response = NextResponse.json({

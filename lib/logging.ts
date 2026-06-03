@@ -419,3 +419,55 @@ export function logSystemWarn(
     extra: fullLabels,
   });
 }
+
+/**
+ * Audit-log every internal-service auth attempt. Emits a single-line JSON
+ * record (event="internal_service_auth") so Grafana Loki can alert on a
+ * reject-rate spike via `| json | event="internal_service_auth" | outcome="reject"`.
+ *
+ * Logs-only for v1 -- there is no DB-backed audit table yet. If Loki
+ * retention proves insufficient during an incident, add a parallel insert
+ * into a new internal_service_auth_audit table.
+ *
+ * No Sentry call: accepts would page on every internal request, and rejects
+ * are better caught by a Grafana threshold alert than by per-event Sentry
+ * captures (one bad client can DDoS the Sentry quota in minutes).
+ */
+export function logInternalAuthEvent(fields: {
+  outcome: "accept" | "reject";
+  scheme: "hmac" | "legacy-bearer" | "none";
+  caller: string;
+  route: string;
+  method: string;
+  ip: string | null;
+  keyVersion?: number;
+  reason?: string;
+  latencyMs?: number;
+}): void {
+  const payload: Record<string, unknown> = {
+    level: "info",
+    msg: `[InternalAuth] ${fields.outcome} caller=${fields.caller} scheme=${fields.scheme} route=${fields.route}`,
+    event: "internal_service_auth",
+    outcome: fields.outcome,
+    scheme: fields.scheme,
+    caller: fields.caller,
+    route: fields.route,
+    method: fields.method,
+  };
+  if (fields.ip !== null) {
+    payload.ip = fields.ip;
+  }
+  if (fields.keyVersion !== undefined) {
+    payload.key_version = fields.keyVersion;
+  }
+  if (fields.reason !== undefined) {
+    payload.reason = fields.reason;
+  }
+  if (fields.latencyMs !== undefined) {
+    payload.latency_ms = fields.latencyMs;
+  }
+  // Structured audit-log sink intended to land in Grafana Loki via stdout
+  // capture; no Sentry capture by design (accepts would page on every
+  // internal request; rejects are better caught by a Grafana threshold).
+  console.log(JSON.stringify(payload));
+}

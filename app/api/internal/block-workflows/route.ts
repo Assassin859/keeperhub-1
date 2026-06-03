@@ -8,11 +8,11 @@ import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 import type { WorkflowNode } from "@/lib/workflow/store";
 
 export async function GET(request: Request): Promise<NextResponse> {
-  const auth = authenticateInternalService(request);
+  const auth = await authenticateInternalService(request);
   if (!auth.authenticated) {
     return NextResponse.json(
-      { error: auth.error || "Unauthorized" },
-      { status: 401 }
+      { error: auth.error ?? "Unauthorized" },
+      { status: auth.status }
     );
   }
 

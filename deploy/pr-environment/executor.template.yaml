@@ -110,6 +110,17 @@ env:
   K8S_NAMESPACE:
     type: kv
     value: "pr-${PR_NUMBER}"
+  # Hardened runner Job pods use a dedicated zero-RBAC SA (created by
+  # deploy/pr-environment/runner-sa.template.yaml) and pull secrets via
+  # secretKeyRef. In the PR env the executor Helm release is
+  # executor-pr-${PR_NUMBER}, so its External Secrets land as
+  # executor-pr-${PR_NUMBER}-common-<slug>; point the runner there.
+  RUNNER_SERVICE_ACCOUNT:
+    type: kv
+    value: "keeperhub-workflow-runner"
+  RUNNER_SECRET_PREFIX:
+    type: kv
+    value: "executor-pr-${PR_NUMBER}-common"
   HEALTH_PORT:
     type: kv
     value: "3080"

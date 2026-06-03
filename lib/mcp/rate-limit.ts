@@ -70,6 +70,14 @@ export function checkIpRateLimit(
 }
 
 export function getClientIp(request: Request): string {
+  // Prefer `cf-connecting-ip`: Cloudflare sets it to the real client IP at the
+  // edge and overwrites any client-supplied value, so it cannot be spoofed to
+  // defeat per-IP rate limits. `x-forwarded-for`/`x-real-ip` are attacker-
+  // controllable and only used as a fallback for non-CF/local environments.
+  const cfIp = request.headers.get("cf-connecting-ip")?.trim();
+  if (cfIp) {
+    return cfIp;
+  }
   return (
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
     request.headers.get("x-real-ip") ??

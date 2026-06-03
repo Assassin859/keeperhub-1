@@ -1,5 +1,11 @@
-// Static MCP server card. Lets ERC-8004 indexers (e.g. 8004scan) discover
-// the tool catalog without performing an authenticated tools/list call.
+// Static MCP server card. Lets ERC-8004 indexers (e.g. 8004scan, thespawn)
+// discover the tool catalog. The advertised `endpoint` is the ANONYMOUS
+// /mcp/public marketplace surface, so a marketplace liveness probe can complete
+// an unauthenticated initialize + tools/list (and call listed workflows). The
+// authenticated, org-scoped surface is advertised separately under
+// `authenticatedEndpoint` (OAuth-gated /mcp).
+
+import { PUBLIC_TOOLS } from "@/lib/mcp/oauth-scopes";
 
 const TRAILING_SLASH = /\/$/;
 
@@ -61,17 +67,31 @@ export function GET(request: Request): Response {
     description:
       "Web3 workflow automation platform. Build and deploy on-chain automations through a visual builder. Workflows are callable by AI agents via MCP and x402 micropayments.",
     iconUrl: `${baseUrl}/keeperhub_logo.png`,
-    endpoint: `${baseUrl}/mcp`,
+    endpoint: `${baseUrl}/mcp/public`,
     transport: {
       type: "streamable-http",
-      endpoint: "/mcp",
+      endpoint: "/mcp/public",
     },
     capabilities: { tools: {} },
-    tools: TOOLS,
+    tools: [...PUBLIC_TOOLS],
     authentication: {
-      required: true,
-      type: "oauth2",
-      resource_metadata: `${baseUrl}/.well-known/oauth-protected-resource`,
+      required: false,
+    },
+    // Full org-scoped surface (manage your own workflows, integrations, wallet,
+    // executions). OAuth-gated; org clients connect here, not to the public
+    // endpoint above.
+    authenticatedEndpoint: {
+      endpoint: `${baseUrl}/mcp`,
+      transport: {
+        type: "streamable-http",
+        endpoint: "/mcp",
+      },
+      tools: TOOLS,
+      authentication: {
+        required: true,
+        type: "oauth2",
+        resource_metadata: `${baseUrl}/.well-known/oauth-protected-resource`,
+      },
     },
     erc8004: {
       agent_id: 31_875,

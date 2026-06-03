@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
+import { safeFetch } from "@/lib/safe-fetch";
 import { getErrorMessage } from "@/lib/utils";
 import type { BlockscoutCredentials } from "../credentials";
 import { BLOCKSCOUT_INSTANCES } from "../chains";
@@ -85,7 +86,8 @@ export async function blockscoutGet<T>(
   }
 
   try {
-    const response = await fetch(url.toString(), {
+    const response = await safeFetch(url.toString(), {
+      plugin: "blockscout",
       method: "GET",
       headers: { Accept: "application/json" },
     });

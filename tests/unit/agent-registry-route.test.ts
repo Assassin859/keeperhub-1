@@ -108,7 +108,7 @@ describe("GET /api/agent-registry", () => {
       (s: { name: string; endpoint: string }) => s.name === "agentWallet"
     );
     expect(agentWalletService?.endpoint).toBe(
-      "eip155:1:0xc300b53616532fdb0116bce916c9307377362b51"
+      "eip155:1:0xaa70faa583c0889164cfd9b45aa075f6c4388fee"
     );
   });
 

@@ -8,16 +8,17 @@ export async function PATCH(
   request: Request,
   context: { params: Promise<{ executionId: string }> }
 ) {
-  const auth = authenticateInternalService(request);
+  const rawBody = await request.text();
+  const auth = await authenticateInternalService(request, rawBody);
   if (!auth.authenticated) {
     return NextResponse.json(
-      { error: auth.error || "Unauthorized" },
-      { status: 401 }
+      { error: auth.error ?? "Unauthorized" },
+      { status: auth.status }
     );
   }
 
   const { executionId } = await context.params;
-  const body = await request.json();
+  const body = JSON.parse(rawBody);
   const { status, error, duration } = body;
 
   type ExecutionStatus = "running" | "success" | "error";

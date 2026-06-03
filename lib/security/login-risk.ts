@@ -469,19 +469,16 @@ export type RequestIpGate =
  * lookup. The cache collapses those to one DB hit per (user, ip) per
  * TTL window.
  *
- * Trusted results get a long TTL because the trust list rarely changes
- * for an active user. Untrusted gets a short TTL so that once the user
- * completes /verify-ip the next request picks up the new trust quickly
- * without requiring cross-pod invalidation; same-pod invalidation is
- * driven explicitly from /api/user/verify-ip via clearTrustCacheEntry.
- * `no_ip` is rare and stable (only fires when CF-Connecting-IP is
- * missing) so it gets the long TTL too.
+ * Only `trusted` is cached. Untrusted is deliberately not: a per-pod
+ * untrusted entry outlived the moment another replica trusted the IP via
+ * /verify-ip, re-bouncing the user. Re-reading the DB (the shared source of
+ * truth) on every untrusted request keeps replicas consistent; untrusted is
+ * rare and short-lived, so the extra lookups are negligible.
  */
 type CachedTrust = { result: RequestIpGate; expiresAt: number };
 const TRUST_CACHE = new Map<string, CachedTrust>();
 const TRUST_CACHE_LIMIT = 10_000;
 const TRUSTED_TTL_MS = 300_000;
-const UNTRUSTED_TTL_MS = 30_000;
 
 function trustCacheKey(userId: string, ip: string): string {
   return `${userId}:${ip}`;
@@ -502,10 +499,8 @@ function rememberTrust(key: string, entry: CachedTrust): void {
 
 /**
  * Drop the cached gate result for this (user, ip). Called by
- * /api/user/verify-ip after a successful upsert so the next request on
- * the same pod sees the freshly-trusted IP without waiting for the
- * untrusted TTL to expire. Cross-pod stale entries age out on their own
- * within UNTRUSTED_TTL_MS.
+ * /api/user/verify-ip after a successful upsert. Now only evicts a stale
+ * `trusted` entry; untrusted is no longer cached.
  */
 export function clearTrustCacheEntry(userId: string, ip: string): void {
   TRUST_CACHE.delete(trustCacheKey(userId, ip));
@@ -555,8 +550,9 @@ export async function gateRequestIp(userId: string): Promise<RequestIpGate> {
   } catch {
     country = null;
   }
+  // Not cached -- see TRUST_CACHE doc; a stale untrusted entry re-bounced
+  // already-verified users on multi-replica deployments.
   const result: RequestIpGate = { kind: "untrusted", ip, country };
-  rememberTrust(key, { result, expiresAt: now + UNTRUSTED_TTL_MS });
   logIpVerify("gate-untrusted", {
     userId,
     rawIp,

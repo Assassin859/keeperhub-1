@@ -8,11 +8,11 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ workflowId: string }> }
 ) {
-  const auth = authenticateInternalService(request);
+  const auth = await authenticateInternalService(request);
   if (!auth.authenticated) {
     return NextResponse.json(
-      { error: auth.error || "Unauthorized" },
-      { status: 401 }
+      { error: auth.error ?? "Unauthorized" },
+      { status: auth.status }
     );
   }
 
