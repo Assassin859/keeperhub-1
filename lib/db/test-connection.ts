@@ -6,10 +6,12 @@ import {
   getDatabaseErrorMessage,
   getPostgresConnectionOptions,
 } from "@/lib/db/connection-utils";
+import { assertUrlIsPublic, SsrfBlockedError } from "@/lib/safe-fetch";
 import type { IntegrationType } from "@/lib/types/integration";
 import {
   getCredentialMapping,
   getIntegration as getPluginFromRegistry,
+  type IntegrationPlugin,
 } from "@/plugins/registry";
 
 export type TestConnectionResult = {
@@ -82,6 +84,45 @@ export async function handleDatabaseTest(
   return await testDatabaseConnection(url, sslMode);
 }
 
+/**
+ * Connection-test files (plugins/*\/test.ts) are reachable from the
+ * client-bundled plugin registry, so they cannot import the server-only SSRF
+ * guard and fetch user-supplied instance URLs with raw `fetch`. Validate every
+ * user-supplied URL field here, on the server, before the test runs -- mirrors
+ * the assertConnectionUrlIsPublic pre-flight used for database connection
+ * tests. This is a write-time DNS check; the test's own one-shot fetch happens
+ * immediately after, so the rebinding window is negligible.
+ */
+async function assertPluginUrlFieldsArePublic(
+  plugin: IntegrationPlugin,
+  config: Record<string, unknown>
+): Promise<TestConnectionResult | null> {
+  for (const field of plugin.formFields) {
+    if (field.type !== "url") {
+      continue;
+    }
+    const value = config[field.configKey];
+    if (typeof value !== "string" || value.trim() === "") {
+      continue;
+    }
+    try {
+      await assertUrlIsPublic(value.trim());
+    } catch (error) {
+      if (error instanceof SsrfBlockedError) {
+        return { status: "error", message: `${field.label}: ${error.message}` };
+      }
+      return {
+        status: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "URL is invalid or could not be resolved",
+      };
+    }
+  }
+  return null;
+}
+
 export async function handlePluginTest(
   type: IntegrationType | string,
   config: Record<string, unknown>
@@ -92,6 +133,10 @@ export async function handlePluginTest(
   }
   if (!plugin.testConfig) {
     return { status: "error", message: "Integration does not support testing" };
+  }
+  const urlGuard = await assertPluginUrlFieldsArePublic(plugin, config);
+  if (urlGuard) {
+    return urlGuard;
   }
   const credentials = getCredentialMapping(plugin, config);
   const testFn = await plugin.testConfig.getTestFunction();
