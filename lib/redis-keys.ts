@@ -17,3 +17,11 @@ export function deploymentKey(...parts: string[]): string {
 export function newIpNotifyClaimKey(userId: string, ip: string): string {
   return deploymentKey("ip-notify", userId, ip);
 }
+
+/**
+ * Shared cache of a trusted (user, ip). Present means the IP gate may pass
+ * without a DB read. `ip` must be the normalized /24-or-/64 trust key.
+ */
+export function trustedIpKey(userId: string, ip: string): string {
+  return deploymentKey("trust", userId, ip);
+}

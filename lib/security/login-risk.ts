@@ -3,6 +3,8 @@ import { headers } from "next/headers";
 import { db } from "@/lib/db";
 import { sessions, userTrustedIps } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { getRedis } from "@/lib/redis";
+import { trustedIpKey } from "@/lib/redis-keys";
 import { normalizeIpForTrust } from "@/lib/security/ip-normalize";
 import {
   type ResolvedLocation,
@@ -462,48 +464,39 @@ export type RequestIpGate =
   | { kind: "no_ip" };
 
 /**
- * Per-pod TTL cache for gate results. A single page navigation in the
- * KeeperHub app fans out into ~20 parallel API requests, each of which
- * passes through the proxy. Without caching the gate would do one DB
- * round-trip per request, plus a redundant evaluation of every header
- * lookup. The cache collapses those to one DB hit per (user, ip) per
- * TTL window.
+ * Shared (cross-replica) cache of trusted (user, ip) pairs in Redis, fronting
+ * the user_trusted_ips table. A single page navigation fans out into ~20
+ * parallel gate checks; the cache collapses those to one DB read per (user,
+ * ip) per TTL window across the whole fleet, instead of one per pod.
  *
- * Only `trusted` is cached. Untrusted is deliberately not: a per-pod
- * untrusted entry outlived the moment another replica trusted the IP via
- * /verify-ip, re-bouncing the user. Re-reading the DB (the shared source of
- * truth) on every untrusted request keeps replicas consistent; untrusted is
- * rare and short-lived, so the extra lookups are negligible.
+ * Postgres stays the durable source of truth: on a cache miss the gate reads
+ * the DB and re-populates Redis, so a Redis flush or restart re-fills on
+ * demand and never locks anyone out. Only `trusted` is cached -- untrusted is
+ * always re-checked against the DB. Trust is monotonic, so a cached entry is
+ * never a false positive; the TTL just bounds memory and any future
+ * revocation window.
  */
-type CachedTrust = { result: RequestIpGate; expiresAt: number };
-const TRUST_CACHE = new Map<string, CachedTrust>();
-const TRUST_CACHE_LIMIT = 10_000;
-const TRUSTED_TTL_MS = 300_000;
-
-function trustCacheKey(userId: string, ip: string): string {
-  return `${userId}:${ip}`;
-}
-
-function rememberTrust(key: string, entry: CachedTrust): void {
-  if (TRUST_CACHE.size >= TRUST_CACHE_LIMIT) {
-    const retained = Array.from(TRUST_CACHE.entries()).slice(
-      -Math.floor(TRUST_CACHE_LIMIT / 2)
-    );
-    TRUST_CACHE.clear();
-    for (const [k, v] of retained) {
-      TRUST_CACHE.set(k, v);
-    }
-  }
-  TRUST_CACHE.set(key, entry);
-}
+const TRUSTED_TTL_SECONDS = 300;
 
 /**
- * Drop the cached gate result for this (user, ip). Called by
- * /api/user/verify-ip after a successful upsert. Now only evicts a stale
- * `trusted` entry; untrusted is no longer cached.
+ * Mark (user, ip) trusted in the shared cache. Called by the gate after a DB
+ * hit and by /api/user/verify-ip after a successful upsert, so every replica's
+ * next request is a cache hit. Best-effort: a missing or failing Redis is
+ * swallowed (the DB read-through still serves the correct answer).
  */
-export function clearTrustCacheEntry(userId: string, ip: string): void {
-  TRUST_CACHE.delete(trustCacheKey(userId, ip));
+export async function cacheTrustedIp(
+  userId: string,
+  ip: string
+): Promise<void> {
+  const redis = getRedis();
+  if (!redis) {
+    return;
+  }
+  try {
+    await redis.set(trustedIpKey(userId, ip), "1", "EX", TRUSTED_TTL_SECONDS);
+  } catch {
+    // best-effort cache write; the DB remains the source of truth
+  }
 }
 
 /**
@@ -525,22 +518,34 @@ export async function gateRequestIp(userId: string): Promise<RequestIpGate> {
     return result;
   }
   const ip = normalizeIpForTrust(rawIp);
-  const key = trustCacheKey(userId, ip);
-  const now = Date.now();
-  const cached = TRUST_CACHE.get(key);
-  if (cached && cached.expiresAt > now) {
-    return cached.result;
+
+  // Fast path: shared Redis cache. A hit means a prior DB read on some replica
+  // already confirmed trust; trust is monotonic so the cached answer is safe.
+  const redis = getRedis();
+  if (redis) {
+    try {
+      if ((await redis.get(trustedIpKey(userId, ip))) === "1") {
+        return { kind: "trusted" };
+      }
+    } catch {
+      // Redis unavailable -- fall through to the DB source of truth.
+    }
   }
+
+  // Source of truth: user_trusted_ips. Re-populate the cache on a hit so the
+  // next request on any replica is served from Redis.
   const [hit] = await db
     .select({ id: userTrustedIps.id })
     .from(userTrustedIps)
     .where(and(eq(userTrustedIps.userId, userId), eq(userTrustedIps.ip, ip)))
     .limit(1);
   if (hit) {
-    const result: RequestIpGate = { kind: "trusted" };
-    rememberTrust(key, { result, expiresAt: now + TRUSTED_TTL_MS });
-    return result;
+    cacheTrustedIp(userId, ip).catch(() => {
+      // cacheTrustedIp already swallows; this is the floating-promise boundary
+    });
+    return { kind: "trusted" };
   }
+
   // CF-attested country only on the hot path; the external IP-to-location
   // lookup has a 2-second timeout and isn't wanted here.
   let country: string | null = null;
@@ -550,8 +555,8 @@ export async function gateRequestIp(userId: string): Promise<RequestIpGate> {
   } catch {
     country = null;
   }
-  // Not cached -- see TRUST_CACHE doc; a stale untrusted entry re-bounced
-  // already-verified users on multi-replica deployments.
+  // Untrusted is never cached -- re-checked against the DB every request so a
+  // freshly trusted IP is honored fleet-wide on the very next request.
   const result: RequestIpGate = { kind: "untrusted", ip, country };
   logIpVerify("gate-untrusted", {
     userId,
