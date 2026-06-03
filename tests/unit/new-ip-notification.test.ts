@@ -41,8 +41,11 @@ beforeEach(() => {
 });
 
 describe("newIpNotifyClaimKey", () => {
-  it("namespaces under ip-notify with user and normalized ip", () => {
-    expect(newIpNotifyClaimKey("u1", "1.2.3.0")).toBe("ip-notify:u1:1.2.3.0");
+  it("namespaces under deployment prefix + ip-notify with user and normalized ip", () => {
+    // REDIS_KEY_PREFIX is unset in tests, so the prefix falls back to "local".
+    expect(newIpNotifyClaimKey("u1", "1.2.3.0")).toBe(
+      "local:ip-notify:u1:1.2.3.0"
+    );
   });
 });
 
@@ -58,7 +61,7 @@ describe("claimNewIpNotification", () => {
 
     await expect(claimNewIpNotification("u1", "1.2.3.0")).resolves.toBe(true);
     expect(set).toHaveBeenCalledWith(
-      "ip-notify:u1:1.2.3.0",
+      "local:ip-notify:u1:1.2.3.0",
       "1",
       "EX",
       NEW_IP_NOTIFY_TTL_SECONDS,
