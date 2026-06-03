@@ -645,22 +645,23 @@ export function extractIntegrationIds(
  * Validate that the executing/saving principal is authorized to use every
  * integration referenced by a workflow's nodes.
  *
- * Authorization is per-integration against the principal's grant (owner,
- * organization visibility + membership, or an explicit specific_members
- * grant) - not merely "same organization". This is what closes the
- * lateral-movement path where any org member could run a workflow that
- * referenced another member's credential. Non-existent ids (deleted
- * integrations) stay valid so stale references remain savable.
+ * Authorization is per-integration against the principal's grant - not merely
+ * "same organization". This is what closes the lateral-movement path where any
+ * org member could run a workflow that referenced another member's credential.
+ * Non-existent ids (deleted integrations) stay valid so stale references
+ * remain savable.
  *
- * `userId` + `organizationId` together are the effective principal: the
- * authenticated caller for interactive executions and saves, or the workflow
- * owner for owner-context executions (webhook, scheduler, internal, MCP).
+ * The org owns workflows, so workflow save/execute gates pass the ORG
+ * principal (`userId: null` + the workflow's `organizationId`): the workflow
+ * may reference its org's organization-visibility integrations and nothing
+ * personal, keeping the gate consistent with the runtime credential fetch.
+ * Interactive, user-scoped checks may still pass a `userId`.
  *
  * @returns Object with `valid` boolean and optional `invalidIds` array
  */
 export async function validateWorkflowIntegrations(
   nodes: WorkflowNodeForValidation[],
-  userId: string,
+  userId: string | null,
   organizationId?: string | null
 ): Promise<{ valid: boolean; invalidIds?: string[] }> {
   const integrationIds = extractIntegrationIds(nodes);

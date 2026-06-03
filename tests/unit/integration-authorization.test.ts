@@ -250,3 +250,96 @@ describe("filterUnauthorizedIntegrationIds", () => {
     ).toEqual(["org_int"]);
   });
 });
+
+// The org owns workflows: every workflow gate and the runtime credential
+// fetch authorize as the ORG principal (userId null + the workflow's org).
+describe("org principal", () => {
+  const ORG_PRINCIPAL = { userId: null, organizationId: "org_1" };
+
+  it("uses its own org-visible integration without a membership check", () => {
+    expect(
+      isIntegrationUsable(row({ visibility: "organization" }), ORG_PRINCIPAL, {
+        ...NO_CTX,
+        isPrincipalMember: false,
+      })
+    ).toBe(true);
+  });
+
+  it("is denied on another org's organization-visible integration", () => {
+    expect(
+      isIntegrationUsable(
+        row({ visibility: "organization", organizationId: "org_2" }),
+        ORG_PRINCIPAL,
+        NO_CTX
+      )
+    ).toBe(false);
+  });
+
+  it("is denied on a private integration (personal credentials never resolve)", () => {
+    expect(
+      isIntegrationUsable(row({ visibility: "private" }), ORG_PRINCIPAL, NO_CTX)
+    ).toBe(false);
+  });
+
+  it("is denied on specific_members (grants are per-user)", () => {
+    expect(
+      isIntegrationUsable(
+        row({ visibility: "specific_members" }),
+        ORG_PRINCIPAL,
+        NO_CTX
+      )
+    ).toBe(false);
+  });
+
+  it("is still frozen when the integration's creator is deactivated", () => {
+    expect(
+      isIntegrationUsable(row({ visibility: "organization" }), ORG_PRINCIPAL, {
+        ...NO_CTX,
+        isOwnerDeactivated: true,
+      })
+    ).toBe(false);
+  });
+
+  it("a fully-null principal is denied everything", () => {
+    expect(
+      isIntegrationUsable(
+        row({ visibility: "organization" }),
+        { userId: null, organizationId: null },
+        NO_CTX
+      )
+    ).toBe(false);
+  });
+
+  it("filterUnauthorizedIntegrationIds authorizes org-visible, flags private and specific_members", async () => {
+    fixtures.integrations = [
+      {
+        id: "org_int",
+        userId: "owner_1",
+        organizationId: "org_1",
+        visibility: "organization",
+      },
+      {
+        id: "private_int",
+        userId: "owner_1",
+        organizationId: "org_1",
+        visibility: "private",
+      },
+      {
+        id: "specific_int",
+        userId: "owner_1",
+        organizationId: "org_1",
+        visibility: "specific_members",
+      },
+    ];
+    fixtures.grants = [];
+    fixtures.users = [];
+    mockIsMember.mockResolvedValue(false); // must not be consulted for the org principal
+
+    expect(
+      await filterUnauthorizedIntegrationIds(
+        ["org_int", "private_int", "specific_int"],
+        ORG_PRINCIPAL
+      )
+    ).toEqual(["private_int", "specific_int"]);
+  });
+});

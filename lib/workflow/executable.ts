@@ -48,10 +48,7 @@ export function workflowReachableConditions(): SQL {
  * reachable AND enabled. Same join requirement as `workflowReachableConditions`.
  */
 export function workflowExecutableConditions(): SQL {
-  return and(
-    eq(workflows.enabled, true),
-    workflowReachableConditions()
-  ) as SQL;
+  return and(eq(workflows.enabled, true), workflowReachableConditions()) as SQL;
 }
 
 export type WorkflowExecutabilityInput = {

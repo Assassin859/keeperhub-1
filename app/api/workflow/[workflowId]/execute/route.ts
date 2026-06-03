@@ -144,10 +144,12 @@ export async function POST(
       return NextResponse.json({ error: "Workflow not found" }, { status: 404 });
     }
 
-    // Validate that all integrationIds in workflow nodes belong to the user or org
+    // Validate integration references as the ORG principal: the org owns the
+    // workflow, so a run uses the org's integrations regardless of who
+    // triggered it, matching the runtime credential fetch.
     const validation = await validateWorkflowIntegrations(
       workflow.nodes as WorkflowNode[],
-      userId,
+      null,
       workflow.organizationId
     );
     if (!validation.valid) {

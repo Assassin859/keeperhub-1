@@ -121,9 +121,12 @@ async function databaseQuery(
     return { success: false, error: validationError };
   }
 
+  // Authorize as the ORG principal: the org owns the workflow, so credential
+  // use is gated on the org's integrations, not the creating user's.
+  // `_context.ownerId` is createdBy attribution only.
   const credentials = input.integrationId
     ? await fetchCredentials(input.integrationId, {
-        userId: input._context?.ownerId ?? null,
+        userId: null,
         organizationId: input._context?.organizationId ?? null,
       })
     : {};

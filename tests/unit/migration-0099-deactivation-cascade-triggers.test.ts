@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 // assertions are intentionally strict to catch a silent weakening.
 
 const MIGRATION_PATH = join(
-  __dirname,
+  import.meta.dirname,
   "../../drizzle/0099_keep_696_deactivation_cascade_triggers.sql"
 );
 
@@ -32,7 +32,9 @@ describe("migration 0099: execution block extended for deactivation", () => {
 
   it("joins organization on the workflow's organization_id", () => {
     const ddl = READ_SQL_DDL_ONLY();
-    expect(ddl).toMatch(/LEFT JOIN organization o\s+ON o\.id = w\.organization_id/);
+    expect(ddl).toMatch(
+      /LEFT JOIN organization o\s+ON o\.id = w\.organization_id/
+    );
   });
 
   it("blocks executions for a deactivated workflow", () => {

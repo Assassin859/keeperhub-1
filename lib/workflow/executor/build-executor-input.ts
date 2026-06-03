@@ -11,14 +11,14 @@ export type ExecutorInputWorkflow = {
 };
 
 /**
- * Build the executor input from a workflow row, always deriving the
- * owner-context principal (`ownerId` / `organizationId`) from the workflow.
+ * Build the executor input from a workflow row.
  *
  * Centralised so every dispatch entry point (scheduled K8s job, in-process,
- * MCP) threads the same owner context. The database-query step authorizes
- * credential use against this principal; a dropped `ownerId` leaves the
- * principal with a null userId, so org-visibility integrations fail closed
- * and surface the misleading "DATABASE_URL is not configured" error.
+ * MCP) threads the same context. `organizationId` is the credential
+ * authority: the org owns the workflow, and steps authorize credential use
+ * as the ORG principal (userId null + this organizationId). `ownerId` is
+ * createdBy attribution for execution records only - it confers no
+ * credential access.
  */
 export function buildExecutorInput(
   workflow: ExecutorInputWorkflow,

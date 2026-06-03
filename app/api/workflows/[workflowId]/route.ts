@@ -463,10 +463,12 @@ export async function PATCH(
     if (Array.isArray(updateData.nodes)) {
       // Validate the exact shape that will be persisted. The sanitizer moves
       // misplaced root fields into data.config, including integrationId.
+      // Org principal: the workflow may only reference its owning org's
+      // integrations, so the save gate matches the runtime credential fetch.
       const validation = await validateWorkflowIntegrations(
         updateData.nodes,
-        userId || existingWorkflow.userId,
-        organizationId
+        null,
+        existingWorkflow.organizationId
       );
       if (!validation.valid) {
         return NextResponse.json(

@@ -687,6 +687,27 @@
       "when": 1779843900004,
       "tag": "0097_internal_service_hmac_secrets",
       "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1779843900005,
+      "tag": "0098_keep_696_deactivation_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1779843900006,
+      "tag": "0099_keep_696_deactivation_cascade_triggers",
+      "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1779843900007,
+      "tag": "0100_keep_696_workflow_org_ownership",
+      "breakpoints": true
     }
   ]
 }

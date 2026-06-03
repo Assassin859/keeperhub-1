@@ -29,7 +29,10 @@ import {
 import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
 import { withBackstopCapture } from "@/lib/security/backstop-capture";
 import { buildAttribution } from "@/lib/security/request-attribution";
-import { getWorkflowAccess } from "@/lib/workflow/access";
+import {
+  getWorkflowAccess,
+  isUserMemberOfOrganization,
+} from "@/lib/workflow/access";
 import { getWorkflowExecutability } from "@/lib/workflow/executable";
 import { executeWorkflowInBackground } from "@/lib/workflow/execute-in-background";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
@@ -42,10 +45,12 @@ type ValidateApiKeyResult = {
   errorBody?: Record<string, unknown>;
 };
 
-// Validate API key and return the user ID if valid
+// Validate API key and return the user ID if valid. The org owns the
+// workflow, so the key must belong to a CURRENT MEMBER of the workflow's
+// org - not specifically its creator.
 async function validateApiKey(
   authHeader: string | null,
-  workflowUserId: string
+  workflowOrganizationId: string
 ): Promise<ValidateApiKeyResult> {
   if (!authHeader) {
     return {
@@ -103,8 +108,14 @@ async function validateApiKey(
     return { valid: false, error: "Invalid API key", statusCode: 401 };
   }
 
-  // Verify the API key belongs to the workflow owner
-  if (apiKey.userId !== workflowUserId) {
+  // Verify the key's holder is a current member of the workflow's org.
+  // (A deactivated member cannot reach here: the deactivation cascade
+  // deletes their api_keys rows.)
+  const isMember = await isUserMemberOfOrganization(
+    apiKey.userId,
+    workflowOrganizationId
+  );
+  if (!isMember) {
     return {
       valid: false,
       error: "You do not have permission to run this workflow",
@@ -201,7 +212,10 @@ export async function POST(
 
     // Validate API key - must belong to the workflow owner
     const authHeader = request.headers.get("Authorization");
-    const apiKeyValidation = await validateApiKey(authHeader, workflow.userId);
+    const apiKeyValidation = await validateApiKey(
+      authHeader,
+      workflow.organizationId
+    );
 
     if (!apiKeyValidation.valid) {
       return failResponse(
@@ -237,10 +251,11 @@ export async function POST(
       );
     }
 
-    // Validate that all integrationIds in workflow nodes belong to the workflow owner
+    // Validate integration references as the ORG principal (the org owns the
+    // workflow), matching the runtime credential fetch.
     const validation = await validateWorkflowIntegrations(
       workflow.nodes as WorkflowNode[],
-      workflow.userId,
+      null,
       workflow.organizationId
     );
     if (!validation.valid) {

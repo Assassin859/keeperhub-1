@@ -48,6 +48,13 @@ const ANON_WORKFLOW = {
   isAnonymous: true,
 };
 
+const ORG_WORKFLOW = {
+  id: "wf-org",
+  userId: "creator",
+  organizationId: "org-1",
+  isAnonymous: false,
+};
+
 describe("isWorkflowDeleted", () => {
   it("returns true when deletedAt is set", () => {
     expect(isWorkflowDeleted({ deletedAt: new Date() })).toBe(true);
@@ -74,14 +81,18 @@ describe("getWorkflowAccess soft-delete signal", () => {
   });
 
   it("flags isDeleted when the workflow row has a deletedAt timestamp", async () => {
+    // A same-org member retains full access -- isDeleted is an orthogonal
+    // signal so owner-facing read paths can keep serving the row with a
+    // marker. Access is org-based now, so the subject must be acting in the
+    // workflow's org and be a current member of it.
+    mockMemberLimit.mockResolvedValue([{ id: "member-1" }]);
+
     const access = await getWorkflowAccess(
-      { ...ANON_WORKFLOW, deletedAt: new Date() },
-      { userId: "creator", organizationId: null }
+      { ...ORG_WORKFLOW, deletedAt: new Date() },
+      { userId: "member-user", organizationId: "org-1" }
     );
 
     expect(access.isDeleted).toBe(true);
-    // The creator still has full access -- isDeleted is an orthogonal signal
-    // so owner-facing read paths can keep serving the row with a marker.
     expect(access.hasFullAccess).toBe(true);
   });
 

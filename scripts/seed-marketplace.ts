@@ -5,7 +5,7 @@ import { organization, workflows } from "@/lib/db/schema";
 type Seed = {
   id: string;
   description: string;
-  orgId: string | null;
+  orgId: string;
   inputSchema: Record<string, unknown>;
   outputMapping: { nodeId: string; field: string };
 };
@@ -56,7 +56,9 @@ const SEEDS: Seed[] = [
   },
   {
     id: "6ks6f4ywwxl0janc924sd",
-    orgId: null,
+    // The org owns every workflow now (organization_id is NOT NULL), so the
+    // x402 echo seed gets its own demo org instead of the old null-org form.
+    orgId: "org_demo_x402",
     description:
       "Returns the input as output. For testing x402 paid calls — the workflow charges on every invocation but performs no real work, making it the cheapest way to validate an agent's payment plumbing.",
     inputSchema: {
@@ -76,6 +78,7 @@ const SEEDS: Seed[] = [
 const DEMO_ORGS: Array<{ id: string; name: string; slug: string }> = [
   { id: "org_demo_acme", name: "Acme Labs", slug: "acme-labs" },
   { id: "org_demo_helix", name: "Helix Research", slug: "helix-research" },
+  { id: "org_demo_x402", name: "x402 Demo", slug: "x402-demo" },
 ];
 
 async function main(): Promise<void> {
@@ -99,7 +102,7 @@ async function main(): Promise<void> {
         inputSchema: seed.inputSchema,
         outputMapping: seed.outputMapping,
         organizationId: seed.orgId,
-        isAnonymous: seed.orgId === null,
+        isAnonymous: false,
       })
       .where(eq(workflows.id, seed.id));
   }

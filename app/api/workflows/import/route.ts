@@ -125,9 +125,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       exportPayload.edges as Record<string, unknown>[]
     );
 
+    // Org principal: the imported workflow is org-owned (matches runtime).
     const validation = await validateWorkflowIntegrations(
       sanitized.nodes,
-      userId,
+      null,
       organizationId
     );
     if (!validation.valid) {

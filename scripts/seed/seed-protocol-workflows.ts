@@ -129,7 +129,7 @@ async function upsertOne(
   workflow: BuiltWorkflow,
   idParts: string[],
   userId: string,
-  organizationId: string | null,
+  organizationId: string,
   now: Date
 ): Promise<SeedOutcome> {
   const id = deterministicId(idParts);

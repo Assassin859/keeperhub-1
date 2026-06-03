@@ -13,11 +13,14 @@ import { isUserMemberOfOrganization } from "@/lib/workflow/access";
 /**
  * The identity whose grants gate credential use for a given execution.
  *
- * - Interactive executions: the authenticated caller.
- * - Owner-context executions (webhook, scheduler, internal, MCP/agent): the
- *   workflow owner. The caller's identity is not available once a run is
- *   dispatched, so owner-context authorization is the only check possible at
- *   runtime and is resolved up front at the execution entry point.
+ * - Interactive callers (a user saving or browsing): `userId` set; org
+ *   visibility additionally requires current membership.
+ * - The ORG principal (`userId: null`, `organizationId` set): the workflow's
+ *   owning organization itself. The org owns workflows, so every execution
+ *   gate and the runtime credential fetch authorize as the org - a workflow
+ *   uses its org's organization-visibility integrations regardless of who
+ *   created it or who triggered the run. Private integrations and per-user
+ *   specific_members grants do NOT resolve for the org principal.
  */
 export type IntegrationPrincipal = {
   userId: string | null;
@@ -51,29 +54,38 @@ export function isIntegrationUsable(
   principal: IntegrationPrincipal,
   ctx: AuthContext
 ): boolean {
-  // A deactivated owner's credentials are frozen for everyone, including
-  // owner-context (scheduled/webhook) executions that would otherwise run as
-  // the now-deactivated owner. This is the lazy deactivation cascade.
+  // A deactivated creator's credentials are frozen for everyone, including
+  // org-principal executions. The credential was contributed by that user;
+  // deactivation (compromise/offboard) must freeze it even though the org
+  // owns the workflows that reference it. This is the lazy deactivation
+  // cascade.
   if (ctx.isOwnerDeactivated) {
     return false;
   }
 
-  // Owner may always use their own integration.
+  // Creator may always use their own integration (interactive callers).
   if (principal.userId !== null && principal.userId === integration.userId) {
     return true;
   }
+
+  // The org principal (userId null, organizationId set) is the owning org
+  // itself: it is entitled to its own organization-visibility integrations
+  // without a per-user membership check, because there is no user - the org
+  // was resolved from an authenticated context at the entry point.
+  const isOrgPrincipal =
+    principal.userId === null && principal.organizationId !== null;
 
   switch (integration.visibility) {
     case "organization":
       return (
         integration.organizationId !== null &&
         integration.organizationId === principal.organizationId &&
-        ctx.isPrincipalMember
+        (isOrgPrincipal || ctx.isPrincipalMember)
       );
     case "specific_members":
       return ctx.hasGrant;
     default:
-      // "private" - only the owner, handled above.
+      // "private" - only the creator, handled above.
       return false;
   }
 }

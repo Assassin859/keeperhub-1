@@ -135,9 +135,11 @@ export async function POST(request: Request) {
 
     // Validate the exact shape that will be persisted. The sanitizer moves
     // misplaced root fields into data.config, including integrationId.
+    // Org principal: the new workflow is org-owned, so it may only reference
+    // the org's integrations (matches the runtime credential fetch).
     const validation = await validateWorkflowIntegrations(
       nodes,
-      userId,
+      null,
       organizationId
     );
     if (!validation.valid) {

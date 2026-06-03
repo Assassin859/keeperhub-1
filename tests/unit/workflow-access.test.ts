@@ -39,8 +39,8 @@ describe("getWorkflowAccess", () => {
     vi.clearAllMocks();
   });
 
-  it("does not grant full access to an org workflow creator who is no longer an org member", async () => {
-    mockMemberLimit.mockResolvedValue([]);
+  it("does not grant full access to an org workflow creator whose subject org is null (no same-org context, no membership query)", async () => {
+    mockMemberLimit.mockResolvedValue([{ id: "member-1" }]);
 
     const access = await getWorkflowAccess(ORG_WORKFLOW, {
       userId: "creator",
@@ -49,19 +49,22 @@ describe("getWorkflowAccess", () => {
 
     expect(access.hasFullAccess).toBe(false);
     expect(access.isCreatorWithCurrentAccess).toBe(false);
-    expect(mockMemberLimit).toHaveBeenCalledOnce();
+    // The org context does not match the workflow's org, so the membership
+    // query is never made -- the creator confers no authority on its own.
+    expect(mockMemberLimit).not.toHaveBeenCalled();
   });
 
-  it("grants full access to an org workflow creator who is still an org member", async () => {
+  it("grants full access to a creator acting in the workflow's org who is still a member", async () => {
     mockMemberLimit.mockResolvedValue([{ id: "member-1" }]);
 
     const access = await getWorkflowAccess(ORG_WORKFLOW, {
       userId: "creator",
-      organizationId: null,
+      organizationId: "org-1",
     });
 
     expect(access.hasFullAccess).toBe(true);
     expect(access.isCreatorWithCurrentAccess).toBe(true);
+    expect(mockMemberLimit).toHaveBeenCalledOnce();
   });
 
   it("does not grant API-key same-org access when the key creator is no longer an org member", async () => {
@@ -144,8 +147,8 @@ describe("getWorkflowAccess", () => {
     expect(mockMemberLimit).not.toHaveBeenCalled();
   });
 
-  it("does not grant internal execution access when the org workflow creator is no longer an org member", async () => {
-    mockMemberLimit.mockResolvedValue([]);
+  it("does not grant internal execution access when the subject org does not match the workflow's org", async () => {
+    mockMemberLimit.mockResolvedValue([{ id: "member-1" }]);
 
     const access = await getWorkflowAccess(ORG_WORKFLOW, {
       userId: "creator",
@@ -155,10 +158,11 @@ describe("getWorkflowAccess", () => {
 
     expect(access.hasFullAccess).toBe(false);
     expect(access.isCreatorWithCurrentAccess).toBe(false);
-    expect(mockMemberLimit).toHaveBeenCalledOnce();
+    // Org context mismatch -- no membership query, no access.
+    expect(mockMemberLimit).not.toHaveBeenCalled();
   });
 
-  it("preserves anonymous workflow ownership for the creator", async () => {
+  it("denies access to an anonymous (null-org) workflow even for its creator", async () => {
     const access = await getWorkflowAccess(
       {
         ...ORG_WORKFLOW,
@@ -172,8 +176,11 @@ describe("getWorkflowAccess", () => {
       }
     );
 
-    expect(access.hasFullAccess).toBe(true);
-    expect(access.isCreatorWithCurrentAccess).toBe(true);
+    // A null-org workflow has no owning org, so the org-membership rule can
+    // never be satisfied -- the creator gets no authority on its own.
+    expect(access.hasFullAccess).toBe(false);
+    expect(access.isSameOrg).toBe(false);
+    expect(access.isCreatorWithCurrentAccess).toBe(false);
     expect(mockMemberLimit).not.toHaveBeenCalled();
   });
 });

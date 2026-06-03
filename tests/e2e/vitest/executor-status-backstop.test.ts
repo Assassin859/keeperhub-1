@@ -7,7 +7,12 @@ import {
   type DbSchema,
   updateExecutionStatus,
 } from "../../../keeperhub-executor/lib/db-helpers";
-import { users, workflowExecutions, workflows } from "../../../lib/db/schema";
+import {
+  organization,
+  users,
+  workflowExecutions,
+  workflows,
+} from "../../../lib/db/schema";
 
 // tests/setup.ts globally mocks @/lib/db. This suite drives updateExecutionStatus
 // against a real database via its own handle, so restore the genuine module.
@@ -28,7 +33,12 @@ const DATABASE_URL = process.env.DATABASE_URL ?? "";
 
 const PREFIX = "test_keep611_backstop_";
 
-type ExecutionStatus = "pending" | "running" | "success" | "error" | "cancelled";
+type ExecutionStatus =
+  | "pending"
+  | "running"
+  | "success"
+  | "error"
+  | "cancelled";
 
 describe.skipIf(SKIP)("updateExecutionStatus terminal-state guard", () => {
   let queryClient: ReturnType<typeof postgres>;
@@ -38,11 +48,13 @@ describe.skipIf(SKIP)("updateExecutionStatus terminal-state guard", () => {
   let execDb: PostgresJsDatabase<DbSchema>;
 
   const ownerId = `${PREFIX}user`;
+  const orgId = `${PREFIX}org`;
   const workflowId = `${PREFIX}wf`;
 
   async function cleanup(): Promise<void> {
     await queryClient`DELETE FROM workflow_executions WHERE id LIKE ${`${PREFIX}%`}`;
     await queryClient`DELETE FROM workflows WHERE id LIKE ${`${PREFIX}%`}`;
+    await queryClient`DELETE FROM organization WHERE id LIKE ${`${PREFIX}%`}`;
     await queryClient`DELETE FROM users WHERE id LIKE ${`${PREFIX}%`}`;
   }
 
@@ -82,10 +94,17 @@ describe.skipIf(SKIP)("updateExecutionStatus terminal-state guard", () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     });
+    await db.insert(organization).values({
+      id: orgId,
+      name: orgId,
+      slug: orgId,
+      createdAt: new Date(),
+    });
     await db.insert(workflows).values({
       id: workflowId,
       name: workflowId,
       userId: ownerId,
+      organizationId: orgId,
       nodes: [],
       edges: [],
       visibility: "private",
@@ -120,7 +139,9 @@ describe.skipIf(SKIP)("updateExecutionStatus terminal-state guard", () => {
 
     // The runner's result was a failure, but the engine reconciled to success
     // first. The backstop must not flip it back to error.
-    await updateExecutionStatus(execDb, id, "error", { error: "stale failure" });
+    await updateExecutionStatus(execDb, id, "error", {
+      error: "stale failure",
+    });
 
     const row = await readExecution(id);
     expect(row.status).toBe("success");
@@ -134,7 +155,9 @@ describe.skipIf(SKIP)("updateExecutionStatus terminal-state guard", () => {
 
     // Exercises the ne(status, 'error') clause: a re-issued write (even a
     // success) must not overwrite the engine's terminal error and its fields.
-    await updateExecutionStatus(execDb, id, "success", { output: { ok: true } });
+    await updateExecutionStatus(execDb, id, "success", {
+      output: { ok: true },
+    });
 
     const row = await readExecution(id);
     expect(row.status).toBe("error");
