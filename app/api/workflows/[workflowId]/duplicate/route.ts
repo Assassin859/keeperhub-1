@@ -133,6 +133,13 @@ export async function POST(
     if (!userId && !organizationId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    // The duplicate is owned by the caller's org (organization_id is NOT NULL).
+    if (!organizationId) {
+      return NextResponse.json(
+        { error: "No active organization" },
+        { status: 409 }
+      );
+    }
 
     // Find the workflow to duplicate
     const sourceWorkflow = await db.query.workflows.findFirst({

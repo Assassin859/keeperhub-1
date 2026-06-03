@@ -158,7 +158,17 @@ export async function POST(request: Request) {
       });
     }
 
-    // Create new current workflow
+    // Create new current workflow. The org owns workflows, so it must be
+    // stamped here too (organization_id is NOT NULL). Every account has an
+    // org, so this is present in practice; guard rather than insert a null.
+    const organizationId = orgContext.organization?.id;
+    if (!organizationId) {
+      return NextResponse.json(
+        { error: "No active organization" },
+        { status: 409 }
+      );
+    }
+
     const workflowId = generateId();
 
     const [savedWorkflow] = await db
@@ -170,6 +180,8 @@ export async function POST(request: Request) {
         nodes,
         edges,
         userId: session.user.id,
+        organizationId,
+        isAnonymous: false,
       })
       .returning();
 

@@ -20,7 +20,12 @@ import {
   enforceWorkflowFeatures,
   FEATURE_UPGRADE_REQUIRED_ERROR,
 } from "@/lib/features/route-guard";
-import { apiKeys, users, workflowExecutions, workflows } from "@/lib/db/schema";
+import {
+  apiKeys,
+  organization,
+  workflowExecutions,
+  workflows,
+} from "@/lib/db/schema";
 import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
 import { withBackstopCapture } from "@/lib/security/backstop-capture";
 import { buildAttribution } from "@/lib/security/request-attribution";
@@ -175,15 +180,17 @@ export async function POST(
     // validation so a non-executable workflow never triggers an auth round-trip.
     // A disabled workflow stays a 410; a deleted or deactivated-owner workflow
     // is reported as gone (404).
-    const [owner] = await db
-      .select({ deactivatedAt: users.deactivatedAt })
-      .from(users)
-      .where(eq(users.id, workflow.userId))
+    const [gate] = await db
+      .select({ orgDeactivatedAt: organization.deactivatedAt })
+      .from(workflows)
+      .leftJoin(organization, eq(organization.id, workflows.organizationId))
+      .where(eq(workflows.id, workflow.id))
       .limit(1);
     const executability = getWorkflowExecutability({
       enabled: workflow.enabled,
       deletedAt: workflow.deletedAt,
-      ownerDeactivatedAt: owner?.deactivatedAt ?? null,
+      deactivatedAt: workflow.deactivatedAt,
+      orgDeactivatedAt: gate?.orgDeactivatedAt ?? null,
     });
     if (!executability.executable) {
       if (executability.reason === "disabled") {

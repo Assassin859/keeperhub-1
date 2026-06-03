@@ -101,6 +101,14 @@ export async function POST(request: Request) {
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    // The org owns the workflow (organization_id is NOT NULL). Every account
+    // has an org, so a missing one is an unexpected state, not anonymous use.
+    if (!organizationId) {
+      return NextResponse.json(
+        { error: "No active organization" },
+        { status: 409 }
+      );
+    }
 
     const body = await request.json();
 

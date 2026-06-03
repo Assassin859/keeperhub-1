@@ -65,6 +65,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    // The org owns the workflow (organization_id is NOT NULL).
+    if (!organizationId) {
+      return NextResponse.json(
+        { error: "No active organization" },
+        { status: 409 }
+      );
+    }
 
     // Anonymous (auto-provisioned, not signed-in) sessions cannot import.
     // API key and OAuth callers are real principals and pass through.

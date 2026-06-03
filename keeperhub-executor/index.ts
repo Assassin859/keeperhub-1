@@ -32,7 +32,7 @@ import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import {
-  users,
+  organization,
   workflowExecutions,
   workflowSchedules,
   workflows,
@@ -222,11 +222,11 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     `[Executor] Processing ${triggerType} trigger for workflow ${workflowId}`
   );
 
-  // Load the workflow and its owner's deactivation state in one round-trip.
+  // Load the workflow and its owning org's deactivation state in one round-trip.
   const [row] = await db
     .select()
     .from(workflows)
-    .leftJoin(users, eq(users.id, workflows.userId))
+    .leftJoin(organization, eq(organization.id, workflows.organizationId))
     .where(eq(workflows.id, workflowId))
     .limit(1);
   const workflow = row?.workflows;
@@ -236,14 +236,16 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     return;
   }
 
-  // A soft-deleted workflow, a disabled workflow, or one whose owner is
-  // deactivated must never execute, even if a stale schedule or queued
-  // message still references it. The block_executions DB trigger is the
-  // INSERT-time backstop; this skips the work before it gets that far.
+  // A soft-deleted, disabled, or deactivated workflow - or one whose owning
+  // org is deactivated - must never execute, even if a stale schedule or
+  // queued message still references it. The block_executions DB trigger is the
+  // INSERT-time backstop; this skips the work before it gets that far. The org
+  // owns the workflow, so org deactivation is the owner gate.
   const executability = getWorkflowExecutability({
     enabled: workflow.enabled,
     deletedAt: workflow.deletedAt,
-    ownerDeactivatedAt: row?.users?.deactivatedAt ?? null,
+    deactivatedAt: workflow.deactivatedAt,
+    orgDeactivatedAt: row?.organization?.deactivatedAt ?? null,
   });
   if (!executability.executable) {
     console.log(

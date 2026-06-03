@@ -15,7 +15,7 @@ import {
   twoFactor,
 } from "better-auth/plugins";
 import { createAccessControl } from "better-auth/plugins/access";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { rateLimitBypassRule, testEndpointsEnabled } from "@/lib/admin-auth";
 import { isUserDeactivated } from "@/lib/auth-deactivation-guard";
@@ -292,27 +292,46 @@ const plugins = [
       //   throw error;
       // }
 
-      // When anonymous user links account, transfer ownership to the new user.
-      // Workflows stay as isAnonymous=true with no org - the client-side claim
-      // dialog will offer to move them into the user's organization.
+      // When an anonymous session links to a real account, move its content
+      // into the linking user's organization. The org owns workflows now, so
+      // we re-parent to the target org (not just swap the createdBy user) and
+      // mark the workflows non-anonymous. The linking user already has a
+      // personal org minted at signup.
       const fromUserId = data.anonymousUser.user.id;
       const toUserId = data.newUser.user.id;
 
       try {
-        await db
-          .update(workflows)
-          .set({ userId: toUserId })
-          .where(eq(workflows.userId, fromUserId));
+        const [targetMembership] = await db
+          .select({ organizationId: memberTable.organizationId })
+          .from(memberTable)
+          .where(
+            and(eq(memberTable.userId, toUserId), eq(memberTable.role, "owner"))
+          )
+          .limit(1);
+
+        if (targetMembership) {
+          await db
+            .update(workflows)
+            .set({
+              userId: toUserId,
+              organizationId: targetMembership.organizationId,
+              isAnonymous: false,
+            })
+            .where(eq(workflows.userId, fromUserId));
+
+          await db
+            .update(integrations)
+            .set({
+              userId: toUserId,
+              organizationId: targetMembership.organizationId,
+            })
+            .where(eq(integrations.userId, fromUserId));
+        }
 
         await db
           .update(workflowExecutions)
           .set({ userId: toUserId })
           .where(eq(workflowExecutions.userId, fromUserId));
-
-        await db
-          .update(integrations)
-          .set({ userId: toUserId })
-          .where(eq(integrations.userId, fromUserId));
       } catch (error) {
         console.error("[Anonymous Migration] Error:", error);
         throw error;
@@ -499,15 +518,13 @@ export const auth = betterAuth({
           }
         },
         after: async (user) => {
-          // Skip organization creation for anonymous users
-          // Anonymous users have name "Anonymous" and temp- prefixed emails
           const isAnonymous =
             user.name === "Anonymous" || user.email?.startsWith("temp-");
-          if (isAnonymous) {
-            return;
-          }
 
-          // Generate unique slug from user name/email
+          // Every account - anonymous sessions included - gets an organization
+          // so the org is the single owner of every workflow/integration and
+          // there are no null-org rows. An anonymous account's org is merged
+          // into the real org when the account is later linked (onLinkAccount).
           const baseName = user.name || user.email?.split("@")[0] || "User";
           const slug = `${baseName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${nanoid(6)}`;
 
@@ -536,6 +553,13 @@ export const auth = betterAuth({
             });
           } catch (error) {
             console.error(error);
+          }
+
+          // Anonymous accounts get an org (above) but no signup
+          // notifications or verification OTP - they have no real, verified
+          // email (name "Anonymous" / temp- prefixed address).
+          if (isAnonymous) {
+            return;
           }
 
           // Notify external services for OAuth signups (already verified at creation).

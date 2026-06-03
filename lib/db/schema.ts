@@ -167,6 +167,11 @@ export const organization = pgTable("organization", {
   logo: text("logo"),
   createdAt: timestamp("created_at").notNull(),
   metadata: text("metadata"),
+  // Set when the org is deactivated. Cascaded from owner deactivation by the
+  // cascade_org_deactivation_on_owner trigger (only when no active owner
+  // remains) and honored as a hard access/execution gate. Reactivation clears
+  // it manually, mirroring users.deactivatedAt.
+  deactivatedAt: timestamp("deactivated_at"),
 });
 
 export const member = pgTable(
@@ -284,12 +289,19 @@ export const workflows = pgTable(
       .$defaultFn(() => generateId()),
     name: text("name").notNull(),
     description: text("description"),
+    // createdBy (audit only). The authoritative owner of a workflow is its
+    // organization; userId records who created it and must NOT be used as an
+    // ownership/authority signal. See lib/workflow/access.ts and executable.ts.
     userId: text("user_id")
       .notNull()
       .references(() => users.id),
-    organizationId: text("organization_id").references(() => organization.id, {
-      onDelete: "cascade",
-    }),
+    // The owning organization. Authoritative owner. NOT NULL: every account
+    // (anonymous included) has an org, so there are no org-less workflows.
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, {
+        onDelete: "cascade",
+      }),
     isAnonymous: boolean("is_anonymous").default(false).notNull(),
     featured: boolean("featured").default(false).notNull(),
     featuredOrder: integer("featured_order").default(0),
@@ -336,6 +348,11 @@ export const workflows = pgTable(
     // KEEP-440: soft-delete. Set instead of hard-deleting the row so the listed
     // slug stays bound to this row and cannot be re-claimed by another workflow.
     deletedAt: timestamp("deleted_at"),
+    // Set when the workflow is deactivated. A distinct state from `enabled`
+    // (automation toggle) and `deletedAt` (slug-hiding soft-delete): a
+    // deactivated workflow cannot be enabled or triggered manually. Cleared
+    // manually on reactivation.
+    deactivatedAt: timestamp("deactivated_at"),
   },
   (table) => [
     // INFRA-02: globally unique listed slug so external callers can invoke by slug alone

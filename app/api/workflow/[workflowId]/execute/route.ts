@@ -17,7 +17,11 @@ import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { extractActionTypeNodes } from "@/lib/features";
 import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
 import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
-import { users, workflowExecutions, workflows } from "@/lib/db/schema";
+import {
+  organization,
+  workflowExecutions,
+  workflows,
+} from "@/lib/db/schema";
 import { getWorkflowAccess } from "@/lib/workflow/access";
 import { getWorkflowExecutability } from "@/lib/workflow/executable";
 import { executeWorkflowInBackground } from "@/lib/workflow/execute-in-background";
@@ -121,15 +125,17 @@ export async function POST(
     // automated dispatch only: interactive callers (the editor "Run" button)
     // must still be able to test a not-yet-enabled workflow, so a disabled
     // workflow is allowed through the dual-auth branch.
-    const [owner] = await db
-      .select({ deactivatedAt: users.deactivatedAt })
-      .from(users)
-      .where(eq(users.id, workflow.userId))
+    const [gate] = await db
+      .select({ orgDeactivatedAt: organization.deactivatedAt })
+      .from(workflows)
+      .leftJoin(organization, eq(organization.id, workflows.organizationId))
+      .where(eq(workflows.id, workflow.id))
       .limit(1);
     const executability = getWorkflowExecutability({
       enabled: workflow.enabled,
       deletedAt: workflow.deletedAt,
-      ownerDeactivatedAt: owner?.deactivatedAt ?? null,
+      deactivatedAt: workflow.deactivatedAt,
+      orgDeactivatedAt: gate?.orgDeactivatedAt ?? null,
     });
     const blockedByExecutability =
       !executability.executable &&
