@@ -28,7 +28,7 @@ import { sanitizeNextPath } from "@/lib/sanitize-next-path";
 import {
   assessIpTrust,
   buildRiskFlagsJsonForIp,
-  clearTrustCacheEntry,
+  cacheTrustedIp,
   logIpVerify,
 } from "@/lib/security/login-risk";
 import { verifyUserTotp } from "@/lib/security/totp-verify";
@@ -391,10 +391,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  // Same-pod cache invalidation: evict any stale entry so the next request on
-  // this pod reflects the fresh upsert immediately. Untrusted is not cached,
-  // so other pods just re-read the DB and see the trust right away.
-  clearTrustCacheEntry(decoded.payload.userId, decoded.payload.ip);
+  // Warm the shared cache so every replica's next request is a hit, not a DB
+  // read. Best-effort; the DB upsert above is the durable source of truth.
+  await cacheTrustedIp(decoded.payload.userId, decoded.payload.ip);
 
   const response = NextResponse.json({
     ok: true,
