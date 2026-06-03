@@ -121,6 +121,11 @@ jobs:
         run: |
           kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
 
+      - name: Apply workflow-runner ServiceAccount
+        if: steps.skip.outputs.skip_deploy != 'true'
+        run: |
+          kubectl apply -f deploy/executor/${{ env.ENVIRONMENT_TAG }}/runner-sa.yaml
+
       - name: Deploy executor
         if: steps.skip.outputs.skip_deploy != 'true'
         uses: bitovi/github-actions-deploy-eks-helm@v1.2.12

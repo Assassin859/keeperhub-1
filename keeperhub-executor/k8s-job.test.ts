@@ -1,4 +1,4 @@
-import type { V1Job } from "@kubernetes/client-node";
+import type { V1EnvVar, V1Job } from "@kubernetes/client-node";
 import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 
 let mockCreateNamespacedJob: Mock;
@@ -30,6 +30,8 @@ vi.mock("./config", () => ({
     chainRpcConfig: '{"eth":"http://localhost:8545"}',
     etherscanApiKey: "test-etherscan-key",
     namespace: "test-ns",
+    runnerServiceAccount: "keeperhub-workflow-runner",
+    runnerSecretPrefix: "keeperhub-executor-common",
     runnerImage: "runner:latest",
     imagePullPolicy: "Never",
     jobTtlSeconds: 3600,
@@ -54,18 +56,19 @@ function getSubmittedJob(): V1Job {
   return call.body as V1Job;
 }
 
-function getJobEnvVars(job: V1Job): Array<{ name: string; value: string }> {
-  return (job.spec?.template?.spec?.containers?.[0]?.env ?? []) as Array<{
-    name: string;
-    value: string;
-  }>;
+function getJobEnvVars(job: V1Job): V1EnvVar[] {
+  return job.spec?.template?.spec?.containers?.[0]?.env ?? [];
 }
 
-function getEnvVar(
-  envVars: Array<{ name: string; value: string }>,
-  name: string
-): string | undefined {
+function getEnvVar(envVars: V1EnvVar[], name: string): string | undefined {
   return envVars.find((v) => v.name === name)?.value;
+}
+
+function getSecretRef(
+  envVars: V1EnvVar[],
+  name: string
+): { name?: string; key?: string; optional?: boolean } | undefined {
+  return envVars.find((v) => v.name === name)?.valueFrom?.secretKeyRef;
 }
 
 describe("createWorkflowJob", () => {
@@ -77,10 +80,9 @@ describe("createWorkflowJob", () => {
     delete process.env.METRICS_INGEST_TOKEN;
   });
 
-  it("forwards metrics ingest env vars when set", async () => {
+  it("forwards non-secret metrics env vars as literals when set", async () => {
     process.env.METRICS_COLLECTOR = "prometheus";
     process.env.EXECUTOR_METRICS_INGEST_URL = "http://executor:3080";
-    process.env.METRICS_INGEST_TOKEN = "secret";
 
     await createWorkflowJob({
       workflowId: "wf-1",
@@ -94,10 +96,9 @@ describe("createWorkflowJob", () => {
     expect(getEnvVar(envVars, "EXECUTOR_METRICS_INGEST_URL")).toBe(
       "http://executor:3080"
     );
-    expect(getEnvVar(envVars, "METRICS_INGEST_TOKEN")).toBe("secret");
   });
 
-  it("omits metrics ingest env vars when unset", async () => {
+  it("omits non-secret metrics literals when unset", async () => {
     await createWorkflowJob({
       workflowId: "wf-1",
       executionId: "exec-1234abcd",
@@ -106,28 +107,14 @@ describe("createWorkflowJob", () => {
     });
 
     const envVars = getJobEnvVars(getSubmittedJob());
+    expect(envVars.find((v) => v.name === "METRICS_COLLECTOR")).toBeUndefined();
     expect(
       envVars.find((v) => v.name === "EXECUTOR_METRICS_INGEST_URL")
     ).toBeUndefined();
-    expect(
-      envVars.find((v) => v.name === "METRICS_INGEST_TOKEN")
-    ).toBeUndefined();
   });
 
-  it("includes ETHERSCAN_API_KEY when configured", async () => {
-    await createWorkflowJob({
-      workflowId: "wf-1",
-      executionId: "exec-1234abcd",
-      input: { triggerType: "schedule" },
-      triggerType: "schedule",
-    });
-
-    const envVars = getJobEnvVars(getSubmittedJob());
-    expect(getEnvVar(envVars, "ETHERSCAN_API_KEY")).toBe("test-etherscan-key");
-  });
-
-  it("omits ETHERSCAN_API_KEY when not configured", async () => {
-    (CONFIG as Record<string, unknown>).etherscanApiKey = "";
+  it("injects METRICS_INGEST_TOKEN as an optional secret ref, not a literal", async () => {
+    process.env.METRICS_INGEST_TOKEN = "should-not-be-relayed";
 
     await createWorkflowJob({
       workflowId: "wf-1",
@@ -137,10 +124,15 @@ describe("createWorkflowJob", () => {
     });
 
     const envVars = getJobEnvVars(getSubmittedJob());
-    expect(envVars.find((v) => v.name === "ETHERSCAN_API_KEY")).toBeUndefined();
+    expect(getEnvVar(envVars, "METRICS_INGEST_TOKEN")).toBeUndefined();
+    expect(getSecretRef(envVars, "METRICS_INGEST_TOKEN")).toEqual({
+      name: "keeperhub-executor-common-metrics-ingest-token",
+      key: "keeperhub-executor-common-metrics-ingest-token",
+      optional: true,
+    });
   });
 
-  it("includes system env vars from runner-env", async () => {
+  it("references ETHERSCAN_API_KEY as an optional secret ref", async () => {
     await createWorkflowJob({
       workflowId: "wf-1",
       executionId: "exec-1234abcd",
@@ -149,14 +141,30 @@ describe("createWorkflowJob", () => {
     });
 
     const envVars = getJobEnvVars(getSubmittedJob());
-    expect(getEnvVar(envVars, "OPENAI_API_KEY")).toBe("sk-test");
+    expect(getEnvVar(envVars, "ETHERSCAN_API_KEY")).toBeUndefined();
+    expect(getSecretRef(envVars, "ETHERSCAN_API_KEY")).toEqual({
+      name: "keeperhub-executor-common-etherscan-api-key",
+      key: "keeperhub-executor-common-etherscan-api-key",
+      optional: true,
+    });
+  });
+
+  it("forwards non-secret system env vars from runner-env as literals", async () => {
+    await createWorkflowJob({
+      workflowId: "wf-1",
+      executionId: "exec-1234abcd",
+      input: {},
+      triggerType: "schedule",
+    });
+
+    const envVars = getJobEnvVars(getSubmittedJob());
     expect(getEnvVar(envVars, "SLACK_API_KEY")).toBe("xoxb-test");
   });
 
-  it("deduplicates system vars against explicit vars", async () => {
+  it("never relays secret-valued system vars as plaintext", async () => {
     (getRunnerSystemEnvVars as Mock).mockReturnValue([
       { name: "DATABASE_URL", value: "should-be-ignored" },
-      { name: "OPENAI_API_KEY", value: "sk-test" },
+      { name: "OPENAI_API_KEY", value: "should-be-ignored" },
     ]);
 
     await createWorkflowJob({
@@ -169,15 +177,16 @@ describe("createWorkflowJob", () => {
     const envVars = getJobEnvVars(getSubmittedJob());
     const dbUrls = envVars.filter((v) => v.name === "DATABASE_URL");
     expect(dbUrls).toHaveLength(1);
-    expect(dbUrls[0].value).toBe("postgres://localhost/test");
+    expect(dbUrls[0].value).toBeUndefined();
+    expect(dbUrls[0].valueFrom?.secretKeyRef?.name).toBe(
+      "keeperhub-executor-common-db-url"
+    );
+    const openai = envVars.filter((v) => v.name === "OPENAI_API_KEY");
+    expect(openai).toHaveLength(1);
+    expect(openai[0].value).toBeUndefined();
   });
 
-  it("forwards Turnkey API env vars from runner-env into the Job spec", async () => {
-    (getRunnerSystemEnvVars as Mock).mockReturnValue([
-      { name: "TURNKEY_API_PUBLIC_KEY", value: "pub-test" },
-      { name: "TURNKEY_API_PRIVATE_KEY", value: "priv-test" },
-    ]);
-
+  it("references Turnkey API keys as optional secret refs", async () => {
     await createWorkflowJob({
       workflowId: "wf-1",
       executionId: "exec-1234abcd",
@@ -186,8 +195,17 @@ describe("createWorkflowJob", () => {
     });
 
     const envVars = getJobEnvVars(getSubmittedJob());
-    expect(getEnvVar(envVars, "TURNKEY_API_PUBLIC_KEY")).toBe("pub-test");
-    expect(getEnvVar(envVars, "TURNKEY_API_PRIVATE_KEY")).toBe("priv-test");
+    expect(getSecretRef(envVars, "TURNKEY_API_PUBLIC_KEY")).toEqual({
+      name: "keeperhub-executor-common-turnkey-api-public-key",
+      key: "keeperhub-executor-common-turnkey-api-public-key",
+      optional: true,
+    });
+    expect(getSecretRef(envVars, "TURNKEY_API_PRIVATE_KEY")).toEqual({
+      name: "keeperhub-executor-common-turnkey-api-private-key",
+      key: "keeperhub-executor-common-turnkey-api-private-key",
+      optional: true,
+    });
+    expect(getEnvVar(envVars, "TURNKEY_API_PRIVATE_KEY")).toBeUndefined();
   });
 
   it("includes SCHEDULE_ID for scheduled triggers", async () => {
@@ -215,7 +233,7 @@ describe("createWorkflowJob", () => {
     expect(envVars.find((v) => v.name === "SCHEDULE_ID")).toBeUndefined();
   });
 
-  it("includes all infrastructure env vars", async () => {
+  it("passes non-secret execution context as literal env vars", async () => {
     await createWorkflowJob({
       workflowId: "wf-1",
       executionId: "exec-1234abcd",
@@ -228,15 +246,35 @@ describe("createWorkflowJob", () => {
     expect(getEnvVar(envVars, "WORKFLOW_ID")).toBe("wf-1");
     expect(getEnvVar(envVars, "EXECUTION_ID")).toBe("exec-1234abcd");
     expect(getEnvVar(envVars, "WORKFLOW_INPUT")).toBe('{"test":true}');
-    expect(getEnvVar(envVars, "DATABASE_URL")).toBe(
-      "postgres://localhost/test"
-    );
-    expect(getEnvVar(envVars, "INTEGRATION_ENCRYPTION_KEY")).toBe(
-      "test-enc-key"
-    );
-    expect(getEnvVar(envVars, "CHAIN_RPC_CONFIG")).toBe(
-      '{"eth":"http://localhost:8545"}'
-    );
+  });
+
+  it("references core credentials as required (non-optional) secret refs", async () => {
+    await createWorkflowJob({
+      workflowId: "wf-1",
+      executionId: "exec-1234abcd",
+      input: {},
+      triggerType: "schedule",
+    });
+
+    const envVars = getJobEnvVars(getSubmittedJob());
+
+    // No plaintext for any of the high-value credentials.
+    expect(getEnvVar(envVars, "DATABASE_URL")).toBeUndefined();
+    expect(getEnvVar(envVars, "INTEGRATION_ENCRYPTION_KEY")).toBeUndefined();
+    expect(getEnvVar(envVars, "CHAIN_RPC_CONFIG")).toBeUndefined();
+
+    expect(getSecretRef(envVars, "DATABASE_URL")).toEqual({
+      name: "keeperhub-executor-common-db-url",
+      key: "keeperhub-executor-common-db-url",
+      optional: false,
+    });
+    expect(getSecretRef(envVars, "INTEGRATION_ENCRYPTION_KEY")).toEqual({
+      name: "keeperhub-executor-common-integration-encryption-key",
+      key: "keeperhub-executor-common-integration-encryption-key",
+      optional: false,
+    });
+    // CHAIN_RPC_CONFIG is plugin-specific, so it is optional.
+    expect(getSecretRef(envVars, "CHAIN_RPC_CONFIG")?.optional).toBe(true);
   });
 
   it("force-enables SAFE_FETCH_ENFORCE on runner pods even when unset on controller", async () => {
@@ -274,5 +312,71 @@ describe("createWorkflowJob", () => {
     expect(getEnvVar(envVars, "SAFE_FETCH_ENFORCE")).toBe("true");
     const occurrences = envVars.filter((v) => v.name === "SAFE_FETCH_ENFORCE");
     expect(occurrences).toHaveLength(1);
+  });
+
+  it("runs under the dedicated SA with no mounted token", async () => {
+    await createWorkflowJob({
+      workflowId: "wf-1",
+      executionId: "exec-1234abcd",
+      input: {},
+      triggerType: "schedule",
+    });
+
+    const podSpec = getSubmittedJob().spec?.template?.spec;
+    expect(podSpec?.serviceAccountName).toBe("keeperhub-workflow-runner");
+    expect(podSpec?.automountServiceAccountToken).toBe(false);
+  });
+
+  it("applies a non-root pod securityContext", async () => {
+    await createWorkflowJob({
+      workflowId: "wf-1",
+      executionId: "exec-1234abcd",
+      input: {},
+      triggerType: "schedule",
+    });
+
+    const podSecurityContext =
+      getSubmittedJob().spec?.template?.spec?.securityContext;
+    expect(podSecurityContext?.runAsNonRoot).toBe(true);
+    expect(podSecurityContext?.runAsUser).toBe(1000);
+    expect(podSecurityContext?.runAsGroup).toBe(1000);
+    expect(podSecurityContext?.fsGroup).toBe(1000);
+    expect(podSecurityContext?.seccompProfile?.type).toBe("RuntimeDefault");
+  });
+
+  it("locks down the runner container securityContext", async () => {
+    await createWorkflowJob({
+      workflowId: "wf-1",
+      executionId: "exec-1234abcd",
+      input: {},
+      triggerType: "schedule",
+    });
+
+    const container = getSubmittedJob().spec?.template?.spec?.containers?.[0];
+    expect(container?.securityContext?.allowPrivilegeEscalation).toBe(false);
+    expect(container?.securityContext?.readOnlyRootFilesystem).toBe(true);
+    expect(container?.securityContext?.capabilities?.drop).toEqual(["ALL"]);
+  });
+
+  it("mounts a writable /tmp emptyDir backing TMPDIR", async () => {
+    await createWorkflowJob({
+      workflowId: "wf-1",
+      executionId: "exec-1234abcd",
+      input: {},
+      triggerType: "schedule",
+    });
+
+    const job = getSubmittedJob();
+    const podSpec = job.spec?.template?.spec;
+    const tmpVolume = podSpec?.volumes?.find((v) => v.name === "tmp");
+    expect(tmpVolume?.emptyDir).toBeDefined();
+
+    const tmpMount = podSpec?.containers?.[0]?.volumeMounts?.find(
+      (m) => m.name === "tmp"
+    );
+    expect(tmpMount?.mountPath).toBe("/tmp");
+
+    const envVars = getJobEnvVars(job);
+    expect(getEnvVar(envVars, "TMPDIR")).toBe("/tmp");
   });
 });
