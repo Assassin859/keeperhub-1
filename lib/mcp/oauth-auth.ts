@@ -1,3 +1,4 @@
+import { captureMessage } from "@sentry/nextjs";
 import { eq } from "drizzle-orm";
 import { jwtVerify, SignJWT } from "jose";
 import { db } from "@/lib/db";
@@ -143,6 +144,32 @@ export async function authenticateOAuthToken(
       columns: { deactivatedAt: true },
     });
     if (user?.deactivatedAt) {
+      // KEEP-612: fourth deactivated-login surface (alongside better-auth
+      // session/account hooks and api-key auth). A deactivated user with a
+      // still-valid MCP OAuth JWT hitting MCP endpoints is exactly the
+      // anomaly the detection layer wants surfaced. Best-effort; never
+      // blocks the 401.
+      try {
+        captureMessage("security.deactivated_login_attempt", {
+          level: "warning",
+          tags: {
+            security: "deactivated_login_attempt",
+            surface: "mcp_oauth",
+          },
+          user: { id: payload.sub },
+          extra: { organizationId: payload.org },
+        });
+      } catch {
+        // swallow; observability must not affect the auth response
+      }
+      console.warn(
+        JSON.stringify({
+          event: "security.deactivated_login_attempt",
+          surface: "mcp_oauth",
+          userId: payload.sub,
+          organizationId: payload.org,
+        })
+      );
       return {
         authenticated: false,
         error: "User account is deactivated",

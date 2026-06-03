@@ -2,6 +2,7 @@ import "server-only";
 
 import { and, count, desc, eq, gte, lt, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { logInputField, logOutputField } from "@/lib/db/execution-log-fields";
 import {
   workflowExecutionLogs,
   workflowExecutions,
@@ -383,57 +384,35 @@ function addBigIntStrings(a: string, b: string): string {
   return (BigInt(a || "0") + BigInt(b || "0")).toString();
 }
 
-/**
- * Build SQL to extract a field from workflow_execution_logs output JSONB.
- *
- * The output column is double-encoded: Drizzle stores a JSON string inside JSONB
- * (jsonb_typeof = 'string') rather than a JSONB object. To extract a nested key
- * we first unwrap the string with `#>> '{}'`, re-parse as jsonb, then extract.
- * Falls back to direct `->>` for any rows where output is already an object.
- */
-function logOutputField(field: string): ReturnType<typeof sql> {
-  return sql`CASE
-    WHEN jsonb_typeof(${workflowExecutionLogs.output}) = 'string'
-    THEN (${workflowExecutionLogs.output} #>> '{}')::jsonb->>${sql.raw(`'${field}'`)}
-    ELSE ${workflowExecutionLogs.output}->>${sql.raw(`'${field}'`)}
-  END`;
-}
-
-/**
- * Build SQL to extract a field from workflow_execution_logs input JSONB.
- * Same double-encoding handling as output.
- */
-function logInputField(field: string): ReturnType<typeof sql> {
-  return sql`CASE
-    WHEN jsonb_typeof(${workflowExecutionLogs.input}) = 'string'
-    THEN (${workflowExecutionLogs.input} #>> '{}')::jsonb->>${sql.raw(`'${field}'`)}
-    ELSE ${workflowExecutionLogs.input}->>${sql.raw(`'${field}'`)}
-  END`;
-}
-
 async function getWorkflowGasTotal(
   organizationId: string,
   rangeStart: Date,
   rangeEnd: Date,
   projectId?: string
 ): Promise<string> {
+  // Reads the denormalised run-total `gas_used_wei` written at finalize
+  // (lib/workflow/executor/logging.ts) instead of re-summing the per-step logs
+  // JSONB. No logs join, no JSONB parse, no TOAST detoast - the org+window slice
+  // is aggregated straight off workflow_executions. SUM skips NULL, so runs with
+  // no gas need no explicit filter.
+  //
+  // The window is now `workflow_executions.started_at` (when the run started),
+  // not the per-step `started_at`. Since the column is a run-level rollup that
+  // is the correct axis, and it matches every other summary metric, which is
+  // already keyed to run start. Boundary-straddling runs can reattribute by the
+  // gap between run start and a late step; immaterial at dashboard granularity.
   const result = await db
     .select({
-      totalGas: sql<string>`COALESCE(SUM(CAST(${logOutputField("gasUsed")} AS NUMERIC)), 0)::text`,
+      totalGas: sql<string>`COALESCE(SUM(CAST(${workflowExecutions.gasUsedWei} AS NUMERIC)), 0)::text`,
     })
-    .from(workflowExecutionLogs)
-    .innerJoin(
-      workflowExecutions,
-      eq(workflowExecutionLogs.executionId, workflowExecutions.id)
-    )
+    .from(workflowExecutions)
     .innerJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
     .where(
       and(
         eq(workflows.organizationId, organizationId),
         projectId ? eq(workflows.projectId, projectId) : undefined,
-        gte(workflowExecutionLogs.startedAt, rangeStart),
-        lt(workflowExecutionLogs.startedAt, rangeEnd),
-        sql`${logOutputField("gasUsed")} IS NOT NULL`
+        gte(workflowExecutions.startedAt, rangeStart),
+        lt(workflowExecutions.startedAt, rangeEnd)
       )
     );
 
@@ -1193,21 +1172,20 @@ export async function getSpendCapData(organizationId: string): Promise<{
           )
         ),
       db
+        // Same denormalised-column read as getWorkflowGasTotal: today's run
+        // gas straight off workflow_executions, no logs JSONB scan. gas_used_wei
+        // already reflects only gas-bearing (success) step output, so the
+        // previous log status='success' filter is subsumed. Windowed by run
+        // start rather than per-step time (see getWorkflowGasTotal).
         .select({
-          totalWei: sql<string>`COALESCE(SUM(CAST(${logOutputField("gasUsed")} AS NUMERIC)), 0)::text`,
+          totalWei: sql<string>`COALESCE(SUM(CAST(${workflowExecutions.gasUsedWei} AS NUMERIC)), 0)::text`,
         })
-        .from(workflowExecutionLogs)
-        .innerJoin(
-          workflowExecutions,
-          eq(workflowExecutionLogs.executionId, workflowExecutions.id)
-        )
+        .from(workflowExecutions)
         .innerJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
         .where(
           and(
             eq(workflows.organizationId, organizationId),
-            eq(workflowExecutionLogs.status, "success"),
-            gte(workflowExecutionLogs.startedAt, todayStart),
-            sql`${logOutputField("gasUsed")} IS NOT NULL`
+            gte(workflowExecutions.startedAt, todayStart)
           )
         ),
     ]

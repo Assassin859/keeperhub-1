@@ -29,6 +29,7 @@ import {
   serializeRiskFlags,
   upsertTrustedIp,
 } from "@/lib/security/login-risk";
+import { reportSessionBackstop } from "@/lib/security/session-backstop";
 import { TRUSTED_ORIGINS } from "@/lib/trusted-origins";
 import { wrapWithSessionTokenHash } from "./auth-session-token-hash";
 import { db } from "./db";
@@ -46,6 +47,7 @@ import {
   sessions,
   twoFactor as twoFactorTable,
   users,
+  userTrustedIps,
   verifications,
   workflowExecutionLogs,
   workflowExecutions,
@@ -742,6 +744,12 @@ export const auth = betterAuth({
   },
   onAPIError: {
     onError: (error, ctx) => {
+      // KEEP-612: emit the sessions-backstop detection signal if this error
+      // is the migration-0090 KH001 reject (a deactivated-user session insert
+      // that bypassed the session.create.before gate). reportSessionBackstop
+      // walks the wrapped-error cause chain + message fallback and is
+      // unit-tested independently of the Better Auth config.
+      reportSessionBackstop(error);
       console.error("[Better Auth API Error]", {
         error:
           error instanceof Error

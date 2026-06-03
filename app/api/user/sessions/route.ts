@@ -6,10 +6,9 @@ import { db } from "@/lib/db";
 import { sessions } from "@/lib/db/schema";
 import { formatIpForDisplay } from "@/lib/security/ip-normalize";
 import {
-  formatLocation,
-  type ResolvedLocation,
-  resolveLocationFromIp,
-} from "@/lib/security/resolve-country";
+  decodeRiskFlags,
+  locationForSessionRow,
+} from "@/lib/security/session-location";
 
 type SessionListItem = {
   id: string;
@@ -26,45 +25,6 @@ type SessionListItem = {
 type SessionListResponse = {
   sessions: SessionListItem[];
 };
-
-function mergeLocations(
-  primary: ResolvedLocation,
-  fallback: ResolvedLocation
-): ResolvedLocation {
-  return {
-    country: primary.country ?? fallback.country,
-    region: primary.region ?? fallback.region,
-    city: primary.city ?? fallback.city,
-  };
-}
-
-function decodeLocation(riskFlagsJson: string | null): ResolvedLocation {
-  if (!riskFlagsJson) {
-    return { country: null, region: null, city: null };
-  }
-  try {
-    const parsed = JSON.parse(riskFlagsJson) as {
-      country?: unknown;
-      region?: unknown;
-      city?: unknown;
-    };
-    const pick = (value: unknown): string | null => {
-      if (typeof value !== "string") {
-        return null;
-      }
-      const trimmed = value.trim();
-      return trimmed.length > 0 ? trimmed : null;
-    };
-    const countryRaw = pick(parsed.country);
-    return {
-      country: countryRaw ? countryRaw.toUpperCase() : null,
-      region: pick(parsed.region),
-      city: pick(parsed.city),
-    };
-  } catch {
-    return { country: null, region: null, city: null };
-  }
-}
 
 /**
  * GET /api/user/sessions
@@ -120,18 +80,14 @@ export async function GET(request: Request): Promise<NextResponse> {
   // per IP for 24h, so this is cheap on repeat panel loads.
   const enriched = await Promise.all(
     rows.map(async (row) => {
-      const decoded = decodeLocation(row.riskFlagsJson);
-      const needsFallback =
-        (decoded.city === null || decoded.region === null) && row.ipAddress;
-      const merged = needsFallback
-        ? mergeLocations(decoded, await resolveLocationFromIp(row.ipAddress))
-        : decoded;
+      const { location } = decodeRiskFlags(row.riskFlagsJson);
+      const resolved = await locationForSessionRow(location, row.ipAddress);
       return {
         id: row.id,
         ipAddress: row.ipAddress ? formatIpForDisplay(row.ipAddress) : null,
         userAgent: row.userAgent,
-        country: merged.country,
-        location: formatLocation(merged),
+        country: resolved.country,
+        location: resolved.location,
         createdAt: row.createdAt.toISOString(),
         updatedAt: row.updatedAt.toISOString(),
         expiresAt: row.expiresAt.toISOString(),

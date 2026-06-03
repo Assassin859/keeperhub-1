@@ -490,6 +490,21 @@ export const workflowExecutions = pgTable(
       .notNull()
       .default(sql`'[]'::jsonb`),
     /**
+     * Run-total gas (sum of per-step `gasUsed`, in wei), denormalised out of the
+     * per-step workflow_execution_logs.output JSONB. Populated at terminal
+     * finalize (success or error), alongside transaction_hashes
+     * (lib/workflow/executor/logging.ts), so org-scoped /analytics summary and
+     * spend-cap reads can aggregate a first-class column instead of full-scanning
+     * and detoasting the logs table.
+     *
+     * Nullable on legacy rows until backfilled, and on runs that produced no
+     * on-chain gas. Network is intentionally NOT denormalised here: it is a
+     * per-step property (each web3 node targets its own chain), so a run can
+     * span multiple networks and no single run-level value is correct. The
+     * per-network gas breakdown keeps reading step-level log data.
+     */
+    gasUsedWei: numeric("gas_used_wei"),
+    /**
      * Whether this execution counts toward the owner organisation's monthly
      * execution quota and overage billing.
      *

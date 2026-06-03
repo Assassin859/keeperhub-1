@@ -678,7 +678,14 @@
       "idx": 96,
       "version": "7",
       "when": 1779843900003,
-      "tag": "0096_internal_service_hmac_secrets",
+      "tag": "0096_keep_683_workflow_gas_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "7",
+      "when": 1779843900004,
+      "tag": "0097_internal_service_hmac_secrets",
       "breakpoints": true
     }
   ]

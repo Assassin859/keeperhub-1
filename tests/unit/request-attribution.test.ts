@@ -3,11 +3,70 @@ import {
   buildAttribution,
   getRequestCountry,
   getRequestSourceIp,
+  resolveTriggerLabels,
 } from "@/lib/security/request-attribution";
 
 function makeRequest(headers: Record<string, string> = {}): Request {
   return new Request("http://localhost:3000/api/x", { headers });
 }
+
+describe("resolveTriggerLabels", () => {
+  it("passes a recognised x-trigger-type header through to both labels", () => {
+    for (const t of ["block", "event", "schedule"] as const) {
+      expect(resolveTriggerLabels(t, false)).toEqual({
+        triggerType: t,
+        triggerSource: t,
+      });
+      // isInternal flag is irrelevant once a valid header is present
+      expect(resolveTriggerLabels(t, true)).toEqual({
+        triggerType: t,
+        triggerSource: t,
+      });
+    }
+  });
+
+  it("internal call without a header → metric 'schedule', audit 'internal'", () => {
+    // Regression guard: the metric label must stay 'schedule' (NOT
+    // 'scheduled') so it never re-fragments the started_total series, while
+    // trigger_source keeps the more precise 'internal'.
+    expect(resolveTriggerLabels(null, true)).toEqual({
+      triggerType: "schedule",
+      triggerSource: "internal",
+    });
+  });
+
+  it("external call without a header → 'manual' on both", () => {
+    expect(resolveTriggerLabels(null, false)).toEqual({
+      triggerType: "manual",
+      triggerSource: "manual",
+    });
+  });
+
+  it("normalises a legacy 'scheduled' header to canonical 'schedule'", () => {
+    // An explicit x-trigger-type: scheduled must NOT pass through as
+    // "scheduled" -- that would re-fragment the metric/audit series the
+    // header-less path already converges on "schedule".
+    expect(resolveTriggerLabels("scheduled", false)).toEqual({
+      triggerType: "schedule",
+      triggerSource: "schedule",
+    });
+    expect(resolveTriggerLabels("scheduled", true)).toEqual({
+      triggerType: "schedule",
+      triggerSource: "schedule",
+    });
+  });
+
+  it("ignores an unrecognised header value and falls back", () => {
+    expect(resolveTriggerLabels("garbage", false)).toEqual({
+      triggerType: "manual",
+      triggerSource: "manual",
+    });
+    expect(resolveTriggerLabels("garbage", true)).toEqual({
+      triggerType: "schedule",
+      triggerSource: "internal",
+    });
+  });
+});
 
 describe("getRequestSourceIp", () => {
   it("prefers cf-connecting-ip when present", () => {

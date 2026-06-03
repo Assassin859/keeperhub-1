@@ -75,6 +75,49 @@ describe("withBackstopCapture", () => {
     expect(captureMessageMock).toHaveBeenCalledTimes(1);
   });
 
+  it("captures a Drizzle-wrapped 42501 reject (cause chain)", async () => {
+    // Regression guard for the live-found bug: Drizzle wraps the driver's
+    // PostgresError in a DrizzleQueryError, so the 42501 SQLSTATE sits on
+    // `.cause.code`, not the top-level `.code`. A bare top-level check missed
+    // every real executor reject and the backstop never fired in production.
+    const wrapped = new Error(
+      "Failed query: insert into workflow_executions ..."
+    ) as Error & { cause: unknown };
+    wrapped.cause = makeBackstopError(
+      "Workflow owner is deactivated; new executions are not allowed."
+    );
+    await expect(
+      withBackstopCapture(ctx, () => Promise.reject(wrapped))
+    ).rejects.toBe(wrapped);
+    expect(captureMessageMock).toHaveBeenCalledTimes(1);
+    expect(captureMessageMock.mock.calls[0][0]).toBe(
+      "security.backstop_execution_blocked"
+    );
+  });
+
+  it("captures a 42501 nested two levels deep in the cause chain", async () => {
+    const inner = makeBackstopError("pg reject");
+    const mid = new Error("driver wrap") as Error & { cause: unknown };
+    mid.cause = inner;
+    const outer = new Error("orm wrap") as Error & { cause: unknown };
+    outer.cause = mid;
+    await expect(
+      withBackstopCapture(ctx, () => Promise.reject(outer))
+    ).rejects.toBe(outer);
+    expect(captureMessageMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT capture when no 42501 anywhere in the cause chain", async () => {
+    const inner = new Error("unique violation") as Error & { code: string };
+    inner.code = "23505";
+    const wrapped = new Error("orm wrap") as Error & { cause: unknown };
+    wrapped.cause = inner;
+    await expect(
+      withBackstopCapture(ctx, () => Promise.reject(wrapped))
+    ).rejects.toBe(wrapped);
+    expect(captureMessageMock).not.toHaveBeenCalled();
+  });
+
   it("does NOT capture for different ERRCODE", async () => {
     const err = new Error("Workflow owner is deactivated") as Error & {
       code: string;

@@ -1858,6 +1858,11 @@ export const WorkflowToolbar = ({
             state={state}
             workflowId={effectiveWorkflowId}
           />
+          {isWorkflowRoute && state.currentWorkflowId && (
+            <span className="hidden max-w-48 truncate font-medium text-foreground text-sm lg:inline-block">
+              {state.workflowName}
+            </span>
+          )}
           {isWorkflowRoute &&
             effectiveWorkflowId &&
             !state.isOwner &&
