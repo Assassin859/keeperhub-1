@@ -26,6 +26,7 @@ variable "EVENTS_ECR_TRACKER_REPO" { default = "" }
 variable "SCHEDULER_ECR_REPO" { default = "" }
 variable "EXECUTOR_ECR_REPO" { default = "" }
 variable "SANDBOX_ECR_REPO" { default = "" }
+variable "METRICS_COLLECTOR_ECR_REPO" { default = "" }
 
 group "default" {
   targets = ["app", "migrator", "workflow-runner"]
@@ -43,8 +44,12 @@ group "sandbox" {
   targets = ["sandbox"]
 }
 
+group "metrics-collector" {
+  targets = ["metrics-collector"]
+}
+
 group "all" {
-  targets = ["app", "migrator", "workflow-runner", "event-tracker", "schedule-dispatcher", "block-dispatcher", "executor", "sandbox"]
+  targets = ["app", "migrator", "workflow-runner", "event-tracker", "schedule-dispatcher", "block-dispatcher", "executor", "sandbox", "metrics-collector"]
 }
 
 target "app" {
@@ -214,5 +219,21 @@ target "sandbox" {
   ])
   cache-from = ["type=registry,ref=${ECR_REGISTRY}/${SANDBOX_ECR_REPO}:cache"]
   cache-to   = ["type=registry,ref=${ECR_REGISTRY}/${SANDBOX_ECR_REPO}:cache,mode=max"]
+  attest     = []
+}
+
+# Metrics collector (TECH-6484). Context is repo root because the stage reuses
+# lib/ and the root node_modules. Tag prefix `collector-`.
+target "metrics-collector" {
+  context    = "."
+  dockerfile = "Dockerfile"
+  target     = "metrics-collector"
+  tags = compact([
+    "${ECR_REGISTRY}/${METRICS_COLLECTOR_ECR_REPO}:collector-${IMAGE_TAG}",
+    "${ECR_REGISTRY}/${METRICS_COLLECTOR_ECR_REPO}:collector-latest",
+    ENVIRONMENT_TAG != "" ? "${ECR_REGISTRY}/${METRICS_COLLECTOR_ECR_REPO}:${ENVIRONMENT_TAG}" : "",
+  ])
+  cache-from = ["type=registry,ref=${ECR_REGISTRY}/${METRICS_COLLECTOR_ECR_REPO}:cache"]
+  cache-to   = ["type=registry,ref=${ECR_REGISTRY}/${METRICS_COLLECTOR_ECR_REPO}:cache,mode=max"]
   attest     = []
 }

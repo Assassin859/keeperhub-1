@@ -50,6 +50,7 @@ COPY drizzle/ ./drizzle/
 COPY hooks/ ./hooks/
 COPY keeperhub-events/ ./keeperhub-events/
 COPY keeperhub-executor/ ./keeperhub-executor/
+COPY keeperhub-metrics-collector/ ./keeperhub-metrics-collector/
 COPY keeperhub-scheduler/ ./keeperhub-scheduler/
 COPY lib/ ./lib/
 COPY plugins/ ./plugins/
@@ -310,3 +311,36 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 # Start the application
 CMD ["node", "server.js"]
+
+# ==============================================================================
+# Stage: metrics-collector (TECH-6484)
+# Single-replica service that serves the DB-sourced Prometheus gauges (the
+# former /api/metrics/db scrape) off the request-serving pods. Executor-style:
+# reuses lib/metrics + lib/db verbatim via tsx. Copies the full root
+# node_modules (the imported lib code has transitive deps beyond the
+# collector's own package.json). The metrics import graph touches no
+# builder-generated file at runtime -- lib/db/schema only references the
+# generated lib/types/integration via `import type`, which tsx erases -- so
+# this stage depends on source only, not the (expensive) Next builder stage.
+# ==============================================================================
+FROM node:24-alpine AS metrics-collector
+WORKDIR /app
+RUN npm install -g pnpm@9 tsx@4
+COPY --link --from=deps /etc/ssl/certs/rds-combined-ca-bundle.pem /etc/ssl/certs/rds-combined-ca-bundle.pem
+
+COPY --link --from=deps /app/node_modules ./node_modules
+COPY --link --from=source /app/keeperhub-metrics-collector ./keeperhub-metrics-collector
+COPY --link --from=source /app/lib ./lib
+COPY --link --from=source /app/package.json ./package.json
+COPY --link --from=source /app/tsconfig.json ./tsconfig.json
+
+# Shim server-only (runs outside Next.js)
+SHELL ["/bin/ash", "-o", "pipefail", "-c"]
+RUN find /app/node_modules -path "*server-only*/index.js" | while read -r f; do echo 'module.exports = {};' > "$f"; done
+
+ENV NODE_ENV=production
+
+EXPOSE 9090
+
+# Build with: docker build --target metrics-collector -t keeperhub-metrics-collector .
+CMD ["tsx", "keeperhub-metrics-collector/index.ts"]
