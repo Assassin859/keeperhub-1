@@ -412,19 +412,6 @@ env:
   GAS_CREDITS_ENTERPRISE_CENTS:
     type: kv
     value: "10000"
-  # Gas Sponsorship (Pimlico EIP-7702)
-  PIMLICO_API_KEY:
-    type: parameterStore
-    name: pimlico-api-key
-    parameter_name: /eks/techops-prod/keeperhub/pimlico-api-key
-  PIMLICO_BASE_URL:
-    type: parameterStore
-    name: pimlico-base-url
-    parameter_name: /eks/techops-prod/keeperhub/pimlico-base-url
-  SIMPLE_ACCOUNT_7702_ADDRESS:
-    type: parameterStore
-    name: simple-account-7702-address
-    parameter_name: /eks/techops-prod/keeperhub/simple-account-7702-address
   # Internal service API keys for service-to-service auth
   MCP_SERVICE_API_KEY:
     type: parameterStore
