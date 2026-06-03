@@ -26,14 +26,6 @@ function redisWithSet(set: SetFn): { set: SetFn } {
   return { set };
 }
 
-// Each test uses a distinct userId so the module-level per-pod dedup set
-// (which persists across tests in this file) never bleeds between cases.
-let userSeq = 0;
-function freshUser(): string {
-  userSeq += 1;
-  return `user-${userSeq}`;
-}
-
 beforeEach(() => {
   mockGetRedis.mockReset();
   mockSendEmail.mockReset();
@@ -85,10 +77,8 @@ describe("claimNewIpNotification", () => {
 describe("maybeNotifyNewIp", () => {
   it("sends once when the claim is won, with the resolved device label", async () => {
     mockGetRedis.mockReturnValue(redisWithSet(vi.fn().mockResolvedValue("OK")));
-    const userId = freshUser();
-
     maybeNotifyNewIp({
-      userId,
+      userId: "u1",
       email: "a@b.com",
       ip: "9.9.9.0",
       country: "DE",
@@ -110,7 +100,7 @@ describe("maybeNotifyNewIp", () => {
     mockGetRedis.mockReturnValue(redisWithSet(vi.fn().mockResolvedValue(null)));
 
     maybeNotifyNewIp({
-      userId: freshUser(),
+      userId: "u1",
       email: "a@b.com",
       ip: "9.9.9.0",
       country: null,
@@ -129,7 +119,7 @@ describe("maybeNotifyNewIp", () => {
     const set = vi.fn().mockResolvedValueOnce("OK").mockResolvedValue(null);
     mockGetRedis.mockReturnValue(redisWithSet(set));
     const notification = {
-      userId: freshUser(),
+      userId: "u1",
       email: "a@b.com",
       ip: "9.9.9.0",
       country: null,
@@ -155,7 +145,7 @@ describe("maybeNotifyNewIp", () => {
       userAgent: null,
     });
     maybeNotifyNewIp({
-      userId: freshUser(),
+      userId: "u1",
       email: "a@b.com",
       ip: "",
       country: null,
