@@ -123,6 +123,7 @@ Step functions follow a two-layer pattern:
 import "server-only";
 
 import { fetchCredentials } from "@/lib/credential-fetcher";
+import { safeFetch } from "@/lib/safe-fetch";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import type { MyServiceCredentials } from "../credentials";
 
@@ -161,8 +162,10 @@ async function stepHandler(
   }
 
   try {
-    // Use fetch directly - no SDK dependencies
-    const response = await fetch("https://api.myservice.com/endpoint", {
+    // Use safeFetch - no SDK dependencies, and egress is routed through the
+    // SSRF guard. The `plugin` tag attributes blocked requests in metrics.
+    const response = await safeFetch("https://api.myservice.com/endpoint", {
+      plugin: "my-service",
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -230,7 +233,8 @@ export async function testMyService(credentials: Record<string, string>) {
     }
 
     // Option 2: Make a lightweight read-only API call
-    const response = await fetch("https://api.myservice.com/v1/me", {
+    const response = await safeFetch("https://api.myservice.com/v1/me", {
+      plugin: "my-service",
       method: "GET",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -344,24 +348,36 @@ Available types for action `configFields`:
 
 ## Critical Rules
 
-### Use fetch, Not SDKs
+### Use safeFetch, Not SDKs or Raw fetch
 
-Plugins must use the native `fetch` API instead of SDK dependencies:
+Plugins must use `safeFetch` from `@/lib/safe-fetch` instead of SDK dependencies
+or the raw `fetch` global. `safeFetch` routes every outbound request through the
+SSRF guard so a user-controlled or attacker-influenced destination cannot reach
+internal metadata endpoints or RFC1918 hosts. Raw `fetch`/`axios`/`http.request`
+under `plugins/` is rejected by the `Forbid raw network egress in plugins` CI
+check.
 
 ```typescript
-// CORRECT - use fetch directly
-const response = await fetch("https://api.service.com/endpoint", {
+import { safeFetch } from "@/lib/safe-fetch";
+
+// CORRECT - safeFetch with a plugin tag for observability
+const response = await safeFetch("https://api.service.com/endpoint", {
+  plugin: "my-service",
   method: "POST",
   headers: { Authorization: `Bearer ${apiKey}` },
   body: JSON.stringify(data),
 });
+
+// WRONG - raw fetch bypasses the SSRF guard
+const r = await fetch("https://api.service.com/endpoint");
 
 // WRONG - do not add SDK dependencies
 import { ServiceClient } from "service-sdk";  // Never do this
 const client = new ServiceClient(apiKey);
 ```
 
-This reduces supply chain attack surface by avoiding transitive dependencies.
+Using `safeFetch` instead of SDKs also reduces supply chain attack surface by
+avoiding transitive dependencies.
 
 ### Naming Conventions
 

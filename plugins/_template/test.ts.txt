@@ -13,6 +13,8 @@
  * 3. Dedicated test endpoint if the API provides one
  */
 
+import { safeFetch } from "@/lib/safe-fetch";
+
 export async function test[IntegrationName](credentials: Record<string, string>) {
   try {
     const apiKey = credentials.[INTEGRATION_NAME]_API_KEY;
@@ -33,8 +35,10 @@ export async function test[IntegrationName](credentials: Record<string, string>)
     //   };
     // }
 
-    // Option 2: Make a lightweight API call to verify the key works
-    const response = await fetch("https://api.[integration-name].com/v1/test", {
+    // Option 2: Make a lightweight API call to verify the key works.
+    // Egress goes through safeFetch so the SSRF guard applies.
+    const response = await safeFetch("https://api.[integration-name].com/v1/test", {
+      plugin: "[integration-name]",
       method: "GET",
       headers: {
         "Content-Type": "application/json",
