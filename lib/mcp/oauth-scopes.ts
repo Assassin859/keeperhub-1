@@ -10,6 +10,31 @@ export const SUPPORTED_SCOPES = [
 
 export type OAuthScope = (typeof SUPPORTED_SCOPES)[number];
 
+// Server-internal scope for the anonymous /mcp/public endpoint. It is NOT in
+// SUPPORTED_SCOPES on purpose: callers can never request it through the OAuth
+// authorize flow, so it can only ever be assigned by the server to an
+// unauthenticated marketplace caller. It grants EXACTLY the tools in
+// PUBLIC_TOOLS and nothing else.
+export const SCOPE_MCP_PUBLIC = "mcp:public";
+
+// The only tools an anonymous caller may list or invoke. Each one proxies an
+// endpoint that is already public over HTTP (no org/user scoping), so exposing
+// it over MCP reveals no new data. This is a hand-curated allowlist, NOT a
+// derivation from READ_TOOLS -- several read tools (validate_workflow,
+// prepare_test_pin_data, list_workflows, get_wallet_integration, ...) are
+// org-scoped and must never be anonymously reachable.
+export const PUBLIC_TOOLS = new Set<string>([
+  "search_workflows",
+  "get_workflow_listing",
+  "search_templates",
+  "list_action_schemas",
+  "search_plugins",
+  "search_protocol_actions",
+  "get_plugin",
+  "tools_documentation",
+  "call_workflow",
+]);
+
 const READ_TOOLS = new Set<string>([
   "list_workflows",
   "get_workflow",
@@ -61,6 +86,14 @@ export function parseScopes(scopeString: string): string[] {
 
 export function isToolAllowed(toolName: string, scopeString: string): boolean {
   const scopes = parseScopes(scopeString);
+
+  // Public scope is terminal and deny-by-default: it grants ONLY the public
+  // allowlist and never falls through to read/write/admin. Checked first so a
+  // (server-only) public token can never be widened, even if some future code
+  // path concatenated another scope onto it.
+  if (scopes.includes(SCOPE_MCP_PUBLIC)) {
+    return PUBLIC_TOOLS.has(toolName);
+  }
 
   if (scopes.includes(SCOPE_MCP_ADMIN)) {
     return true;
