@@ -21,12 +21,13 @@ const ALLOWED_FEATURED_FIELDS: (keyof FeaturedFields)[] = [
 
 export async function POST(request: Request) {
   try {
-    const auth = authenticateInternalService(request);
-    if (!auth.authenticated || auth.service !== "hub") {
+    const rawBody = await request.text();
+    const auth = await authenticateInternalService(request, rawBody);
+    if (!auth.authenticated || auth.caller !== "hub") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = await request.json();
+    const body = JSON.parse(rawBody);
     const { workflowId, ...fields } = body;
 
     if (!workflowId || typeof workflowId !== "string") {

@@ -85,7 +85,11 @@ async function callExecute(): Promise<Response> {
 describe("execute route - per-integration authorization", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockAuthenticateInternalService.mockReturnValue({ authenticated: false });
+    mockAuthenticateInternalService.mockResolvedValue({
+      authenticated: false,
+      error: "Unauthorized",
+      status: 401,
+    });
     mockFindWorkflow.mockResolvedValue(workflow);
     mockGetWorkflowAccess.mockResolvedValue({
       isCreatorWithCurrentAccess: false,
@@ -141,7 +145,11 @@ describe("execute route - per-integration authorization", () => {
 describe("execute route - lifecycle executability gate", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockAuthenticateInternalService.mockReturnValue({ authenticated: false });
+    mockAuthenticateInternalService.mockResolvedValue({
+      authenticated: false,
+      error: "Unauthorized",
+      status: 401,
+    });
     mockFindWorkflow.mockResolvedValue(workflow);
     mockGetWorkflowAccess.mockResolvedValue({
       isCreatorWithCurrentAccess: false,
@@ -160,9 +168,10 @@ describe("execute route - lifecycle executability gate", () => {
   });
 
   it("blocks a disabled workflow on the internal (automated) path with 404", async () => {
-    mockAuthenticateInternalService.mockReturnValue({
+    mockAuthenticateInternalService.mockResolvedValue({
       authenticated: true,
-      service: "scheduler",
+      caller: "scheduler",
+      scheme: "hmac",
     });
     mockFindWorkflow.mockResolvedValue({ ...workflow, enabled: false });
 

@@ -17,17 +17,18 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
  * Returns: { released: boolean, previousHolder: string | null }
  */
 export async function POST(request: Request): Promise<NextResponse> {
-  const auth = authenticateInternalService(request);
+  const rawBody = await request.text();
+  const auth = await authenticateInternalService(request, rawBody);
   if (!auth.authenticated) {
     return NextResponse.json(
       { error: auth.error ?? "Unauthorized" },
-      { status: 401 }
+      { status: auth.status }
     );
   }
 
   let body: unknown;
   try {
-    body = await request.json();
+    body = JSON.parse(rawBody);
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }

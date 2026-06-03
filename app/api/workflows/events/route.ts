@@ -1,44 +1,29 @@
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { getProtocol } from "@/lib/protocol-registry";
 import { db } from "@/lib/db";
 import { type Chain, chains, workflows } from "@/lib/db/schema";
+import { authenticateInternalService } from "@/lib/internal-service-auth";
+import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { getProtocol } from "@/lib/protocol-registry";
 import type { WorkflowNode } from "@/lib/workflow/store";
 import { WorkflowTriggerEnum } from "@/lib/workflow/store";
 import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 
 /**
- * Internal endpoint for workers to fetch active Event-type workflows
- * Returns only enabled workflows with Event trigger type
- * Requires X-Internal-Token header for authentication
+ * Internal endpoint for workers to fetch active Event-type workflows.
+ * Returns only enabled workflows with Event trigger type. Authentication
+ * goes through the shared authenticateInternalService helper, which accepts
+ * both the new HMAC scheme and the legacy X-Internal-Token / X-Service-Key
+ * bearers during the dual-accept rollout window.
  */
 export async function GET(request: Request) {
   try {
-    // Check for internal token authentication
-    const internalToken = request.headers.get("X-Internal-Token");
-    const expectedToken = process.env.EVENTS_SERVICE_API_KEY;
-
-    if (!expectedToken) {
-      logSystemError(
-        ErrorCategory.INFRASTRUCTURE,
-        "[Workflows Events] EVENTS_SERVICE_API_KEY not configured",
-        new Error(
-          "EVENTS_SERVICE_API_KEY environment variable is not configured"
-        ),
-        {
-          endpoint: "/api/workflows/events",
-          component: "events-service",
-        }
-      );
+    const auth = await authenticateInternalService(request);
+    if (!auth.authenticated) {
       return NextResponse.json(
-        { error: "Internal endpoint not configured" },
-        { status: 500 }
+        { error: auth.error ?? "Unauthorized" },
+        { status: auth.status }
       );
-    }
-
-    if (!internalToken || internalToken !== expectedToken) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const { searchParams } = new URL(request.url);

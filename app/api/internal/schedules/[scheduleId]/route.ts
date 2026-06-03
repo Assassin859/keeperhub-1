@@ -26,11 +26,11 @@ function computeNextRunTime(
 }
 
 export async function GET(request: Request, context: RouteContext) {
-  const auth = authenticateInternalService(request);
+  const auth = await authenticateInternalService(request);
   if (!auth.authenticated) {
     return NextResponse.json(
-      { error: auth.error || "Unauthorized" },
-      { status: 401 }
+      { error: auth.error ?? "Unauthorized" },
+      { status: auth.status }
     );
   }
 
@@ -48,17 +48,18 @@ export async function GET(request: Request, context: RouteContext) {
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
-  const auth = authenticateInternalService(request);
+  const rawBody = await request.text();
+  const auth = await authenticateInternalService(request, rawBody);
   if (!auth.authenticated) {
     return NextResponse.json(
-      { error: auth.error || "Unauthorized" },
-      { status: 401 }
+      { error: auth.error ?? "Unauthorized" },
+      { status: auth.status }
     );
   }
 
   const { scheduleId } = await context.params;
 
-  const body = await request.json();
+  const body = JSON.parse(rawBody);
   const { status, error } = body as { status?: string; error?: string };
 
   if (status !== "success" && status !== "error") {

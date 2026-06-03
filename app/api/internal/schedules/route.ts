@@ -6,11 +6,11 @@ import { authenticateInternalService } from "@/lib/internal-service-auth";
 import { workflowExecutableConditions } from "@/lib/workflow/executable";
 
 export async function GET(request: Request) {
-  const auth = authenticateInternalService(request);
+  const auth = await authenticateInternalService(request);
   if (!auth.authenticated) {
     return NextResponse.json(
-      { error: auth.error || "Unauthorized" },
-      { status: 401 }
+      { error: auth.error ?? "Unauthorized" },
+      { status: auth.status }
     );
   }
 
