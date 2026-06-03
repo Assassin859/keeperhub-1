@@ -206,15 +206,18 @@ env:
   REDIS_HOST:
     type: parameterStore
     name: redis-host
-    parameter_name: /eks/techops-staging/keeperhub/redis-host
+    parameter_name: /eks/techops-staging/keeperhub-events/redis-host
   REDIS_PORT:
     type: parameterStore
     name: redis-port
-    parameter_name: /eks/techops-staging/keeperhub/redis-port
+    parameter_name: /eks/techops-staging/keeperhub-events/redis-port
   REDIS_PASSWORD:
     type: parameterStore
     name: redis-password
-    parameter_name: /eks/techops-staging/keeperhub/redis-password
+    parameter_name: /eks/techops-staging/keeperhub-events/redis-password
+  REDIS_KEY_PREFIX:
+    type: kv
+    value: "pr-${PR_NUMBER}"
   OPENAI_API_KEY:
     type: parameterStore
     name: openai-api-key
