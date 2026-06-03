@@ -123,6 +123,7 @@ Step functions follow a two-layer pattern:
 import "server-only";
 
 import { fetchCredentials } from "@/lib/credential-fetcher";
+import { safeFetch } from "@/lib/safe-fetch";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import type { MyServiceCredentials } from "../credentials";
 
@@ -161,8 +162,10 @@ async function stepHandler(
   }
 
   try {
-    // Use fetch directly - no SDK dependencies
-    const response = await fetch("https://api.myservice.com/endpoint", {
+    // Use safeFetch - no SDK dependencies, and egress is routed through the
+    // SSRF guard. The `plugin` tag attributes blocked requests in metrics.
+    const response = await safeFetch("https://api.myservice.com/endpoint", {
+      plugin: "my-service",
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -229,7 +232,10 @@ export async function testMyService(credentials: Record<string, string>) {
       };
     }
 
-    // Option 2: Make a lightweight read-only API call
+    // Option 2: Make a lightweight read-only API call.
+    // NOTE: connection-test files (test.ts) are reachable from the
+    // client-bundled plugin registry, so they cannot import the server-only
+    // safe-fetch.ts. Use the raw fetch global here. Step files use safeFetch.
     const response = await fetch("https://api.myservice.com/v1/me", {
       method: "GET",
       headers: {
@@ -344,24 +350,50 @@ Available types for action `configFields`:
 
 ## Critical Rules
 
-### Use fetch, Not SDKs
+### Use safeFetch, Not SDKs or Raw fetch
 
-Plugins must use the native `fetch` API instead of SDK dependencies:
+Step files (under `steps/`) must use `safeFetch` from `@/lib/safe-fetch` instead
+of SDK dependencies or the raw `fetch` global. `safeFetch` routes every outbound
+request through the SSRF guard so a user-controlled or attacker-influenced
+destination cannot reach internal metadata endpoints or RFC1918 hosts. Raw
+`fetch`/`axios`/`http.request` in a step file is rejected by the `Forbid raw
+network egress in plugins` CI check.
+
+Exception: the connection-test file (`test.ts`) is reachable from the
+client-bundled plugin registry, so it cannot import the `server-only`
+`safe-fetch.ts`. Connection tests use the raw `fetch` global and are excluded
+from the CI check. Instead, any user-supplied URL field (a `formFields` entry
+with `type: "url"`, e.g. a custom instance URL) is validated on the server by
+`assertUrlIsPublic` in `handlePluginTest` (`lib/db/test-connection.ts`) before
+the test runs, so a connection test still cannot reach internal hosts.
+
+That server-side guard is always-on (it does not honor `SAFE_FETCH_ENFORCE`),
+so in local dev "Test Connection" will block a `localhost`/private instance URL
+even though workflow execution against it works (`safeFetch` runs in shadow
+mode locally). To exercise a local instance in dev, run the workflow instead of
+the connection test, or point at a public instance.
 
 ```typescript
-// CORRECT - use fetch directly
-const response = await fetch("https://api.service.com/endpoint", {
+import { safeFetch } from "@/lib/safe-fetch";
+
+// CORRECT - safeFetch with a plugin tag for observability
+const response = await safeFetch("https://api.service.com/endpoint", {
+  plugin: "my-service",
   method: "POST",
   headers: { Authorization: `Bearer ${apiKey}` },
   body: JSON.stringify(data),
 });
+
+// WRONG - raw fetch bypasses the SSRF guard
+const r = await fetch("https://api.service.com/endpoint");
 
 // WRONG - do not add SDK dependencies
 import { ServiceClient } from "service-sdk";  // Never do this
 const client = new ServiceClient(apiKey);
 ```
 
-This reduces supply chain attack surface by avoiding transitive dependencies.
+Using `safeFetch` instead of SDKs also reduces supply chain attack surface by
+avoiding transitive dependencies.
 
 ### Naming Conventions
 

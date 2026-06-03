@@ -1,6 +1,7 @@
 import "server-only";
 
 import { fetchCredentials } from "@/lib/credential-fetcher";
+import { safeFetch } from "@/lib/safe-fetch";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 import type { WebflowCredentials } from "../credentials";
@@ -86,9 +87,10 @@ async function stepHandler(
       body.publishToWebflowSubdomain = false;
     }
 
-    const response = await fetch(
+    const response = await safeFetch(
       `${WEBFLOW_API_URL}/sites/${encodeURIComponent(input.siteId)}/publish`,
       {
+        plugin: "webflow",
         method: "POST",
         headers: {
           Accept: "application/json",

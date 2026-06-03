@@ -1,12 +1,11 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { sendNewIpAttemptEmail } from "@/lib/email";
-import { describeUserAgentLabel } from "@/lib/security/device-label";
-import { gateRequestIp } from "@/lib/security/login-risk";
 import {
   buildPendingIpSetCookie,
   encodePendingIpCookie,
 } from "@/lib/pending-ip-cookie";
+import { gateRequestIp } from "@/lib/security/login-risk";
+import { maybeNotifyNewIp } from "@/lib/security/new-ip-notification";
 import {
   hasSessionCookie,
   isTrustedOrigin,
@@ -298,28 +297,6 @@ async function mfaBlock(request: NextRequest): Promise<MfaResult> {
 // IP gate
 // ---------------------------------------------------------------------------
 
-/**
- * Per-pod dedup of (userId, ip) pairs we've already alerted on. Prevents
- * a single new network from generating one email per page navigation
- * while the user is mid-verification. Same shape and eviction approach
- * as the trust caches in lib/security/login-risk.ts.
- */
-const NEW_IP_NOTIFIED: Set<string> = new Set();
-const NEW_IP_NOTIFIED_LIMIT = 10_000;
-
-function rememberNotified(key: string): void {
-  if (NEW_IP_NOTIFIED.size >= NEW_IP_NOTIFIED_LIMIT) {
-    const retained = Array.from(NEW_IP_NOTIFIED).slice(
-      -Math.floor(NEW_IP_NOTIFIED_LIMIT / 2)
-    );
-    NEW_IP_NOTIFIED.clear();
-    for (const k of retained) {
-      NEW_IP_NOTIFIED.add(k);
-    }
-  }
-  NEW_IP_NOTIFIED.add(key);
-}
-
 async function ipGateBlock(
   request: NextRequest,
   user: GatedUser
@@ -345,22 +322,13 @@ async function ipGateBlock(
     return null;
   }
 
-  const notifyKey = `${user.id}:${gate.ip}`;
-  if (!NEW_IP_NOTIFIED.has(notifyKey)) {
-    rememberNotified(notifyKey);
-    const userAgent = request.headers.get("user-agent");
-    // Fire-and-forget. SendGrid failures are already logged inside
-    // sendNewIpAttemptEmail and must not block the gate response.
-    sendNewIpAttemptEmail({
-      email: user.email,
-      ip: gate.ip,
-      country: gate.country,
-      device: describeUserAgentLabel(userAgent),
-      when: new Date(),
-    }).catch(() => {
-      // Already logged inside the email helper; swallow at the boundary.
-    });
-  }
+  maybeNotifyNewIp({
+    userId: user.id,
+    email: user.email,
+    ip: gate.ip,
+    country: gate.country,
+    userAgent: request.headers.get("user-agent"),
+  });
 
   const apiPath = request.nextUrl.pathname.startsWith("/api/");
   if (apiPath) {

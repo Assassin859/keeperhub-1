@@ -111,6 +111,32 @@ jobs:
             exit 1
           fi
 
+      - name: Forbid raw network egress in plugins
+        # Workflow step files run server-side in the executor and must route
+        # egress through safeFetch so the SSRF guard (lib/safe-fetch.ts) sees
+        # every outbound request. Bare fetch()/axios/http.request bypass the
+        # guard and can reach internal metadata endpoints (169.254.169.254)
+        # and RFC1918 hosts. Excluded:
+        #   - *.test.ts: vitest specs mock the network and never egress.
+        #   - plugins/*/test.ts: connection-test files are reachable from the
+        #     client-bundled plugin registry (plugins/index.ts), so they cannot
+        #     import safe-fetch.ts (which is "server-only"). Their egress is a
+        #     separate, server-architecture concern, not a step-file bypass.
+        # Uses git grep on the checked-out tree; no user input is interpolated.
+        run: |
+          MATCHES=$(git grep -nE '(^|[^0-9A-Za-z_.])fetch\(|(^|[^0-9A-Za-z_])axios([^0-9A-Za-z_]|$)|https?\.request\(' -- \
+            'plugins/' \
+            ':!*.test.ts' \
+            ':!plugins/*/test.ts' \
+            ':!*.md' \
+            ':!*.txt' \
+            | grep -vE 'safeFetch\(' || true)
+          if [ -n "$MATCHES" ]; then
+            echo "::error::Raw network egress found under plugins/. Route it through safeFetch(..., { plugin }) from @/lib/safe-fetch so the SSRF guard applies."
+            echo "$MATCHES"
+            exit 1
+          fi
+
   typecheck:
     runs-on: ubuntu-latest
     steps:
