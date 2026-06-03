@@ -98,10 +98,17 @@ jobs:
                 fi
               fi
             elif [[ "$ADDED_LABEL" == "deploy-pr-metrics" ]]; then
-              # Metrics-only path: PR env already deployed. Build a PR collector
-              # image and deploy just that satellite (TECH-6484).
+              # Metrics path: PR env already deployed. Build a PR collector image
+              # and re-run the deploy (which now includes the collector step).
+              # should-deploy=true is required because the collector deploy step
+              # lives inside the should-deploy-gated deploy job - same pattern as
+              # the deploy-pr-executor incremental path. (TECH-6484)
               if [[ "$HAS_DEPLOY_LABEL" == "true" ]]; then
+                echo "should-deploy=true" >> $GITHUB_OUTPUT
                 echo "should-deploy-collector=true" >> $GITHUB_OUTPUT
+                if [[ "$HAS_TEST_LABEL" == "true" ]]; then
+                  echo "should-test=true" >> $GITHUB_OUTPUT
+                fi
               fi
             fi
           elif [[ "$ACTION" == "unlabeled" ]]; then
