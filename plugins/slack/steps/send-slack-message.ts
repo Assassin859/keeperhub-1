@@ -1,6 +1,7 @@
 import "server-only";
 
 import { fetchCredentials } from "@/lib/credential-fetcher";
+import { safeFetch } from "@/lib/safe-fetch";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 import type { SlackCredentials } from "../credentials";
@@ -46,7 +47,8 @@ async function stepHandler(
   }
 
   try {
-    const response = await fetch(`${SLACK_API_URL}/chat.postMessage`, {
+    const response = await safeFetch(`${SLACK_API_URL}/chat.postMessage`, {
+      plugin: "slack",
       method: "POST",
       headers: {
         "Content-Type": "application/json",

@@ -1,5 +1,6 @@
 import "server-only";
 
+import { safeFetch } from "@/lib/safe-fetch";
 import { fetchCredentials } from "@/lib/credential-fetcher";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
@@ -59,7 +60,8 @@ async function linearQuery<T>(
   query: string,
   variables?: Record<string, unknown>
 ): Promise<LinearGraphQLResponse<T>> {
-  const response = await fetch(LINEAR_API_URL, {
+  const response = await safeFetch(LINEAR_API_URL, {
+    plugin: "linear",
     method: "POST",
     headers: {
       "Content-Type": "application/json",
