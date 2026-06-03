@@ -29,7 +29,7 @@ import {
   executeContractCallAsRole,
   executeContractCallAsSafe,
 } from "@/lib/safe/execute-as-safe";
-import { resolveSignerForNode } from "@/lib/safe/signer-resolver";
+import { resolveSignerForNode, SIGNER_MODE } from "@/lib/safe/signer-resolver";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import {
   classifyRevert,
@@ -336,7 +336,7 @@ export async function writeContractCore(
   // which would change msg.sender away from the Safe.
   if (
     !usePrivateMempool &&
-    signerMode.kind === "eoa" &&
+    signerMode.kind === SIGNER_MODE.EOA &&
     isGasSponsorshipEnabled()
   ) {
     try {
@@ -440,7 +440,7 @@ export async function writeContractCore(
 
     try {
       let receipt: Awaited<ReturnType<typeof adapter.executeContractCall>>;
-      if (signerMode.kind === "safe-role") {
+      if (signerMode.kind === SIGNER_MODE.SAFE_ROLE) {
         receipt = await executeContractCallAsRole(
           signer,
           {
@@ -461,7 +461,7 @@ export async function writeContractCore(
             rpcManager,
           }
         );
-      } else if (signerMode.kind === "safe") {
+      } else if (signerMode.kind === SIGNER_MODE.SAFE) {
         receipt = await executeContractCallAsSafe(
           signer,
           {

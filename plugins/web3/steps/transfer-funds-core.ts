@@ -25,7 +25,7 @@ import {
   executeNativeTransferAsRole,
   executeNativeTransferAsSafe,
 } from "@/lib/safe/execute-as-safe";
-import { resolveSignerForNode } from "@/lib/safe/signer-resolver";
+import { resolveSignerForNode, SIGNER_MODE } from "@/lib/safe/signer-resolver";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import {
   classifyRevert,
@@ -220,7 +220,7 @@ export async function transferFundsCore(
   // which would change msg.sender away from the Safe.
   if (
     !usePrivateMempool &&
-    signerMode.kind === "eoa" &&
+    signerMode.kind === SIGNER_MODE.EOA &&
     isGasSponsorshipEnabled()
   ) {
     // Try gas-sponsored execution first via Turnkey Gas Station (KEEP-464)
@@ -321,7 +321,7 @@ export async function transferFundsCore(
     // RPC failure here surfaces as a step error to stay consistent with
     // transfer-token-core's pattern. See review #923-r3 (MEDIUM).
     const fundingHolderAddress: string =
-      signerMode.kind === "safe-role" || signerMode.kind === "safe"
+      signerMode.kind === SIGNER_MODE.SAFE_ROLE || signerMode.kind === SIGNER_MODE.SAFE
         ? signerMode.safeAddress
         : walletAddress;
     const nativeBalance = await rpcManager.executeWithFailover(
@@ -349,7 +349,7 @@ export async function transferFundsCore(
 
     try {
       let receipt: Awaited<ReturnType<typeof adapter.sendTransaction>>;
-      if (signerMode.kind === "safe-role") {
+      if (signerMode.kind === SIGNER_MODE.SAFE_ROLE) {
         receipt = await executeNativeTransferAsRole(
           signer,
           {
@@ -367,7 +367,7 @@ export async function transferFundsCore(
             rpcManager,
           }
         );
-      } else if (signerMode.kind === "safe") {
+      } else if (signerMode.kind === SIGNER_MODE.SAFE) {
         receipt = await executeNativeTransferAsSafe(
           signer,
           {
