@@ -38,9 +38,9 @@ The wallet handles payment; the agent still needs a way to discover and call Kee
 
 With MCP + wallet both installed, ask your agent in plain language:
 
-> Use KeeperHub to check the ETH balance of `0xC300B53616532FDB0116bcE916c9307377362B51`.
+> Use KeeperHub to check the ETH balance of `0xAA70fAa583c0889164cFD9b45Aa075F6c4388Fee`.
 
-> Run the KeeperHub `mcp-test` workflow for `0xC300...`.
+> Run the KeeperHub `mcp-test` workflow for `0xAA70...`.
 
 The agent discovers available workflows at runtime through the KeeperHub meta-tools (`search_workflows` + `call_workflow`) and picks the best match. When a paid workflow returns a `402`, the wallet intercepts the challenge, signs through the server-side proxy (x402 on Base USDC or MPP on Tempo USDC.e), and the call retries transparently. Most KeeperHub paid workflows accept both protocols; today the wallet pays via x402 by default and uses MPP when the workflow is MPP-only. If the amount exceeds your `auto_approve_max_usd` the safety hook surfaces an inline permission prompt before any payment is authorised.
 
