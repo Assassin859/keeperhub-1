@@ -221,8 +221,10 @@ export async function testPluginName(
   }
 
   try {
-    const response = await safeFetch("https://api.example.com/me", {
-      plugin: "plugin-name",
+    // Connection-test files (test.ts) are reachable from the client-bundled
+    // plugin registry and cannot import the server-only safe-fetch.ts, so use
+    // the raw fetch global here. Step files use safeFetch.
+    const response = await fetch("https://api.example.com/me", {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
 

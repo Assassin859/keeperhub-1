@@ -232,9 +232,11 @@ export async function testMyService(credentials: Record<string, string>) {
       };
     }
 
-    // Option 2: Make a lightweight read-only API call
-    const response = await safeFetch("https://api.myservice.com/v1/me", {
-      plugin: "my-service",
+    // Option 2: Make a lightweight read-only API call.
+    // NOTE: connection-test files (test.ts) are reachable from the
+    // client-bundled plugin registry, so they cannot import the server-only
+    // safe-fetch.ts. Use the raw fetch global here. Step files use safeFetch.
+    const response = await fetch("https://api.myservice.com/v1/me", {
       method: "GET",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -350,12 +352,17 @@ Available types for action `configFields`:
 
 ### Use safeFetch, Not SDKs or Raw fetch
 
-Plugins must use `safeFetch` from `@/lib/safe-fetch` instead of SDK dependencies
-or the raw `fetch` global. `safeFetch` routes every outbound request through the
-SSRF guard so a user-controlled or attacker-influenced destination cannot reach
-internal metadata endpoints or RFC1918 hosts. Raw `fetch`/`axios`/`http.request`
-under `plugins/` is rejected by the `Forbid raw network egress in plugins` CI
-check.
+Step files (under `steps/`) must use `safeFetch` from `@/lib/safe-fetch` instead
+of SDK dependencies or the raw `fetch` global. `safeFetch` routes every outbound
+request through the SSRF guard so a user-controlled or attacker-influenced
+destination cannot reach internal metadata endpoints or RFC1918 hosts. Raw
+`fetch`/`axios`/`http.request` in a step file is rejected by the `Forbid raw
+network egress in plugins` CI check.
+
+Exception: the connection-test file (`test.ts`) is reachable from the
+client-bundled plugin registry, so it cannot import the `server-only`
+`safe-fetch.ts`. Connection tests use the raw `fetch` global and are excluded
+from the CI check.
 
 ```typescript
 import { safeFetch } from "@/lib/safe-fetch";

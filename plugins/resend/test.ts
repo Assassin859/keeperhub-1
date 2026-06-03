@@ -1,5 +1,3 @@
-import { safeFetch } from "@/lib/safe-fetch";
-
 const RESEND_API_URL = "https://api.resend.com";
 
 export async function testResend(credentials: Record<string, string>) {
@@ -14,8 +12,7 @@ export async function testResend(credentials: Record<string, string>) {
     }
 
     // Validate API key by fetching domains (lightweight read-only endpoint)
-    const response = await safeFetch(`${RESEND_API_URL}/domains`, {
-      plugin: "resend",
+    const response = await fetch(`${RESEND_API_URL}/domains`, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${apiKey}`,

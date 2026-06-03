@@ -1,4 +1,3 @@
-import { safeFetch } from "@/lib/safe-fetch";
 import type { SafeCredentials } from "./credentials";
 
 export async function testSafe(
@@ -11,10 +10,9 @@ export async function testSafe(
   }
 
   try {
-    const response = await safeFetch(
+    const response = await fetch(
       "https://api.safe.global/tx-service/eth/api/v1/about/",
       {
-        plugin: "safe",
         headers: {
           Authorization: `Bearer ${apiKey}`,
         },

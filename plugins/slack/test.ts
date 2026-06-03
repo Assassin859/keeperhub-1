@@ -1,5 +1,3 @@
-import { safeFetch } from "@/lib/safe-fetch";
-
 const SLACK_API_URL = "https://slack.com/api";
 
 type SlackAuthTestResponse = {
@@ -18,8 +16,7 @@ export async function testSlack(credentials: Record<string, string>) {
       };
     }
 
-    const response = await safeFetch(`${SLACK_API_URL}/auth.test`, {
-      plugin: "slack",
+    const response = await fetch(`${SLACK_API_URL}/auth.test`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
