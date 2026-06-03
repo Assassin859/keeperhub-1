@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { deploymentKey, newIpNotifyClaimKey } from "@/lib/redis-keys";
+import {
+  deploymentKey,
+  newIpNotifyClaimKey,
+  trustedIpKey,
+} from "@/lib/redis-keys";
 
 describe("deploymentKey", () => {
   it("prefixes a single part with the default 'local' namespace", () => {
@@ -16,6 +20,12 @@ describe("newIpNotifyClaimKey", () => {
     expect(newIpNotifyClaimKey("u1", "1.2.3.0")).toBe(
       "local:ip-notify:u1:1.2.3.0"
     );
+  });
+});
+
+describe("trustedIpKey", () => {
+  it("builds a trust key through deploymentKey", () => {
+    expect(trustedIpKey("u1", "1.2.3.0")).toBe("local:trust:u1:1.2.3.0");
   });
 });
 
