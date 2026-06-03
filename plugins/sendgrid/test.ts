@@ -1,3 +1,5 @@
+import { safeFetch } from "@/lib/safe-fetch";
+
 const SENDGRID_API_URL = "https://api.sendgrid.com";
 
 export async function testSendGrid(credentials: Record<string, string>) {
@@ -12,7 +14,8 @@ export async function testSendGrid(credentials: Record<string, string>) {
     }
 
     // Validate API key by fetching user profile (lightweight read-only endpoint)
-    const response = await fetch(`${SENDGRID_API_URL}/v3/user/profile`, {
+    const response = await safeFetch(`${SENDGRID_API_URL}/v3/user/profile`, {
+      plugin: "sendgrid",
       method: "GET",
       headers: {
         Authorization: `Bearer ${apiKey}`,

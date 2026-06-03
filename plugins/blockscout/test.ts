@@ -1,3 +1,5 @@
+import { safeFetch } from "@/lib/safe-fetch";
+
 const DEFAULT_BLOCKSCOUT_API_URL = "https://eth.blockscout.com";
 const TRAILING_SLASH_RE = /\/+$/;
 
@@ -16,7 +18,8 @@ export async function testBlockscout(
     }
 
     // Lightweight read-only endpoint to confirm the instance is reachable.
-    const response = await fetch(url.toString(), {
+    const response = await safeFetch(url.toString(), {
+      plugin: "blockscout",
       method: "GET",
       headers: { Accept: "application/json" },
     });

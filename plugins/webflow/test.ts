@@ -1,3 +1,5 @@
+import { safeFetch } from "@/lib/safe-fetch";
+
 const WEBFLOW_API_URL = "https://api.webflow.com/v2";
 
 export async function testWebflow(credentials: Record<string, string>) {
@@ -12,7 +14,8 @@ export async function testWebflow(credentials: Record<string, string>) {
     }
 
     // Use the list sites endpoint to validate the API key
-    const response = await fetch(`${WEBFLOW_API_URL}/sites`, {
+    const response = await safeFetch(`${WEBFLOW_API_URL}/sites`, {
+      plugin: "webflow",
       method: "GET",
       headers: {
         Accept: "application/json",

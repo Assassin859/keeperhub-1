@@ -1,3 +1,5 @@
+import { safeFetch } from "@/lib/safe-fetch";
+
 export async function testClerk(credentials: Record<string, string>) {
   try {
     const secretKey = credentials.CLERK_SECRET_KEY;
@@ -22,7 +24,8 @@ export async function testClerk(credentials: Record<string, string>) {
     }
 
     // Test the connection by fetching users list (limit 1)
-    const response = await fetch("https://api.clerk.com/v1/users?limit=1", {
+    const response = await safeFetch("https://api.clerk.com/v1/users?limit=1", {
+      plugin: "clerk",
       headers: {
         Authorization: `Bearer ${secretKey}`,
         "Content-Type": "application/json",

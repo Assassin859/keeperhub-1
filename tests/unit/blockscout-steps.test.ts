@@ -15,6 +15,11 @@ vi.mock("@/lib/credential-fetcher", () => ({
   fetchCredentials: (...args: unknown[]) => mockFetchCredentials(...args),
 }));
 
+// Blockscout egress routes through safeFetch (the SSRF guard), not the raw
+// fetch global. Mock it so these tests assert on the URL passed to safeFetch.
+const { safeFetch } = vi.hoisted(() => ({ safeFetch: vi.fn() }));
+vi.mock("@/lib/safe-fetch", () => ({ safeFetch }));
+
 import { getAddressBalanceStep } from "@/plugins/blockscout/steps/get-address-balance";
 import { getAddressCountersStep } from "@/plugins/blockscout/steps/get-address-counters";
 import { getAddressInfoStep } from "@/plugins/blockscout/steps/get-address-info";
@@ -24,17 +29,17 @@ import { getTransactionStep } from "@/plugins/blockscout/steps/get-transaction";
 function mockFetchOnce(body: unknown, init?: { ok?: boolean; status?: number }) {
   const ok = init?.ok ?? true;
   const status = init?.status ?? 200;
-  global.fetch = vi.fn().mockResolvedValue({
+  safeFetch.mockReset();
+  safeFetch.mockResolvedValue({
     ok,
     status,
     statusText: ok ? "OK" : "Error",
     json: () => Promise.resolve(body),
-  }) as unknown as typeof fetch;
+  });
 }
 
 function lastFetchUrl(): string {
-  const calls = (global.fetch as unknown as { mock: { calls: unknown[][] } })
-    .mock.calls;
+  const calls = safeFetch.mock.calls;
   return String(calls.at(-1)?.[0]);
 }
 

@@ -1,3 +1,5 @@
+import { safeFetch } from "@/lib/safe-fetch";
+
 export async function testTelegram(credentials: Record<string, string>) {
   try {
     const botToken = credentials.TELEGRAM_BOT_TOKEN;
@@ -7,9 +9,10 @@ export async function testTelegram(credentials: Record<string, string>) {
     }
 
     // Validate bot token by calling getMe endpoint
-    const response = await fetch(
+    const response = await safeFetch(
       `https://api.telegram.org/bot${botToken}/getMe`,
       {
+        plugin: "telegram",
         method: "GET",
       }
     );
