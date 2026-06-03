@@ -29,7 +29,7 @@ The `"use step"` directive marks a file for workflow bundler processing. Violati
 
 2. **To share logic between step files**: extract into a `*-core.ts` file (no `"use step"` directive), then import from both step files. See `read-contract-core.ts`, `decode-calldata-core.ts`, `transfer-funds-core.ts` as examples.
 
-3. **No Node.js-only SDKs** in step files (AI SDK, etc.) -- use `safeFetch` from `@/lib/safe-fetch` for HTTP calls. Pass `{ plugin: "<name>" }` so the SSRF guard sees every outbound request; raw `fetch`/`axios`/`http.request` under `plugins/` is rejected by the `Forbid raw network egress in plugins` CI check.
+3. **No Node.js-only SDKs** in step files (AI SDK, etc.); use `safeFetch` from `@/lib/safe-fetch` for HTTP calls. Pass `{ plugin: "<name>" }` so the SSRF guard sees every outbound request; raw `fetch`/`axios`/`http.request` under `plugins/` is rejected by the `Forbid raw network egress in plugins` CI check.
 
 4. **The core-file pattern**:
    - `{action}.ts` -- contains `"use step"`, exports the step function + `_integrationType` + types

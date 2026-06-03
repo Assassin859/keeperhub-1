@@ -88,10 +88,17 @@ export async function handleDatabaseTest(
  * Connection-test files (plugins/*\/test.ts) are reachable from the
  * client-bundled plugin registry, so they cannot import the server-only SSRF
  * guard and fetch user-supplied instance URLs with raw `fetch`. Validate every
- * user-supplied URL field here, on the server, before the test runs -- mirrors
+ * user-supplied URL field here, on the server, before the test runs, mirroring
  * the assertConnectionUrlIsPublic pre-flight used for database connection
  * tests. This is a write-time DNS check; the test's own one-shot fetch happens
  * immediately after, so the rebinding window is negligible.
+ *
+ * Note: `assertUrlIsPublic` is always-on; it does not honor
+ * `SAFE_FETCH_ENFORCE`, matching the database-test and RPC pre-flights. So
+ * "Test Connection" blocks a `localhost`/private instance URL even in local
+ * dev, where `safeFetch` (used by workflow execution) runs in shadow mode and
+ * would allow it. If you need to test against a local explorer in dev, run the
+ * workflow rather than the connection test, or point at a public instance.
  */
 async function assertPluginUrlFieldsArePublic(
   plugin: IntegrationPlugin,

@@ -362,7 +362,16 @@ network egress in plugins` CI check.
 Exception: the connection-test file (`test.ts`) is reachable from the
 client-bundled plugin registry, so it cannot import the `server-only`
 `safe-fetch.ts`. Connection tests use the raw `fetch` global and are excluded
-from the CI check.
+from the CI check. Instead, any user-supplied URL field (a `formFields` entry
+with `type: "url"`, e.g. a custom instance URL) is validated on the server by
+`assertUrlIsPublic` in `handlePluginTest` (`lib/db/test-connection.ts`) before
+the test runs, so a connection test still cannot reach internal hosts.
+
+That server-side guard is always-on (it does not honor `SAFE_FETCH_ENFORCE`),
+so in local dev "Test Connection" will block a `localhost`/private instance URL
+even though workflow execution against it works (`safeFetch` runs in shadow
+mode locally). To exercise a local instance in dev, run the workflow instead of
+the connection test, or point at a public instance.
 
 ```typescript
 import { safeFetch } from "@/lib/safe-fetch";

@@ -123,7 +123,7 @@ async function stepHandler(
   }
 
   try {
-    // Use safeFetch -- NO SDK dependencies, and egress goes through the SSRF guard
+    // Use safeFetch. NO SDK dependencies, and egress goes through the SSRF guard
     const response = await safeFetch("https://api.example.com/endpoint", {
       plugin: "plugin-name",
       method: "POST",
@@ -313,7 +313,7 @@ CRITICAL "use step" bundler rules (violations break production builds):
 
 2. SHARING LOGIC BETWEEN STEP FILES: extract to `*-core.ts` file WITHOUT "use step", both step files import from it
 
-3. NO NODE.JS-ONLY DEPENDENCIES: no Vercel AI SDK, use `safeFetch` from `@/lib/safe-fetch` (pass `{ plugin }`) instead -- raw `fetch`/`axios`/`http.request` under `plugins/` fails the CI egress guard
+3. NO NODE.JS-ONLY DEPENDENCIES: no Vercel AI SDK, use `safeFetch` from `@/lib/safe-fetch` (pass `{ plugin }`) instead. Raw `fetch`/`axios`/`http.request` under `plugins/` fails the CI egress guard
 
 4. Security-critical steps: set `stepFunction.maxRetries = 0` after function definition (fail-safe, not fail-open)
 </bundler_constraints>
@@ -329,7 +329,7 @@ Post-creation steps:
 <critical_rules>
 Production rules (violations break the build):
 
-1. Use `safeFetch` (from `@/lib/safe-fetch`, with `{ plugin }`) not SDKs or raw `fetch` -- routes egress through the SSRF guard and avoids Node.js-only transitive deps
+1. Use `safeFetch` (from `@/lib/safe-fetch`, with `{ plugin }`) not SDKs or raw `fetch`. Routes egress through the SSRF guard and avoids Node.js-only transitive deps
 2. All step files must start with `import "server-only";`
 3. Entry point must have `"use step";` directive
 4. Must export `_integrationType` constant matching plugin type

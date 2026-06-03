@@ -117,12 +117,12 @@ jobs:
         # every outbound request. Bare fetch()/axios/http.request bypass the
         # guard and can reach internal metadata endpoints (169.254.169.254)
         # and RFC1918 hosts. Excluded:
-        #   - *.test.ts  -- vitest specs mock the network and never egress.
-        #   - plugins/*/test.ts -- connection-test files are reachable from the
+        #   - *.test.ts: vitest specs mock the network and never egress.
+        #   - plugins/*/test.ts: connection-test files are reachable from the
         #     client-bundled plugin registry (plugins/index.ts), so they cannot
         #     import safe-fetch.ts (which is "server-only"). Their egress is a
         #     separate, server-architecture concern, not a step-file bypass.
-        # Uses git grep on the checked-out tree -- no user input is interpolated.
+        # Uses git grep on the checked-out tree; no user input is interpolated.
         run: |
           MATCHES=$(git grep -nE '(^|[^0-9A-Za-z_.])fetch\(|(^|[^0-9A-Za-z_])axios([^0-9A-Za-z_]|$)|https?\.request\(' -- \
             'plugins/' \

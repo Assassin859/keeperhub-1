@@ -410,7 +410,7 @@ restricted runtime (similar to Cloudflare Workers). This has hard constraints:
    - NEVER import a function from one step file into another step file
 
 3. NO NODE.JS-ONLY DEPENDENCIES in step files
-   - The Vercel AI SDK (`ai`, `@ai-sdk/*`) has Node.js transitive deps -- use safeFetch instead
+   - The Vercel AI SDK (`ai`, `@ai-sdk/*`) has Node.js transitive deps; use safeFetch instead
    - Heavy libraries like ethers.js work IF used only internally (not re-exported)
    - When in doubt, use safeFetch calls to external APIs
    - If a library works in Cloudflare Workers, it works in "use step" context
