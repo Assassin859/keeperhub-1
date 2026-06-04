@@ -276,29 +276,37 @@ const plugins = [
           .orderBy(memberTable.createdAt)
           .limit(1);
 
-        if (targetMembership) {
-          await tx
-            .update(workflows)
-            .set({
-              userId: toUserId,
-              organizationId: targetMembership.organizationId,
-              isAnonymous: false,
-            })
-            .where(eq(workflows.userId, fromUserId));
-
-          await tx
-            .update(integrations)
-            .set({
-              userId: toUserId,
-              organizationId: targetMembership.organizationId,
-            })
-            .where(eq(integrations.userId, fromUserId));
-
-          await tx
-            .update(workflowExecutions)
-            .set({ userId: toUserId })
-            .where(eq(workflowExecutions.userId, fromUserId));
+        if (!targetMembership) {
+          logSystemError(
+            ErrorCategory.AUTH,
+            "[Auth] Account link: no owner org found for target user; anonymous content not re-parented",
+            new Error("targetMembership undefined"),
+            { fromUserId, toUserId }
+          );
+          return;
         }
+
+        await tx
+          .update(workflows)
+          .set({
+            userId: toUserId,
+            organizationId: targetMembership.organizationId,
+            isAnonymous: false,
+          })
+          .where(eq(workflows.userId, fromUserId));
+
+        await tx
+          .update(integrations)
+          .set({
+            userId: toUserId,
+            organizationId: targetMembership.organizationId,
+          })
+          .where(eq(integrations.userId, fromUserId));
+
+        await tx
+          .update(workflowExecutions)
+          .set({ userId: toUserId })
+          .where(eq(workflowExecutions.userId, fromUserId));
       });
     },
   }),
