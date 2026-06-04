@@ -25,6 +25,7 @@ import { sanitizeDescription } from "@/lib/sanitize-description";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import { getWorkflowAccess } from "@/lib/workflow/access";
 import { hashWorkflowDefinition } from "@/lib/workflow/content-hash";
+import { recordWorkflowSnapshot } from "@/lib/workflow/history";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
 import { softDeleteValues } from "@/lib/workflow/soft-delete";
 import { isReservedSlug } from "@/lib/workflow/reserved-slugs";
@@ -679,6 +680,15 @@ export async function PATCH(
         ),
       },
       metadata: buildAuditMetadata(request),
+    });
+
+    // Full version snapshot for the change-history timeline + restore.
+    await recordWorkflowSnapshot({
+      workflowId,
+      before: existingWorkflow,
+      after: updatedWorkflow,
+      actor: { userId, organizationId, authMethod: authContext.authMethod },
+      source: "update",
     });
 
     return NextResponse.json({

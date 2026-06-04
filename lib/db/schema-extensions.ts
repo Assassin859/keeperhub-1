@@ -1053,3 +1053,61 @@ export const securityAuditLog = pgTable(
 // Type exports for Security Audit Log table
 export type SecurityAuditLog = typeof securityAuditLog.$inferSelect;
 export type NewSecurityAuditLog = typeof securityAuditLog.$inferInsert;
+
+/**
+ * Workflow History table
+ *
+ * One row per saved workflow version. Complements security_audit_log: that
+ * table keeps a lightweight cross-resource "who did what" event for each
+ * workflow change; this table holds the heavy per-version payload needed to
+ * load, diff, and restore a past version. It mirrors the audit-log actor
+ * capture (changedByUserId, authMethod, createdAt) so "who did it" is
+ * answerable here too.
+ *
+ * `snapshot` stores the full definition (incl. edges, which are structural --
+ * the executor builds its run graph from them). `change` is the deep-diff
+ * against the previous version, and both it and `contentHash` are computed
+ * over the MEANINGFUL definition only (cosmetic ReactFlow state stripped via
+ * lib/workflow/content-hash.ts), so a cosmetic node drag does not create a
+ * version while a connection change does. `contentHash` joins to
+ * workflow_executions.executed_workflow_hash.
+ */
+export const workflowHistory = pgTable(
+  "workflow_history",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    workflowId: text("workflow_id")
+      .notNull()
+      .references(() => workflows.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id").references(() => organization.id, {
+      onDelete: "set null",
+    }),
+    // Per-workflow monotonic version (MAX(version)+1 at write time).
+    version: integer("version").notNull(),
+    changedByUserId: text("changed_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    authMethod: text("auth_method").notNull(),
+    source: text("source").notNull(), // create | update | listing
+    // biome-ignore lint/suspicious/noExplicitAny: JSONB - full workflow snapshot, shape is the workflow definition
+    snapshot: jsonb("snapshot").$type<any>(),
+    // biome-ignore lint/suspicious/noExplicitAny: JSONB - deep-diff change records vs the previous version
+    change: jsonb("change").$type<any>(),
+    contentHash: text("content_hash").notNull(),
+    previousVersion: integer("previous_version"),
+    previousHash: text("previous_hash"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("uq_workflow_history_workflow_version").on(
+      table.workflowId,
+      table.version
+    ),
+    index("idx_workflow_history_content_hash").on(table.contentHash),
+  ]
+);
+
+export type WorkflowHistory = typeof workflowHistory.$inferSelect;
+export type NewWorkflowHistory = typeof workflowHistory.$inferInsert;

@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
+import { recordWorkflowSnapshot } from "@/lib/workflow/history";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { projects, tags, workflows } from "@/lib/db/schema";
@@ -241,6 +242,15 @@ export async function POST(request: Request) {
       resourceId: newWorkflow.id,
       after: { name: newWorkflow.name, enabled: newWorkflow.enabled },
       metadata: buildAuditMetadata(request),
+    });
+
+    // First version snapshot for the change-history timeline.
+    await recordWorkflowSnapshot({
+      workflowId: newWorkflow.id,
+      before: null,
+      after: newWorkflow,
+      actor: { userId, organizationId, authMethod: authContext.authMethod },
+      source: "create",
     });
 
     return NextResponse.json({

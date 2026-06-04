@@ -49,4 +49,34 @@ describe("hashWorkflowDefinition", () => {
       hashWorkflowDefinition(nodes, edges)
     );
   });
+
+  it("ignores cosmetic node fields (position, selection, size)", () => {
+    const moved = [
+      {
+        id: "n1",
+        type: "trigger",
+        data: { kind: "Webhook" },
+        position: { x: 999, y: 42 },
+        selected: true,
+        width: 240,
+        height: 80,
+      },
+    ];
+    expect(hashWorkflowDefinition(moved, edges)).toBe(
+      hashWorkflowDefinition(nodes, edges)
+    );
+  });
+
+  it("ignores cosmetic edge styling but still tracks connectivity", () => {
+    const styledSameConn = [
+      { id: "e1", source: "n1", target: "n2", animated: true, style: { x: 1 } },
+    ];
+    expect(hashWorkflowDefinition(nodes, styledSameConn)).toBe(
+      hashWorkflowDefinition(nodes, edges)
+    );
+    const rewired = [{ id: "e1", source: "n1", target: "n9" }];
+    expect(hashWorkflowDefinition(nodes, rewired)).not.toBe(
+      hashWorkflowDefinition(nodes, edges)
+    );
+  });
 });

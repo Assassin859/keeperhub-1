@@ -664,6 +664,7 @@ export {
   type NewSafeWallet,
   type NewSecurityAuditLog,
   type NewSupportedToken,
+  type NewWorkflowHistory,
   type NewWorkflowPublicTag,
   type OrganizationApiKey,
   type OrganizationSpendCap,
@@ -696,8 +697,10 @@ export {
   securityAuditLog,
   supportedTokens,
   type WalletLock,
+  type WorkflowHistory,
   type WorkflowPublicTag,
   walletLocks,
+  workflowHistory,
   workflowPublicTags,
   workflowRatings,
 } from "./schema-extensions";
