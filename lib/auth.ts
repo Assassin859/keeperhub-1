@@ -263,12 +263,17 @@ const plugins = [
       const toUserId = data.newUser.user.id;
 
       await db.transaction(async (tx) => {
+        // Selects the user's personal org (the one minted at signup, which is
+        // always the oldest owner membership). A user is unlikely to own
+        // multiple orgs at link time, but if they do the content goes into
+        // the oldest one as the best proxy for their primary workspace.
         const [targetMembership] = await tx
           .select({ organizationId: memberTable.organizationId })
           .from(memberTable)
           .where(
             and(eq(memberTable.userId, toUserId), eq(memberTable.role, "owner"))
           )
+          .orderBy(memberTable.createdAt)
           .limit(1);
 
         if (targetMembership) {
