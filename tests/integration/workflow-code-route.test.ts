@@ -33,6 +33,9 @@ vi.mock("@/lib/db", () => ({
   db: {
     select: vi.fn(() => ({
       from: vi.fn(() => ({
+        innerJoin: vi.fn(() => ({
+          where: vi.fn(() => ({ limit: mockMemberLimit })),
+        })),
         where: vi.fn(() => ({
           limit: mockMemberLimit,
         })),
