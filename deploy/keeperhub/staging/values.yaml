@@ -447,6 +447,10 @@ env:
   ALLOW_TEST_ENDPOINTS:
     type: kv
     value: "true"
+  KH_ADMIN_SECRET:
+    type: parameterStore
+    name: kh-admin-secret
+    parameter_name: /eks/techops-staging/keeperhub/kh-admin-secret
   SAFE_FETCH_ENFORCE:
     type: kv
     value: "true"
