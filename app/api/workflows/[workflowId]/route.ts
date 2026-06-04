@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { revalidateTag } from "next/cache";
 import { NextResponse } from "next/server";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
@@ -7,7 +7,7 @@ import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { extractActionTypeNodes } from "@/lib/features";
 import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
-import { projects, publicTags, tags, workflowExecutions, workflowPublicTags, workflowSchedules, workflows } from "@/lib/db/schema";
+import { projects, publicTags, tags, workflowExecutions, workflowHistory, workflowPublicTags, workflowSchedules, workflows } from "@/lib/db/schema";
 import {
   deriveWorkflowType,
   findFirstWriteActionNode,
@@ -23,6 +23,7 @@ import {
 } from "@/lib/schedule-service";
 import { sanitizeDescription } from "@/lib/sanitize-description";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
+import { isOrgAdmin } from "@/lib/security/org-role";
 import { getWorkflowAccess } from "@/lib/workflow/access";
 import { hashWorkflowDefinition } from "@/lib/workflow/content-hash";
 import { recordWorkflowSnapshot } from "@/lib/workflow/history";
@@ -133,6 +134,51 @@ export async function GET(
     }
 
     const hasFullAccess = access.hasFullAccess;
+
+    // ?version=N returns a historical snapshot instead of the live row.
+    // History is an audit trail, so it is gated to org admins/owners with
+    // full workflow access, scoped to the workflow's org.
+    const versionParam = new URL(request.url).searchParams.get("version");
+    if (versionParam !== null) {
+      const versionNumber = Number.parseInt(versionParam, 10);
+      if (Number.isNaN(versionNumber)) {
+        return NextResponse.json({ error: "Invalid version" }, { status: 400 });
+      }
+      if (
+        !(hasFullAccess && userId && workflow.organizationId) ||
+        !(await isOrgAdmin(userId, workflow.organizationId))
+      ) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      const [historyRow] = await db
+        .select()
+        .from(workflowHistory)
+        .where(
+          and(
+            eq(workflowHistory.workflowId, workflowId),
+            eq(workflowHistory.version, versionNumber)
+          )
+        )
+        .limit(1);
+      if (!historyRow) {
+        return NextResponse.json(
+          { error: "Version not found" },
+          { status: 404 }
+        );
+      }
+      const snapshot = (historyRow.snapshot ?? {}) as Record<string, unknown>;
+      return NextResponse.json({
+        ...workflow,
+        ...snapshot,
+        id: workflow.id,
+        version: historyRow.version,
+        isHistoricalVersion: true,
+        versionCreatedAt: historyRow.createdAt.toISOString(),
+        createdAt: workflow.createdAt.toISOString(),
+        updatedAt: workflow.updatedAt.toISOString(),
+        isOwner: hasFullAccess,
+      });
+    }
 
     const workflowTags = await fetchWorkflowPublicTags(workflowId);
 

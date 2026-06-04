@@ -1,8 +1,8 @@
-import { and, desc, eq, lt } from "drizzle-orm";
+import { and, desc, eq, inArray, lt } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { member, securityAuditLog } from "@/lib/db/schema";
+import { member, securityAuditLog, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 
@@ -98,8 +98,26 @@ export async function GET(request: Request) {
       .limit(limit + 1);
 
     const hasMore = rows.length > limit;
-    const events = hasMore ? rows.slice(0, limit) : rows;
-    const nextCursor = hasMore ? events.at(-1)?.createdAt.toISOString() : null;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+    const nextCursor = hasMore ? page.at(-1)?.createdAt.toISOString() : null;
+
+    // Enrich actor ids -> name/email so the UI can show "who did it".
+    const actorIds = [
+      ...new Set(page.map((r) => r.actorUserId).filter(Boolean)),
+    ] as string[];
+    const actors = actorIds.length
+      ? await db
+          .select({ id: users.id, name: users.name, email: users.email })
+          .from(users)
+          .where(inArray(users.id, actorIds))
+      : [];
+    const actorMap = new Map(actors.map((a) => [a.id, a]));
+    const events = page.map((r) => ({
+      ...r,
+      actor: r.actorUserId
+        ? (actorMap.get(r.actorUserId) ?? { id: r.actorUserId })
+        : null,
+    }));
 
     return NextResponse.json({ events, nextCursor });
   } catch (error) {
