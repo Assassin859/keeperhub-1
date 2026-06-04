@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 import { NextResponse } from "next/server";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { projects, tags, workflows } from "@/lib/db/schema";
@@ -227,6 +228,20 @@ export async function POST(request: Request) {
         ...(typeof body.enabled === "boolean" ? { enabled: body.enabled } : {}),
       })
       .returning();
+
+    await recordAuditEvent({
+      actor: {
+        userId,
+        organizationId,
+        authMethod: authContext.authMethod,
+        apiKeyId: authContext.apiKeyId,
+      },
+      action: "workflow.created",
+      resourceType: "workflow",
+      resourceId: newWorkflow.id,
+      after: { name: newWorkflow.name, enabled: newWorkflow.enabled },
+      metadata: buildAuditMetadata(request),
+    });
 
     return NextResponse.json({
       ...newWorkflow,

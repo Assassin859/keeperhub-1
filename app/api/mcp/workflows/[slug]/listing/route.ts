@@ -11,6 +11,7 @@ import {
 import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { sanitizeDescription } from "@/lib/sanitize-description";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 const LISTING_RATE_LIMIT = 60;
 const LISTING_RATE_WINDOW_MS = 60_000;
@@ -189,6 +190,20 @@ export async function POST(
     return mapListingError(result.error, result.details);
   }
 
+  await recordAuditEvent({
+    actor: {
+      userId: authContext.userId,
+      organizationId,
+      authMethod: authContext.authMethod,
+      apiKeyId: authContext.apiKeyId,
+    },
+    action: "workflow.listed",
+    resourceType: "workflow",
+    resourceId: workflowId,
+    after: { slug: result.listing.listedSlug },
+    metadata: buildAuditMetadata(request),
+  });
+
   return NextResponse.json(result.listing, { status: 200 });
 }
 
@@ -250,6 +265,19 @@ export async function PATCH(
     return mapListingError(result.error, result.details);
   }
 
+  await recordAuditEvent({
+    actor: {
+      userId: authContext.userId,
+      organizationId,
+      authMethod: authContext.authMethod,
+      apiKeyId: authContext.apiKeyId,
+    },
+    action: "workflow.listing_updated",
+    resourceType: "workflow",
+    resourceId: workflowId,
+    metadata: buildAuditMetadata(request),
+  });
+
   return NextResponse.json(result.listing, { status: 200 });
 }
 
@@ -279,6 +307,19 @@ export async function DELETE(
   if (!result.ok) {
     return mapListingError(result.error, result.details);
   }
+
+  await recordAuditEvent({
+    actor: {
+      userId: authContext.userId,
+      organizationId,
+      authMethod: authContext.authMethod,
+      apiKeyId: authContext.apiKeyId,
+    },
+    action: "workflow.unlisted",
+    resourceType: "workflow",
+    resourceId: workflowId,
+    metadata: buildAuditMetadata(request),
+  });
 
   return NextResponse.json(result.listing, { status: 200 });
 }

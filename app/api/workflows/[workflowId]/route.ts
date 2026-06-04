@@ -22,7 +22,9 @@ import {
   syncWorkflowSchedule,
 } from "@/lib/schedule-service";
 import { sanitizeDescription } from "@/lib/sanitize-description";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import { getWorkflowAccess } from "@/lib/workflow/access";
+import { hashWorkflowDefinition } from "@/lib/workflow/content-hash";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
 import { softDeleteValues } from "@/lib/workflow/soft-delete";
 import { isReservedSlug } from "@/lib/workflow/reserved-slugs";
@@ -643,6 +645,42 @@ export async function PATCH(
 
     await handlePostUpdateSideEffects(workflowId, body);
 
+    // Audit the change with scalar fields plus a content hash of the
+    // definition, so the row stays small. The full nodes/edges snapshot and
+    // structural diff are the job of the workflow change-history table.
+    await recordAuditEvent({
+      actor: {
+        userId,
+        organizationId,
+        authMethod: authContext.authMethod,
+        apiKeyId: authContext.apiKeyId,
+      },
+      action: "workflow.updated",
+      resourceType: "workflow",
+      resourceId: workflowId,
+      before: {
+        name: existingWorkflow.name,
+        enabled: existingWorkflow.enabled,
+        visibility: existingWorkflow.visibility,
+        isListed: existingWorkflow.isListed,
+        contentHash: hashWorkflowDefinition(
+          existingWorkflow.nodes,
+          existingWorkflow.edges
+        ),
+      },
+      after: {
+        name: updatedWorkflow.name,
+        enabled: updatedWorkflow.enabled,
+        visibility: updatedWorkflow.visibility,
+        isListed: updatedWorkflow.isListed,
+        contentHash: hashWorkflowDefinition(
+          updatedWorkflow.nodes,
+          updatedWorkflow.edges
+        ),
+      },
+      metadata: buildAuditMetadata(request),
+    });
+
     return NextResponse.json({
       ...updatedWorkflow,
       createdAt: updatedWorkflow.createdAt.toISOString(),
@@ -764,6 +802,19 @@ export async function DELETE(
           .where(eq(workflows.id, workflowId));
       });
     }
+
+    await recordAuditEvent({
+      actor: {
+        userId,
+        organizationId,
+        authMethod: authContext.authMethod,
+        apiKeyId: authContext.apiKeyId,
+      },
+      action: "workflow.deleted",
+      resourceType: "workflow",
+      resourceId: workflowId,
+      metadata: { ...buildAuditMetadata(request), forced: force },
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {
