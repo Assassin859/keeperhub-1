@@ -1,6 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { member } from "@/lib/db/schema";
+import { member, users } from "@/lib/db/schema";
 
 type WorkflowAccessSubject = {
   userId: string | null;
@@ -35,8 +35,13 @@ export async function isUserMemberOfOrganization(
   const [membership] = await db
     .select({ id: member.id })
     .from(member)
+    .innerJoin(users, eq(member.userId, users.id))
     .where(
-      and(eq(member.userId, userId), eq(member.organizationId, organizationId))
+      and(
+        eq(member.userId, userId),
+        eq(member.organizationId, organizationId),
+        isNull(users.deactivatedAt)
+      )
     )
     .limit(1);
 
