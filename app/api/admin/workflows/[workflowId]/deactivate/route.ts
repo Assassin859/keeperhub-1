@@ -1,0 +1,59 @@
+import { and, eq, isNull } from "drizzle-orm";
+import { NextResponse } from "next/server";
+import { db } from "@/lib/db";
+import { workflows } from "@/lib/db/schema";
+import { authenticateKhAdmin } from "@/lib/kh-admin-auth";
+import { ErrorCategory, logSystemError } from "@/lib/logging";
+
+export async function POST(
+  request: Request,
+  context: { params: Promise<{ workflowId: string }> }
+): Promise<NextResponse> {
+  const auth = authenticateKhAdmin(request);
+  if (!auth.authenticated) {
+    return NextResponse.json({ error: auth.error }, { status: 401 });
+  }
+
+  const { workflowId } = await context.params;
+
+  try {
+    const now = new Date();
+
+    const result = await db.transaction(async (tx) => {
+      const [existing] = await tx
+        .select({ id: workflows.id, deactivatedAt: workflows.deactivatedAt, deletedAt: workflows.deletedAt })
+        .from(workflows)
+        .where(eq(workflows.id, workflowId))
+        .limit(1);
+
+      if (!existing || existing.deletedAt) {
+        return { conflict: "not_found" as const };
+      }
+      if (existing.deactivatedAt) {
+        return { conflict: "already_deactivated" as const };
+      }
+
+      const [deactivated] = await tx
+        .update(workflows)
+        .set({ deactivatedAt: now, enabled: false })
+        .where(eq(workflows.id, workflowId))
+        .returning({ id: workflows.id, deactivatedAt: workflows.deactivatedAt });
+
+      return { workflowId: deactivated.id, deactivatedAt: deactivated.deactivatedAt };
+    });
+
+    if ("conflict" in result) {
+      if (result.conflict === "not_found") {
+        return NextResponse.json({ error: "Workflow not found" }, { status: 404 });
+      }
+      return NextResponse.json({ error: "Workflow is already deactivated" }, { status: 409 });
+    }
+
+    return NextResponse.json(result);
+  } catch (error) {
+    logSystemError(ErrorCategory.DATABASE, "[Admin] Failed to deactivate workflow", error, {
+      workflowId,
+    });
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
