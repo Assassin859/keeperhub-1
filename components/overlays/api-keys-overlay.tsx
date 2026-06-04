@@ -251,23 +251,31 @@ function DeleteApiKeyOverlay({
   );
 }
 
-// Per-key change history (create/revoke), read from the org-scoped,
-// admin/owner-gated security audit trail. Only used on the Organisation tab;
-// org-key events carry an organizationId so the audit reader returns them.
-function ApiKeyHistory({
-  keyId,
-  resourceType,
-}: {
-  keyId: string;
-  resourceType: string;
-}): React.ReactElement {
+// Pull a stored field (e.g. keyPrefix) out of an audit event's deep-diff,
+// which records it as an added (create) or removed (revoke) value.
+function fieldFromDiff(diff: unknown, field: string): string | null {
+  if (!Array.isArray(diff)) {
+    return null;
+  }
+  const rec = diff.find(
+    (d) => Array.isArray(d?.path) && d.path[0] === field
+  ) as { rhs?: unknown; lhs?: unknown } | undefined;
+  const value = rec?.rhs ?? rec?.lhs;
+  return typeof value === "string" ? value : null;
+}
+
+// Section-level activity for org API keys: create AND revoke events across all
+// keys, including revoked ones no longer in the list. An API key only has
+// those two lifecycle events, so a per-key timeline adds nothing -- this is the
+// audit view that matters. Org-scoped + admin/owner-gated by the endpoint.
+function OrgApiKeyActivity(): React.ReactElement {
   const [events, setEvents] = useState<SecurityAuditEvent[] | null>(null);
   const [error, setError] = useState(false);
 
   useEffect(() => {
     let active = true;
     api.security
-      .getAudit({ resourceType, resourceId: keyId, limit: 20 })
+      .getAudit({ resourceType: "org_api_key", limit: 50 })
       .then((res) => {
         if (active) {
           setEvents(res.events);
@@ -281,38 +289,56 @@ function ApiKeyHistory({
     return () => {
       active = false;
     };
-  }, [keyId, resourceType]);
+  }, []);
 
   if (error) {
     return (
-      <p className="px-3 py-2 text-muted-foreground text-xs">
-        Failed to load history.
+      <p className="py-2 text-muted-foreground text-xs">
+        Failed to load activity.
       </p>
     );
   }
   if (!events) {
-    return (
-      <p className="px-3 py-2 text-muted-foreground text-xs">Loading...</p>
-    );
+    return <p className="py-2 text-muted-foreground text-xs">Loading...</p>;
   }
   if (events.length === 0) {
     return (
-      <p className="px-3 py-2 text-muted-foreground text-xs">
-        No recorded events.
+      <p className="py-2 text-muted-foreground text-xs">
+        No key activity recorded yet.
       </p>
     );
   }
   return (
-    <ul className="space-y-1 px-3 py-2">
-      {events.map((e) => (
-        <li className="text-muted-foreground text-xs" key={e.id}>
-          <span className="font-medium text-foreground">
-            {e.action.endsWith("revoked") ? "Revoked" : "Created"}
-          </span>{" "}
-          by {e.actor?.name || e.actor?.email || "unknown"} ·{" "}
-          {new Date(e.createdAt).toLocaleString()}
-        </li>
-      ))}
+    <ul className="space-y-2">
+      {events.map((e) => {
+        const revoked = e.action.endsWith("revoked");
+        const label =
+          fieldFromDiff(e.diff, "name") ||
+          (fieldFromDiff(e.diff, "keyPrefix")
+            ? `${fieldFromDiff(e.diff, "keyPrefix")}...`
+            : (e.resourceId ?? "a key"));
+        return (
+          <li className="flex items-start gap-2 text-xs" key={e.id}>
+            <span
+              className={`mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-full ${
+                revoked
+                  ? "bg-destructive/15 text-destructive"
+                  : "bg-keeperhub-green/15 text-keeperhub-green"
+              }`}
+            >
+              {revoked ? "−" : "+"}
+            </span>
+            <span className="text-muted-foreground">
+              <span className="font-medium text-foreground">
+                {revoked ? "Revoked" : "Created"}
+              </span>{" "}
+              <span className="font-mono">{label}</span> ·{" "}
+              {e.actor?.name || e.actor?.email || "unknown"} ·{" "}
+              {new Date(e.createdAt).toLocaleString()}
+            </span>
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -327,7 +353,6 @@ function ApiKeysList({
   deleteEndpoint,
   canDelete = true,
   readOnlyReason,
-  historyResourceType,
 }: {
   apiKeys: ApiKey[];
   newlyCreatedKey: string | null;
@@ -342,11 +367,8 @@ function ApiKeysList({
   deleteEndpoint: (id: string) => string;
   canDelete?: boolean;
   readOnlyReason?: string;
-  // When set, show a per-key change-history expander (admin/owner only).
-  historyResourceType?: string;
 }) {
   const { push } = useOverlay();
-  const [historyKeyId, setHistoryKeyId] = useState<string | null>(null);
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -408,64 +430,41 @@ function ApiKeysList({
       ) : (
         <div className="space-y-2">
           {apiKeys.map((apiKey) => (
-            <div className="rounded-md border" key={apiKey.id}>
-              <div className="flex items-center justify-between p-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
-                      {apiKey.keyPrefix}...
-                    </code>
-                    {apiKey.name && (
-                      <span className="truncate text-sm">{apiKey.name}</span>
-                    )}
-                  </div>
-                  <p className="mt-1 text-muted-foreground text-xs">
-                    Created {formatDate(apiKey.createdAt)}
-                    {showCreator &&
-                      apiKey.createdByName &&
-                      ` by ${apiKey.createdByName}`}
-                    {apiKey.lastUsedAt &&
-                      ` · Last used ${formatDate(apiKey.lastUsedAt)}`}
-                  </p>
-                </div>
-                <div className="flex items-center gap-1">
-                  {historyResourceType && (
-                    <Button
-                      onClick={() =>
-                        setHistoryKeyId((prev) =>
-                          prev === apiKey.id ? null : apiKey.id
-                        )
-                      }
-                      size="sm"
-                      title="View change history"
-                      variant="ghost"
-                    >
-                      <History className="size-4" />
-                    </Button>
+            <div
+              className="flex items-center justify-between rounded-md border p-3"
+              key={apiKey.id}
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
+                    {apiKey.keyPrefix}...
+                  </code>
+                  {apiKey.name && (
+                    <span className="truncate text-sm">{apiKey.name}</span>
                   )}
-                  <Button
-                    disabled={!canDelete || deleting === apiKey.id}
-                    onClick={() => openDeleteConfirm(apiKey.id)}
-                    size="sm"
-                    title={canDelete ? undefined : readOnlyReason}
-                    variant="ghost"
-                  >
-                    {deleting === apiKey.id ? (
-                      <Spinner className="size-4" />
-                    ) : (
-                      <Trash2 className="size-4 text-destructive" />
-                    )}
-                  </Button>
                 </div>
+                <p className="mt-1 text-muted-foreground text-xs">
+                  Created {formatDate(apiKey.createdAt)}
+                  {showCreator &&
+                    apiKey.createdByName &&
+                    ` by ${apiKey.createdByName}`}
+                  {apiKey.lastUsedAt &&
+                    ` · Last used ${formatDate(apiKey.lastUsedAt)}`}
+                </p>
               </div>
-              {historyResourceType && historyKeyId === apiKey.id && (
-                <div className="border-t">
-                  <ApiKeyHistory
-                    keyId={apiKey.id}
-                    resourceType={historyResourceType}
-                  />
-                </div>
-              )}
+              <Button
+                disabled={!canDelete || deleting === apiKey.id}
+                onClick={() => openDeleteConfirm(apiKey.id)}
+                size="sm"
+                title={canDelete ? undefined : readOnlyReason}
+                variant="ghost"
+              >
+                {deleting === apiKey.id ? (
+                  <Spinner className="size-4" />
+                ) : (
+                  <Trash2 className="size-4 text-destructive" />
+                )}
+              </Button>
             </div>
           ))}
         </div>
@@ -640,6 +639,7 @@ export function ApiKeysOverlay({ overlayId }: ApiKeysOverlayProps) {
   const { push, closeAll } = useOverlay();
   const { isAdmin } = useActiveMember();
   const [activeTab, setActiveTab] = useState("organisation");
+  const [showActivity, setShowActivity] = useState(false);
 
   // Webhook (User) keys
   const webhookKeys = useApiKeys(
@@ -714,15 +714,33 @@ export function ApiKeysOverlay({ overlayId }: ApiKeysOverlayProps) {
               canDelete={canManageOrgKeys}
               deleteEndpoint={orgKeys.deleteEndpoint}
               deleting={orgKeys.deleting}
-              historyResourceType={
-                canManageOrgKeys ? "org_api_key" : undefined
-              }
               newlyCreatedKey={orgKeys.newlyCreatedKey}
               onDelete={orgKeys.handleDelete}
               onDismissNewKey={orgKeys.dismissNewKey}
               readOnlyReason={orgReadOnlyReason}
               showCreator
             />
+          )}
+
+          {/* Section-level activity: create + revoke events across all keys,
+              including revoked keys no longer in the list. Admin/owner only. */}
+          {canManageOrgKeys && (
+            <div className="mt-4 border-border border-t pt-3">
+              <Button
+                className="px-0 text-muted-foreground text-xs hover:text-foreground"
+                onClick={() => setShowActivity((v) => !v)}
+                size="sm"
+                variant="link"
+              >
+                <History className="mr-1.5 size-3.5" />
+                {showActivity ? "Hide key activity" : "View key activity"}
+              </Button>
+              {showActivity && (
+                <div className="mt-2">
+                  <OrgApiKeyActivity />
+                </div>
+              )}
+            </div>
           )}
         </TabsContent>
 

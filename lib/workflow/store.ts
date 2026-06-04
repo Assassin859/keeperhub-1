@@ -91,6 +91,12 @@ export type WorkflowVisibility = "private" | "unlisted" | "public";
 // Atoms for workflow state (now backed by database)
 export const nodesAtom = atom<WorkflowNode[]>([]);
 export const edgesAtom = atom<WorkflowEdge[]>([]);
+
+// When non-null, the canvas is showing a historical version (read-only
+// preview from the version-history overlay). Autosave is suppressed while
+// this is set so previewing a past version can never clobber the live
+// workflow via the debounced save.
+export const previewVersionAtom = atom<number | null>(null);
 export const selectedNodeAtom = atom<string | null>(null);
 export const selectedEdgeAtom = atom<string | null>(null);
 export const isExecutingAtom = atom(false);
@@ -187,6 +193,12 @@ export const autosaveAtom = atom(
 
     // Only autosave if we have a workflow ID
     if (!workflowId) {
+      return;
+    }
+
+    // Never autosave while previewing a historical version -- the canvas is
+    // showing an old snapshot, not the user's working edits.
+    if (get(previewVersionAtom) !== null) {
       return;
     }
 

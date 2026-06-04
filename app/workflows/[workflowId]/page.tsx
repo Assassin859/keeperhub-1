@@ -56,6 +56,7 @@ import {
   isWorkflowOwnerAtom,
   newlyCreatedNodeIdAtom,
   nodesAtom,
+  previewVersionAtom,
   propertiesPanelActiveTabAtom,
   rightPanelWidthAtom,
   selectedExecutionIdAtom,
@@ -177,6 +178,7 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
   const setCurrentExecutionId = useSetAtom(currentExecutionIdAtom);
   const setNodes = useSetAtom(nodesAtom);
   const setEdges = useSetAtom(edgesAtom);
+  const setPreviewVersion = useSetAtom(previewVersionAtom);
   const setCurrentWorkflowId = useSetAtom(currentWorkflowIdAtom);
   const setCurrentWorkflowName = useSetAtom(currentWorkflowNameAtom);
   const setCurrentWorkflowDescription = useSetAtom(
@@ -561,6 +563,7 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
       setEdges([]);
       setSelectedNode(null);
       setWorkflowNotFound(false);
+      setPreviewVersion(null);
     }
     return (): void => {
       setCurrentWorkflowId(null);
@@ -572,6 +575,7 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
       setEdges([]);
       setSelectedNode(null);
       setWorkflowNotFound(false);
+      setPreviewVersion(null);
     };
   }, [
     workflowId,
@@ -584,6 +588,7 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
     setEdges,
     setSelectedNode,
     setWorkflowNotFound,
+    setPreviewVersion,
   ]);
 
   useEffect(() => {
