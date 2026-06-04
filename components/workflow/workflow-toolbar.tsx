@@ -7,6 +7,7 @@ import {
   Copy,
   Download,
   Globe,
+  History,
   Link2,
   Loader2,
   Lock,
@@ -43,6 +44,7 @@ import { BUILTIN_NODE_ID } from "@/lib/workflow/editor/builtin-variables";
 import { useAuthPrompt } from "@/components/auth/provider";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import { api, ApiError, type Project, type Tag } from "@/lib/api-client";
+import { useActiveMember } from "@/lib/hooks/use-organization";
 import { useSession } from "@/lib/auth-client";
 import { refetchSidebar } from "@/lib/refetch-sidebar";
 import { getCustomLogo } from "@/lib/workflow/editor/extension-registry";
@@ -101,6 +103,7 @@ import { Panel } from "../ai-elements/panel";
 import { ConfigurationOverlay } from "../overlays/configuration-overlay";
 import { ConfirmOverlay } from "../overlays/confirm-overlay";
 import { useOverlay } from "../overlays/overlay-provider";
+import { WorkflowVersionHistoryOverlay } from "../overlays/workflow-version-history-overlay";
 import { WorkflowIOOverlay } from "../overlays/workflow-io-overlay";
 import { WorkflowIssuesOverlay } from "../overlays/workflow-issues-overlay";
 import {
@@ -1445,6 +1448,9 @@ function ToolbarActions({
       {/* Listing Button */}
       <ListingButton actions={actions} state={state} />
 
+      {/* Version history (admin/owner only) */}
+      <VersionHistoryButton openOverlay={openOverlay} workflowId={workflowId} />
+
       {shouldDisplayEnableWorkflowSwitch && (
         <button
           className="relative hidden h-8 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background lg:inline-flex"
@@ -1491,6 +1497,37 @@ function ToolbarActions({
 
       <RunButtonGroup actions={actions} state={state} />
     </>
+  );
+}
+
+// Version history button. Admin/owner only -- history is an audit trail.
+function VersionHistoryButton({
+  workflowId,
+  openOverlay,
+}: {
+  workflowId: string;
+  openOverlay: ReturnType<typeof useOverlay>["open"];
+}) {
+  const { isAdmin } = useActiveMember();
+  if (!isAdmin) {
+    return null;
+  }
+  return (
+    <Button
+      className="hidden border hover:bg-black/5 lg:inline-flex dark:hover:bg-white/5"
+      onClick={() =>
+        openOverlay(
+          WorkflowVersionHistoryOverlay,
+          { workflowId },
+          { size: "4xl" }
+        )
+      }
+      size="icon"
+      title="Version history"
+      variant="secondary"
+    >
+      <History className="size-4" />
+    </Button>
   );
 }
 

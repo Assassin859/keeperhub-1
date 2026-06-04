@@ -64,6 +64,32 @@ export type SavedWorkflow = WorkflowData & {
   userVote?: VoteDirection | null;
   canVote?: boolean;
   duplicateCount?: number;
+  // Present when loaded via getById(id, { version }).
+  isHistoricalVersion?: boolean;
+  version?: number;
+  versionCreatedAt?: string;
+};
+
+export type WorkflowVersionActor = {
+  id: string;
+  name?: string | null;
+  email?: string | null;
+};
+
+export type WorkflowVersionSummary = {
+  version: number;
+  source: "create" | "update" | "listing";
+  contentHash: string;
+  previousVersion: number | null;
+  // deep-diff change records vs the previous version (null for v1).
+  change: unknown;
+  createdAt: string;
+  changedBy: WorkflowVersionActor | null;
+};
+
+export type WorkflowHistoryResponse = {
+  versions: WorkflowVersionSummary[];
+  nextCursor: number | null;
 };
 
 export type VoteResponse = {
@@ -536,8 +562,28 @@ export const workflowApi = {
       body: JSON.stringify({ vote }),
     }),
 
-  // Get a specific workflow
-  getById: (id: string) => apiCall<SavedWorkflow>(`/api/workflows/${id}`),
+  // Get a specific workflow. Pass `version` to load a historical snapshot.
+  getById: (id: string, options?: { version?: number }) =>
+    apiCall<SavedWorkflow>(
+      `/api/workflows/${id}${
+        options?.version === undefined ? "" : `?version=${options.version}`
+      }`
+    ),
+
+  // Version history timeline (admin/owner only).
+  getHistory: (id: string, options?: { before?: number; limit?: number }) => {
+    const params = new URLSearchParams();
+    if (options?.before !== undefined) {
+      params.set("before", String(options.before));
+    }
+    if (options?.limit !== undefined) {
+      params.set("limit", String(options.limit));
+    }
+    const qs = params.toString();
+    return apiCall<WorkflowHistoryResponse>(
+      `/api/workflows/${id}/history${qs ? `?${qs}` : ""}`
+    );
+  },
 
   // Create a new workflow
   create: (workflow: Omit<WorkflowData, "id">) =>
