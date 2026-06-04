@@ -894,6 +894,48 @@ export const projectApi = {
       method: "DELETE",
     }),
 };
+
+export type SecurityAuditEvent = {
+  id: string;
+  action: string;
+  resourceType: string | null;
+  resourceId: string | null;
+  createdAt: string;
+  // biome-ignore lint/suspicious/noExplicitAny: stored deep-diff, shape varies by action
+  diff: any;
+  metadata: Record<string, unknown> | null;
+  actor: { id: string; name?: string | null; email?: string | null } | null;
+};
+
+export const securityApi = {
+  // Org-scoped, admin/owner-gated audit trail. Filter by resource to get a
+  // single resource's history (e.g. one API key's create/revoke events).
+  getAudit: (params?: {
+    resourceType?: string;
+    resourceId?: string;
+    action?: string;
+    limit?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.resourceType) {
+      qs.set("resourceType", params.resourceType);
+    }
+    if (params?.resourceId) {
+      qs.set("resourceId", params.resourceId);
+    }
+    if (params?.action) {
+      qs.set("action", params.action);
+    }
+    if (params?.limit !== undefined) {
+      qs.set("limit", String(params.limit));
+    }
+    const s = qs.toString();
+    return apiCall<{
+      events: SecurityAuditEvent[];
+      nextCursor: string | null;
+    }>(`/api/security/audit${s ? `?${s}` : ""}`);
+  },
+};
 // Export all APIs as a single object
 export const api = {
   ai: aiApi,
@@ -901,6 +943,7 @@ export const api = {
   organization: organizationApi,
   project: projectApi,
   publicTag: publicTagApi,
+  security: securityApi,
   tag: tagApi,
   user: userApi,
   workflow: workflowApi,
