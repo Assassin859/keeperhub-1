@@ -517,6 +517,10 @@ export const auth = betterAuth({
             });
           } catch (error) {
             logSystemError(ErrorCategory.AUTH, "[Auth] Failed to mint org for new user", error, { userId: user.id });
+            // Re-throw: a user without an org cannot create workflows. Failing
+            // signup cleanly here is better than creating a user who hits
+            // errors on every subsequent action.
+            throw error;
           }
 
           // Anonymous accounts get an org (above) but no signup
