@@ -38,6 +38,7 @@ import { insertHmacSecret } from "@/lib/agentic-wallet/hmac-secret-store";
 import { db } from "@/lib/db";
 import { agenticWalletHmacSecrets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 export const dynamic = "force-dynamic";
 
@@ -81,6 +82,20 @@ export async function POST(request: Request): Promise<Response> {
           ne(agenticWalletHmacSecrets.keyVersion, newVersion)
         )
       );
+
+    await recordAuditEvent({
+      actor: {
+        userId: null,
+        organizationId: null,
+        authMethod: "internal",
+      },
+      action: "agentic_wallet.hmac_rotated",
+      resourceType: "agentic_wallet",
+      resourceId: auth.subOrgId,
+      before: { keyVersion: currentVersion },
+      after: { keyVersion: newVersion },
+      metadata: buildAuditMetadata(request),
+    });
 
     return Response.json(
       { newSecret, keyVersion: newVersion },
