@@ -9,6 +9,8 @@ import { requireDualFactor } from "@/lib/mfa/dual-factor";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { getOrgContext } from "@/lib/middleware/org-context";
 import { requireAdminOrOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
+import { notifyApiKeyChange } from "@/lib/security/api-key-notification";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 // Generate a secure API key with KeeperHub prefix
 function generateApiKey(): { key: string; hash: string; prefix: string } {
@@ -189,6 +191,27 @@ export async function POST(request: Request) {
     console.log(
       `[API Keys] Created new API key for organization ${activeOrgId}: ${newKey.id}`
     );
+
+    // Out-of-band alert + durable audit record, symmetric with user keys.
+    notifyApiKeyChange({
+      email: session.user.email,
+      action: "created",
+      tokenName: newKey.name,
+      keyPrefix: newKey.keyPrefix,
+      when: newKey.createdAt,
+    });
+    await recordAuditEvent({
+      actor: {
+        userId: session.user.id,
+        organizationId: activeOrgId,
+        authMethod: "session",
+      },
+      action: "org_api_key.created",
+      resourceType: "org_api_key",
+      resourceId: newKey.id,
+      after: { name: newKey.name, keyPrefix: newKey.keyPrefix },
+      metadata: buildAuditMetadata(request),
+    });
 
     // Return the full key only on creation (won't be shown again)
     return NextResponse.json({

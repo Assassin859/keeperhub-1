@@ -7,6 +7,8 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { requireDualFactor } from "@/lib/mfa/dual-factor";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { requireAdminOrOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
+import { notifyApiKeyChange } from "@/lib/security/api-key-notification";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 // DELETE - Revoke an API key
 export async function DELETE(
@@ -68,7 +70,7 @@ export async function DELETE(
     }
 
     // Revoke the key (soft delete) - only if it belongs to the organization
-    const result = await db
+    const [revoked] = await db
       .update(organizationApiKeys)
       .set({ revokedAt: new Date() })
       .where(
@@ -77,15 +79,40 @@ export async function DELETE(
           eq(organizationApiKeys.organizationId, activeOrgId)
         )
       )
-      .returning({ id: organizationApiKeys.id });
+      .returning({
+        id: organizationApiKeys.id,
+        name: organizationApiKeys.name,
+        keyPrefix: organizationApiKeys.keyPrefix,
+      });
 
-    if (result.length === 0) {
+    if (!revoked) {
       return NextResponse.json({ error: "API key not found" }, { status: 404 });
     }
 
     console.log(
       `[API Keys] Revoked API key ${keyId} for organization ${activeOrgId}`
     );
+
+    // Out-of-band alert + durable audit record, symmetric with user keys.
+    notifyApiKeyChange({
+      email: session.user.email,
+      action: "revoked",
+      tokenName: revoked.name,
+      keyPrefix: revoked.keyPrefix,
+      when: new Date(),
+    });
+    await recordAuditEvent({
+      actor: {
+        userId: session.user.id,
+        organizationId: activeOrgId,
+        authMethod: "session",
+      },
+      action: "org_api_key.revoked",
+      resourceType: "org_api_key",
+      resourceId: revoked.id,
+      before: { name: revoked.name, keyPrefix: revoked.keyPrefix },
+      metadata: buildAuditMetadata(request),
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {
