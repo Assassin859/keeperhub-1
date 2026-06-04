@@ -31,6 +31,7 @@ import {
 } from "@/lib/security/login-risk";
 import { reportSessionBackstop } from "@/lib/security/session-backstop";
 import { TRUSTED_ORIGINS } from "@/lib/trusted-origins";
+import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { wrapWithSessionTokenHash } from "./auth-session-token-hash";
 import { db } from "./db";
 import {
@@ -510,7 +511,7 @@ export const auth = betterAuth({
               createdAt: new Date(),
             });
           } catch (error) {
-            console.error(error);
+            logSystemError(ErrorCategory.AUTH, "[Auth] Failed to mint org for new user", error, { userId: user.id });
           }
 
           // Anonymous accounts get an org (above) but no signup
@@ -679,7 +680,7 @@ export const auth = betterAuth({
                 .where(eq(sessions.id, session.id));
             }
           } catch (error) {
-            console.error(error);
+            logSystemError(ErrorCategory.AUTH, "[Auth] Failed to set active org on session", error, { sessionId: session.id });
           }
         },
       },
