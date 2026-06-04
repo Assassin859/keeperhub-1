@@ -229,7 +229,7 @@ export async function POST(
 
     const access = await getWorkflowAccess(workflow, {
       userId: apiKeyValidation.userId ?? null,
-      organizationId: null,
+      organizationId: workflow.organizationId,
       authMethod: "webhook",
     });
 

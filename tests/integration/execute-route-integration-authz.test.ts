@@ -121,7 +121,7 @@ describe("execute route - per-integration authorization", () => {
     expect(response.status).toBe(403);
   });
 
-  it("authorizes against the caller's principal, not the workflow owner", async () => {
+  it("authorizes against the org principal, not the individual caller or workflow owner", async () => {
     mockGetDualAuthContext.mockResolvedValue({
       userId: "member_b",
       organizationId: "org_1",
@@ -135,11 +135,12 @@ describe("execute route - per-integration authorization", () => {
 
     await callExecute();
 
-    // The crux of the fix: the caller (member_b) is the principal, not the
-    // workflow owner (owner_a). The org dimension is the workflow's org.
+    // The org is the principal for integration validation: the org owns the
+    // workflow, so credential access is gated by org-visibility regardless of
+    // who triggered the run. userId null signals the org-principal path.
     expect(mockValidateWorkflowIntegrations).toHaveBeenCalledWith(
       workflow.nodes,
-      "member_b",
+      null,
       "org_1"
     );
   });

@@ -338,13 +338,15 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
       expect(data.error).toBe("Invalid API key");
     });
 
-    it("should return 403 when key belongs to different user", async () => {
+    it("should return 403 when key belongs to a non-member user", async () => {
       mockWorkflowsFindFirst.mockResolvedValue(webhookWorkflow);
       mockApiKeysFindFirst.mockResolvedValue({
         id: "key-other",
         userId: OTHER_USER_ID,
         keyHash: VALID_KEY_HASH,
       });
+      // OTHER_USER_ID is not a member of the workflow's org
+      mockMemberLimit.mockResolvedValue([]);
 
       const response = await POST(
         createWebhookRequest(VALID_API_KEY),
@@ -357,7 +359,7 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
       );
     });
 
-    it("should return 404 when the owner key belongs to a removed org member", async () => {
+    it("should return 403 when the key holder is no longer an org member", async () => {
       mockWorkflowsFindFirst.mockResolvedValue(webhookWorkflow);
       mockApiKeysFindFirst.mockResolvedValue({
         id: "key-1",
@@ -370,9 +372,9 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
         createWebhookRequest(VALID_API_KEY),
         createContext(WORKFLOW_ID)
       );
-      expect(response.status).toBe(404);
+      expect(response.status).toBe(403);
       const data = await response.json();
-      expect(data.error).toBe("Workflow not found");
+      expect(data.error).toBe("You do not have permission to run this workflow");
     });
   });
 
