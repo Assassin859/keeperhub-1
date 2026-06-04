@@ -43,11 +43,14 @@ BEGIN
 END $$;
 
 -- 2. Assign each null-org workflow to its createdBy user's earliest owned org.
+--    Filter to role = 'owner' so workflows are not assigned to orgs the user
+--    only has member/admin access to but does not control.
 UPDATE workflows w
 SET organization_id = (
   SELECT m.organization_id
   FROM member m
   WHERE m.user_id = w.user_id
+    AND m.role = 'owner'
   ORDER BY m.created_at ASC, m.id ASC
   LIMIT 1
 )
