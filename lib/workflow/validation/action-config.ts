@@ -135,8 +135,8 @@ function isJsonArrayOrObjectString(value: unknown): boolean {
 // users can re-save existing workflows that contain the legacy shape. The
 // runtime is responsible for normalizing aliases when it reads the config.
 const LEGACY_FIELD_ALIASES: Record<string, Record<string, string>> = {
-  "web3/read-contract": { functionName: "abiFunction" },
-  "web3/write-contract": { functionName: "abiFunction" },
+  "web3/read-contract": { functionName: "abiFunction", args: "functionArgs" },
+  "web3/write-contract": { functionName: "abiFunction", args: "functionArgs" },
 };
 
 // Legacy config keys that don't map to a canonical field but should not be
