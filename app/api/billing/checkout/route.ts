@@ -15,6 +15,7 @@ import { requireOrgOwner } from "@/lib/billing/require-org-owner";
 import { db } from "@/lib/db";
 import { organizationSubscriptions } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 type CheckoutRequestBody = {
   plan?: string;
@@ -124,7 +125,8 @@ async function handleExistingSubscription(
   subscriptionId: string,
   priceId: string,
   activeOrgId: string,
-  currentSub: NonNullable<Awaited<ReturnType<typeof getOrgSubscription>>>
+  currentSub: NonNullable<Awaited<ReturnType<typeof getOrgSubscription>>>,
+  actor: { userId: string; request: Request }
 ): Promise<NextResponse> {
   await provider.updateSubscription(subscriptionId, priceId);
 
@@ -146,6 +148,25 @@ async function handleExistingSubscription(
       updatedAt: new Date(),
     })
     .where(eq(organizationSubscriptions.organizationId, activeOrgId));
+
+  // Intent record: which user initiated the change. The authoritative
+  // subscription.plan_changed event is emitted by the Stripe webhook handler.
+  await recordAuditEvent({
+    actor: {
+      userId: actor.userId,
+      organizationId: activeOrgId,
+      authMethod: "session",
+    },
+    action: "subscription.change_requested",
+    resourceType: "subscription",
+    resourceId: activeOrgId,
+    before: { plan: currentSub.plan, tier: currentSub.tier },
+    after: {
+      plan: resolved?.plan ?? currentSub.plan,
+      tier: resolved?.tier ?? null,
+    },
+    metadata: buildAuditMetadata(actor.request),
+  });
 
   return NextResponse.json({ updated: true });
 }
@@ -184,7 +205,8 @@ export async function POST(request: Request): Promise<NextResponse> {
         existingSubId,
         priceId,
         activeOrgId,
-        sub
+        sub,
+        { userId, request }
       );
     }
 
@@ -207,6 +229,19 @@ export async function POST(request: Request): Promise<NextResponse> {
       organizationId: activeOrgId,
       successUrl: `${appUrl}/billing?checkout=success`,
       cancelUrl: `${appUrl}/billing?checkout=canceled`,
+    });
+
+    // The plan change itself is finalized by the provider webhook; this
+    // records the owner-initiated intent. resolvePriceId maps the price back
+    // to the human plan/tier for the trail.
+    const target = resolvePriceId(priceId);
+    await recordAuditEvent({
+      actor: { userId, organizationId: activeOrgId, authMethod: "session" },
+      action: "subscription.checkout_started",
+      resourceType: "subscription",
+      resourceId: activeOrgId,
+      after: { plan: target?.plan ?? null, tier: target?.tier ?? null },
+      metadata: buildAuditMetadata(request),
     });
 
     return NextResponse.json({ url });
