@@ -111,4 +111,22 @@ describe("collectAllSkippedTargets", () => {
     const allSkipped = collectAllSkippedTargets(decisions);
     expect(allSkipped).toEqual(new Set(["skip-a"]));
   });
+
+  it("excludes a node that another condition actually took (shared alert node)", () => {
+    // cond-1 passes: its false branch (alert) is not taken.
+    // cond-2 fails: its false branch takes the same alert node, which executes.
+    const decisions = new Map<string, ConditionDecision>([
+      [
+        "cond-1",
+        { taken: "true", skippedTargets: ["alert"], takenTargets: [] },
+      ],
+      [
+        "cond-2",
+        { taken: "false", skippedTargets: [], takenTargets: ["alert"] },
+      ],
+    ]);
+
+    const allSkipped = collectAllSkippedTargets(decisions);
+    expect(allSkipped.has("alert")).toBe(false);
+  });
 });
