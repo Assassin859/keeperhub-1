@@ -11,9 +11,12 @@ const kc = new KubeConfig();
 kc.loadFromDefault();
 const batchApi = kc.makeApiClient(BatchV1Api);
 
-// Non-root identity for runner pods. 1000/1000 is the "node" user/group that
-// ships in the node:alpine runner image, so the app files (world-readable)
-// stay accessible while the container never runs as root.
+// Non-root identity for runner pods. Pinned to 1000/1000, the "node" user/group
+// that ships in the node:alpine runner image (see the workflow-runner stage in
+// Dockerfile), so the app files (world-readable) stay accessible while the
+// container never runs as root. Coupled to that image: if the runner base image
+// changes, confirm UID 1000 is a valid non-root user there and the app files are
+// readable by it, otherwise update RUNNER_UID/RUNNER_GID to match.
 const RUNNER_UID = 1000;
 const RUNNER_GID = 1000;
 
