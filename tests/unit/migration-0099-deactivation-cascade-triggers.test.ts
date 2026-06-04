@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-// Drift catch for the KEEP-696 deactivation-cascade triggers. These are the
+// Drift catch for the deactivation-cascade triggers. These are the
 // DB-layer backstops for workflow/org deactivation: the execution block must
 // reject runs for a deactivated workflow or deactivated org (on top of the
 // existing soft-delete and owner-deactivation checks), and the org cascade
