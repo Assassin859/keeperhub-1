@@ -117,7 +117,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     const exportPayload = parsed.data;
-    const isAnonymous = !organizationId;
 
     const importNodes = stripIntegrationsFromImportNodes(exportPayload.nodes);
     const sanitized = sanitizeWorkflowData(
@@ -167,7 +166,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         edges: sanitized.edges,
         userId,
         organizationId,
-        isAnonymous,
+        isAnonymous: false,
       })
       .returning();
 

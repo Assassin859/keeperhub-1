@@ -302,6 +302,10 @@ export const workflows = pgTable(
       .references(() => organization.id, {
         onDelete: "cascade",
       }),
+    // DEPRECATED: always false. Encoded "created by a logged-out session with
+    // no org", a state that no longer exists (every account has an org and
+    // organizationId is NOT NULL); normalized to false by migration 0101.
+    // Column drop is a follow-up alongside retiring the claim route + dialog.
     isAnonymous: boolean("is_anonymous").default(false).notNull(),
     featured: boolean("featured").default(false).notNull(),
     featuredOrder: integer("featured_order").default(0),
@@ -465,6 +469,9 @@ export const workflowExecutions = pgTable(
     workflowId: text("workflow_id")
       .notNull()
       .references(() => workflows.id),
+    // Audit lineage only (the workflow's createdBy, or the triggering user
+    // where one exists). Execution AUTHORITY - quotas, billing, credentials -
+    // is the owning org: resolve it via getOrganizationIdFromExecution.
     userId: text("user_id")
       .notNull()
       .references(() => users.id),

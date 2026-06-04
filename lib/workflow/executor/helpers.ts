@@ -48,8 +48,12 @@ export async function getOrganizationIdFromExecution(
 }
 
 /**
- * @deprecated Use getOrganizationIdFromExecution instead
- * Get userId from executionId (legacy pattern - kept for backwards compatibility)
+ * Resolve the execution's audit userId (the workflow's createdBy). Live use:
+ * the generated web3 read steps (plugins/web3/steps/*, emitted into
+ * lib/workflow/codegen/registry.ts) look up that user's RPC preferences.
+ * This is NOT an authority signal - quotas, billing, and credentials key on
+ * the owning org via getOrganizationIdFromExecution. Follow-up: move RPC
+ * preferences to the org so this helper can be retired.
  */
 export async function getUserIdFromExecution(
   executionId: string | undefined

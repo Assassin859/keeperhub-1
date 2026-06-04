@@ -59,31 +59,21 @@ function createDefaultNodes() {
 // Helper to generate workflow name
 async function generateWorkflowName(
   name: string,
-  userId: string,
-  organizationId: string | null
+  organizationId: string
 ): Promise<string> {
   if (name !== "Untitled Workflow") {
     return name;
   }
 
-  const isAnonymous = !organizationId;
-  const userWorkflows = isAnonymous
-    ? await db.query.workflows.findMany({
-        where: and(
-          eq(workflows.userId, userId),
-          eq(workflows.isAnonymous, true),
-          workflowNotDeleted()
-        ),
-      })
-    : await db.query.workflows.findMany({
-        where: and(
-          eq(workflows.organizationId, organizationId ?? ""),
-          eq(workflows.isAnonymous, false),
-          workflowNotDeleted()
-        ),
-      });
+  // The org owns every workflow, so the untitled counter is org-scoped.
+  const orgWorkflows = await db.query.workflows.findMany({
+    where: and(
+      eq(workflows.organizationId, organizationId),
+      workflowNotDeleted()
+    ),
+  });
 
-  const count = userWorkflows.length + 1;
+  const count = orgWorkflows.length + 1;
   return `Untitled ${count}`;
 }
 
@@ -165,22 +155,10 @@ export async function POST(request: Request) {
       return featureGuard.response;
     }
 
-    const isAnonymous = !organizationId;
-    const workflowName = await generateWorkflowName(
-      body.name,
-      userId,
-      organizationId
-    );
+    const workflowName = await generateWorkflowName(body.name, organizationId);
 
     // Validate projectId/tagId ownership when provided
     if (body.projectId !== undefined || body.tagId !== undefined) {
-      if (isAnonymous) {
-        return NextResponse.json(
-          { error: "Cannot assign project or tag without an organization" },
-          { status: 400 }
-        );
-      }
-
       if (body.projectId) {
         const projRows = await db
           .select({ id: projects.id })
@@ -231,7 +209,7 @@ export async function POST(request: Request) {
         edges,
         userId,
         organizationId,
-        isAnonymous,
+        isAnonymous: false,
         projectId: body.projectId || null,
         tagId: body.tagId || null,
         ...(typeof body.enabled === "boolean" ? { enabled: body.enabled } : {}),

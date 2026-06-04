@@ -7,6 +7,11 @@ import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getOrgContext } from "@/lib/middleware/org-context";
 
+// RETIRED IN PRACTICE: claiming moved an anonymous null-org workflow into the
+// caller's org, but every workflow is org-owned now (anonymous sessions get an
+// org at signup, account-link re-parents their content, and is_anonymous was
+// normalized to false), so the gate below always rejects. The route stays only
+// because the client claim dialog still references it; remove both together.
 export async function POST(
   _request: Request,
   context: { params: Promise<{ workflowId: string }> }
