@@ -129,7 +129,7 @@ resources:
     # Kept in lockstep with prod so staging is predictive of prod memory behaviour.
     memory: 4Gi
   requests:
-    cpu: 1m
+    cpu: 100m
     memory: 2Gi
 
 env:
