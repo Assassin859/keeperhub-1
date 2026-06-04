@@ -397,7 +397,29 @@ function ExecutionUsageBar({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between text-sm">
-        <span className="text-muted-foreground">Monthly executions</span>
+        <span className="flex items-center gap-1 text-muted-foreground">
+          Monthly executions
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                aria-label="How monthly executions are counted"
+                className="inline-flex cursor-help items-center text-muted-foreground transition-colors hover:text-foreground"
+                type="button"
+              >
+                <Info className="size-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs">
+              <p>
+                Counts billable executions for the current calendar month
+                (since the 1st, UTC) and resets on the 1st. This is your plan
+                quota usage, so it differs from the Analytics page, which counts
+                all executions over the time range you select there (for
+                example, the last 30 days).
+              </p>
+            </TooltipContent>
+          </Tooltip>
+        </span>
         <span className="font-medium">
           {used.toLocaleString()} /{" "}
           {isUnlimited ? "Unlimited" : limit.toLocaleString()}
