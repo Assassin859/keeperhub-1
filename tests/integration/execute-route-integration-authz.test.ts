@@ -30,22 +30,25 @@ vi.mock("@/lib/workflow/access", () => ({
 vi.mock("@/lib/db/integrations", () => ({
   validateWorkflowIntegrations: mockValidateWorkflowIntegrations,
 }));
-const mockOwnerLimit = vi.fn().mockResolvedValue([{ deactivatedAt: null }]);
+const mockOwnerLimit = vi.fn().mockResolvedValue([{ orgDeactivatedAt: null }]);
 vi.mock("@/lib/db", () => ({
   db: {
     query: { workflows: { findFirst: mockFindWorkflow } },
-    // The route now loads the owner's deactivatedAt to gate executability.
-    // Default to an active owner.
+    // The route loads org deactivatedAt via a leftJoin to gate executability.
+    // Default to an active org.
     select: vi.fn(() => ({
       from: vi.fn(() => ({
-        where: vi.fn(() => ({ limit: mockOwnerLimit })),
+        leftJoin: vi.fn(() => ({
+          where: vi.fn(() => ({ limit: mockOwnerLimit })),
+        })),
       })),
     })),
   },
 }));
 vi.mock("@/lib/db/schema", () => ({
   users: { id: "id", deactivatedAt: "deactivated_at" },
-  workflows: { id: "id", userId: "user_id" },
+  workflows: { id: "id", userId: "user_id", organizationId: "organization_id" },
+  organization: { id: "id", deactivatedAt: "deactivated_at" },
   workflowExecutions: { id: "id" },
 }));
 vi.mock("@/lib/logging", () => ({
@@ -157,7 +160,7 @@ describe("execute route - lifecycle executability gate", () => {
       hasFullAccess: true,
       isDeleted: false,
     });
-    mockOwnerLimit.mockResolvedValue([{ deactivatedAt: null }]);
+    mockOwnerLimit.mockResolvedValue([{ orgDeactivatedAt: null }]);
     mockGetDualAuthContext.mockResolvedValue({
       userId: "owner_a",
       organizationId: "org_1",
@@ -207,7 +210,7 @@ describe("execute route - lifecycle executability gate", () => {
   });
 
   it("blocks a deactivated-owner workflow on the interactive path with 404", async () => {
-    mockOwnerLimit.mockResolvedValue([{ deactivatedAt: new Date() }]);
+    mockOwnerLimit.mockResolvedValue([{ orgDeactivatedAt: new Date() }]);
 
     const response = await callExecute();
 

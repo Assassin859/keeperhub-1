@@ -1031,7 +1031,7 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
           }),
         }),
       ],
-      "user-123",
+      null,
       "org-123"
     );
     expect(mockUpdateReturning).not.toHaveBeenCalled();

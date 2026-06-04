@@ -134,7 +134,7 @@ describe("POST /api/workflows/current action config validation", () => {
           }),
         }),
       ],
-      "user-123",
+      null,
       "org-123"
     );
     expect(mockSelect).not.toHaveBeenCalled();
@@ -167,7 +167,7 @@ describe("POST /api/workflows/current action config validation", () => {
     expect(response.status).toBe(403);
     expect(mockValidateWorkflowIntegrations).toHaveBeenCalledWith(
       expect.any(Array),
-      "user-123",
+      null,
       null
     );
   });
