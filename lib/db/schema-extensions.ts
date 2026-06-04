@@ -983,3 +983,73 @@ export const workflowRatings = pgTable(
     index("idx_workflow_ratings_workflow").on(table.workflowId),
   ]
 );
+
+/**
+ * Security Audit Log table
+ *
+ * Durable forensic record of sensitive account/security actions: who did
+ * what, when, from where, and -- for mutations -- a structured before/after
+ * diff. The out-of-band email notifications are the real-time alert; this
+ * table is the queryable history that answers "who changed this" after the
+ * fact.
+ *
+ * `actorUserId` and `organizationId` use ON DELETE SET NULL so a purged user
+ * or org never erases the audit trail of what they did. `diff` holds the
+ * deep-diff between the prior and new state (null for pure create/delete
+ * events that have no meaningful field-level diff); `metadata` carries
+ * request context (ip, user agent) and any action-specific details.
+ */
+export const securityAuditLog = pgTable(
+  "security_audit_log",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    actorUserId: text("actor_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    organizationId: text("organization_id").references(() => organization.id, {
+      onDelete: "set null",
+    }),
+    authMethod: text("auth_method").notNull(), // session | api-key | oauth | internal | unknown
+    apiKeyId: text("api_key_id"),
+    action: text("action").notNull(), // e.g. "api_key.created", "api_key.revoked"
+    resourceType: text("resource_type"), // e.g. "api_key", "user", "workflow"
+    resourceId: text("resource_id"),
+    // biome-ignore lint/suspicious/noExplicitAny: JSONB - deep-diff change records; shape varies by action
+    diff: jsonb("diff").$type<any>(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    // Audit reads are always "filter by one dimension, newest first", so each
+    // index trails with createdAt -- Postgres satisfies ORDER BY createdAt DESC
+    // via a backward scan, so the filter and the sort are both served by one
+    // index with no separate sort step.
+    // Org admin viewing their audit trail (primary access path).
+    index("idx_security_audit_org_created").on(
+      table.organizationId,
+      table.createdAt
+    ),
+    // "Who did it" -- a single actor's timeline.
+    index("idx_security_audit_actor_created").on(
+      table.actorUserId,
+      table.createdAt
+    ),
+    // "What happened to this resource" -- e.g. one API key's full history.
+    index("idx_security_audit_resource_created").on(
+      table.resourceType,
+      table.resourceId,
+      table.createdAt
+    ),
+    // Filter by event type -- e.g. all "api_key.revoked" events.
+    index("idx_security_audit_action_created").on(
+      table.action,
+      table.createdAt
+    ),
+  ]
+);
+
+// Type exports for Security Audit Log table
+export type SecurityAuditLog = typeof securityAuditLog.$inferSelect;
+export type NewSecurityAuditLog = typeof securityAuditLog.$inferInsert;

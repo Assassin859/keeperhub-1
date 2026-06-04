@@ -6,6 +6,8 @@ import { apiKeys } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { requireDualFactor } from "@/lib/mfa/dual-factor";
 import { requireMfaEnrolled } from "@/lib/middleware/owner-mfa-guard";
+import { notifyApiKeyChange } from "@/lib/security/api-key-notification";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 // DELETE - Delete an API key
 export async function DELETE(
@@ -58,14 +60,42 @@ export async function DELETE(
     }
 
     // Delete the key (only if it belongs to the user)
-    const result = await db
+    const [deleted] = await db
       .delete(apiKeys)
       .where(and(eq(apiKeys.id, keyId), eq(apiKeys.userId, session.user.id)))
-      .returning({ id: apiKeys.id });
+      .returning({
+        id: apiKeys.id,
+        name: apiKeys.name,
+        keyPrefix: apiKeys.keyPrefix,
+      });
 
-    if (result.length === 0) {
+    if (!deleted) {
       return NextResponse.json({ error: "API key not found" }, { status: 404 });
     }
+
+    // Out-of-band alert symmetric with creation: the owner learns a bypass
+    // credential was revoked even if their own session did it. Non-blocking.
+    notifyApiKeyChange({
+      email: session.user.email,
+      action: "revoked",
+      tokenName: deleted.name,
+      keyPrefix: deleted.keyPrefix,
+      when: new Date(),
+    });
+
+    // Durable forensic record of who revoked the key and from where.
+    await recordAuditEvent({
+      actor: {
+        userId: session.user.id,
+        organizationId: null,
+        authMethod: "session",
+      },
+      action: "api_key.revoked",
+      resourceType: "api_key",
+      resourceId: deleted.id,
+      before: { name: deleted.name, keyPrefix: deleted.keyPrefix },
+      metadata: buildAuditMetadata(request),
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {

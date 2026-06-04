@@ -559,3 +559,119 @@ KeeperHub - Blockchain Workflow Automation
 
   return success;
 }
+
+type ApiKeyChangeData = {
+  email: string;
+  action: "created" | "revoked";
+  tokenName: string | null;
+  keyPrefix: string;
+  when: Date;
+};
+
+/**
+ * Notify the account owner out-of-band whenever an API key is minted or
+ * revoked. An API key is the longest-lived bypass credential a session can
+ * mint, so the owner should learn about a create/revoke even if their session
+ * was the one that did it -- a silent key issued from a stolen session is the
+ * exact thing this surfaces.
+ */
+export async function sendApiKeyChangeEmail(
+  data: ApiKeyChangeData
+): Promise<boolean> {
+  const { email, action, tokenName, keyPrefix, when } = data;
+
+  const logoUrl =
+    "https://raw.githubusercontent.com/KeeperHub/keeperhub/staging/public/keeperhub_logo_email.png";
+
+  const created = action === "created";
+  const subject = created
+    ? "A new API key was created - KeeperHub"
+    : "An API key was revoked - KeeperHub";
+  const heading = created ? "New API key created" : "API key revoked";
+  const lead = created
+    ? "A new API key was just created on your KeeperHub account."
+    : "An API key was just revoked from your KeeperHub account.";
+  const nameLabel = tokenName ?? "Unnamed key";
+  const whenFormatted = when.toUTCString();
+
+  const text = `
+Hi,
+
+${lead}
+
+Name: ${nameLabel}
+Key: ${keyPrefix}...
+When: ${whenFormatted}
+
+If this was you, no action is needed. If this was not you, revoke your API keys and change your password immediately.
+
+---
+KeeperHub - Blockchain Workflow Automation
+`.trim();
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
+    <img src="${logoUrl}" alt="KeeperHub" style="max-width: 200px; height: auto;" />
+  </div>
+
+  <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e5e5; border-top: none; border-radius: 0 0 12px 12px;">
+    <h2 style="color: #1a1a2e; margin-top: 0;">${heading}</h2>
+
+    <p>${lead}</p>
+
+    <div style="background: #f5f5f5; border-radius: 8px; padding: 20px; margin: 20px 0; font-family: monospace; font-size: 14px;">
+      <div><strong>Name:</strong> ${nameLabel}</div>
+      <div><strong>Key:</strong> ${keyPrefix}...</div>
+      <div><strong>When:</strong> ${whenFormatted}</div>
+    </div>
+
+    <p>If this was you, no action is needed.</p>
+
+    <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 20px; margin: 20px 0;">
+      <p style="margin: 0; color: #991b1b;">
+        <strong>If this was not you</strong>, revoke your API keys and change your password immediately.
+      </p>
+    </div>
+
+    <hr style="border: none; border-top: 1px solid #e5e5e5; margin: 30px 0;">
+
+    <p style="color: #999; font-size: 12px; margin-bottom: 0;">
+      You're receiving this because API keys on your account were changed. These notifications cannot be turned off as they protect your account.
+    </p>
+  </div>
+
+  <div style="text-align: center; padding: 20px; color: #999; font-size: 12px;">
+    <p style="margin: 0;">KeeperHub - Blockchain Workflow Automation</p>
+  </div>
+</body>
+</html>
+`.trim();
+
+  const success = await sendEmail({
+    to: email,
+    subject,
+    text,
+    html,
+  });
+
+  if (!(success || isTestEnv)) {
+    logUserError(
+      ErrorCategory.EXTERNAL_SERVICE,
+      `[Email] Failed to send API key ${action} notification to ${email}`,
+      new Error("Failed to send API key change notification"),
+      {
+        service: "sendgrid",
+        action,
+      }
+    );
+  }
+
+  return success;
+}

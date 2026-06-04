@@ -687,6 +687,13 @@
       "when": 1779843900004,
       "tag": "0097_internal_service_hmac_secrets",
       "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1779843900005,
+      "tag": "0098_keep_671_security_audit_log",
+      "breakpoints": true
     }
   ]
 }
