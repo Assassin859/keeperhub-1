@@ -149,6 +149,11 @@ const LEGACY_FIELD_ALIASES: Record<string, Record<string, string>> = {
 const LEGACY_IGNORED_FIELDS: Record<string, Set<string>> = {
   "web3/query-transactions": new Set(["inputMode", "batchSize"]),
   "web3/query-events": new Set(["inputMode", "batchSize"]),
+  // The editor persists the resolved function signature (for overloaded-
+  // function disambiguation); the runtime recomputes it and never reads it
+  // from config, so it must not block a save.
+  "web3/read-contract": new Set(["abiFunctionKey"]),
+  "web3/write-contract": new Set(["abiFunctionKey"]),
 };
 
 function getLegacyAliasMap(actionType: string): Record<string, string> {
