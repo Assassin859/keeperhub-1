@@ -10,6 +10,7 @@ import {
   type DualAuthContext,
   getDualAuthContext,
 } from "@/lib/middleware/auth-helpers";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import { getOrganizationWallet } from "@/lib/web3/wallet-helpers";
 
 export async function GET(request: Request): Promise<NextResponse> {
@@ -147,6 +148,22 @@ export async function PATCH(request: Request) {
     }
 
     await db.update(users).set(updates).where(eq(users.id, session.user.id));
+
+    if (isEmailChange) {
+      await recordAuditEvent({
+        actor: {
+          userId: session.user.id,
+          organizationId: null,
+          authMethod: "session",
+        },
+        action: "email.changed",
+        resourceType: "user",
+        resourceId: session.user.id,
+        before: { email: session.user.email },
+        after: { email: updates.email },
+        metadata: buildAuditMetadata(request),
+      });
+    }
 
     return NextResponse.json({ success: true });
   } catch (error) {

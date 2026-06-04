@@ -15,9 +15,8 @@ import {
   checkDualFactorRateLimit,
   resetDualFactor,
 } from "@/lib/mfa/dual-factor-rate-limit";
-import {
-  buildPendingSignupClearCookie,
-} from "@/lib/pending-signup-cookie";
+import { buildPendingSignupClearCookie } from "@/lib/pending-signup-cookie";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import { recordTrustedIpFromRequest } from "@/lib/security/login-risk";
 import { verifyUserTotp } from "@/lib/security/totp-verify";
 
@@ -43,13 +42,9 @@ function generatePlainBackupCodes(): string[] {
   return codes;
 }
 
-function buildSessionSetCookie(
-  signedValue: string,
-  ttlMs: number
-): string {
+function buildSessionSetCookie(signedValue: string, ttlMs: number): string {
   const maxAge = Math.floor(ttlMs / 1000);
-  const secureSegment =
-    process.env.NODE_ENV === "production" ? " Secure;" : "";
+  const secureSegment = process.env.NODE_ENV === "production" ? " Secure;" : "";
   const cookieName =
     process.env.NODE_ENV === "production"
       ? "__Secure-better-auth.session_token"
@@ -144,6 +139,13 @@ export async function POST(request: Request): Promise<NextResponse> {
         .update(sessions)
         .set({ requiresMfa: false, mfaVerifiedAt: new Date() })
         .where(eq(sessions.userId, userId));
+      await recordAuditEvent({
+        actor: { userId, organizationId: null, authMethod: "session" },
+        action: "totp.enrolled",
+        resourceType: "user",
+        resourceId: userId,
+        metadata: buildAuditMetadata(request),
+      });
       const responseBody: EnrollResponse = { backupCodes };
       const response = NextResponse.json(responseBody);
       for (const [name, value] of verifyHeaders.entries()) {
@@ -260,6 +262,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     // attestation) so a later sign-in from the same network isn't
     // bounced to /verify-ip for an IP the user already signed up from.
     await recordTrustedIpFromRequest(userId);
+
+    await recordAuditEvent({
+      actor: { userId, organizationId: null, authMethod: "session" },
+      action: "totp.enrolled",
+      resourceType: "user",
+      resourceId: userId,
+      metadata: buildAuditMetadata(request),
+    });
 
     const responseBody: EnrollResponse = {
       backupCodes,

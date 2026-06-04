@@ -6,6 +6,7 @@ import { accounts } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { requireDualFactor } from "@/lib/mfa/dual-factor";
 import { hashPassword, verifyPassword } from "@/lib/password";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 const OAUTH_PROVIDERS = ["github", "google"];
 
@@ -118,6 +119,18 @@ export async function POST(request: Request): Promise<NextResponse> {
       .update(accounts)
       .set({ password: hashedPassword, updatedAt: new Date() })
       .where(eq(accounts.id, credentialAccount.id));
+
+    await recordAuditEvent({
+      actor: {
+        userId: session.user.id,
+        organizationId: null,
+        authMethod: "session",
+      },
+      action: "password.changed",
+      resourceType: "user",
+      resourceId: session.user.id,
+      metadata: buildAuditMetadata(request),
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {

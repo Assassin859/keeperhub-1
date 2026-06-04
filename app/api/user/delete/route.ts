@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { organizationApiKeys, sessions, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { requireDualFactor } from "@/lib/mfa/dual-factor";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 /**
  * POST /api/user/delete
@@ -105,6 +106,14 @@ export async function POST(request: Request): Promise<NextResponse> {
             isNull(organizationApiKeys.revokedAt)
           )
         );
+    });
+
+    await recordAuditEvent({
+      actor: { userId, organizationId: null, authMethod: "session" },
+      action: "account.deactivated",
+      resourceType: "user",
+      resourceId: userId,
+      metadata: buildAuditMetadata(request),
     });
 
     return NextResponse.json({

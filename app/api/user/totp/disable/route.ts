@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { twoFactor as twoFactorTable, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { requireDualFactor } from "@/lib/mfa/dual-factor";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 type RequestBody = {
   code?: string;
@@ -76,6 +77,14 @@ export async function POST(request: Request): Promise<NextResponse> {
       { status: 500 }
     );
   }
+
+  await recordAuditEvent({
+    actor: { userId, organizationId: null, authMethod: "session" },
+    action: "totp.disabled",
+    resourceType: "user",
+    resourceId: userId,
+    metadata: buildAuditMetadata(request),
+  });
 
   return NextResponse.json({ status: "ok" });
 }
