@@ -77,6 +77,11 @@ const ALLOWED_METHODS = new Set([
   "toUpperCase",
   "trim",
   "length", // Actually a property, but accessed like .length
+  // Type guards emitted by the visual builder's Array/Object operators. Both are
+  // pure, non-mutating reads on built-in globals, so they are safe to evaluate
+  // and let array/object comparisons run without throwing on non-matching types.
+  "isArray", // Array.isArray(...)
+  "keys", // Object.keys(...)
 ]);
 
 // Pattern to match method calls
