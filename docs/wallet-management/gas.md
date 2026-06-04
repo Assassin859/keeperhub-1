@@ -65,6 +65,33 @@ If the network estimates 100,000 gas for your transaction:
 
 Setting a gas limit below the estimate will cause the transaction to revert with an out-of-gas error. Setting it close to the estimate risks failure if on-chain state changes between estimation and execution.
 
+## Gas Sponsorship
+
+On supported networks, KeeperHub can sponsor the **gas fee** of a workflow transaction through Turnkey's Gas Station, so a workflow can run even when the sending wallet holds no native gas token. Sponsorship is enabled per organization and metered against a monthly gas credit allowance shown on your billing page.
+
+### What sponsorship covers
+
+Sponsorship pays the **transaction fee only**. It does not provide the assets your transaction moves. The native value a transaction sends (for example, the ETH amount in a Transfer Native Token action) is always debited from your own wallet.
+
+To send 0.1 ETH to another address, your wallet must hold at least 0.1 ETH; sponsorship only means it does not also need extra ETH to cover the gas fee. A token transfer (USDC and similar) likewise requires the token balance in your wallet. Only the gas is sponsored.
+
+### When a transaction is sponsored
+
+A transaction is sponsored only when all of the following are true. Otherwise it falls back to paying gas from your wallet, and it fails if that wallet has no native balance.
+
+- **Supported network**: Ethereum, Base, Polygon, and Arbitrum, plus their testnets (Sepolia, Base Sepolia, Polygon Amoy, Arbitrum Sepolia).
+- **Direct wallet sender (no Safe)**: the active Sender is the wallet itself.
+- **Public mempool**: transactions routed through a private mempool are not sponsored.
+- **Gas credits available**: your organization still has gas credits for the current period.
+
+### Safe wallets
+
+Workflows that route through a Safe (Sender ON) are not gas sponsored. The sponsored transaction is built as a direct call from your wallet, so applying it to a Safe write would change `msg.sender` away from the Safe. Safe writes pay gas from the wallet that signs the outer transaction; direct wallet sends remain eligible for sponsorship.
+
+### Gas credits
+
+Sponsored gas is metered in USD against your plan's monthly gas credit cap (shown on the billing page). Mainnet usage counts against the cap; testnet usage is not charged. When the cap is reached, sponsorship pauses for the rest of the period and transactions pay gas from the wallet.
+
 ## FAQ
 
 ### What happens if I leave the gas limit empty?
