@@ -254,54 +254,15 @@ const plugins = [
   }),
   anonymous({
     async onLinkAccount(data) {
-      // // When an anonymous user links to a real account, migrate their data
-      // const fromUserId = data.anonymousUser.user.id;
-      // const toUserId = data.newUser.user.id;
-
-      // console.log(
-      //   `[Anonymous Migration] Migrating from user ${fromUserId} to ${toUserId}`
-      // );
-
-      // try {
-      //   // Migrate workflows
-      //   await db
-      //     .update(workflows)
-      //     .set({ userId: toUserId })
-      //     .where(eq(workflows.userId, fromUserId));
-
-      //   // Migrate workflow executions
-      //   await db
-      //     .update(workflowExecutions)
-      //     .set({ userId: toUserId })
-      //     .where(eq(workflowExecutions.userId, fromUserId));
-
-      //   // Migrate integrations
-      //   await db
-      //     .update(integrations)
-      //     .set({ userId: toUserId })
-      //     .where(eq(integrations.userId, fromUserId));
-
-      //   console.log(
-      //     `[Anonymous Migration] Successfully migrated data from ${fromUserId} to ${toUserId}`
-      //   );
-      // } catch (error) {
-      //   console.error(
-      //     "[Anonymous Migration] Error migrating user data:",
-      //     error
-      //   );
-      //   throw error;
-      // }
-
       // When an anonymous session links to a real account, move its content
-      // into the linking user's organization. The org owns workflows now, so
-      // we re-parent to the target org (not just swap the createdBy user) and
-      // mark the workflows non-anonymous. The linking user already has a
-      // personal org minted at signup.
+      // into the linking user's organization. All three updates are one atomic
+      // transaction: a partial re-parent (e.g. workflows moved but executions
+      // not) would leave inconsistent ownership history.
       const fromUserId = data.anonymousUser.user.id;
       const toUserId = data.newUser.user.id;
 
-      try {
-        const [targetMembership] = await db
+      await db.transaction(async (tx) => {
+        const [targetMembership] = await tx
           .select({ organizationId: memberTable.organizationId })
           .from(memberTable)
           .where(
@@ -310,7 +271,7 @@ const plugins = [
           .limit(1);
 
         if (targetMembership) {
-          await db
+          await tx
             .update(workflows)
             .set({
               userId: toUserId,
@@ -319,23 +280,20 @@ const plugins = [
             })
             .where(eq(workflows.userId, fromUserId));
 
-          await db
+          await tx
             .update(integrations)
             .set({
               userId: toUserId,
               organizationId: targetMembership.organizationId,
             })
             .where(eq(integrations.userId, fromUserId));
-        }
 
-        await db
-          .update(workflowExecutions)
-          .set({ userId: toUserId })
-          .where(eq(workflowExecutions.userId, fromUserId));
-      } catch (error) {
-        console.error("[Anonymous Migration] Error:", error);
-        throw error;
-      }
+          await tx
+            .update(workflowExecutions)
+            .set({ userId: toUserId })
+            .where(eq(workflowExecutions.userId, fromUserId));
+        }
+      });
     },
   }),
   ...captchaPlugins,
