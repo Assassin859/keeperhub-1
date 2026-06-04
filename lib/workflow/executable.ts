@@ -31,9 +31,14 @@ import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
  * deactivated, and owned by an active org, but WITHOUT the `enabled` clause.
  * Used by the agent-call lookup, which surfaces a listed-but-disabled workflow
  * as "temporarily unavailable" rather than 404, so it gates `enabled` in-memory
- * after the row loads. The caller MUST have joined `organization` on
- * `workflows.organizationId` (an inner join is safe - `workflows.organizationId`
- * is non-null) so the org clause can resolve.
+ * after the row loads.
+ *
+ * REQUIRED: the caller's query MUST join `organization` on
+ * `workflows.organizationId` before composing this fragment. An inner join is
+ * safe because `workflows.organizationId` is NOT NULL. Omitting the join
+ * produces a runtime SQL error ("missing FROM-clause entry for table
+ * 'organization'"). If you cannot add the join, use `getWorkflowExecutability()`
+ * on the loaded row instead.
  */
 export function workflowReachableConditions(): SQL {
   return and(
@@ -45,7 +50,8 @@ export function workflowReachableConditions(): SQL {
 
 /**
  * Drizzle WHERE fragment for the fully-runnable SELECT sites (scheduler select):
- * reachable AND enabled. Same join requirement as `workflowReachableConditions`.
+ * reachable AND enabled. Carries the same join requirement as
+ * `workflowReachableConditions` - the caller MUST join `organization`.
  */
 export function workflowExecutableConditions(): SQL {
   return and(eq(workflows.enabled, true), workflowReachableConditions()) as SQL;
