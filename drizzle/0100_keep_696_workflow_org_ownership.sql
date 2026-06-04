@@ -14,8 +14,11 @@
 -- failure rolls the whole thing back.
 
 -- 1. Mint an org + owner membership for any user that owns a null-org workflow
---    but has no organization membership (legacy anonymous users predate the
---    "every account gets an org" signup change in lib/auth.ts).
+--    but has no OWNER membership. This covers two legacy cases:
+--    (a) users with no membership at all (fully anonymous, pre-org signup);
+--    (b) users with only member/admin memberships but no owner role - step 2
+--        assigns workflows to the oldest owned org, so a user with no owner
+--        membership would produce NULL there and fail step 3.
 DO $$
 DECLARE
   r RECORD;
@@ -25,7 +28,7 @@ BEGIN
     SELECT DISTINCT w.user_id AS user_id
     FROM workflows w
     WHERE w.organization_id IS NULL
-      AND NOT EXISTS (SELECT 1 FROM member m WHERE m.user_id = w.user_id)
+      AND NOT EXISTS (SELECT 1 FROM member m WHERE m.user_id = w.user_id AND m.role = 'owner')
   LOOP
     v_org_id := gen_random_uuid()::text;
     INSERT INTO organization (id, name, slug, created_at)
