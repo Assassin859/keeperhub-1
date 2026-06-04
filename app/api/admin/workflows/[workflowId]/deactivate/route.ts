@@ -20,24 +20,26 @@ export async function POST(
     const now = new Date();
 
     const result = await db.transaction(async (tx) => {
-      const [existing] = await tx
-        .select({ id: workflows.id, deactivatedAt: workflows.deactivatedAt, deletedAt: workflows.deletedAt })
-        .from(workflows)
-        .where(eq(workflows.id, workflowId))
-        .limit(1);
-
-      if (!existing || existing.deletedAt) {
-        return { conflict: "not_found" as const };
-      }
-      if (existing.deactivatedAt) {
-        return { conflict: "already_deactivated" as const };
-      }
-
       const [deactivated] = await tx
         .update(workflows)
         .set({ deactivatedAt: now, enabled: false })
-        .where(eq(workflows.id, workflowId))
+        .where(
+          and(
+            eq(workflows.id, workflowId),
+            isNull(workflows.deactivatedAt),
+            isNull(workflows.deletedAt)
+          )
+        )
         .returning({ id: workflows.id, deactivatedAt: workflows.deactivatedAt });
+
+      if (!deactivated) {
+        const [existing] = await tx
+          .select({ id: workflows.id, deactivatedAt: workflows.deactivatedAt, deletedAt: workflows.deletedAt })
+          .from(workflows)
+          .where(eq(workflows.id, workflowId))
+          .limit(1);
+        return { conflict: existing?.deactivatedAt ? ("already_deactivated" as const) : ("not_found" as const) };
+      }
 
       return { workflowId: deactivated.id, deactivatedAt: deactivated.deactivatedAt };
     });
