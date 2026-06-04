@@ -25,6 +25,7 @@ import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
 import { withBackstopCapture } from "@/lib/security/backstop-capture";
 import { buildAttribution } from "@/lib/security/request-attribution";
 import { getWorkflowAccess } from "@/lib/workflow/access";
+import { hashWorkflowDefinition } from "@/lib/workflow/content-hash";
 import { getWorkflowExecutability } from "@/lib/workflow/executable";
 import { executeWorkflowInBackground } from "@/lib/workflow/execute-in-background";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
@@ -32,6 +33,7 @@ type ValidateApiKeyResult = {
   valid: boolean;
   userId?: string;
   apiKeyId?: string;
+  keyPrefix?: string;
   error?: string;
   statusCode?: number;
   errorBody?: Record<string, unknown>;
@@ -115,7 +117,12 @@ async function validateApiKey(
       // Fire and forget - ignore errors
     });
 
-  return { valid: true, userId: apiKey.userId, apiKeyId: apiKey.id };
+  return {
+    valid: true,
+    userId: apiKey.userId,
+    apiKeyId: apiKey.id,
+    keyPrefix: apiKey.keyPrefix,
+  };
 }
 
 const corsHeaders = {
@@ -307,6 +314,8 @@ export async function POST(
       request,
       source: "webhook",
       userApiKeyId: apiKeyValidation.apiKeyId ?? null,
+      credentialType: "webhook_key",
+      credentialLabel: apiKeyValidation.keyPrefix ?? null,
     });
 
     // Create execution record
@@ -321,6 +330,10 @@ export async function POST(
             status: "pending",
             input: body,
             ...attribution,
+            executedWorkflowHash: hashWorkflowDefinition(
+              workflow.nodes,
+              workflow.edges
+            ),
           })
           .returning()
     );

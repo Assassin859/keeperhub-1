@@ -694,6 +694,13 @@
       "when": 1779843900005,
       "tag": "0098_keep_671_security_audit_log",
       "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1779843900006,
+      "tag": "0099_keep_671_execution_credential_and_version",
+      "breakpoints": true
     }
   ]
 }

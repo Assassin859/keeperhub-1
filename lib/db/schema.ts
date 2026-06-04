@@ -542,10 +542,33 @@ export const workflowExecutions = pgTable(
     triggeredByIp: text("triggered_by_ip"),
     triggeredByCountry: text("triggered_by_country"),
     triggerSource: text("trigger_source"),
+    /**
+     * Durable credential descriptor captured at trigger time. The
+     * `triggered_by_*_api_key_id` FKs above are nulled when a key is revoked
+     * (user keys are hard-deleted), which erases "what did this credential
+     * run" exactly when an investigation needs it. These two columns survive
+     * revocation: `type` is the credential class (webhook_key | org_api_key |
+     * oauth | session | internal) and `label` is a stable, non-secret handle
+     * (e.g. the key prefix `wfb_abc1234`, or the internal caller name).
+     */
+    triggeredByCredentialType: text("triggered_by_credential_type"),
+    triggeredByCredentialLabel: text("triggered_by_credential_label"),
+    /**
+     * sha256 of the workflow definition (nodes + edges) as it existed when
+     * this run was triggered -- see lib/workflow/content-hash.ts. Ties a run
+     * to the exact definition that produced it even after the workflow is
+     * later edited, and joins to `workflow_history.content_hash` to resolve
+     * the full stored snapshot without duplicating the graph per execution.
+     */
+    executedWorkflowHash: text("executed_workflow_hash"),
   },
   (table) => [
     index("idx_workflow_executions_status").on(table.status),
     index("idx_workflow_executions_user_id").on(table.userId),
+    // Resolve "which runs executed this snapshot" / join to workflow_history.
+    index("idx_workflow_executions_executed_hash").on(
+      table.executedWorkflowHash
+    ),
   ]
 );
 

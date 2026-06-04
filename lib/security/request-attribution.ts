@@ -124,12 +124,26 @@ export function getRequestCountry(request: Request): string | null {
   return raw;
 }
 
+/**
+ * Credential class an execution was triggered with. Recorded durably (it
+ * survives revoking/deleting the underlying key) so the audit trail can always
+ * answer "what kind of credential ran this".
+ */
+export type ExecutionCredentialType =
+  | "webhook_key"
+  | "org_api_key"
+  | "oauth"
+  | "session"
+  | "internal";
+
 export type ExecutionAttribution = {
   triggeredByUserApiKeyId: string | null;
   triggeredByOrgApiKeyId: string | null;
   triggeredByIp: string | null;
   triggeredByCountry: string | null;
   triggerSource: TriggerSource;
+  triggeredByCredentialType: ExecutionCredentialType | null;
+  triggeredByCredentialLabel: string | null;
 };
 
 export function buildAttribution(input: {
@@ -137,6 +151,8 @@ export function buildAttribution(input: {
   source: TriggerSource;
   userApiKeyId?: string | null;
   orgApiKeyId?: string | null;
+  credentialType?: ExecutionCredentialType | null;
+  credentialLabel?: string | null;
 }): ExecutionAttribution {
   return {
     triggeredByUserApiKeyId: input.userApiKeyId ?? null,
@@ -144,5 +160,7 @@ export function buildAttribution(input: {
     triggeredByIp: input.request ? getRequestSourceIp(input.request) : null,
     triggeredByCountry: input.request ? getRequestCountry(input.request) : null,
     triggerSource: input.source,
+    triggeredByCredentialType: input.credentialType ?? null,
+    triggeredByCredentialLabel: input.credentialLabel ?? null,
   };
 }

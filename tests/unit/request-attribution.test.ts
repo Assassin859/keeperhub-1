@@ -145,7 +145,28 @@ describe("buildAttribution", () => {
       triggeredByIp: "203.0.113.10",
       triggeredByCountry: "CA",
       triggerSource: "webhook",
+      triggeredByCredentialType: null,
+      triggeredByCredentialLabel: null,
     });
+  });
+
+  it("captures the durable credential type and label", () => {
+    const req = makeRequest({ "cf-connecting-ip": "203.0.113.12" });
+    const attribution = buildAttribution({
+      request: req,
+      source: "webhook",
+      userApiKeyId: "key_1",
+      credentialType: "webhook_key",
+      credentialLabel: "wfb_abc1234",
+    });
+    expect(attribution.triggeredByCredentialType).toBe("webhook_key");
+    expect(attribution.triggeredByCredentialLabel).toBe("wfb_abc1234");
+  });
+
+  it("normalises undefined credential fields to null", () => {
+    const attribution = buildAttribution({ source: "manual" });
+    expect(attribution.triggeredByCredentialType).toBeNull();
+    expect(attribution.triggeredByCredentialLabel).toBeNull();
   });
 
   it("leaves country null when cf-ipcountry header is absent", () => {
