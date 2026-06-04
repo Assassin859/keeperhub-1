@@ -8,6 +8,11 @@ vi.mock("@/lib/db", () => ({
   db: {
     select: vi.fn(() => ({
       from: vi.fn(() => ({
+        innerJoin: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: mockMemberLimit,
+          })),
+        })),
         where: vi.fn(() => ({
           limit: mockMemberLimit,
         })),
@@ -21,6 +26,10 @@ vi.mock("@/lib/db/schema", () => ({
     id: "id",
     organizationId: "organizationId",
     userId: "userId",
+  },
+  users: {
+    id: "id",
+    deactivatedAt: "deactivated_at",
   },
 }));
 

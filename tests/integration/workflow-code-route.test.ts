@@ -49,6 +49,7 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@/lib/db/schema", () => ({
   member: { id: "id", organizationId: "organizationId", userId: "userId" },
+  users: { id: "id", deactivatedAt: "deactivated_at" },
   workflows: { id: "id" },
 }));
 
