@@ -1,5 +1,5 @@
 import "server-only";
-import type { Hex } from "viem";
+import { getAddress, type Hex } from "viem";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getTurnkeyClientForOrg } from "@/lib/turnkey/agentic-wallet";
 import {
@@ -25,17 +25,26 @@ import { toCaip2 } from "@/lib/web3/turnkey-sponsorship-config";
 const STATUS_POLL_INTERVAL_MS = 1000;
 const STATUS_POLL_TIMEOUT_MS = 30_000;
 
+// Turnkey's getSendTransactionStatus returns short status strings
+// (INITIALIZED, BROADCASTING, BROADCASTED, INCLUDED, CONFIRMED, FINALIZED,
+// FAILED, DROPPED, REJECTED), NOT the `TRANSACTION_STATUS_*` enum the API uses
+// elsewhere -- the original constants never matched, so the poll always timed
+// out and callers fell back to direct signing. Turnkey reports INCLUDED only
+// once the tx succeeded on-chain and FAILED for reverts, so matching the real
+// terminal states keeps revert detection (SponsoredTxRevertError) intact.
 const TERMINAL_FAILURE_STATUSES = new Set([
-  "TRANSACTION_STATUS_FAILED",
-  "TRANSACTION_STATUS_REJECTED",
-  "TRANSACTION_STATUS_TIMEOUT",
-  "TRANSACTION_STATUS_REVERTED",
+  "FAILED",
+  "DROPPED",
+  "REJECTED",
+  "TIMEOUT",
+  "REVERTED",
 ]);
 
 const TERMINAL_SUCCESS_STATUSES = new Set([
-  "TRANSACTION_STATUS_BROADCASTED",
-  "TRANSACTION_STATUS_CONFIRMED",
-  "TRANSACTION_STATUS_FINALIZED",
+  "BROADCASTED",
+  "INCLUDED",
+  "CONFIRMED",
+  "FINALIZED",
 ]);
 
 export type TurnkeySponsoredTxParams = {
@@ -78,7 +87,11 @@ export async function submitTurnkeySponsoredTransaction(
   try {
     const submitResponse = await client.ethSendTransaction({
       organizationId: params.subOrgId,
-      from: params.walletAddress,
+      // Turnkey matches the signing resource on the EIP-55 checksummed address
+      // (it is case-sensitive). The wallet address is stored lowercase in the
+      // DB, so checksum it here or Turnkey rejects with "Could not find any
+      // resource to sign with" and the caller falls back to direct signing.
+      from: getAddress(params.walletAddress),
       sponsor: true,
       // Turnkey confirmed Arbitrum (eip155:42161) is supported on mainnet,
       // but the SDK v5.2.0 CAIP-2 enum has not been regenerated yet. Widen
