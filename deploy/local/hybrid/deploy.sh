@@ -104,9 +104,8 @@ generate_manifest() {
     ENCRYPTION_KEY_BASE64=$(echo -n "$ENCRYPTION_KEY" | base64 -w0)
 
     if [ -f "$PROJECT_ROOT/.env" ]; then
-        set -a
-        . "$PROJECT_ROOT/.env"
-        set +a
+        INTEGRATION_ENCRYPTION_KEY=$(grep -E '^INTEGRATION_ENCRYPTION_KEY=' "$PROJECT_ROOT/.env" | head -1 | cut -d= -f2-)
+        POSTGRES_DB=$(grep -E '^POSTGRES_DB=' "$PROJECT_ROOT/.env" | head -1 | cut -d= -f2-)
     fi
 
     local DB_NAME="${POSTGRES_DB:-keeperhub}"
