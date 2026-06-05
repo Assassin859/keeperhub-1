@@ -27,13 +27,20 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const orgContext = await getOrgContext();
+    const organizationId = orgContext.organization?.id;
+    if (!organizationId) {
+      return NextResponse.json({ nodes: [], edges: [] });
+    }
+
     const [currentWorkflow] = await db
       .select()
       .from(workflows)
       .where(
         and(
           eq(workflows.name, CURRENT_WORKFLOW_NAME),
-          eq(workflows.userId, session.user.id)
+          eq(workflows.userId, session.user.id),
+          eq(workflows.organizationId, organizationId)
         )
       )
       .orderBy(desc(workflows.updatedAt))
@@ -98,12 +105,19 @@ export async function POST(request: Request) {
     const sanitized = sanitizeWorkflowData(rawNodes, rawEdges);
     const { nodes, edges } = sanitized;
     const orgContext = await getOrgContext();
+    const organizationId = orgContext.organization?.id;
+    if (!organizationId) {
+      return NextResponse.json(
+        { error: "No active organization" },
+        { status: 409 }
+      );
+    }
 
     // Org principal: drafts are org-owned like any workflow (matches runtime).
     const integrationValidation = await validateWorkflowIntegrations(
       nodes,
       null,
-      orgContext.organization?.id ?? null
+      organizationId
     );
     if (!integrationValidation.valid) {
       return NextResponse.json(
@@ -122,20 +136,23 @@ export async function POST(request: Request) {
 
     const featureGuard = await enforceWorkflowFeatures(
       extractActionTypeNodes(nodes),
-      orgContext.organization?.id ?? null
+      organizationId
     );
     if (featureGuard.blocked) {
       return featureGuard.response;
     }
 
-    // Check if current workflow exists
+    // Check if current workflow exists for this user in this org.
+    // Both filters are required: userId scopes the draft to the editing user,
+    // organizationId prevents access after the user has left the org.
     const [existingWorkflow] = await db
       .select()
       .from(workflows)
       .where(
         and(
           eq(workflows.name, CURRENT_WORKFLOW_NAME),
-          eq(workflows.userId, session.user.id)
+          eq(workflows.userId, session.user.id),
+          eq(workflows.organizationId, organizationId)
         )
       )
       .limit(1);
@@ -157,17 +174,6 @@ export async function POST(request: Request) {
         nodes: updatedWorkflow.nodes,
         edges: updatedWorkflow.edges,
       });
-    }
-
-    // Create new current workflow. The org owns workflows, so it must be
-    // stamped here too (organization_id is NOT NULL). Every account has an
-    // org, so this is present in practice; guard rather than insert a null.
-    const organizationId = orgContext.organization?.id;
-    if (!organizationId) {
-      return NextResponse.json(
-        { error: "No active organization" },
-        { status: 409 }
-      );
     }
 
     const workflowId = generateId();
