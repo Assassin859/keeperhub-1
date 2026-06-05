@@ -25,6 +25,7 @@ import {
   NO_STEP_COMPLETION_REGEX,
 } from "@/lib/workflow/executor/runner-error-patterns";
 import { getTransactionHashes } from "@/lib/workflow/executor/step-success-tracker";
+import { computeTrulyFailedNodes } from "@/lib/workflow/executor/truly-failed-nodes";
 
 const TERMINAL_STATUSES = new Set(["cancelled"]);
 
@@ -45,30 +46,17 @@ function isSpuriousWorkflowError(error: string | null | undefined): boolean {
 }
 
 /**
- * Per-nodeId aggregate over workflow_execution_logs rows (top-level steps only).
+ * Per-nodeId aggregate over workflow_execution_logs rows.
  *
  * KEEP-431: A node can have multiple log rows (e.g. a cross-pod retry from the
  * SDK's "use step" boundary inserts a fresh row each time logStepStartDb runs).
  * Treat the node as succeeded if ANY of its rows is success -- only flag a
- * node as truly failed when no row succeeded for it.
+ * node as truly failed when no row succeeded for it. For Each iteration
+ * failures are surfaced via the parent loop node. See `computeTrulyFailedNodes`
+ * for the full contract.
  *
- * Top-level steps are aggregated by `nodeId` (a node is OK if any of its rows
- * succeeded -- a cross-pod SDK retry can leave an orphan running/error row next
- * to the real success row).
- *
- * For Each iteration rows (`iteration_index` + `for_each_node_id` non-null) are
- * aggregated per `(forEachNodeId, iterationIndex, nodeId)` so a failed iteration
- * body is NOT masked by a sibling iteration's success. When such a step has no
- * success row, its parent For Each node id is reported as failed. This is
- * required because `forEachStep` pre-logs the parent For Each node as success
- * before any iteration runs and never flips it; without counting iteration
- * failures here, a genuinely failed loop is invisible to every DB-based
- * reconciliation path and `logWorkflowCompleteDb` would override the real error
- * to success.
- *
- * Returns the list of node IDs (top-level nodes and/or parent For Each nodes)
- * that have at least one log row but no success row. Empty list means the
- * workflow body succeeded as a whole even if the SDK reported a spurious error.
+ * Empty list means the workflow body succeeded as a whole even if the SDK
+ * reported a spurious error.
  */
 async function listTrulyFailedNodes(executionId: string): Promise<string[]> {
   const allLogs = await db.query.workflowExecutionLogs.findMany({
@@ -81,41 +69,7 @@ async function listTrulyFailedNodes(executionId: string): Promise<string[]> {
     },
   });
 
-  const topLevelSucceeded = new Map<string, boolean>();
-  const iterationSucceeded = new Map<string, boolean>();
-  const iterationKeyToForEach = new Map<string, string>();
-
-  for (const log of allLogs) {
-    if (log.iterationIndex !== null && log.forEachNodeId !== null) {
-      const key = `${log.forEachNodeId}:${log.iterationIndex}:${log.nodeId}`;
-      iterationKeyToForEach.set(key, log.forEachNodeId);
-      if (log.status === "success") {
-        iterationSucceeded.set(key, true);
-      } else if (!iterationSucceeded.has(key)) {
-        iterationSucceeded.set(key, false);
-      }
-    } else if (log.status === "success") {
-      topLevelSucceeded.set(log.nodeId, true);
-    } else if (!topLevelSucceeded.has(log.nodeId)) {
-      topLevelSucceeded.set(log.nodeId, false);
-    }
-  }
-
-  const trulyFailedNodes = new Set<string>();
-  for (const [nodeId, succeeded] of topLevelSucceeded) {
-    if (!succeeded) {
-      trulyFailedNodes.add(nodeId);
-    }
-  }
-  for (const [key, succeeded] of iterationSucceeded) {
-    if (!succeeded) {
-      const forEachNodeId = iterationKeyToForEach.get(key);
-      if (forEachNodeId) {
-        trulyFailedNodes.add(forEachNodeId);
-      }
-    }
-  }
-  return [...trulyFailedNodes];
+  return computeTrulyFailedNodes(allLogs);
 }
 
 /**
