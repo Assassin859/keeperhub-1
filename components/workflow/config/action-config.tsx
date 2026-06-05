@@ -33,6 +33,10 @@ import { actionRequiresCredentials } from "@/lib/integration-helpers";
 import { ConditionQueryBuilder } from "@/components/workflow/condition-query-builder";
 import type { ConditionGroup } from "@/lib/workflow/nodes/condition/builder-types";
 import {
+  DEFAULT_HTTP_METHOD,
+  HTTP_METHODS,
+} from "@/lib/workflow/nodes/http-request/constants";
+import {
   createEmptyGroup,
   expressionToConditionGroup,
   visualConditionToExpression,
@@ -138,17 +142,17 @@ function HttpRequestFields({
         <Select
           disabled={disabled}
           onValueChange={(value) => onUpdateConfig("httpMethod", value)}
-          value={(config?.httpMethod as string) || "POST"}
+          value={(config?.httpMethod as string) || DEFAULT_HTTP_METHOD}
         >
           <SelectTrigger className="w-full" id="httpMethod">
             <SelectValue placeholder="Select method" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="GET">GET</SelectItem>
-            <SelectItem value="POST">POST</SelectItem>
-            <SelectItem value="PUT">PUT</SelectItem>
-            <SelectItem value="PATCH">PATCH</SelectItem>
-            <SelectItem value="DELETE">DELETE</SelectItem>
+            {HTTP_METHODS.map((method) => (
+              <SelectItem key={method} value={method}>
+                {method}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
