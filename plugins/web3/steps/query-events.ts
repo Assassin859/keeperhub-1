@@ -11,6 +11,10 @@ import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import type { RpcProviderManager } from "@/lib/rpc/providers";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
+import {
+  type AbiEntry,
+  queryBatchWithRetry,
+} from "./query-events-core";
 
 const DEFAULT_BATCH_SIZE = 2000;
 const DEFAULT_BLOCK_LOOKBACK = 6500;
@@ -80,7 +84,6 @@ function decodeEventArgs(
   return args;
 }
 
-type AbiEntry = { type: string; name: string };
 
 function parseAbi(
   abi: string
@@ -199,17 +202,14 @@ async function resolveBlockRange(
 }
 
 async function queryEventBatches(
-  contract: ethers.Contract,
+  rpcManager: RpcProviderManager,
+  contractAddress: string,
+  parsedAbi: AbiEntry[],
   eventName: string,
   eventFragment: ethers.EventFragment,
   range: BlockRange
 ): Promise<DecodedEvent[]> {
   const batchSize = DEFAULT_BATCH_SIZE;
-  const eventFilter = contract.filters[eventName]?.();
-  if (eventFilter === undefined || eventFilter === null) {
-    throw new Error(`Could not create filter for event '${eventName}'`);
-  }
-
   const allEvents: DecodedEvent[] = [];
 
   for (
@@ -220,7 +220,14 @@ async function queryEventBatches(
     const end = Math.min(start + batchSize - 1, range.toBlock);
     console.log(`[Query Events] Querying batch: blocks ${start} to ${end}`);
 
-    const batchEvents = await contract.queryFilter(eventFilter, start, end);
+    const batchEvents = await queryBatchWithRetry(
+      rpcManager,
+      contractAddress,
+      parsedAbi,
+      eventName,
+      start,
+      end
+    );
 
     for (const event of batchEvents) {
       if (event instanceof ethers.EventLog) {
@@ -325,35 +332,27 @@ async function stepHandler(
     };
   }
 
-  // Query events (uses RPC for log fetching)
+  // Query events (each batch fails over between endpoints and retries with a
+  // backoff, so a transient timeout on one batch does not fail the whole node).
   try {
-    return await rpcManager.executeWithFailover(async (provider) => {
-      const contract = new ethers.Contract(
-        contractAddress,
-        abiResult.parsed,
-        provider
-      );
+    const events = await queryEventBatches(
+      rpcManager,
+      contractAddress,
+      abiResult.parsed,
+      eventName,
+      eventFragment,
+      range
+    );
 
-      const events = await queryEventBatches(
-        contract,
-        eventName,
-        eventFragment,
-        range
-      );
+    console.log("[Query Events] Query complete. Events found:", events.length);
 
-      console.log(
-        "[Query Events] Query complete. Events found:",
-        events.length
-      );
-
-      return {
-        success: true as const,
-        events,
-        fromBlock: range.fromBlock,
-        toBlock: range.toBlock,
-        eventCount: events.length,
-      };
-    });
+    return {
+      success: true as const,
+      events,
+      fromBlock: range.fromBlock,
+      toBlock: range.toBlock,
+      eventCount: events.length,
+    };
   } catch (error) {
     return {
       success: false,

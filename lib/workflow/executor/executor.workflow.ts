@@ -1866,11 +1866,16 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
             return recovered ? { output: recovered.output } : null;
           }
         : undefined,
-      onSpuriousRecovery: ({ nodeId: bodyNodeId, iterationMeta: meta }) => {
+      onSpuriousRecovery: ({
+        nodeId: bodyNodeId,
+        iterationMeta: meta,
+        reason,
+      }) => {
         getMetricsCollector().incrementCounter(
           "workflow.executor.spurious_recovery.total",
           {
             source: "body_runner",
+            recovery_reason: reason,
             ...(workflowId ? { [LabelKeys.WORKFLOW_ID]: workflowId } : {}),
             ...(organizationId ? { [LabelKeys.ORG_ID]: organizationId } : {}),
             ...(organizationPlan ? { [LabelKeys.PLAN]: organizationPlan } : {}),
@@ -1956,6 +1961,9 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     arrayLength: number;
     maxIterations: number;
     iterationsRan: number;
+    failedIterations: number;
+    firstFailureError?: string;
+    firstFailureNodeId?: string;
   }> {
     const {
       forEachNodeId,
@@ -2063,12 +2071,19 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         );
       }
 
-      // If any body node failed, surface the error in the iteration result
+      // If any body node failed, surface the error in the iteration result.
+      // The `__forEachBodyFailure` marker lets the post-loop aggregation tell a
+      // genuine body failure apart from a successful iteration whose output
+      // happens to be shaped like `{ success: false }`.
       const bodyFailure = Object.entries(bodyResults).find(
         ([, r]) => !r.success
       );
       if (bodyFailure) {
+        console.log(
+          `[Workflow Executor] For Each "${getNodeName(forEachNode)}" iteration ${index} failed at node "${getNodeName(nodeMap.get(bodyFailure[0]) ?? forEachNode)}" (${bodyFailure[0]}): ${bodyFailure[1].error}`
+        );
         return {
+          __forEachBodyFailure: true as const,
           success: false as const,
           error: bodyFailure[1].error ?? "Body node failed",
           nodeId: bodyFailure[0],
@@ -2131,6 +2146,29 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       concurrencyMode as "sequential" | "parallel" | "custom",
       concurrencyLimit
     );
+
+    // KEEP-586: Detect genuine iteration-body failures. Without this they
+    // vanish into the Collect aggregate -- the Collect node and the For Each
+    // node both report success -- so the run is silently marked success even
+    // though a node that should have run did not. The caller (executeNode)
+    // uses these fields to fail the For Each node and surface it in the run.
+    const failedIterations = iterationResults.filter(
+      (
+        r
+      ): r is {
+        __forEachBodyFailure: true;
+        error?: string;
+        nodeId?: string;
+      } =>
+        typeof r === "object" &&
+        r !== null &&
+        (r as { __forEachBodyFailure?: unknown }).__forEachBodyFailure === true
+    );
+    if (failedIterations.length > 0) {
+      console.log(
+        `[Workflow Executor] For Each "${getNodeName(forEachNode)}": ${failedIterations.length}/${iterationResults.length} iteration(s) failed; first failing node ${failedIterations[0].nodeId}: ${failedIterations[0].error}`
+      );
+    }
 
     // 5. Mark body nodes as visited in the parent scope
     for (const bodyNodeId of bodyNodeIds) {
@@ -2212,6 +2250,9 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       arrayLength: resolvedArray.length,
       maxIterations,
       iterationsRan: itemsToProcess.length,
+      failedIterations: failedIterations.length,
+      firstFailureError: failedIterations[0]?.error,
+      firstFailureNodeId: failedIterations[0]?.nodeId,
     };
   }
 
@@ -2594,7 +2635,24 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
             label: getNodeName(node),
             data: iterationSummary,
           };
-          results[nodeId] = { success: true, data: iterationSummary };
+          // KEEP-586: A failed iteration body must fail the For Each node so
+          // computeFinalSuccess marks the run as error instead of silently
+          // reporting success while the loop dropped work mid-iteration.
+          const feFailed =
+            typeof iterationSummary === "object" &&
+            iterationSummary !== null &&
+            "failedIterations" in iterationSummary &&
+            (iterationSummary as { failedIterations: number })
+              .failedIterations > 0;
+          results[nodeId] = feFailed
+            ? {
+                success: false,
+                error:
+                  (iterationSummary as { firstFailureError?: string })
+                    .firstFailureError ?? "For Each iteration body failed",
+                data: iterationSummary,
+              }
+            : { success: true, data: iterationSummary };
         } else if (currentActionType === "Condition") {
           // For condition nodes, route to true/false handle targets
           const conditionResult = (result.data as { condition?: boolean })
