@@ -63,6 +63,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       id: users.id,
       email: users.email,
       twoFactorEnabled: users.twoFactorEnabled,
+      deactivatedAt: users.deactivatedAt,
     })
     .from(users)
     .where(eq(users.email, email))
@@ -93,6 +94,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json(
       { error: "Invalid sign-in", code: "invalid_signin" },
       { status: 401 }
+    );
+  }
+
+  if (user.deactivatedAt) {
+    return NextResponse.json(
+      { error: "Your account has been deactivated.", code: "account_deactivated" },
+      { status: 403 }
     );
   }
 
