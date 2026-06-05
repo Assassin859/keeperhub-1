@@ -14,7 +14,7 @@ const ETH_USD_FEEDS: Record<number, Address> = {
 };
 
 /**
- * Known testnet chain IDs where Pimlico doesn't charge for sponsorship.
+ * Known testnet chain IDs that are not charged for gas sponsorship.
  */
 const TESTNET_CHAIN_IDS: ReadonlySet<number> = new Set([
   11_155_111, // Sepolia

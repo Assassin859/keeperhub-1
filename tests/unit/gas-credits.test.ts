@@ -86,9 +86,12 @@ import { isBillingEnabled } from "@/lib/billing/feature-flag";
 import {
   checkGasCredits,
   getEthPriceUsd,
+  getGasCreditBalance,
   getGasCreditCapCents,
+  getGasCreditCaps,
   recordGasUsage,
 } from "@/lib/billing/gas-credits";
+import { getOrgSubscription } from "@/lib/billing/plans-server";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -200,5 +203,61 @@ describe("getEthPriceUsd", () => {
     const price = await getEthPriceUsd("https://rpc.example.com", 8453);
 
     expect(price).toBe(3000);
+  });
+});
+
+describe("getGasCreditCapCents per-org overrides", () => {
+  it("uses the per-org override when set (enterprise custom cap)", () => {
+    expect(
+      getGasCreditCapCents("enterprise", { gasCreditsCents: 25_000 })
+    ).toBe(25_000);
+  });
+
+  it("override wins over both env var and plan default", () => {
+    process.env.GAS_CREDITS_PRO_CENTS = "2000";
+    expect(getGasCreditCapCents("pro", { gasCreditsCents: 1234 })).toBe(1234);
+  });
+
+  it("ignores a negative override and falls back to the plan default", () => {
+    expect(getGasCreditCapCents("pro", { gasCreditsCents: -5 })).toBe(500);
+  });
+
+  it("accepts a zero override", () => {
+    expect(getGasCreditCapCents("pro", { gasCreditsCents: 0 })).toBe(0);
+  });
+
+  it("falls back to env/default when no override is provided", () => {
+    expect(getGasCreditCapCents("pro", null)).toBe(500);
+  });
+});
+
+describe("getGasCreditCaps", () => {
+  it("returns a cap for every plan from the shared cap function", () => {
+    expect(getGasCreditCaps()).toEqual({
+      free: 500,
+      pro: 500,
+      business: 500,
+      enterprise: 500,
+    });
+  });
+
+  it("reflects per-plan env overrides", () => {
+    process.env.GAS_CREDITS_PRO_CENTS = "2000";
+    expect(getGasCreditCaps().pro).toBe(2000);
+  });
+});
+
+describe("getGasCreditBalance", () => {
+  it("threads the org's plan_overrides into the allocation cap", async () => {
+    vi.mocked(getOrgSubscription).mockResolvedValue({
+      plan: "enterprise",
+      planOverrides: { gasCreditsCents: 7777 },
+      currentPeriodStart: new Date(),
+    } as unknown as Awaited<ReturnType<typeof getOrgSubscription>>);
+
+    const balance = await getGasCreditBalance("org_override");
+
+    expect(balance.totalCents).toBe(7777);
+    expect(balance.remainingCents).toBe(7777);
   });
 });
