@@ -298,10 +298,10 @@ const plugins = [
         await tx
           .update(integrations)
           .set({
-            userId: toUserId,
+            createdBy: toUserId,
             organizationId: targetMembership.organizationId,
           })
-          .where(eq(integrations.userId, fromUserId));
+          .where(eq(integrations.createdBy, fromUserId));
 
         await tx
           .update(workflowExecutions)

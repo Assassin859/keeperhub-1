@@ -18,25 +18,25 @@ const WORKFLOW = {
 };
 
 describe("buildExecutorInput", () => {
-  it("derives ownerId and organizationId from the workflow", () => {
+  it("derives createdBy and organizationId from the workflow", () => {
     const input = buildExecutorInput(WORKFLOW, {
       triggerInput: { foo: "bar" },
       executionId: "exec-1",
     });
 
-    expect(input.ownerId).toBe("owner-1");
+    expect(input.createdBy).toBe("owner-1");
     expect(input.organizationId).toBe("org-1");
     expect(input.workflowId).toBe("wf-1");
   });
 
-  it("maps a null organizationId to undefined and still sets ownerId", () => {
+  it("maps a null organizationId to undefined and still sets createdBy", () => {
     const input = buildExecutorInput(
       { ...WORKFLOW, organizationId: null },
       { executionId: "exec-2" }
     );
 
     expect(input.organizationId).toBeUndefined();
-    expect(input.ownerId).toBe("owner-1");
+    expect(input.createdBy).toBe("owner-1");
   });
 
   it("passes through the optional org metadata it is given", () => {

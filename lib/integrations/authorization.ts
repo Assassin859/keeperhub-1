@@ -30,7 +30,7 @@ export type IntegrationPrincipal = {
 /** Minimal integration shape needed to make an authorization decision. */
 export type IntegrationAuthRow = {
   id: string;
-  userId: string;
+  createdBy: string;
   organizationId: string | null;
   visibility: IntegrationVisibility;
 };
@@ -64,7 +64,7 @@ export function isIntegrationUsable(
   }
 
   // Creator may always use their own integration (interactive callers).
-  if (principal.userId !== null && principal.userId === integration.userId) {
+  if (principal.userId !== null && principal.userId === integration.createdBy) {
     return true;
   }
 
@@ -110,7 +110,7 @@ export async function filterUnauthorizedIntegrationIds(
   const rows = await db
     .select({
       id: integrations.id,
-      userId: integrations.userId,
+      createdBy: integrations.createdBy,
       organizationId: integrations.organizationId,
       visibility: integrations.visibility,
     })
@@ -145,12 +145,12 @@ export async function filterUnauthorizedIntegrationIds(
     }
   }
 
-  const ownerIds = [...new Set(rows.map((row) => row.userId))];
+  const creatorIds = [...new Set(rows.map((row) => row.createdBy))];
   const deactivatedOwners = new Set<string>();
   const deactivatedRows = await db
     .select({ id: users.id })
     .from(users)
-    .where(and(inArray(users.id, ownerIds), isNotNull(users.deactivatedAt)));
+    .where(and(inArray(users.id, creatorIds), isNotNull(users.deactivatedAt)));
   for (const user of deactivatedRows) {
     deactivatedOwners.add(user.id);
   }
@@ -158,7 +158,7 @@ export async function filterUnauthorizedIntegrationIds(
   const unauthorized: string[] = [];
   for (const row of rows) {
     const usable = isIntegrationUsable(row, principal, {
-      isOwnerDeactivated: deactivatedOwners.has(row.userId),
+      isOwnerDeactivated: deactivatedOwners.has(row.createdBy),
       isPrincipalMember,
       hasGrant: grantedIds.has(row.id),
     });

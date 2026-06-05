@@ -387,7 +387,7 @@ export const integrations = pgTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => generateId()),
-    userId: text("user_id")
+    createdBy: text("created_by")
       .notNull()
       .references(() => users.id),
     organizationId: text("organization_id").references(() => organization.id, {
@@ -416,7 +416,7 @@ export const integrations = pgTable(
       .where(
         sql`${table.type} = 'web3' AND ${table.organizationId} IS NOT NULL`
       ),
-    index("idx_integrations_user_id").on(table.userId),
+    index("idx_integrations_created_by").on(table.createdBy),
   ]
 );
 
