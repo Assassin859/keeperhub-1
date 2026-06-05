@@ -131,6 +131,19 @@ describe("mapIntegrationConfig (via fetchCredentials)", () => {
     expect(creds[envVar]).toBe("secret-value");
   });
 
+  it("returns empty creds without hitting the DB when integrationId is missing", async () => {
+    const { getIntegrationById } = await import("@/lib/db/integrations");
+    const { fetchCredentials } = await import("@/lib/credential-fetcher");
+
+    vi.mocked(getIntegrationById).mockClear();
+
+    // Must short-circuit before getIntegrationById(undefined) throws.
+    const creds = await fetchCredentials(undefined as unknown as string);
+
+    expect(creds).toEqual({});
+    expect(getIntegrationById).not.toHaveBeenCalled();
+  });
+
   it("returns empty creds for unknown integration types", async () => {
     const { getIntegrationById } = await import("@/lib/db/integrations");
     const { fetchCredentials } = await import("@/lib/credential-fetcher");
