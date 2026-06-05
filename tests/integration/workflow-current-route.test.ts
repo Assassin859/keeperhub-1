@@ -139,12 +139,8 @@ describe("POST /api/workflows/current action config validation", () => {
     expect(mockSelect).not.toHaveBeenCalled();
   });
 
-  it("falls back to user-scoped integration validation when there is no active org", async () => {
+  it("rejects with 409 when there is no active org", async () => {
     mockGetOrgContext.mockResolvedValue({ organization: null });
-    mockValidateWorkflowIntegrations.mockResolvedValue({
-      valid: false,
-      invalidIds: ["foreign-integration"],
-    });
 
     const response = await POST(
       request([
@@ -163,10 +159,7 @@ describe("POST /api/workflows/current action config validation", () => {
       ])
     );
 
-    expect(response.status).toBe(403);
-    expect(mockValidateWorkflowIntegrations).toHaveBeenCalledWith(
-      expect.any(Array),
-      null
-    );
+    expect(response.status).toBe(409);
+    expect(mockValidateWorkflowIntegrations).not.toHaveBeenCalled();
   });
 });
