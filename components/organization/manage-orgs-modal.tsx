@@ -15,6 +15,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { FailureDigestSection } from "@/components/organization/failure-digest-section";
 import { MemberSessionsDialog } from "@/components/organization/member-sessions-dialog";
 import {
   AlertDialog,
@@ -1190,7 +1191,7 @@ export function ManageOrgsModal({
             )}
           </DialogTrigger>
         )}
-        <DialogContent className="max-h-[80vh] max-w-2xl overflow-y-auto">
+        <DialogContent className="h-[600px] max-h-[85vh] max-w-2xl content-start overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Manage Organizations</DialogTitle>
             <DialogDescription>
@@ -1199,7 +1200,7 @@ export function ManageOrgsModal({
           </DialogHeader>
 
           <Tabs className="w-full" defaultValue="organizations">
-            <TabsList className="grid w-full grid-cols-2">
+            <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="organizations">Organizations</TabsTrigger>
               <TabsTrigger value="invitations">
                 Invitations
@@ -1209,6 +1210,7 @@ export function ManageOrgsModal({
                   </span>
                 )}
               </TabsTrigger>
+              <TabsTrigger value="notifications">Notifications</TabsTrigger>
             </TabsList>
 
             <TabsContent className="space-y-4" value="organizations">
@@ -1562,6 +1564,16 @@ export function ManageOrgsModal({
                       processingInvite={processingInvite}
                     />
                   ))}
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent className="space-y-4" value="notifications">
+              {organization && (isActiveOrgOwner || isActiveOrgAdmin) ? (
+                <FailureDigestSection organizationId={organization.id} />
+              ) : (
+                <div className="py-8 text-center text-muted-foreground">
+                  Only organization owners and admins can manage notifications.
                 </div>
               )}
             </TabsContent>
