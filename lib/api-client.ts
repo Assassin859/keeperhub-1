@@ -57,6 +57,9 @@ export type SavedWorkflow = WorkflowData & {
   // KEEP-440: set when the workflow has been soft-deleted. The owner-facing
   // list keeps showing these rows with a deleted marker.
   deletedAt?: string | null;
+  // Set by ops via admin API when a workflow is deactivated. Distinct from
+  // `enabled` (user toggle) — the user cannot clear this themselves.
+  deactivatedAt?: string | null;
   inputSchema?: Record<string, unknown> | null;
   outputMapping?: Record<string, unknown> | null;
   priceUsdcPerCall?: string | null;
