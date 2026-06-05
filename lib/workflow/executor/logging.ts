@@ -4,7 +4,7 @@
  */
 import "server-only";
 
-import { and, asc, eq, isNotNull, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { logOutputField } from "@/lib/db/execution-log-fields";
 import {
@@ -52,44 +52,70 @@ function isSpuriousWorkflowError(error: string | null | undefined): boolean {
  * Treat the node as succeeded if ANY of its rows is success -- only flag a
  * node as truly failed when no row succeeded for it.
  *
- * Filters out forEach iteration rows (`iteration_index` and `for_each_node_id`
- * are non-null on those). Iteration rows are scoped to a parent forEach node;
- * we only aggregate top-level steps here so we don't accidentally treat a
- * succeeded forEach with one failed iteration as fully succeeded. The forEach
- * runner is responsible for surfacing iteration failures via the parent node's
- * own success/error status.
+ * Top-level steps are aggregated by `nodeId` (a node is OK if any of its rows
+ * succeeded -- a cross-pod SDK retry can leave an orphan running/error row next
+ * to the real success row).
  *
- * Returns the list of node IDs that have at least one log row but no success
- * row. Empty list means every observed node has at least one success row, so
- * the workflow body succeeded as a whole even if the SDK reported an error
- * via a spurious max-retries throw.
+ * For Each iteration rows (`iteration_index` + `for_each_node_id` non-null) are
+ * aggregated per `(forEachNodeId, iterationIndex, nodeId)` so a failed iteration
+ * body is NOT masked by a sibling iteration's success. When such a step has no
+ * success row, its parent For Each node id is reported as failed. This is
+ * required because `forEachStep` pre-logs the parent For Each node as success
+ * before any iteration runs and never flips it; without counting iteration
+ * failures here, a genuinely failed loop is invisible to every DB-based
+ * reconciliation path and `logWorkflowCompleteDb` would override the real error
+ * to success.
+ *
+ * Returns the list of node IDs (top-level nodes and/or parent For Each nodes)
+ * that have at least one log row but no success row. Empty list means the
+ * workflow body succeeded as a whole even if the SDK reported a spurious error.
  */
 async function listTrulyFailedNodes(executionId: string): Promise<string[]> {
   const allLogs = await db.query.workflowExecutionLogs.findMany({
-    where: and(
-      eq(workflowExecutionLogs.executionId, executionId),
-      isNull(workflowExecutionLogs.iterationIndex),
-      isNull(workflowExecutionLogs.forEachNodeId)
-    ),
-    columns: { nodeId: true, status: true },
+    where: eq(workflowExecutionLogs.executionId, executionId),
+    columns: {
+      nodeId: true,
+      status: true,
+      iterationIndex: true,
+      forEachNodeId: true,
+    },
   });
 
-  const nodeSucceeded = new Map<string, boolean>();
+  const topLevelSucceeded = new Map<string, boolean>();
+  const iterationSucceeded = new Map<string, boolean>();
+  const iterationKeyToForEach = new Map<string, string>();
+
   for (const log of allLogs) {
-    if (log.status === "success") {
-      nodeSucceeded.set(log.nodeId, true);
-    } else if (!nodeSucceeded.has(log.nodeId)) {
-      nodeSucceeded.set(log.nodeId, false);
+    if (log.iterationIndex !== null && log.forEachNodeId !== null) {
+      const key = `${log.forEachNodeId}:${log.iterationIndex}:${log.nodeId}`;
+      iterationKeyToForEach.set(key, log.forEachNodeId);
+      if (log.status === "success") {
+        iterationSucceeded.set(key, true);
+      } else if (!iterationSucceeded.has(key)) {
+        iterationSucceeded.set(key, false);
+      }
+    } else if (log.status === "success") {
+      topLevelSucceeded.set(log.nodeId, true);
+    } else if (!topLevelSucceeded.has(log.nodeId)) {
+      topLevelSucceeded.set(log.nodeId, false);
     }
   }
 
-  const trulyFailedNodes: string[] = [];
-  for (const [nodeId, succeeded] of nodeSucceeded) {
+  const trulyFailedNodes = new Set<string>();
+  for (const [nodeId, succeeded] of topLevelSucceeded) {
     if (!succeeded) {
-      trulyFailedNodes.push(nodeId);
+      trulyFailedNodes.add(nodeId);
     }
   }
-  return trulyFailedNodes;
+  for (const [key, succeeded] of iterationSucceeded) {
+    if (!succeeded) {
+      const forEachNodeId = iterationKeyToForEach.get(key);
+      if (forEachNodeId) {
+        trulyFailedNodes.add(forEachNodeId);
+      }
+    }
+  }
+  return [...trulyFailedNodes];
 }
 
 /**

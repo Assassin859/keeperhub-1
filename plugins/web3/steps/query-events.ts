@@ -14,6 +14,18 @@ import { getErrorMessage } from "@/lib/utils";
 
 const DEFAULT_BATCH_SIZE = 2000;
 const DEFAULT_BLOCK_LOOKBACK = 6500;
+// A single batch can transiently time out on both RPC endpoints during a long
+// scan (e.g. 30-60 day event ranges). Rather than failing the whole node (and
+// having the durable engine replay the entire multi-minute scan), retry the
+// failing batch with a backoff so a blip does not sink the run.
+const MAX_BATCH_RETRIES = 3;
+const RETRY_BASE_DELAY_MS = 2000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
 
 async function getUserIdFromExecution(
   executionId: string | undefined
@@ -198,18 +210,55 @@ async function resolveBlockRange(
   };
 }
 
+// Query a single block range, failing over between RPC endpoints AND retrying
+// the batch with a backoff (at least MAX_BATCH_RETRIES attempts) before giving
+// up. A timed-out batch is the common transient failure on long scans; this
+// keeps it from sinking the whole node.
+async function queryBatchWithRetry(
+  rpcManager: RpcProviderManager,
+  contractAddress: string,
+  parsedAbi: AbiEntry[],
+  eventName: string,
+  start: number,
+  end: number
+): Promise<(ethers.Log | ethers.EventLog)[]> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= MAX_BATCH_RETRIES; attempt++) {
+    try {
+      return await rpcManager.executeWithFailover(async (provider) => {
+        const contract = new ethers.Contract(
+          contractAddress,
+          parsedAbi,
+          provider
+        );
+        const eventFilter = contract.filters[eventName]?.();
+        if (eventFilter === undefined || eventFilter === null) {
+          throw new Error(`Could not create filter for event '${eventName}'`);
+        }
+        return await contract.queryFilter(eventFilter, start, end);
+      });
+    } catch (error) {
+      lastError = error;
+      console.log(
+        `[Query Events] Batch ${start}-${end} failed (attempt ${attempt}/${MAX_BATCH_RETRIES}): ${getErrorMessage(error)}`
+      );
+      if (attempt < MAX_BATCH_RETRIES) {
+        await delay(RETRY_BASE_DELAY_MS * attempt);
+      }
+    }
+  }
+  throw lastError;
+}
+
 async function queryEventBatches(
-  contract: ethers.Contract,
+  rpcManager: RpcProviderManager,
+  contractAddress: string,
+  parsedAbi: AbiEntry[],
   eventName: string,
   eventFragment: ethers.EventFragment,
   range: BlockRange
 ): Promise<DecodedEvent[]> {
   const batchSize = DEFAULT_BATCH_SIZE;
-  const eventFilter = contract.filters[eventName]?.();
-  if (eventFilter === undefined || eventFilter === null) {
-    throw new Error(`Could not create filter for event '${eventName}'`);
-  }
-
   const allEvents: DecodedEvent[] = [];
 
   for (
@@ -220,7 +269,14 @@ async function queryEventBatches(
     const end = Math.min(start + batchSize - 1, range.toBlock);
     console.log(`[Query Events] Querying batch: blocks ${start} to ${end}`);
 
-    const batchEvents = await contract.queryFilter(eventFilter, start, end);
+    const batchEvents = await queryBatchWithRetry(
+      rpcManager,
+      contractAddress,
+      parsedAbi,
+      eventName,
+      start,
+      end
+    );
 
     for (const event of batchEvents) {
       if (event instanceof ethers.EventLog) {
@@ -325,35 +381,27 @@ async function stepHandler(
     };
   }
 
-  // Query events (uses RPC for log fetching)
+  // Query events (each batch fails over between endpoints and retries with a
+  // backoff, so a transient timeout on one batch does not fail the whole node).
   try {
-    return await rpcManager.executeWithFailover(async (provider) => {
-      const contract = new ethers.Contract(
-        contractAddress,
-        abiResult.parsed,
-        provider
-      );
+    const events = await queryEventBatches(
+      rpcManager,
+      contractAddress,
+      abiResult.parsed,
+      eventName,
+      eventFragment,
+      range
+    );
 
-      const events = await queryEventBatches(
-        contract,
-        eventName,
-        eventFragment,
-        range
-      );
+    console.log("[Query Events] Query complete. Events found:", events.length);
 
-      console.log(
-        "[Query Events] Query complete. Events found:",
-        events.length
-      );
-
-      return {
-        success: true as const,
-        events,
-        fromBlock: range.fromBlock,
-        toBlock: range.toBlock,
-        eventCount: events.length,
-      };
-    });
+    return {
+      success: true as const,
+      events,
+      fromBlock: range.fromBlock,
+      toBlock: range.toBlock,
+      eventCount: events.length,
+    };
   } catch (error) {
     return {
       success: false,
