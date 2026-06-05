@@ -507,3 +507,30 @@ cronjob:
       failedJobsHistoryLimit: 3
       restartPolicy: OnFailure
       backoffLimit: 2
+    - name: failure-digest
+      image:
+        repository: ${ECR_REGISTRY}/keeperhub-prod
+        tag: app-${IMAGE_TAG}
+        imagePullPolicy: Always
+      schedule: "0 14 * * *" # daily 14:00 UTC; weekly digests are sent on Tuesdays
+      command: ["/bin/sh"]
+      args:
+        - "/app/deploy/scripts/digest-cron.sh"
+        - "http://keeperhub-common:3000/api/internal/failure-digest"
+      env:
+        SCHEDULER_SERVICE_API_KEY:
+          type: parameterStore
+          name: scheduler-service-api-key
+          parameter_name: /eks/techops-prod/keeperhub-scheduler/keeperhub-api-key
+      resources:
+        requests:
+          memory: "32Mi"
+          cpu: "10m"
+        limits:
+          memory: "32Mi"
+          cpu: "10m"
+      concurrencyPolicy: Forbid
+      successfulJobsHistoryLimit: 3
+      failedJobsHistoryLimit: 3
+      restartPolicy: OnFailure
+      backoffLimit: 2
