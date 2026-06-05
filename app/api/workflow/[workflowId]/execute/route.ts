@@ -66,20 +66,12 @@ export async function POST(
         );
       }
 
+      // Internal service auth already verified by authenticateInternalService.
+      // Org membership check would require organizationId but internal callers
+      // have no session org — and all workflows are NOT NULL on organizationId
+      // post-migration, so passing null here would always 404. Lifecycle checks
+      // (deleted, deactivated) are handled by getWorkflowExecutability below.
       userId = workflow.userId;
-
-      const access = await getWorkflowAccess(workflow, {
-        userId,
-        organizationId: null,
-        authMethod: "internal",
-      });
-
-      if (!access.hasFullAccess) {
-        return NextResponse.json(
-          { error: "Workflow not found" },
-          { status: 404 }
-        );
-      }
     } else {
       const authContext = await getDualAuthContext(request);
       if ("error" in authContext) {
