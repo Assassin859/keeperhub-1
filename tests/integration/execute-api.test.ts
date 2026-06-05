@@ -268,23 +268,24 @@ describe("Execute API Integration Tests", () => {
   });
 
   describe("Integration Validation", () => {
-    it("validates integrations belong to workflow owner", async () => {
+    it("validates integrations using the org principal (userId null, organizationId set)", async () => {
       const { validateWorkflowIntegrations } = await import(
         "@/lib/db/integrations"
       );
 
       const nodes = mockWorkflow.nodes;
-      const userId = mockWorkflow.userId;
+      const organizationId = "org_test";
 
-      // Cast nodes for test - actual validation uses WorkflowNodeForValidation type
       await validateWorkflowIntegrations(
         nodes as Parameters<typeof validateWorkflowIntegrations>[0],
-        userId
+        null,
+        organizationId
       );
 
       expect(validateWorkflowIntegrations).toHaveBeenCalledWith(
         expect.anything(),
-        userId
+        null,
+        organizationId
       );
     });
 

@@ -64,7 +64,7 @@ const NO_CTX = {
 function row(overrides: Partial<IntegrationAuthRow>): IntegrationAuthRow {
   return {
     id: "int_1",
-    userId: "owner_1",
+    createdBy: "owner_1",
     organizationId: "org_1",
     visibility: "private",
     ...overrides,
@@ -189,7 +189,7 @@ describe("filterUnauthorizedIntegrationIds", () => {
     fixtures.integrations = [
       {
         id: "int_1",
-        userId: "owner_1",
+        createdBy: "owner_1",
         organizationId: "org_1",
         visibility: "private",
       },
@@ -208,13 +208,13 @@ describe("filterUnauthorizedIntegrationIds", () => {
     fixtures.integrations = [
       {
         id: "org_int",
-        userId: "owner_1",
+        createdBy: "owner_1",
         organizationId: "org_1",
         visibility: "organization",
       },
       {
         id: "specific_int",
-        userId: "owner_1",
+        createdBy: "owner_1",
         organizationId: "org_1",
         visibility: "specific_members",
       },
@@ -234,7 +234,7 @@ describe("filterUnauthorizedIntegrationIds", () => {
     fixtures.integrations = [
       {
         id: "org_int",
-        userId: "owner_1",
+        createdBy: "owner_1",
         organizationId: "org_1",
         visibility: "organization",
       },
@@ -314,19 +314,19 @@ describe("org principal", () => {
     fixtures.integrations = [
       {
         id: "org_int",
-        userId: "owner_1",
+        createdBy: "owner_1",
         organizationId: "org_1",
         visibility: "organization",
       },
       {
         id: "private_int",
-        userId: "owner_1",
+        createdBy: "owner_1",
         organizationId: "org_1",
         visibility: "private",
       },
       {
         id: "specific_int",
-        userId: "owner_1",
+        createdBy: "owner_1",
         organizationId: "org_1",
         visibility: "specific_members",
       },
