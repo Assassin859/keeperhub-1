@@ -15,9 +15,10 @@ export async function GET(request: Request): Promise<NextResponse> {
       );
     }
 
-    const { organizationId, userId } = authContext;
+    const { organizationId } = authContext;
 
-    if (!organizationId && !userId) {
+    // The org owns every workflow; the list is purely org-scoped.
+    if (!organizationId) {
       return NextResponse.json([], { status: 200 });
     }
 
@@ -25,13 +26,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     const projectIdFilter = searchParams.get("projectId");
     const tagIdFilter = searchParams.get("tagId");
 
-    const conditions =
-      !organizationId && userId
-        ? [eq(workflows.userId, userId), eq(workflows.isAnonymous, true)]
-        : [
-            eq(workflows.organizationId, organizationId ?? ""),
-            eq(workflows.isAnonymous, false),
-          ];
+    const conditions = [eq(workflows.organizationId, organizationId)];
 
     if (projectIdFilter) {
       conditions.push(eq(workflows.projectId, projectIdFilter));

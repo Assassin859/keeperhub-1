@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { buildExecutorInput } from "@/lib/workflow/executor/build-executor-input";
 
-// Regression guard for the KEEP-613 follow-up. The database-query step
-// authorizes credential use against the owner-context principal
-// (`ownerId` / `organizationId`). Every dispatch entry point (scheduled K8s
-// job, in-process, MCP) builds its executor input through buildExecutorInput,
-// so pinning the owner derivation here guards all of them: a regression that
-// drops ownerId would leave the principal with a null userId and make
-// org-visibility integrations fail closed as "DATABASE_URL is not configured".
+// Every dispatch entry point (scheduled K8s job, in-process, MCP) builds its
+// executor input through buildExecutorInput, so pinning the derivation here
+// guards all of them. `organizationId` is the credential authority (steps
+// authorize as the ORG principal - the org owns the workflow); `ownerId` is
+// createdBy attribution for execution records and confers no credential
+// access. A regression that drops organizationId would make org-visibility
+// integrations fail closed as "DATABASE_URL is not configured".
 
 const WORKFLOW = {
   id: "wf-1",
@@ -18,25 +18,25 @@ const WORKFLOW = {
 };
 
 describe("buildExecutorInput", () => {
-  it("derives ownerId and organizationId from the workflow", () => {
+  it("derives createdBy and organizationId from the workflow", () => {
     const input = buildExecutorInput(WORKFLOW, {
       triggerInput: { foo: "bar" },
       executionId: "exec-1",
     });
 
-    expect(input.ownerId).toBe("owner-1");
+    expect(input.createdBy).toBe("owner-1");
     expect(input.organizationId).toBe("org-1");
     expect(input.workflowId).toBe("wf-1");
   });
 
-  it("maps a null organizationId to undefined and still sets ownerId", () => {
+  it("maps a null organizationId to undefined and still sets createdBy", () => {
     const input = buildExecutorInput(
       { ...WORKFLOW, organizationId: null },
       { executionId: "exec-2" }
     );
 
     expect(input.organizationId).toBeUndefined();
-    expect(input.ownerId).toBe("owner-1");
+    expect(input.createdBy).toBe("owner-1");
   });
 
   it("passes through the optional org metadata it is given", () => {

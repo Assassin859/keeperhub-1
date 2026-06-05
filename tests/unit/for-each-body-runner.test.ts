@@ -170,7 +170,7 @@ async function runIteration(
       executionId: "exec-test",
       organizationId: "org-test",
       orgSlug: "org-test",
-      ownerId: "user-test",
+      createdBy: "user-test",
       workflowId: "wf-test",
     } satisfies Omit<StepContext, "nodeId" | "nodeName" | "nodeType">,
   };
@@ -587,7 +587,7 @@ describe("runBodyNode: bodyVisited semantics", () => {
         executionId: "e",
         organizationId: "o",
         orgSlug: "o",
-        ownerId: "u",
+        createdBy: "u",
         workflowId: "w",
       } satisfies Omit<StepContext, "nodeId" | "nodeName" | "nodeType">,
     };

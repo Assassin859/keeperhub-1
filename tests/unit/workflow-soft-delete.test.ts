@@ -15,6 +15,11 @@ vi.mock("@/lib/db", () => ({
   db: {
     select: vi.fn(() => ({
       from: vi.fn(() => ({
+        innerJoin: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: mockMemberLimit,
+          })),
+        })),
         where: vi.fn(() => ({
           limit: mockMemberLimit,
         })),
@@ -28,6 +33,10 @@ vi.mock("@/lib/db/schema", () => ({
     id: "id",
     organizationId: "organizationId",
     userId: "userId",
+  },
+  users: {
+    id: "id",
+    deactivatedAt: "deactivated_at",
   },
   workflows: {
     deletedAt: "deleted_at",
@@ -46,6 +55,13 @@ const ANON_WORKFLOW = {
   userId: "creator",
   organizationId: null,
   isAnonymous: true,
+};
+
+const ORG_WORKFLOW = {
+  id: "wf-org",
+  userId: "creator",
+  organizationId: "org-1",
+  isAnonymous: false,
 };
 
 describe("isWorkflowDeleted", () => {
@@ -74,14 +90,18 @@ describe("getWorkflowAccess soft-delete signal", () => {
   });
 
   it("flags isDeleted when the workflow row has a deletedAt timestamp", async () => {
+    // A same-org member retains full access -- isDeleted is an orthogonal
+    // signal so owner-facing read paths can keep serving the row with a
+    // marker. Access is org-based now, so the subject must be acting in the
+    // workflow's org and be a current member of it.
+    mockMemberLimit.mockResolvedValue([{ id: "member-1" }]);
+
     const access = await getWorkflowAccess(
-      { ...ANON_WORKFLOW, deletedAt: new Date() },
-      { userId: "creator", organizationId: null }
+      { ...ORG_WORKFLOW, deletedAt: new Date() },
+      { userId: "member-user", organizationId: "org-1" }
     );
 
     expect(access.isDeleted).toBe(true);
-    // The creator still has full access -- isDeleted is an orthogonal signal
-    // so owner-facing read paths can keep serving the row with a marker.
     expect(access.hasFullAccess).toBe(true);
   });
 

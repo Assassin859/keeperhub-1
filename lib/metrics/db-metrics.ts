@@ -415,7 +415,7 @@ export async function getUserStatsFromDb(): Promise<UserStats> {
       db.select({ count: countDistinct(workflows.userId) }).from(workflows),
       // Users with at least one integration
       db
-        .select({ count: countDistinct(integrations.userId) })
+        .select({ count: countDistinct(integrations.createdBy) })
         .from(integrations),
     ]);
 

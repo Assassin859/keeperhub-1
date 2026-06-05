@@ -167,12 +167,18 @@ export async function createTestWorkflow(
     }
     const userId = userResult[0].id as string;
 
-    // Get organization ID
+    // Get organization ID. The org owns workflows (organization_id is NOT
+    // NULL), so a test user without a membership is a fixture bug - fail
+    // loudly here instead of with a constraint violation at insert.
     const orgResult = await sql`
       SELECT organization_id FROM member WHERE user_id = ${userId} LIMIT 1
     `;
-    const organizationId =
-      orgResult.length > 0 ? (orgResult[0].organization_id as string) : null;
+    if (orgResult.length === 0) {
+      throw new Error(
+        `Test user ${userEmail} has no organization membership; every workflow needs an owning org`
+      );
+    }
+    const organizationId = orgResult[0].organization_id as string;
 
     const {
       name = `Test Workflow ${Date.now()}`,

@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { users, workflowSchedules, workflows } from "@/lib/db/schema";
+import { organization, workflowSchedules, workflows } from "@/lib/db/schema";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
 import { workflowExecutableConditions } from "@/lib/workflow/executable";
 
@@ -28,7 +28,7 @@ export async function GET(request: Request) {
     })
     .from(workflowSchedules)
     .innerJoin(workflows, eq(workflowSchedules.workflowId, workflows.id))
-    .innerJoin(users, eq(workflows.userId, users.id))
+    .innerJoin(organization, eq(workflows.organizationId, organization.id))
     .where(
       and(eq(workflowSchedules.enabled, true), workflowExecutableConditions())
     );
