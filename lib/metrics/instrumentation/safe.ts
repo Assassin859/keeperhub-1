@@ -13,6 +13,7 @@
  * outcome counter and the duration histogram in one shot.
  */
 
+import type { SignerModeKind } from "@/lib/safe/signer-resolver";
 import { createTimer, getMetricsCollector } from "../index";
 import { MetricNames } from "../types";
 
@@ -123,7 +124,7 @@ export function recordSafeWithdraw(options: {
  * product/security stakeholders track Safe adoption over time.
  */
 export function recordSignerMode(options: {
-  kind: "eoa" | "safe" | "safe-role";
+  kind: SignerModeKind;
   chainId: number;
 }): void {
   const metrics = getMetricsCollector();

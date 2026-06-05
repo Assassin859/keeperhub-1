@@ -136,6 +136,7 @@ vi.mock("@/lib/web3/wallet-helpers", () => ({
 }));
 
 vi.mock("@/lib/safe/signer-resolver", () => ({
+  SIGNER_MODE: { EOA: "eoa", SAFE: "safe", SAFE_ROLE: "safe-role" },
   resolveSignerMode: vi.fn().mockResolvedValue({
     kind: "eoa",
     ownerAddress: "0xwalletaddress",
