@@ -1,5 +1,6 @@
 import { buildEdgesBySourceHandle } from "@/lib/workflow/editor/edge-handle-utils";
 import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
+import { DEFAULT_HTTP_METHOD } from "@/lib/workflow/nodes/http-request/constants";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 import { findActionById, flattenConfigFields } from "@/plugins/registry";
 import {
@@ -400,7 +401,7 @@ export function generateWorkflowCode(
     const config = node.data.config || {};
     const endpoint =
       (config.endpoint as string) || "https://api.example.com/endpoint";
-    const method = (config.httpMethod as string) || "POST";
+    const method = (config.httpMethod as string) || DEFAULT_HTTP_METHOD;
 
     return [
       `${indent}const ${varName} = await ${stepInfo.functionName}({`,

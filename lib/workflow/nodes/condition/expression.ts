@@ -20,6 +20,11 @@ const UNARY_OPERATORS: ReadonlySet<ConditionOperator> = new Set([
   "isNotEmpty",
   "exists",
   "doesNotExist",
+  "isTrue",
+  "isFalse",
+  "arrayIsEmpty",
+  "arrayIsNotEmpty",
+  "objectIsEmpty",
 ]);
 
 function wrapOperand(operand: string): string {
@@ -92,6 +97,34 @@ function ruleToExpression(rule: ConditionRule): string {
 
     case "matchesRegex":
       return `new RegExp(${wrapOperand(rule.rightOperand)}).test(String(${left}))`;
+
+    case "isTrue":
+      return `${left} === true`;
+
+    case "isFalse":
+      return `${left} === false`;
+
+    // Array operators are guarded with Array.isArray so they evaluate safely
+    // (to false) when the referenced value is not an array, instead of throwing.
+    case "arrayIsEmpty":
+      return `(Array.isArray(${left}) && ${left}.length === 0)`;
+
+    case "arrayIsNotEmpty":
+      return `(Array.isArray(${left}) && ${left}.length > 0)`;
+
+    case "arrayContains":
+      return `(Array.isArray(${left}) && ${left}.includes(${wrapOperand(rule.rightOperand)}))`;
+
+    case "arrayLength":
+      return `(Array.isArray(${left}) && ${left}.length === ${wrapOperand(rule.rightOperand)})`;
+
+    // Object operators guard against null/undefined before reading keys, so a
+    // missing reference is false rather than a thrown error.
+    case "objectIsEmpty":
+      return `(${left} !== null && ${left} !== undefined && Object.keys(${left}).length === 0)`;
+
+    case "objectHasKey":
+      return `(${left} !== null && ${left} !== undefined && Object.keys(${left}).includes(${wrapOperand(rule.rightOperand)}))`;
 
     default: {
       const _exhaustive: never = rule.operator;

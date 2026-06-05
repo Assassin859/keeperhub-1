@@ -5,7 +5,9 @@ import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -20,7 +22,9 @@ import {
   createEmptyGroup,
   createEmptyRule,
   isUnaryOperator,
+  OPERATOR_GROUPS,
   OPERATOR_METADATA,
+  operatorsForCategory,
 } from "@/lib/workflow/nodes/condition/builder-utils";
 import { cn } from "@/lib/utils";
 
@@ -30,10 +34,13 @@ type ConditionQueryBuilderProps = {
   disabled?: boolean;
 };
 
-const OPERATOR_OPTIONS = Object.entries(OPERATOR_METADATA) as [
-  ConditionOperator,
-  (typeof OPERATOR_METADATA)[ConditionOperator],
-][];
+// Operators grouped by value type so the dropdown shows section headers
+// (General / Text / Number / Boolean / Array / Object) with their operators
+// beneath, making clear which comparisons apply to which kind of value.
+const OPERATOR_OPTION_GROUPS = OPERATOR_GROUPS.map((groupMeta) => ({
+  label: groupMeta.label,
+  operators: operatorsForCategory(groupMeta.category),
+}));
 
 function RuleRow({
   rule,
@@ -72,10 +79,15 @@ function RuleRow({
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          {OPERATOR_OPTIONS.map(([op, meta]) => (
-            <SelectItem key={op} value={op}>
-              {meta.label}
-            </SelectItem>
+          {OPERATOR_OPTION_GROUPS.map((optionGroup) => (
+            <SelectGroup key={optionGroup.label}>
+              <SelectLabel>{optionGroup.label}</SelectLabel>
+              {optionGroup.operators.map((op) => (
+                <SelectItem key={op} value={op}>
+                  {OPERATOR_METADATA[op].label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
           ))}
         </SelectContent>
       </Select>

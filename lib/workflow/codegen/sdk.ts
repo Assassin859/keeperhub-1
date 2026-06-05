@@ -1,5 +1,6 @@
 import "server-only";
 
+import { DEFAULT_HTTP_METHOD } from "@/lib/workflow/nodes/http-request/constants";
 import { findActionById } from "@/plugins/registry";
 import { synthesiseProtocolForSDK } from "./protocol-synthesiser";
 // System action codegen templates (not in plugin registry)
@@ -344,7 +345,7 @@ export function generateWorkflowSDKCode(
   function buildHttpParams(config: Record<string, unknown>): string[] {
     const params = [
       `url: "${config.endpoint || "https://api.example.com/endpoint"}"`,
-      `method: "${config.httpMethod || "POST"}"`,
+      `method: "${config.httpMethod || DEFAULT_HTTP_METHOD}"`,
       `headers: ${config.httpHeaders || "{}"}`,
     ];
     if (config.httpBody) {

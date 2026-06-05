@@ -14,7 +14,15 @@ export type ConditionOperator =
   | "isNotEmpty"
   | "exists"
   | "doesNotExist"
-  | "matchesRegex";
+  | "matchesRegex"
+  | "isTrue"
+  | "isFalse"
+  | "arrayIsEmpty"
+  | "arrayIsNotEmpty"
+  | "arrayContains"
+  | "arrayLength"
+  | "objectIsEmpty"
+  | "objectHasKey";
 
 export type ConditionRule = {
   id: string;

@@ -18,7 +18,7 @@ export default async function BillingRoute(): Promise<React.ReactElement> {
 
   const activeMember = await auth.api.getActiveMember({ headers: hdrs });
   if (activeMember?.role !== "owner") {
-    notFound();
+    redirect("/");
   }
 
   return (

@@ -539,6 +539,137 @@ describe("condition evaluation edge cases", () => {
     });
   });
 
+  describe("typed operators via visual builder (boolean/array/object)", () => {
+    function evalRule(
+      operator: string,
+      value: unknown,
+      rightOperand = ""
+    ): boolean {
+      const config: Record<string, unknown> = {
+        conditionConfig: {
+          group: {
+            id: "g1",
+            logic: "AND",
+            rules: [
+              {
+                id: "r1",
+                leftOperand: "{{@node1:API.value}}",
+                operator,
+                rightOperand,
+              },
+            ],
+          },
+        },
+      };
+
+      const expression = resolveConditionExpression(config);
+      const outputs = { node1: { label: "API", data: { value } } };
+      return evaluateConditionExpression(expression, outputs).result;
+    }
+
+    describe("isTrue / isFalse", () => {
+      it("should match a boolean true value with isTrue", () => {
+        expect(evalRule("isTrue", true)).toBe(true);
+      });
+
+      it("should not treat a truthy string as isTrue", () => {
+        // strict `=== true`, so the string "true" does not match
+        expect(evalRule("isTrue", "true")).toBe(false);
+      });
+
+      it("should match a boolean false value with isFalse", () => {
+        expect(evalRule("isFalse", false)).toBe(true);
+      });
+
+      it("should not treat 0 as isFalse", () => {
+        expect(evalRule("isFalse", 0)).toBe(false);
+      });
+    });
+
+    describe("arrayIsEmpty / arrayIsNotEmpty", () => {
+      it("should report an empty array as empty", () => {
+        expect(evalRule("arrayIsEmpty", [])).toBe(true);
+      });
+
+      it("should report a populated array as not empty", () => {
+        expect(evalRule("arrayIsNotEmpty", [1, 2, 3])).toBe(true);
+      });
+
+      it("should evaluate arrayIsEmpty to false on a non-array (no throw)", () => {
+        // The Array.isArray guard means a string is not "an empty array"
+        expect(evalRule("arrayIsEmpty", "not an array")).toBe(false);
+      });
+
+      it("should evaluate arrayIsEmpty to false on null (no throw)", () => {
+        expect(evalRule("arrayIsEmpty", null)).toBe(false);
+      });
+
+      it("should evaluate arrayIsNotEmpty to false on a non-array (no throw)", () => {
+        expect(evalRule("arrayIsNotEmpty", 42)).toBe(false);
+      });
+    });
+
+    describe("arrayContains", () => {
+      it("should detect a present numeric element", () => {
+        expect(evalRule("arrayContains", [1, 2, 3], "2")).toBe(true);
+      });
+
+      it("should detect a present string element", () => {
+        expect(evalRule("arrayContains", ["a", "b"], "b")).toBe(true);
+      });
+
+      it("should return false when the element is absent", () => {
+        expect(evalRule("arrayContains", [1, 2, 3], "9")).toBe(false);
+      });
+
+      it("should evaluate to false on a non-array (no throw)", () => {
+        expect(evalRule("arrayContains", "abc", "a")).toBe(false);
+      });
+    });
+
+    describe("arrayLength", () => {
+      it("should match the exact length", () => {
+        expect(evalRule("arrayLength", [1, 2, 3], "3")).toBe(true);
+      });
+
+      it("should not match a different length", () => {
+        expect(evalRule("arrayLength", [1, 2], "3")).toBe(false);
+      });
+
+      it("should evaluate to false on a non-array (no throw)", () => {
+        expect(evalRule("arrayLength", "abc", "3")).toBe(false);
+      });
+    });
+
+    describe("objectIsEmpty", () => {
+      it("should report an object with no keys as empty", () => {
+        expect(evalRule("objectIsEmpty", {})).toBe(true);
+      });
+
+      it("should report an object with keys as not empty", () => {
+        expect(evalRule("objectIsEmpty", { a: 1 })).toBe(false);
+      });
+
+      it("should evaluate to false on null (no throw)", () => {
+        expect(evalRule("objectIsEmpty", null)).toBe(false);
+      });
+    });
+
+    describe("objectHasKey", () => {
+      it("should detect a present key", () => {
+        expect(evalRule("objectHasKey", { id: 1, name: "x" }, "id")).toBe(true);
+      });
+
+      it("should return false for an absent key", () => {
+        expect(evalRule("objectHasKey", { id: 1 }, "missing")).toBe(false);
+      });
+
+      it("should evaluate to false on null (no throw)", () => {
+        expect(evalRule("objectHasKey", null, "id")).toBe(false);
+      });
+    });
+  });
+
   describe("BigInt-safe comparisons for large Web3 values", () => {
     it("should detect off-by-one difference in large numbers", () => {
       const expression = "{{@node1:Contract.balance}} > 1000000000000000000";

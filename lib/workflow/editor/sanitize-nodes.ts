@@ -71,6 +71,14 @@ const VALID_OPERATORS = new Set<string>([
   "exists",
   "doesNotExist",
   "matchesRegex",
+  "isTrue",
+  "isFalse",
+  "arrayIsEmpty",
+  "arrayIsNotEmpty",
+  "arrayContains",
+  "arrayLength",
+  "objectIsEmpty",
+  "objectHasKey",
 ]);
 
 /** Normalize a condition operator string to a canonical ConditionOperator value */
