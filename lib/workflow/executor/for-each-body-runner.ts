@@ -96,17 +96,21 @@ export type RunBodyContext = {
   /** Optional hook for nested For Each handling. Called instead of the generic
    *  downstream walk when the visited node is itself a For Each. */
   handleNestedForEach?: NestedForEachHandler;
-  /** Optional resolver for spurious "exceeded max retries" errors. When the
-   *  step body succeeded but the SDK lost its step_completed event, the
-   *  resolver returns the recovered output so the iteration treats the step
-   *  as a success and continues recursing downstream. Omitted in unit tests
+  /** Optional resolver consulted when a body step throws. When the step body
+   *  already recorded a success row, the resolver returns the recovered output
+   *  so the iteration treats the step as a success and continues recursing
+   *  downstream. Covers both an SDK-lost step_completed event and a long step
+   *  abandoned by the runtime after its body completed. Omitted in unit tests
    *  that don't exercise the recovery path. */
   resolveSpuriousRecovery?: SpuriousRecoveryResolver;
-  /** Optional hook fired when a spurious failure is recovered. Used by the
-   *  executor to emit observability metrics. */
+  /** Optional hook fired when a thrown step is recovered from the success
+   *  authority. Used by the executor to emit observability metrics. `reason`
+   *  distinguishes the lost-completion-event case from a long step abandoned
+   *  after completing. */
   onSpuriousRecovery?: (params: {
     nodeId: string;
     iterationMeta: IterationMeta;
+    reason: "spurious_max_retries" | "abandoned_completion";
   }) => void;
   /** Process action config (template substitution, dbQuery rewriting, etc.). */
   processConfig: (
@@ -215,10 +219,29 @@ async function routeAfterSuccess(params: {
 }
 
 /**
- * KEEP-543: Attempt iteration-scoped spurious-recovery for a body node that
- * just threw. Returns true when the failure was recovered (caller should NOT
- * record it as a failure); false when the failure is real and the caller
- * should fall through to the standard failure path.
+ * KEEP-543 / KEEP-586: Attempt authority-backed recovery for a body node that
+ * just threw. The step-success-tracker (and its workflow_execution_logs
+ * fallback) is the source of truth: when the step body recorded a success row,
+ * the step succeeded even though the runtime wrapper later threw. Two shapes
+ * produce that situation, and both must continue the iteration:
+ *
+ *   1. The Workflow DevKit lost the step_completed event and re-fired the step
+ *      ("exceeded max retries" / "failed after retries" / "did not record
+ *      completion").
+ *   2. A long-running step -- e.g. a multi-minute web3 event scan -- outran the
+ *      runtime's step lease and was abandoned with a generic timeout error
+ *      AFTER its body had already completed and persisted its output. Without
+ *      recovery the iteration silently drops every node downstream of the slow
+ *      step while the run still reports success.
+ *
+ * We therefore consult the authority on ANY throw rather than gating on the
+ * max-retries error shapes. A genuinely failed step has no success row, so the
+ * resolver returns null and the caller falls through to the standard failure
+ * path -- this never masks a real failure.
+ *
+ * Returns true when the failure was recovered (caller should NOT record it as a
+ * failure); false when the failure is real and the caller should fall through
+ * to the standard failure path.
  */
 async function attemptSpuriousRecovery(params: {
   nodeId: string;
@@ -240,9 +263,6 @@ async function attemptSpuriousRecovery(params: {
   if (!actionType) {
     return false;
   }
-  if (!isSpuriousMaxRetriesError(errorMessage)) {
-    return false;
-  }
 
   const recovered = await ctx.resolveSpuriousRecovery({
     nodeId,
@@ -251,6 +271,10 @@ async function attemptSpuriousRecovery(params: {
   if (recovered === null) {
     return false;
   }
+
+  console.log(
+    `[For Each body] recovered "${ctx.getNodeName(node)}" (${nodeId}) from the success authority after it threw; continuing downstream.`
+  );
 
   const result: BodyExecutionResult = {
     success: true,
@@ -263,7 +287,13 @@ async function attemptSpuriousRecovery(params: {
     data: recovered.output,
   };
 
-  ctx.onSpuriousRecovery?.({ nodeId, iterationMeta: ctx.iterationMeta });
+  ctx.onSpuriousRecovery?.({
+    nodeId,
+    iterationMeta: ctx.iterationMeta,
+    reason: isSpuriousMaxRetriesError(errorMessage)
+      ? "spurious_max_retries"
+      : "abandoned_completion",
+  });
 
   await routeAfterSuccess({
     nodeId,
@@ -377,6 +407,10 @@ export async function runBodyNode(
     });
   } catch (error) {
     const errorMessage = await ctx.getErrorMessageAsync(error);
+    const iter = ctx.iterationMeta?.iterationIndex ?? "-";
+    console.log(
+      `[For Each body] node "${ctx.getNodeName(node)}" (${nodeId}) threw at iteration ${iter}: ${errorMessage}`
+    );
 
     const recovered = await attemptSpuriousRecovery({
       nodeId,
@@ -390,6 +424,9 @@ export async function runBodyNode(
       return;
     }
 
+    console.log(
+      `[For Each body] node "${ctx.getNodeName(node)}" (${nodeId}) NOT recovered (no success row in authority); stopping branch -- downstream nodes will not run.`
+    );
     ctx.bodyResults[nodeId] = { success: false, error: errorMessage };
   }
 }

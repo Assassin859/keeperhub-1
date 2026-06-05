@@ -717,7 +717,7 @@ describe("runBodyNode: step context", () => {
 
 const SPURIOUS_ERROR_REGEX = /exceeded max retries/;
 
-describe("runBodyNode: KEEP-543 spurious-max-retries recovery", () => {
+describe("runBodyNode: KEEP-543 / KEEP-586 authority-backed recovery", () => {
   // For Each -> read -> decode (a plain action chain)
   const baseNodes = [
     makeForEach("for-each"),
@@ -773,6 +773,47 @@ describe("runBodyNode: KEEP-543 spurious-max-retries recovery", () => {
     expect(onRecovery).toHaveBeenCalledWith({
       nodeId: "read",
       iterationMeta: { iterationIndex: 3, forEachNodeId: "for-each" },
+      reason: "spurious_max_retries",
+    });
+  });
+
+  it("recovers a long step abandoned with a non-max-retries error after its body completed", async () => {
+    const recoveredOutput = { events: [{ blockNumber: 1 }] };
+    const onRecovery = vi.fn();
+
+    // The web3 event scan ran to completion (its success row is persisted) but
+    // the runtime abandoned the step lease and threw a generic timeout error.
+    const throwingRunner: BodyStepRunner = ({ node }) => {
+      if (node.id === "read") {
+        return Promise.reject(new Error("Step timed out after 60000ms"));
+      }
+      return Promise.resolve({ decoded: true });
+    };
+
+    const { bodyResults } = await runIteration({
+      nodes: baseNodes,
+      edges: baseEdges,
+      forEachNodeId: "for-each",
+      iterationIndex: 7,
+      stepResultFor: () => undefined,
+      stepRunner: throwingRunner,
+      resolveSpuriousRecovery: ({ nodeId }) =>
+        nodeId === "read"
+          ? Promise.resolve({ output: recoveredOutput })
+          : Promise.resolve(null),
+      onSpuriousRecovery: onRecovery,
+    });
+
+    expect(bodyResults.read).toEqual({ success: true, data: recoveredOutput });
+    // The downstream node now runs instead of the iteration silently stopping.
+    expect(bodyResults.decode).toEqual({
+      success: true,
+      data: { decoded: true },
+    });
+    expect(onRecovery).toHaveBeenCalledWith({
+      nodeId: "read",
+      iterationMeta: { iterationIndex: 7, forEachNodeId: "for-each" },
+      reason: "abandoned_completion",
     });
   });
 
@@ -803,7 +844,7 @@ describe("runBodyNode: KEEP-543 spurious-max-retries recovery", () => {
     expect(onRecovery).not.toHaveBeenCalled();
   });
 
-  it("does not invoke recovery for non-spurious errors", async () => {
+  it("consults the authority for any error but fails when no success row exists", async () => {
     const realErrorRunner: BodyStepRunner = ({ node }) => {
       if (node.id === "read") {
         return Promise.reject(new Error("RPC connection refused"));
@@ -811,7 +852,9 @@ describe("runBodyNode: KEEP-543 spurious-max-retries recovery", () => {
       return Promise.resolve({ decoded: true });
     };
 
-    const resolver = vi.fn(() => Promise.resolve({ output: { wrong: true } }));
+    // A genuinely failed step has no success row, so the resolver returns null
+    // and the branch must still fail -- recovery never masks a real failure.
+    const resolver = vi.fn(() => Promise.resolve(null));
     const { bodyResults } = await runIteration({
       nodes: baseNodes,
       edges: baseEdges,
@@ -821,9 +864,10 @@ describe("runBodyNode: KEEP-543 spurious-max-retries recovery", () => {
       resolveSpuriousRecovery: resolver,
     });
 
+    expect(resolver).toHaveBeenCalledOnce();
     expect(bodyResults.read?.success).toBe(false);
     expect(bodyResults.read?.error).toBe("RPC connection refused");
-    expect(resolver).not.toHaveBeenCalled();
+    expect(bodyResults.decode).toBeUndefined();
   });
 
   it("matches FAILED_AFTER_RETRIES_REGEX and NO_STEP_COMPLETION_REGEX patterns", async () => {
