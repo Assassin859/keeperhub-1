@@ -190,6 +190,9 @@ export const member = pgTable(
   (table) => [
     index("idx_member_user_id").on(table.userId),
     index("idx_member_organization_id").on(table.organizationId),
+    uniqueIndex("member_org_single_owner")
+      .on(table.organizationId)
+      .where(sql`${table.role} = 'owner'`),
   ]
 );
 
