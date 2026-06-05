@@ -2615,6 +2615,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
                 notTakenHandle,
                 edgesBySourceHandle
               ),
+              takenTargets: handleTargets,
             });
             await executeReadyDownstream(nodeId, handleTargets, visited);
 

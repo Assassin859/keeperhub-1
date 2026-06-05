@@ -202,6 +202,11 @@ EXPOSE 3000
 CMD ["tsx", "block-dispatcher/index.ts"]
 
 # Stage 2.8: Workflow Runner stage (for executing workflows in K8s Jobs)
+# The K8s Job runs this image as a non-root user pinned to UID/GID 1000
+# (keeperhub-executor/k8s-job.ts -> RUNNER_UID/RUNNER_GID). node:*-alpine ships
+# a "node" user at 1000. If you change this base image, verify a non-root user
+# exists at UID 1000 and that the copied app files stay readable by it, or
+# update RUNNER_UID/RUNNER_GID to match the new image.
 FROM node:24-alpine AS workflow-runner
 WORKDIR /app
 RUN npm install -g pnpm@9 tsx@4

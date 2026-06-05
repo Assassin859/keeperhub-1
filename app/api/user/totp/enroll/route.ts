@@ -18,7 +18,10 @@ import {
 import {
   buildPendingSignupClearCookie,
 } from "@/lib/pending-signup-cookie";
-import { recordTrustedIpFromRequest } from "@/lib/security/login-risk";
+import {
+  recordTrustedIpFromRequest,
+  resolveClientIpFromHeaders,
+} from "@/lib/security/login-risk";
 import { verifyUserTotp } from "@/lib/security/totp-verify";
 
 type RequestBody = {
@@ -77,7 +80,6 @@ function buildSessionSetCookie(
  *     cookie returned here is the FIRST usable session for the
  *     account.
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: two converging auth shapes
 export async function POST(request: Request): Promise<NextResponse> {
   const caller = await resolveEnrollMfaCaller(request.headers);
   if (caller.kind === "anonymous") {
@@ -219,10 +221,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     const expiresAt = new Date(Date.now() + DEFAULT_SESSION_TTL_MS);
     const sessionId = `sess_${randomBytes(16).toString("base64url")}`;
     const userAgent = request.headers.get("user-agent") ?? null;
-    const ipAddress =
-      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-      request.headers.get("x-real-ip") ??
-      null;
+    const ipAddress = resolveClientIpFromHeaders(request.headers);
 
     // Single transaction across the three writes so a mid-flight
     // failure cannot leave the account in a "twoFactorEnabled = true

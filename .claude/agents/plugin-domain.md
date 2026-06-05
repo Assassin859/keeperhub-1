@@ -91,6 +91,7 @@ import "server-only";
 
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import { fetchCredentials } from "@/lib/credential-fetcher";
+import { safeFetch } from "@/lib/safe-fetch";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 import type { PluginNameCredentials } from "../credentials";
@@ -122,8 +123,9 @@ async function stepHandler(
   }
 
   try {
-    // Use fetch() directly -- NO SDK dependencies
-    const response = await fetch("https://api.example.com/endpoint", {
+    // Use safeFetch. NO SDK dependencies, and egress goes through the SSRF guard
+    const response = await safeFetch("https://api.example.com/endpoint", {
+      plugin: "plugin-name",
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -219,6 +221,9 @@ export async function testPluginName(
   }
 
   try {
+    // Connection-test files (test.ts) are reachable from the client-bundled
+    // plugin registry and cannot import the server-only safe-fetch.ts, so use
+    // the raw fetch global here. Step files use safeFetch.
     const response = await fetch("https://api.example.com/me", {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
@@ -308,7 +313,7 @@ CRITICAL "use step" bundler rules (violations break production builds):
 
 2. SHARING LOGIC BETWEEN STEP FILES: extract to `*-core.ts` file WITHOUT "use step", both step files import from it
 
-3. NO NODE.JS-ONLY DEPENDENCIES: no Vercel AI SDK, use `fetch()` directly instead
+3. NO NODE.JS-ONLY DEPENDENCIES: no Vercel AI SDK, use `safeFetch` from `@/lib/safe-fetch` (pass `{ plugin }`) instead. Raw `fetch`/`axios`/`http.request` under `plugins/` fails the CI egress guard
 
 4. Security-critical steps: set `stepFunction.maxRetries = 0` after function definition (fail-safe, not fail-open)
 </bundler_constraints>
@@ -324,7 +329,7 @@ Post-creation steps:
 <critical_rules>
 Production rules (violations break the build):
 
-1. Use `fetch()` not SDKs -- avoids Node.js-only transitive deps
+1. Use `safeFetch` (from `@/lib/safe-fetch`, with `{ plugin }`) not SDKs or raw `fetch`. Routes egress through the SSRF guard and avoids Node.js-only transitive deps
 2. All step files must start with `import "server-only";`
 3. Entry point must have `"use step";` directive
 4. Must export `_integrationType` constant matching plugin type

@@ -1,5 +1,5 @@
 import "server-only";
-import type { Address, Hex } from "viem";
+import type { Hex } from "viem";
 import { createPublicClient, encodeFunctionData, http } from "viem";
 import {
   checkGasCredits,
@@ -10,9 +10,10 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
 import { MetricNames } from "@/lib/metrics/types";
 import { isTestnetChain } from "@/lib/web3/chainlink-feeds";
-import { isSponsorshipSupported } from "@/lib/web3/pimlico-config";
 import { createSponsoredClient } from "@/lib/web3/sponsored-client";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
+import { submitTurnkeySponsoredTransaction } from "@/lib/web3/turnkey-sponsored-tx";
+import { isSponsorshipSupported } from "@/lib/web3/turnkey-sponsorship-config";
 
 type SponsoredTransactionResult = {
   success: true;
@@ -49,11 +50,12 @@ type SponsoredContractTxParams = {
 };
 
 /**
- * Attempt to execute a transaction via gas sponsorship (ERC-4337 + Pimlico).
+ * Attempt to execute a transaction via Turnkey Gas Station sponsorship.
  *
  * Returns the result if sponsorship succeeds, or null if sponsorship is
- * unavailable (unsupported chain, no credits, client creation failed).
- * Callers should fall back to direct signing when null is returned.
+ * unavailable (unsupported chain, non-Turnkey wallet, credits exhausted,
+ * Turnkey rejected the activity). Callers should fall back to direct
+ * signing when null is returned.
  */
 export async function executeSponsoredTransaction(
   params: SponsoredTxParams
@@ -73,44 +75,37 @@ export async function executeSponsoredTransaction(
 
   const client = await createSponsoredClient(
     params.organizationId,
-    params.chainId,
-    params.rpcUrl
+    params.chainId
   );
 
   if (client === null) {
     return null;
   }
 
-  try {
-    const txHash: Hex = await client.smartAccountClient.sendTransaction({
-      to: params.to as Address,
-      value: params.value ?? BigInt(0),
-      data: params.data ?? ("0x" as Hex),
-    });
+  const submitResult = await submitTurnkeySponsoredTransaction({
+    subOrgId: client.subOrgId,
+    walletAddress: client.walletAddress,
+    chainId: params.chainId,
+    to: params.to,
+    value: params.value,
+    data: params.data,
+  });
 
-    return await finalizeSponsoredTx(
-      txHash,
-      params.rpcUrl,
-      params.organizationId,
-      params.chainId,
-      params.executionId
-    );
-  } catch (error) {
-    logSystemError(
-      ErrorCategory.TRANSACTION,
-      "[Sponsorship] Sponsored transaction failed, falling back to direct signing",
-      error instanceof Error ? error : new Error(String(error)),
-      {
-        organizationId: params.organizationId,
-        chainId: params.chainId.toString(),
-      }
-    );
+  if (submitResult === null) {
     return null;
   }
+
+  return await finalizeSponsoredTx(
+    submitResult.txHash,
+    params.rpcUrl,
+    params.organizationId,
+    params.chainId,
+    params.executionId
+  );
 }
 
 /**
- * Attempt to execute a contract call via gas sponsorship.
+ * Attempt to execute a contract call via Turnkey Gas Station sponsorship.
  *
  * Same semantics as executeSponsoredTransaction -- returns null on failure
  * so callers can fall back to direct signing.
@@ -133,51 +128,48 @@ export async function executeSponsoredContractTransaction(
 
   const client = await createSponsoredClient(
     params.organizationId,
-    params.chainId,
-    params.rpcUrl
+    params.chainId
   );
 
   if (client === null) {
     return null;
   }
 
-  try {
-    const callData = encodeFunctionData({
-      abi: params.abi,
-      functionName: params.functionName,
-      args: params.args,
-    });
+  const callData = encodeFunctionData({
+    abi: params.abi,
+    functionName: params.functionName,
+    args: params.args,
+  });
 
-    const txHash: Hex = await client.smartAccountClient.sendTransaction({
-      to: params.to as Address,
-      value: params.value ?? BigInt(0),
-      data: callData,
-    });
+  const submitResult = await submitTurnkeySponsoredTransaction({
+    subOrgId: client.subOrgId,
+    walletAddress: client.walletAddress,
+    chainId: params.chainId,
+    to: params.to,
+    value: params.value,
+    data: callData,
+  });
 
-    return await finalizeSponsoredTx(
-      txHash,
-      params.rpcUrl,
-      params.organizationId,
-      params.chainId,
-      params.executionId
-    );
-  } catch (error) {
-    logSystemError(
-      ErrorCategory.TRANSACTION,
-      "[Sponsorship] Sponsored contract call failed, falling back to direct signing",
-      error instanceof Error ? error : new Error(String(error)),
-      {
-        organizationId: params.organizationId,
-        chainId: params.chainId.toString(),
-      }
-    );
+  if (submitResult === null) {
     return null;
   }
+
+  return await finalizeSponsoredTx(
+    submitResult.txHash,
+    params.rpcUrl,
+    params.organizationId,
+    params.chainId,
+    params.executionId
+  );
 }
 
 /**
  * Wait for receipt, record gas usage, and build the result.
- * Skips billing on testnets (Pimlico doesn't charge for testnet sponsorship).
+ *
+ * Turnkey pays the gas, so the org's wallet is never charged for the
+ * underlying tx -- but the on-chain receipt still reports gasUsed and
+ * effectiveGasPrice, which is what we meter against the org's gas-credit
+ * balance. Billing is skipped on testnets.
  */
 async function finalizeSponsoredTx(
   txHash: Hex,

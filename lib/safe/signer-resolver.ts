@@ -45,19 +45,31 @@ import {
  *                   `rolesModifier.execTransactionWithRole` so every call is
  *                   validated against the role's scope + allowances.
  */
+/**
+ * Canonical signer-mode discriminants. Referenced everywhere a mode is built
+ * or compared so the bare string literals live in exactly one place.
+ */
+export const SIGNER_MODE = {
+  EOA: "eoa",
+  SAFE: "safe",
+  SAFE_ROLE: "safe-role",
+} as const;
+
+export type SignerModeKind = (typeof SIGNER_MODE)[keyof typeof SIGNER_MODE];
+
 export type SignerMode =
   | {
-      kind: "eoa";
+      kind: typeof SIGNER_MODE.EOA;
       ownerAddress: string;
     }
   | {
-      kind: "safe";
+      kind: typeof SIGNER_MODE.SAFE;
       ownerAddress: string;
       safeAddress: string;
       safeWalletId: string;
     }
   | {
-      kind: "safe-role";
+      kind: typeof SIGNER_MODE.SAFE_ROLE;
       ownerAddress: string;
       safeAddress: string;
       safeWalletId: string;
@@ -220,10 +232,10 @@ async function resolveSignerModeImpl(
 
   const safe = rows[0];
   if (!safe) {
-    return { kind: "eoa", ownerAddress };
+    return { kind: SIGNER_MODE.EOA, ownerAddress };
   }
   if (safe.status !== "deployed" || !safe.isSigningActive) {
-    return { kind: "eoa", ownerAddress };
+    return { kind: SIGNER_MODE.EOA, ownerAddress };
   }
 
   // Check whether an active Zodiac Role is installed for this Safe. If so,
@@ -249,7 +261,7 @@ async function resolveSignerModeImpl(
   const role = roleRows[0];
   if (role && role.status === "active") {
     return {
-      kind: "safe-role",
+      kind: SIGNER_MODE.SAFE_ROLE,
       ownerAddress,
       safeAddress: safe.safeAddress,
       safeWalletId: safe.id,
@@ -283,7 +295,7 @@ async function resolveSignerModeImpl(
     backfillRoleInBackground(safeForReconcile);
 
     return {
-      kind: "safe-role",
+      kind: SIGNER_MODE.SAFE_ROLE,
       ownerAddress,
       safeAddress: safe.safeAddress,
       safeWalletId: safe.id,
@@ -294,7 +306,7 @@ async function resolveSignerModeImpl(
   }
 
   return {
-    kind: "safe",
+    kind: SIGNER_MODE.SAFE,
     ownerAddress,
     safeAddress: safe.safeAddress,
     safeWalletId: safe.id,
@@ -336,8 +348,8 @@ export async function resolveWalletAndSignerMode(
  */
 export type ParsedWeb3Connection =
   | { kind: "default" }
-  | { kind: "eoa" }
-  | { kind: "safe"; safeWalletId: string };
+  | { kind: typeof SIGNER_MODE.EOA }
+  | { kind: typeof SIGNER_MODE.SAFE; safeWalletId: string };
 
 export function parseWeb3Connection(
   value: string | null | undefined
@@ -345,8 +357,8 @@ export function parseWeb3Connection(
   if (!value || value === "default") {
     return { kind: "default" };
   }
-  if (value === "eoa") {
-    return { kind: "eoa" };
+  if (value === SIGNER_MODE.EOA) {
+    return { kind: SIGNER_MODE.EOA };
   }
   if (value.startsWith("safe:")) {
     const safeWalletId = value.slice("safe:".length);
@@ -355,7 +367,7 @@ export function parseWeb3Connection(
         `Invalid web3Connection value '${value}': safe id is empty`
       );
     }
-    return { kind: "safe", safeWalletId };
+    return { kind: SIGNER_MODE.SAFE, safeWalletId };
   }
   throw new Error(`Invalid web3Connection value '${value}'`);
 }
@@ -391,12 +403,12 @@ export async function resolveSignerForNode(
     return resolveSignerMode(input.organizationId, input.chainId);
   }
 
-  if (parsed.kind === "eoa") {
+  if (parsed.kind === SIGNER_MODE.EOA) {
     const ownerAddress = normalizeAddressForStorage(
       await getOrganizationWalletAddress(input.organizationId)
     );
-    recordSignerMode({ kind: "eoa", chainId: input.chainId });
-    return { kind: "eoa", ownerAddress };
+    recordSignerMode({ kind: SIGNER_MODE.EOA, chainId: input.chainId });
+    return { kind: SIGNER_MODE.EOA, ownerAddress };
   }
 
   // safe:<id>
@@ -459,9 +471,9 @@ export async function resolveSignerForNode(
 
   const role = roleRows[0];
   if (role && role.status === "active") {
-    recordSignerMode({ kind: "safe-role", chainId: input.chainId });
+    recordSignerMode({ kind: SIGNER_MODE.SAFE_ROLE, chainId: input.chainId });
     return {
-      kind: "safe-role",
+      kind: SIGNER_MODE.SAFE_ROLE,
       ownerAddress,
       safeAddress: safe.safeAddress,
       safeWalletId: safe.id,
@@ -486,9 +498,9 @@ export async function resolveSignerForNode(
       isSigningActive: safe.isSigningActive,
     } as SafeWallet;
     backfillRoleInBackground(safeForReconcile);
-    recordSignerMode({ kind: "safe-role", chainId: input.chainId });
+    recordSignerMode({ kind: SIGNER_MODE.SAFE_ROLE, chainId: input.chainId });
     return {
-      kind: "safe-role",
+      kind: SIGNER_MODE.SAFE_ROLE,
       ownerAddress,
       safeAddress: safe.safeAddress,
       safeWalletId: safe.id,
@@ -498,9 +510,9 @@ export async function resolveSignerForNode(
     };
   }
 
-  recordSignerMode({ kind: "safe", chainId: input.chainId });
+  recordSignerMode({ kind: SIGNER_MODE.SAFE, chainId: input.chainId });
   return {
-    kind: "safe",
+    kind: SIGNER_MODE.SAFE,
     ownerAddress,
     safeAddress: safe.safeAddress,
     safeWalletId: safe.id,

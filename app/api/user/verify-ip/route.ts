@@ -28,7 +28,7 @@ import { sanitizeNextPath } from "@/lib/sanitize-next-path";
 import {
   assessIpTrust,
   buildRiskFlagsJsonForIp,
-  clearTrustCacheEntry,
+  cacheTrustedIp,
   logIpVerify,
 } from "@/lib/security/login-risk";
 import { verifyUserTotp } from "@/lib/security/totp-verify";
@@ -391,10 +391,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  // Same-pod cache invalidation so the next request on this pod sees the
-  // freshly-trusted IP without waiting for the UNTRUSTED_TTL_MS window in
-  // the proxy gate. Cross-pod stale entries age out on their own.
-  clearTrustCacheEntry(decoded.payload.userId, decoded.payload.ip);
+  // Warm the shared cache so every replica's next request is a hit, not a DB
+  // read. Best-effort; the DB upsert above is the durable source of truth.
+  await cacheTrustedIp(decoded.payload.userId, decoded.payload.ip);
 
   const response = NextResponse.json({
     ok: true,

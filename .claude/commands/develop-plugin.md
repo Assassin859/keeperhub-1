@@ -109,6 +109,7 @@ import "server-only";
 
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import { fetchCredentials } from "@/lib/credential-fetcher";
+import { safeFetch } from "@/lib/safe-fetch";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 import type { PluginNameCredentials } from "../credentials";
@@ -147,8 +148,9 @@ async function stepHandler(
   }
 
   try {
-    // Use fetch() directly - NO SDK dependencies
-    const response = await fetch("https://api.example.com/endpoint", {
+    // Use safeFetch - NO SDK dependencies, and egress goes through the SSRF guard
+    const response = await safeFetch("https://api.example.com/endpoint", {
+      plugin: "plugin-name",
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -375,8 +377,10 @@ RETRY BEHAVIOR:
   risk scoring, approval gates -- any step where a retry could mask a real threat
 
 CRITICAL RULES:
-1. Use fetch() not SDKs - reduces supply chain attack surface and avoids Node.js-only
-   transitive deps that break the workflow bundler (see WORKFLOW BUNDLER below)
+1. Use safeFetch (from @/lib/safe-fetch, with { plugin }) not SDKs or raw fetch - routes
+   egress through the SSRF guard, reduces supply chain attack surface, and avoids Node.js-only
+   transitive deps that break the workflow bundler (see WORKFLOW BUNDLER below). Raw
+   fetch/axios/http.request under plugins/ fails the CI egress guard.
 2. All step files must start with `import "server-only";`
 3. Entry point must have `"use step";` directive
 4. Must export `_integrationType` constant matching plugin type
@@ -406,9 +410,9 @@ restricted runtime (similar to Cloudflare Workers). This has hard constraints:
    - NEVER import a function from one step file into another step file
 
 3. NO NODE.JS-ONLY DEPENDENCIES in step files
-   - The Vercel AI SDK (`ai`, `@ai-sdk/*`) has Node.js transitive deps -- use fetch() instead
+   - The Vercel AI SDK (`ai`, `@ai-sdk/*`) has Node.js transitive deps; use safeFetch instead
    - Heavy libraries like ethers.js work IF used only internally (not re-exported)
-   - When in doubt, use direct fetch() calls to external APIs
+   - When in doubt, use safeFetch calls to external APIs
    - If a library works in Cloudflare Workers, it works in "use step" context
 
 4. CORRECT EXPORT PATTERN for step files:
@@ -600,7 +604,7 @@ Before completing, verify:
 - Plugin follows all naming conventions
 - Step functions use two-layer pattern with withPluginMetrics + withStepLogging
 - All imports use correct paths (@/plugins/registry, @/lib/metrics/...)
-- No SDK dependencies - uses fetch() directly
+- No SDK dependencies - uses safeFetch (from @/lib/safe-fetch) for all egress
 - No emojis in any files
 - Documentation page created/updated at docs/plugins/ with actions table, inputs, outputs, example workflows, and when-to-use guidance
 </success_criteria>
