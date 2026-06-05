@@ -31,6 +31,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Skeleton } from "@/components/ui/skeleton";
 import { signOut, useSession } from "@/lib/auth-client";
 import { isBillingEnabled } from "@/lib/billing/feature-flag";
 import {
@@ -53,25 +54,22 @@ export const UserMenu = (): React.ReactElement => {
   // Check if user's email is verified
   const isEmailVerified = session?.user?.emailVerified === true;
 
-  // Only show the placeholder when the session loader is pending AND we
-  // are confident the AuthDialog is not currently driving a sign-in flow
-  // (single-provider auto-sign-in OR an anonymous user is the one whose
-  // session refetch is pending). The original placeholder branch
-  // unconditionally returned a stub div during isPending. That
-  // unmounted the AuthDialog whenever Better Auth refetched the session
-  // after a credential submit, which dropped the post-credential view
-  // (`totp`) before the user could see it. Falling through to the
-  // AuthDialog branch on the anonymous side keeps the modal mounted
-  // across the brief refetch window. NAV-04: the authenticated dropdown
-  // still waits on the loader to avoid firing its protected fetches
-  // before the session is known.
-  const sessionResolvedAndAuthed =
-    !isPending && !isAnonymousUser && isEmailVerified;
-  if (isPending && !signInInProgress && sessionResolvedAndAuthed === false) {
-    if (isAnonymousUser) {
-      // Anonymous + pending: fall through and keep AuthDialog mounted.
-    } else {
-      return <div className="h-9 w-9" />;
+  // While the session loader is pending the visitor's identity is not yet
+  // known. On a hard refresh `session` is undefined, so a signed-in user
+  // would briefly fall through to the Sign In button before their avatar
+  // appears. Render a neutral avatar-shaped skeleton during that window
+  // instead of flashing Sign In.
+  //
+  // Two cases must keep falling through so the AuthDialog stays mounted
+  // across the brief refetch that Better Auth runs after a credential
+  // submit (otherwise the post-credential `totp` view is dropped before the
+  // user can see it): a single-provider auto-sign-in is mid-flight, or an
+  // *existing* anonymous session (session.user present) is being refetched.
+  if (isPending && !signInInProgress) {
+    const anonymousSessionRefetching =
+      Boolean(session?.user) && isAnonymousUser;
+    if (!anonymousSessionRefetching) {
+      return <Skeleton className="h-9 w-9 rounded-full" />;
     }
   }
 
