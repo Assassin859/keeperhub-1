@@ -467,7 +467,6 @@ export async function PATCH(
       // integrations, so the save gate matches the runtime credential fetch.
       const validation = await validateWorkflowIntegrations(
         updateData.nodes,
-        null,
         existingWorkflow.organizationId
       );
       if (!validation.valid) {

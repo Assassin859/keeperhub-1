@@ -127,7 +127,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     // Org principal: the imported workflow is org-owned (matches runtime).
     const validation = await validateWorkflowIntegrations(
       sanitized.nodes,
-      null,
       organizationId
     );
     if (!validation.valid) {

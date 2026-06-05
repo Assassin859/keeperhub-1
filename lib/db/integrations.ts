@@ -652,16 +652,14 @@ export function extractIntegrationIds(
  * remain savable.
  *
  * The org owns workflows, so workflow save/execute gates pass the ORG
- * principal (`userId: null` + the workflow's `organizationId`): the workflow
- * may reference its org's organization-visibility integrations and nothing
- * personal, keeping the gate consistent with the runtime credential fetch.
- * Interactive, user-scoped checks may still pass a `userId`.
+ * principal (the workflow's `organizationId`): the workflow may reference its
+ * org's organization-visibility integrations and nothing personal, keeping
+ * the gate consistent with the runtime credential fetch.
  *
  * @returns Object with `valid` boolean and optional `invalidIds` array
  */
 export async function validateWorkflowIntegrations(
   nodes: WorkflowNodeForValidation[],
-  userId: string | null,
   organizationId?: string | null
 ): Promise<{ valid: boolean; invalidIds?: string[] }> {
   const integrationIds = extractIntegrationIds(nodes);
@@ -671,7 +669,6 @@ export async function validateWorkflowIntegrations(
   }
 
   const invalidIds = await filterUnauthorizedIntegrationIds(integrationIds, {
-    userId,
     organizationId: organizationId ?? null,
   });
 

@@ -116,7 +116,6 @@ export async function POST(request: Request) {
     // Org principal: drafts are org-owned like any workflow (matches runtime).
     const integrationValidation = await validateWorkflowIntegrations(
       nodes,
-      null,
       organizationId
     );
     if (!integrationValidation.valid) {

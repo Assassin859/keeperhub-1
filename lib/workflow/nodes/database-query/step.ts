@@ -126,7 +126,6 @@ async function databaseQuery(
   // `_context.ownerId` is createdBy attribution only.
   const credentials = input.integrationId
     ? await fetchCredentials(input.integrationId, {
-        userId: null,
         organizationId: input._context?.organizationId ?? null,
       })
     : {};

@@ -129,7 +129,6 @@ export async function POST(request: Request) {
     // the org's integrations (matches the runtime credential fetch).
     const validation = await validateWorkflowIntegrations(
       nodes,
-      null,
       organizationId
     );
     if (!validation.valid) {

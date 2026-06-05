@@ -268,7 +268,7 @@ describe("Execute API Integration Tests", () => {
   });
 
   describe("Integration Validation", () => {
-    it("validates integrations using the org principal (userId null, organizationId set)", async () => {
+    it("validates integrations using the org principal (organizationId set)", async () => {
       const { validateWorkflowIntegrations } = await import(
         "@/lib/db/integrations"
       );
@@ -278,13 +278,11 @@ describe("Execute API Integration Tests", () => {
 
       await validateWorkflowIntegrations(
         nodes as Parameters<typeof validateWorkflowIntegrations>[0],
-        null,
         organizationId
       );
 
       expect(validateWorkflowIntegrations).toHaveBeenCalledWith(
         expect.anything(),
-        null,
         organizationId
       );
     });

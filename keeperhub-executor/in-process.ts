@@ -81,7 +81,6 @@ export async function executeInProcess(params: {
     const edges = workflow.edges as WorkflowEdge[];
     const validation = await validateWorkflowIntegrations(
       nodes,
-      null,
       workflow.organizationId
     );
 

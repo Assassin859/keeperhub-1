@@ -255,7 +255,6 @@ export async function POST(
     // workflow), matching the runtime credential fetch.
     const validation = await validateWorkflowIntegrations(
       workflow.nodes as WorkflowNode[],
-      null,
       workflow.organizationId
     );
     if (!validation.valid) {

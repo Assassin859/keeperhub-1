@@ -16,7 +16,7 @@ export type ExecutorInputWorkflow = {
  * Centralised so every dispatch entry point (scheduled K8s job, in-process,
  * MCP) threads the same context. `organizationId` is the credential
  * authority: the org owns the workflow, and steps authorize credential use
- * as the ORG principal (userId null + this organizationId). `createdBy` is
+ * as the ORG principal (this organizationId). `createdBy` is
  * the workflow creator for audit attribution only - it confers no
  * credential access.
  */

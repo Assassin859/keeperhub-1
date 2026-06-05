@@ -137,10 +137,9 @@ describe("execute route - per-integration authorization", () => {
 
     // The org is the principal for integration validation: the org owns the
     // workflow, so credential access is gated by org-visibility regardless of
-    // who triggered the run. userId null signals the org-principal path.
+    // who triggered the run.
     expect(mockValidateWorkflowIntegrations).toHaveBeenCalledWith(
       workflow.nodes,
-      null,
       "org_1"
     );
   });
