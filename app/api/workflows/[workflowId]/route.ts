@@ -328,6 +328,16 @@ export async function PATCH(
 
     const body = await request.json();
 
+    // A deactivated workflow is fully off and cannot be re-enabled from the
+    // app. Clearing deactivatedAt (reactivation) is a DB/ops action, mirroring
+    // user and org reactivation, so the editor toggle cannot flip it back on.
+    if (existingWorkflow.deactivatedAt && body.enabled === true) {
+      return NextResponse.json(
+        { error: "Workflow is deactivated and cannot be enabled" },
+        { status: 409 }
+      );
+    }
+
     if (Array.isArray(body.nodes)) {
       // KEEP-468: parse every `{{...}}` token at save time so grammar typos
       // (the n8n-style `{{$trigger.input.ts}}`-shaped errors that produced
@@ -453,10 +463,11 @@ export async function PATCH(
     if (Array.isArray(updateData.nodes)) {
       // Validate the exact shape that will be persisted. The sanitizer moves
       // misplaced root fields into data.config, including integrationId.
+      // Org principal: the workflow may only reference its owning org's
+      // integrations, so the save gate matches the runtime credential fetch.
       const validation = await validateWorkflowIntegrations(
         updateData.nodes,
-        userId || existingWorkflow.userId,
-        organizationId
+        existingWorkflow.organizationId
       );
       if (!validation.valid) {
         return NextResponse.json(

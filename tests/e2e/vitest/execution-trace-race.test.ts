@@ -63,7 +63,12 @@ vi.mock("@/lib/db", () => ({ db: realDb }));
 
 // ---- schema + function under test ----------------------------------------
 // These imports run after the mocks above are established.
-import { users, workflowExecutions, workflows } from "@/lib/db/schema";
+import {
+  organization,
+  users,
+  workflowExecutions,
+  workflows,
+} from "@/lib/db/schema";
 import { incrementCompletedSteps } from "@/lib/workflow/executor/logging";
 
 // ---- skip guard ----------------------------------------------------------
@@ -78,6 +83,7 @@ describe.skipIf(shouldSkip)("incrementCompletedSteps atomicity", () => {
   let testDb: ReturnType<typeof drizzle>;
   let pgClientOwned: ReturnType<typeof postgres>;
   let testUserId: string;
+  let testOrgId: string;
   let testWorkflowId: string;
 
   beforeAll(async () => {
@@ -88,7 +94,7 @@ describe.skipIf(shouldSkip)("incrementCompletedSteps atomicity", () => {
     // A separate client for test assertions and setup.
     pgClientOwned = postgres(connectionString, { max: 5 });
     testDb = drizzle(pgClientOwned, {
-      schema: { users, workflowExecutions, workflows },
+      schema: { organization, users, workflowExecutions, workflows },
     });
 
     // Create a transient test user owned by this suite.
@@ -103,11 +109,20 @@ describe.skipIf(shouldSkip)("incrementCompletedSteps atomicity", () => {
       updatedAt: now,
     });
 
+    testOrgId = generateId();
+    await testDb.insert(organization).values({
+      id: testOrgId,
+      name: testOrgId,
+      slug: testOrgId,
+      createdAt: now,
+    });
+
     testWorkflowId = generateId();
     await testDb.insert(workflows).values({
       id: testWorkflowId,
       name: "Trace Race Test Workflow",
       userId: testUserId,
+      organizationId: testOrgId,
       nodes: [],
       edges: [],
     });
@@ -119,6 +134,9 @@ describe.skipIf(shouldSkip)("incrementCompletedSteps atomicity", () => {
         .delete(workflowExecutions)
         .where(eq(workflowExecutions.workflowId, testWorkflowId));
       await testDb.delete(workflows).where(eq(workflows.id, testWorkflowId));
+    }
+    if (testOrgId) {
+      await testDb.delete(organization).where(eq(organization.id, testOrgId));
     }
     if (testUserId) {
       await testDb.delete(users).where(eq(users.id, testUserId));

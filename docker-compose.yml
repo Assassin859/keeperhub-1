@@ -110,7 +110,7 @@ services:
   # LocalStack (SQS)
   # ===========================================================================
   localstack:
-    image: localstack/localstack:latest
+    image: localstack/localstack:3.8.1
     # container_name removed to allow worktrees to share or run independently
     hostname: localstack
     ports:
@@ -121,7 +121,6 @@ services:
       - SQS_ENDPOINT_STRATEGY=path
       # Use host.minikube.internal so queue URLs work from both host and Minikube
       - LOCALSTACK_HOST=host.minikube.internal:4566
-      - LOCALSTACK_AUTH_TOKEN=${LOCALSTACK_AUTH_TOKEN:-}
     volumes:
       - ./deploy/local/hybrid/init-localstack.sh:/etc/localstack/init/ready.d/init-aws.sh:ro
       - keeperhub_localstack_data:/var/lib/localstack

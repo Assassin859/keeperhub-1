@@ -192,7 +192,6 @@ describe("POST /api/workflows/create action config validation", () => {
           }),
         }),
       ],
-      "user-123",
       "org-123"
     );
     expect(mockInsert).not.toHaveBeenCalled();

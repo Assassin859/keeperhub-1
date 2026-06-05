@@ -1,33 +1,31 @@
 import "server-only";
 
-import { and, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, inArray, isNotNull } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   type IntegrationVisibility,
-  integrationGrants,
   integrations,
   users,
 } from "@/lib/db/schema";
-import { isUserMemberOfOrganization } from "@/lib/workflow/access";
 
 /**
  * The identity whose grants gate credential use for a given execution.
  *
- * - Interactive executions: the authenticated caller.
- * - Owner-context executions (webhook, scheduler, internal, MCP/agent): the
- *   workflow owner. The caller's identity is not available once a run is
- *   dispatched, so owner-context authorization is the only check possible at
- *   runtime and is resolved up front at the execution entry point.
+ * The ORG principal (`organizationId` set) is the workflow's owning
+ * organization itself. The org owns workflows, so every execution gate and
+ * the runtime credential fetch authorize as the org - a workflow uses its
+ * org's organization-visibility integrations regardless of who created it or
+ * who triggered the run. Private integrations and per-user specific_members
+ * grants do NOT resolve for the org principal.
  */
 export type IntegrationPrincipal = {
-  userId: string | null;
   organizationId: string | null;
 };
 
 /** Minimal integration shape needed to make an authorization decision. */
 export type IntegrationAuthRow = {
   id: string;
-  userId: string;
+  createdBy: string;
   organizationId: string | null;
   visibility: IntegrationVisibility;
 };
@@ -35,10 +33,6 @@ export type IntegrationAuthRow = {
 type AuthContext = {
   /** Owner of the integration is deactivated - credentials are frozen. */
   isOwnerDeactivated: boolean;
-  /** Principal is a current member of its own organization. */
-  isPrincipalMember: boolean;
-  /** A specific_members grant exists for (integration, principal). */
-  hasGrant: boolean;
 };
 
 /**
@@ -51,29 +45,24 @@ export function isIntegrationUsable(
   principal: IntegrationPrincipal,
   ctx: AuthContext
 ): boolean {
-  // A deactivated owner's credentials are frozen for everyone, including
-  // owner-context (scheduled/webhook) executions that would otherwise run as
-  // the now-deactivated owner. This is the lazy deactivation cascade.
+  // A deactivated creator's credentials are frozen for everyone. Deactivation
+  // (compromise/offboard) must freeze them even though the org owns the
+  // workflows that reference them.
   if (ctx.isOwnerDeactivated) {
     return false;
-  }
-
-  // Owner may always use their own integration.
-  if (principal.userId !== null && principal.userId === integration.userId) {
-    return true;
   }
 
   switch (integration.visibility) {
     case "organization":
       return (
         integration.organizationId !== null &&
-        integration.organizationId === principal.organizationId &&
-        ctx.isPrincipalMember
+        integration.organizationId === principal.organizationId
       );
     case "specific_members":
-      return ctx.hasGrant;
+      // Per-user grants do not resolve for the org principal.
+      return false;
     default:
-      // "private" - only the owner, handled above.
+      // "private" - personal credentials never resolve for the org principal.
       return false;
   }
 }
@@ -83,9 +72,8 @@ export function isIntegrationUsable(
  * subset the principal is NOT authorized to use.
  *
  * Non-existent ids (e.g. deleted integrations) are treated as authorized -
- * stale references must stay savable and must not leak existence. All
- * context lookups (membership, grants, owner deactivation) are batched into a
- * single query each to avoid N+1.
+ * stale references must stay savable and must not leak existence. Owner
+ * deactivation is batched into a single query to avoid N+1.
  */
 export async function filterUnauthorizedIntegrationIds(
   integrationIds: string[],
@@ -98,7 +86,7 @@ export async function filterUnauthorizedIntegrationIds(
   const rows = await db
     .select({
       id: integrations.id,
-      userId: integrations.userId,
+      createdBy: integrations.createdBy,
       organizationId: integrations.organizationId,
       visibility: integrations.visibility,
     })
@@ -109,36 +97,12 @@ export async function filterUnauthorizedIntegrationIds(
     return [];
   }
 
-  const isPrincipalMember =
-    principal.userId !== null && principal.organizationId !== null
-      ? await isUserMemberOfOrganization(
-          principal.userId,
-          principal.organizationId
-        )
-      : false;
-
-  const grantedIds = new Set<string>();
-  if (principal.userId !== null) {
-    const grantRows = await db
-      .select({ integrationId: integrationGrants.integrationId })
-      .from(integrationGrants)
-      .where(
-        and(
-          inArray(integrationGrants.integrationId, integrationIds),
-          eq(integrationGrants.userId, principal.userId)
-        )
-      );
-    for (const grant of grantRows) {
-      grantedIds.add(grant.integrationId);
-    }
-  }
-
-  const ownerIds = [...new Set(rows.map((row) => row.userId))];
+  const creatorIds = [...new Set(rows.map((row) => row.createdBy))];
   const deactivatedOwners = new Set<string>();
   const deactivatedRows = await db
     .select({ id: users.id })
     .from(users)
-    .where(and(inArray(users.id, ownerIds), isNotNull(users.deactivatedAt)));
+    .where(and(inArray(users.id, creatorIds), isNotNull(users.deactivatedAt)));
   for (const user of deactivatedRows) {
     deactivatedOwners.add(user.id);
   }
@@ -146,9 +110,7 @@ export async function filterUnauthorizedIntegrationIds(
   const unauthorized: string[] = [];
   for (const row of rows) {
     const usable = isIntegrationUsable(row, principal, {
-      isOwnerDeactivated: deactivatedOwners.has(row.userId),
-      isPrincipalMember,
-      hasGrant: grantedIds.has(row.id),
+      isOwnerDeactivated: deactivatedOwners.has(row.createdBy),
     });
     if (!usable) {
       unauthorized.push(row.id);

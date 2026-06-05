@@ -585,7 +585,11 @@ export const AuthDialog = ({
         signedIn?: boolean;
       };
       if (!startResponse.ok) {
-        setError(startBody.error ?? "Sign in failed");
+        const message = startBody.error ?? "Sign in failed";
+        if (startBody.code === "account_deactivated") {
+          toast.error(message);
+        }
+        setError(message);
         setLoading(false);
         return;
       }

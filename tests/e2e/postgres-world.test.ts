@@ -21,7 +21,12 @@ import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { users, workflowExecutions, workflows } from "@/lib/db/schema";
+import {
+  organization,
+  users,
+  workflowExecutions,
+  workflows,
+} from "@/lib/db/schema";
 import { PERSISTENT_TEST_USER_EMAIL } from "../utils/db";
 
 const DATABASE_URL =
@@ -78,6 +83,7 @@ describe.skipIf(shouldSkip || !hasPgboss)("Postgres World E2E", () => {
   let client: ReturnType<typeof postgres>;
   let db: ReturnType<typeof drizzle>;
   let testUserId: string;
+  let testOrgId: string;
   let testWorkflowId: string;
 
   beforeAll(async () => {
@@ -98,6 +104,14 @@ describe.skipIf(shouldSkip || !hasPgboss)("Postgres World E2E", () => {
     }
     testUserId = existingUser[0].id;
 
+    testOrgId = generateId();
+    await db.insert(organization).values({
+      id: testOrgId,
+      name: testOrgId,
+      slug: testOrgId,
+      createdAt: new Date(),
+    });
+
     testWorkflowId = generateId();
     const nodes = [
       {
@@ -112,6 +126,7 @@ describe.skipIf(shouldSkip || !hasPgboss)("Postgres World E2E", () => {
       id: testWorkflowId,
       name: "Postgres World E2E Test",
       userId: testUserId,
+      organizationId: testOrgId,
       nodes,
       edges: [],
     });
@@ -123,6 +138,9 @@ describe.skipIf(shouldSkip || !hasPgboss)("Postgres World E2E", () => {
         .delete(workflowExecutions)
         .where(eq(workflowExecutions.workflowId, testWorkflowId));
       await db.delete(workflows).where(eq(workflows.id, testWorkflowId));
+    }
+    if (testOrgId) {
+      await db.delete(organization).where(eq(organization.id, testOrgId));
     }
     await client.end();
   });

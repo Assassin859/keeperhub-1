@@ -65,6 +65,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    // The org owns the workflow (organization_id is NOT NULL).
+    if (!organizationId) {
+      return NextResponse.json(
+        { error: "No active organization" },
+        { status: 409 }
+      );
+    }
 
     // Anonymous (auto-provisioned, not signed-in) sessions cannot import.
     // API key and OAuth callers are real principals and pass through.
@@ -110,7 +117,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     const exportPayload = parsed.data;
-    const isAnonymous = !organizationId;
 
     const importNodes = stripIntegrationsFromImportNodes(exportPayload.nodes);
     const sanitized = sanitizeWorkflowData(
@@ -118,9 +124,9 @@ export async function POST(request: Request): Promise<NextResponse> {
       exportPayload.edges as Record<string, unknown>[]
     );
 
+    // Org principal: the imported workflow is org-owned (matches runtime).
     const validation = await validateWorkflowIntegrations(
       sanitized.nodes,
-      userId,
       organizationId
     );
     if (!validation.valid) {
@@ -159,7 +165,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         edges: sanitized.edges,
         userId,
         organizationId,
-        isAnonymous,
+        isAnonymous: false,
       })
       .returning();
 

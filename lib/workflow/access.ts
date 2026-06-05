@@ -1,6 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { member } from "@/lib/db/schema";
+import { member, users } from "@/lib/db/schema";
 
 type WorkflowAccessSubject = {
   userId: string | null;
@@ -35,8 +35,13 @@ export async function isUserMemberOfOrganization(
   const [membership] = await db
     .select({ id: member.id })
     .from(member)
+    .innerJoin(users, eq(member.userId, users.id))
     .where(
-      and(eq(member.userId, userId), eq(member.organizationId, organizationId))
+      and(
+        eq(member.userId, userId),
+        eq(member.organizationId, organizationId),
+        isNull(users.deactivatedAt)
+      )
     )
     .limit(1);
 
@@ -48,20 +53,20 @@ export async function getWorkflowAccess(
   subject: WorkflowAccessSubject
 ): Promise<WorkflowAccess> {
   const userId = subject.userId;
+  // workflow.userId is createdBy (audit only) and confers NO authority on its
+  // own. The organization owns the workflow: full access requires the caller
+  // to be acting in the workflow's org AND be a current member of it. The
+  // isAnonymous provenance flag no longer gates access - every workflow has an
+  // org now, so org membership is the single rule.
   const isCreator = userId !== null && userId === workflow.userId;
+
   const hasSameOrgContext =
-    !workflow.isAnonymous &&
     workflow.organizationId !== null &&
     subject.organizationId === workflow.organizationId;
-  const isAnonymousCreator = workflow.isAnonymous && isCreator;
 
   let currentMembership: boolean | null = null;
   const hasCurrentMembership = async (): Promise<boolean> => {
-    if (
-      workflow.isAnonymous ||
-      workflow.organizationId === null ||
-      userId === null
-    ) {
+    if (workflow.organizationId === null || userId === null) {
       return false;
     }
     currentMembership ??= await isUserMemberOfOrganization(
@@ -73,23 +78,14 @@ export async function getWorkflowAccess(
 
   const isSameOrg =
     hasSameOrgContext && userId !== null && (await hasCurrentMembership());
-  const isOrgWorkflowCreatorWithMembership =
-    !workflow.isAnonymous &&
-    isCreator &&
-    !isSameOrg &&
-    workflow.organizationId !== null &&
-    userId !== null &&
-    (await hasCurrentMembership());
-
-  const isCreatorWithCurrentAccess =
-    isAnonymousCreator ||
-    (isCreator && isSameOrg) ||
-    isOrgWorkflowCreatorWithMembership;
 
   return {
-    isCreatorWithCurrentAccess,
+    // Retained for callers that distinguish "the creator, acting in-org" from
+    // a non-creator org member (e.g. the duplicate route's retire-original
+    // branch). Not an authority signal - hasFullAccess is org-based.
+    isCreatorWithCurrentAccess: isCreator && isSameOrg,
     isSameOrg,
-    hasFullAccess: isCreatorWithCurrentAccess || isSameOrg,
+    hasFullAccess: isSameOrg,
     isDeleted: (workflow.deletedAt ?? null) !== null,
   };
 }

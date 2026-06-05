@@ -46,7 +46,13 @@ vi.mock("@/lib/db", () => ({
     select: vi.fn(() => ({
       from: vi.fn(() => ({
         innerJoin: vi.fn(() => ({
-          where: mockSelectFrom,
+          // where() must support two call patterns:
+          // - .innerJoin().where() awaited directly (public tag queries)
+          // - .innerJoin().where().limit() (membership check in isUserMemberOfOrganization)
+          where: vi.fn((...args) => {
+            const p = mockSelectFrom(...args);
+            return Object.assign(p, { limit: mockMemberLimit });
+          }),
         })),
         where: vi.fn(() => ({
           limit: mockMemberLimit,
@@ -64,6 +70,7 @@ vi.mock("@/lib/db/schema", () => ({
   },
   publicTags: { id: "id", name: "name", slug: "slug" },
   member: { id: "id", organizationId: "organization_id", userId: "user_id" },
+  users: { id: "id", deactivatedAt: "deactivated_at" },
   projects: { id: "id", organizationId: "organization_id" },
   tags: { id: "id", organizationId: "organization_id" },
   workflowExecutions: { workflowId: "workflow_id" },
@@ -1031,7 +1038,6 @@ describe("PATCH /api/workflows/[workflowId] — listing fields", () => {
           }),
         }),
       ],
-      "user-123",
       "org-123"
     );
     expect(mockUpdateReturning).not.toHaveBeenCalled();

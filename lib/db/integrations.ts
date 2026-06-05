@@ -152,7 +152,7 @@ export function mergeDatabaseConfig(
 
 export type DecryptedIntegration = {
   id: string;
-  userId: string;
+  createdBy: string;
   name: string;
   type: IntegrationType;
   config: IntegrationConfig;
@@ -200,7 +200,7 @@ export async function getIntegrations(
 ): Promise<DecryptedIntegration[]> {
   const conditions = organizationId
     ? [eq(integrations.organizationId, organizationId)]
-    : [eq(integrations.userId, userId)];
+    : [eq(integrations.createdBy, userId)];
 
   if (type) {
     conditions.push(eq(integrations.type, type));
@@ -209,7 +209,7 @@ export async function getIntegrations(
   const results = await db
     .select({
       id: integrations.id,
-      userId: integrations.userId,
+      createdBy: integrations.createdBy,
       organizationId: integrations.organizationId,
       name: integrations.name,
       type: integrations.type,
@@ -231,7 +231,7 @@ export async function getIntegrations(
 
   return results.map((row) => ({
     id: row.id,
-    userId: row.userId,
+    createdBy: row.createdBy,
     name: row.name,
     type: row.type,
     config: decryptConfig(row.config as string) as IntegrationConfig,
@@ -244,7 +244,7 @@ export async function getIntegrations(
 
 const integrationWithWalletSelect = {
   id: integrations.id,
-  userId: integrations.userId,
+  createdBy: integrations.createdBy,
   organizationId: integrations.organizationId,
   name: integrations.name,
   type: integrations.type,
@@ -269,7 +269,7 @@ export async function getIntegration(
         eq(integrations.id, integrationId),
         eq(integrations.organizationId, organizationId),
       ]
-    : [eq(integrations.id, integrationId), eq(integrations.userId, userId)];
+    : [eq(integrations.id, integrationId), eq(integrations.createdBy, userId)];
 
   const result = await db
     .select(integrationWithWalletSelect)
@@ -291,7 +291,7 @@ export async function getIntegration(
   const row = result[0];
   return {
     id: row.id,
-    userId: row.userId,
+    createdBy: row.createdBy,
     name: row.name,
     type: row.type,
     config: decryptConfig(row.config as string) as IntegrationConfig,
@@ -328,7 +328,7 @@ export async function getIntegrationById(
   const row = result[0];
   return {
     id: row.id,
-    userId: row.userId,
+    createdBy: row.createdBy,
     name: row.name,
     type: row.type,
     config: decryptConfig(row.config as string) as IntegrationConfig,
@@ -379,7 +379,7 @@ export async function createIntegration(
   const [result] = await db
     .insert(integrations)
     .values({
-      userId,
+      createdBy: userId,
       name,
       type,
       config: encryptedConfig,
@@ -534,7 +534,7 @@ export async function updateIntegration(
         eq(integrations.id, integrationId),
         eq(integrations.organizationId, organizationId),
       ]
-    : [eq(integrations.id, integrationId), eq(integrations.userId, userId)];
+    : [eq(integrations.id, integrationId), eq(integrations.createdBy, userId)];
 
   const [result] = await db
     .update(integrations)
@@ -572,7 +572,7 @@ export async function deleteIntegration(
         eq(integrations.id, integrationId),
         eq(integrations.organizationId, organizationId),
       ]
-    : [eq(integrations.id, integrationId), eq(integrations.userId, userId)];
+    : [eq(integrations.id, integrationId), eq(integrations.createdBy, userId)];
 
   const result = await db
     .delete(integrations)
@@ -645,22 +645,21 @@ export function extractIntegrationIds(
  * Validate that the executing/saving principal is authorized to use every
  * integration referenced by a workflow's nodes.
  *
- * Authorization is per-integration against the principal's grant (owner,
- * organization visibility + membership, or an explicit specific_members
- * grant) - not merely "same organization". This is what closes the
- * lateral-movement path where any org member could run a workflow that
- * referenced another member's credential. Non-existent ids (deleted
- * integrations) stay valid so stale references remain savable.
+ * Authorization is per-integration against the principal's grant - not merely
+ * "same organization". This is what closes the lateral-movement path where any
+ * org member could run a workflow that referenced another member's credential.
+ * Non-existent ids (deleted integrations) stay valid so stale references
+ * remain savable.
  *
- * `userId` + `organizationId` together are the effective principal: the
- * authenticated caller for interactive executions and saves, or the workflow
- * owner for owner-context executions (webhook, scheduler, internal, MCP).
+ * The org owns workflows, so workflow save/execute gates pass the ORG
+ * principal (the workflow's `organizationId`): the workflow may reference its
+ * org's organization-visibility integrations and nothing personal, keeping
+ * the gate consistent with the runtime credential fetch.
  *
  * @returns Object with `valid` boolean and optional `invalidIds` array
  */
 export async function validateWorkflowIntegrations(
   nodes: WorkflowNodeForValidation[],
-  userId: string,
   organizationId?: string | null
 ): Promise<{ valid: boolean; invalidIds?: string[] }> {
   const integrationIds = extractIntegrationIds(nodes);
@@ -670,7 +669,6 @@ export async function validateWorkflowIntegrations(
   }
 
   const invalidIds = await filterUnauthorizedIntegrationIds(integrationIds, {
-    userId,
     organizationId: organizationId ?? null,
   });
 

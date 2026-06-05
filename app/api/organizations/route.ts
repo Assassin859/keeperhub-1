@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -27,7 +27,7 @@ export async function GET(request: Request) {
       })
       .from(member)
       .innerJoin(organization, eq(organization.id, member.organizationId))
-      .where(eq(member.userId, session.user.id));
+      .where(and(eq(member.userId, session.user.id), isNull(organization.deactivatedAt)));
 
     return NextResponse.json(rows, { status: 200 });
   } catch (error) {

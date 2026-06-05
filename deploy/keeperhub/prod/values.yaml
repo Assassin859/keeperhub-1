@@ -455,6 +455,10 @@ env:
     type: parameterStore
     name: feedback-api-key
     parameter_name: /eks/techops-prod/keeperhub-feedback/feedback-api-key
+  KH_ADMIN_SECRET:
+    type: parameterStore
+    name: kh-admin-secret
+    parameter_name: /eks/techops-prod/keeperhub/kh-admin-secret
   SAFE_FETCH_ENFORCE:
     type: kv
     value: "true"

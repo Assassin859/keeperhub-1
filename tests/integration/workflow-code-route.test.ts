@@ -33,6 +33,9 @@ vi.mock("@/lib/db", () => ({
   db: {
     select: vi.fn(() => ({
       from: vi.fn(() => ({
+        innerJoin: vi.fn(() => ({
+          where: vi.fn(() => ({ limit: mockMemberLimit })),
+        })),
         where: vi.fn(() => ({
           limit: mockMemberLimit,
         })),
@@ -46,6 +49,7 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@/lib/db/schema", () => ({
   member: { id: "id", organizationId: "organizationId", userId: "userId" },
+  users: { id: "id", deactivatedAt: "deactivated_at" },
   workflows: { id: "id" },
 }));
 
@@ -99,18 +103,19 @@ describe("GET /api/workflows/[id]/code", () => {
   it("permits the workflow owner via session", async () => {
     mockGetDualAuthContext.mockResolvedValue({
       userId: OWNER_USER_ID,
-      organizationId: null,
+      organizationId: ORG_ID,
       authMethod: "session",
     });
     mockWorkflowsFindFirst.mockResolvedValue({
       id: WORKFLOW_ID,
       userId: OWNER_USER_ID,
-      organizationId: null,
-      isAnonymous: true,
+      organizationId: ORG_ID,
+      isAnonymous: false,
       name: "wf",
       nodes: [],
       edges: [],
     });
+    mockMemberLimit.mockResolvedValue([{ id: "member-1" }]);
 
     const response = await GET(buildRequest(), buildContext());
     expect(response.status).toBe(200);
