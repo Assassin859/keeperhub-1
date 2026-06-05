@@ -11,7 +11,8 @@ export type FeatureId =
   | "action.database-query"
   | "action.http-request"
   | "action.code"
-  | "action.webhook";
+  | "action.webhook"
+  | "notifications.failure-digest";
 
 // High-level grouping used for UI ("Workflow actions", "API access", etc.)
 // and analytics. Extend freely as new categories are needed.
