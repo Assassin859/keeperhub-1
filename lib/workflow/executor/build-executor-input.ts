@@ -16,8 +16,8 @@ export type ExecutorInputWorkflow = {
  * Centralised so every dispatch entry point (scheduled K8s job, in-process,
  * MCP) threads the same context. `organizationId` is the credential
  * authority: the org owns the workflow, and steps authorize credential use
- * as the ORG principal (userId null + this organizationId). `ownerId` is
- * createdBy attribution for execution records only - it confers no
+ * as the ORG principal (userId null + this organizationId). `createdBy` is
+ * the workflow creator for audit attribution only - it confers no
  * credential access.
  */
 export function buildExecutorInput(
@@ -37,7 +37,7 @@ export function buildExecutorInput(
     executionId: params.executionId,
     workflowId: workflow.id,
     organizationId: workflow.organizationId ?? undefined,
-    ownerId: workflow.userId,
+    createdBy: workflow.userId,
     organizationName: params.organizationName,
     organizationSlug: params.organizationSlug,
     organizationPlan: params.organizationPlan,

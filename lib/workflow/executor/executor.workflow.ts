@@ -194,7 +194,7 @@ export type WorkflowExecutionInput = {
   // low-cardinality label on error metrics so alerts can filter to managed
   // clients. Resolved by the caller via getOrgPlanLabel().
   organizationPlan?: string;
-  ownerId?: string;
+  createdBy?: string;
 };
 
 /**
@@ -1569,7 +1569,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     organizationName,
     organizationSlug,
     organizationPlan,
-    ownerId,
+    createdBy,
   } = input;
 
   console.log("[Workflow Executor] Input:", {
@@ -1590,7 +1590,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     ...(organizationSlug ? { org_slug: organizationSlug } : {}),
     ...(organizationPlan ? { plan: organizationPlan } : {}),
     ...(organizationName ? { org_name: organizationName } : {}),
-    ...(ownerId ? { owner_id: ownerId } : {}),
+    ...(createdBy ? { owner_id: createdBy } : {}),
   };
 
   // Enter async-local context so any logUserError/logSystemError called from
@@ -1602,7 +1602,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     org_id: organizationId,
     org_slug: organizationSlug,
     plan: organizationPlan,
-    owner_id: ownerId,
+    owner_id: createdBy,
   });
 
   // KEEP-612 detection signal. Single pass at run start covering both
@@ -1831,7 +1831,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         executionId,
         organizationId,
         orgSlug: organizationSlug,
-        ownerId,
+        createdBy,
         workflowId,
       },
       runStep: async ({
@@ -2172,7 +2172,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
             forEachNodeId,
             organizationId,
             orgSlug: organizationSlug,
-            ownerId,
+            createdBy,
             workflowId,
           } satisfies StepContext,
         });
@@ -2386,7 +2386,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           nodeType: node.data.type,
           organizationId,
           orgSlug: organizationSlug,
-          ownerId,
+          createdBy,
           workflowId,
         };
 
@@ -2482,7 +2482,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           triggerType: workflowTriggerType,
           organizationId,
           orgSlug: organizationSlug,
-          ownerId,
+          createdBy,
           workflowId,
         };
 
