@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { deserialize } from "node:v8";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
@@ -57,7 +59,7 @@ describe("sandbox child-source consumes lib/ssrf-blocklist.ts", () => {
 
   it("inlines the NAT64 well-known prefix tuple from the SoT", () => {
     expect(SANDBOX_CHILD_SOURCE).toContain(
-      JSON.stringify(SSRF_NAT64_PREFIX_CIDR),
+      JSON.stringify(SSRF_NAT64_PREFIX_CIDR)
     );
   });
 
@@ -90,6 +92,8 @@ describe("sandbox child-source consumes lib/ssrf-blocklist.ts", () => {
 // across "node -e") or introduce a dependency the standalone sandbox image
 // does not have. Lock the contract here so it cannot regress quietly.
 const IMPORT_STATEMENT_REGEX = /^import\s.+$/gm;
+const SCHEME_NOT_ALLOWED_REGEX = /scheme not allowed/;
+const TOO_MANY_REDIRECTS_REGEX = /too many redirects/;
 
 describe("lib/sandbox/child-source.ts only imports pure data", () => {
   it("has at most one import and it points at the SSRF blocklist JSON", async () => {
@@ -117,9 +121,7 @@ function parseChildOutput(stdout: string): SandboxOutcome {
   }
   const newlineIdx = stdout.indexOf("\n", idx);
   const end = newlineIdx === -1 ? stdout.length : newlineIdx;
-  const base64 = stdout
-    .slice(idx + SANDBOX_RESULT_SENTINEL.length, end)
-    .trim();
+  const base64 = stdout.slice(idx + SANDBOX_RESULT_SENTINEL.length, end).trim();
   try {
     return deserialize(Buffer.from(base64, "base64")) as SandboxOutcome;
   } catch (_err) {
@@ -130,9 +132,10 @@ function parseChildOutput(stdout: string): SandboxOutcome {
 async function runSandboxed(
   userCode: string,
   timeoutMs = 3000,
+  source: string = SANDBOX_CHILD_SOURCE
 ): Promise<SandboxOutcome> {
   return await new Promise<SandboxOutcome>((resolve) => {
-    const child = spawn(process.execPath, ["-e", SANDBOX_CHILD_SOURCE], {
+    const child = spawn(process.execPath, ["-e", source], {
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
@@ -225,18 +228,196 @@ describe("sandbox grandchild SSRF guard fires on every category", () => {
     ['await fetch("http://localhost/")', "pre-DNS exact match"],
     ['await fetch("http://LOCALHOST/")', "case normalisation"],
     ['await fetch("http://localhost./")', "trailing-dot normalisation"],
-    [
-      'await fetch("http://probe.svc.cluster.local/")',
-      "*.svc.cluster.local",
-    ],
-    [
-      'await fetch("http://probe.pod.cluster.local/")',
-      "*.pod.cluster.local",
-    ],
+    ['await fetch("http://probe.svc.cluster.local/")', "*.svc.cluster.local"],
+    ['await fetch("http://probe.pod.cluster.local/")', "*.pod.cluster.local"],
     ['await fetch("http://probe.internal/")', "*.internal"],
     ['await fetch("http://probe.local/")', "*.local (mDNS / Bonjour)"],
   ])("blocks %s before DNS (%s)", async (snippet) => {
     const outcome = await runSandboxed(snippet);
     expectBlocked(outcome);
+  });
+}, 30_000);
+
+// Structural guard for the redirect re-validation wiring. undici's default
+// follow mode would chase a 3xx Location into a blocked host because the
+// SSRF guard only sees the initial URL; the wrapped fetch must instead use
+// manual redirects and re-check every hop. Lock the key tokens so the
+// behaviour cannot regress silently if the template is refactored.
+describe("sandbox grandchild re-validates redirects", () => {
+  it("uses manual redirect mode on the wrapped fetch", () => {
+    expect(SANDBOX_CHILD_SOURCE).toContain('redirect: "manual"');
+  });
+
+  it("re-runs the SSRF check on each redirect hop and caps the chain", () => {
+    expect(SANDBOX_CHILD_SOURCE).toContain("REDIRECT_STATUSES");
+    expect(SANDBOX_CHILD_SOURCE).toContain("MAX_SANDBOX_REDIRECTS");
+    expect(SANDBOX_CHILD_SOURCE).toContain("too many redirects");
+  });
+});
+
+// Behavioural coverage for the redirect loop. The real grandchild blocks
+// every locally-bindable address, so no hop of a local test server would be
+// reachable. We derive a variant of the real source with only the IPv4
+// loopback subnet removed, leaving link-local/IMDS (169.254.0.0/16), RFC1918
+// and the cluster-hostname denylist intact - exactly the redirect targets
+// the per-hop re-validation must still catch. The redirect-following code
+// under test is otherwise the unmodified production source.
+const LOOPBACK_CIDR_TUPLE = '["127.0.0.0",8]';
+const REDIRECT_TEST_SOURCE = SANDBOX_CHILD_SOURCE.replace(
+  `,${LOOPBACK_CIDR_TUPLE}`,
+  ""
+);
+
+type FetchResult = { status: number; body: string };
+
+function resultOf(outcome: SandboxOutcome): FetchResult {
+  if (!outcome.ok) {
+    throw new Error(`expected ok outcome, got: ${outcome.errorMessage}`);
+  }
+  return outcome.result as FetchResult;
+}
+
+describe("sandbox grandchild redirect following", () => {
+  let server: Server;
+  let base: string;
+
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://127.0.0.1");
+      if (url.pathname === "/loop") {
+        res.writeHead(302, { Location: "/loop" });
+        res.end();
+        return;
+      }
+      if (url.pathname === "/redir") {
+        const to = url.searchParams.get("to") ?? "/ok";
+        const status = Number(url.searchParams.get("status") ?? "302");
+        res.writeHead(status, { Location: to });
+        res.end();
+        return;
+      }
+      const chunks: Buffer[] = [];
+      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      req.on("end", () => {
+        const body = Buffer.concat(chunks).toString();
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end(`FINAL method=${req.method} body=${body}`);
+      });
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const { port } = server.address() as AddressInfo;
+    base = `http://127.0.0.1:${port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+  });
+
+  function getCode(url: string): string {
+    return `const r = await fetch(${JSON.stringify(url)}); return { status: r.status, body: await r.text() };`;
+  }
+
+  function postCode(url: string, body: string): string {
+    return `const r = await fetch(${JSON.stringify(url)}, { method: "POST", body: ${JSON.stringify(body)} }); return { status: r.status, body: await r.text() };`;
+  }
+
+  function redirTo(target: string, status = 302): string {
+    return `${base}/redir?status=${status}&to=${encodeURIComponent(target)}`;
+  }
+
+  it("sanity: the test source actually dropped the loopback block", () => {
+    expect(REDIRECT_TEST_SOURCE).not.toBe(SANDBOX_CHILD_SOURCE);
+    expect(REDIRECT_TEST_SOURCE).not.toContain(LOOPBACK_CIDR_TUPLE);
+  });
+
+  it("follows a 302 to an allowed host", async () => {
+    const outcome = await runSandboxed(
+      getCode(redirTo(`${base}/ok`)),
+      3000,
+      REDIRECT_TEST_SOURCE
+    );
+    const result = resultOf(outcome);
+    expect(result.status).toBe(200);
+    expect(result.body).toContain("FINAL method=GET");
+  });
+
+  it("follows a multi-hop redirect chain", async () => {
+    const outcome = await runSandboxed(
+      getCode(redirTo(redirTo(`${base}/ok`))),
+      3000,
+      REDIRECT_TEST_SOURCE
+    );
+    expect(resultOf(outcome).status).toBe(200);
+  });
+
+  it("blocks a redirect into IMDS link-local", async () => {
+    const outcome = await runSandboxed(
+      getCode(redirTo("http://169.254.169.254/latest/meta-data/")),
+      3000,
+      REDIRECT_TEST_SOURCE
+    );
+    expectBlocked(outcome);
+    if (!outcome.ok) {
+      expect(outcome.errorMessage).toContain("169.254.169.254");
+    }
+  });
+
+  it("blocks a redirect into a cluster hostname", async () => {
+    const outcome = await runSandboxed(
+      getCode(redirTo("http://probe.svc.cluster.local/")),
+      3000,
+      REDIRECT_TEST_SOURCE
+    );
+    expectBlocked(outcome);
+  });
+
+  it("rejects a redirect to a disallowed scheme", async () => {
+    const outcome = await runSandboxed(
+      getCode(redirTo("file:///etc/passwd")),
+      3000,
+      REDIRECT_TEST_SOURCE
+    );
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.errorMessage).toMatch(SCHEME_NOT_ALLOWED_REGEX);
+    }
+  });
+
+  it("downgrades POST to GET and drops the body on a 302", async () => {
+    const outcome = await runSandboxed(
+      postCode(redirTo(`${base}/ok`, 302), "secret-payload"),
+      3000,
+      REDIRECT_TEST_SOURCE
+    );
+    const result = resultOf(outcome);
+    expect(result.body).toContain("method=GET");
+    expect(result.body).not.toContain("secret-payload");
+  });
+
+  it("preserves POST and body across a 307", async () => {
+    const outcome = await runSandboxed(
+      postCode(redirTo(`${base}/ok`, 307), "keep-me"),
+      3000,
+      REDIRECT_TEST_SOURCE
+    );
+    const result = resultOf(outcome);
+    expect(result.body).toContain("method=POST");
+    expect(result.body).toContain("keep-me");
+  });
+
+  it("errors on an unbounded redirect loop", async () => {
+    const outcome = await runSandboxed(
+      getCode(`${base}/loop`),
+      5000,
+      REDIRECT_TEST_SOURCE
+    );
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.errorMessage).toMatch(TOO_MANY_REDIRECTS_REGEX);
+    }
   });
 }, 30_000);
