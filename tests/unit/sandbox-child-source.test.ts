@@ -277,22 +277,23 @@ function resultOf(outcome: SandboxOutcome): FetchResult {
   return outcome.result as FetchResult;
 }
 
+// Each redirect route maps to a server-defined target. The Location is
+// never derived from the request (which CodeQL would flag as an open
+// redirect); the test picks behaviour by choosing a path, and the server
+// reflects a fixed, server-owned target for that path.
+type RedirectRoute = { status: number; location: string };
+
 describe("sandbox grandchild redirect following", () => {
   let server: Server;
   let base: string;
+  let routes: Record<string, RedirectRoute> = {};
 
   beforeAll(async () => {
     server = createServer((req, res) => {
       const url = new URL(req.url ?? "/", "http://127.0.0.1");
-      if (url.pathname === "/loop") {
-        res.writeHead(302, { Location: "/loop" });
-        res.end();
-        return;
-      }
-      if (url.pathname === "/redir") {
-        const to = url.searchParams.get("to") ?? "/ok";
-        const status = Number(url.searchParams.get("status") ?? "302");
-        res.writeHead(status, { Location: to });
+      const route = routes[url.pathname];
+      if (route) {
+        res.writeHead(route.status, { Location: route.location });
         res.end();
         return;
       }
@@ -309,6 +310,21 @@ describe("sandbox grandchild redirect following", () => {
     });
     const { port } = server.address() as AddressInfo;
     base = `http://127.0.0.1:${port}`;
+    routes = {
+      "/r/ok": { status: 302, location: `${base}/ok` },
+      "/r/ok307": { status: 307, location: `${base}/ok` },
+      "/r/chain": { status: 302, location: `${base}/r/ok` },
+      "/r/imds": {
+        status: 302,
+        location: "http://169.254.169.254/latest/meta-data/",
+      },
+      "/r/cluster": {
+        status: 302,
+        location: "http://probe.svc.cluster.local/",
+      },
+      "/r/scheme": { status: 302, location: "file:///etc/passwd" },
+      "/loop": { status: 302, location: "/loop" },
+    };
   });
 
   afterAll(async () => {
@@ -325,10 +341,6 @@ describe("sandbox grandchild redirect following", () => {
     return `const r = await fetch(${JSON.stringify(url)}, { method: "POST", body: ${JSON.stringify(body)} }); return { status: r.status, body: await r.text() };`;
   }
 
-  function redirTo(target: string, status = 302): string {
-    return `${base}/redir?status=${status}&to=${encodeURIComponent(target)}`;
-  }
-
   it("sanity: the test source actually dropped the loopback block", () => {
     expect(REDIRECT_TEST_SOURCE).not.toBe(SANDBOX_CHILD_SOURCE);
     expect(REDIRECT_TEST_SOURCE).not.toContain(LOOPBACK_CIDR_TUPLE);
@@ -336,7 +348,7 @@ describe("sandbox grandchild redirect following", () => {
 
   it("follows a 302 to an allowed host", async () => {
     const outcome = await runSandboxed(
-      getCode(redirTo(`${base}/ok`)),
+      getCode(`${base}/r/ok`),
       3000,
       REDIRECT_TEST_SOURCE
     );
@@ -347,7 +359,7 @@ describe("sandbox grandchild redirect following", () => {
 
   it("follows a multi-hop redirect chain", async () => {
     const outcome = await runSandboxed(
-      getCode(redirTo(redirTo(`${base}/ok`))),
+      getCode(`${base}/r/chain`),
       3000,
       REDIRECT_TEST_SOURCE
     );
@@ -356,7 +368,7 @@ describe("sandbox grandchild redirect following", () => {
 
   it("blocks a redirect into IMDS link-local", async () => {
     const outcome = await runSandboxed(
-      getCode(redirTo("http://169.254.169.254/latest/meta-data/")),
+      getCode(`${base}/r/imds`),
       3000,
       REDIRECT_TEST_SOURCE
     );
@@ -368,7 +380,7 @@ describe("sandbox grandchild redirect following", () => {
 
   it("blocks a redirect into a cluster hostname", async () => {
     const outcome = await runSandboxed(
-      getCode(redirTo("http://probe.svc.cluster.local/")),
+      getCode(`${base}/r/cluster`),
       3000,
       REDIRECT_TEST_SOURCE
     );
@@ -377,7 +389,7 @@ describe("sandbox grandchild redirect following", () => {
 
   it("rejects a redirect to a disallowed scheme", async () => {
     const outcome = await runSandboxed(
-      getCode(redirTo("file:///etc/passwd")),
+      getCode(`${base}/r/scheme`),
       3000,
       REDIRECT_TEST_SOURCE
     );
@@ -389,7 +401,7 @@ describe("sandbox grandchild redirect following", () => {
 
   it("downgrades POST to GET and drops the body on a 302", async () => {
     const outcome = await runSandboxed(
-      postCode(redirTo(`${base}/ok`, 302), "secret-payload"),
+      postCode(`${base}/r/ok`, "secret-payload"),
       3000,
       REDIRECT_TEST_SOURCE
     );
@@ -400,7 +412,7 @@ describe("sandbox grandchild redirect following", () => {
 
   it("preserves POST and body across a 307", async () => {
     const outcome = await runSandboxed(
-      postCode(redirTo(`${base}/ok`, 307), "keep-me"),
+      postCode(`${base}/r/ok307`, "keep-me"),
       3000,
       REDIRECT_TEST_SOURCE
     );
