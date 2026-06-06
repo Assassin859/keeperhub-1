@@ -6,6 +6,7 @@ import { evaluateConditionExpression } from "@/lib/workflow/executor/executor.wo
 import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
 
 const NO_EXPRESSION_REGEX = /no expression configured/;
+const NO_OUTPUT_FOUND_RE = /no output was found/;
 
 /**
  * Tests for KEEP-1520: Condition node losing expression at runtime
@@ -930,5 +931,49 @@ describe("condition evaluation edge cases", () => {
       const result = evaluateConditionExpression(expression, outputs);
       expect(result.result).toBe(true);
     });
+  });
+});
+
+describe("dead-branch grace: references to nodes that never executed", () => {
+  // A convergence Condition (e.g. "Already scheduled?") joins two
+  // mutually-exclusive branches and references a node from each, using
+  // doesNotExist / === undefined to handle whichever branch did not run. When
+  // nodeMap + executionResults are supplied, a reference to a graph node that
+  // never executed resolves to `undefined` instead of throwing. The For Each
+  // body must pass that context so a loop-body Condition behaves like a
+  // top-level one.
+  const deadNodeMap = new Map<string, unknown>([
+    ["dead", { id: "dead", data: { label: "Query Transaction History" } }],
+  ]);
+
+  it("resolves a reference to a non-executed graph node to undefined (no throw)", () => {
+    const expression =
+      "({{@dead:Query Transaction History.matchCount}} === null || {{@dead:Query Transaction History.matchCount}} === undefined)";
+    const result = evaluateConditionExpression(expression, {}, deadNodeMap, {});
+    expect(result.result).toBe(true);
+  });
+
+  it("evaluates a convergence condition when one referenced branch ran and the other did not", () => {
+    const expression =
+      "{{@ran:Check if already scheduled?.matchCount}} == 0 && ({{@dead:Query Transaction History.matchCount}} === null || {{@dead:Query Transaction History.matchCount}} === undefined)";
+    const outputs = {
+      ran: { label: "Check if already scheduled?", data: { matchCount: 0 } },
+    };
+    const nodeMap = new Map<string, unknown>([
+      ["ran", { id: "ran" }],
+      ["dead", { id: "dead" }],
+    ]);
+    const result = evaluateConditionExpression(expression, outputs, nodeMap, {
+      ran: { success: true },
+    });
+    expect(result.result).toBe(true);
+  });
+
+  it("throws without the dead-branch context (the pre-fix For Each body behaviour)", () => {
+    const expression =
+      "{{@dead:Query Transaction History.matchCount}} === undefined";
+    expect(() => evaluateConditionExpression(expression, {})).toThrow(
+      NO_OUTPUT_FOUND_RE
+    );
   });
 });

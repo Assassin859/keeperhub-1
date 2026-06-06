@@ -1840,11 +1840,20 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         scopedOutputs: outputs,
         stepContext,
       }) =>
+        // Pass nodeMap + executionResults so a Condition inside the loop body
+        // gets the same dead-branch grace as a top-level Condition: a reference
+        // to a graph node that never executed (e.g. a convergence node that
+        // joins two mutually-exclusive branches) resolves to `undefined`
+        // instead of throwing, letting `doesNotExist`/`=== undefined` rules
+        // evaluate. Without this the body Condition fails closed with
+        // "references node ... but no output was found".
         await executeActionStep({
           actionType,
           config: processedConfig,
           outputs,
           context: stepContext,
+          nodeMap,
+          executionResults: results,
         }),
       // KEEP-543: Same KEEP-398/431 spurious-max-retries recovery pattern as
       // the top-level node executor, scoped to the current iteration.
