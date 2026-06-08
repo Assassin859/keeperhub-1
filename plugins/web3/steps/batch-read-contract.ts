@@ -458,7 +458,7 @@ function decodeCallResult(
     );
     const structured = callMeta.functionAbi
       ? structureDecodedResult(decoded, callMeta.functionAbi)
-      : decoded;
+      : serializeBigInts(decoded);
     return { success: true, result: structured };
   } catch (error) {
     return {

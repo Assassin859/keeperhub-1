@@ -1,12 +1,11 @@
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { db } from "@/lib/db";
+import { workflowExecutionLogs } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { createTimer } from "@/lib/metrics";
 import { recordStatusPollMetrics } from "@/lib/metrics/instrumentation/api";
-import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
-import { db } from "@/lib/db";
-import { workflowExecutionLogs, workflowExecutions } from "@/lib/db/schema";
-import { getWorkflowAccess } from "@/lib/workflow/access";
+import { resolveAuthorizedExecution } from "@/lib/workflow/execution-access";
 
 type NodeStatus = {
   nodeId: string;
@@ -22,72 +21,19 @@ export async function GET(
   try {
     const { executionId } = await context.params;
 
-    const authContext = await getDualAuthContext(request);
-    if ("error" in authContext) {
+    const resolved = await resolveAuthorizedExecution(request, executionId);
+    if (!resolved.ok) {
       recordStatusPollMetrics({
         executionId,
         durationMs: timer(),
-        statusCode: authContext.status,
+        statusCode: resolved.status,
       });
       return NextResponse.json(
-        { error: authContext.error },
-        { status: authContext.status }
+        { error: resolved.error },
+        { status: resolved.status }
       );
     }
-    const { userId, organizationId } = authContext;
-
-    if (!userId && !organizationId) {
-      recordStatusPollMetrics({
-        executionId,
-        durationMs: timer(),
-        statusCode: 403,
-      });
-      return NextResponse.json(
-        { error: "API key has no associated user or organization. Please recreate the API key." },
-        { status: 403 }
-      );
-    }
-
-    // Get the execution and verify ownership
-    const execution = await db.query.workflowExecutions.findFirst({
-      where: eq(workflowExecutions.id, executionId),
-      with: {
-        workflow: true,
-      },
-    });
-
-    if (!execution) {
-      recordStatusPollMetrics({
-        executionId,
-        durationMs: timer(),
-        statusCode: 404,
-      });
-      return NextResponse.json(
-        { error: "Execution not found" },
-        { status: 404 }
-      );
-    }
-
-    // Verify access: owner or org member
-    const access = await getWorkflowAccess(execution.workflow, {
-      userId,
-      organizationId,
-      authMethod: authContext.authMethod,
-    });
-
-    // KEEP-440: keep this consistent with the execution-history route -- once
-    // the workflow is soft-deleted its execution detail is hidden too.
-    if (!access.hasFullAccess || access.isDeleted) {
-      recordStatusPollMetrics({
-        executionId,
-        durationMs: timer(),
-        statusCode: 404,
-      });
-      return NextResponse.json(
-        { error: "Execution not found" },
-        { status: 404 }
-      );
-    }
+    const { execution } = resolved;
 
     // Get logs for all nodes
     const logs = await db.query.workflowExecutionLogs.findMany({
