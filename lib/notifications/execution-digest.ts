@@ -68,7 +68,7 @@ export type MostExecutedWorkflow = {
   runs: number;
 };
 
-export type OrgFailureDigest = {
+export type OrgExecutionDigest = {
   total: number;
   success: number;
   error: number;
@@ -86,11 +86,11 @@ const TOP_EXECUTED_LIMIT = 3;
  * Aggregate an org's workflow executions over [since, until): totals plus the
  * workflows with the most failures (and each one's most recent error message).
  */
-export async function getOrgFailureDigest(
+export async function getOrgExecutionDigest(
   organizationId: string,
   since: Date,
   until: Date
-): Promise<OrgFailureDigest> {
+): Promise<OrgExecutionDigest> {
   const windowFilter = and(
     eq(workflows.organizationId, organizationId),
     gte(workflowExecutions.startedAt, since),

@@ -35,16 +35,16 @@ type DigestSettingsResponse = {
   members: DigestMember[];
 };
 
-type FailureDigestSectionProps = {
+type ExecutionDigestSectionProps = {
   organizationId: string;
 };
 
-export function FailureDigestSection({
+export function ExecutionDigestSection({
   organizationId,
-}: FailureDigestSectionProps): React.ReactElement {
+}: ExecutionDigestSectionProps): React.ReactElement {
   const router = useRouter();
   const { enabled: featureEnabled, loading: featureLoading } = useFeature(
-    "notifications.failure-digest"
+    "notifications.execution-digest"
   );
 
   const [loading, setLoading] = useState(true);
@@ -57,7 +57,7 @@ export function FailureDigestSection({
   useEffect(() => {
     let active = true;
     setLoading(true);
-    fetch(`/api/organizations/${organizationId}/failure-digest`)
+    fetch(`/api/organizations/${organizationId}/execution-digest`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data: DigestSettingsResponse | null) => {
         if (!(active && data)) {
@@ -98,7 +98,7 @@ export function FailureDigestSection({
     setSaving(true);
     try {
       const res = await fetch(
-        `/api/organizations/${organizationId}/failure-digest`,
+        `/api/organizations/${organizationId}/execution-digest`,
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },

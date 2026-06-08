@@ -93,7 +93,7 @@ describe("getEnabledFeatureIdsForPlan", () => {
       "action.http-request",
       "action.code",
       "action.webhook",
-      "notifications.failure-digest",
+      "notifications.execution-digest",
     ];
     for (const plan of ["pro", "business", "enterprise"] as const) {
       const ids = getEnabledFeatureIdsForPlan(plan);

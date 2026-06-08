@@ -1,9 +1,9 @@
 /**
- * KEEP-586: scheduled workflow failure digest (paid-only email).
+ * KEEP-586: scheduled workflow execution digest (paid-only email).
  *
  * Sends each opted-in org a daily/weekly summary of its workflow executions and
  * failures to the subscribed members. Authenticated as an internal service
- * (X-Service-Key / HMAC) and invoked by the `failure-digest` k8s CronJob, which
+ * (X-Service-Key / HMAC) and invoked by the `execution-digest` k8s CronJob, which
  * runs daily at 14:00 UTC via deploy/scripts/digest-cron.sh. Daily-cadence orgs
  * send every run; weekly-cadence orgs send only on Tuesdays, so weekly digests
  * land Tuesday 14:00 UTC (mid-week mornings see the best engagement).
@@ -15,19 +15,19 @@ import {
   member,
   organization,
   users,
-  workflowFailureDigestSettings,
+  workflowExecutionDigestSettings,
 } from "@/lib/db/schema";
-import { sendWorkflowFailureDigestEmail } from "@/lib/email";
+import { sendWorkflowExecutionDigestEmail } from "@/lib/email";
 import { isFeatureEnabledForOrg } from "@/lib/features/server";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
   digestWindowStart,
-  getOrgFailureDigest,
+  getOrgExecutionDigest,
   isDigestDue,
-} from "@/lib/notifications/failure-digest";
+} from "@/lib/notifications/execution-digest";
 
-const FEATURE_ID = "notifications.failure-digest" as const;
+const FEATURE_ID = "notifications.execution-digest" as const;
 
 type DigestRow = {
   organizationId: string;
@@ -77,7 +77,7 @@ async function processOrg(
   }
 
   const since = digestWindowStart(row.cadence, now);
-  const digest = await getOrgFailureDigest(row.organizationId, since, now);
+  const digest = await getOrgExecutionDigest(row.organizationId, since, now);
   if (digest.total === 0) {
     // No activity this window; send nothing and leave lastSentAt so the next
     // run re-evaluates once there is something to report.
@@ -91,7 +91,7 @@ async function processOrg(
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.keeperhub.com";
 
   for (const to of emails) {
-    await sendWorkflowFailureDigestEmail({
+    await sendWorkflowExecutionDigestEmail({
       to,
       orgName: row.orgName,
       cadence: row.cadence,
@@ -109,9 +109,9 @@ async function processOrg(
   }
 
   await db
-    .update(workflowFailureDigestSettings)
+    .update(workflowExecutionDigestSettings)
     .set({ lastSentAt: now, updatedAt: now })
-    .where(eq(workflowFailureDigestSettings.organizationId, row.organizationId));
+    .where(eq(workflowExecutionDigestSettings.organizationId, row.organizationId));
 
   return {
     organizationId: row.organizationId,
@@ -139,18 +139,18 @@ export async function GET(request: Request): Promise<NextResponse> {
   try {
     const rows = await db
       .select({
-        organizationId: workflowFailureDigestSettings.organizationId,
+        organizationId: workflowExecutionDigestSettings.organizationId,
         orgName: organization.name,
-        cadence: workflowFailureDigestSettings.cadence,
-        subscriberUserIds: workflowFailureDigestSettings.subscriberUserIds,
-        lastSentAt: workflowFailureDigestSettings.lastSentAt,
+        cadence: workflowExecutionDigestSettings.cadence,
+        subscriberUserIds: workflowExecutionDigestSettings.subscriberUserIds,
+        lastSentAt: workflowExecutionDigestSettings.lastSentAt,
       })
-      .from(workflowFailureDigestSettings)
+      .from(workflowExecutionDigestSettings)
       .innerJoin(
         organization,
-        eq(organization.id, workflowFailureDigestSettings.organizationId)
+        eq(organization.id, workflowExecutionDigestSettings.organizationId)
       )
-      .where(eq(workflowFailureDigestSettings.enabled, true));
+      .where(eq(workflowExecutionDigestSettings.enabled, true));
 
     for (const row of rows) {
       orgsProcessed++;
@@ -165,7 +165,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         errors++;
         logSystemError(
           ErrorCategory.EXTERNAL_SERVICE,
-          "[FailureDigest] Failed to process org digest",
+          "[ExecutionDigest] Failed to process org digest",
           error,
           { organization_id: row.organizationId }
         );
@@ -182,9 +182,9 @@ export async function GET(request: Request): Promise<NextResponse> {
   } catch (error) {
     logSystemError(
       ErrorCategory.DATABASE,
-      "[FailureDigest] Failed to run digest job",
+      "[ExecutionDigest] Failed to run digest job",
       error,
-      { endpoint: "/api/internal/failure-digest", operation: "get" }
+      { endpoint: "/api/internal/execution-digest", operation: "get" }
     );
     return NextResponse.json(
       { error: "Digest run failed" },

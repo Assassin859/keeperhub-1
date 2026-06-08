@@ -10,7 +10,7 @@ vi.mock("@/lib/db/schema", () => ({
 import {
   digestWindowStart,
   isDigestDue,
-} from "@/lib/notifications/failure-digest";
+} from "@/lib/notifications/execution-digest";
 
 // 2026-06-02 is a Tuesday (UTC); 2026-06-04 is a Thursday (a non-digest day).
 const TUESDAY = new Date("2026-06-02T14:00:00.000Z");

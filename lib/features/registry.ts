@@ -45,8 +45,8 @@ export const FEATURES: Record<FeatureId, FeatureDefinition> = {
     requiredPlan: "pro",
     actionTypes: ["webhook/send-webhook"],
   },
-  "notifications.failure-digest": {
-    id: "notifications.failure-digest",
+  "notifications.execution-digest": {
+    id: "notifications.execution-digest",
     name: "Execution digest",
     description:
       "Email subscribed org members a daily or weekly summary of workflow executions: total runs, successes, and failures.",

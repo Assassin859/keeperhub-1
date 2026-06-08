@@ -4,14 +4,14 @@ import { db } from "@/lib/db";
 import {
   member,
   users,
-  workflowFailureDigestSettings,
+  workflowExecutionDigestSettings,
 } from "@/lib/db/schema";
 import { isFeatureEnabledForOrg } from "@/lib/features/server";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { DIGEST_REQUIRES_SUBSCRIBER_ERROR } from "@/lib/notifications/digest-messages";
 
-const FEATURE_ID = "notifications.failure-digest" as const;
+const FEATURE_ID = "notifications.execution-digest" as const;
 
 type ManagerOk = { ok: true; userId: string };
 type ManagerErr = { ok: false; status: number; error: string };
@@ -54,12 +54,12 @@ async function requireOrgManager(
 async function loadSettings(organizationId: string) {
   const [row] = await db
     .select({
-      enabled: workflowFailureDigestSettings.enabled,
-      cadence: workflowFailureDigestSettings.cadence,
-      subscriberUserIds: workflowFailureDigestSettings.subscriberUserIds,
+      enabled: workflowExecutionDigestSettings.enabled,
+      cadence: workflowExecutionDigestSettings.cadence,
+      subscriberUserIds: workflowExecutionDigestSettings.subscriberUserIds,
     })
-    .from(workflowFailureDigestSettings)
-    .where(eq(workflowFailureDigestSettings.organizationId, organizationId))
+    .from(workflowExecutionDigestSettings)
+    .where(eq(workflowExecutionDigestSettings.organizationId, organizationId))
     .limit(1);
   return row;
 }
@@ -116,9 +116,9 @@ export async function GET(
   } catch (error) {
     logSystemError(
       ErrorCategory.DATABASE,
-      "Failed to load failure-digest settings",
+      "Failed to load execution-digest settings",
       error,
-      { endpoint: "/api/organizations/[organizationId]/failure-digest" }
+      { endpoint: "/api/organizations/[organizationId]/execution-digest" }
     );
     return NextResponse.json(
       { error: "Failed to load settings" },
@@ -192,7 +192,7 @@ export async function PUT(
 
     const now = new Date();
     await db
-      .insert(workflowFailureDigestSettings)
+      .insert(workflowExecutionDigestSettings)
       .values({
         organizationId,
         enabled,
@@ -202,7 +202,7 @@ export async function PUT(
         updatedAt: now,
       })
       .onConflictDoUpdate({
-        target: workflowFailureDigestSettings.organizationId,
+        target: workflowExecutionDigestSettings.organizationId,
         set: { enabled, cadence, subscriberUserIds, updatedAt: now },
       });
 
@@ -210,9 +210,9 @@ export async function PUT(
   } catch (error) {
     logSystemError(
       ErrorCategory.DATABASE,
-      "Failed to save failure-digest settings",
+      "Failed to save execution-digest settings",
       error,
-      { endpoint: "/api/organizations/[organizationId]/failure-digest" }
+      { endpoint: "/api/organizations/[organizationId]/execution-digest" }
     );
     return NextResponse.json(
       { error: "Failed to save settings" },

@@ -570,7 +570,7 @@ KeeperHub - Blockchain Workflow Automation
   return success;
 }
 
-type FailureDigestEmailData = {
+type ExecutionDigestEmailData = {
   to: string;
   orgName: string;
   cadence: "daily" | "weekly";
@@ -612,8 +612,8 @@ function formatWeiToEth(weiStr: string): string {
  * KEEP-586: send a scheduled (daily/weekly) workflow execution digest to a
  * subscribed org member.
  */
-export async function sendWorkflowFailureDigestEmail(
-  data: FailureDigestEmailData
+export async function sendWorkflowExecutionDigestEmail(
+  data: ExecutionDigestEmailData
 ): Promise<boolean> {
   const { to, orgName, cadence, appUrl, stats, topFailing, mostExecuted } =
     data;

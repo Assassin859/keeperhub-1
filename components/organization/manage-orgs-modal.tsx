@@ -15,7 +15,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { FailureDigestSection } from "@/components/organization/failure-digest-section";
+import { ExecutionDigestSection } from "@/components/organization/execution-digest-section";
 import { MemberSessionsDialog } from "@/components/organization/member-sessions-dialog";
 import {
   AlertDialog,
@@ -1570,7 +1570,7 @@ export function ManageOrgsModal({
 
             <TabsContent className="space-y-4" value="notifications">
               {organization && (isActiveOrgOwner || isActiveOrgAdmin) ? (
-                <FailureDigestSection organizationId={organization.id} />
+                <ExecutionDigestSection organizationId={organization.id} />
               ) : (
                 <div className="py-8 text-center text-muted-foreground">
                   Only organization owners and admins can manage notifications.

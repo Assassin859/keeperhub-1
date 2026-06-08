@@ -810,12 +810,12 @@ export const workflowSchedules = pgTable(
   ]
 );
 
-// KEEP-586: per-org scheduled failure-digest config. Paid-only (Pro+); the cron
+// KEEP-586: per-org scheduled execution-digest config. Paid-only (Pro+); the cron
 // job and settings API both gate on the org plan. subscriberUserIds is the
 // explicit recipient list managed by owners/admins; non-members are skipped at
 // send time. lastSentAt drives the daily/weekly due check.
-export const workflowFailureDigestSettings = pgTable(
-  "workflow_failure_digest_settings",
+export const workflowExecutionDigestSettings = pgTable(
+  "workflow_execution_digest_settings",
   {
     organizationId: text("organization_id")
       .primaryKey()
@@ -837,7 +837,7 @@ export const workflowFailureDigestSettings = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (table) => [index("idx_failure_digest_enabled").on(table.enabled)]
+  (table) => [index("idx_execution_digest_enabled").on(table.enabled)]
 );
 
 // Supported blockchain networks with default RPC endpoints

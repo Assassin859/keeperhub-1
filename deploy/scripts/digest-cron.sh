@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-# Cron runner for the execution digest: GET the /api/internal/failure-digest
+# Cron runner for the execution digest: GET the /api/internal/execution-digest
 # endpoint authenticated with the scheduler service key. Pass the full URL as
 # the first argument. Shares the curl-with-service-key shape of reaper.sh but is
 # a distinct job (scheduled digest, not stale-execution reaping).

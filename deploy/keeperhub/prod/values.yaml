@@ -507,7 +507,7 @@ cronjob:
       failedJobsHistoryLimit: 3
       restartPolicy: OnFailure
       backoffLimit: 2
-    - name: failure-digest
+    - name: execution-digest
       image:
         repository: ${ECR_REGISTRY}/keeperhub-prod
         tag: app-${IMAGE_TAG}
@@ -516,7 +516,7 @@ cronjob:
       command: ["/bin/sh"]
       args:
         - "/app/deploy/scripts/digest-cron.sh"
-        - "http://keeperhub-common:3000/api/internal/failure-digest"
+        - "http://keeperhub-common:3000/api/internal/execution-digest"
       env:
         SCHEDULER_SERVICE_API_KEY:
           type: parameterStore
