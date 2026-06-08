@@ -1,6 +1,6 @@
 "use client";
 
-import { Gem } from "lucide-react";
+import { Gem, Info } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -15,8 +15,18 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useFeature } from "@/hooks/use-features";
 import { DIGEST_REQUIRES_SUBSCRIBER_ERROR } from "@/lib/notifications/digest-messages";
+
+const SCHEDULE_HINT: Record<Cadence, string> = {
+  daily: "Sent every day at 14:00 UTC.",
+  weekly: "Sent every Tuesday at 14:00 UTC.",
+};
 
 type Cadence = "daily" | "weekly";
 
@@ -163,9 +173,17 @@ export function ExecutionDigestSection({
       </div>
 
       <div className="flex items-center justify-between gap-2">
-        <Label className="text-sm" htmlFor="digest-cadence">
-          Frequency
-        </Label>
+        <div className="flex items-center gap-1.5">
+          <Label className="text-sm" htmlFor="digest-cadence">
+            Frequency
+          </Label>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Info className="size-3.5 text-muted-foreground" />
+            </TooltipTrigger>
+            <TooltipContent>{SCHEDULE_HINT[cadence]}</TooltipContent>
+          </Tooltip>
+        </div>
         <Select
           disabled={!enabled || loading || saving}
           onValueChange={(v) => setCadence(v as Cadence)}
