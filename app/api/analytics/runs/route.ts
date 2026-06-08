@@ -11,6 +11,7 @@ const VALID_STATUSES = new Set<NormalizedStatus>([
   "running",
   "success",
   "error",
+  "cancelled",
 ]);
 
 const VALID_SOURCES = new Set<RunSource>(["workflow", "direct"]);
