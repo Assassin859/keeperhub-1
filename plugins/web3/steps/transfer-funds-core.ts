@@ -70,6 +70,7 @@ export type TransferFundsResult =
       gasUsed: string;
       gasUsedUnits: string;
       effectiveGasPrice: string;
+      sponsored?: boolean;
     }
   | { success: false; error: string; rejection?: RevertKind };
 
@@ -245,6 +246,7 @@ export async function transferFundsCore(
 
         return {
           success: true,
+          sponsored: true,
           transactionHash: sponsoredResult.transactionHash,
           transactionLink,
           gasUsed: sponsoredResult.gasUsed,
