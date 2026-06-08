@@ -87,12 +87,13 @@ describe("getEnabledFeatureIdsForPlan", () => {
     expect(getEnabledFeatureIdsForPlan("free")).toEqual([]);
   });
 
-  it("returns all workflow-action features for pro+", () => {
+  it("returns all pro+ features for pro+", () => {
     const expected: FeatureId[] = [
       "action.database-query",
       "action.http-request",
       "action.code",
       "action.webhook",
+      "notifications.failure-digest",
     ];
     for (const plan of ["pro", "business", "enterprise"] as const) {
       const ids = getEnabledFeatureIdsForPlan(plan);
