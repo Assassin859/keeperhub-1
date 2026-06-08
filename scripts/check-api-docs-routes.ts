@@ -200,6 +200,20 @@ function indexRouteFiles(): {
 }
 
 /**
+ * Returns true if the route file sets Content-Type: text/event-stream,
+ * indicating a Server-Sent Events endpoint. The post-deploy curl probe
+ * skips these: curl has no --max-time by default, so a keep-alive stream
+ * blocks the probe indefinitely.
+ */
+function isStreamingRoute(absRouteFile: string): boolean {
+  try {
+    return readFileSync(absRouteFile, "utf8").includes("text/event-stream");
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Read a route file and report which HTTP methods it exports. Matches
  * the three styles observed in the codebase:
  *   export async function GET(...) { ... }
@@ -322,13 +336,19 @@ function writeCoverageArtifact(
     return 0;
   });
   const json = {
-    endpoints: sorted.map((ep) => ({
-      method: ep.method,
-      path: ep.path,
-      route_file: shapeIndex.get(pathShape(ep.path)) ?? null,
-      source: ep.source,
-      line: ep.line,
-    })),
+    endpoints: sorted.map((ep) => {
+      const routeFile = shapeIndex.get(pathShape(ep.path)) ?? null;
+      const streaming =
+        routeFile !== null && isStreamingRoute(join(REPO_ROOT, routeFile));
+      return {
+        method: ep.method,
+        path: ep.path,
+        route_file: routeFile,
+        ...(streaming ? { streaming: true } : {}),
+        source: ep.source,
+        line: ep.line,
+      };
+    }),
   };
   writeFileSync(COVERAGE_OUT, `${JSON.stringify(json, null, 2)}\n`);
 }

@@ -102,6 +102,7 @@
       "method": "GET",
       "path": "/api/analytics/stream",
       "route_file": "app/api/analytics/stream/route.ts",
+      "streaming": true,
       "source": "docs/api/analytics.md",
       "line": 207
     },

@@ -237,10 +237,16 @@ jobs:
           FIXTURE="probe-fixture"
           FAILED=0
           REACHED=0
+          SKIPPED=$(jq '[.endpoints[] | select(.streaming == true) | .path] | length' specs/api-coverage.json)
+          if [ "$SKIPPED" -gt 0 ]; then
+            echo "Skipping ${SKIPPED} streaming endpoint(s) (text/event-stream; curl would block indefinitely):"
+            jq -r '.endpoints[] | select(.streaming == true) | "  GET \(.path)"' specs/api-coverage.json
+          fi
           while IFS=$'\t' read -r METHOD PATH_TEMPLATE; do
             [ "$METHOD" = "GET" ] || continue
             URL_PATH=$(printf '%s' "$PATH_TEMPLATE" | sed -E "s/\{[^}]+\}/${FIXTURE}/g")
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              --max-time 10 \
               "${HEADERS[@]}" \
               "${{ env.BASE_URL }}${URL_PATH}" || echo "000")
             HAS_PARAM=0
@@ -265,7 +271,7 @@ jobs:
                 echo "::warning::endpoint drift: GET ${PATH_TEMPLATE} returned ${STATUS} on ${{ env.BASE_URL }}"
                 ;;
             esac
-          done < <(jq -r '.endpoints[] | [.method, .path] | @tsv' specs/api-coverage.json)
+          done < <(jq -r '.endpoints[] | select(.streaming != true) | [.method, .path] | @tsv' specs/api-coverage.json)
           TOTAL=$((REACHED + FAILED))
           echo "Reached ${REACHED} documented GET endpoints; ${FAILED} drift; ${TOTAL} probed."
           # Schema sanity guard: if 0 endpoints were probed at all, the
