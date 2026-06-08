@@ -10,7 +10,7 @@ import { workflowExecutionLogs, workflowExecutions } from "@/lib/db/schema";
  * HTTP/MCP client timeouts (~30s) so clients don't time out on us.
  */
 export const DEFAULT_CALL_WAIT_TIMEOUT_MS = 25_000;
-const DEFAULT_POLL_INTERVAL_MS = 250;
+const DEFAULT_POLL_INTERVAL_MS = 1000;
 
 type TerminalStatus = "success" | "error" | "cancelled";
 
