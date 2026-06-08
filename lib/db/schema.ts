@@ -810,7 +810,7 @@ export const workflowSchedules = pgTable(
   ]
 );
 
-// KEEP-586: per-org scheduled execution-digest config. Paid-only (Pro+); the cron
+// Per-org scheduled execution-digest config. Paid-only (Pro+); the cron
 // job and settings API both gate on the org plan. subscriberUserIds is the
 // explicit recipient list managed by owners/admins; non-members are skipped at
 // send time. lastSentAt drives the daily/weekly due check.

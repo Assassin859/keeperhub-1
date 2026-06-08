@@ -1,5 +1,5 @@
 /**
- * KEEP-586: scheduled workflow execution digest (paid-only email).
+ * Scheduled workflow execution digest (paid-only email).
  *
  * Sends each opted-in org a daily/weekly summary of its workflow executions and
  * failures to the subscribed members. Authenticated as an internal service

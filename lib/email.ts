@@ -609,7 +609,7 @@ function formatWeiToEth(weiStr: string): string {
 }
 
 /**
- * KEEP-586: send a scheduled (daily/weekly) workflow execution digest to a
+ * Send a scheduled (daily/weekly) workflow execution digest to a
  * subscribed org member.
  */
 export async function sendWorkflowExecutionDigestEmail(
