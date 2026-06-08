@@ -19,6 +19,7 @@ import { ErrorCategory, logSystemError, logSystemWarn } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
 import { recordWorkflowExecutionError } from "@/lib/metrics/collectors/prometheus";
 import { ANONYMOUS_ORG_SLUG } from "@/lib/metrics/db-metrics";
+import { toJsonSafe } from "@/lib/utils/json-safe";
 import {
   EXCEEDED_MAX_RETRIES_REGEX,
   FAILED_AFTER_RETRIES_REGEX,
@@ -431,7 +432,7 @@ export async function logStepStartDb(
       nodeName: params.nodeName,
       nodeType: params.nodeType,
       status: "running",
-      input: params.input,
+      input: toJsonSafe(params.input),
       startedAt: new Date(),
       iterationIndex: params.iterationIndex ?? null,
       forEachNodeId: params.forEachNodeId ?? null,
@@ -489,8 +490,8 @@ export async function logStepCompleteDb(
     .update(workflowExecutionLogs)
     .set({
       status: params.status,
-      output: params.output,
-      outputRaw: params.outputRaw,
+      output: toJsonSafe(params.output),
+      outputRaw: toJsonSafe(params.outputRaw),
       error: errorValue,
       completedAt: new Date(),
       duration: duration.toString(),
@@ -700,7 +701,7 @@ export async function logWorkflowCompleteDb(
     .update(workflowExecutions)
     .set({
       status: resolvedStatus,
-      output: params.output,
+      output: toJsonSafe(params.output),
       error: resolvedError,
       errorCategory: classification?.errorCategory ?? null,
       errorType: classification?.errorType ?? null,
