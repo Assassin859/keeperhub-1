@@ -20,6 +20,74 @@ type ExecutionResult = {
   error: string | null;
 };
 
+function isTerminalStatus(status: string): status is TerminalStatus {
+  return status === "success" || status === "error" || status === "cancelled";
+}
+
+function loadReceiptRow(executionId: string) {
+  return db.query.workflowExecutions.findFirst({
+    where: eq(workflowExecutions.id, executionId),
+    columns: {
+      status: true,
+      output: true,
+      error: true,
+      transactionHashes: true,
+      gasUsedWei: true,
+      completedAt: true,
+    },
+  });
+}
+
+export type ExecutionReceiptRow = NonNullable<
+  Awaited<ReturnType<typeof loadReceiptRow>>
+>;
+
+export type ExecutionReceiptPoll = {
+  row: ExecutionReceiptRow | null;
+  completed: boolean;
+};
+
+/**
+ * Poll the execution row until it reaches a terminal state (success, error,
+ * cancelled) or the timeout elapses. Always returns the last-seen row (so
+ * callers can read the receipt on timeout too); `row` is null only when the
+ * execution does not exist, and `completed` is true only on a terminal state.
+ */
+async function pollExecutionReceipt(
+  executionId: string,
+  timeoutMs: number,
+  pollIntervalMs: number
+): Promise<ExecutionReceiptPoll> {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    const row = await loadReceiptRow(executionId);
+    if (!row) {
+      return { row: null, completed: false };
+    }
+    if (isTerminalStatus(row.status)) {
+      return { row, completed: true };
+    }
+    if (Date.now() + pollIntervalMs >= deadline) {
+      return { row, completed: false };
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+}
+
+/**
+ * Poll until the execution reaches a terminal state or the timeout elapses,
+ * returning the receipt row plus a `completed` flag. Unlike
+ * waitForExecutionCompletion, the row is returned on timeout too so the caller
+ * does not need a second read for the transaction hashes / gas / completedAt.
+ */
+export function waitForExecutionReceipt(
+  executionId: string,
+  timeoutMs: number = DEFAULT_CALL_WAIT_TIMEOUT_MS,
+  pollIntervalMs: number = DEFAULT_POLL_INTERVAL_MS
+): Promise<ExecutionReceiptPoll> {
+  return pollExecutionReceipt(executionId, timeoutMs, pollIntervalMs);
+}
+
 /**
  * Poll workflowExecutions.status until it reaches a terminal state (success,
  * error, cancelled) or the timeout elapses. Returns null on timeout.
@@ -32,31 +100,19 @@ export async function waitForExecutionCompletion(
   if (timeoutMs <= 0) {
     return null;
   }
-  const deadline = Date.now() + timeoutMs;
-  while (true) {
-    const row = await db.query.workflowExecutions.findFirst({
-      where: eq(workflowExecutions.id, executionId),
-      columns: { status: true, output: true, error: true },
-    });
-    if (!row) {
-      return null;
-    }
-    if (
-      row.status === "success" ||
-      row.status === "error" ||
-      row.status === "cancelled"
-    ) {
-      return {
-        status: row.status,
-        output: row.output,
-        error: row.error ?? null,
-      };
-    }
-    if (Date.now() + pollIntervalMs >= deadline) {
-      return null;
-    }
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  const { row } = await pollExecutionReceipt(
+    executionId,
+    timeoutMs,
+    pollIntervalMs
+  );
+  if (!(row && isTerminalStatus(row.status))) {
+    return null;
   }
+  return {
+    status: row.status,
+    output: row.output,
+    error: row.error ?? null,
+  };
 }
 
 /**

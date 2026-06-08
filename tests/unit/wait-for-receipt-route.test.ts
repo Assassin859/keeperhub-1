@@ -6,13 +6,13 @@ const {
   mockFindFirst,
   mockGetDualAuthContext,
   mockGetWorkflowAccess,
-  mockWaitForExecutionCompletion,
+  mockWaitForExecutionReceipt,
   mockRecordStatusPollMetrics,
 } = vi.hoisted(() => ({
   mockFindFirst: vi.fn(),
   mockGetDualAuthContext: vi.fn(),
   mockGetWorkflowAccess: vi.fn(),
-  mockWaitForExecutionCompletion: vi.fn(),
+  mockWaitForExecutionReceipt: vi.fn(),
   mockRecordStatusPollMetrics: vi.fn(),
 }));
 
@@ -28,7 +28,7 @@ vi.mock("@/lib/workflow/access", () => ({
 }));
 vi.mock("@/lib/payments/x402/execution-wait", () => ({
   DEFAULT_CALL_WAIT_TIMEOUT_MS: 25_000,
-  waitForExecutionCompletion: mockWaitForExecutionCompletion,
+  waitForExecutionReceipt: mockWaitForExecutionReceipt,
 }));
 vi.mock("@/lib/metrics", () => ({ createTimer: () => () => 0 }));
 vi.mock("@/lib/metrics/instrumentation/api", () => ({
@@ -62,23 +62,20 @@ describe("GET wait-for-receipt route", () => {
       hasFullAccess: true,
       isDeleted: false,
     });
+    mockFindFirst.mockResolvedValue({ id: "exec-1", workflow: { id: "wf-1" } });
   });
 
   it("returns the receipt with transactionHashes when terminal", async () => {
-    mockFindFirst
-      .mockResolvedValueOnce({ id: "exec-1", workflow: { id: "wf-1" } })
-      .mockResolvedValueOnce({
+    mockWaitForExecutionReceipt.mockResolvedValue({
+      row: {
         status: "success",
         output: { ok: true },
         error: null,
         transactionHashes: [{ hash: "0xabc", nodeId: "n1", nodeName: "Send" }],
         gasUsedWei: "21000",
         completedAt: new Date("2026-06-05T12:00:00.000Z"),
-      });
-    mockWaitForExecutionCompletion.mockResolvedValue({
-      status: "success",
-      output: { ok: true },
-      error: null,
+      },
+      completed: true,
     });
 
     const { GET } = await import(ROUTE);
@@ -94,17 +91,17 @@ describe("GET wait-for-receipt route", () => {
   });
 
   it("returns completed=false with current status on timeout", async () => {
-    mockFindFirst
-      .mockResolvedValueOnce({ id: "exec-1", workflow: { id: "wf-1" } })
-      .mockResolvedValueOnce({
+    mockWaitForExecutionReceipt.mockResolvedValue({
+      row: {
         status: "running",
         output: null,
         error: null,
         transactionHashes: [],
         gasUsedWei: null,
         completedAt: null,
-      });
-    mockWaitForExecutionCompletion.mockResolvedValue(null);
+      },
+      completed: false,
+    });
 
     const { GET } = await import(ROUTE);
     const res = await GET(makeRequest(), makeContext("exec-1"));
@@ -123,14 +120,22 @@ describe("GET wait-for-receipt route", () => {
     const res = await GET(makeRequest(), makeContext("missing"));
 
     expect(res.status).toBe(404);
-    expect(mockWaitForExecutionCompletion).not.toHaveBeenCalled();
+    expect(mockWaitForExecutionReceipt).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when the execution is deleted mid-wait", async () => {
+    mockWaitForExecutionReceipt.mockResolvedValue({
+      row: null,
+      completed: false,
+    });
+
+    const { GET } = await import(ROUTE);
+    const res = await GET(makeRequest(), makeContext("exec-1"));
+
+    expect(res.status).toBe(404);
   });
 
   it("returns 404 when the caller lacks access", async () => {
-    mockFindFirst.mockResolvedValueOnce({
-      id: "exec-1",
-      workflow: { id: "wf-1" },
-    });
     mockGetWorkflowAccess.mockResolvedValue({
       hasFullAccess: false,
       isDeleted: false,
@@ -140,7 +145,7 @@ describe("GET wait-for-receipt route", () => {
     const res = await GET(makeRequest(), makeContext("exec-1"));
 
     expect(res.status).toBe(404);
-    expect(mockWaitForExecutionCompletion).not.toHaveBeenCalled();
+    expect(mockWaitForExecutionReceipt).not.toHaveBeenCalled();
   });
 
   it("propagates the auth error status", async () => {
@@ -156,24 +161,21 @@ describe("GET wait-for-receipt route", () => {
   });
 
   it("clamps timeoutMs above the max before waiting", async () => {
-    mockFindFirst
-      .mockResolvedValueOnce({ id: "exec-1", workflow: { id: "wf-1" } })
-      .mockResolvedValueOnce({
+    mockWaitForExecutionReceipt.mockResolvedValue({
+      row: {
         status: "running",
         output: null,
         error: null,
         transactionHashes: [],
         gasUsedWei: null,
         completedAt: null,
-      });
-    mockWaitForExecutionCompletion.mockResolvedValue(null);
+      },
+      completed: false,
+    });
 
     const { GET } = await import(ROUTE);
     await GET(makeRequest(999_999), makeContext("exec-1"));
 
-    expect(mockWaitForExecutionCompletion).toHaveBeenCalledWith(
-      "exec-1",
-      60_000
-    );
+    expect(mockWaitForExecutionReceipt).toHaveBeenCalledWith("exec-1", 60_000);
   });
 });

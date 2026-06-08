@@ -1,13 +1,10 @@
-import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { workflowExecutions } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { createTimer } from "@/lib/metrics";
 import { recordStatusPollMetrics } from "@/lib/metrics/instrumentation/api";
 import {
   DEFAULT_CALL_WAIT_TIMEOUT_MS,
-  waitForExecutionCompletion,
+  waitForExecutionReceipt,
 } from "@/lib/payments/x402/execution-wait";
 import { resolveAuthorizedExecution } from "@/lib/workflow/execution-access";
 
@@ -48,23 +45,12 @@ export async function GET(
     }
 
     const timeoutMs = parseTimeoutMs(request);
-    const result = await waitForExecutionCompletion(executionId, timeoutMs);
+    const { row, completed } = await waitForExecutionReceipt(
+      executionId,
+      timeoutMs
+    );
 
-    // Re-read the row after waiting: the poller only resolves status/output/
-    // error, but the receipt needs transactionHashes/gas/completedAt too.
-    const fresh = await db.query.workflowExecutions.findFirst({
-      where: eq(workflowExecutions.id, executionId),
-      columns: {
-        status: true,
-        output: true,
-        error: true,
-        transactionHashes: true,
-        gasUsedWei: true,
-        completedAt: true,
-      },
-    });
-
-    if (!fresh) {
+    if (!row) {
       recordStatusPollMetrics({
         executionId,
         durationMs: timer(),
@@ -80,20 +66,20 @@ export async function GET(
       executionId,
       durationMs: timer(),
       statusCode: 200,
-      executionStatus: fresh.status,
+      executionStatus: row.status,
     });
 
-    // result is null on timeout (still pending/running); non-null once the
+    // completed is false on timeout (still pending/running), true once the
     // execution reached a terminal state within the wait window.
     return NextResponse.json({
       executionId,
-      status: fresh.status,
-      completed: result !== null,
-      transactionHashes: fresh.transactionHashes ?? [],
-      output: fresh.output,
-      error: fresh.error ?? null,
-      gasUsedWei: fresh.gasUsedWei,
-      completedAt: fresh.completedAt,
+      status: row.status,
+      completed,
+      transactionHashes: row.transactionHashes ?? [],
+      output: row.output,
+      error: row.error ?? null,
+      gasUsedWei: row.gasUsedWei,
+      completedAt: row.completedAt,
     });
   } catch (error) {
     const { executionId } = await context.params;
