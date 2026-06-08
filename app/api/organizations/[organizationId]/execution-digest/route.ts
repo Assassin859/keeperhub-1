@@ -10,6 +10,7 @@ import { isFeatureEnabledForOrg } from "@/lib/features/server";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { DIGEST_REQUIRES_SUBSCRIBER_ERROR } from "@/lib/notifications/digest-messages";
+import { SUBSCRIBABLE_ROLES } from "@/lib/notifications/execution-digest";
 
 const FEATURE_ID = "notifications.execution-digest" as const;
 
@@ -63,10 +64,6 @@ async function loadSettings(organizationId: string) {
     .limit(1);
   return row;
 }
-
-// Only owners and admins can be digest subscribers -- they are the ones who
-// act on workflow failures.
-const SUBSCRIBABLE_ROLES = ["owner", "admin"];
 
 async function loadSubscribableMembers(organizationId: string) {
   return await db

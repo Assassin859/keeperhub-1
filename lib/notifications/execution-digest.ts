@@ -11,6 +11,11 @@ import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
 
 export type DigestCadence = "daily" | "weekly";
 
+// Only owners and admins may subscribe to / receive the digest. Enforced both
+// at save time (settings API) and at send time (cron) so a member who was
+// subscribed and later downgraded stops receiving emails.
+export const SUBSCRIBABLE_ROLES: string[] = ["owner", "admin"];
+
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
 

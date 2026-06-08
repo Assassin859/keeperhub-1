@@ -25,6 +25,7 @@ import {
   digestWindowStart,
   getOrgExecutionDigest,
   isDigestDue,
+  SUBSCRIBABLE_ROLES,
 } from "@/lib/notifications/execution-digest";
 
 const FEATURE_ID = "notifications.execution-digest" as const;
@@ -51,6 +52,8 @@ async function resolveSubscriberEmails(
   if (subscriberUserIds.length === 0) {
     return [];
   }
+  // Re-check the role at send time: a subscriber downgraded to member after
+  // being saved must stop receiving the digest.
   const rows = await db
     .select({ email: users.email })
     .from(member)
@@ -58,6 +61,7 @@ async function resolveSubscriberEmails(
     .where(
       and(
         eq(member.organizationId, organizationId),
+        inArray(member.role, SUBSCRIBABLE_ROLES),
         inArray(member.userId, subscriberUserIds)
       )
     );
