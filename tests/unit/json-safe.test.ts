@@ -70,4 +70,41 @@ describe("toJsonSafe", () => {
     a.self = a;
     expect(toJsonSafe(a)).toEqual({ name: "a", self: "[Circular]" });
   });
+
+  it("serializes shared (non-circular) references in full", () => {
+    const shared = { token: "USDC", decimals: 6 };
+    expect(toJsonSafe({ a: shared, b: shared })).toEqual({
+      a: { token: "USDC", decimals: 6 },
+      b: { token: "USDC", decimals: 6 },
+    });
+    expect(toJsonSafe([shared, shared])).toEqual([
+      { token: "USDC", decimals: 6 },
+      { token: "USDC", decimals: 6 },
+    ]);
+  });
+
+  it("serializes a reference shared across Set and Map entries in full", () => {
+    const shared = { fee: BigInt(500) };
+    expect(toJsonSafe(new Set([{ shared }, { shared }]))).toEqual([
+      { shared: { fee: "500" } },
+      { shared: { fee: "500" } },
+    ]);
+    expect(
+      toJsonSafe(
+        new Map<string, unknown>([
+          ["x", shared],
+          ["y", shared],
+        ])
+      )
+    ).toEqual({ x: { fee: "500" }, y: { fee: "500" } });
+  });
+
+  it("still flags a true cycle even when the node also appears as a sibling", () => {
+    const node: Record<string, unknown> = { name: "n" };
+    node.self = node;
+    expect(toJsonSafe({ first: node, second: node })).toEqual({
+      first: { name: "n", self: "[Circular]" },
+      second: { name: "n", self: "[Circular]" },
+    });
+  });
 });

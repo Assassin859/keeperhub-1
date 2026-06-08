@@ -14,6 +14,9 @@
  * - undefined -> null (explicit, avoids silent drops in arrays)
  * - Functions -> omitted
  * - Circular references -> "[Circular]"
+ *
+ * Only ancestor cycles are treated as circular; the same object reachable via
+ * two sibling paths (a shared, non-circular reference) is serialized in full.
  */
 export function toJsonSafe(obj: unknown, seen = new WeakSet()): unknown {
   if (obj === null || obj === undefined) {
@@ -58,15 +61,20 @@ export function toJsonSafe(obj: unknown, seen = new WeakSet()): unknown {
     for (const [key, value] of obj) {
       mapResult[String(key)] = toJsonSafe(value, seen);
     }
+    seen.delete(obj);
     return mapResult;
   }
 
   if (obj instanceof Set) {
-    return [...obj].map((item) => toJsonSafe(item, seen));
+    const setResult = [...obj].map((item) => toJsonSafe(item, seen));
+    seen.delete(obj);
+    return setResult;
   }
 
   if (Array.isArray(obj)) {
-    return obj.map((item) => toJsonSafe(item, seen));
+    const arrayResult = obj.map((item) => toJsonSafe(item, seen));
+    seen.delete(obj);
+    return arrayResult;
   }
 
   // Plain object (includes ethers.Result, which has numeric + named keys)
@@ -77,5 +85,6 @@ export function toJsonSafe(obj: unknown, seen = new WeakSet()): unknown {
       result[key] = safe;
     }
   }
+  seen.delete(obj);
   return result;
 }
