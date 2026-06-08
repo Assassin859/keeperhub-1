@@ -43,11 +43,53 @@ if (
   );
 }
 
-const JS_STRING_LITERAL_REGEX =
-  /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`/g;
-
-function stripStringLiterals(code: string): string {
-  return code.replace(JS_STRING_LITERAL_REGEX, "");
+// Remove string/template-literal bodies and `//` + block comments so the
+// template scan only sees executable code. Refs inside strings or comments are
+// data or documentation, not dependencies, and must not be flagged as
+// unresolved -- the executor deliberately leaves them in place. Mirrors the
+// string/comment-aware scanning in executor.workflow.ts.
+function stripStringsAndComments(code: string): string {
+  const out: string[] = [];
+  const n = code.length;
+  let i = 0;
+  let stringDelim: string | null = null;
+  while (i < n) {
+    const c = code[i];
+    if (stringDelim) {
+      if (c === "\\") {
+        i += 2;
+        continue;
+      }
+      if (c === stringDelim) {
+        stringDelim = null;
+      }
+      i++;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      stringDelim = c;
+      i++;
+      continue;
+    }
+    if (c === "/" && code[i + 1] === "/") {
+      i += 2;
+      while (i < n && code[i] !== "\n") {
+        i++;
+      }
+      continue;
+    }
+    if (c === "/" && code[i + 1] === "*") {
+      i += 2;
+      while (i < n && !(code[i] === "*" && code[i + 1] === "/")) {
+        i++;
+      }
+      i = Math.min(i + 2, n);
+      continue;
+    }
+    out.push(c);
+    i++;
+  }
+  return out.join("");
 }
 
 function extractLineNumber(stack: string | undefined): number | undefined {
@@ -206,7 +248,7 @@ function validateInput(input: RunCodeCoreInput): RunCodeResult | null {
   if (!code || code.trim() === "") {
     return { success: false, error: "No code provided", logs: [] };
   }
-  const unresolvedTemplates = stripStringLiterals(code).match(
+  const unresolvedTemplates = stripStringsAndComments(code).match(
     UNRESOLVED_TEMPLATE_REGEX,
   );
   if (unresolvedTemplates) {
