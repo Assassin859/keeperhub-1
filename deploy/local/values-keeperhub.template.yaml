@@ -132,4 +132,31 @@ readinessProbe:
     port: 3000
 
 cronjob:
-  enabled: false
+  enabled: true
+  jobs:
+    - name: execution-digest
+      image:
+        repository: keeperhub
+        tag: "${IMAGE_TAG}"
+        pullPolicy: Never
+      schedule: "0 14 * * *" # daily 14:00 UTC; weekly digests are sent on Tuesdays
+      command: ["/bin/sh"]
+      args:
+        - "/app/deploy/scripts/digest-cron.sh"
+        - "http://keeperhub:3000/api/internal/execution-digest"
+      env:
+        SCHEDULER_SERVICE_API_KEY:
+          type: kv
+          value: "local-scheduler-key-for-dev"
+      resources:
+        requests:
+          memory: "32Mi"
+          cpu: "10m"
+        limits:
+          memory: "32Mi"
+          cpu: "10m"
+      concurrencyPolicy: Forbid
+      successfulJobsHistoryLimit: 3
+      failedJobsHistoryLimit: 3
+      restartPolicy: OnFailure
+      backoffLimit: 2

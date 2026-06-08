@@ -78,6 +78,7 @@ export type ApproveTokenResult =
       approvedAmount: string;
       spender: string;
       symbol: string;
+      sponsored?: boolean;
     }
   | {
       success: false;
@@ -304,6 +305,7 @@ export async function approveTokenCore(
 
         return {
           success: true,
+          sponsored: true,
           transactionHash: sponsoredResult.transactionHash,
           transactionLink,
           gasUsed: sponsoredResult.gasUsed,

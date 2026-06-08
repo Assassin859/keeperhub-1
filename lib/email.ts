@@ -35,6 +35,16 @@ function normalizeEmail(email: string): string {
   return `${normalizedLocal}@${domain}`;
 }
 
+/** Escape user-controlled strings before interpolating into email HTML. */
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 /**
  * Send an email using SendGrid
  */
@@ -558,4 +568,205 @@ KeeperHub - Blockchain Workflow Automation
   }
 
   return success;
+}
+
+type ExecutionDigestEmailData = {
+  to: string;
+  orgName: string;
+  cadence: "daily" | "weekly";
+  appUrl: string;
+  stats: {
+    total: number;
+    success: number;
+    error: number;
+    transactionCount: number;
+    gasUsedWei: string;
+    // Present only when gas sponsorship is enabled; renders a sponsored card.
+    sponsoredTransactionCount?: number;
+  };
+  topFailing: {
+    workflowId: string;
+    name: string;
+    failures: number;
+    lastError: string | null;
+  }[];
+  mostExecuted: {
+    workflowId: string;
+    name: string;
+    runs: number;
+  }[];
+};
+
+/** Format a summed wei amount as an ETH-equivalent string for display. */
+function formatWeiToEth(weiStr: string): string {
+  let wei: bigint;
+  try {
+    wei = BigInt(weiStr || "0");
+  } catch {
+    return "0";
+  }
+  if (wei === BigInt(0)) {
+    return "0";
+  }
+  const eth = Number(wei) / 1e18;
+  return eth < 0.0001 ? "<0.0001" : eth.toFixed(4);
+}
+
+/**
+ * Send a scheduled (daily/weekly) workflow execution digest to a
+ * subscribed org member.
+ */
+export async function sendWorkflowExecutionDigestEmail(
+  data: ExecutionDigestEmailData
+): Promise<boolean> {
+  const { to, orgName, cadence, appUrl, stats, topFailing, mostExecuted } =
+    data;
+  const period = cadence === "daily" ? "day" : "week";
+  const successRate =
+    stats.total > 0 ? Math.round((stats.success / stats.total) * 100) : 0;
+  const gasEth = formatWeiToEth(stats.gasUsedWei);
+  const subject = `${orgName} workflow digest: ${stats.total} run${
+    stats.total === 1 ? "" : "s"
+  }, ${stats.error} failed (last ${period})`;
+
+  const logoUrl =
+    "https://raw.githubusercontent.com/KeeperHub/keeperhub/staging/public/keeperhub_logo_email.png";
+
+  const workflowUrl = (id: string): string =>
+    `${appUrl}/workflows/${encodeURIComponent(id)}`;
+
+  const failingText = topFailing.length
+    ? topFailing
+        .map(
+          (w) =>
+            `- ${w.name}: ${w.failures} failure${w.failures === 1 ? "" : "s"}${
+              w.lastError ? ` (last: ${w.lastError})` : ""
+            } (${workflowUrl(w.workflowId)})`
+        )
+        .join("\n")
+    : "No failing workflows.";
+
+  const mostExecutedText = mostExecuted.length
+    ? mostExecuted
+        .map(
+          (w) => `- ${w.name}: ${w.runs} runs (${workflowUrl(w.workflowId)})`
+        )
+        .join("\n")
+    : "No executions.";
+
+  const sponsoredText =
+    stats.sponsoredTransactionCount === undefined
+      ? ""
+      : `\nSponsored transactions: ${stats.sponsoredTransactionCount}`;
+
+  const text = `
+${orgName} workflow digest (last ${period})
+
+Total runs: ${stats.total}
+Succeeded: ${stats.success} (${successRate}% success rate)
+Failed: ${stats.error}
+On-chain transactions: ${stats.transactionCount}
+Gas spent: ${gasEth} ETH${sponsoredText}
+
+Most executed workflows:
+${mostExecutedText}
+
+Top failing workflows:
+${failingText}
+
+View runs: ${appUrl}/analytics
+
+---
+KeeperHub - Blockchain Workflow Automation
+`.trim();
+
+  // Email-safe: table cells center reliably across clients where flexbox does
+  // not. Each stat is a card cell; rows are full-width centered tables.
+  const statCard = (
+    value: string | number,
+    label: string,
+    color = "#1a1a2e"
+  ): string =>
+    `<td align="center" style="padding:6px;"><div style="background:#f5f5f5;border-radius:8px;padding:16px;"><div style="font-size:24px;font-weight:bold;color:${color};">${value}</div><div style="color:#999;font-size:12px;">${label}</div></div></td>`;
+
+  const onchainCards = [
+    statCard(stats.transactionCount, "On-chain txs"),
+    statCard(gasEth, "Gas spent (ETH)"),
+  ];
+  if (stats.sponsoredTransactionCount !== undefined) {
+    onchainCards.push(
+      statCard(stats.sponsoredTransactionCount, "Sponsored txs")
+    );
+  }
+
+  const nameLink = (id: string, name: string): string =>
+    `<a href="${workflowUrl(id)}" style="color:#1a1a2e;text-decoration:underline;">${escapeHtml(name)}</a>`;
+
+  const failingRows = topFailing.length
+    ? topFailing
+        .map(
+          (w) =>
+            `<tr><td style="padding:8px 0;border-bottom:1px solid #eee;">${nameLink(
+              w.workflowId,
+              w.name
+            )}</td><td style="padding:8px 0;border-bottom:1px solid #eee;text-align:right;color:#c0392b;">${
+              w.failures
+            }</td></tr>${
+              w.lastError
+                ? `<tr><td colspan="2" style="padding:0 0 8px;color:#999;font-size:12px;">${escapeHtml(
+                    w.lastError
+                  )}</td></tr>`
+                : ""
+            }`
+        )
+        .join("")
+    : `<tr><td style="padding:8px 0;color:#999;">No failing workflows.</td></tr>`;
+
+  const mostExecutedRows = mostExecuted.length
+    ? mostExecuted
+        .map(
+          (w) =>
+            `<tr><td style="padding:8px 0;border-bottom:1px solid #eee;">${nameLink(
+              w.workflowId,
+              w.name
+            )}</td><td style="padding:8px 0;border-bottom:1px solid #eee;text-align:right;">${
+              w.runs
+            }</td></tr>`
+        )
+        .join("")
+    : `<tr><td style="padding:8px 0;color:#999;">No executions.</td></tr>`;
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
+    <img src="${logoUrl}" alt="KeeperHub" style="max-width: 200px; height: auto;" />
+  </div>
+  <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e5e5; border-top: none; border-radius: 0 0 12px 12px; text-align: center;">
+    <h2 style="color: #1a1a2e; margin-top: 0;">${escapeHtml(orgName)} workflow digest</h2>
+    <p style="color:#666;">Summary for the last ${period}.</p>
+    <table role="presentation" width="100%" style="border-collapse:collapse; table-layout:fixed; margin:24px 0;">
+      <tr>${statCard(stats.total, "Total runs")}${statCard(`${successRate}%`, "Success rate", "#27ae60")}${statCard(stats.error, "Failed", "#c0392b")}</tr>
+    </table>
+    <table role="presentation" width="100%" style="border-collapse:collapse; table-layout:fixed; margin:0 0 24px;">
+      <tr>${onchainCards.join("")}</tr>
+    </table>
+    <h3 style="color:#1a1a2e;">Most executed workflows</h3>
+    <table style="width:100%; border-collapse:collapse; text-align:left;">${mostExecutedRows}</table>
+    <h3 style="color:#1a1a2e;">Top failing workflows</h3>
+    <table style="width:100%; border-collapse:collapse; text-align:left;">${failingRows}</table>
+    <div style="margin:30px 0 0;">
+      <a href="${appUrl}/analytics" style="display:inline-block; background:#1a1a2e; color:#fff; padding:12px 24px; border-radius:8px; text-decoration:none;">View runs</a>
+    </div>
+  </div>
+  <div style="text-align: center; padding: 20px; color: #999; font-size: 12px;">
+    <p style="margin: 0;">KeeperHub - Blockchain Workflow Automation</p>
+  </div>
+</body>
+</html>
+`.trim();
+
+  return await sendEmail({ to, subject, text, html });
 }
