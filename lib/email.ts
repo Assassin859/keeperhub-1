@@ -657,7 +657,7 @@ export async function sendWorkflowExecutionDigestEmail(
   const sponsoredText =
     stats.sponsoredTransactionCount === undefined
       ? ""
-      : `Sponsored transactions: ${stats.sponsoredTransactionCount}\n`;
+      : `\nSponsored transactions: ${stats.sponsoredTransactionCount}`;
 
   const text = `
 ${orgName} workflow digest (last ${period})
@@ -666,8 +666,8 @@ Total runs: ${stats.total}
 Succeeded: ${stats.success} (${successRate}% success rate)
 Failed: ${stats.error}
 On-chain transactions: ${stats.transactionCount}
-Gas spent: ${gasEth} ETH
-${sponsoredText}
+Gas spent: ${gasEth} ETH${sponsoredText}
+
 Most executed workflows:
 ${mostExecutedText}
 
