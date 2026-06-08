@@ -110,9 +110,9 @@ export function ExecutionDigestSection({
         }
       );
       if (res.ok) {
-        toast.success("Failure digest settings saved");
+        toast.success("Digest settings saved");
       } else if (res.status === 402) {
-        toast.error("Failure digests require a paid plan");
+        toast.error("Execution digests require a paid plan");
       } else {
         toast.error("Could not save settings");
       }

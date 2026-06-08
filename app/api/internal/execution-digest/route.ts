@@ -102,6 +102,7 @@ async function processOrg(
         error: digest.error,
         transactionCount: digest.transactionCount,
         gasUsedWei: digest.gasUsedWei,
+        sponsoredTransactionCount: digest.sponsoredTransactionCount,
       },
       topFailing: digest.topFailing,
       mostExecuted: digest.mostExecuted,

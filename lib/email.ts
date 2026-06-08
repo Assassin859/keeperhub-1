@@ -581,13 +581,17 @@ type ExecutionDigestEmailData = {
     error: number;
     transactionCount: number;
     gasUsedWei: string;
+    // Present only when gas sponsorship is enabled; renders a sponsored card.
+    sponsoredTransactionCount?: number;
   };
   topFailing: {
+    workflowId: string;
     name: string;
     failures: number;
     lastError: string | null;
   }[];
   mostExecuted: {
+    workflowId: string;
     name: string;
     runs: number;
   }[];
@@ -628,20 +632,32 @@ export async function sendWorkflowExecutionDigestEmail(
   const logoUrl =
     "https://raw.githubusercontent.com/KeeperHub/keeperhub/staging/public/keeperhub_logo_email.png";
 
+  const workflowUrl = (id: string): string =>
+    `${appUrl}/workflows/${encodeURIComponent(id)}`;
+
   const failingText = topFailing.length
     ? topFailing
         .map(
           (w) =>
             `- ${w.name}: ${w.failures} failure${w.failures === 1 ? "" : "s"}${
               w.lastError ? ` (last: ${w.lastError})` : ""
-            }`
+            } (${workflowUrl(w.workflowId)})`
         )
         .join("\n")
     : "No failing workflows.";
 
   const mostExecutedText = mostExecuted.length
-    ? mostExecuted.map((w) => `- ${w.name}: ${w.runs} runs`).join("\n")
+    ? mostExecuted
+        .map(
+          (w) => `- ${w.name}: ${w.runs} runs (${workflowUrl(w.workflowId)})`
+        )
+        .join("\n")
     : "No executions.";
+
+  const sponsoredText =
+    stats.sponsoredTransactionCount === undefined
+      ? ""
+      : `Sponsored transactions: ${stats.sponsoredTransactionCount}\n`;
 
   const text = `
 ${orgName} workflow digest (last ${period})
@@ -651,7 +667,7 @@ Succeeded: ${stats.success} (${successRate}% success rate)
 Failed: ${stats.error}
 On-chain transactions: ${stats.transactionCount}
 Gas spent: ${gasEth} ETH
-
+${sponsoredText}
 Most executed workflows:
 ${mostExecutedText}
 
@@ -664,11 +680,34 @@ View runs: ${appUrl}/analytics
 KeeperHub - Blockchain Workflow Automation
 `.trim();
 
+  // Email-safe: table cells center reliably across clients where flexbox does
+  // not. Each stat is a card cell; rows are full-width centered tables.
+  const statCard = (
+    value: string | number,
+    label: string,
+    color = "#1a1a2e"
+  ): string =>
+    `<td align="center" style="padding:6px;"><div style="background:#f5f5f5;border-radius:8px;padding:16px;"><div style="font-size:24px;font-weight:bold;color:${color};">${value}</div><div style="color:#999;font-size:12px;">${label}</div></div></td>`;
+
+  const onchainCards = [
+    statCard(stats.transactionCount, "On-chain txs"),
+    statCard(gasEth, "Gas spent (ETH)"),
+  ];
+  if (stats.sponsoredTransactionCount !== undefined) {
+    onchainCards.push(
+      statCard(stats.sponsoredTransactionCount, "Sponsored txs")
+    );
+  }
+
+  const nameLink = (id: string, name: string): string =>
+    `<a href="${workflowUrl(id)}" style="color:#1a1a2e;text-decoration:underline;">${escapeHtml(name)}</a>`;
+
   const failingRows = topFailing.length
     ? topFailing
         .map(
           (w) =>
-            `<tr><td style="padding:8px 0;border-bottom:1px solid #eee;">${escapeHtml(
+            `<tr><td style="padding:8px 0;border-bottom:1px solid #eee;">${nameLink(
+              w.workflowId,
               w.name
             )}</td><td style="padding:8px 0;border-bottom:1px solid #eee;text-align:right;color:#c0392b;">${
               w.failures
@@ -687,7 +726,8 @@ KeeperHub - Blockchain Workflow Automation
     ? mostExecuted
         .map(
           (w) =>
-            `<tr><td style="padding:8px 0;border-bottom:1px solid #eee;">${escapeHtml(
+            `<tr><td style="padding:8px 0;border-bottom:1px solid #eee;">${nameLink(
+              w.workflowId,
               w.name
             )}</td><td style="padding:8px 0;border-bottom:1px solid #eee;text-align:right;">${
               w.runs
@@ -704,38 +744,20 @@ KeeperHub - Blockchain Workflow Automation
   <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
     <img src="${logoUrl}" alt="KeeperHub" style="max-width: 200px; height: auto;" />
   </div>
-  <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e5e5; border-top: none; border-radius: 0 0 12px 12px;">
+  <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e5e5; border-top: none; border-radius: 0 0 12px 12px; text-align: center;">
     <h2 style="color: #1a1a2e; margin-top: 0;">${escapeHtml(orgName)} workflow digest</h2>
     <p style="color:#666;">Summary for the last ${period}.</p>
-    <div style="display:flex; gap:12px; margin:24px 0;">
-      <div style="flex:1; background:#f5f5f5; border-radius:8px; padding:16px; text-align:center;">
-        <div style="font-size:24px; font-weight:bold;">${stats.total}</div>
-        <div style="color:#999; font-size:12px;">Total runs</div>
-      </div>
-      <div style="flex:1; background:#f5f5f5; border-radius:8px; padding:16px; text-align:center;">
-        <div style="font-size:24px; font-weight:bold; color:#27ae60;">${successRate}%</div>
-        <div style="color:#999; font-size:12px;">Success rate</div>
-      </div>
-      <div style="flex:1; background:#f5f5f5; border-radius:8px; padding:16px; text-align:center;">
-        <div style="font-size:24px; font-weight:bold; color:#c0392b;">${stats.error}</div>
-        <div style="color:#999; font-size:12px;">Failed</div>
-      </div>
-    </div>
-    <div style="display:flex; gap:12px; margin:0 0 24px;">
-      <div style="flex:1; background:#f5f5f5; border-radius:8px; padding:16px; text-align:center;">
-        <div style="font-size:24px; font-weight:bold;">${stats.transactionCount}</div>
-        <div style="color:#999; font-size:12px;">On-chain txs</div>
-      </div>
-      <div style="flex:1; background:#f5f5f5; border-radius:8px; padding:16px; text-align:center;">
-        <div style="font-size:24px; font-weight:bold;">${gasEth}</div>
-        <div style="color:#999; font-size:12px;">Gas spent (ETH)</div>
-      </div>
-    </div>
+    <table role="presentation" width="100%" style="border-collapse:collapse; table-layout:fixed; margin:24px 0;">
+      <tr>${statCard(stats.total, "Total runs")}${statCard(`${successRate}%`, "Success rate", "#27ae60")}${statCard(stats.error, "Failed", "#c0392b")}</tr>
+    </table>
+    <table role="presentation" width="100%" style="border-collapse:collapse; table-layout:fixed; margin:0 0 24px;">
+      <tr>${onchainCards.join("")}</tr>
+    </table>
     <h3 style="color:#1a1a2e;">Most executed workflows</h3>
-    <table style="width:100%; border-collapse:collapse;">${mostExecutedRows}</table>
+    <table style="width:100%; border-collapse:collapse; text-align:left;">${mostExecutedRows}</table>
     <h3 style="color:#1a1a2e;">Top failing workflows</h3>
-    <table style="width:100%; border-collapse:collapse;">${failingRows}</table>
-    <div style="text-align:center; margin:30px 0 0;">
+    <table style="width:100%; border-collapse:collapse; text-align:left;">${failingRows}</table>
+    <div style="margin:30px 0 0;">
       <a href="${appUrl}/analytics" style="display:inline-block; background:#1a1a2e; color:#fff; padding:12px 24px; border-radius:8px; text-decoration:none;">View runs</a>
     </div>
   </div>

@@ -150,7 +150,7 @@ export async function PUT(
     if (!(await isFeatureEnabledForOrg(FEATURE_ID, organizationId))) {
       return NextResponse.json(
         {
-          error: "Failure alert digests require a paid plan.",
+          error: "Execution digests require a paid plan.",
           code: "upgrade_required",
         },
         { status: 402 }

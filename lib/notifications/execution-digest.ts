@@ -2,7 +2,12 @@ import "server-only";
 
 import { and, count, desc, eq, gte, lt, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { workflowExecutions, workflows } from "@/lib/db/schema";
+import {
+  workflowExecutionLogs,
+  workflowExecutions,
+  workflows,
+} from "@/lib/db/schema";
+import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
 
 export type DigestCadence = "daily" | "weekly";
 
@@ -11,7 +16,7 @@ const DAY_MS = 24 * HOUR_MS;
 
 // Daily threshold sits below 24h so a cron that fires at a fixed wall-clock time
 // each day still sends when the previous send landed a little later. Weekly is
-// pinned to Friday (below), guarded by "not already sent today".
+// pinned to Tuesday (below), guarded by "not already sent today".
 const DAILY_DUE_THRESHOLD_MS = 23 * HOUR_MS;
 
 // Weekly digests go out on Tuesday (14:00 UTC cron) -- mid-week mornings see
@@ -28,8 +33,8 @@ function isSameUtcDate(a: Date, b: Date): boolean {
 
 /**
  * Whether a digest of the given cadence is due now. Daily sends roughly once a
- * day; weekly sends only on Fridays (UTC), once per day. The cron runs daily at
- * 17:00 UTC, so weekly digests land Friday 17:00 UTC.
+ * day; weekly sends only on Tuesdays (UTC), once per day. The cron runs daily at
+ * 14:00 UTC, so weekly digests land Tuesday 14:00 UTC.
  */
 export function isDigestDue(
   cadence: DigestCadence,
@@ -40,7 +45,7 @@ export function isDigestDue(
     if (now.getUTCDay() !== WEEKLY_DIGEST_UTC_DAY) {
       return false;
     }
-    // Avoid a second send if the cron fires more than once on the same Friday.
+    // Avoid a second send if the cron fires more than once on the same Tuesday.
     return !(lastSentAt && isSameUtcDate(lastSentAt, now));
   }
   if (!lastSentAt) {
@@ -75,6 +80,9 @@ export type OrgExecutionDigest = {
   // On-chain activity over the window.
   transactionCount: number;
   gasUsedWei: string;
+  // Present only when gas sponsorship is enabled; otherwise undefined so the
+  // email omits the sponsored section entirely.
+  sponsoredTransactionCount?: number;
   topFailing: FailingWorkflow[];
   mostExecuted: MostExecutedWorkflow[];
 };
@@ -83,8 +91,10 @@ const TOP_FAILING_LIMIT = 5;
 const TOP_EXECUTED_LIMIT = 3;
 
 /**
- * Aggregate an org's workflow executions over [since, until): totals plus the
- * workflows with the most failures (and each one's most recent error message).
+ * Aggregate an org's workflow executions over [since, until): run totals,
+ * on-chain tx count and gas, the most-executed workflows, the top-failing
+ * workflows (with each one's most recent error), and -- when gas sponsorship
+ * is enabled -- the sponsored-transaction count.
  */
 export async function getOrgExecutionDigest(
   organizationId: string,
@@ -153,12 +163,34 @@ export async function getOrgExecutionDigest(
     lastErrorByWorkflow.set(row.workflowId, row.error ?? null);
   }
 
+  // Sponsored-tx count is only meaningful (and only queried) when gas
+  // sponsorship is enabled. Sponsored step runs stamp output_raw.sponsored.
+  let sponsoredTransactionCount: number | undefined;
+  if (isGasSponsorshipEnabled()) {
+    const [sponsoredRow] = await db
+      .select({ value: count() })
+      .from(workflowExecutionLogs)
+      .innerJoin(
+        workflowExecutions,
+        eq(workflowExecutionLogs.executionId, workflowExecutions.id)
+      )
+      .innerJoin(workflows, eq(workflowExecutions.workflowId, workflows.id))
+      .where(
+        and(
+          windowFilter,
+          sql`${workflowExecutionLogs.outputRaw}->>'sponsored' = 'true'`
+        )
+      );
+    sponsoredTransactionCount = Number(sponsoredRow?.value) || 0;
+  }
+
   return {
     total: Number(totalsRow?.total) || 0,
     success: Number(totalsRow?.success) || 0,
     error: Number(totalsRow?.error) || 0,
     transactionCount: Number(totalsRow?.transactionCount) || 0,
     gasUsedWei: totalsRow?.gasUsedWei ?? "0",
+    sponsoredTransactionCount,
     topFailing: failingRows.map((row) => ({
       workflowId: row.workflowId,
       name: row.name,
