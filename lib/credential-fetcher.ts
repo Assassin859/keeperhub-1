@@ -101,6 +101,13 @@ export async function fetchCredentials(
   integrationId: string,
   principal?: IntegrationPrincipal
 ): Promise<WorkflowCredentials> {
+  // A node with no integration selected passes undefined at runtime; treat it
+  // as a missing integration instead of letting getIntegrationById(undefined)
+  // throw UNDEFINED_VALUE and surface as a system error.
+  if (!integrationId) {
+    return {};
+  }
+
   if (principal) {
     const unauthorized = await filterUnauthorizedIntegrationIds(
       [integrationId],
