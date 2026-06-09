@@ -63,7 +63,7 @@ const initialize = async (): Promise<(signal: string) => Promise<void>> => {
   return shutdown
 };
 
-// Register signal handlers before initialize() so a SIGTERM arriving during
+// Register signal handlers before initialize() so a signal arriving during
 // startup is handled rather than causing a default Node.js exit. Before the
 // full shutdown handler is ready, a signal triggers a clean immediate exit
 // (nothing to tear down yet). Once initialize() resolves the reference is
@@ -74,6 +74,15 @@ let onSignal: (signal: string) => void = (signal) => {
 };
 process.on("SIGTERM", () => onSignal("SIGTERM"));
 process.on("SIGINT", () => onSignal("SIGINT"));
+// SIGHUP default is silent termination; alias to graceful shutdown so the
+// pod always exits through the logged teardown path.
+process.on("SIGHUP", () => onSignal("SIGHUP"));
+// SIGUSR1 starts the Node.js inspector. Suppress it: debug attachment requires
+// cluster-level access but adds an unnecessary exposure surface for a
+// self-hosted deployment where defence-in-depth applies at every layer.
+process.on("SIGUSR1", () => {
+  logger.warn("[Security] SIGUSR1 received; inspector activation suppressed");
+});
 
 logger.log(`Initializing container: ${os.hostname()}`);
 void initialize().then((shutdown) => {
