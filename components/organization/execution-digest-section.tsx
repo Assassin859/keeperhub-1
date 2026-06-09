@@ -21,6 +21,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useFeature } from "@/hooks/use-features";
+import { isBillingEnabled } from "@/lib/billing/feature-flag";
 import { DIGEST_REQUIRES_SUBSCRIBER_ERROR } from "@/lib/notifications/digest-messages";
 
 const SCHEDULE_HINT: Record<Cadence, string> = {
@@ -47,10 +48,12 @@ type DigestSettingsResponse = {
 
 type ExecutionDigestSectionProps = {
   organizationId: string;
+  canManageBilling: boolean;
 };
 
 export function ExecutionDigestSection({
   organizationId,
+  canManageBilling,
 }: ExecutionDigestSectionProps): React.ReactElement {
   const router = useRouter();
   const { enabled: featureEnabled, loading: featureLoading } = useFeature(
@@ -149,9 +152,25 @@ export function ExecutionDigestSection({
             Get a scheduled email summary of your workflow runs: total
             executions, successes, and failures. Available on paid plans.
           </p>
-          <Button onClick={() => router.push("/billing")} size="sm">
-            Upgrade
-          </Button>
+          {isBillingEnabled() &&
+            (canManageBilling ? (
+              <Button onClick={() => router.push("/billing")} size="sm">
+                Upgrade
+              </Button>
+            ) : (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span>
+                    <Button disabled size="sm">
+                      Upgrade
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Only organization owners can upgrade the plan.
+                </TooltipContent>
+              </Tooltip>
+            ))}
         </div>
       </div>
     );
