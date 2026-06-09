@@ -237,6 +237,9 @@ process.on("uncaughtException", (error: Error) => {
 
 // Main entry point
 async function main(): Promise<void> {
+  if (!process.env.INTERNAL_SERVICE_HMAC_SECRET) {
+    throw new Error("INTERNAL_SERVICE_HMAC_SECRET is required");
+  }
   console.log("[BlockDispatcher] Starting block dispatcher...");
   console.log(`[BlockDispatcher] KeeperHub URL: ${KEEPERHUB_URL}`);
   console.log(`[BlockDispatcher] SQS Queue URL: ${SQS_QUEUE_URL}`);

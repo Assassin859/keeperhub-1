@@ -56,6 +56,9 @@ process.on("SIGINT", () => {
 logger.log(`Initializing container: ${os.hostname()}`);
 
 const initialize = async (): Promise<void> => {
+  if (!process.env.INTERNAL_SERVICE_HMAC_SECRET) {
+    throw new Error("INTERNAL_SERVICE_HMAC_SECRET is required");
+  }
   // Health server bind must succeed for K8s probes to work. Kept outside
   // the try/catch below so a bind failure (port taken, EACCES) rejects
   // initialize(), which the unhandledRejection handler turns into
