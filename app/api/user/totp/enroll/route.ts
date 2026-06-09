@@ -15,11 +15,10 @@ import {
   checkDualFactorRateLimit,
   resetDualFactor,
 } from "@/lib/mfa/dual-factor-rate-limit";
+import { buildPendingSignupClearCookie } from "@/lib/pending-signup-cookie";
+import { resolveSigninDevice } from "@/lib/security/device-trust";
 import {
-  buildPendingSignupClearCookie,
-} from "@/lib/pending-signup-cookie";
-import {
-  recordTrustedIpFromRequest,
+  recordTrustedCountryFromRequest,
   resolveClientIpFromHeaders,
 } from "@/lib/security/login-risk";
 import { verifyUserTotp } from "@/lib/security/totp-verify";
@@ -46,13 +45,9 @@ function generatePlainBackupCodes(): string[] {
   return codes;
 }
 
-function buildSessionSetCookie(
-  signedValue: string,
-  ttlMs: number
-): string {
+function buildSessionSetCookie(signedValue: string, ttlMs: number): string {
   const maxAge = Math.floor(ttlMs / 1000);
-  const secureSegment =
-    process.env.NODE_ENV === "production" ? " Secure;" : "";
+  const secureSegment = process.env.NODE_ENV === "production" ? " Secure;" : "";
   const cookieName =
     process.env.NODE_ENV === "production"
       ? "__Secure-better-auth.session_token"
@@ -254,11 +249,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
 
     // This path mints the first session by hand, so the
-    // session.create.before hook that normally records the source IP in
-    // user_trusted_ips never runs. Trust the signup IP here (first
-    // attestation) so a later sign-in from the same network isn't
-    // bounced to /verify-ip for an IP the user already signed up from.
-    await recordTrustedIpFromRequest(userId);
+    // session.create.before hook that normally records the source country
+    // in user_trusted_countries never runs. Trust the signup country here
+    // (first attestation) so a later sign-in from it isn't bounced to
+    // /verify-ip for a country the user already signed up from.
+    await recordTrustedCountryFromRequest(userId);
 
     const responseBody: EnrollResponse = {
       backupCodes,
@@ -273,6 +268,16 @@ export async function POST(request: Request): Promise<NextResponse> {
       )
     );
     response.headers.append("Set-Cookie", buildPendingSignupClearCookie());
+    // Register this as the account's first device (no warning email).
+    const deviceSetCookie = await resolveSigninDevice({
+      userId,
+      email: caller.email,
+      country: null,
+      request,
+    });
+    if (deviceSetCookie) {
+      response.headers.append("Set-Cookie", deviceSetCookie);
+    }
     return response;
   } catch (error) {
     logSystemError(

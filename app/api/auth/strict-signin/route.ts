@@ -26,7 +26,8 @@ import {
   buildPendingIpSetCookie,
   encodePendingIpCookie,
 } from "@/lib/pending-ip-cookie";
-import { assessIpTrust } from "@/lib/security/login-risk";
+import { resolveSigninDevice } from "@/lib/security/device-trust";
+import { assessCountryTrust } from "@/lib/security/login-risk";
 import { verifyUserTotp } from "@/lib/security/totp-verify";
 
 function constantTimeEquals(a: string, b: string): boolean {
@@ -254,19 +255,18 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   // Three factors are now valid but we have not minted a session
-  // yet. Consult assessIpTrust before doing so. If the request comes
-  // from an IP this user has never signed in from, defer the session:
-  // consume the email-OTP row, set a signed `pending_ip_verify`
-  // cookie carrying the resolved identity + IP, and route the user
+  // yet. Consult assessCountryTrust before doing so. If the request
+  // comes from a country this user has never signed in from, defer the
+  // session: consume the email-OTP row, set a signed `pending_ip_verify`
+  // cookie carrying the resolved identity + full IP, and route the user
   // to /verify-ip where they must satisfy another email+TOTP dual
-  // factor against the very same IP. No session row exists in
-  // between, so a stolen cookie alone cannot unlock the account on a
-  // new network. assessIpTrust returns trusted=true for the user's
-  // first-ever attestation and for requests that did not arrive via
-  // Cloudflare (no_cf), so local dev and self-hosted setups still
-  // sign in normally.
-  const ipTrust = await assessIpTrust(user.id);
-  if (!ipTrust.trusted && ipTrust.ip) {
+  // factor. No session row exists in between, so a stolen cookie alone
+  // cannot unlock the account from a new country. assessCountryTrust
+  // returns trusted=true for the user's first-ever attestation and for
+  // requests that did not arrive via Cloudflare (no_cf), so local dev
+  // and self-hosted setups still sign in normally.
+  const countryTrust = await assessCountryTrust(user.id);
+  if (!countryTrust.trusted && countryTrust.country) {
     try {
       await db
         .delete(verifications)
@@ -283,8 +283,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       {
         userId: user.id,
         email,
-        ip: ipTrust.ip,
-        country: ipTrust.country,
+        ip: countryTrust.ip ?? "",
+        country: countryTrust.country,
         redirect: "/",
       },
       serverSecret
@@ -426,6 +426,18 @@ export async function POST(request: Request): Promise<NextResponse> {
   const response = NextResponse.json({ ok: true });
   for (const cookie of sessionSetCookies) {
     response.headers.append("set-cookie", cookie);
+  }
+  // Recognise the browser and warn the owner if this device is new. The
+  // country is already trusted at this point (the untrusted-country path
+  // returned above), so this is the known-country/new-device case.
+  const deviceSetCookie = await resolveSigninDevice({
+    userId: user.id,
+    email,
+    country: countryTrust.country,
+    request,
+  });
+  if (deviceSetCookie) {
+    response.headers.append("set-cookie", deviceSetCookie);
   }
   return response;
 }
