@@ -290,11 +290,11 @@ async function main(): Promise<void> {
     });
   };
 
-  process.on("SIGINT", () => {
-    shutdownHandler();
-  });
-  process.on("SIGTERM", () => {
-    shutdownHandler();
+  process.on("SIGINT", () => { shutdownHandler(); });
+  process.on("SIGTERM", () => { shutdownHandler(); });
+  process.on("SIGHUP", () => { shutdownHandler(); });
+  process.on("SIGUSR1", () => {
+    console.warn("[Security] SIGUSR1 received; inspector activation suppressed");
   });
 
   // Start monitoring
