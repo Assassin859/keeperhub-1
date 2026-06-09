@@ -1570,7 +1570,10 @@ export function ManageOrgsModal({
 
             <TabsContent className="space-y-4" value="notifications">
               {organization && (isActiveOrgOwner || isActiveOrgAdmin) ? (
-                <ExecutionDigestSection organizationId={organization.id} />
+                <ExecutionDigestSection
+                  canManageBilling={isActiveOrgOwner}
+                  organizationId={organization.id}
+                />
               ) : (
                 <div className="py-8 text-center text-muted-foreground">
                   Only organization owners and admins can manage notifications.
