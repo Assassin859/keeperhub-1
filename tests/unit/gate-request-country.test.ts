@@ -58,10 +58,22 @@ describe("gateRequestCountry read-through Redis cache", () => {
   });
 
   it("treats CF's XX sentinel as no_country", async () => {
-    mockHeaders.mockResolvedValue(headersWith({ "cf-ipcountry": "XX" }));
+    mockHeaders.mockResolvedValue(
+      headersWith({ "cf-connecting-ip": "9.9.9.9", "cf-ipcountry": "XX" })
+    );
     mockGetRedis.mockReturnValue(null);
 
     expect(await gateRequestCountry("u1")).toEqual({ kind: "no_country" });
+  });
+
+  it("ignores a forged cf-ipcountry that lacks the CF-set connecting IP", async () => {
+    // No cf-connecting-ip means the request did not transit Cloudflare, so a
+    // cf-ipcountry header is caller-controlled and must not pin a country.
+    mockHeaders.mockResolvedValue(headersWith({ "cf-ipcountry": "US" }));
+    mockGetRedis.mockReturnValue(null);
+
+    expect(await gateRequestCountry("u1")).toEqual({ kind: "no_country" });
+    expect(mockLimit).not.toHaveBeenCalled();
   });
 
   it("serves trusted from a Redis hit without touching the DB", async () => {

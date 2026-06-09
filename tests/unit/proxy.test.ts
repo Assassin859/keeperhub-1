@@ -5,10 +5,18 @@
  */
 
 import { NextRequest } from "next/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockGetSession } = vi.hoisted(() => ({
+const {
+  mockGetSession,
+  mockGateCountry,
+  mockResolveDevice,
+  mockReadDeviceCookie,
+} = vi.hoisted(() => ({
   mockGetSession: vi.fn(),
+  mockGateCountry: vi.fn(),
+  mockResolveDevice: vi.fn(),
+  mockReadDeviceCookie: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -17,6 +25,18 @@ vi.mock("@/lib/auth", () => ({
       getSession: mockGetSession,
     },
   },
+}));
+// The country gate's collaborators are mocked so the proxy wiring can be
+// driven directly. proxy.ts is their only importer here, so full replacements
+// keep the real DB/Redis/header stack out of these tests.
+vi.mock("@/lib/security/login-risk", () => ({
+  gateRequestCountry: mockGateCountry,
+}));
+vi.mock("@/lib/security/device-trust", () => ({
+  resolveSigninDevice: mockResolveDevice,
+}));
+vi.mock("@/lib/device-cookie", () => ({
+  readDeviceCookie: mockReadDeviceCookie,
 }));
 
 import { proxy } from "@/proxy";
@@ -30,6 +50,17 @@ function make(
     headers: new Headers(init.headers ?? {}),
   });
 }
+
+// Safe defaults for the country gate so existing CSRF/MFA tests that fall
+// through to it pass exactly as before (no CF country -> pass, no device work).
+beforeEach(() => {
+  mockGateCountry.mockReset();
+  mockGateCountry.mockResolvedValue({ kind: "no_country" });
+  mockResolveDevice.mockReset();
+  mockResolveDevice.mockResolvedValue(null);
+  mockReadDeviceCookie.mockReset();
+  mockReadDeviceCookie.mockReturnValue(null);
+});
 
 describe("CSRF proxy", () => {
   beforeEach(() => {
@@ -430,7 +461,10 @@ describe("MFA gate", () => {
       user: { id: "u1", twoFactorEnabled: false },
       session: { requiresMfa: false },
     });
-    for (const path of ["/api/auth/sign-out", "/api/auth/two-factor/verify-totp"]) {
+    for (const path of [
+      "/api/auth/sign-out",
+      "/api/auth/two-factor/verify-totp",
+    ]) {
       const res = await proxy(
         make(path, { method: "POST", headers: sessionCookieHeaders() })
       );
@@ -481,5 +515,110 @@ describe("MFA gate", () => {
     mockGetSession.mockResolvedValue(null);
     const res = await proxy(make("/"));
     expect(res.status).toBe(200);
+  });
+});
+
+describe("Country gate", () => {
+  // Authenticated, enrolled, MFA-verified user with an email so mfaBlock
+  // returns a real user and the country gate runs.
+  const VERIFIED_USER = {
+    user: { id: "u1", email: "a@b.com", twoFactorEnabled: true },
+    session: { requiresMfa: false },
+  };
+
+  function gateHeaders(): Record<string, string> {
+    return {
+      cookie: "better-auth.session_token=tok",
+      origin: "http://localhost:3000",
+    };
+  }
+
+  beforeEach(() => {
+    mockGetSession.mockReset();
+    mockGetSession.mockResolvedValue(VERIFIED_USER);
+    // encodePendingIpCookie needs a signing secret for the untrusted path.
+    vi.stubEnv("BETTER_AUTH_SECRET", "test-secret-please-ignore");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("passes a trusted-country request through", async () => {
+    mockGateCountry.mockResolvedValue({ kind: "trusted" });
+    mockReadDeviceCookie.mockReturnValue("kh_device_id=existing");
+    const res = await proxy(make("/dashboard", { headers: gateHeaders() }));
+    expect(res.status).toBe(200);
+    expect(mockResolveDevice).not.toHaveBeenCalled();
+  });
+
+  it("passes when CF attested no country", async () => {
+    mockGateCountry.mockResolvedValue({ kind: "no_country" });
+    const res = await proxy(make("/dashboard", { headers: gateHeaders() }));
+    expect(res.status).toBe(200);
+  });
+
+  it("redirects a page navigation to /verify-ip on an untrusted country", async () => {
+    mockGateCountry.mockResolvedValue({
+      kind: "untrusted",
+      country: "DE",
+      ip: "9.9.9.9",
+    });
+    const res = await proxy(make("/dashboard", { headers: gateHeaders() }));
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toContain("/verify-ip");
+    expect(res.headers.get("set-cookie")).toContain("pending_ip_verify");
+  });
+
+  it("returns 403 ip_verification_required for an untrusted-country API call", async () => {
+    mockGateCountry.mockResolvedValue({
+      kind: "untrusted",
+      country: "DE",
+      ip: "9.9.9.9",
+    });
+    const res = await proxy(make("/api/workflows", { headers: gateHeaders() }));
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { code: string };
+    expect(body.code).toBe("ip_verification_required");
+  });
+
+  it("passes (no verify cookie) when an untrusted country has no resolvable IP", async () => {
+    mockGateCountry.mockResolvedValue({
+      kind: "untrusted",
+      country: "DE",
+      ip: null,
+    });
+    const res = await proxy(make("/dashboard", { headers: gateHeaders() }));
+    expect(res.status).toBe(200);
+  });
+
+  it("adopts the device cookie on a document navigation lacking one", async () => {
+    mockGateCountry.mockResolvedValue({ kind: "trusted" });
+    mockReadDeviceCookie.mockReturnValue(null);
+    mockResolveDevice.mockResolvedValue(
+      "kh_device_id=minted; Path=/; HttpOnly"
+    );
+    const res = await proxy(
+      make("/dashboard", {
+        headers: { ...gateHeaders(), "sec-fetch-dest": "document" },
+      })
+    );
+    expect(res.status).toBe(200);
+    expect(mockResolveDevice).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "u1", notifyOnNew: false })
+    );
+    expect(res.headers.get("set-cookie")).toContain("kh_device_id=");
+  });
+
+  it("does not adopt a device on non-document subrequests (fan-out guard)", async () => {
+    mockGateCountry.mockResolvedValue({ kind: "trusted" });
+    mockReadDeviceCookie.mockReturnValue(null);
+    const res = await proxy(
+      make("/api/workflows", {
+        headers: { ...gateHeaders(), "sec-fetch-dest": "empty" },
+      })
+    );
+    expect(res.status).toBe(200);
+    expect(mockResolveDevice).not.toHaveBeenCalled();
   });
 });

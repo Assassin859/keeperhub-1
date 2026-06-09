@@ -362,11 +362,23 @@ export async function buildRiskFlagsJsonForIp(
  * sign-in trust check and the per-request gate so both decide trust on the
  * same authoritative signal rather than diverging (header vs provider
  * fallback). XX / T1 are CF's "unknown" sentinels and read as null.
+ *
+ * `cf-ipcountry` is only honored when `cf-connecting-ip` is also present:
+ * both are set by Cloudflare at the edge and stripped from client input, so
+ * requiring the pair means a request that reaches the origin directly (or
+ * injects `cf-ipcountry`) cannot forge a specific trusted country. A forged
+ * header without the CF-set connecting IP reads as null and falls through to
+ * the no-country pass, never a spoofed trusted country. Mirrors the same
+ * paired check in resolveLoginLocation.
  */
 export async function resolveCfCountry(): Promise<string | null> {
   try {
     const header = await headers();
+    const cfConnectingIp = header.get("cf-connecting-ip");
     const cf = header.get("cf-ipcountry");
+    if (!cfConnectingIp) {
+      return null;
+    }
     return cf && cf !== "XX" && cf !== "T1" ? cf.toUpperCase() : null;
   } catch {
     return null;

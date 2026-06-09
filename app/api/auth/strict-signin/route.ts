@@ -266,7 +266,11 @@ export async function POST(request: Request): Promise<NextResponse> {
   // requests that did not arrive via Cloudflare (no_cf), so local dev
   // and self-hosted setups still sign in normally.
   const countryTrust = await assessCountryTrust(user.id);
-  if (!countryTrust.trusted && countryTrust.country) {
+  // A CF-attested country always arrives with a CF-Connecting-IP, so an
+  // untrusted country implies a non-null IP to bind the verify exchange to.
+  // Guard on it anyway: without an IP we cannot pin the replay, so fall
+  // through to a normal mint rather than issue an unbindable verify cookie.
+  if (!countryTrust.trusted && countryTrust.country && countryTrust.ip) {
     try {
       await db
         .delete(verifications)
@@ -283,7 +287,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       {
         userId: user.id,
         email,
-        ip: countryTrust.ip ?? "",
+        ip: countryTrust.ip,
         country: countryTrust.country,
         redirect: "/",
       },

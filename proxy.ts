@@ -345,6 +345,13 @@ async function countryGateBlock(
     return null;
   }
 
+  // An untrusted CF country always carries a CF-Connecting-IP, so gate.ip is
+  // non-null here. Without an IP the /verify-ip replay can't be pinned, so
+  // pass rather than issue an unbindable verify cookie.
+  if (!gate.ip) {
+    return null;
+  }
+
   const apiPath = request.nextUrl.pathname.startsWith("/api/");
   if (apiPath) {
     return NextResponse.json(
@@ -360,7 +367,7 @@ async function countryGateBlock(
     {
       userId: user.id,
       email: user.email,
-      ip: gate.ip ?? "",
+      ip: gate.ip,
       country: gate.country,
       redirect: request.nextUrl.pathname + request.nextUrl.search,
     },
