@@ -303,23 +303,6 @@ Returns all public workflows with optional filtering.
 ]
 ```
 
-## Workflow Taxonomy
-
-```http
-GET /api/workflows/taxonomy
-```
-
-Returns distinct categories and protocols from all public workflows. Useful for building filter UIs.
-
-### Response
-
-```json
-{
-  "categories": ["defi", "nft"],
-  "protocols": ["uniswap", "aave-v3"]
-}
-```
-
 ## Update Featured Status (Internal)
 
 ```http

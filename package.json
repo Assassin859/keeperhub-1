@@ -11,6 +11,7 @@
     "start": "next start",
     "type-check": "tsc --noEmit",
     "check": "ultracite check",
+    "check:api-docs": "tsx scripts/check-api-docs-routes.ts",
     "fix": "ultracite fix",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",

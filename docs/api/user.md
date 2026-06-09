@@ -77,31 +77,31 @@ GET /api/user/rpc-preferences
 
 ### Response
 
+Returns two arrays. `preferences` lists the user's saved overrides; `resolved` lists the effective RPC config for every chain after merging overrides with platform defaults. `source` is `"user"` when a preference is in effect, `"default"` otherwise.
+
 ```json
 {
-  "data": [
+  "preferences": [
+    {
+      "id": "pref_abc123",
+      "chainId": 1,
+      "primaryRpcUrl": "https://custom-rpc.example.com",
+      "fallbackRpcUrl": "https://fallback.example.com",
+      "createdAt": "2026-05-01T12:00:00.000Z",
+      "updatedAt": "2026-05-01T12:00:00.000Z"
+    }
+  ],
+  "resolved": [
     {
       "chainId": 1,
-      "primaryRpc": "https://custom-rpc.example.com",
-      "fallbackRpc": "https://fallback.example.com"
+      "chainName": "Ethereum Mainnet",
+      "primaryRpcUrl": "https://custom-rpc.example.com",
+      "fallbackRpcUrl": "https://fallback.example.com",
+      "primaryWssUrl": null,
+      "fallbackWssUrl": null,
+      "source": "user"
     }
   ]
-}
-```
-
-### Set RPC Preferences
-
-```http
-POST /api/user/rpc-preferences
-```
-
-### Request Body
-
-```json
-{
-  "chainId": 1,
-  "primaryRpc": "https://custom-rpc.example.com",
-  "fallbackRpc": "https://fallback.example.com"
 }
 ```
 
@@ -111,11 +111,22 @@ POST /api/user/rpc-preferences
 GET /api/user/rpc-preferences/{chainId}
 ```
 
-### Update Chain RPC Preference
+### Set or Update Chain RPC Preference
 
 ```http
 PUT /api/user/rpc-preferences/{chainId}
 ```
+
+#### Request Body
+
+```json
+{
+  "primaryRpcUrl": "https://custom-rpc.example.com",
+  "fallbackRpcUrl": "https://fallback.example.com"
+}
+```
+
+`fallbackRpcUrl` is optional. To clear an existing preference, use the DELETE endpoint below instead of sending an empty body.
 
 ### Delete Chain RPC Preference
 
