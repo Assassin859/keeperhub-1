@@ -7,6 +7,21 @@ import {
 } from "./health/health-server";
 import { shutdownRegistry, synchronizeData } from "./main";
 
+// Fatal-error handlers: an uncaught exception or unhandled rejection inside a
+// listener callback is almost always a bug that leaves the process in an
+// indeterminate state. Log and exit so K8s restarts the pod. Blast radius is
+// the whole pod, which makes these handlers load-bearing.
+process.on("uncaughtException", (err: Error) => {
+  logger.error(`[Fatal] uncaughtException: ${err.message}\n${err.stack ?? ""}`);
+  process.exit(1);
+});
+process.on("unhandledRejection", (reason: unknown) => {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  const stack = reason instanceof Error ? (reason.stack ?? "") : "";
+  logger.error(`[Fatal] unhandledRejection: ${message}\n${stack}`);
+  process.exit(1);
+});
+
 const initialize = async (): Promise<(signal: string) => Promise<void>> => {
   if (!process.env.INTERNAL_SERVICE_HMAC_SECRET) {
     throw new Error("INTERNAL_SERVICE_HMAC_SECRET is required");
@@ -47,21 +62,6 @@ const initialize = async (): Promise<(signal: string) => Promise<void>> => {
 
   return shutdown
 };
-
-// Fatal-error handlers: an uncaught exception or unhandled rejection inside a
-// listener callback is almost always a bug that leaves the process in an
-// indeterminate state. Log and exit so K8s restarts the pod. Blast radius is
-// the whole pod, which makes these handlers load-bearing.
-process.on("uncaughtException", (err: Error) => {
-  logger.error(`[Fatal] uncaughtException: ${err.message}\n${err.stack ?? ""}`);
-  process.exit(1);
-});
-process.on("unhandledRejection", (reason: unknown) => {
-  const message = reason instanceof Error ? reason.message : String(reason);
-  const stack = reason instanceof Error ? (reason.stack ?? "") : "";
-  logger.error(`[Fatal] unhandledRejection: ${message}\n${stack}`);
-  process.exit(1);
-});
 
 // Register signal handlers before initialize() so a SIGTERM arriving during
 // startup is handled rather than causing a default Node.js exit. Before the
