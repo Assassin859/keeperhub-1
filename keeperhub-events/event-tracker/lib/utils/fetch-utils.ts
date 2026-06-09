@@ -29,9 +29,8 @@ export async function fetchActiveWorkflows(): Promise<SyncData | null> {
   const url = `${KEEPERHUB_API_URL}/api/workflows/events?active=true`;
   try {
     const response = await fetch(url, {
-        headers: signHmacHeaders("GET", url, ""),
-      },
-    );
+      headers: signHmacHeaders("GET", url, ""),
+    });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
