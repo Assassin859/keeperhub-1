@@ -491,10 +491,10 @@ cronjob:
         - "/app/deploy/scripts/reaper.sh"
         - "http://keeperhub-common:3000/api/internal/reaper"
       env:
-        SCHEDULER_SERVICE_API_KEY:
+        INTERNAL_SERVICE_HMAC_SECRET:
           type: parameterStore
-          name: scheduler-service-api-key
-          parameter_name: /eks/techops-prod/keeperhub-scheduler/keeperhub-api-key
+          name: internal-service-hmac-secret
+          parameter_name: /eks/techops-prod/keeperhub/internal-service-hmac-secret
       resources:
         requests:
           memory: "32Mi"
@@ -518,10 +518,10 @@ cronjob:
         - "/app/deploy/scripts/digest-cron.sh"
         - "http://keeperhub-common:3000/api/internal/execution-digest"
       env:
-        SCHEDULER_SERVICE_API_KEY:
+        INTERNAL_SERVICE_HMAC_SECRET:
           type: parameterStore
-          name: scheduler-service-api-key
-          parameter_name: /eks/techops-prod/keeperhub-scheduler/keeperhub-api-key
+          name: internal-service-hmac-secret
+          parameter_name: /eks/techops-prod/keeperhub/internal-service-hmac-secret
       resources:
         requests:
           memory: "32Mi"

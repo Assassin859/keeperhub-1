@@ -207,16 +207,27 @@ Auto-refresh on commit is intentionally **off** in this repo (it would couple th
 
 ### Services
 
+#### Long-running
+
 | Service | Description | Source |
 |---------|-------------|--------|
 | **App** | Next.js application with workflow builder UI and API | `app/`, `keeperhub/` |
-| **Scheduler** | Evaluates cron schedules every minute, dispatches matching workflows to SQS | `keeperhub-scheduler/schedule-dispatcher/` |
-| **Block** | Monitors blockchain blocks via WebSocket, dispatches matching workflows to SQS | `keeperhub-scheduler/block-dispatcher/` |
-| **Event** | Monitors blockchain events and routes to SQS | `keeperhub-events/event-tracker/` |
+| **Schedule Dispatcher** | Evaluates cron schedules every minute, dispatches matching workflows to SQS | `keeperhub-scheduler/schedule-dispatcher/` |
+| **Block Dispatcher** | Monitors blockchain blocks via WebSocket, dispatches matching workflows to SQS | `keeperhub-scheduler/block-dispatcher/` |
+| **Event Tracker** | Monitors blockchain events via Redis streams and routes to SQS | `keeperhub-events/event-tracker/` |
 | **Executor** | Polls SQS for all trigger types, executes workflows in-process or as K8s Jobs | `keeperhub-executor/` |
-| **Workflow Runner** | Isolated container for executing web3 write workflows in K8s Jobs | `keeperhub-executor/workflow-runner.ts` |
+| **Sandbox** | WASM-isolated JavaScript runtime for safe user code execution | `deploy/keeperhub-sandbox/` |
+| **Metrics Collector** | Aggregates and exposes per-execution Prometheus metrics from workflow runner pods | `keeperhub-metrics-collector/` |
 
-All trigger services (scheduler, block, event) send messages to a shared SQS queue. The executor consumes from this queue and runs workflows in isolated K8s Job containers using the workflow-runner image. The execution mode is configurable via `EXECUTION_MODE`: `isolated` (default, all workflows in K8s Jobs), `complex` (K8s Jobs for web3 writes, in-process for everything else), or `process` (all in-process, no K8s).
+#### Ephemeral
+
+| Service | Description | Source |
+|---------|-------------|--------|
+| **Workflow Runner** | Short-lived K8s Job container that executes a single workflow in isolation | `keeperhub-executor/workflow-runner.ts` |
+| **Reaper** | K8s CronJob (every 10 min) that cleans up stale in-progress executions | `deploy/scripts/reaper.sh` |
+| **Execution Digest** | K8s CronJob (daily 14:00 UTC) that sends weekly execution digest emails | `deploy/scripts/digest-cron.sh` |
+
+All trigger services (schedule dispatcher, block dispatcher, event tracker) send messages to a shared SQS queue. The executor consumes from this queue and runs workflows in isolated K8s Job containers using the workflow-runner image. The execution mode is configurable via `EXECUTION_MODE`: `isolated` (default, all workflows in K8s Jobs), `complex` (K8s Jobs for web3 writes, in-process for everything else), or `process` (all in-process, no K8s).
 
 ### Tech Stack
 
