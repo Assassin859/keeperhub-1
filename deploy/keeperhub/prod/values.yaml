@@ -428,6 +428,9 @@ env:
     type: kv
     value: "10000"
   # Internal service API keys for service-to-service auth
+  INTERNAL_AUTH_REQUIRE_HMAC:
+    type: kv
+    value: "true"
   MCP_SERVICE_API_KEY:
     type: parameterStore
     name: mcp-service-api-key
