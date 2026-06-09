@@ -33,7 +33,10 @@ const initialize = async (): Promise<(signal: string) => Promise<void>> => {
   // initialize(), which the unhandledRejection handler turns into
   // exit(1) for K8s restart. A silent bind failure would zombify the
   // pod: process alive, no workflows running, no probe.
-  const healthServer: HealthServerHandle = await startHealthServer(chainProviderManager, HEALTH_PORT);
+  const healthServer: HealthServerHandle = await startHealthServer(
+    chainProviderManager,
+    HEALTH_PORT,
+  );
   logger.log(`[Health] /healthz listening on :${healthServer.port}`);
 
   await synchronizeData();
@@ -85,6 +88,8 @@ process.on("SIGUSR1", () => {
 
 logger.log(`Initializing container: ${os.hostname()}`);
 void initialize().then((shutdown) => {
-  onSignal = (signal) => { void shutdown(signal); };
+  onSignal = (signal) => {
+    void shutdown(signal);
+  };
   logger.log("Initialization complete.");
 });
