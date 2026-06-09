@@ -431,6 +431,10 @@ env:
   INTERNAL_AUTH_REQUIRE_HMAC:
     type: kv
     value: "true"
+  INTERNAL_SERVICE_HMAC_SECRET:
+    type: parameterStore
+    name: internal-service-hmac-secret
+    parameter_name: /eks/techops-prod/keeperhub/internal-service-hmac-secret
   MCP_SERVICE_API_KEY:
     type: parameterStore
     name: mcp-service-api-key
