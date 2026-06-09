@@ -54,7 +54,10 @@ import { executeInProcess } from "./in-process";
 import { createWorkflowJob } from "./k8s-job";
 import { applyCounterDeltas, isIngestPayload } from "./lib/metrics-shipping";
 import { toJsonSafe } from "./lib/serialize";
-import { assertTurnkeyEnvForActiveWallets } from "./startup-checks";
+import {
+  assertHmacSecretSet,
+  assertTurnkeyEnvForActiveWallets,
+} from "./startup-checks";
 import type { ExecutorMessage, ScheduleMessage } from "./types";
 
 const INGEST_MAX_BODY_BYTES = 256 * 1024;
@@ -478,6 +481,7 @@ async function listen(): Promise<void> {
     );
   }
 
+  assertHmacSecretSet();
   await assertTurnkeyEnvForActiveWallets(db);
 
   // Health check + metrics server
@@ -576,6 +580,10 @@ async function listen(): Promise<void> {
 
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+  process.on("SIGHUP", shutdown);
+  process.on("SIGUSR1", () => {
+    console.warn("[Security] SIGUSR1 received; inspector activation suppressed");
+  });
 
   // SQS polling loop
   while (true) {
