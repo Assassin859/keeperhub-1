@@ -31,20 +31,17 @@ const initialize = async (): Promise<(signal: string) => Promise<void>> => {
   async function shutdown(signal: string): Promise<void> {
     logger.log(`[Shutdown] received ${signal}; stopping listeners`);
     clearInterval(synchronizeDataInterval)
-    try {
-      await shutdownRegistry();
-    } catch (err: unknown) {
+
+    await shutdownRegistry().catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
       logger.error(`[Shutdown] error during registry shutdown: ${message}`);
-    }
-    if (healthServer) {
-      try {
-        await healthServer.close();
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        logger.error(`[Shutdown] error closing health server: ${message}`);
-      }
-    }
+    });
+
+    await healthServer.close().catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error(`[Shutdown] error closing health server: ${message}`);
+    });
+    
     process.exit(0);
   }
 
@@ -66,15 +63,21 @@ process.on("unhandledRejection", (reason: unknown) => {
   process.exit(1);
 });
 
+// Register signal handlers before initialize() so a SIGTERM arriving during
+// startup is handled rather than causing a default Node.js exit. Before the
+// full shutdown handler is ready, a signal triggers a clean immediate exit
+// (nothing to tear down yet). Once initialize() resolves the reference is
+// swapped in-place so subsequent signals use the full graceful path.
+let onSignal: (signal: string) => void = (signal) => {
+  logger.log(`[Shutdown] received ${signal} during startup; exiting`);
+  process.exit(0);
+};
+process.on("SIGTERM", () => onSignal("SIGTERM"));
+process.on("SIGINT", () => onSignal("SIGINT"));
+
 logger.log(`Initializing container: ${os.hostname()}`);
-initialize().then((shutdown) => {
-  // Signal handlers
-  process.on("SIGTERM", () => {
-    void shutdown("SIGTERM");
-  });
-  process.on("SIGINT", () => {
-    void shutdown("SIGINT");
-  });
+void initialize().then((shutdown) => {
+  onSignal = (signal) => { void shutdown(signal); };
 });
 
 
