@@ -648,7 +648,9 @@ describe("dispatch", () => {
       }),
     );
 
-    await expect(dispatch()).rejects.toThrow(/API GET \/api\/internal\/schedules failed: 500/);
+    await expect(dispatch()).rejects.toThrow(
+      /API GET \/api\/internal\/schedules failed: 500/,
+    );
     expect(mockedSqsSend).not.toHaveBeenCalled();
   });
 
