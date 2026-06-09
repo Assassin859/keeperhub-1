@@ -462,6 +462,12 @@ export const organizationApi = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  /** 2FA enrollment status per member, keyed by user id. Owner/admin only. */
+  memberTwoFactorStatus: (organizationId: string) =>
+    apiCall<{ statuses: Record<string, boolean> }>(
+      `/api/organizations/${organizationId}/members/two-factor`
+    ),
 };
 
 // Address Book API
