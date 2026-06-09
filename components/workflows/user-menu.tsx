@@ -13,6 +13,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import {
   AuthDialog,
+  isAuthFlowInProgress,
   isSingleProviderSignInInitiated,
 } from "@/components/auth/dialog";
 import { ManageOrgsModal } from "@/components/organization/manage-orgs-modal";
@@ -43,6 +44,7 @@ import { useActiveMember, useOrganization } from "@/lib/hooks/use-organization";
 export const UserMenu = (): React.ReactElement => {
   const { data: session, isPending } = useSession();
   const signInInProgress = isSingleProviderSignInInitiated();
+  const authFlowInProgress = isAuthFlowInProgress();
 
   // Check if user is anonymous
   // Better Auth anonymous plugin creates users with name "Anonymous" and temp- email
@@ -60,12 +62,14 @@ export const UserMenu = (): React.ReactElement => {
   // appears. Render a neutral avatar-shaped skeleton during that window
   // instead of flashing Sign In.
   //
-  // Two cases must keep falling through so the AuthDialog stays mounted
-  // across the brief refetch that Better Auth runs after a credential
-  // submit (otherwise the post-credential `totp` view is dropped before the
-  // user can see it): a single-provider auto-sign-in is mid-flight, or an
-  // *existing* anonymous session (session.user present) is being refetched.
-  if (isPending && !signInInProgress) {
+  // Several cases must keep falling through so the AuthDialog stays mounted
+  // across the brief refetch that Better Auth runs after a credential submit
+  // or on tab focus (otherwise the post-credential email/totp view is dropped
+  // before the user can see it): a single-provider auto-sign-in is mid-flight,
+  // the dialog is on a verification step (email OTP / TOTP / signup verify),
+  // or an *existing* anonymous session (session.user present) is being
+  // refetched.
+  if (isPending && !signInInProgress && !authFlowInProgress) {
     const anonymousSessionRefetching =
       Boolean(session?.user) && isAnonymousUser;
     if (!anonymousSessionRefetching) {
