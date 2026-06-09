@@ -88,6 +88,7 @@ describe.skipIf(SKIP_INFRA_TESTS)(
           ...process.env,
           KEEPERHUB_API_URL: mockApi.url,
           KEEPERHUB_API_KEY: "test-key",
+          INTERNAL_SERVICE_HMAC_SECRET: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
           SQS_QUEUE_URL: `${AWS_ENDPOINT}/000000000000/dummy-shutdown-test`,
           AWS_ENDPOINT_URL: AWS_ENDPOINT,
           AWS_REGION: "us-east-1",

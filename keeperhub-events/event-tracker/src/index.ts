@@ -28,7 +28,6 @@ const initialize = async (): Promise<(signal: string) => Promise<void>> => {
   }
   const HEALTH_PORT = Number(process.env.HEALTH_PORT ?? 3001);
 
-
   // Health server bind must succeed for K8s probes to work. Kept outside
   // the try/catch below so a bind failure (port taken, EACCES) rejects
   // initialize(), which the unhandledRejection handler turns into
@@ -45,7 +44,7 @@ const initialize = async (): Promise<(signal: string) => Promise<void>> => {
   // still exit so K8s can restart.
   async function shutdown(signal: string): Promise<void> {
     logger.log(`[Shutdown] received ${signal}; stopping listeners`);
-    clearInterval(synchronizeDataInterval)
+    clearInterval(synchronizeDataInterval);
 
     await shutdownRegistry().catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
@@ -56,11 +55,11 @@ const initialize = async (): Promise<(signal: string) => Promise<void>> => {
       const message = err instanceof Error ? err.message : String(err);
       logger.error(`[Shutdown] error closing health server: ${message}`);
     });
-    
+
     process.exit(0);
   }
 
-  return shutdown
+  return shutdown;
 };
 
 // Register signal handlers before initialize() so a signal arriving during
@@ -87,6 +86,5 @@ process.on("SIGUSR1", () => {
 logger.log(`Initializing container: ${os.hostname()}`);
 void initialize().then((shutdown) => {
   onSignal = (signal) => { void shutdown(signal); };
+  logger.log("Initialization complete.");
 });
-
-
