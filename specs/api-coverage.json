@@ -61,7 +61,7 @@
       "path": "/api/workflows/{workflowId}/executions",
       "route_file": "app/api/workflows/[workflowId]/executions/route.ts",
       "source": "docs/api/executions.md",
-      "line": 259
+      "line": 302
     },
     {
       "method": "GET",
@@ -146,7 +146,7 @@
       "path": "/api/execute/{executionId}/status",
       "route_file": "app/api/execute/[executionId]/status/route.ts",
       "source": "docs/api/direct-execution.md",
-      "line": 198
+      "line": 289
     },
     {
       "method": "GET",
@@ -237,7 +237,7 @@
       "path": "/api/workflows/executions/{executionId}/logs",
       "route_file": "app/api/workflows/executions/[executionId]/logs/route.ts",
       "source": "docs/api/executions.md",
-      "line": 116
+      "line": 159
     },
     {
       "method": "GET",
@@ -245,6 +245,13 @@
       "route_file": "app/api/workflows/executions/[executionId]/status/route.ts",
       "source": "docs/api/executions.md",
       "line": 46
+    },
+    {
+      "method": "GET",
+      "path": "/api/workflows/executions/{executionId}/wait",
+      "route_file": "app/api/workflows/executions/[executionId]/wait/route.ts",
+      "source": "docs/api/executions.md",
+      "line": 116
     },
     {
       "method": "GET",
