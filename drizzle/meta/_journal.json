@@ -729,6 +729,13 @@
       "when": 1779843900010,
       "tag": "0103_keep_696_member_single_owner",
       "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "7",
+      "when": 1779843900011,
+      "tag": "0104_keep_586_execution_digest_settings",
+      "breakpoints": true
     }
   ]
 }

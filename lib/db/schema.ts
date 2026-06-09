@@ -810,6 +810,36 @@ export const workflowSchedules = pgTable(
   ]
 );
 
+// Per-org scheduled execution-digest config. Paid-only (Pro+); the cron
+// job and settings API both gate on the org plan. subscriberUserIds is the
+// explicit recipient list managed by owners/admins; non-members are skipped at
+// send time. lastSentAt drives the daily/weekly due check.
+export const workflowExecutionDigestSettings = pgTable(
+  "workflow_execution_digest_settings",
+  {
+    organizationId: text("organization_id")
+      .primaryKey()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    enabled: boolean("enabled").notNull().default(false),
+    cadence: text("cadence")
+      .$type<"daily" | "weekly">()
+      .notNull()
+      .default("weekly"),
+    subscriberUserIds: jsonb("subscriber_user_ids")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    lastSentAt: timestamp("last_sent_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [index("idx_execution_digest_enabled").on(table.enabled)]
+);
+
 // Supported blockchain networks with default RPC endpoints
 export const chains = pgTable(
   "chains",

@@ -86,6 +86,7 @@ export type WriteContractResult =
       gasUsedUnits: string;
       effectiveGasPrice: string;
       result?: unknown;
+      sponsored?: boolean;
     }
   | { success: false; error: string; rejection?: RevertKind };
 
@@ -364,6 +365,7 @@ export async function writeContractCore(
 
         return {
           success: true,
+          sponsored: true,
           transactionHash: sponsoredResult.transactionHash,
           transactionLink,
           gasUsed: sponsoredResult.gasUsed,

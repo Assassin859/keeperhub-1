@@ -81,6 +81,7 @@ export type TransferTokenResult =
       amount: string;
       symbol: string;
       recipient: string;
+      sponsored?: boolean;
     }
   | { success: false; error: string; rejection?: RevertKind };
 
@@ -394,6 +395,7 @@ export async function transferTokenCore(
 
         return {
           success: true,
+          sponsored: true,
           transactionHash: sponsoredResult.transactionHash,
           transactionLink,
           gasUsed: sponsoredResult.gasUsed,

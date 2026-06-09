@@ -1,6 +1,9 @@
 #!/bin/sh
 set -e
 
+# Cron runner for the execution digest: GET the /api/internal/execution-digest
+# endpoint authenticated with HMAC. Pass the full URL as the first argument.
+
 URL="$1"
 
 if [ -z "$URL" ]; then

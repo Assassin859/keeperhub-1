@@ -23,34 +23,59 @@ Returns all supported blockchain networks.
 
 ### Response
 
+Returns a bare JSON array of chain objects. The response is not wrapped in a `data` envelope.
+
 ```json
-{
-  "data": [
-    {
-      "id": "chain_1",
-      "chainId": 1,
-      "name": "Ethereum Mainnet",
-      "symbol": "ETH",
-      "chainType": "evm",
-      "defaultPrimaryRpc": "https://...",
-      "defaultFallbackRpc": "https://...",
-      "explorerUrl": "https://etherscan.io",
-      "explorerApiUrl": "https://api.etherscan.io",
-      "isTestnet": false,
-      "isEnabled": true
-    },
-    {
-      "id": "chain_2",
-      "chainId": 11155111,
-      "name": "Sepolia",
-      "symbol": "ETH",
-      "chainType": "evm",
-      "isTestnet": true,
-      "isEnabled": true
-    }
-  ]
-}
+[
+  {
+    "id": "chain_1",
+    "chainId": 1,
+    "name": "Ethereum Mainnet",
+    "symbol": "ETH",
+    "chainType": "evm",
+    "explorerUrl": "https://etherscan.io",
+    "explorerAddressPath": "/address/",
+    "explorerApiUrl": "https://api.etherscan.io",
+    "explorerApiType": "etherscan",
+    "isTestnet": false,
+    "isEnabled": true,
+    "usePrivateMempoolRpc": false
+  },
+  {
+    "id": "chain_2",
+    "chainId": 11155111,
+    "name": "Sepolia",
+    "symbol": "ETH",
+    "chainType": "evm",
+    "explorerUrl": "https://sepolia.etherscan.io",
+    "explorerAddressPath": "/address/",
+    "explorerApiUrl": "https://api-sepolia.etherscan.io",
+    "explorerApiType": "etherscan",
+    "isTestnet": true,
+    "isEnabled": true,
+    "usePrivateMempoolRpc": false
+  }
+]
 ```
+
+### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Internal chain identifier |
+| `chainId` | number | Numeric EVM chain ID (or Solana network ID) |
+| `name` | string | Human-readable chain name |
+| `symbol` | string | Native token symbol |
+| `chainType` | string | `evm` or `solana` (see below) |
+| `explorerUrl` | string \| null | Block explorer base URL |
+| `explorerAddressPath` | string \| null | Path segment appended to `explorerUrl` for address links |
+| `explorerApiUrl` | string \| null | Explorer API base URL for ABI / verification lookups |
+| `explorerApiType` | string \| null | Explorer API family (e.g. `etherscan`, `blockscout`) |
+| `isTestnet` | boolean | Whether this chain is a testnet |
+| `isEnabled` | boolean | Whether the chain is currently available for workflow execution |
+| `usePrivateMempoolRpc` | boolean | Whether KeeperHub routes transactions through a private mempool (Flashbots Protect) by default |
+
+RPC endpoint URLs (`defaultPrimaryRpc`, `defaultFallbackRpc`) are not returned by this endpoint. They may embed provider API keys and are read server-side only; client code should use the user-configurable RPC preferences API instead.
 
 ### Chain Types
 
@@ -114,10 +139,3 @@ Fetches the ABI for a verified contract from the block explorer. The `{chainId}`
 }
 ```
 
-## Alternative ABI Fetch
-
-```http
-GET /api/web3/fetch-abi?address={address}&chainId={chainId}
-```
-
-Alternative endpoint for fetching contract ABIs.

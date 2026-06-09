@@ -137,6 +137,26 @@ jobs:
             exit 1
           fi
 
+      - name: Check public API docs match route files
+        # Parses every documented (METHOD /api/...) entry in docs/api/*.md
+        # and asserts the corresponding app/api/<path>/route.ts exists and
+        # exports a handler for that method. Also writes
+        # specs/api-coverage.json which the post-deploy live HEAD check
+        # reads. Hackathon teams reported endpoints that 404 in prod or
+        # return shapes that diverge from docs; this guard blocks new drift
+        # at PR time.
+        run: pnpm check:api-docs
+
+      - name: Detect uncommitted api-coverage drift
+        # specs/api-coverage.json is committed and read by the post-deploy
+        # live HEAD check. If the script regenerated it during this job we
+        # need the contributor to commit the regenerated file.
+        run: |
+          if ! git diff --exit-code specs/api-coverage.json; then
+            echo "::error::specs/api-coverage.json is stale. Run 'pnpm check:api-docs' locally and commit the result."
+            exit 1
+          fi
+
   typecheck:
     runs-on: ubuntu-latest
     steps:
