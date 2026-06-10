@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { type NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { readDeviceCookie } from "@/lib/device-cookie";
@@ -168,6 +169,24 @@ const MFA_EXEMPT_PAGE_PREFIXES: readonly string[] = [
   "/sign-up",
 ];
 
+const LOAD_TEST_BYPASS_TOKEN = process.env.LOAD_TEST_BYPASS_TOKEN;
+
+function hasValidLoadTestMfaBypass(request: NextRequest): boolean {
+  if (!LOAD_TEST_BYPASS_TOKEN) {
+    return false;
+  }
+  const provided = request.headers.get("x-load-test-mfa-bypass");
+  if (!provided) {
+    return false;
+  }
+  const providedBuf = Buffer.from(provided, "utf8");
+  const expectedBuf = Buffer.from(LOAD_TEST_BYPASS_TOKEN, "utf8");
+  if (providedBuf.length !== expectedBuf.length) {
+    return false;
+  }
+  return timingSafeEqual(providedBuf, expectedBuf);
+}
+
 function isMfaExemptPath(pathname: string): boolean {
   if (pathname.startsWith("/api/")) {
     for (const prefix of MFA_EXEMPT_API_PREFIXES) {
@@ -222,6 +241,9 @@ async function mfaBlock(request: NextRequest): Promise<MfaResult> {
   const { pathname } = request.nextUrl;
 
   if (isMfaExemptPath(pathname)) {
+    return { kind: "pass", user: null };
+  }
+  if (hasValidLoadTestMfaBypass(request)) {
     return { kind: "pass", user: null };
   }
   // No session cookie at all → no session → nothing to gate on. Route

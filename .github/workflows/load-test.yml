@@ -160,7 +160,8 @@ jobs:
             -e SKIP_CLEANUP=true \
             -e CF_ACCESS_CLIENT_ID="${CF_ACCESS_CLIENT_ID}" \
             -e CF_ACCESS_CLIENT_SECRET="${CF_ACCESS_CLIENT_SECRET}" \
-            -e LOAD_TEST_CAPTCHA_BYPASS_TOKEN="${LOAD_TEST_CAPTCHA_BYPASS_TOKEN}" \
+            -e LOAD_TEST_BYPASS_TOKEN="${LOAD_TEST_BYPASS_TOKEN}" \
+            -e LOAD_TEST_USER_PASSWORD="${LOAD_TEST_USER_PASSWORD}" \
             -e TARGET_VUS="${{ inputs.target_vus || '25' }}" \
             -e WF_PER_VU="${{ inputs.wf_per_vu || '65' }}" \
             -e OBSERVE_SECONDS="${{ inputs.observe_seconds || '300' }}" \
@@ -180,7 +181,8 @@ jobs:
           SERVICE_KEY: ${{ secrets.SCHEDULER_SERVICE_API_KEY }}
           CF_ACCESS_CLIENT_ID: ${{ secrets.TO_CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.TO_CF_ACCESS_CLIENT_SECRET }}
-          LOAD_TEST_CAPTCHA_BYPASS_TOKEN: ${{ secrets.LOAD_TEST_CAPTCHA_BYPASS_TOKEN }}
+          LOAD_TEST_BYPASS_TOKEN: ${{ secrets.LOAD_TEST_BYPASS_TOKEN }}
+          LOAD_TEST_USER_PASSWORD: ${{ secrets.LOAD_TEST_USER_PASSWORD }}
           K6_PROMETHEUS_RW_SERVER_URL: ${{ secrets.K6_PROMETHEUS_RW_SERVER_URL }}
           K6_PROMETHEUS_RW_USERNAME: ${{ secrets.K6_PROMETHEUS_RW_USERNAME }}
           K6_PROMETHEUS_RW_PASSWORD: ${{ secrets.K6_PROMETHEUS_RW_PASSWORD }}
@@ -200,7 +202,8 @@ jobs:
           TEST_API_KEY: ${{ secrets.TEST_API_KEY }}
           CF_ACCESS_CLIENT_ID: ${{ secrets.TO_CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.TO_CF_ACCESS_CLIENT_SECRET }}
-          LOAD_TEST_CAPTCHA_BYPASS_TOKEN: ${{ secrets.LOAD_TEST_CAPTCHA_BYPASS_TOKEN }}
+          LOAD_TEST_BYPASS_TOKEN: ${{ secrets.LOAD_TEST_BYPASS_TOKEN }}
+          LOAD_TEST_USER_PASSWORD: ${{ secrets.LOAD_TEST_USER_PASSWORD }}
 
       - name: Cleanup test users
         if: always()

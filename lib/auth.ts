@@ -1,4 +1,4 @@
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { captureMessage } from "@sentry/nextjs";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
@@ -167,53 +167,14 @@ if (captchaRequired && !captchaSecretKey) {
   );
 }
 
-// Optional load-test bypass: when LOAD_TEST_CAPTCHA_BYPASS_TOKEN is set in the
-// environment, wrap the captcha plugin so a request carrying a matching
-// X-Load-Test-Captcha-Bypass header skips the upstream siteverify call. The
-// header value is compared timing-safe. Without the env var (production), the
-// wrapper is a no-op and no bypass path exists. Only the scheduled k6 load
-// test running against staging has both the env var and the matching header.
-type CaptchaPluginInstance = ReturnType<typeof captcha>;
-function withLoadTestBypass(
-  plugin: CaptchaPluginInstance
-): CaptchaPluginInstance {
-  const token = process.env.LOAD_TEST_CAPTCHA_BYPASS_TOKEN;
-  if (!token) {
-    return plugin;
-  }
-  const expected = Buffer.from(token, "utf8");
-  const originalOnRequest = plugin.onRequest;
-  return {
-    ...plugin,
-    onRequest: async (request, ctx) => {
-      const provided = request.headers.get("x-load-test-captcha-bypass");
-      if (provided) {
-        const providedBuf = Buffer.from(provided, "utf8");
-        if (
-          providedBuf.length === expected.length &&
-          timingSafeEqual(providedBuf, expected)
-        ) {
-          ctx.logger.info("captcha bypass header accepted", {
-            endpoint: request.url,
-          });
-          return undefined;
-        }
-      }
-      return await originalOnRequest(request, ctx);
-    },
-  };
-}
-
 const captchaPlugins =
   !captchaSkippedForTests && captchaSecretKey
     ? [
-        withLoadTestBypass(
-          captcha({
-            provider: "cloudflare-turnstile",
-            secretKey: captchaSecretKey,
-            endpoints: ["/sign-up/email"],
-          })
-        ),
+        captcha({
+          provider: "cloudflare-turnstile",
+          secretKey: captchaSecretKey,
+          endpoints: ["/sign-up/email"],
+        }),
       ]
     : [];
 
