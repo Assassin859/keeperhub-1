@@ -343,7 +343,7 @@ env:
     value: "true"
   NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED:
     type: kv
-    value: "false"
+    value: "true"
   # AI Prompt feature flag - disabled
   # (gates UI render in components/workflow/workflow-canvas.tsx
   #  and /api/ai/generate route)

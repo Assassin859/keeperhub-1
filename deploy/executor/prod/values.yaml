@@ -147,7 +147,7 @@ env:
     value: "true"
   NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED:
     type: kv
-    value: "false"
+    value: "true"
   # Gas credit caps per plan (cents, server-only)
   GAS_CREDITS_FREE_CENTS:
     type: kv
