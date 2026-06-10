@@ -1,17 +1,17 @@
 "use client";
 
 import { Minus, Pencil, Plus } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
 import { relativeTime } from "@/components/settings/session-format";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { groupByDate } from "@/lib/activity/time-groups";
-import { api, followPage, type SecurityAuditEvent } from "@/lib/api-client";
+import { api, type SecurityAuditEvent } from "@/lib/api-client";
+import { usePaginatedResource } from "@/lib/hooks/use-paginated-resource";
 import {
   type AuditActionKind,
   describeAuditAction,
 } from "@/lib/security/audit-actions";
 import { ActorAvatar, actorLabel } from "./actor-avatar";
+import { Pager } from "./pager";
 
 type FeedParams = {
   resourceType?: string;
@@ -82,51 +82,22 @@ export function ActivityFeed({
 }: {
   params?: FeedParams;
 }): React.ReactElement {
-  const [events, setEvents] = useState<SecurityAuditEvent[]>([]);
-  const [nextLink, setNextLink] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [error, setError] = useState(false);
-
   const resourceType = params?.resourceType;
   const resourceId = params?.resourceId;
   const action = params?.action;
   const limit = params?.limit;
 
-  useEffect(() => {
-    let active = true;
-    setLoading(true);
-    setError(false);
-    api.security
-      .getAudit({ resourceType, resourceId, action, limit })
-      .then((res) => {
-        if (active) {
-          setEvents(res.items);
-          setNextLink(res._links.next);
-        }
-      })
-      .catch(() => active && setError(true))
-      .finally(() => active && setLoading(false));
-    return () => {
-      active = false;
-    };
-  }, [resourceType, resourceId, action, limit]);
-
-  const loadMore = useCallback(async () => {
-    if (!nextLink) {
-      return;
-    }
-    setLoadingMore(true);
-    try {
-      const res = await followPage<SecurityAuditEvent>(nextLink);
-      setEvents((prev) => [...prev, ...res.items]);
-      setNextLink(res._links.next);
-    } catch {
-      setError(true);
-    } finally {
-      setLoadingMore(false);
-    }
-  }, [nextLink]);
+  const {
+    items: events,
+    meta,
+    setPage,
+    loading,
+    error,
+  } = usePaginatedResource<SecurityAuditEvent>(
+    (page) =>
+      api.security.getAudit({ resourceType, resourceId, action, page, limit }),
+    JSON.stringify({ resourceType, resourceId, action, limit })
+  );
 
   if (loading) {
     return (
@@ -176,16 +147,10 @@ export function ActivityFeed({
           </ul>
         </div>
       ))}
-      {nextLink && (
-        <Button
-          className="w-full"
-          disabled={loadingMore}
-          onClick={loadMore}
-          size="sm"
-          variant="ghost"
-        >
-          {loadingMore ? "Loading..." : "Load more"}
-        </Button>
+      {meta && (
+        <div className="pt-1">
+          <Pager meta={meta} onPage={setPage} unit="events" />
+        </div>
       )}
     </div>
   );

@@ -20,11 +20,12 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   api,
-  followPage,
   type SavedWorkflow,
   type WorkflowVersionSummary,
 } from "@/lib/api-client";
+import { Pager } from "@/components/activity/pager";
 import { groupByDate } from "@/lib/activity/time-groups";
+import { usePaginatedResource } from "@/lib/hooks/use-paginated-resource";
 import {
   currentWorkflowIdAtom,
   edgesAtom,
@@ -307,52 +308,31 @@ export function VersionHistoryPanel(): React.ReactElement | null {
   const [selectedNode, setSelectedNode] = useAtom(selectedNodeAtom);
   const isResizing = useRef(false);
 
-  const [versions, setVersions] = useState<WorkflowVersionSummary[]>([]);
-  const [nextLink, setNextLink] = useState<string | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<WorkflowVersionSummary | null>(null);
   const [snapshot, setSnapshot] = useState<SavedWorkflow | null>(null);
   const [diff, setDiff] = useState<VersionDiff | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
   const [restoring, setRestoring] = useState(false);
 
-  useEffect(() => {
-    if (!(open && workflowId)) {
-      return;
-    }
-    let active = true;
-    setLoading(true);
-    api.workflow
-      .getHistory(workflowId)
-      .then((res) => {
-        if (active) {
-          setVersions(res.items);
-          setNextLink(res._links.next);
-        }
-      })
-      .catch(() => active && toast.error("Failed to load version history"))
-      .finally(() => active && setLoading(false));
-    return () => {
-      active = false;
-    };
-  }, [open, workflowId]);
+  const {
+    items: versions,
+    meta,
+    page,
+    setPage,
+    loading,
+    error,
+  } = usePaginatedResource<WorkflowVersionSummary>(
+    (p) => api.workflow.getHistory(workflowId ?? "", { page: p }),
+    // Reopening the panel (open toggling) restarts at the newest page.
+    `${workflowId}|${open}`,
+    { enabled: open && !!workflowId }
+  );
 
-  const loadMore = useCallback(async () => {
-    if (!nextLink) {
-      return;
+  useEffect(() => {
+    if (error) {
+      toast.error("Failed to load version history");
     }
-    setLoadingMore(true);
-    try {
-      const res = await followPage<WorkflowVersionSummary>(nextLink);
-      setVersions((prev) => [...prev, ...res.items]);
-      setNextLink(res._links.next);
-    } catch {
-      toast.error("Failed to load more versions");
-    } finally {
-      setLoadingMore(false);
-    }
-  }, [nextLink]);
+  }, [error]);
 
   // Opening history clears any node selection so the panel isn't covering a
   // config form; a subsequent node click (current version only) then closes
@@ -494,7 +474,8 @@ export function VersionHistoryPanel(): React.ReactElement | null {
     return null;
   }
 
-  const latestVersion = versions[0]?.version;
+  // The newest version only ever appears on page 1 (descending order).
+  const latestVersion = page === 1 ? versions[0]?.version : undefined;
   const groups = groupByDate(versions, (v) => v.createdAt);
   const canRestore =
     selected !== null && selected.version !== latestVersion && !!snapshot;
@@ -576,16 +557,10 @@ export function VersionHistoryPanel(): React.ReactElement | null {
             </ul>
           </div>
         ))}
-        {nextLink && (
-          <Button
-            className="w-full"
-            disabled={loadingMore}
-            onClick={loadMore}
-            size="sm"
-            variant="ghost"
-          >
-            {loadingMore ? "Loading..." : "Load more"}
-          </Button>
+        {meta && (
+          <div className="px-1 pt-2">
+            <Pager meta={meta} onPage={setPage} unit="versions" />
+          </div>
         )}
       </div>
 

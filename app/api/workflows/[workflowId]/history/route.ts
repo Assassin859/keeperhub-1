@@ -1,10 +1,10 @@
-import { and, asc, desc, eq, gt, inArray, lt } from "drizzle-orm";
+import { and, count, desc, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { users, workflowHistory, workflows } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
-import { buildCursorPage, parseCursorRequest } from "@/lib/pagination";
+import { buildPage, parsePageRequest } from "@/lib/pagination";
 import { isOrgAdmin } from "@/lib/security/org-role";
 import { getWorkflowAccess } from "@/lib/workflow/access";
 
@@ -53,17 +53,13 @@ export async function GET(
     }
 
     const url = new URL(request.url);
-    const req = parseCursorRequest(url);
-    const cursorVersion = Number.parseInt(req.cursor ?? "", 10);
+    const req = parsePageRequest(url);
+    const where = eq(workflowHistory.workflowId, workflowId);
 
-    const conditions = [eq(workflowHistory.workflowId, workflowId)];
-    if (!Number.isNaN(cursorVersion)) {
-      conditions.push(
-        req.direction === "next"
-          ? lt(workflowHistory.version, cursorVersion)
-          : gt(workflowHistory.version, cursorVersion)
-      );
-    }
+    const [{ total }] = await db
+      .select({ total: count() })
+      .from(workflowHistory)
+      .where(where);
 
     const rows = await db
       .select({
@@ -76,24 +72,14 @@ export async function GET(
         createdAt: workflowHistory.createdAt,
       })
       .from(workflowHistory)
-      .where(and(...conditions))
-      .orderBy(
-        req.direction === "next"
-          ? desc(workflowHistory.version)
-          : asc(workflowHistory.version)
-      )
-      .limit(req.limit + 1);
-
-    const { items: page, _links } = buildCursorPage(
-      rows,
-      req,
-      url,
-      (r) => r.version
-    );
+      .where(where)
+      .orderBy(desc(workflowHistory.version))
+      .limit(req.pageSize)
+      .offset(req.offset);
 
     // Enrich actor ids -> name/email in one lookup so the timeline shows "who".
     const actorIds = [
-      ...new Set(page.map((r) => r.changedByUserId).filter(Boolean)),
+      ...new Set(rows.map((r) => r.changedByUserId).filter(Boolean)),
     ] as string[];
     const actors = actorIds.length
       ? await db
@@ -103,7 +89,7 @@ export async function GET(
       : [];
     const actorMap = new Map(actors.map((a) => [a.id, a]));
 
-    const items = page.map((r) => ({
+    const items = rows.map((r) => ({
       version: r.version,
       source: r.source,
       contentHash: r.contentHash,
@@ -115,7 +101,7 @@ export async function GET(
         : null,
     }));
 
-    return NextResponse.json({ items, _links });
+    return NextResponse.json(buildPage(items, total, req, url));
   } catch (error) {
     logSystemError(
       ErrorCategory.DATABASE,

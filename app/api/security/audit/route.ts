@@ -1,11 +1,11 @@
-import { and, asc, desc, eq, gt, inArray, lt } from "drizzle-orm";
+import { and, count, desc, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { member, securityAuditLog, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
-import { buildCursorPage, parseCursorRequest } from "@/lib/pagination";
+import { buildPage, parsePageRequest } from "@/lib/pagination";
 
 /**
  * Read the org's security audit trail. Sensitive forensic data, so it is
@@ -52,7 +52,7 @@ export async function GET(request: Request) {
     }
 
     const url = new URL(request.url);
-    const req = parseCursorRequest(url);
+    const req = parsePageRequest(url);
     const action = url.searchParams.get("action");
     const resourceType = url.searchParams.get("resourceType");
     const resourceId = url.searchParams.get("resourceId");
@@ -71,36 +71,24 @@ export async function GET(request: Request) {
     if (actorUserId) {
       conditions.push(eq(securityAuditLog.actorUserId, actorUserId));
     }
-    if (req.cursor) {
-      const cursorDate = new Date(req.cursor);
-      if (!Number.isNaN(cursorDate.getTime())) {
-        conditions.push(
-          req.direction === "next"
-            ? lt(securityAuditLog.createdAt, cursorDate)
-            : gt(securityAuditLog.createdAt, cursorDate)
-        );
-      }
-    }
+    const where = and(...conditions);
 
-    // Fetch one extra row to derive the page boundary without a count query.
+    const [{ total }] = await db
+      .select({ total: count() })
+      .from(securityAuditLog)
+      .where(where);
+
     const rows = await db
       .select()
       .from(securityAuditLog)
-      .where(and(...conditions))
-      .orderBy(
-        req.direction === "next"
-          ? desc(securityAuditLog.createdAt)
-          : asc(securityAuditLog.createdAt)
-      )
-      .limit(req.limit + 1);
-
-    const { items: page, _links } = buildCursorPage(rows, req, url, (r) =>
-      r.createdAt.toISOString()
-    );
+      .where(where)
+      .orderBy(desc(securityAuditLog.createdAt))
+      .limit(req.pageSize)
+      .offset(req.offset);
 
     // Enrich actor ids -> name/email so the UI can show "who did it".
     const actorIds = [
-      ...new Set(page.map((r) => r.actorUserId).filter(Boolean)),
+      ...new Set(rows.map((r) => r.actorUserId).filter(Boolean)),
     ] as string[];
     const actors = actorIds.length
       ? await db
@@ -109,14 +97,14 @@ export async function GET(request: Request) {
           .where(inArray(users.id, actorIds))
       : [];
     const actorMap = new Map(actors.map((a) => [a.id, a]));
-    const items = page.map((r) => ({
+    const items = rows.map((r) => ({
       ...r,
       actor: r.actorUserId
         ? (actorMap.get(r.actorUserId) ?? { id: r.actorUserId })
         : null,
     }));
 
-    return NextResponse.json({ items, _links });
+    return NextResponse.json(buildPage(items, total, req, url));
   } catch (error) {
     logSystemError(
       ErrorCategory.DATABASE,
