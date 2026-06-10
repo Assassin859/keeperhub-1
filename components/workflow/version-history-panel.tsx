@@ -31,6 +31,7 @@ import {
 } from "@/lib/workflow/store";
 import { useVersionPreview } from "@/lib/workflow/use-version-preview";
 import type { VersionDiff } from "@/lib/workflow/version-diff";
+import { findActionById, flattenConfigFields } from "@/plugins/registry";
 
 type ChangeItem = {
   key: string;
@@ -50,6 +51,33 @@ function Arrow(): React.ReactElement {
 
 function Quoted({ value }: { value: string }): React.ReactElement {
   return <span className="font-medium">&quot;{value || "untitled"}&quot;</span>;
+}
+
+// Map a stored config key to the field label the user sees in the editor
+// (e.g. "functionArgs" -> "Function Arguments"); fall back to the raw key.
+function configFieldLabel(
+  actionType: string | undefined,
+  key: string
+): string {
+  if (!actionType) {
+    return key;
+  }
+  const action = findActionById(actionType);
+  if (!action) {
+    return key;
+  }
+  const field = flattenConfigFields(action.configFields).find(
+    (f) => f.key === key
+  );
+  return field?.label ?? key;
+}
+
+function ConfigValue({ value }: { value: string }): React.ReactElement {
+  return (
+    <span className="break-all rounded bg-muted px-1.5 py-0.5 font-mono text-muted-foreground">
+      {value || "empty"}
+    </span>
+  );
 }
 
 function settingItem(s: VersionDiff["settings"][number]): ChangeItem {
@@ -188,10 +216,19 @@ function buildChangeItems(diff: VersionDiff): ChangeItem[] {
             key: `cfg-${n.id}-${c.key}`,
             kind: "change",
             content: (
-              <span className="inline-flex flex-wrap items-center gap-1">
-                {cap(n.nodeType)} <Quoted value={n.label} />
-                <span className="font-medium">{c.key}</span>:{" "}
-                <Quoted value={c.before} /> <Arrow /> <Quoted value={c.after} />
+              <span className="flex flex-col gap-1">
+                <span>
+                  {cap(n.nodeType)} <Quoted value={n.label} />{" "}
+                  <span className="text-muted-foreground">·</span>{" "}
+                  <span className="font-medium">
+                    {configFieldLabel(n.actionType, c.key)}
+                  </span>
+                </span>
+                <span className="flex flex-wrap items-center gap-1.5">
+                  <ConfigValue value={c.before} />
+                  <Arrow />
+                  <ConfigValue value={c.after} />
+                </span>
               </span>
             ),
           });

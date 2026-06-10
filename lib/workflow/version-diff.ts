@@ -40,6 +40,9 @@ export type NodeFieldChange = {
   id: string;
   label: string;
   nodeType: string;
+  // The action id (e.g. "web3/read-contract") so the UI can map config keys
+  // to their human field labels.
+  actionType?: string;
   deltas: NodeFieldDelta[];
 };
 
@@ -81,6 +84,22 @@ function nodeType(node: AnyRecord): string {
   return typeof node.type === "string" ? node.type : "step";
 }
 
+function nodeActionType(node: AnyRecord): string | undefined {
+  const config = ((node.data ?? {}) as AnyRecord).config as
+    | AnyRecord
+    | undefined;
+  const actionType = config?.actionType;
+  return typeof actionType === "string" ? actionType : undefined;
+}
+
+// Template refs persist as `{{@nodeId:Display.field}}`; the node id is noise in
+// a human diff, so collapse them to `{{Display.field}}`.
+const TEMPLATE_REF = /\{\{@[^:}]+:([^}]+)\}\}/g;
+
+function cleanTemplateRefs(text: string): string {
+  return text.replace(TEMPLATE_REF, "{{$1}}");
+}
+
 function byId(nodes: AnyRecord[]): Map<string, AnyRecord> {
   const map = new Map<string, AnyRecord>();
   for (const n of nodes) {
@@ -97,7 +116,8 @@ function shortConfigValue(value: unknown): string {
   if (value === undefined || value === null || value === "") {
     return "empty";
   }
-  const text = typeof value === "string" ? value : JSON.stringify(value);
+  const raw = typeof value === "string" ? value : JSON.stringify(value);
+  const text = cleanTemplateRefs(raw);
   return text.length > MAX_VALUE_LEN
     ? `${text.slice(0, MAX_VALUE_LEN - 1)}…`
     : text;
@@ -248,6 +268,7 @@ export function computeVersionDiff(
         id,
         label: nodeLabel(node),
         nodeType: nodeType(node),
+        actionType: nodeActionType(node),
         deltas,
       });
     }
