@@ -99,6 +99,9 @@ export async function assertTurnkeyEnvForActiveWallets(db: Db): Promise<void> {
   if (!process.env.TURNKEY_API_PRIVATE_KEY) {
     missing.push("TURNKEY_API_PRIVATE_KEY");
   }
+  if (!process.env.TURNKEY_ORGANIZATION_ID) {
+    missing.push("TURNKEY_ORGANIZATION_ID");
+  }
 
   if (missing.length === 0) {
     return;
