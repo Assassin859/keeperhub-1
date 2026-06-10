@@ -482,7 +482,7 @@ export function VersionHistoryPanel(): React.ReactElement | null {
 
   return (
     <aside
-      className="fixed top-[calc(60px+var(--app-banner-height,0px))] right-0 bottom-0 z-30 flex flex-col border-border border-l bg-background shadow-xl transition-transform duration-300 ease-out"
+      className="fixed top-[calc(6rem+var(--app-banner-height,0px))] right-0 bottom-0 z-30 flex flex-col border-border border-l bg-background shadow-xl transition-transform duration-300 ease-out lg:top-[calc(60px+var(--app-banner-height,0px))]"
       style={{
         width: `${widthPct}%`,
         transform: open ? "translateX(0)" : "translateX(100%)",
