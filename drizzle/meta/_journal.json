@@ -741,7 +741,14 @@
       "idx": 105,
       "version": "7",
       "when": 1779843900012,
-      "tag": "0105_keep_586_digest_multi_cadence",
+      "tag": "0105_country_device_trust",
+      "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "7",
+      "when": 1779843900013,
+      "tag": "0106_keep_586_digest_multi_cadence",
       "breakpoints": true
     }
   ]

@@ -10,7 +10,7 @@ import { db } from "@/lib/db";
 import {
   sessions,
   twoFactor as twoFactorTable,
-  userTrustedIps,
+  userTrustedCountries,
   verifications,
 } from "@/lib/db/schema";
 import { sendVerificationOTP } from "@/lib/email";
@@ -25,11 +25,13 @@ import {
   readPendingIpCookie,
 } from "@/lib/pending-ip-cookie";
 import { sanitizeNextPath } from "@/lib/sanitize-next-path";
+import { resolveSigninDevice } from "@/lib/security/device-trust";
+import { normalizeIpForTrust } from "@/lib/security/ip-normalize";
 import {
-  assessIpTrust,
   buildRiskFlagsJsonForIp,
-  cacheTrustedIp,
+  cacheTrustedCountry,
   logIpVerify,
+  resolveClientIpFromHeaders,
 } from "@/lib/security/login-risk";
 import { verifyUserTotp } from "@/lib/security/totp-verify";
 import { generateId } from "@/lib/utils/id";
@@ -217,17 +219,19 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   // Both codes present -> session-minting path. Bind the exchange to the
   // network the cookie was issued for: a thief on a different network
-  // cannot finish even with valid factors because assessIpTrust resolves
-  // a different /24-or-/64 key than the one pinned in the payload. The
-  // raw (pre-normalization) IPs are logged so a rotating egress address
-  // is visible end to end.
-  const ipTrust = await assessIpTrust(decoded.payload.userId);
-  const ipMatch = !ipTrust.ip || ipTrust.ip === decoded.payload.ip;
+  // cannot finish even with valid factors. The full IP is what we store
+  // and email, but the replay comparison normalizes both sides to the
+  // /24-or-/64 network so a user whose egress IP rotates within their
+  // subnet mid-flow isn't bounced.
+  const currentRawIp = resolveClientIpFromHeaders(request.headers);
+  const ipMatch =
+    !currentRawIp ||
+    normalizeIpForTrust(currentRawIp) ===
+      normalizeIpForTrust(decoded.payload.ip);
   logIpVerify("verify-ip:final_check", {
     userId: decoded.payload.userId,
     cookieIp: decoded.payload.ip,
-    currentRawIp: ipTrust.rawIp,
-    currentNormalizedIp: ipTrust.ip,
+    currentRawIp,
     match: ipMatch,
   });
   if (!ipMatch) {
@@ -351,6 +355,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     decoded.payload.country
   );
 
+  const trustedCountry = decoded.payload.country;
   try {
     await db.transaction(async (tx) => {
       await tx.insert(sessions).values({
@@ -366,22 +371,23 @@ export async function POST(request: Request): Promise<NextResponse> {
         mfaVerifiedAt: new Date(),
         riskFlagsJson,
       });
-      await tx
-        .insert(userTrustedIps)
-        .values({
-          userId: decoded.payload.userId,
-          ip: decoded.payload.ip,
-          country: decoded.payload.country,
-        })
-        .onConflictDoUpdate({
-          target: [userTrustedIps.userId, userTrustedIps.ip],
-          set: { lastSeenAt: new Date() },
-        });
+      if (trustedCountry) {
+        await tx
+          .insert(userTrustedCountries)
+          .values({
+            userId: decoded.payload.userId,
+            country: trustedCountry,
+          })
+          .onConflictDoUpdate({
+            target: [userTrustedCountries.userId, userTrustedCountries.country],
+            set: { lastSeenAt: new Date() },
+          });
+      }
     });
   } catch (err) {
     logSystemError(
       ErrorCategory.DATABASE,
-      "[verify-ip] failed to insert session + trusted IP",
+      "[verify-ip] failed to insert session + trusted country",
       err,
       { endpoint: "/api/user/verify-ip", user_id: decoded.payload.userId }
     );
@@ -393,7 +399,9 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   // Warm the shared cache so every replica's next request is a hit, not a DB
   // read. Best-effort; the DB upsert above is the durable source of truth.
-  await cacheTrustedIp(decoded.payload.userId, decoded.payload.ip);
+  if (trustedCountry) {
+    await cacheTrustedCountry(decoded.payload.userId, trustedCountry);
+  }
 
   const response = NextResponse.json({
     ok: true,
@@ -407,5 +415,15 @@ export async function POST(request: Request): Promise<NextResponse> {
     )
   );
   response.headers.append("Set-Cookie", buildPendingIpClearCookie());
+  // Recognise the browser and warn the owner if this device is new.
+  const deviceSetCookie = await resolveSigninDevice({
+    userId: decoded.payload.userId,
+    email: decoded.payload.email,
+    country: trustedCountry,
+    request,
+  });
+  if (deviceSetCookie) {
+    response.headers.append("Set-Cookie", deviceSetCookie);
+  }
   return response;
 }

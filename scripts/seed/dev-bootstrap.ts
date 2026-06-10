@@ -300,12 +300,13 @@ async function ensureDevIdentity(
 }
 
 // Pre-trust the IPs Chrome will use when hitting localhost:3000 so the
-// proxy IP gate (login-risk.ts:gateRequestIp) passes for the minted
-// session. Without these the user gets redirected to /verify-ip on every
-// request, which defeats the whole point of skipping the UI auth flow.
+// proxy gate's legacy-IP bridge (login-risk.ts:gateRequestCountry) passes
+// for the minted session even if a CF-IPCountry header is forced in for
+// testing. Without these a forced-country local request would redirect to
+// /verify-ip, which defeats the point of skipping the UI auth flow.
 //
 // IPv4 stored as-is; IPv6 ::1 normalizes to its /64 (all-zero) prefix per
-// normalizeIpForTrust, matching what gateRequestIp would look up.
+// normalizeIpForTrust, matching what the bridge looks up.
 const TRUSTED_LOCAL_IPS = [
   "127.0.0.1",
   "0000:0000:0000:0000:0000:0000:0000:0000",

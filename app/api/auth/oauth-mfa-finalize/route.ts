@@ -14,7 +14,13 @@ import {
   readPendingOauthMfaCookie,
 } from "@/lib/oauth-mfa-cookie";
 import { sanitizeNextPath } from "@/lib/sanitize-next-path";
-import { resolveClientIpFromHeaders } from "@/lib/security/login-risk";
+import { resolveSigninDevice } from "@/lib/security/device-trust";
+import {
+  cacheTrustedCountry,
+  resolveCfCountry,
+  resolveClientIpFromHeaders,
+  upsertTrustedCountry,
+} from "@/lib/security/login-risk";
 
 /**
  * Finishes the deferred OAuth sign-in.
@@ -151,6 +157,16 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
+  // OAuth finalize is the full dual-factor (TOTP + email OTP) equivalent of
+  // /verify-ip, and this path mints the session directly without the
+  // country gate. Record the CF country as trusted so the next request
+  // isn't bounced to /verify-ip for a redundant step-up.
+  const country = await resolveCfCountry();
+  if (country) {
+    await upsertTrustedCountry(decoded.payload.userId, country);
+    await cacheTrustedCountry(decoded.payload.userId, country);
+  }
+
   const response = NextResponse.json({
     ok: true,
     redirect: sanitizeNextPath(decoded.payload.redirect),
@@ -163,5 +179,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     )
   );
   response.headers.append("Set-Cookie", buildPendingOauthMfaClearCookie());
+  const deviceSetCookie = await resolveSigninDevice({
+    userId: decoded.payload.userId,
+    email: decoded.payload.email,
+    country,
+    request,
+  });
+  if (deviceSetCookie) {
+    response.headers.append("Set-Cookie", deviceSetCookie);
+  }
   return response;
 }
