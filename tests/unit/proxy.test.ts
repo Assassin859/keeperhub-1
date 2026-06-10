@@ -518,6 +518,108 @@ describe("MFA gate", () => {
   });
 });
 
+describe("MFA gate: load-test bypass header", () => {
+  const BYPASS_TOKEN = "load-test-bypass-token-32-bytes-long!";
+  const SAME_LENGTH_WRONG = "WRONG-TOKEN-DIFFERENT-VALUE-XXXXXXXXX";
+
+  function sessionCookieHeaders(): Record<string, string> {
+    return {
+      cookie: "better-auth.session_token=tok",
+      origin: "http://localhost:3000",
+    };
+  }
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    mockGetSession.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  async function loadProxyWithBypassTokenSet(): Promise<typeof proxy> {
+    vi.stubEnv("LOAD_TEST_BYPASS_TOKEN", BYPASS_TOKEN);
+    const mod = await import("@/proxy");
+    return mod.proxy;
+  }
+
+  it("passes an authenticated API request when the bypass header matches", async () => {
+    expect(SAME_LENGTH_WRONG.length).toBe(BYPASS_TOKEN.length);
+    mockGetSession.mockResolvedValue({
+      user: { id: "u1", twoFactorEnabled: false },
+      session: { requiresMfa: false },
+    });
+    const proxyFn = await loadProxyWithBypassTokenSet();
+    const res = await proxyFn(
+      make("/api/workflows", {
+        headers: {
+          ...sessionCookieHeaders(),
+          "x-load-test-mfa-bypass": BYPASS_TOKEN,
+        },
+      })
+    );
+    expect(res.status).toBe(200);
+    expect(mockGetSession).not.toHaveBeenCalled();
+  });
+
+  it("does not honor a same-length but wrong bypass header", async () => {
+    mockGetSession.mockResolvedValue({
+      user: { id: "u1", twoFactorEnabled: false },
+      session: { requiresMfa: false },
+    });
+    const proxyFn = await loadProxyWithBypassTokenSet();
+    const res = await proxyFn(
+      make("/api/workflows", {
+        headers: {
+          ...sessionCookieHeaders(),
+          "x-load-test-mfa-bypass": SAME_LENGTH_WRONG,
+        },
+      })
+    );
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { code: string };
+    expect(body.code).toBe("mfa_enrollment_required");
+  });
+
+  it("does not honor a wrong-length bypass header", async () => {
+    mockGetSession.mockResolvedValue({
+      user: { id: "u1", twoFactorEnabled: false },
+      session: { requiresMfa: false },
+    });
+    const proxyFn = await loadProxyWithBypassTokenSet();
+    const res = await proxyFn(
+      make("/api/workflows", {
+        headers: {
+          ...sessionCookieHeaders(),
+          "x-load-test-mfa-bypass": "too-short",
+        },
+      })
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("ignores the bypass header entirely when the env token is unset", async () => {
+    mockGetSession.mockResolvedValue({
+      user: { id: "u1", twoFactorEnabled: false },
+      session: { requiresMfa: false },
+    });
+    const mod = await import("@/proxy");
+    const res = await mod.proxy(
+      make("/api/workflows", {
+        headers: {
+          ...sessionCookieHeaders(),
+          "x-load-test-mfa-bypass": BYPASS_TOKEN,
+        },
+      })
+    );
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { code: string };
+    expect(body.code).toBe("mfa_enrollment_required");
+  });
+});
+
 describe("Country gate", () => {
   // Authenticated, enrolled, MFA-verified user with an email so mfaBlock
   // returns a real user and the country gate runs.
