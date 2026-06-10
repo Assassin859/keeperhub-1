@@ -3,6 +3,8 @@
  * Uses SendGrid API for transactional emails
  */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { ErrorCategory, logSystemError, logUserError } from "@/lib/logging";
 
 const isTestEnv = !!process.env.CI || process.env.NODE_ENV === "test";
@@ -15,11 +17,20 @@ const SENDGRID_API_URL = "https://api.sendgrid.com/v3/mail/send";
 // on "Sending..." indefinitely.
 const SENDGRID_TIMEOUT_MS = 10_000;
 
+type EmailAttachment = {
+  content: string;
+  filename: string;
+  type: string;
+  disposition: "inline" | "attachment";
+  content_id?: string;
+};
+
 type SendEmailOptions = {
   to: string;
   subject: string;
   text: string;
   html?: string;
+  attachments?: EmailAttachment[];
 };
 
 /**
@@ -94,6 +105,9 @@ export async function sendEmail(options: SendEmailOptions): Promise<boolean> {
           ]
         : []),
     ],
+    ...(options.attachments?.length
+      ? { attachments: options.attachments }
+      : {}),
   };
 
   try {
@@ -574,12 +588,16 @@ KeeperHub - Blockchain Workflow Automation
 type ExecutionDigestEmailData = {
   to: string;
   orgName: string;
-  cadence: "daily" | "weekly";
+  cadence: "daily" | "weekly" | "monthly";
+  // Window the digest summarizes, [since, until).
+  since: Date;
+  until: Date;
   appUrl: string;
   stats: {
     total: number;
     success: number;
     error: number;
+    distinctWorkflows: number;
     transactionCount: number;
     gasUsedWei: string;
     // Present only when gas sponsorship is enabled; renders a sponsored card.
@@ -597,6 +615,74 @@ type ExecutionDigestEmailData = {
     runs: number;
   }[];
 };
+
+const DIGEST_PERIOD_LABEL: Record<"daily" | "weekly" | "monthly", string> = {
+  daily: "day",
+  weekly: "week",
+  monthly: "month",
+};
+
+const DIGEST_SUMMARY_LABEL: Record<"daily" | "weekly" | "monthly", string> = {
+  daily: "Daily summary",
+  weekly: "Weekly summary",
+  monthly: "Monthly summary",
+};
+
+/** Format a date as "DD/MM/YY HH:MM UTC" for the digest period line. */
+function formatUtcStamp(date: Date): string {
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  const day = pad(date.getUTCDate());
+  const month = pad(date.getUTCMonth() + 1);
+  const year = pad(date.getUTCFullYear() % 100);
+  const hours = pad(date.getUTCHours());
+  const minutes = pad(date.getUTCMinutes());
+  return `${day}/${month}/${year} ${hours}:${minutes} UTC`;
+}
+
+const DIGEST_SOCIAL_LINKS: { name: string; url: string; icon: string }[] = [
+  {
+    name: "LinkedIn",
+    url: "https://www.linkedin.com/company/keeperhub/",
+    icon: "linkedin",
+  },
+  { name: "X", url: "https://x.com/KeeperHubApp", icon: "x" },
+  { name: "Discord", url: "https://discord.gg/keeperhub", icon: "discord" },
+  {
+    name: "YouTube",
+    url: "https://www.youtube.com/@KeeperHub",
+    icon: "youtube",
+  },
+  { name: "Telegram", url: "https://t.me/+S18ut1NJA5Q1NzBk", icon: "telegram" },
+];
+
+// Icons ship as inline (CID) attachments rather than hosted images so they
+// render in every client without depending on an external URL. Read once and
+// cached; missing files just drop that icon.
+let digestSocialAttachmentsCache: EmailAttachment[] | null = null;
+
+function getDigestSocialAttachments(): EmailAttachment[] {
+  if (digestSocialAttachmentsCache) {
+    return digestSocialAttachmentsCache;
+  }
+  const dir = join(process.cwd(), "public", "email", "social");
+  const attachments: EmailAttachment[] = [];
+  for (const { icon } of DIGEST_SOCIAL_LINKS) {
+    try {
+      const content = readFileSync(join(dir, `${icon}.png`)).toString("base64");
+      attachments.push({
+        content,
+        filename: `${icon}.png`,
+        type: "image/png",
+        disposition: "inline",
+        content_id: icon,
+      });
+    } catch {
+      // Icon asset missing; skip it rather than fail the whole send.
+    }
+  }
+  digestSocialAttachmentsCache = attachments;
+  return attachments;
+}
 
 /** Format a summed wei amount as an ETH-equivalent string for display. */
 function formatWeiToEth(weiStr: string): string {
@@ -620,11 +706,24 @@ function formatWeiToEth(weiStr: string): string {
 export async function sendWorkflowExecutionDigestEmail(
   data: ExecutionDigestEmailData
 ): Promise<boolean> {
-  const { to, orgName, cadence, appUrl, stats, topFailing, mostExecuted } =
-    data;
-  const period = cadence === "daily" ? "day" : "week";
+  const {
+    to,
+    orgName,
+    cadence,
+    since,
+    until,
+    appUrl,
+    stats,
+    topFailing,
+    mostExecuted,
+  } = data;
+  const period = DIGEST_PERIOD_LABEL[cadence];
+  const summaryLabel = DIGEST_SUMMARY_LABEL[cadence];
+  const periodRange = `${formatUtcStamp(since)} to ${formatUtcStamp(until)}`;
   const successRate =
     stats.total > 0 ? Math.round((stats.success / stats.total) * 100) : 0;
+  const failRate =
+    stats.total > 0 ? Math.round((stats.error / stats.total) * 100) : 0;
   const gasEth = formatWeiToEth(stats.gasUsedWei);
   const subject = `${orgName} workflow digest: ${stats.total} run${
     stats.total === 1 ? "" : "s"
@@ -660,18 +759,24 @@ export async function sendWorkflowExecutionDigestEmail(
       ? ""
       : `\nSponsored transactions: ${stats.sponsoredTransactionCount}`;
 
+  const socialText = DIGEST_SOCIAL_LINKS.map((s) => `${s.name}: ${s.url}`).join(
+    "\n"
+  );
+
   const text = `
-${orgName} workflow digest (last ${period})
+${orgName} - ${summaryLabel}
+${periodRange}
 
 Total runs: ${stats.total}
-Succeeded: ${stats.success} (${successRate}% success rate)
-Failed: ${stats.error}
+Workflows run: ${stats.distinctWorkflows}
 On-chain transactions: ${stats.transactionCount}
 Gas spent: ${gasEth} ETH${sponsoredText}
 
+Succeeded: ${stats.success} (${successRate}%)
 Most executed workflows:
 ${mostExecutedText}
 
+Failed: ${stats.error} (${failRate}%)
 Top failing workflows:
 ${failingText}
 
@@ -679,6 +784,7 @@ View runs: ${appUrl}/analytics
 
 ---
 KeeperHub - Blockchain Workflow Automation
+${socialText}
 `.trim();
 
   // Email-safe: table cells center reliably across clients where flexbox does
@@ -700,42 +806,55 @@ KeeperHub - Blockchain Workflow Automation
     );
   }
 
-  const nameLink = (id: string, name: string): string =>
-    `<a href="${workflowUrl(id)}" style="color:#1a1a2e;text-decoration:underline;">${escapeHtml(name)}</a>`;
+  const truncate = (value: string, max: number): string =>
+    value.length > max ? `${value.slice(0, max - 1).trimEnd()}…` : value;
+
+  // Name links out to the workflow; the trailing arrow signals it's clickable.
+  // title carries the full (untruncated) name as a hover tooltip.
+  const nameLink = (
+    id: string,
+    name: string,
+    fullName: string = name
+  ): string =>
+    `<a href="${workflowUrl(id)}" title="${escapeHtml(fullName)}" style="color:#1a1a2e;text-decoration:underline;">${escapeHtml(name)}</a><span style="color:#b5b5b5;">&nbsp;&#8599;</span>`;
+
+  // One header row labels the otherwise-bare right column; rows themselves carry
+  // no dividers so the link underlines aren't doubled up.
+  const tableHeader = (rightLabel: string, rightColor = "#999"): string =>
+    `<tr><th align="left" style="color:#999;font-size:11px;font-weight:600;letter-spacing:0.4px;text-transform:uppercase;padding:0 0 6px;border-bottom:1px solid #eee;">Workflow</th><th align="right" style="color:${rightColor};font-size:11px;font-weight:600;letter-spacing:0.4px;text-transform:uppercase;padding:0 0 6px;border-bottom:1px solid #eee;">${rightLabel}</th></tr>`;
 
   const failingRows = topFailing.length
     ? topFailing
-        .map(
-          (w) =>
-            `<tr><td style="padding:8px 0;border-bottom:1px solid #eee;">${nameLink(
-              w.workflowId,
-              w.name
-            )}</td><td style="padding:8px 0;border-bottom:1px solid #eee;text-align:right;color:#c0392b;">${
-              w.failures
-            }</td></tr>${
-              w.lastError
-                ? `<tr><td colspan="2" style="padding:0 0 8px;color:#999;font-size:12px;">${escapeHtml(
-                    w.lastError
-                  )}</td></tr>`
-                : ""
-            }`
-        )
+        .map((w) => {
+          const errorNote = w.lastError
+            ? ` <span style="color:#999;" title="${escapeHtml(
+                w.lastError
+              )}">- ${escapeHtml(truncate(w.lastError, 42))}</span>`
+            : "";
+          return `<tr><td style="padding:6px 0;">${nameLink(
+            w.workflowId,
+            truncate(w.name, 26),
+            w.name
+          )}${errorNote}</td><td style="padding:6px 0;text-align:right;color:#c0392b;vertical-align:top;">${
+            w.failures
+          }</td></tr>`;
+        })
         .join("")
-    : `<tr><td style="padding:8px 0;color:#999;">No failing workflows.</td></tr>`;
+    : `<tr><td style="padding:6px 0;color:#999;">No failing workflows.</td></tr>`;
 
   const mostExecutedRows = mostExecuted.length
     ? mostExecuted
         .map(
           (w) =>
-            `<tr><td style="padding:8px 0;border-bottom:1px solid #eee;">${nameLink(
+            `<tr><td style="padding:6px 0;">${nameLink(
               w.workflowId,
               w.name
-            )}</td><td style="padding:8px 0;border-bottom:1px solid #eee;text-align:right;">${
+            )}</td><td style="padding:6px 0;text-align:right;">${
               w.runs
             }</td></tr>`
         )
         .join("")
-    : `<tr><td style="padding:8px 0;color:#999;">No executions.</td></tr>`;
+    : `<tr><td style="padding:6px 0;color:#999;">No executions.</td></tr>`;
 
   const html = `
 <!DOCTYPE html>
@@ -747,27 +866,42 @@ KeeperHub - Blockchain Workflow Automation
   </div>
   <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e5e5; border-top: none; border-radius: 0 0 12px 12px; text-align: center;">
     <h2 style="color: #1a1a2e; margin-top: 0;">${escapeHtml(orgName)} workflow digest</h2>
-    <p style="color:#666;">Summary for the last ${period}.</p>
+    <p style="color:#666; margin-bottom:10px;">${summaryLabel}</p>
+    <p style="color:#444; font-size:13px; margin:0 0 4px; line-height:1.8;">${formatUtcStamp(since)}<br><span style="color:#aaa;">to</span><br>${formatUtcStamp(until)}</p>
     <table role="presentation" width="100%" style="border-collapse:collapse; table-layout:fixed; margin:24px 0;">
-      <tr>${statCard(stats.total, "Total runs")}${statCard(`${successRate}%`, "Success rate", "#27ae60")}${statCard(stats.error, "Failed", "#c0392b")}</tr>
+      <tr>${statCard(stats.total, "Total runs")}${statCard(stats.distinctWorkflows, "Workflows run")}</tr>
     </table>
     <table role="presentation" width="100%" style="border-collapse:collapse; table-layout:fixed; margin:0 0 24px;">
       <tr>${onchainCards.join("")}</tr>
     </table>
-    <h3 style="color:#1a1a2e;">Most executed workflows</h3>
-    <table style="width:100%; border-collapse:collapse; text-align:left;">${mostExecutedRows}</table>
-    <h3 style="color:#1a1a2e;">Top failing workflows</h3>
-    <table style="width:100%; border-collapse:collapse; text-align:left;">${failingRows}</table>
+    <div style="text-align:left;">
+      <p style="margin:0 0 10px;"><span style="color:#27ae60; font-weight:bold; font-size:17px;">Succeeded: ${stats.success} (${successRate}%)</span> <span style="color:#999; font-size:13px;">- Most executed workflows</span></p>
+      <table style="width:100%; border-collapse:collapse;">${tableHeader("Runs")}${mostExecutedRows}</table>
+    </div>
+    <div style="text-align:left; margin-top:28px;">
+      <p style="margin:0 0 10px;"><span style="color:#c0392b; font-weight:bold; font-size:17px;">Failed: ${stats.error} (${failRate}%)</span> <span style="color:#999; font-size:13px;">- Top failing workflows</span></p>
+      <table style="width:100%; border-collapse:collapse;">${tableHeader("Failures", "#c0392b")}${failingRows}</table>
+    </div>
     <div style="margin:30px 0 0;">
       <a href="${appUrl}/analytics" style="display:inline-block; background:#1a1a2e; color:#fff; padding:12px 24px; border-radius:8px; text-decoration:none;">View runs</a>
     </div>
   </div>
-  <div style="text-align: center; padding: 20px; color: #999; font-size: 12px;">
+  <div style="text-align: center; padding: 24px 20px; color: #999; font-size: 12px;">
+    <table role="presentation" align="center" style="margin:0 auto 12px;"><tr>${DIGEST_SOCIAL_LINKS.map(
+      (s) =>
+        `<td style="padding:0 8px;"><a href="${s.url}" target="_blank" rel="noopener"><img src="cid:${s.icon}" alt="${s.name}" width="20" height="20" style="display:block;" /></a></td>`
+    ).join("")}</tr></table>
     <p style="margin: 0;">KeeperHub - Blockchain Workflow Automation</p>
   </div>
 </body>
 </html>
 `.trim();
 
-  return await sendEmail({ to, subject, text, html });
+  return await sendEmail({
+    to,
+    subject,
+    text,
+    html,
+    attachments: getDigestSocialAttachments(),
+  });
 }

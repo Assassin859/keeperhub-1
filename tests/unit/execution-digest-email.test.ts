@@ -15,11 +15,14 @@ function baseData() {
     to: "owner@example.com",
     orgName: "Acme",
     cadence: "daily" as const,
+    since: new Date("2026-06-08T14:00:00.000Z"),
+    until: new Date("2026-06-09T14:00:00.000Z"),
     appUrl: "https://app.keeperhub.com",
     stats: {
       total: 5,
       success: 3,
       error: 2,
+      distinctWorkflows: 2,
       transactionCount: 4,
       gasUsedWei: "0",
     },
@@ -76,5 +79,48 @@ describe("sendWorkflowExecutionDigestEmail", () => {
     const content = sentContent();
     expect(content).toContain("https://app.keeperhub.com/workflows/wf-fail");
     expect(content).toContain("https://app.keeperhub.com/workflows/wf-run");
+  });
+
+  it("shows the explicit UTC period window in DD/MM/YY format", async () => {
+    await sendWorkflowExecutionDigestEmail(baseData());
+    const content = sentContent();
+    expect(content).toContain("08/06/26 14:00 UTC to 09/06/26 14:00 UTC");
+  });
+
+  it("uses a professional cadence label", async () => {
+    await sendWorkflowExecutionDigestEmail(baseData());
+    expect(sentContent()).toContain("Daily summary");
+  });
+
+  it("reports successes and failures as both count and percentage", async () => {
+    await sendWorkflowExecutionDigestEmail(baseData());
+    const content = sentContent();
+    expect(content).toContain("Succeeded: 3 (60%)");
+    expect(content).toContain("Failed: 2 (40%)");
+  });
+
+  it("reports the number of distinct workflows run", async () => {
+    await sendWorkflowExecutionDigestEmail(baseData());
+    const content = sentContent();
+    expect(content).toContain("Workflows run");
+  });
+
+  it("includes the social links in the footer", async () => {
+    await sendWorkflowExecutionDigestEmail(baseData());
+    const content = sentContent();
+    expect(content).toContain("https://discord.gg/keeperhub");
+    expect(content).toContain("https://x.com/KeeperHubApp");
+    expect(content).not.toContain("mailto:");
+  });
+
+  it("attaches the social icons inline (cid) so they render without hosting", async () => {
+    await sendWorkflowExecutionDigestEmail(baseData());
+    const body = JSON.parse(mockFetch.mock.calls[0]?.[1]?.body ?? "{}");
+    const ids = (body.attachments ?? []).map(
+      (a: { content_id: string }) => a.content_id
+    );
+    expect(ids).toContain("discord");
+    expect(ids).toContain("telegram");
+    expect(sentContent()).toContain('src="cid:discord"');
   });
 });

@@ -1,12 +1,14 @@
 /**
  * Scheduled workflow execution digest (paid-only email).
  *
- * Sends each opted-in org a daily/weekly summary of its workflow executions and
- * failures to the subscribed members. Authenticated as an internal service
- * (X-Service-Key / HMAC) and invoked by the `execution-digest` k8s CronJob, which
- * runs daily at 14:00 UTC via deploy/scripts/digest-cron.sh. Daily-cadence orgs
- * send every run; weekly-cadence orgs send only on Tuesdays, so weekly digests
- * land Tuesday 14:00 UTC (mid-week mornings see the best engagement).
+ * Sends each opted-in org a summary of its workflow executions and failures to
+ * the subscribed members, for each cadence the org subscribes to. Authenticated
+ * as an internal service (X-Service-Key / HMAC) and invoked by the
+ * `execution-digest` k8s CronJob, which runs daily at 14:00 UTC via
+ * deploy/scripts/digest-cron.sh. Daily cadence sends every run; weekly sends
+ * only on Tuesdays; monthly sends only on the 1st (reporting the previous
+ * calendar month) -- so weekly digests land Tuesday 14:00 UTC and monthly
+ * digests land the 1st at 14:00 UTC.
  */
 import { and, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
@@ -21,8 +23,9 @@ import { sendWorkflowExecutionDigestEmail } from "@/lib/email";
 import { isFeatureEnabledForOrg } from "@/lib/features/server";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import type { DigestCadence } from "@/lib/notifications/execution-digest";
 import {
-  digestWindowStart,
+  digestWindow,
   getOrgExecutionDigest,
   isDigestDue,
   SUBSCRIBABLE_ROLES,
@@ -33,15 +36,15 @@ const FEATURE_ID = "notifications.execution-digest" as const;
 type DigestRow = {
   organizationId: string;
   orgName: string;
-  cadence: "daily" | "weekly";
+  cadences: DigestCadence[];
   subscriberUserIds: string[];
-  lastSentAt: Date | null;
+  lastSent: Partial<Record<DigestCadence, string>>;
 };
 
 type NotifiedOrg = {
   organizationId: string;
   name: string;
-  cadence: "daily" | "weekly";
+  cadences: DigestCadence[];
   recipients: number;
 };
 
@@ -72,19 +75,15 @@ async function processOrg(
   row: DigestRow,
   now: Date
 ): Promise<NotifiedOrg | null> {
-  if (!isDigestDue(row.cadence, row.lastSentAt, now)) {
+  const dueCadences = row.cadences.filter((cadence) => {
+    const last = row.lastSent[cadence];
+    return isDigestDue(cadence, last ? new Date(last) : null, now);
+  });
+  if (dueCadences.length === 0) {
     return null;
   }
   // Re-check plan at send time so a downgraded org stops receiving digests.
   if (!(await isFeatureEnabledForOrg(FEATURE_ID, row.organizationId))) {
-    return null;
-  }
-
-  const since = digestWindowStart(row.cadence, now);
-  const digest = await getOrgExecutionDigest(row.organizationId, since, now);
-  if (digest.total === 0) {
-    // No activity this window; send nothing and leave lastSentAt so the next
-    // run re-evaluates once there is something to report.
     return null;
   }
 
@@ -94,34 +93,63 @@ async function processOrg(
   );
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://app.keeperhub.com";
 
-  for (const to of emails) {
-    await sendWorkflowExecutionDigestEmail({
-      to,
-      orgName: row.orgName,
-      cadence: row.cadence,
-      appUrl,
-      stats: {
-        total: digest.total,
-        success: digest.success,
-        error: digest.error,
-        transactionCount: digest.transactionCount,
-        gasUsedWei: digest.gasUsedWei,
-        sponsoredTransactionCount: digest.sponsoredTransactionCount,
-      },
-      topFailing: digest.topFailing,
-      mostExecuted: digest.mostExecuted,
-    });
+  const nextLastSent = { ...row.lastSent };
+  const sentCadences: DigestCadence[] = [];
+
+  for (const cadence of dueCadences) {
+    const { since, until } = digestWindow(cadence, now);
+    const digest = await getOrgExecutionDigest(
+      row.organizationId,
+      since,
+      until
+    );
+    if (digest.total === 0) {
+      // No activity this window; send nothing and leave this cadence's last-sent
+      // so the next run re-evaluates once there is something to report.
+      continue;
+    }
+
+    for (const to of emails) {
+      await sendWorkflowExecutionDigestEmail({
+        to,
+        orgName: row.orgName,
+        cadence,
+        since,
+        until,
+        appUrl,
+        stats: {
+          total: digest.total,
+          success: digest.success,
+          error: digest.error,
+          distinctWorkflows: digest.distinctWorkflows,
+          transactionCount: digest.transactionCount,
+          gasUsedWei: digest.gasUsedWei,
+          sponsoredTransactionCount: digest.sponsoredTransactionCount,
+        },
+        topFailing: digest.topFailing,
+        mostExecuted: digest.mostExecuted,
+      });
+    }
+
+    nextLastSent[cadence] = now.toISOString();
+    sentCadences.push(cadence);
+  }
+
+  if (sentCadences.length === 0) {
+    return null;
   }
 
   await db
     .update(workflowExecutionDigestSettings)
-    .set({ lastSentAt: now, updatedAt: now })
-    .where(eq(workflowExecutionDigestSettings.organizationId, row.organizationId));
+    .set({ lastSent: nextLastSent, updatedAt: now })
+    .where(
+      eq(workflowExecutionDigestSettings.organizationId, row.organizationId)
+    );
 
   return {
     organizationId: row.organizationId,
     name: row.orgName,
-    cadence: row.cadence,
+    cadences: sentCadences,
     recipients: emails.length,
   };
 }
@@ -146,9 +174,9 @@ export async function GET(request: Request): Promise<NextResponse> {
       .select({
         organizationId: workflowExecutionDigestSettings.organizationId,
         orgName: organization.name,
-        cadence: workflowExecutionDigestSettings.cadence,
+        cadences: workflowExecutionDigestSettings.cadences,
         subscriberUserIds: workflowExecutionDigestSettings.subscriberUserIds,
-        lastSentAt: workflowExecutionDigestSettings.lastSentAt,
+        lastSent: workflowExecutionDigestSettings.lastSent,
       })
       .from(workflowExecutionDigestSettings)
       .innerJoin(
@@ -191,9 +219,6 @@ export async function GET(request: Request): Promise<NextResponse> {
       error,
       { endpoint: "/api/internal/execution-digest", operation: "get" }
     );
-    return NextResponse.json(
-      { error: "Digest run failed" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Digest run failed" }, { status: 500 });
   }
 }
