@@ -25,11 +25,15 @@ export type SettingChange = {
 
 export type NodeRef = { id: string; label: string; nodeType: string };
 
+export type ConfigChange = { key: string; before: string; after: string };
+
 export type NodeFieldDelta = {
   field: "name" | "description" | "type" | "configuration" | "enabled";
   before?: string;
   after?: string;
   configKeys?: string[];
+  // Per-field before/after for configuration changes (values truncated).
+  configChanges?: ConfigChange[];
 };
 
 export type NodeFieldChange = {
@@ -87,12 +91,31 @@ function byId(nodes: AnyRecord[]): Map<string, AnyRecord> {
   return map;
 }
 
-function changedConfigKeys(before: AnyRecord, after: AnyRecord): string[] {
+const MAX_VALUE_LEN = 80;
+
+function shortConfigValue(value: unknown): string {
+  if (value === undefined || value === null || value === "") {
+    return "empty";
+  }
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  return text.length > MAX_VALUE_LEN
+    ? `${text.slice(0, MAX_VALUE_LEN - 1)}…`
+    : text;
+}
+
+function changedConfigDetails(
+  before: AnyRecord,
+  after: AnyRecord
+): ConfigChange[] {
   const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
-  const changed: string[] = [];
+  const changed: ConfigChange[] = [];
   for (const key of keys) {
     if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
-      changed.push(key);
+      changed.push({
+        key,
+        before: shortConfigValue(before[key]),
+        after: shortConfigValue(after[key]),
+      });
     }
   }
   return changed;
@@ -128,9 +151,13 @@ function buildNodeDeltas(
 
   const bConfig = (bd.config ?? {}) as AnyRecord;
   const aConfig = (ad.config ?? {}) as AnyRecord;
-  const configKeys = changedConfigKeys(bConfig, aConfig);
-  if (configKeys.length > 0) {
-    deltas.push({ field: "configuration", configKeys });
+  const configChanges = changedConfigDetails(bConfig, aConfig);
+  if (configChanges.length > 0) {
+    deltas.push({
+      field: "configuration",
+      configKeys: configChanges.map((c) => c.key),
+      configChanges,
+    });
   }
 
   const bEnabled = bd.enabled ?? true;

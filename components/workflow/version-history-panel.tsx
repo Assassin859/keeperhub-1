@@ -179,6 +179,25 @@ function buildChangeItems(diff: VersionDiff): ChangeItem[] {
   }
   for (const n of diff.nodesChanged) {
     for (const d of n.deltas) {
+      // Expand a configuration change into one row per field, showing the
+      // actual before -> after value (older versions without per-field detail
+      // fall back to the key summary in nodeDeltaItem).
+      if (d.field === "configuration" && d.configChanges?.length) {
+        for (const c of d.configChanges) {
+          items.push({
+            key: `cfg-${n.id}-${c.key}`,
+            kind: "change",
+            content: (
+              <span className="inline-flex flex-wrap items-center gap-1">
+                {cap(n.nodeType)} <Quoted value={n.label} />
+                <span className="font-medium">{c.key}</span>:{" "}
+                <Quoted value={c.before} /> <Arrow /> <Quoted value={c.after} />
+              </span>
+            ),
+          });
+        }
+        continue;
+      }
       items.push(nodeDeltaItem(n, d));
     }
   }
