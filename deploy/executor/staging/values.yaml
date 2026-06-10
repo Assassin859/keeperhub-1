@@ -116,6 +116,10 @@ env:
     type: parameterStore
     name: turnkey-api-private-key
     parameter_name: /eks/techops-staging/keeperhub/turnkey-api-private-key
+  TURNKEY_ORGANIZATION_ID:
+    type: parameterStore
+    name: turnkey-organization-id
+    parameter_name: /eks/techops-staging/keeperhub/turnkey-organization-id
   CHAIN_RPC_CONFIG:
     type: parameterStore
     name: chain-rpc-config
@@ -139,6 +143,9 @@ env:
   # SQS-triggered runs (schedule / block / event) on the monthly tier.
   # Must mirror NEXT_PUBLIC_BILLING_ENABLED in deploy/keeperhub/staging/values.yaml.
   NEXT_PUBLIC_BILLING_ENABLED:
+    type: kv
+    value: "true"
+  NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED:
     type: kv
     value: "true"
   # Gas credit caps per plan (cents, server-only)
