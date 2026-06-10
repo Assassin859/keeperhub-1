@@ -72,10 +72,28 @@ function configFieldLabel(
   return field?.label ?? key;
 }
 
-function ConfigValue({ value }: { value: string }): React.ReactElement {
+// A before/after value chip in a config diff: old values read as removed
+// (red), new values as added (green); an absent value is a faint placeholder
+// rather than a chip, so it never looks like a disabled control.
+function DiffValue({
+  value,
+  tone,
+}: {
+  value: string;
+  tone: "before" | "after";
+}): React.ReactElement {
+  if (!value || value === "empty") {
+    return <span className="text-muted-foreground/60 italic">empty</span>;
+  }
+  const cls =
+    tone === "before"
+      ? "bg-destructive/10 text-destructive ring-1 ring-destructive/20"
+      : "bg-keeperhub-green/10 text-keeperhub-green ring-1 ring-keeperhub-green/20";
   return (
-    <span className="break-all rounded bg-muted px-1.5 py-0.5 font-mono text-muted-foreground">
-      {value || "empty"}
+    <span
+      className={`break-all rounded px-1.5 py-0.5 font-mono leading-relaxed ${cls}`}
+    >
+      {value}
     </span>
   );
 }
@@ -216,18 +234,18 @@ function buildChangeItems(diff: VersionDiff): ChangeItem[] {
             key: `cfg-${n.id}-${c.key}`,
             kind: "change",
             content: (
-              <span className="flex flex-col gap-1">
-                <span>
+              <span className="flex flex-col gap-1.5">
+                <span className="text-muted-foreground">
                   {cap(n.nodeType)} <Quoted value={n.label} />{" "}
-                  <span className="text-muted-foreground">·</span>{" "}
-                  <span className="font-medium">
+                  <span className="px-0.5">·</span>{" "}
+                  <span className="font-medium text-foreground">
                     {configFieldLabel(n.actionType, c.key)}
                   </span>
                 </span>
-                <span className="flex flex-wrap items-center gap-1.5">
-                  <ConfigValue value={c.before} />
+                <span className="flex flex-wrap items-center gap-2">
+                  <DiffValue tone="before" value={c.before} />
                   <Arrow />
-                  <ConfigValue value={c.after} />
+                  <DiffValue tone="after" value={c.after} />
                 </span>
               </span>
             ),
