@@ -4,7 +4,7 @@
 #
 # Usage: ./ramp-until-breach.sh <base_url> [threshold%] [step_size] [step_duration] [max_vus]
 # Env: TEST_API_KEY, CF_ACCESS_CLIENT_ID, CF_ACCESS_CLIENT_SECRET,
-#      LOAD_TEST_CAPTCHA_BYPASS_TOKEN
+#      LOAD_TEST_BYPASS_TOKEN, LOAD_TEST_USER_PASSWORD
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -50,7 +50,8 @@ while [ "$current_vus" -le "$MAX_VUS" ]; do
     -e TEST_API_KEY="${TEST_API_KEY:-}" \
     -e CF_ACCESS_CLIENT_ID="${CF_ACCESS_CLIENT_ID:-}" \
     -e CF_ACCESS_CLIENT_SECRET="${CF_ACCESS_CLIENT_SECRET:-}" \
-    -e LOAD_TEST_CAPTCHA_BYPASS_TOKEN="${LOAD_TEST_CAPTCHA_BYPASS_TOKEN:-}" \
+    -e LOAD_TEST_BYPASS_TOKEN="${LOAD_TEST_BYPASS_TOKEN:-}" \
+    -e LOAD_TEST_USER_PASSWORD="${LOAD_TEST_USER_PASSWORD:-}" \
     -e K6_SCENARIO=ci \
     --no-usage-report \
     2>&1 | tee "$output_file" || tier_exit=$?

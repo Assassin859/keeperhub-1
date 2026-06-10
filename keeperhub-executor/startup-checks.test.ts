@@ -4,6 +4,8 @@ import { assertTurnkeyEnvForActiveWallets } from "./startup-checks";
 const PUBLIC_KEY_PATTERN = /TURNKEY_API_PUBLIC_KEY/;
 const PRIVATE_KEY_PATTERN = /TURNKEY_API_PRIVATE_KEY/;
 const BOTH_KEYS_PATTERN = /TURNKEY_API_PUBLIC_KEY.*TURNKEY_API_PRIVATE_KEY/;
+const ORGANIZATION_ID_PATTERN = /TURNKEY_ORGANIZATION_ID/;
+const CONNECTION_REFUSED_PATTERN = /connection refused/;
 
 type AssertDb = Parameters<typeof assertTurnkeyEnvForActiveWallets>[0];
 
@@ -42,6 +44,7 @@ describe("assertTurnkeyEnvForActiveWallets", () => {
     const {
       TURNKEY_API_PUBLIC_KEY: _pub,
       TURNKEY_API_PRIVATE_KEY: _priv,
+      TURNKEY_ORGANIZATION_ID: _org,
       K8S_NAMESPACE: _ns,
       ...rest
     } = originalEnv;
@@ -58,9 +61,10 @@ describe("assertTurnkeyEnvForActiveWallets", () => {
     await expect(assertTurnkeyEnvForActiveWallets(db)).resolves.toBeUndefined();
   });
 
-  it("resolves when active Turnkey wallets exist and both env vars are set", async () => {
+  it("resolves when active Turnkey wallets exist and all env vars are set", async () => {
     process.env.TURNKEY_API_PUBLIC_KEY = "pub-test";
     process.env.TURNKEY_API_PRIVATE_KEY = "priv-test";
+    process.env.TURNKEY_ORGANIZATION_ID = "org-test";
     const db = makeDb([{ id: "wallet-1" }]);
 
     await expect(assertTurnkeyEnvForActiveWallets(db)).resolves.toBeUndefined();
@@ -68,6 +72,7 @@ describe("assertTurnkeyEnvForActiveWallets", () => {
 
   it("throws naming the missing public key when only private is set", async () => {
     process.env.TURNKEY_API_PRIVATE_KEY = "priv-test";
+    process.env.TURNKEY_ORGANIZATION_ID = "org-test";
     const db = makeDb([{ id: "wallet-1" }]);
 
     await expect(assertTurnkeyEnvForActiveWallets(db)).rejects.toThrow(
@@ -77,6 +82,7 @@ describe("assertTurnkeyEnvForActiveWallets", () => {
 
   it("throws naming the missing private key when only public is set", async () => {
     process.env.TURNKEY_API_PUBLIC_KEY = "pub-test";
+    process.env.TURNKEY_ORGANIZATION_ID = "org-test";
     const db = makeDb([{ id: "wallet-1" }]);
 
     await expect(assertTurnkeyEnvForActiveWallets(db)).rejects.toThrow(
@@ -84,7 +90,18 @@ describe("assertTurnkeyEnvForActiveWallets", () => {
     );
   });
 
-  it("throws naming both missing vars together", async () => {
+  it("throws naming the missing organization id when only keys are set", async () => {
+    process.env.TURNKEY_API_PUBLIC_KEY = "pub-test";
+    process.env.TURNKEY_API_PRIVATE_KEY = "priv-test";
+    const db = makeDb([{ id: "wallet-1" }]);
+
+    await expect(assertTurnkeyEnvForActiveWallets(db)).rejects.toThrow(
+      ORGANIZATION_ID_PATTERN
+    );
+  });
+
+  it("throws naming both missing keys together", async () => {
+    process.env.TURNKEY_ORGANIZATION_ID = "org-test";
     const db = makeDb([{ id: "wallet-1" }]);
 
     await expect(assertTurnkeyEnvForActiveWallets(db)).rejects.toThrow(
@@ -95,6 +112,7 @@ describe("assertTurnkeyEnvForActiveWallets", () => {
   it("treats empty-string env as missing", async () => {
     process.env.TURNKEY_API_PUBLIC_KEY = "";
     process.env.TURNKEY_API_PRIVATE_KEY = "";
+    process.env.TURNKEY_ORGANIZATION_ID = "org-test";
     const db = makeDb([{ id: "wallet-1" }]);
 
     await expect(assertTurnkeyEnvForActiveWallets(db)).rejects.toThrow(
@@ -113,7 +131,7 @@ describe("assertTurnkeyEnvForActiveWallets", () => {
     const db = makeFailingDb(new Error("connection refused"));
 
     await expect(assertTurnkeyEnvForActiveWallets(db)).rejects.toThrow(
-      /connection refused/
+      CONNECTION_REFUSED_PATTERN
     );
   });
 
