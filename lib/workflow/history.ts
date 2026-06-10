@@ -83,6 +83,13 @@ export async function recordWorkflowSnapshot(args: {
     // the timeline can show each version's changes without re-deriving them.
     const change = before ? computeVersionDiff(before, after) : null;
 
+    // Don't record a no-op version: an autosave that only moved a node (or
+    // changed nothing meaningful) produces an empty diff. Skipping these keeps
+    // the timeline to real edits. The first version (no `before`) always lands.
+    if (before && change && !change.hasChanges) {
+      return;
+    }
+
     await db.insert(workflowHistory).values({
       workflowId,
       organizationId: actor.organizationId,

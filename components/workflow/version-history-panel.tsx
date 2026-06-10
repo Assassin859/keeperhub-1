@@ -314,7 +314,7 @@ export function VersionHistoryPanel(): React.ReactElement | null {
     loading,
     error,
   } = usePaginatedResource<WorkflowVersionSummary>(
-    (p) => api.workflow.getHistory(workflowId ?? "", { page: p }),
+    (p) => api.workflow.getHistory(workflowId ?? "", { page: p, limit: 10 }),
     // Reopening the panel (open toggling) restarts at the newest page.
     `${workflowId}|${open}`,
     { enabled: open && !!workflowId }
