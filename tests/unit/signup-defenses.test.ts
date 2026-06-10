@@ -192,6 +192,7 @@ describe("signup defenses: load-test captcha bypass", () => {
 
   it("passes through when the bypass header matches the env token", async () => {
     vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("CI", "");
     process.env.TURNSTILE_SECRET_KEY = "test-secret";
     process.env.LOAD_TEST_CAPTCHA_BYPASS_TOKEN = BYPASS_TOKEN;
     const plugin = await loadCaptchaPlugin();
@@ -209,6 +210,7 @@ describe("signup defenses: load-test captcha bypass", () => {
 
   it("delegates to the underlying captcha check when no bypass header is sent", async () => {
     vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("CI", "");
     process.env.TURNSTILE_SECRET_KEY = "test-secret";
     process.env.LOAD_TEST_CAPTCHA_BYPASS_TOKEN = BYPASS_TOKEN;
     const plugin = await loadCaptchaPlugin();
@@ -223,6 +225,7 @@ describe("signup defenses: load-test captcha bypass", () => {
 
   it("delegates when the bypass header is the same length but the wrong value", async () => {
     vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("CI", "");
     process.env.TURNSTILE_SECRET_KEY = "test-secret";
     process.env.LOAD_TEST_CAPTCHA_BYPASS_TOKEN = BYPASS_TOKEN;
     const plugin = await loadCaptchaPlugin();
@@ -241,6 +244,7 @@ describe("signup defenses: load-test captcha bypass", () => {
 
   it("delegates when the bypass header is the wrong length", async () => {
     vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("CI", "");
     process.env.TURNSTILE_SECRET_KEY = "test-secret";
     process.env.LOAD_TEST_CAPTCHA_BYPASS_TOKEN = BYPASS_TOKEN;
     const plugin = await loadCaptchaPlugin();
@@ -258,6 +262,7 @@ describe("signup defenses: load-test captcha bypass", () => {
 
   it("ignores the bypass header entirely when the env token is unset", async () => {
     vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("CI", "");
     process.env.TURNSTILE_SECRET_KEY = "test-secret";
     // LOAD_TEST_CAPTCHA_BYPASS_TOKEN intentionally left unset (production posture)
     const plugin = await loadCaptchaPlugin();
