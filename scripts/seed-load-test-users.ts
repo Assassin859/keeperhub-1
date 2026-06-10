@@ -34,7 +34,7 @@ async function seedUser(vuId: number, password: string): Promise<"created" | "sk
       emailVerified: true,
       createdAt: now,
       updatedAt: now,
-      twoFactorEnabled: true,
+      twoFactorEnabled: false,
     });
     await tx.insert(accounts).values({
       id: accountId,
