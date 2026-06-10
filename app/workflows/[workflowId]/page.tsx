@@ -59,6 +59,7 @@ import {
   previewVersionAtom,
   propertiesPanelActiveTabAtom,
   rightPanelWidthAtom,
+  rightPanelWidthPctAtom,
   selectedExecutionIdAtom,
   selectedNodeAtom,
   triggerExecuteAtom,
@@ -232,8 +233,9 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
     }
   }, [session]);
 
-  // Panel width state for resizing
-  const [panelWidth, setPanelWidth] = useState(30); // default percentage
+  // Panel width (viewport %), shared with the version-history panel so the
+  // two right-docked panels stay the same size and resizing keeps them in sync.
+  const [panelWidth, setPanelWidth] = useAtom(rightPanelWidthPctAtom);
   // Start visible if sidebar has already been shown (switching between workflows)
   const [panelVisible, setPanelVisible] = useState(hasSidebarBeenShown);
   const [isDraggingResize, setIsDraggingResize] = useState(false);
@@ -265,7 +267,7 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
     if (collapsedCookie) {
       setPanelCollapsed(collapsedCookie.split("=")[1] === "true");
     }
-  }, [setPanelCollapsed]);
+  }, [setPanelCollapsed, setPanelWidth]);
 
   // Save sidebar width to cookie when it changes (skip initial render)
   const hasInitialized = useRef(false);
@@ -347,35 +349,38 @@ const WorkflowEditor = ({ workflowId }: WorkflowEditorProps) => {
   }, [isMobile, setRightPanelWidth, panelWidth, panelVisible, panelCollapsed]);
 
   // Handle panel resize
-  const handleResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    isResizing.current = true;
-    setIsDraggingResize(true);
+  const handleResizeStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      isResizing.current = true;
+      setIsDraggingResize(true);
 
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      if (!isResizing.current) {
-        return;
-      }
-      const newWidth =
-        ((window.innerWidth - moveEvent.clientX) / window.innerWidth) * 100;
-      // Clamp between 20% and 50%
-      setPanelWidth(Math.min(50, Math.max(20, newWidth)));
-    };
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        if (!isResizing.current) {
+          return;
+        }
+        const newWidth =
+          ((window.innerWidth - moveEvent.clientX) / window.innerWidth) * 100;
+        // Clamp between 20% and 50%
+        setPanelWidth(Math.min(50, Math.max(20, newWidth)));
+      };
 
-    const handleMouseUp = () => {
-      isResizing.current = false;
-      setIsDraggingResize(false);
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    };
+      const handleMouseUp = () => {
+        isResizing.current = false;
+        setIsDraggingResize(false);
+        document.removeEventListener("mousemove", handleMouseMove);
+        document.removeEventListener("mouseup", handleMouseUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      };
 
-    document.addEventListener("mousemove", handleMouseMove);
-    document.addEventListener("mouseup", handleMouseUp);
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-  }, []);
+      document.addEventListener("mousemove", handleMouseMove);
+      document.addEventListener("mouseup", handleMouseUp);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    },
+    [setPanelWidth]
+  );
 
   // Ref to track polling interval
   const executionPollingIntervalRef = useRef<NodeJS.Timeout | null>(null);

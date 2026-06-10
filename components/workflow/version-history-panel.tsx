@@ -3,16 +3,16 @@
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   ArrowRight,
+  ChevronRight,
   Clock,
   GitBranch,
   Minus,
   Pencil,
   Plus,
   RotateCcw,
-  X,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ActorAvatar, actorLabel } from "@/components/activity/actor-avatar";
 import { relativeTime } from "@/components/settings/session-format";
@@ -30,6 +30,8 @@ import {
   hasUnsavedChangesAtom,
   nodesAtom,
   previewVersionAtom,
+  rightPanelWidthPctAtom,
+  selectedNodeAtom,
   versionHistoryOpenAtom,
 } from "@/lib/workflow/store";
 import {
@@ -300,6 +302,9 @@ export function VersionHistoryPanel(): React.ReactElement | null {
   const setEdges = useSetAtom(edgesAtom);
   const setHasUnsavedChanges = useSetAtom(hasUnsavedChangesAtom);
   const [previewVersion, setPreviewVersion] = useAtom(previewVersionAtom);
+  const [widthPct, setWidthPct] = useAtom(rightPanelWidthPctAtom);
+  const [selectedNode, setSelectedNode] = useAtom(selectedNodeAtom);
+  const isResizing = useRef(false);
 
   const [versions, setVersions] = useState<WorkflowVersionSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -324,6 +329,21 @@ export function VersionHistoryPanel(): React.ReactElement | null {
       active = false;
     };
   }, [open, workflowId]);
+
+  // Opening history clears any node selection so the panel isn't covering a
+  // config form; a subsequent node click (current version only) then closes
+  // the panel to reveal that node's config for editing.
+  useEffect(() => {
+    if (open) {
+      setSelectedNode(null);
+    }
+  }, [open, setSelectedNode]);
+
+  useEffect(() => {
+    if (open && previewVersion === null && selectedNode) {
+      setOpen(false);
+    }
+  }, [open, previewVersion, selectedNode, setOpen]);
 
   const exitPreview = useCallback(async () => {
     if (previewVersion === null || !workflowId) {
@@ -422,7 +442,31 @@ export function VersionHistoryPanel(): React.ReactElement | null {
     setOpen,
   ]);
 
-  if (!(open && workflowId)) {
+  const handleResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    isResizing.current = true;
+    const onMove = (move: MouseEvent) => {
+      if (!isResizing.current) {
+        return;
+      }
+      const pct = ((window.innerWidth - move.clientX) / window.innerWidth) * 100;
+      setWidthPct(Math.min(50, Math.max(20, pct)));
+    };
+    const onUp = () => {
+      isResizing.current = false;
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  };
+
+  // Keep mounted so open/close slides; only fully unmount when no workflow.
+  if (!workflowId) {
     return null;
   }
 
@@ -432,15 +476,41 @@ export function VersionHistoryPanel(): React.ReactElement | null {
     selected !== null && selected.version !== latestVersion && !!snapshot;
 
   return (
-    <aside className="fixed top-[var(--header-height,60px)] right-0 z-30 flex h-[calc(100vh-var(--header-height,60px))] w-[360px] flex-col border-border border-l bg-card shadow-xl">
-      <div className="flex items-center justify-between border-border border-b px-4 py-3">
-        <div className="flex items-center gap-2">
-          <GitBranch className="size-4 text-muted-foreground" />
-          <h2 className="font-semibold text-sm">Version history</h2>
-        </div>
-        <Button onClick={close} size="icon-sm" variant="ghost">
-          <X className="size-4" />
-        </Button>
+    <aside
+      className="fixed top-[calc(60px+var(--app-banner-height,0px))] right-0 bottom-0 z-30 flex flex-col border-border border-l bg-background shadow-xl transition-transform duration-300 ease-out"
+      style={{
+        width: `${widthPct}%`,
+        transform: open ? "translateX(0)" : "translateX(100%)",
+      }}
+    >
+      {/* Drag handle: resizes both right-docked panels (shared width atom). */}
+      {/* biome-ignore lint/a11y/useSemanticElements: custom resize handle */}
+      <div
+        aria-orientation="vertical"
+        aria-valuenow={widthPct}
+        className="absolute inset-y-0 left-0 z-10 w-3 cursor-col-resize"
+        onMouseDown={handleResizeStart}
+        role="separator"
+        tabIndex={0}
+      >
+        <div className="absolute inset-y-0 left-0 w-px bg-border" />
+        {/* Collapse button mirrors the node-config panel's handle affordance. */}
+        <button
+          className="-translate-x-1/2 absolute top-3 left-0 flex size-6 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
+          onClick={(e) => {
+            e.stopPropagation();
+            close();
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          title="Close version history"
+          type="button"
+        >
+          <ChevronRight className="size-3.5" />
+        </button>
+      </div>
+      <div className="flex items-center gap-2 border-border border-b px-4 py-3">
+        <GitBranch className="size-4 text-muted-foreground" />
+        <h2 className="font-semibold text-sm">Version history</h2>
       </div>
 
       <div className="thin-scrollbar flex-1 overflow-y-auto p-3">

@@ -138,6 +138,10 @@ export const runsRefreshTriggerAtom = atom<number>(0);
 export const showMinimapAtom = atom(false);
 export const selectedExecutionIdAtom = atom<string | null>(null);
 export const rightPanelWidthAtom = atom<string | null>(null);
+// Width (in viewport %) shared by the right-docked editor panels (node config
+// + version history) so they stay the same size and a resize on either keeps
+// them in sync. Clamp 20-50 when writing.
+export const rightPanelWidthPctAtom = atom(30);
 export const isPanelAnimatingAtom = atom<boolean>(false);
 export const hasSidebarBeenShownAtom = atom<boolean>(false);
 export const isSidebarCollapsedAtom = atom<boolean>(false);
