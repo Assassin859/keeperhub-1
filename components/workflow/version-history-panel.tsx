@@ -1,44 +1,36 @@
 "use client";
 
-import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import { useAtom, useAtomValue } from "jotai";
 import {
   ArrowRight,
   ChevronRight,
   Clock,
+  Eye,
   GitBranch,
   Minus,
   Pencil,
   Plus,
-  RotateCcw,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ActorAvatar, actorLabel } from "@/components/activity/actor-avatar";
+import { Pager } from "@/components/activity/pager";
 import { relativeTime } from "@/components/settings/session-format";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  api,
-  type SavedWorkflow,
-  type WorkflowVersionSummary,
-} from "@/lib/api-client";
-import { Pager } from "@/components/activity/pager";
+import { api, type WorkflowVersionSummary } from "@/lib/api-client";
 import { groupByDate } from "@/lib/activity/time-groups";
 import { usePaginatedResource } from "@/lib/hooks/use-paginated-resource";
 import {
   currentWorkflowIdAtom,
-  edgesAtom,
-  hasUnsavedChangesAtom,
-  nodesAtom,
   previewVersionAtom,
   rightPanelWidthPctAtom,
   selectedNodeAtom,
   versionHistoryOpenAtom,
 } from "@/lib/workflow/store";
-import {
-  type VersionDiff,
-} from "@/lib/workflow/version-diff";
+import { useVersionPreview } from "@/lib/workflow/use-version-preview";
+import type { VersionDiff } from "@/lib/workflow/version-diff";
 
 type ChangeItem = {
   key: string;
@@ -235,14 +227,17 @@ function ChangeRow({ item }: { item: ChangeItem }): React.ReactElement {
 function VersionRow({
   version,
   isCurrent,
-  isSelected,
-  onSelect,
+  isPreviewing,
+  onView,
 }: {
   version: WorkflowVersionSummary;
   isCurrent: boolean;
-  isSelected: boolean;
-  onSelect: () => void;
+  isPreviewing: boolean;
+  onView: () => void;
 }): React.ReactElement {
+  // Each row owns its open/closed state. Switching page remounts the rows
+  // (keys change), so they naturally collapse.
+  const [isExpanded, setIsExpanded] = useState(false);
   // The semantic diff vs the previous version is precomputed and stored, so we
   // can show what each version changed without fetching its snapshot. Versions
   // recorded before this format shipped hold a raw diff and are skipped.
@@ -252,9 +247,9 @@ function VersionRow({
     <li>
       <button
         className={`flex w-full items-start gap-2.5 rounded-lg p-2.5 text-left transition-colors hover:bg-muted ${
-          isSelected ? "bg-muted" : ""
+          isExpanded ? "bg-muted" : ""
         }`}
-        onClick={onSelect}
+        onClick={() => setIsExpanded((e) => !e)}
         type="button"
       >
         <ActorAvatar actor={version.changedBy} />
@@ -277,14 +272,36 @@ function VersionRow({
             {relativeTime(version.createdAt)}
           </span>
         </span>
+        <ChevronRight
+          className={`mt-1 size-4 shrink-0 text-muted-foreground transition-transform ${
+            isExpanded ? "rotate-90" : ""
+          }`}
+        />
       </button>
-      {version.previousVersion !== null && items.length > 0 && (
-        <div className="mt-1 mb-1 ml-9 border-border border-l pl-3">
-          <ul className="space-y-1.5 py-1">
-            {items.map((item) => (
-              <ChangeRow item={item} key={item.key} />
-            ))}
-          </ul>
+      {isExpanded && (
+        <div className="mt-1 mb-1 ml-9 space-y-2 border-border border-l pl-3">
+          {items.length > 0 ? (
+            <ul className="space-y-1.5 py-1">
+              {items.map((item) => (
+                <ChangeRow item={item} key={item.key} />
+              ))}
+            </ul>
+          ) : (
+            <p className="py-1 text-muted-foreground text-xs">
+              {version.previousVersion === null
+                ? "Initial version."
+                : "No tracked changes."}
+            </p>
+          )}
+          <Button
+            disabled={isPreviewing}
+            onClick={onView}
+            size="sm"
+            variant="outline"
+          >
+            <Eye className="mr-1.5 size-3.5" />
+            {isPreviewing ? "Viewing on canvas" : "View on canvas"}
+          </Button>
         </div>
       )}
     </li>
@@ -294,17 +311,11 @@ function VersionRow({
 export function VersionHistoryPanel(): React.ReactElement | null {
   const [open, setOpen] = useAtom(versionHistoryOpenAtom);
   const workflowId = useAtomValue(currentWorkflowIdAtom);
-  const setNodes = useSetAtom(nodesAtom);
-  const setEdges = useSetAtom(edgesAtom);
-  const setHasUnsavedChanges = useSetAtom(hasUnsavedChangesAtom);
-  const [previewVersion, setPreviewVersion] = useAtom(previewVersionAtom);
+  const previewVersion = useAtomValue(previewVersionAtom);
   const [widthPct, setWidthPct] = useAtom(rightPanelWidthPctAtom);
   const [selectedNode, setSelectedNode] = useAtom(selectedNodeAtom);
   const isResizing = useRef(false);
-
-  const [selected, setSelected] = useState<WorkflowVersionSummary | null>(null);
-  const [snapshot, setSnapshot] = useState<SavedWorkflow | null>(null);
-  const [restoring, setRestoring] = useState(false);
+  const { preview, exitPreview } = useVersionPreview();
 
   const {
     items: versions,
@@ -319,6 +330,7 @@ export function VersionHistoryPanel(): React.ReactElement | null {
     `${workflowId}|${open}`,
     { enabled: open && !!workflowId }
   );
+
 
   useEffect(() => {
     if (error) {
@@ -341,94 +353,10 @@ export function VersionHistoryPanel(): React.ReactElement | null {
     }
   }, [open, previewVersion, selectedNode, setOpen]);
 
-  const exitPreview = useCallback(async () => {
-    if (previewVersion === null || !workflowId) {
-      return;
-    }
-    try {
-      const live = await api.workflow.getById(workflowId);
-      setNodes(live.nodes);
-      setEdges(live.edges);
-    } catch {
-      // best-effort
-    } finally {
-      setPreviewVersion(null);
-      setHasUnsavedChanges(false);
-    }
-  }, [
-    previewVersion,
-    workflowId,
-    setNodes,
-    setEdges,
-    setPreviewVersion,
-    setHasUnsavedChanges,
-  ]);
-
   const close = useCallback(async () => {
     await exitPreview();
-    setSelected(null);
     setOpen(false);
   }, [exitPreview, setOpen]);
-
-  const select = useCallback(
-    async (v: WorkflowVersionSummary) => {
-      if (!workflowId) {
-        return;
-      }
-      setSelected(v);
-      setSnapshot(null);
-      try {
-        const sel = await api.workflow.getById(workflowId, {
-          version: v.version,
-        });
-        setSnapshot(sel);
-        // Live preview on the canvas (autosave is suppressed while previewing).
-        setPreviewVersion(v.version);
-        setNodes(sel.nodes);
-        setEdges(sel.edges);
-      } catch {
-        toast.error("Failed to load version");
-      }
-    },
-    [workflowId, setPreviewVersion, setNodes, setEdges]
-  );
-
-  const restore = useCallback(async () => {
-    if (!(snapshot && selected && workflowId)) {
-      return;
-    }
-    setRestoring(true);
-    try {
-      await api.workflow.update(workflowId, {
-        name: snapshot.name,
-        description: snapshot.description,
-        nodes: snapshot.nodes,
-        edges: snapshot.edges,
-        visibility: snapshot.visibility,
-        enabled: snapshot.enabled,
-      });
-      setNodes(snapshot.nodes);
-      setEdges(snapshot.edges);
-      setPreviewVersion(null);
-      setHasUnsavedChanges(false);
-      toast.success(`Restored version ${selected.version}`);
-      setOpen(false);
-      setSelected(null);
-    } catch {
-      toast.error("Failed to restore version");
-    } finally {
-      setRestoring(false);
-    }
-  }, [
-    snapshot,
-    selected,
-    workflowId,
-    setNodes,
-    setEdges,
-    setPreviewVersion,
-    setHasUnsavedChanges,
-    setOpen,
-  ]);
 
   const handleResizeStart = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -461,8 +389,6 @@ export function VersionHistoryPanel(): React.ReactElement | null {
   // The newest version only ever appears on page 1 (descending order).
   const latestVersion = page === 1 ? versions[0]?.version : undefined;
   const groups = groupByDate(versions, (v) => v.createdAt);
-  const canRestore =
-    selected !== null && selected.version !== latestVersion && !!snapshot;
 
   return (
     <aside
@@ -534,9 +460,9 @@ export function VersionHistoryPanel(): React.ReactElement | null {
               {group.items.map((v) => (
                 <VersionRow
                   isCurrent={v.version === latestVersion}
-                  isSelected={selected?.version === v.version}
+                  isPreviewing={previewVersion === v.version}
                   key={v.version}
-                  onSelect={() => select(v)}
+                  onView={() => preview(v.version)}
                   version={v}
                 />
               ))}
@@ -548,21 +474,6 @@ export function VersionHistoryPanel(): React.ReactElement | null {
             <Pager meta={meta} onPage={setPage} unit="versions" />
           </div>
         )}
-      </div>
-
-      <div className="border-border border-t p-3">
-        <Button
-          className="w-full"
-          disabled={!canRestore || restoring}
-          onClick={restore}
-        >
-          <RotateCcw className="mr-1.5 size-4" />
-          {restoring
-            ? "Restoring..."
-            : selected && canRestore
-              ? `Restore version ${selected.version}`
-              : "Restore"}
-        </Button>
       </div>
     </aside>
   );
