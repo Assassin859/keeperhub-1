@@ -108,6 +108,73 @@ export const userTrustedIps = pgTable(
   ]
 );
 
+/**
+ * Per-user allowlist of trusted countries. Trust is keyed on the
+ * Cloudflare-attested country (CF-IPCountry), not the IP: once a user has
+ * signed in from a country, later sign-ins from any IP within it pass
+ * without a second MFA round. A country never seen before defers the
+ * session to the /verify-ip dual-factor flow, which inserts the row here
+ * on success.
+ *
+ * The (user_id, country) pair is unique so re-entry from a known country
+ * upserts `last_seen_at` rather than duplicating rows.
+ */
+export const userTrustedCountries = pgTable(
+  "user_trusted_countries",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    country: text("country").notNull(),
+    firstSeenAt: timestamp("first_seen_at").notNull().defaultNow(),
+    lastSeenAt: timestamp("last_seen_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("idx_user_trusted_countries_user_id").on(table.userId),
+    uniqueIndex("idx_user_trusted_countries_user_country").on(
+      table.userId,
+      table.country
+    ),
+  ]
+);
+
+/**
+ * Per-user inventory of devices that have signed in, identified by the
+ * random id carried in the signed `kh_device_id` cookie. A device not
+ * already in this list signing in (from a trusted country) is allowed
+ * through but triggers a courtesy warning email; the row is recorded so
+ * the next sign-in from the same device is silent. `user_agent` stores
+ * the most recent label for the email and active-sessions panel.
+ *
+ * The (user_id, device_id) pair is unique so a repeat sign-in upserts
+ * `last_seen_at` rather than duplicating rows.
+ */
+export const userTrustedDevices = pgTable(
+  "user_trusted_devices",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    deviceId: text("device_id").notNull(),
+    userAgent: text("user_agent"),
+    firstSeenAt: timestamp("first_seen_at").notNull().defaultNow(),
+    lastSeenAt: timestamp("last_seen_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("idx_user_trusted_devices_user_id").on(table.userId),
+    uniqueIndex("idx_user_trusted_devices_user_device").on(
+      table.userId,
+      table.deviceId
+    ),
+  ]
+);
+
 export const twoFactor = pgTable(
   "two_factor",
   {
@@ -821,15 +888,22 @@ export const workflowExecutionDigestSettings = pgTable(
       .primaryKey()
       .references(() => organization.id, { onDelete: "cascade" }),
     enabled: boolean("enabled").notNull().default(false),
-    cadence: text("cadence")
-      .$type<"daily" | "weekly">()
+    // An org can subscribe to any combination of cadences; each one sends on its
+    // own schedule. Defaults to weekly for parity with the original single-choice.
+    cadences: jsonb("cadences")
+      .$type<("daily" | "weekly" | "monthly")[]>()
       .notNull()
-      .default("weekly"),
+      .default(["weekly"]),
     subscriberUserIds: jsonb("subscriber_user_ids")
       .$type<string[]>()
       .notNull()
       .default([]),
-    lastSentAt: timestamp("last_sent_at", { withTimezone: true }),
+    // Last-sent timestamp (ISO string) keyed by cadence, so a daily send does not
+    // suppress the weekly/monthly send and vice versa.
+    lastSent: jsonb("last_sent")
+      .$type<Partial<Record<"daily" | "weekly" | "monthly", string>>>()
+      .notNull()
+      .default({}),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

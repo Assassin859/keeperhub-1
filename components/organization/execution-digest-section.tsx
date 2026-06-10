@@ -7,13 +7,6 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import {
   Tooltip,
@@ -22,14 +15,26 @@ import {
 } from "@/components/ui/tooltip";
 import { useFeature } from "@/hooks/use-features";
 import { isBillingEnabled } from "@/lib/billing/feature-flag";
-import { DIGEST_REQUIRES_SUBSCRIBER_ERROR } from "@/lib/notifications/digest-messages";
+import {
+  DIGEST_REQUIRES_CADENCE_ERROR,
+  DIGEST_REQUIRES_SUBSCRIBER_ERROR,
+} from "@/lib/notifications/digest-messages";
 
-const SCHEDULE_HINT: Record<Cadence, string> = {
-  daily: "Sent every day at 14:00 UTC.",
-  weekly: "Sent every Tuesday at 14:00 UTC.",
-};
+type Cadence = "daily" | "weekly" | "monthly";
 
-type Cadence = "daily" | "weekly";
+const CADENCE_OPTIONS: { value: Cadence; label: string; hint: string }[] = [
+  { value: "daily", label: "Daily", hint: "Sent every day at 14:00 UTC." },
+  {
+    value: "weekly",
+    label: "Weekly",
+    hint: "Sent every Tuesday at 14:00 UTC.",
+  },
+  {
+    value: "monthly",
+    label: "Monthly",
+    hint: "Sent on the 1st of each month at 14:00 UTC.",
+  },
+];
 
 type DigestMember = {
   userId: string;
@@ -40,7 +45,7 @@ type DigestMember = {
 
 type DigestSettingsResponse = {
   enabled: boolean;
-  cadence: Cadence;
+  cadences: Cadence[];
   subscriberUserIds: string[];
   eligible: boolean;
   members: DigestMember[];
@@ -63,7 +68,7 @@ export function ExecutionDigestSection({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [enabled, setEnabled] = useState(false);
-  const [cadence, setCadence] = useState<Cadence>("weekly");
+  const [cadences, setCadences] = useState<Set<Cadence>>(new Set(["weekly"]));
   const [subscribers, setSubscribers] = useState<Set<string>>(new Set());
   const [members, setMembers] = useState<DigestMember[]>([]);
 
@@ -77,7 +82,7 @@ export function ExecutionDigestSection({
           return;
         }
         setEnabled(data.enabled);
-        setCadence(data.cadence);
+        setCadences(new Set(data.cadences));
         setSubscribers(new Set(data.subscriberUserIds));
         setMembers(data.members);
       })
@@ -103,7 +108,23 @@ export function ExecutionDigestSection({
     });
   }, []);
 
+  const toggleCadence = useCallback((value: Cadence, checked: boolean) => {
+    setCadences((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        next.add(value);
+      } else {
+        next.delete(value);
+      }
+      return next;
+    });
+  }, []);
+
   const handleSave = useCallback(async () => {
+    if (enabled && cadences.size === 0) {
+      toast.error(DIGEST_REQUIRES_CADENCE_ERROR);
+      return;
+    }
     if (enabled && subscribers.size === 0) {
       toast.error(DIGEST_REQUIRES_SUBSCRIBER_ERROR);
       return;
@@ -117,7 +138,7 @@ export function ExecutionDigestSection({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             enabled,
-            cadence,
+            cadences: [...cadences],
             subscriberUserIds: [...subscribers],
           }),
         }
@@ -134,7 +155,7 @@ export function ExecutionDigestSection({
     } finally {
       setSaving(false);
     }
-  }, [organizationId, enabled, cadence, subscribers]);
+  }, [organizationId, enabled, cadences, subscribers]);
 
   const heading = (
     <h4 className="font-medium text-muted-foreground text-sm">
@@ -191,31 +212,37 @@ export function ExecutionDigestSection({
         />
       </div>
 
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5">
-          <Label className="text-sm" htmlFor="digest-cadence">
-            Frequency
-          </Label>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Info className="size-3.5 text-muted-foreground" />
-            </TooltipTrigger>
-            <TooltipContent>{SCHEDULE_HINT[cadence]}</TooltipContent>
-          </Tooltip>
+      <div className="space-y-2">
+        <Label className="text-sm">Frequency</Label>
+        <p className="text-muted-foreground text-xs">
+          Pick one or more schedules; each sends its own digest.
+        </p>
+        <div className="space-y-2">
+          {CADENCE_OPTIONS.map((opt) => (
+            <div className="flex items-center gap-2" key={opt.value}>
+              <Checkbox
+                checked={cadences.has(opt.value)}
+                disabled={!enabled || loading || saving}
+                id={`digest-cadence-${opt.value}`}
+                onCheckedChange={(checked) =>
+                  toggleCadence(opt.value, checked === true)
+                }
+              />
+              <Label
+                className="cursor-pointer text-sm"
+                htmlFor={`digest-cadence-${opt.value}`}
+              >
+                {opt.label}
+              </Label>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Info className="size-3.5 text-muted-foreground" />
+                </TooltipTrigger>
+                <TooltipContent>{opt.hint}</TooltipContent>
+              </Tooltip>
+            </div>
+          ))}
         </div>
-        <Select
-          disabled={!enabled || loading || saving}
-          onValueChange={(v) => setCadence(v as Cadence)}
-          value={cadence}
-        >
-          <SelectTrigger className="w-36" id="digest-cadence">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="daily">Daily</SelectItem>
-            <SelectItem value="weekly">Weekly</SelectItem>
-          </SelectContent>
-        </Select>
       </div>
 
       <div className="space-y-2">

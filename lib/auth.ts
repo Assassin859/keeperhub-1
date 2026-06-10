@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { captureMessage } from "@sentry/nextjs";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
@@ -23,15 +23,15 @@ import { isDisposableEmailDomain } from "@/lib/auth-disposable-emails";
 import { DISPOSABLE_EMAIL_REJECTION_MESSAGE } from "@/lib/auth-disposable-emails-message";
 import { isFreshSignup } from "@/lib/auth-notification-guard";
 import { sendInvitationEmail, sendVerificationOTP } from "@/lib/email";
+import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
-  assessIpTrust,
+  assessCountryTrust,
   assessLoginRisk,
   serializeRiskFlags,
-  upsertTrustedIp,
+  upsertTrustedCountry,
 } from "@/lib/security/login-risk";
 import { reportSessionBackstop } from "@/lib/security/session-backstop";
 import { TRUSTED_ORIGINS } from "@/lib/trusted-origins";
-import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { wrapWithSessionTokenHash } from "./auth-session-token-hash";
 import { db } from "./db";
 import {
@@ -48,7 +48,6 @@ import {
   sessions,
   twoFactor as twoFactorTable,
   users,
-  userTrustedIps,
   verifications,
   workflowExecutionLogs,
   workflowExecutions,
@@ -168,14 +167,53 @@ if (captchaRequired && !captchaSecretKey) {
   );
 }
 
+// Optional load-test bypass: when LOAD_TEST_CAPTCHA_BYPASS_TOKEN is set in the
+// environment, wrap the captcha plugin so a request carrying a matching
+// X-Load-Test-Captcha-Bypass header skips the upstream siteverify call. The
+// header value is compared timing-safe. Without the env var (production), the
+// wrapper is a no-op and no bypass path exists. Only the scheduled k6 load
+// test running against staging has both the env var and the matching header.
+type CaptchaPluginInstance = ReturnType<typeof captcha>;
+function withLoadTestBypass(
+  plugin: CaptchaPluginInstance
+): CaptchaPluginInstance {
+  const token = process.env.LOAD_TEST_CAPTCHA_BYPASS_TOKEN;
+  if (!token) {
+    return plugin;
+  }
+  const expected = Buffer.from(token, "utf8");
+  const originalOnRequest = plugin.onRequest;
+  return {
+    ...plugin,
+    onRequest: async (request, ctx) => {
+      const provided = request.headers.get("x-load-test-captcha-bypass");
+      if (provided) {
+        const providedBuf = Buffer.from(provided, "utf8");
+        if (
+          providedBuf.length === expected.length &&
+          timingSafeEqual(providedBuf, expected)
+        ) {
+          ctx.logger.info("captcha bypass header accepted", {
+            endpoint: request.url,
+          });
+          return undefined;
+        }
+      }
+      return await originalOnRequest(request, ctx);
+    },
+  };
+}
+
 const captchaPlugins =
   !captchaSkippedForTests && captchaSecretKey
     ? [
-        captcha({
-          provider: "cloudflare-turnstile",
-          secretKey: captchaSecretKey,
-          endpoints: ["/sign-up/email"],
-        }),
+        withLoadTestBypass(
+          captcha({
+            provider: "cloudflare-turnstile",
+            secretKey: captchaSecretKey,
+            endpoints: ["/sign-up/email"],
+          })
+        ),
       ]
     : [];
 
@@ -524,7 +562,12 @@ export const auth = betterAuth({
               createdAt: new Date(),
             });
           } catch (error) {
-            logSystemError(ErrorCategory.AUTH, "[Auth] Failed to mint org for new user", error, { userId: user.id });
+            logSystemError(
+              ErrorCategory.AUTH,
+              "[Auth] Failed to mint org for new user",
+              error,
+              { userId: user.id }
+            );
             // Re-throw: a user without an org cannot create workflows. Failing
             // signup cleanly here is better than creating a user who hits
             // errors on every subsequent action.
@@ -636,15 +679,15 @@ export const auth = betterAuth({
             return false;
           }
           const risk = await assessLoginRisk(userId);
-          const ipTrust = await assessIpTrust(userId);
-          // When the session is being created from a trusted IP (or
-          // for the user's first-ever attestation) record/refresh it
-          // in user_trusted_ips. This is the only path that auto-adds
-          // an IP without going through /verify-ip; the unique
-          // (user_id, ip) constraint makes the upsert idempotent so a
-          // repeat sign-in from a known IP just bumps last_seen_at.
-          if (ipTrust.ip && ipTrust.trusted) {
-            await upsertTrustedIp(userId, ipTrust.ip, ipTrust.country);
+          const countryTrust = await assessCountryTrust(userId);
+          // When the session is being created from a trusted country (or
+          // for the user's first-ever attestation) record/refresh it in
+          // user_trusted_countries. This is the only path that auto-adds a
+          // country without going through /verify-ip; the unique
+          // (user_id, country) constraint makes the upsert idempotent so a
+          // repeat sign-in from a known country just bumps last_seen_at.
+          if (countryTrust.country && countryTrust.trusted) {
+            await upsertTrustedCountry(userId, countryTrust.country);
           }
           const [userRow] = await db
             .select({ twoFactorEnabled: users.twoFactorEnabled })
@@ -697,7 +740,12 @@ export const auth = betterAuth({
                 .where(eq(sessions.id, session.id));
             }
           } catch (error) {
-            logSystemError(ErrorCategory.AUTH, "[Auth] Failed to set active org on session", error, { sessionId: session.id });
+            logSystemError(
+              ErrorCategory.AUTH,
+              "[Auth] Failed to set active org on session",
+              error,
+              { sessionId: session.id }
+            );
           }
         },
       },

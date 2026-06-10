@@ -4,6 +4,8 @@ const BASE_URL = __ENV.BASE_URL || "http://localhost:3000";
 const TEST_API_KEY = __ENV.TEST_API_KEY || "";
 const CF_ACCESS_CLIENT_ID = __ENV.CF_ACCESS_CLIENT_ID || "";
 const CF_ACCESS_CLIENT_SECRET = __ENV.CF_ACCESS_CLIENT_SECRET || "";
+const LOAD_TEST_CAPTCHA_BYPASS_TOKEN =
+  __ENV.LOAD_TEST_CAPTCHA_BYPASS_TOKEN || "";
 
 export function getBaseUrl() {
   return BASE_URL;
@@ -23,6 +25,10 @@ export function getCommonHeaders() {
   if (CF_ACCESS_CLIENT_ID && CF_ACCESS_CLIENT_SECRET) {
     headers["CF-Access-Client-Id"] = CF_ACCESS_CLIENT_ID;
     headers["CF-Access-Client-Secret"] = CF_ACCESS_CLIENT_SECRET;
+  }
+
+  if (LOAD_TEST_CAPTCHA_BYPASS_TOKEN) {
+    headers["X-Load-Test-Captcha-Bypass"] = LOAD_TEST_CAPTCHA_BYPASS_TOKEN;
   }
 
   return headers;

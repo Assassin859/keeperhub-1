@@ -27,7 +27,7 @@ httpBasicAuth:
 
 image:
   repository: ${ECR_REGISTRY}/keeperhub-docs-staging
-  tag: ${IMAGE_TAG}
+  tag: "${IMAGE_TAG}"
   pullPolicy: Always
 
 deployment:
