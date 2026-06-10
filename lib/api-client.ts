@@ -3,6 +3,7 @@
  * Replaces server actions with API endpoints
  */
 
+import type { CursorPage } from "@/lib/pagination";
 import type { VoteDirection } from "@/lib/workflow/editor/votes";
 import type { WorkflowExportV1 } from "@/lib/workflow/export-schema";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
@@ -90,10 +91,7 @@ export type WorkflowVersionSummary = {
   changedBy: WorkflowVersionActor | null;
 };
 
-export type WorkflowHistoryResponse = {
-  versions: WorkflowVersionSummary[];
-  nextCursor: number | null;
-};
+export type WorkflowHistoryResponse = CursorPage<WorkflowVersionSummary>;
 
 export type VoteResponse = {
   userVote: VoteDirection | null;
@@ -580,16 +578,13 @@ export const workflowApi = {
     ),
 
   // Version history timeline (admin/owner only).
-  getHistory: (id: string, options?: { before?: number; limit?: number }) => {
+  getHistory: (id: string, options?: { limit?: number }) => {
     const params = new URLSearchParams();
-    if (options?.before !== undefined) {
-      params.set("before", String(options.before));
-    }
     if (options?.limit !== undefined) {
       params.set("limit", String(options.limit));
     }
     const qs = params.toString();
-    return apiCall<WorkflowHistoryResponse>(
+    return apiCall<CursorPage<WorkflowVersionSummary>>(
       `/api/workflows/${id}/history${qs ? `?${qs}` : ""}`
     );
   },
@@ -924,7 +919,6 @@ export const securityApi = {
     resourceId?: string;
     action?: string;
     limit?: number;
-    before?: string;
   }) => {
     const qs = new URLSearchParams();
     if (params?.resourceType) {
@@ -939,16 +933,18 @@ export const securityApi = {
     if (params?.limit !== undefined) {
       qs.set("limit", String(params.limit));
     }
-    if (params?.before) {
-      qs.set("before", params.before);
-    }
     const s = qs.toString();
-    return apiCall<{
-      events: SecurityAuditEvent[];
-      nextCursor: string | null;
-    }>(`/api/security/audit${s ? `?${s}` : ""}`);
+    return apiCall<CursorPage<SecurityAuditEvent>>(
+      `/api/security/audit${s ? `?${s}` : ""}`
+    );
   },
 };
+
+// Follow a HATEOAS pagination link (_links.next / _links.prev) from any
+// cursor-paginated endpoint, without reconstructing the cursor client-side.
+export function followPage<T>(href: string): Promise<CursorPage<T>> {
+  return apiCall<CursorPage<T>>(href);
+}
 // Export all APIs as a single object
 export const api = {
   ai: aiApi,

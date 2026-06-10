@@ -1,22 +1,12 @@
-import { and, desc, eq, inArray, lt } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, lt } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { users, workflowHistory, workflows } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import { buildCursorPage, parseCursorRequest } from "@/lib/pagination";
 import { isOrgAdmin } from "@/lib/security/org-role";
 import { getWorkflowAccess } from "@/lib/workflow/access";
-
-const DEFAULT_LIMIT = 50;
-const MAX_LIMIT = 200;
-
-function parseLimit(raw: string | null): number {
-  const parsed = Number.parseInt(raw ?? "", 10);
-  if (Number.isNaN(parsed)) {
-    return DEFAULT_LIMIT;
-  }
-  return Math.min(Math.max(parsed, 1), MAX_LIMIT);
-}
 
 /**
  * Version timeline for a workflow. Admin/owner only (history is an audit
@@ -63,15 +53,16 @@ export async function GET(
     }
 
     const url = new URL(request.url);
-    const limit = parseLimit(url.searchParams.get("limit"));
-    const beforeVersion = Number.parseInt(
-      url.searchParams.get("before") ?? "",
-      10
-    );
+    const req = parseCursorRequest(url);
+    const cursorVersion = Number.parseInt(req.cursor ?? "", 10);
 
     const conditions = [eq(workflowHistory.workflowId, workflowId)];
-    if (!Number.isNaN(beforeVersion)) {
-      conditions.push(lt(workflowHistory.version, beforeVersion));
+    if (!Number.isNaN(cursorVersion)) {
+      conditions.push(
+        req.direction === "next"
+          ? lt(workflowHistory.version, cursorVersion)
+          : gt(workflowHistory.version, cursorVersion)
+      );
     }
 
     const rows = await db
@@ -86,11 +77,19 @@ export async function GET(
       })
       .from(workflowHistory)
       .where(and(...conditions))
-      .orderBy(desc(workflowHistory.version))
-      .limit(limit + 1);
+      .orderBy(
+        req.direction === "next"
+          ? desc(workflowHistory.version)
+          : asc(workflowHistory.version)
+      )
+      .limit(req.limit + 1);
 
-    const hasMore = rows.length > limit;
-    const page = hasMore ? rows.slice(0, limit) : rows;
+    const { items: page, _links } = buildCursorPage(
+      rows,
+      req,
+      url,
+      (r) => r.version
+    );
 
     // Enrich actor ids -> name/email in one lookup so the timeline shows "who".
     const actorIds = [
@@ -104,7 +103,7 @@ export async function GET(
       : [];
     const actorMap = new Map(actors.map((a) => [a.id, a]));
 
-    const versions = page.map((r) => ({
+    const items = page.map((r) => ({
       version: r.version,
       source: r.source,
       contentHash: r.contentHash,
@@ -116,10 +115,7 @@ export async function GET(
         : null,
     }));
 
-    return NextResponse.json({
-      versions,
-      nextCursor: hasMore ? page.at(-1)?.version : null,
-    });
+    return NextResponse.json({ items, _links });
   } catch (error) {
     logSystemError(
       ErrorCategory.DATABASE,

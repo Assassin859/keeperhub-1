@@ -6,7 +6,7 @@ import { relativeTime } from "@/components/settings/session-format";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { groupByDate } from "@/lib/activity/time-groups";
-import { api, type SecurityAuditEvent } from "@/lib/api-client";
+import { api, followPage, type SecurityAuditEvent } from "@/lib/api-client";
 import {
   type AuditActionKind,
   describeAuditAction,
@@ -83,7 +83,7 @@ export function ActivityFeed({
   params?: FeedParams;
 }): React.ReactElement {
   const [events, setEvents] = useState<SecurityAuditEvent[]>([]);
-  const [cursor, setCursor] = useState<string | null>(null);
+  const [nextLink, setNextLink] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(false);
@@ -101,8 +101,8 @@ export function ActivityFeed({
       .getAudit({ resourceType, resourceId, action, limit })
       .then((res) => {
         if (active) {
-          setEvents(res.events);
-          setCursor(res.nextCursor);
+          setEvents(res.items);
+          setNextLink(res._links.next);
         }
       })
       .catch(() => active && setError(true))
@@ -113,26 +113,20 @@ export function ActivityFeed({
   }, [resourceType, resourceId, action, limit]);
 
   const loadMore = useCallback(async () => {
-    if (!cursor) {
+    if (!nextLink) {
       return;
     }
     setLoadingMore(true);
     try {
-      const res = await api.security.getAudit({
-        resourceType,
-        resourceId,
-        action,
-        limit,
-        before: cursor,
-      });
-      setEvents((prev) => [...prev, ...res.events]);
-      setCursor(res.nextCursor);
+      const res = await followPage<SecurityAuditEvent>(nextLink);
+      setEvents((prev) => [...prev, ...res.items]);
+      setNextLink(res._links.next);
     } catch {
       setError(true);
     } finally {
       setLoadingMore(false);
     }
-  }, [cursor, resourceType, resourceId, action, limit]);
+  }, [nextLink]);
 
   if (loading) {
     return (
@@ -182,7 +176,7 @@ export function ActivityFeed({
           </ul>
         </div>
       ))}
-      {cursor && (
+      {nextLink && (
         <Button
           className="w-full"
           disabled={loadingMore}

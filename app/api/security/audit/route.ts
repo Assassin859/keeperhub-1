@@ -1,21 +1,11 @@
-import { and, desc, eq, inArray, lt } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, lt } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { member, securityAuditLog, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
-
-const DEFAULT_LIMIT = 50;
-const MAX_LIMIT = 200;
-
-function parseLimit(raw: string | null): number {
-  const parsed = Number.parseInt(raw ?? "", 10);
-  if (Number.isNaN(parsed)) {
-    return DEFAULT_LIMIT;
-  }
-  return Math.min(Math.max(parsed, 1), MAX_LIMIT);
-}
+import { buildCursorPage, parseCursorRequest } from "@/lib/pagination";
 
 /**
  * Read the org's security audit trail. Sensitive forensic data, so it is
@@ -62,12 +52,11 @@ export async function GET(request: Request) {
     }
 
     const url = new URL(request.url);
-    const limit = parseLimit(url.searchParams.get("limit"));
+    const req = parseCursorRequest(url);
     const action = url.searchParams.get("action");
     const resourceType = url.searchParams.get("resourceType");
     const resourceId = url.searchParams.get("resourceId");
     const actorUserId = url.searchParams.get("actorUserId");
-    const before = url.searchParams.get("before");
 
     const conditions = [eq(securityAuditLog.organizationId, organizationId)];
     if (action) {
@@ -82,24 +71,32 @@ export async function GET(request: Request) {
     if (actorUserId) {
       conditions.push(eq(securityAuditLog.actorUserId, actorUserId));
     }
-    if (before) {
-      const beforeDate = new Date(before);
-      if (!Number.isNaN(beforeDate.getTime())) {
-        conditions.push(lt(securityAuditLog.createdAt, beforeDate));
+    if (req.cursor) {
+      const cursorDate = new Date(req.cursor);
+      if (!Number.isNaN(cursorDate.getTime())) {
+        conditions.push(
+          req.direction === "next"
+            ? lt(securityAuditLog.createdAt, cursorDate)
+            : gt(securityAuditLog.createdAt, cursorDate)
+        );
       }
     }
 
-    // Fetch one extra row to derive the next-page cursor without a count query.
+    // Fetch one extra row to derive the page boundary without a count query.
     const rows = await db
       .select()
       .from(securityAuditLog)
       .where(and(...conditions))
-      .orderBy(desc(securityAuditLog.createdAt))
-      .limit(limit + 1);
+      .orderBy(
+        req.direction === "next"
+          ? desc(securityAuditLog.createdAt)
+          : asc(securityAuditLog.createdAt)
+      )
+      .limit(req.limit + 1);
 
-    const hasMore = rows.length > limit;
-    const page = hasMore ? rows.slice(0, limit) : rows;
-    const nextCursor = hasMore ? page.at(-1)?.createdAt.toISOString() : null;
+    const { items: page, _links } = buildCursorPage(rows, req, url, (r) =>
+      r.createdAt.toISOString()
+    );
 
     // Enrich actor ids -> name/email so the UI can show "who did it".
     const actorIds = [
@@ -112,14 +109,14 @@ export async function GET(request: Request) {
           .where(inArray(users.id, actorIds))
       : [];
     const actorMap = new Map(actors.map((a) => [a.id, a]));
-    const events = page.map((r) => ({
+    const items = page.map((r) => ({
       ...r,
       actor: r.actorUserId
         ? (actorMap.get(r.actorUserId) ?? { id: r.actorUserId })
         : null,
     }));
 
-    return NextResponse.json({ events, nextCursor });
+    return NextResponse.json({ items, _links });
   } catch (error) {
     logSystemError(
       ErrorCategory.DATABASE,

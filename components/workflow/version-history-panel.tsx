@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   api,
+  followPage,
   type SavedWorkflow,
   type WorkflowVersionSummary,
 } from "@/lib/api-client";
@@ -307,6 +308,8 @@ export function VersionHistoryPanel(): React.ReactElement | null {
   const isResizing = useRef(false);
 
   const [versions, setVersions] = useState<WorkflowVersionSummary[]>([]);
+  const [nextLink, setNextLink] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<WorkflowVersionSummary | null>(null);
   const [snapshot, setSnapshot] = useState<SavedWorkflow | null>(null);
@@ -322,13 +325,34 @@ export function VersionHistoryPanel(): React.ReactElement | null {
     setLoading(true);
     api.workflow
       .getHistory(workflowId)
-      .then((res) => active && setVersions(res.versions))
+      .then((res) => {
+        if (active) {
+          setVersions(res.items);
+          setNextLink(res._links.next);
+        }
+      })
       .catch(() => active && toast.error("Failed to load version history"))
       .finally(() => active && setLoading(false));
     return () => {
       active = false;
     };
   }, [open, workflowId]);
+
+  const loadMore = useCallback(async () => {
+    if (!nextLink) {
+      return;
+    }
+    setLoadingMore(true);
+    try {
+      const res = await followPage<WorkflowVersionSummary>(nextLink);
+      setVersions((prev) => [...prev, ...res.items]);
+      setNextLink(res._links.next);
+    } catch {
+      toast.error("Failed to load more versions");
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [nextLink]);
 
   // Opening history clears any node selection so the panel isn't covering a
   // config form; a subsequent node click (current version only) then closes
@@ -552,6 +576,17 @@ export function VersionHistoryPanel(): React.ReactElement | null {
             </ul>
           </div>
         ))}
+        {nextLink && (
+          <Button
+            className="w-full"
+            disabled={loadingMore}
+            onClick={loadMore}
+            size="sm"
+            variant="ghost"
+          >
+            {loadingMore ? "Loading..." : "Load more"}
+          </Button>
+        )}
       </div>
 
       <div className="border-border border-t p-3">
