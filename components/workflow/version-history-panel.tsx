@@ -18,6 +18,7 @@ import {
   PowerOff,
   Unlink,
 } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -555,6 +556,10 @@ export function VersionHistoryPanel(): React.ReactElement | null {
   const { preview, exitPreview } = useVersionPreview();
   const resolveValue = useConfigValueDisplay(open);
 
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
   const {
     items: versions,
     meta,
@@ -564,11 +569,40 @@ export function VersionHistoryPanel(): React.ReactElement | null {
     error,
   } = usePaginatedResource<WorkflowVersionSummary>(
     (p) => api.workflow.getHistory(workflowId ?? "", { page: p, limit: 10 }),
-    // Reopening the panel (open toggling) restarts at the newest page.
-    `${workflowId}|${open}`,
+    // Reset only when the workflow changes, so the page survives close/reopen
+    // and stays in sync with the URL.
+    `${workflowId}`,
     { enabled: open && !!workflowId, refetchIntervalMs: 30_000 }
   );
 
+  // Open at the page named in the URL (shareable deep link).
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const fromUrl = Number.parseInt(searchParams?.get("historyPage") ?? "", 10);
+    if (!Number.isNaN(fromUrl) && fromUrl > 1) {
+      setPage(fromUrl);
+    }
+  }, [open, searchParams, setPage]);
+
+  // Reflect the current page in the URL so the view is shareable; the param is
+  // removed when the panel is closed or on page 1.
+  useEffect(() => {
+    const current = searchParams?.toString() ?? "";
+    const params = new URLSearchParams(current);
+    if (open && page > 1) {
+      params.set("historyPage", String(page));
+    } else {
+      params.delete("historyPage");
+    }
+    const next = params.toString();
+    if (next !== current) {
+      router.replace(next ? `${pathname}?${next}` : pathname, {
+        scroll: false,
+      });
+    }
+  }, [open, page, pathname, router, searchParams]);
 
   useEffect(() => {
     if (error) {
