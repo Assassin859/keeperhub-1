@@ -2,7 +2,13 @@ import { randomUUID } from "node:crypto";
 import { hashPassword } from "better-auth/crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { accounts, member, organization, users } from "@/lib/db/schema";
+import {
+  accounts,
+  member,
+  organization,
+  organizationSubscriptions,
+  users,
+} from "@/lib/db/schema";
 
 const COUNT = Number(process.env.SEED_COUNT ?? "50");
 const EMAIL_PREFIX = "k6-loadtest-vu";
@@ -23,6 +29,7 @@ async function seedUser(vuId: number, password: string): Promise<"created" | "sk
   const orgId = randomUUID();
   const memberId = randomUUID();
   const accountId = randomUUID();
+  const subscriptionId = randomUUID();
   const now = new Date();
   const slug = `k6-loadtest-vu${vuId}-${randomUUID().slice(0, 6)}`;
 
@@ -57,6 +64,14 @@ async function seedUser(vuId: number, password: string): Promise<"created" | "sk
       userId,
       role: "owner",
       createdAt: now,
+    });
+    await tx.insert(organizationSubscriptions).values({
+      id: subscriptionId,
+      organizationId: orgId,
+      plan: "pro",
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
     });
   });
 
