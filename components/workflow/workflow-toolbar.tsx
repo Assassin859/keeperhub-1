@@ -89,6 +89,7 @@ import {
   triggerExecuteAtom,
   undoAtom,
   updateNodeDataAtom,
+  versionHistoryOpenAtom,
   type WorkflowEdge,
   type WorkflowNode,
   WorkflowTriggerEnum,
@@ -104,7 +105,7 @@ import { Panel } from "../ai-elements/panel";
 import { ConfigurationOverlay } from "../overlays/configuration-overlay";
 import { ConfirmOverlay } from "../overlays/confirm-overlay";
 import { useOverlay } from "../overlays/overlay-provider";
-import { WorkflowVersionHistoryOverlay } from "../overlays/workflow-version-history-overlay";
+import { VersionHistoryPanel } from "./version-history-panel";
 import { WorkflowIOOverlay } from "../overlays/workflow-io-overlay";
 import { WorkflowIssuesOverlay } from "../overlays/workflow-issues-overlay";
 import {
@@ -1450,7 +1451,7 @@ function ToolbarActions({
       <ListingButton actions={actions} state={state} />
 
       {/* Version history (admin/owner only) */}
-      <VersionHistoryButton openOverlay={openOverlay} workflowId={workflowId} />
+      <VersionHistoryButton />
 
       {shouldDisplayEnableWorkflowSwitch && (
         <button
@@ -1502,27 +1503,16 @@ function ToolbarActions({
 }
 
 // Version history button. Admin/owner only -- history is an audit trail.
-function VersionHistoryButton({
-  workflowId,
-  openOverlay,
-}: {
-  workflowId: string;
-  openOverlay: ReturnType<typeof useOverlay>["open"];
-}) {
+function VersionHistoryButton() {
   const { isAdmin } = useActiveMember();
+  const setOpen = useSetAtom(versionHistoryOpenAtom);
   if (!isAdmin) {
     return null;
   }
   return (
     <Button
       className="hidden border hover:bg-black/5 lg:inline-flex dark:hover:bg-white/5"
-      onClick={() =>
-        openOverlay(
-          WorkflowVersionHistoryOverlay,
-          { workflowId },
-          { size: "4xl" }
-        )
-      }
+      onClick={() => setOpen((v) => !v)}
       size="icon"
       title="Version history"
       variant="secondary"
@@ -1877,6 +1867,7 @@ export const WorkflowToolbar = ({
     return (
       <div className={containerClassName}>
         <VersionPreviewBanner />
+        <VersionHistoryPanel />
         {/* Left side: Logo + Menu + Org Switcher */}
         <div className={leftSectionClassName}>
           {(() => {

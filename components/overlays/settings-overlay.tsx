@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { ActivityFeed } from "@/components/activity/activity-feed";
 import { AccountSettings } from "@/components/settings/account-settings";
 import { ActiveSessionsSection } from "@/components/settings/active-sessions-section";
 import { ChangePasswordSection } from "@/components/settings/change-password-section";
@@ -11,6 +12,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/lib/api-client";
 import { useSession } from "@/lib/auth-client";
+import { useActiveMember } from "@/lib/hooks/use-organization";
 import { useDualFactorState } from "@/lib/mfa/use-dual-factor-state";
 import { Overlay } from "./overlay";
 import { useOverlay } from "./overlay-provider";
@@ -33,6 +35,7 @@ export function SettingsOverlay({
   const dual = useDualFactorState();
 
   const session = useSession();
+  const { isAdmin } = useActiveMember();
   const sessionUser = session.data?.user as
     | { twoFactorEnabled?: boolean | null }
     | undefined;
@@ -148,6 +151,7 @@ export function SettingsOverlay({
           <TabsList className="mb-4 w-full">
             <TabsTrigger value="account">Account</TabsTrigger>
             <TabsTrigger value="security">Security</TabsTrigger>
+            {isAdmin && <TabsTrigger value="activity">Activity</TabsTrigger>}
           </TabsList>
 
           <TabsContent className="space-y-6" value="account">
@@ -171,6 +175,20 @@ export function SettingsOverlay({
             <ChangePasswordSection providerId={providerId} />
             <ActiveSessionsSection />
           </TabsContent>
+
+          {isAdmin && (
+            <TabsContent value="activity">
+              <div className="space-y-1">
+                <h3 className="font-medium text-sm">Organization activity</h3>
+                <p className="text-muted-foreground text-xs">
+                  Recent security-sensitive actions across your organization.
+                </p>
+              </div>
+              <div className="mt-3 max-h-[60vh]">
+                <ActivityFeed params={{ limit: 50 }} />
+              </div>
+            </TabsContent>
+          )}
         </Tabs>
       )}
     </Overlay>

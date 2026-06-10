@@ -4,7 +4,7 @@ import { Copy, History, Key, Server, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { api, type SecurityAuditEvent } from "@/lib/api-client";
+import { ActivityFeed } from "@/components/activity/activity-feed";
 import { DualFactorInput } from "@/components/auth/dual-factor-input";
 import { DualFactorSteps } from "@/components/auth/dual-factor-steps";
 import { Button } from "@/components/ui/button";
@@ -248,98 +248,6 @@ function DeleteApiKeyOverlay({
         submitVariant="destructive"
       />
     </Overlay>
-  );
-}
-
-// Pull a stored field (e.g. keyPrefix) out of an audit event's deep-diff,
-// which records it as an added (create) or removed (revoke) value.
-function fieldFromDiff(diff: unknown, field: string): string | null {
-  if (!Array.isArray(diff)) {
-    return null;
-  }
-  const rec = diff.find(
-    (d) => Array.isArray(d?.path) && d.path[0] === field
-  ) as { rhs?: unknown; lhs?: unknown } | undefined;
-  const value = rec?.rhs ?? rec?.lhs;
-  return typeof value === "string" ? value : null;
-}
-
-// Section-level activity for org API keys: create AND revoke events across all
-// keys, including revoked ones no longer in the list. An API key only has
-// those two lifecycle events, so a per-key timeline adds nothing -- this is the
-// audit view that matters. Org-scoped + admin/owner-gated by the endpoint.
-function OrgApiKeyActivity(): React.ReactElement {
-  const [events, setEvents] = useState<SecurityAuditEvent[] | null>(null);
-  const [error, setError] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-    api.security
-      .getAudit({ resourceType: "org_api_key", limit: 50 })
-      .then((res) => {
-        if (active) {
-          setEvents(res.events);
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setError(true);
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  if (error) {
-    return (
-      <p className="py-2 text-muted-foreground text-xs">
-        Failed to load activity.
-      </p>
-    );
-  }
-  if (!events) {
-    return <p className="py-2 text-muted-foreground text-xs">Loading...</p>;
-  }
-  if (events.length === 0) {
-    return (
-      <p className="py-2 text-muted-foreground text-xs">
-        No key activity recorded yet.
-      </p>
-    );
-  }
-  return (
-    <ul className="space-y-2">
-      {events.map((e) => {
-        const revoked = e.action.endsWith("revoked");
-        const label =
-          fieldFromDiff(e.diff, "name") ||
-          (fieldFromDiff(e.diff, "keyPrefix")
-            ? `${fieldFromDiff(e.diff, "keyPrefix")}...`
-            : (e.resourceId ?? "a key"));
-        return (
-          <li className="flex items-start gap-2 text-xs" key={e.id}>
-            <span
-              className={`mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-full ${
-                revoked
-                  ? "bg-destructive/15 text-destructive"
-                  : "bg-keeperhub-green/15 text-keeperhub-green"
-              }`}
-            >
-              {revoked ? "−" : "+"}
-            </span>
-            <span className="text-muted-foreground">
-              <span className="font-medium text-foreground">
-                {revoked ? "Revoked" : "Created"}
-              </span>{" "}
-              <span className="font-mono">{label}</span> ·{" "}
-              {e.actor?.name || e.actor?.email || "unknown"} ·{" "}
-              {new Date(e.createdAt).toLocaleString()}
-            </span>
-          </li>
-        );
-      })}
-    </ul>
   );
 }
 
@@ -737,7 +645,7 @@ export function ApiKeysOverlay({ overlayId }: ApiKeysOverlayProps) {
               </Button>
               {showActivity && (
                 <div className="mt-2">
-                  <OrgApiKeyActivity />
+                  <ActivityFeed params={{ resourceType: "org_api_key" }} />
                 </div>
               )}
             </div>

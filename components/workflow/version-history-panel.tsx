@@ -1,0 +1,503 @@
+"use client";
+
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import {
+  ArrowRight,
+  Clock,
+  GitBranch,
+  Minus,
+  Pencil,
+  Plus,
+  RotateCcw,
+  X,
+} from "lucide-react";
+import type { ReactNode } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
+import { ActorAvatar, actorLabel } from "@/components/activity/actor-avatar";
+import { relativeTime } from "@/components/settings/session-format";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  api,
+  type SavedWorkflow,
+  type WorkflowVersionSummary,
+} from "@/lib/api-client";
+import { groupByDate } from "@/lib/activity/time-groups";
+import {
+  currentWorkflowIdAtom,
+  edgesAtom,
+  hasUnsavedChangesAtom,
+  nodesAtom,
+  previewVersionAtom,
+  versionHistoryOpenAtom,
+} from "@/lib/workflow/store";
+import {
+  computeVersionDiff,
+  type VersionDiff,
+} from "@/lib/workflow/version-diff";
+
+type ChangeItem = {
+  key: string;
+  kind: "add" | "remove" | "change";
+  content: ReactNode;
+};
+
+function cap(s: string): string {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
+
+function Arrow(): React.ReactElement {
+  return (
+    <ArrowRight className="inline size-3 shrink-0 text-muted-foreground" />
+  );
+}
+
+function Quoted({ value }: { value: string }): React.ReactElement {
+  return <span className="font-medium">&quot;{value || "untitled"}&quot;</span>;
+}
+
+function settingItem(s: VersionDiff["settings"][number]): ChangeItem {
+  if (s.field === "name") {
+    return {
+      key: "set-name",
+      kind: "change",
+      content: (
+        <>
+          Renamed workflow to <Quoted value={s.after} />
+        </>
+      ),
+    };
+  }
+  if (s.field === "enabled") {
+    return {
+      key: "set-enabled",
+      kind: "change",
+      content: s.after === "true" ? "Workflow enabled" : "Workflow disabled",
+    };
+  }
+  if (s.field === "visibility") {
+    return {
+      key: "set-visibility",
+      kind: "change",
+      content: (
+        <span className="inline-flex items-center gap-1">
+          Visibility: {s.before} <Arrow /> {s.after}
+        </span>
+      ),
+    };
+  }
+  return {
+    key: "set-description",
+    kind: "change",
+    content: "Description updated",
+  };
+}
+
+function nodeDeltaItem(
+  n: VersionDiff["nodesChanged"][number],
+  d: VersionDiff["nodesChanged"][number]["deltas"][number]
+): ChangeItem {
+  const key = `chg-${n.id}-${d.field}`;
+  const who = (
+    <>
+      {cap(n.nodeType)} <Quoted value={n.label} />
+    </>
+  );
+  if (d.field === "name") {
+    return {
+      key,
+      kind: "change",
+      content: (
+        <span className="inline-flex flex-wrap items-center gap-1">
+          Renamed {cap(n.nodeType)}: <Quoted value={d.before ?? ""} /> <Arrow />{" "}
+          <Quoted value={d.after ?? ""} />
+        </span>
+      ),
+    };
+  }
+  if (d.field === "type") {
+    return {
+      key,
+      kind: "change",
+      content: (
+        <span className="inline-flex items-center gap-1">
+          {who} type: {d.before} <Arrow /> {d.after}
+        </span>
+      ),
+    };
+  }
+  if (d.field === "configuration") {
+    return {
+      key,
+      kind: "change",
+      content: (
+        <>
+          {who} configuration changed
+          {d.configKeys?.length ? ` (${d.configKeys.join(", ")})` : ""}
+        </>
+      ),
+    };
+  }
+  if (d.field === "enabled") {
+    return {
+      key,
+      kind: "change",
+      content: d.after === "true" ? <>Enabled {who}</> : <>Disabled {who}</>,
+    };
+  }
+  return { key, kind: "change", content: <>{who} description updated</> };
+}
+
+function buildChangeItems(diff: VersionDiff): ChangeItem[] {
+  const items: ChangeItem[] = diff.settings.map(settingItem);
+  for (const n of diff.nodesAdded) {
+    items.push({
+      key: `add-${n.id}`,
+      kind: "add",
+      content: (
+        <>
+          Added {cap(n.nodeType)} <Quoted value={n.label} />
+        </>
+      ),
+    });
+  }
+  for (const n of diff.nodesRemoved) {
+    items.push({
+      key: `rem-${n.id}`,
+      kind: "remove",
+      content: (
+        <>
+          Removed {cap(n.nodeType)} <Quoted value={n.label} />
+        </>
+      ),
+    });
+  }
+  for (const n of diff.nodesChanged) {
+    for (const d of n.deltas) {
+      items.push(nodeDeltaItem(n, d));
+    }
+  }
+  for (const c of diff.connectionsAdded) {
+    items.push({
+      key: `cadd-${c.from}-${c.to}`,
+      kind: "add",
+      content: (
+        <span className="inline-flex flex-wrap items-center gap-1">
+          Connected {c.from} <Arrow /> {c.to}
+        </span>
+      ),
+    });
+  }
+  for (const c of diff.connectionsRemoved) {
+    items.push({
+      key: `crem-${c.from}-${c.to}`,
+      kind: "remove",
+      content: (
+        <span className="inline-flex flex-wrap items-center gap-1">
+          Disconnected {c.from} <Arrow /> {c.to}
+        </span>
+      ),
+    });
+  }
+  return items;
+}
+
+function ChangeRow({ item }: { item: ChangeItem }): React.ReactElement {
+  const Icon =
+    item.kind === "add" ? Plus : item.kind === "remove" ? Minus : Pencil;
+  const color =
+    item.kind === "add"
+      ? "text-keeperhub-green"
+      : item.kind === "remove"
+        ? "text-destructive"
+        : "text-amber-500";
+  return (
+    <li className="flex items-start gap-2 text-xs">
+      <Icon className={`mt-0.5 size-3.5 shrink-0 ${color}`} />
+      <span>{item.content}</span>
+    </li>
+  );
+}
+
+function VersionRow({
+  version,
+  isCurrent,
+  isSelected,
+  onSelect,
+  diff,
+  diffLoading,
+}: {
+  version: WorkflowVersionSummary;
+  isCurrent: boolean;
+  isSelected: boolean;
+  onSelect: () => void;
+  diff: VersionDiff | null;
+  diffLoading: boolean;
+}): React.ReactElement {
+  const items = diff ? buildChangeItems(diff) : [];
+  return (
+    <li>
+      <button
+        className={`flex w-full items-start gap-2.5 rounded-lg p-2.5 text-left transition-colors hover:bg-muted ${
+          isSelected ? "bg-muted" : ""
+        }`}
+        onClick={onSelect}
+        type="button"
+      >
+        <ActorAvatar actor={version.changedBy} />
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-2">
+            <span className="font-medium text-sm">
+              Version {version.version}
+            </span>
+            {isCurrent && (
+              <span className="rounded-full bg-keeperhub-green/15 px-1.5 py-0.5 font-medium text-[10px] text-keeperhub-green">
+                Current
+              </span>
+            )}
+          </span>
+          <span className="mt-0.5 block truncate text-muted-foreground text-xs">
+            {actorLabel(version.changedBy)}
+          </span>
+          <span className="flex items-center gap-1 text-muted-foreground text-xs">
+            <Clock className="size-3" />
+            {relativeTime(version.createdAt)}
+          </span>
+        </span>
+      </button>
+      {isSelected && (
+        <div className="mt-1 ml-9 border-border border-l pl-3">
+          {diffLoading && (
+            <p className="py-1 text-muted-foreground text-xs">Loading...</p>
+          )}
+          {!diffLoading &&
+            (version.previousVersion === null ? (
+              <p className="py-1 text-muted-foreground text-xs">
+                Initial version.
+              </p>
+            ) : items.length === 0 ? (
+              <p className="py-1 text-muted-foreground text-xs">
+                Layout-only changes.
+              </p>
+            ) : (
+              <ul className="space-y-1.5 py-1">
+                {items.map((item) => (
+                  <ChangeRow item={item} key={item.key} />
+                ))}
+              </ul>
+            ))}
+        </div>
+      )}
+    </li>
+  );
+}
+
+export function VersionHistoryPanel(): React.ReactElement | null {
+  const [open, setOpen] = useAtom(versionHistoryOpenAtom);
+  const workflowId = useAtomValue(currentWorkflowIdAtom);
+  const setNodes = useSetAtom(nodesAtom);
+  const setEdges = useSetAtom(edgesAtom);
+  const setHasUnsavedChanges = useSetAtom(hasUnsavedChangesAtom);
+  const [previewVersion, setPreviewVersion] = useAtom(previewVersionAtom);
+
+  const [versions, setVersions] = useState<WorkflowVersionSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<WorkflowVersionSummary | null>(null);
+  const [snapshot, setSnapshot] = useState<SavedWorkflow | null>(null);
+  const [diff, setDiff] = useState<VersionDiff | null>(null);
+  const [diffLoading, setDiffLoading] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+
+  useEffect(() => {
+    if (!(open && workflowId)) {
+      return;
+    }
+    let active = true;
+    setLoading(true);
+    api.workflow
+      .getHistory(workflowId)
+      .then((res) => active && setVersions(res.versions))
+      .catch(() => active && toast.error("Failed to load version history"))
+      .finally(() => active && setLoading(false));
+    return () => {
+      active = false;
+    };
+  }, [open, workflowId]);
+
+  const exitPreview = useCallback(async () => {
+    if (previewVersion === null || !workflowId) {
+      return;
+    }
+    try {
+      const live = await api.workflow.getById(workflowId);
+      setNodes(live.nodes);
+      setEdges(live.edges);
+    } catch {
+      // best-effort
+    } finally {
+      setPreviewVersion(null);
+      setHasUnsavedChanges(false);
+    }
+  }, [
+    previewVersion,
+    workflowId,
+    setNodes,
+    setEdges,
+    setPreviewVersion,
+    setHasUnsavedChanges,
+  ]);
+
+  const close = useCallback(async () => {
+    await exitPreview();
+    setSelected(null);
+    setOpen(false);
+  }, [exitPreview, setOpen]);
+
+  const select = useCallback(
+    async (v: WorkflowVersionSummary) => {
+      if (!workflowId) {
+        return;
+      }
+      setSelected(v);
+      setDiff(null);
+      setSnapshot(null);
+      setDiffLoading(true);
+      try {
+        const [sel, prev] = await Promise.all([
+          api.workflow.getById(workflowId, { version: v.version }),
+          v.previousVersion
+            ? api.workflow.getById(workflowId, { version: v.previousVersion })
+            : Promise.resolve(null),
+        ]);
+        setSnapshot(sel);
+        setDiff(computeVersionDiff(prev, sel));
+        // Live preview on the canvas (autosave is suppressed while previewing).
+        setPreviewVersion(v.version);
+        setNodes(sel.nodes);
+        setEdges(sel.edges);
+      } catch {
+        toast.error("Failed to load version");
+      } finally {
+        setDiffLoading(false);
+      }
+    },
+    [workflowId, setPreviewVersion, setNodes, setEdges]
+  );
+
+  const restore = useCallback(async () => {
+    if (!(snapshot && selected && workflowId)) {
+      return;
+    }
+    setRestoring(true);
+    try {
+      await api.workflow.update(workflowId, {
+        name: snapshot.name,
+        description: snapshot.description,
+        nodes: snapshot.nodes,
+        edges: snapshot.edges,
+        visibility: snapshot.visibility,
+        enabled: snapshot.enabled,
+      });
+      setNodes(snapshot.nodes);
+      setEdges(snapshot.edges);
+      setPreviewVersion(null);
+      setHasUnsavedChanges(false);
+      toast.success(`Restored version ${selected.version}`);
+      setOpen(false);
+      setSelected(null);
+    } catch {
+      toast.error("Failed to restore version");
+    } finally {
+      setRestoring(false);
+    }
+  }, [
+    snapshot,
+    selected,
+    workflowId,
+    setNodes,
+    setEdges,
+    setPreviewVersion,
+    setHasUnsavedChanges,
+    setOpen,
+  ]);
+
+  if (!(open && workflowId)) {
+    return null;
+  }
+
+  const latestVersion = versions[0]?.version;
+  const groups = groupByDate(versions, (v) => v.createdAt);
+  const canRestore =
+    selected !== null && selected.version !== latestVersion && !!snapshot;
+
+  return (
+    <aside className="fixed top-[var(--header-height,60px)] right-0 z-30 flex h-[calc(100vh-var(--header-height,60px))] w-[360px] flex-col border-border border-l bg-card shadow-xl">
+      <div className="flex items-center justify-between border-border border-b px-4 py-3">
+        <div className="flex items-center gap-2">
+          <GitBranch className="size-4 text-muted-foreground" />
+          <h2 className="font-semibold text-sm">Version history</h2>
+        </div>
+        <Button onClick={close} size="icon-sm" variant="ghost">
+          <X className="size-4" />
+        </Button>
+      </div>
+
+      <div className="thin-scrollbar flex-1 overflow-y-auto p-3">
+        {loading && (
+          <div className="space-y-3">
+            {[0, 1, 2].map((i) => (
+              <div className="flex items-center gap-2.5" key={i}>
+                <Skeleton className="size-7 rounded-full" />
+                <div className="flex-1 space-y-1.5">
+                  <Skeleton className="h-3 w-1/2" />
+                  <Skeleton className="h-2.5 w-1/3" />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {!loading && versions.length === 0 && (
+          <p className="p-2 text-muted-foreground text-sm">
+            No versions recorded yet.
+          </p>
+        )}
+        {groups.map((group) => (
+          <div className="mb-2" key={group.label}>
+            <p className="px-2.5 py-1 font-medium text-muted-foreground text-xs uppercase tracking-wide">
+              {group.label}
+            </p>
+            <ul className="space-y-0.5">
+              {group.items.map((v) => (
+                <VersionRow
+                  diff={selected?.version === v.version ? diff : null}
+                  diffLoading={selected?.version === v.version && diffLoading}
+                  isCurrent={v.version === latestVersion}
+                  isSelected={selected?.version === v.version}
+                  key={v.version}
+                  onSelect={() => select(v)}
+                  version={v}
+                />
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+
+      <div className="border-border border-t p-3">
+        <Button
+          className="w-full"
+          disabled={!canRestore || restoring}
+          onClick={restore}
+        >
+          <RotateCcw className="mr-1.5 size-4" />
+          {restoring
+            ? "Restoring..."
+            : selected && canRestore
+              ? `Restore version ${selected.version}`
+              : "Restore"}
+        </Button>
+      </div>
+    </aside>
+  );
+}

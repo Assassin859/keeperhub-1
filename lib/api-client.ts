@@ -924,6 +924,7 @@ export const securityApi = {
     resourceId?: string;
     action?: string;
     limit?: number;
+    before?: string;
   }) => {
     const qs = new URLSearchParams();
     if (params?.resourceType) {
@@ -937,6 +938,9 @@ export const securityApi = {
     }
     if (params?.limit !== undefined) {
       qs.set("limit", String(params.limit));
+    }
+    if (params?.before) {
+      qs.set("before", params.before);
     }
     const s = qs.toString();
     return apiCall<{

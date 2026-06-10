@@ -1,0 +1,71 @@
+/**
+ * Human-readable descriptions for security audit-log `action` values, used by
+ * the activity feed. `phrase` completes "{actor} ___" (e.g. "created an API
+ * key"); `kind` drives the row icon/color (add = green, remove = red, change =
+ * amber). Any action not listed falls back to a humanized dotted name.
+ */
+
+export type AuditActionKind = "add" | "remove" | "change";
+
+export type AuditActionDescription = {
+  phrase: string;
+  kind: AuditActionKind;
+};
+
+const ACTION_MAP: Record<string, AuditActionDescription> = {
+  "api_key.created": { phrase: "created an API key", kind: "add" },
+  "api_key.revoked": { phrase: "revoked an API key", kind: "remove" },
+  "org_api_key.created": { phrase: "created an org API key", kind: "add" },
+  "org_api_key.revoked": { phrase: "revoked an org API key", kind: "remove" },
+  "password.changed": { phrase: "changed their password", kind: "change" },
+  "password.reset": { phrase: "reset their password", kind: "change" },
+  "email.changed": { phrase: "changed their email", kind: "change" },
+  "account.deactivated": { phrase: "deactivated the account", kind: "remove" },
+  "session.revoked": { phrase: "revoked a session", kind: "remove" },
+  "totp.enrolled": { phrase: "enabled two-factor auth", kind: "add" },
+  "totp.disabled": { phrase: "disabled two-factor auth", kind: "remove" },
+  "backup_codes.regenerated": {
+    phrase: "regenerated backup codes",
+    kind: "change",
+  },
+  "workflow.created": { phrase: "created a workflow", kind: "add" },
+  "workflow.updated": { phrase: "updated a workflow", kind: "change" },
+  "workflow.deleted": { phrase: "deleted a workflow", kind: "remove" },
+  "workflow.listed": { phrase: "listed a workflow", kind: "add" },
+  "workflow.unlisted": { phrase: "unlisted a workflow", kind: "remove" },
+  "workflow.listing_updated": {
+    phrase: "updated a workflow listing",
+    kind: "change",
+  },
+  "subscription.plan_changed": { phrase: "changed the plan", kind: "change" },
+  "subscription.canceled": {
+    phrase: "canceled the subscription",
+    kind: "remove",
+  },
+  "subscription.change_requested": {
+    phrase: "requested a plan change",
+    kind: "change",
+  },
+  "subscription.cancel_requested": {
+    phrase: "requested cancellation",
+    kind: "change",
+  },
+  "org_wallet.created": { phrase: "created an org wallet", kind: "add" },
+  "agentic_wallet.hmac_rotated": {
+    phrase: "rotated a wallet signing key",
+    kind: "change",
+  },
+};
+
+const DELIMITERS = /[._]/g;
+
+function humanizeFallback(action: string): string {
+  // "some.unknown_action" -> "some unknown action"
+  return action.replace(DELIMITERS, " ").trim();
+}
+
+export function describeAuditAction(action: string): AuditActionDescription {
+  return (
+    ACTION_MAP[action] ?? { phrase: humanizeFallback(action), kind: "change" }
+  );
+}

@@ -97,6 +97,8 @@ export const edgesAtom = atom<WorkflowEdge[]>([]);
 // this is set so previewing a past version can never clobber the live
 // workflow via the debounced save.
 export const previewVersionAtom = atom<number | null>(null);
+// Whether the right-docked version-history panel is open in the editor.
+export const versionHistoryOpenAtom = atom(false);
 export const selectedNodeAtom = atom<string | null>(null);
 export const selectedEdgeAtom = atom<string | null>(null);
 export const isExecutingAtom = atom(false);
