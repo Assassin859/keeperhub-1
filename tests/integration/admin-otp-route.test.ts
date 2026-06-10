@@ -1,7 +1,13 @@
+import { symmetricEncrypt } from "better-auth/crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const TEST_KEY = "kha_test-secret-key-12345";
 const TEST_EMAIL = "test@techops.services";
+const TEST_BETTER_AUTH_SECRET = "test-better-auth-secret-32-chars!";
+
+async function encryptOtp(otp: string): Promise<string> {
+  return await symmetricEncrypt({ key: TEST_BETTER_AUTH_SECRET, data: otp });
+}
 
 let mockResult: unknown[] = [];
 let mockShouldThrow = false;
@@ -53,6 +59,7 @@ describe("GET /api/admin/test/otp", () => {
     mockResult = [];
     mockShouldThrow = false;
     process.env.TEST_API_KEY = TEST_KEY;
+    process.env.BETTER_AUTH_SECRET = TEST_BETTER_AUTH_SECRET;
     vi.stubEnv("INCLUDE_TEST_ENDPOINTS", "true");
   });
 
@@ -100,16 +107,18 @@ describe("GET /api/admin/test/otp", () => {
   });
 
   describe("OTP lookup", () => {
-    it("should return OTP when found", async () => {
-      mockResult = [{ value: "123456:2" }];
+    it("should decrypt and return the plaintext OTP when found", async () => {
+      const cipher = await encryptOtp("123456");
+      mockResult = [{ value: `${cipher}:2` }];
       const response = await GET(createRequest(TEST_EMAIL, TEST_KEY));
       expect(response.status).toBe(200);
       const data = await response.json();
       expect(data.otp).toBe("123456");
     });
 
-    it("should split value on colon and return first part", async () => {
-      mockResult = [{ value: "789012:5:extra" }];
+    it("should split value on colon and decrypt the first part only", async () => {
+      const cipher = await encryptOtp("789012");
+      mockResult = [{ value: `${cipher}:5:extra` }];
       const response = await GET(createRequest(TEST_EMAIL, TEST_KEY));
       expect(response.status).toBe(200);
       const data = await response.json();
@@ -128,6 +137,16 @@ describe("GET /api/admin/test/otp", () => {
       mockResult = [{ value: null }];
       const response = await GET(createRequest(TEST_EMAIL, TEST_KEY));
       expect(response.status).toBe(404);
+    });
+
+    it("should return 500 when BETTER_AUTH_SECRET is unset", async () => {
+      // biome-ignore lint/performance/noDelete: env var must be removed
+      delete process.env.BETTER_AUTH_SECRET;
+      mockResult = [{ value: `${await encryptOtp("123456")}:0` }];
+      const response = await GET(createRequest(TEST_EMAIL, TEST_KEY));
+      expect(response.status).toBe(500);
+      const data = await response.json();
+      expect(data.error).toBe("BETTER_AUTH_SECRET not configured");
     });
 
     it("should return 500 on database error", async () => {
