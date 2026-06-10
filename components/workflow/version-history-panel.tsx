@@ -488,31 +488,35 @@ export function VersionHistoryPanel(): React.ReactElement | null {
         transform: open ? "translateX(0)" : "translateX(100%)",
       }}
     >
-      {/* Drag handle: resizes both right-docked panels (shared width atom). */}
-      {/* biome-ignore lint/a11y/useSemanticElements: custom resize handle */}
-      <div
-        aria-orientation="vertical"
-        aria-valuenow={widthPct}
-        className="absolute inset-y-0 left-0 z-10 w-3 cursor-col-resize"
-        onMouseDown={handleResizeStart}
-        role="separator"
-        tabIndex={0}
-      >
-        <div className="absolute inset-y-0 left-0 w-px bg-border" />
-        {/* Collapse button mirrors the node-config panel's handle affordance. */}
-        <button
-          className="-translate-x-1/2 absolute top-3 left-0 flex size-6 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
-          onClick={(e) => {
-            e.stopPropagation();
-            close();
-          }}
-          onMouseDown={(e) => e.stopPropagation()}
-          title="Close version history"
-          type="button"
+      {/* Drag handle: resizes both right-docked panels (shared width atom).
+          Only while open -- when closed the panel is parked off-screen and its
+          left-edge button would otherwise protrude at the viewport's right. */}
+      {open && (
+        // biome-ignore lint/a11y/useSemanticElements: custom resize handle
+        <div
+          aria-orientation="vertical"
+          aria-valuenow={widthPct}
+          className="absolute inset-y-0 left-0 z-10 w-3 cursor-col-resize"
+          onMouseDown={handleResizeStart}
+          role="separator"
+          tabIndex={0}
         >
-          <ChevronRight className="size-3.5" />
-        </button>
-      </div>
+          <div className="absolute inset-y-0 left-0 w-px bg-border" />
+          {/* Collapse button mirrors the node-config panel's handle affordance. */}
+          <button
+            className="-translate-x-1/2 absolute top-3 left-0 flex size-6 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
+            onClick={(e) => {
+              e.stopPropagation();
+              close();
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+            title="Close version history"
+            type="button"
+          >
+            <ChevronRight className="size-3.5" />
+          </button>
+        </div>
+      )}
       <div className="flex items-center gap-2 border-border border-b px-4 py-3">
         <GitBranch className="size-4 text-muted-foreground" />
         <h2 className="font-semibold text-sm">Version history</h2>
