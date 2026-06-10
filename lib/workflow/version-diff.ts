@@ -6,6 +6,8 @@
  * differ".
  */
 
+import { getActionLabel } from "@/lib/step-registry";
+
 type AnyRecord = Record<string, unknown>;
 
 type Snapshotish = {
@@ -68,12 +70,23 @@ function nodeLabel(node: AnyRecord): string {
   if (label) {
     return label;
   }
-  const type = typeof data.type === "string" ? data.type : undefined;
-  const kind =
-    typeof (data.config as AnyRecord)?.triggerType === "string"
-      ? ((data.config as AnyRecord).triggerType as string)
-      : undefined;
-  return kind || type || (typeof node.type === "string" ? node.type : "node");
+  const config = (data.config ?? {}) as AnyRecord;
+  // Plugin actions resolve via getActionLabel (e.g. web3/read-contract ->
+  // "Read Contract"); system actions ("Condition", "HTTP Request", ...) are
+  // already their own label, so fall back to the raw actionType.
+  if (typeof config.actionType === "string") {
+    return getActionLabel(config.actionType) ?? config.actionType;
+  }
+  if (typeof config.triggerType === "string") {
+    return config.triggerType;
+  }
+  // Unconfigured node (no action picked yet): present the category capitalized
+  // ("action" -> "Action") rather than the raw lowercase type.
+  const rawType =
+    (typeof data.type === "string" ? data.type : "") ||
+    (typeof node.type === "string" ? node.type : "") ||
+    "node";
+  return rawType.charAt(0).toUpperCase() + rawType.slice(1);
 }
 
 function nodeType(node: AnyRecord): string {

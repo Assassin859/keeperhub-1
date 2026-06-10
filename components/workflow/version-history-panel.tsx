@@ -7,9 +7,13 @@ import {
   Clock,
   Eye,
   GitBranch,
+  Link2,
   Minus,
   Pencil,
   Plus,
+  Power,
+  PowerOff,
+  Unlink,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -33,15 +37,20 @@ import { useVersionPreview } from "@/lib/workflow/use-version-preview";
 import type { VersionDiff } from "@/lib/workflow/version-diff";
 import { findActionById, flattenConfigFields } from "@/plugins/registry";
 
+type ChangeKind =
+  | "add"
+  | "remove"
+  | "change"
+  | "connect"
+  | "disconnect"
+  | "enable"
+  | "disable";
+
 type ChangeItem = {
   key: string;
-  kind: "add" | "remove" | "change";
+  kind: ChangeKind;
   content: ReactNode;
 };
-
-function cap(s: string): string {
-  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
-}
 
 function Arrow(): React.ReactElement {
   return (
@@ -59,6 +68,10 @@ function configFieldLabel(
   actionType: string | undefined,
   key: string
 ): string {
+  // The action id itself is meta, not a form field; show it as "Action".
+  if (key === "actionType") {
+    return "Action";
+  }
   if (!actionType) {
     return key;
   }
@@ -111,10 +124,11 @@ function settingItem(s: VersionDiff["settings"][number]): ChangeItem {
     };
   }
   if (s.field === "enabled") {
+    const on = s.after === "true";
     return {
       key: "set-enabled",
-      kind: "change",
-      content: s.after === "true" ? "Workflow enabled" : "Workflow disabled",
+      kind: on ? "enable" : "disable",
+      content: on ? "Workflow enabled" : "Workflow disabled",
     };
   }
   if (s.field === "visibility") {
@@ -140,18 +154,14 @@ function nodeDeltaItem(
   d: VersionDiff["nodesChanged"][number]["deltas"][number]
 ): ChangeItem {
   const key = `chg-${n.id}-${d.field}`;
-  const who = (
-    <>
-      {cap(n.nodeType)} <Quoted value={n.label} />
-    </>
-  );
+  const who = <Quoted value={n.label} />;
   if (d.field === "name") {
     return {
       key,
       kind: "change",
       content: (
         <span className="inline-flex flex-wrap items-center gap-1">
-          Renamed {cap(n.nodeType)}: <Quoted value={d.before ?? ""} /> <Arrow />{" "}
+          Renamed <Quoted value={d.before ?? ""} /> <Arrow />{" "}
           <Quoted value={d.after ?? ""} />
         </span>
       ),
@@ -181,10 +191,11 @@ function nodeDeltaItem(
     };
   }
   if (d.field === "enabled") {
+    const on = d.after === "true";
     return {
       key,
-      kind: "change",
-      content: d.after === "true" ? <>Enabled {who}</> : <>Disabled {who}</>,
+      kind: on ? "enable" : "disable",
+      content: on ? <>Enabled {who}</> : <>Disabled {who}</>,
     };
   }
   return { key, kind: "change", content: <>{who} description updated</> };
@@ -207,7 +218,7 @@ function buildChangeItems(diff: VersionDiff): ChangeItem[] {
       kind: "add",
       content: (
         <>
-          Added {cap(n.nodeType)} <Quoted value={n.label} />
+          Added <Quoted value={n.label} />
         </>
       ),
     });
@@ -218,7 +229,7 @@ function buildChangeItems(diff: VersionDiff): ChangeItem[] {
       kind: "remove",
       content: (
         <>
-          Removed {cap(n.nodeType)} <Quoted value={n.label} />
+          Removed <Quoted value={n.label} />
         </>
       ),
     });
@@ -236,7 +247,7 @@ function buildChangeItems(diff: VersionDiff): ChangeItem[] {
             content: (
               <span className="flex flex-col gap-1.5">
                 <span className="text-muted-foreground">
-                  {cap(n.nodeType)} <Quoted value={n.label} />{" "}
+                  <Quoted value={n.label} />{" "}
                   <span className="px-0.5">·</span>{" "}
                   <span className="font-medium text-foreground">
                     {configFieldLabel(n.actionType, c.key)}
@@ -259,10 +270,10 @@ function buildChangeItems(diff: VersionDiff): ChangeItem[] {
   for (const c of diff.connectionsAdded) {
     items.push({
       key: `cadd-${c.from}-${c.to}`,
-      kind: "add",
+      kind: "connect",
       content: (
         <span className="inline-flex flex-wrap items-center gap-1">
-          Connected {c.from} <Arrow /> {c.to}
+          Connected <Quoted value={c.from} /> <Arrow /> <Quoted value={c.to} />
         </span>
       ),
     });
@@ -270,10 +281,11 @@ function buildChangeItems(diff: VersionDiff): ChangeItem[] {
   for (const c of diff.connectionsRemoved) {
     items.push({
       key: `crem-${c.from}-${c.to}`,
-      kind: "remove",
+      kind: "disconnect",
       content: (
         <span className="inline-flex flex-wrap items-center gap-1">
-          Disconnected {c.from} <Arrow /> {c.to}
+          Disconnected <Quoted value={c.from} /> <Arrow />{" "}
+          <Quoted value={c.to} />
         </span>
       ),
     });
@@ -281,15 +293,18 @@ function buildChangeItems(diff: VersionDiff): ChangeItem[] {
   return items;
 }
 
+const KIND_STYLE: Record<ChangeKind, { Icon: typeof Plus; color: string }> = {
+  add: { Icon: Plus, color: "text-keeperhub-green" },
+  remove: { Icon: Minus, color: "text-destructive" },
+  change: { Icon: Pencil, color: "text-amber-400" },
+  connect: { Icon: Link2, color: "text-keeperhub-green" },
+  disconnect: { Icon: Unlink, color: "text-destructive" },
+  enable: { Icon: Power, color: "text-keeperhub-green" },
+  disable: { Icon: PowerOff, color: "text-destructive" },
+};
+
 function ChangeRow({ item }: { item: ChangeItem }): React.ReactElement {
-  const Icon =
-    item.kind === "add" ? Plus : item.kind === "remove" ? Minus : Pencil;
-  const color =
-    item.kind === "add"
-      ? "text-keeperhub-green"
-      : item.kind === "remove"
-        ? "text-destructive"
-        : "text-amber-400";
+  const { Icon, color } = KIND_STYLE[item.kind];
   return (
     <li className="flex items-start gap-2 text-xs">
       <Icon className={`mt-0.5 size-3.5 shrink-0 ${color}`} />
@@ -318,11 +333,13 @@ function VersionRow({
   const diff = isVersionDiff(version.change) ? version.change : null;
   const items = diff ? buildChangeItems(diff) : [];
   return (
-    <li>
+    <li
+      className={`rounded-xl transition-colors ${
+        isExpanded ? "bg-muted/40 ring-1 ring-border/70" : "hover:bg-muted/30"
+      }`}
+    >
       <button
-        className={`flex w-full items-start gap-2.5 rounded-lg p-2.5 text-left transition-colors hover:bg-muted ${
-          isExpanded ? "bg-muted" : ""
-        }`}
+        className="flex w-full items-start gap-2.5 rounded-xl p-3 text-left"
         onClick={() => setIsExpanded((e) => !e)}
         type="button"
       >
@@ -338,12 +355,13 @@ function VersionRow({
               </span>
             )}
           </span>
-          <span className="mt-0.5 block truncate text-muted-foreground text-xs">
-            {actorLabel(version.changedBy)}
-          </span>
-          <span className="flex items-center gap-1 text-muted-foreground text-xs">
-            <Clock className="size-3" />
-            {relativeTime(version.createdAt)}
+          <span className="mt-0.5 flex items-center gap-1.5 text-muted-foreground text-xs">
+            <span className="truncate">{actorLabel(version.changedBy)}</span>
+            <span className="text-muted-foreground/60">·</span>
+            <span className="flex shrink-0 items-center gap-1">
+              <Clock className="size-3" />
+              {relativeTime(version.createdAt)}
+            </span>
           </span>
         </span>
         <ChevronRight
@@ -352,32 +370,40 @@ function VersionRow({
           }`}
         />
       </button>
-      {isExpanded && (
-        <div className="mt-1 mb-1 ml-9 space-y-2 border-border border-l pl-3">
-          {items.length > 0 ? (
-            <ul className="space-y-1.5 py-1">
-              {items.map((item) => (
-                <ChangeRow item={item} key={item.key} />
-              ))}
-            </ul>
-          ) : (
-            <p className="py-1 text-muted-foreground text-xs">
-              {version.previousVersion === null
-                ? "Initial version."
-                : "No tracked changes."}
-            </p>
-          )}
-          <Button
-            disabled={isPreviewing}
-            onClick={onView}
-            size="sm"
-            variant="outline"
-          >
-            <Eye className="mr-1.5 size-3.5" />
-            {isPreviewing ? "Viewing on canvas" : "View on canvas"}
-          </Button>
+      {/* Animated reveal (grid 0fr -> 1fr) so the box opens smoothly, like the
+          right-side panel slide. */}
+      <div
+        className={`grid transition-[grid-template-rows] duration-300 ease-out ${
+          isExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+        }`}
+      >
+        <div className="overflow-hidden">
+          <div className="space-y-3 border-border border-t px-4 py-3">
+            {items.length > 0 ? (
+              <ul className="space-y-2">
+                {items.map((item) => (
+                  <ChangeRow item={item} key={item.key} />
+                ))}
+              </ul>
+            ) : (
+              <p className="text-muted-foreground text-xs">
+                {version.previousVersion === null
+                  ? "Initial version."
+                  : "No tracked changes."}
+              </p>
+            )}
+            <Button
+              disabled={isPreviewing}
+              onClick={onView}
+              size="sm"
+              variant="outline"
+            >
+              <Eye className="mr-1.5 size-3.5" />
+              {isPreviewing ? "Viewing on canvas" : "View on canvas"}
+            </Button>
+          </div>
         </div>
-      )}
+      </div>
     </li>
   );
 }
@@ -402,7 +428,7 @@ export function VersionHistoryPanel(): React.ReactElement | null {
     (p) => api.workflow.getHistory(workflowId ?? "", { page: p, limit: 10 }),
     // Reopening the panel (open toggling) restarts at the newest page.
     `${workflowId}|${open}`,
-    { enabled: open && !!workflowId }
+    { enabled: open && !!workflowId, refetchIntervalMs: 30_000 }
   );
 
 
@@ -526,11 +552,11 @@ export function VersionHistoryPanel(): React.ReactElement | null {
           </p>
         )}
         {groups.map((group) => (
-          <div className="mb-2" key={group.label}>
+          <div className="mb-3" key={group.label}>
             <p className="px-2.5 py-1 font-medium text-muted-foreground text-xs uppercase tracking-wide">
               {group.label}
             </p>
-            <ul className="space-y-0.5">
+            <ul className="space-y-2">
               {group.items.map((v) => (
                 <VersionRow
                   isCurrent={v.version === latestVersion}
