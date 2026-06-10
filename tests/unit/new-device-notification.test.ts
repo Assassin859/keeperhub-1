@@ -6,7 +6,7 @@ const { mockGetRedis, mockSendEmail } = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/redis", () => ({ getRedis: mockGetRedis }));
-vi.mock("@/lib/email", () => ({ sendNewIpAttemptEmail: mockSendEmail }));
+vi.mock("@/lib/email", () => ({ sendNewDeviceEmail: mockSendEmail }));
 vi.mock("@/lib/security/device-label", () => ({
   describeUserAgentLabel: (ua: string | null) => ua ?? "Unknown device",
 }));
@@ -14,12 +14,12 @@ vi.mock("@/lib/security/device-label", () => ({
 // (and the rest of login-risk) into the unit env.
 vi.mock("@/lib/security/login-risk", () => ({ logIpVerify: vi.fn() }));
 
-import { newIpNotifyClaimKey } from "@/lib/redis-keys";
+import { newDeviceNotifyClaimKey } from "@/lib/redis-keys";
 import {
-  claimNewIpNotification,
-  maybeNotifyNewIp,
-  NEW_IP_NOTIFY_TTL_SECONDS,
-} from "@/lib/security/new-ip-notification";
+  claimNewDeviceNotification,
+  maybeNotifyNewDevice,
+  NEW_DEVICE_NOTIFY_TTL_SECONDS,
+} from "@/lib/security/new-device-notification";
 
 type SetFn = (...args: unknown[]) => Promise<unknown>;
 function redisWithSet(set: SetFn): { set: SetFn } {
@@ -32,55 +32,62 @@ beforeEach(() => {
   mockSendEmail.mockResolvedValue(true);
 });
 
-describe("newIpNotifyClaimKey", () => {
-  it("namespaces under deployment prefix + ip-notify with user and normalized ip", () => {
+describe("newDeviceNotifyClaimKey", () => {
+  it("namespaces under deployment prefix + device-notify with user and device id", () => {
     // REDIS_KEY_PREFIX is unset in tests, so the prefix falls back to "local".
-    expect(newIpNotifyClaimKey("u1", "1.2.3.0")).toBe(
-      "local:ip-notify:u1:1.2.3.0"
+    expect(newDeviceNotifyClaimKey("u1", "dev-1")).toBe(
+      "local:device-notify:u1:dev-1"
     );
   });
 });
 
-describe("claimNewIpNotification", () => {
+describe("claimNewDeviceNotification", () => {
   it("returns false (skip) when no Redis is configured", async () => {
     mockGetRedis.mockReturnValue(null);
-    await expect(claimNewIpNotification("u1", "1.2.3.0")).resolves.toBe(false);
+    await expect(claimNewDeviceNotification("u1", "dev-1")).resolves.toBe(
+      false
+    );
   });
 
   it("returns true and claims with NX + EX TTL when the key was set", async () => {
     const set = vi.fn().mockResolvedValue("OK");
     mockGetRedis.mockReturnValue(redisWithSet(set));
 
-    await expect(claimNewIpNotification("u1", "1.2.3.0")).resolves.toBe(true);
+    await expect(claimNewDeviceNotification("u1", "dev-1")).resolves.toBe(true);
     expect(set).toHaveBeenCalledWith(
-      "local:ip-notify:u1:1.2.3.0",
+      "local:device-notify:u1:dev-1",
       "1",
       "EX",
-      NEW_IP_NOTIFY_TTL_SECONDS,
+      NEW_DEVICE_NOTIFY_TTL_SECONDS,
       "NX"
     );
   });
 
   it("returns false (skip) when another replica already holds the key", async () => {
     mockGetRedis.mockReturnValue(redisWithSet(vi.fn().mockResolvedValue(null)));
-    await expect(claimNewIpNotification("u1", "1.2.3.0")).resolves.toBe(false);
+    await expect(claimNewDeviceNotification("u1", "dev-1")).resolves.toBe(
+      false
+    );
   });
 
   it("returns false (skip) when the Redis command throws", async () => {
     mockGetRedis.mockReturnValue(
       redisWithSet(vi.fn().mockRejectedValue(new Error("ECONNREFUSED")))
     );
-    await expect(claimNewIpNotification("u1", "1.2.3.0")).resolves.toBe(false);
+    await expect(claimNewDeviceNotification("u1", "dev-1")).resolves.toBe(
+      false
+    );
   });
 });
 
-describe("maybeNotifyNewIp", () => {
+describe("maybeNotifyNewDevice", () => {
   it("sends once when the claim is won, with the resolved device label", async () => {
     mockGetRedis.mockReturnValue(redisWithSet(vi.fn().mockResolvedValue("OK")));
-    maybeNotifyNewIp({
+    maybeNotifyNewDevice({
       userId: "u1",
       email: "a@b.com",
-      ip: "9.9.9.0",
+      deviceId: "dev-1",
+      ip: "9.9.9.9",
       country: "DE",
       userAgent: "Mozilla/5.0",
     });
@@ -89,7 +96,7 @@ describe("maybeNotifyNewIp", () => {
     expect(mockSendEmail).toHaveBeenCalledWith(
       expect.objectContaining({
         email: "a@b.com",
-        ip: "9.9.9.0",
+        ip: "9.9.9.9",
         country: "DE",
         device: "Mozilla/5.0",
       })
@@ -99,10 +106,11 @@ describe("maybeNotifyNewIp", () => {
   it("does not send when another replica already claimed", async () => {
     mockGetRedis.mockReturnValue(redisWithSet(vi.fn().mockResolvedValue(null)));
 
-    maybeNotifyNewIp({
+    maybeNotifyNewDevice({
       userId: "u1",
       email: "a@b.com",
-      ip: "9.9.9.0",
+      deviceId: "dev-1",
+      ip: "9.9.9.9",
       country: null,
       userAgent: null,
     });
@@ -114,40 +122,43 @@ describe("maybeNotifyNewIp", () => {
 
   it("sends once across a fan-out: only the SET NX winner delivers", async () => {
     // SET NX is atomic in Redis: the first call sets the key ("OK"), the rest
-    // see it exists (null). The mock mirrors that so concurrent requests for
-    // the same network produce exactly one email with no local dedup.
+    // see it exists (null). The mock mirrors that so concurrent sign-ins for
+    // the same device produce exactly one email with no local dedup.
     const set = vi.fn().mockResolvedValueOnce("OK").mockResolvedValue(null);
     mockGetRedis.mockReturnValue(redisWithSet(set));
     const notification = {
       userId: "u1",
       email: "a@b.com",
-      ip: "9.9.9.0",
+      deviceId: "dev-1",
+      ip: "9.9.9.9",
       country: null,
       userAgent: null,
     };
 
-    maybeNotifyNewIp(notification);
-    maybeNotifyNewIp(notification);
-    maybeNotifyNewIp(notification);
+    maybeNotifyNewDevice(notification);
+    maybeNotifyNewDevice(notification);
+    maybeNotifyNewDevice(notification);
 
     await vi.waitFor(() => expect(mockSendEmail).toHaveBeenCalledTimes(1));
     expect(set).toHaveBeenCalledTimes(3);
   });
 
-  it("skips entirely when userId or ip is empty", async () => {
+  it("skips entirely when userId or deviceId is empty", async () => {
     mockGetRedis.mockReturnValue(redisWithSet(vi.fn().mockResolvedValue("OK")));
 
-    maybeNotifyNewIp({
+    maybeNotifyNewDevice({
       userId: "",
       email: "a@b.com",
-      ip: "9.9.9.0",
+      deviceId: "dev-1",
+      ip: "9.9.9.9",
       country: null,
       userAgent: null,
     });
-    maybeNotifyNewIp({
+    maybeNotifyNewDevice({
       userId: "u1",
       email: "a@b.com",
-      ip: "",
+      deviceId: "",
+      ip: "9.9.9.9",
       country: null,
       userAgent: null,
     });

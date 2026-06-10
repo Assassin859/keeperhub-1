@@ -461,41 +461,43 @@ KeeperHub - Blockchain Workflow Automation
   return success;
 }
 
-type NewIpAttemptData = {
+type NewDeviceData = {
   email: string;
-  ip: string;
+  ip: string | null;
   country: string | null;
   device: string;
   when: Date;
 };
 
 /**
- * Notify the account owner that an authenticated request reached them
- * from an IP not in their trust list. The IP gate in the root proxy
- * fires this once per (user, ip) per pod lifetime so a legitimate
- * network change does not flood the inbox.
+ * Notify the account owner that a device they have not signed in from
+ * before just authenticated. Fired once per (user, device) per week by
+ * the sign-in device check; the account's first-ever device is not
+ * emailed (that is the signup device). The full source IP is included so
+ * the recipient can recognise the network.
  */
-export async function sendNewIpAttemptEmail(
-  data: NewIpAttemptData
+export async function sendNewDeviceEmail(
+  data: NewDeviceData
 ): Promise<boolean> {
   const { email, ip, country, device, when } = data;
 
   const logoUrl =
     "https://raw.githubusercontent.com/KeeperHub/keeperhub/staging/public/keeperhub_logo_email.png";
 
-  const subject = "New sign-in location detected - KeeperHub";
+  const subject = "New device signed in to your KeeperHub account";
 
   const whenFormatted = when.toUTCString();
   const countryLabel = country ?? "Unknown";
+  const ipLabel = ip ?? "Unknown";
 
   const text = `
 Hi,
 
-An authenticated request to your KeeperHub account just reached us from a network we have not seen on this account before. If this was you, confirm the new IP by completing the verification step in your browser. If this was not you, change your password and remove the IP from your active sessions immediately.
+A device we have not seen on your KeeperHub account before just signed in. If this was you, no action is needed. If this was not you, change your password and remove the device from your active sessions immediately.
 
-IP: ${ip}
-Country: ${countryLabel}
 Device: ${device}
+Country: ${countryLabel}
+IP: ${ipLabel}
 When: ${whenFormatted}
 
 ---
@@ -515,29 +517,29 @@ KeeperHub - Blockchain Workflow Automation
   </div>
 
   <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e5e5; border-top: none; border-radius: 0 0 12px 12px;">
-    <h2 style="color: #1a1a2e; margin-top: 0;">New sign-in location detected</h2>
+    <h2 style="color: #1a1a2e; margin-top: 0;">New device signed in</h2>
 
-    <p>An authenticated request to your KeeperHub account just reached us from a network we have not seen on this account before.</p>
+    <p>A device we have not seen on your KeeperHub account before just signed in.</p>
 
     <div style="background: #f5f5f5; border-radius: 8px; padding: 20px; margin: 20px 0; font-family: monospace; font-size: 14px;">
-      <div><strong>IP:</strong> ${ip}</div>
-      <div><strong>Country:</strong> ${countryLabel}</div>
       <div><strong>Device:</strong> ${device}</div>
+      <div><strong>Country:</strong> ${countryLabel}</div>
+      <div><strong>IP:</strong> ${ipLabel}</div>
       <div><strong>When:</strong> ${whenFormatted}</div>
     </div>
 
-    <p>If this was you, confirm the new IP by completing the verification step in your browser.</p>
+    <p>If this was you, no action is needed.</p>
 
     <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 20px; margin: 20px 0;">
       <p style="margin: 0; color: #991b1b;">
-        <strong>If this was not you</strong>, change your password and remove the IP from your active sessions immediately.
+        <strong>If this was not you</strong>, change your password and remove the device from your active sessions immediately.
       </p>
     </div>
 
     <hr style="border: none; border-top: 1px solid #e5e5e5; margin: 30px 0;">
 
     <p style="color: #999; font-size: 12px; margin-bottom: 0;">
-      You're receiving this because a new network attempted to access your account. To stop these alerts, sign in only from networks you've verified.
+      You're receiving this because a new device signed in to your account. To stop these alerts, sign in only from devices you recognise.
     </p>
   </div>
 
@@ -558,11 +560,10 @@ KeeperHub - Blockchain Workflow Automation
   if (!(success || isTestEnv)) {
     logUserError(
       ErrorCategory.EXTERNAL_SERVICE,
-      `[Email] Failed to send new-IP notification to ${email}`,
-      new Error("Failed to send new-IP notification"),
+      `[Email] Failed to send new-device notification to ${email}`,
+      new Error("Failed to send new-device notification"),
       {
         service: "sendgrid",
-        ip,
       }
     );
   }

@@ -23,15 +23,15 @@ import { isDisposableEmailDomain } from "@/lib/auth-disposable-emails";
 import { DISPOSABLE_EMAIL_REJECTION_MESSAGE } from "@/lib/auth-disposable-emails-message";
 import { isFreshSignup } from "@/lib/auth-notification-guard";
 import { sendInvitationEmail, sendVerificationOTP } from "@/lib/email";
+import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
-  assessIpTrust,
+  assessCountryTrust,
   assessLoginRisk,
   serializeRiskFlags,
-  upsertTrustedIp,
+  upsertTrustedCountry,
 } from "@/lib/security/login-risk";
 import { reportSessionBackstop } from "@/lib/security/session-backstop";
 import { TRUSTED_ORIGINS } from "@/lib/trusted-origins";
-import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { wrapWithSessionTokenHash } from "./auth-session-token-hash";
 import { db } from "./db";
 import {
@@ -48,7 +48,6 @@ import {
   sessions,
   twoFactor as twoFactorTable,
   users,
-  userTrustedIps,
   verifications,
   workflowExecutionLogs,
   workflowExecutions,
@@ -524,7 +523,12 @@ export const auth = betterAuth({
               createdAt: new Date(),
             });
           } catch (error) {
-            logSystemError(ErrorCategory.AUTH, "[Auth] Failed to mint org for new user", error, { userId: user.id });
+            logSystemError(
+              ErrorCategory.AUTH,
+              "[Auth] Failed to mint org for new user",
+              error,
+              { userId: user.id }
+            );
             // Re-throw: a user without an org cannot create workflows. Failing
             // signup cleanly here is better than creating a user who hits
             // errors on every subsequent action.
@@ -636,15 +640,15 @@ export const auth = betterAuth({
             return false;
           }
           const risk = await assessLoginRisk(userId);
-          const ipTrust = await assessIpTrust(userId);
-          // When the session is being created from a trusted IP (or
-          // for the user's first-ever attestation) record/refresh it
-          // in user_trusted_ips. This is the only path that auto-adds
-          // an IP without going through /verify-ip; the unique
-          // (user_id, ip) constraint makes the upsert idempotent so a
-          // repeat sign-in from a known IP just bumps last_seen_at.
-          if (ipTrust.ip && ipTrust.trusted) {
-            await upsertTrustedIp(userId, ipTrust.ip, ipTrust.country);
+          const countryTrust = await assessCountryTrust(userId);
+          // When the session is being created from a trusted country (or
+          // for the user's first-ever attestation) record/refresh it in
+          // user_trusted_countries. This is the only path that auto-adds a
+          // country without going through /verify-ip; the unique
+          // (user_id, country) constraint makes the upsert idempotent so a
+          // repeat sign-in from a known country just bumps last_seen_at.
+          if (countryTrust.country && countryTrust.trusted) {
+            await upsertTrustedCountry(userId, countryTrust.country);
           }
           const [userRow] = await db
             .select({ twoFactorEnabled: users.twoFactorEnabled })
@@ -697,7 +701,12 @@ export const auth = betterAuth({
                 .where(eq(sessions.id, session.id));
             }
           } catch (error) {
-            logSystemError(ErrorCategory.AUTH, "[Auth] Failed to set active org on session", error, { sessionId: session.id });
+            logSystemError(
+              ErrorCategory.AUTH,
+              "[Auth] Failed to set active org on session",
+              error,
+              { sessionId: session.id }
+            );
           }
         },
       },

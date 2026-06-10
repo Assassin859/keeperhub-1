@@ -13,15 +13,18 @@ export function deploymentKey(...parts: string[]): string {
   return [KEY_PREFIX, ...parts].join(":");
 }
 
-/** `ip` must be the normalized /24-or-/64 trust key (matches user_trusted_ips). */
-export function newIpNotifyClaimKey(userId: string, ip: string): string {
-  return deploymentKey("ip-notify", userId, ip);
+/** Dedup claim for the new-device warning email, keyed on the device id. */
+export function newDeviceNotifyClaimKey(
+  userId: string,
+  deviceId: string
+): string {
+  return deploymentKey("device-notify", userId, deviceId);
 }
 
 /**
- * Shared cache of a trusted (user, ip). Present means the IP gate may pass
- * without a DB read. `ip` must be the normalized /24-or-/64 trust key.
+ * Shared cache of a trusted (user, country). Present means the country gate
+ * may pass without a DB read. `country` is the CF-attested 2-letter code.
  */
-export function trustedIpKey(userId: string, ip: string): string {
-  return deploymentKey("trust", userId, ip);
+export function trustedCountryKey(userId: string, country: string): string {
+  return deploymentKey("trust-country", userId, country);
 }

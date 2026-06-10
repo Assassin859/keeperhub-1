@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   deploymentKey,
-  newIpNotifyClaimKey,
-  trustedIpKey,
+  newDeviceNotifyClaimKey,
+  trustedCountryKey,
 } from "@/lib/redis-keys";
 
 describe("deploymentKey", () => {
@@ -15,17 +15,17 @@ describe("deploymentKey", () => {
   });
 });
 
-describe("newIpNotifyClaimKey", () => {
-  it("builds an ip-notify key through deploymentKey", () => {
-    expect(newIpNotifyClaimKey("u1", "1.2.3.0")).toBe(
-      "local:ip-notify:u1:1.2.3.0"
+describe("newDeviceNotifyClaimKey", () => {
+  it("builds a device-notify key through deploymentKey", () => {
+    expect(newDeviceNotifyClaimKey("u1", "dev-1")).toBe(
+      "local:device-notify:u1:dev-1"
     );
   });
 });
 
-describe("trustedIpKey", () => {
-  it("builds a trust key through deploymentKey", () => {
-    expect(trustedIpKey("u1", "1.2.3.0")).toBe("local:trust:u1:1.2.3.0");
+describe("trustedCountryKey", () => {
+  it("builds a country trust key through deploymentKey", () => {
+    expect(trustedCountryKey("u1", "US")).toBe("local:trust-country:u1:US");
   });
 });
 
@@ -41,11 +41,11 @@ describe("REDIS_KEY_PREFIX per deployment", () => {
     vi.resetModules();
     const mod = await import("@/lib/redis-keys");
 
-    expect(mod.deploymentKey("ip-notify", "u1", "1.2.3.0")).toBe(
-      "staging:ip-notify:u1:1.2.3.0"
+    expect(mod.deploymentKey("device-notify", "u1", "dev-1")).toBe(
+      "staging:device-notify:u1:dev-1"
     );
-    expect(mod.newIpNotifyClaimKey("u1", "1.2.3.0")).toBe(
-      "staging:ip-notify:u1:1.2.3.0"
+    expect(mod.newDeviceNotifyClaimKey("u1", "dev-1")).toBe(
+      "staging:device-notify:u1:dev-1"
     );
   });
 
@@ -54,12 +54,12 @@ describe("REDIS_KEY_PREFIX per deployment", () => {
     vi.resetModules();
     const mod = await import("@/lib/redis-keys");
 
-    // Same user + ip on a different deployment lands on a different key.
-    expect(mod.newIpNotifyClaimKey("u1", "1.2.3.0")).not.toBe(
-      "staging:ip-notify:u1:1.2.3.0"
+    // Same user + device on a different deployment lands on a different key.
+    expect(mod.newDeviceNotifyClaimKey("u1", "dev-1")).not.toBe(
+      "staging:device-notify:u1:dev-1"
     );
-    expect(mod.newIpNotifyClaimKey("u1", "1.2.3.0")).toBe(
-      "pr-42:ip-notify:u1:1.2.3.0"
+    expect(mod.newDeviceNotifyClaimKey("u1", "dev-1")).toBe(
+      "pr-42:device-notify:u1:dev-1"
     );
   });
 });
