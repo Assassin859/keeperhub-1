@@ -4,7 +4,10 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { organization, workflows } from "@/lib/db/schema";
 import { classifyExecutionError } from "@/lib/errors/classify";
-import { recordWorkflowExecutionError } from "@/lib/metrics/collectors/prometheus";
+import {
+  recordWorkflowExecutionError,
+  recordWorkflowExecutionErrorByWorkflow,
+} from "@/lib/metrics/collectors/prometheus";
 import { ANONYMOUS_ORG_SLUG } from "@/lib/metrics/db-metrics";
 
 /**
@@ -39,6 +42,12 @@ export async function recordExecutionErrorFinalized(args: {
     recordWorkflowExecutionError({
       orgSlug,
       errorCategory,
+      errorType,
+    });
+
+    recordWorkflowExecutionErrorByWorkflow({
+      workflowId: args.workflowId,
+      orgSlug,
       errorType,
     });
   } catch {
