@@ -456,6 +456,10 @@ env:
   ALLOW_TEST_ENDPOINTS:
     type: kv
     value: "true"
+  LOAD_TEST_CAPTCHA_BYPASS_TOKEN:
+    type: parameterStore
+    name: load-test-captcha-bypass-token
+    parameter_name: /eks/techops-staging/keeperhub/load-test-captcha-bypass-token
   KH_ADMIN_SECRET:
     type: parameterStore
     name: kh-admin-secret
