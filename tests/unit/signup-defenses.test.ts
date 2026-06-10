@@ -5,9 +5,18 @@ type RateLimitRuleFn = (
   req: Request,
   defaults: RateLimitRule
 ) => Promise<RateLimitRule | false> | RateLimitRule | false;
+type CaptchaPluginCtx = {
+  logger: {
+    info: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+};
 type CaptchaPluginShape = {
   id: string;
   options: { provider?: string; endpoints?: string[]; secretKey?: string };
+};
+type CaptchaPluginWithRequest = CaptchaPluginShape & {
+  onRequest: (request: Request, ctx: CaptchaPluginCtx) => Promise<unknown>;
 };
 
 const TEST_API_KEY = "kha_test_signup_defenses_key";
@@ -26,6 +35,8 @@ function clearTurnstileEnv(): void {
   delete process.env.NEXT_PHASE;
   // biome-ignore lint/performance/noDelete: same
   delete process.env.TURNSTILE_ENFORCE;
+  // biome-ignore lint/performance/noDelete: same
+  delete process.env.LOAD_TEST_CAPTCHA_BYPASS_TOKEN;
 }
 
 describe("signup defenses: captcha plugin", () => {
@@ -77,7 +88,7 @@ describe("signup defenses: captcha plugin", () => {
   it("throws at module load in production when TURNSTILE_SECRET_KEY is missing", async () => {
     vi.stubEnv("NODE_ENV", "production");
     await expect(import("@/lib/auth")).rejects.toThrow(
-      /TURNSTILE_SECRET_KEY is required in production/
+      MISSING_CAPTCHA_SECRET_ERROR
     );
   });
 
@@ -126,6 +137,139 @@ describe("signup defenses: captcha plugin", () => {
     vi.stubEnv("TURNSTILE_ENFORCE", "true");
     await expect(import("@/lib/auth")).rejects.toThrow(
       MISSING_CAPTCHA_SECRET_ERROR
+    );
+  });
+});
+
+describe("signup defenses: load-test captcha bypass", () => {
+  const BYPASS_TOKEN = "0123456789abcdef0123456789abcdef";
+  const SAME_LENGTH_WRONG = "ffffffffffffffffffffffffffffffff";
+  const SIGNUP_URL = "http://localhost:3000/api/auth/sign-up/email";
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    clearTurnstileEnv();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    clearTurnstileEnv();
+  });
+
+  async function loadCaptchaPlugin(): Promise<CaptchaPluginWithRequest> {
+    const { auth } = await import("@/lib/auth");
+    const plugin = (auth.options.plugins ?? []).find(
+      (p) => (p as { id?: string }).id === "captcha"
+    );
+    if (!plugin) {
+      throw new Error("captcha plugin not loaded");
+    }
+    return plugin as unknown as CaptchaPluginWithRequest;
+  }
+
+  function makeRequest(headers: Record<string, string> = {}): Request {
+    return new Request(SIGNUP_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify({ email: "x@x.test", password: "x", name: "x" }),
+    });
+  }
+
+  function makeCtx(): CaptchaPluginCtx & {
+    logger: {
+      info: ReturnType<typeof vi.fn>;
+      error: ReturnType<typeof vi.fn>;
+    };
+  } {
+    return {
+      logger: {
+        info: vi.fn() as unknown as (...args: unknown[]) => void,
+        error: vi.fn() as unknown as (...args: unknown[]) => void,
+      },
+    } as never;
+  }
+
+  it("passes through when the bypass header matches the env token", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    process.env.TURNSTILE_SECRET_KEY = "test-secret";
+    process.env.LOAD_TEST_CAPTCHA_BYPASS_TOKEN = BYPASS_TOKEN;
+    const plugin = await loadCaptchaPlugin();
+    const ctx = makeCtx();
+    const result = await plugin.onRequest(
+      makeRequest({ "X-Load-Test-Captcha-Bypass": BYPASS_TOKEN }),
+      ctx
+    );
+    expect(result).toBeUndefined();
+    expect(ctx.logger.info).toHaveBeenCalledWith(
+      "captcha bypass header accepted",
+      expect.objectContaining({ endpoint: expect.stringContaining(SIGNUP_URL) })
+    );
+  });
+
+  it("delegates to the underlying captcha check when no bypass header is sent", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    process.env.TURNSTILE_SECRET_KEY = "test-secret";
+    process.env.LOAD_TEST_CAPTCHA_BYPASS_TOKEN = BYPASS_TOKEN;
+    const plugin = await loadCaptchaPlugin();
+    const ctx = makeCtx();
+    const result = await plugin.onRequest(makeRequest(), ctx);
+    expect(result).toBeDefined();
+    expect(ctx.logger.info).not.toHaveBeenCalledWith(
+      "captcha bypass header accepted",
+      expect.anything()
+    );
+  });
+
+  it("delegates when the bypass header is the same length but the wrong value", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    process.env.TURNSTILE_SECRET_KEY = "test-secret";
+    process.env.LOAD_TEST_CAPTCHA_BYPASS_TOKEN = BYPASS_TOKEN;
+    const plugin = await loadCaptchaPlugin();
+    expect(SAME_LENGTH_WRONG.length).toBe(BYPASS_TOKEN.length);
+    const ctx = makeCtx();
+    const result = await plugin.onRequest(
+      makeRequest({ "X-Load-Test-Captcha-Bypass": SAME_LENGTH_WRONG }),
+      ctx
+    );
+    expect(result).toBeDefined();
+    expect(ctx.logger.info).not.toHaveBeenCalledWith(
+      "captcha bypass header accepted",
+      expect.anything()
+    );
+  });
+
+  it("delegates when the bypass header is the wrong length", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    process.env.TURNSTILE_SECRET_KEY = "test-secret";
+    process.env.LOAD_TEST_CAPTCHA_BYPASS_TOKEN = BYPASS_TOKEN;
+    const plugin = await loadCaptchaPlugin();
+    const ctx = makeCtx();
+    const result = await plugin.onRequest(
+      makeRequest({ "X-Load-Test-Captcha-Bypass": "too-short" }),
+      ctx
+    );
+    expect(result).toBeDefined();
+    expect(ctx.logger.info).not.toHaveBeenCalledWith(
+      "captcha bypass header accepted",
+      expect.anything()
+    );
+  });
+
+  it("ignores the bypass header entirely when the env token is unset", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    process.env.TURNSTILE_SECRET_KEY = "test-secret";
+    // LOAD_TEST_CAPTCHA_BYPASS_TOKEN intentionally left unset (production posture)
+    const plugin = await loadCaptchaPlugin();
+    const ctx = makeCtx();
+    const result = await plugin.onRequest(
+      makeRequest({ "X-Load-Test-Captcha-Bypass": BYPASS_TOKEN }),
+      ctx
+    );
+    expect(result).toBeDefined();
+    expect(ctx.logger.info).not.toHaveBeenCalledWith(
+      "captcha bypass header accepted",
+      expect.anything()
     );
   });
 });
