@@ -187,7 +187,7 @@ export const lastExecutionLogsAtom = atom<LastExecutionLogsState>({
 
 // Autosave functionality
 let autosaveTimeoutId: NodeJS.Timeout | null = null;
-const AUTOSAVE_DELAY = 1000; // 1 second debounce for field typing
+const AUTOSAVE_DELAY = 2500; // debounce so rapid edits don't each save/version
 
 // Autosave atom that handles saving workflow state
 export const autosaveAtom = atom(

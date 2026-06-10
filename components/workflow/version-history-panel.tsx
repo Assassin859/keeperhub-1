@@ -37,7 +37,6 @@ import {
   versionHistoryOpenAtom,
 } from "@/lib/workflow/store";
 import {
-  computeVersionDiff,
   type VersionDiff,
 } from "@/lib/workflow/version-diff";
 
@@ -153,6 +152,15 @@ function nodeDeltaItem(
   return { key, kind: "change", content: <>{who} description updated</> };
 }
 
+function isVersionDiff(value: unknown): value is VersionDiff {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Array.isArray((value as VersionDiff).settings) &&
+    Array.isArray((value as VersionDiff).nodesAdded)
+  );
+}
+
 function buildChangeItems(diff: VersionDiff): ChangeItem[] {
   const items: ChangeItem[] = diff.settings.map(settingItem);
   for (const n of diff.nodesAdded) {
@@ -215,7 +223,7 @@ function ChangeRow({ item }: { item: ChangeItem }): React.ReactElement {
       ? "text-keeperhub-green"
       : item.kind === "remove"
         ? "text-destructive"
-        : "text-amber-500";
+        : "text-amber-400";
   return (
     <li className="flex items-start gap-2 text-xs">
       <Icon className={`mt-0.5 size-3.5 shrink-0 ${color}`} />
@@ -229,16 +237,16 @@ function VersionRow({
   isCurrent,
   isSelected,
   onSelect,
-  diff,
-  diffLoading,
 }: {
   version: WorkflowVersionSummary;
   isCurrent: boolean;
   isSelected: boolean;
   onSelect: () => void;
-  diff: VersionDiff | null;
-  diffLoading: boolean;
 }): React.ReactElement {
+  // The semantic diff vs the previous version is precomputed and stored, so we
+  // can show what each version changed without fetching its snapshot. Versions
+  // recorded before this format shipped hold a raw diff and are skipped.
+  const diff = isVersionDiff(version.change) ? version.change : null;
   const items = diff ? buildChangeItems(diff) : [];
   return (
     <li>
@@ -270,27 +278,13 @@ function VersionRow({
           </span>
         </span>
       </button>
-      {isSelected && (
-        <div className="mt-1 ml-9 border-border border-l pl-3">
-          {diffLoading && (
-            <p className="py-1 text-muted-foreground text-xs">Loading...</p>
-          )}
-          {!diffLoading &&
-            (version.previousVersion === null ? (
-              <p className="py-1 text-muted-foreground text-xs">
-                Initial version.
-              </p>
-            ) : items.length === 0 ? (
-              <p className="py-1 text-muted-foreground text-xs">
-                Layout-only changes.
-              </p>
-            ) : (
-              <ul className="space-y-1.5 py-1">
-                {items.map((item) => (
-                  <ChangeRow item={item} key={item.key} />
-                ))}
-              </ul>
+      {version.previousVersion !== null && items.length > 0 && (
+        <div className="mt-1 mb-1 ml-9 border-border border-l pl-3">
+          <ul className="space-y-1.5 py-1">
+            {items.map((item) => (
+              <ChangeRow item={item} key={item.key} />
             ))}
+          </ul>
         </div>
       )}
     </li>
@@ -310,8 +304,6 @@ export function VersionHistoryPanel(): React.ReactElement | null {
 
   const [selected, setSelected] = useState<WorkflowVersionSummary | null>(null);
   const [snapshot, setSnapshot] = useState<SavedWorkflow | null>(null);
-  const [diff, setDiff] = useState<VersionDiff | null>(null);
-  const [diffLoading, setDiffLoading] = useState(false);
   const [restoring, setRestoring] = useState(false);
 
   const {
@@ -384,26 +376,18 @@ export function VersionHistoryPanel(): React.ReactElement | null {
         return;
       }
       setSelected(v);
-      setDiff(null);
       setSnapshot(null);
-      setDiffLoading(true);
       try {
-        const [sel, prev] = await Promise.all([
-          api.workflow.getById(workflowId, { version: v.version }),
-          v.previousVersion
-            ? api.workflow.getById(workflowId, { version: v.previousVersion })
-            : Promise.resolve(null),
-        ]);
+        const sel = await api.workflow.getById(workflowId, {
+          version: v.version,
+        });
         setSnapshot(sel);
-        setDiff(computeVersionDiff(prev, sel));
         // Live preview on the canvas (autosave is suppressed while previewing).
         setPreviewVersion(v.version);
         setNodes(sel.nodes);
         setEdges(sel.edges);
       } catch {
         toast.error("Failed to load version");
-      } finally {
-        setDiffLoading(false);
       }
     },
     [workflowId, setPreviewVersion, setNodes, setEdges]
@@ -482,7 +466,7 @@ export function VersionHistoryPanel(): React.ReactElement | null {
 
   return (
     <aside
-      className="fixed top-[calc(6rem+var(--app-banner-height,0px))] right-0 bottom-0 z-30 flex flex-col border-border border-l bg-background shadow-xl transition-transform duration-300 ease-out lg:top-[calc(60px+var(--app-banner-height,0px))]"
+      className="fixed top-[calc(6rem+var(--app-banner-height,0px))] right-0 bottom-0 z-30 flex flex-col border-border border-t border-l bg-background shadow-xl transition-transform duration-300 ease-out lg:top-[calc(60px+var(--app-banner-height,0px))]"
       style={{
         width: `${widthPct}%`,
         transform: open ? "translateX(0)" : "translateX(100%)",
@@ -549,8 +533,6 @@ export function VersionHistoryPanel(): React.ReactElement | null {
             <ul className="space-y-0.5">
               {group.items.map((v) => (
                 <VersionRow
-                  diff={selected?.version === v.version ? diff : null}
-                  diffLoading={selected?.version === v.version && diffLoading}
                   isCurrent={v.version === latestVersion}
                   isSelected={selected?.version === v.version}
                   key={v.version}

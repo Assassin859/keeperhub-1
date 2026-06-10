@@ -29,7 +29,7 @@ const KIND_ICON: Record<AuditActionKind, typeof Plus> = {
 const KIND_COLOR: Record<AuditActionKind, string> = {
   add: "bg-keeperhub-green/15 text-keeperhub-green",
   remove: "bg-destructive/15 text-destructive",
-  change: "bg-amber-500/15 text-amber-500",
+  change: "bg-amber-400/15 text-amber-400",
 };
 
 function metadataLine(event: SecurityAuditEvent): string | null {

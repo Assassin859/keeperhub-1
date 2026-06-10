@@ -1,12 +1,9 @@
-import deepDiff from "deep-diff";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { workflowHistory } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import {
-  hashWorkflowDefinition,
-  normalizeWorkflowDefinition,
-} from "@/lib/workflow/content-hash";
+import { hashWorkflowDefinition } from "@/lib/workflow/content-hash";
+import { computeVersionDiff } from "@/lib/workflow/version-diff";
 
 /**
  * One saved version per workflow edit. Holds the full snapshot (for load /
@@ -61,24 +58,6 @@ function buildSnapshot(wf: WorkflowSnapshotInput): Record<string, unknown> {
   };
 }
 
-/**
- * The shape the diff runs over: scalar metadata plus the MEANINGFUL definition
- * (cosmetic node/edge fields stripped), so a node drag does not register as a
- * change but a connection or config edit does.
- */
-function diffable(wf: WorkflowSnapshotInput): Record<string, unknown> {
-  const { nodes, edges } = normalizeWorkflowDefinition(wf.nodes, wf.edges);
-  return {
-    name: wf.name ?? null,
-    description: wf.description ?? null,
-    visibility: wf.visibility ?? null,
-    enabled: wf.enabled ?? null,
-    isListed: wf.isListed ?? null,
-    nodes,
-    edges,
-  };
-}
-
 export async function recordWorkflowSnapshot(args: {
   workflowId: string;
   before: WorkflowSnapshotInput | null;
@@ -100,9 +79,9 @@ export async function recordWorkflowSnapshot(args: {
 
     const previousVersion = latest?.version ?? null;
     const version = (previousVersion ?? 0) + 1;
-    const change = before
-      ? (deepDiff.diff(diffable(before), diffable(after)) ?? null)
-      : null;
+    // Store the semantic diff (what changed: nodes/connections/settings), so
+    // the timeline can show each version's changes without re-deriving them.
+    const change = before ? computeVersionDiff(before, after) : null;
 
     await db.insert(workflowHistory).values({
       workflowId,
