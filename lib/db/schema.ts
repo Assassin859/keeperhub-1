@@ -821,15 +821,22 @@ export const workflowExecutionDigestSettings = pgTable(
       .primaryKey()
       .references(() => organization.id, { onDelete: "cascade" }),
     enabled: boolean("enabled").notNull().default(false),
-    cadence: text("cadence")
-      .$type<"daily" | "weekly">()
+    // An org can subscribe to any combination of cadences; each one sends on its
+    // own schedule. Defaults to weekly for parity with the original single-choice.
+    cadences: jsonb("cadences")
+      .$type<("daily" | "weekly" | "monthly")[]>()
       .notNull()
-      .default("weekly"),
+      .default(["weekly"]),
     subscriberUserIds: jsonb("subscriber_user_ids")
       .$type<string[]>()
       .notNull()
       .default([]),
-    lastSentAt: timestamp("last_sent_at", { withTimezone: true }),
+    // Last-sent timestamp (ISO string) keyed by cadence, so a daily send does not
+    // suppress the weekly/monthly send and vice versa.
+    lastSent: jsonb("last_sent")
+      .$type<Partial<Record<"daily" | "weekly" | "monthly", string>>>()
+      .notNull()
+      .default({}),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

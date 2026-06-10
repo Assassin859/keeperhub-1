@@ -736,6 +736,13 @@
       "when": 1779843900011,
       "tag": "0104_keep_586_execution_digest_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "7",
+      "when": 1779843900012,
+      "tag": "0105_keep_586_digest_multi_cadence",
+      "breakpoints": true
     }
   ]
 }

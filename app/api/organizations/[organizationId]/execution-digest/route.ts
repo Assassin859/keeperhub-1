@@ -9,8 +9,15 @@ import {
 import { isFeatureEnabledForOrg } from "@/lib/features/server";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
-import { DIGEST_REQUIRES_SUBSCRIBER_ERROR } from "@/lib/notifications/digest-messages";
-import { SUBSCRIBABLE_ROLES } from "@/lib/notifications/execution-digest";
+import {
+  DIGEST_REQUIRES_CADENCE_ERROR,
+  DIGEST_REQUIRES_SUBSCRIBER_ERROR,
+} from "@/lib/notifications/digest-messages";
+import type { DigestCadence } from "@/lib/notifications/execution-digest";
+import {
+  DIGEST_CADENCES,
+  SUBSCRIBABLE_ROLES,
+} from "@/lib/notifications/execution-digest";
 
 const FEATURE_ID = "notifications.execution-digest" as const;
 
@@ -39,14 +46,16 @@ async function requireOrgManager(
     .select({ role: member.role })
     .from(member)
     .where(
-      and(
-        eq(member.organizationId, organizationId),
-        eq(member.userId, userId)
-      )
+      and(eq(member.organizationId, organizationId), eq(member.userId, userId))
     )
     .limit(1);
 
-  if (!membership || !(membership.role === "owner" || membership.role === "admin")) {
+  if (
+    !(
+      membership &&
+      (membership.role === "owner" || membership.role === "admin")
+    )
+  ) {
     return { ok: false, status: 403, error: "Forbidden" };
   }
   return { ok: true, userId };
@@ -56,7 +65,7 @@ async function loadSettings(organizationId: string) {
   const [row] = await db
     .select({
       enabled: workflowExecutionDigestSettings.enabled,
-      cadence: workflowExecutionDigestSettings.cadence,
+      cadences: workflowExecutionDigestSettings.cadences,
       subscriberUserIds: workflowExecutionDigestSettings.subscriberUserIds,
     })
     .from(workflowExecutionDigestSettings)
@@ -105,7 +114,7 @@ export async function GET(
 
     return NextResponse.json({
       enabled: settings?.enabled ?? false,
-      cadence: settings?.cadence ?? "weekly",
+      cadences: settings?.cadences ?? ["weekly"],
       subscriberUserIds: settings?.subscriberUserIds ?? [],
       eligible,
       members,
@@ -126,9 +135,17 @@ export async function GET(
 
 type PutBody = {
   enabled?: boolean;
-  cadence?: string;
+  cadences?: string[];
   subscriberUserIds?: string[];
 };
+
+function parseCadences(raw: unknown): DigestCadence[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  // Keep the canonical order and drop anything unknown or duplicated.
+  return DIGEST_CADENCES.filter((c) => raw.includes(c));
+}
 
 export async function PUT(
   request: Request,
@@ -156,9 +173,11 @@ export async function PUT(
 
     const body = (await request.json()) as PutBody;
     const enabled = Boolean(body.enabled);
-    const cadence = body.cadence === "daily" ? "daily" : "weekly";
+    const cadences = parseCadences(body.cadences);
     const requested = Array.isArray(body.subscriberUserIds)
-      ? body.subscriberUserIds.filter((id): id is string => typeof id === "string")
+      ? body.subscriberUserIds.filter(
+          (id): id is string => typeof id === "string"
+        )
       : [];
 
     // Keep only ids that are current owners/admins of this org.
@@ -178,6 +197,15 @@ export async function PUT(
       subscriberUserIds = requested.filter((id) => validSet.has(id));
     }
 
+    // A digest with no frequency would never send; require at least one when
+    // enabling.
+    if (enabled && cadences.length === 0) {
+      return NextResponse.json(
+        { error: DIGEST_REQUIRES_CADENCE_ERROR },
+        { status: 400 }
+      );
+    }
+
     // A digest with no recipients would send to nobody; require at least one
     // valid subscriber when enabling.
     if (enabled && subscriberUserIds.length === 0) {
@@ -187,23 +215,37 @@ export async function PUT(
       );
     }
 
+    // Fall back to weekly when disabled with no selection, so the stored row
+    // stays valid for the next time the org turns the digest on.
+    const persistedCadences: DigestCadence[] =
+      cadences.length > 0 ? cadences : ["weekly"];
+
     const now = new Date();
     await db
       .insert(workflowExecutionDigestSettings)
       .values({
         organizationId,
         enabled,
-        cadence,
+        cadences: persistedCadences,
         subscriberUserIds,
         createdAt: now,
         updatedAt: now,
       })
       .onConflictDoUpdate({
         target: workflowExecutionDigestSettings.organizationId,
-        set: { enabled, cadence, subscriberUserIds, updatedAt: now },
+        set: {
+          enabled,
+          cadences: persistedCadences,
+          subscriberUserIds,
+          updatedAt: now,
+        },
       });
 
-    return NextResponse.json({ enabled, cadence, subscriberUserIds });
+    return NextResponse.json({
+      enabled,
+      cadences: persistedCadences,
+      subscriberUserIds,
+    });
   } catch (error) {
     logSystemError(
       ErrorCategory.DATABASE,
