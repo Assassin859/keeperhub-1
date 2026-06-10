@@ -23,6 +23,8 @@ const TEST_API_KEY = __ENV.TEST_API_KEY || "";
 const CF_ID = __ENV.CF_ACCESS_CLIENT_ID || "";
 const CF_SECRET = __ENV.CF_ACCESS_CLIENT_SECRET || "";
 const SERVICE_KEY = __ENV.SERVICE_KEY || "";
+const LOAD_TEST_CAPTCHA_BYPASS_TOKEN =
+  __ENV.LOAD_TEST_CAPTCHA_BYPASS_TOKEN || "";
 const TARGET_VUS = parseInt(__ENV.TARGET_VUS || "20", 10);
 const OBSERVE_SECONDS = parseInt(__ENV.OBSERVE_SECONDS || "180", 10);
 const PASSWORD = "K6LoadTest!2024";
@@ -68,6 +70,7 @@ function h() {
   if (TEST_API_KEY) hd["X-Test-API-Key"] = TEST_API_KEY;
   if (CF_ID) hd["CF-Access-Client-Id"] = CF_ID;
   if (CF_SECRET) hd["CF-Access-Client-Secret"] = CF_SECRET;
+  if (LOAD_TEST_CAPTCHA_BYPASS_TOKEN) hd["X-Load-Test-Captcha-Bypass"] = LOAD_TEST_CAPTCHA_BYPASS_TOKEN;
   return hd;
 }
 function adminH() { const hd = h(); if (TEST_API_KEY) hd["Authorization"] = `Bearer ${TEST_API_KEY}`; return hd; }
