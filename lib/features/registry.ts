@@ -45,6 +45,17 @@ export const FEATURES: Record<FeatureId, FeatureDefinition> = {
     requiredPlan: "pro",
     actionTypes: ["webhook/send-webhook"],
   },
+  "notifications.execution-digest": {
+    id: "notifications.execution-digest",
+    name: "Execution digest",
+    description:
+      "Email subscribed org members a daily or weekly summary of workflow executions: total runs, successes, and failures.",
+    category: "observability",
+    enabled: true,
+    requiredPlan: "pro",
+    upgradeCta:
+      "Upgrade to get scheduled email digests of your workflow executions.",
+  },
 } as const;
 
 // Pre-computed reverse index: actionType -> FeatureId. Built once at module

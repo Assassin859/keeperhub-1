@@ -117,14 +117,9 @@ serviceMonitors:
       path: /api/metrics/api
       interval: 30s
       scrapeTimeout: 10s
-    - name: db-metrics
-      port: http
-      path: /api/metrics/db
-      interval: 30s
-      # 12s (not 10s): this endpoint blocks on the serialised db-metrics
-      # refresh. Staging refresh is well under this, but kept in parity with
-      # prod to avoid config drift. See KEEP-682.
-      scrapeTimeout: 12s
+    # db-metrics removed (TECH-6484): the DB-sourced gauges are now scraped from
+    # the dedicated keeperhub-metrics-collector single-replica service, not from
+    # the app pods. The app route is also gated off via METRICS_DB_OFFLOADED.
 
 resources:
   limits:
@@ -134,7 +129,7 @@ resources:
     # Kept in lockstep with prod so staging is predictive of prod memory behaviour.
     memory: 4Gi
   requests:
-    cpu: 1m
+    cpu: 100m
     memory: 2Gi
 
 env:
@@ -145,6 +140,11 @@ env:
   METRICS_COLLECTOR:
     type: kv
     value: "prometheus"
+  # TECH-6484: /api/metrics/db is served by keeperhub-metrics-collector now;
+  # gate the app route to 404 so the heavy scan never runs on these pods.
+  METRICS_DB_OFFLOADED:
+    type: kv
+    value: "true"
   RPC_PROBE_INTERVAL_MS:
     type: kv
     value: "30000"
@@ -425,20 +425,14 @@ env:
   GAS_CREDITS_ENTERPRISE_CENTS:
     type: kv
     value: "10000"
-  # Gas Sponsorship (Pimlico EIP-7702)
-  PIMLICO_API_KEY:
-    type: parameterStore
-    name: pimlico-api-key
-    parameter_name: /eks/techops-staging/keeperhub/pimlico-api-key
-  PIMLICO_BASE_URL:
-    type: parameterStore
-    name: pimlico-base-url
-    parameter_name: /eks/techops-staging/keeperhub/pimlico-base-url
-  SIMPLE_ACCOUNT_7702_ADDRESS:
-    type: parameterStore
-    name: simple-account-7702-address
-    parameter_name: /eks/techops-staging/keeperhub/simple-account-7702-address
   # Internal service API keys for service-to-service auth
+  INTERNAL_AUTH_REQUIRE_HMAC:
+    type: kv
+    value: "true"
+  INTERNAL_SERVICE_HMAC_SECRET:
+    type: parameterStore
+    name: internal-service-hmac-secret
+    parameter_name: /eks/techops-staging/keeperhub/internal-service-hmac-secret
   MCP_SERVICE_API_KEY:
     type: parameterStore
     name: mcp-service-api-key
@@ -462,6 +456,18 @@ env:
   ALLOW_TEST_ENDPOINTS:
     type: kv
     value: "true"
+  LOAD_TEST_BYPASS_TOKEN:
+    type: parameterStore
+    name: load-test-captcha-bypass-token
+    parameter_name: /eks/techops-staging/keeperhub/load-test-captcha-bypass-token
+  LOAD_TEST_USER_PASSWORD:
+    type: parameterStore
+    name: load-test-user-password
+    parameter_name: /eks/techops-staging/keeperhub/load-test-user-password
+  KH_ADMIN_SECRET:
+    type: parameterStore
+    name: kh-admin-secret
+    parameter_name: /eks/techops-staging/keeperhub/kh-admin-secret
   SAFE_FETCH_ENFORCE:
     type: kv
     value: "true"
@@ -494,10 +500,37 @@ cronjob:
         - "/app/deploy/scripts/reaper.sh"
         - "http://keeperhub-common:3000/api/internal/reaper"
       env:
-        SCHEDULER_SERVICE_API_KEY:
+        INTERNAL_SERVICE_HMAC_SECRET:
           type: parameterStore
-          name: scheduler-service-api-key
-          parameter_name: /eks/techops-staging/keeperhub-scheduler/keeperhub-api-key
+          name: internal-service-hmac-secret
+          parameter_name: /eks/techops-staging/keeperhub/internal-service-hmac-secret
+      resources:
+        requests:
+          memory: "32Mi"
+          cpu: "10m"
+        limits:
+          memory: "32Mi"
+          cpu: "10m"
+      concurrencyPolicy: Forbid
+      successfulJobsHistoryLimit: 3
+      failedJobsHistoryLimit: 3
+      restartPolicy: OnFailure
+      backoffLimit: 2
+    - name: execution-digest
+      image:
+        repository: ${ECR_REGISTRY}/keeperhub-staging
+        tag: app-${IMAGE_TAG}
+        imagePullPolicy: Always
+      schedule: "0 14 * * *" # daily 14:00 UTC; weekly digests are sent on Tuesdays
+      command: ["/bin/sh"]
+      args:
+        - "/app/deploy/scripts/digest-cron.sh"
+        - "http://keeperhub-common:3000/api/internal/execution-digest"
+      env:
+        INTERNAL_SERVICE_HMAC_SECRET:
+          type: parameterStore
+          name: internal-service-hmac-secret
+          parameter_name: /eks/techops-staging/keeperhub/internal-service-hmac-secret
       resources:
         requests:
           memory: "32Mi"

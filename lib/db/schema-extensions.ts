@@ -836,10 +836,12 @@ export type NewBillingEvent = typeof billingEvents.$inferInsert;
 /**
  * Gas Sponsorship Delegations table
  *
- * Tracks EIP-7702 delegations per organization per chain.
- * Delegation is a one-time operation that upgrades an EOA to also function
- * as a smart account, enabling ERC-4337 gas sponsorship via Pimlico.
+ * Legacy table from the ERC-4337 sponsorship path that has been replaced by
+ * Turnkey's native gas sponsorship (no EOA delegation required). No code
+ * writes to it anymore; it is retained until a dedicated drop migration runs.
  *
+ * Tracks EIP-7702 delegations per organization per chain: a one-time
+ * operation that upgraded an EOA to also function as a smart account.
  * Unique constraint on (organizationId, chainId) ensures at most one
  * active delegation per org per chain.
  *

@@ -26,7 +26,7 @@ import {
   executeContractCallAsRole,
   executeContractCallAsSafe,
 } from "@/lib/safe/execute-as-safe";
-import { resolveSignerForNode } from "@/lib/safe/signer-resolver";
+import { resolveSignerForNode, SIGNER_MODE } from "@/lib/safe/signer-resolver";
 import { getChainAdapter } from "@/lib/web3/chain-adapter";
 import {
   classifyRevert,
@@ -34,10 +34,11 @@ import {
   type RevertKind,
 } from "@/lib/web3/decode-revert-error";
 import { resolveGasLimitOverrides } from "@/lib/web3/gas-defaults";
-import { isSponsorshipSupported } from "@/lib/web3/pimlico-config";
+import { isSponsorshipSupported } from "@/lib/web3/turnkey-sponsorship-config";
 import { resolveOrganizationContext } from "@/lib/web3/resolve-org-context";
 import { executeSponsoredContractTransaction } from "@/lib/web3/sponsored-transaction-manager";
 import { isGasSponsorshipEnabled } from "@/lib/web3/sponsorship-feature-flag";
+import { isSponsoredTxRevertError } from "@/lib/web3/turnkey-revert";
 import {
   type TransactionContext,
   withNonceSession,
@@ -52,7 +53,7 @@ export type ApproveTokenCoreInput = {
   gasLimitMultiplier?: string;
   tokenAddress?: string;
   // KEEP-137: Route through private mempool (Flashbots Protect). Skips
-  // ERC-4337 sponsorship -- mutually exclusive.
+  // Turnkey-sponsored execution -- mutually exclusive.
   usePrivateMempool?: boolean;
   // Strict mode: when true and usePrivateMempool is true, failing to reach the
   // private RPC does NOT fall back to the public mempool. Ignored otherwise.
@@ -77,6 +78,7 @@ export type ApproveTokenResult =
       approvedAmount: string;
       spender: string;
       symbol: string;
+      sponsored?: boolean;
     }
   | {
       success: false;
@@ -249,15 +251,15 @@ export async function approveTokenCore(
     rpcManager,
   };
 
-  // Try gas-sponsored execution first (ERC-4337 via Pimlico).
+  // Try gas-sponsored execution first via Turnkey Gas Station (KEEP-464).
   // KEEP-137: skip sponsorship when routing through a private mempool --
-  // ERC-4337 bundlers use their own RPC (Pimlico), which bypasses Flashbots Protect.
-  // KEEP-177: skip sponsorship in Safe mode -- the 4337 bundler sends from
-  // its own smart account, which would change msg.sender away from the Safe.
+  // Turnkey broadcasts via its own infrastructure, which bypasses Flashbots Protect.
+  // Also skip in Safe mode: the sponsored path sends from the org's EOA wallet,
+  // which would change msg.sender away from the Safe.
   if (
     isSponsorshipSupported(chainId) &&
     !usePrivateMempool &&
-    signerMode.kind === "eoa" &&
+    signerMode.kind === SIGNER_MODE.EOA &&
     isGasSponsorshipEnabled()
   ) {
     try {
@@ -303,6 +305,7 @@ export async function approveTokenCore(
 
         return {
           success: true,
+          sponsored: true,
           transactionHash: sponsoredResult.transactionHash,
           transactionLink,
           gasUsed: sponsoredResult.gasUsed,
@@ -325,6 +328,25 @@ export async function approveTokenCore(
         }
       );
     } catch (error) {
+      if (isSponsoredTxRevertError(error)) {
+        logUserError(
+          ErrorCategory.TRANSACTION,
+          "[Approve Token] Sponsored transaction reverted on-chain",
+          error,
+          {
+            plugin_name: "web3",
+            action_name: "approve-token",
+            chain_id: String(chainId),
+            tx_hash: error.txHash,
+            send_transaction_status_id: error.sendTransactionStatusId,
+            revert_chain_depth: String(error.revertChain.length),
+          }
+        );
+        return {
+          success: false,
+          error: `Transaction reverted: ${error.message}`,
+        };
+      }
       logUserError(
         ErrorCategory.TRANSACTION,
         "[Approve Token] Sponsorship attempted but failed, falling back to direct signing",
@@ -389,7 +411,7 @@ export async function approveTokenCore(
       }
 
       let receipt: Awaited<ReturnType<typeof adapter.executeContractCall>>;
-      if (signerMode.kind === "safe-role") {
+      if (signerMode.kind === SIGNER_MODE.SAFE_ROLE) {
         receipt = await executeContractCallAsRole(
           signer,
           {
@@ -409,7 +431,7 @@ export async function approveTokenCore(
             rpcManager,
           }
         );
-      } else if (signerMode.kind === "safe") {
+      } else if (signerMode.kind === SIGNER_MODE.SAFE) {
         receipt = await executeContractCallAsSafe(
           signer,
           {

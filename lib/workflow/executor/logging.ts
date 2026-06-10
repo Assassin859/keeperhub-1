@@ -4,7 +4,7 @@
  */
 import "server-only";
 
-import { and, asc, eq, isNotNull, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { logOutputField } from "@/lib/db/execution-log-fields";
 import {
@@ -19,12 +19,14 @@ import { ErrorCategory, logSystemError, logSystemWarn } from "@/lib/logging";
 import { getMetricsCollector } from "@/lib/metrics";
 import { recordWorkflowExecutionError } from "@/lib/metrics/collectors/prometheus";
 import { ANONYMOUS_ORG_SLUG } from "@/lib/metrics/db-metrics";
+import { toJsonSafe } from "@/lib/utils/json-safe";
 import {
   EXCEEDED_MAX_RETRIES_REGEX,
   FAILED_AFTER_RETRIES_REGEX,
   NO_STEP_COMPLETION_REGEX,
 } from "@/lib/workflow/executor/runner-error-patterns";
 import { getTransactionHashes } from "@/lib/workflow/executor/step-success-tracker";
+import { computeTrulyFailedNodes } from "@/lib/workflow/executor/truly-failed-nodes";
 
 const TERMINAL_STATUSES = new Set(["cancelled"]);
 
@@ -45,51 +47,30 @@ function isSpuriousWorkflowError(error: string | null | undefined): boolean {
 }
 
 /**
- * Per-nodeId aggregate over workflow_execution_logs rows (top-level steps only).
+ * Per-nodeId aggregate over workflow_execution_logs rows.
  *
  * KEEP-431: A node can have multiple log rows (e.g. a cross-pod retry from the
  * SDK's "use step" boundary inserts a fresh row each time logStepStartDb runs).
  * Treat the node as succeeded if ANY of its rows is success -- only flag a
- * node as truly failed when no row succeeded for it.
+ * node as truly failed when no row succeeded for it. For Each iteration
+ * failures are surfaced via the parent loop node. See `computeTrulyFailedNodes`
+ * for the full contract.
  *
- * Filters out forEach iteration rows (`iteration_index` and `for_each_node_id`
- * are non-null on those). Iteration rows are scoped to a parent forEach node;
- * we only aggregate top-level steps here so we don't accidentally treat a
- * succeeded forEach with one failed iteration as fully succeeded. The forEach
- * runner is responsible for surfacing iteration failures via the parent node's
- * own success/error status.
- *
- * Returns the list of node IDs that have at least one log row but no success
- * row. Empty list means every observed node has at least one success row, so
- * the workflow body succeeded as a whole even if the SDK reported an error
- * via a spurious max-retries throw.
+ * Empty list means the workflow body succeeded as a whole even if the SDK
+ * reported a spurious error.
  */
 async function listTrulyFailedNodes(executionId: string): Promise<string[]> {
   const allLogs = await db.query.workflowExecutionLogs.findMany({
-    where: and(
-      eq(workflowExecutionLogs.executionId, executionId),
-      isNull(workflowExecutionLogs.iterationIndex),
-      isNull(workflowExecutionLogs.forEachNodeId)
-    ),
-    columns: { nodeId: true, status: true },
+    where: eq(workflowExecutionLogs.executionId, executionId),
+    columns: {
+      nodeId: true,
+      status: true,
+      iterationIndex: true,
+      forEachNodeId: true,
+    },
   });
 
-  const nodeSucceeded = new Map<string, boolean>();
-  for (const log of allLogs) {
-    if (log.status === "success") {
-      nodeSucceeded.set(log.nodeId, true);
-    } else if (!nodeSucceeded.has(log.nodeId)) {
-      nodeSucceeded.set(log.nodeId, false);
-    }
-  }
-
-  const trulyFailedNodes: string[] = [];
-  for (const [nodeId, succeeded] of nodeSucceeded) {
-    if (!succeeded) {
-      trulyFailedNodes.push(nodeId);
-    }
-  }
-  return trulyFailedNodes;
+  return computeTrulyFailedNodes(allLogs);
 }
 
 /**
@@ -451,7 +432,7 @@ export async function logStepStartDb(
       nodeName: params.nodeName,
       nodeType: params.nodeType,
       status: "running",
-      input: params.input,
+      input: toJsonSafe(params.input),
       startedAt: new Date(),
       iterationIndex: params.iterationIndex ?? null,
       forEachNodeId: params.forEachNodeId ?? null,
@@ -509,8 +490,8 @@ export async function logStepCompleteDb(
     .update(workflowExecutionLogs)
     .set({
       status: params.status,
-      output: params.output,
-      outputRaw: params.outputRaw,
+      output: toJsonSafe(params.output),
+      outputRaw: toJsonSafe(params.outputRaw),
       error: errorValue,
       completedAt: new Date(),
       duration: duration.toString(),
@@ -720,7 +701,7 @@ export async function logWorkflowCompleteDb(
     .update(workflowExecutions)
     .set({
       status: resolvedStatus,
-      output: params.output,
+      output: toJsonSafe(params.output),
       error: resolvedError,
       errorCategory: classification?.errorCategory ?? null,
       errorType: classification?.errorType ?? null,

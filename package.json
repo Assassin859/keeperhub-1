@@ -11,6 +11,7 @@
     "start": "next start",
     "type-check": "tsc --noEmit",
     "check": "ultracite check",
+    "check:api-docs": "tsx scripts/check-api-docs-routes.ts",
     "fix": "ultracite fix",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
@@ -95,7 +96,7 @@
     "@x402/next": "^2.8.0",
     "@xyflow/react": "^12.10.2",
     "ai": "^5.0.167",
-    "better-auth": "^1.5.6",
+    "better-auth": "^1.6.11",
     "qrcode-generator": "1.4.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -114,7 +115,7 @@
     "motion": "^12.38.0",
     "mppx": "^0.5.12",
     "nanoid": "^5.1.7",
-    "next": "16.2.6",
+    "next": "16.2.7",
     "next-themes": "^0.4.6",
     "ox": "0.14.20",
     "postgres": "^3.4.9",
@@ -165,7 +166,7 @@
     "ultracite": "6.5.1",
     "viem": "^2.47.1",
     "vitest": "^4.1.2",
-    "ws": "^8.20.1"
+    "ws": "^8.21.0"
   },
   "pnpm": {
     "neverBuiltDependencies_comment": "prisma is an unused optional dep of better-auth's prisma adapter; we use drizzle. Skip its preinstall which requires Node 20.19+.",

@@ -108,6 +108,73 @@ export const userTrustedIps = pgTable(
   ]
 );
 
+/**
+ * Per-user allowlist of trusted countries. Trust is keyed on the
+ * Cloudflare-attested country (CF-IPCountry), not the IP: once a user has
+ * signed in from a country, later sign-ins from any IP within it pass
+ * without a second MFA round. A country never seen before defers the
+ * session to the /verify-ip dual-factor flow, which inserts the row here
+ * on success.
+ *
+ * The (user_id, country) pair is unique so re-entry from a known country
+ * upserts `last_seen_at` rather than duplicating rows.
+ */
+export const userTrustedCountries = pgTable(
+  "user_trusted_countries",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    country: text("country").notNull(),
+    firstSeenAt: timestamp("first_seen_at").notNull().defaultNow(),
+    lastSeenAt: timestamp("last_seen_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("idx_user_trusted_countries_user_id").on(table.userId),
+    uniqueIndex("idx_user_trusted_countries_user_country").on(
+      table.userId,
+      table.country
+    ),
+  ]
+);
+
+/**
+ * Per-user inventory of devices that have signed in, identified by the
+ * random id carried in the signed `kh_device_id` cookie. A device not
+ * already in this list signing in (from a trusted country) is allowed
+ * through but triggers a courtesy warning email; the row is recorded so
+ * the next sign-in from the same device is silent. `user_agent` stores
+ * the most recent label for the email and active-sessions panel.
+ *
+ * The (user_id, device_id) pair is unique so a repeat sign-in upserts
+ * `last_seen_at` rather than duplicating rows.
+ */
+export const userTrustedDevices = pgTable(
+  "user_trusted_devices",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    deviceId: text("device_id").notNull(),
+    userAgent: text("user_agent"),
+    firstSeenAt: timestamp("first_seen_at").notNull().defaultNow(),
+    lastSeenAt: timestamp("last_seen_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("idx_user_trusted_devices_user_id").on(table.userId),
+    uniqueIndex("idx_user_trusted_devices_user_device").on(
+      table.userId,
+      table.deviceId
+    ),
+  ]
+);
+
 export const twoFactor = pgTable(
   "two_factor",
   {
@@ -167,6 +234,11 @@ export const organization = pgTable("organization", {
   logo: text("logo"),
   createdAt: timestamp("created_at").notNull(),
   metadata: text("metadata"),
+  // Set when the org is deactivated. Cascaded from owner deactivation by the
+  // cascade_org_deactivation_on_owner trigger (only when no active owner
+  // remains) and honored as a hard access/execution gate. Reactivation clears
+  // it manually, mirroring users.deactivatedAt.
+  deactivatedAt: timestamp("deactivated_at"),
 });
 
 export const member = pgTable(
@@ -185,6 +257,9 @@ export const member = pgTable(
   (table) => [
     index("idx_member_user_id").on(table.userId),
     index("idx_member_organization_id").on(table.organizationId),
+    uniqueIndex("member_org_single_owner")
+      .on(table.organizationId)
+      .where(sql`${table.role} = 'owner'`),
   ]
 );
 
@@ -284,12 +359,23 @@ export const workflows = pgTable(
       .$defaultFn(() => generateId()),
     name: text("name").notNull(),
     description: text("description"),
+    // createdBy (audit only). The authoritative owner of a workflow is its
+    // organization; userId records who created it and must NOT be used as an
+    // ownership/authority signal. See lib/workflow/access.ts and executable.ts.
     userId: text("user_id")
       .notNull()
       .references(() => users.id),
-    organizationId: text("organization_id").references(() => organization.id, {
-      onDelete: "cascade",
-    }),
+    // The owning organization. Authoritative owner. NOT NULL: every account
+    // (anonymous included) has an org, so there are no org-less workflows.
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, {
+        onDelete: "cascade",
+      }),
+    // DEPRECATED: always false. Encoded "created by a logged-out session with
+    // no org", a state that no longer exists (every account has an org and
+    // organizationId is NOT NULL); normalized to false by migration 0101.
+    // Column drop is a follow-up alongside retiring the claim route + dialog.
     isAnonymous: boolean("is_anonymous").default(false).notNull(),
     featured: boolean("featured").default(false).notNull(),
     featuredOrder: integer("featured_order").default(0),
@@ -336,6 +422,11 @@ export const workflows = pgTable(
     // KEEP-440: soft-delete. Set instead of hard-deleting the row so the listed
     // slug stays bound to this row and cannot be re-claimed by another workflow.
     deletedAt: timestamp("deleted_at"),
+    // Set when the workflow is deactivated. A distinct state from `enabled`
+    // (automation toggle) and `deletedAt` (slug-hiding soft-delete): a
+    // deactivated workflow cannot be enabled or triggered manually. Cleared
+    // manually on reactivation.
+    deactivatedAt: timestamp("deactivated_at"),
   },
   (table) => [
     // INFRA-02: globally unique listed slug so external callers can invoke by slug alone
@@ -366,7 +457,7 @@ export const integrations = pgTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => generateId()),
-    userId: text("user_id")
+    createdBy: text("created_by")
       .notNull()
       .references(() => users.id),
     organizationId: text("organization_id").references(() => organization.id, {
@@ -395,7 +486,7 @@ export const integrations = pgTable(
       .where(
         sql`${table.type} = 'web3' AND ${table.organizationId} IS NOT NULL`
       ),
-    index("idx_integrations_user_id").on(table.userId),
+    index("idx_integrations_created_by").on(table.createdBy),
   ]
 );
 
@@ -448,6 +539,9 @@ export const workflowExecutions = pgTable(
     workflowId: text("workflow_id")
       .notNull()
       .references(() => workflows.id),
+    // Audit lineage only (the workflow's createdBy, or the triggering user
+    // where one exists). Execution AUTHORITY - quotas, billing, credentials -
+    // is the owning org: resolve it via getOrganizationIdFromExecution.
     userId: text("user_id")
       .notNull()
       .references(() => users.id),
@@ -810,6 +904,43 @@ export const workflowSchedules = pgTable(
     index("idx_workflow_schedules_enabled").on(table.enabled),
     uniqueIndex("idx_workflow_schedules_workflow").on(table.workflowId),
   ]
+);
+
+// Per-org scheduled execution-digest config. Paid-only (Pro+); the cron
+// job and settings API both gate on the org plan. subscriberUserIds is the
+// explicit recipient list managed by owners/admins; non-members are skipped at
+// send time. lastSentAt drives the daily/weekly due check.
+export const workflowExecutionDigestSettings = pgTable(
+  "workflow_execution_digest_settings",
+  {
+    organizationId: text("organization_id")
+      .primaryKey()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    enabled: boolean("enabled").notNull().default(false),
+    // An org can subscribe to any combination of cadences; each one sends on its
+    // own schedule. Defaults to weekly for parity with the original single-choice.
+    cadences: jsonb("cadences")
+      .$type<("daily" | "weekly" | "monthly")[]>()
+      .notNull()
+      .default(["weekly"]),
+    subscriberUserIds: jsonb("subscriber_user_ids")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    // Last-sent timestamp (ISO string) keyed by cadence, so a daily send does not
+    // suppress the weekly/monthly send and vice versa.
+    lastSent: jsonb("last_sent")
+      .$type<Partial<Record<"daily" | "weekly" | "monthly", string>>>()
+      .notNull()
+      .default({}),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [index("idx_execution_digest_enabled").on(table.enabled)]
 );
 
 // Supported blockchain networks with default RPC endpoints

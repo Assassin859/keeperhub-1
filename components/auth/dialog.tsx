@@ -256,6 +256,14 @@ export const isSingleProviderSignInInitiated = () =>
 let pendingVerifyEmail: string | null = null;
 let pendingVerifyPassword: string | null = null;
 
+// True while the dialog is on a sign-in/sign-up verification step (email OTP,
+// TOTP, or signup email verify). UserMenu reads this to keep the AuthDialog
+// mounted through the Better Auth session refetch that fires when the tab
+// regains focus, so leaving to grab the code from the email tab does not drop
+// the modal.
+let authFlowInProgress = false;
+export const isAuthFlowInProgress = () => authFlowInProgress;
+
 type SingleProviderButtonProps = {
   provider: Provider;
   loadingProvider: "github" | "google" | null;
@@ -505,6 +513,15 @@ export const AuthDialog = ({
     }
   }, [view]);
 
+  // Mirror the active verification step into a module flag so UserMenu can
+  // keep this dialog mounted through the tab-focus session refetch instead of
+  // swapping it for a skeleton and losing the in-progress code entry.
+  useEffect(() => {
+    authFlowInProgress =
+      open &&
+      (view === "signin-email-otp" || view === "totp" || view === "verify");
+  }, [open, view]);
+
   const resetCaptcha = () => {
     setCaptchaToken("");
     captchaRef.current?.reset();
@@ -585,7 +602,11 @@ export const AuthDialog = ({
         signedIn?: boolean;
       };
       if (!startResponse.ok) {
-        setError(startBody.error ?? "Sign in failed");
+        const message = startBody.error ?? "Sign in failed";
+        if (startBody.code === "account_deactivated") {
+          toast.error(message);
+        }
+        setError(message);
         setLoading(false);
         return;
       }

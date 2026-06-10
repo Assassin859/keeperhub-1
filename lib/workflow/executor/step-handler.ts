@@ -35,7 +35,7 @@ export type StepContext = {
   organizationId?: string;
   // Identifiers attached to every workflow error log line
   orgSlug?: string;
-  ownerId?: string;
+  createdBy?: string;
   workflowId?: string;
 };
 
@@ -55,7 +55,7 @@ function errorContextFromStep(
     execution_id: ctx.executionId,
     org_id: ctx.organizationId,
     org_slug: ctx.orgSlug,
-    owner_id: ctx.ownerId,
+    owner_id: ctx.createdBy,
     plugin_id: pluginId,
     integration_id:
       typeof integrationId === "string" ? integrationId : undefined,

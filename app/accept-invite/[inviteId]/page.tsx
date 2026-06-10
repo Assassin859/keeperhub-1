@@ -1,7 +1,8 @@
 "use client";
 
+import { Turnstile, type TurnstileInstance } from "@marsidev/react-turnstile";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -120,11 +121,16 @@ function LoadingState() {
   );
 }
 
-async function trySignUp(email: string, password: string) {
+async function trySignUp(email: string, password: string, captchaToken?: string) {
   const response = await signUp.email({
     email,
     password,
     name: email.split("@")[0],
+    ...(captchaToken && {
+      fetchOptions: {
+        headers: { "x-captcha-response": captchaToken },
+      },
+    }),
   });
 
   if (!response.error) {
@@ -518,14 +524,27 @@ function AuthFormState({
   const [password, setPassword] = useState("");
   const [formError, setFormError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState("");
+  const captchaRef = useRef<TurnstileInstance | null>(null);
+  const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+
+  const resetCaptcha = () => {
+    setCaptchaToken("");
+    captchaRef.current?.reset();
+  };
 
   const handleSignupSubmit = async () => {
-    const signUpResult = await trySignUp(invitation.email, password);
+    const signUpResult = await trySignUp(
+      invitation.email,
+      password,
+      captchaToken || undefined
+    );
 
     if (signUpResult.userExists) {
       // Existing account: switch to sign-in instead of firing an
       // email-verification OTP. trySignIn already detects an unverified
       // account and sends a code, so the verification case stays covered.
+      resetCaptcha();
       setAuthMode("signin");
       setFormError(
         "You already have an account. Enter your password to sign in."
@@ -534,6 +553,7 @@ function AuthFormState({
     }
 
     if (!signUpResult.success) {
+      resetCaptcha();
       setFormError(signUpResult.error || "Failed to create account");
       return { done: true };
     }
@@ -606,6 +626,7 @@ function AuthFormState({
     setAuthMode(authMode === "signin" ? "signup" : "signin");
     setFormError("");
     setPassword("");
+    resetCaptcha();
   };
 
   return (
@@ -657,7 +678,25 @@ function AuthFormState({
             </div>
           )}
 
-          <Button className="w-full" disabled={submitting} type="submit">
+          {authMode === "signup" && turnstileSiteKey && (
+            <Turnstile
+              onError={() => setCaptchaToken("")}
+              onExpire={() => setCaptchaToken("")}
+              onSuccess={(token) => setCaptchaToken(token)}
+              options={{ theme: "auto" }}
+              ref={captchaRef}
+              siteKey={turnstileSiteKey}
+            />
+          )}
+
+          <Button
+            className="w-full"
+            disabled={
+              submitting ||
+              (authMode === "signup" && !!turnstileSiteKey && !captchaToken)
+            }
+            type="submit"
+          >
             {submitting && <Spinner className="mr-2 size-4" />}
             {submitting && authMode === "signin" && "Signing in..."}
             {submitting && authMode === "signup" && "Creating account..."}

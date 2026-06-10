@@ -2,6 +2,14 @@ import { eq } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/postgres-js";
 import { organizationWallets } from "../lib/db/schema";
 
+export function assertHmacSecretSet(): void {
+  if (!process.env.INTERNAL_SERVICE_HMAC_SECRET) {
+    throw new Error(
+      "INTERNAL_SERVICE_HMAC_SECRET is required for internal service authentication"
+    );
+  }
+}
+
 type Db = ReturnType<typeof drizzle>;
 
 const STARTUP_QUERY_TIMEOUT_MS = 10_000;
@@ -90,6 +98,9 @@ export async function assertTurnkeyEnvForActiveWallets(db: Db): Promise<void> {
   }
   if (!process.env.TURNKEY_API_PRIVATE_KEY) {
     missing.push("TURNKEY_API_PRIVATE_KEY");
+  }
+  if (!process.env.TURNKEY_ORGANIZATION_ID) {
+    missing.push("TURNKEY_ORGANIZATION_ID");
   }
 
   if (missing.length === 0) {

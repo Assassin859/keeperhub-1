@@ -9,12 +9,15 @@ import {
   Plus,
   RotateCw,
   Settings,
+  ShieldAlert,
+  ShieldCheck,
   Trash2,
   X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { ExecutionDigestSection } from "@/components/organization/execution-digest-section";
 import { MemberSessionsDialog } from "@/components/organization/member-sessions-dialog";
 import {
   AlertDialog,
@@ -26,6 +29,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -185,6 +189,8 @@ type MembersListContentProps = {
   onUpdateMemberRole?: (memberId: string, role: string) => Promise<void>;
   updatingRoleMemberId?: string | null;
   organizationId?: string | null;
+  /** 2FA enrollment per member user id. Only populated for owners/admins. */
+  twoFactorStatuses?: Record<string, boolean>;
 };
 
 function MembersListContent({
@@ -203,6 +209,7 @@ function MembersListContent({
   onUpdateMemberRole,
   updatingRoleMemberId,
   organizationId,
+  twoFactorStatuses,
 }: MembersListContentProps) {
   const [pendingAction, setPendingAction] = useState<{
     type: "revoke" | "remove" | "resend" | "remove-member";
@@ -268,11 +275,30 @@ function MembersListContent({
             >
               {entry.email}
             </p>
-            <p className="text-muted-foreground text-xs">
-              {entry.role}
-              {entry.kind === "invite" &&
-                (entry.expired ? " - expired" : " - invited")}
-            </p>
+            <div className="flex items-center gap-2">
+              <p className="text-muted-foreground text-xs">
+                {entry.role}
+                {entry.kind === "invite" &&
+                  (entry.expired ? " - expired" : " - invited")}
+              </p>
+              {entry.kind === "member" &&
+                entry.userId &&
+                twoFactorStatuses?.[entry.userId] !== undefined &&
+                (twoFactorStatuses[entry.userId] ? (
+                  <Badge
+                    className="gap-1 border-keeperhub-green/30 bg-keeperhub-green/10 text-keeperhub-green"
+                    variant="outline"
+                  >
+                    <ShieldCheck />
+                    2FA on
+                  </Badge>
+                ) : (
+                  <Badge className="gap-1" variant="destructive">
+                    <ShieldAlert />
+                    No 2FA
+                  </Badge>
+                ))}
+            </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
             {entry.kind === "member" && canInvite && organizationId && (
@@ -580,6 +606,10 @@ export function ManageOrgsModal({
     };
   };
   const [members, setMembers] = useState<Member[]>([]);
+  // 2FA enrollment per member user id, fetched for owners/admins only.
+  const [twoFactorStatuses, setTwoFactorStatuses] = useState<
+    Record<string, boolean>
+  >({});
 
   // Compute user's role in the managed org from fetched members
   const currentUserMember = members.find((m) => m.userId === session?.user?.id);
@@ -708,6 +738,29 @@ export function ManageOrgsModal({
     }
   }, [organizationId, isStaleRequest]);
 
+  // Fetch per-member 2FA status. Owner/admin-gated on the server; we only
+  // call it when the caller can manage the org to avoid a guaranteed 403.
+  const fetchTwoFactorStatuses = useCallback(async () => {
+    if (!organizationId) {
+      return;
+    }
+
+    const orgIdAtStart = organizationId;
+    try {
+      const result =
+        await api.organization.memberTwoFactorStatus(organizationId);
+      if (isStaleRequest(orgIdAtStart)) {
+        return;
+      }
+      setTwoFactorStatuses(result.statuses);
+    } catch (error) {
+      console.error("Failed to fetch member 2FA status:", error);
+      if (!isStaleRequest(orgIdAtStart)) {
+        setTwoFactorStatuses({});
+      }
+    }
+  }, [organizationId, isStaleRequest]);
+
   // Fetch invitations when modal opens
   useEffect(() => {
     if (open) {
@@ -720,10 +773,19 @@ export function ManageOrgsModal({
     if (open && managedOrgId) {
       setMembers([]);
       setSentInvitations([]);
+      setTwoFactorStatuses({});
       fetchSentInvitations();
       fetchMembers();
     }
   }, [open, managedOrgId, fetchSentInvitations, fetchMembers]);
+
+  // Load 2FA status once we know the caller manages the org. canInvite is
+  // derived from the fetched members, so this runs after fetchMembers settles.
+  useEffect(() => {
+    if (open && managedOrgId && canInvite) {
+      fetchTwoFactorStatuses();
+    }
+  }, [open, managedOrgId, canInvite, fetchTwoFactorStatuses]);
 
   // Keep edit input in sync when switching orgs / name updates
   const lastManagedOrgIdForNameEditRef = useRef<string | null>(null);
@@ -1190,7 +1252,7 @@ export function ManageOrgsModal({
             )}
           </DialogTrigger>
         )}
-        <DialogContent className="max-h-[80vh] max-w-2xl overflow-y-auto">
+        <DialogContent className="h-[600px] max-h-[85vh] max-w-2xl content-start overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Manage Organizations</DialogTitle>
             <DialogDescription>
@@ -1199,7 +1261,7 @@ export function ManageOrgsModal({
           </DialogHeader>
 
           <Tabs className="w-full" defaultValue="organizations">
-            <TabsList className="grid w-full grid-cols-2">
+            <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="organizations">Organizations</TabsTrigger>
               <TabsTrigger value="invitations">
                 Invitations
@@ -1209,6 +1271,7 @@ export function ManageOrgsModal({
                   </span>
                 )}
               </TabsTrigger>
+              <TabsTrigger value="notifications">Notifications</TabsTrigger>
             </TabsList>
 
             <TabsContent className="space-y-4" value="organizations">
@@ -1484,6 +1547,7 @@ export function ManageOrgsModal({
                         organizationId={managedOrgId}
                         removingMember={removingMember}
                         sentInvitations={sentInvitations}
+                        twoFactorStatuses={twoFactorStatuses}
                         updatingRoleMemberId={updatingRoleMemberId}
                       />
                     </div>
@@ -1562,6 +1626,19 @@ export function ManageOrgsModal({
                       processingInvite={processingInvite}
                     />
                   ))}
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent className="space-y-4" value="notifications">
+              {organization && (isActiveOrgOwner || isActiveOrgAdmin) ? (
+                <ExecutionDigestSection
+                  canManageBilling={isActiveOrgOwner}
+                  organizationId={organization.id}
+                />
+              ) : (
+                <div className="py-8 text-center text-muted-foreground">
+                  Only organization owners and admins can manage notifications.
                 </div>
               )}
             </TabsContent>

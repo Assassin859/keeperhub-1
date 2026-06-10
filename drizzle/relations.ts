@@ -46,7 +46,7 @@ export const workflowExecutionsRelations = relations(workflowExecutions, ({one, 
 
 export const integrationsRelations = relations(integrations, ({one}) => ({
 	user: one(users, {
-		fields: [integrations.userId],
+		fields: [integrations.createdBy],
 		references: [users.id]
 	}),
 	organization: one(organization, {

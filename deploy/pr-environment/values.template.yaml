@@ -377,6 +377,10 @@ env:
   ALLOW_TEST_ENDPOINTS:
     type: kv
     value: "true"
+  KH_ADMIN_SECRET:
+    type: parameterStore
+    name: kh-admin-secret
+    parameter_name: /eks/techops-staging/keeperhub/kh-admin-secret
   # Gas credit caps per plan (cents, server-only)
   GAS_CREDITS_FREE_CENTS:
     type: kv

@@ -18,7 +18,13 @@ import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { apiKeys, users, workflowExecutions, workflows } from "@/lib/db/schema";
+import {
+  apiKeys,
+  organization,
+  users,
+  workflowExecutions,
+  workflows,
+} from "@/lib/db/schema";
 import { PERSISTENT_TEST_USER_EMAIL } from "../../utils/db";
 
 // Regex pattern for API key prefix validation (top-level for performance)
@@ -36,6 +42,7 @@ describe.skipIf(shouldSkip)("Workflow Runner E2E", () => {
   let client: ReturnType<typeof postgres>;
   let db: ReturnType<typeof drizzle>;
   let testUserId: string;
+  let testOrgId: string;
   let testWorkflowId: string;
   let testApiKeyRaw: string;
   let testApiKeyId: string;
@@ -63,6 +70,15 @@ describe.skipIf(shouldSkip)("Workflow Runner E2E", () => {
     }
     testUserId = existingUser[0].id;
 
+    // Create org that owns the test workflow (workflows.organizationId is NOT NULL)
+    testOrgId = generateId();
+    await db.insert(organization).values({
+      id: testOrgId,
+      name: testOrgId,
+      slug: testOrgId,
+      createdAt: new Date(),
+    });
+
     // Create test workflow with webhook trigger
     testWorkflowId = generateId();
     const webhookNodes = [
@@ -81,6 +97,7 @@ describe.skipIf(shouldSkip)("Workflow Runner E2E", () => {
       id: testWorkflowId,
       name: "E2E Runner Test Workflow",
       userId: testUserId,
+      organizationId: testOrgId,
       nodes: webhookNodes,
       edges: [],
     });
@@ -110,6 +127,9 @@ describe.skipIf(shouldSkip)("Workflow Runner E2E", () => {
         .delete(workflowExecutions)
         .where(eq(workflowExecutions.workflowId, testWorkflowId));
       await db.delete(workflows).where(eq(workflows.id, testWorkflowId));
+    }
+    if (testOrgId) {
+      await db.delete(organization).where(eq(organization.id, testOrgId));
     }
     if (testApiKeyId) {
       await db.delete(apiKeys).where(eq(apiKeys.id, testApiKeyId));

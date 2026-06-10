@@ -4,14 +4,65 @@ import { authenticateAdmin } from "@/lib/admin-auth";
 import { db } from "@/lib/db";
 import { users } from "@/lib/db/schema";
 
-const K6_EMAIL_PATTERN = "k6-%@techops.services";
-const VERIFICATION_PATTERN = "email-verification-otp-k6-%@techops.services";
+const K6_EMAIL_PATTERN = "k6-vu%@techops.services";
+const SEEDED_EMAIL_PATTERN = "k6-loadtest-vu%@techops.services";
+const VERIFICATION_PATTERN = "email-verification-otp-k6-vu%@techops.services";
 const MAX_ATTEMPTS = 10;
 
 // Allowlist for identifiers returned by information_schema.
 const IDENT_RE = /^[a-z_][a-z0-9_]*$/i;
 
 type FkRow = { table_name: string; column_name: string };
+
+type SeededCleanupCounts = {
+  workflows: number;
+  executions: number;
+};
+
+// Clean workflows + execution data owned by the pre-seeded load-test users.
+// The user/org/membership rows are intentionally preserved so the next run
+// can sign in with the same credentials.
+async function cleanupSeededUserWorkflows(): Promise<SeededCleanupCounts> {
+  const userSubquery = sql`SELECT id FROM users WHERE email LIKE ${SEEDED_EMAIL_PATTERN}`;
+  const wfSubquery = sql`SELECT id FROM workflows WHERE user_id IN (${userSubquery})`;
+
+  const wfCount = await db.execute<{ count: string }>(sql`
+    SELECT count(*)::text as count FROM workflows
+    WHERE user_id IN (${userSubquery})
+  `);
+  const execCount = await db.execute<{ count: string }>(sql`
+    SELECT count(*)::text as count FROM workflow_executions
+    WHERE workflow_id IN (${wfSubquery})
+  `);
+
+  await db
+    .execute(sql`
+    UPDATE workflows SET enabled = false WHERE user_id IN (${userSubquery})
+  `)
+    .catch(() => {});
+  await db
+    .execute(sql`
+    UPDATE workflow_executions SET status = 'cancelled'
+    WHERE status = 'running' AND workflow_id IN (${wfSubquery})
+  `)
+    .catch(() => {});
+
+  const statements = [
+    sql`DELETE FROM workflow_execution_logs WHERE execution_id IN (
+      SELECT id FROM workflow_executions WHERE workflow_id IN (${wfSubquery}))`,
+    sql`DELETE FROM workflow_executions WHERE workflow_id IN (${wfSubquery})`,
+    sql`DELETE FROM workflow_schedules WHERE workflow_id IN (${wfSubquery})`,
+    sql`DELETE FROM workflows WHERE user_id IN (${userSubquery})`,
+  ];
+  for (const stmt of statements) {
+    await db.execute(stmt).catch(() => {});
+  }
+
+  return {
+    workflows: Number(wfCount[0]?.count ?? 0),
+    executions: Number(execCount[0]?.count ?? 0),
+  };
+}
 
 // Single cleanup pass — deletes what it can, ignores lock/FK errors.
 // Returns the number of remaining test users.
@@ -139,6 +190,11 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   try {
+    const seededCounts =
+      body.dryRun === true
+        ? { workflows: 0, executions: 0 }
+        : await cleanupSeededUserWorkflows();
+
     const testUsers = await db
       .select({ id: users.id, email: users.email })
       .from(users)
@@ -146,7 +202,12 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     if (testUsers.length === 0) {
       return NextResponse.json({
-        deleted: { users: 0, organizations: 0, workflows: 0 },
+        deleted: {
+          users: 0,
+          organizations: 0,
+          workflows: seededCounts.workflows,
+        },
+        executions: { total: seededCounts.executions },
         emails: [],
         dryRun: body.dryRun === true,
       });
@@ -253,10 +314,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       deleted: {
         users: deletedUsers,
         organizations: deletedUsers,
-        workflows: deletedWorkflows,
+        workflows: deletedWorkflows + seededCounts.workflows,
       },
       executions: {
-        total: execTotal,
+        total: execTotal + seededCounts.executions,
         success: execSuccess,
         error: execError,
         successRate:

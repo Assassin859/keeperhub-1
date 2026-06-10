@@ -67,6 +67,7 @@ const manualWorkflow = {
 const {
   mockWorkflowsFindFirst,
   mockApiKeysFindFirst,
+  mockOrgGateLimit,
   mockMemberLimit,
   mockInsertReturning,
   mockValidateIntegrations,
@@ -75,6 +76,7 @@ const {
 } = vi.hoisted(() => ({
   mockWorkflowsFindFirst: vi.fn(),
   mockApiKeysFindFirst: vi.fn(),
+  mockOrgGateLimit: vi.fn().mockResolvedValue([{ orgDeactivatedAt: null }]),
   mockMemberLimit: vi.fn(),
   mockInsertReturning: vi.fn(),
   mockValidateIntegrations: vi.fn(),
@@ -86,6 +88,12 @@ vi.mock("@/lib/db", () => ({
   db: {
     select: vi.fn(() => ({
       from: vi.fn(() => ({
+        leftJoin: vi.fn(() => ({
+          where: vi.fn(() => ({ limit: mockOrgGateLimit })),
+        })),
+        innerJoin: vi.fn(() => ({
+          where: vi.fn(() => ({ limit: mockMemberLimit })),
+        })),
         where: vi.fn(() => ({
           limit: mockMemberLimit,
         })),
@@ -113,7 +121,8 @@ vi.mock("@/lib/db", () => ({
 vi.mock("@/lib/db/schema", () => ({
   apiKeys: { keyHash: "key_hash", id: "id", lastUsedAt: "last_used_at" },
   member: { id: "id", organizationId: "organizationId", userId: "userId" },
-  workflows: { id: "id" },
+  workflows: { id: "id", organizationId: "organization_id" },
+  organization: { id: "id", deactivatedAt: "deactivated_at" },
   workflowExecutions: { id: "id" },
   users: { id: "id", deactivatedAt: "deactivated_at" },
 }));
@@ -197,6 +206,7 @@ function setupHappyPath(): void {
     userId: OWNER_USER_ID,
     keyHash: VALID_KEY_HASH,
   });
+  mockOrgGateLimit.mockResolvedValue([{ orgDeactivatedAt: null }]);
   mockMemberLimit.mockResolvedValue([{ id: "member-1" }]);
   mockValidateIntegrations.mockResolvedValue({ valid: true });
   mockEnforceExecutionLimit.mockResolvedValue({ blocked: false });
@@ -209,6 +219,7 @@ function setupHappyPath(): void {
 describe("POST /api/workflows/:workflowId/webhook", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockOrgGateLimit.mockResolvedValue([{ orgDeactivatedAt: null }]);
     mockMemberLimit.mockResolvedValue([{ id: "member-1" }]);
   });
 
@@ -254,9 +265,9 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
   describe("deactivated owner", () => {
     it("should return 404 when the workflow owner is deactivated", async () => {
       mockWorkflowsFindFirst.mockResolvedValue(webhookWorkflow);
-      // The owner lookup is the first db.select() the route makes; return a
-      // deactivated owner so the executability gate rejects before auth.
-      mockMemberLimit.mockResolvedValue([{ deactivatedAt: new Date() }]);
+      // The org gate is the first db.select() the route makes; return a
+      // deactivated org so the executability gate rejects before auth.
+      mockOrgGateLimit.mockResolvedValue([{ orgDeactivatedAt: new Date() }]);
 
       const response = await POST(
         createWebhookRequest(VALID_API_KEY),
@@ -327,13 +338,15 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
       expect(data.error).toBe("Invalid API key");
     });
 
-    it("should return 403 when key belongs to different user", async () => {
+    it("should return 403 when key belongs to a non-member user", async () => {
       mockWorkflowsFindFirst.mockResolvedValue(webhookWorkflow);
       mockApiKeysFindFirst.mockResolvedValue({
         id: "key-other",
         userId: OTHER_USER_ID,
         keyHash: VALID_KEY_HASH,
       });
+      // OTHER_USER_ID is not a member of the workflow's org
+      mockMemberLimit.mockResolvedValue([]);
 
       const response = await POST(
         createWebhookRequest(VALID_API_KEY),
@@ -346,7 +359,7 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
       );
     });
 
-    it("should return 404 when the owner key belongs to a removed org member", async () => {
+    it("should return 403 when the key holder is no longer an org member", async () => {
       mockWorkflowsFindFirst.mockResolvedValue(webhookWorkflow);
       mockApiKeysFindFirst.mockResolvedValue({
         id: "key-1",
@@ -359,9 +372,9 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
         createWebhookRequest(VALID_API_KEY),
         createContext(WORKFLOW_ID)
       );
-      expect(response.status).toBe(404);
+      expect(response.status).toBe(403);
       const data = await response.json();
-      expect(data.error).toBe("Workflow not found");
+      expect(data.error).toBe("You do not have permission to run this workflow");
     });
   });
 

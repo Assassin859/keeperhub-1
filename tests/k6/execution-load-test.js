@@ -23,9 +23,10 @@ const TEST_API_KEY = __ENV.TEST_API_KEY || "";
 const CF_ID = __ENV.CF_ACCESS_CLIENT_ID || "";
 const CF_SECRET = __ENV.CF_ACCESS_CLIENT_SECRET || "";
 const SERVICE_KEY = __ENV.SERVICE_KEY || "";
+const LOAD_TEST_BYPASS_TOKEN = __ENV.LOAD_TEST_BYPASS_TOKEN || "";
 const TARGET_VUS = parseInt(__ENV.TARGET_VUS || "20", 10);
 const OBSERVE_SECONDS = parseInt(__ENV.OBSERVE_SECONDS || "180", 10);
-const PASSWORD = "K6LoadTest!2024";
+const PASSWORD = __ENV.LOAD_TEST_USER_PASSWORD || "K6LoadTest!2024";
 const TIERS = (__ENV.TIERS || "10,12,14,16,18,20,25,30,40,50").split(",").map(Number);
 
 // Metrics — pushed to Prometheus via --out experimental-prometheus-rw
@@ -68,6 +69,7 @@ function h() {
   if (TEST_API_KEY) hd["X-Test-API-Key"] = TEST_API_KEY;
   if (CF_ID) hd["CF-Access-Client-Id"] = CF_ID;
   if (CF_SECRET) hd["CF-Access-Client-Secret"] = CF_SECRET;
+  if (LOAD_TEST_BYPASS_TOKEN) hd["X-Load-Test-Mfa-Bypass"] = LOAD_TEST_BYPASS_TOKEN;
   return hd;
 }
 function adminH() { const hd = h(); if (TEST_API_KEY) hd["Authorization"] = `Bearer ${TEST_API_KEY}`; return hd; }
@@ -132,31 +134,10 @@ function retryPost(url, body, max) {
 
 function authenticate() {
   const v = exec.vu.idInTest;
-
-  if (!myEmail) {
-    http.get(`${BASE_URL}/api/health`, { headers: h(), redirects: 5 });
-    myEmail = `k6-vu${v}-${Date.now()}@techops.services`;
-    const su = retryPost(`${BASE_URL}/api/auth/sign-up/email`,
-      JSON.stringify({ email: myEmail, password: PASSWORD, name: `k6-${v}` }), 5);
-    if (su.status !== 200) { console.error(`VU${v}: signup ${su.status}`); return false; }
-    sleep(1);
-
-    let otp = null;
-    for (let i = 0; i < 10; i++) {
-      const r = http.get(`${BASE_URL}/api/admin/test/otp?email=${encodeURIComponent(myEmail)}`, { headers: adminH() });
-      if (r.status === 200) { otp = JSON.parse(r.body).otp; break; }
-      sleep(1);
-    }
-    if (!otp) { console.error(`VU${v}: no OTP`); return false; }
-
-    const vr = retryPost(`${BASE_URL}/api/auth/email-otp/verify-email`,
-      JSON.stringify({ email: myEmail, otp }), 5);
-    if (vr.status !== 200) { console.error(`VU${v}: verify ${vr.status}`); return false; }
-  }
-
+  myEmail = `k6-loadtest-vu${v}@techops.services`;
   const sr = retryPost(`${BASE_URL}/api/auth/sign-in/email`,
     JSON.stringify({ email: myEmail, password: PASSWORD }), 5);
-  if (sr.status !== 200) { console.error(`VU${exec.vu.idInTest}: signin ${sr.status}`); return false; }
+  if (sr.status !== 200) { console.error(`VU${v}: signin ${sr.status}`); return false; }
   return true;
 }
 

@@ -17,7 +17,11 @@ import {
 } from "@/lib/mfa/dual-factor-rate-limit";
 import { buildPendingSignupClearCookie } from "@/lib/pending-signup-cookie";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
-import { recordTrustedIpFromRequest } from "@/lib/security/login-risk";
+import { resolveSigninDevice } from "@/lib/security/device-trust";
+import {
+  recordTrustedCountryFromRequest,
+  resolveClientIpFromHeaders,
+} from "@/lib/security/login-risk";
 import { verifyUserTotp } from "@/lib/security/totp-verify";
 
 type RequestBody = {
@@ -72,7 +76,6 @@ function buildSessionSetCookie(signedValue: string, ttlMs: number): string {
  *     cookie returned here is the FIRST usable session for the
  *     account.
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: two converging auth shapes
 export async function POST(request: Request): Promise<NextResponse> {
   const caller = await resolveEnrollMfaCaller(request.headers);
   if (caller.kind === "anonymous") {
@@ -221,10 +224,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     const expiresAt = new Date(Date.now() + DEFAULT_SESSION_TTL_MS);
     const sessionId = `sess_${randomBytes(16).toString("base64url")}`;
     const userAgent = request.headers.get("user-agent") ?? null;
-    const ipAddress =
-      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-      request.headers.get("x-real-ip") ??
-      null;
+    const ipAddress = resolveClientIpFromHeaders(request.headers);
 
     // Single transaction across the three writes so a mid-flight
     // failure cannot leave the account in a "twoFactorEnabled = true
@@ -257,11 +257,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
 
     // This path mints the first session by hand, so the
-    // session.create.before hook that normally records the source IP in
-    // user_trusted_ips never runs. Trust the signup IP here (first
-    // attestation) so a later sign-in from the same network isn't
-    // bounced to /verify-ip for an IP the user already signed up from.
-    await recordTrustedIpFromRequest(userId);
+    // session.create.before hook that normally records the source country
+    // in user_trusted_countries never runs. Trust the signup country here
+    // (first attestation) so a later sign-in from it isn't bounced to
+    // /verify-ip for a country the user already signed up from.
+    await recordTrustedCountryFromRequest(userId);
 
     await recordAuditEvent({
       actor: { userId, organizationId: null, authMethod: "session" },
@@ -284,6 +284,16 @@ export async function POST(request: Request): Promise<NextResponse> {
       )
     );
     response.headers.append("Set-Cookie", buildPendingSignupClearCookie());
+    // Register this as the account's first device (no warning email).
+    const deviceSetCookie = await resolveSigninDevice({
+      userId,
+      email: caller.email,
+      country: null,
+      request,
+    });
+    if (deviceSetCookie) {
+      response.headers.append("Set-Cookie", deviceSetCookie);
+    }
     return response;
   } catch (error) {
     logSystemError(

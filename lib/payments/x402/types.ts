@@ -47,6 +47,9 @@ export const CALL_ROUTE_COLUMNS = {
   workflowType: workflows.workflowType,
   nodes: workflows.nodes,
   edges: workflows.edges,
+  // createdBy, loaded solely to populate the execution row's audit column.
+  // Never an authority signal: the call route authorizes, meters, and pays
+  // via organizationId (org wallet, org quota, org credential principal).
   userId: workflows.userId,
   category: workflows.category,
 } as const;

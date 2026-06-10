@@ -64,6 +64,10 @@ const { BlockList, isIP } = require("node:net");
 
 const MAX_LOG_ENTRIES = 200;
 
+// Cap on redirect hops a single sandboxed fetch will follow before giving
+// up, mirroring undici's built-in maxRedirections default.
+const MAX_SANDBOX_REDIRECTS = 20;
+
 // SSRF guard: ported from lib/safe-fetch.ts. Modeled on the main-app
 // pattern but inlined here because the sandbox package is
 // zero-runtime-dep by design and the grandchild gets only node: builtins.
@@ -87,12 +91,17 @@ const MAX_LOG_ENTRIES = 200;
 // undici as a sandbox dep), so there is a small window between our
 // dns.lookup and the fetch's internal connect where the record could
 // change. NetworkPolicy is the real defense for that (tracked elsewhere).
+// Redirects: lacking the per-connect hook, the wrapped fetch uses
+// redirect:"manual" and re-runs these same checks on each 3xx Location
+// before following it, so a redirect cannot chase a public host into a
+// blocked one (IMDS, K8s apiserver, *.svc.cluster.local).
 // Testing note: the sandbox guard is not unit-tested directly because
 // this entire file is a template literal executed in a subprocess via
 // "node -e". The parallel behavior in lib/safe-fetch.ts is unit-tested
 // (tests/unit/safe-fetch.test.ts) and these CIDR / hostname denylists
 // are kept in lockstep with that file by convention.
 const ALLOWED_SCHEMES = new Set(["http:", "https:"]);
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const IPV4_MAPPED_PREFIX = "::ffff:";
 const IPV4_MAPPED_HEX_REGEX = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/;
 // NAT64 well-known prefix (RFC 6052): 64:ff9b::/96 — last 32 bits encode an
@@ -211,6 +220,23 @@ function stripIpv6Brackets(hostname) {
     return hostname.slice(1, -1);
   }
   return hostname;
+}
+
+// Rewrite the method/body for the next hop the way undici's follow mode
+// would: 301/302 downgrade a POST to GET, 303 downgrades any non-GET/HEAD
+// to GET, and 307/308 preserve both. Keeps manual redirect following
+// behaviourally equivalent to the network layer's own follow.
+function applyRedirectMethod(init, status) {
+  const next = Object.assign({}, init);
+  const method = (typeof next.method === "string" ? next.method : "GET").toUpperCase();
+  const downgrade =
+    ((status === 301 || status === 302) && method === "POST") ||
+    (status === 303 && method !== "GET" && method !== "HEAD");
+  if (downgrade) {
+    next.method = "GET";
+    delete next.body;
+  }
+  return next;
 }
 
 // Pre-DNS hostname denylist interpolated from lib/ssrf-blocklist.ts at
@@ -349,10 +375,71 @@ function run(input) {
       );
     }
 
-    const nextInit = Object.assign({}, init, { signal: controller.signal });
-    return fetch(resource, nextInit).finally(function clearTimer() {
-      clearTimeout(timer);
+    // Follow redirects manually so every hop is re-validated. undici's
+    // built-in follow mode would transparently chase a 3xx Location into a
+    // blocked host (IMDS, K8s apiserver, *.svc.cluster.local) because the
+    // SSRF guard above only sees the initial URL. "manual" returns the real
+    // 3xx response with a readable Location header, so we re-run the same
+    // scheme + SSRF checks before issuing the next request.
+    const baseInit = Object.assign({}, init, {
+      signal: controller.signal,
+      redirect: "manual",
     });
+
+    let currentResource = resource;
+    let currentBase = parsed;
+    let currentInit = baseInit;
+    let redirectsLeft = MAX_SANDBOX_REDIRECTS;
+
+    try {
+      while (true) {
+        const response = await fetch(currentResource, currentInit);
+        const location = REDIRECT_STATUSES.has(response.status)
+          ? response.headers.get("location")
+          : null;
+        if (location === null) {
+          return response;
+        }
+        if (redirectsLeft <= 0) {
+          throw new Error("sandbox fetch: too many redirects");
+        }
+        redirectsLeft -= 1;
+
+        let nextUrl;
+        try {
+          nextUrl = new URL(location, currentBase);
+        } catch (_e) {
+          throw new Error("sandbox fetch: invalid redirect location: " + location);
+        }
+        if (!ALLOWED_SCHEMES.has(nextUrl.protocol)) {
+          throw new Error("sandbox fetch: scheme not allowed: " + nextUrl.protocol);
+        }
+        const nextHostname = stripIpv6Brackets(nextUrl.hostname);
+        const nextCheck = await checkHostnameSsrf(nextHostname);
+        if (nextCheck.blocked) {
+          const nextIp = nextCheck.ip;
+          const nextSuffix = nextIp && nextIp !== nextHostname ? " -> " + nextIp : "";
+          throw new Error(
+            "sandbox fetch: SSRF blocked (" + nextHostname + nextSuffix + ")"
+          );
+        }
+
+        // Discard the redirect body so the underlying socket is freed.
+        if (response.body) {
+          try {
+            await response.body.cancel();
+          } catch (_e) {
+            // body may already be consumed or unsupported; ignore
+          }
+        }
+
+        currentInit = applyRedirectMethod(currentInit, response.status);
+        currentResource = nextUrl.href;
+        currentBase = nextUrl;
+      }
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   const sandbox = createContext({

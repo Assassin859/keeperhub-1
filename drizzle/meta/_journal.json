@@ -692,21 +692,84 @@
       "idx": 98,
       "version": "7",
       "when": 1779843900005,
-      "tag": "0098_keep_671_security_audit_log",
+      "tag": "0098_keep_696_deactivation_columns",
       "breakpoints": true
     },
     {
       "idx": 99,
       "version": "7",
       "when": 1779843900006,
-      "tag": "0099_keep_671_execution_credential_and_version",
+      "tag": "0099_keep_696_deactivation_cascade_triggers",
       "breakpoints": true
     },
     {
       "idx": 100,
       "version": "7",
       "when": 1779843900007,
-      "tag": "0100_keep_671_workflow_history",
+      "tag": "0100_keep_696_workflow_org_ownership",
+      "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1779843900008,
+      "tag": "0101_keep_696_normalize_is_anonymous",
+      "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "7",
+      "when": 1779843900009,
+      "tag": "0102_keep_696_integrations_created_by",
+      "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "7",
+      "when": 1779843900010,
+      "tag": "0103_keep_696_member_single_owner",
+      "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "7",
+      "when": 1779843900011,
+      "tag": "0104_keep_586_execution_digest_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "7",
+      "when": 1779843900012,
+      "tag": "0105_country_device_trust",
+      "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "7",
+      "when": 1779843900013,
+      "tag": "0106_keep_586_digest_multi_cadence",
+      "breakpoints": true
+    },
+    {
+      "idx": 107,
+      "version": "7",
+      "when": 1779843900014,
+      "tag": "0107_keep_671_security_audit_log",
+      "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "7",
+      "when": 1779843900015,
+      "tag": "0108_keep_671_execution_credential_and_version",
+      "breakpoints": true
+    },
+    {
+      "idx": 109,
+      "version": "7",
+      "when": 1779843900016,
+      "tag": "0109_keep_671_workflow_history",
       "breakpoints": true
     }
   ]

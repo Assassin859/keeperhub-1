@@ -640,6 +640,28 @@ describe("code/run-code - error handling", () => {
     expect(result.error).toContain("Unresolved template variables");
   });
 
+  it("allows {{...}} inside line comments", async () => {
+    const result = await expectSuccess({
+      code: "// const x = {{Commented.result}};\nreturn 1;",
+    });
+    expect(result.result).toBe(1);
+  });
+
+  it("allows {{...}} inside block comments", async () => {
+    const result = await expectSuccess({
+      code: "/* const x = {{A.result}};\nconst y = {{B.result}}; */\nreturn 2;",
+    });
+    expect(result.result).toBe(2);
+  });
+
+  it("still detects unresolved templates outside comments", async () => {
+    const result = await expectFailure({
+      code: "/* const x = {{Commented.result}}; */\nreturn {{Outside.field}};",
+    });
+    expect(result.error).toContain("Unresolved template variables");
+    expect(result.error).not.toContain("{{Commented.result}}");
+  });
+
   it("preserves console logs even on error", async () => {
     const code = [
       'console.log("before error");',

@@ -1,11 +1,13 @@
+import { timingSafeEqual } from "node:crypto";
 import { type NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { readDeviceCookie } from "@/lib/device-cookie";
 import {
   buildPendingIpSetCookie,
   encodePendingIpCookie,
 } from "@/lib/pending-ip-cookie";
-import { gateRequestIp } from "@/lib/security/login-risk";
-import { maybeNotifyNewIp } from "@/lib/security/new-ip-notification";
+import { resolveSigninDevice } from "@/lib/security/device-trust";
+import { gateRequestCountry } from "@/lib/security/login-risk";
 import {
   hasSessionCookie,
   isTrustedOrigin,
@@ -33,16 +35,17 @@ import {
  *     and 302 → /enroll-mfa on page navigation. Failing (b) yields 403
  *     mfa_pending and 302 → /verify-mfa.
  *
- *  3. IP trust gate: refuse to serve an authenticated request whose
- *     source IP is not in the user's `user_trusted_ips` list. Page
- *     navigations get 302 → /verify-ip with a signed pending_ip_verify
- *     cookie; API calls get 403 ip_verification_required. The trust list
- *     only grows via explicit sign-in events (first-attestation in
- *     session.create.before, or /verify-ip OTP confirmation), so an
- *     attacker who steals a session cookie cannot reuse it from a
- *     different network without going through the email-OTP step. The
- *     legitimate user gets a notification email naming the new IP,
- *     country, and device the first time we see that (user, ip) pair.
+ *  3. Country trust gate: refuse to serve an authenticated request whose
+ *     CF-attested country is not in the user's `user_trusted_countries`
+ *     list. Page navigations get 302 → /verify-ip with a signed
+ *     pending_ip_verify cookie; API calls get 403 ip_verification_required.
+ *     The country list grows via sign-in events (first-attestation in
+ *     session.create.before, or /verify-ip OTP confirmation). A legacy
+ *     bridge honours a session whose IP is still in `user_trusted_ips`
+ *     from before country trust shipped, backfilling the country so the
+ *     transition is seamless. Requests with no CF country (local dev)
+ *     pass through. New devices are warned about by email at sign-in, not
+ *     here.
  *
  * Unauthenticated requests pass through untouched - route handlers
  * remain responsible for their own auth/authorization, and API-key
@@ -166,6 +169,24 @@ const MFA_EXEMPT_PAGE_PREFIXES: readonly string[] = [
   "/sign-up",
 ];
 
+const LOAD_TEST_BYPASS_TOKEN = process.env.LOAD_TEST_BYPASS_TOKEN;
+
+function hasValidLoadTestMfaBypass(request: NextRequest): boolean {
+  if (!LOAD_TEST_BYPASS_TOKEN) {
+    return false;
+  }
+  const provided = request.headers.get("x-load-test-mfa-bypass");
+  if (!provided) {
+    return false;
+  }
+  const providedBuf = Buffer.from(provided, "utf8");
+  const expectedBuf = Buffer.from(LOAD_TEST_BYPASS_TOKEN, "utf8");
+  if (providedBuf.length !== expectedBuf.length) {
+    return false;
+  }
+  return timingSafeEqual(providedBuf, expectedBuf);
+}
+
 function isMfaExemptPath(pathname: string): boolean {
   if (pathname.startsWith("/api/")) {
     for (const prefix of MFA_EXEMPT_API_PREFIXES) {
@@ -220,6 +241,9 @@ async function mfaBlock(request: NextRequest): Promise<MfaResult> {
   const { pathname } = request.nextUrl;
 
   if (isMfaExemptPath(pathname)) {
+    return { kind: "pass", user: null };
+  }
+  if (hasValidLoadTestMfaBypass(request)) {
     return { kind: "pass", user: null };
   }
   // No session cookie at all → no session → nothing to gate on. Route
@@ -294,10 +318,10 @@ async function mfaBlock(request: NextRequest): Promise<MfaResult> {
 }
 
 // ---------------------------------------------------------------------------
-// IP gate
+// Country gate
 // ---------------------------------------------------------------------------
 
-async function ipGateBlock(
+async function countryGateBlock(
   request: NextRequest,
   user: GatedUser
 ): Promise<NextResponse | null> {
@@ -317,24 +341,44 @@ async function ipGateBlock(
     return null;
   }
 
-  const gate = await gateRequestIp(user.id);
-  if (gate.kind === "trusted" || gate.kind === "no_ip") {
+  const gate = await gateRequestCountry(user.id);
+  if (gate.kind === "trusted" || gate.kind === "no_country") {
+    // Adopt the browser as a known device when a passing request carries no
+    // device cookie -- sessions minted before device tracking shipped. Gated
+    // to top-level document navigations so the ~20-request fan-out of a page
+    // load (API + RSC subrequests) doesn't each mint a distinct device id;
+    // one navigation sets the cookie and the rest carry it. Silent
+    // (notifyOnNew: false) so an already-active session is not emailed.
+    const isDocumentNav = request.headers.get("sec-fetch-dest") === "document";
+    if (isDocumentNav && !readDeviceCookie(request.headers)) {
+      const deviceSetCookie = await resolveSigninDevice({
+        userId: user.id,
+        email: user.email,
+        country: null,
+        request,
+        notifyOnNew: false,
+      });
+      if (deviceSetCookie) {
+        const passthrough = NextResponse.next();
+        passthrough.headers.append("set-cookie", deviceSetCookie);
+        return passthrough;
+      }
+    }
     return null;
   }
 
-  maybeNotifyNewIp({
-    userId: user.id,
-    email: user.email,
-    ip: gate.ip,
-    country: gate.country,
-    userAgent: request.headers.get("user-agent"),
-  });
+  // An untrusted CF country always carries a CF-Connecting-IP, so gate.ip is
+  // non-null here. Without an IP the /verify-ip replay can't be pinned, so
+  // pass rather than issue an unbindable verify cookie.
+  if (!gate.ip) {
+    return null;
+  }
 
   const apiPath = request.nextUrl.pathname.startsWith("/api/");
   if (apiPath) {
     return NextResponse.json(
       {
-        error: "Verify this network in your browser to continue.",
+        error: "Verify your sign-in in your browser to continue.",
         code: "ip_verification_required",
       },
       { status: 403 }
@@ -377,9 +421,9 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
     return mfaResult.response;
   }
   if (mfaResult.user) {
-    const ipResponse = await ipGateBlock(request, mfaResult.user);
-    if (ipResponse) {
-      return ipResponse;
+    const countryResponse = await countryGateBlock(request, mfaResult.user);
+    if (countryResponse) {
+      return countryResponse;
     }
   }
   return NextResponse.next();

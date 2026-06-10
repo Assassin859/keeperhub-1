@@ -68,6 +68,9 @@ type WorkflowEntry = {
   // greys the row out and tags it "Disabled" without strikethrough. The row
   // stays selectable.
   enabled?: boolean;
+  // Set by ops via admin API. Takes precedence over the "Disabled" label —
+  // the user cannot clear this themselves.
+  deactivatedAt?: string | null;
 };
 
 function groupWorkflows(workflows: WorkflowEntry[]): {
@@ -99,7 +102,8 @@ function WorkflowItem({
   activeWorkflowId: string | undefined;
 }): React.ReactNode {
   const router = useRouter();
-  const showDisabled = shouldShowDisabledBadge(workflow);
+  const isDeactivated = !!workflow.deactivatedAt;
+  const showDisabled = !isDeactivated && shouldShowDisabledBadge(workflow);
   const isActive = workflow.id === activeWorkflowId;
   return (
     <button
@@ -110,9 +114,19 @@ function WorkflowItem({
       onClick={() => router.push(`/workflows/${workflow.id}`)}
       type="button"
     >
-      <span className={cn("truncate", showDisabled && "text-muted-foreground")}>
+      <span
+        className={cn(
+          "truncate",
+          (isDeactivated || showDisabled) && "text-muted-foreground"
+        )}
+      >
         {workflow.name}
       </span>
+      {isDeactivated && (
+        <span className="ml-2 shrink-0 text-muted-foreground text-xs">
+          Deactivated
+        </span>
+      )}
       {showDisabled && (
         <span className="ml-2 shrink-0 text-muted-foreground text-xs">
           Disabled

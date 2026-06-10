@@ -1,10 +1,14 @@
 import { and, desc, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { db } from "@/lib/db";
-import { sessions, userTrustedIps } from "@/lib/db/schema";
+import {
+  sessions,
+  userTrustedCountries,
+  userTrustedIps,
+} from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getRedis } from "@/lib/redis";
-import { trustedIpKey } from "@/lib/redis-keys";
+import { trustedCountryKey } from "@/lib/redis-keys";
 import { normalizeIpForTrust } from "@/lib/security/ip-normalize";
 import {
   type ResolvedLocation,
@@ -353,60 +357,33 @@ export async function buildRiskFlagsJsonForIp(
 }
 
 /**
- * Trust decision for the in-flight session's source IP. Called from
- * databaseHooks.session.create.before alongside assessLoginRisk so
- * the row written for the new session captures both signals.
+ * CF-attested country for the current request, or null when the request
+ * did not arrive via Cloudflare (local dev, direct origin). Shared by the
+ * sign-in trust check and the per-request gate so both decide trust on the
+ * same authoritative signal rather than diverging (header vs provider
+ * fallback). XX / T1 are CF's "unknown" sentinels and read as null.
  *
- *   - `ip: null`                       -> request did not arrive via
- *                                         Cloudflare; no IP signal to
- *                                         act on. Treat as trusted to
- *                                         avoid locking out local-dev
- *                                         and self-hosted setups.
- *   - `trusted: true`                  -> ip appears in user_trusted_ips
- *                                         for this user. No /verify-ip
- *                                         needed.
- *   - first attestation for this user  -> trusted = true. Mirrors the
- *                                         "first-geo-attestation" rule
- *                                         in assessLoginRisk: a brand
- *                                         new user cannot satisfy
- *                                         /verify-ip (they have no
- *                                         TOTP yet). The IP is added
- *                                         to user_trusted_ips by the
- *                                         session.create.after hook.
- *
- *                                         Migration caveat: when this
- *                                         feature ships, every existing
- *                                         user has zero rows in
- *                                         user_trusted_ips, so their
- *                                         FIRST sign-in after deploy
- *                                         auto-trusts the IP they happen
- *                                         to be on. /verify-ip only kicks
- *                                         in for SUBSEQUENT new IPs after
- *                                         that. We accept this rather
- *                                         than backfilling because the
- *                                         backfill would have to read
- *                                         sessions.ip_address, which is
- *                                         the raw value Better Auth
- *                                         records (no CF attestation)
- *                                         and is null for sessions
- *                                         created before the IP-risk
- *                                         work landed, so seeding from
- *                                         it would either lock those
- *                                         users out or trust whatever
- *                                         their proxy decided to log
- *                                         which is no stronger than
- *                                         what we do here.
- *   - subsequent unknown ip            -> trusted = false. Caller sets
- *                                         requires_ip_verification on
- *                                         the new session.
+ * `cf-ipcountry` is only honored when `cf-connecting-ip` is also present:
+ * both are set by Cloudflare at the edge and stripped from client input, so
+ * requiring the pair means a request that reaches the origin directly (or
+ * injects `cf-ipcountry`) cannot forge a specific trusted country. A forged
+ * header without the CF-set connecting IP reads as null and falls through to
+ * the no-country pass, never a spoofed trusted country. Mirrors the same
+ * paired check in resolveLoginLocation.
  */
-export type IpTrust = {
-  ip: string | null;
-  rawIp: string | null;
-  trusted: boolean;
-  country: string | null;
-  reason: "no_cf" | "known" | "first" | "untrusted";
-};
+export async function resolveCfCountry(): Promise<string | null> {
+  try {
+    const header = await headers();
+    const cfConnectingIp = header.get("cf-connecting-ip");
+    const cf = header.get("cf-ipcountry");
+    if (!cfConnectingIp) {
+      return null;
+    }
+    return cf && cf !== "XX" && cf !== "T1" ? cf.toUpperCase() : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Structured trace for the IP-verification gate. Logs the raw
@@ -422,52 +399,70 @@ export function logIpVerify(
   console.info(`[ip-verify] ${stage}`, fields);
 }
 
+/**
+ * Resolve the raw client IP from a set of request headers using the
+ * auth system's trust model. Behind the edge proxy (staging/prod) only
+ * CF-Connecting-IP is authoritative: it is set at the edge and cannot be
+ * forged by the caller, whereas X-Forwarded-For and X-Real-IP are
+ * caller-controlled and may be rewritten by intermediate hops, so they
+ * are not a reliable source of the client IP. Outside production we fall
+ * back to the first X-Forwarded-For hop and then X-Real-IP so VPN / NAT
+ * changes during local dev still exercise the new-IP gate. Returns null
+ * when no trusted source is present rather than an unreliable address, so
+ * callers persist an honest empty value instead of a misattributed one.
+ *
+ * Shared by resolveLoginIp (ambient headers) and the session-minting
+ * routes that write sessions.ip_address directly instead of through
+ * Better Auth's getIp, so every entrypoint resolves the client IP the
+ * same way.
+ */
+export function resolveClientIpFromHeaders(
+  header: Pick<Headers, "get">
+): string | null {
+  const cfConnectingIp = header.get("cf-connecting-ip");
+  if (cfConnectingIp) {
+    return cfConnectingIp;
+  }
+  if (process.env.NODE_ENV !== "production") {
+    const xffFirst = header.get("x-forwarded-for")?.split(",")[0]?.trim();
+    if (xffFirst) {
+      return xffFirst;
+    }
+    const xRealIp = header.get("x-real-ip");
+    if (xRealIp) {
+      return xRealIp;
+    }
+  }
+  return null;
+}
+
 async function resolveLoginIp(): Promise<string | null> {
   try {
-    const header = await headers();
-    const cfConnectingIp = header.get("cf-connecting-ip");
-    if (cfConnectingIp) {
-      return cfConnectingIp;
-    }
-    // Cloudflare is the trusted source in staging/prod. In other
-    // environments we fall back to the first X-Forwarded-For hop and
-    // then to X-Real-IP so VPN / NAT changes during local dev still
-    // exercise the new-IP gate. NODE_ENV-gated because in CF-fronted
-    // environments these headers are caller-controlled and must not
-    // be trusted.
-    if (process.env.NODE_ENV !== "production") {
-      const xff = header.get("x-forwarded-for");
-      const xffFirst = xff?.split(",")[0]?.trim();
-      if (xffFirst) {
-        return xffFirst;
-      }
-      const xRealIp = header.get("x-real-ip");
-      if (xRealIp) {
-        return xRealIp;
-      }
-    }
-    return null;
+    return resolveClientIpFromHeaders(await headers());
   } catch {
     return null;
   }
 }
 
 /**
- * Per-request gate result. `trusted` means the current request's IP is
- * in the user's `user_trusted_ips` list. `untrusted` carries the IP and
- * CF-attested country so the caller can build the pending_ip_verify
- * cookie + notification email without re-resolving the headers.
+ * Per-request gate result. `trusted` means the current request's CF country
+ * is in the user's `user_trusted_countries` list. `untrusted` carries that
+ * country plus the full client IP so the caller can build the
+ * pending_ip_verify cookie without re-resolving the headers. `no_country`
+ * means CF did not attest a country (local dev, direct origin) -- the gate
+ * passes through, fail-open, like the no_cf path at sign-in.
  */
-export type RequestIpGate =
+export type RequestCountryGate =
   | { kind: "trusted" }
-  | { kind: "untrusted"; ip: string; country: string | null }
-  | { kind: "no_ip" };
+  | { kind: "untrusted"; country: string; ip: string | null }
+  | { kind: "no_country" };
 
 /**
- * Shared (cross-replica) cache of trusted (user, ip) pairs in Redis, fronting
- * the user_trusted_ips table. A single page navigation fans out into ~20
- * parallel gate checks; the cache collapses those to one DB read per (user,
- * ip) per TTL window across the whole fleet, instead of one per pod.
+ * Shared (cross-replica) cache of trusted (user, country) pairs in Redis,
+ * fronting the user_trusted_countries table. A single page navigation fans
+ * out into ~20 parallel gate checks; the cache collapses those to one DB read
+ * per (user, country) per TTL window across the whole fleet, instead of one
+ * per pod.
  *
  * Postgres stays the durable source of truth: on a cache miss the gate reads
  * the DB and re-populates Redis, so a Redis flush or restart re-fills on
@@ -479,52 +474,83 @@ export type RequestIpGate =
 const TRUSTED_TTL_SECONDS = 300;
 
 /**
- * Mark (user, ip) trusted in the shared cache. Called by the gate after a DB
- * hit and by /api/user/verify-ip after a successful upsert, so every replica's
- * next request is a cache hit. Best-effort: a missing or failing Redis is
- * swallowed (the DB read-through still serves the correct answer).
+ * Mark (user, country) trusted in the shared cache. Called by the gate after a
+ * DB hit and by /api/user/verify-ip after a successful upsert, so every
+ * replica's next request is a cache hit. Best-effort: a missing or failing
+ * Redis is swallowed (the DB read-through still serves the correct answer).
  */
-export async function cacheTrustedIp(
+export async function cacheTrustedCountry(
   userId: string,
-  ip: string
+  country: string
 ): Promise<void> {
   const redis = getRedis();
   if (!redis) {
     return;
   }
   try {
-    await redis.set(trustedIpKey(userId, ip), "1", "EX", TRUSTED_TTL_SECONDS);
+    await redis.set(
+      trustedCountryKey(userId, country),
+      "1",
+      "EX",
+      TRUSTED_TTL_SECONDS
+    );
   } catch {
     // best-effort cache write; the DB remains the source of truth
   }
 }
 
 /**
- * Per-request IP gate consulted by the root proxy on every authenticated
- * request. Unlike assessIpTrust (used at sign-in time), this never
- * grants a first-attestation: if the user has zero trusted IPs we still
- * return untrusted, on the theory that a session that exists with no
- * trust rows means the sign-in path's bookkeeping failed and we should
- * fail closed.
- *
- * No DB writes here. The trust list only grows via sign-in events
- * (session.create.before first-attestation) and explicit /verify-ip
- * confirmation; the proxy gate is read-only.
+ * Transition bridge: true when the current request's IP is in the legacy
+ * user_trusted_ips list. Before country trust shipped, every active session
+ * had its source IP recorded here; reading it lets an already-trusted user
+ * pass the new country gate without a /verify-ip detour, and the caller then
+ * backfills the country so the bridge is only consulted until the country is
+ * recorded. The IP comparison normalizes both sides to the /24-or-/64
+ * network, matching how the rows were written.
  */
-export async function gateRequestIp(userId: string): Promise<RequestIpGate> {
-  const rawIp = await resolveLoginIp();
+async function legacyIpTrusted(
+  userId: string,
+  rawIp: string | null
+): Promise<boolean> {
   if (!rawIp) {
-    const result: RequestIpGate = { kind: "no_ip" };
-    return result;
+    return false;
   }
   const ip = normalizeIpForTrust(rawIp);
+  const [hit] = await db
+    .select({ id: userTrustedIps.id })
+    .from(userTrustedIps)
+    .where(and(eq(userTrustedIps.userId, userId), eq(userTrustedIps.ip, ip)))
+    .limit(1);
+  return Boolean(hit);
+}
+
+/**
+ * Per-request country gate consulted by the root proxy on every authenticated
+ * request. Resolves the CF-attested country from the cheap edge header (no
+ * external IP-to-location lookup on the hot path). When CF didn't attest a
+ * country we return `no_country` and pass through, mirroring the no_cf
+ * fail-open at sign-in. The full client IP is resolved only for the
+ * pending-cookie payload on the untrusted path.
+ *
+ * On a country miss the legacy IP bridge is consulted: a session whose IP is
+ * already in user_trusted_ips passes, and the country is backfilled into
+ * user_trusted_countries so the transition is seamless for users who were
+ * signed in before this shipped. That backfill is the gate's only write.
+ */
+export async function gateRequestCountry(
+  userId: string
+): Promise<RequestCountryGate> {
+  const country = await resolveCfCountry();
+  if (!country) {
+    return { kind: "no_country" };
+  }
 
   // Fast path: shared Redis cache. A hit means a prior DB read on some replica
   // already confirmed trust; trust is monotonic so the cached answer is safe.
   const redis = getRedis();
   if (redis) {
     try {
-      if ((await redis.get(trustedIpKey(userId, ip))) === "1") {
+      if ((await redis.get(trustedCountryKey(userId, country))) === "1") {
         return { kind: "trusted" };
       }
     } catch {
@@ -532,141 +558,161 @@ export async function gateRequestIp(userId: string): Promise<RequestIpGate> {
     }
   }
 
-  // Source of truth: user_trusted_ips. Re-populate the cache on a hit so the
-  // next request on any replica is served from Redis.
+  // Source of truth: user_trusted_countries. Re-populate the cache on a hit so
+  // the next request on any replica is served from Redis.
   const [hit] = await db
-    .select({ id: userTrustedIps.id })
-    .from(userTrustedIps)
-    .where(and(eq(userTrustedIps.userId, userId), eq(userTrustedIps.ip, ip)))
+    .select({ id: userTrustedCountries.id })
+    .from(userTrustedCountries)
+    .where(
+      and(
+        eq(userTrustedCountries.userId, userId),
+        eq(userTrustedCountries.country, country)
+      )
+    )
     .limit(1);
   if (hit) {
-    cacheTrustedIp(userId, ip).catch(() => {
-      // cacheTrustedIp already swallows; this is the floating-promise boundary
+    cacheTrustedCountry(userId, country).catch(() => {
+      // cacheTrustedCountry already swallows; floating-promise boundary
     });
     return { kind: "trusted" };
   }
 
-  // CF-attested country only on the hot path; the external IP-to-location
-  // lookup has a 2-second timeout and isn't wanted here.
-  let country: string | null = null;
-  try {
-    const header = await headers();
-    country = header.get("cf-ipcountry") ?? null;
-  } catch {
-    country = null;
-  }
-  // Untrusted is never cached -- re-checked against the DB every request so a
-  // freshly trusted IP is honored fleet-wide on the very next request.
-  const result: RequestIpGate = { kind: "untrusted", ip, country };
-  logIpVerify("gate-untrusted", {
-    userId,
-    rawIp,
-    normalizedIp: ip,
-    country,
-  });
-  return result;
-}
+  const ip = await resolveLoginIp();
 
-export async function assessIpTrust(userId: string): Promise<IpTrust> {
-  const rawIp = await resolveLoginIp();
-  const { country } = await resolveLoginLocation();
-  if (!rawIp) {
-    logIpVerify("assess", {
-      userId,
-      rawIp: null,
-      normalizedIp: null,
-      reason: "no_cf",
+  // Legacy bridge: an already-trusted IP from before country trust shipped
+  // passes the gate. Backfill the country so subsequent requests are a fast
+  // user_trusted_countries hit and the bridge fades on its own.
+  if (await legacyIpTrusted(userId, ip)) {
+    await upsertTrustedCountry(userId, country);
+    cacheTrustedCountry(userId, country).catch(() => {
+      // best-effort cache warm; the upsert above is durable
     });
-    return { ip: null, rawIp: null, trusted: true, country, reason: "no_cf" };
+    logIpVerify("gate-bridge-legacy-ip", { userId, country, ip });
+    return { kind: "trusted" };
   }
 
-  // IPv6 trust is bucketed at /64 to handle CF's lower-64-bits
-  // zeroing for privacy and any SLAAC reshuffles on the same
-  // network. IPv4 passes through unchanged. Callers (cookie
-  // payload, /verify-ip insert) use the normalized form too so
-  // the same string is what ever lands in user_trusted_ips.
-  const ip = normalizeIpForTrust(rawIp);
-
-  const [hit] = await db
-    .select({ id: userTrustedIps.id })
-    .from(userTrustedIps)
-    .where(and(eq(userTrustedIps.userId, userId), eq(userTrustedIps.ip, ip)))
-    .limit(1);
-  if (hit) {
-    logIpVerify("assess", { userId, rawIp, normalizedIp: ip, reason: "known" });
-    return { ip, rawIp, trusted: true, country, reason: "known" };
-  }
-
-  const [anyTrusted] = await db
-    .select({ id: userTrustedIps.id })
-    .from(userTrustedIps)
-    .where(eq(userTrustedIps.userId, userId))
-    .limit(1);
-  if (!anyTrusted) {
-    logIpVerify("assess", { userId, rawIp, normalizedIp: ip, reason: "first" });
-    return { ip, rawIp, trusted: true, country, reason: "first" };
-  }
-
-  logIpVerify("assess", {
-    userId,
-    rawIp,
-    normalizedIp: ip,
-    reason: "untrusted",
-  });
-  return { ip, rawIp, trusted: false, country, reason: "untrusted" };
+  logIpVerify("gate-untrusted-country", { userId, country, ip });
+  return { kind: "untrusted", country, ip };
 }
 
 /**
- * Idempotently record an IP in a user's trusted list. The unique
- * (user_id, ip) constraint makes the upsert safe to repeat: a known IP
- * just bumps last_seen_at. Best-effort by design. A failure is logged
- * and swallowed because trust-list bookkeeping must never block the
- * sign-in that triggered it. If the write is lost, the next sign-in
- * from the same IP hits the /verify-ip gate, which is the correct
- * fail-closed direction.
+ * Trust decision for the in-flight session's country. Called from
+ * databaseHooks.session.create.before and the strict-signin route.
+ *
+ *   - country null (no CF attestation) -> trusted, reason "no_cf". Avoids
+ *     locking out local-dev and self-hosted setups.
+ *   - country in user_trusted_countries -> trusted, reason "known".
+ *   - first attestation (user has zero trusted countries) -> trusted,
+ *     reason "first". Mirrors the IP feature's migration stance: a brand
+ *     new user, and every existing user's first post-deploy login,
+ *     auto-trusts the country they happen to be on; /verify-ip kicks in only
+ *     for SUBSEQUENT new countries.
+ *   - legacy IP bridge -> trusted, reason "legacy_ip". The country is unknown
+ *     but the IP is already in user_trusted_ips from before country trust
+ *     shipped, so the user is not bounced; the caller records the country.
+ *   - otherwise -> untrusted. Caller defers the session to /verify-ip.
+ *
+ * `ip` is the full (un-normalized) client IP, carried into the pending
+ * cookie + session row by the caller.
  */
-export async function upsertTrustedIp(
+export type CountryTrust = {
+  country: string | null;
+  ip: string | null;
+  trusted: boolean;
+  reason: "no_cf" | "known" | "first" | "legacy_ip" | "untrusted";
+};
+
+export async function assessCountryTrust(
+  userId: string
+): Promise<CountryTrust> {
+  const ip = await resolveLoginIp();
+  const country = await resolveCfCountry();
+  if (!country) {
+    logIpVerify("assess-country", { userId, country: null, reason: "no_cf" });
+    return { country: null, ip, trusted: true, reason: "no_cf" };
+  }
+
+  const [hit] = await db
+    .select({ id: userTrustedCountries.id })
+    .from(userTrustedCountries)
+    .where(
+      and(
+        eq(userTrustedCountries.userId, userId),
+        eq(userTrustedCountries.country, country)
+      )
+    )
+    .limit(1);
+  if (hit) {
+    logIpVerify("assess-country", { userId, country, reason: "known" });
+    return { country, ip, trusted: true, reason: "known" };
+  }
+
+  const [anyTrusted] = await db
+    .select({ id: userTrustedCountries.id })
+    .from(userTrustedCountries)
+    .where(eq(userTrustedCountries.userId, userId))
+    .limit(1);
+  if (!anyTrusted) {
+    logIpVerify("assess-country", { userId, country, reason: "first" });
+    return { country, ip, trusted: true, reason: "first" };
+  }
+
+  // Legacy bridge: an unfamiliar country whose IP is already trusted from
+  // before country trust shipped is honored rather than bounced. The caller
+  // records the country, retiring the bridge for this (user, country).
+  if (await legacyIpTrusted(userId, ip)) {
+    logIpVerify("assess-country", { userId, country, reason: "legacy_ip" });
+    return { country, ip, trusted: true, reason: "legacy_ip" };
+  }
+
+  logIpVerify("assess-country", { userId, country, reason: "untrusted" });
+  return { country, ip, trusted: false, reason: "untrusted" };
+}
+
+/**
+ * Idempotently record a country in a user's trusted list. The unique
+ * (user_id, country) constraint makes the upsert safe to repeat: a known
+ * country just bumps last_seen_at. Best-effort by design. A failure is logged
+ * and swallowed because trust-list bookkeeping must never block the sign-in
+ * that triggered it. If the write is lost, the next sign-in from the same
+ * country hits the /verify-ip gate, which is the correct fail-closed
+ * direction.
+ */
+export async function upsertTrustedCountry(
   userId: string,
-  ip: string,
-  country: string | null
+  country: string
 ): Promise<void> {
   try {
     await db
-      .insert(userTrustedIps)
-      .values({ userId, ip, country })
+      .insert(userTrustedCountries)
+      .values({ userId, country })
       .onConflictDoUpdate({
-        target: [userTrustedIps.userId, userTrustedIps.ip],
+        target: [userTrustedCountries.userId, userTrustedCountries.country],
         set: { lastSeenAt: new Date() },
       });
   } catch (err) {
     logSystemError(
       ErrorCategory.DATABASE,
-      "[ip-trust] failed to upsert trusted IP",
+      "[country-trust] failed to upsert trusted country",
       err,
-      { user_id: userId, ip }
+      { user_id: userId, country }
     );
   }
 }
 
 /**
- * Record the current request's source IP as trusted for this user,
- * mirroring the databaseHooks.session.create.before path in lib/auth.ts.
- * Called by the pending-signup TOTP enroll path, which mints a user's
- * first session by inserting the row directly and so never runs that
- * hook. Without it a credential signup never records its origin IP, so a
- * later sign-in from that very network is treated as new and bounced to
- * /verify-ip. (OAuth signup does not need this: its callback mints a
- * Better Auth session first, which runs the hook before being discarded.)
- *
- * Records only on a positive trust decision: first-ever attestation or
- * an already-known IP, exactly as the hook does. An untrusted IP is left
- * for the /verify-ip gate to resolve.
+ * Record the current request's country as trusted for this user, mirroring
+ * the databaseHooks.session.create.before path in lib/auth.ts. Called by the
+ * pending-signup TOTP enroll path, which mints a user's first session by
+ * inserting the row directly and so never runs that hook. Records only on a
+ * positive trust decision: first-ever attestation or an already-known
+ * country. An untrusted country is left for the /verify-ip gate to resolve.
  */
-export async function recordTrustedIpFromRequest(
+export async function recordTrustedCountryFromRequest(
   userId: string
 ): Promise<void> {
-  const ipTrust = await assessIpTrust(userId);
-  if (ipTrust.ip && ipTrust.trusted) {
-    await upsertTrustedIp(userId, ipTrust.ip, ipTrust.country);
+  const trust = await assessCountryTrust(userId);
+  if (trust.country && trust.trusted) {
+    await upsertTrustedCountry(userId, trust.country);
   }
 }
