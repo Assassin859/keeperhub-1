@@ -45,6 +45,9 @@ export type NodeFieldChange = {
   // The action id (e.g. "web3/read-contract") so the UI can map config keys
   // to their human field labels.
   actionType?: string;
+  // The node's configured chain id, so address values can link to the right
+  // block explorer.
+  chainId?: string;
   deltas: NodeFieldDelta[];
 };
 
@@ -103,6 +106,17 @@ function nodeActionType(node: AnyRecord): string | undefined {
     | undefined;
   const actionType = config?.actionType;
   return typeof actionType === "string" ? actionType : undefined;
+}
+
+function nodeChainId(node: AnyRecord): string | undefined {
+  const config = ((node.data ?? {}) as AnyRecord).config as
+    | AnyRecord
+    | undefined;
+  const raw = config?.network ?? config?.chainId ?? config?.chain;
+  if (typeof raw === "string" || typeof raw === "number") {
+    return String(raw);
+  }
+  return;
 }
 
 // Template refs persist as `{{@nodeId:Display.field}}`; the node id is noise in
@@ -282,6 +296,7 @@ export function computeVersionDiff(
         label: nodeLabel(node),
         nodeType: nodeType(node),
         actionType: nodeActionType(node),
+        chainId: nodeChainId(node),
         deltas,
       });
     }

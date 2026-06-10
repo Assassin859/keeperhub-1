@@ -3,8 +3,11 @@
 import { useAtom, useAtomValue } from "jotai";
 import {
   ArrowRight,
+  Check,
   ChevronRight,
   Clock,
+  Copy,
+  ExternalLink,
   Eye,
   GitBranch,
   Link2,
@@ -23,6 +26,12 @@ import { Pager } from "@/components/activity/pager";
 import { relativeTime } from "@/components/settings/session-format";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { api, type WorkflowVersionSummary } from "@/lib/api-client";
 import { groupByDate } from "@/lib/activity/time-groups";
 import { usePaginatedResource } from "@/lib/hooks/use-paginated-resource";
@@ -33,6 +42,11 @@ import {
   selectedNodeAtom,
   versionHistoryOpenAtom,
 } from "@/lib/workflow/store";
+import {
+  type ConfigValueResolver,
+  type ResolvedValue,
+  useConfigValueDisplay,
+} from "@/lib/workflow/use-config-value-display";
 import { useVersionPreview } from "@/lib/workflow/use-version-preview";
 import type { VersionDiff } from "@/lib/workflow/version-diff";
 import { findActionById, flattenConfigFields } from "@/plugins/registry";
@@ -68,9 +82,12 @@ function configFieldLabel(
   actionType: string | undefined,
   key: string
 ): string {
-  // The action id itself is meta, not a form field; show it as "Action".
+  // Reserved keys aren't form fields; give them friendly labels.
   if (key === "actionType") {
     return "Action";
+  }
+  if (key === "integrationId") {
+    return "Integration";
   }
   if (!actionType) {
     return key;
@@ -85,28 +102,114 @@ function configFieldLabel(
   return field?.label ?? key;
 }
 
+function toneChip(tone: "before" | "after"): string {
+  return tone === "before"
+    ? "bg-destructive/10 text-destructive ring-1 ring-destructive/20"
+    : "bg-keeperhub-green-dark/10 text-keeperhub-green-dark ring-1 ring-keeperhub-green-dark/20";
+}
+
+// An EVM address value: checksummed + shortened, with the full address on
+// hover, a copy button, and a network-aware explorer link when known.
+function AddressChip({
+  address,
+  label,
+  tone,
+}: {
+  address: { full: string; href: string | null };
+  label: string;
+  tone: "before" | "after";
+}): React.ReactElement {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard.writeText(address.full).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    });
+  };
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className={`inline-flex items-center gap-1.5 rounded px-1.5 py-0.5 font-medium text-xs leading-relaxed ${toneChip(
+              tone
+            )}`}
+          >
+            {label}
+            <button
+              aria-label="Copy address"
+              className="opacity-70 transition-opacity hover:opacity-100"
+              onClick={copy}
+              type="button"
+            >
+              {copied ? (
+                <Check className="size-3" />
+              ) : (
+                <Copy className="size-3" />
+              )}
+            </button>
+            {address.href && (
+              <a
+                aria-label="View on explorer"
+                className="opacity-70 transition-opacity hover:opacity-100"
+                href={address.href}
+                rel="noopener"
+                target="_blank"
+              >
+                <ExternalLink className="size-3" />
+              </a>
+            )}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>
+          <span className="font-mono text-xs">{address.full}</span>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
 // A before/after value chip in a config diff: old values read as removed
 // (red), new values as added (green); an absent value is a faint placeholder
 // rather than a chip, so it never looks like a disabled control.
 function DiffValue({
-  value,
+  resolved,
   tone,
 }: {
-  value: string;
+  resolved: ResolvedValue;
   tone: "before" | "after";
 }): React.ReactElement {
-  if (!value || value === "empty") {
+  if (resolved.empty) {
     return <span className="text-muted-foreground/60 italic">empty</span>;
   }
-  const cls =
-    tone === "before"
-      ? "bg-destructive/10 text-destructive ring-1 ring-destructive/20"
-      : "bg-keeperhub-green/10 text-keeperhub-green ring-1 ring-keeperhub-green/20";
+  if (resolved.deleted) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded bg-muted px-1.5 py-0.5 leading-relaxed">
+        <span className="break-all text-muted-foreground line-through">
+          {resolved.label}
+        </span>
+        <span className="rounded bg-destructive/15 px-1 font-medium text-[10px] text-destructive uppercase">
+          deleted
+        </span>
+      </span>
+    );
+  }
+  if (resolved.address) {
+    return (
+      <AddressChip
+        address={resolved.address}
+        label={resolved.label}
+        tone={tone}
+      />
+    );
+  }
   return (
     <span
-      className={`break-all rounded px-1.5 py-0.5 font-mono leading-relaxed ${cls}`}
+      className={`break-all rounded px-1.5 py-0.5 font-medium text-xs leading-relaxed ${toneChip(
+        tone
+      )}`}
     >
-      {value}
+      {resolved.label}
     </span>
   );
 }
@@ -201,6 +304,25 @@ function nodeDeltaItem(
   return { key, kind: "change", content: <>{who} description updated</> };
 }
 
+// The chain a node's addresses belong to: prefer the captured chainId, else
+// read the network/chain field changed in this same version.
+function nodeChainId(
+  n: VersionDiff["nodesChanged"][number]
+): string | undefined {
+  if (n.chainId) {
+    return n.chainId;
+  }
+  for (const d of n.deltas) {
+    const net = d.configChanges?.find(
+      (c) => c.key === "network" || c.key === "chainId" || c.key === "chain"
+    );
+    if (net?.after && net.after !== "empty") {
+      return net.after;
+    }
+  }
+  return;
+}
+
 function isVersionDiff(value: unknown): value is VersionDiff {
   return (
     typeof value === "object" &&
@@ -210,7 +332,10 @@ function isVersionDiff(value: unknown): value is VersionDiff {
   );
 }
 
-function buildChangeItems(diff: VersionDiff): ChangeItem[] {
+function buildChangeItems(
+  diff: VersionDiff,
+  resolveValue: ConfigValueResolver
+): ChangeItem[] {
   const items: ChangeItem[] = diff.settings.map(settingItem);
   for (const n of diff.nodesAdded) {
     items.push({
@@ -235,6 +360,7 @@ function buildChangeItems(diff: VersionDiff): ChangeItem[] {
     });
   }
   for (const n of diff.nodesChanged) {
+    const chain = nodeChainId(n);
     for (const d of n.deltas) {
       // Expand a configuration change into one row per field, showing the
       // actual before -> after value (older versions without per-field detail
@@ -254,9 +380,15 @@ function buildChangeItems(diff: VersionDiff): ChangeItem[] {
                   </span>
                 </span>
                 <span className="flex flex-wrap items-center gap-2">
-                  <DiffValue tone="before" value={c.before} />
+                  <DiffValue
+                    resolved={resolveValue(n.actionType, c.key, c.before, chain)}
+                    tone="before"
+                  />
                   <Arrow />
-                  <DiffValue tone="after" value={c.after} />
+                  <DiffValue
+                    resolved={resolveValue(n.actionType, c.key, c.after, chain)}
+                    tone="after"
+                  />
                 </span>
               </span>
             ),
@@ -294,12 +426,12 @@ function buildChangeItems(diff: VersionDiff): ChangeItem[] {
 }
 
 const KIND_STYLE: Record<ChangeKind, { Icon: typeof Plus; color: string }> = {
-  add: { Icon: Plus, color: "text-keeperhub-green" },
+  add: { Icon: Plus, color: "text-keeperhub-green-dark" },
   remove: { Icon: Minus, color: "text-destructive" },
-  change: { Icon: Pencil, color: "text-amber-400" },
-  connect: { Icon: Link2, color: "text-keeperhub-green" },
+  change: { Icon: Pencil, color: "text-foreground" },
+  connect: { Icon: Link2, color: "text-keeperhub-green-dark" },
   disconnect: { Icon: Unlink, color: "text-destructive" },
-  enable: { Icon: Power, color: "text-keeperhub-green" },
+  enable: { Icon: Power, color: "text-keeperhub-green-dark" },
   disable: { Icon: PowerOff, color: "text-destructive" },
 };
 
@@ -318,11 +450,13 @@ function VersionRow({
   isCurrent,
   isPreviewing,
   onView,
+  resolveValue,
 }: {
   version: WorkflowVersionSummary;
   isCurrent: boolean;
   isPreviewing: boolean;
   onView: () => void;
+  resolveValue: ConfigValueResolver;
 }): React.ReactElement {
   // Each row owns its open/closed state. Switching page remounts the rows
   // (keys change), so they naturally collapse.
@@ -331,7 +465,7 @@ function VersionRow({
   // can show what each version changed without fetching its snapshot. Versions
   // recorded before this format shipped hold a raw diff and are skipped.
   const diff = isVersionDiff(version.change) ? version.change : null;
-  const items = diff ? buildChangeItems(diff) : [];
+  const items = diff ? buildChangeItems(diff, resolveValue) : [];
   return (
     <li
       className={`rounded-xl transition-colors ${
@@ -350,7 +484,7 @@ function VersionRow({
               Version {version.version}
             </span>
             {isCurrent && (
-              <span className="rounded-full bg-keeperhub-green/15 px-1.5 py-0.5 font-medium text-[10px] text-keeperhub-green">
+              <span className="rounded-full bg-keeperhub-green-dark/15 px-1.5 py-0.5 font-medium text-[10px] text-keeperhub-green-dark">
                 Current
               </span>
             )}
@@ -392,15 +526,18 @@ function VersionRow({
                   : "No tracked changes."}
               </p>
             )}
-            <Button
-              disabled={isPreviewing}
-              onClick={onView}
-              size="sm"
-              variant="outline"
-            >
-              <Eye className="mr-1.5 size-3.5" />
-              {isPreviewing ? "Viewing on canvas" : "View on canvas"}
-            </Button>
+            {/* The current version is already on the canvas. */}
+            {!isCurrent && (
+              <Button
+                disabled={isPreviewing}
+                onClick={onView}
+                size="sm"
+                variant="outline"
+              >
+                <Eye className="mr-1.5 size-3.5" />
+                {isPreviewing ? "Viewing on canvas" : "View on canvas"}
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -416,6 +553,7 @@ export function VersionHistoryPanel(): React.ReactElement | null {
   const [selectedNode, setSelectedNode] = useAtom(selectedNodeAtom);
   const isResizing = useRef(false);
   const { preview, exitPreview } = useVersionPreview();
+  const resolveValue = useConfigValueDisplay(open);
 
   const {
     items: versions,
@@ -563,18 +701,19 @@ export function VersionHistoryPanel(): React.ReactElement | null {
                   isPreviewing={previewVersion === v.version}
                   key={v.version}
                   onView={() => preview(v.version)}
+                  resolveValue={resolveValue}
                   version={v}
                 />
               ))}
             </ul>
           </div>
         ))}
-        {meta && (
-          <div className="px-1 pt-2">
-            <Pager meta={meta} onPage={setPage} unit="versions" />
-          </div>
-        )}
       </div>
+      {meta && (
+        <div className="border-border border-t px-4 py-2.5">
+          <Pager meta={meta} onPage={setPage} unit="versions" />
+        </div>
+      )}
     </aside>
   );
 }

@@ -391,6 +391,8 @@ export type Integration = {
   id: string;
   name: string;
   type: IntegrationType;
+  // Canonical EIP-55 wallet address for web3 integrations, null otherwise.
+  address?: string | null;
   isManaged?: boolean;
   createdAt: string;
   updatedAt: string;
