@@ -103,12 +103,19 @@ export async function GET(request: Request) {
           .where(inArray(users.id, actorIds))
       : [];
     const actorMap = new Map(actors.map((a) => [a.id, a]));
-    const items = rows.map((r) => ({
-      ...r,
-      actor: r.actorUserId
-        ? (actorMap.get(r.actorUserId) ?? { id: r.actorUserId })
-        : null,
-    }));
+    const items = rows.map((r) => {
+      const enriched = r.actorUserId ? actorMap.get(r.actorUserId) : undefined;
+      if (enriched) {
+        return { ...r, actor: enriched };
+      }
+      // Fall back to the denormalized actor_label when the user row is gone
+      // (a deletion cascade nulls actor_user_id) or no longer joinable, so the
+      // trail still attributes the action instead of rendering as "System".
+      if (r.actorLabel) {
+        return { ...r, actor: { id: r.actorUserId, name: r.actorLabel } };
+      }
+      return { ...r, actor: r.actorUserId ? { id: r.actorUserId } : null };
+    });
 
     return NextResponse.json(buildPage(items, total, req, url));
   } catch (error) {
