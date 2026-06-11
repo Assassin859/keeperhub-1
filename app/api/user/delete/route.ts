@@ -136,6 +136,10 @@ export async function POST(request: Request): Promise<NextResponse> {
         // root event plus one row per affected resource, all sharing the
         // correlation id. Passing `tx` makes a failed audit write roll the
         // whole deactivation back, so the trail can never disagree with reality.
+        // This is deliberately stricter than the other audited routes (api-key,
+        // totp, billing), which record post-action with the global db and
+        // swallow audit failures: a deletion cascade is the one case where the
+        // trail must be guaranteed consistent with what was actually deleted.
         const events: RecordAuditEventArgs[] = [
           {
             actor,
