@@ -39,12 +39,11 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
+import { recordExecutionErrorFinalized } from "@/lib/errors/finalize-error";
 import {
   getPrometheusMetrics,
   recordWorkflowExecutionErrorByWorkflow,
 } from "@/lib/metrics/collectors/prometheus";
-
-import { recordExecutionErrorFinalized } from "@/lib/errors/finalize-error";
 
 describe("recordWorkflowExecutionErrorByWorkflow", () => {
   it("increments keeperhub_workflow_execution_errors_by_workflow_total with correct labels", async () => {
@@ -87,7 +86,10 @@ describe("recordExecutionErrorFinalized", () => {
     mockLimit.mockResolvedValue([{ slug: "acme" }]);
 
     const prometheusMod = await import("@/lib/metrics/collectors/prometheus");
-    const recordErrorSpy = vi.spyOn(prometheusMod, "recordWorkflowExecutionError");
+    const recordErrorSpy = vi.spyOn(
+      prometheusMod,
+      "recordWorkflowExecutionError"
+    );
     const recordByWorkflowSpy = vi.spyOn(
       prometheusMod,
       "recordWorkflowExecutionErrorByWorkflow"
@@ -114,7 +116,10 @@ describe("recordExecutionErrorFinalized", () => {
     mockLimit.mockResolvedValue([]);
 
     const prometheusMod = await import("@/lib/metrics/collectors/prometheus");
-    const recordErrorSpy = vi.spyOn(prometheusMod, "recordWorkflowExecutionError");
+    const recordErrorSpy = vi.spyOn(
+      prometheusMod,
+      "recordWorkflowExecutionError"
+    );
     const recordByWorkflowSpy = vi.spyOn(
       prometheusMod,
       "recordWorkflowExecutionErrorByWorkflow"
@@ -129,7 +134,10 @@ describe("recordExecutionErrorFinalized", () => {
       expect.objectContaining({ orgSlug: "_anonymous" })
     );
     expect(recordByWorkflowSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ orgSlug: "_anonymous", workflowId: "wf_personal" })
+      expect.objectContaining({
+        orgSlug: "_anonymous",
+        workflowId: "wf_personal",
+      })
     );
   });
 

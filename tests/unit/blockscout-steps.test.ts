@@ -26,7 +26,10 @@ import { getAddressInfoStep } from "@/plugins/blockscout/steps/get-address-info"
 import { getTokenInfoStep } from "@/plugins/blockscout/steps/get-token-info";
 import { getTransactionStep } from "@/plugins/blockscout/steps/get-transaction";
 
-function mockFetchOnce(body: unknown, init?: { ok?: boolean; status?: number }) {
+function mockFetchOnce(
+  body: unknown,
+  init?: { ok?: boolean; status?: number }
+) {
   const ok = init?.ok ?? true;
   const status = init?.status ?? 200;
   safeFetch.mockReset();
@@ -69,7 +72,9 @@ describe("blockscout get-address-balance", () => {
       isContract: false,
       ensName: "vitalik.eth",
     });
-    expect(lastFetchUrl()).toContain("https://eth.blockscout.com/api/v2/addresses/0xabc");
+    expect(lastFetchUrl()).toContain(
+      "https://eth.blockscout.com/api/v2/addresses/0xabc"
+    );
   });
 
   it("uses the configured instance URL and appends the API key", async () => {
@@ -323,7 +328,9 @@ describe("blockscout chain selection", () => {
 
     await getAddressInfoStep({ address: "0xabc", network: "8453" });
 
-    expect(lastFetchUrl()).toContain("https://base.blockscout.com/api/v2/addresses/0xabc");
+    expect(lastFetchUrl()).toContain(
+      "https://base.blockscout.com/api/v2/addresses/0xabc"
+    );
   });
 
   it("maps Optimism to its canonical instance", async () => {
@@ -331,7 +338,9 @@ describe("blockscout chain selection", () => {
 
     await getAddressCountersStep({ address: "0xabc", network: "10" });
 
-    expect(lastFetchUrl()).toContain("https://explorer.optimism.io/api/v2/addresses/0xabc/counters");
+    expect(lastFetchUrl()).toContain(
+      "https://explorer.optimism.io/api/v2/addresses/0xabc/counters"
+    );
   });
 
   it("defaults to Ethereum mainnet when no chain is selected", async () => {
@@ -345,7 +354,10 @@ describe("blockscout chain selection", () => {
   it("errors for a chain with no hosted instance and no connection", async () => {
     global.fetch = vi.fn() as unknown as typeof fetch;
 
-    const result = await getAddressInfoStep({ address: "0xabc", network: "999999" });
+    const result = await getAddressInfoStep({
+      address: "0xabc",
+      network: "999999",
+    });
 
     expect(result.success).toBe(false);
     expect(global.fetch).not.toHaveBeenCalled();
@@ -366,6 +378,8 @@ describe("blockscout chain selection", () => {
       integrationId: "int-1",
     });
 
-    expect(lastFetchUrl()).toContain("https://custom.blockscout.example/api/v2/addresses/0xabc");
+    expect(lastFetchUrl()).toContain(
+      "https://custom.blockscout.example/api/v2/addresses/0xabc"
+    );
   });
 });

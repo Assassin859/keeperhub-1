@@ -555,8 +555,8 @@ export function PolicyWizard({
                 Protocols skipped
               </div>
               <div className="text-muted-foreground text-xs">
-                {simulation.skipped.map(getProtocolLabel).join(", ")}. These
-                are not supported on this chain or lack a template.
+                {simulation.skipped.map(getProtocolLabel).join(", ")}. These are
+                not supported on this chain or lack a template.
               </div>
             </div>
           )}

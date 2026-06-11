@@ -112,6 +112,25 @@ describe("getDualAuthContext", () => {
       expect(mockAuthenticateApiKey).not.toHaveBeenCalled();
       expect(mockGetSession).not.toHaveBeenCalled();
     });
+
+    it("propagates the OAuth token scope onto the context", async () => {
+      mockAuthenticateOAuthToken.mockResolvedValue({
+        authenticated: true,
+        userId: "user_oauth",
+        organizationId: "org_oauth",
+        scope: "mcp:read",
+      });
+
+      const result = await getDualAuthContext(makeRequest());
+
+      expect(result).toMatchObject({
+        userId: "user_oauth",
+        organizationId: "org_oauth",
+        authMethod: "oauth",
+        apiKeyId: null,
+        scope: "mcp:read",
+      });
+    });
   });
 
   describe("API key authentication", () => {

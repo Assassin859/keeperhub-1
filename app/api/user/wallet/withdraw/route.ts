@@ -11,10 +11,6 @@ import { recordSafeWithdraw } from "@/lib/metrics/instrumentation/safe";
 import { requireDualFactor } from "@/lib/mfa/dual-factor";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
 import { requireOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
-import {
-  getOrganizationWalletAddress,
-  initializeWalletSigner,
-} from "@/lib/web3/wallet-helpers";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import {
   executeContractCallAsSafe,
@@ -26,6 +22,10 @@ import {
   type TransactionContext,
   withNonceSession,
 } from "@/lib/web3/transaction-manager";
+import {
+  getOrganizationWalletAddress,
+  initializeWalletSigner,
+} from "@/lib/web3/wallet-helpers";
 
 const ERC20_TRANSFER_ABI = [
   "function transfer(address to, uint256 amount) returns (bool)",

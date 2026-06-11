@@ -882,10 +882,7 @@ function computeCommentRanges(code: string): [number, number][] {
   return ranges;
 }
 
-function offsetInRanges(
-  offset: number,
-  ranges: [number, number][]
-): boolean {
+function offsetInRanges(offset: number, ranges: [number, number][]): boolean {
   return ranges.some(([start, end]) => offset >= start && offset < end);
 }
 
@@ -964,8 +961,7 @@ function resolveDisplayCodeRef(
 
 // Matches a stored ref `{{@nodeId:Label.field}}` OR a display ref
 // `{{Label.field}}` in one pass so offsets align with the comment scan below.
-const CODE_TEMPLATE_PATTERN =
-  /\{\{@([^:]+):([^}]+)\}\}|\{\{([^@}][^}]*)\}\}/g;
+const CODE_TEMPLATE_PATTERN = /\{\{@([^:]+):([^}]+)\}\}|\{\{([^@}][^}]*)\}\}/g;
 
 export function processCodeTemplates(
   code: string,
@@ -1872,7 +1868,11 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     // an unresolved literal. The tracker is the authority for code-field refs.
     let renderedCode: string | undefined;
     if (actionType === "code/run-code" && typeof originalCode === "string") {
-      renderedCode = processCodeTemplates(originalCode, currentOutputs, tracker);
+      renderedCode = processCodeTemplates(
+        originalCode,
+        currentOutputs,
+        tracker
+      );
     }
 
     // KEEP-468 hotfix: scan + assert BEFORE re-attaching condition fields.

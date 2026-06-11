@@ -23,8 +23,13 @@ export async function POST(
       const [deactivatedOrg] = await tx
         .update(organization)
         .set({ deactivatedAt: now })
-        .where(and(eq(organization.id, orgId), isNull(organization.deactivatedAt)))
-        .returning({ id: organization.id, deactivatedAt: organization.deactivatedAt });
+        .where(
+          and(eq(organization.id, orgId), isNull(organization.deactivatedAt))
+        )
+        .returning({
+          id: organization.id,
+          deactivatedAt: organization.deactivatedAt,
+        });
 
       if (!deactivatedOrg) {
         const [existing] = await tx
@@ -32,7 +37,11 @@ export async function POST(
           .from(organization)
           .where(eq(organization.id, orgId))
           .limit(1);
-        return { conflict: existing ? ("already_deactivated" as const) : ("not_found" as const) };
+        return {
+          conflict: existing
+            ? ("already_deactivated" as const)
+            : ("not_found" as const),
+        };
       }
 
       const deactivatedWorkflows = await tx
@@ -56,7 +65,10 @@ export async function POST(
 
     if ("conflict" in result) {
       if (result.conflict === "not_found") {
-        return NextResponse.json({ error: "Organization not found" }, { status: 404 });
+        return NextResponse.json(
+          { error: "Organization not found" },
+          { status: 404 }
+        );
       }
       return NextResponse.json(
         { error: "Organization is already deactivated" },
@@ -66,9 +78,17 @@ export async function POST(
 
     return NextResponse.json(result);
   } catch (error) {
-    logSystemError(ErrorCategory.DATABASE, "[Admin] Failed to deactivate org", error, {
-      orgId,
-    });
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    logSystemError(
+      ErrorCategory.DATABASE,
+      "[Admin] Failed to deactivate org",
+      error,
+      {
+        orgId,
+      }
+    );
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
   }
 }

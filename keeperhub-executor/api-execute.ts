@@ -9,7 +9,7 @@ const HMAC_CALLER = "executor";
 function signHmacHeaders(
   method: string,
   url: string,
-  body: string,
+  body: string
 ): Record<string, string> {
   const secret = process.env.INTERNAL_SERVICE_HMAC_SECRET ?? "";
   const pathname = new URL(url).pathname;

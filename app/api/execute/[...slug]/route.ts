@@ -9,6 +9,8 @@ import {
   idempotencyEarlyResponse,
   recordIdempotentResponse,
 } from "@/lib/idempotency";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
+import { requireScope } from "@/lib/middleware/require-scope";
 import { getProtocol } from "@/lib/protocol-registry";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { PLUGIN_STEP_IMPORTERS } from "@/lib/step-registry";
@@ -210,6 +212,11 @@ export async function POST(
   const apiKeyCtx = await validateApiKey(request);
   if (!apiKeyCtx) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const scopeError = requireScope(apiKeyCtx.scope, SCOPE_MCP_WRITE);
+  if (scopeError) {
+    return scopeError;
   }
 
   // Enter ALS error context so plugin step errors carry org labels

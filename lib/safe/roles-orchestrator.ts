@@ -34,10 +34,6 @@ import {
 } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { startSafeRoleInstallMetrics } from "@/lib/metrics/instrumentation/safe";
-import {
-  getOrganizationWallet,
-  initializeWalletSigner,
-} from "@/lib/web3/wallet-helpers";
 import { buildExecTransactionCalldata } from "@/lib/safe/allowance-module";
 import {
   TEMPLATE_SPECS,
@@ -78,6 +74,10 @@ import {
   type TransactionContext,
   withNonceSession,
 } from "@/lib/web3/transaction-manager";
+import {
+  getOrganizationWallet,
+  initializeWalletSigner,
+} from "@/lib/web3/wallet-helpers";
 
 const ROLE_TYPE_AUTOMATION = "automation" as const;
 

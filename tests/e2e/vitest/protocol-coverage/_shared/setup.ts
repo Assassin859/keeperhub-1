@@ -50,7 +50,10 @@ async function getTestWalletAddress(): Promise<string> {
     const [row] = await db
       .select({ walletAddress: organizationWallets.walletAddress })
       .from(organizationWallets)
-      .innerJoin(organization, eq(organization.id, organizationWallets.organizationId))
+      .innerJoin(
+        organization,
+        eq(organization.id, organizationWallets.organizationId)
+      )
       .where(
         and(
           eq(organization.slug, PERSISTENT_TEST_ORG_SLUG),
