@@ -81,9 +81,15 @@ async function main(): Promise<void> {
   );
 }
 
-main().catch((error: unknown) => {
-  process.stderr.write(
-    `${error instanceof Error ? error.message : String(error)}\n`
-  );
-  process.exit(1);
-});
+main()
+  .then(() => {
+    // Exit explicitly: the DB client keeps an open connection that would
+    // otherwise keep the process (and a one-shot seed Job pod) alive forever.
+    process.exit(0);
+  })
+  .catch((error: unknown) => {
+    process.stderr.write(
+      `${error instanceof Error ? error.message : String(error)}\n`
+    );
+    process.exit(1);
+  });
