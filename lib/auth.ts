@@ -5,9 +5,6 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError } from "better-auth/api";
 import {
   anonymous,
-  // start custom keeperhub code //
-  bearer,
-  // end keeperhub code //
   captcha,
   deviceAuthorization,
   emailOTP,
@@ -181,7 +178,6 @@ const captchaPlugins =
 // Build plugins array conditionally
 const plugins = [
   // start custom keeperhub code //
-  bearer(),
   deviceAuthorization({
     expiresIn: "15m",
     interval: "5s",
