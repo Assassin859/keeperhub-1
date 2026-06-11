@@ -217,6 +217,48 @@ describe("requireDualFactor", () => {
     });
   });
 
+  // F-003: the dual-factor gate must never write the user's live TOTP
+  // code to logs. A leaked code is replayable inside its time window and
+  // is a secrets-in-logs compliance violation.
+  it("never logs the plaintext TOTP code", async () => {
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {
+      // swallow log output during the assertion
+    });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {
+      // swallow log output during the assertion
+    });
+    const totp = totpForNow(TOTP_SECRET);
+    const encSecret = await symmetricEncrypt({
+      key: SERVER_SECRET,
+      data: TOTP_SECRET,
+    });
+    const encEmailOtp = await symmetricEncrypt({
+      key: SERVER_SECRET,
+      data: "123456",
+    });
+    mockSelect
+      .mockReturnValueOnce(selectChain([{ secret: encSecret }]))
+      .mockReturnValueOnce(
+        selectChain([{ id: "verif_1", value: encEmailOtp }])
+      );
+
+    await requireDualFactor({
+      userId: "user_log",
+      email: "user@example.com",
+      action: "oauth_signin",
+      code: totp,
+      emailOtp: "123456",
+      headers: new Headers(),
+    });
+
+    const logged = [...infoSpy.mock.calls, ...warnSpy.mock.calls]
+      .map((c) => JSON.stringify(c))
+      .join(" ");
+    expect(logged).not.toContain(totp);
+    infoSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
   it("mints and emails an OTP and returns factors_required when codes are missing", async () => {
     const result = await requireDualFactor({
       userId: "user_5",
