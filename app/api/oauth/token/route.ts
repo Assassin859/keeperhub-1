@@ -65,16 +65,22 @@ function secretMatches(secret: string, expectedHash: string): boolean {
   return timingSafeEqual(actual, expected);
 }
 
-// Confidential clients (any token_endpoint_auth_method other than "none") must
-// present a valid client_secret on token grants. Public PKCE clients are
-// identified by client_id alone and skip this check. Returns an error Response
-// when verification fails, or null when the client is authenticated.
+// Only clients that registered a confidential auth method present a
+// client_secret on token grants. Public PKCE clients (auth method "none", or
+// rows predating the column that default to it) are identified by client_id
+// alone and skip this check. Returns an error Response when verification
+// fails, or null when the client is authenticated.
+const CONFIDENTIAL_AUTH_METHODS = new Set([
+  "client_secret_post",
+  "client_secret_basic",
+]);
+
 function verifyClientAuthentication(
   client: OAuthClient,
   request: Request,
   params: URLSearchParams
 ): Response | null {
-  if (client.tokenEndpointAuthMethod === "none") {
+  if (!CONFIDENTIAL_AUTH_METHODS.has(client.tokenEndpointAuthMethod)) {
     return null;
   }
   const secret = extractClientSecret(request, params);
