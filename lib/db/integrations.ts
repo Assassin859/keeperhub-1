@@ -271,12 +271,20 @@ export async function getIntegration(
   userId: string,
   organizationId?: string | null
 ): Promise<DecryptedIntegration | null> {
+  // No active org -> personal scope only. Constrain the createdBy fallback to
+  // org-less rows (organizationId IS NULL); otherwise a user could GET an
+  // org-owned integration they created in ANY org by presenting a null-org
+  // context, bypassing org membership and the deactivation-cascade gate.
   const conditions = organizationId
     ? [
         eq(integrations.id, integrationId),
         eq(integrations.organizationId, organizationId),
       ]
-    : [eq(integrations.id, integrationId), eq(integrations.createdBy, userId)];
+    : [
+        eq(integrations.id, integrationId),
+        eq(integrations.createdBy, userId),
+        isNull(integrations.organizationId),
+      ];
 
   const result = await db
     .select(integrationWithWalletSelect)
@@ -536,12 +544,19 @@ export async function updateIntegration(
     }
   }
 
+  // No active org -> personal scope only. Constrain the createdBy fallback to
+  // org-less rows so a null-org context cannot UPDATE an org-owned integration
+  // the user created in another org (IDOR/authz bypass).
   const conditions = organizationId
     ? [
         eq(integrations.id, integrationId),
         eq(integrations.organizationId, organizationId),
       ]
-    : [eq(integrations.id, integrationId), eq(integrations.createdBy, userId)];
+    : [
+        eq(integrations.id, integrationId),
+        eq(integrations.createdBy, userId),
+        isNull(integrations.organizationId),
+      ];
 
   const [result] = await db
     .update(integrations)
@@ -574,12 +589,19 @@ export async function deleteIntegration(
   userId: string,
   organizationId?: string | null
 ): Promise<boolean> {
+  // No active org -> personal scope only. Constrain the createdBy fallback to
+  // org-less rows so a null-org context cannot DELETE an org-owned integration
+  // the user created in another org (IDOR/authz bypass).
   const conditions = organizationId
     ? [
         eq(integrations.id, integrationId),
         eq(integrations.organizationId, organizationId),
       ]
-    : [eq(integrations.id, integrationId), eq(integrations.createdBy, userId)];
+    : [
+        eq(integrations.id, integrationId),
+        eq(integrations.createdBy, userId),
+        isNull(integrations.organizationId),
+      ];
 
   const result = await db
     .delete(integrations)
