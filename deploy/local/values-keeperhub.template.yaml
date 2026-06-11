@@ -104,16 +104,12 @@ env:
   NEXT_PUBLIC_API_URL:
     type: kv
     value: "https://workflow.keeperhub.local"
-  # Internal service API keys (must match scheduler-env ConfigMap)
-  SCHEDULER_SERVICE_API_KEY:
+  # Internal service-to-service auth (HMAC). Must match the secret seeded into
+  # the local app's internal_service_hmac_secrets store and the value used by
+  # the dispatchers/runner below.
+  INTERNAL_SERVICE_HMAC_SECRET:
     type: kv
-    value: "local-scheduler-key-for-dev"
-  MCP_SERVICE_API_KEY:
-    type: kv
-    value: "local-mcp-key-for-dev"
-  EVENTS_SERVICE_API_KEY:
-    type: kv
-    value: "local-events-key-for-dev"
+    value: "bG9jYWwtZGV2LWludGVybmFsLXNlcnZpY2UtaG1hYzA="
 
 livenessProbe:
   initialDelaySeconds: 120
@@ -145,9 +141,9 @@ cronjob:
         - "/app/deploy/scripts/digest-cron.sh"
         - "http://keeperhub:3000/api/internal/execution-digest"
       env:
-        SCHEDULER_SERVICE_API_KEY:
+        INTERNAL_SERVICE_HMAC_SECRET:
           type: kv
-          value: "local-scheduler-key-for-dev"
+          value: "bG9jYWwtZGV2LWludGVybmFsLXNlcnZpY2UtaG1hYzA="
       resources:
         requests:
           memory: "32Mi"
