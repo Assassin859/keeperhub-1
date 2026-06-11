@@ -231,12 +231,16 @@ type ResolveSessionResult = ResolveSessionOk | ResolveSessionError;
 async function resolveSession(
   sessionId: string,
   organizationId: string,
+  callerApiKeyId: string,
   request: Request
 ): Promise<ResolveSessionResult> {
   // Fast path: same-pod cache hit.
   const cached = getSession(sessionId);
   if (cached) {
-    if (cached.organizationId !== organizationId) {
+    if (
+      cached.organizationId !== organizationId ||
+      cached.apiKeyId !== callerApiKeyId
+    ) {
       return { ok: false, code: "session_not_found" };
     }
     touchSession(sessionId);
@@ -259,7 +263,16 @@ async function resolveSession(
     };
   }
 
-  if (result.payload.org !== organizationId) {
+  // Bind the session to the principal that created it. The JWT's `key`
+  // (apiKeyId) claim is signed by MCP_SESSION_SECRET, so a leaked secret would
+  // otherwise let any authenticated caller forge a token pinned to a different
+  // principal's apiKeyId. Requiring it to match the freshly-authenticated
+  // caller (whose key/token authenticate() already validated live) closes that
+  // and rejects sessions whose underlying key was revoked or rotated.
+  if (
+    result.payload.org !== organizationId ||
+    result.payload.key !== callerApiKeyId
+  ) {
     return { ok: false, code: "session_not_found" };
   }
 
@@ -425,7 +438,12 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   if (sessionId) {
-    const resolved = await resolveSession(sessionId, organizationId, request);
+    const resolved = await resolveSession(
+      sessionId,
+      organizationId,
+      auth.apiKeyId ?? "",
+      request
+    );
     if (!resolved.ok) {
       return buildSessionErrorResponse(resolved.code, {
         headers: CORS_HEADERS,
@@ -533,7 +551,12 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   const organizationId = auth.organizationId ?? "";
-  const resolved = await resolveSession(sessionId, organizationId, request);
+  const resolved = await resolveSession(
+    sessionId,
+    organizationId,
+    auth.apiKeyId ?? "",
+    request
+  );
   if (!resolved.ok) {
     return buildSessionErrorResponse(resolved.code, {
       headers: CORS_HEADERS,
@@ -573,9 +596,15 @@ export async function DELETE(request: Request): Promise<Response> {
   const organizationId = auth.organizationId ?? "";
 
   // Verify ownership via JWT before touching anything in the local cache.
-  // Accept expired JWTs so clients can clean up old sessions.
+  // Accept expired JWTs so clients can clean up old sessions. Bind the `key`
+  // claim to the authenticated caller so a leaked MCP_SESSION_SECRET cannot
+  // forge deletion of another principal's session.
   const payload = await verifySessionToken(sessionId, { allowExpired: true });
-  if (!payload || payload.org !== organizationId) {
+  if (
+    !payload ||
+    payload.org !== organizationId ||
+    payload.key !== (auth.apiKeyId ?? "")
+  ) {
     return buildSessionErrorResponse("session_not_found", {
       headers: CORS_HEADERS,
     });
