@@ -44,9 +44,7 @@ describe("Unified Logging Helpers", () => {
   // and `org_slug` via `| json`. This helper parses the JSON arg and returns
   // the payload so per-test assertions can check fields without coupling to
   // the on-the-wire serialization order.
-  function lastJsonLine(
-    spy: ReturnType<typeof vi.spyOn>
-  ): Record<string, unknown> {
+  function lastJsonLine(spy: ReturnType<typeof vi.spyOn>): Record<string, unknown> {
     const calls = spy.mock.calls;
     expect(calls.length).toBeGreaterThan(0);
     const last = calls[calls.length - 1];

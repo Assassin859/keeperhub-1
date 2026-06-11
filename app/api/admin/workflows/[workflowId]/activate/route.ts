@@ -32,11 +32,7 @@ export async function POST(
 
       if (!activated) {
         const [existing] = await tx
-          .select({
-            id: workflows.id,
-            deactivatedAt: workflows.deactivatedAt,
-            deletedAt: workflows.deletedAt,
-          })
+          .select({ id: workflows.id, deactivatedAt: workflows.deactivatedAt, deletedAt: workflows.deletedAt })
           .from(workflows)
           .where(eq(workflows.id, workflowId))
           .limit(1);
@@ -52,30 +48,16 @@ export async function POST(
 
     if ("conflict" in result) {
       if (result.conflict === "not_found") {
-        return NextResponse.json(
-          { error: "Workflow not found" },
-          { status: 404 }
-        );
+        return NextResponse.json({ error: "Workflow not found" }, { status: 404 });
       }
-      return NextResponse.json(
-        { error: "Workflow is not deactivated" },
-        { status: 409 }
-      );
+      return NextResponse.json({ error: "Workflow is not deactivated" }, { status: 409 });
     }
 
     return NextResponse.json(result);
   } catch (error) {
-    logSystemError(
-      ErrorCategory.DATABASE,
-      "[Admin] Failed to activate workflow",
-      error,
-      {
-        workflowId,
-      }
-    );
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    logSystemError(ErrorCategory.DATABASE, "[Admin] Failed to activate workflow", error, {
+      workflowId,
+    });
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

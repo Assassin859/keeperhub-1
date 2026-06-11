@@ -99,10 +99,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   if (user.deactivatedAt) {
     return NextResponse.json(
-      {
-        error: "Your account has been deactivated.",
-        code: "account_deactivated",
-      },
+      { error: "Your account has been deactivated.", code: "account_deactivated" },
       { status: 403 }
     );
   }

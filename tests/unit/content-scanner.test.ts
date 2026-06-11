@@ -209,9 +209,7 @@ describe("scanAndReport", () => {
         throw new Error("scanner exploded");
       },
     } as unknown as { nodes: never };
-    expect(() =>
-      scanAndReport(exploding, { workflowId: "wf_err" })
-    ).not.toThrow();
+    expect(() => scanAndReport(exploding, { workflowId: "wf_err" })).not.toThrow();
     const errorLine = warnSpy.mock.calls
       .map((call) => String(call[0]))
       .find((line) => line.includes("security.content_scanner_error"));

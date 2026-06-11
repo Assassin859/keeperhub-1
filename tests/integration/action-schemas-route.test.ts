@@ -73,8 +73,7 @@ const mockPlugins = [
 
 vi.mock("@/plugins/registry", () => ({
   getAllIntegrations: () => mockPlugins,
-  computeActionId: (pluginType: string, slug: string) =>
-    `${pluginType}.${slug}`,
+  computeActionId: (pluginType: string, slug: string) => `${pluginType}.${slug}`,
   flattenConfigFields: (fields: unknown[]) => fields,
 }));
 
@@ -145,9 +144,9 @@ vi.mock("@/lib/api-key-auth", () => ({
   authenticateApiKey: vi.fn(() => Promise.resolve(nextAuthResult)),
 }));
 
-import { GET as singleGet } from "@/app/api/action-schemas/[actionType]/route";
 // Routes are imported after mocks so the bound module references resolve to mocks.
 import { GET as collectionGet } from "@/app/api/action-schemas/route";
+import { GET as singleGet } from "@/app/api/action-schemas/[actionType]/route";
 
 function authenticatedRequest(path: string): Request {
   return new Request(`http://localhost${path}`, {
@@ -214,7 +213,9 @@ describe("GET /api/action-schemas", () => {
       apiKeyId: "key_test",
     };
     const res = await collectionGet(
-      authenticatedRequest("/api/action-schemas?type=web3.read-contract")
+      authenticatedRequest(
+        "/api/action-schemas?type=web3.read-contract"
+      )
     );
     expect(res.status).toBe(200);
     const body = await res.json();

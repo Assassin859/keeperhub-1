@@ -3,12 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const TEST_SECRET = "kha_test-admin-secret-12345";
 const TEST_WORKFLOW_ID = "wf-abc123";
 
-type MockWorkflow =
-  | { id: string; deactivatedAt: Date | null; deletedAt: Date | null }
-  | undefined;
+type MockWorkflow = { id: string; deactivatedAt: Date | null; deletedAt: Date | null } | undefined;
 
-let mockWorkflowForSelect: MockWorkflow;
-let mockDeactivatedWorkflow: { id: string; deactivatedAt: Date } | undefined;
+let mockWorkflowForSelect: MockWorkflow = undefined;
+let mockDeactivatedWorkflow: { id: string; deactivatedAt: Date } | undefined = undefined;
 let mockShouldThrow = false;
 
 vi.mock("@/lib/db", () => {
@@ -17,9 +15,7 @@ vi.mock("@/lib/db", () => {
       from: vi.fn(() => ({
         where: vi.fn(() => ({
           limit: vi.fn(() =>
-            Promise.resolve(
-              mockWorkflowForSelect ? [mockWorkflowForSelect] : []
-            )
+            Promise.resolve(mockWorkflowForSelect ? [mockWorkflowForSelect] : [])
           ),
         })),
       })),
@@ -28,9 +24,7 @@ vi.mock("@/lib/db", () => {
       set: vi.fn(() => ({
         where: vi.fn(() => ({
           returning: vi.fn(() =>
-            Promise.resolve(
-              mockDeactivatedWorkflow ? [mockDeactivatedWorkflow] : []
-            )
+            Promise.resolve(mockDeactivatedWorkflow ? [mockDeactivatedWorkflow] : [])
           ),
         })),
       })),
@@ -66,13 +60,10 @@ import { POST } from "@/app/api/admin/workflows/[workflowId]/deactivate/route";
 function makeRequest(token?: string): Request {
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
-  return new Request(
-    "http://localhost/api/admin/workflows/wf-abc123/deactivate",
-    {
-      method: "POST",
-      headers,
-    }
-  );
+  return new Request("http://localhost/api/admin/workflows/wf-abc123/deactivate", {
+    method: "POST",
+    headers,
+  });
 }
 
 function makeContext(workflowId = TEST_WORKFLOW_ID) {
@@ -115,11 +106,7 @@ describe("POST /api/admin/workflows/:workflowId/deactivate", () => {
   describe("happy path", () => {
     it("deactivates the workflow and returns workflowId and deactivatedAt", async () => {
       const now = new Date();
-      mockWorkflowForSelect = {
-        id: TEST_WORKFLOW_ID,
-        deactivatedAt: null,
-        deletedAt: null,
-      };
+      mockWorkflowForSelect = { id: TEST_WORKFLOW_ID, deactivatedAt: null, deletedAt: null };
       mockDeactivatedWorkflow = { id: TEST_WORKFLOW_ID, deactivatedAt: now };
 
       const res = await POST(makeRequest(TEST_SECRET), makeContext());

@@ -10,6 +10,10 @@ import {
   recordSignerMode,
   recordSignerProbeFailure,
 } from "@/lib/metrics/instrumentation/safe";
+import {
+  getOrganizationWallet,
+  getOrganizationWalletAddress,
+} from "@/lib/web3/wallet-helpers";
 import { getRpcProviderFromUrls } from "@/lib/rpc/provider-factory";
 import { getRpcUrlByChainId } from "@/lib/rpc/rpc-config";
 // reconcileSafeRoleFromChain is dynamically imported below to keep the
@@ -23,10 +27,6 @@ import {
   findRolesModifierForSafe,
   readEnabledSafeModules,
 } from "@/lib/safe/zodiac-roles";
-import {
-  getOrganizationWallet,
-  getOrganizationWalletAddress,
-} from "@/lib/web3/wallet-helpers";
 
 /**
  * Resolution result: which mode should a workflow write on this (org, chain)

@@ -12,7 +12,10 @@ import {
   parsePlanName,
   parseTierKey,
 } from "../lib/billing/plans";
-import { executionDebt, organizationSubscriptions } from "../lib/db/schema";
+import {
+  executionDebt,
+  organizationSubscriptions,
+} from "../lib/db/schema";
 
 export type BillingGuardResult =
   | {

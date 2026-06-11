@@ -582,9 +582,7 @@ async function listen(): Promise<void> {
   process.on("SIGTERM", shutdown);
   process.on("SIGHUP", shutdown);
   process.on("SIGUSR1", () => {
-    console.warn(
-      "[Security] SIGUSR1 received; inspector activation suppressed"
-    );
+    console.warn("[Security] SIGUSR1 received; inspector activation suppressed");
   });
 
   // SQS polling loop

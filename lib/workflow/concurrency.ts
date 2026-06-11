@@ -28,9 +28,7 @@ export type ConcurrencyLimitResult =
  * concurrent callers may all pass before any new execution is inserted. The
  * goal is back-pressure, not a hard guarantee.
  */
-export async function checkConcurrencyLimit<
-  TSchema extends Record<string, unknown>,
->(
+export async function checkConcurrencyLimit<TSchema extends Record<string, unknown>>(
   db: PostgresJsDatabase<TSchema>,
   limit: number = resolveMaxConcurrent()
 ): Promise<ConcurrencyLimitResult> {

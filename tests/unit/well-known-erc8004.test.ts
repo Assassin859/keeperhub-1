@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { GET as agentGET } from "@/app/agent/route";
 import { GET as agentJsonGET } from "@/app/.well-known/agent.json/route";
 import { GET as erc8004GET } from "@/app/.well-known/erc8004.json/route";
-import { GET as agentGET } from "@/app/agent/route";
 
 const REQ_URL = "https://app.keeperhub.com/.well-known/test";
 const EIP55_ADDRESS = /^0x[a-fA-F0-9]{40}$/;
