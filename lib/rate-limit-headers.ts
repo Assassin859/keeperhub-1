@@ -45,8 +45,23 @@ export function applyRateLimitHeaders<T extends Response>(
   info: RateLimitHeaderInfo,
   options?: RateLimitHeaderOptions
 ): T {
-  for (const [key, value] of Object.entries(rateLimitHeaders(info, options))) {
-    response.headers.set(key, value);
+  const headers = rateLimitHeaders(info, options);
+  try {
+    for (const [key, value] of Object.entries(headers)) {
+      response.headers.set(key, value);
+    }
+    return response;
+  } catch {
+    // A few Response variants (e.g. redirects) carry immutable headers and
+    // throw on set; rebuild with the extra headers merged in.
+    const merged = new Headers(response.headers);
+    for (const [key, value] of Object.entries(headers)) {
+      merged.set(key, value);
+    }
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: merged,
+    }) as T;
   }
-  return response;
 }
