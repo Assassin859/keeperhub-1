@@ -12,9 +12,8 @@ import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 /**
  * Internal endpoint for workers to fetch active Event-type workflows.
  * Returns only enabled workflows with Event trigger type. Authentication
- * goes through the shared authenticateInternalService helper, which accepts
- * both the new HMAC scheme and the legacy X-Internal-Token / X-Service-Key
- * bearers during the dual-accept rollout window.
+ * goes through the shared authenticateInternalService helper, which verifies
+ * the request's HMAC signature.
  */
 export async function GET(request: Request) {
   try {

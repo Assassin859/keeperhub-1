@@ -4,7 +4,6 @@
 
 export const KEEPERHUB_URL =
   process.env.KEEPERHUB_API_URL || "http://localhost:3000";
-export const SERVICE_API_KEY = process.env.KEEPERHUB_API_KEY || "";
 
 export const AWS_REGION = process.env.AWS_REGION || "us-east-1";
 export const AWS_ENDPOINT_URL = process.env.AWS_ENDPOINT_URL;
