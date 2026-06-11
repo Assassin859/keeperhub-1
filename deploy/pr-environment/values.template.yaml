@@ -66,9 +66,23 @@ deployment:
           pnpm db:migrate
           echo "Seeding chains and tokens..."
           pnpm db:seed
+          echo "Seeding internal-service HMAC secret (shared signing key)..."
+          printf '%s' "$INTERNAL_SERVICE_HMAC_SECRET" | ALLOW_REMOTE=1 pnpm tsx scripts/seed-internal-service-hmac.ts || echo "internal-service HMAC seed skipped (row already present or seed unavailable)"
           echo "Migrations and seeding completed successfully"
       env:
         <<: *shared_env
+        # Seeds the internal-service HMAC store on a fresh PR-env database so
+        # the app can verify HMAC-signed internal requests. The secret is the
+        # same value the producers sign with; the KMS key envelope-encrypts it
+        # at rest. The seed line tolerates failure so it never blocks startup.
+        INTERNAL_SERVICE_HMAC_SECRET:
+          type: parameterStore
+          name: internal-service-hmac-secret
+          parameter_name: /eks/techops-staging/keeperhub/internal-service-hmac-secret
+        AGENTIC_WALLET_HMAC_KMS_KEY:
+          type: parameterStore
+          name: agentic-wallet-hmac-kms-key
+          parameter_name: /eks/techops-staging/keeperhub/agentic-wallet-hmac-kms-key
         TURNKEY_API_PUBLIC_KEY:
           type: parameterStore
           name: turnkey-api-public-key
