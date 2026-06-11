@@ -17,7 +17,14 @@ vi.mock("@/lib/logging", () => ({
   logSystemError: vi.fn(),
 }));
 
-import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
+import {
+  type AuditExecutor,
+  buildActor,
+  buildAuditMetadata,
+  newCorrelationId,
+  recordAuditEvent,
+  recordAuditEvents,
+} from "@/lib/security/audit-log";
 
 const actor = {
   userId: "user-1",
@@ -86,6 +93,128 @@ describe("recordAuditEvent", () => {
     await expect(
       recordAuditEvent({ actor, action: "api_key.created" })
     ).resolves.toBeUndefined();
+  });
+
+  it("persists durable attribution, correlation, and outcome columns", async () => {
+    await recordAuditEvent({
+      actor: {
+        ...actor,
+        actorLabel: "user@example.com",
+        organizationLabel: "Acme",
+      },
+      action: "account.deactivated",
+      resourceType: "user",
+      resourceId: "user-1",
+      correlationId: "corr-1",
+      outcome: "failed",
+    });
+
+    expect(mockValues.mock.calls[0][0]).toMatchObject({
+      actorLabel: "user@example.com",
+      organizationLabel: "Acme",
+      correlationId: "corr-1",
+      outcome: "failed",
+    });
+  });
+
+  it("defaults outcome to succeeded and labels/correlation to null", async () => {
+    await recordAuditEvent({ actor, action: "user.signed_in" });
+    expect(mockValues.mock.calls[0][0]).toMatchObject({
+      actorLabel: null,
+      organizationLabel: null,
+      correlationId: null,
+      outcome: "succeeded",
+    });
+  });
+
+  it("writes through a passed executor and rethrows on failure (atomic mode)", async () => {
+    const txValues = vi.fn().mockResolvedValue(undefined);
+    const txInsert = vi.fn(() => ({ values: txValues }));
+    const executor = { insert: txInsert } as unknown as AuditExecutor;
+
+    await recordAuditEvent({ actor, action: "session.revoked", executor });
+    expect(txInsert).toHaveBeenCalledTimes(1);
+    // The composed write does NOT touch the global db.
+    expect(mockInsert).not.toHaveBeenCalled();
+
+    txValues.mockRejectedValueOnce(new Error("tx insert failed"));
+    await expect(
+      recordAuditEvent({ actor, action: "session.revoked", executor })
+    ).rejects.toThrow("tx insert failed");
+  });
+});
+
+describe("recordAuditEvents", () => {
+  it("inserts every event in a single batch call", async () => {
+    await recordAuditEvents([
+      { actor, action: "account.deactivated", correlationId: "corr-2" },
+      { actor, action: "session.revoked", correlationId: "corr-2" },
+    ]);
+
+    expect(mockValues).toHaveBeenCalledTimes(1);
+    const rows = mockValues.mock.calls[0][0];
+    expect(rows).toHaveLength(2);
+    expect(
+      rows.every((r: { correlationId: string }) => r.correlationId === "corr-2")
+    ).toBe(true);
+  });
+
+  it("is a no-op for an empty list", async () => {
+    await recordAuditEvents([]);
+    expect(mockInsert).not.toHaveBeenCalled();
+  });
+
+  it("rethrows on failure when a non-default executor is passed", async () => {
+    const txValues = vi.fn().mockRejectedValue(new Error("batch failed"));
+    const executor = {
+      insert: vi.fn(() => ({ values: txValues })),
+    } as unknown as AuditExecutor;
+    await expect(
+      recordAuditEvents([{ actor, action: "session.revoked" }], executor)
+    ).rejects.toThrow("batch failed");
+  });
+});
+
+describe("buildActor", () => {
+  it("maps an auth context and snapshots durable identity labels", () => {
+    expect(
+      buildActor(
+        {
+          userId: "u1",
+          organizationId: "o1",
+          authMethod: "api-key",
+          apiKeyId: "k1",
+        },
+        { actorLabel: "u1@example.com", organizationLabel: "Acme" }
+      )
+    ).toEqual({
+      userId: "u1",
+      organizationId: "o1",
+      authMethod: "api-key",
+      apiKeyId: "k1",
+      actorLabel: "u1@example.com",
+      organizationLabel: "Acme",
+    });
+  });
+
+  it("defaults apiKeyId and labels to null when omitted", () => {
+    expect(
+      buildActor({ userId: "u1", organizationId: null, authMethod: "session" })
+    ).toMatchObject({
+      apiKeyId: null,
+      actorLabel: null,
+      organizationLabel: null,
+    });
+  });
+});
+
+describe("newCorrelationId", () => {
+  it("returns a fresh non-empty id each call", () => {
+    const a = newCorrelationId();
+    const b = newCorrelationId();
+    expect(a).toBeTruthy();
+    expect(typeof a).toBe("string");
+    expect(a).not.toBe(b);
   });
 });
 

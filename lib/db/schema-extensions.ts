@@ -1010,14 +1010,30 @@ export const securityAuditLog = pgTable(
     actorUserId: text("actor_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
+    // Denormalized actor identity (e.g. email or name) captured at write time.
+    // The FK above nulls on user deletion (onDelete: set null), which would
+    // erase attribution from the very deletion events we audit; this column is
+    // the durable fallback that survives the actor row.
+    actorLabel: text("actor_label"),
     organizationId: text("organization_id").references(() => organization.id, {
       onDelete: "set null",
     }),
+    // Durable org identity, same reasoning as actorLabel: an org-deletion
+    // cascade nulls the FK above, so reads after the org is gone fall back here.
+    organizationLabel: text("organization_label"),
     authMethod: text("auth_method").notNull(), // session | api-key | oauth | internal | unknown
     apiKeyId: text("api_key_id"),
     action: text("action").notNull(), // e.g. "api_key.created", "api_key.revoked"
     resourceType: text("resource_type"), // e.g. "api_key", "user", "workflow"
     resourceId: text("resource_id"),
+    // Groups every row emitted by one logical operation (e.g. an account
+    // deactivation that fans out to sessions, API keys, wallets). Null for
+    // standalone single-row events; lets a cascade be read back as one unit.
+    correlationId: text("correlation_id"),
+    // Operation outcome. Success rows are written inside the action's own
+    // transaction; a "failed" row is written out-of-band (global db, post
+    // rollback) so a rolled-back cascade still leaves a durable trace.
+    outcome: text("outcome").notNull().default("succeeded"), // succeeded | failed | partial
     // biome-ignore lint/suspicious/noExplicitAny: JSONB - deep-diff change records; shape varies by action
     diff: jsonb("diff").$type<any>(),
     metadata: jsonb("metadata").$type<Record<string, unknown>>(),
@@ -1047,6 +1063,11 @@ export const securityAuditLog = pgTable(
     // Filter by event type -- e.g. all "api_key.revoked" events.
     index("idx_security_audit_action_created").on(
       table.action,
+      table.createdAt
+    ),
+    // Read an entire cascade back as one unit, newest first.
+    index("idx_security_audit_correlation_created").on(
+      table.correlationId,
       table.createdAt
     ),
   ]

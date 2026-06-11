@@ -57,6 +57,7 @@ export async function GET(request: Request) {
     const resourceType = url.searchParams.get("resourceType");
     const resourceId = url.searchParams.get("resourceId");
     const actorUserId = url.searchParams.get("actorUserId");
+    const correlationId = url.searchParams.get("correlationId");
 
     const conditions = [eq(securityAuditLog.organizationId, organizationId)];
     if (action) {
@@ -70,6 +71,11 @@ export async function GET(request: Request) {
     }
     if (actorUserId) {
       conditions.push(eq(securityAuditLog.actorUserId, actorUserId));
+    }
+    // Read one cascade back as a unit. ANDed with the org scope above, so a
+    // correlation id can only ever surface the caller's own org's events.
+    if (correlationId) {
+      conditions.push(eq(securityAuditLog.correlationId, correlationId));
     }
     const where = and(...conditions);
 
