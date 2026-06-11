@@ -21,6 +21,11 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/db/integrations", () => ({
   getIntegrationById: vi.fn(),
 }));
+vi.mock("@/lib/integrations/authorization", () => ({
+  filterUnauthorizedIntegrationIds: vi.fn().mockResolvedValue([]),
+}));
+
+const ORG_PRINCIPAL = { organizationId: "org_1" };
 
 type ExpectedMapping = {
   type: string;
@@ -127,7 +132,7 @@ describe("mapIntegrationConfig (via fetchCredentials)", () => {
       config: { [configKey]: "secret-value" },
     } as Awaited<ReturnType<typeof getIntegrationById>>);
 
-    const creds = await fetchCredentials("int_test");
+    const creds = await fetchCredentials("int_test", ORG_PRINCIPAL);
     expect(creds[envVar]).toBe("secret-value");
   });
 
@@ -138,7 +143,10 @@ describe("mapIntegrationConfig (via fetchCredentials)", () => {
     vi.mocked(getIntegrationById).mockClear();
 
     // Must short-circuit before getIntegrationById(undefined) throws.
-    const creds = await fetchCredentials(undefined as unknown as string);
+    const creds = await fetchCredentials(
+      undefined as unknown as string,
+      ORG_PRINCIPAL
+    );
 
     expect(creds).toEqual({});
     expect(getIntegrationById).not.toHaveBeenCalled();
@@ -154,7 +162,26 @@ describe("mapIntegrationConfig (via fetchCredentials)", () => {
       config: { someKey: "someValue" },
     } as unknown as Awaited<ReturnType<typeof getIntegrationById>>);
 
-    const creds = await fetchCredentials("int_test");
+    const creds = await fetchCredentials("int_test", ORG_PRINCIPAL);
     expect(creds).toEqual({});
+  });
+
+  it("returns no creds and skips the DB when the principal is not authorized for the integration (cross-org)", async () => {
+    const { getIntegrationById } = await import("@/lib/db/integrations");
+    const { filterUnauthorizedIntegrationIds } = await import(
+      "@/lib/integrations/authorization"
+    );
+    const { fetchCredentials } = await import("@/lib/credential-fetcher");
+
+    vi.mocked(getIntegrationById).mockClear();
+    // The integration belongs to another org -> authorization marks it invalid.
+    vi.mocked(filterUnauthorizedIntegrationIds).mockResolvedValueOnce([
+      "int_other_org",
+    ]);
+
+    const creds = await fetchCredentials("int_other_org", ORG_PRINCIPAL);
+
+    expect(creds).toEqual({});
+    expect(getIntegrationById).not.toHaveBeenCalled();
   });
 });
