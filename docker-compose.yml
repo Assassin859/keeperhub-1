@@ -72,9 +72,6 @@ x-env-sqs: &env_sqs
   SQS_QUEUE_URL: http://host.minikube.internal:4566/000000000000/keeperhub-workflow-queue
 
 x-env-service-keys: &env_service_keys
-  SCHEDULER_SERVICE_API_KEY: local-scheduler-key-for-dev
-  MCP_SERVICE_API_KEY: local-mcp-key-for-dev
-  EVENTS_SERVICE_API_KEY: local-events-key-for-dev
   # Shared HMAC signing secret for internal service-to-service auth. Local-dev
   # default (base64 of 32 bytes); the hmac-seed service inserts this same value
   # into the internal_service_hmac_secrets store so signed requests verify.
@@ -156,7 +153,6 @@ services:
     environment:
       <<: [*env_db_connection, *env_aws, *env_sqs]
       NODE_ENV: production
-      KEEPERHUB_API_KEY: ${KEEPERHUB_API_KEY:-}
     depends_on:
       db:
         condition: service_healthy
@@ -205,7 +201,6 @@ services:
     environment:
       <<: [*env_db_connection, *env_aws, *env_sqs, *env_service_keys]
       HOSTNAME: "0.0.0.0"
-      KEEPERHUB_API_KEY: ${KEEPERHUB_API_KEY:-some-random-api-key}
       # 6GB heap leaves headroom on top of the 8GB container cap for
       # Turbopack's bundler, which crashes a 3GB heap on cold compile.
       NODE_OPTIONS: "--max-old-space-size=6144"
@@ -291,7 +286,7 @@ services:
       AWS_ENDPOINT_URL: http://localstack:4566
       SQS_QUEUE_URL: http://localstack:4566/000000000000/keeperhub-workflow-queue
       KEEPERHUB_API_URL: http://app-dev:3000
-      KEEPERHUB_API_KEY: ${KEEPERHUB_API_KEY:-local-scheduler-key-for-dev}
+      INTERNAL_SERVICE_HMAC_SECRET: ${INTERNAL_SERVICE_HMAC_SECRET:-bG9jYWwtZGV2LWludGVybmFsLXNlcnZpY2UtaG1hYzA=}
     depends_on:
       db:
         condition: service_healthy
@@ -333,6 +328,7 @@ services:
       AWS_SECRET_ACCESS_KEY: test
       AWS_ENDPOINT_URL: http://localstack:4566
       SQS_QUEUE_URL: http://localstack:4566/000000000000/keeperhub-workflow-queue
+      INTERNAL_SERVICE_HMAC_SECRET: ${INTERNAL_SERVICE_HMAC_SECRET:-bG9jYWwtZGV2LWludGVybmFsLXNlcnZpY2UtaG1hYzA=}
       INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
       HEALTH_PORT: "3080"
       TURNKEY_API_PUBLIC_KEY: ${TURNKEY_API_PUBLIC_KEY:-}
@@ -454,7 +450,7 @@ services:
     environment:
       WATCH_MODE: "true"
       KEEPERHUB_API_URL: http://keeperhub:3000
-      KEEPERHUB_API_KEY: ${KEEPERHUB_API_KEY:-local-events-key-for-dev}
+      INTERNAL_SERVICE_HMAC_SECRET: ${INTERNAL_SERVICE_HMAC_SECRET:-bG9jYWwtZGV2LWludGVybmFsLXNlcnZpY2UtaG1hYzA=}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       JWT_TOKEN_USERNAME: ${JWT_TOKEN_USERNAME:-}
@@ -492,7 +488,7 @@ services:
     working_dir: /app
     environment:
       KEEPERHUB_API_URL: http://app-dev:3000
-      KEEPERHUB_API_KEY: ${KEEPERHUB_API_KEY:-local-scheduler-key-for-dev}
+      INTERNAL_SERVICE_HMAC_SECRET: ${INTERNAL_SERVICE_HMAC_SECRET:-bG9jYWwtZGV2LWludGVybmFsLXNlcnZpY2UtaG1hYzA=}
       AWS_REGION: us-east-1
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
@@ -735,7 +731,7 @@ services:
       - keeperhub_test_node_modules:/app/node_modules
     environment:
       KEEPERHUB_API_URL: http://test-app:3000
-      KEEPERHUB_API_KEY: ${KEEPERHUB_API_KEY:-local-scheduler-key-for-dev}
+      INTERNAL_SERVICE_HMAC_SECRET: ${INTERNAL_SERVICE_HMAC_SECRET:-bG9jYWwtZGV2LWludGVybmFsLXNlcnZpY2UtaG1hYzA=}
       AWS_ENDPOINT_URL: http://test-localstack:4566
       AWS_REGION: us-east-1
       AWS_ACCESS_KEY_ID: test
