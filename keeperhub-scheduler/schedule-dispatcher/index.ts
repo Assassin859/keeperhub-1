@@ -9,7 +9,7 @@
  *
  * Environment variables:
  *   KEEPERHUB_API_URL - KeeperHub API URL (default: http://localhost:3000)
- *   KEEPERHUB_API_KEY - Service API key for authentication
+ *   INTERNAL_SERVICE_HMAC_SECRET - HMAC signing secret for internal service auth
  *   AWS_ENDPOINT_URL - LocalStack endpoint (default: http://localhost:4566)
  *   SQS_QUEUE_URL - SQS queue URL (default: LocalStack queue)
  *   HEALTH_PORT - Health check server port (default: 3060)

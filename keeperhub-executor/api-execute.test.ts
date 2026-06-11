@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("./config", () => ({
   CONFIG: {
     keeperhubApiUrl: "https://api.test.local",
-    keeperhubApiKey: "test-service-key",
   },
 }));
 

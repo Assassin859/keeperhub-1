@@ -74,7 +74,7 @@ function createRequest(body: unknown): Request {
   return new Request("http://localhost:3000/api/internal/wallet-unlock", {
     method: "POST",
     headers: {
-      "X-Service-Key": "test-key",
+      "X-KH-Caller": "scheduler",
       "Content-Type": "application/json",
     },
     body: typeof body === "string" ? body : JSON.stringify(body),

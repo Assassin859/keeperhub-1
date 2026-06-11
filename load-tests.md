@@ -18,7 +18,7 @@ Replicates the real production workload: scheduled workflows triggered by the ac
 - `scheduler-dispatcher` polls `/api/internal/schedules` every 60 seconds
 - Evaluates cron expressions, enqueues matching workflows to SQS
 - `scheduler-executor` polls SQS, calls `POST /api/workflow/{id}/execute`
-- Manual workflows triggered by k6 via `X-Service-Key` every 60 seconds
+- Manual workflows triggered by k6 via an HMAC-signed internal request every 60 seconds
 
 **Observation:** 3-minute window per tier, then collect execution results from API.
 

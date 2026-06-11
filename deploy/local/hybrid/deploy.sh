@@ -142,7 +142,7 @@ data:
   SQS_QUEUE_URL: "http://host.minikube.internal:4566/000000000000/keeperhub-workflow-queue"
   DATABASE_URL: "postgresql://postgres:postgres@host.minikube.internal:5433/__DB_NAME__"
   KEEPERHUB_API_URL: "http://host.minikube.internal:3000"
-  KEEPERHUB_API_KEY: "local-scheduler-key-for-dev"
+  INTERNAL_SERVICE_HMAC_SECRET: "bG9jYWwtZGV2LWludGVybmFsLXNlcnZpY2UtaG1hYzA="
   RUNNER_IMAGE: "keeperhub-runner:latest"
   IMAGE_PULL_POLICY: "Never"
   K8S_NAMESPACE: "local"

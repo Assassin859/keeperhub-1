@@ -100,7 +100,7 @@ import { authenticateInternalService } from "@/lib/internal-service-auth";
 
 function createRequest(): Request {
   return new Request("http://localhost:3000/api/internal/reaper", {
-    headers: { "X-Service-Key": "test-key" },
+    headers: { "X-KH-Caller": "scheduler" },
   });
 }
 

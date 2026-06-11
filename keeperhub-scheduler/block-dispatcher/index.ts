@@ -9,7 +9,7 @@
  *
  * Environment variables:
  *   KEEPERHUB_API_URL      - KeeperHub API URL (default: http://localhost:3000)
- *   KEEPERHUB_API_KEY      - Service API key for X-Service-Key authentication
+ *   INTERNAL_SERVICE_HMAC_SECRET - HMAC signing secret for internal service auth
  *   RECONCILE_INTERVAL_MS  - How often to refetch workflows (default: 30000)
  *   SQS_QUEUE_URL          - SQS queue URL
  *   AWS_REGION             - AWS region
