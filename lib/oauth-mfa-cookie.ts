@@ -53,7 +53,9 @@ function base64UrlDecode(input: string): Buffer {
 }
 
 function sign(payload: string, secret: string): string {
-  return base64UrlEncode(createHmac("sha256", secret).update(payload).digest());
+  return base64UrlEncode(
+    createHmac("sha256", secret).update(payload).digest()
+  );
 }
 
 /**
@@ -105,9 +107,7 @@ export function decodePendingOauthMfaCookie(
   }
   let payload: PendingOauthMfaPayload;
   try {
-    payload = JSON.parse(
-      base64UrlDecode(encoded).toString()
-    ) as PendingOauthMfaPayload;
+    payload = JSON.parse(base64UrlDecode(encoded).toString()) as PendingOauthMfaPayload;
   } catch {
     return { ok: false, reason: "malformed" };
   }
@@ -136,7 +136,8 @@ export function buildPendingOauthMfaSetCookie(
   ttlMs: number = DEFAULT_TTL_MS
 ): string {
   const maxAge = Math.floor(ttlMs / 1000);
-  const secureSegment = process.env.NODE_ENV === "production" ? " Secure;" : "";
+  const secureSegment =
+    process.env.NODE_ENV === "production" ? " Secure;" : "";
   return `${COOKIE_NAME}=${encodedValue}; Path=/; HttpOnly;${secureSegment} SameSite=Lax; Max-Age=${maxAge}`;
 }
 
@@ -145,7 +146,8 @@ export function buildPendingOauthMfaSetCookie(
  * Used after the user finishes MFA finalize, or after explicit cancel.
  */
 export function buildPendingOauthMfaClearCookie(): string {
-  const secureSegment = process.env.NODE_ENV === "production" ? " Secure;" : "";
+  const secureSegment =
+    process.env.NODE_ENV === "production" ? " Secure;" : "";
   return `${COOKIE_NAME}=; Path=/; HttpOnly;${secureSegment} SameSite=Lax; Max-Age=0`;
 }
 
@@ -153,7 +155,9 @@ export function buildPendingOauthMfaClearCookie(): string {
  * Parse the pending cookie out of an incoming request's Cookie header.
  * Returns null when absent so callers can branch cleanly.
  */
-export function readPendingOauthMfaCookie(headers: Headers): string | null {
+export function readPendingOauthMfaCookie(
+  headers: Headers
+): string | null {
   const cookie = headers.get("cookie");
   if (!cookie) {
     return null;
