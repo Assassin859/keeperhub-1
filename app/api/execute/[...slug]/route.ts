@@ -1,3 +1,4 @@
+import { HttpStatus } from "@/lib/http-status";
 import "server-only";
 import "@/protocols";
 
@@ -5,6 +6,7 @@ import { NextResponse } from "next/server";
 import { resolveAbi } from "@/lib/abi/cache";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import { getProtocol } from "@/lib/protocol-registry";
+import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { PLUGIN_STEP_IMPORTERS } from "@/lib/step-registry";
 import { resolveProtocolMeta } from "@/plugins/protocol/steps/resolve-protocol-meta";
@@ -58,7 +60,7 @@ async function executeProtocolAction(
         success: false,
         error: `Could not resolve protocol metadata for: ${actionType}`,
       },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -66,7 +68,7 @@ async function executeProtocolAction(
   if (!protocol) {
     return NextResponse.json(
       { success: false, error: `Unknown protocol: ${meta.protocolSlug}` },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -77,7 +79,7 @@ async function executeProtocolAction(
         success: false,
         error: `Unknown contract key "${meta.contractKey}" in protocol "${meta.protocolSlug}"`,
       },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -94,7 +96,7 @@ async function executeProtocolAction(
         error:
           "Missing required field: chainId (or network, which is a deprecated alias)",
       },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -107,7 +109,7 @@ async function executeProtocolAction(
         success: false,
         error: err instanceof Error ? err.message : String(err),
       },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
   const network = String(resolvedChainId);
@@ -124,7 +126,7 @@ async function executeProtocolAction(
           ? `Missing contract address for "${meta.contractKey}"`
           : `Protocol "${meta.protocolSlug}" contract "${meta.contractKey}" is not deployed on chain ${network} (input: "${rawNetwork}")`,
       },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -142,7 +144,7 @@ async function executeProtocolAction(
         success: false,
         error: `Failed to resolve ABI: ${err instanceof Error ? err.message : String(err)}`,
       },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -190,7 +192,7 @@ export async function POST(
   if (slug.length < 2) {
     return NextResponse.json(
       { error: `Invalid action type: ${actionType}` },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -198,13 +200,16 @@ export async function POST(
   if (!PLUGIN_STEP_IMPORTERS[actionType]) {
     return NextResponse.json(
       { error: `Unknown action: ${actionType}` },
-      { status: 404 }
+      { status: HttpStatus.NOT_FOUND }
     );
   }
 
   const apiKeyCtx = await validateApiKey(request);
   if (!apiKeyCtx) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: HttpStatus.UNAUTHORIZED }
+    );
   }
 
   // Enter ALS error context so plugin step errors carry org labels
@@ -212,9 +217,12 @@ export async function POST(
 
   const rateLimit = checkRateLimit(apiKeyCtx.apiKeyId);
   if (!rateLimit.allowed) {
-    return NextResponse.json(
-      { error: "Rate limit exceeded" },
-      { status: 429, headers: { "Retry-After": String(rateLimit.retryAfter) } }
+    return applyRateLimitHeaders(
+      NextResponse.json(
+        { error: "Rate limit exceeded" },
+        { status: HttpStatus.TOO_MANY_REQUESTS }
+      ),
+      rateLimit
     );
   }
 
@@ -222,17 +230,19 @@ export async function POST(
   try {
     body = (await request.json()) as Record<string, unknown>;
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid JSON body" },
+      { status: HttpStatus.BAD_REQUEST }
+    );
   }
 
   try {
     // Try protocol action first (covers all protocol read/write tools)
     const meta = resolveProtocolMeta({ _actionType: actionType });
     if (meta) {
-      return await executeProtocolAction(
-        actionType,
-        body,
-        apiKeyCtx.organizationId
+      return applyRateLimitHeaders(
+        await executeProtocolAction(actionType, body, apiKeyCtx.organizationId),
+        rateLimit
       );
     }
 
@@ -242,13 +252,13 @@ export async function POST(
         error: `Direct execution not supported for "${actionType}". Use workflow execution instead.`,
         hint: "Create a workflow with this action and execute it via workflow_execute.",
       },
-      { status: 501 }
+      { status: HttpStatus.NOT_IMPLEMENTED }
     );
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json(
       { success: false, error: message },
-      { status: 500 }
+      { status: HttpStatus.INTERNAL_SERVER_ERROR }
     );
   }
 }

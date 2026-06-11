@@ -3,10 +3,12 @@ import { createOpenAI } from "@ai-sdk/openai";
 import type { LanguageModelV2 } from "@ai-sdk/provider";
 import { streamText } from "ai";
 import { NextResponse } from "next/server";
+import { HttpStatus } from "@/lib/http-status";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { createTimer, getMetricsCollector } from "@/lib/metrics";
 import { MetricNames } from "@/lib/metrics/types";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { generateAIActionPrompts } from "@/plugins/registry";
 import {
   checkAiGenerateRateLimit,
@@ -325,7 +327,7 @@ export async function POST(request: Request) {
   if (process.env.NEXT_PUBLIC_AI_PROMPT_ENABLED !== "true") {
     return NextResponse.json(
       { error: "AI Prompt is disabled" },
-      { status: 503 }
+      { status: HttpStatus.SERVICE_UNAVAILABLE }
     );
   }
 
@@ -348,12 +350,12 @@ export async function POST(request: Request) {
       getAiGenerateRateLimitKey(authContext)
     );
     if (!rateLimit.allowed) {
-      return NextResponse.json(
-        { error: "Rate limit exceeded" },
-        {
-          status: 429,
-          headers: { "Retry-After": String(rateLimit.retryAfter) },
-        }
+      return applyRateLimitHeaders(
+        NextResponse.json(
+          { error: "Rate limit exceeded" },
+          { status: HttpStatus.TOO_MANY_REQUESTS }
+        ),
+        rateLimit
       );
     }
 
@@ -361,7 +363,10 @@ export async function POST(request: Request) {
     try {
       rawBody = await request.json();
     } catch {
-      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Invalid JSON body" },
+        { status: HttpStatus.BAD_REQUEST }
+      );
     }
 
     const validation = validateGenerateBody(rawBody);
@@ -386,7 +391,10 @@ export async function POST(request: Request) {
       metrics.recordLatency(MetricNames.AI_GENERATION_DURATION, timer(), {
         status: "failure",
       });
-      return NextResponse.json({ error: modelResult.error }, { status: 500 });
+      return NextResponse.json(
+        { error: modelResult.error },
+        { status: HttpStatus.INTERNAL_SERVER_ERROR }
+      );
     }
 
     const model = modelResult.model;
@@ -472,13 +480,16 @@ Example: If user says "connect node A to node B", output:
       },
     });
 
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "application/x-ndjson",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    });
+    return applyRateLimitHeaders(
+      new Response(stream, {
+        headers: {
+          "Content-Type": "application/x-ndjson",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        },
+      }),
+      rateLimit
+    );
   } catch (error) {
     logSystemError(
       ErrorCategory.INFRASTRUCTURE,
@@ -496,7 +507,7 @@ Example: If user says "connect node A to node B", output:
             ? error.message
             : "Failed to generate workflow",
       },
-      { status: 500 }
+      { status: HttpStatus.INTERNAL_SERVER_ERROR }
     );
   }
 }

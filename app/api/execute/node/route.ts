@@ -1,3 +1,4 @@
+import { HttpStatus } from "@/lib/http-status";
 import "server-only";
 
 import { and, eq } from "drizzle-orm";
@@ -6,6 +7,7 @@ import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { db } from "@/lib/db";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import { integrations } from "@/lib/db/schema";
+import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { getErrorMessage } from "@/lib/utils";
 import type { ResolvedAction } from "../_lib/action-resolver";
 import { resolveAction } from "../_lib/action-resolver";
@@ -241,7 +243,7 @@ async function handleResult(
         error: errorMsg,
         ...(retryCount > 0 ? { retryCount } : {}),
       },
-      { status: 422 }
+      { status: HttpStatus.UNPROCESSABLE_ENTITY }
     );
   }
 
@@ -264,7 +266,9 @@ async function handleResult(
       result: output,
       ...(retryCount > 0 ? { retryCount } : {}),
     },
-    { status: isTransactionResult(output) ? 202 : 200 }
+    {
+      status: isTransactionResult(output) ? HttpStatus.ACCEPTED : HttpStatus.OK,
+    }
   );
 }
 
@@ -320,7 +324,7 @@ async function executeNode(
       );
       return NextResponse.json(
         { error: "Internal error: step function not found" },
-        { status: 500 }
+        { status: HttpStatus.INTERNAL_SERVER_ERROR }
       );
     }
 
@@ -346,7 +350,7 @@ async function executeNode(
             ? { retryCount: invokeResult.retryCount }
             : {}),
         },
-        { status: 422 }
+        { status: HttpStatus.UNPROCESSABLE_ENTITY }
       );
     }
 
@@ -360,7 +364,7 @@ async function executeNode(
     await failExecution(executionId, errorMsg);
     return NextResponse.json(
       { executionId, status: "failed", error: errorMsg },
-      { status: 500 }
+      { status: HttpStatus.INTERNAL_SERVER_ERROR }
     );
   }
 }
@@ -368,7 +372,10 @@ async function executeNode(
 export async function POST(request: Request): Promise<NextResponse> {
   const apiKeyCtx = await validateApiKey(request);
   if (!apiKeyCtx) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: HttpStatus.UNAUTHORIZED }
+    );
   }
 
   // Enter ALS error context so plugin step errors carry org labels
@@ -376,9 +383,12 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const rateLimit = checkRateLimit(apiKeyCtx.apiKeyId);
   if (!rateLimit.allowed) {
-    return NextResponse.json(
-      { error: "Rate limit exceeded" },
-      { status: 429, headers: { "Retry-After": String(rateLimit.retryAfter) } }
+    return applyRateLimitHeaders(
+      NextResponse.json(
+        { error: "Rate limit exceeded" },
+        { status: HttpStatus.TOO_MANY_REQUESTS }
+      ),
+      rateLimit
     );
   }
 
@@ -391,12 +401,18 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid JSON body" },
+      { status: HttpStatus.BAD_REQUEST }
+    );
   }
 
   const validation = validateRequest(body);
   if (!validation.valid) {
-    return NextResponse.json({ error: validation.error }, { status: 400 });
+    return NextResponse.json(
+      { error: validation.error },
+      { status: HttpStatus.BAD_REQUEST }
+    );
   }
 
   const { actionType, integrationId, network } = validation.data;
@@ -405,7 +421,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!resolved) {
     return NextResponse.json(
       { error: `Unknown action type: ${actionType}` },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -420,7 +436,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           error:
             "Integration not found or does not belong to this organization",
         },
-        { status: 403 }
+        { status: HttpStatus.FORBIDDEN }
       );
     }
   }
@@ -443,16 +459,25 @@ export async function POST(request: Request): Promise<NextResponse> {
       input: redactedInput,
     });
     if (!reserve.allowed) {
-      return NextResponse.json({ error: reserve.reason }, { status: 403 });
+      return NextResponse.json(
+        { error: reserve.reason },
+        { status: HttpStatus.FORBIDDEN }
+      );
     }
 
-    return await executeNode(
-      validation.data,
-      resolved,
-      apiKeyCtx,
-      reserve.executionId
+    return applyRateLimitHeaders(
+      await executeNode(
+        validation.data,
+        resolved,
+        apiKeyCtx,
+        reserve.executionId
+      ),
+      rateLimit
     );
   }
 
-  return await executeNode(validation.data, resolved, apiKeyCtx);
+  return applyRateLimitHeaders(
+    await executeNode(validation.data, resolved, apiKeyCtx),
+    rateLimit
+  );
 }

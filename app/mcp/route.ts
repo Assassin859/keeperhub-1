@@ -1,3 +1,4 @@
+import { HttpStatus } from "@/lib/http-status";
 import "server-only";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
@@ -6,7 +7,7 @@ import { McpEventStore } from "@/lib/mcp/event-store";
 import { getInternalApiBaseUrl } from "@/lib/mcp/internal-url";
 import { logMcpEvent } from "@/lib/mcp/logging";
 import { authenticateOAuthToken } from "@/lib/mcp/oauth-auth";
-import { checkMcpRateLimit } from "@/lib/mcp/rate-limit";
+import { checkMcpRateLimit, type RateLimitResult } from "@/lib/mcp/rate-limit";
 import { createMcpServer } from "@/lib/mcp/server";
 import { buildSessionErrorResponse } from "@/lib/mcp/session-error";
 import {
@@ -22,6 +23,10 @@ import {
   startCleanupInterval,
   touchSession,
 } from "@/lib/mcp/sessions";
+import {
+  applyRateLimitHeaders,
+  rateLimitHeaders,
+} from "@/lib/rate-limit-headers";
 
 export const dynamic = "force-dynamic";
 
@@ -108,7 +113,7 @@ function unauthorizedResponse(request: Request): Response {
     error_description: "Missing or invalid access token",
   };
   return new Response(JSON.stringify(body), {
-    status: 401,
+    status: HttpStatus.UNAUTHORIZED,
     headers: {
       "Content-Type": "application/json",
       "WWW-Authenticate": challenge,
@@ -147,7 +152,9 @@ function isInitializeRequestBody(body: unknown): boolean {
   return isInitializeRequest(body);
 }
 
-function rateLimitResponse(retryAfter: number): Response {
+function rateLimitResponse(
+  rateLimit: Extract<RateLimitResult, { allowed: false }>
+): Response {
   return new Response(
     JSON.stringify({
       jsonrpc: "2.0",
@@ -155,10 +162,10 @@ function rateLimitResponse(retryAfter: number): Response {
       id: null,
     }),
     {
-      status: 429,
+      status: HttpStatus.TOO_MANY_REQUESTS,
       headers: {
         "Content-Type": "application/json",
-        "Retry-After": String(retryAfter),
+        ...rateLimitHeaders(rateLimit),
         ...CORS_HEADERS,
       },
     }
@@ -166,7 +173,10 @@ function rateLimitResponse(retryAfter: number): Response {
 }
 
 export function OPTIONS(): Response {
-  return new Response(null, { status: 204, headers: CORS_HEADERS });
+  return new Response(null, {
+    status: HttpStatus.NO_CONTENT,
+    headers: CORS_HEADERS,
+  });
 }
 
 type BuiltSession = {
@@ -384,7 +394,7 @@ export async function POST(request: Request): Promise<Response> {
       },
     };
     return new Response(JSON.stringify(anonInitResult), {
-      status: 200,
+      status: HttpStatus.OK,
       headers: {
         "Content-Type": "application/json",
         "Cache-Control": "no-store",
@@ -410,7 +420,7 @@ export async function POST(request: Request): Promise<Response> {
   const rateLimit = checkMcpRateLimit(organizationId);
   if (!rateLimit.allowed) {
     logMcpEvent("mcp.rate.limited", { orgId: organizationId });
-    return rateLimitResponse(rateLimit.retryAfter);
+    return rateLimitResponse(rateLimit);
   }
 
   const sessionId = request.headers.get("mcp-session-id");
@@ -419,7 +429,7 @@ export async function POST(request: Request): Promise<Response> {
   // call from here on must hand the parsed value through parsedBody.
   if (!bodyParsed) {
     return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
-      status: 400,
+      status: HttpStatus.BAD_REQUEST,
       headers: { "Content-Type": "application/json", ...CORS_HEADERS },
     });
   }
@@ -435,7 +445,10 @@ export async function POST(request: Request): Promise<Response> {
       ensureMcpAcceptHeader(request),
       { parsedBody: body }
     );
-    return withRenewedSessionHeader(response, resolved.renewedSessionId);
+    return applyRateLimitHeaders(
+      withRenewedSessionHeader(response, resolved.renewedSessionId),
+      rateLimit
+    );
   }
 
   if (!isInitializeRequestBody(body)) {
@@ -453,7 +466,7 @@ export async function POST(request: Request): Promise<Response> {
     return new Response(
       JSON.stringify({ error: "API key missing organization context" }),
       {
-        status: 403,
+        status: HttpStatus.FORBIDDEN,
         headers: { "Content-Type": "application/json", ...CORS_HEADERS },
       }
     );
@@ -484,9 +497,12 @@ export async function POST(request: Request): Promise<Response> {
 
   await entry.server.connect(transport);
 
-  return transport.handleRequest(ensureMcpAcceptHeader(request), {
-    parsedBody: body,
-  });
+  return applyRateLimitHeaders(
+    await transport.handleRequest(ensureMcpAcceptHeader(request), {
+      parsedBody: body,
+    }),
+    rateLimit
+  );
 }
 
 export async function GET(request: Request): Promise<Response> {
@@ -509,7 +525,7 @@ export async function GET(request: Request): Promise<Response> {
         },
       }),
       {
-        status: 200,
+        status: HttpStatus.OK,
         headers: {
           "Content-Type": "application/json",
           "Cache-Control": "no-store",
@@ -589,5 +605,8 @@ export async function DELETE(request: Request): Promise<Response> {
     deleteSession(sessionId);
   }
 
-  return new Response(null, { status: 204, headers: CORS_HEADERS });
+  return new Response(null, {
+    status: HttpStatus.NO_CONTENT,
+    headers: CORS_HEADERS,
+  });
 }

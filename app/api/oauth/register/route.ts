@@ -1,7 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
+import { HttpStatus } from "@/lib/http-status";
 import { normalizeScope } from "@/lib/mcp/oauth-scopes";
 import { type OAuthClient, storeOAuthClient } from "@/lib/mcp/oauth-store";
 import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
+import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 
 export const dynamic = "force-dynamic";
 
@@ -55,12 +57,12 @@ export async function POST(request: Request): Promise<Response> {
   const ip = getClientIp(request);
   const rateLimit = checkIpRateLimit(ip, 10, 60_000);
   if (!rateLimit.allowed) {
-    return Response.json(
-      { error: "Too many requests" },
-      {
-        status: 429,
-        headers: { "Retry-After": String(rateLimit.retryAfter) },
-      }
+    return applyRateLimitHeaders(
+      Response.json(
+        { error: "Too many requests" },
+        { status: HttpStatus.TOO_MANY_REQUESTS }
+      ),
+      rateLimit
     );
   }
 
@@ -68,7 +70,10 @@ export async function POST(request: Request): Promise<Response> {
   try {
     body = (await request.json()) as RegistrationRequestBody;
   } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+    return Response.json(
+      { error: "Invalid JSON body" },
+      { status: HttpStatus.BAD_REQUEST }
+    );
   }
 
   const {
@@ -83,7 +88,7 @@ export async function POST(request: Request): Promise<Response> {
   if (typeof client_name !== "string" || client_name.trim().length === 0) {
     return Response.json(
       { error: "client_name is required and must be a string" },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -93,7 +98,7 @@ export async function POST(request: Request): Promise<Response> {
         error:
           "redirect_uris is required and must be a non-empty array of strings",
       },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -103,7 +108,7 @@ export async function POST(request: Request): Promise<Response> {
     } catch {
       return Response.json(
         { error: `Invalid redirect_uri: ${uri}` },
-        { status: 400 }
+        { status: HttpStatus.BAD_REQUEST }
       );
     }
   }
@@ -170,5 +175,8 @@ export async function POST(request: Request): Promise<Response> {
       ? responseBase
       : { ...responseBase, client_secret: clientSecretRaw };
 
-  return Response.json(responseBody, { status: 201 });
+  return applyRateLimitHeaders(
+    Response.json(responseBody, { status: HttpStatus.CREATED }),
+    rateLimit
+  );
 }

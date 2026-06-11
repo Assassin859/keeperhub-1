@@ -1,3 +1,4 @@
+import { HttpStatus } from "@/lib/http-status";
 import "server-only";
 
 import { NextResponse } from "next/server";
@@ -6,6 +7,7 @@ import { type AbiItem, findAbiFunction } from "@/lib/abi/utils";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import { simulateContractCall } from "@/lib/execute/simulate";
+import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { getErrorMessage } from "@/lib/utils";
 import { readContractCore } from "@/plugins/web3/steps/read-contract-core";
 import { writeContractCore } from "@/plugins/web3/steps/write-contract-core";
@@ -81,10 +83,16 @@ async function handleReadCall(
   });
 
   if (result.success) {
-    return NextResponse.json({ result: result.result }, { status: 200 });
+    return NextResponse.json(
+      { result: result.result },
+      { status: HttpStatus.OK }
+    );
   }
 
-  return NextResponse.json({ error: result.error }, { status: 400 });
+  return NextResponse.json(
+    { error: result.error },
+    { status: HttpStatus.BAD_REQUEST }
+  );
 }
 
 async function handleSimulateCall(
@@ -108,7 +116,7 @@ async function handleSimulateCall(
   });
 
   return NextResponse.json(result, {
-    status: result.wouldRevert ? 400 : 200,
+    status: result.wouldRevert ? HttpStatus.BAD_REQUEST : HttpStatus.OK,
   });
 }
 
@@ -132,7 +140,10 @@ async function handleWriteCall(
     input: redactedInput,
   });
   if (!reserve.allowed) {
-    return NextResponse.json({ error: reserve.reason }, { status: 403 });
+    return NextResponse.json(
+      { error: reserve.reason },
+      { status: HttpStatus.FORBIDDEN }
+    );
   }
   const { executionId } = reserve;
 
@@ -164,14 +175,17 @@ async function handleWriteCall(
 
   return NextResponse.json(
     { executionId, status: result.success ? "completed" : "failed" },
-    { status: 202 }
+    { status: HttpStatus.ACCEPTED }
   );
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
   const apiKeyCtx = await validateApiKey(request);
   if (!apiKeyCtx) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: HttpStatus.UNAUTHORIZED }
+    );
   }
 
   // Enter ALS error context so plugin step errors carry org labels
@@ -179,9 +193,12 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const rateLimit = checkRateLimit(apiKeyCtx.apiKeyId);
   if (!rateLimit.allowed) {
-    return NextResponse.json(
-      { error: "Rate limit exceeded" },
-      { status: 429, headers: { "Retry-After": String(rateLimit.retryAfter) } }
+    return applyRateLimitHeaders(
+      NextResponse.json(
+        { error: "Rate limit exceeded" },
+        { status: HttpStatus.TOO_MANY_REQUESTS }
+      ),
+      rateLimit
     );
   }
 
@@ -194,12 +211,17 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     body = (await request.json()) as Record<string, unknown>;
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid JSON body" },
+      { status: HttpStatus.BAD_REQUEST }
+    );
   }
 
   const validation = validateContractCallInput(body);
   if (!validation.valid) {
-    return NextResponse.json(validation.error, { status: 400 });
+    return NextResponse.json(validation.error, {
+      status: HttpStatus.BAD_REQUEST,
+    });
   }
 
   // KEEP-490: collapse `chainId` (canonical) and `network` (deprecated alias)
@@ -213,7 +235,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   if ("error" in abiResult) {
     return NextResponse.json(
       { error: abiResult.error, field: "abi" },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -223,7 +245,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   if ("error" in fnResult) {
     return NextResponse.json(
       { error: fnResult.error, field: "functionName" },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -232,7 +254,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     fnResult.entry.stateMutability === "pure";
 
   if (isReadOnly) {
-    return handleReadCall(body, resolvedAbi, apiKeyCtx.organizationId);
+    return applyRateLimitHeaders(
+      await handleReadCall(body, resolvedAbi, apiKeyCtx.organizationId),
+      rateLimit
+    );
   }
 
   // Dry-run path: validate inputs, simulate via provider.call + estimateGas,
@@ -242,17 +267,23 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!simulateFlag.ok) {
     return NextResponse.json(
       { error: simulateFlag.error, field: "simulate" },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
   if (simulateFlag.simulate) {
-    return handleSimulateCall(body, resolvedAbi, apiKeyCtx.organizationId);
+    return applyRateLimitHeaders(
+      await handleSimulateCall(body, resolvedAbi, apiKeyCtx.organizationId),
+      rateLimit
+    );
   }
 
-  return handleWriteCall(
-    body,
-    resolvedAbi,
-    apiKeyCtx.organizationId,
-    apiKeyCtx.apiKeyId
+  return applyRateLimitHeaders(
+    await handleWriteCall(
+      body,
+      resolvedAbi,
+      apiKeyCtx.organizationId,
+      apiKeyCtx.apiKeyId
+    ),
+    rateLimit
   );
 }

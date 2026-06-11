@@ -1,3 +1,4 @@
+import { HttpStatus } from "@/lib/http-status";
 import "server-only";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
@@ -7,7 +8,7 @@ import { getInternalApiBaseUrl } from "@/lib/mcp/internal-url";
 import { getWorkflowListing } from "@/lib/mcp/listing";
 import { logMcpEvent } from "@/lib/mcp/logging";
 import { authenticateOAuthToken } from "@/lib/mcp/oauth-auth";
-import { checkMcpRateLimit } from "@/lib/mcp/rate-limit";
+import { checkMcpRateLimit, type RateLimitResult } from "@/lib/mcp/rate-limit";
 import { buildSessionErrorResponse } from "@/lib/mcp/session-error";
 import {
   createSessionToken,
@@ -23,6 +24,10 @@ import {
   touchSession,
 } from "@/lib/mcp/sessions";
 import { createWorkflowMcpServer } from "@/lib/mcp/workflow-server";
+import {
+  applyRateLimitHeaders,
+  rateLimitHeaders,
+} from "@/lib/rate-limit-headers";
 
 export const dynamic = "force-dynamic";
 
@@ -89,7 +94,7 @@ function unauthorizedResponse(request: Request): Response {
     error_description: "Missing or invalid access token",
   };
   return new Response(JSON.stringify(body), {
-    status: 401,
+    status: HttpStatus.UNAUTHORIZED,
     headers: {
       "Content-Type": "application/json",
       "WWW-Authenticate": challenge,
@@ -127,7 +132,9 @@ function isInitializeRequestBody(body: unknown): boolean {
   return isInitializeRequest(body);
 }
 
-function rateLimitResponse(retryAfter: number): Response {
+function rateLimitResponse(
+  rateLimit: Extract<RateLimitResult, { allowed: false }>
+): Response {
   return new Response(
     JSON.stringify({
       jsonrpc: "2.0",
@@ -135,10 +142,10 @@ function rateLimitResponse(retryAfter: number): Response {
       id: null,
     }),
     {
-      status: 429,
+      status: HttpStatus.TOO_MANY_REQUESTS,
       headers: {
         "Content-Type": "application/json",
-        "Retry-After": String(retryAfter),
+        ...rateLimitHeaders(rateLimit),
         ...CORS_HEADERS,
       },
     }
@@ -146,7 +153,10 @@ function rateLimitResponse(retryAfter: number): Response {
 }
 
 export function OPTIONS(): Response {
-  return new Response(null, { status: 204, headers: CORS_HEADERS });
+  return new Response(null, {
+    status: HttpStatus.NO_CONTENT,
+    headers: CORS_HEADERS,
+  });
 }
 
 type BuiltSession = {
@@ -326,7 +336,7 @@ async function resolveListing(slug: string): Promise<
     return {
       ok: false,
       response: new Response(JSON.stringify({ error: "Workflow not found" }), {
-        status: 404,
+        status: HttpStatus.NOT_FOUND,
         headers: { "Content-Type": "application/json", ...CORS_HEADERS },
       }),
     };
@@ -364,7 +374,7 @@ export async function POST(
   const rateLimit = checkMcpRateLimit(organizationId);
   if (!rateLimit.allowed) {
     logMcpEvent("mcp.rate.limited", { orgId: organizationId });
-    return rateLimitResponse(rateLimit.retryAfter);
+    return rateLimitResponse(rateLimit);
   }
 
   const sessionId = request.headers.get("mcp-session-id");
@@ -385,7 +395,10 @@ export async function POST(
     const response = await resolved.transport.handleRequest(
       ensureMcpAcceptHeader(request)
     );
-    return withRenewedSessionHeader(response, resolved.renewedSessionId);
+    return applyRateLimitHeaders(
+      withRenewedSessionHeader(response, resolved.renewedSessionId),
+      rateLimit
+    );
   }
 
   let body: unknown;
@@ -393,7 +406,7 @@ export async function POST(
     body = await request.json();
   } catch {
     return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
-      status: 400,
+      status: HttpStatus.BAD_REQUEST,
       headers: { "Content-Type": "application/json", ...CORS_HEADERS },
     });
   }
@@ -411,7 +424,7 @@ export async function POST(
     return new Response(
       JSON.stringify({ error: "API key missing organization context" }),
       {
-        status: 403,
+        status: HttpStatus.FORBIDDEN,
         headers: { "Content-Type": "application/json", ...CORS_HEADERS },
       }
     );
@@ -441,9 +454,12 @@ export async function POST(
 
   await entry.server.connect(transport);
 
-  return transport.handleRequest(ensureMcpAcceptHeader(request), {
-    parsedBody: body,
-  });
+  return applyRateLimitHeaders(
+    await transport.handleRequest(ensureMcpAcceptHeader(request), {
+      parsedBody: body,
+    }),
+    rateLimit
+  );
 }
 
 export async function GET(
@@ -544,5 +560,8 @@ export async function DELETE(
     deleteSession(sessionId);
   }
 
-  return new Response(null, { status: 204, headers: CORS_HEADERS });
+  return new Response(null, {
+    status: HttpStatus.NO_CONTENT,
+    headers: CORS_HEADERS,
+  });
 }

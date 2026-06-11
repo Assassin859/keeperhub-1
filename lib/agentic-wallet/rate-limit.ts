@@ -14,8 +14,21 @@ import { db } from "@/lib/db";
 import { agenticWalletRateLimits } from "@/lib/db/schema";
 
 export type RateLimitResult =
-  | { allowed: true; count: number }
-  | { allowed: false; retryAfter: number; count: number };
+  | {
+      allowed: true;
+      count: number;
+      limit: number;
+      remaining: number;
+      reset: number;
+    }
+  | {
+      allowed: false;
+      retryAfter: number;
+      count: number;
+      limit: number;
+      remaining: number;
+      reset: number;
+    };
 
 export async function incrementAndCheck(
   key: string,
@@ -33,16 +46,27 @@ export async function incrementAndCheck(
   `);
   const count = rows[0]?.request_count ?? 1;
 
+  // Time until the bucket rolls over to the next hour. A single `new Date()`
+  // guards against the sub-second race where minutes and seconds cross an hour
+  // boundary between two separate reads. `reset` is the Unix-epoch second when
+  // the current hour bucket rolls over and the counter resets.
+  const now = new Date();
+  const secondsPastHour = now.getMinutes() * 60 + now.getSeconds();
+  // `Math.max(1, ...)` guards the edge case where the request lands at
+  // XX:59:59.999 and the arithmetic would otherwise return 0.
+  const secondsToNextHour = Math.max(1, 3600 - secondsPastHour);
+  const reset = Math.ceil(now.getTime() / 1000) + secondsToNextHour;
+  const remaining = Math.max(0, limit - count);
+
   if (count > limit) {
-    // Time until the bucket rolls over to the next hour. A single
-    // `new Date()` guards against the sub-second race where minutes and
-    // seconds cross an hour boundary between two separate reads.
-    const now = new Date();
-    const secondsPastHour = now.getMinutes() * 60 + now.getSeconds();
-    // `Math.max(1, ...)` guards the edge case where the request lands at
-    // XX:59:59.999 and the arithmetic would otherwise return 0.
-    const retryAfter = Math.max(1, 3600 - secondsPastHour);
-    return { allowed: false, retryAfter, count };
+    return {
+      allowed: false,
+      retryAfter: secondsToNextHour,
+      count,
+      limit,
+      remaining: 0,
+      reset,
+    };
   }
-  return { allowed: true, count };
+  return { allowed: true, count, limit, remaining, reset };
 }

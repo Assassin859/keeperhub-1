@@ -1,3 +1,4 @@
+import { HttpStatus } from "@/lib/http-status";
 import "server-only";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
@@ -19,6 +20,10 @@ import {
   setSession,
   touchSession,
 } from "@/lib/mcp/sessions";
+import {
+  applyRateLimitHeaders,
+  rateLimitHeaders,
+} from "@/lib/rate-limit-headers";
 
 export const dynamic = "force-dynamic";
 
@@ -137,7 +142,10 @@ function ensureMcpAcceptHeader(request: Request): Request {
 }
 
 export function OPTIONS(): Response {
-  return new Response(null, { status: 204, headers: CORS_HEADERS });
+  return new Response(null, {
+    status: HttpStatus.NO_CONTENT,
+    headers: CORS_HEADERS,
+  });
 }
 
 // Some marketplace probers issue a GET before POSTing. Mirror the /mcp health
@@ -145,7 +153,11 @@ export function OPTIONS(): Response {
 export function GET(request: Request): Response {
   if (request.headers.get("mcp-session-id")) {
     // JSON-only transport: no server-initiated SSE stream to resume here.
-    return jsonRpcError(405, -32_601, "Method not allowed");
+    return jsonRpcError(
+      HttpStatus.METHOD_NOT_ALLOWED,
+      -32_601,
+      "Method not allowed"
+    );
   }
   return new Response(
     JSON.stringify({
@@ -156,7 +168,7 @@ export function GET(request: Request): Response {
       authentication: { required: false },
     }),
     {
-      status: 200,
+      status: HttpStatus.OK,
       headers: {
         "Content-Type": "application/json",
         "Cache-Control": "no-store",
@@ -177,7 +189,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   if (!bodyParsed) {
-    return jsonRpcError(400, -32_700, "Invalid JSON body");
+    return jsonRpcError(HttpStatus.BAD_REQUEST, -32_700, "Invalid JSON body");
   }
 
   // Per-IP rate limiting on the real client IP (never the org, which is the
@@ -185,9 +197,12 @@ export async function POST(request: Request): Promise<Response> {
   const ip = getClientIp(request);
   const listGate = checkIpRateLimit(`mcp-public:${ip}`, LIST_LIMIT, WINDOW_MS);
   if (!listGate.allowed) {
-    return jsonRpcError(429, -32_029, "Rate limit exceeded", {
-      "Retry-After": String(listGate.retryAfter),
-    });
+    return jsonRpcError(
+      HttpStatus.TOO_MANY_REQUESTS,
+      -32_029,
+      "Rate limit exceeded",
+      rateLimitHeaders(listGate)
+    );
   }
   if (isToolCallBody(body)) {
     const callGate = checkIpRateLimit(
@@ -196,9 +211,12 @@ export async function POST(request: Request): Promise<Response> {
       WINDOW_MS
     );
     if (!callGate.allowed) {
-      return jsonRpcError(429, -32_029, "Rate limit exceeded", {
-        "Retry-After": String(callGate.retryAfter),
-      });
+      return jsonRpcError(
+        HttpStatus.TOO_MANY_REQUESTS,
+        -32_029,
+        "Rate limit exceeded",
+        rateLimitHeaders(callGate)
+      );
     }
   }
 
@@ -211,9 +229,12 @@ export async function POST(request: Request): Promise<Response> {
         headers: CORS_HEADERS,
       });
     }
-    return resolved.transport.handleRequest(ensureMcpAcceptHeader(request), {
-      parsedBody: body,
-    });
+    return applyRateLimitHeaders(
+      await resolved.transport.handleRequest(ensureMcpAcceptHeader(request), {
+        parsedBody: body,
+      }),
+      listGate
+    );
   }
 
   if (!isInitializeBody(body)) {
@@ -231,9 +252,12 @@ export async function POST(request: Request): Promise<Response> {
   await entry.server.connect(transport);
   logMcpEvent("mcp.public.session.created", { ip });
 
-  return transport.handleRequest(ensureMcpAcceptHeader(request), {
-    parsedBody: body,
-  });
+  return applyRateLimitHeaders(
+    await transport.handleRequest(ensureMcpAcceptHeader(request), {
+      parsedBody: body,
+    }),
+    listGate
+  );
 }
 
 type ResolveResult =

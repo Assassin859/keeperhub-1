@@ -1,3 +1,4 @@
+import { HttpStatus } from "@/lib/http-status";
 import "server-only";
 
 import { NextResponse } from "next/server";
@@ -5,6 +6,7 @@ import { resolveAbi } from "@/lib/abi/cache";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import { simulateContractCall } from "@/lib/execute/simulate";
+import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { getErrorMessage } from "@/lib/utils";
 import { readContractCore } from "@/plugins/web3/steps/read-contract-core";
 import { writeContractCore } from "@/plugins/web3/steps/write-contract-core";
@@ -67,12 +69,15 @@ async function executeConditionalRead(
   });
 
   if (!readResult.success) {
-    return NextResponse.json({ error: readResult.error }, { status: 400 });
+    return NextResponse.json(
+      { error: readResult.error },
+      { status: HttpStatus.BAD_REQUEST }
+    );
   }
 
   return NextResponse.json(
     { executed: true, conditionResult, result: readResult.result },
-    { status: 200 }
+    { status: HttpStatus.OK }
   );
 }
 
@@ -100,7 +105,7 @@ async function simulateConditionalWrite(
   // broadcast would have reverted too, so executed is false.
   return NextResponse.json(
     { ...result, executed: !result.wouldRevert, conditionResult },
-    { status: result.wouldRevert ? 400 : 200 }
+    { status: result.wouldRevert ? HttpStatus.BAD_REQUEST : HttpStatus.OK }
   );
 }
 
@@ -127,7 +132,10 @@ async function executeConditionalWrite(
     input: redactedInput,
   });
   if (!reserve.allowed) {
-    return NextResponse.json({ error: reserve.reason }, { status: 403 });
+    return NextResponse.json(
+      { error: reserve.reason },
+      { status: HttpStatus.FORBIDDEN }
+    );
   }
   const { executionId } = reserve;
 
@@ -162,14 +170,17 @@ async function executeConditionalWrite(
       executed: true,
       conditionResult,
     },
-    { status: 202 }
+    { status: HttpStatus.ACCEPTED }
   );
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
   const apiKeyCtx = await validateApiKey(request);
   if (!apiKeyCtx) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: HttpStatus.UNAUTHORIZED }
+    );
   }
 
   // Enter ALS error context so plugin step errors carry org labels
@@ -177,9 +188,12 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const rateLimit = checkRateLimit(apiKeyCtx.apiKeyId);
   if (!rateLimit.allowed) {
-    return NextResponse.json(
-      { error: "Rate limit exceeded" },
-      { status: 429, headers: { "Retry-After": String(rateLimit.retryAfter) } }
+    return applyRateLimitHeaders(
+      NextResponse.json(
+        { error: "Rate limit exceeded" },
+        { status: HttpStatus.TOO_MANY_REQUESTS }
+      ),
+      rateLimit
     );
   }
 
@@ -192,12 +206,17 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     body = (await request.json()) as Record<string, unknown>;
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid JSON body" },
+      { status: HttpStatus.BAD_REQUEST }
+    );
   }
 
   const validation = validateCheckAndExecuteInput(body);
   if (!validation.valid) {
-    return NextResponse.json(validation.error, { status: 400 });
+    return NextResponse.json(validation.error, {
+      status: HttpStatus.BAD_REQUEST,
+    });
   }
 
   // KEEP-490: chainId is the canonical input; network is a deprecated alias.
@@ -213,7 +232,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   if ("error" in readAbiResult) {
     return NextResponse.json(
       { error: readAbiResult.error, field: "abi" },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -227,7 +246,10 @@ export async function POST(request: Request): Promise<NextResponse> {
   });
 
   if (!readResult.success) {
-    return NextResponse.json({ error: readResult.error }, { status: 400 });
+    return NextResponse.json(
+      { error: readResult.error },
+      { status: HttpStatus.BAD_REQUEST }
+    );
   }
 
   const conditionResult = evaluateCondition(readResult.result, condition);
@@ -235,7 +257,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!conditionResult.met) {
     return NextResponse.json(
       { executed: false, conditionResult },
-      { status: 200 }
+      { status: HttpStatus.OK }
     );
   }
 
@@ -247,7 +269,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   if ("error" in writeAbiResult) {
     return NextResponse.json(
       { error: writeAbiResult.error, field: "action.abi" },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -264,7 +286,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         error: `Function "${action.functionName}" not found in action ABI`,
         field: "action.functionName",
       },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -272,12 +294,15 @@ export async function POST(request: Request): Promise<NextResponse> {
     actionFn.stateMutability === "view" || actionFn.stateMutability === "pure";
 
   if (isReadOnly) {
-    return executeConditionalRead(
-      action,
-      network,
-      writeAbiResult.abi,
-      apiKeyCtx.organizationId,
-      conditionResult
+    return applyRateLimitHeaders(
+      await executeConditionalRead(
+        action,
+        network,
+        writeAbiResult.abi,
+        apiKeyCtx.organizationId,
+        conditionResult
+      ),
+      rateLimit
     );
   }
 
@@ -288,26 +313,32 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!simulateFlag.ok) {
     return NextResponse.json(
       { error: simulateFlag.error, field: "simulate" },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
   if (simulateFlag.simulate) {
-    return simulateConditionalWrite(
+    return applyRateLimitHeaders(
+      await simulateConditionalWrite(
+        action,
+        network,
+        writeAbiResult.abi,
+        apiKeyCtx.organizationId,
+        conditionResult
+      ),
+      rateLimit
+    );
+  }
+
+  return applyRateLimitHeaders(
+    await executeConditionalWrite(
       action,
       network,
       writeAbiResult.abi,
       apiKeyCtx.organizationId,
+      apiKeyCtx.apiKeyId,
+      body,
       conditionResult
-    );
-  }
-
-  return executeConditionalWrite(
-    action,
-    network,
-    writeAbiResult.abi,
-    apiKeyCtx.organizationId,
-    apiKeyCtx.apiKeyId,
-    body,
-    conditionResult
+    ),
+    rateLimit
   );
 }

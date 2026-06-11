@@ -10,6 +10,7 @@ import {
 import { db } from "@/lib/db";
 import { sessions, twoFactor as twoFactorTable, users } from "@/lib/db/schema";
 import { resolveEnrollMfaCaller } from "@/lib/enroll-mfa-caller";
+import { HttpStatus } from "@/lib/http-status";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
   checkDualFactorRateLimit,
@@ -81,16 +82,22 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (caller.reason === "anonymous_user") {
       return NextResponse.json(
         { error: "Sign in with a real account to enable two-factor" },
-        { status: 403 }
+        { status: HttpStatus.FORBIDDEN }
       );
     }
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: HttpStatus.UNAUTHORIZED }
+    );
   }
 
   const body = (await request.json().catch(() => ({}))) as RequestBody;
   const code = typeof body.code === "string" ? body.code.trim() : "";
   if (!code) {
-    return NextResponse.json({ error: "Code is required" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Code is required" },
+      { status: HttpStatus.BAD_REQUEST }
+    );
   }
 
   const secret = process.env.BETTER_AUTH_SECRET;
@@ -103,7 +110,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
     return NextResponse.json(
       { error: "Server misconfigured" },
-      { status: 500 }
+      { status: HttpStatus.INTERNAL_SERVER_ERROR }
     );
   }
 
@@ -123,7 +130,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     } catch {
       return NextResponse.json(
         { error: "Invalid verification code" },
-        { status: 401 }
+        { status: HttpStatus.UNAUTHORIZED }
       );
     }
 
@@ -158,7 +165,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
       return NextResponse.json(
         { error: "Verification accepted but backup-code mint failed" },
-        { status: 500 }
+        { status: HttpStatus.INTERNAL_SERVER_ERROR }
       );
     }
   }
@@ -179,7 +186,10 @@ export async function POST(request: Request): Promise<NextResponse> {
         code: "rate_limited",
         retryAfter: rate.retryAfter,
       },
-      { status: 429 }
+      {
+        status: HttpStatus.TOO_MANY_REQUESTS,
+        headers: { "Retry-After": String(rate.retryAfter) },
+      }
     );
   }
 
@@ -191,14 +201,14 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!enrollment) {
     return NextResponse.json(
       { error: "No enrollment in progress for this user" },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
   const codeOk = await verifyUserTotp(enrollment.secret, code, secret);
   if (!codeOk) {
     return NextResponse.json(
       { error: "Invalid verification code" },
-      { status: 401 }
+      { status: HttpStatus.UNAUTHORIZED }
     );
   }
 
@@ -288,7 +298,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
     return NextResponse.json(
       { error: "Verification accepted but enrollment finalize failed" },
-      { status: 500 }
+      { status: HttpStatus.INTERNAL_SERVER_ERROR }
     );
   }
 }

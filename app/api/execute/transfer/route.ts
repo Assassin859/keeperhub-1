@@ -1,3 +1,4 @@
+import { HttpStatus } from "@/lib/http-status";
 import "server-only";
 
 import { NextResponse } from "next/server";
@@ -7,6 +8,7 @@ import {
   simulateNativeTransfer,
   simulateTokenTransfer,
 } from "@/lib/execute/simulate";
+import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { transferFundsCore } from "@/plugins/web3/steps/transfer-funds-core";
 import { transferTokenCore } from "@/plugins/web3/steps/transfer-token-core";
 import { validateApiKey } from "../_lib/auth";
@@ -26,7 +28,10 @@ export async function POST(request: Request): Promise<NextResponse> {
   // 1. Auth
   const apiKeyCtx = await validateApiKey(request);
   if (!apiKeyCtx) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: HttpStatus.UNAUTHORIZED }
+    );
   }
 
   // Enter ALS error context so plugin step errors carry org labels
@@ -35,9 +40,12 @@ export async function POST(request: Request): Promise<NextResponse> {
   // 2. Rate limit
   const rateLimit = checkRateLimit(apiKeyCtx.apiKeyId);
   if (!rateLimit.allowed) {
-    return NextResponse.json(
-      { error: "Rate limit exceeded" },
-      { status: 429, headers: { "Retry-After": String(rateLimit.retryAfter) } }
+    return applyRateLimitHeaders(
+      NextResponse.json(
+        { error: "Rate limit exceeded" },
+        { status: HttpStatus.TOO_MANY_REQUESTS }
+      ),
+      rateLimit
     );
   }
 
@@ -52,18 +60,25 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     body = (await request.json()) as Record<string, unknown>;
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid JSON body" },
+      { status: HttpStatus.BAD_REQUEST }
+    );
   }
 
   // 4. Validate input
   const validation = validateTransferInput(body);
   if (!validation.valid) {
-    return NextResponse.json(validation.error, { status: 400 });
+    return NextResponse.json(validation.error, {
+      status: HttpStatus.BAD_REQUEST,
+    });
   }
 
   const tokenValidation = validateTokenFields(body);
   if (!tokenValidation.valid) {
-    return NextResponse.json(tokenValidation.error, { status: 400 });
+    return NextResponse.json(tokenValidation.error, {
+      status: HttpStatus.BAD_REQUEST,
+    });
   }
 
   // KEEP-490: accept `chainId` as canonical, `network` as deprecated alias.
@@ -94,7 +109,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!simulateFlag.ok) {
     return NextResponse.json(
       { error: simulateFlag.error, field: "simulate" },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
   if (simulateFlag.simulate) {
@@ -112,7 +127,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         decimals: typeof body.decimals === "number" ? body.decimals : undefined,
       });
       return NextResponse.json(result, {
-        status: result.wouldRevert ? 400 : 200,
+        status: result.wouldRevert ? HttpStatus.BAD_REQUEST : HttpStatus.OK,
       });
     }
     const nativeResult = await simulateNativeTransfer({
@@ -122,7 +137,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       amount,
     });
     return NextResponse.json(nativeResult, {
-      status: nativeResult.wouldRevert ? 400 : 200,
+      status: nativeResult.wouldRevert ? HttpStatus.BAD_REQUEST : HttpStatus.OK,
     });
   }
 
@@ -136,7 +151,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     input: redactedInput,
   });
   if (!reserve.allowed) {
-    return NextResponse.json({ error: reserve.reason }, { status: 403 });
+    return NextResponse.json(
+      { error: reserve.reason },
+      { status: HttpStatus.FORBIDDEN }
+    );
   }
   const { executionId } = reserve;
 
@@ -178,8 +196,11 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   // 10. Return
-  return NextResponse.json(
-    { executionId, status: result.success ? "completed" : "failed" },
-    { status: 202 }
+  return applyRateLimitHeaders(
+    NextResponse.json(
+      { executionId, status: result.success ? "completed" : "failed" },
+      { status: HttpStatus.ACCEPTED }
+    ),
+    rateLimit
   );
 }

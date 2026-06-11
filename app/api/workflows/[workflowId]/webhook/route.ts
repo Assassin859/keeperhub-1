@@ -1,3 +1,4 @@
+import { HttpStatus } from "@/lib/http-status";
 import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
@@ -12,6 +13,7 @@ import {
 } from "@/lib/billing/execution-guard";
 import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { recordWebhookMetrics } from "@/lib/metrics/instrumentation/api";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
@@ -56,7 +58,7 @@ async function validateApiKey(
     return {
       valid: false,
       error: "Missing Authorization header",
-      statusCode: 401,
+      statusCode: HttpStatus.UNAUTHORIZED,
     };
   }
 
@@ -73,7 +75,7 @@ async function validateApiKey(
     if (key?.startsWith("kh_")) {
       return {
         valid: false,
-        statusCode: 401,
+        statusCode: HttpStatus.UNAUTHORIZED,
         error:
           "Wrong API key type. This endpoint requires a user webhook key (wfb_*). The kh_* prefix is an org API key for /api/execute/* and /mcp.",
         errorBody: {
@@ -86,7 +88,7 @@ async function validateApiKey(
     }
     return {
       valid: false,
-      statusCode: 401,
+      statusCode: HttpStatus.UNAUTHORIZED,
       error:
         "Invalid API key format. Expected a user webhook key starting with wfb_.",
       errorBody: {
@@ -105,7 +107,7 @@ async function validateApiKey(
   });
 
   if (!apiKey) {
-    return { valid: false, error: "Invalid API key", statusCode: 401 };
+    return { valid: false, error: "Invalid API key", statusCode: HttpStatus.UNAUTHORIZED };
   }
 
   // Verify the key's holder is a current member of the workflow's org.
@@ -119,7 +121,7 @@ async function validateApiKey(
     return {
       valid: false,
       error: "You do not have permission to run this workflow",
-      statusCode: 403,
+      statusCode: HttpStatus.FORBIDDEN,
     };
   }
 
@@ -183,7 +185,7 @@ export async function POST(
     });
 
     if (!workflow) {
-      return failResponse(workflowId, timer, 404, "Workflow not found");
+      return failResponse(workflowId, timer, HttpStatus.NOT_FOUND, "Workflow not found");
     }
 
     // Gate on workflow lifecycle (enabled, not soft-deleted, owner active)
@@ -205,9 +207,9 @@ export async function POST(
     });
     if (!executability.executable) {
       if (executability.reason === "disabled") {
-        return failResponse(workflowId, timer, 410, "Workflow is disabled");
+        return failResponse(workflowId, timer, HttpStatus.GONE, "Workflow is disabled");
       }
-      return failResponse(workflowId, timer, 404, "Workflow not found");
+      return failResponse(workflowId, timer, HttpStatus.NOT_FOUND, "Workflow not found");
     }
 
     // Validate API key - must belong to the workflow owner
@@ -221,7 +223,7 @@ export async function POST(
       return failResponse(
         workflowId,
         timer,
-        apiKeyValidation.statusCode ?? 401,
+        apiKeyValidation.statusCode ?? HttpStatus.UNAUTHORIZED,
         apiKeyValidation.error ?? "Invalid API key",
         apiKeyValidation.errorBody
       );
@@ -234,7 +236,7 @@ export async function POST(
     });
 
     if (!access.hasFullAccess) {
-      return failResponse(workflowId, timer, 404, "Workflow not found");
+      return failResponse(workflowId, timer, HttpStatus.NOT_FOUND, "Workflow not found");
     }
 
     // Verify this is a webhook-triggered workflow
@@ -275,13 +277,13 @@ export async function POST(
       await recordWebhookMetrics({
         workflowId,
         durationMs: timer(),
-        statusCode: 402,
+        statusCode: HttpStatus.PAYMENT_REQUIRED,
         error: FEATURE_UPGRADE_REQUIRED_ERROR,
         organizationId: workflow.organizationId,
       });
       const body = await featureGuard.response.json();
       return NextResponse.json(body, {
-        status: 402,
+        status: HttpStatus.PAYMENT_REQUIRED,
         headers: corsHeaders,
       });
     }
@@ -291,13 +293,13 @@ export async function POST(
       await recordWebhookMetrics({
         workflowId,
         durationMs: timer(),
-        statusCode: 429,
+        statusCode: HttpStatus.TOO_MANY_REQUESTS,
         error: EXECUTION_LIMIT_ERROR,
         organizationId: workflow.organizationId,
       });
       const body = await executionGuard.response.json();
       return NextResponse.json(body, {
-        status: 429,
+        status: HttpStatus.TOO_MANY_REQUESTS,
         headers: corsHeaders,
       });
     }
@@ -307,17 +309,26 @@ export async function POST(
       await recordWebhookMetrics({
         workflowId,
         durationMs: timer(),
-        statusCode: 429,
+        statusCode: HttpStatus.TOO_MANY_REQUESTS,
         error: "Too many concurrent workflow executions",
         organizationId: workflow.organizationId,
       });
-      return NextResponse.json(
+      const retryAfter = 30;
+      return applyRateLimitHeaders(
+        NextResponse.json(
+          {
+            error: "Too many concurrent workflow executions",
+            running: concurrencyCheck.running,
+            limit: concurrencyCheck.limit,
+          },
+          { status: HttpStatus.TOO_MANY_REQUESTS, headers: corsHeaders }
+        ),
         {
-          error: "Too many concurrent workflow executions",
-          running: concurrencyCheck.running,
           limit: concurrencyCheck.limit,
-        },
-        { status: 429, headers: { ...corsHeaders, "Retry-After": "30" } }
+          remaining: 0,
+          reset: Math.ceil(Date.now() / 1000) + retryAfter,
+          retryAfter,
+        }
       );
     }
 
@@ -383,7 +394,7 @@ export async function POST(
       workflowId,
       executionId: execution.id,
       durationMs: timer(),
-      statusCode: 200,
+      statusCode: HttpStatus.OK,
     });
 
     // Return immediately with the execution ID
@@ -400,6 +411,6 @@ export async function POST(
     const { workflowId } = await context.params;
     const message =
       error instanceof Error ? error.message : "Failed to execute workflow";
-    return failResponse(workflowId, timer, 500, message);
+    return failResponse(workflowId, timer, HttpStatus.INTERNAL_SERVER_ERROR, message);
   }
 }

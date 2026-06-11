@@ -1,12 +1,19 @@
+import { HttpStatus } from "@/lib/http-status";
 import "server-only";
 
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { directExecutions } from "@/lib/db/schema";
+import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { validateApiKey } from "../../_lib/auth";
 import { checkRateLimit } from "../../_lib/rate-limit";
 import type { ExecutionStatusResponse } from "../../_lib/types";
+
+// Seconds a client should wait before polling status again while the execution
+// is still in flight. Terminal executions return 0 to tell clients to stop.
+const POLL_INTERVAL_HINT_SECONDS = 2;
+const TERMINAL_STATUSES = new Set(["completed", "failed"]);
 
 export async function GET(
   request: Request,
@@ -14,14 +21,20 @@ export async function GET(
 ): Promise<NextResponse> {
   const apiKeyCtx = await validateApiKey(request);
   if (!apiKeyCtx) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: HttpStatus.UNAUTHORIZED }
+    );
   }
 
   const rateLimit = checkRateLimit(apiKeyCtx.apiKeyId);
   if (!rateLimit.allowed) {
-    return NextResponse.json(
-      { error: "Rate limit exceeded" },
-      { status: 429, headers: { "Retry-After": String(rateLimit.retryAfter) } }
+    return applyRateLimitHeaders(
+      NextResponse.json(
+        { error: "Rate limit exceeded" },
+        { status: HttpStatus.TOO_MANY_REQUESTS }
+      ),
+      rateLimit
     );
   }
 
@@ -41,7 +54,10 @@ export async function GET(
   const execution = executions[0];
 
   if (!execution) {
-    return NextResponse.json({ error: "Execution not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Execution not found" },
+      { status: HttpStatus.NOT_FOUND }
+    );
   }
 
   const output = execution.output as Record<string, unknown> | null;
@@ -63,5 +79,11 @@ export async function GET(
     completedAt: execution.completedAt?.toISOString() ?? null,
   };
 
-  return NextResponse.json(response);
+  const pollIntervalHint = TERMINAL_STATUSES.has(response.status)
+    ? 0
+    : POLL_INTERVAL_HINT_SECONDS;
+
+  return applyRateLimitHeaders(NextResponse.json(response), rateLimit, {
+    pollIntervalHint,
+  });
 }

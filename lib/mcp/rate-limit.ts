@@ -20,8 +20,14 @@ let maxWindowMs = WINDOW_MS;
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
 export type RateLimitResult =
-  | { allowed: true }
-  | { allowed: false; retryAfter: number };
+  | { allowed: true; limit: number; remaining: number; reset: number }
+  | {
+      allowed: false;
+      retryAfter: number;
+      limit: number;
+      remaining: number;
+      reset: number;
+    };
 
 export function checkMcpRateLimit(organizationId: string): RateLimitResult {
   const now = Date.now();
@@ -34,13 +40,25 @@ export function checkMcpRateLimit(organizationId: string): RateLimitResult {
     // Oldest timestamp in window determines when the first slot opens
     const oldestInWindow = recent[0];
     const retryAfter = Math.ceil((oldestInWindow + WINDOW_MS - now) / 1000);
-    return { allowed: false, retryAfter: Math.max(retryAfter, 1) };
+    return {
+      allowed: false,
+      retryAfter: Math.max(retryAfter, 1),
+      limit: LIMIT,
+      remaining: 0,
+      reset: Math.ceil((oldestInWindow + WINDOW_MS) / 1000),
+    };
   }
 
   recent.push(now);
   requestLog.set(organizationId, recent);
 
-  return { allowed: true };
+  const reset = Math.ceil((recent[0] + WINDOW_MS) / 1000);
+  return {
+    allowed: true,
+    limit: LIMIT,
+    remaining: LIMIT - recent.length,
+    reset,
+  };
 }
 
 export function checkIpRateLimit(
@@ -60,13 +78,20 @@ export function checkIpRateLimit(
   if (recent.length >= limit) {
     const oldestInWindow = recent[0];
     const retryAfter = Math.ceil((oldestInWindow + windowMs - now) / 1000);
-    return { allowed: false, retryAfter: Math.max(retryAfter, 1) };
+    return {
+      allowed: false,
+      retryAfter: Math.max(retryAfter, 1),
+      limit,
+      remaining: 0,
+      reset: Math.ceil((oldestInWindow + windowMs) / 1000),
+    };
   }
 
   recent.push(now);
   ipRequestLog.set(ip, recent);
 
-  return { allowed: true };
+  const reset = Math.ceil((recent[0] + windowMs) / 1000);
+  return { allowed: true, limit, remaining: limit - recent.length, reset };
 }
 
 export function getClientIp(request: Request): string {
