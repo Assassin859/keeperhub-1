@@ -38,6 +38,8 @@ describe("explorer", () => {
     explorerTxPath: "/tx/{hash}",
     explorerAddressPath: "/address/{address}",
     explorerContractPath: "/address/{address}#code",
+    backupExplorerApiType: null,
+    backupExplorerApiUrl: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -52,6 +54,8 @@ describe("explorer", () => {
     explorerTxPath: "/tx/{hash}",
     explorerAddressPath: "/address/{address}",
     explorerContractPath: "/address/{address}?tab=contract",
+    backupExplorerApiType: null,
+    backupExplorerApiUrl: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -66,6 +70,8 @@ describe("explorer", () => {
     explorerTxPath: "/tx/{hash}",
     explorerAddressPath: "/account/{address}",
     explorerContractPath: "/account/{address}#anchorProgramIDL",
+    backupExplorerApiType: null,
+    backupExplorerApiUrl: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
