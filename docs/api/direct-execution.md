@@ -19,7 +19,7 @@ See [Authentication](/api/authentication) for the full auth model and [API Keys]
 
 ## Rate Limits
 
-Direct execution requests are limited to 60 requests per minute per API key. When rate limited, the API returns a `429` status with a `Retry-After` header indicating seconds to wait.
+Direct execution requests are limited to 60 requests per minute per API key. Every response carries `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset` so you can pace requests; a `429` adds `Retry-After` with the seconds to wait. See [API errors](errors.md#rate-limit-headers) for the full header reference.
 
 ## Spending Caps
 
@@ -314,6 +314,8 @@ Check the status of a direct execution.
 - `running`: Currently executing
 - `completed`: Successfully completed
 - `failed`: Execution failed
+
+When polling this endpoint, honour the `X-Poll-Interval-Hint` response header instead of polling on a fixed timer: it gives the recommended number of seconds to wait before the next poll. A value of `0` means the execution has reached a terminal state (`completed` or `failed`) and you can stop polling.
 
 ## Error Responses
 

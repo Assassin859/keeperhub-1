@@ -72,6 +72,21 @@ Reference for API error codes and how to resolve them.
 |------|-------------|------------|
 | `RATE_LIMITED` | Too many requests | Wait and retry |
 
+#### Rate-limit headers
+
+Every response from a rate-limited endpoint (both success and `429`) carries the current limiter state, so clients can pace requests instead of guessing:
+
+| Header | Description |
+|--------|-------------|
+| `X-RateLimit-Limit` | Maximum requests allowed in the current window |
+| `X-RateLimit-Remaining` | Requests left in the current window |
+| `X-RateLimit-Reset` | Unix epoch (seconds) when the window frees a slot |
+| `Retry-After` | Seconds to wait before retrying (sent only on `429`) |
+
+Status and long-poll endpoints additionally return `X-Poll-Interval-Hint`: the server-recommended number of seconds to wait before polling again. A value of `0` means the resource has reached a terminal state and no further polling is needed.
+
+> Anti-abuse endpoints (for example password reset and MFA enrollment) intentionally omit `X-RateLimit-Remaining` so they don't disclose a caller's remaining attempt budget. They still send `Retry-After` on `429`.
+
 ## Retry Strategy
 
 For transient errors (5xx, rate limits), use exponential backoff:
