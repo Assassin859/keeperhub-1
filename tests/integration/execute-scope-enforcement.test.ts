@@ -94,8 +94,18 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
+vi.mock("@/lib/auth", () => ({
+  auth: { api: { getSession: vi.fn() } },
+}));
+
+vi.mock("@/lib/workflow/access", () => ({
+  getWorkflowAccess: vi.fn(),
+}));
+
 import { POST as transferPOST } from "@/app/api/execute/transfer/route";
+import { DELETE as executionsDELETE } from "@/app/api/workflows/[workflowId]/executions/route";
 import { POST as createPOST } from "@/app/api/workflows/create/route";
+import { POST as importPOST } from "@/app/api/workflows/import/route";
 
 function transferRequest(body: unknown): Request {
   return new Request("http://localhost:3000/api/execute/transfer", {
@@ -227,5 +237,97 @@ describe("A-03 scope enforcement — POST /api/workflows/create", () => {
     const body = await response.json();
     expect(response.status).not.toBe(403);
     expect(body.error).not.toBe("insufficient_scope");
+  });
+});
+
+function importRequest(body: unknown): Request {
+  return new Request("http://localhost:3000/api/workflows/import", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+describe("A-03 scope enforcement — POST /api/workflows/import", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("rejects a read-only OAuth token with 403 insufficient_scope", async () => {
+    mocks.getDualAuthContext.mockResolvedValue({
+      userId: "user_1",
+      organizationId: "org_1",
+      authMethod: "oauth",
+      apiKeyId: null,
+      scope: "mcp:read",
+    });
+
+    const response = await importPOST(importRequest({ version: 1 }));
+
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.error).toBe("insufficient_scope");
+    expect(body.required_scope).toBe("mcp:write");
+  });
+
+  it("allows a non-OAuth caller (scope undefined) past the guard", async () => {
+    mocks.getDualAuthContext.mockResolvedValue({
+      userId: "user_1",
+      organizationId: "org_1",
+      authMethod: "api_key",
+      apiKeyId: "key_test",
+    });
+
+    const response = await importPOST(importRequest({ version: 1 }));
+
+    const body = await response.json();
+    expect(response.status).not.toBe(403);
+    expect(body.error).not.toBe("insufficient_scope");
+  });
+});
+
+function executionsDeleteRequest(): Request {
+  return new Request("http://localhost:3000/api/workflows/wf_1/executions", {
+    method: "DELETE",
+  });
+}
+
+describe("A-03 scope enforcement — DELETE /api/workflows/[workflowId]/executions", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("rejects a read-only OAuth token with 403 insufficient_scope", async () => {
+    mocks.getDualAuthContext.mockResolvedValue({
+      userId: "user_1",
+      organizationId: "org_1",
+      authMethod: "oauth",
+      apiKeyId: null,
+      scope: "mcp:read",
+    });
+
+    const response = await executionsDELETE(executionsDeleteRequest(), {
+      params: Promise.resolve({ workflowId: "wf_1" }),
+    });
+
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.error).toBe("insufficient_scope");
+    expect(body.required_scope).toBe("mcp:write");
+  });
+
+  it("allows a non-OAuth caller (scope undefined) past the guard", async () => {
+    mocks.getDualAuthContext.mockResolvedValue({
+      userId: "user_1",
+      organizationId: "org_1",
+      authMethod: "api_key",
+      apiKeyId: "key_test",
+    });
+
+    const response = await executionsDELETE(executionsDeleteRequest(), {
+      params: Promise.resolve({ workflowId: "wf_1" }),
+    });
+
+    expect(response.status).not.toBe(403);
   });
 });
