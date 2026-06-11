@@ -137,3 +137,29 @@ export function getRequiredScopeForTool(toolName: string): OAuthScope {
   }
   return SCOPE_MCP_ADMIN;
 }
+
+const SCOPE_RANK: Record<OAuthScope, number> = {
+  [SCOPE_MCP_READ]: 1,
+  [SCOPE_MCP_WRITE]: 2,
+  [SCOPE_MCP_ADMIN]: 3,
+};
+
+/**
+ * True when `grantedScope` satisfies the `required` scope level.
+ * `undefined` means no scope restriction (kh_ API key / cookie session /
+ * internal service) and always passes -- those callers are intentionally
+ * full-access. An empty or all-invalid scope string fails for every level
+ * (matches isToolAllowed("") === false). Only OAuth Bearer tokens are gated.
+ */
+export function scopeSatisfies(
+  grantedScope: string | undefined,
+  required: OAuthScope
+): boolean {
+  if (grantedScope === undefined) {
+    return true;
+  }
+  const requiredRank = SCOPE_RANK[required];
+  return parseScopes(grantedScope).some(
+    (s) => isScopeValid(s) && SCOPE_RANK[s as OAuthScope] >= requiredRank
+  );
+}

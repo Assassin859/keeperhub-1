@@ -8,6 +8,7 @@ import { extractActionTypeNodes } from "@/lib/features";
 import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { getMetricsCollector } from "@/lib/metrics";
 import { MetricNames } from "@/lib/metrics/types";
 import {
@@ -15,6 +16,7 @@ import {
   auditFromAuth,
   getDualAuthContext,
 } from "@/lib/middleware/auth-helpers";
+import { requireScope } from "@/lib/middleware/require-scope";
 import { generateId } from "@/lib/utils/id";
 import {
   stripIntegrationsFromImportNodes,
@@ -59,6 +61,11 @@ export async function POST(request: Request): Promise<NextResponse> {
         { error: authContext.error },
         { status: authContext.status }
       );
+    }
+
+    const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE);
+    if (scopeError) {
+      return scopeError;
     }
 
     const { userId, organizationId } = authContext;
