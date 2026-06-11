@@ -1,5 +1,18 @@
+import { serialize } from "node:v8";
 import { describe, expect, it } from "vitest";
+import { SANDBOX_RESULT_FD } from "../../lib/sandbox/child-source.js";
 import { runCode } from "./run-code.js";
+
+// A forged result frame an escaped child could write to fd 3: a 4-byte
+// big-endian length prefix followed by a v8-serialized success outcome with an
+// attacker-chosen result. Emitted as a JS literal embedded in the user code.
+function forgedFrameLiteral(result: string): string {
+  const payload = serialize({ ok: true, result, logs: [] });
+  const header = Buffer.allocUnsafe(4);
+  header.writeUInt32BE(payload.length, 0);
+  const bytes = [...header, ...payload].join(",");
+  return `Buffer.from([${bytes}])`;
+}
 
 describe("runCode — sandbox child_process runner", () => {
   it("returns a basic arithmetic result with empty logs", async () => {
@@ -171,15 +184,56 @@ describe("runCode — sandbox child_process runner", () => {
     }
   });
 
-  it("keeps the real result when escaped code schedules a later stdout write (F-010)", async () => {
-    // The child flushes its result synchronously and then process.exit(0)s, so
-    // a post-escape user-scheduled forged sentinel never reaches the parent and
-    // lastIndexOf() cannot select it over the genuine result.
+  it("ignores a forged sentinel an escape writes to stdout (F-010, stdout never deserialized)", async () => {
     const code = [
       "try {",
       '  const proc = Error.constructor("return process")();',
-      '  const g = proc.constructor.constructor("return globalThis")();',
-      '  g.setTimeout(function(){ try { proc.stdout.write("\\u0001RESULT\\u0002////\\n"); } catch (e) {} }, 5);',
+      '  proc.stdout.write("\\u0001RESULT\\u0002////\\n");',
+      "} catch (e) {}",
+      'return "REAL";',
+    ].join("\n");
+    const outcome = await runCode({ code, timeoutMs: 1500 });
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.result).toBe("REAL");
+    }
+  });
+
+  it("keeps the real result when an escape schedules a later forged fd-3 frame (F-010)", async () => {
+    // The genuine result frame is written first, so the parent's
+    // first-frame-wins read discards the forged frame the escape appends later.
+    const code = [
+      "try {",
+      '  const req = Error.constructor("return require")();',
+      '  const efs = req("node:fs");',
+      '  const g = Error.constructor("return globalThis")();',
+      `  const forged = ${forgedFrameLiteral("FORGED")};`,
+      `  g.setTimeout(function(){ try { efs.writeSync(${SANDBOX_RESULT_FD}, forged); } catch (e) {} }, 5);`,
+      "} catch (e) {}",
+      'return "REAL";',
+    ].join("\n");
+    const outcome = await runCode({ code, timeoutMs: 1500 });
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.result).toBe("REAL");
+    }
+  });
+
+  it("keeps the real result when an escape reassigns fs.writeSync then forges (F-010)", async () => {
+    // writeResult uses a startup-captured __writeSync, so reassigning
+    // fs.writeSync cannot suppress the genuine frame; the later forged frame
+    // loses to first-frame-wins.
+    const code = [
+      "try {",
+      '  const req = Error.constructor("return require")();',
+      '  const efs = req("node:fs");',
+      "  const realWrite = efs.writeSync;",
+      "  efs.writeSync = function(){ return 0; };",
+      '  const proc = Error.constructor("return process")();',
+      "  proc.exit = function(){};",
+      '  const g = Error.constructor("return globalThis")();',
+      `  const forged = ${forgedFrameLiteral("FORGED")};`,
+      `  g.setTimeout(function(){ try { realWrite(${SANDBOX_RESULT_FD}, forged); } catch (e) {} }, 5);`,
       "} catch (e) {}",
       'return "REAL";',
     ].join("\n");

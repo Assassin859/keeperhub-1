@@ -34,12 +34,110 @@
 import blocklist from "../ssrf-blocklist.json" with { type: "json" };
 
 /**
- * Byte-sequence that prefixes the grandchild's final v8-serialized result
- * on stdout. The parent uses `lastIndexOf(sentinel)` to locate the real
- * result even if user code writes arbitrary bytes to stdout via a sandbox
- * escape — stray writes before the sentinel are ignored.
+ * F-010: the grandchild returns its v8-serialized result on a DEDICATED pipe
+ * (fd 3), not stdout. The result is a single length-prefixed frame
+ * (4-byte big-endian byte count, then the raw v8 bytes) and the parent
+ * accepts only the FIRST complete frame.
+ *
+ * Why this shape:
+ *   - stdout (fd 1) is left purely user-facing; nothing written there is
+ *     ever deserialized, so a sandbox escape that writes arbitrary bytes to
+ *     stdout can no longer masquerade as a result (the old design scanned
+ *     stdout for a 6-byte sentinel via lastIndexOf, which an escaped child
+ *     defeated by appending a later sentinel).
+ *   - First-frame-wins means a post-escape, user-scheduled write to fd 3
+ *     loses to the genuine frame the child emits first. The genuine write
+ *     goes through a fs.writeSync reference captured at child startup
+ *     (before any user code runs), so monkeypatching fs.writeSync cannot
+ *     suppress it.
+ *
+ * Residual (accepted, documented on the PR): a FULLY-escaped child can write
+ * a forged frame to fd 3 synchronously, BEFORE the genuine result is
+ * produced, occupying frame #0. Closing that completely would require the
+ * parent to stop v8.deserialize-ing untrusted bytes at all, which drops
+ * structured-clone fidelity (BigInt/Map/Set/Date) -- a separate product
+ * decision. The vector is gated behind a vm escape; the child is
+ * env-scrubbed and NetworkPolicy-isolated.
  */
-export const SANDBOX_RESULT_SENTINEL = "RESULT";
+export const SANDBOX_RESULT_FD = 3;
+
+/** Width of the big-endian length prefix on the fd-3 result frame. */
+const SANDBOX_RESULT_HEADER_BYTES = 4;
+
+/**
+ * Upper bound on the declared frame length the parent will buffer. Checked
+ * against the length prefix before any payload bytes are accumulated, so a
+ * malicious child cannot pin parent memory by declaring a huge frame. The
+ * child process is itself memory-bounded, so legitimate results never
+ * approach this; it is a denial-of-service backstop, not a product limit.
+ */
+export const SANDBOX_RESULT_MAX_BYTES = 96 * 1024 * 1024;
+
+export type SandboxResultReader = {
+  /** Feed a chunk from the parent's fd-3 stream. Chunks after the first
+   * complete frame are ignored (first-frame-wins). */
+  push: (chunk: Buffer) => void;
+  /** The first complete frame's v8 bytes, or null until one is complete. */
+  readonly frame: Buffer | null;
+  /** True once the first frame is complete or the stream is known-malformed. */
+  readonly done: boolean;
+  /** Set when the declared length exceeds SANDBOX_RESULT_MAX_BYTES. */
+  readonly error: string | null;
+};
+
+/**
+ * Streaming reader for the fd-3 result frame. The parent attaches it to the
+ * child's fd-3 pipe and resolves as soon as `done` is true with a non-null
+ * `frame`. Only the first length-prefixed frame is read; any trailing bytes
+ * (e.g. a forged frame a sandbox escape appends later) are discarded.
+ */
+export function createSandboxResultReader(
+  maxBytes: number = SANDBOX_RESULT_MAX_BYTES
+): SandboxResultReader {
+  let chunks: Buffer[] = [];
+  let size = 0;
+  let frame: Buffer | null = null;
+  let done = false;
+  let error: string | null = null;
+
+  return {
+    push(chunk: Buffer): void {
+      if (done) {
+        return;
+      }
+      chunks.push(chunk);
+      size += chunk.length;
+      if (size < SANDBOX_RESULT_HEADER_BYTES) {
+        return;
+      }
+      const buf =
+        chunks.length === 1
+          ? (chunks[0] as Buffer)
+          : Buffer.concat(chunks, size);
+      chunks = [buf];
+      const declared = buf.readUInt32BE(0);
+      if (declared > maxBytes) {
+        error = `Sandbox result exceeds maximum size (${declared} > ${maxBytes} bytes)`;
+        done = true;
+        return;
+      }
+      const total = SANDBOX_RESULT_HEADER_BYTES + declared;
+      if (buf.length >= total) {
+        frame = buf.subarray(SANDBOX_RESULT_HEADER_BYTES, total);
+        done = true;
+      }
+    },
+    get frame(): Buffer | null {
+      return frame;
+    },
+    get done(): boolean {
+      return done;
+    },
+    get error(): string | null {
+      return error;
+    },
+  };
+}
 
 /**
  * JavaScript source string for the sandbox grandchild. Passed verbatim to
@@ -53,7 +151,8 @@ export const SANDBOX_RESULT_SENTINEL = "RESULT";
  *     lib/safe-fetch.ts from KEEP-314)
  *   - Apply a wall-clock timeout (beyond the vm's sync CPU timeout) that
  *     catches never-settling user promises
- *   - Write a sentinel-prefixed, v8-serialized outcome to stdout
+ *   - Write a length-prefixed, v8-serialized outcome to the dedicated
+ *     result pipe (fd SANDBOX_RESULT_FD), leaving stdout user-facing
  */
 export const SANDBOX_CHILD_SOURCE = `
 "use strict";
@@ -62,6 +161,16 @@ const v8 = require("node:v8");
 const fs = require("node:fs");
 const dnsPromises = require("node:dns").promises;
 const { BlockList, isIP } = require("node:net");
+
+// Captured BEFORE any user code runs so the result frame is written through a
+// reference a sandbox escape cannot monkeypatch. The genuine result therefore
+// reaches fd ${SANDBOX_RESULT_FD} first even if escaped user code reassigns
+// fs.writeSync / process.exit; the parent's first-frame-wins read then ignores
+// any later forged frame (F-010).
+const RESULT_FD = ${SANDBOX_RESULT_FD};
+const RESULT_HEADER_BYTES = ${SANDBOX_RESULT_HEADER_BYTES};
+const __writeSync = fs.writeSync.bind(fs);
+const __exit = process.exit.bind(process);
 
 const MAX_LOG_ENTRIES = 200;
 
@@ -525,28 +634,32 @@ function run(input) {
 function writeResult(message) {
   let payload;
   try {
-    payload = v8.serialize(message).toString("base64");
+    payload = v8.serialize(message);
   } catch (cloneErr) {
-    payload = v8
-      .serialize({
-        ok: false,
-        errorMessage:
-          "Result is not serializable: " +
-          (cloneErr && cloneErr.message
-            ? cloneErr.message
-            : String(cloneErr)),
-        errorStack: undefined,
-        logs: [],
-      })
-      .toString("base64");
+    payload = v8.serialize({
+      ok: false,
+      errorMessage:
+        "Result is not serializable: " +
+        (cloneErr && cloneErr.message
+          ? cloneErr.message
+          : String(cloneErr)),
+      errorStack: undefined,
+      logs: [],
+    });
   }
-  // Prefix with sentinel so the parent can ignore stray writes from user code
-  // that reaches process.stdout via a sandbox escape (F-010).
-  const out = Buffer.from("\\x01RESULT\\x02" + payload + "\\n", "utf8");
+  // F-010: emit the result as a single length-prefixed frame on the dedicated
+  // result pipe (fd RESULT_FD), NOT on stdout. The 4-byte big-endian length
+  // lets the parent read exactly one frame and ignore anything appended after
+  // it, and stdout stays purely user-facing (never deserialized). Use the
+  // startup-captured __writeSync so escaped user code that reassigned
+  // fs.writeSync cannot suppress the genuine frame.
+  const header = Buffer.allocUnsafe(RESULT_HEADER_BYTES);
+  header.writeUInt32BE(payload.length, 0);
+  const out = Buffer.concat([header, payload]);
   let written = 0;
   while (written < out.length) {
     try {
-      written += fs.writeSync(1, out, written, out.length - written);
+      written += __writeSync(RESULT_FD, out, written, out.length - written);
     } catch (writeErr) {
       if (writeErr && writeErr.code === "EAGAIN") {
         continue;
@@ -554,10 +667,10 @@ function writeResult(message) {
       break;
     }
   }
-  // Hard-exit immediately: once the real result is on the wire, give no
-  // event-loop turn in which a post-escape user-scheduled callback could emit
-  // a second, later sentinel that the parent's lastIndexOf() would select.
-  process.exit(0);
+  // Hard-exit through the captured reference so a lingering escaped child that
+  // reassigned process.exit is still reaped promptly. Correctness does not
+  // depend on this: the parent already took the first frame above.
+  __exit(0);
 }
 
 let stdinBuf = "";

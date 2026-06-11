@@ -2,14 +2,16 @@ import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { deserialize } from "node:v8";
+import { deserialize, serialize } from "node:v8";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
 import {
+  createSandboxResultReader,
   SANDBOX_CHILD_SOURCE,
-  SANDBOX_RESULT_SENTINEL,
+  SANDBOX_RESULT_FD,
+  SANDBOX_RESULT_MAX_BYTES,
 } from "@/lib/sandbox/child-source";
 import {
   SSRF_BLOCKED_HOST_EXACT,
@@ -114,21 +116,25 @@ type SandboxOutcome =
       logs: unknown[];
     };
 
-function parseChildOutput(stdout: string): SandboxOutcome {
-  const idx = stdout.lastIndexOf(SANDBOX_RESULT_SENTINEL);
-  if (idx === -1) {
-    return { ok: false, errorMessage: "no sentinel in stdout", logs: [] };
+function outcomeFromReader(
+  reader: ReturnType<typeof createSandboxResultReader>
+): SandboxOutcome {
+  if (reader.error) {
+    return { ok: false, errorMessage: reader.error, logs: [] };
   }
-  const newlineIdx = stdout.indexOf("\n", idx);
-  const end = newlineIdx === -1 ? stdout.length : newlineIdx;
-  const base64 = stdout.slice(idx + SANDBOX_RESULT_SENTINEL.length, end).trim();
+  if (!reader.frame) {
+    return { ok: false, errorMessage: "no result frame on fd 3", logs: [] };
+  }
   try {
-    return deserialize(Buffer.from(base64, "base64")) as SandboxOutcome;
+    return deserialize(reader.frame) as SandboxOutcome;
   } catch (_err) {
     return { ok: false, errorMessage: "malformed v8 payload", logs: [] };
   }
 }
 
+// Mirrors the production parent (sandbox/src/run-code.ts): spawn with the
+// dedicated fd-3 result channel, read the first length-prefixed frame, and
+// never deserialize stdout.
 async function runSandboxed(
   userCode: string,
   timeoutMs = 3000,
@@ -136,9 +142,9 @@ async function runSandboxed(
 ): Promise<SandboxOutcome> {
   return await new Promise<SandboxOutcome>((resolve) => {
     const child = spawn(process.execPath, ["-e", source], {
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe", "pipe"],
     });
-    let stdout = "";
+    const reader = createSandboxResultReader();
     let settled = false;
 
     function finish(outcome: SandboxOutcome): void {
@@ -161,15 +167,22 @@ async function runSandboxed(
       finish({ ok: false, errorMessage: "harness timeout", logs: [] });
     }, timeoutMs + 3000);
 
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      stdout += chunk;
-    });
+    child.stdout.resume();
+    child.stderr.resume();
+    const resultStream = child.stdio[SANDBOX_RESULT_FD];
+    if (resultStream && "on" in resultStream) {
+      resultStream.on("data", (chunk: Buffer) => {
+        reader.push(chunk);
+        if (reader.done) {
+          finish(outcomeFromReader(reader));
+        }
+      });
+    }
     child.on("error", (err: Error) => {
       finish({ ok: false, errorMessage: err.message, logs: [] });
     });
     child.on("close", () => {
-      finish(parseChildOutput(stdout));
+      finish(outcomeFromReader(reader));
     });
 
     try {
@@ -434,29 +447,38 @@ describe("sandbox grandchild redirect following", () => {
   });
 }, 30_000);
 
-// F-010 mitigation: the grandchild must flush its result via a synchronous
-// fd-1 write and then process.exit(0) immediately, so a post-escape
-// user-scheduled stdout write cannot emit a second, later sentinel that the
-// parent's lastIndexOf() would otherwise select as the authoritative result.
-describe("sandbox grandchild flushes the result then hard-exits", () => {
-  it("writeResult writes the result synchronously and then hard-exits", () => {
-    expect(SANDBOX_CHILD_SOURCE).toContain("fs.writeSync(1");
-    expect(SANDBOX_CHILD_SOURCE).toContain("process.exit(0)");
+// Helper: a forged result frame an escaped child could write to fd 3 — a
+// 4-byte big-endian length prefix followed by a v8-serialized success outcome
+// carrying an attacker-chosen result. Used by the forgery tests below to prove
+// the parent's first-frame-wins read rejects it.
+function forgedFrameLiteral(result: string): string {
+  const payload = serialize({ ok: true, result, logs: [] });
+  const header = Buffer.allocUnsafe(4);
+  header.writeUInt32BE(payload.length, 0);
+  const bytes = [...header, ...payload].join(",");
+  return `Buffer.from([${bytes}])`;
+}
+
+// F-010 mitigation: the result travels on the dedicated fd-3 channel as a
+// length-prefixed frame the parent reads first-frame-wins, and stdout is never
+// deserialized. These tests prove a sandbox escape cannot forge a result by
+// (a) writing stdout, (b) appending a later fd-3 frame, (c) reassigning
+// process.exit, or (d) reassigning fs.writeSync.
+describe("sandbox grandchild result channel resists forgery (F-010)", () => {
+  it("writes the result frame to the dedicated fd via a captured writeSync, then captured exit", () => {
+    expect(SANDBOX_CHILD_SOURCE).toContain("const __writeSync = fs.writeSync");
+    expect(SANDBOX_CHILD_SOURCE).toContain("const __exit = process.exit");
+    expect(SANDBOX_CHILD_SOURCE).toContain("__writeSync(RESULT_FD");
+    expect(SANDBOX_CHILD_SOURCE).toContain("__exit(0)");
+    // The result must NOT be written to stdout (fd 1) any more.
+    expect(SANDBOX_CHILD_SOURCE).not.toContain("writeSync(1");
   });
 
-  it("keeps the real result even when escaped code schedules a post-result stdout write", async () => {
-    // Reach the host process via the canonical escape (proven reachable by
-    // sandbox/src/run-code.test.ts), reach the host global for a real timer,
-    // and schedule a forged sentinel for AFTER the real result. With
-    // process.exit(0) in writeResult the child dies first, so the forged bytes
-    // never reach the parent and lastIndexOf() selects the real result. The
-    // primitives are wrapped in try/catch so the test is never flaky if one is
-    // unavailable; it then simply returns the real result.
+  it("ignores a forged sentinel an escape writes to stdout (stdout is never deserialized)", async () => {
     const code = [
       "try {",
       '  const proc = Error.constructor("return process")();',
-      '  const g = proc.constructor.constructor("return globalThis")();',
-      '  g.setTimeout(function(){ try { proc.stdout.write("\\u0001RESULT\\u0002////\\n"); } catch (e) {} }, 5);',
+      '  proc.stdout.write("\\u0001RESULT\\u0002////\\n");',
       "} catch (e) {}",
       'return "REAL";',
     ].join("\n");
@@ -464,6 +486,141 @@ describe("sandbox grandchild flushes the result then hard-exits", () => {
     expect(outcome.ok).toBe(true);
     if (outcome.ok) {
       expect(outcome.result).toBe("REAL");
+    }
+  });
+
+  it("keeps the real result when an escape schedules a LATER forged fd-3 frame", async () => {
+    // Reach host require for fs, schedule a forged frame on fd 3 for after the
+    // genuine result. The genuine frame is written first, so first-frame-wins
+    // discards the forgery.
+    const code = [
+      "try {",
+      '  const req = Error.constructor("return require")();',
+      '  const efs = req("node:fs");',
+      '  const g = Error.constructor("return globalThis")();',
+      `  const forged = ${forgedFrameLiteral("FORGED")};`,
+      `  g.setTimeout(function(){ try { efs.writeSync(${SANDBOX_RESULT_FD}, forged); } catch (e) {} }, 5);`,
+      "} catch (e) {}",
+      'return "REAL";',
+    ].join("\n");
+    const outcome = await runSandboxed(code, 1500);
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.result).toBe("REAL");
+    }
+  });
+
+  it("keeps the real result even when the escape disables process.exit before forging", async () => {
+    // Disabling process.exit cannot help: correctness rests on first-frame-wins,
+    // not on the hard-exit. The genuine frame is still written first.
+    const code = [
+      "try {",
+      '  const proc = Error.constructor("return process")();',
+      "  proc.exit = function(){};",
+      '  const req = Error.constructor("return require")();',
+      '  const efs = req("node:fs");',
+      '  const g = Error.constructor("return globalThis")();',
+      `  const forged = ${forgedFrameLiteral("FORGED")};`,
+      `  g.setTimeout(function(){ try { efs.writeSync(${SANDBOX_RESULT_FD}, forged); } catch (e) {} }, 5);`,
+      "} catch (e) {}",
+      'return "REAL";',
+    ].join("\n");
+    const outcome = await runSandboxed(code, 1500);
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.result).toBe("REAL");
+    }
+  });
+
+  it("keeps the real result even when the escape reassigns fs.writeSync before forging", async () => {
+    // The genuine writeResult uses the startup-captured __writeSync, so
+    // reassigning fs.writeSync cannot suppress the genuine frame; the later
+    // forged frame loses to first-frame-wins.
+    const code = [
+      "try {",
+      '  const req = Error.constructor("return require")();',
+      '  const efs = req("node:fs");',
+      "  const realWrite = efs.writeSync;",
+      "  efs.writeSync = function(){ return 0; };",
+      '  const g = Error.constructor("return globalThis")();',
+      `  const forged = ${forgedFrameLiteral("FORGED")};`,
+      `  g.setTimeout(function(){ try { realWrite(${SANDBOX_RESULT_FD}, forged); } catch (e) {} }, 5);`,
+      "} catch (e) {}",
+      'return "REAL";',
+    ].join("\n");
+    const outcome = await runSandboxed(code, 1500);
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.result).toBe("REAL");
+    }
+  });
+});
+
+// Unit coverage for the parent-side frame reader in isolation (no subprocess).
+describe("createSandboxResultReader first-frame-wins framing", () => {
+  function frame(value: unknown): Buffer {
+    const payload = serialize(value);
+    const header = Buffer.allocUnsafe(4);
+    header.writeUInt32BE(payload.length, 0);
+    return Buffer.concat([header, payload]);
+  }
+
+  it("returns the first frame and ignores trailing forged frames", () => {
+    const reader = createSandboxResultReader();
+    const genuine = frame({ ok: true, result: "REAL", logs: [] });
+    const forged = frame({ ok: true, result: "FORGED", logs: [] });
+    reader.push(Buffer.concat([genuine, forged]));
+    expect(reader.done).toBe(true);
+    expect(reader.error).toBeNull();
+    expect(reader.frame).not.toBeNull();
+    if (reader.frame) {
+      expect(deserialize(reader.frame)).toEqual({
+        ok: true,
+        result: "REAL",
+        logs: [],
+      });
+    }
+  });
+
+  it("reassembles a frame delivered across multiple chunks", () => {
+    const reader = createSandboxResultReader();
+    const buf = frame({ ok: true, result: 42, logs: [] });
+    for (const byte of buf) {
+      reader.push(Buffer.from([byte]));
+    }
+    expect(reader.done).toBe(true);
+    if (reader.frame) {
+      expect(deserialize(reader.frame)).toEqual({
+        ok: true,
+        result: 42,
+        logs: [],
+      });
+    }
+  });
+
+  it("rejects a frame whose declared length exceeds the cap", () => {
+    const reader = createSandboxResultReader();
+    const header = Buffer.allocUnsafe(4);
+    header.writeUInt32BE(SANDBOX_RESULT_MAX_BYTES + 1, 0);
+    reader.push(header);
+    expect(reader.done).toBe(true);
+    expect(reader.frame).toBeNull();
+    expect(reader.error).toMatch(/exceeds maximum size/);
+  });
+});
+
+// End-to-end framing across a real pipe: a result larger than the OS pipe
+// buffer (64 KiB on Linux) forces the child's synchronous fd-3 write to span
+// multiple drains and the parent's reader to reassemble multiple chunks,
+// exercising the EAGAIN-retry/backpressure path the in-memory reader test
+// cannot.
+describe("sandbox grandchild fd-3 framing survives large multi-chunk results", () => {
+  it("round-trips a result larger than the pipe buffer", async () => {
+    const outcome = await runSandboxed('return "x".repeat(300000);', 3000);
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(typeof outcome.result).toBe("string");
+      expect((outcome.result as string).length).toBe(300_000);
     }
   });
 });
