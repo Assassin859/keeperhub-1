@@ -20,24 +20,29 @@ import { sanitizeNextPath } from "@/lib/sanitize-next-path";
 const handlers = toNextJsHandler(auth);
 
 // Better Auth's built-in rate limiter answers 429s with its own non-standard
-// `X-Retry-After` header and no standard `Retry-After`. Mirror the value onto
-// `Retry-After` so API clients get the conventional header. These are
-// anti-abuse limits, so we deliberately do not expose remaining-budget headers.
+// `X-Retry-After` header and no standard `Retry-After`. Replace it with the
+// conventional `Retry-After` (RFC 9110) that HTTP clients understand, and drop
+// the non-standard header so the response carries exactly one retry signal.
+// These are anti-abuse limits, so we deliberately expose no remaining-budget.
 function normalizeRateLimitRetryAfter(res: Response): Response {
-  if (res.status !== 429 || res.headers.get("Retry-After")) {
+  if (res.status !== 429) {
     return res;
   }
   const retryAfter = res.headers.get("X-Retry-After");
   if (!retryAfter) {
     return res;
   }
+  const apply = (target: Response): Response => {
+    if (!target.headers.get("Retry-After")) {
+      target.headers.set("Retry-After", retryAfter);
+    }
+    target.headers.delete("X-Retry-After");
+    return target;
+  };
   try {
-    res.headers.set("Retry-After", retryAfter);
-    return res;
+    return apply(res);
   } catch {
-    const cloned = new Response(res.body, res);
-    cloned.headers.set("Retry-After", retryAfter);
-    return cloned;
+    return apply(new Response(res.body, res));
   }
 }
 
