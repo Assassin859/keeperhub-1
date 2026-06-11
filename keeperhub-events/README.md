@@ -61,7 +61,7 @@ The system is designed to run in multiple deployment modes: local development, D
    ```bash
    # Required variables:
    KEEPERHUB_API_URL=https://api.keeperhub.example.com
-   KEEPERHUB_API_KEY=your-api-key
+   INTERNAL_SERVICE_HMAC_SECRET=your-internal-service-hmac-secret
    JWT_TOKEN_USERNAME=your-username
    JWT_TOKEN_PASSWORD=your-password
    ETHERSCAN_API_KEY=your-etherscan-key
