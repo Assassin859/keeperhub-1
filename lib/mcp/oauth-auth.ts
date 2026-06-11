@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { jwtVerify, SignJWT } from "jose";
 import { db } from "@/lib/db";
 import { users } from "@/lib/db/schema";
+import { isUserMemberOfOrganization } from "@/lib/workflow/access";
 
 export type OAuthTokenPayload = {
   sub: string;
@@ -176,6 +177,27 @@ export async function authenticateOAuthToken(
         statusCode: 401,
       };
     }
+  }
+
+  // A long-lived access token only proves who the user was when it was
+  // minted, not that they still belong to the org it is scoped to. Re-check
+  // current membership on every use so a token keeps no authority after the
+  // user is removed from (or leaves) the organization.
+  if (!payload.sub) {
+    return {
+      authenticated: false,
+      error: "OAuth token missing subject claim",
+      statusCode: 401,
+    };
+  }
+
+  const isMember = await isUserMemberOfOrganization(payload.sub, payload.org);
+  if (!isMember) {
+    return {
+      authenticated: false,
+      error: "User is no longer a member of this organization",
+      statusCode: 401,
+    };
   }
 
   return {
