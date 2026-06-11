@@ -5,6 +5,11 @@ import { resolveAbi } from "@/lib/abi/cache";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import { simulateContractCall } from "@/lib/execute/simulate";
+import {
+  beginIdempotentFromRequest,
+  idempotencyEarlyResponse,
+  recordIdempotentResponse,
+} from "@/lib/idempotency";
 import { getErrorMessage } from "@/lib/utils";
 import { readContractCore } from "@/plugins/web3/steps/read-contract-core";
 import { writeContractCore } from "@/plugins/web3/steps/write-contract-core";
@@ -301,13 +306,30 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  return executeConditionalWrite(
-    action,
-    network,
-    writeAbiResult.abi,
-    apiKeyCtx.organizationId,
-    apiKeyCtx.apiKeyId,
-    body,
-    conditionResult
+  // Idempotency applies only to the broadcasting write path.
+  const idem = await beginIdempotentFromRequest({
+    request,
+    organizationId: apiKeyCtx.organizationId,
+    scope: "execute",
+    requestBody: body,
+  });
+  if (idem) {
+    const early = idempotencyEarlyResponse(idem);
+    if (early) {
+      return NextResponse.json(early.body, { status: early.status });
+    }
+  }
+
+  return recordIdempotentResponse(
+    idem,
+    await executeConditionalWrite(
+      action,
+      network,
+      writeAbiResult.abi,
+      apiKeyCtx.organizationId,
+      apiKeyCtx.apiKeyId,
+      body,
+      conditionResult
+    )
   );
 }

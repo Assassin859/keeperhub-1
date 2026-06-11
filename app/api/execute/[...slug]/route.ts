@@ -4,6 +4,11 @@ import "@/protocols";
 import { NextResponse } from "next/server";
 import { resolveAbi } from "@/lib/abi/cache";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
+import {
+  beginIdempotentFromRequest,
+  idempotencyEarlyResponse,
+  recordIdempotentResponse,
+} from "@/lib/idempotency";
 import { getProtocol } from "@/lib/protocol-registry";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { PLUGIN_STEP_IMPORTERS } from "@/lib/step-registry";
@@ -225,30 +230,45 @@ export async function POST(
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
+  const idem = await beginIdempotentFromRequest({
+    request,
+    organizationId: apiKeyCtx.organizationId,
+    scope: "execute",
+    requestBody: body,
+  });
+  if (idem) {
+    const early = idempotencyEarlyResponse(idem);
+    if (early) {
+      return NextResponse.json(early.body, { status: early.status });
+    }
+  }
+
   try {
     // Try protocol action first (covers all protocol read/write tools)
     const meta = resolveProtocolMeta({ _actionType: actionType });
     if (meta) {
-      return await executeProtocolAction(
-        actionType,
-        body,
-        apiKeyCtx.organizationId
+      return await recordIdempotentResponse(
+        idem,
+        await executeProtocolAction(actionType, body, apiKeyCtx.organizationId)
       );
     }
 
     // Non-protocol actions are not yet supported via direct execution
-    return NextResponse.json(
-      {
-        error: `Direct execution not supported for "${actionType}". Use workflow execution instead.`,
-        hint: "Create a workflow with this action and execute it via workflow_execute.",
-      },
-      { status: 501 }
+    return await recordIdempotentResponse(
+      idem,
+      NextResponse.json(
+        {
+          error: `Direct execution not supported for "${actionType}". Use workflow execution instead.`,
+          hint: "Create a workflow with this action and execute it via workflow_execute.",
+        },
+        { status: 501 }
+      )
     );
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
-    return NextResponse.json(
-      { success: false, error: message },
-      { status: 500 }
+    return await recordIdempotentResponse(
+      idem,
+      NextResponse.json({ success: false, error: message }, { status: 500 })
     );
   }
 }

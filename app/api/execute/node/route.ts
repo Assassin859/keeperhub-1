@@ -6,6 +6,11 @@ import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { db } from "@/lib/db";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import { integrations } from "@/lib/db/schema";
+import {
+  beginIdempotentFromRequest,
+  idempotencyEarlyResponse,
+  recordIdempotentResponse,
+} from "@/lib/idempotency";
 import { getErrorMessage } from "@/lib/utils";
 import type { ResolvedAction } from "../_lib/action-resolver";
 import { resolveAction } from "../_lib/action-resolver";
@@ -457,6 +462,20 @@ export async function POST(request: Request): Promise<NextResponse> {
     integrationId: effectiveIntegrationId,
   };
 
+  // Idempotency: reserve the key before any state-changing node execution.
+  const idem = await beginIdempotentFromRequest({
+    request,
+    organizationId: apiKeyCtx.organizationId,
+    scope: "execute",
+    requestBody: body,
+  });
+  if (idem) {
+    const early = idempotencyEarlyResponse(idem);
+    if (early) {
+      return NextResponse.json(early.body, { status: early.status });
+    }
+  }
+
   if (effectiveNetwork) {
     const walletError = await requireWallet(apiKeyCtx.organizationId);
     if (walletError) {
@@ -475,23 +494,32 @@ export async function POST(request: Request): Promise<NextResponse> {
       input: redactedInput,
     });
     if (!reserve.allowed) {
-      return NextResponse.json({ error: reserve.reason }, { status: 403 });
+      return recordIdempotentResponse(
+        idem,
+        NextResponse.json({ error: reserve.reason }, { status: 403 })
+      );
     }
 
-    return await executeNode(
-      validation.data,
-      resolved,
-      apiKeyCtx,
-      reserve.executionId,
-      resolvedRefs
+    return recordIdempotentResponse(
+      idem,
+      await executeNode(
+        validation.data,
+        resolved,
+        apiKeyCtx,
+        reserve.executionId,
+        resolvedRefs
+      )
     );
   }
 
-  return await executeNode(
-    validation.data,
-    resolved,
-    apiKeyCtx,
-    undefined,
-    resolvedRefs
+  return recordIdempotentResponse(
+    idem,
+    await executeNode(
+      validation.data,
+      resolved,
+      apiKeyCtx,
+      undefined,
+      resolvedRefs
+    )
   );
 }

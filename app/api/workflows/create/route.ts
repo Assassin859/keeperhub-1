@@ -8,6 +8,11 @@ import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { projects, tags, workflows } from "@/lib/db/schema";
 import { extractActionTypeNodes } from "@/lib/features";
 import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
+import {
+  beginIdempotentFromRequest,
+  idempotencyEarlyResponse,
+  recordIdempotentResponse,
+} from "@/lib/idempotency";
 import { generateId } from "@/lib/utils/id";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
 import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
@@ -107,6 +112,21 @@ export async function POST(request: Request) {
         { error: "Name, nodes, and edges are required" },
         { status: 400 }
       );
+    }
+
+    // Idempotency: a retry with the same key + body returns the original
+    // created workflow instead of creating a duplicate shell.
+    const idem = await beginIdempotentFromRequest({
+      request,
+      organizationId,
+      scope: "workflow-create",
+      requestBody: body,
+    });
+    if (idem) {
+      const early = idempotencyEarlyResponse(idem);
+      if (early) {
+        return NextResponse.json(early.body, { status: early.status });
+      }
     }
 
     // Ensure there are always default nodes (trigger + action) if nodes array is empty
@@ -215,11 +235,14 @@ export async function POST(request: Request) {
       })
       .returning();
 
-    return NextResponse.json({
-      ...newWorkflow,
-      createdAt: newWorkflow.createdAt.toISOString(),
-      updatedAt: newWorkflow.updatedAt.toISOString(),
-    });
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json({
+        ...newWorkflow,
+        createdAt: newWorkflow.createdAt.toISOString(),
+        updatedAt: newWorkflow.updatedAt.toISOString(),
+      })
+    );
   } catch (error) {
     logSystemError(ErrorCategory.DATABASE, "Failed to create workflow", error, {
       endpoint: "/api/workflows/create",

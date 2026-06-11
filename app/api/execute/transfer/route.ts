@@ -7,6 +7,11 @@ import {
   simulateNativeTransfer,
   simulateTokenTransfer,
 } from "@/lib/execute/simulate";
+import {
+  beginIdempotentFromRequest,
+  idempotencyEarlyResponse,
+  recordIdempotentResponse,
+} from "@/lib/idempotency";
 import { transferFundsCore } from "@/plugins/web3/steps/transfer-funds-core";
 import { transferTokenCore } from "@/plugins/web3/steps/transfer-token-core";
 import { validateApiKey } from "../_lib/auth";
@@ -126,6 +131,22 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
   }
 
+  // 5.6 Idempotency: an Idempotency-Key lets clients retry a broadcast safely.
+  // Reserve the key (per-org, across direct-execution endpoints) before doing
+  // any state-changing work; a replay/conflict/in-progress short-circuits here.
+  const idem = await beginIdempotentFromRequest({
+    request,
+    organizationId: apiKeyCtx.organizationId,
+    scope: "execute",
+    requestBody: body,
+  });
+  if (idem) {
+    const early = idempotencyEarlyResponse(idem);
+    if (early) {
+      return NextResponse.json(early.body, { status: early.status });
+    }
+  }
+
   // 6. Spending cap + create execution atomically
   const redactedInput = redactInput(body);
   const reserve = await checkAndReserveExecution({
@@ -136,7 +157,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     input: redactedInput,
   });
   if (!reserve.allowed) {
-    return NextResponse.json({ error: reserve.reason }, { status: 403 });
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json({ error: reserve.reason }, { status: 403 })
+    );
   }
   const { executionId } = reserve;
 
@@ -178,8 +202,11 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   // 10. Return
-  return NextResponse.json(
-    { executionId, status: result.success ? "completed" : "failed" },
-    { status: 202 }
+  return recordIdempotentResponse(
+    idem,
+    NextResponse.json(
+      { executionId, status: result.success ? "completed" : "failed" },
+      { status: 202 }
+    )
   );
 }

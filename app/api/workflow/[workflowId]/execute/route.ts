@@ -8,6 +8,11 @@ import { LabelKeys, MetricNames } from "@/lib/metrics/types";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit";
 import { db } from "@/lib/db";
+import {
+  beginIdempotentFromRequest,
+  idempotencyEarlyResponse,
+  recordIdempotentResponse,
+} from "@/lib/idempotency";
 import { withBackstopCapture } from "@/lib/security/backstop-capture";
 import {
   buildAttribution,
@@ -189,6 +194,21 @@ export async function POST(
     }
     const input = (body.input as Record<string, unknown> | undefined) ?? {};
 
+    // Idempotency: a retry with the same key + body replays the original
+    // executionId instead of starting the workflow again. Scoped per workflow.
+    const idem = await beginIdempotentFromRequest({
+      request,
+      organizationId: workflow.organizationId,
+      scope: `workflow-execute:${workflowId}`,
+      requestBody: body,
+    });
+    if (idem) {
+      const early = idempotencyEarlyResponse(idem);
+      if (early) {
+        return NextResponse.json(early.body, { status: early.status });
+      }
+    }
+
     // Resolve the (metric, audit) trigger labels in one place -- see
     // resolveTriggerLabels for the schedule/scheduled convergence and the
     // intentional triggerType-vs-triggerSource divergence. Extracted +
@@ -297,10 +317,13 @@ export async function POST(
     );
 
     // Return immediately with the execution ID
-    return NextResponse.json({
-      executionId,
-      status: "running",
-    });
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json({
+        executionId,
+        status: "running",
+      })
+    );
   } catch (error) {
     logSystemError(ErrorCategory.WORKFLOW_ENGINE, "Failed to start workflow execution", error, { endpoint: "/api/workflow/[workflowId]/execute", operation: "post" });
     return NextResponse.json(
