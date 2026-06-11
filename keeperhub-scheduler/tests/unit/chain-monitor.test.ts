@@ -894,17 +894,12 @@ describe("ChainMonitor", () => {
       // At least one new provider was created (the probe), and the active
       // provider should now be primary again.
       expect(providerInstances.length).toBeGreaterThan(startCount);
-      // Latest connected provider should be primary
-      const lastConnectedUrl = monitor.isAlive()
-        ? "wss://primary.test"
-        : "(monitor not alive)";
-      // Find the most recent provider matching the primary URL — that is the
-      // one we are now connected on.
-      const primaryProviders = providerInstances.filter(
-        (p) => p.url === "wss://primary.test",
-      );
-      expect(primaryProviders.length).toBeGreaterThanOrEqual(2);
-      expect(lastConnectedUrl).toBe("wss://primary.test");
+      // The monitor must have reconnected to primary, not stayed on fallback.
+      // This is the assertion that catches the probePrimary bug: previously,
+      // currentUrlIndex was never reset to 0, so reconnectWithBackoff always
+      // landed back on the fallback URL.
+      expect(latestProvider().url).toBe("wss://primary.test");
+      expect(monitor.isAlive()).toBe(true);
     });
 
     it("recycles the socket after SOCKET_MAX_AGE_MS elapses", async () => {
