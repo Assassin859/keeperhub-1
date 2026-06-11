@@ -61,9 +61,16 @@ export type RecordAuditEventArgs = {
   /** The kind of resource acted on, e.g. "api_key", "user", "workflow". */
   resourceType?: string | null;
   resourceId?: string | null;
-  /** Prior state for a mutation; omit for pure create events. */
+  /**
+   * Prior state for a mutation; omit for pure create events.
+   *
+   * REDACTION CONTRACT: `before`/`after` are deep-diffed and stored verbatim in
+   * the `diff` JSONB column with no field filtering. Pass only curated,
+   * non-secret fields (e.g. `{ name, keyPrefix }`) -- never a raw user row,
+   * credential, token, or request body.
+   */
   before?: unknown;
-  /** New state for a mutation; omit for pure delete events. */
+  /** New state for a mutation; omit for pure delete events. See `before` for the redaction contract. */
   after?: unknown;
   /** Request context (ip, userAgent) and any action-specific details. */
   metadata?: Record<string, unknown> | null;
