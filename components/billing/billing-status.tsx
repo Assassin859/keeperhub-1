@@ -414,11 +414,11 @@ function ExecutionUsageBar({
             </TooltipTrigger>
             <TooltipContent className="max-w-xs">
               <p>
-                Counts billable executions for the current calendar month (since
-                the 1st, UTC) and resets on the 1st. This is your plan quota
-                usage, so it differs from the Analytics page, which counts all
-                executions over the time range you select there (for example,
-                the last 30 days).
+                Counts billable executions for the current calendar month
+                (since the 1st, UTC) and resets on the 1st. This is your plan
+                quota usage, so it differs from the Analytics page, which counts
+                all executions over the time range you select there (for
+                example, the last 30 days).
               </p>
             </TooltipContent>
           </Tooltip>

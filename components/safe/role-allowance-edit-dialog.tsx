@@ -116,9 +116,7 @@ export function RoleAllowanceEditDialog({
 
   useEffect(() => {
     if (open) {
-      setAmountHuman(
-        weiToHuman(allowance.maxRefillWei, allowance.tokenDecimals)
-      );
+      setAmountHuman(weiToHuman(allowance.maxRefillWei, allowance.tokenDecimals));
       setPeriodSeconds(allowance.periodSeconds);
     }
   }, [open, allowance]);
@@ -213,8 +211,8 @@ export function RoleAllowanceEditDialog({
         <DialogHeader>
           <DialogTitle>Edit allowance</DialogTitle>
           <DialogDescription>
-            {getProtocolLabel(allowance.protocolSlug)} · {allowance.tokenSymbol}
-            . Change the cap or refill period for this bucket.
+            {getProtocolLabel(allowance.protocolSlug)} · {allowance.tokenSymbol}.
+            Change the cap or refill period for this bucket.
           </DialogDescription>
         </DialogHeader>
 

@@ -21,10 +21,7 @@ export async function POST(
 
     const result = await db.transaction(async (tx) => {
       const [existing] = await tx
-        .select({
-          id: organization.id,
-          deactivatedAt: organization.deactivatedAt,
-        })
+        .select({ id: organization.id, deactivatedAt: organization.deactivatedAt })
         .from(organization)
         .where(eq(organization.id, orgId))
         .limit(1);
@@ -57,30 +54,16 @@ export async function POST(
 
     if ("conflict" in result) {
       if (result.conflict === "not_found") {
-        return NextResponse.json(
-          { error: "Organization not found" },
-          { status: 404 }
-        );
+        return NextResponse.json({ error: "Organization not found" }, { status: 404 });
       }
-      return NextResponse.json(
-        { error: "Organization is not deactivated" },
-        { status: 409 }
-      );
+      return NextResponse.json({ error: "Organization is not deactivated" }, { status: 409 });
     }
 
     return NextResponse.json(result);
   } catch (error) {
-    logSystemError(
-      ErrorCategory.DATABASE,
-      "[Admin] Failed to activate org",
-      error,
-      {
-        orgId,
-      }
-    );
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    logSystemError(ErrorCategory.DATABASE, "[Admin] Failed to activate org", error, {
+      orgId,
+    });
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

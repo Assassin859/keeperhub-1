@@ -53,44 +53,21 @@ export function GET(request: Request): Response {
         name: "AI Workflow Generation",
         description:
           "Generate a new automation workflow from a natural-language goal, including triggers, conditional logic, and multi-step protocol actions across chains.",
-        tags: [
-          "ai",
-          "generation",
-          "natural-language",
-          "workflow",
-          "automation",
-        ],
+        tags: ["ai", "generation", "natural-language", "workflow", "automation"],
       },
       {
         id: "protocol_actions",
         name: "Protocol Actions",
         description:
           "Search and execute Web3 protocol actions (DeFi, governance, NFT, bridging, lending) across supported chains. Aave, Safe, swap routers, lending markets and more.",
-        tags: [
-          "defi",
-          "web3",
-          "protocol",
-          "onchain",
-          "aave",
-          "safe",
-          "lending",
-          "governance",
-        ],
+        tags: ["defi", "web3", "protocol", "onchain", "aave", "safe", "lending", "governance"],
       },
       {
         id: "onchain_execution",
         name: "Onchain Execution",
         description:
           "Execute token transfers, swaps, bridges, stakes, contract calls, and conditional check-and-execute transactions across Base, Ethereum, Tempo and other supported chains.",
-        tags: [
-          "transfer",
-          "swap",
-          "bridge",
-          "stake",
-          "contract",
-          "execution",
-          "onchain",
-        ],
+        tags: ["transfer", "swap", "bridge", "stake", "contract", "execution", "onchain"],
       },
       {
         id: "templates",

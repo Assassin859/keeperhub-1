@@ -962,6 +962,8 @@ export const explorerConfigs = pgTable(
     explorerUrl: text("explorer_url"), // e.g., "https://etherscan.io"
     explorerApiType: text("explorer_api_type"), // "etherscan" | "blockscout" | "solscan"
     explorerApiUrl: text("explorer_api_url"), // Base URL for API calls (ABI, balance, etc.)
+    backupExplorerApiType: text("backup_explorer_api_type"), // fallback API type if primary fails
+    backupExplorerApiUrl: text("backup_explorer_api_url"), // fallback API URL if primary fails
     explorerTxPath: text("explorer_tx_path").default("/tx/{hash}"),
     explorerAddressPath: text("explorer_address_path").default(
       "/address/{address}"

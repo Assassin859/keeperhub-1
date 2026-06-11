@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 // rely on. These assertions are deliberately strict.
 
 const MIGRATION_PATH = join(
-  import.meta.dirname,
+  __dirname,
   "../../drizzle/0086_drop_employee_only_signup_block.sql"
 );
 

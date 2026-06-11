@@ -49,15 +49,15 @@ beforeEach(() => {
 
 describe("isEvmAddress", () => {
   it("accepts a checksummed 42-char 0x address", () => {
-    expect(isEvmAddress("0xdfc24b077bc1425ad1dea75bcb6f8158e10df303")).toBe(
-      true
-    );
+    expect(
+      isEvmAddress("0xdfc24b077bc1425ad1dea75bcb6f8158e10df303")
+    ).toBe(true);
   });
 
   it("accepts uppercase hex", () => {
-    expect(isEvmAddress("0xDFC24B077BC1425AD1DEA75BCB6F8158E10DF303")).toBe(
-      true
-    );
+    expect(
+      isEvmAddress("0xDFC24B077BC1425AD1DEA75BCB6F8158E10DF303")
+    ).toBe(true);
   });
 
   it("rejects too-short, too-long, missing prefix, and non-hex inputs", () => {

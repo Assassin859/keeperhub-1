@@ -101,16 +101,22 @@ describe("Phase 50 — get_execution handler combines /status + /logs in one env
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = typeof input === "string" ? input : input.toString();
       if (url.endsWith("/status")) {
-        return new Response(JSON.stringify({ executionStatus: "completed" }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
+        return new Response(
+          JSON.stringify({ executionStatus: "completed" }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
       }
       if (url.includes("/logs")) {
-        return new Response(JSON.stringify({ logs: [{ nodeId: "n1" }] }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
+        return new Response(
+          JSON.stringify({ logs: [{ nodeId: "n1" }] }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
       }
       throw new Error(`Unexpected fetch URL: ${url}`);
     });
@@ -217,7 +223,9 @@ describe("Phase 50 — get_template and search_plugins are deprecated aliases (M
     registerTools(server, "http://localhost:3000", "Bearer test-token");
     const plug = tools.find((t) => t.name === "search_plugins");
     if (!plug) {
-      throw new Error("search_plugins not registered (must remain functional)");
+      throw new Error(
+        "search_plugins not registered (must remain functional)"
+      );
     }
     expect(plug.description.startsWith(DEPRECATED_PREFIX_PLUGINS)).toBe(true);
   });

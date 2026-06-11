@@ -374,9 +374,7 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
       );
       expect(response.status).toBe(403);
       const data = await response.json();
-      expect(data.error).toBe(
-        "You do not have permission to run this workflow"
-      );
+      expect(data.error).toBe("You do not have permission to run this workflow");
     });
   });
 

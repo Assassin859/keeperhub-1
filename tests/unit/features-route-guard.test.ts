@@ -97,9 +97,11 @@ describe("enforceWorkflowFeatures", () => {
     vi.mocked(isBillingEnabled).mockReturnValue(true);
     vi.mocked(getOrgPlan).mockResolvedValue("free");
 
-    const result = await enforceWorkflowFeatures([databaseQueryNode], "org_1", {
-      errorMessage: "Custom upgrade copy for this route",
-    });
+    const result = await enforceWorkflowFeatures(
+      [databaseQueryNode],
+      "org_1",
+      { errorMessage: "Custom upgrade copy for this route" }
+    );
 
     expect(result.blocked).toBe(true);
     if (!result.blocked) {

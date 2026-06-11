@@ -5,7 +5,7 @@ const TEST_USER_ID = "user-abc123";
 
 type MockUser = { id: string; deactivatedAt: Date | null } | undefined;
 
-let mockUserForSelect: MockUser;
+let mockUserForSelect: MockUser = undefined;
 let mockShouldThrow = false;
 
 vi.mock("@/lib/db", () => {
@@ -13,9 +13,7 @@ vi.mock("@/lib/db", () => {
     select: vi.fn(() => ({
       from: vi.fn(() => ({
         where: vi.fn(() => ({
-          limit: vi.fn(() =>
-            Promise.resolve(mockUserForSelect ? [mockUserForSelect] : [])
-          ),
+          limit: vi.fn(() => Promise.resolve(mockUserForSelect ? [mockUserForSelect] : [])),
         })),
       })),
     })),
@@ -55,13 +53,10 @@ import { POST } from "@/app/api/admin/users/[userId]/deactivate/route";
 function makeRequest(token?: string): Request {
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
-  return new Request(
-    "http://localhost/api/admin/users/user-abc123/deactivate",
-    {
-      method: "POST",
-      headers,
-    }
-  );
+  return new Request("http://localhost/api/admin/users/user-abc123/deactivate", {
+    method: "POST",
+    headers,
+  });
 }
 
 function makeContext(userId = TEST_USER_ID) {

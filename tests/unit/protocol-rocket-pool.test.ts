@@ -124,7 +124,9 @@ describe("Rocket Pool Protocol Definition", () => {
   });
 
   it("totalSupply has 1 output", () => {
-    const action = rocketPoolDef.actions.find((a) => a.slug === "total-supply");
+    const action = rocketPoolDef.actions.find(
+      (a) => a.slug === "total-supply"
+    );
     expect(action).toBeDefined();
     expect(action?.outputs).toHaveLength(1);
     const outputNames = action?.outputs?.map((o) => o.name);
