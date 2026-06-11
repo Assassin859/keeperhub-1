@@ -160,35 +160,19 @@ function normalizeBlockscoutTx(
   };
 }
 
-/**
- * Fetch transaction list for a contract address from the appropriate explorer
- *
- * @param config - Explorer configuration from database
- * @param contractAddress - Contract address to list transactions for
- * @param chainId - Chain ID (required for Etherscan v2)
- * @param startBlock - Start block number
- * @param endBlock - End block number
- * @param apiKey - Optional API key (required for Etherscan)
- */
-export async function fetchContractTransactions(
-  config: ExplorerConfig,
+async function fetchTransactionsFromProvider(
+  apiType: string,
+  apiUrl: string,
   contractAddress: string,
   chainId: number,
   startBlock: number,
   endBlock: number,
   apiKey?: string
 ): Promise<TransactionListResult> {
-  if (!(config.explorerApiUrl && config.explorerApiType)) {
-    return {
-      success: false,
-      error: "Explorer API not configured for this chain",
-    };
-  }
-
-  switch (config.explorerApiType) {
+  switch (apiType) {
     case "etherscan": {
       const result = await fetchEtherscanTransactions(
-        config.explorerApiUrl,
+        apiUrl,
         chainId,
         contractAddress,
         startBlock,
@@ -206,7 +190,7 @@ export async function fetchContractTransactions(
 
     case "blockscout": {
       const result = await fetchBlockscoutTransactions(
-        config.explorerApiUrl,
+        apiUrl,
         contractAddress,
         startBlock,
         endBlock
@@ -223,7 +207,69 @@ export async function fetchContractTransactions(
     default:
       return {
         success: false,
-        error: `Transaction listing not supported for explorer type: ${config.explorerApiType}`,
+        error: `Transaction listing not supported for explorer type: ${apiType}`,
       };
   }
+}
+
+/**
+ * Fetch transaction list for a contract address from the appropriate explorer.
+ * If the primary explorer API fails, falls back to the backup explorer API
+ * when one is configured on the chain's explorer config.
+ *
+ * @param config - Explorer configuration from database
+ * @param contractAddress - Contract address to list transactions for
+ * @param chainId - Chain ID (required for Etherscan v2)
+ * @param startBlock - Start block number
+ * @param endBlock - End block number
+ * @param apiKey - Optional API key (used for Etherscan primary and backup)
+ */
+export async function fetchContractTransactions(
+  config: ExplorerConfig,
+  contractAddress: string,
+  chainId: number,
+  startBlock: number,
+  endBlock: number,
+  apiKey?: string
+): Promise<TransactionListResult> {
+  if (!(config.explorerApiUrl && config.explorerApiType)) {
+    return {
+      success: false,
+      error: "Explorer API not configured for this chain",
+    };
+  }
+
+  const primaryResult = await fetchTransactionsFromProvider(
+    config.explorerApiType,
+    config.explorerApiUrl,
+    contractAddress,
+    chainId,
+    startBlock,
+    endBlock,
+    apiKey
+  );
+
+  if (primaryResult.success) {
+    return primaryResult;
+  }
+
+  if (!(config.backupExplorerApiUrl && config.backupExplorerApiType)) {
+    return primaryResult;
+  }
+
+  const backupResult = await fetchTransactionsFromProvider(
+    config.backupExplorerApiType,
+    config.backupExplorerApiUrl,
+    contractAddress,
+    chainId,
+    startBlock,
+    endBlock,
+    apiKey
+  );
+
+  if (backupResult.success) {
+    return backupResult;
+  }
+
+  return primaryResult;
 }
