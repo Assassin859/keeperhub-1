@@ -16,7 +16,10 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { agenticWallets } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { requireDualFactor } from "@/lib/mfa/dual-factor";
+import {
+  dualFactorErrorResponse,
+  requireDualFactor,
+} from "@/lib/mfa/dual-factor";
 import { requireMfaEnrolled } from "@/lib/middleware/owner-mfa-guard";
 
 export const dynamic = "force-dynamic";
@@ -84,10 +87,7 @@ export async function POST(
     headers: request.headers,
   });
   if (!dual.ok) {
-    return NextResponse.json(
-      { error: dual.error, code: dual.code },
-      { status: dual.status }
-    );
+    return dualFactorErrorResponse(dual);
   }
 
   const { id } = await params;

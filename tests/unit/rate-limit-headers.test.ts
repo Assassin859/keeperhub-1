@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { dualFactorErrorResponse } from "@/lib/mfa/dual-factor";
 import {
   applyRateLimitHeaders,
   rateLimitHeaders,
@@ -72,5 +73,34 @@ describe("applyRateLimitHeaders", () => {
     });
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(response.headers.get("Retry-After")).toBe("5");
+  });
+});
+
+describe("dualFactorErrorResponse", () => {
+  it("sets Retry-After on the rate-limit 429", async () => {
+    const res = dualFactorErrorResponse({
+      ok: false,
+      status: 429,
+      error: "Too many attempts. Wait and try again.",
+      code: "rate_limited",
+      retryAfter: 42,
+    });
+    expect(res.status).toBe(429);
+    expect(res.headers.get("Retry-After")).toBe("42");
+    expect(await res.json()).toEqual({
+      error: "Too many attempts. Wait and try again.",
+      code: "rate_limited",
+    });
+  });
+
+  it("does not set Retry-After on non-429 failures", () => {
+    const res = dualFactorErrorResponse({
+      ok: false,
+      status: 401,
+      error: "Invalid code",
+      code: "mfa_code_invalid",
+    });
+    expect(res.status).toBe(401);
+    expect(res.headers.get("Retry-After")).toBeNull();
   });
 });
