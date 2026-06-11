@@ -75,6 +75,10 @@ x-env-service-keys: &env_service_keys
   SCHEDULER_SERVICE_API_KEY: local-scheduler-key-for-dev
   MCP_SERVICE_API_KEY: local-mcp-key-for-dev
   EVENTS_SERVICE_API_KEY: local-events-key-for-dev
+  # Shared HMAC signing secret for internal service-to-service auth. Local-dev
+  # default (base64 of 32 bytes); the hmac-seed service inserts this same value
+  # into the internal_service_hmac_secrets store so signed requests verify.
+  INTERNAL_SERVICE_HMAC_SECRET: ${INTERNAL_SERVICE_HMAC_SECRET:-bG9jYWwtZGV2LWludGVybmFsLXNlcnZpY2UtaG1hYzA=}
 
 # -----------------------------------------------------------------------------
 # Services
@@ -345,27 +349,62 @@ services:
       - dev
 
   # ===========================================================================
+  # Internal-service HMAC secret seeder (one-shot)
+  # Ensures the schema exists (idempotent db:push) and inserts the shared HMAC
+  # signing secret under caller "*shared*" so locally-signed internal requests
+  # (reaper, execution-digest, executor, scheduler) verify against the app's
+  # DB-backed secret store. Re-runs are a no-op (duplicate insert is ignored).
+  # ===========================================================================
+  hmac-seed:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    env_file:
+      - .env
+    environment:
+      <<: *env_db_connection
+      INTERNAL_SERVICE_HMAC_SECRET: ${INTERNAL_SERVICE_HMAC_SECRET:-bG9jYWwtZGV2LWludGVybmFsLXNlcnZpY2UtaG1hYzA=}
+    volumes:
+      - .:/app
+      - /app/node_modules
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "pnpm db:push;
+      printf '%s' \"$$INTERNAL_SERVICE_HMAC_SECRET\" |
+      pnpm tsx scripts/seed-internal-service-hmac.ts || true"
+    profiles:
+      - dev
+      - minikube
+
+  # ===========================================================================
   # Reaper (stale execution cleanup)
   # Runs every 10 minutes to mark stuck workflow executions as timed out
   # ===========================================================================
   reaper:
-    image: curlimages/curl:latest
+    image: alpine:3.20
     container_name: keeperhub-reaper
     restart: unless-stopped
     environment:
-      SCHEDULER_SERVICE_API_KEY: ${KEEPERHUB_API_KEY:-local-scheduler-key-for-dev}
+      INTERNAL_SERVICE_HMAC_SECRET: ${INTERNAL_SERVICE_HMAC_SECRET:-bG9jYWwtZGV2LWludGVybmFsLXNlcnZpY2UtaG1hYzA=}
+    volumes:
+      - ./deploy/scripts:/scripts:ro
     depends_on:
       app-dev:
         condition: service_started
+      hmac-seed:
+        condition: service_completed_successfully
     command: |
-      sh -c 'while true; do
-        echo "[Reaper] Running at $$(date)"
-        curl -sS -f -H "X-Service-Key: $$SCHEDULER_SERVICE_API_KEY" \
-          http://app-dev:3000/api/internal/reaper || echo "[Reaper] Failed"
-        echo ""
-        echo "[Reaper] Sleeping 600s..."
-        sleep 600
-      done'
+      sh -c 'apk add --no-cache curl openssl >/dev/null;
+        while true; do
+          echo "[Reaper] Running at $$(date)"
+          sh /scripts/reaper.sh http://app-dev:3000/api/internal/reaper || echo "[Reaper] Failed"
+          echo ""
+          echo "[Reaper] Sleeping 600s..."
+          sleep 600
+        done'
     profiles:
       - dev
       - minikube
@@ -377,23 +416,27 @@ services:
   # than the real schedule only affects how soon a due digest is sent.
   # ===========================================================================
   execution-digest:
-    image: curlimages/curl:latest
+    image: alpine:3.20
     container_name: keeperhub-execution-digest
     restart: unless-stopped
     environment:
-      SCHEDULER_SERVICE_API_KEY: ${KEEPERHUB_API_KEY:-local-scheduler-key-for-dev}
+      INTERNAL_SERVICE_HMAC_SECRET: ${INTERNAL_SERVICE_HMAC_SECRET:-bG9jYWwtZGV2LWludGVybmFsLXNlcnZpY2UtaG1hYzA=}
+    volumes:
+      - ./deploy/scripts:/scripts:ro
     depends_on:
       app-dev:
         condition: service_started
+      hmac-seed:
+        condition: service_completed_successfully
     command: |
-      sh -c 'while true; do
-        echo "[ExecutionDigest] Running at $$(date)"
-        curl -sS -f -H "X-Service-Key: $$SCHEDULER_SERVICE_API_KEY" \
-          http://app-dev:3000/api/internal/execution-digest || echo "[ExecutionDigest] Failed"
-        echo ""
-        echo "[ExecutionDigest] Sleeping 3600s..."
-        sleep 3600
-      done'
+      sh -c 'apk add --no-cache curl openssl >/dev/null;
+        while true; do
+          echo "[ExecutionDigest] Running at $$(date)"
+          sh /scripts/digest-cron.sh http://app-dev:3000/api/internal/execution-digest || echo "[ExecutionDigest] Failed"
+          echo ""
+          echo "[ExecutionDigest] Sleeping 3600s..."
+          sleep 3600
+        done'
     profiles:
       - dev
       - minikube

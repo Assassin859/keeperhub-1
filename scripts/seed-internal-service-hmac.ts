@@ -22,7 +22,11 @@
 
 import { insertHmacSecret } from "@/lib/internal-service-hmac-store";
 
-const LOCAL_HOST_PATTERN = /^postgres(ql)?:\/\/[^@]+@(localhost|127\.0\.0\.1):/;
+// Allow the docker-compose service hostnames (db/postgres) in addition to
+// loopback, so the seed can run from inside the local dev stack. Mirrors the
+// host allowlist used by the dev-login bootstrap scripts.
+const LOCAL_HOST_PATTERN =
+  /^postgres(ql)?:\/\/[^@]+@(localhost|127\.0\.0\.1|db|postgres):/;
 
 function parseArgs(argv: string[]): { caller: string; version: number } {
   let caller = "*shared*";

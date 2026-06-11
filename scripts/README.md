@@ -80,8 +80,16 @@ The API also supports protocol-level featuring (e.g. featured workflows on a pro
 To feature a single workflow without editing the script:
 
 ```bash
-curl -X POST "https://app.keeperhub.com/api/hub/featured" \
+# The endpoint authenticates with an HMAC signature (X-KH-* headers), so sign
+# the request the same way feature-workflows.sh does.
+URL="https://app.keeperhub.com/api/hub/featured"
+BODY='{"workflowId": "<id>", "featured": true, "category": "Getting Started", "featuredOrder": 1}'
+TS=$(date +%s)
+BODY_DIGEST=$(printf '%s' "$BODY" | openssl dgst -sha256 | awk '{print $2}')
+SIG=$(printf '%s\n%s\n%s\n%s\n%s' POST /api/hub/featured hub "$BODY_DIGEST" "$TS" \
+  | openssl dgst -sha256 -hmac "$INTERNAL_SERVICE_HMAC_SECRET" | awk '{print $2}')
+curl -X POST "$URL" \
   -H "Content-Type: application/json" \
-  -H "X-Service-Key: $HUB_SERVICE_API_KEY" \
-  -d '{"workflowId": "<id>", "featured": true, "category": "Getting Started", "featuredOrder": 1}'
+  -H "X-KH-Caller: hub" -H "X-KH-Timestamp: $TS" -H "X-KH-Signature: $SIG" \
+  -d "$BODY"
 ```
