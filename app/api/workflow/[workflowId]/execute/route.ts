@@ -6,8 +6,10 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
 import { getMetricsCollector } from "@/lib/metrics";
 import { LabelKeys, MetricNames } from "@/lib/metrics/types";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
+import { requireScope } from "@/lib/middleware/require-scope";
 import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit";
 import { db } from "@/lib/db";
 import { withBackstopCapture } from "@/lib/security/backstop-capture";
@@ -81,6 +83,11 @@ export async function POST(
           { error: authContext.error },
           { status: authContext.status }
         );
+      }
+
+      const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE);
+      if (scopeError) {
+        return scopeError;
       }
 
       workflow = await db.query.workflows.findFirst({

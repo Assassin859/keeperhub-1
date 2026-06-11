@@ -2,6 +2,7 @@ import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { Box } from "lucide-react";
 import "@/protocols";
 import { db } from "@/lib/db";
+import { workflows } from "@/lib/db/schema";
 import {
   getRegisteredProtocols,
   type ProtocolActionInput,
@@ -9,7 +10,6 @@ import {
 } from "@/lib/protocol-registry";
 import type { IntegrationType } from "@/lib/types/integration";
 import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
-import { workflows } from "@/lib/db/schema";
 import {
   flattenConfigFields,
   getIntegration,

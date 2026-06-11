@@ -71,9 +71,9 @@ export function EnrollMfaForm({ next, mode }: Props): React.ReactElement {
         credentials: "include",
       });
       if (res.ok) {
-        const data = (await res.json().catch(() => null)) as
-          | { user?: unknown }
-          | null;
+        const data = (await res.json().catch(() => null)) as {
+          user?: unknown;
+        } | null;
         if (data?.user) {
           window.location.assign(target);
           return;

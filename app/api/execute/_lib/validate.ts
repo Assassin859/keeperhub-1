@@ -29,9 +29,7 @@ function hasChainInput(record: Record<string, unknown>): boolean {
   if (typeof record.chainId === "number") {
     return true;
   }
-  return (
-    isNonEmptyString(record.chainId) || isNonEmptyString(record.network)
-  );
+  return isNonEmptyString(record.chainId) || isNonEmptyString(record.network);
 }
 
 function chainFieldError(): ValidationResult {

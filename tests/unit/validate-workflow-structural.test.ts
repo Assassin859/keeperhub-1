@@ -1,14 +1,13 @@
 import { describe, expect, it } from "vitest";
-
+import {
+  type ValidatorWorkflow,
+  validateWorkflow,
+} from "@/lib/mcp/validate-workflow";
 import {
   SYSTEM_ACTIONS,
   TEMPLATE_SYNTAX,
   TRIGGERS,
 } from "@/lib/mcp/workflow-schema-constants";
-import {
-  type ValidatorWorkflow,
-  validateWorkflow,
-} from "@/lib/mcp/validate-workflow";
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -428,9 +427,7 @@ describe("validateWorkflow — unknown-output-mapping-node (VALID-03)", () => {
 
 describe("validateWorkflow — missing-write-action-for-write-workflow (VALID-04)", () => {
   it("errors when workflowType=write but no write-action node is present", () => {
-    const result = validateWorkflow(
-      makeWorkflow({ workflowType: "write" })
-    );
+    const result = validateWorkflow(makeWorkflow({ workflowType: "write" }));
     expect(result.valid).toBe(false);
     const err = result.errors.find(
       (e) => e.code === "missing-write-action-for-write-workflow"
@@ -500,10 +497,7 @@ describe("validateWorkflow — happy path", () => {
     const result = validateWorkflow(
       makeWorkflow({
         nodes: [triggerNode(), actionNode("a1"), actionNode("a2")],
-        edges: [
-          edge("e1", "trigger-1", "a1"),
-          edge("e2", "a1", "a2"),
-        ],
+        edges: [edge("e1", "trigger-1", "a1"), edge("e2", "a1", "a2")],
       })
     );
     expect(result.nodeCount).toBe(3);

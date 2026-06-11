@@ -5,9 +5,11 @@ import { streamText } from "ai";
 import { NextResponse } from "next/server";
 import { HttpStatus } from "@/lib/http-status";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { createTimer, getMetricsCollector } from "@/lib/metrics";
 import { MetricNames } from "@/lib/metrics/types";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import { requireScope } from "@/lib/middleware/require-scope";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { generateAIActionPrompts } from "@/plugins/registry";
 import {
@@ -344,6 +346,11 @@ export async function POST(request: Request) {
         { error: authContext.error },
         { status: authContext.status }
       );
+    }
+
+    const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE);
+    if (scopeError) {
+      return scopeError;
     }
 
     const rateLimit = checkAiGenerateRateLimit(

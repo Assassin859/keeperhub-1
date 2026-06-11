@@ -3,6 +3,7 @@ import { HttpStatus } from "@/lib/http-status";
 import { normalizeScope } from "@/lib/mcp/oauth-scopes";
 import { type OAuthClient, storeOAuthClient } from "@/lib/mcp/oauth-store";
 import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
+import { isAllowedRedirectUri } from "@/lib/mcp/redirect-uri";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 
 export const dynamic = "force-dynamic";
@@ -103,11 +104,11 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   for (const uri of redirect_uris) {
-    try {
-      new URL(uri);
-    } catch {
+    if (!isAllowedRedirectUri(uri)) {
       return Response.json(
-        { error: `Invalid redirect_uri: ${uri}` },
+        {
+          error: `Invalid redirect_uri: ${uri}. Must be https, or http on a loopback host (localhost, 127.0.0.1, [::1]).`,
+        },
         { status: HttpStatus.BAD_REQUEST }
       );
     }

@@ -7,6 +7,7 @@ import {
   getOAuthClient,
   storeAuthCode,
 } from "@/lib/mcp/oauth-store";
+import { isAllowedRedirectUri } from "@/lib/mcp/redirect-uri";
 import { getOrgContext } from "@/lib/middleware/org-context";
 
 type AuthorizeSearchParams = {
@@ -46,7 +47,12 @@ async function handleApprove(formData: FormData): Promise<void> {
   const codeChallengeMethod = formData.get("code_challenge_method") as string;
 
   const client = await getOAuthClient(clientId);
-  if (!client?.redirectUris.includes(redirectUri)) {
+  if (
+    !(
+      client?.redirectUris.includes(redirectUri) &&
+      isAllowedRedirectUri(redirectUri)
+    )
+  ) {
     redirect("/oauth/authorize?error=invalid_request");
   }
 
@@ -87,7 +93,12 @@ async function handleDeny(formData: FormData): Promise<void> {
   const state = formData.get("state") as string | null;
 
   const client = await getOAuthClient(clientId);
-  if (!client?.redirectUris.includes(redirectUri)) {
+  if (
+    !(
+      client?.redirectUris.includes(redirectUri) &&
+      isAllowedRedirectUri(redirectUri)
+    )
+  ) {
     redirect("/oauth/authorize?error=invalid_request");
   }
 
@@ -150,7 +161,12 @@ export default async function AuthorizePage({
     );
   }
 
-  if (!client.redirectUris.includes(redirectUri)) {
+  if (
+    !(
+      client.redirectUris.includes(redirectUri) &&
+      isAllowedRedirectUri(redirectUri)
+    )
+  ) {
     return (
       <main className="pointer-events-auto fixed inset-0 z-50 flex items-center justify-center bg-black/60">
         <div className="w-full max-w-sm rounded-xl border bg-background px-4 shadow-2xl ring-1 ring-black/5">

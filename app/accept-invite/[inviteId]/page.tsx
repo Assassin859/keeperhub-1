@@ -121,7 +121,11 @@ function LoadingState() {
   );
 }
 
-async function trySignUp(email: string, password: string, captchaToken?: string) {
+async function trySignUp(
+  email: string,
+  password: string,
+  captchaToken?: string
+) {
   const response = await signUp.email({
     email,
     password,

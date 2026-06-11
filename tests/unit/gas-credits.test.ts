@@ -20,20 +20,25 @@ vi.mock("@/lib/web3/chainlink-feeds", () => ({
   },
 }));
 
-const mockInsertValues = vi.fn().mockResolvedValue(undefined);
+const mockOnConflictDoNothing = vi.fn().mockResolvedValue(undefined);
+const mockOnConflictDoUpdate = vi.fn().mockResolvedValue(undefined);
+const mockSelectLimit = vi.fn().mockResolvedValue([]);
 
 vi.mock("@/lib/db", () => ({
   db: {
     select: vi.fn(() => ({
       from: vi.fn(() => ({
         where: vi.fn(() => ({
-          limit: vi.fn().mockResolvedValue([]),
+          limit: (...args: unknown[]) => mockSelectLimit(...args),
         })),
       })),
     })),
     insert: vi.fn(() => ({
       values: vi.fn(() => ({
-        onConflictDoNothing: (...args: unknown[]) => mockInsertValues(...args),
+        onConflictDoNothing: (...args: unknown[]) =>
+          mockOnConflictDoNothing(...args),
+        onConflictDoUpdate: (...args: unknown[]) =>
+          mockOnConflictDoUpdate(...args),
       })),
     })),
   },
@@ -91,11 +96,14 @@ import {
   getGasCreditCaps,
   recordGasUsage,
 } from "@/lib/billing/gas-credits";
+import type { PlanLimits } from "@/lib/billing/plans";
 import { getOrgSubscription } from "@/lib/billing/plans-server";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockInsertValues.mockResolvedValue(undefined);
+  mockOnConflictDoNothing.mockResolvedValue(undefined);
+  mockOnConflictDoUpdate.mockResolvedValue(undefined);
+  mockSelectLimit.mockResolvedValue([]);
   mockReadContract.mockReset();
   process.env.GAS_CREDITS_FREE_CENTS = undefined;
   process.env.GAS_CREDITS_PRO_CENTS = undefined;
@@ -152,7 +160,7 @@ describe("recordGasUsage", () => {
       ethPriceUsd: 2000,
     });
 
-    expect(mockInsertValues).toHaveBeenCalledOnce();
+    expect(mockOnConflictDoNothing).toHaveBeenCalledOnce();
   });
 });
 
@@ -259,5 +267,49 @@ describe("getGasCreditBalance", () => {
 
     expect(balance.totalCents).toBe(7777);
     expect(balance.remainingCents).toBe(7777);
+  });
+});
+
+describe("gas credit allocation self-heal", () => {
+  const mockSubscription = (
+    plan: string,
+    overrides: Partial<PlanLimits> | null
+  ): void => {
+    vi.mocked(getOrgSubscription).mockResolvedValue({
+      plan,
+      planOverrides: overrides,
+      currentPeriodStart: new Date(),
+    } as unknown as Awaited<ReturnType<typeof getOrgSubscription>>);
+  };
+
+  it("upserts the period allocation with a raise-only guard at the derived cap", async () => {
+    mockSubscription("enterprise", { gasCreditsCents: 7777 });
+
+    await getGasCreditBalance("org_heal");
+
+    expect(mockOnConflictDoUpdate).toHaveBeenCalledOnce();
+    const [arg] = mockOnConflictDoUpdate.mock.calls[0] as [
+      {
+        target: unknown[];
+        set: { allocatedCents: number };
+        setWhere: unknown;
+      },
+    ];
+    expect(arg.set.allocatedCents).toBe(7777);
+    expect(arg.target).toHaveLength(2);
+    // The raise-only predicate (allocated_cents < cap) is enforced in SQL via
+    // setWhere; this asserts the guard is wired, not the DB-side comparison.
+    expect(arg.setWhere).toBeDefined();
+  });
+
+  it("returns the persisted allocation rather than a lower derived cap (no mid-period clawback)", async () => {
+    // A higher allocation is already snapshotted for this period...
+    mockSelectLimit.mockResolvedValue([{ allocatedCents: 10_000 }]);
+    // ...while the org now resolves to a lower plan cap (free default = 500).
+    mockSubscription("free", null);
+
+    const balance = await getGasCreditBalance("org_downgrade");
+
+    expect(balance.totalCents).toBe(10_000);
   });
 });

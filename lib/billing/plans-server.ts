@@ -264,7 +264,12 @@ export async function checkExecutionLimit(
   switch (outcome) {
     // Under limit: always allowed, no overage.
     case "within_limit":
-      return { allowed: true, isOverage: false, debtExecutions, effectiveLimit };
+      return {
+        allowed: true,
+        isOverage: false,
+        debtExecutions,
+        effectiveLimit,
+      };
     // Paid plans over limit: allowed with overage billing.
     case "overage":
       return {

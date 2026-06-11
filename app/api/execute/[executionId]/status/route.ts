@@ -5,6 +5,8 @@ import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { directExecutions } from "@/lib/db/schema";
+import { SCOPE_MCP_READ } from "@/lib/mcp/oauth-scopes";
+import { requireScope } from "@/lib/middleware/require-scope";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { validateApiKey } from "../../_lib/auth";
 import { checkRateLimit } from "../../_lib/rate-limit";
@@ -25,6 +27,11 @@ export async function GET(
       { error: "Unauthorized" },
       { status: HttpStatus.UNAUTHORIZED }
     );
+  }
+
+  const scopeError = requireScope(apiKeyCtx.scope, SCOPE_MCP_READ);
+  if (scopeError) {
+    return scopeError;
   }
 
   const rateLimit = checkRateLimit(apiKeyCtx.apiKeyId);

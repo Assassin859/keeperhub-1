@@ -1,5 +1,6 @@
 import { buildEdgesBySourceHandle } from "@/lib/workflow/editor/edge-handle-utils";
 import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
+import { isSafeConditionExpression } from "@/lib/workflow/nodes/condition/safe-eval";
 import { DEFAULT_HTTP_METHOD } from "@/lib/workflow/nodes/http-request/constants";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
 import { findActionById, flattenConfigFields } from "@/plugins/registry";
@@ -888,6 +889,14 @@ export function generateWorkflowCode(
       let convertedCondition: string;
       if (condition) {
         convertedCondition = convertConditionToJS(condition);
+        const isDisplayableCondition =
+          convertedCondition.includes("{{") ||
+          isSafeConditionExpression(convertedCondition);
+        if (!isDisplayableCondition) {
+          const errorMsg = `Condition node "${node.data.label || node.id}" contains unsupported syntax`;
+          validationErrors.push(errorMsg);
+          convertedCondition = `false /* ERROR: ${errorMsg} */`;
+        }
       } else {
         const errorMsg = `Condition node "${node.data.label || node.id}" has no condition expression configured`;
         validationErrors.push(errorMsg);
@@ -1009,6 +1018,14 @@ export function generateWorkflowCode(
       let convertedCondition: string;
       if (condition) {
         convertedCondition = convertConditionToJS(condition);
+        const isDisplayableCondition =
+          convertedCondition.includes("{{") ||
+          isSafeConditionExpression(convertedCondition);
+        if (!isDisplayableCondition) {
+          const errorMsg = `Condition node "${node.data.label || nodeId}" contains unsupported syntax`;
+          validationErrors.push(errorMsg);
+          convertedCondition = `false /* ERROR: ${errorMsg} */`;
+        }
       } else {
         const errorMsg = `Condition node "${node.data.label || nodeId}" has no condition expression configured`;
         validationErrors.push(errorMsg);

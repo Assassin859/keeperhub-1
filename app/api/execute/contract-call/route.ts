@@ -7,6 +7,8 @@ import { type AbiItem, findAbiFunction } from "@/lib/abi/utils";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import { simulateContractCall } from "@/lib/execute/simulate";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
+import { requireScope } from "@/lib/middleware/require-scope";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { getErrorMessage } from "@/lib/utils";
 import { readContractCore } from "@/plugins/web3/steps/read-contract-core";
@@ -186,6 +188,11 @@ export async function POST(request: Request): Promise<NextResponse> {
       { error: "Unauthorized" },
       { status: HttpStatus.UNAUTHORIZED }
     );
+  }
+
+  const scopeError = requireScope(apiKeyCtx.scope, SCOPE_MCP_WRITE);
+  if (scopeError) {
+    return scopeError;
   }
 
   // Enter ALS error context so plugin step errors carry org labels

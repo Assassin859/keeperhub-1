@@ -7,6 +7,8 @@ import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { db } from "@/lib/db";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import { integrations } from "@/lib/db/schema";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
+import { requireScope } from "@/lib/middleware/require-scope";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { getErrorMessage } from "@/lib/utils";
 import type { ResolvedAction } from "../_lib/action-resolver";
@@ -276,9 +278,22 @@ async function executeNode(
   data: NodeExecuteRequest,
   resolved: ResolvedAction,
   apiKeyCtx: ApiKeyContext,
-  preCreatedExecutionId?: string
+  preCreatedExecutionId?: string,
+  resolvedRefs?: { network?: string; integrationId?: string }
 ): Promise<NextResponse> {
-  const { config, integrationId, network, retry } = data;
+  const { config, retry } = data;
+  const network = resolvedRefs?.network;
+  const integrationId = resolvedRefs?.integrationId;
+
+  // Drop caller-supplied gating keys so the step only sees the values the
+  // route resolved and gated on. web3Connection is intentionally preserved;
+  // it stays org-ownership-verified downstream in lib/safe/signer-resolver.ts.
+  const {
+    network: _ignoredNetwork,
+    integrationId: _ignoredIntegrationId,
+    _context: _ignoredContext,
+    ...safeConfig
+  } = config;
 
   let executionId: string;
   if (preCreatedExecutionId) {
@@ -286,7 +301,7 @@ async function executeNode(
   } else {
     const redactedInput = redactInput({
       actionType: data.actionType,
-      ...config,
+      ...safeConfig,
     });
     const created = await createExecution({
       organizationId: apiKeyCtx.organizationId,
@@ -301,7 +316,7 @@ async function executeNode(
   await markRunning(executionId);
 
   const stepInput = {
-    ...config,
+    ...safeConfig,
     ...(integrationId ? { integrationId } : {}),
     ...(network ? { network } : {}),
     _context: {
@@ -378,6 +393,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
+  const scopeError = requireScope(apiKeyCtx.scope, SCOPE_MCP_WRITE);
+  if (scopeError) {
+    return scopeError;
+  }
+
   // Enter ALS error context so plugin step errors carry org labels
   await enterApiExecuteErrorContext(apiKeyCtx.organizationId);
 
@@ -415,7 +435,21 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  const { actionType, integrationId, network } = validation.data;
+  const { actionType, config, integrationId, network } = validation.data;
+
+  // Gating keys can ride inside caller config; merge them in so ownership,
+  // wallet, and spending-cap checks cannot be bypassed by nesting them there.
+  const configNetwork =
+    typeof config.network === "string" && config.network.trim() !== ""
+      ? config.network
+      : undefined;
+  const configIntegrationId =
+    typeof config.integrationId === "string" &&
+    config.integrationId.trim() !== ""
+      ? config.integrationId
+      : undefined;
+  const effectiveNetwork = network ?? configNetwork;
+  const effectiveIntegrationId = integrationId ?? configIntegrationId;
 
   const resolved = resolveAction(actionType);
   if (!resolved) {
@@ -425,9 +459,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  if (integrationId) {
+  if (effectiveIntegrationId) {
     const owned = await verifyIntegrationOwnership(
-      integrationId,
+      effectiveIntegrationId,
       apiKeyCtx.organizationId
     );
     if (!owned) {
@@ -441,7 +475,12 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
   }
 
-  if (network) {
+  const resolvedRefs = {
+    network: effectiveNetwork,
+    integrationId: effectiveIntegrationId,
+  };
+
+  if (effectiveNetwork) {
     const walletError = await requireWallet(apiKeyCtx.organizationId);
     if (walletError) {
       return walletError;
@@ -455,7 +494,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       organizationId: apiKeyCtx.organizationId,
       apiKeyId: apiKeyCtx.apiKeyId,
       type: resolved.actionType,
-      network,
+      network: effectiveNetwork,
       input: redactedInput,
     });
     if (!reserve.allowed) {
@@ -470,14 +509,21 @@ export async function POST(request: Request): Promise<NextResponse> {
         validation.data,
         resolved,
         apiKeyCtx,
-        reserve.executionId
+        reserve.executionId,
+        resolvedRefs
       ),
       rateLimit
     );
   }
 
   return applyRateLimitHeaders(
-    await executeNode(validation.data, resolved, apiKeyCtx),
+    await executeNode(
+      validation.data,
+      resolved,
+      apiKeyCtx,
+      undefined,
+      resolvedRefs
+    ),
     rateLimit
   );
 }

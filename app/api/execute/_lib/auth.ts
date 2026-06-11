@@ -6,6 +6,7 @@ import { authenticateOAuthToken } from "@/lib/mcp/oauth-auth";
 export type ApiKeyContext = {
   organizationId: string;
   apiKeyId: string;
+  scope?: string;
 };
 
 /**
@@ -21,6 +22,7 @@ export async function validateApiKey(
     return {
       organizationId: oauthResult.organizationId,
       apiKeyId: `oauth:${oauthResult.userId ?? "unknown"}`,
+      scope: oauthResult.scope,
     };
   }
 

@@ -206,13 +206,6 @@ export async function requireDualFactor(
     .where(eq(twoFactorTable.userId, userId))
     .limit(1);
   if (!tfRow) {
-    // [mfa-debug] KEEP-471 OAuth/TOTP investigation: the userId carried
-    // into this gate has no two_factor row. Remove once root-caused.
-    // biome-ignore lint/suspicious/noConsole: temporary KEEP-471 diagnostic
-    console.warn("[mfa-debug] no two_factor row for userId", {
-      action,
-      userId,
-    });
     return {
       ok: false,
       status: 401,
@@ -221,14 +214,6 @@ export async function requireDualFactor(
     };
   }
   const totpOk = await verifyUserTotp(tfRow.secret, totpCode, serverSecret);
-  // [mfa-debug] KEEP-471 OAuth/TOTP investigation. Remove once root-caused.
-  // biome-ignore lint/suspicious/noConsole: temporary KEEP-471 diagnostic
-  console.info("[mfa-debug] totp check", {
-    action,
-    userId,
-    providedTotp: totpCode,
-    totpOk,
-  });
   if (!totpOk) {
     return {
       ok: false,
