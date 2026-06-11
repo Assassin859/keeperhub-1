@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { generateRandomString, symmetricEncrypt } from "better-auth/crypto";
+import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { twoFactor as twoFactorTable } from "@/lib/db/schema";
+import { twoFactor as twoFactorTable, users } from "@/lib/db/schema";
 import { resolveEnrollMfaCaller } from "@/lib/enroll-mfa-caller";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { requireDualFactor } from "@/lib/mfa/dual-factor";
 
 const ISSUER = "KeeperHub";
 const SECRET_LENGTH = 32;
@@ -14,6 +16,8 @@ const BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
 type SetupRequest = {
   name?: string;
+  code?: string;
+  emailOtp?: string;
 };
 
 type SetupResponse = {
@@ -98,7 +102,12 @@ function buildTotpUri(secret: string, account: string): string {
  * coupled to the user actually proving they can read the QR.
  *
  * Calling this endpoint a second time replaces any existing
- * enrollment; it is the supported way to rotate a lost authenticator.
+ * enrollment. Once the account is fully enrolled
+ * (users.two_factor_enabled = true with a two_factor row), that
+ * rotation overwrites the live secret and wipes backup codes, so it is
+ * gated behind requireDualFactor (authenticator + email OTP) exactly
+ * like /disable. First-time and pending-signup enrollment, which have
+ * no active second factor to protect yet, mint without that proof.
  */
 export async function POST(request: Request): Promise<NextResponse> {
   const caller = await resolveEnrollMfaCaller(request.headers);
@@ -142,6 +151,40 @@ export async function POST(request: Request): Promise<NextResponse> {
   const name =
     sanitizeName(body.name) ??
     `Authenticator (${new Date().toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })})`;
+
+  // Re-running /setup on an already-enrolled account overwrites the
+  // TOTP secret and wipes backup codes. That is a security-floor
+  // mutation as impactful as /disable, so it must carry the same
+  // dual-factor proof. First-time and pending-signup enroll (no active
+  // second factor yet) are still allowed to mint without proof.
+  const [userRow] = await db
+    .select({ twoFactorEnabled: users.twoFactorEnabled })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  const [existingFactor] = await db
+    .select({ id: twoFactorTable.id })
+    .from(twoFactorTable)
+    .where(eq(twoFactorTable.userId, userId))
+    .limit(1);
+  const alreadyEnrolled =
+    userRow?.twoFactorEnabled === true && Boolean(existingFactor);
+  if (alreadyEnrolled) {
+    const dual = await requireDualFactor({
+      userId,
+      email: userEmail,
+      action: "totp_setup",
+      code: typeof body.code === "string" ? body.code.trim() : "",
+      emailOtp: typeof body.emailOtp === "string" ? body.emailOtp.trim() : "",
+      headers: request.headers,
+    });
+    if (!dual.ok) {
+      return NextResponse.json(
+        { error: dual.error, code: dual.code },
+        { status: dual.status }
+      );
+    }
+  }
 
   try {
     const totpSecret = generateRandomString(SECRET_LENGTH);
