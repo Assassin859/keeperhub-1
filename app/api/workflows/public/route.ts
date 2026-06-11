@@ -10,6 +10,10 @@ import {
 } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import type { VoteDirection } from "@/lib/workflow/editor/votes";
+import {
+  projectEdgesForPublicFeed,
+  projectNodesForPublicFeed,
+} from "@/lib/workflow/public-feed-projection";
 import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 type TagInfo = { id: string; name: string; slug: string };
 
@@ -262,6 +266,10 @@ export async function GET(request: Request): Promise<NextResponse> {
 
     const mappedWorkflows = publicWorkflows.map((workflow) => ({
       ...workflow,
+      // Anonymous feed: expose only the graph shape the marketplace renders
+      // (positions + node/action type), never node config or secrets.
+      nodes: projectNodesForPublicFeed(workflow.nodes),
+      edges: projectEdgesForPublicFeed(workflow.edges),
       publicTags: tagsByWorkflow[workflow.id] ?? [],
       score: scores[workflow.id] ?? 0,
       userVote: userVotes[workflow.id] ?? null,
