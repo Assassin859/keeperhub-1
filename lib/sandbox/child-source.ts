@@ -785,10 +785,12 @@ function encodeResult(value, seen) {
     return { "$": "bigint", "v": value.toString() };
   }
   if (t === "function" || t === "symbol") {
-    throw new Error("Result is not serializable: " + t);
+    // Bare reason; writeResult's catch adds the "Result is not serializable: "
+    // prefix so the message is not doubled.
+    throw new Error(t);
   }
   if (seen.has(value)) {
-    throw new Error("Result is not serializable: circular reference");
+    throw new Error("circular reference");
   }
   seen.add(value);
   try {
