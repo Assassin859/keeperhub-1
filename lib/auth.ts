@@ -40,6 +40,7 @@ import {
   integrations,
   invitationRelations,
   invitation as invitationTable,
+  mcpOauthRefreshTokens,
   memberRelations,
   member as memberTable,
   organizationRelations,
@@ -372,6 +373,22 @@ const plugins = [
 
       async afterAcceptInvitation() {
         await Promise.resolve();
+      },
+
+      // A-04: admin-initiated removal goes through better-auth's removeMember
+      // (no custom route), so revoke the removed member's renewable MCP OAuth
+      // refresh tokens for this org here. Access is already refused at use
+      // time by the membership re-check; this clears the dormant 30-day
+      // credential so it cannot linger. Mirrors the leave-route cascade.
+      async afterRemoveMember(data) {
+        await db
+          .delete(mcpOauthRefreshTokens)
+          .where(
+            and(
+              eq(mcpOauthRefreshTokens.userId, data.user.id),
+              eq(mcpOauthRefreshTokens.organizationId, data.organization.id)
+            )
+          );
       },
     },
   }),
