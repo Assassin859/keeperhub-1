@@ -1,4 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// version-diff pulls in step-registry, which `import "server-only"`. That guard
+// throws under vitest (no SSR context), so stub it.
+vi.mock("server-only", () => ({}));
+
 import { computeVersionDiff } from "@/lib/workflow/version-diff";
 
 const node = (id: string, label: string, config: object = {}) => ({

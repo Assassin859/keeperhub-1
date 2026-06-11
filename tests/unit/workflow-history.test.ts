@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// history -> version-diff -> step-registry, which `import "server-only"`. That
+// guard throws under vitest (no SSR context), so stub it.
+vi.mock("server-only", () => ({}));
+
 const { mockInsertValues, mockLimit, mockInsert, mockSelect } = vi.hoisted(
   () => {
     const limit = vi.fn();
@@ -87,14 +91,18 @@ describe("recordWorkflowSnapshot", () => {
     expect(row.version).toBe(2);
     expect(row.previousVersion).toBe(1);
     expect(row.previousHash).toBe("prevhash");
-    // The name change produces a diff record.
-    expect(Array.isArray(row.change)).toBe(true);
-    expect(row.change).toContainEqual(
-      expect.objectContaining({ kind: "E", path: ["name"] })
+    // The name change is captured as a settings diff on the stored VersionDiff.
+    expect(row.change.hasChanges).toBe(true);
+    expect(row.change.settings).toContainEqual(
+      expect.objectContaining({
+        field: "name",
+        before: "Flow",
+        after: "Renamed",
+      })
     );
   });
 
-  it("does not register a diff for a cosmetic-only change", async () => {
+  it("does not record a version for a cosmetic-only change", async () => {
     mockLimit.mockResolvedValue([{ version: 1, contentHash: "prevhash" }]);
     const moved = {
       ...wf,
@@ -109,7 +117,8 @@ describe("recordWorkflowSnapshot", () => {
       source: "update",
     });
 
-    expect(mockInsertValues.mock.calls[0][0].change).toBeNull();
+    // An empty diff is a no-op version: it is skipped, so nothing is inserted.
+    expect(mockInsertValues).not.toHaveBeenCalled();
   });
 
   it("never throws when the insert fails", async () => {
