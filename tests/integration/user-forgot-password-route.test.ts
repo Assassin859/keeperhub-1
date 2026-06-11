@@ -19,6 +19,7 @@ const {
   mockEq,
   mockAnd,
   mockGt,
+  mockIsNull,
   txUpdateCalls,
   txDeleteCalls,
 } = vi.hoisted(() => ({
@@ -36,6 +37,7 @@ const {
   mockGt: vi.fn((column: unknown, value: unknown) => ({
     __gt: [column, value],
   })),
+  mockIsNull: vi.fn((column: unknown) => ({ __isNull: column })),
   txUpdateCalls: [] as Array<{ table: unknown; value: unknown }>,
   txDeleteCalls: [] as Array<{ table: unknown }>,
 }));
@@ -44,6 +46,7 @@ vi.mock("drizzle-orm", () => ({
   and: mockAnd,
   eq: mockEq,
   gt: mockGt,
+  isNull: mockIsNull,
 }));
 
 vi.mock("better-auth/crypto", () => ({
@@ -80,6 +83,14 @@ vi.mock("@/lib/db/schema", () => ({
     id: "accounts.id",
     userId: "accounts.userId",
     providerId: "accounts.providerId",
+  },
+  apiKeys: { userId: "apiKeys.userId" },
+  deviceCode: { userId: "deviceCode.userId" },
+  mcpOauthAuthCodes: { userId: "mcpOauthAuthCodes.userId" },
+  mcpOauthRefreshTokens: { userId: "mcpOauthRefreshTokens.userId" },
+  organizationApiKeys: {
+    createdBy: "organizationApiKeys.createdBy",
+    revokedAt: "organizationApiKeys.revokedAt",
   },
   sessions: { id: "sessions.id", userId: "sessions.userId" },
   twoFactor: { userId: "twoFactor.userId", secret: "twoFactor.secret" },
@@ -118,7 +129,14 @@ vi.mock("@/lib/utils/id", () => ({
 }));
 
 import { POST } from "@/app/api/user/forgot-password/route";
-import { sessions as sessionsToken } from "@/lib/db/schema";
+import {
+  apiKeys as apiKeysToken,
+  deviceCode as deviceCodeToken,
+  mcpOauthAuthCodes as mcpOauthAuthCodesToken,
+  mcpOauthRefreshTokens as mcpOauthRefreshTokensToken,
+  organizationApiKeys as organizationApiKeysToken,
+  sessions as sessionsToken,
+} from "@/lib/db/schema";
 
 function buildResetRequest(body: unknown): Request {
   return new Request("http://localhost/api/user/forgot-password", {
@@ -166,15 +184,42 @@ describe("POST /api/user/forgot-password (reset)", () => {
 
     expect(response.status).toBe(200);
 
-    // Transaction performed the account update plus two deletes
-    // (consumed verification row + every session for the user).
+    // The reset revokes every credential the user holds, not just sessions:
+    // the transaction deletes the consumed verification row plus sessions,
+    // api keys, MCP refresh tokens, MCP auth codes, and device codes, and
+    // updates the account password plus revokes the user's org api keys.
     expect(mockTransaction).toHaveBeenCalledTimes(1);
-    expect(txUpdateCalls).toHaveLength(1);
-    expect(txDeleteCalls).toHaveLength(2);
-    expect(txDeleteCalls.some((call) => call.table === sessionsToken)).toBe(
-      true
-    );
+    expect(txDeleteCalls).toHaveLength(6);
+    const deletedTables = txDeleteCalls.map((call) => call.table);
+    expect(deletedTables).toContain(sessionsToken);
+    expect(deletedTables).toContain(apiKeysToken);
+    expect(deletedTables).toContain(mcpOauthRefreshTokensToken);
+    expect(deletedTables).toContain(mcpOauthAuthCodesToken);
+    expect(deletedTables).toContain(deviceCodeToken);
     expect(mockEq).toHaveBeenCalledWith("sessions.userId", USER_ID);
+    expect(mockEq).toHaveBeenCalledWith("apiKeys.userId", USER_ID);
+    expect(mockEq).toHaveBeenCalledWith(
+      "mcpOauthRefreshTokens.userId",
+      USER_ID
+    );
+    expect(mockEq).toHaveBeenCalledWith("mcpOauthAuthCodes.userId", USER_ID);
+    expect(mockEq).toHaveBeenCalledWith("deviceCode.userId", USER_ID);
+
+    // Org api keys are soft-revoked (revokedAt set) for keys this user
+    // created that are not already revoked, not hard-deleted.
+    expect(txUpdateCalls).toHaveLength(2);
+    const orgKeyUpdate = txUpdateCalls.find(
+      (call) => call.table === organizationApiKeysToken
+    );
+    expect(orgKeyUpdate).toBeDefined();
+    expect(
+      (orgKeyUpdate?.value as { revokedAt?: Date }).revokedAt
+    ).toBeInstanceOf(Date);
+    expect(mockEq).toHaveBeenCalledWith(
+      "organizationApiKeys.createdBy",
+      USER_ID
+    );
+    expect(mockIsNull).toHaveBeenCalledWith("organizationApiKeys.revokedAt");
   });
 
   it("does not touch sessions when the OTP is invalid or expired", async () => {

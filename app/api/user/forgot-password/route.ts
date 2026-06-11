@@ -1,10 +1,15 @@
 import { randomInt, timingSafeEqual } from "node:crypto";
 import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, gt, isNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import {
   accounts,
+  apiKeys,
+  deviceCode,
+  mcpOauthAuthCodes,
+  mcpOauthRefreshTokens,
+  organizationApiKeys,
   sessions,
   twoFactor as twoFactorTable,
   users,
@@ -362,22 +367,43 @@ async function handleReset(
     }
   }
 
-  // Hash the new password, drop the consumed reset code, and revoke
-  // every session for this user in a single transaction. A reset is a
-  // recovery path the user may be invoking precisely because they lost
-  // control of the account, so any session minted before the reset must
-  // not survive it. The reset flow itself mints no session, so all of
-  // them are cleared and the user signs in fresh.
+  // Hash the new password, drop the consumed reset code, and revoke every
+  // credential this user holds in a single transaction. A reset is a recovery
+  // path the user may be invoking precisely because they lost control of the
+  // account, so nothing minted before the reset may survive it. Sessions alone
+  // are not enough: API keys, MCP refresh tokens, auth codes, and device codes
+  // each authenticate standalone with no password or session, so a stolen one
+  // would outlive the reset. This mirrors the cascade that runs on user
+  // deactivation (drizzle/0085), the other compromise-revocation path. The
+  // reset flow itself mints no session, so the user signs in fresh.
   const hashedPassword = await hashPassword(newPassword);
+  const revokedAt = new Date();
   await db.transaction(async (tx) => {
     await tx
       .update(accounts)
-      .set({ password: hashedPassword, updatedAt: new Date() })
+      .set({ password: hashedPassword, updatedAt: revokedAt })
       .where(eq(accounts.id, credentialAccount.id));
 
     await tx.delete(verifications).where(eq(verifications.id, verification.id));
 
     await tx.delete(sessions).where(eq(sessions.userId, user.id));
+    await tx.delete(apiKeys).where(eq(apiKeys.userId, user.id));
+    await tx
+      .delete(mcpOauthRefreshTokens)
+      .where(eq(mcpOauthRefreshTokens.userId, user.id));
+    await tx
+      .delete(mcpOauthAuthCodes)
+      .where(eq(mcpOauthAuthCodes.userId, user.id));
+    await tx.delete(deviceCode).where(eq(deviceCode.userId, user.id));
+    await tx
+      .update(organizationApiKeys)
+      .set({ revokedAt })
+      .where(
+        and(
+          eq(organizationApiKeys.createdBy, user.id),
+          isNull(organizationApiKeys.revokedAt)
+        )
+      );
   });
 
   return NextResponse.json({
