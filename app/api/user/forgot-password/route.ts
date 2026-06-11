@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import {
   accounts,
+  sessions,
   twoFactor as twoFactorTable,
   users,
   verifications,
@@ -361,15 +362,23 @@ async function handleReset(
     }
   }
 
-  // Hash and update password
+  // Hash the new password, drop the consumed reset code, and revoke
+  // every session for this user in a single transaction. A reset is a
+  // recovery path the user may be invoking precisely because they lost
+  // control of the account, so any session minted before the reset must
+  // not survive it. The reset flow itself mints no session, so all of
+  // them are cleared and the user signs in fresh.
   const hashedPassword = await hashPassword(newPassword);
-  await db
-    .update(accounts)
-    .set({ password: hashedPassword, updatedAt: new Date() })
-    .where(eq(accounts.id, credentialAccount.id));
+  await db.transaction(async (tx) => {
+    await tx
+      .update(accounts)
+      .set({ password: hashedPassword, updatedAt: new Date() })
+      .where(eq(accounts.id, credentialAccount.id));
 
-  // Delete used verification
-  await db.delete(verifications).where(eq(verifications.id, verification.id));
+    await tx.delete(verifications).where(eq(verifications.id, verification.id));
+
+    await tx.delete(sessions).where(eq(sessions.userId, user.id));
+  });
 
   return NextResponse.json({
     success: true,
