@@ -59,6 +59,7 @@ export const SANDBOX_CHILD_SOURCE = `
 "use strict";
 const { createContext, runInContext } = require("node:vm");
 const v8 = require("node:v8");
+const fs = require("node:fs");
 const dnsPromises = require("node:dns").promises;
 const { BlockList, isIP } = require("node:net");
 
@@ -540,8 +541,23 @@ function writeResult(message) {
       .toString("base64");
   }
   // Prefix with sentinel so the parent can ignore stray writes from user code
-  // that reaches process.stdout via a sandbox escape.
-  process.stdout.write("\\x01RESULT\\x02" + payload + "\\n");
+  // that reaches process.stdout via a sandbox escape (F-010).
+  const out = Buffer.from("\\x01RESULT\\x02" + payload + "\\n", "utf8");
+  let written = 0;
+  while (written < out.length) {
+    try {
+      written += fs.writeSync(1, out, written, out.length - written);
+    } catch (writeErr) {
+      if (writeErr && writeErr.code === "EAGAIN") {
+        continue;
+      }
+      break;
+    }
+  }
+  // Hard-exit immediately: once the real result is on the wire, give no
+  // event-loop turn in which a post-escape user-scheduled callback could emit
+  // a second, later sentinel that the parent's lastIndexOf() would select.
+  process.exit(0);
 }
 
 let stdinBuf = "";

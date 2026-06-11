@@ -170,4 +170,23 @@ describe("runCode — sandbox child_process runner", () => {
       expect(asMap.get("b")).toBe(2);
     }
   });
+
+  it("keeps the real result when escaped code schedules a later stdout write (F-010)", async () => {
+    // The child flushes its result synchronously and then process.exit(0)s, so
+    // a post-escape user-scheduled forged sentinel never reaches the parent and
+    // lastIndexOf() cannot select it over the genuine result.
+    const code = [
+      "try {",
+      '  const proc = Error.constructor("return process")();',
+      '  const g = proc.constructor.constructor("return globalThis")();',
+      '  g.setTimeout(function(){ try { proc.stdout.write("\\u0001RESULT\\u0002////\\n"); } catch (e) {} }, 5);',
+      "} catch (e) {}",
+      'return "REAL";',
+    ].join("\n");
+    const outcome = await runCode({ code, timeoutMs: 1500 });
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.result).toBe("REAL");
+    }
+  });
 });

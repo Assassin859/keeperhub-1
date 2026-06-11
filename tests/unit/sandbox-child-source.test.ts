@@ -433,3 +433,37 @@ describe("sandbox grandchild redirect following", () => {
     }
   });
 }, 30_000);
+
+// F-010 mitigation: the grandchild must flush its result via a synchronous
+// fd-1 write and then process.exit(0) immediately, so a post-escape
+// user-scheduled stdout write cannot emit a second, later sentinel that the
+// parent's lastIndexOf() would otherwise select as the authoritative result.
+describe("sandbox grandchild flushes the result then hard-exits", () => {
+  it("writeResult writes the result synchronously and then hard-exits", () => {
+    expect(SANDBOX_CHILD_SOURCE).toContain("fs.writeSync(1");
+    expect(SANDBOX_CHILD_SOURCE).toContain("process.exit(0)");
+  });
+
+  it("keeps the real result even when escaped code schedules a post-result stdout write", async () => {
+    // Reach the host process via the canonical escape (proven reachable by
+    // sandbox/src/run-code.test.ts), reach the host global for a real timer,
+    // and schedule a forged sentinel for AFTER the real result. With
+    // process.exit(0) in writeResult the child dies first, so the forged bytes
+    // never reach the parent and lastIndexOf() selects the real result. The
+    // primitives are wrapped in try/catch so the test is never flaky if one is
+    // unavailable; it then simply returns the real result.
+    const code = [
+      "try {",
+      '  const proc = Error.constructor("return process")();',
+      '  const g = proc.constructor.constructor("return globalThis")();',
+      '  g.setTimeout(function(){ try { proc.stdout.write("\\u0001RESULT\\u0002////\\n"); } catch (e) {} }, 5);',
+      "} catch (e) {}",
+      'return "REAL";',
+    ].join("\n");
+    const outcome = await runSandboxed(code, 1500);
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.result).toBe("REAL");
+    }
+  });
+});
