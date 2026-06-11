@@ -79,14 +79,21 @@ export function IntegrationSelector({
     }
   }, [integrationsVersion, loadIntegrations]);
 
+  // Auto-select a connection ONLY for a node that has none yet. Never change a
+  // binding that is already set: a previously pinned connection that is missing
+  // from the freshly-loaded list (deleted, or not in the active org) must not be
+  // silently rebound to a different one, since that change autosaves and can
+  // repoint a running workflow at the wrong database.
   useEffect(() => {
-    if (integrations.length > 0 && !disabled) {
-      const currentExists = value && integrations.some((i) => i.id === value);
-      if (!currentExists) {
-        onChange(integrations[0].id);
-      }
+    if (integrations.length > 0 && !disabled && !value) {
+      onChange(integrations[0].id);
     }
   }, [integrations, value, disabled, onChange]);
+
+  const selectedMissing =
+    Boolean(value) &&
+    integrations.length > 0 &&
+    !integrations.some((i) => i.id === value);
 
   const handleNewIntegrationCreated = useCallback(
     async (integrationId: string) => {
@@ -146,6 +153,15 @@ export function IntegrationSelector({
     SYSTEM_INTEGRATION_LABELS[integrationType] ||
     integrationType;
 
+  const missingSelectionWarning = selectedMissing ? (
+    <div className="flex items-center gap-2 rounded-md border border-orange-500/50 bg-orange-500/10 px-3 py-1.5 text-orange-600 text-sm dark:text-orange-400">
+      <AlertTriangle className="size-4 shrink-0" />
+      <span className="flex-1 text-left">
+        Selected {integrationLabel} connection is unavailable - choose one below
+      </span>
+    </div>
+  ) : null;
+
   if (integrations.length === 0) {
     return (
       <Button
@@ -166,31 +182,47 @@ export function IntegrationSelector({
   if (integrations.length === 1) {
     const integration = integrations[0];
     const displayName = integration.name || `${integrationLabel} API Key`;
+    const isSelected = value === integration.id;
 
     return (
-      <div
-        className={cn(
-          "flex h-9 w-full items-center gap-2 rounded-md border px-3 text-sm",
-          disabled && "cursor-not-allowed opacity-50"
-        )}
-      >
-        <Check className="size-4 shrink-0 text-green-600" />
-        <span className="flex-1 truncate">{displayName}</span>
-        <Button
-          className="size-6 shrink-0"
-          disabled={disabled}
-          onClick={() => openEditConnectionOverlay(integration)}
-          size="icon"
-          variant="ghost"
+      <div className="flex flex-col gap-1">
+        {missingSelectionWarning}
+        <div
+          className={cn(
+            "flex h-9 w-full items-center gap-2 rounded-md border px-3 text-sm",
+            disabled && "cursor-not-allowed opacity-50"
+          )}
         >
-          <Pencil className="size-3" />
-        </Button>
+          <button
+            className="flex flex-1 items-center gap-2 truncate text-left"
+            disabled={disabled}
+            onClick={() => onChange(integration.id)}
+            type="button"
+          >
+            {isSelected ? (
+              <Check className="size-4 shrink-0 text-green-600" />
+            ) : (
+              <Circle className="size-4 shrink-0 text-muted-foreground" />
+            )}
+            <span className="flex-1 truncate">{displayName}</span>
+          </button>
+          <Button
+            className="size-6 shrink-0"
+            disabled={disabled}
+            onClick={() => openEditConnectionOverlay(integration)}
+            size="icon"
+            variant="ghost"
+          >
+            <Pencil className="size-3" />
+          </Button>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="flex flex-col gap-1">
+      {missingSelectionWarning}
       {integrations.map((integration) => {
         const isSelected = value === integration.id;
         const displayName = integration.name || `${integrationLabel} API Key`;

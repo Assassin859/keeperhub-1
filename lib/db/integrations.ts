@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { toChecksumAddress } from "@/lib/address-utils";
 import { filterUnauthorizedIntegrationIds } from "@/lib/integrations/authorization";
 import {
@@ -198,9 +198,13 @@ export async function getIntegrations(
   type?: IntegrationType,
   organizationId?: string | null
 ): Promise<DecryptedIntegration[]> {
+  // No active org -> personal scope only. Constrain to integrations the user
+  // created that are NOT org-scoped (organizationId IS NULL); without this the
+  // fallback returns every connection the user ever created in ANY org, which
+  // leaks cross-org connections into the workflow connection picker.
   const conditions = organizationId
     ? [eq(integrations.organizationId, organizationId)]
-    : [eq(integrations.createdBy, userId)];
+    : [eq(integrations.createdBy, userId), isNull(integrations.organizationId)];
 
   if (type) {
     conditions.push(eq(integrations.type, type));
@@ -227,7 +231,10 @@ export async function getIntegrations(
         eq(organizationWallets.isActive, true)
       )
     )
-    .where(and(...conditions));
+    .where(and(...conditions))
+    // Deterministic order so list consumers (e.g. the connection picker) see a
+    // stable "first" row instead of unordered, insertion-dependent results.
+    .orderBy(integrations.createdAt, integrations.id);
 
   return results.map((row) => ({
     id: row.id,

@@ -179,7 +179,7 @@ export async function sendDiscordMessageStep(
 ): Promise<SendDiscordMessageResult> {
   "use step";
 
-  const credentials = await fetchCredentials(input.integrationId);
+  const credentials = await fetchCredentials(input.integrationId, { organizationId: input._context?.organizationId ?? null });
 
   return withPluginMetrics(
     {
