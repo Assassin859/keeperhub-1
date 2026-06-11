@@ -2,6 +2,8 @@ import deepDiff from "deep-diff";
 import { db } from "@/lib/db";
 import { securityAuditLog } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { getMetricsCollector } from "@/lib/metrics";
+import { MetricNames } from "@/lib/metrics/types";
 import {
   getRequestCountry,
   getRequestSourceIp,
@@ -179,6 +181,10 @@ export async function recordAuditEvent(
       error,
       { action: args.action }
     );
+    getMetricsCollector().incrementCounter(
+      MetricNames.SECURITY_AUDIT_WRITE_FAILED,
+      { action: args.action }
+    );
     if (composed) {
       throw error;
     }
@@ -209,6 +215,10 @@ export async function recordAuditEvents(
       "Failed to record security audit events",
       error,
       { count: String(events.length) }
+    );
+    getMetricsCollector().incrementCounter(
+      MetricNames.SECURITY_AUDIT_WRITE_FAILED,
+      { scope: "batch" }
     );
     if (composed) {
       throw error;

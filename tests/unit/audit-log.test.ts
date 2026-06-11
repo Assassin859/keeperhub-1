@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockValues, mockInsert } = vi.hoisted(() => {
+const { mockValues, mockInsert, mockIncrementCounter } = vi.hoisted(() => {
   const values = vi.fn();
   return {
     mockValues: values,
     mockInsert: vi.fn(() => ({ values })),
+    mockIncrementCounter: vi.fn(),
   };
 });
 
@@ -15,6 +16,9 @@ vi.mock("@/lib/db/schema", () => ({
 vi.mock("@/lib/logging", () => ({
   ErrorCategory: { DATABASE: "database" },
   logSystemError: vi.fn(),
+}));
+vi.mock("@/lib/metrics", () => ({
+  getMetricsCollector: () => ({ incrementCounter: mockIncrementCounter }),
 }));
 
 import {
@@ -36,6 +40,7 @@ beforeEach(() => {
   mockValues.mockReset();
   mockValues.mockResolvedValue(undefined);
   mockInsert.mockClear();
+  mockIncrementCounter.mockClear();
 });
 
 describe("recordAuditEvent", () => {
@@ -88,11 +93,15 @@ describe("recordAuditEvent", () => {
     expect(mockValues.mock.calls[0][0].diff).toBeNull();
   });
 
-  it("never throws when the insert fails", async () => {
+  it("never throws when the insert fails, and counts the dropped event", async () => {
     mockValues.mockRejectedValue(new Error("db down"));
     await expect(
       recordAuditEvent({ actor, action: "api_key.created" })
     ).resolves.toBeUndefined();
+    expect(mockIncrementCounter).toHaveBeenCalledWith(
+      "errors.system.security_audit_write.total",
+      { action: "api_key.created" }
+    );
   });
 
   it("persists durable attribution, correlation, and outcome columns", async () => {
