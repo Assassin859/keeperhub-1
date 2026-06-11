@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
@@ -244,6 +244,14 @@ describe("queryTransactionsCore", () => {
   });
 
   describe("backup explorer fallback", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
     it("falls back to backup explorer when primary fails", async () => {
       mockFindFirst.mockResolvedValue({
         chainId: 1,
@@ -304,7 +312,7 @@ describe("queryTransactionsCore", () => {
       expect(mockFetch).toHaveBeenCalledTimes(2);
     });
 
-    it("returns primary error when both primary and backup fail", async () => {
+    it("returns combined error when both providers fail on all rounds", async () => {
       mockFindFirst.mockResolvedValue({
         chainId: 1,
         chainType: "evm",
@@ -320,6 +328,60 @@ describe("queryTransactionsCore", () => {
         updatedAt: new Date(),
       });
 
+      const rateLimitResponse = {
+        json: () =>
+          Promise.resolve({
+            status: "0",
+            message: "NOTOK",
+            result: "Rate limit exceeded",
+          }),
+      };
+      const unavailableResponse = {
+        json: () =>
+          Promise.resolve({
+            status: "0",
+            message: "NOTOK",
+            result: "Service unavailable",
+          }),
+      };
+
+      // round 1
+      mockFetch.mockResolvedValueOnce(rateLimitResponse);
+      mockFetch.mockResolvedValueOnce(unavailableResponse);
+      // round 2 (after 10s backoff)
+      mockFetch.mockResolvedValueOnce(rateLimitResponse);
+      mockFetch.mockResolvedValueOnce(unavailableResponse);
+
+      const resultPromise = queryTransactionsCore(BASE_INPUT);
+      await vi.advanceTimersByTimeAsync(10_000);
+      const result = await resultPromise;
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain("All explorer providers failed");
+        expect(result.error).toContain("Primary:");
+        expect(result.error).toContain("Backup:");
+      }
+      expect(mockFetch).toHaveBeenCalledTimes(4);
+    });
+
+    it("self-heals when both providers fail transiently then primary succeeds on retry", async () => {
+      mockFindFirst.mockResolvedValue({
+        chainId: 1,
+        chainType: "evm",
+        explorerUrl: "https://etherscan.io",
+        explorerApiType: "etherscan",
+        explorerApiUrl: "https://api.etherscan.io/v2/api",
+        explorerTxPath: "/tx/{hash}",
+        explorerAddressPath: "/address/{address}",
+        explorerContractPath: null,
+        backupExplorerApiType: "etherscan",
+        backupExplorerApiUrl: "https://backup.etherscan.io/v2/api",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      // round 1: both fail
       mockFetch.mockResolvedValueOnce({
         json: () =>
           Promise.resolve({
@@ -328,25 +390,29 @@ describe("queryTransactionsCore", () => {
             result: "Rate limit exceeded",
           }),
       });
-
       mockFetch.mockResolvedValueOnce({
         json: () =>
           Promise.resolve({
             status: "0",
             message: "NOTOK",
-            result: "Service unavailable",
+            result: "Rate limit exceeded",
           }),
       });
+      // round 2: primary recovers
+      mockFetch.mockResolvedValueOnce({
+        json: () =>
+          Promise.resolve(makeEtherscanTxResponse([{ hash: "0xrecovered" }])),
+      });
 
-      const result = await queryTransactionsCore(BASE_INPUT);
+      const resultPromise = queryTransactionsCore(BASE_INPUT);
+      await vi.advanceTimersByTimeAsync(10_000);
+      const result = await resultPromise;
 
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error).toBe(
-          "Rate limit exceeded. Please try again later."
-        );
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.transactions[0].hash).toBe("0xrecovered");
       }
-      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(mockFetch).toHaveBeenCalledTimes(3);
     });
 
     it("does not attempt backup when primary succeeds", async () => {
@@ -379,7 +445,7 @@ describe("queryTransactionsCore", () => {
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
-    it("does not attempt backup when no backup is configured", async () => {
+    it("retries primary alone when no backup is configured", async () => {
       mockFindFirst.mockResolvedValue({
         chainId: 1,
         chainType: "evm",
@@ -395,16 +461,21 @@ describe("queryTransactionsCore", () => {
         updatedAt: new Date(),
       });
 
-      mockFetch.mockResolvedValueOnce({
+      const failResponse = {
         json: () =>
           Promise.resolve({
             status: "0",
             message: "NOTOK",
             result: "Rate limit exceeded",
           }),
-      });
+      };
+      // round 1 and round 2 both fail
+      mockFetch.mockResolvedValueOnce(failResponse);
+      mockFetch.mockResolvedValueOnce(failResponse);
 
-      const result = await queryTransactionsCore(BASE_INPUT);
+      const resultPromise = queryTransactionsCore(BASE_INPUT);
+      await vi.advanceTimersByTimeAsync(10_000);
+      const result = await resultPromise;
 
       expect(result.success).toBe(false);
       if (!result.success) {
@@ -412,7 +483,7 @@ describe("queryTransactionsCore", () => {
           "Rate limit exceeded. Please try again later."
         );
       }
-      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
     });
 
     it("falls back when primary throws a network error", async () => {
