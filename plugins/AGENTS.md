@@ -201,7 +201,9 @@ export async function doSomethingStep(
   "use step";
 
   const credentials = input.integrationId
-    ? await fetchCredentials(input.integrationId)
+    ? await fetchCredentials(input.integrationId, {
+        organizationId: input._context?.organizationId ?? null,
+      })
     : {};
 
   return withStepLogging(input, () => stepHandler(input, credentials));
@@ -487,7 +489,9 @@ Some plugins may work without credentials (using defaults or public APIs):
 
 ```typescript
 const credentials = input.integrationId
-  ? await fetchCredentials(input.integrationId)
+  ? await fetchCredentials(input.integrationId, {
+      organizationId: input._context?.organizationId ?? null,
+    })
   : {};  // Empty object if no integrationId
 
 // Handle missing credentials gracefully

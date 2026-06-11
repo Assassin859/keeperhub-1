@@ -169,7 +169,7 @@ export async function sendEmailStep(
   }
 
   const credentials = input.integrationId
-    ? await fetchCredentials(input.integrationId)
+    ? await fetchCredentials(input.integrationId, { organizationId: input._context?.organizationId ?? null })
     : {};
 
   // Always use KeeperHub API key
