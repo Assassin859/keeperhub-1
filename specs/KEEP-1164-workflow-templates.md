@@ -38,9 +38,9 @@ Note: `description` already exists on the workflow table.
 
 **Route:** `POST /keeperhub/api/hub/featured`
 
-**Authentication:** Internal service key via `X-Service-Key` header
+**Authentication:** Internal service HMAC signature via `X-KH-Caller` / `X-KH-Timestamp` / `X-KH-Signature` headers
 
-**Environment Variable:** `HUB_SERVICE_API_KEY`
+**Environment Variable:** `INTERNAL_SERVICE_HMAC_SECRET`
 
 **Request Body:**
 ```typescript
@@ -70,7 +70,7 @@ Note: `description` already exists on the workflow table.
 ```bash
 curl -X POST https://app.keeperhub.com/api/hub/featured \
   -H "Content-Type: application/json" \
-  -H "X-Service-Key: $HUB_SERVICE_API_KEY" \
+  -H "X-KH-Caller: hub" -H "X-KH-Timestamp: $TS" -H "X-KH-Signature: $SIG" \
   -d '{
     "workflowId": "abc123",
     "category": "Web3",
@@ -100,10 +100,12 @@ const SERVICE_KEYS: Record<InternalServiceName, string | undefined> = {
 ```
 
 **Authentication flow:**
-1. Request includes `X-Service-Key: <secret>` header
-2. Server loops through registered services and compares keys
-3. Uses timing-safe comparison (`crypto.timingSafeEqual`) to prevent timing attacks
-4. Returns `{ authenticated: true, service: "hub" }` on success
+1. Request includes `X-KH-Caller` / `X-KH-Timestamp` / `X-KH-Signature` headers, where the
+   signature is `hmac_sha256(secret, "POST\n/api/hub/featured\nhub\nsha256(body)\ntimestamp")`
+2. Server verifies the timestamp is within the replay window and recomputes the signature
+   using the shared secret from the `internal_service_hmac_secrets` store
+3. Uses timing-safe comparison (`crypto.timingSafeEqual`) on the signature bytes
+4. Returns `{ authenticated: true, caller: "hub" }` on success
 
 **Endpoint authorization:**
 ```typescript

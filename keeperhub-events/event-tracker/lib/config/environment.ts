@@ -1,5 +1,4 @@
 export const KEEPERHUB_API_URL: string = process.env.KEEPERHUB_API_URL || "";
-export const KEEPERHUB_API_KEY: string = process.env.KEEPERHUB_API_KEY || "";
 export const REDIS_HOST: string = process.env.REDIS_HOST || "localhost";
 export const REDIS_PORT: number = Number(process.env.REDIS_PORT) || 6379;
 export const REDIS_PASSWORD: string = process.env.REDIS_PASSWORD || "";

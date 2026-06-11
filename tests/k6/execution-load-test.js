@@ -2,7 +2,7 @@
 //
 // Each VU creates workflows in tiers (configurable via TIERS env).
 // ~75% Schedule (triggered by real scheduler-dispatcher every minute)
-// ~25% Manual (triggered by k6 via service key every ~60s)
+// ~25% Manual (triggered by k6 via HMAC-signed internal request every ~60s)
 //
 // Execution counting uses the /api/admin/test/stats endpoint which
 // queries the DB directly — no per-VU counting, no session-dependent
@@ -10,10 +10,11 @@
 //
 // k6 run execution-load-test.js \
 //   -e BASE_URL=https://app-staging.keeperhub.com \
-//   -e TEST_API_KEY=placeholder -e SERVICE_KEY=<key> \
+//   -e TEST_API_KEY=placeholder -e INTERNAL_SERVICE_HMAC_SECRET=<secret> \
 //   -e CF_ACCESS_CLIENT_ID=... -e CF_ACCESS_CLIENT_SECRET=...
 
 import http from "k6/http";
+import crypto from "k6/crypto";
 import { sleep } from "k6";
 import { Counter, Gauge } from "k6/metrics";
 import exec from "k6/execution";
@@ -22,7 +23,9 @@ const BASE_URL = __ENV.BASE_URL || "http://localhost:3000";
 const TEST_API_KEY = __ENV.TEST_API_KEY || "";
 const CF_ID = __ENV.CF_ACCESS_CLIENT_ID || "";
 const CF_SECRET = __ENV.CF_ACCESS_CLIENT_SECRET || "";
-const SERVICE_KEY = __ENV.SERVICE_KEY || "";
+const INTERNAL_SERVICE_HMAC_SECRET =
+  __ENV.INTERNAL_SERVICE_HMAC_SECRET || __ENV.SERVICE_KEY || "";
+const HMAC_CALLER = __ENV.HMAC_CALLER || "executor";
 const LOAD_TEST_BYPASS_TOKEN = __ENV.LOAD_TEST_BYPASS_TOKEN || "";
 const TARGET_VUS = parseInt(__ENV.TARGET_VUS || "20", 10);
 const OBSERVE_SECONDS = parseInt(__ENV.OBSERVE_SECONDS || "180", 10);
@@ -73,7 +76,21 @@ function h() {
   return hd;
 }
 function adminH() { const hd = h(); if (TEST_API_KEY) hd["Authorization"] = `Bearer ${TEST_API_KEY}`; return hd; }
-function serviceH() { const hd = h(); if (SERVICE_KEY) hd["X-Service-Key"] = SERVICE_KEY; return hd; }
+// Sign an internal service-to-service request with HMAC, matching the verifier
+// in lib/internal-service-auth.ts:
+//   signingString = method\npath\ncaller\nsha256_hex(body)\ntimestamp
+function serviceH(method, path, body) {
+  const hd = h();
+  if (INTERNAL_SERVICE_HMAC_SECRET) {
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const bodyDigest = crypto.sha256(body || "", "hex");
+    const signingString = `${method}\n${path}\n${HMAC_CALLER}\n${bodyDigest}\n${ts}`;
+    hd["X-KH-Caller"] = HMAC_CALLER;
+    hd["X-KH-Timestamp"] = ts;
+    hd["X-KH-Signature"] = crypto.hmac("sha256", INTERNAL_SERVICE_HMAC_SECRET, signingString, "hex");
+  }
+  return hd;
+}
 
 // Workflow node builders
 function act(id, x, y) {
@@ -178,7 +195,9 @@ function createWorkflows(count) {
 
 function triggerManuals() {
   for (const wfId of manualWfIds) {
-    const r = http.post(`${BASE_URL}/api/workflow/${wfId}/execute`, JSON.stringify({}), { headers: serviceH() });
+    const path = `/api/workflow/${wfId}/execute`;
+    const body = JSON.stringify({});
+    const r = http.post(`${BASE_URL}${path}`, body, { headers: serviceH("POST", path, body) });
     if (r.status === 200 || r.status === 201) manualTriggerOk.add(1);
     else manualTriggerFail.add(1);
   }

@@ -148,7 +148,6 @@ describe.skipIf(SKIP_INFRA_TESTS)(
       });
 
       process.env.KEEPERHUB_API_URL = mockApi.url;
-      process.env.KEEPERHUB_API_KEY = "test-key";
       process.env.SQS_QUEUE_URL = queueUrl;
       process.env.AWS_ENDPOINT_URL = AWS_ENDPOINT;
       process.env.AWS_REGION = "us-east-1";

@@ -77,7 +77,7 @@ Polls SQS for workflow triggers and executes them.
 | Variable | Description | Used By |
 |----------|-------------|---------|
 | `KEEPERHUB_API_URL` | KeeperHub API base URL | All |
-| `KEEPERHUB_API_KEY` | Internal service API key | All |
+| `INTERNAL_SERVICE_HMAC_SECRET` | Shared HMAC secret for signing internal requests | All |
 | `AWS_REGION` | AWS region | All |
 | `SQS_QUEUE_URL` | SQS queue URL for workflow triggers | All |
 | `HEALTH_PORT` | HTTP health check port (defaults: 3060 schedule-dispatcher, 3050 block-dispatcher) | All |
@@ -121,7 +121,7 @@ To connect to real services, set the environment variables:
 
 ```bash
 export KEEPERHUB_API_URL=http://your-api-url
-export KEEPERHUB_API_KEY=your-api-key
+export INTERNAL_SERVICE_HMAC_SECRET=your-internal-service-hmac-secret
 export AWS_REGION=us-east-1
 export SQS_QUEUE_URL=https://sqs.us-east-1.amazonaws.com/123456789/your-queue
 ```
@@ -141,7 +141,7 @@ Run a container with required environment variables:
 
 ```bash
 docker run -e KEEPERHUB_API_URL=http://host.docker.internal:3000 \
-           -e KEEPERHUB_API_KEY=your-key \
+           -e INTERNAL_SERVICE_HMAC_SECRET=your-internal-service-hmac-secret \
            -e AWS_REGION=us-east-1 \
            -e SQS_QUEUE_URL=https://sqs.us-east-1.amazonaws.com/123456789/your-queue \
            -p 3000:3000 \
