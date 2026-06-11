@@ -9,6 +9,7 @@ vi.mock("server-only", () => ({}));
 
 import {
   createSandboxResultReader,
+  decodeSandboxResult,
   SANDBOX_CHILD_SOURCE,
   SANDBOX_RESULT_FD,
   SANDBOX_RESULT_MAX_BYTES,
@@ -126,9 +127,9 @@ function outcomeFromReader(
     return { ok: false, errorMessage: "no result frame on fd 3", logs: [] };
   }
   try {
-    return deserialize(reader.frame) as SandboxOutcome;
+    return decodeSandboxResult(reader.frame.toString("utf8")) as SandboxOutcome;
   } catch (_err) {
-    return { ok: false, errorMessage: "malformed v8 payload", logs: [] };
+    return { ok: false, errorMessage: "malformed result payload", logs: [] };
   }
 }
 
@@ -622,5 +623,125 @@ describe("sandbox grandchild fd-3 framing survives large multi-chunk results", (
       expect(typeof outcome.result).toBe("string");
       expect((outcome.result as string).length).toBe(300_000);
     }
+  });
+});
+
+// The result codec replaces v8.serialize/deserialize so the parent never
+// deserializes untrusted v8 (F-010 root cause). It must still preserve the
+// structured types the Code node contract promises. These spawn the real
+// grandchild and assert fidelity end-to-end through the tagged-JSON channel.
+describe("sandbox grandchild result codec preserves structured-type fidelity", () => {
+  it("round-trips a nested BigInt (wei-style amounts)", async () => {
+    const code =
+      "return { amounts: [BigInt(10), BigInt(20)], wei: BigInt('1000000000000000000') };";
+    const outcome = await runSandboxed(code);
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      const r = outcome.result as { amounts: bigint[]; wei: bigint };
+      expect(typeof r.amounts[0]).toBe("bigint");
+      expect(r.amounts[1]).toBe(BigInt(20));
+      expect(r.wei).toBe(BigInt("1000000000000000000"));
+    }
+  });
+
+  it("round-trips Set and Date", async () => {
+    const outcome = await runSandboxed(
+      "return { s: new Set([1, 2, 3]), d: new Date(1700000000000) };"
+    );
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      const r = outcome.result as { s: Set<number>; d: Date };
+      expect(r.s).toBeInstanceOf(Set);
+      expect([...r.s]).toEqual([1, 2, 3]);
+      expect(r.d).toBeInstanceOf(Date);
+      expect(r.d.getTime()).toBe(1_700_000_000_000);
+    }
+  });
+
+  it("round-trips a typed array", async () => {
+    const outcome = await runSandboxed("return new Uint8Array([1, 2, 255]);");
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.result).toBeInstanceOf(Uint8Array);
+      expect([...(outcome.result as Uint8Array)]).toEqual([1, 2, 255]);
+    }
+  });
+
+  it("round-trips NaN / Infinity / undefined", async () => {
+    const outcome = await runSandboxed(
+      "return { n: NaN, p: Infinity, m: -Infinity, u: undefined };"
+    );
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      const r = outcome.result as Record<string, unknown>;
+      expect(Number.isNaN(r.n)).toBe(true);
+      expect(r.p).toBe(Number.POSITIVE_INFINITY);
+      expect(r.m).toBe(Number.NEGATIVE_INFINITY);
+      expect(r.u).toBeUndefined();
+    }
+  });
+
+  it("does NOT misinterpret a user object that literally has a \"$\" key", async () => {
+    // Collision safety: a user object shaped like a type tag must round-trip as
+    // a plain object, not be decoded as a BigInt.
+    const outcome = await runSandboxed('return { "$": "bigint", v: "5" };');
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.result).toEqual({ $: "bigint", v: "5" });
+    }
+  });
+
+  it("returns a clean error (not a crash) for a non-serializable value", async () => {
+    const outcome = await runSandboxed("return () => 1;");
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.errorMessage).toMatch(/not serializable/i);
+    }
+  });
+
+  it("returns a clean error for a circular reference", async () => {
+    const outcome = await runSandboxed(
+      "const a = {}; a.self = a; return a;"
+    );
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.errorMessage).toMatch(/serializable|circular/i);
+    }
+  });
+});
+
+// The decoder runs on bytes a sandbox escape can fully control, so it must be
+// safe on hostile input in isolation -- no prototype pollution, no v8.
+describe("decodeSandboxResult is safe on untrusted input", () => {
+  it("does not pollute Object.prototype via a __proto__ key", () => {
+    const before = ({} as Record<string, unknown>).polluted;
+    const decoded = decodeSandboxResult(
+      '{"result":{"__proto__":{"polluted":true}}}'
+    ) as { result: Record<string, unknown> };
+    // The hostile key lands as an own data property, not on the prototype.
+    expect(({} as Record<string, unknown>).polluted).toBe(before);
+    expect(Object.getPrototypeOf(decoded.result)).toBe(Object.prototype);
+    expect(Object.hasOwn(decoded.result, "__proto__")).toBe(true);
+  });
+
+  it("rebuilds tagged values", () => {
+    expect(decodeSandboxResult('{"$":"bigint","v":"42"}')).toBe(BigInt(42));
+    expect(decodeSandboxResult('{"$":"undef"}')).toBeUndefined();
+    const m = decodeSandboxResult('{"$":"map","v":[["a",1]]}') as Map<
+      string,
+      number
+    >;
+    expect(m).toBeInstanceOf(Map);
+    expect(m.get("a")).toBe(1);
+  });
+
+  it("treats an escaped {$:obj} wrapper as a literal object", () => {
+    expect(
+      decodeSandboxResult('{"$":"obj","v":{"$":"x","y":1}}')
+    ).toEqual({ $: "x", y: 1 });
+  });
+
+  it("throws on malformed JSON (callers map this to an error outcome)", () => {
+    expect(() => decodeSandboxResult("not json")).toThrow();
   });
 });

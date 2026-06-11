@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
-import { deserialize } from "node:v8";
 import {
   SANDBOX_CHILD_SOURCE as CHILD_SOURCE,
   createSandboxResultReader,
+  decodeSandboxResult,
   SANDBOX_RESULT_FD,
   type SandboxResultReader,
 } from "../../lib/sandbox/child-source.js";
@@ -49,6 +49,14 @@ function buildChildEnv(): NodeJS.ProcessEnv {
   return out as NodeJS.ProcessEnv;
 }
 
+function isChildOutcome(value: unknown): value is ChildOutcome {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { ok?: unknown }).ok === "boolean"
+  );
+}
+
 function outcomeFromReader(reader: SandboxResultReader): ChildOutcome {
   if (reader.error) {
     return { ok: false, errorMessage: reader.error, logs: [] };
@@ -57,7 +65,18 @@ function outcomeFromReader(reader: SandboxResultReader): ChildOutcome {
     return { ok: false, errorMessage: "Sandbox produced no result", logs: [] };
   }
   try {
-    return deserialize(reader.frame) as ChildOutcome;
+    // Safe by construction: JSON.parse + tag rebuild, never v8.deserialize on
+    // child-produced bytes (F-010). Validate the envelope shape since the
+    // child is untrusted.
+    const decoded = decodeSandboxResult(reader.frame.toString("utf8"));
+    if (!isChildOutcome(decoded)) {
+      return {
+        ok: false,
+        errorMessage: "Sandbox produced malformed result",
+        logs: [],
+      };
+    }
+    return decoded;
   } catch (_err) {
     return {
       ok: false,

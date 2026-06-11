@@ -1,7 +1,6 @@
 import "server-only";
 
 import { spawn } from "node:child_process";
-import { deserialize } from "node:v8";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import {
@@ -9,6 +8,7 @@ import {
   SANDBOX_RESULT_FD,
   type SandboxResultReader,
   createSandboxResultReader,
+  decodeSandboxResult,
 } from "@/lib/sandbox/child-source";
 import { runRemote } from "@/lib/sandbox/client";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
@@ -135,6 +135,14 @@ type ChildOutcome =
       logs: LogEntry[];
     };
 
+function isChildOutcome(value: unknown): value is ChildOutcome {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { ok?: unknown }).ok === "boolean"
+  );
+}
+
 function outcomeFromReader(reader: SandboxResultReader): ChildOutcome {
   if (reader.error) {
     return { ok: false, errorMessage: reader.error, logs: [] };
@@ -143,7 +151,19 @@ function outcomeFromReader(reader: SandboxResultReader): ChildOutcome {
     return { ok: false, errorMessage: "Sandbox produced no result", logs: [] };
   }
   try {
-    return deserialize(reader.frame) as ChildOutcome;
+    // Safe by construction: JSON.parse + tag rebuild, never v8.deserialize on
+    // child-produced bytes (F-010). This parent is the privileged in-pod app,
+    // so the no-untrusted-deserialize property matters most here. Validate the
+    // envelope shape since the child is untrusted.
+    const decoded = decodeSandboxResult(reader.frame.toString("utf8"));
+    if (!isChildOutcome(decoded)) {
+      return {
+        ok: false,
+        errorMessage: "Sandbox produced malformed result",
+        logs: [],
+      };
+    }
+    return decoded;
   } catch (_err) {
     return {
       ok: false,

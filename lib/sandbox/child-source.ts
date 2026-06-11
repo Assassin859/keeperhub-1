@@ -34,30 +34,33 @@
 import blocklist from "../ssrf-blocklist.json" with { type: "json" };
 
 /**
- * F-010: the grandchild returns its v8-serialized result on a DEDICATED pipe
- * (fd 3), not stdout. The result is a single length-prefixed frame
- * (4-byte big-endian byte count, then the raw v8 bytes) and the parent
- * accepts only the FIRST complete frame.
+ * F-010: the grandchild returns its result as TAGGED JSON on a DEDICATED pipe
+ * (fd 3), not stdout. The result is a single length-prefixed frame (4-byte
+ * big-endian byte count, then a UTF-8 JSON body) and the parent recovers it
+ * with JSON.parse + decodeSandboxResult.
  *
- * Why this shape:
- *   - stdout (fd 1) is left purely user-facing; nothing written there is
- *     ever deserialized, so a sandbox escape that writes arbitrary bytes to
- *     stdout can no longer masquerade as a result (the old design scanned
- *     stdout for a 6-byte sentinel via lastIndexOf, which an escaped child
- *     defeated by appending a later sentinel).
- *   - First-frame-wins means a post-escape, user-scheduled write to fd 3
- *     loses to the genuine frame the child emits first. The genuine write
- *     goes through a fs.writeSync reference captured at child startup
- *     (before any user code runs), so monkeypatching fs.writeSync cannot
- *     suppress it.
+ * Two independent properties close the finding:
+ *   - The parent NEVER runs v8.deserialize on bytes the child produced. JSON
+ *     is safe to parse on untrusted input (the decoder additionally rebuilds
+ *     "__proto__" keys as own data properties, so it cannot be used to pollute
+ *     the parent's prototypes). This removes the root cause: even a fully
+ *     compromised child can only deliver inert data, never a deserialization
+ *     gadget. Fidelity (BigInt/Map/Set/Date/typed arrays/...) is preserved by
+ *     the tag codec rather than by structured-clone.
+ *   - stdout (fd 1) is left purely user-facing; nothing there is deserialized,
+ *     so a sandbox escape writing to stdout cannot masquerade as a result (the
+ *     old design scanned stdout for a 6-byte sentinel via lastIndexOf, which
+ *     an escaped child defeated by appending a later sentinel). The parent
+ *     also accepts only the FIRST complete fd-3 frame, and the genuine frame
+ *     is written through a fs.writeSync reference captured at child startup,
+ *     so a post-escape forged frame -- even with process.exit/fs.writeSync
+ *     reassigned -- loses to the genuine one.
  *
- * Residual (accepted, documented on the PR): a FULLY-escaped child can write
- * a forged frame to fd 3 synchronously, BEFORE the genuine result is
- * produced, occupying frame #0. Closing that completely would require the
- * parent to stop v8.deserialize-ing untrusted bytes at all, which drops
- * structured-clone fidelity (BigInt/Map/Set/Date) -- a separate product
- * decision. The vector is gated behind a vm escape; the child is
- * env-scrubbed and NetworkPolicy-isolated.
+ * Residual: a sandbox escape is still arbitrary code running AS the user, so
+ * it can return any DATA it likes (exactly as legitimate user code can). What
+ * it can no longer do is hand the parent untrusted bytes to deserialize. The
+ * vector is gated behind a vm escape; the child is env-scrubbed and
+ * NetworkPolicy-isolated.
  */
 export const SANDBOX_RESULT_FD = 3;
 
@@ -140,6 +143,123 @@ export function createSandboxResultReader(
 }
 
 /**
+ * Tag key for the result codec. The child encodes its outcome as tagged JSON
+ * (see `encodeResult` in the template) so the parent can recover it with a
+ * SAFE `JSON.parse` instead of `v8.deserialize` -- which Node documents as
+ * unsafe on untrusted data. A 1-key `{ "$": <tag> }` object carries a typed
+ * value (bigint, Date, Map, ...); plain user objects that happen to contain a
+ * literal "$" key are escaped as `{ "$": "obj", "v": {...} }` so they cannot
+ * be mistaken for a tag.
+ */
+const SANDBOX_RESULT_TAG = "$";
+
+function reviveSandboxNumber(token: string): number {
+  switch (token) {
+    case "NaN":
+      return Number.NaN;
+    case "Inf":
+      return Number.POSITIVE_INFINITY;
+    case "-Inf":
+      return Number.NEGATIVE_INFINITY;
+    case "-0":
+      return -0;
+    default:
+      return Number(token);
+  }
+}
+
+function reviveSandboxBytes(kind: string, base64: string): unknown {
+  const buf = Buffer.from(base64, "base64");
+  // Copy into a standalone ArrayBuffer so the result does not alias Node's
+  // shared Buffer pool.
+  const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+  if (kind === "ArrayBuffer") {
+    return ab;
+  }
+  if (kind === "DataView") {
+    return new DataView(ab);
+  }
+  const Ctor = (globalThis as Record<string, unknown>)[kind];
+  if (typeof Ctor === "function") {
+    return new (Ctor as new (b: ArrayBuffer) => unknown)(ab);
+  }
+  // Unknown view kind from a malformed/compromised child: hand back raw bytes
+  // rather than throwing.
+  return new Uint8Array(ab);
+}
+
+/**
+ * Rebuild a plain object key-by-key, defining each property so a "__proto__"
+ * key lands as an own data property instead of invoking the prototype setter
+ * (the prototype-pollution guard that makes deserializing untrusted input
+ * safe).
+ */
+function decodeSandboxObject(obj: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const key of Object.keys(obj)) {
+    Object.defineProperty(result, key, {
+      value: decodeSandboxNode(obj[key]),
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+  }
+  return result;
+}
+
+function decodeSandboxNode(node: unknown): unknown {
+  if (Array.isArray(node)) {
+    return node.map(decodeSandboxNode);
+  }
+  if (node === null || typeof node !== "object") {
+    return node;
+  }
+  const obj = node as Record<string, unknown>;
+  if (!Object.hasOwn(obj, SANDBOX_RESULT_TAG)) {
+    return decodeSandboxObject(obj);
+  }
+  switch (obj[SANDBOX_RESULT_TAG]) {
+    case "undef":
+      return undefined;
+    case "bigint":
+      return BigInt(obj.v as string);
+    case "num":
+      return reviveSandboxNumber(obj.v as string);
+    case "date":
+      return new Date(obj.v as number);
+    case "regexp":
+      return new RegExp(obj.src as string, obj.flags as string);
+    case "map":
+      return new Map(
+        (obj.v as [unknown, unknown][]).map((e) => [
+          decodeSandboxNode(e[0]),
+          decodeSandboxNode(e[1]),
+        ])
+      );
+    case "set":
+      return new Set((obj.v as unknown[]).map(decodeSandboxNode));
+    case "bytes":
+      return reviveSandboxBytes(obj.k as string, obj.v as string);
+    case "obj":
+      // Escaped plain object: its keys are literal data, never tags.
+      return decodeSandboxObject(obj.v as Record<string, unknown>);
+    default:
+      // Unknown tag from a malformed/compromised child: treat as plain data.
+      return decodeSandboxObject(obj);
+  }
+}
+
+/**
+ * Parse a child result frame. `text` is the UTF-8 body of the fd-3 frame.
+ * Uses `JSON.parse` (safe on untrusted input) and rebuilds the typed values
+ * the child tagged. Throws on malformed JSON / tags; callers map that to an
+ * error outcome.
+ */
+export function decodeSandboxResult(text: string): unknown {
+  return decodeSandboxNode(JSON.parse(text));
+}
+
+/**
  * JavaScript source string for the sandbox grandchild. Passed verbatim to
  * `node -e`, so it must be standalone (no imports, no TypeScript syntax).
  *
@@ -151,13 +271,12 @@ export function createSandboxResultReader(
  *     lib/safe-fetch.ts from KEEP-314)
  *   - Apply a wall-clock timeout (beyond the vm's sync CPU timeout) that
  *     catches never-settling user promises
- *   - Write a length-prefixed, v8-serialized outcome to the dedicated
+ *   - Write a length-prefixed, tagged-JSON outcome to the dedicated
  *     result pipe (fd SANDBOX_RESULT_FD), leaving stdout user-facing
  */
 export const SANDBOX_CHILD_SOURCE = `
 "use strict";
 const { createContext, runInContext } = require("node:vm");
-const v8 = require("node:v8");
 const fs = require("node:fs");
 const dnsPromises = require("node:dns").promises;
 const { BlockList, isIP } = require("node:net");
@@ -631,21 +750,136 @@ function run(input) {
   return Promise.race([settledUserPromise, timeoutPromise]);
 }
 
+// Encode an outcome as tagged JSON. The PARENT recovers it with JSON.parse
+// (safe on untrusted input) plus decodeSandboxResult(), so it never runs
+// v8.deserialize on bytes a sandbox escape could control. Mirrors
+// decodeSandboxNode in this module exactly; keep the two in lockstep.
+// Throws on a value with no safe representation (function, symbol, cycle),
+// which writeResult maps to a structured "not serializable" outcome.
+function encodeResult(value, seen) {
+  if (value === null) {
+    return null;
+  }
+  const t = typeof value;
+  if (t === "undefined") {
+    return { "$": "undef" };
+  }
+  if (t === "boolean" || t === "string") {
+    return value;
+  }
+  if (t === "number") {
+    if (Number.isFinite(value) && !Object.is(value, -0)) {
+      return value;
+    }
+    let token = "-0";
+    if (Number.isNaN(value)) {
+      token = "NaN";
+    } else if (value === Infinity) {
+      token = "Inf";
+    } else if (value === -Infinity) {
+      token = "-Inf";
+    }
+    return { "$": "num", "v": token };
+  }
+  if (t === "bigint") {
+    return { "$": "bigint", "v": value.toString() };
+  }
+  if (t === "function" || t === "symbol") {
+    throw new Error("Result is not serializable: " + t);
+  }
+  if (seen.has(value)) {
+    throw new Error("Result is not serializable: circular reference");
+  }
+  seen.add(value);
+  try {
+    if (Array.isArray(value)) {
+      const arr = new Array(value.length);
+      for (let i = 0; i < value.length; i++) {
+        arr[i] = encodeResult(value[i], seen);
+      }
+      return arr;
+    }
+    if (value instanceof Date) {
+      return { "$": "date", "v": value.getTime() };
+    }
+    if (value instanceof RegExp) {
+      return { "$": "regexp", "src": value.source, "flags": value.flags };
+    }
+    if (value instanceof Map) {
+      const entries = [];
+      for (const pair of value) {
+        entries.push([encodeResult(pair[0], seen), encodeResult(pair[1], seen)]);
+      }
+      return { "$": "map", "v": entries };
+    }
+    if (value instanceof Set) {
+      const items = [];
+      for (const item of value) {
+        items.push(encodeResult(item, seen));
+      }
+      return { "$": "set", "v": items };
+    }
+    if (value instanceof ArrayBuffer) {
+      return {
+        "$": "bytes",
+        "k": "ArrayBuffer",
+        "v": Buffer.from(value).toString("base64"),
+      };
+    }
+    if (ArrayBuffer.isView(value)) {
+      const kind =
+        value.constructor && value.constructor.name
+          ? value.constructor.name
+          : "Uint8Array";
+      return {
+        "$": "bytes",
+        "k": kind,
+        "v": Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString(
+          "base64"
+        ),
+      };
+    }
+    const out = {};
+    let hasTagKey = false;
+    const keys = Object.keys(value);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      if (key === "$") {
+        hasTagKey = true;
+      }
+      out[key] = encodeResult(value[key], seen);
+    }
+    // Escape a user object that literally carries a "$" key so the parent does
+    // not mistake it for a type tag.
+    return hasTagKey ? { "$": "obj", "v": out } : out;
+  } finally {
+    seen.delete(value);
+  }
+}
+
 function writeResult(message) {
   let payload;
   try {
-    payload = v8.serialize(message);
+    payload = Buffer.from(JSON.stringify(encodeResult(message, new Set())), "utf8");
   } catch (cloneErr) {
-    payload = v8.serialize({
-      ok: false,
-      errorMessage:
-        "Result is not serializable: " +
-        (cloneErr && cloneErr.message
-          ? cloneErr.message
-          : String(cloneErr)),
-      errorStack: undefined,
-      logs: [],
-    });
+    payload = Buffer.from(
+      JSON.stringify(
+        encodeResult(
+          {
+            ok: false,
+            errorMessage:
+              "Result is not serializable: " +
+              (cloneErr && cloneErr.message
+                ? cloneErr.message
+                : String(cloneErr)),
+            errorStack: undefined,
+            logs: [],
+          },
+          new Set()
+        )
+      ),
+      "utf8"
+    );
   }
   // F-010: emit the result as a single length-prefixed frame on the dedicated
   // result pipe (fd RESULT_FD), NOT on stdout. The 4-byte big-endian length

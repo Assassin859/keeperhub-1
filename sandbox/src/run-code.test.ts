@@ -184,6 +184,29 @@ describe("runCode — sandbox child_process runner", () => {
     }
   });
 
+  it("round-trips a typed array through the tagged-JSON codec", async () => {
+    const outcome = await runCode({
+      code: "return new Uint8Array([1, 2, 255]);",
+      timeoutMs: 5000,
+    });
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.result).toBeInstanceOf(Uint8Array);
+      expect([...(outcome.result as Uint8Array)]).toEqual([1, 2, 255]);
+    }
+  });
+
+  it("returns a clean error for a non-serializable result", async () => {
+    const outcome = await runCode({
+      code: "return () => 1;",
+      timeoutMs: 5000,
+    });
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.errorMessage).toMatch(/not serializable/i);
+    }
+  });
+
   it("ignores a forged sentinel an escape writes to stdout (F-010, stdout never deserialized)", async () => {
     const code = [
       "try {",
