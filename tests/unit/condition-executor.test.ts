@@ -7,6 +7,7 @@ import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resol
 
 const NO_EXPRESSION_REGEX = /no expression configured/;
 const NO_OUTPUT_FOUND_RE = /no output was found/;
+const FAILED_TO_EVALUATE_RE = /Failed to evaluate condition expression/;
 
 /**
  * Tests for KEEP-1520: Condition node losing expression at runtime
@@ -975,5 +976,30 @@ describe("dead-branch grace: references to nodes that never executed", () => {
     expect(() => evaluateConditionExpression(expression, {})).toThrow(
       NO_OUTPUT_FOUND_RE
     );
+  });
+});
+
+describe("A-01: condition expressions cannot execute arbitrary code", () => {
+  it("rejects a bare global call that the regex validator lets through (SSRF vector)", () => {
+    // `fetch(...)` passes the legacy regex blocklist (no blocked keyword, not a
+    // `.method(` call) but must never reach a real fetch under the AST interpreter.
+    expect(() =>
+      evaluateConditionExpression('fetch("http://127.0.0.1/")', {})
+    ).toThrow(FAILED_TO_EVALUATE_RE);
+  });
+
+  it("rejects unicode-escaped constructor access (RCE vector)", () => {
+    expect(() =>
+      evaluateConditionExpression('"x"["\\u0063onstructor"]', {})
+    ).toThrow(FAILED_TO_EVALUATE_RE);
+  });
+
+  it("rejects the full constructor-of-constructor RCE chain", () => {
+    expect(() =>
+      evaluateConditionExpression(
+        '"x"["\\u0063onstructor"]["\\u0063onstructor"]("return 1")()',
+        {}
+      )
+    ).toThrow(FAILED_TO_EVALUATE_RE);
   });
 });

@@ -73,6 +73,7 @@ import {
   type TemplateResolutionTracker,
 } from "@/lib/workflow/executor/template-resolution";
 import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
+import { safeEvaluateCondition } from "@/lib/workflow/nodes/condition/safe-eval";
 import {
   type ConditionDecision,
   collectAllSkippedTargets,
@@ -323,11 +324,13 @@ type ConditionEvalResult = {
 };
 
 /**
- * Evaluate condition expression with template variable replacement
- * Uses Function constructor to evaluate user-defined conditions dynamically
+ * Evaluate condition expression with template variable replacement.
  *
- * Security: Expressions are validated before evaluation to prevent code injection.
- * Only comparison operators, logical operators, and whitelisted methods are allowed.
+ * Security (A-01): The transformed expression is evaluated by a safe AST
+ * interpreter (safeEvaluateCondition) that never constructs functions and
+ * never reaches host globals. It can only read the resolved __v/__b values and
+ * apply an allowlisted set of operators and methods. Expressions are still
+ * validated upfront for clear user-facing error messages.
  */
 // Exported for testing - KEEP-1284
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: KEEP-1284 validation requires comprehensive error checking
@@ -420,16 +423,10 @@ export function evaluateConditionExpression(
         evalContext = converted.evalContext;
       }
 
-      const varNames = Object.keys(evalContext);
-      const varValues = Object.values(evalContext);
-
-      // Safe to evaluate - expression has been validated
-      // Only contains: variables (__v0, __v1), operators, literals, and whitelisted methods
-      const evalFunc = new Function(
-        ...varNames,
-        `return (${transformedExpression});`
-      );
-      const result = evalFunc(...varValues);
+      // Safe AST interpreter (no new Function / no host access) for A-01.
+      // Only reads the resolved __v/__b values and applies allowlisted
+      // operators and methods.
+      const result = safeEvaluateCondition(transformedExpression, evalContext);
       return { result: Boolean(result), resolvedValues };
     } catch (error) {
       // KEEP-1284: Re-throw errors about missing data - these should not be silently swallowed
