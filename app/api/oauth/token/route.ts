@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { isUserDeactivated } from "@/lib/auth-deactivation-guard";
 import { createAccessToken } from "@/lib/mcp/oauth-auth";
 import {
@@ -7,6 +7,7 @@ import {
   getAuthCode,
   getOAuthClient,
   getRefreshToken,
+  type OAuthClient,
   REFRESH_TOKEN_TTL_MS,
   storeRefreshToken,
 } from "@/lib/mcp/oauth-store";
@@ -28,7 +29,66 @@ function verifyPkceS256(verifier: string, challenge: string): boolean {
   return hash === challenge;
 }
 
+// Pull the client_secret from either the request body (client_secret_post) or
+// the HTTP Basic Authorization header (client_secret_basic). Public PKCE
+// clients send neither.
+function extractClientSecret(
+  request: Request,
+  params: URLSearchParams
+): string | null {
+  const fromBody = params.get("client_secret");
+  if (fromBody) {
+    return fromBody;
+  }
+  const authHeader = request.headers.get("authorization") ?? "";
+  if (!authHeader.startsWith("Basic ")) {
+    return null;
+  }
+  try {
+    const decoded = Buffer.from(authHeader.slice(6), "base64").toString("utf8");
+    const secret = decoded.slice(decoded.indexOf(":") + 1);
+    return secret || null;
+  } catch {
+    return null;
+  }
+}
+
+function secretMatches(secret: string, expectedHash: string): boolean {
+  const actual = Buffer.from(
+    createHash("sha256").update(secret).digest("hex"),
+    "utf8"
+  );
+  const expected = Buffer.from(expectedHash, "utf8");
+  if (actual.length !== expected.length) {
+    return false;
+  }
+  return timingSafeEqual(actual, expected);
+}
+
+// Confidential clients (any token_endpoint_auth_method other than "none") must
+// present a valid client_secret on token grants. Public PKCE clients are
+// identified by client_id alone and skip this check. Returns an error Response
+// when verification fails, or null when the client is authenticated.
+function verifyClientAuthentication(
+  client: OAuthClient,
+  request: Request,
+  params: URLSearchParams
+): Response | null {
+  if (client.tokenEndpointAuthMethod === "none") {
+    return null;
+  }
+  const secret = extractClientSecret(request, params);
+  if (!secret) {
+    return jsonError("client_secret is required for this client", 401);
+  }
+  if (!secretMatches(secret, client.clientSecretHash)) {
+    return jsonError("Invalid client_secret", 401);
+  }
+  return null;
+}
+
 async function handleAuthorizationCode(
+  request: Request,
   params: URLSearchParams
 ): Promise<Response> {
   const code = params.get("code");
@@ -41,6 +101,16 @@ async function handleAuthorizationCode(
       "Missing required parameters: code, client_id, redirect_uri, code_verifier",
       400
     );
+  }
+
+  const client = await getOAuthClient(clientId);
+  if (!client) {
+    return jsonError("Unknown client_id", 400);
+  }
+
+  const clientAuthError = verifyClientAuthentication(client, request, params);
+  if (clientAuthError) {
+    return clientAuthError;
   }
 
   const authCode = await getAuthCode(code);
@@ -99,7 +169,10 @@ async function handleAuthorizationCode(
   });
 }
 
-async function handleRefreshToken(params: URLSearchParams): Promise<Response> {
+async function handleRefreshToken(
+  request: Request,
+  params: URLSearchParams
+): Promise<Response> {
   const refreshTokenValue = params.get("refresh_token");
   const clientId = params.get("client_id");
 
@@ -113,6 +186,11 @@ async function handleRefreshToken(params: URLSearchParams): Promise<Response> {
   const client = await getOAuthClient(clientId);
   if (!client) {
     return jsonError("Unknown client_id", 400);
+  }
+
+  const clientAuthError = verifyClientAuthentication(client, request, params);
+  if (clientAuthError) {
+    return clientAuthError;
   }
 
   const entry = await getRefreshToken(refreshTokenValue);
@@ -191,11 +269,11 @@ export async function POST(request: Request): Promise<Response> {
   const grantType = params.get("grant_type");
 
   if (grantType === "authorization_code") {
-    return await handleAuthorizationCode(params);
+    return await handleAuthorizationCode(request, params);
   }
 
   if (grantType === "refresh_token") {
-    return await handleRefreshToken(params);
+    return await handleRefreshToken(request, params);
   }
 
   return jsonError(

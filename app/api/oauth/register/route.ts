@@ -136,6 +136,7 @@ export async function POST(request: Request): Promise<Response> {
   const client: OAuthClient = {
     clientId,
     clientSecretHash,
+    tokenEndpointAuthMethod: authMethod,
     clientName: client_name.trim(),
     redirectUris: redirect_uris,
     scopes: resolvedScope.split(" "),
