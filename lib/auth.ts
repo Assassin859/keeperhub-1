@@ -381,7 +381,27 @@ const plugins = [
       // time by the membership re-check; this clears the dormant 30-day
       // credential so it cannot linger. Mirrors the leave-route cascade.
       async afterRemoveMember(data) {
-        await revokeRefreshTokensForUserOrg(data.user.id, data.organization.id);
+        // Best-effort: better-auth calls this after the member row is already
+        // deleted and outside any transaction, and access is already refused
+        // at use time by the membership re-check. A failure to clear the
+        // dormant refresh tokens must not throw back and fail the removal
+        // request itself - log and move on; the rows are inert.
+        try {
+          await revokeRefreshTokensForUserOrg(
+            data.user.id,
+            data.organization.id
+          );
+        } catch (err) {
+          logSystemError(
+            ErrorCategory.AUTH,
+            "[Org] Failed to revoke MCP OAuth refresh tokens after member removal",
+            err,
+            {
+              userId: data.user.id,
+              organizationId: data.organization.id,
+            }
+          );
+        }
       },
     },
   }),
