@@ -71,7 +71,7 @@ export function ActorAvatarBadge({
           badgeClassName
         )}
       >
-        <Icon className="size-2.5" />
+        <Icon className="size-2" />
       </span>
     </div>
   );
