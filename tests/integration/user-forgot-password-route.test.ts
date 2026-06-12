@@ -19,7 +19,6 @@ const {
   mockEq,
   mockAnd,
   mockGt,
-  mockIsNull,
   txUpdateCalls,
   txDeleteCalls,
 } = vi.hoisted(() => ({
@@ -37,7 +36,6 @@ const {
   mockGt: vi.fn((column: unknown, value: unknown) => ({
     __gt: [column, value],
   })),
-  mockIsNull: vi.fn((column: unknown) => ({ __isNull: column })),
   txUpdateCalls: [] as Array<{ table: unknown; value: unknown }>,
   txDeleteCalls: [] as Array<{ table: unknown }>,
 }));
@@ -46,7 +44,6 @@ vi.mock("drizzle-orm", () => ({
   and: mockAnd,
   eq: mockEq,
   gt: mockGt,
-  isNull: mockIsNull,
 }));
 
 vi.mock("better-auth/crypto", () => ({
@@ -134,7 +131,6 @@ import {
   deviceCode as deviceCodeToken,
   mcpOauthAuthCodes as mcpOauthAuthCodesToken,
   mcpOauthRefreshTokens as mcpOauthRefreshTokensToken,
-  organizationApiKeys as organizationApiKeysToken,
   sessions as sessionsToken,
 } from "@/lib/db/schema";
 
@@ -184,10 +180,10 @@ describe("POST /api/user/forgot-password (reset)", () => {
 
     expect(response.status).toBe(200);
 
-    // The reset revokes every credential the user holds, not just sessions:
-    // the transaction deletes the consumed verification row plus sessions,
-    // api keys, MCP refresh tokens, MCP auth codes, and device codes, and
-    // updates the account password plus revokes the user's org api keys.
+    // The reset revokes every user-scoped credential, not just sessions: the
+    // transaction deletes the consumed verification row plus sessions, api
+    // keys, MCP refresh tokens, MCP auth codes, and device codes, each keyed
+    // on the user id.
     expect(mockTransaction).toHaveBeenCalledTimes(1);
     expect(txDeleteCalls).toHaveLength(6);
     const deletedTables = txDeleteCalls.map((call) => call.table);
@@ -205,21 +201,16 @@ describe("POST /api/user/forgot-password (reset)", () => {
     expect(mockEq).toHaveBeenCalledWith("mcpOauthAuthCodes.userId", USER_ID);
     expect(mockEq).toHaveBeenCalledWith("deviceCode.userId", USER_ID);
 
-    // Org api keys are soft-revoked (revokedAt set) for keys this user
-    // created that are not already revoked, not hard-deleted.
-    expect(txUpdateCalls).toHaveLength(2);
-    const orgKeyUpdate = txUpdateCalls.find(
-      (call) => call.table === organizationApiKeysToken
-    );
-    expect(orgKeyUpdate).toBeDefined();
+    // The only update is the account password rotation. Organization api keys
+    // are org-owned and are deliberately not touched by a user password reset.
+    expect(txUpdateCalls).toHaveLength(1);
     expect(
-      (orgKeyUpdate?.value as { revokedAt?: Date }).revokedAt
-    ).toBeInstanceOf(Date);
-    expect(mockEq).toHaveBeenCalledWith(
+      (txUpdateCalls[0].value as { password?: string }).password
+    ).toBeDefined();
+    expect(mockEq).not.toHaveBeenCalledWith(
       "organizationApiKeys.createdBy",
       USER_ID
     );
-    expect(mockIsNull).toHaveBeenCalledWith("organizationApiKeys.revokedAt");
   });
 
   it("does not touch sessions when the OTP is invalid or expired", async () => {
