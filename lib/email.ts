@@ -948,7 +948,7 @@ Our automated security systems have temporarily suspended access to your KeeperH
 
 This review helps us maintain the security and integrity of the KeeperHub platform and protect our users. Your data remains safe, secure, and unchanged throughout this process. All workflows, configurations, and account data are preserved and will remain available once access is restored.
 
-If you believe this action was taken in error or would like additional information, please contact our support team. We will review your case and assist you as quickly as possible.
+If you believe this action was taken in error or would like additional information, please contact our support team via the channels listed below (Discord or Telegram). We will review your case and assist you as quickly as possible.
 
 Thank you for your understanding and cooperation.
 
@@ -973,13 +973,17 @@ ${socialText}
   </div>
 
   <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e5e5; border-top: none; border-radius: 0 0 12px 12px;">
+    <h2 style="color: #1a1a2e; margin-top: 0;">Your account access has been suspended</h2>
+
     <p>${greetingHtml}</p>
 
     <p>Our automated security systems have temporarily suspended access to your KeeperHub account after detecting activity that requires additional review. Our team is already conducting a review. During this time, you will not be able to sign in or run workflows.</p>
 
     <p>This review helps us maintain the security and integrity of the KeeperHub platform and protect our users. Your data remains safe, secure, and unchanged throughout this process. All workflows, configurations, and account data are preserved and will remain available once access is restored.</p>
 
-    <p>If you believe this action was taken in error or would like additional information, please contact our support team. We will review your case and assist you as quickly as possible.</p>
+    <div style="background: #f5f5f5; border-left: 4px solid #3b82f6; border-radius: 8px; padding: 16px 20px; margin: 20px 0;">
+      <p style="margin: 0;">If you believe this action was taken in error or would like additional information, please contact our support team via the channels below (Discord or Telegram). We will review your case and assist you as quickly as possible.</p>
+    </div>
 
     <p style="margin-bottom: 0;">Thank you for your understanding and cooperation.</p>
     <p style="margin-top: 8px;">Kind regards,<br>KeeperHub Team</p>
