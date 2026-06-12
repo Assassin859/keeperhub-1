@@ -62,13 +62,14 @@ type ExecutionLog = {
 type WorkflowExecution = {
   id: string;
   workflowId: string;
-  status: "pending" | "running" | "success" | "error" | "cancelled";
+  status: "pending" | "running" | "success" | "error" | "cancelled" | "phantom";
   startedAt: Date;
   completedAt: Date | null;
   duration: string | null;
   error: string | null;
   errorType: "user" | "system" | null;
   errorCategory: string | null;
+  errorCode: string | null;
   // Progress tracking fields
   totalSteps: number | null;
   completedSteps: number | null;

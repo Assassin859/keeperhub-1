@@ -637,6 +637,7 @@ export const workflowApi = {
         error: string | null;
         errorType: "user" | "system" | null;
         errorCategory: string | null;
+        errorCode: string | null;
         startedAt: Date;
         completedAt: Date | null;
         duration: string | null;
@@ -673,6 +674,7 @@ export const workflowApi = {
         error: string | null;
         errorType: "user" | "system" | null;
         errorCategory: string | null;
+        errorCode: string | null;
         startedAt: Date;
         completedAt: Date | null;
         duration: string | null;

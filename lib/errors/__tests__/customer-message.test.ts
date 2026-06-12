@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getCustomerRunErrorMessage } from "@/lib/errors/customer-message";
+import { ERROR_CODES } from "@/lib/errors/error-codes";
 
 const NETWORK_MESSAGE =
   "Internal network error, please wait 5 minutes and try again.";
@@ -80,5 +81,54 @@ describe("getCustomerRunErrorMessage", () => {
         errorCategory: null,
       })
     ).toBe(GENERIC_MESSAGE);
+  });
+
+  it("prefers the registry message for a system failure with a known code", () => {
+    expect(
+      getCustomerRunErrorMessage({
+        status: "error",
+        error: "Execution did not start",
+        errorType: "system",
+        errorCategory: "workflow_engine",
+        errorCode: "P-0001",
+      })
+    ).toBe(ERROR_CODES["P-0001"].customerMessage);
+  });
+
+  it("uses the coded message even when the category would map elsewhere", () => {
+    // network_rpc would otherwise return NETWORK_MESSAGE; the code wins.
+    expect(
+      getCustomerRunErrorMessage({
+        status: "error",
+        error: "RPC failed on both endpoints",
+        errorType: "system",
+        errorCategory: "network_rpc",
+        errorCode: "N-0001",
+      })
+    ).toBe(ERROR_CODES["N-0001"].customerMessage);
+  });
+
+  it("falls back to the generic message for an unknown code", () => {
+    expect(
+      getCustomerRunErrorMessage({
+        status: "error",
+        error: "something internal",
+        errorType: "system",
+        errorCategory: "infrastructure",
+        errorCode: "Z-9999",
+      })
+    ).toBe(GENERIC_MESSAGE);
+  });
+
+  it("ignores the code when the run did not fail", () => {
+    expect(
+      getCustomerRunErrorMessage({
+        status: "success",
+        error: null,
+        errorType: null,
+        errorCategory: null,
+        errorCode: "P-0001",
+      })
+    ).toBeNull();
   });
 });
