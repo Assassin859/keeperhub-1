@@ -1,7 +1,11 @@
 import "server-only";
 
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
-import { safeFetch } from "@/lib/safe-fetch";
+import {
+  assertUrlIsPublic,
+  safeFetch,
+  SsrfBlockedError,
+} from "@/lib/safe-fetch";
 import { getErrorMessage } from "@/lib/utils";
 import type { BlockscoutCredentials } from "../credentials";
 import { BLOCKSCOUT_INSTANCES } from "../chains";
@@ -86,6 +90,14 @@ export async function blockscoutGet<T>(
   }
 
   try {
+    // SSRF guard: the instance URL is user-configurable (BLOCKSCOUT_API_URL on
+    // the connection), so validate it before any outbound request.
+    // `assertUrlIsPublic` is always-on -- it ignores `SAFE_FETCH_ENFORCE`/
+    // shadow mode -- so an instance URL pointing at an internal address is
+    // blocked here even where `safeFetch` would only log-and-continue.
+    // Mirrors plugins/webhook/steps/send-webhook.ts.
+    await assertUrlIsPublic(url.toString());
+
     const response = await safeFetch(url.toString(), {
       plugin: "blockscout",
       method: "GET",
@@ -102,6 +114,12 @@ export async function blockscoutGet<T>(
     const data = (await response.json()) as T;
     return { success: true, data };
   } catch (error) {
+    if (error instanceof SsrfBlockedError) {
+      return {
+        success: false,
+        error: `Blockscout instance URL is not allowed: ${error.message}`,
+      };
+    }
     return {
       success: false,
       error: `Failed to reach Blockscout: ${getErrorMessage(error)}`,

@@ -2,7 +2,7 @@ import "server-only";
 
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
-import { safeFetch } from "@/lib/safe-fetch";
+import { assertUrlIsPublic, safeFetch, SsrfBlockedError } from "@/lib/safe-fetch";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 
@@ -117,6 +117,48 @@ async function stepHandler(
 
   // Parse payload
   const payload = parseJsonSafely(input.webhookPayload);
+
+  // SSRF guard: reject private/loopback/link-local/metadata destinations
+  // before any outbound request. `assertUrlIsPublic` is always-on -- it
+  // ignores `SAFE_FETCH_ENFORCE`/shadow mode -- so an attacker-supplied
+  // webhookUrl pointing at an internal address (e.g.
+  // http://169.254.169.254/latest/meta-data/) is blocked here even in
+  // environments where `safeFetch` itself would only log-and-continue.
+  try {
+    await assertUrlIsPublic(url);
+  } catch (error) {
+    if (error instanceof SsrfBlockedError) {
+      logUserError(
+        ErrorCategory.VALIDATION,
+        "[Webhook] Blocked SSRF target",
+        error.message,
+        {
+          plugin_name: "webhook",
+          action_name: "send-webhook",
+        }
+      );
+      return {
+        success: false,
+        error: `Webhook URL is not allowed: ${error.message}`,
+      };
+    }
+    logUserError(
+      ErrorCategory.VALIDATION,
+      "[Webhook] Could not validate webhook URL",
+      error,
+      {
+        plugin_name: "webhook",
+        action_name: "send-webhook",
+      }
+    );
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Webhook URL is invalid or could not be resolved",
+    };
+  }
 
   try {
     console.log("[Webhook] Sending request to webhook");

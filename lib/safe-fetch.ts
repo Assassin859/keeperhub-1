@@ -277,7 +277,12 @@ export function isBlockedHost(
 }
 
 export function isShadowMode(): boolean {
-  return process.env.SAFE_FETCH_ENFORCE !== "true";
+  // Fail-closed by default: enforce SSRF blocking unless an environment
+  // explicitly opts into shadow mode with SAFE_FETCH_ENFORCE="false". Any
+  // other value (including unset) enforces, so an environment that forgets
+  // to set the flag still rejects private/loopback/metadata targets instead
+  // of shipping an unauthenticated SSRF primitive.
+  return process.env.SAFE_FETCH_ENFORCE === "false";
 }
 
 type BlockContext = {
@@ -461,8 +466,9 @@ export type SafeFetchOptions = RequestInit & {
  * call; DNS-resolved IPs are validated via a custom undici Agent lookup on
  * every redirect hop.
  *
- * Shadow mode is the default: blocks are logged and counted but the request
- * proceeds. Set `SAFE_FETCH_ENFORCE=true` to enforce.
+ * Enforce mode is the default (fail-closed): blocked requests throw
+ * `SsrfBlockedError`. Set `SAFE_FETCH_ENFORCE="false"` to opt into shadow
+ * mode, where blocks are logged and counted but the request still proceeds.
  */
 export async function safeFetch(
   input: RequestInfo | URL,
