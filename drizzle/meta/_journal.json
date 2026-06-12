@@ -776,7 +776,14 @@
       "idx": 110,
       "version": "7",
       "when": 1781274021441,
-      "tag": "0110_keep_486_idempotency_records",
+      "tag": "0110_mcp_oauth_client_auth_method",
+      "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "7",
+      "when": 1781274021442,
+      "tag": "0111_keep_486_idempotency_records",
       "breakpoints": true
     }
   ]

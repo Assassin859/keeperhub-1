@@ -26,6 +26,14 @@ export const mcpOauthClients = pgTable("mcp_oauth_clients", {
     .$defaultFn(() => generateId()),
   clientId: text("client_id").notNull().unique(),
   clientSecretHash: text("client_secret_hash").notNull(),
+  // RFC 7591 token_endpoint_auth_method the client registered with. "none"
+  // means a public PKCE client (no usable secret); any other value is a
+  // confidential client whose client_secret is verified on token grants.
+  // Existing rows predate this column and default to "none" so they keep
+  // working without secret verification.
+  tokenEndpointAuthMethod: text("token_endpoint_auth_method")
+    .notNull()
+    .default("none"),
   clientName: text("client_name").notNull(),
   redirectUris: jsonb("redirect_uris").notNull().$type<string[]>(),
   scopes: jsonb("scopes").notNull().$type<string[]>(),
