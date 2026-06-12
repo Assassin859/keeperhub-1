@@ -3,7 +3,9 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
 import { workflowPayments } from "@/lib/db/schema-payments";
+import { HttpStatus } from "@/lib/http-status";
 import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
+import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { sanitizeDescription } from "@/lib/sanitize-description";
 import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 
@@ -58,12 +60,12 @@ export async function GET(request: Request): Promise<NextResponse> {
       CATALOG_RATE_WINDOW_MS
     );
     if (!rateCheck.allowed) {
-      return NextResponse.json(
-        { error: "Too many requests" },
-        {
-          status: 429,
-          headers: { "Retry-After": String(rateCheck.retryAfter) },
-        }
+      return applyRateLimitHeaders(
+        NextResponse.json(
+          { error: "Too many requests" },
+          { status: HttpStatus.TOO_MANY_REQUESTS }
+        ),
+        rateCheck
       );
     }
 
@@ -79,7 +81,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     ) {
       return NextResponse.json(
         { error: "workflowType must be 'read' or 'write'" },
-        { status: 400 }
+        { status: HttpStatus.BAD_REQUEST }
       );
     }
     const workflowType = workflowTypeParam ?? undefined;
@@ -168,18 +170,21 @@ export async function GET(request: Request): Promise<NextResponse> {
         : null,
     }));
 
-    return NextResponse.json(
-      { items, total, page, limit },
-      {
-        headers: {
-          "Cache-Control": "public, max-age=300, stale-while-revalidate=600",
-        },
-      }
+    return applyRateLimitHeaders(
+      NextResponse.json(
+        { items, total, page, limit },
+        {
+          headers: {
+            "Cache-Control": "public, max-age=300, stale-while-revalidate=600",
+          },
+        }
+      ),
+      rateCheck
     );
   } catch {
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500 }
+      { status: HttpStatus.INTERNAL_SERVER_ERROR }
     );
   }
 }

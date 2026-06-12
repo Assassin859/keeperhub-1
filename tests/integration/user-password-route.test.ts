@@ -45,7 +45,8 @@ vi.mock("@/lib/auth", () => ({
   auth: { api: { getSession: mockGetSession } },
 }));
 
-vi.mock("@/lib/mfa/dual-factor", () => ({
+vi.mock("@/lib/mfa/dual-factor", async (importActual) => ({
+  ...(await importActual<typeof import("@/lib/mfa/dual-factor")>()),
   requireDualFactor: mockRequireDualFactor,
 }));
 

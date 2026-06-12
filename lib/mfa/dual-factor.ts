@@ -1,6 +1,7 @@
 import { randomInt, timingSafeEqual } from "node:crypto";
 import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
 import { and, eq, gt } from "drizzle-orm";
+import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { twoFactor as twoFactorTable, verifications } from "@/lib/db/schema";
 import { sendVerificationOTP } from "@/lib/email";
@@ -67,6 +68,21 @@ export type DualFactorError = {
   retryAfter?: number;
 };
 export type DualFactorResult = DualFactorOk | DualFactorError;
+
+// Render a requireDualFactor failure as a JSON response. On the rate-limit
+// 429 it surfaces the standard Retry-After header so callers don't drop the
+// retry hint. This is an anti-abuse limiter, so no remaining-budget headers.
+export function dualFactorErrorResponse(error: DualFactorError): NextResponse {
+  return NextResponse.json(
+    { error: error.error, code: error.code },
+    error.status === 429 && error.retryAfter !== undefined
+      ? {
+          status: error.status,
+          headers: { "Retry-After": String(error.retryAfter) },
+        }
+      : { status: error.status }
+  );
+}
 
 type DualFactorArgs = {
   userId: string;

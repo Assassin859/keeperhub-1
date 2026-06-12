@@ -2,7 +2,9 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { invitation, organization, users } from "@/lib/db/schema";
+import { HttpStatus } from "@/lib/http-status";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import {
   checkInviteFetchRateLimit,
   getInviteFetchRateLimitKey,
@@ -26,15 +28,12 @@ export async function GET(request: Request, { params }: RouteParams) {
       getInviteFetchRateLimitKey(request)
     );
     if (!rateLimit.allowed) {
-      return NextResponse.json(
-        { error: "Too many requests" },
-        {
-          status: 429,
-          headers: {
-            ...NO_STORE_HEADERS,
-            "Retry-After": String(rateLimit.retryAfter),
-          },
-        }
+      return applyRateLimitHeaders(
+        NextResponse.json(
+          { error: "Too many requests" },
+          { status: HttpStatus.TOO_MANY_REQUESTS, headers: NO_STORE_HEADERS }
+        ),
+        rateLimit
       );
     }
 
@@ -43,7 +42,7 @@ export async function GET(request: Request, { params }: RouteParams) {
     if (!inviteId) {
       return NextResponse.json(
         { error: "Invitation ID is required" },
-        { status: 400, headers: NO_STORE_HEADERS }
+        { status: HttpStatus.BAD_REQUEST, headers: NO_STORE_HEADERS }
       );
     }
 
@@ -68,7 +67,7 @@ export async function GET(request: Request, { params }: RouteParams) {
     if (result.length === 0) {
       return NextResponse.json(
         { error: "Invitation not found" },
-        { status: 404, headers: NO_STORE_HEADERS }
+        { status: HttpStatus.NOT_FOUND, headers: NO_STORE_HEADERS }
       );
     }
 
@@ -85,7 +84,7 @@ export async function GET(request: Request, { params }: RouteParams) {
             organizationName: inv.organizationName,
           },
         },
-        { status: 410, headers: NO_STORE_HEADERS }
+        { status: HttpStatus.GONE, headers: NO_STORE_HEADERS }
       );
     }
 
@@ -100,7 +99,7 @@ export async function GET(request: Request, { params }: RouteParams) {
             organizationName: inv.organizationName,
           },
         },
-        { status: 410, headers: NO_STORE_HEADERS }
+        { status: HttpStatus.GONE, headers: NO_STORE_HEADERS }
       );
     }
 
@@ -115,24 +114,27 @@ export async function GET(request: Request, { params }: RouteParams) {
             organizationName: inv.organizationName,
           },
         },
-        { status: 410, headers: NO_STORE_HEADERS }
+        { status: HttpStatus.GONE, headers: NO_STORE_HEADERS }
       );
     }
 
     // Return invitation details
-    return NextResponse.json(
-      {
-        invitation: {
-          id: inv.id,
-          email: inv.email,
-          role: inv.role,
-          status: inv.status,
-          expiresAt: inv.expiresAt,
-          organizationName: inv.organizationName,
-          inviterName: inv.inviterName || "A team member",
+    return applyRateLimitHeaders(
+      NextResponse.json(
+        {
+          invitation: {
+            id: inv.id,
+            email: inv.email,
+            role: inv.role,
+            status: inv.status,
+            expiresAt: inv.expiresAt,
+            organizationName: inv.organizationName,
+            inviterName: inv.inviterName || "A team member",
+          },
         },
-      },
-      { headers: NO_STORE_HEADERS }
+        { headers: NO_STORE_HEADERS }
+      ),
+      rateLimit
     );
   } catch (error) {
     logSystemError(
@@ -143,7 +145,7 @@ export async function GET(request: Request, { params }: RouteParams) {
     );
     return NextResponse.json(
       { error: "Failed to fetch invitation" },
-      { status: 500, headers: NO_STORE_HEADERS }
+      { status: HttpStatus.INTERNAL_SERVER_ERROR, headers: NO_STORE_HEADERS }
     );
   }
 }

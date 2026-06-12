@@ -5,7 +5,10 @@ import { isAnonymousUserShape } from "@/lib/auth-anonymous-guard";
 import { db } from "@/lib/db";
 import { sessions } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { requireDualFactor } from "@/lib/mfa/dual-factor";
+import {
+  dualFactorErrorResponse,
+  requireDualFactor,
+} from "@/lib/mfa/dual-factor";
 
 type RequestBody = {
   code?: string;
@@ -76,10 +79,7 @@ export async function POST(
     headers: request.headers,
   });
   if (!dual.ok) {
-    return NextResponse.json(
-      { error: dual.error, code: dual.code },
-      { status: dual.status }
-    );
+    return dualFactorErrorResponse(dual);
   }
 
   try {

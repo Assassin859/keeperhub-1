@@ -1,3 +1,4 @@
+import { HttpStatus } from "@/lib/http-status";
 import "server-only";
 
 import { NextResponse } from "next/server";
@@ -7,8 +8,15 @@ import {
   simulateNativeTransfer,
   simulateTokenTransfer,
 } from "@/lib/execute/simulate";
+import {
+  beginIdempotentFromRequest,
+  idempotencyEarlyResponse,
+  recordIdempotentResponse,
+  withIdempotencyHeartbeat,
+} from "@/lib/idempotency";
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { requireScope } from "@/lib/middleware/require-scope";
+import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { transferFundsCore } from "@/plugins/web3/steps/transfer-funds-core";
 import { transferTokenCore } from "@/plugins/web3/steps/transfer-token-core";
 import { validateApiKey } from "../_lib/auth";
@@ -28,7 +36,10 @@ export async function POST(request: Request): Promise<NextResponse> {
   // 1. Auth
   const apiKeyCtx = await validateApiKey(request);
   if (!apiKeyCtx) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: HttpStatus.UNAUTHORIZED }
+    );
   }
 
   const scopeError = requireScope(apiKeyCtx.scope, SCOPE_MCP_WRITE);
@@ -42,9 +53,12 @@ export async function POST(request: Request): Promise<NextResponse> {
   // 2. Rate limit
   const rateLimit = checkRateLimit(apiKeyCtx.apiKeyId);
   if (!rateLimit.allowed) {
-    return NextResponse.json(
-      { error: "Rate limit exceeded" },
-      { status: 429, headers: { "Retry-After": String(rateLimit.retryAfter) } }
+    return applyRateLimitHeaders(
+      NextResponse.json(
+        { error: "Rate limit exceeded" },
+        { status: HttpStatus.TOO_MANY_REQUESTS }
+      ),
+      rateLimit
     );
   }
 
@@ -59,18 +73,25 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     body = (await request.json()) as Record<string, unknown>;
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid JSON body" },
+      { status: HttpStatus.BAD_REQUEST }
+    );
   }
 
   // 4. Validate input
   const validation = validateTransferInput(body);
   if (!validation.valid) {
-    return NextResponse.json(validation.error, { status: 400 });
+    return NextResponse.json(validation.error, {
+      status: HttpStatus.BAD_REQUEST,
+    });
   }
 
   const tokenValidation = validateTokenFields(body);
   if (!tokenValidation.valid) {
-    return NextResponse.json(tokenValidation.error, { status: 400 });
+    return NextResponse.json(tokenValidation.error, {
+      status: HttpStatus.BAD_REQUEST,
+    });
   }
 
   // KEEP-490: accept `chainId` as canonical, `network` as deprecated alias.
@@ -101,7 +122,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!simulateFlag.ok) {
     return NextResponse.json(
       { error: simulateFlag.error, field: "simulate" },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
   if (simulateFlag.simulate) {
@@ -119,7 +140,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         decimals: typeof body.decimals === "number" ? body.decimals : undefined,
       });
       return NextResponse.json(result, {
-        status: result.wouldRevert ? 400 : 200,
+        status: result.wouldRevert ? HttpStatus.BAD_REQUEST : HttpStatus.OK,
       });
     }
     const nativeResult = await simulateNativeTransfer({
@@ -129,8 +150,27 @@ export async function POST(request: Request): Promise<NextResponse> {
       amount,
     });
     return NextResponse.json(nativeResult, {
-      status: nativeResult.wouldRevert ? 400 : 200,
+      status: nativeResult.wouldRevert ? HttpStatus.BAD_REQUEST : HttpStatus.OK,
     });
+  }
+
+  // 5.6 Idempotency: an Idempotency-Key lets clients retry a broadcast safely.
+  // Reserve the key (per-org, across direct-execution endpoints) before doing
+  // any state-changing work; a replay/conflict/in-progress short-circuits here.
+  const idem = await beginIdempotentFromRequest({
+    request,
+    organizationId: apiKeyCtx.organizationId,
+    scope: "execute:transfer",
+    requestBody: body,
+  });
+  if (idem) {
+    const early = idempotencyEarlyResponse(idem);
+    if (early) {
+      return applyRateLimitHeaders(
+        NextResponse.json(early.body, { status: early.status }),
+        rateLimit
+      );
+    }
   }
 
   // 6. Spending cap + create execution atomically
@@ -143,33 +183,46 @@ export async function POST(request: Request): Promise<NextResponse> {
     input: redactedInput,
   });
   if (!reserve.allowed) {
-    return NextResponse.json({ error: reserve.reason }, { status: 403 });
+    // Pre-broadcast gating failure: release so the same key can be retried.
+    return applyRateLimitHeaders(
+      await recordIdempotentResponse(
+        idem,
+        NextResponse.json(
+          { error: reserve.reason },
+          { status: HttpStatus.FORBIDDEN }
+        ),
+        "release"
+      ),
+      rateLimit
+    );
   }
   const { executionId } = reserve;
 
   // 7. Mark running
   await markRunning(executionId);
 
-  // 8. Execute
+  // 8. Execute (heartbeat the idempotency lock across the on-chain wait).
   const context = { organizationId: apiKeyCtx.organizationId };
 
-  const result = isTokenTransfer
-    ? await transferTokenCore({
-        network,
-        tokenConfig: (body.tokenConfig ?? "") as
-          | string
-          | Record<string, unknown>,
-        tokenAddress: body.tokenAddress as string | undefined,
-        recipientAddress,
-        amount,
-        _context: context,
-      })
-    : await transferFundsCore({
-        network,
-        recipientAddress,
-        amount,
-        _context: context,
-      });
+  const result = await withIdempotencyHeartbeat(idem, () =>
+    isTokenTransfer
+      ? transferTokenCore({
+          network,
+          tokenConfig: (body.tokenConfig ?? "") as
+            | string
+            | Record<string, unknown>,
+          tokenAddress: body.tokenAddress as string | undefined,
+          recipientAddress,
+          amount,
+          _context: context,
+        })
+      : transferFundsCore({
+          network,
+          recipientAddress,
+          amount,
+          _context: context,
+        })
+  );
 
   // 9. Handle result
   if (result.success) {
@@ -184,9 +237,17 @@ export async function POST(request: Request): Promise<NextResponse> {
     await failExecution(executionId, result.error);
   }
 
-  // 10. Return
-  return NextResponse.json(
-    { executionId, status: result.success ? "completed" : "failed" },
-    { status: 202 }
+  // 10. Return. A failed broadcast is finalized (not released) so a retry
+  // replays the failure instead of re-sending the tx.
+  return applyRateLimitHeaders(
+    await recordIdempotentResponse(
+      idem,
+      NextResponse.json(
+        { executionId, status: result.success ? "completed" : "failed" },
+        { status: HttpStatus.ACCEPTED }
+      ),
+      result.success ? "success" : "failed"
+    ),
+    rateLimit
   );
 }

@@ -3,7 +3,7 @@ import "server-only";
 import type { RetryConfig } from "./types";
 
 const DEFAULT_MAX_RETRIES = 3;
-const DEFAULT_TIMEOUT_MS = 120_000;
+export const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_GAS_BUMP_PERCENT = 10;
 
 export type TransactionResult =

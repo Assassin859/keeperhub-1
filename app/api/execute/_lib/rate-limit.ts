@@ -9,8 +9,14 @@ const LIMIT = 60; // requests per window
 const requestLog = new Map<string, number[]>();
 
 export type RateLimitResult =
-  | { allowed: true }
-  | { allowed: false; retryAfter: number };
+  | { allowed: true; limit: number; remaining: number; reset: number }
+  | {
+      allowed: false;
+      retryAfter: number;
+      limit: number;
+      remaining: number;
+      reset: number;
+    };
 
 export function checkRateLimit(apiKeyId: string): RateLimitResult {
   const now = Date.now();
@@ -23,11 +29,24 @@ export function checkRateLimit(apiKeyId: string): RateLimitResult {
     // Oldest timestamp in window determines when the first slot opens
     const oldestInWindow = recent[0];
     const retryAfter = Math.ceil((oldestInWindow + WINDOW_MS - now) / 1000);
-    return { allowed: false, retryAfter: Math.max(retryAfter, 1) };
+    return {
+      allowed: false,
+      retryAfter: Math.max(retryAfter, 1),
+      limit: LIMIT,
+      remaining: 0,
+      reset: Math.ceil((oldestInWindow + WINDOW_MS) / 1000),
+    };
   }
 
   recent.push(now);
   requestLog.set(apiKeyId, recent);
 
-  return { allowed: true };
+  // Window frees a slot when its oldest in-window request expires.
+  const reset = Math.ceil((recent[0] + WINDOW_MS) / 1000);
+  return {
+    allowed: true,
+    limit: LIMIT,
+    remaining: LIMIT - recent.length,
+    reset,
+  };
 }

@@ -308,6 +308,7 @@ describe("POST /mcp — authed session-resume forwards parsedBody", () => {
       .mockResolvedValue(new Response(null, { status: 200 }));
     mockGetSession.mockReturnValue({
       organizationId: "org-1",
+      apiKeyId: "key-1",
       transport: { handleRequest },
     });
 
@@ -333,10 +334,31 @@ describe("POST /mcp — authed session-resume forwards parsedBody", () => {
     expect(options).toEqual({ parsedBody: parsed });
   });
 
+  it("rejects a cached session whose apiKeyId differs from the caller (cross-principal binding)", async () => {
+    const handleRequest = vi.fn();
+    mockGetSession.mockReturnValue({
+      organizationId: "org-1",
+      apiKeyId: "other-key",
+      transport: { handleRequest },
+    });
+
+    const parsed = { jsonrpc: "2.0", id: 12, method: "tools/list", params: {} };
+    const request = makeRequest(
+      "POST",
+      { "mcp-session-id": "session-abc" },
+      JSON.stringify(parsed)
+    );
+    const response = await POST(request);
+
+    expect(response.status).not.toBe(200);
+    expect(handleRequest).not.toHaveBeenCalled();
+  });
+
   it("returns 400 when an authed POST has a malformed body (cannot reach transport)", async () => {
     const handleRequest = vi.fn();
     mockGetSession.mockReturnValue({
       organizationId: "org-1",
+      apiKeyId: "key-1",
       transport: { handleRequest },
     });
 

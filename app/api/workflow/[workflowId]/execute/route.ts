@@ -1,3 +1,4 @@
+import { HttpStatus } from "@/lib/http-status";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
@@ -7,9 +8,15 @@ import { getMetricsCollector } from "@/lib/metrics";
 import { LabelKeys, MetricNames } from "@/lib/metrics/types";
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { requireScope } from "@/lib/middleware/require-scope";
 import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit";
 import { db } from "@/lib/db";
+import {
+  beginIdempotentFromRequest,
+  idempotencyEarlyResponse,
+  recordIdempotentResponse,
+} from "@/lib/idempotency";
 import { withBackstopCapture } from "@/lib/security/backstop-capture";
 import {
   buildAttribution,
@@ -64,7 +71,7 @@ export async function POST(
       if (!workflow) {
         return NextResponse.json(
           { error: "Workflow not found" },
-          { status: 404 }
+          { status: HttpStatus.NOT_FOUND }
         );
       }
 
@@ -95,7 +102,7 @@ export async function POST(
       if (!workflow) {
         return NextResponse.json(
           { error: "Workflow not found" },
-          { status: 404 }
+          { status: HttpStatus.NOT_FOUND }
         );
       }
 
@@ -108,7 +115,7 @@ export async function POST(
       if (!access.hasFullAccess) {
         return NextResponse.json(
           { error: "Workflow not found" },
-          { status: 404 }
+          { status: HttpStatus.NOT_FOUND }
         );
       }
 
@@ -140,7 +147,7 @@ export async function POST(
       !executability.executable &&
       (isInternalExecution || executability.reason !== "disabled");
     if (blockedByExecutability) {
-      return NextResponse.json({ error: "Workflow not found" }, { status: 404 });
+      return NextResponse.json({ error: "Workflow not found" }, { status: HttpStatus.NOT_FOUND });
     }
 
     // Validate integration references as the ORG principal: the org owns the
@@ -154,7 +161,7 @@ export async function POST(
       logSystemError(ErrorCategory.WORKFLOW_ENGINE, "[Workflow Execute] Invalid integration references", new Error(String(validation.invalidIds)), { endpoint: "/api/workflow/[workflowId]/execute", operation: "validateIntegrations" });
       return NextResponse.json(
         { error: "Workflow contains invalid integration references" },
-        { status: 403 }
+        { status: HttpStatus.FORBIDDEN }
       );
     }
 
@@ -173,13 +180,22 @@ export async function POST(
 
     const concurrencyCheck = await checkConcurrencyLimit();
     if (!concurrencyCheck.allowed) {
-      return NextResponse.json(
+      const retryAfter = 30;
+      return applyRateLimitHeaders(
+        NextResponse.json(
+          {
+            error: "Too many concurrent workflow executions",
+            running: concurrencyCheck.running,
+            limit: concurrencyCheck.limit,
+          },
+          { status: HttpStatus.TOO_MANY_REQUESTS }
+        ),
         {
-          error: "Too many concurrent workflow executions",
-          running: concurrencyCheck.running,
           limit: concurrencyCheck.limit,
-        },
-        { status: 429, headers: { "Retry-After": "30" } }
+          remaining: 0,
+          reset: Math.ceil(Date.now() / 1000) + retryAfter,
+          retryAfter,
+        }
       );
     }
 
@@ -195,6 +211,21 @@ export async function POST(
       }
     }
     const input = (body.input as Record<string, unknown> | undefined) ?? {};
+
+    // Idempotency: a retry with the same key + body replays the original
+    // executionId instead of starting the workflow again. Scoped per workflow.
+    const idem = await beginIdempotentFromRequest({
+      request,
+      organizationId: workflow.organizationId,
+      scope: `workflow-execute:${workflowId}`,
+      requestBody: body,
+    });
+    if (idem) {
+      const early = idempotencyEarlyResponse(idem);
+      if (early) {
+        return NextResponse.json(early.body, { status: early.status });
+      }
+    }
 
     // Resolve the (metric, audit) trigger labels in one place -- see
     // resolveTriggerLabels for the schedule/scheduled convergence and the
@@ -304,10 +335,13 @@ export async function POST(
     );
 
     // Return immediately with the execution ID
-    return NextResponse.json({
-      executionId,
-      status: "running",
-    });
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json({
+        executionId,
+        status: "running",
+      })
+    );
   } catch (error) {
     logSystemError(ErrorCategory.WORKFLOW_ENGINE, "Failed to start workflow execution", error, { endpoint: "/api/workflow/[workflowId]/execute", operation: "post" });
     return NextResponse.json(
@@ -317,7 +351,7 @@ export async function POST(
             ? error.message
             : "Failed to start workflow execution",
       },
-      { status: 500 }
+      { status: HttpStatus.INTERNAL_SERVER_ERROR }
     );
   }
 }
