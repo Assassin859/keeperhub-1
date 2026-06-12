@@ -52,6 +52,110 @@ function roleLabel(role?: string | null): string | null {
   return role ? role.charAt(0).toUpperCase() + role.slice(1) : null;
 }
 
+type DiffEntry = { label: string; from: string | null; to: string | null };
+
+// Mask values whose field name looks like a secret, even though the audit
+// layer already curates before/after (keys store only name + keyPrefix). This
+// is a display-side backstop so a future careless audit call can't leak a
+// token through the feed. `keyPrefix` is intentionally not matched -- it is a
+// prefix by design, not the secret.
+const SENSITIVE_FIELD =
+  /(?:^|[_.])(?:token|secret|password|privatekey|private_key|mnemonic|seed|hash|apikey)(?:[_.]|$)|^key$/i;
+
+// Opaque machine values that read as noise in a human feed (e.g. a definition
+// content hash). The change is still recorded; we just don't print the value.
+const HIDDEN_FIELDS = new Set(["contentHash"]);
+
+function humanizeField(path: Array<string | number>): string {
+  const key = String(path.at(-1) ?? "");
+  const spaced = key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_.]+/g, " ")
+    .trim();
+  return spaced ? spaced.charAt(0).toUpperCase() + spaced.slice(1) : "Value";
+}
+
+function formatValue(value: unknown, sensitive: boolean): string | null {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  if (sensitive) {
+    return "•••";
+  }
+  if (typeof value === "boolean") {
+    return value ? "Yes" : "No";
+  }
+  if (typeof value === "number") {
+    return String(value);
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  return "[changed]";
+}
+
+// Turn the stored deep-diff array into readable "Field: old -> new" rows.
+function diffEntries(diff: unknown): DiffEntry[] {
+  if (!Array.isArray(diff)) {
+    return [];
+  }
+  const entries: DiffEntry[] = [];
+  for (const change of diff) {
+    if (!change || typeof change !== "object") {
+      continue;
+    }
+    const c = change as {
+      kind?: string;
+      path?: Array<string | number>;
+      lhs?: unknown;
+      rhs?: unknown;
+    };
+    const path = c.path ?? [];
+    const fieldKey = String(path.at(-1) ?? "");
+    if (HIDDEN_FIELDS.has(fieldKey)) {
+      continue;
+    }
+    const sensitive = SENSITIVE_FIELD.test(fieldKey);
+    const label = humanizeField(path);
+    if (c.kind === "E") {
+      entries.push({
+        label,
+        from: formatValue(c.lhs, sensitive),
+        to: formatValue(c.rhs, sensitive),
+      });
+    } else if (c.kind === "N") {
+      entries.push({ label, from: null, to: formatValue(c.rhs, sensitive) });
+    } else if (c.kind === "D") {
+      entries.push({ label, from: formatValue(c.lhs, sensitive), to: null });
+    }
+  }
+  return entries.filter((e) => e.from !== null || e.to !== null).slice(0, 6);
+}
+
+function DiffLines({ diff }: { diff: unknown }): React.ReactElement | null {
+  const entries = diffEntries(diff);
+  if (entries.length === 0) {
+    return null;
+  }
+  return (
+    <ul className="mt-1 space-y-0.5">
+      {entries.map((entry) => (
+        <li
+          className="text-muted-foreground text-xs"
+          key={`${entry.label}:${entry.from ?? ""}:${entry.to ?? ""}`}
+        >
+          <span className="font-medium text-foreground/70">{entry.label}:</span>{" "}
+          {entry.from !== null && (
+            <span className="opacity-60">{entry.from}</span>
+          )}
+          {entry.from !== null && entry.to !== null && " → "}
+          {entry.to !== null && <span>{entry.to}</span>}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function ActivityRow({
   event,
 }: {
@@ -85,6 +189,7 @@ function ActivityRow({
           )}{" "}
           <span className="text-muted-foreground">{phrase}</span>
         </p>
+        <DiffLines diff={event.diff} />
         {email && (
           <p className="truncate text-muted-foreground text-xs">{email}</p>
         )}
