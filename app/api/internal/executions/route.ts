@@ -8,7 +8,37 @@ import { extractActionTypeNodes } from "@/lib/features";
 import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
 import { withBackstopCapture } from "@/lib/security/backstop-capture";
-import { buildAttribution } from "@/lib/security/request-attribution";
+import {
+  buildAttribution,
+  type TriggerSource,
+} from "@/lib/security/request-attribution";
+
+const VALID_TRIGGER_SOURCES: readonly TriggerSource[] = [
+  "manual",
+  "webhook",
+  "scheduled",
+  "schedule",
+  "mcp",
+  "internal",
+  "block",
+  "event",
+];
+
+/**
+ * Resolve a caller-supplied trigger source to a known value, defaulting to
+ * "internal" for unknown/absent input. Schedulers pass "schedule" | "block" |
+ * "event" when pre-creating a phantom so the audit column reflects the real
+ * entry point rather than the generic internal-API path.
+ */
+function resolveTriggerSource(value: unknown): TriggerSource {
+  if (typeof value === "string") {
+    const match = VALID_TRIGGER_SOURCES.find((source) => source === value);
+    if (match) {
+      return match;
+    }
+  }
+  return "internal";
+}
 
 export async function POST(request: Request): Promise<NextResponse> {
   const rawBody = await request.text();
@@ -21,7 +51,13 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   const body = JSON.parse(rawBody);
-  const { workflowId, userId, input } = body;
+  const { workflowId, userId, input, status, triggerSource } = body;
+
+  // A phantom row represents an expected-but-unstarted trigger that the
+  // scheduler/event-tracker pre-creates; the executor later upgrades it to
+  // running. Any other status keeps the existing direct-execution behaviour of
+  // creating a row already marked running.
+  const isPhantom = status === "phantom";
 
   if (!(workflowId && userId)) {
     return NextResponse.json(
@@ -52,22 +88,28 @@ export async function POST(request: Request): Promise<NextResponse> {
     return featureGuard.response;
   }
 
-  const executionGuard = await enforceExecutionLimit(workflow.organizationId);
-  if (executionGuard.blocked) {
-    return executionGuard.response;
+  // Phantom rows do not consume execution quota at creation time -- the limit
+  // is enforced when the executor upgrades the row to running. A real (running)
+  // row enforces it up front as before.
+  if (!isPhantom) {
+    const executionGuard = await enforceExecutionLimit(workflow.organizationId);
+    if (executionGuard.blocked) {
+      return executionGuard.response;
+    }
   }
 
-  const attribution = buildAttribution({ request, source: "internal" });
+  const source = resolveTriggerSource(triggerSource);
+  const attribution = buildAttribution({ request, source });
 
   const [execution] = await withBackstopCapture(
-    { workflowId, userId, source: "internal" },
+    { workflowId, userId, source },
     () =>
       db
         .insert(workflowExecutions)
         .values({
           workflowId,
           userId,
-          status: "running",
+          status: isPhantom ? "phantom" : "running",
           input: input || {},
           ...attribution,
         })
