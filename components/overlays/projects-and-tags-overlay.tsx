@@ -3,6 +3,7 @@
 import {
   FolderOpen,
   History,
+  Pencil,
   Plus,
   Tag as TagIcon,
   Trash2,
@@ -38,6 +39,8 @@ export function ProjectsAndTagsOverlay({
   const [loadingTags, setLoadingTags] = useState(true);
   const [showProjectDialog, setShowProjectDialog] = useState(false);
   const [showTagDialog, setShowTagDialog] = useState(false);
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
+  const [editingTag, setEditingTag] = useState<TagType | null>(null);
 
   const loadProjects = useCallback(async (): Promise<void> => {
     try {
@@ -112,6 +115,40 @@ export function ProjectsAndTagsOverlay({
     setTags((prev) => [...prev, tag]);
   };
 
+  const handleProjectUpdated = (project: Project): void => {
+    setProjects((prev) =>
+      prev.map((p) => (p.id === project.id ? { ...p, ...project } : p))
+    );
+    toast.success(`Project "${project.name}" updated`);
+  };
+
+  const handleTagUpdated = (tag: TagType): void => {
+    setTags((prev) =>
+      prev.map((t) => (t.id === tag.id ? { ...t, ...tag } : t))
+    );
+    toast.success(`Tag "${tag.name}" updated`);
+  };
+
+  const openEditProject = (project: Project): void => {
+    setEditingProject(project);
+    setShowProjectDialog(true);
+  };
+
+  const openEditTag = (tag: TagType): void => {
+    setEditingTag(tag);
+    setShowTagDialog(true);
+  };
+
+  const openNewProject = (): void => {
+    setEditingProject(null);
+    setShowProjectDialog(true);
+  };
+
+  const openNewTag = (): void => {
+    setEditingTag(null);
+    setShowTagDialog(true);
+  };
+
   return (
     <>
       <Overlay
@@ -127,7 +164,7 @@ export function ProjectsAndTagsOverlay({
 
           <TabsContent className="space-y-4" value="projects">
             <div className="flex justify-end">
-              <Button onClick={() => setShowProjectDialog(true)} size="sm">
+              <Button onClick={openNewProject} size="sm">
                 <Plus className="mr-2 size-4" />
                 New Project
               </Button>
@@ -183,6 +220,17 @@ export function ProjectsAndTagsOverlay({
                       {isAdmin && (
                         <Button
                           className="text-muted-foreground"
+                          onClick={() => openEditProject(project)}
+                          size="icon"
+                          title="Edit project"
+                          variant="ghost"
+                        >
+                          <Pencil className="size-4" />
+                        </Button>
+                      )}
+                      {isAdmin && (
+                        <Button
+                          className="text-muted-foreground"
                           onClick={() =>
                             push(ResourceActivityOverlay, {
                               title: `Activity: ${project.name}`,
@@ -223,7 +271,7 @@ export function ProjectsAndTagsOverlay({
 
           <TabsContent className="space-y-4" value="tags">
             <div className="flex justify-end">
-              <Button onClick={() => setShowTagDialog(true)} size="sm">
+              <Button onClick={openNewTag} size="sm">
                 <Plus className="mr-2 size-4" />
                 New Tag
               </Button>
@@ -262,6 +310,17 @@ export function ProjectsAndTagsOverlay({
                         {tag.workflowCount}{" "}
                         {tag.workflowCount === 1 ? "workflow" : "workflows"}
                       </span>
+                      {isAdmin && (
+                        <Button
+                          className="text-muted-foreground"
+                          onClick={() => openEditTag(tag)}
+                          size="icon"
+                          title="Edit tag"
+                          variant="ghost"
+                        >
+                          <Pencil className="size-4" />
+                        </Button>
+                      )}
                       {isAdmin && (
                         <Button
                           className="text-muted-foreground"
@@ -307,12 +366,16 @@ export function ProjectsAndTagsOverlay({
       <ProjectFormDialog
         onCreated={handleProjectCreated}
         onOpenChange={setShowProjectDialog}
+        onUpdated={handleProjectUpdated}
         open={showProjectDialog}
+        project={editingProject}
       />
       <TagFormDialog
         onCreated={handleTagCreated}
         onOpenChange={setShowTagDialog}
+        onUpdated={handleTagUpdated}
         open={showTagDialog}
+        tag={editingTag}
       />
     </>
   );
