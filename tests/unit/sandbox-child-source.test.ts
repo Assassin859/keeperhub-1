@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { deserialize, serialize } from "node:v8";
+import { gzipSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -446,6 +447,112 @@ describe("sandbox grandchild redirect following", () => {
       expect(outcome.errorMessage).toMatch(TOO_MANY_REDIRECTS_REGEX);
     }
   });
+}, 30_000);
+
+// F-024: the wrapped fetch must PIN the SSRF-validated IP at dial time. The
+// grandchild has no undici connect hook (zero-dep sandbox image), so the dial
+// goes through node:http / node:https with a custom `lookup` that resolves
+// once, re-validates every candidate against the blocklist, and hands
+// net.connect ONLY validated addresses. checkHostnameSsrf is only a pre-flight;
+// the connect-time pin is the load-bearing control that closes the
+// DNS-rebinding TOCTOU (guard sees a public A record, connect dials a private
+// one). These tests lock the wiring and prove the connect-time re-validation
+// is authoritative independent of the pre-flight.
+const NEUTERED_PREFLIGHT_SOURCE = SANDBOX_CHILD_SOURCE.replace(
+  "const ssrfCheck = await checkHostnameSsrf(hostname);",
+  "const ssrfCheck = { blocked: false };"
+);
+
+describe("sandbox grandchild pins the validated IP at dial time (F-024)", () => {
+  it("dials via node:http/https with a re-validating custom lookup, not a re-resolving fetch", () => {
+    expect(SANDBOX_CHILD_SOURCE).toContain('require("node:http")');
+    expect(SANDBOX_CHILD_SOURCE).toContain('require("node:https")');
+    expect(SANDBOX_CHILD_SOURCE).toContain("function pinningLookup");
+    expect(SANDBOX_CHILD_SOURCE).toContain("lookup: function boundLookup");
+    // The lookup re-checks every resolved candidate against the same blocklist.
+    expect(SANDBOX_CHILD_SOURCE).toContain("isBlockedIp(records[i].address)");
+    // The redirect loop dials through the pinning fetch, not the global fetch
+    // that would re-resolve DNS at connect time (the rebinding window).
+    expect(SANDBOX_CHILD_SOURCE).toContain("await pinnedFetch(currentResource");
+    expect(SANDBOX_CHILD_SOURCE).not.toContain("await fetch(currentResource");
+  });
+
+  it("sanity: the neutered-preflight source dropped only the initial pre-flight check", () => {
+    expect(NEUTERED_PREFLIGHT_SOURCE).not.toBe(SANDBOX_CHILD_SOURCE);
+    expect(NEUTERED_PREFLIGHT_SOURCE).not.toContain(
+      "const ssrfCheck = await checkHostnameSsrf(hostname);"
+    );
+    // The blocklist itself is untouched, so the connect-time pin still has it.
+    expect(NEUTERED_PREFLIGHT_SOURCE).toContain("function pinningLookup");
+  });
+
+  it("blocks a name that resolves to loopback at connect-time even when the pre-flight is bypassed", async () => {
+    // Simulates DNS rebinding: the pre-flight check is neutered (as if it had
+    // seen a public A record), but the connect-time pin resolves + re-validates
+    // the name and refuses to dial the private address it actually gets. If the
+    // dial re-resolved without re-validating (the bug), this would NOT be
+    // blocked. A DNS NAME (not an IP literal) is required: net.connect dials IP
+    // literals directly and never invokes the custom lookup, but IP literals are
+    // already handled by the pre-flight isBlockedIp; rebinding is a name attack.
+    const outcome = await runSandboxed(
+      'return await fetch("http://localhost/");',
+      3000,
+      NEUTERED_PREFLIGHT_SOURCE
+    );
+    expectBlocked(outcome);
+    if (!outcome.ok) {
+      expect(outcome.errorMessage).toContain("localhost");
+    }
+  });
+}, 30_000);
+
+// Behavioural coverage that the node:http/https pin path is a faithful drop-in
+// for global fetch: a real Response (status + headers + decoded JSON body) must
+// survive the rewrite, including transparent content-encoding decompression.
+// Uses REDIRECT_TEST_SOURCE so the loopback block is lifted and a local server
+// on 127.0.0.1 is a reachable (validated) dial target.
+describe("sandbox grandchild pinned fetch preserves the Response contract", () => {
+  let server: Server;
+  let base: string;
+
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      res.writeHead(200, {
+        "content-type": "application/json",
+        "content-encoding": "gzip",
+        "x-pinned": "yes",
+      });
+      res.end(gzipSync(Buffer.from(JSON.stringify({ ok: true, path: req.url }))));
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const { port } = server.address() as AddressInfo;
+    base = `http://127.0.0.1:${port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+  });
+
+  it("returns status, headers, and a gzip-decoded JSON body through the pin", async () => {
+    const code = `const r = await fetch(${JSON.stringify(`${base}/ping`)}); const j = await r.json(); return { status: r.status, header: r.headers.get("x-pinned"), body: j };`;
+    const outcome = await runSandboxed(code, 3000, REDIRECT_TEST_SOURCE);
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      const r = outcome.result as {
+        status: number;
+        header: string;
+        body: { ok: boolean; path: string };
+      };
+      expect(r.status).toBe(200);
+      expect(r.header).toBe("yes");
+      expect(r.body.ok).toBe(true);
+      expect(r.body.path).toBe("/ping");
+    }
+  }, 10_000);
 }, 30_000);
 
 // Helper: a forged result frame an escaped child could write to fd 3 — a
