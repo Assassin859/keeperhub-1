@@ -1274,7 +1274,7 @@ export function WorkflowRuns({
               <div className="border-t bg-muted/20">
                 {runErrorMessage && (
                   <div className="p-4 pb-0">
-                    <Alert variant="destructive">
+                    <Alert>
                       <TriangleAlert />
                       <AlertDescription>{runErrorMessage}</AlertDescription>
                     </Alert>
