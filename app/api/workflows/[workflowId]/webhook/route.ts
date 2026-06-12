@@ -11,6 +11,11 @@ import {
   enforceExecutionLimit,
 } from "@/lib/billing/execution-guard";
 import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit";
+import {
+  beginIdempotentFromRequest,
+  idempotencyEarlyResponse,
+  recordIdempotentResponse,
+} from "@/lib/idempotency";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { recordWebhookMetrics } from "@/lib/metrics/instrumentation/api";
 import { db } from "@/lib/db";
@@ -324,6 +329,24 @@ export async function POST(
     // Parse request body
     const body = await request.json().catch(() => ({}));
 
+    // Idempotency: a retry carrying the same key + body replays the original
+    // executionId instead of triggering the workflow again. Scoped per workflow.
+    const idem = await beginIdempotentFromRequest({
+      request,
+      organizationId: workflow.organizationId,
+      scope: `webhook:${workflowId}`,
+      requestBody: body,
+    });
+    if (idem) {
+      const early = idempotencyEarlyResponse(idem);
+      if (early) {
+        return NextResponse.json(early.body, {
+          status: early.status,
+          headers: corsHeaders,
+        });
+      }
+    }
+
     const attribution = buildAttribution({
       request,
       source: "webhook",
@@ -387,12 +410,15 @@ export async function POST(
     });
 
     // Return immediately with the execution ID
-    return NextResponse.json(
-      {
-        executionId: execution.id,
-        status: "running",
-      },
-      { headers: corsHeaders }
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json(
+        {
+          executionId: execution.id,
+          status: "running",
+        },
+        { headers: corsHeaders }
+      )
     );
   } catch (error) {
     logSystemError(ErrorCategory.WORKFLOW_ENGINE, "[Webhook] Failed to start workflow execution", error, { endpoint: "/api/workflows/[workflowId]/webhook", operation: "post" });

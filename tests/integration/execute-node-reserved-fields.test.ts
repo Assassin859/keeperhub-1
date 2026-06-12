@@ -213,4 +213,30 @@ describe("POST /api/execute/node reserved-field gating", () => {
     expect([200, 202]).toContain(response.status);
     expect(mocks.capturedInput?.integrationId).toBe("int_mine");
   });
+
+  it("rejects a retry budget that would outlive the idempotency lock (H3)", async () => {
+    const response = await nodePOST(
+      postRequest({
+        actionType: "web3/write-contract",
+        config: { network: "1", contractAddress: "0xabc" },
+        retry: { maxRetries: 10, timeoutMs: 600_000 },
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.checkAndReserveExecution).not.toHaveBeenCalled();
+    expect(mocks.stepFn).not.toHaveBeenCalled();
+  });
+
+  it("accepts a retry budget within the lock TTL", async () => {
+    const response = await nodePOST(
+      postRequest({
+        actionType: "web3/write-contract",
+        config: { network: "1", contractAddress: "0xabc" },
+        retry: { maxRetries: 3, timeoutMs: 120_000 },
+      })
+    );
+
+    expect([200, 202]).toContain(response.status);
+  });
 });
