@@ -321,6 +321,11 @@ async function resolveListing(slug: string): Promise<
     }
   | { ok: false; response: Response }
 > {
+  // Authenticated per-workflow MCP server: intentionally uses the full,
+  // nodes-bearing getWorkflowListing because createWorkflowMcpServer ->
+  // detectListingTriggerType(listing.nodes) needs the workflow nodes for
+  // trigger detection. The public/unauthenticated HTTP endpoint uses
+  // getWorkflowListingPublic instead, which strips nodes.
   const result = await getWorkflowListing(slug);
   if (!(result.ok && result.listing.isListed)) {
     return {

@@ -1,8 +1,10 @@
 import { spawn } from "node:child_process";
-import { deserialize } from "node:v8";
 import {
   SANDBOX_CHILD_SOURCE as CHILD_SOURCE,
-  SANDBOX_RESULT_SENTINEL as RESULT_SENTINEL,
+  createSandboxResultReader,
+  decodeSandboxResult,
+  SANDBOX_RESULT_FD,
+  type SandboxResultReader,
 } from "../../lib/sandbox/child-source.js";
 
 type LogEntry = {
@@ -47,20 +49,34 @@ function buildChildEnv(): NodeJS.ProcessEnv {
   return out as NodeJS.ProcessEnv;
 }
 
-function parseChildOutput(stdout: string): ChildOutcome {
-  const idx = stdout.lastIndexOf(RESULT_SENTINEL);
-  if (idx === -1) {
-    return {
-      ok: false,
-      errorMessage: "Sandbox produced no result",
-      logs: [],
-    };
+function isChildOutcome(value: unknown): value is ChildOutcome {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { ok?: unknown }).ok === "boolean"
+  );
+}
+
+function outcomeFromReader(reader: SandboxResultReader): ChildOutcome {
+  if (reader.error) {
+    return { ok: false, errorMessage: reader.error, logs: [] };
   }
-  const newlineIdx = stdout.indexOf("\n", idx);
-  const end = newlineIdx === -1 ? stdout.length : newlineIdx;
-  const base64 = stdout.slice(idx + RESULT_SENTINEL.length, end).trim();
+  if (!reader.frame) {
+    return { ok: false, errorMessage: "Sandbox produced no result", logs: [] };
+  }
   try {
-    return deserialize(Buffer.from(base64, "base64")) as ChildOutcome;
+    // Safe by construction: JSON.parse + tag rebuild, never v8.deserialize on
+    // child-produced bytes (F-010). Validate the envelope shape since the
+    // child is untrusted.
+    const decoded = decodeSandboxResult(reader.frame.toString("utf8"));
+    if (!isChildOutcome(decoded)) {
+      return {
+        ok: false,
+        errorMessage: "Sandbox produced malformed result",
+        logs: [],
+      };
+    }
+    return decoded;
   } catch (_err) {
     return {
       ok: false,
@@ -87,12 +103,14 @@ async function runInChild(
       return;
     }
 
+    // fd 3 is the dedicated result channel (F-010). stdout/stderr stay
+    // user-facing diagnostics and are never deserialized.
     const child = spawn(process.execPath, ["-e", CHILD_SOURCE], {
       env: buildChildEnv(),
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe", "pipe"],
     });
 
-    let stdout = "";
+    const resultReader = createSandboxResultReader();
     let stderr = "";
     let settled = false;
 
@@ -122,14 +140,29 @@ async function runInChild(
       finish({ ok: false, errorMessage: "WALL_CLOCK_TIMEOUT", logs: [] });
     }, timeoutMs + 1000);
 
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      stdout += chunk;
-    });
+    // Drain stdout so a sandbox escape that writes there cannot fill the pipe
+    // and block the child; the bytes are intentionally discarded (never a
+    // result source).
+    child.stdout.resume();
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
       stderr += chunk;
     });
+
+    const resultStream = child.stdio[SANDBOX_RESULT_FD];
+    if (resultStream && "on" in resultStream) {
+      resultStream.on("data", (chunk: Buffer) => {
+        resultReader.push(chunk);
+        if (resultReader.done) {
+          // First complete frame wins; resolve now and reap the child even if
+          // escaped code kept the event loop alive past the result.
+          finish(outcomeFromReader(resultReader));
+        }
+      });
+      resultStream.on("error", () => {
+        // Pipe teardown races process exit; the close handler maps the outcome.
+      });
+    }
 
     child.on("error", (err: Error) => {
       finish({
@@ -141,12 +174,12 @@ async function runInChild(
     });
 
     child.on("close", (exitCode: number | null) => {
-      const parsed = parseChildOutput(stdout);
+      const parsed = outcomeFromReader(resultReader);
       if (parsed.ok || exitCode === 0) {
         finish(parsed);
         return;
       }
-      // Non-zero exit with no parseable result; surface stderr as a hint.
+      // Non-zero exit with no result frame; surface stderr as a hint.
       finish({
         ok: false,
         errorMessage:

@@ -12,6 +12,17 @@ vi.mock("../../block-dispatcher/sqs-enqueue.js", () => ({
   enqueueBlockTrigger: vi.fn().mockResolvedValue(undefined),
 }));
 
+// KEEP-693: stub the phantom helpers so the monitor does not call the internal
+// API. Default (undefined) leaves existing tests on the legacy id-less path.
+const { createPhantomExecution, failPhantomExecution } = vi.hoisted(() => ({
+  createPhantomExecution: vi.fn(),
+  failPhantomExecution: vi.fn(),
+}));
+vi.mock("../../lib/phantom.js", () => ({
+  createPhantomExecution,
+  failPhantomExecution,
+}));
+
 // ---------------------------------------------------------------------------
 // Mock WebSocket that supports ping/pong and close events
 // ---------------------------------------------------------------------------
@@ -248,6 +259,58 @@ describe("ChainMonitor", () => {
           workflowId: "wf-1",
           triggerData: expect.objectContaining({ blockNumber: 10 }),
         }),
+      );
+    });
+
+    // KEEP-693: phantom pre-creation wiring.
+    it("pre-creates a phantom and carries its id on the block message", async () => {
+      createPhantomExecution.mockResolvedValueOnce("exec_ph");
+      const monitor = new ChainMonitor({
+        chain: makeChain(),
+        workflows: [makeWorkflow()],
+      });
+
+      await monitor.start();
+
+      const { enqueueBlockTrigger } = await import(
+        "../../block-dispatcher/sqs-enqueue.js"
+      );
+      latestProvider().emitBlock(10);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(createPhantomExecution).toHaveBeenCalledWith(
+        "wf-1",
+        "block",
+        "user-1",
+      );
+      expect(enqueueBlockTrigger).toHaveBeenCalledWith(
+        expect.objectContaining({ executionId: "exec_ph" }),
+      );
+    });
+
+    it("marks the phantom failed with BS-0001 when the enqueue fails", async () => {
+      createPhantomExecution.mockResolvedValueOnce("exec_ph");
+      const { enqueueBlockTrigger } = await import(
+        "../../block-dispatcher/sqs-enqueue.js"
+      );
+      vi.mocked(enqueueBlockTrigger).mockRejectedValueOnce(
+        new Error("SQS down"),
+      );
+
+      const monitor = new ChainMonitor({
+        chain: makeChain(),
+        workflows: [makeWorkflow()],
+      });
+
+      await monitor.start();
+
+      latestProvider().emitBlock(10);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(failPhantomExecution).toHaveBeenCalledWith(
+        "exec_ph",
+        "BS-0001",
+        expect.stringContaining("SQS down"),
       );
     });
 
@@ -894,17 +957,12 @@ describe("ChainMonitor", () => {
       // At least one new provider was created (the probe), and the active
       // provider should now be primary again.
       expect(providerInstances.length).toBeGreaterThan(startCount);
-      // Latest connected provider should be primary
-      const lastConnectedUrl = monitor.isAlive()
-        ? "wss://primary.test"
-        : "(monitor not alive)";
-      // Find the most recent provider matching the primary URL — that is the
-      // one we are now connected on.
-      const primaryProviders = providerInstances.filter(
-        (p) => p.url === "wss://primary.test",
-      );
-      expect(primaryProviders.length).toBeGreaterThanOrEqual(2);
-      expect(lastConnectedUrl).toBe("wss://primary.test");
+      // The monitor must have reconnected to primary, not stayed on fallback.
+      // This is the assertion that catches the probePrimary bug: previously,
+      // currentUrlIndex was never reset to 0, so reconnectWithBackoff always
+      // landed back on the fallback URL.
+      expect(latestProvider().url).toBe("wss://primary.test");
+      expect(monitor.isAlive()).toBe(true);
     });
 
     it("recycles the socket after SOCKET_MAX_AGE_MS elapses", async () => {

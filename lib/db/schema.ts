@@ -11,6 +11,7 @@ import {
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
+import type { ErrorCode } from "../errors/error-codes";
 import type { IntegrationType } from "../types/integration";
 import { generateId } from "../utils/id";
 
@@ -547,7 +548,9 @@ export const workflowExecutions = pgTable(
       .references(() => users.id),
     status: text("status")
       .notNull()
-      .$type<"pending" | "running" | "success" | "error" | "cancelled">(),
+      .$type<
+        "pending" | "running" | "success" | "error" | "cancelled" | "phantom"
+      >(),
     // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
     input: jsonb("input").$type<Record<string, any>>(),
     // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
@@ -567,6 +570,7 @@ export const workflowExecutions = pgTable(
       | "unknown"
     >(),
     errorType: text("error_type").$type<"user" | "system">(),
+    errorCode: text("error_code").$type<ErrorCode>(),
     startedAt: timestamp("started_at").notNull().defaultNow(),
     completedAt: timestamp("completed_at"),
     duration: numeric("duration"), // Duration in milliseconds
@@ -962,6 +966,8 @@ export const explorerConfigs = pgTable(
     explorerUrl: text("explorer_url"), // e.g., "https://etherscan.io"
     explorerApiType: text("explorer_api_type"), // "etherscan" | "blockscout" | "solscan"
     explorerApiUrl: text("explorer_api_url"), // Base URL for API calls (ABI, balance, etc.)
+    backupExplorerApiType: text("backup_explorer_api_type"), // fallback API type if primary fails
+    backupExplorerApiUrl: text("backup_explorer_api_url"), // fallback API URL if primary fails
     explorerTxPath: text("explorer_tx_path").default("/tx/{hash}"),
     explorerAddressPath: text("explorer_address_path").default(
       "/address/{address}"

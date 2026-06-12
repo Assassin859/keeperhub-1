@@ -139,6 +139,7 @@ export type DualAuthContext =
       organizationId: string | null;
       authMethod: AuthMethod;
       apiKeyId: string | null;
+      scope?: string;
     }
   | { error: string; status: number; code?: "mfa_required" };
 
@@ -209,9 +210,11 @@ export function auditFromAuth(
  * These tokens are issued by the MCP OAuth flow and forwarded
  * by the MCP server when calling downstream API endpoints.
  */
-async function resolveOAuthToken(
-  request: Request
-): Promise<{ userId: string | null; organizationId: string | null } | null> {
+async function resolveOAuthToken(request: Request): Promise<{
+  userId: string | null;
+  organizationId: string | null;
+  scope?: string;
+} | null> {
   const result = await authenticateOAuthToken(request);
   if (!result.authenticated) {
     return null;
@@ -219,6 +222,7 @@ async function resolveOAuthToken(
   return {
     userId: result.userId ?? null,
     organizationId: result.organizationId ?? null,
+    scope: result.scope,
   };
 }
 

@@ -160,35 +160,19 @@ function normalizeBlockscoutTx(
   };
 }
 
-/**
- * Fetch transaction list for a contract address from the appropriate explorer
- *
- * @param config - Explorer configuration from database
- * @param contractAddress - Contract address to list transactions for
- * @param chainId - Chain ID (required for Etherscan v2)
- * @param startBlock - Start block number
- * @param endBlock - End block number
- * @param apiKey - Optional API key (required for Etherscan)
- */
-export async function fetchContractTransactions(
-  config: ExplorerConfig,
+async function fetchTransactionsFromProvider(
+  apiType: string,
+  apiUrl: string,
   contractAddress: string,
   chainId: number,
   startBlock: number,
   endBlock: number,
   apiKey?: string
 ): Promise<TransactionListResult> {
-  if (!(config.explorerApiUrl && config.explorerApiType)) {
-    return {
-      success: false,
-      error: "Explorer API not configured for this chain",
-    };
-  }
-
-  switch (config.explorerApiType) {
+  switch (apiType) {
     case "etherscan": {
       const result = await fetchEtherscanTransactions(
-        config.explorerApiUrl,
+        apiUrl,
         chainId,
         contractAddress,
         startBlock,
@@ -206,7 +190,7 @@ export async function fetchContractTransactions(
 
     case "blockscout": {
       const result = await fetchBlockscoutTransactions(
-        config.explorerApiUrl,
+        apiUrl,
         contractAddress,
         startBlock,
         endBlock
@@ -223,7 +207,107 @@ export async function fetchContractTransactions(
     default:
       return {
         success: false,
-        error: `Transaction listing not supported for explorer type: ${config.explorerApiType}`,
+        error: `Transaction listing not supported for explorer type: ${apiType}`,
       };
   }
+}
+
+const RETRY_BACKOFF_MS = 10_000;
+const RETRY_ROUNDS = 2;
+
+/**
+ * Fetch transaction list for a contract address from the appropriate explorer.
+ *
+ * When a backup provider is configured the function runs up to RETRY_ROUNDS
+ * rounds of (primary -> backup) with a RETRY_BACKOFF_MS pause between rounds,
+ * so a transient double-failure on both providers within the same window can
+ * self-heal on the next round without the caller having to retry. Rate-limiting
+ * is the most common cause of simultaneous failures, so the backoff is
+ * intentionally long (10 s) to avoid amplifying the problem.
+ *
+ * When all attempts fail the error message surfaces both providers' last errors
+ * so callers can distinguish e.g. "primary rate-limited, backup bad key" from
+ * a uniform outage.
+ */
+export async function fetchContractTransactions(
+  config: ExplorerConfig,
+  contractAddress: string,
+  chainId: number,
+  startBlock: number,
+  endBlock: number,
+  apiKey?: string
+): Promise<TransactionListResult> {
+  if (!(config.explorerApiUrl && config.explorerApiType)) {
+    return {
+      success: false,
+      error: "Explorer API not configured for this chain",
+    };
+  }
+
+  const backup =
+    config.backupExplorerApiType != null && config.backupExplorerApiUrl != null
+      ? {
+          apiType: config.backupExplorerApiType,
+          apiUrl: config.backupExplorerApiUrl,
+        }
+      : null;
+
+  let lastPrimaryError: string | undefined;
+  let lastBackupError: string | undefined;
+
+  for (let round = 0; round < RETRY_ROUNDS; round++) {
+    if (round > 0) {
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, RETRY_BACKOFF_MS)
+      );
+    }
+
+    const primaryResult = await fetchTransactionsFromProvider(
+      config.explorerApiType,
+      config.explorerApiUrl,
+      contractAddress,
+      chainId,
+      startBlock,
+      endBlock,
+      apiKey
+    );
+
+    if (primaryResult.success) {
+      return primaryResult;
+    }
+
+    lastPrimaryError = primaryResult.error;
+
+    if (backup === null) {
+      continue;
+    }
+
+    const backupResult = await fetchTransactionsFromProvider(
+      backup.apiType,
+      backup.apiUrl,
+      contractAddress,
+      chainId,
+      startBlock,
+      endBlock,
+      apiKey
+    );
+
+    if (backupResult.success) {
+      return backupResult;
+    }
+
+    lastBackupError = backupResult.error;
+  }
+
+  if (lastBackupError !== undefined) {
+    return {
+      success: false,
+      error: `All explorer providers failed. Primary: ${lastPrimaryError}. Backup: ${lastBackupError}`,
+    };
+  }
+
+  return {
+    success: false,
+    error: lastPrimaryError ?? "Explorer request failed",
+  };
 }

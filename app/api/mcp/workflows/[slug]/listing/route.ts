@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import {
-  getWorkflowListing,
+  getWorkflowListingPublic,
   type ListingErrorDetails,
   type ListWorkflowMetadata,
   listWorkflow,
@@ -8,8 +8,10 @@ import {
   unlistWorkflow,
   updateWorkflowListing,
 } from "@/lib/mcp/listing";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import { requireScope } from "@/lib/middleware/require-scope";
 import { sanitizeDescription } from "@/lib/sanitize-description";
 
 const LISTING_RATE_LIMIT = 60;
@@ -104,7 +106,9 @@ export async function GET(
     }
 
     const { slug } = await params;
-    const result = await getWorkflowListing(slug);
+    // Public, unauthenticated read: project the nodes-free listing so workflow
+    // internals (contract addresses, webhook URLs, calldata) never leak.
+    const result = await getWorkflowListingPublic(slug);
 
     if (!result.ok) {
       return NextResponse.json({ error: "Listing not found" }, { status: 404 });
@@ -144,6 +148,11 @@ export async function POST(
       { error: authContext.error },
       { status: authContext.status }
     );
+  }
+
+  const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE);
+  if (scopeError) {
+    return scopeError;
   }
 
   const { organizationId } = authContext;
@@ -202,6 +211,11 @@ export async function PATCH(
       { error: authContext.error },
       { status: authContext.status }
     );
+  }
+
+  const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE);
+  if (scopeError) {
+    return scopeError;
   }
 
   const { organizationId } = authContext;
@@ -263,6 +277,11 @@ export async function DELETE(
       { error: authContext.error },
       { status: authContext.status }
     );
+  }
+
+  const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE);
+  if (scopeError) {
+    return scopeError;
   }
 
   const { organizationId } = authContext;

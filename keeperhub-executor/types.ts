@@ -1,6 +1,12 @@
 import type { WorkflowNode } from "../lib/workflow/store";
 
 export type ScheduleMessage = {
+  /**
+   * Pre-created phantom execution id. When present, the executor upgrades that
+   * 'phantom' row to 'pending' instead of inserting a fresh row. Optional for
+   * backward compatibility with messages enqueued before phantom pre-creation.
+   */
+  executionId?: string;
   workflowId: string;
   scheduleId: string;
   triggerTime: string;
@@ -8,6 +14,8 @@ export type ScheduleMessage = {
 };
 
 export type BlockMessage = {
+  // Pre-created phantom execution id (see ScheduleMessage).
+  executionId?: string;
   workflowId: string;
   userId: string;
   triggerType: "block";
@@ -20,6 +28,8 @@ export type BlockMessage = {
 };
 
 export type EventMessage = {
+  // Pre-created phantom execution id (see ScheduleMessage).
+  executionId?: string;
   workflowId: string;
   userId: string;
   triggerType: "event";
