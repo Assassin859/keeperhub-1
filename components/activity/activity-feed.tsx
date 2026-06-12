@@ -226,29 +226,23 @@ function ActivityRow({
   );
 }
 
-// Merge synthesized baseline entries (e.g. a key's creation when no audit
-// event was ever recorded) with the real feed. Baselines belong on the first
-// (newest) page only and are dropped for any resource that already has a real
-// "created" event.
+// Synthesized baseline entries (e.g. a resource's creation when no audit event
+// was ever recorded) only stand in when there is NO recorded history at all.
+// Once real events exist they ARE the history, and appending a synthetic row
+// would push a page past its size and put the "creation" in the wrong place
+// (it belongs on the last/oldest page, not page 1).
 function mergeFallback(
   events: SecurityAuditEvent[],
   fallback: SecurityAuditEvent[] | undefined,
   meta: PageMeta | null
 ): SecurityAuditEvent[] {
-  if (!fallback?.length || (meta && meta.page > 1)) {
+  if (!fallback?.length) {
     return events;
   }
-  const covered = new Set(
-    events
-      .filter((e) => e.action.endsWith(".created") && e.resourceId)
-      .map((e) => e.resourceId)
-  );
-  const extra = fallback.filter(
-    (f) => !(f.resourceId && covered.has(f.resourceId))
-  );
-  return [...events, ...extra].sort((a, b) =>
-    a.createdAt < b.createdAt ? 1 : -1
-  );
+  if (!meta || meta.total > 0) {
+    return events;
+  }
+  return fallback;
 }
 
 // Stable keys for the placeholder rows so the skeleton list doesn't key on
@@ -292,27 +286,45 @@ export function ActivityFeed({
     JSON.stringify({ resourceType, resourceId, action, limit })
   );
 
-  // Only blank to skeletons on the very first load. Page changes and silent
-  // refetches keep the current rows mounted (the hook retains `events` until
-  // the next page resolves), so the modal height stays put instead of
-  // collapsing and re-expanding on every navigation.
-  if (loading && events.length === 0 && !error) {
+  // Fixed-height scroll region (when a page size is set) so the modal never
+  // resizes: the skeleton, every page, and the empty/error states all occupy
+  // the same box, and content taller than the box scrolls inside it instead of
+  // growing the modal. The Pager lives outside this box so it stays put.
+  const scrollClass = `thin-scrollbar overflow-y-auto ${limit ? "h-[32rem]" : ""}`;
+
+  // Skeletons show on every load -- first open AND page change. Because they
+  // render inside the same fixed-height box as the rows, the modal height never
+  // changes; only the box content swaps. The Pager stays mounted during a page
+  // change so navigation keeps working.
+  if (loading) {
     return (
-      <ul className="divide-y divide-border/60">
-        {SKELETON_KEYS.slice(0, Math.min(limit ?? 3, SKELETON_KEYS.length)).map(
-          (key) => (
-            <SkeletonRow key={key} />
-          )
+      <div>
+        <div className={scrollClass}>
+          <ul className="divide-y divide-border/60">
+            {SKELETON_KEYS.slice(
+              0,
+              Math.min(limit ?? 3, SKELETON_KEYS.length)
+            ).map((key) => (
+              <SkeletonRow key={key} />
+            ))}
+          </ul>
+        </div>
+        {meta && (
+          <div className="pt-2">
+            <Pager meta={meta} onPage={setPage} unit="events" />
+          </div>
         )}
-      </ul>
+      </div>
     );
   }
 
-  if (error && events.length === 0) {
+  if (error) {
     return (
-      <p className="py-4 text-muted-foreground text-sm">
-        Failed to load activity.
-      </p>
+      <div className={scrollClass}>
+        <p className="py-4 text-muted-foreground text-sm">
+          Failed to load activity.
+        </p>
+      </div>
     );
   }
 
@@ -320,35 +332,34 @@ export function ActivityFeed({
 
   if (merged.length === 0) {
     return (
-      <p className="py-4 text-muted-foreground text-sm">
-        No activity recorded yet.
-      </p>
+      <div className={scrollClass}>
+        <p className="py-4 text-muted-foreground text-sm">
+          No activity recorded yet.
+        </p>
+      </div>
     );
   }
 
   const groups = groupByDate(merged, (e) => e.createdAt);
-  // When the feed spans multiple pages, hold a floor height so paging onto a
-  // shorter last page doesn't resize the modal.
-  const paged = Boolean(meta && meta.totalPages > 1);
 
   return (
-    <div
-      className={`thin-scrollbar space-y-4 overflow-y-auto ${paged ? "min-h-80" : ""}`}
-    >
-      {groups.map((group) => (
-        <div key={group.label}>
-          <p className="sticky top-0 bg-background py-1 font-medium text-muted-foreground text-xs uppercase tracking-wide">
-            {group.label}
-          </p>
-          <ul className="divide-y divide-border/60">
-            {group.items.map((event) => (
-              <ActivityRow event={event} key={event.id} />
-            ))}
-          </ul>
-        </div>
-      ))}
+    <div>
+      <div className={`${scrollClass} space-y-4`}>
+        {groups.map((group) => (
+          <div key={group.label}>
+            <p className="sticky top-0 bg-background py-1 font-medium text-muted-foreground text-xs uppercase tracking-wide">
+              {group.label}
+            </p>
+            <ul className="divide-y divide-border/60">
+              {group.items.map((event) => (
+                <ActivityRow event={event} key={event.id} />
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
       {meta && (
-        <div className="pt-1">
+        <div className="pt-2">
           <Pager meta={meta} onPage={setPage} unit="events" />
         </div>
       )}
