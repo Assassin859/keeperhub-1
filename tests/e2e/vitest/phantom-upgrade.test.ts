@@ -172,6 +172,24 @@ describe.skipIf(SKIP)("upgradePhantomToPending", () => {
     expect(row.input).toEqual({ n: 1 });
   });
 
+  it("upgrade flips a non-billable phantom to billable (it now runs)", async () => {
+    const id = `${PREFIX}billable`;
+    await db.insert(workflowExecutions).values({
+      id,
+      workflowId,
+      userId: ownerId,
+      status: "phantom",
+      billable: false,
+    });
+
+    const upgraded = await upgradePhantomToPending(execDb, id, {});
+
+    expect(upgraded).toBe(true);
+    const row = await readExecution(id);
+    expect(row.status).toBe("pending");
+    expect(row.billable).toBe(true);
+  });
+
   it("discardPhantomRow deletes a phantom row (intentional skip)", async () => {
     const id = `${PREFIX}discard`;
     await seedExecution(id, "phantom");

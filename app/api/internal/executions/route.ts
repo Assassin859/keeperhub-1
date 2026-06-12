@@ -116,6 +116,11 @@ export async function POST(request: Request): Promise<NextResponse> {
           workflowId,
           userId: ownerId,
           status: isPhantom ? "phantom" : "running",
+          // KEEP-693: a phantom has not run yet, so it must not count toward the
+          // org's billable executions -- the executor flips it to billable when
+          // it upgrades the row to running. Non-phantom (direct) rows stay
+          // billable as before.
+          billable: !isPhantom,
           input: input || {},
           ...attribution,
         })

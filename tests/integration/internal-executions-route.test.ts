@@ -146,6 +146,7 @@ describe("POST /api/internal/executions", () => {
     expect(response.status).toBe(201);
     expect(data.executionId).toBe("exec_created");
     expect(insertedValues?.status).toBe("running");
+    expect(insertedValues?.billable).toBe(true);
     expect(enforceExecutionLimit).toHaveBeenCalledTimes(1);
   });
 
@@ -158,6 +159,8 @@ describe("POST /api/internal/executions", () => {
     expect(response.status).toBe(201);
     expect(data.executionId).toBe("exec_created");
     expect(insertedValues?.status).toBe("phantom");
+    // A phantom must not count toward billing until it actually runs.
+    expect(insertedValues?.billable).toBe(false);
     // Quota is charged when the executor upgrades to running, not now.
     expect(enforceExecutionLimit).not.toHaveBeenCalled();
   });
