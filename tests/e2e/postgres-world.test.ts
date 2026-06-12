@@ -12,6 +12,9 @@
  * - WORKFLOW_POSTGRES_URL or DATABASE_URL pointing to the database
  * - workflow-postgres-setup already run against the database
  * - App running at KEEPERHUB_URL (default: http://localhost:3000)
+ * - INTERNAL_SERVICE_HMAC_SECRET set to the same value seeded into the running
+ *   app's internal_service_hmac_secrets store under caller "*shared*" (see
+ *   scripts/seed-internal-service-hmac.ts) so the signed requests below verify.
  *
  * Run with: pnpm vitest tests/e2e/postgres-world.test.ts
  */
@@ -21,16 +24,22 @@ import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { users, workflowExecutions, workflows } from "@/lib/db/schema";
+import {
+  organization,
+  users,
+  workflowExecutions,
+  workflows,
+} from "@/lib/db/schema";
 import { PERSISTENT_TEST_USER_EMAIL } from "../utils/db";
+import { signInternalServiceHeaders } from "../utils/internal-service-auth";
 
 const DATABASE_URL =
   process.env.DATABASE_URL ||
   "postgresql://postgres:postgres@localhost:5433/keeperhub";
 
 const KEEPERHUB_URL = process.env.KEEPERHUB_URL || "http://localhost:3000";
-const SERVICE_KEY =
-  process.env.SCHEDULER_SERVICE_API_KEY || "local-scheduler-key-for-dev";
+const INTERNAL_SERVICE_HMAC_SECRET =
+  process.env.INTERNAL_SERVICE_HMAC_SECRET || "";
 
 // Requires workflow + pgboss schemas. Run `pnpm db:setup-workflow` to create them.
 const shouldSkip =
@@ -78,6 +87,7 @@ describe.skipIf(shouldSkip || !hasPgboss)("Postgres World E2E", () => {
   let client: ReturnType<typeof postgres>;
   let db: ReturnType<typeof drizzle>;
   let testUserId: string;
+  let testOrgId: string;
   let testWorkflowId: string;
 
   beforeAll(async () => {
@@ -98,6 +108,14 @@ describe.skipIf(shouldSkip || !hasPgboss)("Postgres World E2E", () => {
     }
     testUserId = existingUser[0].id;
 
+    testOrgId = generateId();
+    await db.insert(organization).values({
+      id: testOrgId,
+      name: testOrgId,
+      slug: testOrgId,
+      createdAt: new Date(),
+    });
+
     testWorkflowId = generateId();
     const nodes = [
       {
@@ -112,6 +130,7 @@ describe.skipIf(shouldSkip || !hasPgboss)("Postgres World E2E", () => {
       id: testWorkflowId,
       name: "Postgres World E2E Test",
       userId: testUserId,
+      organizationId: testOrgId,
       nodes,
       edges: [],
     });
@@ -123,6 +142,9 @@ describe.skipIf(shouldSkip || !hasPgboss)("Postgres World E2E", () => {
         .delete(workflowExecutions)
         .where(eq(workflowExecutions.workflowId, testWorkflowId));
       await db.delete(workflows).where(eq(workflows.id, testWorkflowId));
+    }
+    if (testOrgId) {
+      await db.delete(organization).where(eq(organization.id, testOrgId));
     }
     await client.end();
   });
@@ -179,17 +201,22 @@ describe.skipIf(shouldSkip || !hasPgboss)("Postgres World E2E", () => {
       it("should execute a workflow and persist run in workflow schema", {
         timeout: 35_000,
       }, async () => {
-        const response = await fetch(
-          `${KEEPERHUB_URL}/api/workflow/${testWorkflowId}/execute`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Service-Key": SERVICE_KEY,
-            },
-            body: JSON.stringify({ input: {} }),
-          }
-        );
+        const url = `${KEEPERHUB_URL}/api/workflow/${testWorkflowId}/execute`;
+        const requestBody = JSON.stringify({ input: {} });
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...signInternalServiceHeaders({
+              method: "POST",
+              url,
+              caller: "executor",
+              secret: INTERNAL_SERVICE_HMAC_SECRET,
+              body: requestBody,
+            }),
+          },
+          body: requestBody,
+        });
 
         expect(response.status).toBe(200);
         const body = (await response.json()) as {
@@ -232,17 +259,22 @@ describe.skipIf(shouldSkip || !hasPgboss)("Postgres World E2E", () => {
       it("should record steps in workflow.workflow_steps", {
         timeout: 35_000,
       }, async () => {
-        const response = await fetch(
-          `${KEEPERHUB_URL}/api/workflow/${testWorkflowId}/execute`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Service-Key": SERVICE_KEY,
-            },
-            body: JSON.stringify({ input: {} }),
-          }
-        );
+        const url = `${KEEPERHUB_URL}/api/workflow/${testWorkflowId}/execute`;
+        const requestBody = JSON.stringify({ input: {} });
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...signInternalServiceHeaders({
+              method: "POST",
+              url,
+              caller: "executor",
+              secret: INTERNAL_SERVICE_HMAC_SECRET,
+              body: requestBody,
+            }),
+          },
+          body: requestBody,
+        });
 
         expect(response.status).toBe(200);
 

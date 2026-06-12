@@ -1,6 +1,7 @@
 import "server-only";
 
 import { fetchCredentials } from "@/lib/credential-fetcher";
+import { safeFetch } from "@/lib/safe-fetch";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import type { ResendCredentials } from "../credentials";
 
@@ -76,7 +77,8 @@ async function stepHandler(
       headers["Idempotency-Key"] = input.idempotencyKey;
     }
 
-    const response = await fetch(`${RESEND_API_URL}/emails`, {
+    const response = await safeFetch(`${RESEND_API_URL}/emails`, {
+      plugin: "resend",
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -119,7 +121,7 @@ export async function sendEmailStep(
   "use step";
 
   const credentials = input.integrationId
-    ? await fetchCredentials(input.integrationId)
+    ? await fetchCredentials(input.integrationId, { organizationId: input._context?.organizationId ?? null })
     : {};
 
   const coreInput: SendEmailCoreInput = {

@@ -29,7 +29,6 @@ import postgres from "postgres";
 import { validateWorkflowIntegrations } from "../lib/db/integrations";
 import {
   organization,
-  users,
   workflowExecutions,
   workflowSchedules,
   workflows,
@@ -186,17 +185,19 @@ async function main(): Promise<void> {
     }
 
     // Defensive re-check: the dispatcher already gated lifecycle state, but the
-    // workflow could have been disabled, soft-deleted, or its owner deactivated
-    // between dispatch and pod startup. Cancel rather than run.
-    const [owner] = await db
-      .select({ deactivatedAt: users.deactivatedAt })
-      .from(users)
-      .where(eq(users.id, workflow.userId))
+    // workflow could have been disabled, soft-deleted, deactivated, or its
+    // owning org deactivated between dispatch and pod startup. Cancel rather
+    // than run. The org owns the workflow, so org deactivation is the owner gate.
+    const [org] = await db
+      .select({ deactivatedAt: organization.deactivatedAt })
+      .from(organization)
+      .where(eq(organization.id, workflow.organizationId))
       .limit(1);
     const executability = getWorkflowExecutability({
       enabled: workflow.enabled,
       deletedAt: workflow.deletedAt,
-      ownerDeactivatedAt: owner?.deactivatedAt ?? null,
+      deactivatedAt: workflow.deactivatedAt,
+      orgDeactivatedAt: org?.deactivatedAt ?? null,
     });
     if (!executability.executable) {
       console.log(
@@ -222,7 +223,6 @@ async function main(): Promise<void> {
     const edges = workflow.edges as WorkflowEdge[];
     const validation = await validateWorkflowIntegrations(
       nodes,
-      workflow.userId,
       workflow.organizationId
     );
 

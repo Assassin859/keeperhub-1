@@ -8,7 +8,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import type { BillingInterval } from "@/lib/billing/plans";
+import type { BillingInterval, PlanName } from "@/lib/billing/plans";
 import { PLANS } from "@/lib/billing/plans";
 import { cn } from "@/lib/utils";
 import {
@@ -18,34 +18,63 @@ import {
 import { PlanCard } from "./plan-card";
 import type { PricingTableProps } from "./types";
 
-function formatGasCredits(cents: number): string {
-  return `$${(cents / 100).toFixed(0)} / mo`;
-}
-
 type ComparisonRow = {
   label: string;
+  tooltip?: {
+    title: string;
+    body: React.ReactNode;
+  };
   free: string;
   pro: string;
   business: string;
   enterprise: string;
-  tooltip?: React.ReactNode;
 };
 
-const SPONSORED_NETWORKS_TOOLTIP: React.ReactNode = (
-  <div className="space-y-1.5">
-    <p className="font-medium">Supported networks</p>
-    <p>
-      <span className="font-medium">Mainnets:</span>{" "}
-      {SPONSORSHIP_MAINNET_NAMES.join(", ")}
-    </p>
-    <p>
-      <span className="font-medium">Testnets:</span>{" "}
-      {SPONSORSHIP_TESTNET_NAMES.join(", ")}
-    </p>
-  </div>
-);
+function formatGasCreditCap(planName: PlanName, capCents: number): string {
+  if (planName === "enterprise") {
+    return "Custom";
+  }
+  return `$${(capCents / 100).toFixed(0)}/mo`;
+}
 
-const COMPARISON_ROWS: ComparisonRow[] = [
+function buildSponsoredGasRow(
+  gasCreditCaps?: Record<PlanName, number>
+): ComparisonRow {
+  const resolveCents = (planName: PlanName): number =>
+    gasCreditCaps?.[planName] ?? PLANS[planName].features.gasCreditsCents;
+  return {
+    label: "Sponsored gas",
+    tooltip: {
+      title: "Sponsored via Turnkey Gas Station",
+      body: (
+        <>
+          <div className="space-y-1">
+            <p className="text-[10px] uppercase tracking-wide opacity-70">
+              Mainnets
+            </p>
+            <p>{SPONSORSHIP_MAINNET_NAMES.join(", ")}</p>
+          </div>
+          <div className="space-y-1">
+            <p className="text-[10px] uppercase tracking-wide opacity-70">
+              Testnets
+            </p>
+            <p>{SPONSORSHIP_TESTNET_NAMES.join(", ")}</p>
+          </div>
+          <p className="opacity-70">
+            Monthly cap of sponsored gas credits in USD. Transactions on other
+            chains fall back to your wallet's native balance for gas.
+          </p>
+        </>
+      ),
+    },
+    free: formatGasCreditCap("free", resolveCents("free")),
+    pro: formatGasCreditCap("pro", resolveCents("pro")),
+    business: formatGasCreditCap("business", resolveCents("business")),
+    enterprise: formatGasCreditCap("enterprise", resolveCents("enterprise")),
+  };
+}
+
+const STATIC_COMPARISON_ROWS: readonly ComparisonRow[] = [
   {
     label: "Workflows",
     free: "Unlimited",
@@ -59,14 +88,6 @@ const COMPARISON_ROWS: ComparisonRow[] = [
     pro: "All EVM",
     business: "All EVM",
     enterprise: "Custom",
-  },
-  {
-    label: "Sponsored gas",
-    free: formatGasCredits(PLANS.free.features.gasCreditsCents),
-    pro: formatGasCredits(PLANS.pro.features.gasCreditsCents),
-    business: formatGasCredits(PLANS.business.features.gasCreditsCents),
-    enterprise: `${formatGasCredits(PLANS.enterprise.features.gasCreditsCents)} (custom)`,
-    tooltip: SPONSORED_NETWORKS_TOOLTIP,
   },
   {
     label: "Triggers",
@@ -124,10 +145,50 @@ const COMPARISON_ROWS: ComparisonRow[] = [
     business: "\u2014",
     enterprise: "Dedicated",
   },
-] as const;
+];
 
-function ComparisonTable(): React.ReactElement {
+function ComparisonRowLabel({
+  row,
+}: {
+  row: ComparisonRow;
+}): React.ReactElement {
+  if (!row.tooltip) {
+    return <>{row.label}</>;
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {row.label}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            aria-label={`Learn more about ${row.label}`}
+            className="inline-flex items-center text-muted-foreground/70 transition-colors hover:text-foreground"
+            type="button"
+          >
+            <Info className="size-3.5" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs space-y-2 px-3 py-2 text-left">
+          <p className="font-medium">{row.tooltip.title}</p>
+          {row.tooltip.body}
+        </TooltipContent>
+      </Tooltip>
+    </span>
+  );
+}
+
+function ComparisonTable({
+  gasCreditCaps,
+}: {
+  gasCreditCaps?: Record<PlanName, number>;
+}): React.ReactElement {
   const [isOpen, setIsOpen] = useState(false);
+
+  const rows: ComparisonRow[] = [
+    ...STATIC_COMPARISON_ROWS.slice(0, 3),
+    buildSponsoredGasRow(gasCreditCaps),
+    ...STATIC_COMPARISON_ROWS.slice(3),
+  ];
 
   return (
     <div className="mx-auto mt-6 max-w-7xl">
@@ -168,7 +229,7 @@ function ComparisonTable(): React.ReactElement {
               </tr>
             </thead>
             <tbody>
-              {COMPARISON_ROWS.map((row, i) => (
+              {rows.map((row, i) => (
                 <tr
                   className={cn(
                     "border-b border-border/30 last:border-b-0",
@@ -177,25 +238,7 @@ function ComparisonTable(): React.ReactElement {
                   key={row.label}
                 >
                   <td className="px-5 py-3 font-medium text-muted-foreground">
-                    <span className="inline-flex items-center gap-1">
-                      {row.label}
-                      {row.tooltip && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              aria-label={`More info about ${row.label}`}
-                              className="inline-flex cursor-help items-center text-muted-foreground transition-colors hover:text-foreground"
-                              type="button"
-                            >
-                              <Info className="size-3.5" />
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent className="max-w-xs">
-                            {row.tooltip}
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                    </span>
+                    <ComparisonRowLabel row={row} />
                   </td>
                   <td className="px-5 py-3 text-center text-muted-foreground">
                     {row.free}
@@ -301,7 +344,7 @@ export function PricingTable({
         />
       </div>
 
-      <ComparisonTable />
+      <ComparisonTable gasCreditCaps={gasCreditCaps} />
 
       <p className="text-center text-muted-foreground text-xs">
         Paid tiers bill overage at the end of the cycle. Free tier caps at its

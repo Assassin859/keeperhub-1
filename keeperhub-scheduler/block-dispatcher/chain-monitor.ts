@@ -1078,6 +1078,13 @@ export class ChainMonitor {
       await probeProvider.destroy().catch(() => {
         // ignore cleanup errors
       });
+      // Must set currentUrlIndex before handleDisconnect so reconnectWithBackoff
+      // lands on primary. Without it, maybeFlipUrlPreference() returns early
+      // (silentReconnects is 0 because the fallback is healthy), and connect()
+      // silently stays on fallback while the metric records a flip that never
+      // actually happens — causing the URL Flipped alert to re-fire every probe
+      // interval.
+      this.currentUrlIndex = 0;
       metrics.recordUrlFlip(this.chainName, "to_primary");
       metrics.recordWsClose(this.chainName, "primary_probe_recovered");
       this.handleDisconnect();

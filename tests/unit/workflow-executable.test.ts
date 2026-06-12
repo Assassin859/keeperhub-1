@@ -1,12 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 
-// The SQL builder references workflows/users columns; the in-memory predicate
-// is pure. Mock the schema so importing the module under test does not pull a
-// real db connection (executable.ts only needs the column handles for the SQL
-// builder, which these tests assert returns a defined predicate).
+// The SQL builder references workflows/organization columns; the in-memory
+// predicate is pure. Mock the schema so importing the module under test does
+// not pull a real db connection (executable.ts only needs the column handles
+// for the SQL builder, which these tests assert returns a defined predicate).
 vi.mock("@/lib/db/schema", () => ({
-  workflows: { enabled: "enabled", deletedAt: "deleted_at", userId: "user_id" },
-  users: { id: "id", deactivatedAt: "deactivated_at" },
+  workflows: {
+    enabled: "enabled",
+    deletedAt: "deleted_at",
+    deactivatedAt: "deactivated_at",
+    organizationId: "organization_id",
+    userId: "user_id",
+  },
+  organization: { id: "id", deactivatedAt: "deactivated_at" },
 }));
 
 import {
@@ -16,12 +22,13 @@ import {
 } from "@/lib/workflow/executable";
 
 describe("getWorkflowExecutability", () => {
-  it("is executable when enabled, not deleted, and owner active", () => {
+  it("is executable when enabled, not deleted, not deactivated, org active", () => {
     expect(
       getWorkflowExecutability({
         enabled: true,
         deletedAt: null,
-        ownerDeactivatedAt: null,
+        deactivatedAt: null,
+        orgDeactivatedAt: null,
       })
     ).toEqual({ executable: true });
   });
@@ -31,7 +38,6 @@ describe("getWorkflowExecutability", () => {
       getWorkflowExecutability({
         enabled: true,
         deletedAt: new Date(),
-        ownerDeactivatedAt: null,
       })
     ).toEqual({ executable: false, reason: "deleted" });
   });
@@ -41,29 +47,78 @@ describe("getWorkflowExecutability", () => {
       getWorkflowExecutability({
         enabled: false,
         deletedAt: new Date(),
-        ownerDeactivatedAt: null,
       })
     ).toEqual({ executable: false, reason: "deleted" });
   });
 
-  it("reports 'disabled' when not enabled and not deleted", () => {
-    expect(
-      getWorkflowExecutability({
-        enabled: false,
-        deletedAt: null,
-        ownerDeactivatedAt: null,
-      })
-    ).toEqual({ executable: false, reason: "disabled" });
-  });
-
-  it("reports 'owner_deactivated' when enabled and not deleted but owner is deactivated", () => {
+  it("reports 'deactivated' when the workflow is deactivated, even if still enabled", () => {
     expect(
       getWorkflowExecutability({
         enabled: true,
         deletedAt: null,
-        ownerDeactivatedAt: new Date(),
+        deactivatedAt: new Date(),
       })
-    ).toEqual({ executable: false, reason: "owner_deactivated" });
+    ).toEqual({ executable: false, reason: "deactivated" });
+  });
+
+  it("prefers 'deactivated' over 'disabled' so a disabled+deactivated workflow stays blocked from manual runs", () => {
+    expect(
+      getWorkflowExecutability({
+        enabled: false,
+        deletedAt: null,
+        deactivatedAt: new Date(),
+      })
+    ).toEqual({ executable: false, reason: "deactivated" });
+  });
+
+  it("prefers 'deleted' over 'deactivated' when both apply", () => {
+    expect(
+      getWorkflowExecutability({
+        enabled: true,
+        deletedAt: new Date(),
+        deactivatedAt: new Date(),
+      })
+    ).toEqual({ executable: false, reason: "deleted" });
+  });
+
+  it("reports 'org_deactivated' when the owning org is deactivated (owner gate)", () => {
+    expect(
+      getWorkflowExecutability({
+        enabled: true,
+        deletedAt: null,
+        orgDeactivatedAt: new Date(),
+      })
+    ).toEqual({ executable: false, reason: "org_deactivated" });
+  });
+
+  it("prefers 'deactivated' (workflow) over 'org_deactivated' when both apply", () => {
+    expect(
+      getWorkflowExecutability({
+        enabled: true,
+        deactivatedAt: new Date(),
+        orgDeactivatedAt: new Date(),
+      })
+    ).toEqual({ executable: false, reason: "deactivated" });
+  });
+
+  it("prefers 'org_deactivated' over 'disabled' so a disabled workflow in a dead org stays blocked", () => {
+    expect(
+      getWorkflowExecutability({
+        enabled: false,
+        orgDeactivatedAt: new Date(),
+      })
+    ).toEqual({ executable: false, reason: "org_deactivated" });
+  });
+
+  it("reports 'disabled' when not enabled and otherwise live", () => {
+    expect(
+      getWorkflowExecutability({
+        enabled: false,
+        deletedAt: null,
+        deactivatedAt: null,
+        orgDeactivatedAt: null,
+      })
+    ).toEqual({ executable: false, reason: "disabled" });
   });
 
   it("treats absent timestamps as not-set (trimmed shapes)", () => {

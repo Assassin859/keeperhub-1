@@ -60,6 +60,20 @@ describe("condition-builder-utils", () => {
       expect(isUnaryOperator("contains")).toBe(false);
       expect(isUnaryOperator("matchesRegex")).toBe(false);
     });
+
+    it("should return true for unary boolean/array/object operators", () => {
+      expect(isUnaryOperator("isTrue")).toBe(true);
+      expect(isUnaryOperator("isFalse")).toBe(true);
+      expect(isUnaryOperator("arrayIsEmpty")).toBe(true);
+      expect(isUnaryOperator("arrayIsNotEmpty")).toBe(true);
+      expect(isUnaryOperator("objectIsEmpty")).toBe(true);
+    });
+
+    it("should return false for binary array/object operators", () => {
+      expect(isUnaryOperator("arrayContains")).toBe(false);
+      expect(isUnaryOperator("arrayLength")).toBe(false);
+      expect(isUnaryOperator("objectHasKey")).toBe(false);
+    });
   });
 
   describe("visualConditionToExpression", () => {
@@ -173,6 +187,64 @@ describe("condition-builder-utils", () => {
         const expr = visualConditionToExpression(g);
         expect(expr).toContain("new RegExp");
         expect(expr).toContain(".test(");
+      });
+    });
+
+    describe("boolean operators", () => {
+      it("should generate isTrue expression", () => {
+        const g = group("AND", [rule("{{@n:L.flag}}", "isTrue")]);
+        expect(visualConditionToExpression(g)).toBe("{{@n:L.flag}} === true");
+      });
+
+      it("should generate isFalse expression", () => {
+        const g = group("AND", [rule("{{@n:L.flag}}", "isFalse")]);
+        expect(visualConditionToExpression(g)).toBe("{{@n:L.flag}} === false");
+      });
+    });
+
+    describe("array operators", () => {
+      it("should generate guarded arrayIsEmpty expression", () => {
+        const g = group("AND", [rule("{{@n:L.items}}", "arrayIsEmpty")]);
+        expect(visualConditionToExpression(g)).toBe(
+          "(Array.isArray({{@n:L.items}}) && {{@n:L.items}}.length === 0)"
+        );
+      });
+
+      it("should generate guarded arrayIsNotEmpty expression", () => {
+        const g = group("AND", [rule("{{@n:L.items}}", "arrayIsNotEmpty")]);
+        expect(visualConditionToExpression(g)).toBe(
+          "(Array.isArray({{@n:L.items}}) && {{@n:L.items}}.length > 0)"
+        );
+      });
+
+      it("should generate guarded arrayContains expression", () => {
+        const g = group("AND", [rule("{{@n:L.items}}", "arrayContains", "5")]);
+        expect(visualConditionToExpression(g)).toBe(
+          "(Array.isArray({{@n:L.items}}) && {{@n:L.items}}.includes(5))"
+        );
+      });
+
+      it("should generate guarded arrayLength expression", () => {
+        const g = group("AND", [rule("{{@n:L.items}}", "arrayLength", "3")]);
+        expect(visualConditionToExpression(g)).toBe(
+          "(Array.isArray({{@n:L.items}}) && {{@n:L.items}}.length === 3)"
+        );
+      });
+    });
+
+    describe("object operators", () => {
+      it("should generate null-guarded objectIsEmpty expression", () => {
+        const g = group("AND", [rule("{{@n:L.obj}}", "objectIsEmpty")]);
+        expect(visualConditionToExpression(g)).toBe(
+          "({{@n:L.obj}} !== null && {{@n:L.obj}} !== undefined && Object.keys({{@n:L.obj}}).length === 0)"
+        );
+      });
+
+      it("should generate null-guarded objectHasKey expression", () => {
+        const g = group("AND", [rule("{{@n:L.obj}}", "objectHasKey", "id")]);
+        expect(visualConditionToExpression(g)).toBe(
+          '({{@n:L.obj}} !== null && {{@n:L.obj}} !== undefined && Object.keys({{@n:L.obj}}).includes("id"))'
+        );
       });
     });
 

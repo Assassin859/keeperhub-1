@@ -22,6 +22,30 @@ ingress:
 
 deployment:
   enabled: true
+  # NEEDS LIVE TEST - not yet validated against a real minikube deploy.
+  # Pushes the schema to the local Postgres and seeds the shared internal-service
+  # HMAC secret so the app can verify HMAC-signed requests from the local
+  # dispatchers. Both lines tolerate failure so the initContainer never blocks
+  # app startup (worst case the store stays unseeded, same as before).
+  initContainers:
+    - name: db-migrate-seed
+      image: "keeperhub:${IMAGE_TAG}"
+      imagePullPolicy: Never
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          pnpm db:push || echo "db:push skipped"
+          printf '%s' "$INTERNAL_SERVICE_HMAC_SECRET" | ALLOW_REMOTE=1 pnpm tsx scripts/seed-internal-service-hmac.ts || echo "internal-service HMAC seed skipped (row already present or seed unavailable)"
+      env:
+        DATABASE_URL:
+          type: kv
+          value: "postgresql://local:local@postgresql.local.svc.cluster.local:5432/keeperhub"
+        INTERNAL_SERVICE_HMAC_SECRET:
+          type: kv
+          value: "bG9jYWwtZGV2LWludGVybmFsLXNlcnZpY2UtaG1hYzA="
+        AGENTIC_WALLET_HMAC_KMS_KEY:
+          type: kv
+          value: "bG9jYWwtZGV2LWFnZW50aWMtd2FsbGV0LWhtYWMta3k="
 
 serviceAccount:
   create: true
@@ -104,16 +128,17 @@ env:
   NEXT_PUBLIC_API_URL:
     type: kv
     value: "https://workflow.keeperhub.local"
-  # Internal service API keys (must match scheduler-env ConfigMap)
-  SCHEDULER_SERVICE_API_KEY:
+  # Internal service-to-service auth (HMAC). Must match the secret seeded into
+  # the local app's internal_service_hmac_secrets store and the value used by
+  # the dispatchers/runner below.
+  INTERNAL_SERVICE_HMAC_SECRET:
     type: kv
-    value: "local-scheduler-key-for-dev"
-  MCP_SERVICE_API_KEY:
+    value: "bG9jYWwtZGV2LWludGVybmFsLXNlcnZpY2UtaG1hYzA="
+  # 32-byte base64 AES key the app uses to encrypt/decrypt the HMAC signing
+  # secret in its internal_service_hmac_secrets store (needed to verify).
+  AGENTIC_WALLET_HMAC_KMS_KEY:
     type: kv
-    value: "local-mcp-key-for-dev"
-  EVENTS_SERVICE_API_KEY:
-    type: kv
-    value: "local-events-key-for-dev"
+    value: "bG9jYWwtZGV2LWFnZW50aWMtd2FsbGV0LWhtYWMta3k="
 
 livenessProbe:
   initialDelaySeconds: 120
@@ -132,4 +157,31 @@ readinessProbe:
     port: 3000
 
 cronjob:
-  enabled: false
+  enabled: true
+  jobs:
+    - name: execution-digest
+      image:
+        repository: keeperhub
+        tag: "${IMAGE_TAG}"
+        pullPolicy: Never
+      schedule: "0 14 * * *" # daily 14:00 UTC; weekly digests are sent on Tuesdays
+      command: ["/bin/sh"]
+      args:
+        - "/app/deploy/scripts/digest-cron.sh"
+        - "http://keeperhub:3000/api/internal/execution-digest"
+      env:
+        INTERNAL_SERVICE_HMAC_SECRET:
+          type: kv
+          value: "bG9jYWwtZGV2LWludGVybmFsLXNlcnZpY2UtaG1hYzA="
+      resources:
+        requests:
+          memory: "32Mi"
+          cpu: "10m"
+        limits:
+          memory: "32Mi"
+          cpu: "10m"
+      concurrencyPolicy: Forbid
+      successfulJobsHistoryLimit: 3
+      failedJobsHistoryLimit: 3
+      restartPolicy: OnFailure
+      backoffLimit: 2

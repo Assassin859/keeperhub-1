@@ -172,6 +172,13 @@ const RULES: readonly Rule[] = [
     errorType: "user",
     code: null,
   },
+  // User-config: integration credential not configured
+  {
+    pattern: /API key is required/i,
+    errorCategory: ErrorCategory.CONFIGURATION,
+    errorType: "user",
+    code: null,
+  },
   // User-action: Para wallet session needs re-export
   // Must come BEFORE the generic `^Failed to initialize organization wallet` rule below.
   {

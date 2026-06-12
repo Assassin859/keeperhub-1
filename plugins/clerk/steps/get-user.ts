@@ -1,6 +1,7 @@
 import "server-only";
 
 import { fetchCredentials } from "@/lib/credential-fetcher";
+import { safeFetch } from "@/lib/safe-fetch";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 import type { ClerkCredentials } from "../credentials";
@@ -42,9 +43,10 @@ async function stepHandler(
   }
 
   try {
-    const response = await fetch(
+    const response = await safeFetch(
       `https://api.clerk.com/v1/users/${encodeURIComponent(input.userId)}`,
       {
+        plugin: "clerk",
         headers: {
           Authorization: `Bearer ${secretKey}`,
           "Content-Type": "application/json",
@@ -84,7 +86,7 @@ export async function clerkGetUserStep(
   "use step";
 
   const credentials = input.integrationId
-    ? await fetchCredentials(input.integrationId)
+    ? await fetchCredentials(input.integrationId, { organizationId: input._context?.organizationId ?? null })
     : {};
 
   return withStepLogging(input, () => stepHandler(input, credentials));

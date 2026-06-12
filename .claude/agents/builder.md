@@ -50,7 +50,7 @@ You create and modify files, run checks, and report results. You do NOT make arc
 - NEVER export functions from "use step" files (only step function + `_integrationType` + type exports)
 - Exporting a helper function causes the bundler to pull ALL transitive deps into workflow runtime, breaking build
 - Share logic between step files via `*-core.ts` files without "use step"
-- Use `fetch()` directly in step files -- no Node.js-only SDKs (AI SDK, etc.)
+- Use `safeFetch` from `@/lib/safe-fetch` (pass `{ plugin }`) for HTTP egress in step files. No Node.js-only SDKs (AI SDK, etc.); raw `fetch`/`axios`/`http.request` under `plugins/` fails the CI egress guard
 - Wrap step functions in `withPluginMetrics` and `withStepLogging`
 - Security-critical steps: set `stepFunction.maxRetries = 0`
 

@@ -6,7 +6,12 @@ import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { priceQualifiesForMarketplaceExemption } from "@/lib/billing/marketplace-billing";
 import { db } from "@/lib/db";
 import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
-import { tags, users, workflowExecutions, workflows } from "@/lib/db/schema";
+import {
+  organization,
+  tags,
+  workflowExecutions,
+  workflows,
+} from "@/lib/db/schema";
 import { classifyExecutionError } from "@/lib/errors/classify";
 import { recordExecutionErrorFinalized } from "@/lib/errors/finalize-error";
 import { extractActionTypeNodes } from "@/lib/features";
@@ -212,7 +217,7 @@ async function lookupWorkflow(slug: string): Promise<CallRouteWorkflow | null> {
     .select({ ...CALL_ROUTE_COLUMNS, tagName: tags.name })
     .from(workflows)
     .leftJoin(tags, eq(workflows.tagId, tags.id))
-    .innerJoin(users, eq(workflows.userId, users.id))
+    .innerJoin(organization, eq(workflows.organizationId, organization.id))
     .where(
       and(
         eq(workflows.listedSlug, slug),

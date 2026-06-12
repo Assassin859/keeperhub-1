@@ -49,7 +49,10 @@ vi.mock("@/lib/db", () => ({
     select: vi.fn(() => ({
       from: vi.fn(() => ({
         innerJoin: vi.fn(() => ({
-          where: mockSelectFrom,
+          where: vi.fn((...args) => {
+            const p = mockSelectFrom(...args);
+            return Object.assign(p, { limit: mockMemberLimit });
+          }),
         })),
         where: vi.fn(() => ({
           limit: mockMemberLimit,
@@ -67,6 +70,7 @@ vi.mock("@/lib/db/schema", () => ({
   },
   publicTags: { id: "id", name: "name", slug: "slug" },
   member: { id: "id", organizationId: "organization_id", userId: "user_id" },
+  users: { id: "id", deactivatedAt: "deactivated_at" },
   projects: { id: "id", organizationId: "organization_id" },
   tags: { id: "id", organizationId: "organization_id" },
   workflowExecutions: { workflowId: "workflow_id" },

@@ -5,7 +5,9 @@ import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
 import { getMetricsCollector } from "@/lib/metrics";
 import { LabelKeys, MetricNames } from "@/lib/metrics/types";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import { requireScope } from "@/lib/middleware/require-scope";
 import { checkConcurrencyLimit } from "@/app/api/execute/_lib/concurrency-limit";
 import { db } from "@/lib/db";
 import { withBackstopCapture } from "@/lib/security/backstop-capture";
@@ -17,7 +19,11 @@ import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { extractActionTypeNodes } from "@/lib/features";
 import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
 import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
-import { users, workflowExecutions, workflows } from "@/lib/db/schema";
+import {
+  organization,
+  workflowExecutions,
+  workflows,
+} from "@/lib/db/schema";
 import { getWorkflowAccess } from "@/lib/workflow/access";
 import { getWorkflowExecutability } from "@/lib/workflow/executable";
 import { executeWorkflowInBackground } from "@/lib/workflow/execute-in-background";
@@ -62,20 +68,12 @@ export async function POST(
         );
       }
 
+      // Internal service auth already verified by authenticateInternalService.
+      // Org membership check would require organizationId but internal callers
+      // have no session org — and all workflows are NOT NULL on organizationId
+      // post-migration, so passing null here would always 404. Lifecycle checks
+      // (deleted, deactivated) are handled by getWorkflowExecutability below.
       userId = workflow.userId;
-
-      const access = await getWorkflowAccess(workflow, {
-        userId,
-        organizationId: null,
-        authMethod: "internal",
-      });
-
-      if (!access.hasFullAccess) {
-        return NextResponse.json(
-          { error: "Workflow not found" },
-          { status: 404 }
-        );
-      }
     } else {
       const authContext = await getDualAuthContext(request);
       if ("error" in authContext) {
@@ -83,6 +81,11 @@ export async function POST(
           { error: authContext.error },
           { status: authContext.status }
         );
+      }
+
+      const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE);
+      if (scopeError) {
+        return scopeError;
       }
 
       workflow = await db.query.workflows.findFirst({
@@ -121,15 +124,17 @@ export async function POST(
     // automated dispatch only: interactive callers (the editor "Run" button)
     // must still be able to test a not-yet-enabled workflow, so a disabled
     // workflow is allowed through the dual-auth branch.
-    const [owner] = await db
-      .select({ deactivatedAt: users.deactivatedAt })
-      .from(users)
-      .where(eq(users.id, workflow.userId))
+    const [gate] = await db
+      .select({ orgDeactivatedAt: organization.deactivatedAt })
+      .from(workflows)
+      .leftJoin(organization, eq(organization.id, workflows.organizationId))
+      .where(eq(workflows.id, workflow.id))
       .limit(1);
     const executability = getWorkflowExecutability({
       enabled: workflow.enabled,
       deletedAt: workflow.deletedAt,
-      ownerDeactivatedAt: owner?.deactivatedAt ?? null,
+      deactivatedAt: workflow.deactivatedAt,
+      orgDeactivatedAt: gate?.orgDeactivatedAt ?? null,
     });
     const blockedByExecutability =
       !executability.executable &&
@@ -138,10 +143,11 @@ export async function POST(
       return NextResponse.json({ error: "Workflow not found" }, { status: 404 });
     }
 
-    // Validate that all integrationIds in workflow nodes belong to the user or org
+    // Validate integration references as the ORG principal: the org owns the
+    // workflow, so a run uses the org's integrations regardless of who
+    // triggered it, matching the runtime credential fetch.
     const validation = await validateWorkflowIntegrations(
       workflow.nodes as WorkflowNode[],
-      userId,
       workflow.organizationId
     );
     if (!validation.valid) {

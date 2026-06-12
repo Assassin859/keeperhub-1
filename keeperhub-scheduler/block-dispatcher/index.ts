@@ -9,7 +9,7 @@
  *
  * Environment variables:
  *   KEEPERHUB_API_URL      - KeeperHub API URL (default: http://localhost:3000)
- *   KEEPERHUB_API_KEY      - Service API key for X-Service-Key authentication
+ *   INTERNAL_SERVICE_HMAC_SECRET - HMAC signing secret for internal service auth
  *   RECONCILE_INTERVAL_MS  - How often to refetch workflows (default: 30000)
  *   SQS_QUEUE_URL          - SQS queue URL
  *   AWS_REGION             - AWS region
@@ -237,6 +237,9 @@ process.on("uncaughtException", (error: Error) => {
 
 // Main entry point
 async function main(): Promise<void> {
+  if (!process.env.INTERNAL_SERVICE_HMAC_SECRET) {
+    throw new Error("INTERNAL_SERVICE_HMAC_SECRET is required");
+  }
   console.log("[BlockDispatcher] Starting block dispatcher...");
   console.log(`[BlockDispatcher] KeeperHub URL: ${KEEPERHUB_URL}`);
   console.log(`[BlockDispatcher] SQS Queue URL: ${SQS_QUEUE_URL}`);
@@ -287,11 +290,13 @@ async function main(): Promise<void> {
     });
   };
 
-  process.on("SIGINT", () => {
-    shutdownHandler();
-  });
-  process.on("SIGTERM", () => {
-    shutdownHandler();
+  process.on("SIGINT", () => shutdownHandler());
+  process.on("SIGTERM", () => shutdownHandler());
+  process.on("SIGHUP", () => shutdownHandler());
+  process.on("SIGUSR1", () => {
+    console.warn(
+      "[Security] SIGUSR1 received; inspector activation suppressed",
+    );
   });
 
   // Start monitoring

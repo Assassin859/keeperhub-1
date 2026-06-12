@@ -117,14 +117,9 @@ serviceMonitors:
       path: /api/metrics/api
       interval: 30s
       scrapeTimeout: 10s
-    - name: db-metrics
-      port: http
-      path: /api/metrics/db
-      interval: 30s
-      # 12s (not 10s): this endpoint blocks on the serialised db-metrics
-      # refresh, which is several seconds at prod scale. See KEEP-682 to
-      # measure refresh duration and revisit if it approaches this timeout.
-      scrapeTimeout: 12s
+    # db-metrics removed (TECH-6484): the DB-sourced gauges are now scraped from
+    # the dedicated keeperhub-metrics-collector single-replica service, not from
+    # the app pods. The app route is also gated off via METRICS_DB_OFFLOADED.
 
 resources:
   limits:
@@ -144,6 +139,11 @@ env:
   METRICS_COLLECTOR:
     type: kv
     value: "prometheus"
+  # TECH-6484: /api/metrics/db is served by keeperhub-metrics-collector now;
+  # gate the app route to 404 so the heavy scan never runs on these pods.
+  METRICS_DB_OFFLOADED:
+    type: kv
+    value: "true"
   RPC_PROBE_INTERVAL_MS:
     type: kv
     value: "30000"
@@ -183,6 +183,21 @@ env:
     type: parameterStore
     name: mcp-session-secret
     parameter_name: /eks/techops-prod/keeperhub/mcp-session-secret
+  REDIS_HOST:
+    type: parameterStore
+    name: redis-host
+    parameter_name: /eks/techops-prod/keeperhub-events/redis-host
+  REDIS_PORT:
+    type: parameterStore
+    name: redis-port
+    parameter_name: /eks/techops-prod/keeperhub-events/redis-port
+  REDIS_PASSWORD:
+    type: parameterStore
+    name: redis-password
+    parameter_name: /eks/techops-prod/keeperhub-events/redis-password
+  REDIS_KEY_PREFIX:
+    type: kv
+    value: "prod"
   DISCORD_WEBHOOK_SIGNUPS:
     type: parameterStore
     name: discord-webhook-signups
@@ -328,7 +343,7 @@ env:
     value: "true"
   NEXT_PUBLIC_GAS_SPONSORSHIP_ENABLED:
     type: kv
-    value: "false"
+    value: "true"
   # AI Prompt feature flag - disabled
   # (gates UI render in components/workflow/workflow-canvas.tsx
   #  and /api/ai/generate route)
@@ -412,36 +427,11 @@ env:
   GAS_CREDITS_ENTERPRISE_CENTS:
     type: kv
     value: "10000"
-  # Gas Sponsorship (Pimlico EIP-7702)
-  PIMLICO_API_KEY:
+  # Internal service-to-service auth (HMAC)
+  INTERNAL_SERVICE_HMAC_SECRET:
     type: parameterStore
-    name: pimlico-api-key
-    parameter_name: /eks/techops-prod/keeperhub/pimlico-api-key
-  PIMLICO_BASE_URL:
-    type: parameterStore
-    name: pimlico-base-url
-    parameter_name: /eks/techops-prod/keeperhub/pimlico-base-url
-  SIMPLE_ACCOUNT_7702_ADDRESS:
-    type: parameterStore
-    name: simple-account-7702-address
-    parameter_name: /eks/techops-prod/keeperhub/simple-account-7702-address
-  # Internal service API keys for service-to-service auth
-  MCP_SERVICE_API_KEY:
-    type: parameterStore
-    name: mcp-service-api-key
-    parameter_name: /eks/techops-prod/keeperhub-mcp/keeperhub-api-key
-  EVENTS_SERVICE_API_KEY:
-    type: parameterStore
-    name: events-service-api-key
-    parameter_name: /eks/techops-prod/keeperhub-events/keeperhub-api-key
-  SCHEDULER_SERVICE_API_KEY:
-    type: parameterStore
-    name: scheduler-service-api-key
-    parameter_name: /eks/techops-prod/keeperhub-scheduler/keeperhub-api-key
-  HUB_SERVICE_API_KEY:
-    type: parameterStore
-    name: hub-service-api-key
-    parameter_name: /eks/techops-prod/keeperhub-hub/keeperhub-api-key
+    name: internal-service-hmac-secret
+    parameter_name: /eks/techops-prod/keeperhub/internal-service-hmac-secret
   TEST_API_KEY:
     type: parameterStore
     name: test-api-key
@@ -453,6 +443,10 @@ env:
     type: parameterStore
     name: feedback-api-key
     parameter_name: /eks/techops-prod/keeperhub-feedback/feedback-api-key
+  KH_ADMIN_SECRET:
+    type: parameterStore
+    name: kh-admin-secret
+    parameter_name: /eks/techops-prod/keeperhub/kh-admin-secret
   SAFE_FETCH_ENFORCE:
     type: kv
     value: "true"
@@ -485,10 +479,37 @@ cronjob:
         - "/app/deploy/scripts/reaper.sh"
         - "http://keeperhub-common:3000/api/internal/reaper"
       env:
-        SCHEDULER_SERVICE_API_KEY:
+        INTERNAL_SERVICE_HMAC_SECRET:
           type: parameterStore
-          name: scheduler-service-api-key
-          parameter_name: /eks/techops-prod/keeperhub-scheduler/keeperhub-api-key
+          name: internal-service-hmac-secret
+          parameter_name: /eks/techops-prod/keeperhub/internal-service-hmac-secret
+      resources:
+        requests:
+          memory: "32Mi"
+          cpu: "10m"
+        limits:
+          memory: "32Mi"
+          cpu: "10m"
+      concurrencyPolicy: Forbid
+      successfulJobsHistoryLimit: 3
+      failedJobsHistoryLimit: 3
+      restartPolicy: OnFailure
+      backoffLimit: 2
+    - name: execution-digest
+      image:
+        repository: ${ECR_REGISTRY}/keeperhub-prod
+        tag: app-${IMAGE_TAG}
+        imagePullPolicy: Always
+      schedule: "0 14 * * *" # daily 14:00 UTC; weekly digests are sent on Tuesdays
+      command: ["/bin/sh"]
+      args:
+        - "/app/deploy/scripts/digest-cron.sh"
+        - "http://keeperhub-common:3000/api/internal/execution-digest"
+      env:
+        INTERNAL_SERVICE_HMAC_SECRET:
+          type: parameterStore
+          name: internal-service-hmac-secret
+          parameter_name: /eks/techops-prod/keeperhub/internal-service-hmac-secret
       resources:
         requests:
           memory: "32Mi"

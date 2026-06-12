@@ -8,8 +8,10 @@ import {
   unlistWorkflow,
   updateWorkflowListing,
 } from "@/lib/mcp/listing";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import { requireScope } from "@/lib/middleware/require-scope";
 import { sanitizeDescription } from "@/lib/sanitize-description";
 
 const LISTING_RATE_LIMIT = 60;
@@ -146,6 +148,11 @@ export async function POST(
     );
   }
 
+  const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE);
+  if (scopeError) {
+    return scopeError;
+  }
+
   const { organizationId } = authContext;
   if (!organizationId) {
     return NextResponse.json(
@@ -202,6 +209,11 @@ export async function PATCH(
       { error: authContext.error },
       { status: authContext.status }
     );
+  }
+
+  const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE);
+  if (scopeError) {
+    return scopeError;
   }
 
   const { organizationId } = authContext;
@@ -263,6 +275,11 @@ export async function DELETE(
       { error: authContext.error },
       { status: authContext.status }
     );
+  }
+
+  const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE);
+  if (scopeError) {
+    return scopeError;
   }
 
   const { organizationId } = authContext;

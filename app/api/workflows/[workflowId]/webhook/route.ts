@@ -20,11 +20,19 @@ import {
   enforceWorkflowFeatures,
   FEATURE_UPGRADE_REQUIRED_ERROR,
 } from "@/lib/features/route-guard";
-import { apiKeys, users, workflowExecutions, workflows } from "@/lib/db/schema";
+import {
+  apiKeys,
+  organization,
+  workflowExecutions,
+  workflows,
+} from "@/lib/db/schema";
 import { getOrgPlanLabel, getOrgSlug } from "@/lib/db/org-helpers";
 import { withBackstopCapture } from "@/lib/security/backstop-capture";
 import { buildAttribution } from "@/lib/security/request-attribution";
-import { getWorkflowAccess } from "@/lib/workflow/access";
+import {
+  getWorkflowAccess,
+  isUserMemberOfOrganization,
+} from "@/lib/workflow/access";
 import { getWorkflowExecutability } from "@/lib/workflow/executable";
 import { executeWorkflowInBackground } from "@/lib/workflow/execute-in-background";
 import type { WorkflowEdge, WorkflowNode } from "@/lib/workflow/store";
@@ -37,10 +45,12 @@ type ValidateApiKeyResult = {
   errorBody?: Record<string, unknown>;
 };
 
-// Validate API key and return the user ID if valid
+// Validate API key and return the user ID if valid. The org owns the
+// workflow, so the key must belong to a CURRENT MEMBER of the workflow's
+// org - not specifically its creator.
 async function validateApiKey(
   authHeader: string | null,
-  workflowUserId: string
+  workflowOrganizationId: string
 ): Promise<ValidateApiKeyResult> {
   if (!authHeader) {
     return {
@@ -98,8 +108,14 @@ async function validateApiKey(
     return { valid: false, error: "Invalid API key", statusCode: 401 };
   }
 
-  // Verify the API key belongs to the workflow owner
-  if (apiKey.userId !== workflowUserId) {
+  // Verify the key's holder is a current member of the workflow's org.
+  // (A deactivated member cannot reach here: the deactivation cascade
+  // deletes their api_keys rows.)
+  const isMember = await isUserMemberOfOrganization(
+    apiKey.userId,
+    workflowOrganizationId
+  );
+  if (!isMember) {
     return {
       valid: false,
       error: "You do not have permission to run this workflow",
@@ -175,15 +191,17 @@ export async function POST(
     // validation so a non-executable workflow never triggers an auth round-trip.
     // A disabled workflow stays a 410; a deleted or deactivated-owner workflow
     // is reported as gone (404).
-    const [owner] = await db
-      .select({ deactivatedAt: users.deactivatedAt })
-      .from(users)
-      .where(eq(users.id, workflow.userId))
+    const [gate] = await db
+      .select({ orgDeactivatedAt: organization.deactivatedAt })
+      .from(workflows)
+      .leftJoin(organization, eq(organization.id, workflows.organizationId))
+      .where(eq(workflows.id, workflow.id))
       .limit(1);
     const executability = getWorkflowExecutability({
       enabled: workflow.enabled,
       deletedAt: workflow.deletedAt,
-      ownerDeactivatedAt: owner?.deactivatedAt ?? null,
+      deactivatedAt: workflow.deactivatedAt,
+      orgDeactivatedAt: gate?.orgDeactivatedAt ?? null,
     });
     if (!executability.executable) {
       if (executability.reason === "disabled") {
@@ -194,7 +212,10 @@ export async function POST(
 
     // Validate API key - must belong to the workflow owner
     const authHeader = request.headers.get("Authorization");
-    const apiKeyValidation = await validateApiKey(authHeader, workflow.userId);
+    const apiKeyValidation = await validateApiKey(
+      authHeader,
+      workflow.organizationId
+    );
 
     if (!apiKeyValidation.valid) {
       return failResponse(
@@ -208,7 +229,7 @@ export async function POST(
 
     const access = await getWorkflowAccess(workflow, {
       userId: apiKeyValidation.userId ?? null,
-      organizationId: null,
+      organizationId: workflow.organizationId,
       authMethod: "webhook",
     });
 
@@ -230,10 +251,10 @@ export async function POST(
       );
     }
 
-    // Validate that all integrationIds in workflow nodes belong to the workflow owner
+    // Validate integration references as the ORG principal (the org owns the
+    // workflow), matching the runtime credential fetch.
     const validation = await validateWorkflowIntegrations(
       workflow.nodes as WorkflowNode[],
-      workflow.userId,
       workflow.organizationId
     );
     if (!validation.valid) {

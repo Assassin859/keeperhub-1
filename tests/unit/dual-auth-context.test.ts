@@ -6,16 +6,22 @@ const {
   mockGetSession,
   mockGetOrgContext,
   mockOrgLookup,
+  mockDefaultOrgLookup,
 } = vi.hoisted(() => ({
   mockAuthenticateApiKey: vi.fn(),
   mockAuthenticateOAuthToken: vi.fn(),
   mockGetSession: vi.fn(),
   mockGetOrgContext: vi.fn(),
-  // KEEP-563: resolveSessionOrg does a single org+member inner-join lookup.
+  // resolveSessionOrg header path: a single org+member inner-join lookup.
   // The select chain is select().from().innerJoin().where().limit(). The result
   // is empty when either the org is unknown OR the caller is not a member --
   // both cases must be indistinguishable to avoid org enumeration.
   mockOrgLookup: vi.fn(),
+  // resolveSessionOrg default path (no X-Organization-Id header): a separate
+  // lookup of the session's default org to check it still exists and is not
+  // deactivated. Chain is select().from().where().limit() (no innerJoin). A
+  // missing row or a deactivatedAt value reads as not-found.
+  mockDefaultOrgLookup: vi.fn(),
 }));
 
 vi.mock("@/lib/api-key-auth", () => ({
@@ -42,10 +48,15 @@ vi.mock("@/lib/db", () => ({
   db: {
     select: () => ({
       from: () => ({
+        // Header path: org joined to the caller's membership row.
         innerJoin: () => ({
           where: () => ({
             limit: () => mockOrgLookup(),
           }),
+        }),
+        // Default path: lookup the session's default org (deactivation check).
+        where: () => ({
+          limit: () => mockDefaultOrgLookup(),
         }),
       }),
     }),
@@ -77,6 +88,9 @@ describe("getDualAuthContext", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAuthenticateOAuthToken.mockResolvedValue({ authenticated: false });
+    // Default path: session default org exists and is active (deactivatedAt
+    // null). Tests covering a deactivated/missing default org override this.
+    mockDefaultOrgLookup.mockResolvedValue([{ deactivatedAt: null }]);
   });
 
   describe("OAuth authentication", () => {
@@ -97,6 +111,25 @@ describe("getDualAuthContext", () => {
       });
       expect(mockAuthenticateApiKey).not.toHaveBeenCalled();
       expect(mockGetSession).not.toHaveBeenCalled();
+    });
+
+    it("propagates the OAuth token scope onto the context", async () => {
+      mockAuthenticateOAuthToken.mockResolvedValue({
+        authenticated: true,
+        userId: "user_oauth",
+        organizationId: "org_oauth",
+        scope: "mcp:read",
+      });
+
+      const result = await getDualAuthContext(makeRequest());
+
+      expect(result).toMatchObject({
+        userId: "user_oauth",
+        organizationId: "org_oauth",
+        authMethod: "oauth",
+        apiKeyId: null,
+        scope: "mcp:read",
+      });
     });
   });
 
@@ -266,7 +299,9 @@ describe("getDualAuthContext", () => {
         });
       });
 
-      it("falls back to session default when header is absent", async () => {
+      it("falls back to session default when header is absent (active org)", async () => {
+        mockDefaultOrgLookup.mockResolvedValueOnce([{ deactivatedAt: null }]);
+
         const result = await getDualAuthContext(makeRequest());
 
         expect(result).toEqual({
@@ -274,6 +309,22 @@ describe("getDualAuthContext", () => {
           organizationId: "org_default",
           authMethod: "session",
           apiKeyId: null,
+        });
+        // Default path uses its own org-existence lookup, never the member
+        // inner-join the header path runs.
+        expect(mockOrgLookup).not.toHaveBeenCalled();
+      });
+
+      it("returns 404 when the session default org has been deactivated", async () => {
+        mockDefaultOrgLookup.mockResolvedValueOnce([
+          { deactivatedAt: new Date() },
+        ]);
+
+        const result = await getDualAuthContext(makeRequest());
+
+        expect(result).toEqual({
+          error: "Organization not found",
+          status: 404,
         });
         expect(mockOrgLookup).not.toHaveBeenCalled();
       });
@@ -551,6 +602,7 @@ describe("resolveOrganizationId — origin check wiring", () => {
     mockGetOrgContext.mockResolvedValue({
       organization: { id: "org_session" },
     });
+    mockDefaultOrgLookup.mockResolvedValue([{ deactivatedAt: null }]);
   });
 
   it("rejects untrusted origin on cookie POST", async () => {
@@ -593,6 +645,7 @@ describe("resolveCreatorContext — origin check wiring", () => {
     mockGetOrgContext.mockResolvedValue({
       organization: { id: "org_session" },
     });
+    mockDefaultOrgLookup.mockResolvedValue([{ deactivatedAt: null }]);
   });
 
   it("rejects untrusted origin on cookie POST", async () => {

@@ -31,11 +31,11 @@ export function getRelativeTime(date: string | Date): string {
     return formatTimeDifference(diffInWeeks, "week");
   }
 
-  const diffInMonths = Math.floor(diffInDays / 30);
+  const diffInMonths = Math.max(1, Math.floor(diffInDays / 30));
   if (diffInMonths < 12) {
     return formatTimeDifference(diffInMonths, "month");
   }
 
-  const diffInYears = Math.floor(diffInDays / 365);
+  const diffInYears = Math.max(1, Math.floor(diffInDays / 365));
   return formatTimeDifference(diffInYears, "year");
 }

@@ -110,6 +110,49 @@ Returns real-time execution status with progress tracking.
 
 An empty array carries one of two meanings: the run produced no on-chain writes, or the execution row was finalized before this field began being populated. The two cases are not distinguished at the response level — if the distinction matters for a historical row, the underlying hashes are reconstructable from per-step logs via the endpoint below. For full per-step input, output, error, and timing detail, also use the logs endpoint below.
 
+## Wait for Receipt
+
+```http
+GET /api/workflows/executions/{executionId}/wait?timeoutMs=30000
+```
+
+Blocks until the execution reaches a terminal state (`success`, `error`, or `cancelled`) or the timeout elapses, then returns the execution receipt including `transactionHashes`. This replaces the client-side `while (!terminal) { sleep + GET status }` polling loop.
+
+`timeoutMs` is optional (default `25000`, max `60000`). If the execution is still running when the timeout elapses, the response returns with `completed: false` and the current status — re-call to keep waiting.
+
+### Response
+
+```json
+{
+  "executionId": "exec_123",
+  "status": "success",
+  "completed": true,
+  "transactionHashes": [
+    {
+      "hash": "0x111...",
+      "nodeId": "write-contract-1",
+      "nodeName": "Swap on Uniswap",
+      "chainId": 1,
+      "network": "mainnet"
+    }
+  ],
+  "output": {...},
+  "error": null,
+  "gasUsedWei": "21000",
+  "completedAt": "2024-01-01T00:00:05Z"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | enum | `pending`, `running`, `success`, `error`, `cancelled` |
+| `completed` | boolean | `true` once the execution reached a terminal state; `false` if the wait timed out while still running |
+| `transactionHashes` | array | Ordered on-chain writes (same shape as the status endpoint) |
+| `output` | object | Workflow output |
+| `error` | string \| null | Error message when `status` is `error` |
+| `gasUsedWei` | string \| null | Run-total gas in wei |
+| `completedAt` | timestamp \| null | When the execution finished, null while running |
+
 ## Get Execution Logs
 
 ```http

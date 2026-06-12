@@ -38,7 +38,7 @@ data:
   SQS_QUEUE_URL: "http://localstack:4566/000000000000/keeperhub-workflow-queue"
   DATABASE_URL: "postgresql://local:local@postgresql:5432/keeperhub"
   KEEPERHUB_API_URL: "http://keeperhub-common:3000"
-  KEEPERHUB_API_KEY: "local-scheduler-key-for-dev"
+  INTERNAL_SERVICE_HMAC_SECRET: "bG9jYWwtZGV2LWludGVybmFsLXNlcnZpY2UtaG1hYzA="
   RUNNER_IMAGE: "keeperhub-runner:latest"
   IMAGE_PULL_POLICY: "Never"
   K8S_NAMESPACE: "local"

@@ -1,5 +1,6 @@
 import "server-only";
 
+import { safeFetch } from "@/lib/safe-fetch";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import {
@@ -362,7 +363,8 @@ async function callLlmAssessment(
       context
     );
 
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await safeFetch("https://api.openai.com/v1/chat/completions", {
+      plugin: "web3",
       method: "POST",
       headers: {
         "Content-Type": "application/json",

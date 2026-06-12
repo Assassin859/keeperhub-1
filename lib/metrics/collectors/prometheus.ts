@@ -904,6 +904,30 @@ export function recordWorkflowExecutionError(labels: {
   });
 }
 
+// Per-workflow error counter used exclusively for managed-client alert dedup.
+// Labels are kept to (workflow_id, org_slug, error_type) — no error_category —
+// so cardinality stays bounded: only workflows that actually fail contribute
+// series, and the set of actively-failing workflows at any moment is small.
+// Cardinality ceiling: ~N_failing_workflows * 2 orgs * 2 error_types ≪ 1k.
+const workflowExecutionErrorsByWorkflow = getOrCreateCounter(
+  apiRegistry,
+  "keeperhub_workflow_execution_errors_by_workflow_total",
+  "Workflow execution errors by workflow_id, for per-workflow alert dedup",
+  ["workflow_id", "org_slug", "error_type"]
+);
+
+export function recordWorkflowExecutionErrorByWorkflow(labels: {
+  workflowId: string;
+  orgSlug: string;
+  errorType: "user" | "system";
+}): void {
+  workflowExecutionErrorsByWorkflow.inc({
+    workflow_id: labels.workflowId,
+    org_slug: labels.orgSlug,
+    error_type: labels.errorType,
+  });
+}
+
 const slowQueries = getOrCreateCounter(
   apiRegistry,
   "keeperhub_db_query_slow_total",

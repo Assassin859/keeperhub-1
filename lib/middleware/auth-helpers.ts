@@ -1,4 +1,4 @@
-import { and, eq, or } from "drizzle-orm";
+import { and, eq, isNull, or } from "drizzle-orm";
 import { authenticateApiKey } from "@/lib/api-key-auth";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -87,13 +87,29 @@ async function resolveSessionOrg(
 > {
   const raw = request.headers.get(ORG_HEADER)?.trim();
   if (!raw) {
+    if (!defaultOrgId) {
+      return { organizationId: null };
+    }
+    // A deactivated org (its owner was deactivated and the cascade fired) is
+    // inaccessible to its members even though their session still points at
+    // it. Surface it as not-found, matching the header path's enumeration-safe
+    // response, so members lose access without leaking the deactivated state.
+    const [defaultOrg] = await db
+      .select({ deactivatedAt: organization.deactivatedAt })
+      .from(organization)
+      .where(eq(organization.id, defaultOrgId))
+      .limit(1);
+    if (!defaultOrg || defaultOrg.deactivatedAt) {
+      return { error: "Organization not found", status: 404 };
+    }
     return { organizationId: defaultOrgId };
   }
 
   // Single query joining organization to the caller's membership row. We can't
   // branch on "org exists but you're not a member" vs "org does not exist"
   // because the difference between those two responses would let any
-  // authenticated user enumerate org ids and slugs.
+  // authenticated user enumerate org ids and slugs. A deactivated org is
+  // excluded here too, so it reads as not-found rather than accessible.
   const match = await db
     .select({ id: organization.id })
     .from(organization)
@@ -101,7 +117,12 @@ async function resolveSessionOrg(
       member,
       and(eq(member.organizationId, organization.id), eq(member.userId, userId))
     )
-    .where(or(eq(organization.id, raw), eq(organization.slug, raw)))
+    .where(
+      and(
+        or(eq(organization.id, raw), eq(organization.slug, raw)),
+        isNull(organization.deactivatedAt)
+      )
+    )
     .limit(1);
 
   const targetOrgId = match[0]?.id;
@@ -118,6 +139,7 @@ export type DualAuthContext =
       organizationId: string | null;
       authMethod: AuthMethod;
       apiKeyId: string | null;
+      scope?: string;
     }
   | { error: string; status: number; code?: "mfa_required" };
 
@@ -188,9 +210,11 @@ export function auditFromAuth(
  * These tokens are issued by the MCP OAuth flow and forwarded
  * by the MCP server when calling downstream API endpoints.
  */
-async function resolveOAuthToken(
-  request: Request
-): Promise<{ userId: string | null; organizationId: string | null } | null> {
+async function resolveOAuthToken(request: Request): Promise<{
+  userId: string | null;
+  organizationId: string | null;
+  scope?: string;
+} | null> {
   const result = await authenticateOAuthToken(request);
   if (!result.authenticated) {
     return null;
@@ -198,6 +222,7 @@ async function resolveOAuthToken(
   return {
     userId: result.userId ?? null,
     organizationId: result.organizationId ?? null,
+    scope: result.scope,
   };
 }
 

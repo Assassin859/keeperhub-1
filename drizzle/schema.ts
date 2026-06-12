@@ -46,7 +46,7 @@ export const workflowExecutionLogs = pgTable("workflow_execution_logs", {
 
 export const integrations = pgTable("integrations", {
 	id: text().primaryKey().notNull(),
-	userId: text("user_id").notNull(),
+	createdBy: text("created_by").notNull(),
 	organizationId: text("organization_id"),
 	name: text().notNull(),
 	type: text().notNull(),
@@ -56,9 +56,9 @@ export const integrations = pgTable("integrations", {
 	updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
 	foreignKey({
-			columns: [table.userId],
+			columns: [table.createdBy],
 			foreignColumns: [users.id],
-			name: "integrations_user_id_users_id_fk"
+			name: "integrations_created_by_users_id_fk"
 		}),
 	foreignKey({
 			columns: [table.organizationId],

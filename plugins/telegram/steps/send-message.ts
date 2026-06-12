@@ -3,6 +3,7 @@ import "server-only";
 import { fetchCredentials } from "@/lib/credential-fetcher";
 import { ErrorCategory, logUserError } from "@/lib/logging";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
+import { safeFetch } from "@/lib/safe-fetch";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import type { TelegramCredentials } from "../credentials";
 
@@ -62,7 +63,8 @@ async function sendMessage(
   parseMode: string | undefined
 ): Promise<SendTelegramMessageResult> {
   try {
-    const response = await fetch(apiUrl, {
+    const response = await safeFetch(apiUrl, {
+      plugin: "telegram",
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -242,7 +244,7 @@ export async function sendTelegramMessageStep(
 ): Promise<SendTelegramMessageResult> {
   "use step";
 
-  const credentials = await fetchCredentials(input.integrationId);
+  const credentials = await fetchCredentials(input.integrationId, { organizationId: input._context?.organizationId ?? null });
 
   return withPluginMetrics(
     {

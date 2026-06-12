@@ -2,7 +2,9 @@ import { and, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { NextResponse } from "next/server";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import { requireScope } from "@/lib/middleware/require-scope";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { projects, tags, workflows } from "@/lib/db/schema";
@@ -59,31 +61,21 @@ function createDefaultNodes() {
 // Helper to generate workflow name
 async function generateWorkflowName(
   name: string,
-  userId: string,
-  organizationId: string | null
+  organizationId: string
 ): Promise<string> {
   if (name !== "Untitled Workflow") {
     return name;
   }
 
-  const isAnonymous = !organizationId;
-  const userWorkflows = isAnonymous
-    ? await db.query.workflows.findMany({
-        where: and(
-          eq(workflows.userId, userId),
-          eq(workflows.isAnonymous, true),
-          workflowNotDeleted()
-        ),
-      })
-    : await db.query.workflows.findMany({
-        where: and(
-          eq(workflows.organizationId, organizationId ?? ""),
-          eq(workflows.isAnonymous, false),
-          workflowNotDeleted()
-        ),
-      });
+  // The org owns every workflow, so the untitled counter is org-scoped.
+  const orgWorkflows = await db.query.workflows.findMany({
+    where: and(
+      eq(workflows.organizationId, organizationId),
+      workflowNotDeleted()
+    ),
+  });
 
-  const count = userWorkflows.length + 1;
+  const count = orgWorkflows.length + 1;
   return `Untitled ${count}`;
 }
 
@@ -97,9 +89,22 @@ export async function POST(request: Request) {
       );
     }
 
+    const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE);
+    if (scopeError) {
+      return scopeError;
+    }
+
     const { userId, organizationId } = authContext;
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    // The org owns the workflow (organization_id is NOT NULL). Every account
+    // has an org, so a missing one is an unexpected state, not anonymous use.
+    if (!organizationId) {
+      return NextResponse.json(
+        { error: "No active organization" },
+        { status: 409 }
+      );
     }
 
     const body = await request.json();
@@ -127,9 +132,10 @@ export async function POST(request: Request) {
 
     // Validate the exact shape that will be persisted. The sanitizer moves
     // misplaced root fields into data.config, including integrationId.
+    // Org principal: the new workflow is org-owned, so it may only reference
+    // the org's integrations (matches the runtime credential fetch).
     const validation = await validateWorkflowIntegrations(
       nodes,
-      userId,
       organizationId
     );
     if (!validation.valid) {
@@ -155,22 +161,10 @@ export async function POST(request: Request) {
       return featureGuard.response;
     }
 
-    const isAnonymous = !organizationId;
-    const workflowName = await generateWorkflowName(
-      body.name,
-      userId,
-      organizationId
-    );
+    const workflowName = await generateWorkflowName(body.name, organizationId);
 
     // Validate projectId/tagId ownership when provided
     if (body.projectId !== undefined || body.tagId !== undefined) {
-      if (isAnonymous) {
-        return NextResponse.json(
-          { error: "Cannot assign project or tag without an organization" },
-          { status: 400 }
-        );
-      }
-
       if (body.projectId) {
         const projRows = await db
           .select({ id: projects.id })
@@ -221,7 +215,7 @@ export async function POST(request: Request) {
         edges,
         userId,
         organizationId,
-        isAnonymous,
+        isAnonymous: false,
         projectId: body.projectId || null,
         tagId: body.tagId || null,
         ...(typeof body.enabled === "boolean" ? { enabled: body.enabled } : {}),

@@ -8,6 +8,7 @@ import { extractActionTypeNodes } from "@/lib/features";
 import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
 import { isAnonymousUser } from "@/lib/is-anonymous";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { getMetricsCollector } from "@/lib/metrics";
 import { MetricNames } from "@/lib/metrics/types";
 import {
@@ -15,6 +16,7 @@ import {
   auditFromAuth,
   getDualAuthContext,
 } from "@/lib/middleware/auth-helpers";
+import { requireScope } from "@/lib/middleware/require-scope";
 import { generateId } from "@/lib/utils/id";
 import {
   stripIntegrationsFromImportNodes,
@@ -61,9 +63,21 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
+    const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE);
+    if (scopeError) {
+      return scopeError;
+    }
+
     const { userId, organizationId } = authContext;
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    // The org owns the workflow (organization_id is NOT NULL).
+    if (!organizationId) {
+      return NextResponse.json(
+        { error: "No active organization" },
+        { status: 409 }
+      );
     }
 
     // Anonymous (auto-provisioned, not signed-in) sessions cannot import.
@@ -110,7 +124,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     const exportPayload = parsed.data;
-    const isAnonymous = !organizationId;
 
     const importNodes = stripIntegrationsFromImportNodes(exportPayload.nodes);
     const sanitized = sanitizeWorkflowData(
@@ -118,9 +131,9 @@ export async function POST(request: Request): Promise<NextResponse> {
       exportPayload.edges as Record<string, unknown>[]
     );
 
+    // Org principal: the imported workflow is org-owned (matches runtime).
     const validation = await validateWorkflowIntegrations(
       sanitized.nodes,
-      userId,
       organizationId
     );
     if (!validation.valid) {
@@ -159,7 +172,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         edges: sanitized.edges,
         userId,
         organizationId,
-        isAnonymous,
+        isAnonymous: false,
       })
       .returning();
 

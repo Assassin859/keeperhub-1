@@ -77,7 +77,7 @@ describe("signup defenses: captcha plugin", () => {
   it("throws at module load in production when TURNSTILE_SECRET_KEY is missing", async () => {
     vi.stubEnv("NODE_ENV", "production");
     await expect(import("@/lib/auth")).rejects.toThrow(
-      /TURNSTILE_SECRET_KEY is required in production/
+      MISSING_CAPTCHA_SECRET_ERROR
     );
   });
 

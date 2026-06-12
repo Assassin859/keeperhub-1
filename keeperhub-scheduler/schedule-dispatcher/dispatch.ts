@@ -13,11 +13,8 @@
 
 import { SendMessageCommand } from "@aws-sdk/client-sqs";
 import { CronExpressionParser } from "cron-parser";
-import {
-  KEEPERHUB_URL,
-  SERVICE_API_KEY,
-  SQS_QUEUE_URL,
-} from "../lib/config.js";
+import { SQS_QUEUE_URL } from "../lib/config.js";
+import { apiRequest } from "../lib/http-client.js";
 import {
   createPhantomExecution,
   failPhantomExecution,
@@ -32,20 +29,9 @@ export type DispatchResult = {
 };
 
 export async function fetchSchedules(): Promise<Schedule[]> {
-  const response = await fetch(`${KEEPERHUB_URL}/api/internal/schedules`, {
-    method: "GET",
-    headers: {
-      "X-Service-Key": SERVICE_API_KEY,
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      `Failed to fetch schedules: ${response.status} ${await response.text()}`,
-    );
-  }
-
-  const data = (await response.json()) as { schedules: Schedule[] };
+  const data = await apiRequest<{ schedules: Schedule[] }>(
+    "/api/internal/schedules",
+  );
   return data.schedules;
 }
 

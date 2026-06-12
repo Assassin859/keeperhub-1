@@ -9,7 +9,7 @@
  *
  * Pattern:
  * - Step input: { integrationId: "abc123", ...otherParams }  ← Safe to log
- * - Step fetches: credentials = await fetchCredentials(integrationId)  ← Not logged
+ * - Step fetches: credentials = await fetchCredentials(integrationId, principal)  ← Not logged
  * - Step uses: apiClient.call(credentials.apiKey)  ← In memory only
  * - Step returns: { result: data }  ← Safe to log (no credentials)
  */
@@ -84,31 +84,35 @@ function mapIntegrationConfig(
 /**
  * Fetch credentials for an integration by ID.
  *
- * When `principal` is provided, the fetch is authorized against it (owner /
- * organization visibility / specific_members grant) before any credential is
- * decrypted, and returns no credentials if the principal is not authorized.
- * This is runtime defense-in-depth: execution entry points already authorize
- * the effective principal before dispatch, but only the owner-context
- * (ownerId/organizationId) is available once a run is in flight, so steps pass
- * that here to fail closed if a referenced id ever escapes the pre-execution
- * check. Omitting `principal` preserves the prior unauthenticated behaviour.
+ * The fetch is authorized against `principal` (organization visibility /
+ * specific_members grant) before any credential is decrypted, returning no
+ * credentials if the principal is not authorized. This is the runtime guard
+ * that stops a step from resolving a connection belonging to another org if a
+ * referenced id ever escapes the pre-execution / save-time checks. `principal`
+ * is required so every step fails closed; steps source it from
+ * `input._context` (the run's owner context).
  *
  * @param integrationId - The ID of the integration to fetch credentials for
- * @param principal - Optional owner-context principal to authorize against
+ * @param principal - Owner-context principal to authorize against
  * @returns WorkflowCredentials object with the integration's credentials
  */
 export async function fetchCredentials(
   integrationId: string,
-  principal?: IntegrationPrincipal
+  principal: IntegrationPrincipal
 ): Promise<WorkflowCredentials> {
-  if (principal) {
-    const unauthorized = await filterUnauthorizedIntegrationIds(
-      [integrationId],
-      principal
-    );
-    if (unauthorized.length > 0) {
-      return {};
-    }
+  // A node with no integration selected passes undefined at runtime; treat it
+  // as a missing integration instead of letting getIntegrationById(undefined)
+  // throw UNDEFINED_VALUE and surface as a system error.
+  if (!integrationId) {
+    return {};
+  }
+
+  const unauthorized = await filterUnauthorizedIntegrationIds(
+    [integrationId],
+    principal
+  );
+  if (unauthorized.length > 0) {
+    return {};
   }
 
   const integration = await getIntegrationById(integrationId);
@@ -124,7 +128,7 @@ export async function fetchCredentials(
  */
 export function fetchIntegrationCredentials(
   integrationId: string,
-  principal?: IntegrationPrincipal
+  principal: IntegrationPrincipal
 ): Promise<WorkflowCredentials> {
   return fetchCredentials(integrationId, principal);
 }

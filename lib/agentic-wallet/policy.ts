@@ -22,9 +22,9 @@
  * giveFeedback (~$3-10 per feedback at current Ethereum gas). Both
  * existing payment paths are gasless from the user's perspective (Base:
  * EIP-3009 meta-tx, Tempo: MPP sponsor). Future work: sponsor giveFeedback
- * via either Pimlico (current sponsored-tx infra in lib/web3/pimlico-config.ts)
- * or Turnkey's native sponsorship. Keeping the policy strict so that
- * sponsorship can be layered on without policy widening.
+ * via Turnkey's native gas sponsorship (lib/web3/turnkey-sponsored-tx.ts).
+ * Keeping the policy strict so that sponsorship can be layered on without
+ * policy widening.
  */
 import type { Turnkey } from "@turnkey/sdk-server";
 

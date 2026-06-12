@@ -6,7 +6,17 @@ import type {
 } from "./builder-types";
 import { isConditionGroup } from "./builder-types";
 
-type OperatorCategory = "comparison" | "string" | "existence" | "pattern";
+// Grouping categories drive the type-aware operator dropdown: each operator
+// belongs to one value-type group so the picker can show section headers
+// (General / Text / Number / Boolean / Array / Object) and the author can see
+// at a glance which comparisons make sense for which kind of value.
+type OperatorCategory =
+  | "general"
+  | "text"
+  | "number"
+  | "boolean"
+  | "array"
+  | "object";
 
 type OperatorMeta = {
   label: string;
@@ -15,27 +25,58 @@ type OperatorMeta = {
 };
 
 export const OPERATOR_METADATA: Record<ConditionOperator, OperatorMeta> = {
-  "==": { label: "soft equals", unary: false, category: "comparison" },
-  "===": { label: "equals", unary: false, category: "comparison" },
-  "!=": { label: "soft not equals", unary: false, category: "comparison" },
-  "!==": { label: "not equals", unary: false, category: "comparison" },
-  ">": { label: "greater than", unary: false, category: "comparison" },
+  "===": { label: "equals", unary: false, category: "general" },
+  "!==": { label: "not equals", unary: false, category: "general" },
+  "==": { label: "soft equals", unary: false, category: "general" },
+  "!=": { label: "soft not equals", unary: false, category: "general" },
+  exists: { label: "exists", unary: true, category: "general" },
+  doesNotExist: { label: "does not exist", unary: true, category: "general" },
+  contains: { label: "contains", unary: false, category: "text" },
+  startsWith: { label: "starts with", unary: false, category: "text" },
+  endsWith: { label: "ends with", unary: false, category: "text" },
+  matchesRegex: { label: "matches regex", unary: false, category: "text" },
+  isEmpty: { label: "is empty", unary: true, category: "text" },
+  isNotEmpty: { label: "is not empty", unary: true, category: "text" },
+  ">": { label: "greater than", unary: false, category: "number" },
   ">=": {
     label: "greater than or equal",
     unary: false,
-    category: "comparison",
+    category: "number",
   },
-  "<": { label: "less than", unary: false, category: "comparison" },
-  "<=": { label: "less than or equal", unary: false, category: "comparison" },
-  contains: { label: "contains", unary: false, category: "string" },
-  startsWith: { label: "starts with", unary: false, category: "string" },
-  endsWith: { label: "ends with", unary: false, category: "string" },
-  isEmpty: { label: "is empty", unary: true, category: "existence" },
-  isNotEmpty: { label: "is not empty", unary: true, category: "existence" },
-  exists: { label: "exists", unary: true, category: "existence" },
-  doesNotExist: { label: "does not exist", unary: true, category: "existence" },
-  matchesRegex: { label: "matches regex", unary: false, category: "pattern" },
+  "<": { label: "less than", unary: false, category: "number" },
+  "<=": { label: "less than or equal", unary: false, category: "number" },
+  isTrue: { label: "is true", unary: true, category: "boolean" },
+  isFalse: { label: "is false", unary: true, category: "boolean" },
+  arrayIsEmpty: { label: "is empty", unary: true, category: "array" },
+  arrayIsNotEmpty: { label: "is not empty", unary: true, category: "array" },
+  arrayContains: { label: "contains", unary: false, category: "array" },
+  arrayLength: { label: "length", unary: false, category: "array" },
+  objectIsEmpty: { label: "is empty", unary: true, category: "object" },
+  objectHasKey: { label: "has key", unary: false, category: "object" },
 } as const;
+
+// Ordered groups for the operator dropdown. Section labels match the screenshot
+// pattern (header + items beneath) so each operator reads in the context of the
+// value type it applies to.
+export const OPERATOR_GROUPS: ReadonlyArray<{
+  label: string;
+  category: OperatorCategory;
+}> = [
+  { label: "General", category: "general" },
+  { label: "Text", category: "text" },
+  { label: "Number", category: "number" },
+  { label: "Boolean", category: "boolean" },
+  { label: "Array", category: "array" },
+  { label: "Object", category: "object" },
+] as const;
+
+export function operatorsForCategory(
+  category: OperatorCategory
+): ConditionOperator[] {
+  return (Object.keys(OPERATOR_METADATA) as ConditionOperator[]).filter(
+    (op) => OPERATOR_METADATA[op].category === category
+  );
+}
 
 export function isUnaryOperator(operator: ConditionOperator): boolean {
   return OPERATOR_METADATA[operator].unary;

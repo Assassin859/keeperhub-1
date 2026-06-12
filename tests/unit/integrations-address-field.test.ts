@@ -51,7 +51,9 @@ vi.mock("@/lib/db", () => ({
     select: vi.fn(() => ({
       from: vi.fn(() => ({
         leftJoin: vi.fn(() => ({
-          where: (...args: unknown[]) => mockJoinWhere(...args),
+          where: (...args: unknown[]) => ({
+            orderBy: () => mockJoinWhere(...args),
+          }),
         })),
       })),
     })),

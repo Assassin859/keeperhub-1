@@ -1,6 +1,7 @@
 import "server-only";
 
 import { fetchCredentials } from "@/lib/credential-fetcher";
+import { safeFetch } from "@/lib/safe-fetch";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import { getErrorMessage } from "@/lib/utils";
 import type { WebflowCredentials } from "../credentials";
@@ -62,7 +63,8 @@ async function stepHandler(
   }
 
   try {
-    const response = await fetch(`${WEBFLOW_API_URL}/sites`, {
+    const response = await safeFetch(`${WEBFLOW_API_URL}/sites`, {
+      plugin: "webflow",
       method: "GET",
       headers: {
         Accept: "application/json",
@@ -108,7 +110,7 @@ export async function listSitesStep(
   "use step";
 
   const credentials = input.integrationId
-    ? await fetchCredentials(input.integrationId)
+    ? await fetchCredentials(input.integrationId, { organizationId: input._context?.organizationId ?? null })
     : {};
 
   return withStepLogging(input, () => stepHandler(input, credentials));

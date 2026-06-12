@@ -435,7 +435,7 @@ export function logSystemWarn(
  */
 export function logInternalAuthEvent(fields: {
   outcome: "accept" | "reject";
-  scheme: "hmac" | "legacy-bearer" | "none";
+  scheme: "hmac" | "none";
   caller: string;
   route: string;
   method: string;

@@ -2,7 +2,7 @@
 //
 // Each VU creates workflows in tiers (configurable via TIERS env).
 // ~75% Schedule (triggered by real scheduler-dispatcher every minute)
-// ~25% Manual (triggered by k6 via service key every ~60s)
+// ~25% Manual (triggered by k6 via HMAC-signed internal request every ~60s)
 //
 // Execution counting uses the /api/admin/test/stats endpoint which
 // queries the DB directly — no per-VU counting, no session-dependent
@@ -10,10 +10,11 @@
 //
 // k6 run execution-load-test.js \
 //   -e BASE_URL=https://app-staging.keeperhub.com \
-//   -e TEST_API_KEY=placeholder -e SERVICE_KEY=<key> \
+//   -e TEST_API_KEY=placeholder -e INTERNAL_SERVICE_HMAC_SECRET=<secret> \
 //   -e CF_ACCESS_CLIENT_ID=... -e CF_ACCESS_CLIENT_SECRET=...
 
 import http from "k6/http";
+import crypto from "k6/crypto";
 import { sleep } from "k6";
 import { Counter, Gauge } from "k6/metrics";
 import exec from "k6/execution";
@@ -22,10 +23,13 @@ const BASE_URL = __ENV.BASE_URL || "http://localhost:3000";
 const TEST_API_KEY = __ENV.TEST_API_KEY || "";
 const CF_ID = __ENV.CF_ACCESS_CLIENT_ID || "";
 const CF_SECRET = __ENV.CF_ACCESS_CLIENT_SECRET || "";
-const SERVICE_KEY = __ENV.SERVICE_KEY || "";
+const INTERNAL_SERVICE_HMAC_SECRET =
+  __ENV.INTERNAL_SERVICE_HMAC_SECRET || __ENV.SERVICE_KEY || "";
+const HMAC_CALLER = __ENV.HMAC_CALLER || "executor";
+const LOAD_TEST_BYPASS_TOKEN = __ENV.LOAD_TEST_BYPASS_TOKEN || "";
 const TARGET_VUS = parseInt(__ENV.TARGET_VUS || "20", 10);
 const OBSERVE_SECONDS = parseInt(__ENV.OBSERVE_SECONDS || "180", 10);
-const PASSWORD = "K6LoadTest!2024";
+const PASSWORD = __ENV.LOAD_TEST_USER_PASSWORD || "K6LoadTest!2024";
 const TIERS = (__ENV.TIERS || "10,12,14,16,18,20,25,30,40,50").split(",").map(Number);
 
 // Metrics — pushed to Prometheus via --out experimental-prometheus-rw
@@ -68,10 +72,25 @@ function h() {
   if (TEST_API_KEY) hd["X-Test-API-Key"] = TEST_API_KEY;
   if (CF_ID) hd["CF-Access-Client-Id"] = CF_ID;
   if (CF_SECRET) hd["CF-Access-Client-Secret"] = CF_SECRET;
+  if (LOAD_TEST_BYPASS_TOKEN) hd["X-Load-Test-Mfa-Bypass"] = LOAD_TEST_BYPASS_TOKEN;
   return hd;
 }
 function adminH() { const hd = h(); if (TEST_API_KEY) hd["Authorization"] = `Bearer ${TEST_API_KEY}`; return hd; }
-function serviceH() { const hd = h(); if (SERVICE_KEY) hd["X-Service-Key"] = SERVICE_KEY; return hd; }
+// Sign an internal service-to-service request with HMAC, matching the verifier
+// in lib/internal-service-auth.ts:
+//   signingString = method\npath\ncaller\nsha256_hex(body)\ntimestamp
+function serviceH(method, path, body) {
+  const hd = h();
+  if (INTERNAL_SERVICE_HMAC_SECRET) {
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const bodyDigest = crypto.sha256(body || "", "hex");
+    const signingString = `${method}\n${path}\n${HMAC_CALLER}\n${bodyDigest}\n${ts}`;
+    hd["X-KH-Caller"] = HMAC_CALLER;
+    hd["X-KH-Timestamp"] = ts;
+    hd["X-KH-Signature"] = crypto.hmac("sha256", INTERNAL_SERVICE_HMAC_SECRET, signingString, "hex");
+  }
+  return hd;
+}
 
 // Workflow node builders
 function act(id, x, y) {
@@ -132,31 +151,10 @@ function retryPost(url, body, max) {
 
 function authenticate() {
   const v = exec.vu.idInTest;
-
-  if (!myEmail) {
-    http.get(`${BASE_URL}/api/health`, { headers: h(), redirects: 5 });
-    myEmail = `k6-vu${v}-${Date.now()}@techops.services`;
-    const su = retryPost(`${BASE_URL}/api/auth/sign-up/email`,
-      JSON.stringify({ email: myEmail, password: PASSWORD, name: `k6-${v}` }), 5);
-    if (su.status !== 200) { console.error(`VU${v}: signup ${su.status}`); return false; }
-    sleep(1);
-
-    let otp = null;
-    for (let i = 0; i < 10; i++) {
-      const r = http.get(`${BASE_URL}/api/admin/test/otp?email=${encodeURIComponent(myEmail)}`, { headers: adminH() });
-      if (r.status === 200) { otp = JSON.parse(r.body).otp; break; }
-      sleep(1);
-    }
-    if (!otp) { console.error(`VU${v}: no OTP`); return false; }
-
-    const vr = retryPost(`${BASE_URL}/api/auth/email-otp/verify-email`,
-      JSON.stringify({ email: myEmail, otp }), 5);
-    if (vr.status !== 200) { console.error(`VU${v}: verify ${vr.status}`); return false; }
-  }
-
+  myEmail = `k6-loadtest-vu${v}@techops.services`;
   const sr = retryPost(`${BASE_URL}/api/auth/sign-in/email`,
     JSON.stringify({ email: myEmail, password: PASSWORD }), 5);
-  if (sr.status !== 200) { console.error(`VU${exec.vu.idInTest}: signin ${sr.status}`); return false; }
+  if (sr.status !== 200) { console.error(`VU${v}: signin ${sr.status}`); return false; }
   return true;
 }
 
@@ -197,7 +195,9 @@ function createWorkflows(count) {
 
 function triggerManuals() {
   for (const wfId of manualWfIds) {
-    const r = http.post(`${BASE_URL}/api/workflow/${wfId}/execute`, JSON.stringify({}), { headers: serviceH() });
+    const path = `/api/workflow/${wfId}/execute`;
+    const body = JSON.stringify({});
+    const r = http.post(`${BASE_URL}${path}`, body, { headers: serviceH("POST", path, body) });
     if (r.status === 200 || r.status === 201) manualTriggerOk.add(1);
     else manualTriggerFail.add(1);
   }

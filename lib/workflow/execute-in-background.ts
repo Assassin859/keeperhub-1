@@ -33,7 +33,7 @@ export async function executeWorkflowInBackground(
   input: Record<string, unknown>,
   context: BackgroundLogContext,
   organizationId?: string | null,
-  ownerId?: string,
+  createdBy?: string,
   organizationSlug?: string,
   organizationPlan?: string
 ): Promise<void> {
@@ -62,7 +62,7 @@ export async function executeWorkflowInBackground(
         executionId,
         workflowId,
         organizationId: organizationId ?? undefined,
-        ownerId,
+        createdBy,
         organizationSlug,
         organizationPlan,
       },

@@ -5,9 +5,6 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError } from "better-auth/api";
 import {
   anonymous,
-  // start custom keeperhub code //
-  bearer,
-  // end keeperhub code //
   captcha,
   deviceAuthorization,
   emailOTP,
@@ -15,7 +12,7 @@ import {
   twoFactor,
 } from "better-auth/plugins";
 import { createAccessControl } from "better-auth/plugins/access";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { rateLimitBypassRule, testEndpointsEnabled } from "@/lib/admin-auth";
 import { isUserDeactivated } from "@/lib/auth-deactivation-guard";
@@ -23,11 +20,12 @@ import { isDisposableEmailDomain } from "@/lib/auth-disposable-emails";
 import { DISPOSABLE_EMAIL_REJECTION_MESSAGE } from "@/lib/auth-disposable-emails-message";
 import { isFreshSignup } from "@/lib/auth-notification-guard";
 import { sendInvitationEmail, sendVerificationOTP } from "@/lib/email";
+import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
-  assessIpTrust,
+  assessCountryTrust,
   assessLoginRisk,
   serializeRiskFlags,
-  upsertTrustedIp,
+  upsertTrustedCountry,
 } from "@/lib/security/login-risk";
 import { reportSessionBackstop } from "@/lib/security/session-backstop";
 import { TRUSTED_ORIGINS } from "@/lib/trusted-origins";
@@ -47,7 +45,6 @@ import {
   sessions,
   twoFactor as twoFactorTable,
   users,
-  userTrustedIps,
   verifications,
   workflowExecutionLogs,
   workflowExecutions,
@@ -181,7 +178,6 @@ const captchaPlugins =
 // Build plugins array conditionally
 const plugins = [
   // start custom keeperhub code //
-  bearer(),
   deviceAuthorization({
     expiresIn: "15m",
     interval: "5s",
@@ -254,69 +250,59 @@ const plugins = [
   }),
   anonymous({
     async onLinkAccount(data) {
-      // // When an anonymous user links to a real account, migrate their data
-      // const fromUserId = data.anonymousUser.user.id;
-      // const toUserId = data.newUser.user.id;
-
-      // console.log(
-      //   `[Anonymous Migration] Migrating from user ${fromUserId} to ${toUserId}`
-      // );
-
-      // try {
-      //   // Migrate workflows
-      //   await db
-      //     .update(workflows)
-      //     .set({ userId: toUserId })
-      //     .where(eq(workflows.userId, fromUserId));
-
-      //   // Migrate workflow executions
-      //   await db
-      //     .update(workflowExecutions)
-      //     .set({ userId: toUserId })
-      //     .where(eq(workflowExecutions.userId, fromUserId));
-
-      //   // Migrate integrations
-      //   await db
-      //     .update(integrations)
-      //     .set({ userId: toUserId })
-      //     .where(eq(integrations.userId, fromUserId));
-
-      //   console.log(
-      //     `[Anonymous Migration] Successfully migrated data from ${fromUserId} to ${toUserId}`
-      //   );
-      // } catch (error) {
-      //   console.error(
-      //     "[Anonymous Migration] Error migrating user data:",
-      //     error
-      //   );
-      //   throw error;
-      // }
-
-      // When anonymous user links account, transfer ownership to the new user.
-      // Workflows stay as isAnonymous=true with no org - the client-side claim
-      // dialog will offer to move them into the user's organization.
+      // When an anonymous session links to a real account, move its content
+      // into the linking user's organization. All three updates are one atomic
+      // transaction: a partial re-parent (e.g. workflows moved but executions
+      // not) would leave inconsistent ownership history.
       const fromUserId = data.anonymousUser.user.id;
       const toUserId = data.newUser.user.id;
 
-      try {
-        await db
+      await db.transaction(async (tx) => {
+        // Selects the user's personal org (the one minted at signup, which is
+        // always the oldest owner membership). A user is unlikely to own
+        // multiple orgs at link time, but if they do the content goes into
+        // the oldest one as the best proxy for their primary workspace.
+        const [targetMembership] = await tx
+          .select({ organizationId: memberTable.organizationId })
+          .from(memberTable)
+          .where(
+            and(eq(memberTable.userId, toUserId), eq(memberTable.role, "owner"))
+          )
+          .orderBy(memberTable.createdAt)
+          .limit(1);
+
+        if (!targetMembership) {
+          logSystemError(
+            ErrorCategory.AUTH,
+            "[Auth] Account link: no owner org found for target user; anonymous content not re-parented",
+            new Error("targetMembership undefined"),
+            { fromUserId, toUserId }
+          );
+          return;
+        }
+
+        await tx
           .update(workflows)
-          .set({ userId: toUserId })
+          .set({
+            userId: toUserId,
+            organizationId: targetMembership.organizationId,
+            isAnonymous: false,
+          })
           .where(eq(workflows.userId, fromUserId));
 
-        await db
+        await tx
+          .update(integrations)
+          .set({
+            createdBy: toUserId,
+            organizationId: targetMembership.organizationId,
+          })
+          .where(eq(integrations.createdBy, fromUserId));
+
+        await tx
           .update(workflowExecutions)
           .set({ userId: toUserId })
           .where(eq(workflowExecutions.userId, fromUserId));
-
-        await db
-          .update(integrations)
-          .set({ userId: toUserId })
-          .where(eq(integrations.userId, fromUserId));
-      } catch (error) {
-        console.error("[Anonymous Migration] Error:", error);
-        throw error;
-      }
+      });
     },
   }),
   ...captchaPlugins,
@@ -499,15 +485,13 @@ export const auth = betterAuth({
           }
         },
         after: async (user) => {
-          // Skip organization creation for anonymous users
-          // Anonymous users have name "Anonymous" and temp- prefixed emails
           const isAnonymous =
             user.name === "Anonymous" || user.email?.startsWith("temp-");
-          if (isAnonymous) {
-            return;
-          }
 
-          // Generate unique slug from user name/email
+          // Every account - anonymous sessions included - gets an organization
+          // so the org is the single owner of every workflow/integration and
+          // there are no null-org rows. An anonymous account's org is merged
+          // into the real org when the account is later linked (onLinkAccount).
           const baseName = user.name || user.email?.split("@")[0] || "User";
           const slug = `${baseName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${nanoid(6)}`;
 
@@ -535,7 +519,23 @@ export const auth = betterAuth({
               createdAt: new Date(),
             });
           } catch (error) {
-            console.error(error);
+            logSystemError(
+              ErrorCategory.AUTH,
+              "[Auth] Failed to mint org for new user",
+              error,
+              { userId: user.id }
+            );
+            // Re-throw: a user without an org cannot create workflows. Failing
+            // signup cleanly here is better than creating a user who hits
+            // errors on every subsequent action.
+            throw error;
+          }
+
+          // Anonymous accounts get an org (above) but no signup
+          // notifications or verification OTP - they have no real, verified
+          // email (name "Anonymous" / temp- prefixed address).
+          if (isAnonymous) {
+            return;
           }
 
           // Notify external services for OAuth signups (already verified at creation).
@@ -636,15 +636,15 @@ export const auth = betterAuth({
             return false;
           }
           const risk = await assessLoginRisk(userId);
-          const ipTrust = await assessIpTrust(userId);
-          // When the session is being created from a trusted IP (or
-          // for the user's first-ever attestation) record/refresh it
-          // in user_trusted_ips. This is the only path that auto-adds
-          // an IP without going through /verify-ip; the unique
-          // (user_id, ip) constraint makes the upsert idempotent so a
-          // repeat sign-in from a known IP just bumps last_seen_at.
-          if (ipTrust.ip && ipTrust.trusted) {
-            await upsertTrustedIp(userId, ipTrust.ip, ipTrust.country);
+          const countryTrust = await assessCountryTrust(userId);
+          // When the session is being created from a trusted country (or
+          // for the user's first-ever attestation) record/refresh it in
+          // user_trusted_countries. This is the only path that auto-adds a
+          // country without going through /verify-ip; the unique
+          // (user_id, country) constraint makes the upsert idempotent so a
+          // repeat sign-in from a known country just bumps last_seen_at.
+          if (countryTrust.country && countryTrust.trusted) {
+            await upsertTrustedCountry(userId, countryTrust.country);
           }
           const [userRow] = await db
             .select({ twoFactorEnabled: users.twoFactorEnabled })
@@ -697,7 +697,12 @@ export const auth = betterAuth({
                 .where(eq(sessions.id, session.id));
             }
           } catch (error) {
-            console.error(error);
+            logSystemError(
+              ErrorCategory.AUTH,
+              "[Auth] Failed to set active org on session",
+              error,
+              { sessionId: session.id }
+            );
           }
         },
       },

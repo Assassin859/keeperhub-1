@@ -2,7 +2,9 @@ import { and, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { NextResponse } from "next/server";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import { requireScope } from "@/lib/middleware/require-scope";
 import { db } from "@/lib/db";
 import { workflows } from "@/lib/db/schema";
 import { extractActionTypeNodes } from "@/lib/features";
@@ -11,10 +13,7 @@ import { generateId } from "@/lib/utils/id";
 import { remapTemplateRefsInString } from "@/lib/utils/template";
 import { getWorkflowAccess } from "@/lib/workflow/access";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
-import {
-  softDeleteValues,
-  workflowNotDeleted,
-} from "@/lib/workflow/soft-delete";
+import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 // Node type for type-safe node manipulation
 type WorkflowNodeLike = {
   id: string;
@@ -128,10 +127,22 @@ export async function POST(
       );
     }
 
+    const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE);
+    if (scopeError) {
+      return scopeError;
+    }
+
     const { userId, organizationId } = authContext;
 
     if (!userId && !organizationId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    // The duplicate is owned by the caller's org (organization_id is NOT NULL).
+    if (!organizationId) {
+      return NextResponse.json(
+        { error: "No active organization" },
+        { status: 409 }
+      );
     }
 
     // Find the workflow to duplicate
@@ -168,8 +179,6 @@ export async function POST(
       );
     }
 
-    const isAnonymous = !organizationId;
-
     // Generate new IDs for nodes
     const oldNodes = sourceWorkflow.nodes as WorkflowNodeLike[];
     const idMap = new Map<string, string>();
@@ -199,22 +208,13 @@ export async function POST(
       return featureGuard.response;
     }
 
-    // Count workflows in current context (org or anonymous) to generate unique name
-    const existingWorkflows = isAnonymous
-      ? await db.query.workflows.findMany({
-          where: and(
-            eq(workflows.userId, userId ?? ""),
-            eq(workflows.isAnonymous, true),
-            workflowNotDeleted()
-          ),
-        })
-      : await db.query.workflows.findMany({
-          where: and(
-            eq(workflows.organizationId, organizationId ?? ""),
-            eq(workflows.isAnonymous, false),
-            workflowNotDeleted()
-          ),
-        });
+    // Count workflows in the owning org to generate a unique name.
+    const existingWorkflows = await db.query.workflows.findMany({
+      where: and(
+        eq(workflows.organizationId, organizationId),
+        workflowNotDeleted()
+      ),
+    });
 
     // Generate a unique name
     const baseName = `${sourceWorkflow.name} (Copy)`;
@@ -241,26 +241,11 @@ export async function POST(
         edges: newEdges,
         userId: userId ?? sourceWorkflow.userId,
         organizationId,
-        isAnonymous,
+        isAnonymous: false,
         visibility: "private", // Duplicated workflows are always private
         sourceWorkflowId: sourceWorkflow.visibility === "public" ? workflowId : null,
       })
       .returning();
-
-    // If moving an anonymous workflow to an org, retire the original.
-    // This prevents the old anonymous workflow from being accessible after
-    // sign out. KEEP-440: soft-delete so all workflow removal goes through one
-    // path and the deletedAt filters cover it uniformly.
-    if (
-      sourceWorkflow.isAnonymous &&
-      access.isCreatorWithCurrentAccess &&
-      !isAnonymous
-    ) {
-      await db
-        .update(workflows)
-        .set(softDeleteValues())
-        .where(eq(workflows.id, workflowId));
-    }
 
     return NextResponse.json({
       ...newWorkflow,

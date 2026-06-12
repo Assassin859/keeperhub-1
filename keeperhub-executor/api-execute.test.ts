@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("./config", () => ({
   CONFIG: {
     keeperhubApiUrl: "https://api.test.local",
-    keeperhubApiKey: "test-service-key",
   },
 }));
 
@@ -54,7 +53,9 @@ describe("executeViaApi", () => {
 
     const init = getFetchInit();
     expect(getHeader(init.headers, "X-Trigger-Type")).toBe("block");
-    expect(getHeader(init.headers, "X-Service-Key")).toBe("test-service-key");
+    expect(getHeader(init.headers, "X-KH-Caller")).toBe("executor");
+    expect(getHeader(init.headers, "X-KH-Timestamp")).toMatch(/^\d+$/);
+    expect(getHeader(init.headers, "X-KH-Signature")).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("sends X-Trigger-Type=schedule when triggerType is schedule", async () => {

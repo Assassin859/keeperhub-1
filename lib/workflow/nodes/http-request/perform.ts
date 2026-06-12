@@ -16,6 +16,7 @@ import { safeFetch } from "@/lib/safe-fetch";
 import { getErrorMessage } from "@/lib/utils";
 import { extractTemplateTokens } from "@/lib/utils/template";
 import type { StepInput } from "@/lib/workflow/executor/step-handler";
+import { DEFAULT_HTTP_METHOD } from "./constants";
 
 export type HttpRequestResult =
   // KEEP-444: the success variant carries an optional `error` so a soft-failed
@@ -27,7 +28,9 @@ export type HttpRequestResult =
 
 export type HttpRequestInput = StepInput & {
   endpoint: string;
-  httpMethod: string;
+  // Optional: the visual editor only persists this when the user changes the
+  // dropdown, so it can arrive undefined. resolveHttpMethod defaults it to POST.
+  httpMethod?: string;
   httpHeaders?: string;
   httpBody?: string;
   // KEEP-444: per-node request timeout in seconds (default 5, clamped 1-30).
@@ -68,6 +71,21 @@ export function resolveTimeoutMs(timeout: unknown): number {
  */
 export function resolveFailOnError(failOnError: unknown): boolean {
   return failOnError !== false && failOnError !== "false";
+}
+
+/**
+ * Resolve the HTTP method. The visual editor only writes `httpMethod` to the
+ * node config when the user actively changes the dropdown -- leaving it on its
+ * displayed default means the field is never persisted, so `input.httpMethod`
+ * arrives undefined and fetch silently falls back to GET (which then rejects a
+ * configured body). Default the missing/empty case to POST and uppercase so the
+ * GET-body guard in parseBody matches regardless of casing. Exported for tests.
+ */
+export function resolveHttpMethod(httpMethod: unknown): string {
+  if (typeof httpMethod !== "string" || httpMethod.trim() === "") {
+    return DEFAULT_HTTP_METHOD;
+  }
+  return httpMethod.trim().toUpperCase();
 }
 
 // URLs never legitimately contain `{{`, so any token left in the endpoint
@@ -149,12 +167,13 @@ export async function httpRequest(
   }
   const { endpoint } = validation;
   const failOnError = resolveFailOnError(input.failOnError);
+  const httpMethod = resolveHttpMethod(input.httpMethod);
 
   try {
     const response = await safeFetch(endpoint, {
-      method: input.httpMethod,
+      method: httpMethod,
       headers: parseHeaders(input.httpHeaders),
-      body: parseBody(input.httpMethod, input.httpBody),
+      body: parseBody(httpMethod, input.httpBody),
       signal: AbortSignal.timeout(resolveTimeoutMs(input.timeout)),
       plugin: "http-request",
     });

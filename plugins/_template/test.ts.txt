@@ -11,6 +11,11 @@
  * 1. Format validation (e.g., check API key prefix)
  * 2. Lightweight API call (e.g., fetch user info, list resources)
  * 3. Dedicated test endpoint if the API provides one
+ *
+ * NOTE: this connection-test file is reachable from the client-bundled plugin
+ * registry, so it cannot import safe-fetch.ts (which is "server-only"). Use the
+ * raw fetch global here. Step files under steps/ are server-only and MUST use
+ * safeFetch instead.
  */
 
 export async function test[IntegrationName](credentials: Record<string, string>) {

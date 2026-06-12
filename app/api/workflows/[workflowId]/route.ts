@@ -2,7 +2,9 @@ import { eq, sql } from "drizzle-orm";
 import { revalidateTag } from "next/cache";
 import { NextResponse } from "next/server";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import { requireScope } from "@/lib/middleware/require-scope";
 import { db } from "@/lib/db";
 import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { extractActionTypeNodes } from "@/lib/features";
@@ -310,6 +312,11 @@ export async function PATCH(
       );
     }
 
+    const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE);
+    if (scopeError) {
+      return scopeError;
+    }
+
     const { userId, organizationId } = authContext;
     const { workflow: existingWorkflow, hasAccess } =
       await validateWorkflowAccess(
@@ -327,6 +334,16 @@ export async function PATCH(
     }
 
     const body = await request.json();
+
+    // A deactivated workflow is fully off and cannot be re-enabled from the
+    // app. Clearing deactivatedAt (reactivation) is a DB/ops action, mirroring
+    // user and org reactivation, so the editor toggle cannot flip it back on.
+    if (existingWorkflow.deactivatedAt && body.enabled === true) {
+      return NextResponse.json(
+        { error: "Workflow is deactivated and cannot be enabled" },
+        { status: 409 }
+      );
+    }
 
     if (Array.isArray(body.nodes)) {
       // KEEP-468: parse every `{{...}}` token at save time so grammar typos
@@ -453,10 +470,11 @@ export async function PATCH(
     if (Array.isArray(updateData.nodes)) {
       // Validate the exact shape that will be persisted. The sanitizer moves
       // misplaced root fields into data.config, including integrationId.
+      // Org principal: the workflow may only reference its owning org's
+      // integrations, so the save gate matches the runtime credential fetch.
       const validation = await validateWorkflowIntegrations(
         updateData.nodes,
-        userId || existingWorkflow.userId,
-        organizationId
+        existingWorkflow.organizationId
       );
       if (!validation.valid) {
         return NextResponse.json(
@@ -677,6 +695,12 @@ export async function DELETE(
         { status: authContext.status }
       );
     }
+
+    const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE);
+    if (scopeError) {
+      return scopeError;
+    }
+
     const { userId, organizationId } = authContext;
 
     const { hasAccess } = await validateWorkflowAccess(

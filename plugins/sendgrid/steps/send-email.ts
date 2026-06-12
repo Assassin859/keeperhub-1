@@ -5,6 +5,7 @@ import { fetchCredentials } from "@/lib/credential-fetcher";
 import { db } from "@/lib/db";
 import { workflowExecutions, workflows } from "@/lib/db/schema";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
+import { safeFetch } from "@/lib/safe-fetch";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
 import type { SendGridCredentials } from "../credentials";
 
@@ -99,7 +100,8 @@ async function stepHandler(
       ...(input.emailReplyTo && { reply_to: { email: input.emailReplyTo } }),
     };
 
-    const response = await fetch(`${SENDGRID_API_URL}/v3/mail/send`, {
+    const response = await safeFetch(`${SENDGRID_API_URL}/v3/mail/send`, {
+      plugin: "sendgrid",
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -167,7 +169,7 @@ export async function sendEmailStep(
   }
 
   const credentials = input.integrationId
-    ? await fetchCredentials(input.integrationId)
+    ? await fetchCredentials(input.integrationId, { organizationId: input._context?.organizationId ?? null })
     : {};
 
   // Always use KeeperHub API key

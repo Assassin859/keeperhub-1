@@ -1,23 +1,42 @@
-/**
- * HTTP Client for KeeperHub API
- *
- * Provides authenticated request helper with X-Service-Key header
- */
+import { createHash, createHmac } from "node:crypto";
+import { KEEPERHUB_URL } from "./config.js";
 
-import { KEEPERHUB_URL, SERVICE_API_KEY } from "./config.js";
+const HMAC_CALLER = "scheduler";
 
-/**
- * Make authenticated API request to KeeperHub
- */
+function signHmacHeaders(
+  method: string,
+  url: string,
+  body: string,
+): Record<string, string> {
+  const secret = process.env.INTERNAL_SERVICE_HMAC_SECRET ?? "";
+  const pathname = new URL(url).pathname;
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const bodyDigest = createHash("sha256").update(body).digest("hex");
+  const signingString = `${method}\n${pathname}\n${HMAC_CALLER}\n${bodyDigest}\n${timestamp}`;
+  const signature = createHmac("sha256", secret)
+    .update(signingString)
+    .digest("hex");
+  return {
+    "X-KH-Caller": HMAC_CALLER,
+    "X-KH-Timestamp": timestamp,
+    "X-KH-Signature": signature,
+  };
+}
+
 export async function apiRequest<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const response = await fetch(`${KEEPERHUB_URL}${path}`, {
+  const url = `${KEEPERHUB_URL}${path}`;
+  const method = (options.method ?? "GET").toUpperCase();
+  const body = typeof options.body === "string" ? options.body : "";
+  const hmacHeaders = signHmacHeaders(method, url, body);
+
+  const response = await fetch(url, {
     ...options,
     headers: {
       "Content-Type": "application/json",
-      "X-Service-Key": SERVICE_API_KEY,
+      ...hmacHeaders,
       ...options.headers,
     },
   });

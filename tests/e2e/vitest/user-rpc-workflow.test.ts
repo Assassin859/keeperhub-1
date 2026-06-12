@@ -26,6 +26,7 @@ import postgres from "postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   chains,
+  organization,
   userRpcPreferences,
   users,
   workflowExecutions,
@@ -43,6 +44,7 @@ const DATABASE_URL =
 const TEST_PREFIX = "test_rpc_wf_e2e_";
 const TEST_WORKFLOW_PREFIX = `${TEST_PREFIX}wf_`;
 const TEST_EXECUTION_PREFIX = `${TEST_PREFIX}exec_`;
+const TEST_ORG_ID = `${TEST_PREFIX}org`;
 
 // Test RPC URLs - use TechOps Sepolia for primary (reliable)
 const CUSTOM_PRIMARY_RPC = "https://chain.techops.services/eth-sepolia";
@@ -64,6 +66,7 @@ describe.skipIf(SKIP_INFRA_TESTS)(
       queryClient = postgres(DATABASE_URL);
       db = drizzle(queryClient, {
         schema: {
+          organization,
           users,
           workflows,
           workflowExecutions,
@@ -107,6 +110,16 @@ describe.skipIf(SKIP_INFRA_TESTS)(
         );
       }
       TEST_USER_ID = existingUser[0].id;
+
+      // Ensure the org that owns the test workflows exists (workflows.organizationId
+      // is NOT NULL and the scheduler/executor INNER JOINs organization).
+      await queryClient`DELETE FROM organization WHERE id = ${TEST_ORG_ID}`;
+      await db.insert(organization).values({
+        id: TEST_ORG_ID,
+        name: TEST_ORG_ID,
+        slug: TEST_ORG_ID,
+        createdAt: new Date(),
+      });
     });
 
     // Clean up before each test
@@ -132,6 +145,7 @@ describe.skipIf(SKIP_INFRA_TESTS)(
         await queryClient`DELETE FROM workflow_executions WHERE id LIKE ${`${TEST_EXECUTION_PREFIX}%`}`;
         await queryClient`DELETE FROM workflow_schedules WHERE workflow_id LIKE ${`${TEST_WORKFLOW_PREFIX}%`}`;
         await queryClient`DELETE FROM workflows WHERE id LIKE ${`${TEST_WORKFLOW_PREFIX}%`}`;
+        await queryClient`DELETE FROM organization WHERE id = ${TEST_ORG_ID}`;
         await db
           .delete(userRpcPreferences)
           .where(eq(userRpcPreferences.userId, TEST_USER_ID));
@@ -240,6 +254,7 @@ describe.skipIf(SKIP_INFRA_TESTS)(
         id,
         name: `Test RPC Workflow ${id}`,
         userId: TEST_USER_ID,
+        organizationId: TEST_ORG_ID,
         nodes: [triggerNode, checkBalanceNode],
         edges,
         visibility: "private",
@@ -615,6 +630,7 @@ describe.skipIf(SKIP_INFRA_TESTS)(
             id: workflowId,
             name: "Disabled Chain Test",
             userId: TEST_USER_ID,
+            organizationId: TEST_ORG_ID,
             nodes: [triggerNode, checkBalanceNode],
             edges: [
               { id: "e1", source: "trigger_1", target: "check_balance_1" },
@@ -704,6 +720,7 @@ describe.skipIf(SKIP_INFRA_TESTS)(
           id: workflowId,
           name: "Multi-Step Balance Check",
           userId: TEST_USER_ID,
+          organizationId: TEST_ORG_ID,
           nodes: [triggerNode, checkBalance1, checkBalance2],
           edges: [
             { id: "e1", source: "trigger_1", target: "check_balance_1" },

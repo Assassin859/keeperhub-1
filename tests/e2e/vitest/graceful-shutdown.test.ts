@@ -31,6 +31,7 @@ import {
   it,
 } from "vitest";
 import {
+  organization,
   users,
   workflowExecutions,
   workflowSchedules,
@@ -53,6 +54,7 @@ const TEST_PREFIX = "test_graceful_e2e_";
 const TEST_WORKFLOW_PREFIX = `${TEST_PREFIX}wf_`;
 const TEST_EXECUTION_PREFIX = `${TEST_PREFIX}exec_`;
 const TEST_SCHEDULE_PREFIX = `${TEST_PREFIX}sched_`;
+const TEST_ORG_ID = `${TEST_PREFIX}org`;
 
 // Timeout for process operations
 const PROCESS_TIMEOUT = 30_000;
@@ -212,6 +214,16 @@ describe.skipIf(shouldSkip)("Graceful Shutdown E2E", () => {
       );
     }
     TEST_USER_ID = existingUser[0].id;
+
+    // Ensure the org that owns the test workflows exists (workflows.organizationId
+    // is NOT NULL and the scheduler/executor INNER JOINs organization).
+    await queryClient`DELETE FROM organization WHERE id = ${TEST_ORG_ID}`;
+    await db.insert(organization).values({
+      id: TEST_ORG_ID,
+      name: TEST_ORG_ID,
+      slug: TEST_ORG_ID,
+      createdAt: new Date(),
+    });
   });
 
   beforeEach(async () => {
@@ -242,6 +254,7 @@ describe.skipIf(shouldSkip)("Graceful Shutdown E2E", () => {
       await queryClient`DELETE FROM workflow_executions WHERE id LIKE ${`${TEST_EXECUTION_PREFIX}%`}`;
       await queryClient`DELETE FROM workflow_schedules WHERE id LIKE ${`${TEST_SCHEDULE_PREFIX}%`}`;
       await queryClient`DELETE FROM workflows WHERE id LIKE ${`${TEST_WORKFLOW_PREFIX}%`}`;
+      await queryClient`DELETE FROM organization WHERE id = ${TEST_ORG_ID}`;
     } catch {
       // Ignore cleanup errors
     }
@@ -284,6 +297,7 @@ describe.skipIf(shouldSkip)("Graceful Shutdown E2E", () => {
         id: workflowId,
         name: "SIGTERM Test Workflow",
         userId: TEST_USER_ID,
+        organizationId: TEST_ORG_ID,
         nodes: [triggerNode, checkBalanceNode],
         edges: [{ id: "e1", source: "trigger_1", target: "check_1" }],
         visibility: "private",
@@ -384,6 +398,7 @@ describe.skipIf(shouldSkip)("Graceful Shutdown E2E", () => {
         id: workflowId,
         name: "Schedule SIGTERM Test",
         userId: TEST_USER_ID,
+        organizationId: TEST_ORG_ID,
         nodes: [triggerNode, checkBalanceNode],
         edges: [{ id: "e1", source: "trigger_1", target: "check_1" }],
         visibility: "private",
@@ -498,6 +513,7 @@ describe.skipIf(shouldSkip)("Graceful Shutdown E2E", () => {
         id: workflowId,
         name: "Failing Workflow Test",
         userId: TEST_USER_ID,
+        organizationId: TEST_ORG_ID,
         nodes: [triggerNode, failingNode],
         edges: [{ id: "e1", source: "trigger_1", target: "fail_1" }],
         visibility: "private",

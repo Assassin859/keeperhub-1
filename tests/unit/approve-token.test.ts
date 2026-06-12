@@ -161,11 +161,12 @@ vi.mock("@/lib/web3/transaction-manager", () => ({
 }));
 
 // Mock sponsorship (disabled by default so tests exercise the direct signing path)
-vi.mock("@/lib/web3/pimlico-config", () => ({
+vi.mock("@/lib/web3/turnkey-sponsorship-config", () => ({
   isSponsorshipSupported: () => false,
 }));
 
 vi.mock("@/lib/safe/signer-resolver", () => ({
+  SIGNER_MODE: { EOA: "eoa", SAFE: "safe", SAFE_ROLE: "safe-role" },
   resolveSignerMode: vi.fn().mockResolvedValue({
     kind: "eoa",
     ownerAddress: "0xwalletaddress",

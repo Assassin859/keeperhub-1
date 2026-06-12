@@ -5,6 +5,8 @@ import { resolveAbi } from "@/lib/abi/cache";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import { simulateContractCall } from "@/lib/execute/simulate";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
+import { requireScope } from "@/lib/middleware/require-scope";
 import { getErrorMessage } from "@/lib/utils";
 import { readContractCore } from "@/plugins/web3/steps/read-contract-core";
 import { writeContractCore } from "@/plugins/web3/steps/write-contract-core";
@@ -170,6 +172,11 @@ export async function POST(request: Request): Promise<NextResponse> {
   const apiKeyCtx = await validateApiKey(request);
   if (!apiKeyCtx) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const scopeError = requireScope(apiKeyCtx.scope, SCOPE_MCP_WRITE);
+  if (scopeError) {
+    return scopeError;
   }
 
   // Enter ALS error context so plugin step errors carry org labels

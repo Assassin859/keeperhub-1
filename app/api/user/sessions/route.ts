@@ -4,7 +4,6 @@ import { auth } from "@/lib/auth";
 import { isAnonymousUserShape } from "@/lib/auth-anonymous-guard";
 import { db } from "@/lib/db";
 import { sessions } from "@/lib/db/schema";
-import { formatIpForDisplay } from "@/lib/security/ip-normalize";
 import {
   decodeRiskFlags,
   locationForSessionRow,
@@ -84,7 +83,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       const resolved = await locationForSessionRow(location, row.ipAddress);
       return {
         id: row.id,
-        ipAddress: row.ipAddress ? formatIpForDisplay(row.ipAddress) : null,
+        ipAddress: row.ipAddress,
         userAgent: row.userAgent,
         country: resolved.country,
         location: resolved.location,

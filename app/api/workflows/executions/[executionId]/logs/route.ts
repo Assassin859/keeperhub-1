@@ -1,11 +1,10 @@
 import { desc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
 import { db } from "@/lib/db";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { workflowExecutionLogs, workflowExecutions } from "@/lib/db/schema";
+import { workflowExecutionLogs } from "@/lib/db/schema";
 import { redactSensitiveData } from "@/lib/utils/redact";
-import { getWorkflowAccess } from "@/lib/workflow/access";
+import { resolveAuthorizedExecution } from "@/lib/workflow/execution-access";
 
 type TruncatedMarker = {
   _truncated: true;
@@ -57,48 +56,14 @@ export async function GET(
       nodeIds !== undefined ||
       truncateData !== undefined;
 
-    const authContext = await getDualAuthContext(request);
-    if ("error" in authContext) {
+    const resolved = await resolveAuthorizedExecution(request, executionId);
+    if (!resolved.ok) {
       return NextResponse.json(
-        { error: authContext.error },
-        { status: authContext.status }
+        { error: resolved.error },
+        { status: resolved.status }
       );
     }
-    const { userId, organizationId } = authContext;
-
-    if (!userId && !organizationId) {
-      return NextResponse.json(
-        { error: "API key has no associated user or organization. Please recreate the API key." },
-        { status: 403 }
-      );
-    }
-
-    const execution = await db.query.workflowExecutions.findFirst({
-      where: eq(workflowExecutions.id, executionId),
-      with: {
-        workflow: true,
-      },
-    });
-
-    if (!execution) {
-      return NextResponse.json(
-        { error: "Execution not found" },
-        { status: 404 }
-      );
-    }
-
-    const access = await getWorkflowAccess(execution.workflow, {
-      userId,
-      organizationId,
-      authMethod: authContext.authMethod,
-    });
-
-    if (!access.hasFullAccess) {
-      return NextResponse.json(
-        { error: "Execution not found" },
-        { status: 404 }
-      );
-    }
+    const { execution } = resolved;
 
     const logs = await db.query.workflowExecutionLogs.findMany({
       where: eq(workflowExecutionLogs.executionId, executionId),

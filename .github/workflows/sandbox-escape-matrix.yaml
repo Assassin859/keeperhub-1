@@ -63,7 +63,7 @@ jobs:
       REGION: ${{ vars.TO_REGION }}
       CLUSTER_NAME: ${{ vars.TO_CLUSTER_NAME }}
       NAMESPACE: keeperhub
-      KH_RELEASE_NAME: keeperhub-${{ inputs.environment || 'staging' }}
+      KH_RELEASE_NAME: keeperhub
       CANARY_SSM_PATH: /eks/techops-${{ inputs.environment || 'staging' }}/keeperhub/_sandbox_escape_canary
       APP_URL: ${{ (inputs.environment || 'staging') == 'prod' && vars.TO_PROD_URL || vars.TO_STAGING_URL }}
       TARGET_ENV: ${{ inputs.environment || 'staging' }}

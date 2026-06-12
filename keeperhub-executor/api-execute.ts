@@ -1,7 +1,30 @@
+import { createHash, createHmac } from "node:crypto";
 import { CONFIG } from "./config";
 import type { ExecutorMessage } from "./types";
 
 export type ApiExecuteTriggerType = ExecutorMessage["triggerType"];
+
+const HMAC_CALLER = "executor";
+
+function signHmacHeaders(
+  method: string,
+  url: string,
+  body: string,
+): Record<string, string> {
+  const secret = process.env.INTERNAL_SERVICE_HMAC_SECRET ?? "";
+  const pathname = new URL(url).pathname;
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const bodyDigest = createHash("sha256").update(body).digest("hex");
+  const signingString = `${method}\n${pathname}\n${HMAC_CALLER}\n${bodyDigest}\n${timestamp}`;
+  const signature = createHmac("sha256", secret)
+    .update(signingString)
+    .digest("hex");
+  return {
+    "X-KH-Caller": HMAC_CALLER,
+    "X-KH-Timestamp": timestamp,
+    "X-KH-Signature": signature,
+  };
+}
 
 /**
  * Execute a workflow via the KeeperHub API endpoint.
@@ -22,18 +45,19 @@ export async function executeViaApi(params: {
 }): Promise<void> {
   const { workflowId, executionId, input, triggerType } = params;
 
-  const response = await fetch(
-    `${CONFIG.keeperhubApiUrl}/api/workflow/${workflowId}/execute`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Service-Key": CONFIG.keeperhubApiKey,
-        "X-Trigger-Type": triggerType,
-      },
-      body: JSON.stringify({ executionId, input }),
-    }
-  );
+  const url = `${CONFIG.keeperhubApiUrl}/api/workflow/${workflowId}/execute`;
+  const body = JSON.stringify({ executionId, input });
+  const hmacHeaders = signHmacHeaders("POST", url, body);
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...hmacHeaders,
+      "X-Trigger-Type": triggerType,
+    },
+    body,
+  });
 
   if (!response.ok) {
     const errorText = await response.text();

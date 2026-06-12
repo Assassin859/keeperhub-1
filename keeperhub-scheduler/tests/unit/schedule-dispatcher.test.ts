@@ -347,7 +347,7 @@ describe("fetchSchedules", () => {
     );
 
     await expect(fetchSchedules()).rejects.toThrow(
-      /Failed to fetch schedules: 503 service unavailable/,
+      /API GET \/api\/internal\/schedules failed: 503 service unavailable/,
     );
   });
 
@@ -363,7 +363,7 @@ describe("fetchSchedules", () => {
     await expect(fetchSchedules()).rejects.toThrow("ECONNREFUSED");
   });
 
-  it("calls fetch with the schedules path and X-Service-Key header", async () => {
+  it("calls fetch with the schedules path and HMAC headers", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ schedules: [] }),
@@ -375,9 +375,10 @@ describe("fetchSchedules", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toMatch(/\/api\/internal\/schedules$/);
-    expect(init).toMatchObject({
-      method: "GET",
-      headers: expect.objectContaining({ "X-Service-Key": expect.any(String) }),
+    expect(init.headers).toMatchObject({
+      "X-KH-Caller": "scheduler",
+      "X-KH-Timestamp": expect.stringMatching(/^\d+$/),
+      "X-KH-Signature": expect.stringMatching(/^[0-9a-f]{64}$/),
     });
   });
 });
@@ -660,7 +661,9 @@ describe("dispatch", () => {
       }),
     );
 
-    await expect(dispatch()).rejects.toThrow(/Failed to fetch schedules: 500/);
+    await expect(dispatch()).rejects.toThrow(
+      /API GET \/api\/internal\/schedules failed: 500/,
+    );
     expect(mockedSqsSend).not.toHaveBeenCalled();
   });
 

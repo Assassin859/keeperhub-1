@@ -11,7 +11,12 @@ import {
   it,
   vi,
 } from "vitest";
-import { users, workflowExecutions, workflows } from "../../../lib/db/schema";
+import {
+  organization,
+  users,
+  workflowExecutions,
+  workflows,
+} from "../../../lib/db/schema";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/internal-service-auth", () => ({
@@ -43,6 +48,7 @@ describe.skipIf(SKIP)("reaper error codes", () => {
   let queryClient: ReturnType<typeof postgres>;
   let db: ReturnType<typeof drizzle>;
   const ownerId = `${PREFIX}user`;
+  const orgId = `${PREFIX}org`;
   const workflowId = `${PREFIX}wf`;
 
   async function cleanupRows(): Promise<void> {
@@ -82,6 +88,7 @@ describe.skipIf(SKIP)("reaper error codes", () => {
     db = drizzle(queryClient);
     await queryClient`DELETE FROM workflow_executions WHERE id LIKE ${`${PREFIX}%`}`;
     await queryClient`DELETE FROM workflows WHERE id LIKE ${`${PREFIX}%`}`;
+    await queryClient`DELETE FROM organization WHERE id LIKE ${`${PREFIX}%`}`;
     await queryClient`DELETE FROM users WHERE id LIKE ${`${PREFIX}%`}`;
 
     await db.insert(users).values({
@@ -91,10 +98,17 @@ describe.skipIf(SKIP)("reaper error codes", () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     });
+    await db.insert(organization).values({
+      id: orgId,
+      name: orgId,
+      slug: orgId,
+      createdAt: new Date(),
+    });
     await db.insert(workflows).values({
       id: workflowId,
       name: workflowId,
       userId: ownerId,
+      organizationId: orgId,
       nodes: [],
       edges: [],
       visibility: "private",
@@ -111,6 +125,7 @@ describe.skipIf(SKIP)("reaper error codes", () => {
   afterAll(async () => {
     await cleanupRows();
     await queryClient`DELETE FROM workflows WHERE id LIKE ${`${PREFIX}%`}`;
+    await queryClient`DELETE FROM organization WHERE id LIKE ${`${PREFIX}%`}`;
     await queryClient`DELETE FROM users WHERE id LIKE ${`${PREFIX}%`}`;
     await queryClient.end();
   });

@@ -104,9 +104,8 @@ generate_manifest() {
     ENCRYPTION_KEY_BASE64=$(echo -n "$ENCRYPTION_KEY" | base64 -w0)
 
     if [ -f "$PROJECT_ROOT/.env" ]; then
-        set -a
-        . "$PROJECT_ROOT/.env"
-        set +a
+        INTEGRATION_ENCRYPTION_KEY=$(grep -E '^INTEGRATION_ENCRYPTION_KEY=' "$PROJECT_ROOT/.env" | head -1 | cut -d= -f2-)
+        POSTGRES_DB=$(grep -E '^POSTGRES_DB=' "$PROJECT_ROOT/.env" | head -1 | cut -d= -f2-)
     fi
 
     local DB_NAME="${POSTGRES_DB:-keeperhub}"
@@ -143,7 +142,7 @@ data:
   SQS_QUEUE_URL: "http://host.minikube.internal:4566/000000000000/keeperhub-workflow-queue"
   DATABASE_URL: "postgresql://postgres:postgres@host.minikube.internal:5433/__DB_NAME__"
   KEEPERHUB_API_URL: "http://host.minikube.internal:3000"
-  KEEPERHUB_API_KEY: "local-scheduler-key-for-dev"
+  INTERNAL_SERVICE_HMAC_SECRET: "bG9jYWwtZGV2LWludGVybmFsLXNlcnZpY2UtaG1hYzA="
   RUNNER_IMAGE: "keeperhub-runner:latest"
   IMAGE_PULL_POLICY: "Never"
   K8S_NAMESPACE: "local"

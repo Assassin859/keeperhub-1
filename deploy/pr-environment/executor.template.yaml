@@ -68,10 +68,10 @@ env:
   KEEPERHUB_API_URL:
     type: kv
     value: "http://keeperhub-pr-${PR_NUMBER}-common:3000"
-  KEEPERHUB_API_KEY:
+  INTERNAL_SERVICE_HMAC_SECRET:
     type: parameterStore
-    name: scheduler-service-api-key
-    parameter_name: /eks/techops-staging/keeperhub-scheduler/keeperhub-api-key
+    name: internal-service-hmac-secret
+    parameter_name: /eks/techops-staging/keeperhub/internal-service-hmac-secret
   AWS_REGION:
     type: kv
     value: "us-east-1"
@@ -110,6 +110,17 @@ env:
   K8S_NAMESPACE:
     type: kv
     value: "pr-${PR_NUMBER}"
+  # Hardened runner Job pods use a dedicated zero-RBAC SA (created by
+  # deploy/pr-environment/runner-sa.template.yaml) and pull secrets via
+  # secretKeyRef. In the PR env the executor Helm release is
+  # executor-pr-${PR_NUMBER}, so its External Secrets land as
+  # executor-pr-${PR_NUMBER}-common-<slug>; point the runner there.
+  RUNNER_SERVICE_ACCOUNT:
+    type: kv
+    value: "keeperhub-workflow-runner"
+  RUNNER_SECRET_PREFIX:
+    type: kv
+    value: "executor-pr-${PR_NUMBER}-common"
   HEALTH_PORT:
     type: kv
     value: "3080"

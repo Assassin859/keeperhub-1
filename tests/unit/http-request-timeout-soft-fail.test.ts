@@ -16,6 +16,7 @@ import { safeFetch } from "@/lib/safe-fetch";
 import {
   httpRequest,
   resolveFailOnError,
+  resolveHttpMethod,
   resolveTimeoutMs,
 } from "@/lib/workflow/nodes/http-request/perform";
 
@@ -98,6 +99,50 @@ describe("resolveFailOnError", () => {
 
   it("stays true for the string 'true'", () => {
     expect(resolveFailOnError("true")).toBe(true);
+  });
+});
+
+describe("resolveHttpMethod", () => {
+  it("defaults to POST when the editor never persisted a method", () => {
+    expect(resolveHttpMethod(undefined)).toBe("POST");
+  });
+
+  it("defaults to POST for an empty / whitespace string", () => {
+    expect(resolveHttpMethod("")).toBe("POST");
+    expect(resolveHttpMethod("   ")).toBe("POST");
+  });
+
+  it("preserves an explicitly configured method", () => {
+    expect(resolveHttpMethod("GET")).toBe("GET");
+    expect(resolveHttpMethod("DELETE")).toBe("DELETE");
+  });
+
+  it("uppercases so the GET-body guard matches regardless of casing", () => {
+    expect(resolveHttpMethod("post")).toBe("POST");
+    expect(resolveHttpMethod(" get ")).toBe("GET");
+  });
+});
+
+describe("httpRequest method resolution", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("sends POST with the body when httpMethod is missing from config", async () => {
+    // KEEP-723: a node saved without httpMethod must not fall back to GET, which
+    // would drop the body or throw "GET/HEAD method cannot have body".
+    mockedSafeFetch.mockResolvedValue(
+      mockResponse({ ok: true, status: 200, body: {} })
+    );
+
+    await httpRequest({
+      endpoint: "https://api.example.com/post",
+      httpBody: '{"a":"b"}',
+    });
+
+    const init = mockedSafeFetch.mock.calls[0][1];
+    expect(init?.method).toBe("POST");
+    expect(init?.body).toBe('{"a":"b"}');
   });
 });
 

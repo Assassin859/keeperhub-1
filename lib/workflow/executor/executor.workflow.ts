@@ -73,6 +73,7 @@ import {
   type TemplateResolutionTracker,
 } from "@/lib/workflow/executor/template-resolution";
 import { resolveConditionExpression } from "@/lib/workflow/nodes/condition/resolver";
+import { safeEvaluateCondition } from "@/lib/workflow/nodes/condition/safe-eval";
 import {
   type ConditionDecision,
   collectAllSkippedTargets,
@@ -194,7 +195,7 @@ export type WorkflowExecutionInput = {
   // low-cardinality label on error metrics so alerts can filter to managed
   // clients. Resolved by the caller via getOrgPlanLabel().
   organizationPlan?: string;
-  ownerId?: string;
+  createdBy?: string;
 };
 
 /**
@@ -323,11 +324,13 @@ type ConditionEvalResult = {
 };
 
 /**
- * Evaluate condition expression with template variable replacement
- * Uses Function constructor to evaluate user-defined conditions dynamically
+ * Evaluate condition expression with template variable replacement.
  *
- * Security: Expressions are validated before evaluation to prevent code injection.
- * Only comparison operators, logical operators, and whitelisted methods are allowed.
+ * Security (A-01): The transformed expression is evaluated by a safe AST
+ * interpreter (safeEvaluateCondition) that never constructs functions and
+ * never reaches host globals. It can only read the resolved __v/__b values and
+ * apply an allowlisted set of operators and methods. Expressions are still
+ * validated upfront for clear user-facing error messages.
  */
 // Exported for testing - KEEP-1284
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: KEEP-1284 validation requires comprehensive error checking
@@ -420,16 +423,10 @@ export function evaluateConditionExpression(
         evalContext = converted.evalContext;
       }
 
-      const varNames = Object.keys(evalContext);
-      const varValues = Object.values(evalContext);
-
-      // Safe to evaluate - expression has been validated
-      // Only contains: variables (__v0, __v1), operators, literals, and whitelisted methods
-      const evalFunc = new Function(
-        ...varNames,
-        `return (${transformedExpression});`
-      );
-      const result = evalFunc(...varValues);
+      // Safe AST interpreter (no new Function / no host access) for A-01.
+      // Only reads the resolved __v/__b values and applies allowlisted
+      // operators and methods.
+      const result = safeEvaluateCondition(transformedExpression, evalContext);
       return { result: Boolean(result), resolvedValues };
     } catch (error) {
       // KEEP-1284: Re-throw errors about missing data - these should not be silently swallowed
@@ -835,67 +832,180 @@ function formatCodeValue(value: unknown): string {
  * Handles both stored format {{@nodeId:Label.field}} and display format
  * {{Label.field}} (fallback).
  */
+// Character ranges [start, end) of `//` line comments and block comments in JS
+// source. String/template literals are tracked so a `//` or `{{...}}` inside a
+// string is NOT treated as a comment -- only genuine comments are returned.
+function computeCommentRanges(code: string): [number, number][] {
+  const ranges: [number, number][] = [];
+  const n = code.length;
+  let i = 0;
+  let stringDelim: string | null = null;
+  while (i < n) {
+    const c = code[i];
+    if (stringDelim) {
+      if (c === "\\") {
+        i += 2;
+        continue;
+      }
+      if (c === stringDelim) {
+        stringDelim = null;
+      }
+      i++;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      stringDelim = c;
+      i++;
+      continue;
+    }
+    if (c === "/" && code[i + 1] === "/") {
+      const start = i;
+      i += 2;
+      while (i < n && code[i] !== "\n") {
+        i++;
+      }
+      ranges.push([start, i]);
+      continue;
+    }
+    if (c === "/" && code[i + 1] === "*") {
+      const start = i;
+      i += 2;
+      while (i < n && !(code[i] === "*" && code[i + 1] === "/")) {
+        i++;
+      }
+      i = Math.min(i + 2, n);
+      ranges.push([start, i]);
+      continue;
+    }
+    i++;
+  }
+  return ranges;
+}
+
+function offsetInRanges(
+  offset: number,
+  ranges: [number, number][]
+): boolean {
+  return ranges.some(([start, end]) => offset >= start && offset < end);
+}
+
+function lineNumberAt(code: string, offset: number): number {
+  let line = 1;
+  const limit = Math.min(offset, code.length);
+  for (let i = 0; i < limit; i++) {
+    if (code[i] === "\n") {
+      line++;
+    }
+  }
+  return line;
+}
+
+function resolveStoredCodeRef(
+  full: string,
+  nodeId: string,
+  rest: string,
+  outputs: NodeOutputs,
+  tracker: TemplateResolutionTracker | undefined,
+  line: number
+): string {
+  const trimmedNodeId = nodeId.trim();
+  const sanitizedNodeId = trimmedNodeId.replace(/[^a-zA-Z0-9]/g, "_");
+  const output = outputs[sanitizedNodeId] ?? outputs[trimmedNodeId];
+  if (!output) {
+    recordUnresolved(tracker, {
+      token: full,
+      reason: "no-node",
+      detail: `Node "${trimmedNodeId}" has no output yet (line ${line}).`,
+    });
+    return full;
+  }
+  const { data } = output;
+  if (data === null || data === undefined) {
+    recordUnresolved(tracker, {
+      token: full,
+      reason: "no-data",
+      detail: `Node "${trimmedNodeId}" produced no data (line ${line}).`,
+    });
+    return "null";
+  }
+  const fieldPath = rest.includes(".")
+    ? rest.substring(rest.indexOf(".") + 1).trim()
+    : "";
+  const resolved = resolveFromOutputData(data, fieldPath);
+  if (resolved === undefined || resolved === null) {
+    recordUnresolved(tracker, {
+      token: full,
+      reason: "no-path",
+      detail: `Field "${fieldPath || "(whole output)"}" not found on node "${trimmedNodeId}" (line ${line}).`,
+    });
+    return "null";
+  }
+  return formatCodeValue(resolved);
+}
+
+function resolveDisplayCodeRef(
+  full: string,
+  displayRef: string,
+  outputs: NodeOutputs,
+  tracker: TemplateResolutionTracker | undefined,
+  line: number
+): string {
+  const resolved = resolveDisplayTemplate(displayRef, outputs);
+  if (resolved === undefined || resolved === null) {
+    recordUnresolved(tracker, {
+      token: full,
+      reason: "no-path",
+      detail: `Display reference "${displayRef}" did not resolve (line ${line}).`,
+    });
+    return "null";
+  }
+  return formatCodeValue(resolved);
+}
+
+// Matches a stored ref `{{@nodeId:Label.field}}` OR a display ref
+// `{{Label.field}}` in one pass so offsets align with the comment scan below.
+const CODE_TEMPLATE_PATTERN =
+  /\{\{@([^:]+):([^}]+)\}\}|\{\{([^@}][^}]*)\}\}/g;
+
 export function processCodeTemplates(
   code: string,
   outputs: NodeOutputs,
   tracker?: TemplateResolutionTracker
 ): string {
-  const storedPattern = /\{\{@([^:]+):([^}]+)\}\}/g;
-  const displayPattern = /\{\{([^@}][^}]*)\}\}/g;
+  // Refs inside comments or commented-out code are documentation, not
+  // dependencies: they must not be resolved or fail strict resolution. Scan the
+  // original code so match offsets line up with the comment ranges.
+  const commentRanges = computeCommentRanges(code);
 
-  let result = code.replace(
-    storedPattern,
-    (full, nodeId: string, rest: string) => {
-      const trimmedNodeId = nodeId.trim();
-      const sanitizedNodeId = trimmedNodeId.replace(/[^a-zA-Z0-9]/g, "_");
-      const output = outputs[sanitizedNodeId] ?? outputs[trimmedNodeId];
-      if (!output) {
-        recordUnresolved(tracker, {
-          token: full,
-          reason: "no-node",
-          detail: `Node "${trimmedNodeId}" has no output yet.`,
-        });
+  return code.replace(
+    CODE_TEMPLATE_PATTERN,
+    (
+      full: string,
+      storedNodeId: string | undefined,
+      storedRest: string | undefined,
+      displayRef: string | undefined,
+      offset: number
+    ) => {
+      if (offsetInRanges(offset, commentRanges)) {
         return full;
       }
-      const { data } = output;
-      if (data === null || data === undefined) {
-        recordUnresolved(tracker, {
-          token: full,
-          reason: "no-data",
-          detail: `Node "${trimmedNodeId}" produced no data.`,
-        });
-        return "null";
+      const line = lineNumberAt(code, offset);
+      if (storedNodeId !== undefined && storedRest !== undefined) {
+        return resolveStoredCodeRef(
+          full,
+          storedNodeId,
+          storedRest,
+          outputs,
+          tracker,
+          line
+        );
       }
-      const fieldPath = rest.includes(".")
-        ? rest.substring(rest.indexOf(".") + 1).trim()
-        : "";
-      const resolved = resolveFromOutputData(data, fieldPath);
-      if (resolved === undefined || resolved === null) {
-        recordUnresolved(tracker, {
-          token: full,
-          reason: "no-path",
-          detail: `Field "${fieldPath || "(whole output)"}" not found on node "${trimmedNodeId}".`,
-        });
-        return "null";
+      if (displayRef !== undefined) {
+        return resolveDisplayCodeRef(full, displayRef, outputs, tracker, line);
       }
-      return formatCodeValue(resolved);
+      return full;
     }
   );
-
-  result = result.replace(displayPattern, (full, displayRef: string) => {
-    const resolved = resolveDisplayTemplate(displayRef, outputs);
-    if (resolved === undefined || resolved === null) {
-      recordUnresolved(tracker, {
-        token: full,
-        reason: "no-path",
-        detail: `Display reference "${displayRef}" did not resolve.`,
-      });
-      return "null";
-    }
-    return formatCodeValue(resolved);
-  });
-
-  return result;
 }
 
 /**
@@ -1569,7 +1679,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     organizationName,
     organizationSlug,
     organizationPlan,
-    ownerId,
+    createdBy,
   } = input;
 
   console.log("[Workflow Executor] Input:", {
@@ -1590,7 +1700,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     ...(organizationSlug ? { org_slug: organizationSlug } : {}),
     ...(organizationPlan ? { plan: organizationPlan } : {}),
     ...(organizationName ? { org_name: organizationName } : {}),
-    ...(ownerId ? { owner_id: ownerId } : {}),
+    ...(createdBy ? { owner_id: createdBy } : {}),
   };
 
   // Enter async-local context so any logUserError/logSystemError called from
@@ -1602,7 +1712,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     org_id: organizationId,
     org_slug: organizationSlug,
     plan: organizationPlan,
-    owner_id: ownerId,
+    owner_id: createdBy,
   });
 
   // KEEP-612 detection signal. Single pass at run start covering both
@@ -1754,12 +1864,15 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       processedConfig.dbQuery = originalDbQuery;
     }
 
+    // Render the code now (so genuine unresolved refs in executable code land
+    // in the tracker), but attach it only AFTER the leftover-literal assert
+    // below. processCodeTemplates skips refs inside comments / commented-out
+    // code, so the rendered code must stay out of the generic leftover scan --
+    // otherwise a `{{...}}` left intact inside a comment would be re-flagged as
+    // an unresolved literal. The tracker is the authority for code-field refs.
+    let renderedCode: string | undefined;
     if (actionType === "code/run-code" && typeof originalCode === "string") {
-      processedConfig.code = processCodeTemplates(
-        originalCode,
-        currentOutputs,
-        tracker
-      );
+      renderedCode = processCodeTemplates(originalCode, currentOutputs, tracker);
     }
 
     // KEEP-468 hotfix: scan + assert BEFORE re-attaching condition fields.
@@ -1775,6 +1888,9 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       actionType,
     });
 
+    if (renderedCode !== undefined) {
+      processedConfig.code = renderedCode;
+    }
     if (originalCondition !== undefined) {
       processedConfig.condition = originalCondition;
     }
@@ -1831,7 +1947,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         executionId,
         organizationId,
         orgSlug: organizationSlug,
-        ownerId,
+        createdBy,
         workflowId,
       },
       runStep: async ({
@@ -1840,11 +1956,20 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         scopedOutputs: outputs,
         stepContext,
       }) =>
+        // Pass nodeMap + executionResults so a Condition inside the loop body
+        // gets the same dead-branch grace as a top-level Condition: a reference
+        // to a graph node that never executed (e.g. a convergence node that
+        // joins two mutually-exclusive branches) resolves to `undefined`
+        // instead of throwing, letting `doesNotExist`/`=== undefined` rules
+        // evaluate. Without this the body Condition fails closed with
+        // "references node ... but no output was found".
         await executeActionStep({
           actionType,
           config: processedConfig,
           outputs,
           context: stepContext,
+          nodeMap,
+          executionResults: results,
         }),
       // KEEP-543: Same KEEP-398/431 spurious-max-retries recovery pattern as
       // the top-level node executor, scoped to the current iteration.
@@ -1866,11 +1991,16 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
             return recovered ? { output: recovered.output } : null;
           }
         : undefined,
-      onSpuriousRecovery: ({ nodeId: bodyNodeId, iterationMeta: meta }) => {
+      onSpuriousRecovery: ({
+        nodeId: bodyNodeId,
+        iterationMeta: meta,
+        reason,
+      }) => {
         getMetricsCollector().incrementCounter(
           "workflow.executor.spurious_recovery.total",
           {
             source: "body_runner",
+            recovery_reason: reason,
             ...(workflowId ? { [LabelKeys.WORKFLOW_ID]: workflowId } : {}),
             ...(organizationId ? { [LabelKeys.ORG_ID]: organizationId } : {}),
             ...(organizationPlan ? { [LabelKeys.PLAN]: organizationPlan } : {}),
@@ -1956,6 +2086,9 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
     arrayLength: number;
     maxIterations: number;
     iterationsRan: number;
+    failedIterations: number;
+    firstFailureError?: string;
+    firstFailureNodeId?: string;
   }> {
     const {
       forEachNodeId,
@@ -2063,12 +2196,19 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
         );
       }
 
-      // If any body node failed, surface the error in the iteration result
+      // If any body node failed, surface the error in the iteration result.
+      // The `__forEachBodyFailure` marker lets the post-loop aggregation tell a
+      // genuine body failure apart from a successful iteration whose output
+      // happens to be shaped like `{ success: false }`.
       const bodyFailure = Object.entries(bodyResults).find(
         ([, r]) => !r.success
       );
       if (bodyFailure) {
+        console.log(
+          `[Workflow Executor] For Each "${getNodeName(forEachNode)}" iteration ${index} failed at node "${getNodeName(nodeMap.get(bodyFailure[0]) ?? forEachNode)}" (${bodyFailure[0]}): ${bodyFailure[1].error}`
+        );
         return {
+          __forEachBodyFailure: true as const,
           success: false as const,
           error: bodyFailure[1].error ?? "Body node failed",
           nodeId: bodyFailure[0],
@@ -2132,6 +2272,29 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       concurrencyLimit
     );
 
+    // KEEP-586: Detect genuine iteration-body failures. Without this they
+    // vanish into the Collect aggregate -- the Collect node and the For Each
+    // node both report success -- so the run is silently marked success even
+    // though a node that should have run did not. The caller (executeNode)
+    // uses these fields to fail the For Each node and surface it in the run.
+    const failedIterations = iterationResults.filter(
+      (
+        r
+      ): r is {
+        __forEachBodyFailure: true;
+        error?: string;
+        nodeId?: string;
+      } =>
+        typeof r === "object" &&
+        r !== null &&
+        (r as { __forEachBodyFailure?: unknown }).__forEachBodyFailure === true
+    );
+    if (failedIterations.length > 0) {
+      console.log(
+        `[Workflow Executor] For Each "${getNodeName(forEachNode)}": ${failedIterations.length}/${iterationResults.length} iteration(s) failed; first failing node ${failedIterations[0].nodeId}: ${failedIterations[0].error}`
+      );
+    }
+
     // 5. Mark body nodes as visited in the parent scope
     for (const bodyNodeId of bodyNodeIds) {
       currentVisited.add(bodyNodeId);
@@ -2172,7 +2335,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
             forEachNodeId,
             organizationId,
             orgSlug: organizationSlug,
-            ownerId,
+            createdBy,
             workflowId,
           } satisfies StepContext,
         });
@@ -2212,6 +2375,9 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
       arrayLength: resolvedArray.length,
       maxIterations,
       iterationsRan: itemsToProcess.length,
+      failedIterations: failedIterations.length,
+      firstFailureError: failedIterations[0]?.error,
+      firstFailureNodeId: failedIterations[0]?.nodeId,
     };
   }
 
@@ -2386,7 +2552,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           nodeType: node.data.type,
           organizationId,
           orgSlug: organizationSlug,
-          ownerId,
+          createdBy,
           workflowId,
         };
 
@@ -2482,7 +2648,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
           triggerType: workflowTriggerType,
           organizationId,
           orgSlug: organizationSlug,
-          ownerId,
+          createdBy,
           workflowId,
         };
 
@@ -2594,7 +2760,24 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
             label: getNodeName(node),
             data: iterationSummary,
           };
-          results[nodeId] = { success: true, data: iterationSummary };
+          // KEEP-586: A failed iteration body must fail the For Each node so
+          // computeFinalSuccess marks the run as error instead of silently
+          // reporting success while the loop dropped work mid-iteration.
+          const feFailed =
+            typeof iterationSummary === "object" &&
+            iterationSummary !== null &&
+            "failedIterations" in iterationSummary &&
+            (iterationSummary as { failedIterations: number })
+              .failedIterations > 0;
+          results[nodeId] = feFailed
+            ? {
+                success: false,
+                error:
+                  (iterationSummary as { firstFailureError?: string })
+                    .firstFailureError ?? "For Each iteration body failed",
+                data: iterationSummary,
+              }
+            : { success: true, data: iterationSummary };
         } else if (currentActionType === "Condition") {
           // For condition nodes, route to true/false handle targets
           const conditionResult = (result.data as { condition?: boolean })
@@ -2615,6 +2798,7 @@ export async function executeWorkflow(input: WorkflowExecutionInput) {
                 notTakenHandle,
                 edgesBySourceHandle
               ),
+              takenTargets: handleTargets,
             });
             await executeReadyDownstream(nodeId, handleTargets, visited);
 

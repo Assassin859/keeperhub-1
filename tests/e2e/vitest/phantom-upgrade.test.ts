@@ -7,7 +7,12 @@ import {
   type DbSchema,
   upgradePhantomToPending,
 } from "../../../keeperhub-executor/lib/db-helpers";
-import { users, workflowExecutions, workflows } from "../../../lib/db/schema";
+import {
+  organization,
+  users,
+  workflowExecutions,
+  workflows,
+} from "../../../lib/db/schema";
 
 // tests/setup.ts globally mocks @/lib/db. This suite drives
 // upgradePhantomToPending against a real database via its own handle, so
@@ -44,11 +49,13 @@ describe.skipIf(SKIP)("upgradePhantomToPending", () => {
   let execDb: PostgresJsDatabase<DbSchema>;
 
   const ownerId = `${PREFIX}user`;
+  const orgId = `${PREFIX}org`;
   const workflowId = `${PREFIX}wf`;
 
   async function cleanup(): Promise<void> {
     await queryClient`DELETE FROM workflow_executions WHERE id LIKE ${`${PREFIX}%`}`;
     await queryClient`DELETE FROM workflows WHERE id LIKE ${`${PREFIX}%`}`;
+    await queryClient`DELETE FROM organization WHERE id LIKE ${`${PREFIX}%`}`;
     await queryClient`DELETE FROM users WHERE id LIKE ${`${PREFIX}%`}`;
   }
 
@@ -87,10 +94,17 @@ describe.skipIf(SKIP)("upgradePhantomToPending", () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     });
+    await db.insert(organization).values({
+      id: orgId,
+      name: orgId,
+      slug: orgId,
+      createdAt: new Date(),
+    });
     await db.insert(workflows).values({
       id: workflowId,
       name: workflowId,
       userId: ownerId,
+      organizationId: orgId,
       nodes: [],
       edges: [],
       visibility: "private",

@@ -117,10 +117,27 @@ export async function POST(
           return { success: false, error: "NEW_OWNER_SAME_AS_CURRENT" };
         }
 
+        // Delete the outgoing owner first, then promote the incoming one.
+        // The DB enforces at most one owner per org via a partial unique index
+        // on member(organization_id) WHERE role = 'owner'. Promoting before
+        // deleting would transiently create two owner rows and violate the
+        // IMMEDIATE constraint within the transaction.
+        await tx.delete(member).where(eq(member.id, currentMember.id));
+
         await tx
           .update(member)
           .set({ role: "owner" })
           .where(eq(member.id, newOwnerMemberId));
+
+        // Current member already deleted above; skip the unconditional delete.
+        if (getActiveOrgId(session) === organizationId) {
+          await tx
+            .update(sessions)
+            .set({ activeOrganizationId: null })
+            .where(eq(sessions.token, hashSessionToken(sessionToken)));
+        }
+
+        return { success: true };
       }
 
       await tx.delete(member).where(eq(member.id, currentMember.id));

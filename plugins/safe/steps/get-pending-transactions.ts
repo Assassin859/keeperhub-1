@@ -6,6 +6,7 @@ import { ErrorCategory, logUserError } from "@/lib/logging";
 import { withPluginMetrics } from "@/lib/metrics/instrumentation/plugin";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { type StepInput, withStepLogging } from "@/lib/workflow/executor/step-handler";
+import { safeFetch } from "@/lib/safe-fetch";
 import { getErrorMessage } from "@/lib/utils";
 import type { SafeCredentials } from "../credentials";
 
@@ -190,12 +191,14 @@ async function stepHandler(
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
     const [safeInfoResponse, txResponse] = await Promise.all([
-      fetch(`${baseUrl}/`, {
+      safeFetch(`${baseUrl}/`, {
+        plugin: "safe",
         headers: authHeaders,
         redirect: "follow",
         signal: controller.signal,
       }),
-      fetch(txUrl, {
+      safeFetch(txUrl, {
+        plugin: "safe",
         headers: authHeaders,
         redirect: "follow",
         signal: controller.signal,
@@ -279,7 +282,7 @@ export async function getPendingTransactionsStep(
 ): Promise<GetPendingTransactionsResult> {
   "use step";
 
-  const credentials = await fetchCredentials(input.integrationId);
+  const credentials = await fetchCredentials(input.integrationId, { organizationId: input._context?.organizationId ?? null });
 
   return withPluginMetrics(
     {
