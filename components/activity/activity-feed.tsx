@@ -251,6 +251,23 @@ function mergeFallback(
   );
 }
 
+// Stable keys for the placeholder rows so the skeleton list doesn't key on
+// the array index.
+const SKELETON_KEYS = ["a", "b", "c", "d", "e", "f"] as const;
+
+function SkeletonRow(): React.ReactElement {
+  return (
+    <li className="flex items-start gap-3 py-2.5">
+      <Skeleton className="size-7 shrink-0 rounded-full" />
+      <div className="flex-1 space-y-2 py-0.5">
+        <Skeleton className="h-3.5 w-2/5" />
+        <Skeleton className="h-3 w-3/5" />
+        <Skeleton className="h-3 w-1/4" />
+      </div>
+    </li>
+  );
+}
+
 export function ActivityFeed({
   params,
   fallback,
@@ -275,23 +292,23 @@ export function ActivityFeed({
     JSON.stringify({ resourceType, resourceId, action, limit })
   );
 
-  if (loading) {
+  // Only blank to skeletons on the very first load. Page changes and silent
+  // refetches keep the current rows mounted (the hook retains `events` until
+  // the next page resolves), so the modal height stays put instead of
+  // collapsing and re-expanding on every navigation.
+  if (loading && events.length === 0 && !error) {
     return (
-      <div className="space-y-3">
-        {[0, 1, 2].map((i) => (
-          <div className="flex items-center gap-3" key={i}>
-            <Skeleton className="size-7 rounded-full" />
-            <div className="flex-1 space-y-1.5">
-              <Skeleton className="h-3 w-2/3" />
-              <Skeleton className="h-2.5 w-1/3" />
-            </div>
-          </div>
-        ))}
-      </div>
+      <ul className="divide-y divide-border/60">
+        {SKELETON_KEYS.slice(0, Math.min(limit ?? 3, SKELETON_KEYS.length)).map(
+          (key) => (
+            <SkeletonRow key={key} />
+          )
+        )}
+      </ul>
     );
   }
 
-  if (error) {
+  if (error && events.length === 0) {
     return (
       <p className="py-4 text-muted-foreground text-sm">
         Failed to load activity.
@@ -310,9 +327,14 @@ export function ActivityFeed({
   }
 
   const groups = groupByDate(merged, (e) => e.createdAt);
+  // When the feed spans multiple pages, hold a floor height so paging onto a
+  // shorter last page doesn't resize the modal.
+  const paged = Boolean(meta && meta.totalPages > 1);
 
   return (
-    <div className="thin-scrollbar space-y-4 overflow-y-auto">
+    <div
+      className={`thin-scrollbar space-y-4 overflow-y-auto ${paged ? "min-h-80" : ""}`}
+    >
       {groups.map((group) => (
         <div key={group.label}>
           <p className="sticky top-0 bg-background py-1 font-medium text-muted-foreground text-xs uppercase tracking-wide">
