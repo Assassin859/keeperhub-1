@@ -1,5 +1,6 @@
 "use client";
 
+import type { LucideIcon } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 
@@ -43,5 +44,35 @@ export function ActorAvatar({
       ) : null}
       <AvatarFallback className="text-[11px]">{initials(actor)}</AvatarFallback>
     </Avatar>
+  );
+}
+
+/**
+ * Actor avatar with a small corner badge (e.g. an add/change/remove glyph).
+ * The badge disc is painted with the page background so it cleanly punches out
+ * of the avatar instead of letting it bleed through; `badgeClassName` adds the
+ * colored tint + icon color on top of that opaque base.
+ */
+export function ActorAvatarBadge({
+  actor,
+  icon: Icon,
+  badgeClassName,
+}: {
+  actor: Actor | null;
+  icon: LucideIcon;
+  badgeClassName?: string;
+}): React.ReactElement {
+  return (
+    <div className="relative shrink-0">
+      <ActorAvatar actor={actor} />
+      <span
+        className={cn(
+          "-right-1 -bottom-1 absolute flex size-4 items-center justify-center rounded-full border border-border bg-card ring-2 ring-background",
+          badgeClassName
+        )}
+      >
+        <Icon className="size-2.5" />
+      </span>
+    </div>
   );
 }

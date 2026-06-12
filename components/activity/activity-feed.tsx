@@ -11,7 +11,7 @@ import {
   type AuditActionKind,
   describeAuditAction,
 } from "@/lib/security/audit-actions";
-import { ActorAvatar, actorLabel } from "./actor-avatar";
+import { ActorAvatarBadge, actorLabel } from "./actor-avatar";
 import { Pager } from "./pager";
 
 type FeedParams = {
@@ -28,9 +28,9 @@ const KIND_ICON: Record<AuditActionKind, typeof Plus> = {
 };
 
 const KIND_COLOR: Record<AuditActionKind, string> = {
-  add: "bg-keeperhub-green/15 text-keeperhub-green",
-  remove: "bg-destructive/15 text-destructive",
-  change: "bg-amber-400/15 text-amber-400",
+  add: "text-keeperhub-green",
+  remove: "text-destructive",
+  change: "text-amber-400",
 };
 
 function metadataLine(event: SecurityAuditEvent): string | null {
@@ -111,6 +111,12 @@ function diffEntries(diff: unknown): DiffEntry[] {
       rhs?: unknown;
     };
     const path = c.path ?? [];
+    // Root-level changes (no field path) are whole-object create/delete diffs;
+    // the action phrase ("created a project") already says it, so skip them
+    // rather than printing "Value: [changed]".
+    if (path.length === 0) {
+      continue;
+    }
     const fieldKey = String(path.at(-1) ?? "");
     if (HIDDEN_FIELDS.has(fieldKey)) {
       continue;
@@ -171,14 +177,11 @@ function ActivityRow({
   const email = actor?.name ? actor.email : null;
   return (
     <li className="flex items-start gap-3 py-2.5">
-      <div className="relative shrink-0">
-        <ActorAvatar actor={actor} />
-        <span
-          className={`-right-1 -bottom-1 absolute flex size-4 items-center justify-center rounded-full ring-2 ring-background ${KIND_COLOR[kind]}`}
-        >
-          <Icon className="size-2.5" />
-        </span>
-      </div>
+      <ActorAvatarBadge
+        actor={actor}
+        badgeClassName={KIND_COLOR[kind]}
+        icon={Icon}
+      />
       <div className="min-w-0 flex-1">
         <p className="text-sm leading-snug">
           <span className="font-medium">{actorLabel(actor)}</span>
