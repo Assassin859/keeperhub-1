@@ -1,18 +1,20 @@
 "use client";
 
 import { useSetAtom } from "jotai";
-import { Pencil, Trash2 } from "lucide-react";
+import { History, Pencil, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   DeleteConnectionOverlay,
   EditConnectionOverlay,
 } from "@/components/overlays/edit-connection-overlay";
+import { IntegrationActivityOverlay } from "@/components/overlays/integration-activity-overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
 import { Button } from "@/components/ui/button";
 import { IntegrationIcon } from "@/components/ui/integration-icon";
 import { Spinner } from "@/components/ui/spinner";
 import { api, type Integration } from "@/lib/api-client";
+import { useActiveMember } from "@/lib/hooks/use-organization";
 import { integrationsAtom } from "@/lib/integrations-store";
 import { getIntegrationLabels } from "@/plugins/registry";
 
@@ -31,6 +33,7 @@ export function IntegrationsManager({
   filter = "",
 }: IntegrationsManagerProps) {
   const { push } = useOverlay();
+  const { isAdmin } = useActiveMember();
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [loading, setLoading] = useState(true);
   const [_testingId, setTestingId] = useState<string | null>(null);
@@ -194,6 +197,19 @@ export function IntegrationsManager({
                   <span className="text-xs">Test</span>
                 )}
               </Button> */}
+              {isAdmin && (
+                <Button
+                  className="size-7"
+                  onClick={() =>
+                    push(IntegrationActivityOverlay, { integration })
+                  }
+                  size="icon"
+                  title="View activity"
+                  variant="outline"
+                >
+                  <History className="size-3" />
+                </Button>
+              )}
               <Button
                 className="size-7"
                 onClick={() => handleEdit(integration)}

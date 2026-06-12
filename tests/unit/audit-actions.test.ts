@@ -13,6 +13,15 @@ describe("describeAuditAction", () => {
     );
   });
 
+  it("maps integration actions", () => {
+    expect(describeAuditAction("integration.created")).toEqual({
+      phrase: "added an integration",
+      kind: "add",
+    });
+    expect(describeAuditAction("integration.updated").kind).toBe("change");
+    expect(describeAuditAction("integration.deleted").kind).toBe("remove");
+  });
+
   it("humanizes an unknown action as a change", () => {
     expect(describeAuditAction("widget.frobnicated")).toEqual({
       phrase: "widget frobnicated",

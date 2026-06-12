@@ -1,12 +1,16 @@
+import { and, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { db } from "@/lib/db";
 import {
   createIntegration,
   ensureWalletIntegration,
   getIntegrations,
 } from "@/lib/db/integrations";
+import { member, users } from "@/lib/db/schema";
 import { ApiErrorCodes, apiError } from "@/lib/errors/api-envelope";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import type {
   IntegrationConfig,
   IntegrationType,
@@ -26,7 +30,11 @@ export type GetIntegrationsResponse = {
    * `onBehalfOf` (KEEP-484).
    */
   address: string | null;
-  // Config is intentionally excluded for security
+  // Creator identity (for the activity-history fallback). Config is
+  // intentionally excluded for security.
+  createdByName?: string | null;
+  createdByEmail?: string | null;
+  createdByRole?: string | null;
 }[];
 
 export type CreateIntegrationRequest = {
@@ -107,17 +115,49 @@ export async function GET(request: Request) {
       organizationId
     );
 
+    // Enrich creators (name/email + org role) so the activity-history fallback
+    // can attribute a pre-audit "added" entry to whoever created it.
+    const creatorIds = [
+      ...new Set(integrations.map((i) => i.createdBy).filter(Boolean)),
+    ] as string[];
+    const creators =
+      creatorIds.length > 0
+        ? await db
+            .select({
+              id: users.id,
+              name: users.name,
+              email: users.email,
+              role: member.role,
+            })
+            .from(users)
+            .leftJoin(
+              member,
+              and(
+                eq(member.userId, users.id),
+                eq(member.organizationId, organizationId ?? "")
+              )
+            )
+            .where(inArray(users.id, creatorIds))
+        : [];
+    const creatorMap = new Map(creators.map((c) => [c.id, c]));
+
     // Return integrations without config for security
     const response: GetIntegrationsResponse = integrations.map(
-      (integration) => ({
-        id: integration.id,
-        name: integration.name,
-        type: integration.type,
-        isManaged: integration.isManaged ?? false,
-        createdAt: integration.createdAt.toISOString(),
-        updatedAt: integration.updatedAt.toISOString(),
-        address: integration.address,
-      })
+      (integration) => {
+        const creator = creatorMap.get(integration.createdBy);
+        return {
+          id: integration.id,
+          name: integration.name,
+          type: integration.type,
+          isManaged: integration.isManaged ?? false,
+          createdAt: integration.createdAt.toISOString(),
+          updatedAt: integration.updatedAt.toISOString(),
+          address: integration.address,
+          createdByName: creator?.name ?? null,
+          createdByEmail: creator?.email ?? null,
+          createdByRole: creator?.role ?? null,
+        };
+      }
     );
 
     return NextResponse.json(response);
@@ -188,6 +228,21 @@ export async function POST(request: Request) {
       type: body.type,
       config: body.config,
       organizationId,
+    });
+
+    // Record only non-secret metadata -- never the config (encrypted creds).
+    await recordAuditEvent({
+      actor: {
+        userId,
+        organizationId,
+        authMethod: authContext.authMethod,
+        apiKeyId: authContext.apiKeyId,
+      },
+      action: "integration.created",
+      resourceType: "integration",
+      resourceId: integration.id,
+      after: { name: integration.name, type: integration.type },
+      metadata: buildAuditMetadata(request),
     });
 
     const response: CreateIntegrationResponse = {

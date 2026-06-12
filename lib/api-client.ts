@@ -396,6 +396,10 @@ export type Integration = {
   isManaged?: boolean;
   createdAt: string;
   updatedAt: string;
+  // Creator identity, for the activity-history fallback.
+  createdByName?: string | null;
+  createdByEmail?: string | null;
+  createdByRole?: string | null;
 };
 
 export type IntegrationWithConfig = Integration & {
