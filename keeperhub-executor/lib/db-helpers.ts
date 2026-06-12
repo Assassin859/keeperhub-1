@@ -58,6 +58,35 @@ export async function updateExecutionStatus(
     );
 }
 
+/**
+ * KEEP-693: upgrade a pre-created 'phantom' execution row to 'pending' in place
+ * and stamp its input.
+ *
+ * The scheduler/event-tracker pre-creates a 'phantom' row and passes its id on
+ * the SQS message; the executor calls this to claim it. The compare-and-set on
+ * status='phantom' makes the claim idempotent: a duplicate SQS delivery (or a
+ * missing phantom, when the best-effort create failed, or one already advanced
+ * past phantom) matches no row and returns false, so the caller falls back to a
+ * fresh insert and a run is never dropped.
+ */
+export async function upgradePhantomToPending(
+  db: PostgresJsDatabase<DbSchema>,
+  executionId: string,
+  input: Record<string, unknown>
+): Promise<boolean> {
+  const result = await db
+    .update(workflowExecutions)
+    .set({ status: "pending", input })
+    .where(
+      and(
+        eq(workflowExecutions.id, executionId),
+        eq(workflowExecutions.status, "phantom")
+      )
+    )
+    .returning({ id: workflowExecutions.id });
+  return result.length > 0;
+}
+
 export async function initializeExecutionProgress(
   db: PostgresJsDatabase<DbSchema>,
   executionId: string,

@@ -52,6 +52,7 @@ import { resolveDispatchTarget } from "./execution-mode";
 import { checkWorkflowFeaturesForExecutor } from "./feature-guard";
 import { executeInProcess } from "./in-process";
 import { createWorkflowJob } from "./k8s-job";
+import { upgradePhantomToPending } from "./lib/db-helpers";
 import { applyCounterDeltas, isIngestPayload } from "./lib/metrics-shipping";
 import { toJsonSafe } from "./lib/serialize";
 import { assertTurnkeyEnvForActiveWallets } from "./startup-checks";
@@ -188,6 +189,9 @@ async function dispatchExecution(params: {
               error instanceof Error
                 ? `Failed to create job: ${error.message}`
                 : "Failed to create job",
+            errorCode: "P-0002",
+            errorType: "system",
+            errorCategory: "infrastructure",
             completedAt: new Date(),
           })
           .where(eq(workflowExecutions.id, executionId));
@@ -291,31 +295,60 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     // instead of the trigger silently vanishing. Matches the shape of a regular
     // step failure (status=error, completedAt set) so the rest of the UI
     // and metrics pipeline pick it up uniformly.
-    const blockedExecutionId = generateId();
     const blockedInput = buildInput(message);
     const blockedUserId =
       "userId" in message ? message.userId : workflow.userId;
-    // KEEP-612: attribute the source so blocked scheduled/block/event rows
-    // are not NULL in the audit columns. No client request here (SQS
-    // dispatch), so ip/country/key are correctly left null.
-    const blockedAttribution = buildAttribution({ source: triggerType });
-    await withBackstopCapture(
-      { workflowId, userId: blockedUserId, source: triggerType },
-      () =>
-        db.insert(workflowExecutions).values({
-          id: blockedExecutionId,
-          workflowId,
-          userId: blockedUserId,
+
+    // KEEP-693: if a phantom row was pre-created for this trigger, resolve it
+    // in place to the blocked (billing/user) state rather than inserting a
+    // second row -- and so the reaper does not later age the orphaned phantom
+    // to a system P-code. Falls through to an insert when there is no phantom.
+    let blockedResolved = false;
+    if (message.executionId) {
+      const resolved = await db
+        .update(workflowExecutions)
+        .set({
           status: "error",
-          input: toJsonSafe(blockedInput) as Record<string, unknown>,
           error: errorMessage,
           errorCategory: "billing",
           errorType: "user",
-          startedAt: new Date(),
+          input: toJsonSafe(blockedInput) as Record<string, unknown>,
           completedAt: new Date(),
-          ...blockedAttribution,
         })
-    );
+        .where(
+          and(
+            eq(workflowExecutions.id, message.executionId),
+            eq(workflowExecutions.status, "phantom")
+          )
+        )
+        .returning({ id: workflowExecutions.id });
+      blockedResolved = resolved.length > 0;
+    }
+
+    if (!blockedResolved) {
+      const blockedExecutionId = generateId();
+      // KEEP-612: attribute the source so blocked scheduled/block/event rows
+      // are not NULL in the audit columns. No client request here (SQS
+      // dispatch), so ip/country/key are correctly left null.
+      const blockedAttribution = buildAttribution({ source: triggerType });
+      await withBackstopCapture(
+        { workflowId, userId: blockedUserId, source: triggerType },
+        () =>
+          db.insert(workflowExecutions).values({
+            id: blockedExecutionId,
+            workflowId,
+            userId: blockedUserId,
+            status: "error",
+            input: toJsonSafe(blockedInput) as Record<string, unknown>,
+            error: errorMessage,
+            errorCategory: "billing",
+            errorType: "user",
+            startedAt: new Date(),
+            completedAt: new Date(),
+            ...blockedAttribution,
+          })
+      );
+    }
     return;
   }
 
@@ -330,28 +363,49 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     );
   }
 
-  const executionId = generateId();
   const input = buildInput(message);
   const userId = "userId" in message ? message.userId : workflow.userId;
+  const serializedInput = toJsonSafe(input) as Record<string, unknown>;
 
-  // KEEP-612: this is the insert for ALL SQS-dispatched runs (schedule /
-  // block / event). The executor pre-creates the row and downstream
-  // dispatch (executeViaApi / k8s) reuses it, so the app-route attribution
-  // never runs here -- set it directly. Only trigger_source applies: SQS
-  // dispatch has no inbound client request, so ip/country/api-key stay null.
-  // withBackstopCapture emits security.backstop_execution_blocked if the
-  // 0082 trigger rejects (e.g. owner deactivated in the check->insert race).
-  const attribution = buildAttribution({ source: triggerType });
-  await withBackstopCapture({ workflowId, userId, source: triggerType }, () =>
-    db.insert(workflowExecutions).values({
-      id: executionId,
-      workflowId,
-      userId,
-      status: "pending",
-      input: toJsonSafe(input) as Record<string, unknown>,
-      ...attribution,
-    })
-  );
+  // KEEP-693: unified phantom row. The scheduler/event-tracker pre-creates a
+  // 'phantom' row and passes its id on the message; upgrade it to 'pending' in
+  // place (CAS on status='phantom'). The generated id is the fallback for when
+  // there is no phantom to upgrade -- a legacy message with no id, or a phantom
+  // that is missing (best-effort create failed) or already advanced (a
+  // duplicate SQS delivery won the upgrade) -- so a run is never dropped.
+  let executionId = generateId();
+  let upgraded = false;
+  if (message.executionId) {
+    upgraded = await upgradePhantomToPending(
+      db,
+      message.executionId,
+      serializedInput
+    );
+    if (upgraded) {
+      executionId = message.executionId;
+    }
+  }
+
+  if (!upgraded) {
+    // KEEP-612: insert for SQS-dispatched runs with no phantom to upgrade.
+    // Downstream dispatch (executeViaApi / k8s) reuses this row, so the
+    // app-route attribution never runs here -- set it directly. Only
+    // trigger_source applies: SQS dispatch has no inbound client request, so
+    // ip/country/api-key stay null. withBackstopCapture emits
+    // security.backstop_execution_blocked if the 0082 trigger rejects (e.g.
+    // owner deactivated in the check->insert race).
+    const attribution = buildAttribution({ source: triggerType });
+    await withBackstopCapture({ workflowId, userId, source: triggerType }, () =>
+      db.insert(workflowExecutions).values({
+        id: executionId,
+        workflowId,
+        userId,
+        status: "pending",
+        input: serializedInput,
+        ...attribution,
+      })
+    );
+  }
 
   console.log(`[Executor] Created execution record: ${executionId}`);
 
@@ -398,6 +452,9 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
           error instanceof Error
             ? `Dispatch failed: ${error.message}`
             : "Dispatch failed",
+        errorCode: "P-0004",
+        errorType: "system",
+        errorCategory: "infrastructure",
         completedAt: new Date(),
       })
       .where(
