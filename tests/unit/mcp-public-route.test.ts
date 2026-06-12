@@ -187,4 +187,46 @@ describe("/mcp/public — per-IP rate limiting (c)", () => {
     );
     expect(callBucket).toBeUndefined();
   });
+
+  it("advertises the call-bucket limit (10) on a successful tools/call", async () => {
+    // List bucket allows; call bucket is the binding limit at 10.
+    mockCheckIpRateLimit.mockImplementation((_key: string, limit: number) => ({
+      allowed: true,
+      limit,
+      remaining: limit - 1,
+      reset: 1_700_000_000,
+    }));
+    mockGetSession.mockReturnValue({
+      organizationId: "__anon_public__",
+      scope: "mcp:public",
+      transport: { handleRequest: mockHandleRequest },
+    });
+
+    const response = await POST(
+      makeRequest({ "mcp-session-id": "anon-session" }, TOOLS_CALL_BODY)
+    );
+
+    expect(response.headers.get("X-RateLimit-Limit")).toBe("10");
+    expect(response.headers.get("X-RateLimit-Remaining")).toBe("9");
+  });
+
+  it("advertises the list-bucket limit (60) on a non-call success", async () => {
+    mockCheckIpRateLimit.mockImplementation((_key: string, limit: number) => ({
+      allowed: true,
+      limit,
+      remaining: limit - 1,
+      reset: 1_700_000_000,
+    }));
+    mockGetSession.mockReturnValue({
+      organizationId: "__anon_public__",
+      scope: "mcp:public",
+      transport: { handleRequest: mockHandleRequest },
+    });
+
+    const response = await POST(
+      makeRequest({ "mcp-session-id": "anon-session" }, TOOLS_LIST_BODY)
+    );
+
+    expect(response.headers.get("X-RateLimit-Limit")).toBe("60");
+  });
 });

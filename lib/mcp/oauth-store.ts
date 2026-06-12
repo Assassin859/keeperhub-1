@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { eq, lt } from "drizzle-orm";
+import { and, eq, lt } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   mcpOauthAuthCodes,
@@ -9,6 +9,10 @@ import {
 
 const AUTH_CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+function hashToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
 
 export type AuthorizationCode = {
   code: string;
@@ -34,6 +38,7 @@ export type RefreshTokenEntry = {
 export type OAuthClient = {
   clientId: string;
   clientSecretHash: string;
+  tokenEndpointAuthMethod: string;
   clientName: string;
   redirectUris: string[];
   scopes: string[];
@@ -44,7 +49,7 @@ export type OAuthClient = {
 
 export async function storeAuthCode(entry: AuthorizationCode): Promise<void> {
   await db.insert(mcpOauthAuthCodes).values({
-    code: entry.code,
+    code: hashToken(entry.code),
     clientId: entry.clientId,
     redirectUri: entry.redirectUri,
     scope: entry.scope,
@@ -59,10 +64,11 @@ export async function storeAuthCode(entry: AuthorizationCode): Promise<void> {
 export async function getAuthCode(
   code: string
 ): Promise<AuthorizationCode | undefined> {
+  const codeHash = hashToken(code);
   const rows = await db
     .select()
     .from(mcpOauthAuthCodes)
-    .where(eq(mcpOauthAuthCodes.code, code))
+    .where(eq(mcpOauthAuthCodes.code, codeHash))
     .limit(1);
 
   const row = rows[0];
@@ -71,12 +77,14 @@ export async function getAuthCode(
   }
 
   if (Date.now() > row.expiresAt.getTime()) {
-    await db.delete(mcpOauthAuthCodes).where(eq(mcpOauthAuthCodes.code, code));
+    await db
+      .delete(mcpOauthAuthCodes)
+      .where(eq(mcpOauthAuthCodes.code, codeHash));
     return undefined;
   }
 
   return {
-    code: row.code,
+    code,
     clientId: row.clientId,
     redirectUri: row.redirectUri,
     scope: row.scope,
@@ -89,7 +97,9 @@ export async function getAuthCode(
 }
 
 export async function deleteAuthCode(code: string): Promise<void> {
-  await db.delete(mcpOauthAuthCodes).where(eq(mcpOauthAuthCodes.code, code));
+  await db
+    .delete(mcpOauthAuthCodes)
+    .where(eq(mcpOauthAuthCodes.code, hashToken(code)));
 }
 
 export async function cleanupExpiredAuthCodes(): Promise<void> {
@@ -98,14 +108,11 @@ export async function cleanupExpiredAuthCodes(): Promise<void> {
     .where(lt(mcpOauthAuthCodes.expiresAt, new Date()));
 }
 
-function hashToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
-}
-
 export async function storeOAuthClient(client: OAuthClient): Promise<void> {
   await db.insert(mcpOauthClients).values({
     clientId: client.clientId,
     clientSecretHash: client.clientSecretHash,
+    tokenEndpointAuthMethod: client.tokenEndpointAuthMethod,
     clientName: client.clientName,
     redirectUris: client.redirectUris,
     scopes: client.scopes,
@@ -131,6 +138,7 @@ export async function getOAuthClient(
   return {
     clientId: row.clientId,
     clientSecretHash: row.clientSecretHash,
+    tokenEndpointAuthMethod: row.tokenEndpointAuthMethod,
     clientName: row.clientName,
     redirectUris: row.redirectUris,
     scopes: row.scopes,
@@ -191,6 +199,25 @@ export async function deleteRefreshToken(token: string): Promise<void> {
   await db
     .delete(mcpOauthRefreshTokens)
     .where(eq(mcpOauthRefreshTokens.tokenHash, tokenHash));
+}
+
+/**
+ * Revoke every MCP OAuth refresh token a user holds for a given organization.
+ * Used when a user leaves or is removed from an org so their renewable 30-day
+ * credential cannot be cycled into fresh org-scoped access once membership ends.
+ */
+export async function revokeRefreshTokensForUserOrg(
+  userId: string,
+  organizationId: string
+): Promise<void> {
+  await db
+    .delete(mcpOauthRefreshTokens)
+    .where(
+      and(
+        eq(mcpOauthRefreshTokens.userId, userId),
+        eq(mcpOauthRefreshTokens.organizationId, organizationId)
+      )
+    );
 }
 
 export { AUTH_CODE_TTL_MS, REFRESH_TOKEN_TTL_MS };

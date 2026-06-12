@@ -71,7 +71,7 @@ export async function getAddressCountersStep(
   "use step";
 
   const credentials = input.integrationId
-    ? await fetchCredentials(input.integrationId)
+    ? await fetchCredentials(input.integrationId, { organizationId: input._context?.organizationId ?? null })
     : {};
 
   return withPluginMetrics(

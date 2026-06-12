@@ -1,12 +1,12 @@
 name: k6 Load Test
 
 on:
-  # Weekly automated run against staging every Saturday 20:00 UTC.
-  # Uses input defaults below (environment=staging, 25 VUs, 65 wf/VU, 5 min observe, 16s ramp).
-  # Timing rationale: Sat evening covers all TZs (Sat 17:00 ART, Sat 21:00 CET, Sun 07:00 AEDT)
-  # — nobody working, results ready Sunday morning.
+  # Weekly automated run against staging every Sunday 04:00 UTC.
+  # Uses input defaults below (environment=staging, 5 VUs, 30 wf/VU, 5 min observe, 30s ramp).
+  # Sized to ~10x average prod concurrent executions; scheduled in the quietest
+  # weekly traffic window (results ready Sunday morning).
   schedule:
-    - cron: '0 20 * * 6'
+    - cron: '0 4 * * 0'
   workflow_dispatch:
     inputs:
       test_mode:
@@ -41,12 +41,12 @@ on:
         description: '[execution] Number of concurrent VUs'
         required: false
         type: string
-        default: '25'
+        default: '5'
       wf_per_vu:
         description: '[execution] Workflows created per VU'
         required: false
         type: string
-        default: '65'
+        default: '30'
       duration:
         description: '[execution] Sustained load duration (e.g. 60s, 5m)'
         required: false
@@ -56,7 +56,7 @@ on:
         description: '[execution] Seconds between each new VU during ramp-up'
         required: false
         type: string
-        default: '16'
+        default: '30'
       observe_seconds:
         description: '[execution] Observation window per tier in seconds'
         required: false
@@ -66,7 +66,7 @@ on:
         description: '[execution] Comma-separated workflow-per-VU tiers (e.g. 10,20,30)'
         required: false
         type: string
-        default: '65'
+        default: '30'
       # HTTP ramp mode parameters
       step_size:
         description: '[http-ramp] VU increment per step'
@@ -162,11 +162,11 @@ jobs:
             -e CF_ACCESS_CLIENT_SECRET="${CF_ACCESS_CLIENT_SECRET}" \
             -e LOAD_TEST_BYPASS_TOKEN="${LOAD_TEST_BYPASS_TOKEN}" \
             -e LOAD_TEST_USER_PASSWORD="${LOAD_TEST_USER_PASSWORD}" \
-            -e TARGET_VUS="${{ inputs.target_vus || '25' }}" \
-            -e WF_PER_VU="${{ inputs.wf_per_vu || '65' }}" \
+            -e TARGET_VUS="${{ inputs.target_vus || '5' }}" \
+            -e WF_PER_VU="${{ inputs.wf_per_vu || '30' }}" \
             -e OBSERVE_SECONDS="${{ inputs.observe_seconds || '300' }}" \
-            -e TIERS="${{ inputs.tiers || '65' }}" \
-            -e RAMP_INTERVAL="${{ inputs.ramp_interval || '16' }}" \
+            -e TIERS="${{ inputs.tiers || '30' }}" \
+            -e RAMP_INTERVAL="${{ inputs.ramp_interval || '30' }}" \
             --summary-export /tmp/k6-results/summary.json \
             --no-usage-report \
             $K6_OUT_ARGS 2>&1 | tee /tmp/k6-results/k6-output.log
@@ -263,9 +263,9 @@ jobs:
               lines.append("")
               lines.append(f"| Parameter | Value |")
               lines.append(f"|-----------|-------|")
-              lines.append(f"| VUs | ${{ inputs.target_vus || '25' }} |")
-              lines.append(f"| Workflows/VU | ${{ inputs.wf_per_vu || '65' }} |")
-              lines.append(f"| Tiers | ${{ inputs.tiers || '65' }} |")
+              lines.append(f"| VUs | ${{ inputs.target_vus || '5' }} |")
+              lines.append(f"| Workflows/VU | ${{ inputs.wf_per_vu || '30' }} |")
+              lines.append(f"| Tiers | ${{ inputs.tiers || '30' }} |")
               lines.append(f"| Observe per tier | ${{ inputs.observe_seconds || '300' }}s |")
               lines.append("")
               exec_total = os.environ.get("EXEC_TOTAL", "0")

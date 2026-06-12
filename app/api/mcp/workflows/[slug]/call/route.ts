@@ -16,8 +16,13 @@ import { classifyExecutionError } from "@/lib/errors/classify";
 import { recordExecutionErrorFinalized } from "@/lib/errors/finalize-error";
 import { extractActionTypeNodes } from "@/lib/features";
 import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
+import { HttpStatus } from "@/lib/http-status";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
+import {
+  checkIpRateLimit,
+  getClientIp,
+  type RateLimitResult,
+} from "@/lib/mcp/rate-limit";
 import { hashMppCredential } from "@/lib/payments/mpp/server";
 import {
   detectProtocol,
@@ -34,6 +39,7 @@ import {
   CALL_ROUTE_COLUMNS,
   type CallRouteWorkflow,
 } from "@/lib/payments/x402/types";
+import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { withBackstopCapture } from "@/lib/security/backstop-capture";
 import { buildAttribution } from "@/lib/security/request-attribution";
 import { workflowReachableConditions } from "@/lib/workflow/executable";
@@ -106,7 +112,7 @@ async function prepareExecution(
     const guardBody = await featureGuard.response.json();
     return {
       error: NextResponse.json(guardBody, {
-        status: 402,
+        status: HttpStatus.PAYMENT_REQUIRED,
         headers: corsHeaders,
       }),
     };
@@ -117,7 +123,7 @@ async function prepareExecution(
     const guardBody = await executionGuard.response.json();
     return {
       error: NextResponse.json(guardBody, {
-        status: 429,
+        status: HttpStatus.TOO_MANY_REQUESTS,
         headers: corsHeaders,
       }),
     };
@@ -132,7 +138,10 @@ async function prepareExecution(
           running: concurrencyCheck.running,
           limit: concurrencyCheck.limit,
         },
-        { status: 429, headers: { ...corsHeaders, "Retry-After": "30" } }
+        {
+          status: HttpStatus.TOO_MANY_REQUESTS,
+          headers: { ...corsHeaders, "Retry-After": "30" },
+        }
       ),
     };
   }
@@ -238,7 +247,7 @@ function validateBody(
     if (!validation.valid) {
       return NextResponse.json(
         { error: validation.error },
-        { status: 400, headers: corsHeaders }
+        { status: HttpStatus.BAD_REQUEST, headers: corsHeaders }
       );
     }
   }
@@ -250,26 +259,29 @@ function validateBody(
 const CALL_RATE_LIMIT = 30;
 const CALL_RATE_WINDOW_MS = 60_000;
 
-function checkCallRateLimit(request: Request): NextResponse | null {
+function checkCallRateLimit(request: Request): {
+  rejected: NextResponse | null;
+  rateLimit: RateLimitResult;
+} {
   const clientIp = getClientIp(request);
-  const rateCheck = checkIpRateLimit(
+  const rateLimit = checkIpRateLimit(
     clientIp,
     CALL_RATE_LIMIT,
     CALL_RATE_WINDOW_MS
   );
-  if (!rateCheck.allowed) {
-    return NextResponse.json(
-      { error: "Too many requests" },
-      {
-        status: 429,
-        headers: {
-          ...corsHeaders,
-          "Retry-After": String(rateCheck.retryAfter),
-        },
-      }
-    );
+  if (!rateLimit.allowed) {
+    return {
+      rejected: applyRateLimitHeaders(
+        NextResponse.json(
+          { error: "Too many requests" },
+          { status: HttpStatus.TOO_MANY_REQUESTS, headers: corsHeaders }
+        ),
+        rateLimit
+      ),
+      rateLimit,
+    };
   }
-  return null;
+  return { rejected: null, rateLimit };
 }
 
 async function parseJsonBody(
@@ -282,7 +294,7 @@ async function parseJsonBody(
     return {
       error: NextResponse.json(
         { error: "Invalid JSON body" },
-        { status: 400, headers: corsHeaders }
+        { status: HttpStatus.BAD_REQUEST, headers: corsHeaders }
       ),
     };
   }
@@ -306,7 +318,7 @@ async function handleWriteWorkflow(
   if (!result.success) {
     return NextResponse.json(
       { error: result.error },
-      { status: 400, headers: corsHeaders }
+      { status: HttpStatus.BAD_REQUEST, headers: corsHeaders }
     );
   }
   return NextResponse.json(
@@ -335,7 +347,7 @@ async function handlePaidWorkflow(
         message:
           "The workflow owner must create a wallet in Settings > Wallet before listing paid workflows.",
       },
-      { status: 503, headers: corsHeaders }
+      { status: HttpStatus.SERVICE_UNAVAILABLE, headers: corsHeaders }
     );
   }
 
@@ -414,6 +426,7 @@ async function handlePaidWorkflow(
               error: errorMessage,
               errorCategory: classification.errorCategory,
               errorType: classification.errorType,
+              errorCode: classification.code,
             })
             .where(eq(workflowExecutions.id, executionId))
             .returning({ workflowId: workflowExecutions.workflowId });
@@ -476,9 +489,9 @@ export async function POST(
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
   try {
-    const rateLimited = checkCallRateLimit(request);
-    if (rateLimited) {
-      return rateLimited;
+    const { rejected, rateLimit } = checkCallRateLimit(request);
+    if (rejected) {
+      return rejected;
     }
 
     const { slug } = await params;
@@ -487,7 +500,7 @@ export async function POST(
     if (!workflow) {
       return NextResponse.json(
         { error: "Workflow not found" },
-        { status: 404, headers: corsHeaders }
+        { status: HttpStatus.NOT_FOUND, headers: corsHeaders }
       );
     }
 
@@ -502,15 +515,21 @@ export async function POST(
           error: "Workflow temporarily unavailable",
           message: "The workflow owner has disabled this workflow.",
         },
-        { status: 503, headers: corsHeaders }
+        { status: HttpStatus.SERVICE_UNAVAILABLE, headers: corsHeaders }
       );
     }
 
     if (workflow.workflowType === "write") {
-      return handleWriteWorkflow(request, workflow);
+      return applyRateLimitHeaders(
+        await handleWriteWorkflow(request, workflow),
+        rateLimit
+      );
     }
 
-    return await handleReadWorkflow(request, workflow);
+    return applyRateLimitHeaders(
+      await handleReadWorkflow(request, workflow),
+      rateLimit
+    );
   } catch (err) {
     logSystemError(
       ErrorCategory.WORKFLOW_ENGINE,
@@ -520,7 +539,7 @@ export async function POST(
     );
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Internal server error" },
-      { status: 500, headers: corsHeaders }
+      { status: HttpStatus.INTERNAL_SERVER_ERROR, headers: corsHeaders }
     );
   }
 }

@@ -1,6 +1,7 @@
 import { randomInt, timingSafeEqual } from "node:crypto";
 import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
 import { and, eq, gt } from "drizzle-orm";
+import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { twoFactor as twoFactorTable, verifications } from "@/lib/db/schema";
 import { sendVerificationOTP } from "@/lib/email";
@@ -67,6 +68,21 @@ export type DualFactorError = {
   retryAfter?: number;
 };
 export type DualFactorResult = DualFactorOk | DualFactorError;
+
+// Render a requireDualFactor failure as a JSON response. On the rate-limit
+// 429 it surfaces the standard Retry-After header so callers don't drop the
+// retry hint. This is an anti-abuse limiter, so no remaining-budget headers.
+export function dualFactorErrorResponse(error: DualFactorError): NextResponse {
+  return NextResponse.json(
+    { error: error.error, code: error.code },
+    error.status === 429 && error.retryAfter !== undefined
+      ? {
+          status: error.status,
+          headers: { "Retry-After": String(error.retryAfter) },
+        }
+      : { status: error.status }
+  );
+}
 
 type DualFactorArgs = {
   userId: string;
@@ -144,7 +160,9 @@ export async function requireDualFactor(
 
     // Replace any in-flight OTP for the same (user, action) so the
     // most recent code is the only one accepted.
-    await db.delete(verifications).where(eq(verifications.identifier, identifier));
+    await db
+      .delete(verifications)
+      .where(eq(verifications.identifier, identifier));
     await db.insert(verifications).values({
       id: generateId(),
       identifier,
@@ -188,13 +206,6 @@ export async function requireDualFactor(
     .where(eq(twoFactorTable.userId, userId))
     .limit(1);
   if (!tfRow) {
-    // [mfa-debug] KEEP-471 OAuth/TOTP investigation: the userId carried
-    // into this gate has no two_factor row. Remove once root-caused.
-    // biome-ignore lint/suspicious/noConsole: temporary KEEP-471 diagnostic
-    console.warn("[mfa-debug] no two_factor row for userId", {
-      action,
-      userId,
-    });
     return {
       ok: false,
       status: 401,
@@ -203,14 +214,6 @@ export async function requireDualFactor(
     };
   }
   const totpOk = await verifyUserTotp(tfRow.secret, totpCode, serverSecret);
-  // [mfa-debug] KEEP-471 OAuth/TOTP investigation. Remove once root-caused.
-  // biome-ignore lint/suspicious/noConsole: temporary KEEP-471 diagnostic
-  console.info("[mfa-debug] totp check", {
-    action,
-    userId,
-    providedTotp: totpCode,
-    totpOk,
-  });
   if (!totpOk) {
     return {
       ok: false,

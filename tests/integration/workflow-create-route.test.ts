@@ -42,6 +42,15 @@ vi.mock("@/lib/logging", () => ({
   logSystemError: vi.fn(),
 }));
 
+// Idempotency wraps the route but is covered by its own unit tests. Stub it to
+// a pass-through so this suite stays focused on create logic and does not pull
+// in lib/idempotency's `server-only` import at collection time.
+vi.mock("@/lib/idempotency", () => ({
+  beginIdempotentFromRequest: vi.fn().mockResolvedValue(null),
+  idempotencyEarlyResponse: vi.fn().mockReturnValue(null),
+  recordIdempotentResponse: vi.fn((_idem, response) => response),
+}));
+
 import { POST } from "@/app/api/workflows/create/route";
 
 function request(body: Record<string, unknown>): Request {

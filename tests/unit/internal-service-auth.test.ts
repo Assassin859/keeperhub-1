@@ -382,58 +382,6 @@ describe("authenticateInternalService - HMAC scheme", () => {
       error: "No active signing secret",
     });
   });
-});
-
-describe("authenticateInternalService - legacy bearer scheme", () => {
-  beforeEach(() => {
-    mockLookup.mockReset();
-    mockListActive.mockReset();
-    vi.unstubAllEnvs();
-    vi.stubEnv("SCHEDULER_SERVICE_API_KEY", "legacy-scheduler-key");
-  });
-
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
-  it("accepts the legacy X-Service-Key when matched against env var", async () => {
-    const { authenticateInternalService } = await import(
-      "@/lib/internal-service-auth"
-    );
-    const request = buildRequest({
-      method: "GET",
-      pathname: "/api/internal/schedules",
-      headers: { "X-Service-Key": "legacy-scheduler-key" },
-    });
-
-    const result = await authenticateInternalService(request);
-
-    expect(result).toMatchObject({
-      authenticated: true,
-      caller: "scheduler",
-      scheme: "legacy-bearer",
-    });
-  });
-
-  it("accepts the X-Internal-Token header against the same env var set", async () => {
-    const { authenticateInternalService } = await import(
-      "@/lib/internal-service-auth"
-    );
-    vi.stubEnv("EVENTS_SERVICE_API_KEY", "legacy-events-key");
-    const request = buildRequest({
-      method: "GET",
-      pathname: "/api/workflows/events",
-      headers: { "X-Internal-Token": "legacy-events-key" },
-    });
-
-    const result = await authenticateInternalService(request);
-
-    expect(result).toMatchObject({
-      authenticated: true,
-      caller: "events",
-      scheme: "legacy-bearer",
-    });
-  });
 
   it("rejects when no auth headers are present at all", async () => {
     const { authenticateInternalService } = await import(
@@ -449,52 +397,6 @@ describe("authenticateInternalService - legacy bearer scheme", () => {
     expect(result).toMatchObject({
       authenticated: false,
       error: "Missing auth headers",
-    });
-  });
-
-  it("does NOT fall back to legacy bearer when HMAC headers are present and verification fails", async () => {
-    const { authenticateInternalService } = await import(
-      "@/lib/internal-service-auth"
-    );
-    activeSecrets.length = 0;
-    activeSecrets.push({ secret: SHARED_SECRET, keyVersion: 1 });
-    mockListActive.mockImplementation(async () => activeSecrets.slice());
-
-    // Valid legacy header, but bogus HMAC headers. The presence of an HMAC
-    // signature commits to the HMAC path, so the legacy header MUST NOT
-    // rescue the request.
-    const request = buildRequest({
-      method: "GET",
-      pathname: "/api/internal/schedules",
-      headers: {
-        "X-Service-Key": "legacy-scheduler-key",
-        "X-KH-Caller": "scheduler",
-        "X-KH-Timestamp": String(Math.floor(Date.now() / 1000)),
-        "X-KH-Signature": "0".repeat(64),
-      },
-    });
-
-    const result = await authenticateInternalService(request);
-
-    expect(result.authenticated).toBe(false);
-  });
-
-  it("rejects all legacy bearers when INTERNAL_AUTH_REQUIRE_HMAC=true", async () => {
-    vi.stubEnv("INTERNAL_AUTH_REQUIRE_HMAC", "true");
-    const { authenticateInternalService } = await import(
-      "@/lib/internal-service-auth"
-    );
-    const request = buildRequest({
-      method: "GET",
-      pathname: "/api/internal/schedules",
-      headers: { "X-Service-Key": "legacy-scheduler-key" },
-    });
-
-    const result = await authenticateInternalService(request);
-
-    expect(result).toMatchObject({
-      authenticated: false,
-      error: "HMAC authentication required",
     });
   });
 });

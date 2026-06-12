@@ -1,41 +1,28 @@
 /**
  * @security Internal service-to-service authentication.
  *
- * Two schemes are accepted during the dual-accept rollout window:
- *
- * 1. HMAC (preferred). Producer signs the request with a shared secret stored
- *    encrypted-at-rest in internal_service_hmac_secrets. Headers:
+ * HMAC scheme. Producer signs the request with a shared secret stored
+ * encrypted-at-rest in internal_service_hmac_secrets. Headers:
  *      X-KH-Caller     identity claim (one of InternalCaller)
  *      X-KH-Timestamp  unix seconds, validated within +/- 300 s
  *      X-KH-Signature  64-char lowercase hex
  *      X-KH-Key-Version (optional) pins secret selection to a specific row
  *
- *    Signing string format (caller bound into the signed bytes so a forged
- *    header cannot route to another caller's audit row):
+ * Signing string format (caller bound into the signed bytes so a forged
+ * header cannot route to another caller's audit row):
  *      signingString = `${method}\n${pathname}\n${caller}\n${sha256_hex(body)}\n${timestamp}`
  *      signature     = hex(hmac_sha256(secret, signingString))
  *
- *    Replay within the 300-second window is INTENTIONALLY accepted. Matches
- *    the agentic-wallet HMAC precedent: a server-side nonce cache is
- *    defense-in-depth with measurable latency cost; the upstream attack model
- *    (env-var leak detected via audit log) is closed faster by short rotation
- *    than by single-use enforcement. Revisit if a future review requires it.
+ * Replay within the 300-second window is INTENTIONALLY accepted. Matches
+ * the agentic-wallet HMAC precedent: a server-side nonce cache is
+ * defense-in-depth with measurable latency cost; the upstream attack model
+ * (env-var leak detected via audit log) is closed faster by short rotation
+ * than by single-use enforcement. Revisit if a future review requires it.
  *
- *    For v1 every producer shares one signing secret stored at
- *    caller = LEGACY_SHARED_SECRET_KEY. A future per-caller split is a single
- *    INSERT plus per-client env update; the verifier path needs no change
- *    beyond replacing the constant with `claimedCaller`.
- *
- * 2. Legacy bearer (sunset). The pre-existing X-Service-Key / X-Internal-Token
- *    headers compared against the per-service env vars with timingSafeEqual.
- *    Accepted only when INTERNAL_AUTH_REQUIRE_HMAC is not "true" and no HMAC
- *    headers were sent. A captured bearer replays cross-endpoint trivially;
- *    that is the threat the HMAC scheme closes.
- *
- * Header-presence-commits-to-scheme: if any HMAC header is present the
- * verifier runs the HMAC path with NO fallback to the legacy bearer. This
- * prevents an attacker who knows the legacy bearer from appending a junk
- * signature to slip through the looser path.
+ * For v1 every producer shares one signing secret stored at
+ * caller = SHARED_SECRET_KEY. A future per-caller split is a single
+ * INSERT plus per-client env update; the verifier path needs no change
+ * beyond replacing the constant with `claimedCaller`.
  *
  * Never log secret material, signatures, or timestamps in error paths.
  */
@@ -67,7 +54,7 @@ const INTERNAL_CALLERS: ReadonlySet<InternalCaller> = new Set([
  * in v1. Distinct from any InternalCaller value so a future per-caller split
  * (one row per producer) does not collide with this row.
  */
-const LEGACY_SHARED_SECRET_KEY = "*shared*";
+const SHARED_SECRET_KEY = "*shared*";
 
 const REPLAY_WINDOW_SECONDS = 300;
 const SIGNATURE_HEX_LENGTH = 64;
@@ -76,7 +63,7 @@ export type InternalServiceAuthResult =
   | {
       authenticated: true;
       caller: InternalCaller;
-      scheme: "hmac" | "legacy-bearer";
+      scheme: "hmac";
       keyVersion?: number;
     }
   | { authenticated: false; error: string; status: number };
@@ -107,25 +94,9 @@ async function runAuthentication(
     request.headers.get("X-KH-Signature") !== null ||
     request.headers.get("X-KH-Caller") !== null ||
     request.headers.get("X-KH-Timestamp") !== null;
-  const enforceHmacOnly = process.env.INTERNAL_AUTH_REQUIRE_HMAC === "true";
 
   if (hasHmac) {
     return await verifyHmac(request, rawBody ?? "");
-  }
-
-  if (enforceHmacOnly) {
-    return {
-      authenticated: false,
-      error: "HMAC authentication required",
-      status: 401,
-    };
-  }
-
-  const hasLegacy =
-    request.headers.get("X-Service-Key") !== null ||
-    request.headers.get("X-Internal-Token") !== null;
-  if (hasLegacy) {
-    return verifyLegacyBearer(request);
   }
 
   return {
@@ -179,21 +150,13 @@ function emitAuditEvent(
   });
 }
 
-function pickAttemptedScheme(
-  request: Request
-): "hmac" | "legacy-bearer" | "none" {
+function pickAttemptedScheme(request: Request): "hmac" | "none" {
   if (
     request.headers.get("X-KH-Signature") !== null ||
     request.headers.get("X-KH-Caller") !== null ||
     request.headers.get("X-KH-Timestamp") !== null
   ) {
     return "hmac";
-  }
-  if (
-    request.headers.get("X-Service-Key") !== null ||
-    request.headers.get("X-Internal-Token") !== null
-  ) {
-    return "legacy-bearer";
   }
   return "none";
 }
@@ -271,14 +234,14 @@ async function verifyHmac(
   }
 
   // v1: every producer shares one signing secret stored under
-  // LEGACY_SHARED_SECRET_KEY. Future per-caller split replaces this constant
+  // SHARED_SECRET_KEY. Future per-caller split replaces this constant
   // with `caller` so the secret lookup tracks producer identity.
-  const secretKey = LEGACY_SHARED_SECRET_KEY;
+  const secretKey = SHARED_SECRET_KEY;
 
   // Without a pinned version, try every active secret (newest first, then any
   // still-within-grace older versions) so the 24-hour rotation window
-  // actually lets legacy consumers verify while picking up the new secret.
-  // With a pinned version, only that one row is tried.
+  // actually lets in-flight consumers verify against the previous secret
+  // while they pick up the new one. With a pinned version, only that row is tried.
   const candidates =
     pinnedVersion === undefined
       ? await listActiveHmacSecrets(secretKey)
@@ -324,60 +287,6 @@ async function verifyHmac(
   return {
     authenticated: false,
     error: "Invalid signature",
-    status: 401,
-  };
-}
-
-function secureCompare(a: string, b: string): boolean {
-  if (a.length !== b.length) {
-    return false;
-  }
-  return timingSafeEqual(Buffer.from(a), Buffer.from(b));
-}
-
-function verifyLegacyBearer(request: Request): InternalServiceAuthResult {
-  // Either header carries a bearer in the legacy scheme; accept both so the
-  // /api/workflows/events consolidation does not require a separate code
-  // path. The verifier behavior is identical regardless of which header
-  // delivered the bearer.
-  const bearer =
-    request.headers.get("X-Service-Key") ??
-    request.headers.get("X-Internal-Token");
-
-  if (!bearer) {
-    return {
-      authenticated: false,
-      error: "Missing bearer header",
-      status: 401,
-    };
-  }
-
-  // Read env vars at call time so vi.stubEnv() works in tests and so a value
-  // change does not require a process restart.
-  const serviceKeys: Record<InternalCaller, string | undefined> = {
-    executor: process.env.KEEPERHUB_API_KEY,
-    mcp: process.env.MCP_SERVICE_API_KEY,
-    events: process.env.EVENTS_SERVICE_API_KEY,
-    scheduler: process.env.SCHEDULER_SERVICE_API_KEY,
-    hub: process.env.HUB_SERVICE_API_KEY,
-  };
-
-  for (const [caller, expectedKey] of Object.entries(serviceKeys) as [
-    InternalCaller,
-    string | undefined,
-  ][]) {
-    if (expectedKey && secureCompare(bearer, expectedKey)) {
-      return {
-        authenticated: true,
-        caller,
-        scheme: "legacy-bearer",
-      };
-    }
-  }
-
-  return {
-    authenticated: false,
-    error: "Invalid service key",
     status: 401,
   };
 }

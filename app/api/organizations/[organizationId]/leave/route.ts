@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { hashSessionToken } from "@/lib/auth-session-token-hash";
 import { db } from "@/lib/db";
-import { member, sessions } from "@/lib/db/schema";
+import { mcpOauthRefreshTokens, member, sessions } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
 
@@ -124,6 +124,18 @@ export async function POST(
         // IMMEDIATE constraint within the transaction.
         await tx.delete(member).where(eq(member.id, currentMember.id));
 
+        // Revoke this user's MCP OAuth refresh tokens for the org they are
+        // leaving so their long-lived tokens cannot be cycled into fresh
+        // org-scoped access after they no longer belong to it.
+        await tx
+          .delete(mcpOauthRefreshTokens)
+          .where(
+            and(
+              eq(mcpOauthRefreshTokens.userId, session.user.id),
+              eq(mcpOauthRefreshTokens.organizationId, organizationId)
+            )
+          );
+
         await tx
           .update(member)
           .set({ role: "owner" })
@@ -141,6 +153,18 @@ export async function POST(
       }
 
       await tx.delete(member).where(eq(member.id, currentMember.id));
+
+      // Revoke this user's MCP OAuth refresh tokens for the org they are
+      // leaving so their long-lived tokens cannot be cycled into fresh
+      // org-scoped access after they no longer belong to it.
+      await tx
+        .delete(mcpOauthRefreshTokens)
+        .where(
+          and(
+            eq(mcpOauthRefreshTokens.userId, session.user.id),
+            eq(mcpOauthRefreshTokens.organizationId, organizationId)
+          )
+        );
 
       if (getActiveOrgId(session) === organizationId) {
         await tx

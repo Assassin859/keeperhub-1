@@ -4,7 +4,10 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { organizationApiKeys, sessions, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { requireDualFactor } from "@/lib/mfa/dual-factor";
+import {
+  dualFactorErrorResponse,
+  requireDualFactor,
+} from "@/lib/mfa/dual-factor";
 import {
   buildActor,
   buildAuditMetadata,
@@ -79,10 +82,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       headers: request.headers,
     });
     if (!dual.ok) {
-      return NextResponse.json(
-        { error: dual.error, code: dual.code },
-        { status: dual.status }
-      );
+      return dualFactorErrorResponse(dual);
     }
 
     // Run the deactivation writes in one transaction so a partial failure

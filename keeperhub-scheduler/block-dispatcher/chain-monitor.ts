@@ -13,6 +13,10 @@
 
 import { ethers } from "ethers";
 import { metrics } from "../lib/metrics.js";
+import {
+  createPhantomExecution,
+  failPhantomExecution,
+} from "../lib/phantom.js";
 import type { BlockWorkflow, ChainConfig } from "../lib/types.js";
 import { enqueueBlockTrigger } from "./sqs-enqueue.js";
 
@@ -761,17 +765,7 @@ export class ChainMonitor {
 
     const results = await Promise.allSettled(
       matchingWorkflows.map((wf) =>
-        enqueueBlockTrigger({
-          workflowId: wf.id,
-          userId: wf.userId,
-          triggerType: "block",
-          triggerData: {
-            blockNumber,
-            blockHash: block.hash,
-            blockTimestamp: block.timestamp,
-            parentHash: block.parentHash,
-          },
-        }),
+        this.enqueueWithPhantom(wf, blockNumber, block),
       ),
     );
 
@@ -785,6 +779,43 @@ export class ChainMonitor {
       } else {
         metrics.recordSqsEnqueue(this.chainName, "success");
       }
+    }
+  }
+
+  /**
+   * KEEP-693: pre-create a phantom row (best-effort) then enqueue the block
+   * trigger carrying its id. On enqueue failure, resolve the phantom to a coded
+   * failure and re-throw so the caller's per-result error metric still fires.
+   */
+  private async enqueueWithPhantom(
+    wf: BlockWorkflow,
+    blockNumber: number,
+    block: { hash: string; timestamp: number; parentHash: string },
+  ): Promise<void> {
+    const executionId = await createPhantomExecution(wf.id, "block", wf.userId);
+    try {
+      await enqueueBlockTrigger({
+        executionId,
+        workflowId: wf.id,
+        userId: wf.userId,
+        triggerType: "block",
+        triggerData: {
+          blockNumber,
+          blockHash: block.hash,
+          blockTimestamp: block.timestamp,
+          parentHash: block.parentHash,
+        },
+      });
+    } catch (error) {
+      if (executionId) {
+        const reason = error instanceof Error ? error.message : "send failed";
+        await failPhantomExecution(
+          executionId,
+          "BS-0001",
+          `Block trigger failed to dispatch: ${reason}`,
+        );
+      }
+      throw error;
     }
   }
 
@@ -1047,6 +1078,13 @@ export class ChainMonitor {
       await probeProvider.destroy().catch(() => {
         // ignore cleanup errors
       });
+      // Must set currentUrlIndex before handleDisconnect so reconnectWithBackoff
+      // lands on primary. Without it, maybeFlipUrlPreference() returns early
+      // (silentReconnects is 0 because the fallback is healthy), and connect()
+      // silently stays on fallback while the metric records a flip that never
+      // actually happens — causing the URL Flipped alert to re-fire every probe
+      // interval.
+      this.currentUrlIndex = 0;
       metrics.recordUrlFlip(this.chainName, "to_primary");
       metrics.recordWsClose(this.chainName, "primary_probe_recovered");
       this.handleDisconnect();

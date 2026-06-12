@@ -3,6 +3,7 @@ import { generateRandomString, symmetricEncrypt } from "better-auth/crypto";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { readAllSetCookies } from "@/lib/auth-cookie-chain";
 import {
   hashSessionToken,
   signSessionCookieValue,
@@ -10,6 +11,7 @@ import {
 import { db } from "@/lib/db";
 import { sessions, twoFactor as twoFactorTable, users } from "@/lib/db/schema";
 import { resolveEnrollMfaCaller } from "@/lib/enroll-mfa-caller";
+import { HttpStatus } from "@/lib/http-status";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
   checkDualFactorRateLimit,
@@ -56,6 +58,41 @@ function buildSessionSetCookie(signedValue: string, ttlMs: number): string {
   return `${cookieName}=${encodeURIComponent(signedValue)}; Path=/; HttpOnly;${secureSegment} SameSite=Lax; Max-Age=${maxAge}`;
 }
 
+const SESSION_COOKIE_NAMES = [
+  "better-auth.session_token",
+  "__Secure-better-auth.session_token",
+] as const;
+
+/**
+ * Read the raw session token Better Auth wrote into one of the
+ * Set-Cookie headers returned by verifyTOTP. Better Auth signs the
+ * cookie via hono's setSignedCookie, so the cookie value is
+ * `<rawToken>.<base64HmacSignature>`. We strip the signature suffix
+ * because `sessions.token` stores `hashSessionToken(rawToken)` and we
+ * need the raw token to reproduce that hash so the requires_mfa clear
+ * can be scoped to the just-rotated session only.
+ */
+function extractNewSessionToken(setCookies: readonly string[]): string | null {
+  for (const raw of setCookies) {
+    const firstPair = raw.split(";")[0]?.trim();
+    if (!firstPair) {
+      continue;
+    }
+    const eqIdx = firstPair.indexOf("=");
+    if (eqIdx <= 0) {
+      continue;
+    }
+    const name = firstPair.slice(0, eqIdx);
+    const value = firstPair.slice(eqIdx + 1);
+    if ((SESSION_COOKIE_NAMES as readonly string[]).includes(name)) {
+      const decoded = decodeURIComponent(value);
+      const dotIdx = decoded.lastIndexOf(".");
+      return dotIdx > 0 ? decoded.slice(0, dotIdx) : decoded;
+    }
+  }
+  return null;
+}
+
 /**
  * POST /api/user/totp/enroll
  *
@@ -64,9 +101,10 @@ function buildSessionSetCookie(signedValue: string, ttlMs: number): string {
  *   - Sessioned caller: existing user upgrading from no-MFA to TOTP.
  *     Better Auth's verifyTOTP path is used so its session rotation
  *     + flip of users.two_factor_enabled = true are atomic with the
- *     plugin's own state. We also clear requires_mfa on every session
- *     this user holds, because the freshest possible TOTP proof is
- *     the one we just verified.
+ *     plugin's own state. We clear requires_mfa only on the session we
+ *     just rotated through verifyTOTP, not on every session the user
+ *     holds: a parallel session (e.g. a stolen cookie under step-up
+ *     quarantine) must stay quarantined until it proves its own factor.
  *
  *   - Pending-signup caller: brand-new credential or OAuth user who
  *     carries only the signed pending_signup_mfa cookie, no session.
@@ -82,16 +120,22 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (caller.reason === "anonymous_user") {
       return NextResponse.json(
         { error: "Sign in with a real account to enable two-factor" },
-        { status: 403 }
+        { status: HttpStatus.FORBIDDEN }
       );
     }
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: HttpStatus.UNAUTHORIZED }
+    );
   }
 
   const body = (await request.json().catch(() => ({}))) as RequestBody;
   const code = typeof body.code === "string" ? body.code.trim() : "";
   if (!code) {
-    return NextResponse.json({ error: "Code is required" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Code is required" },
+      { status: HttpStatus.BAD_REQUEST }
+    );
   }
 
   const secret = process.env.BETTER_AUTH_SECRET;
@@ -104,7 +148,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
     return NextResponse.json(
       { error: "Server misconfigured" },
-      { status: 500 }
+      { status: HttpStatus.INTERNAL_SERVER_ERROR }
     );
   }
 
@@ -124,7 +168,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     } catch {
       return NextResponse.json(
         { error: "Invalid verification code" },
-        { status: 401 }
+        { status: HttpStatus.UNAUTHORIZED }
       );
     }
 
@@ -138,10 +182,33 @@ export async function POST(request: Request): Promise<NextResponse> {
         .update(twoFactorTable)
         .set({ backupCodes: encryptedBackupCodes })
         .where(eq(twoFactorTable.userId, userId));
-      await db
-        .update(sessions)
-        .set({ requiresMfa: false, mfaVerifiedAt: new Date() })
-        .where(eq(sessions.userId, userId));
+      const newRawToken = extractNewSessionToken(
+        readAllSetCookies(verifyHeaders)
+      );
+      if (newRawToken) {
+        await db
+          .update(sessions)
+          .set({ requiresMfa: false, mfaVerifiedAt: new Date() })
+          .where(eq(sessions.token, hashSessionToken(newRawToken)));
+      } else {
+        // No rotated session cookie to scope to; fall back to the
+        // caller's current session rather than every session (which
+        // would lift step-up quarantine on a parallel stolen session).
+        const current = await auth.api.getSession({ headers: request.headers });
+        if (current?.session?.id) {
+          await db
+            .update(sessions)
+            .set({ requiresMfa: false, mfaVerifiedAt: new Date() })
+            .where(eq(sessions.id, current.session.id));
+        } else {
+          logSystemError(
+            ErrorCategory.AUTH,
+            "[TOTP Enroll] Could not scope requires_mfa clear to a session",
+            new Error("no session token or id available"),
+            { endpoint: "/api/user/totp/enroll", user_id: userId }
+          );
+        }
+      }
       await recordAuditEvent({
         actor: { userId, organizationId: null, authMethod: "session" },
         action: "totp.enrolled",
@@ -166,7 +233,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
       return NextResponse.json(
         { error: "Verification accepted but backup-code mint failed" },
-        { status: 500 }
+        { status: HttpStatus.INTERNAL_SERVER_ERROR }
       );
     }
   }
@@ -187,7 +254,10 @@ export async function POST(request: Request): Promise<NextResponse> {
         code: "rate_limited",
         retryAfter: rate.retryAfter,
       },
-      { status: 429 }
+      {
+        status: HttpStatus.TOO_MANY_REQUESTS,
+        headers: { "Retry-After": String(rate.retryAfter) },
+      }
     );
   }
 
@@ -199,14 +269,14 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!enrollment) {
     return NextResponse.json(
       { error: "No enrollment in progress for this user" },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
   const codeOk = await verifyUserTotp(enrollment.secret, code, secret);
   if (!codeOk) {
     return NextResponse.json(
       { error: "Invalid verification code" },
-      { status: 401 }
+      { status: HttpStatus.UNAUTHORIZED }
     );
   }
 
@@ -304,7 +374,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
     return NextResponse.json(
       { error: "Verification accepted but enrollment finalize failed" },
-      { status: 500 }
+      { status: HttpStatus.INTERNAL_SERVER_ERROR }
     );
   }
 }

@@ -4,7 +4,10 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { apiKeys } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { requireDualFactor } from "@/lib/mfa/dual-factor";
+import {
+  dualFactorErrorResponse,
+  requireDualFactor,
+} from "@/lib/mfa/dual-factor";
 import { requireMfaEnrolled } from "@/lib/middleware/owner-mfa-guard";
 import { notifyApiKeyChange } from "@/lib/security/api-key-notification";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
@@ -53,10 +56,7 @@ export async function DELETE(
       headers: request.headers,
     });
     if (!dual.ok) {
-      return NextResponse.json(
-        { error: dual.error, code: dual.code },
-        { status: dual.status }
-      );
+      return dualFactorErrorResponse(dual);
     }
 
     // Delete the key (only if it belongs to the user)

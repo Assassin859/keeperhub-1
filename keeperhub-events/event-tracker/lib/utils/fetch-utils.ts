@@ -5,7 +5,7 @@ import { logger } from "./logger";
 
 const HMAC_CALLER = "events";
 
-function signHmacHeaders(
+export function signHmacHeaders(
   method: string,
   url: string,
   body: string,

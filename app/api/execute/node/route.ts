@@ -1,3 +1,4 @@
+import { HttpStatus } from "@/lib/http-status";
 import "server-only";
 
 import { and, eq } from "drizzle-orm";
@@ -6,6 +7,17 @@ import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { db } from "@/lib/db";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import { integrations } from "@/lib/db/schema";
+import {
+  beginIdempotentFromRequest,
+  PROCESSING_TTL_MS as IDEMPOTENCY_PROCESSING_TTL_MS,
+  type IdempotencyOutcome,
+  idempotencyEarlyResponse,
+  recordIdempotentResponse,
+  withIdempotencyHeartbeat,
+} from "@/lib/idempotency";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
+import { requireScope } from "@/lib/middleware/require-scope";
+import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { getErrorMessage } from "@/lib/utils";
 import type { ResolvedAction } from "../_lib/action-resolver";
 import { resolveAction } from "../_lib/action-resolver";
@@ -21,6 +33,7 @@ import {
 } from "../_lib/execution-service";
 import { checkRateLimit } from "../_lib/rate-limit";
 import {
+  DEFAULT_TIMEOUT_MS as DEFAULT_RETRY_TIMEOUT_MS,
   executeWithRetry,
   genericRetryOptions,
   type TransactionResult,
@@ -29,6 +42,11 @@ import {
 import { checkAndReserveExecution } from "../_lib/spending-cap";
 import type { NodeExecuteRequest, RetryConfig } from "../_lib/types";
 import { requireWallet } from "../_lib/wallet-check";
+
+// The worst-case retry budget (timeoutMs x attempts) must not exceed the
+// idempotency processing-lock TTL, so a single request cannot outlive its own
+// reservation and have a reclaimer take the slot mid-flight.
+const MAX_RETRY_BUDGET_MS = IDEMPOTENCY_PROCESSING_TTL_MS;
 
 function validateRetryConfig(
   raw: unknown
@@ -67,6 +85,16 @@ function validateRetryConfig(
     return {
       valid: false,
       error: "retry.gasBumpPercent must be a number between 0 and 100",
+    };
+  }
+
+  const attempts = ((r.maxRetries as number | undefined) ?? 0) + 1;
+  const perAttempt =
+    (r.timeoutMs as number | undefined) ?? DEFAULT_RETRY_TIMEOUT_MS;
+  if (attempts * perAttempt > MAX_RETRY_BUDGET_MS) {
+    return {
+      valid: false,
+      error: `retry budget (timeoutMs x (maxRetries + 1)) must not exceed ${MAX_RETRY_BUDGET_MS}ms`,
     };
   }
 
@@ -222,7 +250,8 @@ async function invokeStep(
 async function handleResult(
   executionId: string,
   result: unknown,
-  retryCount: number
+  retryCount: number,
+  idem: IdempotencyOutcome | null
 ): Promise<NextResponse> {
   const output = result as Record<string, unknown> | undefined;
   const success =
@@ -234,14 +263,20 @@ async function handleResult(
     const errorMsg =
       output && "error" in output ? String(output.error) : "Execution failed";
     await failExecution(executionId, errorMsg);
-    return NextResponse.json(
-      {
-        executionId,
-        status: "failed",
-        error: errorMsg,
-        ...(retryCount > 0 ? { retryCount } : {}),
-      },
-      { status: 422 }
+    // The step ran (possibly broadcasting): finalize as failed so a retry
+    // replays the failure instead of re-executing.
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json(
+        {
+          executionId,
+          status: "failed",
+          error: errorMsg,
+          ...(retryCount > 0 ? { retryCount } : {}),
+        },
+        { status: HttpStatus.UNPROCESSABLE_ENTITY }
+      ),
+      "failed"
     );
   }
 
@@ -257,14 +292,22 @@ async function handleResult(
 
   await completeExecution(executionId, completeParams);
 
-  return NextResponse.json(
-    {
-      executionId,
-      status: "completed",
-      result: output,
-      ...(retryCount > 0 ? { retryCount } : {}),
-    },
-    { status: isTransactionResult(output) ? 202 : 200 }
+  return recordIdempotentResponse(
+    idem,
+    NextResponse.json(
+      {
+        executionId,
+        status: "completed",
+        result: output,
+        ...(retryCount > 0 ? { retryCount } : {}),
+      },
+      {
+        status: isTransactionResult(output)
+          ? HttpStatus.ACCEPTED
+          : HttpStatus.OK,
+      }
+    ),
+    "success"
   );
 }
 
@@ -272,9 +315,23 @@ async function executeNode(
   data: NodeExecuteRequest,
   resolved: ResolvedAction,
   apiKeyCtx: ApiKeyContext,
-  preCreatedExecutionId?: string
+  idem: IdempotencyOutcome | null,
+  preCreatedExecutionId?: string,
+  resolvedRefs?: { network?: string; integrationId?: string }
 ): Promise<NextResponse> {
-  const { config, integrationId, network, retry } = data;
+  const { config, retry } = data;
+  const network = resolvedRefs?.network;
+  const integrationId = resolvedRefs?.integrationId;
+
+  // Drop caller-supplied gating keys so the step only sees the values the
+  // route resolved and gated on. web3Connection is intentionally preserved;
+  // it stays org-ownership-verified downstream in lib/safe/signer-resolver.ts.
+  const {
+    network: _ignoredNetwork,
+    integrationId: _ignoredIntegrationId,
+    _context: _ignoredContext,
+    ...safeConfig
+  } = config;
 
   let executionId: string;
   if (preCreatedExecutionId) {
@@ -282,7 +339,7 @@ async function executeNode(
   } else {
     const redactedInput = redactInput({
       actionType: data.actionType,
-      ...config,
+      ...safeConfig,
     });
     const created = await createExecution({
       organizationId: apiKeyCtx.organizationId,
@@ -297,7 +354,7 @@ async function executeNode(
   await markRunning(executionId);
 
   const stepInput = {
-    ...config,
+    ...safeConfig,
     ...(integrationId ? { integrationId } : {}),
     ...(network ? { network } : {}),
     _context: {
@@ -318,17 +375,19 @@ async function executeNode(
         executionId,
         `Step function not found: ${resolved.importer.stepFunction}`
       );
-      return NextResponse.json(
-        { error: "Internal error: step function not found" },
-        { status: 500 }
+      // Never reached the step: release for a clean retry.
+      return recordIdempotentResponse(
+        idem,
+        NextResponse.json(
+          { error: "Internal error: step function not found" },
+          { status: HttpStatus.INTERNAL_SERVER_ERROR }
+        ),
+        "release"
       );
     }
 
-    const invokeResult = await invokeStep(
-      stepFn,
-      stepInput,
-      retry,
-      Boolean(network)
+    const invokeResult = await withIdempotencyHeartbeat(idem, () =>
+      invokeStep(stepFn, stepInput, retry, Boolean(network))
     );
 
     if (invokeResult.retryCount > 0) {
@@ -337,30 +396,41 @@ async function executeNode(
 
     if (!invokeResult.ok) {
       await failExecution(executionId, invokeResult.error);
-      return NextResponse.json(
-        {
-          executionId,
-          status: "failed",
-          error: invokeResult.error,
-          ...(invokeResult.retryCount > 0
-            ? { retryCount: invokeResult.retryCount }
-            : {}),
-        },
-        { status: 422 }
+      // The step ran (possibly broadcasting): finalize as failed.
+      return recordIdempotentResponse(
+        idem,
+        NextResponse.json(
+          {
+            executionId,
+            status: "failed",
+            error: invokeResult.error,
+            ...(invokeResult.retryCount > 0
+              ? { retryCount: invokeResult.retryCount }
+              : {}),
+          },
+          { status: HttpStatus.UNPROCESSABLE_ENTITY }
+        ),
+        "failed"
       );
     }
 
     return await handleResult(
       executionId,
       invokeResult.result,
-      invokeResult.retryCount
+      invokeResult.retryCount,
+      idem
     );
   } catch (err: unknown) {
     const errorMsg = getErrorMessage(err);
     await failExecution(executionId, errorMsg);
-    return NextResponse.json(
-      { executionId, status: "failed", error: errorMsg },
-      { status: 500 }
+    // A thrown error may have left a tx mid-broadcast: finalize as failed.
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json(
+        { executionId, status: "failed", error: errorMsg },
+        { status: HttpStatus.INTERNAL_SERVER_ERROR }
+      ),
+      "failed"
     );
   }
 }
@@ -368,7 +438,15 @@ async function executeNode(
 export async function POST(request: Request): Promise<NextResponse> {
   const apiKeyCtx = await validateApiKey(request);
   if (!apiKeyCtx) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: HttpStatus.UNAUTHORIZED }
+    );
+  }
+
+  const scopeError = requireScope(apiKeyCtx.scope, SCOPE_MCP_WRITE);
+  if (scopeError) {
+    return scopeError;
   }
 
   // Enter ALS error context so plugin step errors carry org labels
@@ -376,9 +454,12 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const rateLimit = checkRateLimit(apiKeyCtx.apiKeyId);
   if (!rateLimit.allowed) {
-    return NextResponse.json(
-      { error: "Rate limit exceeded" },
-      { status: 429, headers: { "Retry-After": String(rateLimit.retryAfter) } }
+    return applyRateLimitHeaders(
+      NextResponse.json(
+        { error: "Rate limit exceeded" },
+        { status: HttpStatus.TOO_MANY_REQUESTS }
+      ),
+      rateLimit
     );
   }
 
@@ -391,27 +472,47 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid JSON body" },
+      { status: HttpStatus.BAD_REQUEST }
+    );
   }
 
   const validation = validateRequest(body);
   if (!validation.valid) {
-    return NextResponse.json({ error: validation.error }, { status: 400 });
+    return NextResponse.json(
+      { error: validation.error },
+      { status: HttpStatus.BAD_REQUEST }
+    );
   }
 
-  const { actionType, integrationId, network } = validation.data;
+  const { actionType, config, integrationId, network } = validation.data;
+
+  // Gating keys can ride inside caller config; merge them in so ownership,
+  // wallet, and spending-cap checks cannot be bypassed by nesting them there.
+  const configNetwork =
+    typeof config.network === "string" && config.network.trim() !== ""
+      ? config.network
+      : undefined;
+  const configIntegrationId =
+    typeof config.integrationId === "string" &&
+    config.integrationId.trim() !== ""
+      ? config.integrationId
+      : undefined;
+  const effectiveNetwork = network ?? configNetwork;
+  const effectiveIntegrationId = integrationId ?? configIntegrationId;
 
   const resolved = resolveAction(actionType);
   if (!resolved) {
     return NextResponse.json(
       { error: `Unknown action type: ${actionType}` },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
-  if (integrationId) {
+  if (effectiveIntegrationId) {
     const owned = await verifyIntegrationOwnership(
-      integrationId,
+      effectiveIntegrationId,
       apiKeyCtx.organizationId
     );
     if (!owned) {
@@ -420,15 +521,38 @@ export async function POST(request: Request): Promise<NextResponse> {
           error:
             "Integration not found or does not belong to this organization",
         },
-        { status: 403 }
+        { status: HttpStatus.FORBIDDEN }
       );
     }
   }
 
-  if (network) {
+  const resolvedRefs = {
+    network: effectiveNetwork,
+    integrationId: effectiveIntegrationId,
+  };
+
+  // Idempotency: reserve the key before any state-changing node execution.
+  const idem = await beginIdempotentFromRequest({
+    request,
+    organizationId: apiKeyCtx.organizationId,
+    scope: `execute:node:${actionType}`,
+    requestBody: body,
+  });
+  if (idem) {
+    const early = idempotencyEarlyResponse(idem);
+    if (early) {
+      return applyRateLimitHeaders(
+        NextResponse.json(early.body, { status: early.status }),
+        rateLimit
+      );
+    }
+  }
+
+  if (effectiveNetwork) {
     const walletError = await requireWallet(apiKeyCtx.organizationId);
     if (walletError) {
-      return walletError;
+      // Pre-broadcast gating failure: release for a clean retry.
+      return recordIdempotentResponse(idem, walletError, "release");
     }
 
     const redactedInput = redactInput({
@@ -439,20 +563,46 @@ export async function POST(request: Request): Promise<NextResponse> {
       organizationId: apiKeyCtx.organizationId,
       apiKeyId: apiKeyCtx.apiKeyId,
       type: resolved.actionType,
-      network,
+      network: effectiveNetwork,
       input: redactedInput,
     });
     if (!reserve.allowed) {
-      return NextResponse.json({ error: reserve.reason }, { status: 403 });
+      return applyRateLimitHeaders(
+        await recordIdempotentResponse(
+          idem,
+          NextResponse.json(
+            { error: reserve.reason },
+            { status: HttpStatus.FORBIDDEN }
+          ),
+          "release"
+        ),
+        rateLimit
+      );
     }
 
-    return await executeNode(
-      validation.data,
-      resolved,
-      apiKeyCtx,
-      reserve.executionId
+    // executeNode settles the idempotency record (finalize/failed) per branch.
+    return applyRateLimitHeaders(
+      await executeNode(
+        validation.data,
+        resolved,
+        apiKeyCtx,
+        idem,
+        reserve.executionId,
+        resolvedRefs
+      ),
+      rateLimit
     );
   }
 
-  return await executeNode(validation.data, resolved, apiKeyCtx);
+  return applyRateLimitHeaders(
+    await executeNode(
+      validation.data,
+      resolved,
+      apiKeyCtx,
+      idem,
+      undefined,
+      resolvedRefs
+    ),
+    rateLimit
+  );
 }

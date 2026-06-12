@@ -125,7 +125,7 @@ export async function clerkCreateUserStep(
   "use step";
 
   const credentials = input.integrationId
-    ? await fetchCredentials(input.integrationId)
+    ? await fetchCredentials(input.integrationId, { organizationId: input._context?.organizationId ?? null })
     : {};
 
   return withStepLogging(input, () => stepHandler(input, credentials));

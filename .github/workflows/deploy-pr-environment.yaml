@@ -674,6 +674,69 @@ jobs:
             -f ${GITHUB_WORKSPACE}/values-pr-${PR_NUMBER}.yaml \
             --namespace "${NAMESPACE}" --timeout 10m0s --atomic --version 0.2.1
 
+      # Seed the internal-service HMAC store for this PR's fresh database. The
+      # app verifies HMAC-signed internal requests (reaper, dispatchers) against
+      # a DB-backed secret store that starts empty. This runs AFTER the app
+      # deploy so external-secrets has synced the signing secret from SSM - the
+      # app's db-migration initContainer can't do it (its secretKeyRef env is
+      # fixed at container start and races ESO on first boot). A short poll
+      # guards against the secret object existing before its value lands.
+      - name: Seed internal-service HMAC store
+        env:
+          PR_NUMBER: ${{ env.PR_NUMBER }}
+          NAMESPACE: ${{ env.NAMESPACE }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.vars.outputs.sha_short }}
+        run: |
+          set -euo pipefail
+          SECRET_NAME="keeperhub-pr-${PR_NUMBER}-common-internal-service-hmac-secret"
+          echo "Waiting for ${SECRET_NAME} to be populated by external-secrets..."
+          for i in $(seq 1 60); do
+            v=$(kubectl get secret "${SECRET_NAME}" -n "${NAMESPACE}" -o jsonpath="{.data.${SECRET_NAME}}" 2>/dev/null || true)
+            [ -n "${v}" ] && { echo "secret populated"; break; }
+            sleep 5
+          done
+          DB_PASSWORD=$(kubectl get secret keeperhub-pr-${PR_NUMBER}-db-credentials -n "${NAMESPACE}" -o jsonpath='{.data.password}' | base64 -d)
+          ENCODED_PASSWORD=$(DB_PASSWORD="${DB_PASSWORD}" python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['DB_PASSWORD'], safe=''))")
+          DB_URL="postgresql://keeperhub:${ENCODED_PASSWORD}@keeperhub-pr-${PR_NUMBER}-db-rw.${NAMESPACE}.svc.cluster.local:5432/keeperhub"
+          kubectl delete job keeperhub-pr-${PR_NUMBER}-hmac-seed -n "${NAMESPACE}" --ignore-not-found
+          kubectl apply -n "${NAMESPACE}" -f - <<EOF
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: keeperhub-pr-${PR_NUMBER}-hmac-seed
+          spec:
+            backoffLimit: 2
+            ttlSecondsAfterFinished: 600
+            template:
+              spec:
+                restartPolicy: Never
+                containers:
+                  - name: hmac-seed
+                    image: ${ECR_REGISTRY}/keeperhub-staging:migrator-${IMAGE_TAG}
+                    command: ["/bin/sh", "-c"]
+                    args:
+                      - 'printf "%s" "\$INTERNAL_SERVICE_HMAC_SECRET" | pnpm tsx scripts/seed-internal-service-hmac.ts || echo "seed skipped (row already present or failed - see above)"'
+                    env:
+                      - name: DATABASE_URL
+                        value: "${DB_URL}"
+                      - name: ALLOW_REMOTE
+                        value: "1"
+                      - name: INTERNAL_SERVICE_HMAC_SECRET
+                        valueFrom:
+                          secretKeyRef:
+                            name: keeperhub-pr-${PR_NUMBER}-common-internal-service-hmac-secret
+                            key: keeperhub-pr-${PR_NUMBER}-common-internal-service-hmac-secret
+                      - name: AGENTIC_WALLET_HMAC_KMS_KEY
+                        valueFrom:
+                          secretKeyRef:
+                            name: keeperhub-pr-${PR_NUMBER}-common-agentic-wallet-hmac-kms-key
+                            key: keeperhub-pr-${PR_NUMBER}-common-agentic-wallet-hmac-kms-key
+          EOF
+          kubectl wait --for=condition=complete job/keeperhub-pr-${PR_NUMBER}-hmac-seed -n "${NAMESPACE}" --timeout=180s || true
+          echo "--- hmac-seed job logs ---"
+          kubectl logs -n "${NAMESPACE}" job/keeperhub-pr-${PR_NUMBER}-hmac-seed --tail=30 || true
+
       # Opt-in (deploy-pr-metrics label). Deploys the metrics-collector
       # satellite against the PR DB so its /metrics can be curled directly
       # (ServiceMonitors are off in PR envs). TECH-6484.

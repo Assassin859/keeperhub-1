@@ -3,7 +3,7 @@
  *
  * Sends each opted-in org a summary of its workflow executions and failures to
  * the subscribed members, for each cadence the org subscribes to. Authenticated
- * as an internal service (X-Service-Key / HMAC) and invoked by the
+ * as an internal service (HMAC) and invoked by the
  * `execution-digest` k8s CronJob, which runs daily at 14:00 UTC via
  * deploy/scripts/digest-cron.sh. Daily cadence sends every run; weekly sends
  * only on Tuesdays; monthly sends only on the 1st (reporting the previous

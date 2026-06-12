@@ -5,7 +5,10 @@ import { isAnonymousUserShape } from "@/lib/auth-anonymous-guard";
 import { db } from "@/lib/db";
 import { twoFactor as twoFactorTable, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { requireDualFactor } from "@/lib/mfa/dual-factor";
+import {
+  dualFactorErrorResponse,
+  requireDualFactor,
+} from "@/lib/mfa/dual-factor";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 type RequestBody = {
@@ -52,10 +55,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     headers: request.headers,
   });
   if (!dual.ok) {
-    return NextResponse.json(
-      { error: dual.error, code: dual.code },
-      { status: dual.status }
-    );
+    return dualFactorErrorResponse(dual);
   }
 
   const userId = session.user.id;

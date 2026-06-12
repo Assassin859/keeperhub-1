@@ -644,6 +644,54 @@ export type DirectExecution = typeof directExecutions.$inferSelect;
 export type NewDirectExecution = typeof directExecutions.$inferInsert;
 
 /**
+ * Idempotency records for mutating API endpoints.
+ *
+ * Stripe-style Idempotency-Key support. The first request for a given
+ * (organization, scope, key) reserves a row (status "processing"); once the
+ * work finishes its response is stored (status "completed") and replayed for
+ * any retry within the TTL, so a network retry never double-executes. A retry
+ * carrying the same key but a different request body is a conflict. `scope`
+ * namespaces the operation (e.g. "webhook:<workflowId>", "execute",
+ * "workflow:create") so a key is independent across unrelated operations but
+ * unique within one. Expired rows are swept by `expires_at`.
+ */
+export const idempotencyRecords = pgTable(
+  "idempotency_records",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id),
+    scope: text("scope").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestHash: text("request_hash").notNull(),
+    status: text("status").notNull().default("processing"), // processing | completed | failed
+    // Fencing token bumped on every reserve/reclaim so a stale holder whose lock
+    // was taken over cannot finalize/release/heartbeat the new holder's row.
+    lockVersion: integer("lock_version").notNull().default(0),
+    responseStatus: integer("response_status"),
+    // biome-ignore lint/suspicious/noExplicitAny: JSONB - stored response body, shape varies by endpoint
+    responseBody: jsonb("response_body").$type<any>(),
+    resourceId: text("resource_id"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    expiresAt: timestamp("expires_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("uq_idempotency_org_scope_key").on(
+      table.organizationId,
+      table.scope,
+      table.idempotencyKey
+    ),
+    index("idx_idempotency_expires_at").on(table.expiresAt),
+  ]
+);
+
+export type IdempotencyRecord = typeof idempotencyRecords.$inferSelect;
+export type NewIdempotencyRecord = typeof idempotencyRecords.$inferInsert;
+
+/**
  * Organization Spend Caps table
  *
  * Per-organization daily spending limits for the direct execution API.

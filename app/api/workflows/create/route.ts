@@ -2,7 +2,9 @@ import { and, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { NextResponse } from "next/server";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import { requireScope } from "@/lib/middleware/require-scope";
 import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 import { recordWorkflowSnapshot } from "@/lib/workflow/history";
 import { db } from "@/lib/db";
@@ -10,6 +12,11 @@ import { validateWorkflowIntegrations } from "@/lib/db/integrations";
 import { projects, tags, workflows } from "@/lib/db/schema";
 import { extractActionTypeNodes } from "@/lib/features";
 import { enforceWorkflowFeatures } from "@/lib/features/route-guard";
+import {
+  beginIdempotentFromRequest,
+  idempotencyEarlyResponse,
+  recordIdempotentResponse,
+} from "@/lib/idempotency";
 import { generateId } from "@/lib/utils/id";
 import { sanitizeWorkflowData } from "@/lib/workflow/editor/sanitize-nodes";
 import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
@@ -89,6 +96,11 @@ export async function POST(request: Request) {
       );
     }
 
+    const scopeError = requireScope(authContext.scope, SCOPE_MCP_WRITE);
+    if (scopeError) {
+      return scopeError;
+    }
+
     const { userId, organizationId } = authContext;
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -109,6 +121,21 @@ export async function POST(request: Request) {
         { error: "Name, nodes, and edges are required" },
         { status: 400 }
       );
+    }
+
+    // Idempotency: a retry with the same key + body returns the original
+    // created workflow instead of creating a duplicate shell.
+    const idem = await beginIdempotentFromRequest({
+      request,
+      organizationId,
+      scope: "workflow-create",
+      requestBody: body,
+    });
+    if (idem) {
+      const early = idempotencyEarlyResponse(idem);
+      if (early) {
+        return NextResponse.json(early.body, { status: early.status });
+      }
     }
 
     // Ensure there are always default nodes (trigger + action) if nodes array is empty
@@ -240,11 +267,14 @@ export async function POST(request: Request) {
       source: "create",
     });
 
-    return NextResponse.json({
-      ...newWorkflow,
-      createdAt: newWorkflow.createdAt.toISOString(),
-      updatedAt: newWorkflow.updatedAt.toISOString(),
-    });
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json({
+        ...newWorkflow,
+        createdAt: newWorkflow.createdAt.toISOString(),
+        updatedAt: newWorkflow.updatedAt.toISOString(),
+      })
+    );
   } catch (error) {
     logSystemError(ErrorCategory.DATABASE, "Failed to create workflow", error, {
       endpoint: "/api/workflows/create",

@@ -374,7 +374,9 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
       );
       expect(response.status).toBe(403);
       const data = await response.json();
-      expect(data.error).toBe("You do not have permission to run this workflow");
+      expect(data.error).toBe(
+        "You do not have permission to run this workflow"
+      );
     });
   });
 
@@ -436,7 +438,7 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
       mockEnforceExecutionLimit.mockResolvedValue({
         blocked: true,
         response: new Response(
-          JSON.stringify({ error: "Execution limit reached" }),
+          JSON.stringify({ error: "Execution limit reached", limit: 100 }),
           { status: 429 }
         ),
       });
@@ -446,6 +448,11 @@ describe("POST /api/workflows/:workflowId/webhook", () => {
         createContext(WORKFLOW_ID)
       );
       expect(response.status).toBe(429);
+      // The execution-limit 429 must carry limiter headers like the
+      // concurrency 429, with the limit surfaced from the guard body.
+      expect(response.headers.get("Retry-After")).toBe("30");
+      expect(response.headers.get("X-RateLimit-Limit")).toBe("100");
+      expect(response.headers.get("X-RateLimit-Remaining")).toBe("0");
     });
 
     it("should return 429 when concurrency limit reached", async () => {

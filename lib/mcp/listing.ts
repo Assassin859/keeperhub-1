@@ -69,6 +69,32 @@ const LISTING_COLUMNS = {
   nodes: workflows.nodes,
 };
 
+// Public projection: LISTING_COLUMNS minus `nodes`. The public,
+// unauthenticated GET /api/mcp/workflows/[slug]/listing endpoint (and the
+// HTTP-proxied get_workflow_listing MCP tool) must never return workflow node
+// internals (contract addresses, webhook URLs, raw calldata) to anonymous
+// callers. Maintained as an explicit allowlist mirroring LISTED_WORKFLOW_COLUMNS
+// (app/api/mcp/workflows/route.ts) -- NOT a runtime Omit -- so a future column
+// added to LISTING_COLUMNS does not auto-leak through this surface.
+const PUBLIC_LISTING_COLUMNS = {
+  id: workflows.id,
+  name: workflows.name,
+  description: workflows.description,
+  listedSlug: workflows.listedSlug,
+  listedAt: workflows.listedAt,
+  inputSchema: workflows.inputSchema,
+  outputMapping: workflows.outputMapping,
+  priceUsdcPerCall: workflows.priceUsdcPerCall,
+  organizationId: workflows.organizationId,
+  createdAt: workflows.createdAt,
+  updatedAt: workflows.updatedAt,
+  isListed: workflows.isListed,
+  workflowType: workflows.workflowType,
+  category: workflows.category,
+  chain: workflows.chain,
+  listingVersion: workflows.listingVersion,
+};
+
 type ListingRow = {
   id: string;
   name: string;
@@ -421,4 +447,31 @@ export async function getWorkflowListing(
   }
 
   return { ok: true, listing: rows[0] as ListingRow };
+}
+
+export async function getWorkflowListingPublic(
+  slug: string
+): Promise<ListingResult<Omit<ListingRow, "nodes">>> {
+  // Unauthenticated public read. Runs the IDENTICAL query as getWorkflowListing
+  // (listedSlug + isListed=true + not-deleted, limit 1) but projects
+  // PUBLIC_LISTING_COLUMNS so workflow `nodes` are never returned. The
+  // authenticated per-workflow MCP server keeps using getWorkflowListing because
+  // it needs nodes for trigger detection.
+  const rows = await db
+    .select(PUBLIC_LISTING_COLUMNS)
+    .from(workflows)
+    .where(
+      and(
+        eq(workflows.listedSlug, slug),
+        eq(workflows.isListed, true),
+        workflowNotDeleted()
+      )
+    )
+    .limit(1);
+
+  if (rows.length === 0) {
+    return { ok: false, error: "NOT_FOUND" };
+  }
+
+  return { ok: true, listing: rows[0] as Omit<ListingRow, "nodes"> };
 }

@@ -5,6 +5,11 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import {
   accounts,
+  apiKeys,
+  deviceCode,
+  mcpOauthAuthCodes,
+  mcpOauthRefreshTokens,
+  sessions,
   twoFactor as twoFactorTable,
   users,
   verifications,
@@ -364,15 +369,41 @@ async function handleReset(
     }
   }
 
-  // Hash and update password
+  // Hash the new password, drop the consumed reset code, and revoke every
+  // user-scoped credential in a single transaction. A reset is a recovery
+  // path the user may be invoking precisely because they lost control of the
+  // account, so nothing minted before the reset may survive it. Sessions alone
+  // are not enough: API keys, MCP refresh tokens, auth codes, and device codes
+  // each authenticate standalone with no password or session, so a stolen one
+  // would outlive the reset. The reset flow itself mints no session, so the
+  // user signs in fresh.
+  //
+  // Organization API keys are deliberately NOT revoked here. They are
+  // org-owned, not user-owned (created_by records provenance, not ownership),
+  // and minting one already requires admin/owner role plus dual-factor, so a
+  // password reset is the wrong lever: it would take down the org's running
+  // automation on a routine, usually-benign event. Genuine account compromise
+  // is handled by account deactivation, whose cascade (drizzle/0085) revokes
+  // org keys; an exfiltrated key is revoked per-key via /api/keys/[keyId].
   const hashedPassword = await hashPassword(newPassword);
-  await db
-    .update(accounts)
-    .set({ password: hashedPassword, updatedAt: new Date() })
-    .where(eq(accounts.id, credentialAccount.id));
+  await db.transaction(async (tx) => {
+    await tx
+      .update(accounts)
+      .set({ password: hashedPassword, updatedAt: new Date() })
+      .where(eq(accounts.id, credentialAccount.id));
 
-  // Delete used verification
-  await db.delete(verifications).where(eq(verifications.id, verification.id));
+    await tx.delete(verifications).where(eq(verifications.id, verification.id));
+
+    await tx.delete(sessions).where(eq(sessions.userId, user.id));
+    await tx.delete(apiKeys).where(eq(apiKeys.userId, user.id));
+    await tx
+      .delete(mcpOauthRefreshTokens)
+      .where(eq(mcpOauthRefreshTokens.userId, user.id));
+    await tx
+      .delete(mcpOauthAuthCodes)
+      .where(eq(mcpOauthAuthCodes.userId, user.id));
+    await tx.delete(deviceCode).where(eq(deviceCode.userId, user.id));
+  });
 
   await recordAuditEvent({
     actor: { userId: user.id, organizationId: null, authMethod: "unknown" },

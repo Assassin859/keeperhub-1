@@ -10,10 +10,27 @@ import {
   workflowSchedules,
   workflows,
 } from "../../../lib/db/schema";
+import { signInternalServiceHeaders } from "../../utils/internal-service-auth";
 
 // tests/setup.ts globally mocks @/lib/db with a stub query builder. This suite
 // drives the real route against a real database, so restore the genuine module.
 vi.unmock("@/lib/db");
+
+// The route authenticates via HMAC, verified against the internal_service_hmac
+// secret store. Mock the store so the suite stays self-contained (no seeded DB
+// row), and sign requests with the same fixed secret.
+const { HMAC_SECRET } = vi.hoisted(() => ({
+  HMAC_SECRET: "test-scheduler-lifecycle-hmac-secret",
+}));
+vi.mock("@/lib/internal-service-hmac-store", () => ({
+  listActiveHmacSecrets: vi.fn(() =>
+    Promise.resolve([{ secret: HMAC_SECRET, keyVersion: 1 }])
+  ),
+  lookupHmacSecret: vi.fn(() =>
+    Promise.resolve({ secret: HMAC_SECRET, keyVersion: 1 })
+  ),
+  insertHmacSecret: vi.fn(),
+}));
 
 // Proves the scheduler select only returns due workflows that are actually
 // runnable: enabled, not soft-deleted, not deactivated, and owned by an ACTIVE
@@ -29,11 +46,6 @@ vi.unmock("@/lib/db");
 const SKIP =
   !process.env.DATABASE_URL || process.env.SKIP_INFRA_TESTS === "true";
 const DATABASE_URL = process.env.DATABASE_URL ?? "";
-const SERVICE_KEY = "test-scheduler-lifecycle-key";
-
-// The route reads service keys from the environment at import time, so this
-// must be set before the dynamic import in beforeAll.
-process.env.SCHEDULER_SERVICE_API_KEY = SERVICE_KEY;
 
 const PREFIX = "test_keep611_lifecycle_";
 
@@ -124,9 +136,15 @@ describe.skipIf(SKIP)("scheduler lifecycle filtering", () => {
   }
 
   async function fetchScheduledWorkflowIds(): Promise<Set<string>> {
+    const url = "http://localhost/api/internal/schedules";
     const response = await GET(
-      new Request("http://localhost/api/internal/schedules", {
-        headers: { "X-Service-Key": SERVICE_KEY },
+      new Request(url, {
+        headers: signInternalServiceHeaders({
+          method: "GET",
+          url,
+          caller: "scheduler",
+          secret: HMAC_SECRET,
+        }),
       })
     );
     expect(response.status).toBe(200);

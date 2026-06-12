@@ -1,7 +1,10 @@
 import { createHash, randomBytes } from "node:crypto";
+import { HttpStatus } from "@/lib/http-status";
 import { normalizeScope } from "@/lib/mcp/oauth-scopes";
 import { type OAuthClient, storeOAuthClient } from "@/lib/mcp/oauth-store";
 import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
+import { isAllowedRedirectUri } from "@/lib/mcp/redirect-uri";
+import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 
 export const dynamic = "force-dynamic";
 
@@ -41,6 +44,11 @@ function isStringArray(value: unknown): value is string[] {
   );
 }
 
+// A client is confidential only when it explicitly registers
+// client_secret_post or client_secret_basic. A missing method defaults to
+// "none" (public PKCE), matching the column default and OAuth 2.1 / MCP
+// public-client expectations. Secret enforcement on the token endpoint
+// applies only to clients registered after this change.
 function resolveAuthMethod(value: unknown): TokenEndpointAuthMethod {
   if (typeof value === "string") {
     const match = SUPPORTED_AUTH_METHODS.find((m) => m === value);
@@ -48,19 +56,19 @@ function resolveAuthMethod(value: unknown): TokenEndpointAuthMethod {
       return match;
     }
   }
-  return "client_secret_post";
+  return "none";
 }
 
 export async function POST(request: Request): Promise<Response> {
   const ip = getClientIp(request);
   const rateLimit = checkIpRateLimit(ip, 10, 60_000);
   if (!rateLimit.allowed) {
-    return Response.json(
-      { error: "Too many requests" },
-      {
-        status: 429,
-        headers: { "Retry-After": String(rateLimit.retryAfter) },
-      }
+    return applyRateLimitHeaders(
+      Response.json(
+        { error: "Too many requests" },
+        { status: HttpStatus.TOO_MANY_REQUESTS }
+      ),
+      rateLimit
     );
   }
 
@@ -68,7 +76,10 @@ export async function POST(request: Request): Promise<Response> {
   try {
     body = (await request.json()) as RegistrationRequestBody;
   } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+    return Response.json(
+      { error: "Invalid JSON body" },
+      { status: HttpStatus.BAD_REQUEST }
+    );
   }
 
   const {
@@ -83,7 +94,7 @@ export async function POST(request: Request): Promise<Response> {
   if (typeof client_name !== "string" || client_name.trim().length === 0) {
     return Response.json(
       { error: "client_name is required and must be a string" },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -93,17 +104,17 @@ export async function POST(request: Request): Promise<Response> {
         error:
           "redirect_uris is required and must be a non-empty array of strings",
       },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
   for (const uri of redirect_uris) {
-    try {
-      new URL(uri);
-    } catch {
+    if (!isAllowedRedirectUri(uri)) {
       return Response.json(
-        { error: `Invalid redirect_uri: ${uri}` },
-        { status: 400 }
+        {
+          error: `Invalid redirect_uri: ${uri}. Must be https, or http on a loopback host (localhost, 127.0.0.1, [::1]).`,
+        },
+        { status: HttpStatus.BAD_REQUEST }
       );
     }
   }
@@ -135,6 +146,7 @@ export async function POST(request: Request): Promise<Response> {
   const client: OAuthClient = {
     clientId,
     clientSecretHash,
+    tokenEndpointAuthMethod: authMethod,
     clientName: client_name.trim(),
     redirectUris: redirect_uris,
     scopes: resolvedScope.split(" "),
@@ -170,5 +182,8 @@ export async function POST(request: Request): Promise<Response> {
       ? responseBase
       : { ...responseBase, client_secret: clientSecretRaw };
 
-  return Response.json(responseBody, { status: 201 });
+  return applyRateLimitHeaders(
+    Response.json(responseBody, { status: HttpStatus.CREATED }),
+    rateLimit
+  );
 }

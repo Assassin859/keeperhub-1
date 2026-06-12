@@ -1,9 +1,11 @@
+import { HttpStatus } from "@/lib/http-status";
 import { and, eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { users, workflowRatings, workflows } from "@/lib/db/schema";
+import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { checkVoteRateLimit } from "@/lib/workflow/editor/vote-rate-limit";
 import { VOTE_DIRECTIONS, isValidDirection } from "@/lib/workflow/editor/votes";
 
@@ -48,7 +50,7 @@ export async function POST(
     });
 
     if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "Unauthorized" }, { status: HttpStatus.UNAUTHORIZED });
     }
 
     const { id: userId } = session.user;
@@ -62,14 +64,18 @@ export async function POST(
     if (userRecord?.isAnonymous) {
       return NextResponse.json(
         { error: "Sign in with a real account to vote on workflows" },
-        { status: 403 }
+        { status: HttpStatus.FORBIDDEN }
       );
     }
 
-    if (!checkVoteRateLimit(userId)) {
-      return NextResponse.json(
-        { error: "Too many votes, please try again later" },
-        { status: 429 }
+    const rateLimit = checkVoteRateLimit(userId);
+    if (!rateLimit.allowed) {
+      return applyRateLimitHeaders(
+        NextResponse.json(
+          { error: "Too many votes, please try again later" },
+          { status: HttpStatus.TOO_MANY_REQUESTS }
+        ),
+        rateLimit
       );
     }
 
@@ -81,7 +87,7 @@ export async function POST(
     if (!isValidDirection(vote)) {
       return NextResponse.json(
         { error: "Vote must be \"upvote\" or \"downvote\"" },
-        { status: 400 }
+        { status: HttpStatus.BAD_REQUEST }
       );
     }
 
@@ -89,7 +95,7 @@ export async function POST(
     if (!hasDuplicated) {
       return NextResponse.json(
         { error: "You must use this template before voting" },
-        { status: 403 }
+        { status: HttpStatus.FORBIDDEN }
       );
     }
 
@@ -115,7 +121,10 @@ export async function POST(
           .where(eq(workflowRatings.id, current.id));
 
         const score = await getScore(workflowId);
-        return NextResponse.json({ userVote: null, score });
+        return applyRateLimitHeaders(
+          NextResponse.json({ userVote: null, score }),
+          rateLimit
+        );
       }
 
       // Opposite direction: switch vote
@@ -135,7 +144,10 @@ export async function POST(
     }
 
     const score = await getScore(workflowId);
-    return NextResponse.json({ userVote: vote, score });
+    return applyRateLimitHeaders(
+      NextResponse.json({ userVote: vote, score }),
+      rateLimit
+    );
   } catch (error) {
     return apiError(error, "Failed to vote on workflow");
   }

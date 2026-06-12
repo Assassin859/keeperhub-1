@@ -1,3 +1,4 @@
+import { HttpStatus } from "@/lib/http-status";
 import "server-only";
 
 import { NextResponse } from "next/server";
@@ -5,6 +6,16 @@ import { resolveAbi } from "@/lib/abi/cache";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import { simulateContractCall } from "@/lib/execute/simulate";
+import {
+  beginIdempotentFromRequest,
+  type IdempotencyOutcome,
+  idempotencyEarlyResponse,
+  recordIdempotentResponse,
+  withIdempotencyHeartbeat,
+} from "@/lib/idempotency";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
+import { requireScope } from "@/lib/middleware/require-scope";
+import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { getErrorMessage } from "@/lib/utils";
 import { readContractCore } from "@/plugins/web3/steps/read-contract-core";
 import { writeContractCore } from "@/plugins/web3/steps/write-contract-core";
@@ -67,12 +78,15 @@ async function executeConditionalRead(
   });
 
   if (!readResult.success) {
-    return NextResponse.json({ error: readResult.error }, { status: 400 });
+    return NextResponse.json(
+      { error: readResult.error },
+      { status: HttpStatus.BAD_REQUEST }
+    );
   }
 
   return NextResponse.json(
     { executed: true, conditionResult, result: readResult.result },
-    { status: 200 }
+    { status: HttpStatus.OK }
   );
 }
 
@@ -100,7 +114,7 @@ async function simulateConditionalWrite(
   // broadcast would have reverted too, so executed is false.
   return NextResponse.json(
     { ...result, executed: !result.wouldRevert, conditionResult },
-    { status: result.wouldRevert ? 400 : 200 }
+    { status: result.wouldRevert ? HttpStatus.BAD_REQUEST : HttpStatus.OK }
   );
 }
 
@@ -111,11 +125,13 @@ async function executeConditionalWrite(
   organizationId: string,
   apiKeyId: string,
   fullBody: Record<string, unknown>,
-  conditionResult: ConditionResult
+  conditionResult: ConditionResult,
+  idem: IdempotencyOutcome | null
 ): Promise<NextResponse> {
   const walletError = await requireWallet(organizationId);
   if (walletError) {
-    return walletError;
+    // Pre-broadcast gating failure: release for a clean retry.
+    return recordIdempotentResponse(idem, walletError, "release");
   }
 
   const redactedInput = redactInput(fullBody);
@@ -127,21 +143,30 @@ async function executeConditionalWrite(
     input: redactedInput,
   });
   if (!reserve.allowed) {
-    return NextResponse.json({ error: reserve.reason }, { status: 403 });
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json(
+        { error: reserve.reason },
+        { status: HttpStatus.FORBIDDEN }
+      ),
+      "release"
+    );
   }
   const { executionId } = reserve;
 
   await markRunning(executionId);
 
-  const result = await writeContractCore({
-    contractAddress: action.contractAddress,
-    network,
-    abi: resolvedWriteAbi,
-    abiFunction: action.functionName,
-    functionArgs: action.functionArgs,
-    gasLimitMultiplier: action.gasLimitMultiplier,
-    _context: { organizationId },
-  });
+  const result = await withIdempotencyHeartbeat(idem, () =>
+    writeContractCore({
+      contractAddress: action.contractAddress,
+      network,
+      abi: resolvedWriteAbi,
+      abiFunction: action.functionName,
+      functionArgs: action.functionArgs,
+      gasLimitMultiplier: action.gasLimitMultiplier,
+      _context: { organizationId },
+    })
+  );
 
   if (result.success) {
     await completeExecution(executionId, {
@@ -155,21 +180,33 @@ async function executeConditionalWrite(
     await failExecution(executionId, result.error);
   }
 
-  return NextResponse.json(
-    {
-      executionId,
-      status: result.success ? "completed" : "failed",
-      executed: true,
-      conditionResult,
-    },
-    { status: 202 }
+  return recordIdempotentResponse(
+    idem,
+    NextResponse.json(
+      {
+        executionId,
+        status: result.success ? "completed" : "failed",
+        executed: true,
+        conditionResult,
+      },
+      { status: HttpStatus.ACCEPTED }
+    ),
+    result.success ? "success" : "failed"
   );
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
   const apiKeyCtx = await validateApiKey(request);
   if (!apiKeyCtx) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: HttpStatus.UNAUTHORIZED }
+    );
+  }
+
+  const scopeError = requireScope(apiKeyCtx.scope, SCOPE_MCP_WRITE);
+  if (scopeError) {
+    return scopeError;
   }
 
   // Enter ALS error context so plugin step errors carry org labels
@@ -177,9 +214,12 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const rateLimit = checkRateLimit(apiKeyCtx.apiKeyId);
   if (!rateLimit.allowed) {
-    return NextResponse.json(
-      { error: "Rate limit exceeded" },
-      { status: 429, headers: { "Retry-After": String(rateLimit.retryAfter) } }
+    return applyRateLimitHeaders(
+      NextResponse.json(
+        { error: "Rate limit exceeded" },
+        { status: HttpStatus.TOO_MANY_REQUESTS }
+      ),
+      rateLimit
     );
   }
 
@@ -192,12 +232,17 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     body = (await request.json()) as Record<string, unknown>;
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid JSON body" },
+      { status: HttpStatus.BAD_REQUEST }
+    );
   }
 
   const validation = validateCheckAndExecuteInput(body);
   if (!validation.valid) {
-    return NextResponse.json(validation.error, { status: 400 });
+    return NextResponse.json(validation.error, {
+      status: HttpStatus.BAD_REQUEST,
+    });
   }
 
   // KEEP-490: chainId is the canonical input; network is a deprecated alias.
@@ -213,7 +258,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   if ("error" in readAbiResult) {
     return NextResponse.json(
       { error: readAbiResult.error, field: "abi" },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -227,7 +272,10 @@ export async function POST(request: Request): Promise<NextResponse> {
   });
 
   if (!readResult.success) {
-    return NextResponse.json({ error: readResult.error }, { status: 400 });
+    return NextResponse.json(
+      { error: readResult.error },
+      { status: HttpStatus.BAD_REQUEST }
+    );
   }
 
   const conditionResult = evaluateCondition(readResult.result, condition);
@@ -235,7 +283,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!conditionResult.met) {
     return NextResponse.json(
       { executed: false, conditionResult },
-      { status: 200 }
+      { status: HttpStatus.OK }
     );
   }
 
@@ -247,7 +295,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   if ("error" in writeAbiResult) {
     return NextResponse.json(
       { error: writeAbiResult.error, field: "action.abi" },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -264,7 +312,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         error: `Function "${action.functionName}" not found in action ABI`,
         field: "action.functionName",
       },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -272,12 +320,15 @@ export async function POST(request: Request): Promise<NextResponse> {
     actionFn.stateMutability === "view" || actionFn.stateMutability === "pure";
 
   if (isReadOnly) {
-    return executeConditionalRead(
-      action,
-      network,
-      writeAbiResult.abi,
-      apiKeyCtx.organizationId,
-      conditionResult
+    return applyRateLimitHeaders(
+      await executeConditionalRead(
+        action,
+        network,
+        writeAbiResult.abi,
+        apiKeyCtx.organizationId,
+        conditionResult
+      ),
+      rateLimit
     );
   }
 
@@ -288,26 +339,50 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!simulateFlag.ok) {
     return NextResponse.json(
       { error: simulateFlag.error, field: "simulate" },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
   if (simulateFlag.simulate) {
-    return simulateConditionalWrite(
+    return applyRateLimitHeaders(
+      await simulateConditionalWrite(
+        action,
+        network,
+        writeAbiResult.abi,
+        apiKeyCtx.organizationId,
+        conditionResult
+      ),
+      rateLimit
+    );
+  }
+
+  // Idempotency applies only to the broadcasting write path.
+  const idem = await beginIdempotentFromRequest({
+    request,
+    organizationId: apiKeyCtx.organizationId,
+    scope: "execute:check-and-execute",
+    requestBody: body,
+  });
+  if (idem) {
+    const early = idempotencyEarlyResponse(idem);
+    if (early) {
+      return applyRateLimitHeaders(
+        NextResponse.json(early.body, { status: early.status }),
+        rateLimit
+      );
+    }
+  }
+
+  return applyRateLimitHeaders(
+    await executeConditionalWrite(
       action,
       network,
       writeAbiResult.abi,
       apiKeyCtx.organizationId,
-      conditionResult
-    );
-  }
-
-  return executeConditionalWrite(
-    action,
-    network,
-    writeAbiResult.abi,
-    apiKeyCtx.organizationId,
-    apiKeyCtx.apiKeyId,
-    body,
-    conditionResult
+      apiKeyCtx.apiKeyId,
+      body,
+      conditionResult,
+      idem
+    ),
+    rateLimit
   );
 }

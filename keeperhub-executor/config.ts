@@ -34,7 +34,6 @@ export const CONFIG = {
   maxConcurrentJobs: Number(process.env.MAX_CONCURRENT_JOBS) || 1,
 
   keeperhubApiUrl: process.env.KEEPERHUB_API_URL || "http://localhost:3000",
-  keeperhubApiKey: process.env.KEEPERHUB_API_KEY || "",
 
   healthPort: Number(process.env.HEALTH_PORT) || 3080,
   integrationEncryptionKey: process.env.INTEGRATION_ENCRYPTION_KEY || "",

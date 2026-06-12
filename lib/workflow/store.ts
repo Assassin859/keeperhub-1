@@ -1,6 +1,7 @@
 import type { Edge, EdgeChange, Node, NodeChange } from "@xyflow/react";
 import { applyEdgeChanges, applyNodeChanges } from "@xyflow/react";
 import { atom } from "jotai";
+import { toast } from "sonner";
 import { api } from "@/lib/api-client";
 import { computeAutoLayout } from "@/lib/workflow/editor/auto-layout";
 import { buildExecutionLogsMap } from "@/lib/workflow/editor/template-helpers";
@@ -215,7 +216,11 @@ export const autosaveAtom = atom(
         // Clear the unsaved changes indicator after successful save
         set(hasUnsavedChangesAtom, false);
       } catch (error) {
+        // Leave hasUnsavedChangesAtom set (only cleared on success) and tell the
+        // user: a rejected save - e.g. the server refusing an out-of-org
+        // connection reference - must not fail silently.
         console.warn("Autosave failed:", error);
+        toast.error("Couldn't save workflow changes. Please try again.");
       } finally {
         await new Promise((resolve) => setTimeout(resolve, 800));
         set(isSavingAtom, false);

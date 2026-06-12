@@ -81,9 +81,11 @@ type GasCreditCheckResult =
 /**
  * Resolve the gas credit allocation for an org in the current billing period.
  *
- * On first call per period, snapshots the current env-driven cap to the DB.
- * Subsequent calls in the same period return the persisted value, ensuring
- * mid-period env changes don't affect existing orgs.
+ * Snapshots the current env-driven cap to the DB. The snapshot self-heals
+ * upward: if the org's derived cap has increased since the row was written
+ * (plan upgrade, override raise, or env increase), the allocation is raised to
+ * the new cap. It is never reduced within a period, so mid-period env decreases
+ * and plan downgrades don't claw back credits an org is already relying on.
  */
 async function resolveAllocation(
   organizationId: string,
@@ -91,21 +93,6 @@ async function resolveAllocation(
   periodStart: Date,
   overrides?: Partial<PlanLimits> | null
 ): Promise<number> {
-  const existing = await db
-    .select({ allocatedCents: gasCreditAllocations.allocatedCents })
-    .from(gasCreditAllocations)
-    .where(
-      and(
-        eq(gasCreditAllocations.organizationId, organizationId),
-        eq(gasCreditAllocations.periodStart, periodStart)
-      )
-    )
-    .limit(1);
-
-  if (existing[0] !== undefined) {
-    return existing[0].allocatedCents;
-  }
-
   const capCents = getGasCreditCapCents(planName, overrides);
 
   await db
@@ -115,9 +102,16 @@ async function resolveAllocation(
       periodStart,
       allocatedCents: capCents,
     })
-    .onConflictDoNothing();
+    .onConflictDoUpdate({
+      target: [
+        gasCreditAllocations.organizationId,
+        gasCreditAllocations.periodStart,
+      ],
+      set: { allocatedCents: capCents },
+      setWhere: sql`${gasCreditAllocations.allocatedCents} < ${capCents}`,
+    });
 
-  const inserted = await db
+  const row = await db
     .select({ allocatedCents: gasCreditAllocations.allocatedCents })
     .from(gasCreditAllocations)
     .where(
@@ -128,7 +122,7 @@ async function resolveAllocation(
     )
     .limit(1);
 
-  return inserted[0]?.allocatedCents ?? capCents;
+  return row[0]?.allocatedCents ?? capCents;
 }
 
 /**
