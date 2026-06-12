@@ -143,13 +143,11 @@ const HEX_COLOR = /^#[0-9a-f]{3,8}$/i;
 function ValuePiece({ value }: { value: string }): React.ReactElement {
   if (HEX_COLOR.test(value)) {
     return (
-      <span className="inline-flex items-center gap-1 align-middle">
-        <span
-          className="inline-block size-2.5 rounded-full border border-border"
-          style={{ backgroundColor: value }}
-        />
-        {value}
-      </span>
+      <span
+        className="inline-block size-3 rounded-full border border-border align-middle"
+        style={{ backgroundColor: value }}
+        title={value}
+      />
     );
   }
   return <>{value}</>;
