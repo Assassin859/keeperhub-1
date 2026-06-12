@@ -17,6 +17,17 @@ import {
   type EventListenerOptions,
 } from "../../src/listener/event-listener";
 
+// KEEP-693: stub the phantom helpers so the listener does not call the internal
+// API. Default (undefined) keeps existing SQS-path tests on the id-less path.
+const { createPhantomExecution, failPhantomExecution } = vi.hoisted(() => ({
+  createPhantomExecution: vi.fn(),
+  failPhantomExecution: vi.fn(),
+}));
+vi.mock("../../lib/phantom", () => ({
+  createPhantomExecution,
+  failPhantomExecution,
+}));
+
 // Minimal ABI fixture: a single `Emitted(address indexed sender, uint256 value)`
 // matching the Phase 0 E2E fixture contract so unit and integration tests
 // share a mental model.
@@ -144,6 +155,8 @@ function makeLog(params: {
 describe("EventListener", () => {
   beforeEach(() => {
     clearInterfaceCache();
+    createPhantomExecution.mockReset();
+    failPhantomExecution.mockReset();
   });
 
   describe("lifecycle", () => {
@@ -235,6 +248,64 @@ describe("EventListener", () => {
         log.transactionHash,
       );
       expect(sqs.send).toHaveBeenCalledTimes(1);
+    });
+
+    // KEEP-693: phantom pre-creation wiring.
+    it("pre-creates a phantom and carries its id on the event message", async () => {
+      createPhantomExecution.mockResolvedValue("exec_ph");
+      const providerMock = makeProviderManagerMock();
+      const sqs = makeSqsMock();
+      const listener = new EventListener(
+        buildOptions({
+          providerManager: providerMock.manager,
+          dedup: makeDedupMock(),
+          sqs,
+        }),
+      );
+      await listener.start();
+
+      await providerMock.capturedHandler!(
+        makeLog({
+          txHash: `0x${"a".repeat(64)}`,
+          sender: SENDER,
+          value: 7n,
+        }),
+      );
+
+      expect(createPhantomExecution).toHaveBeenCalledWith(WORKFLOW_ID, USER_ID);
+      const command = sqs.send.mock.calls[0][0] as {
+        input: { MessageBody: string };
+      };
+      expect(JSON.parse(command.input.MessageBody).executionId).toBe("exec_ph");
+    });
+
+    it("marks the phantom failed with ES-0001 when the enqueue fails", async () => {
+      createPhantomExecution.mockResolvedValue("exec_ph");
+      const providerMock = makeProviderManagerMock();
+      const sqs = makeSqsMock();
+      sqs.send.mockRejectedValueOnce(new Error("SQS down"));
+      const listener = new EventListener(
+        buildOptions({
+          providerManager: providerMock.manager,
+          dedup: makeDedupMock(),
+          sqs,
+        }),
+      );
+      await listener.start();
+
+      await providerMock.capturedHandler!(
+        makeLog({
+          txHash: `0x${"b".repeat(64)}`,
+          sender: SENDER,
+          value: 7n,
+        }),
+      );
+
+      expect(failPhantomExecution).toHaveBeenCalledWith(
+        "exec_ph",
+        "ES-0001",
+        expect.stringContaining("SQS down"),
+      );
     });
 
     it("dedup hit -> skip SQS", async () => {

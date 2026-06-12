@@ -58,6 +58,94 @@ export async function updateExecutionStatus(
     );
 }
 
+/**
+ * KEEP-693: upgrade a pre-created 'phantom' execution row to 'pending' in place
+ * and stamp its input.
+ *
+ * The scheduler/event-tracker pre-creates a 'phantom' row and passes its id on
+ * the SQS message; the executor calls this to claim it. The compare-and-set on
+ * status='phantom' makes the claim idempotent: a duplicate SQS delivery (or a
+ * missing phantom, when the best-effort create failed, or one already advanced
+ * past phantom) matches no row and returns false, so the caller falls back to a
+ * fresh insert and a run is never dropped.
+ */
+export async function upgradePhantomToPending(
+  db: PostgresJsDatabase<DbSchema>,
+  executionId: string,
+  input: Record<string, unknown>
+): Promise<boolean> {
+  const result = await db
+    .update(workflowExecutions)
+    // KEEP-693: the phantom was created billable=false (it had not run yet);
+    // upgrading to pending means it is now a real execution, so it becomes
+    // billable like any owner-initiated run.
+    .set({ status: "pending", input, billable: true })
+    .where(
+      and(
+        eq(workflowExecutions.id, executionId),
+        eq(workflowExecutions.status, "phantom")
+      )
+    )
+    .returning({ id: workflowExecutions.id });
+  return result.length > 0;
+}
+
+/**
+ * KEEP-693: delete a pre-created phantom row when the executor intentionally
+ * skips the trigger (workflow not found / not executable / schedule invalid).
+ * The trigger correctly did not run, so there is no failure to surface and the
+ * reaper must not later age the orphan to a system P-code. The compare-and-set
+ * on status='phantom' makes it a no-op when there is no id or the row already
+ * advanced past phantom (e.g. a duplicate delivery upgraded it).
+ */
+export async function discardPhantomRow(
+  db: PostgresJsDatabase<DbSchema>,
+  executionId: string | undefined
+): Promise<void> {
+  if (!executionId) {
+    return;
+  }
+  await db
+    .delete(workflowExecutions)
+    .where(
+      and(
+        eq(workflowExecutions.id, executionId),
+        eq(workflowExecutions.status, "phantom")
+      )
+    );
+}
+
+/**
+ * KEEP-693: resolve a pre-created phantom row to a user-actionable error (e.g. a
+ * billing block) rather than leaving it for the reaper to mis-code as a system
+ * failure. Compare-and-set on status='phantom' so a row that already advanced
+ * is left untouched.
+ */
+export async function resolvePhantomToError(
+  db: PostgresJsDatabase<DbSchema>,
+  executionId: string | undefined,
+  fields: { error: string; errorCategory: "billing"; errorType: "user" }
+): Promise<void> {
+  if (!executionId) {
+    return;
+  }
+  await db
+    .update(workflowExecutions)
+    .set({
+      status: "error",
+      error: fields.error,
+      errorCategory: fields.errorCategory,
+      errorType: fields.errorType,
+      completedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(workflowExecutions.id, executionId),
+        eq(workflowExecutions.status, "phantom")
+      )
+    );
+}
+
 export async function initializeExecutionProgress(
   db: PostgresJsDatabase<DbSchema>,
   executionId: string,
