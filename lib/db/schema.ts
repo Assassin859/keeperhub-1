@@ -11,6 +11,7 @@ import {
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
+import type { ErrorCode } from "../errors/error-codes";
 import type { IntegrationType } from "../types/integration";
 import { generateId } from "../utils/id";
 
@@ -547,7 +548,9 @@ export const workflowExecutions = pgTable(
       .references(() => users.id),
     status: text("status")
       .notNull()
-      .$type<"pending" | "running" | "success" | "error" | "cancelled">(),
+      .$type<
+        "pending" | "running" | "success" | "error" | "cancelled" | "phantom"
+      >(),
     // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
     input: jsonb("input").$type<Record<string, any>>(),
     // biome-ignore lint/suspicious/noExplicitAny: JSONB type - structure validated at application level
@@ -567,6 +570,7 @@ export const workflowExecutions = pgTable(
       | "unknown"
     >(),
     errorType: text("error_type").$type<"user" | "system">(),
+    errorCode: text("error_code").$type<ErrorCode>(),
     startedAt: timestamp("started_at").notNull().defaultNow(),
     completedAt: timestamp("completed_at"),
     duration: numeric("duration"), // Duration in milliseconds

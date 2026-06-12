@@ -10,6 +10,12 @@ import {
 } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import type { VoteDirection } from "@/lib/workflow/editor/votes";
+import {
+  type PublicFeedEdge,
+  type PublicFeedNode,
+  projectEdgesForPublicFeed,
+  projectNodesForPublicFeed,
+} from "@/lib/workflow/public-feed-projection";
 import { workflowNotDeleted } from "@/lib/workflow/soft-delete";
 type TagInfo = { id: string; name: string; slug: string };
 
@@ -260,16 +266,40 @@ export async function GET(request: Request): Promise<NextResponse> {
       fetchDuplicateCounts(workflowIds),
     ]);
 
-    const mappedWorkflows = publicWorkflows.map((workflow) => ({
-      ...workflow,
-      publicTags: tagsByWorkflow[workflow.id] ?? [],
-      score: scores[workflow.id] ?? 0,
-      userVote: userVotes[workflow.id] ?? null,
-      canVote: userDuplications.has(workflow.id),
-      duplicateCount: duplicateCounts[workflow.id] ?? 0,
-      createdAt: workflow.createdAt.toISOString(),
-      updatedAt: workflow.updatedAt.toISOString(),
-    }));
+    // The serialized feed element. nodes/edges are pinned to the projected
+    // types so a future edit that drops the projection (or spreads the full
+    // row) fails to compile instead of silently leaking node internals.
+    type PublicFeedWorkflow = Omit<
+      (typeof publicWorkflows)[number],
+      "nodes" | "edges" | "createdAt" | "updatedAt"
+    > & {
+      nodes: PublicFeedNode[];
+      edges: PublicFeedEdge[];
+      createdAt: string;
+      updatedAt: string;
+      publicTags: TagInfo[];
+      score: number;
+      userVote: VoteDirection | null;
+      canVote: boolean;
+      duplicateCount: number;
+    };
+
+    const mappedWorkflows = publicWorkflows.map(
+      (workflow): PublicFeedWorkflow => ({
+        ...workflow,
+        // Anonymous feed: expose only the graph shape the marketplace renders
+        // (positions + node/action type), never node config or secrets.
+        nodes: projectNodesForPublicFeed(workflow.nodes),
+        edges: projectEdgesForPublicFeed(workflow.edges),
+        publicTags: tagsByWorkflow[workflow.id] ?? [],
+        score: scores[workflow.id] ?? 0,
+        userVote: userVotes[workflow.id] ?? null,
+        canVote: userDuplications.has(workflow.id),
+        duplicateCount: duplicateCounts[workflow.id] ?? 0,
+        createdAt: workflow.createdAt.toISOString(),
+        updatedAt: workflow.updatedAt.toISOString(),
+      })
+    );
 
     return NextResponse.json(mappedWorkflows);
   } catch (error) {

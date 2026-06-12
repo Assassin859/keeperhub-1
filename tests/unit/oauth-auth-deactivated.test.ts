@@ -13,6 +13,13 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@/lib/db/schema", () => ({ users: { id: "id" } }));
 
+// authenticateOAuthToken now also re-checks org membership; the active-user
+// case must look like a current member so the deactivation behaviour under
+// test is exercised in isolation.
+vi.mock("@/lib/workflow/access", () => ({
+  isUserMemberOfOrganization: vi.fn().mockResolvedValue(true),
+}));
+
 vi.mock("@sentry/nextjs", () => ({
   captureMessage: (message: string, context: unknown): void => {
     mockCaptureMessage(message, context);
