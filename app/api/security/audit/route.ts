@@ -6,6 +6,7 @@ import { member, securityAuditLog, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
 import { buildPage, parsePageRequest } from "@/lib/pagination";
+import { redactAuditDiff } from "@/lib/security/audit-redaction";
 
 /**
  * Read the org's security audit trail. Sensitive forensic data, so it is
@@ -118,18 +119,39 @@ export async function GET(request: Request) {
           .where(inArray(users.id, actorIds))
       : [];
     const actorMap = new Map(actors.map((a) => [a.id, a]));
+    // Return an explicit, display-only DTO -- never the raw row. Spreading the
+    // row would leak internal audit columns (apiKeyId, authMethod,
+    // correlationId, outcome, org/actor labels) and the unredacted diff to the
+    // client. Only the fields the activity view consumes are exposed, and the
+    // diff is redacted server-side so secrets never reach the wire.
     const items = rows.map((r) => {
       const enriched = r.actorUserId ? actorMap.get(r.actorUserId) : undefined;
+      // Fall back to the denormalized actor_label when the user row is gone (a
+      // deletion cascade nulls actor_user_id) so the trail still attributes the
+      // action instead of rendering as "System".
+      let actor: {
+        id: string | null;
+        name?: string | null;
+        email?: string | null;
+        role?: string | null;
+      } | null = null;
       if (enriched) {
-        return { ...r, actor: enriched };
+        actor = enriched;
+      } else if (r.actorLabel) {
+        actor = { id: r.actorUserId, name: r.actorLabel };
+      } else if (r.actorUserId) {
+        actor = { id: r.actorUserId };
       }
-      // Fall back to the denormalized actor_label when the user row is gone
-      // (a deletion cascade nulls actor_user_id) or no longer joinable, so the
-      // trail still attributes the action instead of rendering as "System".
-      if (r.actorLabel) {
-        return { ...r, actor: { id: r.actorUserId, name: r.actorLabel } };
-      }
-      return { ...r, actor: r.actorUserId ? { id: r.actorUserId } : null };
+      return {
+        id: r.id,
+        action: r.action,
+        resourceType: r.resourceType,
+        resourceId: r.resourceId,
+        createdAt: r.createdAt,
+        diff: redactAuditDiff(r.diff),
+        metadata: r.metadata,
+        actor,
+      };
     });
 
     return NextResponse.json(buildPage(items, total, req, url));

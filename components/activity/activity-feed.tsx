@@ -11,6 +11,7 @@ import {
   type AuditActionKind,
   describeAuditAction,
 } from "@/lib/security/audit-actions";
+import { SENSITIVE_FIELD } from "@/lib/security/audit-redaction";
 import { ActorAvatarBadge, actorLabel } from "./actor-avatar";
 import { Pager } from "./pager";
 
@@ -53,14 +54,6 @@ function roleLabel(role?: string | null): string | null {
 }
 
 type DiffEntry = { label: string; from: string | null; to: string | null };
-
-// Mask values whose field name looks like a secret, even though the audit
-// layer already curates before/after (keys store only name + keyPrefix). This
-// is a display-side backstop so a future careless audit call can't leak a
-// token through the feed. `keyPrefix` is intentionally not matched -- it is a
-// prefix by design, not the secret.
-const SENSITIVE_FIELD =
-  /(?:^|[_.])(?:token|secret|password|privatekey|private_key|mnemonic|seed|hash|apikey)(?:[_.]|$)|^key$/i;
 
 // Opaque machine values that read as noise in a human feed (e.g. a definition
 // content hash). The change is still recorded; we just don't print the value.
