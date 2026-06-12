@@ -12,6 +12,8 @@ const { mockGetSession, mockGetActiveOrgId, selectState, txDeleteCalls } =
     selectState: {
       currentMember: [] as unknown[],
       ownerCount: [] as unknown[],
+      newOwner: [] as unknown[],
+      limitCalls: 0,
     },
     txDeleteCalls: [] as Array<{ table: unknown; whereArg: unknown }>,
   }));
@@ -58,10 +60,18 @@ const txStub = {
   select: vi.fn(() => ({
     from: vi.fn(() => ({
       where: vi.fn(() =>
-        // The owner-count query awaits .where() directly; the member-role
-        // query chains .limit() off it. Serve both shapes from one stub.
+        // The owner-count query awaits .where() directly; the member-role and
+        // new-owner lookups chain .limit() off it. Serve all shapes from one
+        // stub: the first .limit() is the current-member lookup, the second
+        // (sole-owner path only) is the new-owner lookup.
         Object.assign(Promise.resolve(selectState.ownerCount), {
-          limit: vi.fn(() => Promise.resolve(selectState.currentMember)),
+          limit: vi.fn(() => {
+            const isFirstLimit = selectState.limitCalls === 0;
+            selectState.limitCalls += 1;
+            return Promise.resolve(
+              isFirstLimit ? selectState.currentMember : selectState.newOwner
+            );
+          }),
         })
       ),
     })),
@@ -107,6 +117,8 @@ beforeEach(() => {
   txDeleteCalls.length = 0;
   selectState.currentMember = [];
   selectState.ownerCount = [];
+  selectState.newOwner = [];
+  selectState.limitCalls = 0;
   mockGetActiveOrgId.mockReturnValue(null);
 });
 
@@ -120,6 +132,46 @@ describe("POST /api/organizations/[id]/leave -- OAuth refresh token revocation",
     selectState.ownerCount = [{ id: "owner-other" }];
 
     const response = await POST(buildRequest({}), buildContext());
+
+    expect(response.status).toBe(200);
+
+    const oauthDelete = txDeleteCalls.find((call) => {
+      const where = call.whereArg as AndCondition;
+      return (
+        where?.op === "and" &&
+        where.conditions.some((c) => c.column === "mcp.userId")
+      );
+    });
+
+    expect(oauthDelete).toBeDefined();
+    const conditions = (oauthDelete?.whereArg as AndCondition).conditions;
+    expect(conditions).toContainEqual({
+      op: "eq",
+      column: "mcp.userId",
+      value: USER_ID,
+    });
+    expect(conditions).toContainEqual({
+      op: "eq",
+      column: "mcp.organizationId",
+      value: ORG_ID,
+    });
+  });
+
+  it("deletes the leaving user's MCP OAuth refresh tokens on the sole-owner path", async () => {
+    mockGetSession.mockResolvedValue({
+      user: { id: USER_ID },
+      session: { token: "raw-token" },
+    });
+    // Caller is the only owner, so the route requires a successor and takes the
+    // ownership-transfer branch before removing the member.
+    selectState.currentMember = [{ id: "member-1", role: "owner" }];
+    selectState.ownerCount = [{ id: "member-1" }];
+    selectState.newOwner = [{ id: "member-2" }];
+
+    const response = await POST(
+      buildRequest({ newOwnerMemberId: "member-2" }),
+      buildContext()
+    );
 
     expect(response.status).toBe(200);
 

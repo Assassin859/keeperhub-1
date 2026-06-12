@@ -24,6 +24,7 @@ import { DISPOSABLE_EMAIL_REJECTION_MESSAGE } from "@/lib/auth-disposable-emails
 import { isFreshSignup } from "@/lib/auth-notification-guard";
 import { sendInvitationEmail, sendVerificationOTP } from "@/lib/email";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { revokeRefreshTokensForUserOrg } from "@/lib/mcp/oauth-store";
 import {
   assessCountryTrust,
   assessLoginRisk,
@@ -40,7 +41,6 @@ import {
   integrations,
   invitationRelations,
   invitation as invitationTable,
-  mcpOauthRefreshTokens,
   memberRelations,
   member as memberTable,
   organizationRelations,
@@ -381,14 +381,7 @@ const plugins = [
       // time by the membership re-check; this clears the dormant 30-day
       // credential so it cannot linger. Mirrors the leave-route cascade.
       async afterRemoveMember(data) {
-        await db
-          .delete(mcpOauthRefreshTokens)
-          .where(
-            and(
-              eq(mcpOauthRefreshTokens.userId, data.user.id),
-              eq(mcpOauthRefreshTokens.organizationId, data.organization.id)
-            )
-          );
+        await revokeRefreshTokensForUserOrg(data.user.id, data.organization.id);
       },
     },
   }),
