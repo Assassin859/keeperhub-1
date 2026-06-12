@@ -183,6 +183,12 @@ export async function authenticateOAuthToken(
   // minted, not that they still belong to the org it is scoped to. Re-check
   // current membership on every use so a token keeps no authority after the
   // user is removed from (or leaves) the organization.
+  //
+  // Note: isUserMemberOfOrganization joins on users.deactivatedAt IS NULL, so
+  // this check also rejects a deactivated user. The explicit deactivation
+  // guard above is therefore retained for its security telemetry (the Sentry
+  // captureMessage / console.warn), not for access control - it surfaces the
+  // anomaly that this membership check would otherwise reject silently.
   if (!payload.sub) {
     return {
       authenticated: false,
