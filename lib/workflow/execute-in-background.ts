@@ -95,6 +95,7 @@ export async function executeWorkflowInBackground(
         error: errorMessage,
         errorCategory: classification.errorCategory,
         errorType: classification.errorType,
+        errorCode: classification.code,
         completedAt: new Date(),
       })
       .where(eq(workflowExecutions.id, executionId))

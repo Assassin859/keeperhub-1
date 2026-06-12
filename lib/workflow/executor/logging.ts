@@ -724,6 +724,7 @@ export async function logWorkflowCompleteDb(
       error: resolvedError,
       errorCategory: classification?.errorCategory ?? null,
       errorType: classification?.errorType ?? null,
+      errorCode: classification?.code ?? null,
       completedAt: new Date(),
       duration: duration.toString(),
       // Clear current step on completion
