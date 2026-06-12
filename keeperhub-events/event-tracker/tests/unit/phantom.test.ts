@@ -4,6 +4,18 @@ vi.mock("../../lib/utils/logger", () => ({
   logger: { warn: vi.fn(), log: vi.fn() },
 }));
 
+// HMAC signing reads INTERNAL_SERVICE_HMAC_SECRET and parses the request URL;
+// stub it so the unit test asserts the request shape without a real base
+// URL/secret.
+vi.mock("../../lib/utils/fetch-utils", () => ({
+  // Plain function (not vi.fn) so restoreAllMocks in beforeEach can't neutralise it.
+  signHmacHeaders: () => ({
+    "X-KH-Caller": "events",
+    "X-KH-Timestamp": "1",
+    "X-KH-Signature": "sig",
+  }),
+}));
+
 import {
   createPhantomExecution,
   failPhantomExecution,
@@ -30,7 +42,7 @@ describe("createPhantomExecution (event-tracker)", () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toMatch(/\/api\/internal\/executions$/);
     expect(init.method).toBe("POST");
-    expect(init.headers["X-Service-Key"]).toBeDefined();
+    expect(init.headers["X-KH-Caller"]).toBe("events");
     expect(JSON.parse(init.body)).toEqual({
       workflowId: "wf_1",
       userId: "owner_1",

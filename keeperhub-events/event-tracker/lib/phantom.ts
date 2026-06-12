@@ -10,21 +10,17 @@
  * Both calls are best-effort and must never block or fail a real trigger: a
  * failed create degrades to the legacy id-less enqueue (the executor inserts
  * its own row), and a failed mark is swallowed (the reaper ages it out).
+ *
+ * Auth mirrors fetchActiveWorkflows: HMAC-signed internal-service headers
+ * (caller "events") over the request body.
  */
 
-import { KEEPERHUB_API_KEY, KEEPERHUB_API_URL } from "./config/environment";
+import { KEEPERHUB_API_URL } from "./config/environment";
+import { signHmacHeaders } from "./utils/fetch-utils";
 import { logger } from "./utils/logger";
 
 /** Failure codes the event tracker assigns when an enqueue fails. */
 export type EventErrorCode = "ES-0001" | "N-0002";
-
-function authHeaders(): Record<string, string> {
-  return {
-    "Content-Type": "application/json",
-    "X-Internal-Token": KEEPERHUB_API_KEY,
-    "X-Service-Key": KEEPERHUB_API_KEY,
-  };
-}
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -39,20 +35,22 @@ export async function createPhantomExecution(
   workflowId: string,
   userId: string,
 ): Promise<string | undefined> {
+  const url = `${KEEPERHUB_API_URL}/api/internal/executions`;
+  const body = JSON.stringify({
+    workflowId,
+    userId,
+    status: "phantom",
+    triggerSource: "event",
+  });
   try {
-    const response = await fetch(
-      `${KEEPERHUB_API_URL}/api/internal/executions`,
-      {
-        method: "POST",
-        headers: authHeaders(),
-        body: JSON.stringify({
-          workflowId,
-          userId,
-          status: "phantom",
-          triggerSource: "event",
-        }),
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...signHmacHeaders("POST", url, body),
       },
-    );
+      body,
+    });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
@@ -75,19 +73,21 @@ export async function failPhantomExecution(
   errorCode: EventErrorCode,
   errorMessage: string,
 ): Promise<void> {
+  const url = `${KEEPERHUB_API_URL}/api/internal/executions/${executionId}`;
+  const body = JSON.stringify({
+    status: "error",
+    error: errorMessage,
+    errorCode,
+  });
   try {
-    const response = await fetch(
-      `${KEEPERHUB_API_URL}/api/internal/executions/${executionId}`,
-      {
-        method: "PATCH",
-        headers: authHeaders(),
-        body: JSON.stringify({
-          status: "error",
-          error: errorMessage,
-          errorCode,
-        }),
+    const response = await fetch(url, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        ...signHmacHeaders("PATCH", url, body),
       },
-    );
+      body,
+    });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
