@@ -11,6 +11,8 @@ describe("classifyExecutionError", () => {
     expect(result).toEqual({
       errorCategory: ErrorCategory.CONFIGURATION,
       errorType: "user",
+      // User-config failures carry no system error code.
+      code: null,
     });
   });
 
