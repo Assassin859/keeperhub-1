@@ -34,21 +34,36 @@ let workflowState: WorkflowRow;
 vi.mock("@/lib/db", () => ({
   db: {
     select: (cols?: unknown) => {
-      // getWorkflowListing projects LISTING_COLUMNS (which includes listedSlug)
-      // and is a public read — must honour the isListed=true filter. Other
-      // selects (e.g. updateWorkflowListing's pre-flight by id+orgId) use
-      // db.select() with no columns and ignore the listing invariant.
+      // getWorkflowListing / getWorkflowListingPublic both pass a column map
+      // (each includes listedSlug) and are public reads — must honour the
+      // isListed=true filter. Other selects (e.g. updateWorkflowListing's
+      // pre-flight by id+orgId) use db.select() with no columns and ignore the
+      // listing invariant.
+      const isColumnSelect =
+        cols !== undefined && cols !== null && typeof cols === "object";
       const isPublicListingRead =
-        cols !== undefined &&
-        cols !== null &&
-        typeof cols === "object" &&
-        "listedSlug" in (cols as Record<string, unknown>);
+        isColumnSelect && "listedSlug" in (cols as Record<string, unknown>);
       return {
         from: (_table: unknown) => ({
           where: (_condition: unknown) => ({
             limit: (_n: number) => {
               if (isPublicListingRead && !workflowState.isListed) {
                 return Promise.resolve([]);
+              }
+              if (isColumnSelect) {
+                // Mirror Drizzle column projection: only the selected columns
+                // are returned. This makes getWorkflowListingPublic's
+                // PUBLIC_LISTING_COLUMNS (which omits `nodes`) observable in the
+                // result, while getWorkflowListing's LISTING_COLUMNS keeps them.
+                const projected: Record<string, unknown> = {};
+                for (const key of Object.keys(
+                  cols as Record<string, unknown>
+                )) {
+                  projected[key] = (workflowState as Record<string, unknown>)[
+                    key
+                  ];
+                }
+                return Promise.resolve([projected]);
               }
               return Promise.resolve([workflowState]);
             },
@@ -94,6 +109,7 @@ const {
   listWorkflow,
   unlistWorkflow,
   getWorkflowListing,
+  getWorkflowListingPublic,
   updateWorkflowListing,
 } = await import("@/lib/mcp/listing");
 
@@ -502,5 +518,65 @@ describe("workflow listing lifecycle", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.listing.workflowType).toBe("read");
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Public projection: the unauthenticated GET path must never return workflow
+  // nodes (contract addresses, webhook URLs, calldata). The authenticated
+  // per-workflow MCP server still needs the full nodes-bearing row.
+  // ──────────────────────────────────────────────────────────────────────
+
+  it("getWorkflowListingPublic: omits `nodes` but keeps listing metadata; getWorkflowListing still returns nodes", async () => {
+    const SENTINEL_CONTRACT = "0xSENTINELdeadbeefCONTRACT";
+    const SENTINEL_WEBHOOK = "https://internal.example/secret-webhook";
+    workflowState.isListed = true;
+    workflowState.listedSlug = "public-projection";
+    workflowState.priceUsdcPerCall = "0.50";
+    workflowState.inputSchema = {
+      type: "object",
+      properties: { amount: { type: "string" } },
+    };
+    workflowState.outputMapping = { txHash: "result.hash" };
+    workflowState.nodes = [
+      {
+        id: "write-1",
+        data: {
+          actionType: "web3/write-contract",
+          config: {
+            contractAddress: SENTINEL_CONTRACT,
+            webhookUrl: SENTINEL_WEBHOOK,
+          },
+        },
+      },
+    ];
+
+    const publicRead = await getWorkflowListingPublic("public-projection");
+    expect(publicRead.ok).toBe(true);
+    if (!publicRead.ok) {
+      return;
+    }
+    // Node internals must never reach unauthenticated callers.
+    expect("nodes" in publicRead.listing).toBe(false);
+    const serialized = JSON.stringify(publicRead.listing);
+    expect(serialized).not.toContain(SENTINEL_CONTRACT);
+    expect(serialized).not.toContain(SENTINEL_WEBHOOK);
+    // Bazaar-facing metadata is still projected.
+    expect(publicRead.listing.inputSchema).toEqual({
+      type: "object",
+      properties: { amount: { type: "string" } },
+    });
+    expect(publicRead.listing.outputMapping).toEqual({ txHash: "result.hash" });
+    expect(publicRead.listing.listedSlug).toBe("public-projection");
+    expect(publicRead.listing.priceUsdcPerCall).toBe("0.50");
+
+    // Companion: the authenticated per-workflow MCP server path still gets the
+    // nodes it needs for trigger detection.
+    const fullRead = await getWorkflowListing("public-projection");
+    expect(fullRead.ok).toBe(true);
+    if (!fullRead.ok) {
+      return;
+    }
+    expect(fullRead.listing.nodes).toHaveLength(1);
+    expect(JSON.stringify(fullRead.listing.nodes)).toContain(SENTINEL_CONTRACT);
   });
 });
