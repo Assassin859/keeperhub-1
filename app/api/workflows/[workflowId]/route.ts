@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { revalidateTag } from "next/cache";
 import { NextResponse } from "next/server";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
@@ -710,6 +710,37 @@ export async function PATCH(
 
     await handlePostUpdateSideEffects(workflowId, body);
 
+    // Resolve project/tag names so a move/tagging shows "Project: A -> B" in
+    // the activity feed rather than opaque ids.
+    const movementProjectIds = [
+      existingWorkflow.projectId,
+      updatedWorkflow.projectId,
+    ].filter((v): v is string => Boolean(v));
+    const movementTagIds = [
+      existingWorkflow.tagId,
+      updatedWorkflow.tagId,
+    ].filter((v): v is string => Boolean(v));
+    const [projectNameRows, tagNameRows] = await Promise.all([
+      movementProjectIds.length > 0
+        ? db
+            .select({ id: projects.id, name: projects.name })
+            .from(projects)
+            .where(inArray(projects.id, movementProjectIds))
+        : Promise.resolve([]),
+      movementTagIds.length > 0
+        ? db
+            .select({ id: tags.id, name: tags.name })
+            .from(tags)
+            .where(inArray(tags.id, movementTagIds))
+        : Promise.resolve([]),
+    ]);
+    const projectNameById = new Map(projectNameRows.map((r) => [r.id, r.name]));
+    const tagNameById = new Map(tagNameRows.map((r) => [r.id, r.name]));
+    const nameFor = (
+      map: Map<string, string>,
+      id: string | null
+    ): string | null => (id ? (map.get(id) ?? null) : null);
+
     // Audit the change with scalar fields plus a content hash of the
     // definition, so the row stays small. The full nodes/edges snapshot and
     // structural diff are the job of the workflow change-history table.
@@ -728,6 +759,8 @@ export async function PATCH(
         enabled: existingWorkflow.enabled,
         visibility: existingWorkflow.visibility,
         isListed: existingWorkflow.isListed,
+        project: nameFor(projectNameById, existingWorkflow.projectId),
+        tag: nameFor(tagNameById, existingWorkflow.tagId),
         contentHash: hashWorkflowDefinition(
           existingWorkflow.nodes,
           existingWorkflow.edges
@@ -738,6 +771,8 @@ export async function PATCH(
         enabled: updatedWorkflow.enabled,
         visibility: updatedWorkflow.visibility,
         isListed: updatedWorkflow.isListed,
+        project: nameFor(projectNameById, updatedWorkflow.projectId),
+        tag: nameFor(tagNameById, updatedWorkflow.tagId),
         contentHash: hashWorkflowDefinition(
           updatedWorkflow.nodes,
           updatedWorkflow.edges
