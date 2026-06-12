@@ -57,7 +57,7 @@ export async function PATCH(
     }
 
     const [existing] = await db
-      .select({ name: tags.name })
+      .select({ name: tags.name, color: tags.color })
       .from(tags)
       .where(and(eq(tags.id, tagId), eq(tags.organizationId, organizationId)))
       .limit(1);
@@ -77,8 +77,8 @@ export async function PATCH(
       action: "tag.updated",
       resourceType: "tag",
       resourceId: updated.id,
-      before: { name: existing?.name },
-      after: { name: updated.name },
+      before: { name: existing?.name, color: existing?.color },
+      after: { name: updated.name, color: updated.color },
       metadata: buildAuditMetadata(request),
     });
 

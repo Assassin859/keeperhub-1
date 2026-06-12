@@ -138,6 +138,23 @@ function diffEntries(diff: unknown): DiffEntry[] {
   return entries.filter((e) => e.from !== null || e.to !== null).slice(0, 6);
 }
 
+const HEX_COLOR = /^#[0-9a-f]{3,8}$/i;
+
+function ValuePiece({ value }: { value: string }): React.ReactElement {
+  if (HEX_COLOR.test(value)) {
+    return (
+      <span className="inline-flex items-center gap-1 align-middle">
+        <span
+          className="inline-block size-2.5 rounded-full border border-border"
+          style={{ backgroundColor: value }}
+        />
+        {value}
+      </span>
+    );
+  }
+  return <>{value}</>;
+}
+
 function DiffLines({ diff }: { diff: unknown }): React.ReactElement | null {
   const entries = diffEntries(diff);
   if (entries.length === 0) {
@@ -152,10 +169,16 @@ function DiffLines({ diff }: { diff: unknown }): React.ReactElement | null {
         >
           <span className="font-medium text-foreground/70">{entry.label}:</span>{" "}
           {entry.from !== null && (
-            <span className="opacity-60">{entry.from}</span>
+            <span className="opacity-60">
+              <ValuePiece value={entry.from} />
+            </span>
           )}
           {entry.from !== null && entry.to !== null && " → "}
-          {entry.to !== null && <span>{entry.to}</span>}
+          {entry.to !== null && (
+            <span>
+              <ValuePiece value={entry.to} />
+            </span>
+          )}
         </li>
       ))}
     </ul>

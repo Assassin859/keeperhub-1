@@ -55,7 +55,11 @@ export async function PATCH(
     }
 
     const [existing] = await db
-      .select({ name: projects.name })
+      .select({
+        name: projects.name,
+        description: projects.description,
+        color: projects.color,
+      })
       .from(projects)
       .where(
         and(
@@ -85,8 +89,16 @@ export async function PATCH(
       action: "project.updated",
       resourceType: "project",
       resourceId: updated.id,
-      before: { name: existing?.name },
-      after: { name: updated.name },
+      before: {
+        name: existing?.name,
+        description: existing?.description,
+        color: existing?.color,
+      },
+      after: {
+        name: updated.name,
+        description: updated.description,
+        color: updated.color,
+      },
       metadata: buildAuditMetadata(request),
     });
 
