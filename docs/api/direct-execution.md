@@ -25,6 +25,28 @@ Direct execution requests are limited to 60 requests per minute per API key. Eve
 
 Organizations can configure daily spending caps in wei. If the cap is exceeded, execution requests return a `422` status with error code `SPENDING_CAP_EXCEEDED`.
 
+## Idempotency
+
+Send an `Idempotency-Key` header to safely retry a request without risking a double-execution. The key is any client-chosen string (for example an agent-side transaction id, ideally a UUID).
+
+- **Replay**: a retry with the same key and the same request body returns the original response (same `executionId`, same status) without executing again.
+- **Conflict**: reusing a key with a different request body returns `409` with code `idempotency_conflict` and the `originalExecutionId` the key first produced. Use a new key for a different request.
+- **In progress**: a duplicate that arrives while the first request is still running returns `409` with code `idempotency_in_progress`; retry shortly.
+- **Scope**: keys are scoped per organization, so the same key is shared across an org's API keys.
+- **Window**: stored responses are replayable for 24 hours. After that the key is free to reuse.
+
+Requests without an `Idempotency-Key` behave normally. Read-only and dry-run (`simulate: true`) requests are not affected.
+
+```bash
+curl -X POST https://api.keeperhub.com/api/execute/transfer \
+  -H "Authorization: Bearer kh_..." \
+  -H "Idempotency-Key: 7c9e6679-7425-40de-944b-e07fc1f90ae7" \
+  -H "Content-Type: application/json" \
+  -d '{ "chainId": "8453", "recipientAddress": "0x...", "amount": "0.1" }'
+```
+
+Workflow webhooks (`POST /api/workflows/{workflowId}/webhook`) accept the same header, scoped per workflow.
+
 ## Transfer Funds
 
 ```http

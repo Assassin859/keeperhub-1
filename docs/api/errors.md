@@ -28,6 +28,7 @@ Reference for API error codes and how to resolve them.
 | 401 | Unauthorized - Missing or invalid authentication |
 | 403 | Forbidden - Insufficient permissions |
 | 404 | Not Found - Resource does not exist |
+| 409 | Conflict - Idempotency-Key reused or request already in progress |
 | 429 | Too Many Requests - Rate limit exceeded |
 | 500 | Internal Server Error |
 
@@ -48,6 +49,15 @@ Reference for API error codes and how to resolve them.
 | `INVALID_INPUT` | Request body validation failed | Check required fields |
 | `INVALID_ADDRESS` | Invalid Ethereum address | Verify address format |
 | `INVALID_CHAIN_ID` | Unsupported chain ID | Use supported chain |
+
+### Idempotency Errors
+
+| Code | Description | Resolution |
+|------|-------------|------------|
+| `idempotency_conflict` | The `Idempotency-Key` was reused with a different request body. Response includes `originalExecutionId`. | Use a new key for a different request |
+| `idempotency_in_progress` | A request with this `Idempotency-Key` is still being processed | Retry shortly |
+
+See [Direct Execution](/api/direct-execution#idempotency) for the full idempotency policy.
 
 ### Resource Errors
 

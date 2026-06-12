@@ -7,6 +7,13 @@ import { type AbiItem, findAbiFunction } from "@/lib/abi/utils";
 import { enforceExecutionLimit } from "@/lib/billing/execution-guard";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import { simulateContractCall } from "@/lib/execute/simulate";
+import {
+  beginIdempotentFromRequest,
+  type IdempotencyOutcome,
+  idempotencyEarlyResponse,
+  recordIdempotentResponse,
+  withIdempotencyHeartbeat,
+} from "@/lib/idempotency";
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { requireScope } from "@/lib/middleware/require-scope";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
@@ -126,11 +133,13 @@ async function handleWriteCall(
   body: Record<string, unknown>,
   resolvedAbi: string,
   organizationId: string,
-  apiKeyId: string
+  apiKeyId: string,
+  idem: IdempotencyOutcome | null
 ): Promise<NextResponse> {
   const walletError = await requireWallet(organizationId);
   if (walletError) {
-    return walletError;
+    // Pre-broadcast gating failure: release for a clean retry.
+    return recordIdempotentResponse(idem, walletError, "release");
   }
 
   const redactedInput = redactInput(body);
@@ -142,26 +151,32 @@ async function handleWriteCall(
     input: redactedInput,
   });
   if (!reserve.allowed) {
-    return NextResponse.json(
-      { error: reserve.reason },
-      { status: HttpStatus.FORBIDDEN }
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json(
+        { error: reserve.reason },
+        { status: HttpStatus.FORBIDDEN }
+      ),
+      "release"
     );
   }
   const { executionId } = reserve;
 
   await markRunning(executionId);
 
-  const result = await writeContractCore({
-    contractAddress: body.contractAddress as string,
-    network: body.network as string,
-    abi: resolvedAbi,
-    abiFunction: body.functionName as string,
-    functionArgs: body.functionArgs as string | undefined,
-    ethValue: body.value as string | undefined,
-    gasLimitMultiplier: body.gasLimitMultiplier as string | undefined,
-    priorityFeeGwei: body.priorityFeeGwei as string | undefined,
-    _context: { organizationId },
-  });
+  const result = await withIdempotencyHeartbeat(idem, () =>
+    writeContractCore({
+      contractAddress: body.contractAddress as string,
+      network: body.network as string,
+      abi: resolvedAbi,
+      abiFunction: body.functionName as string,
+      functionArgs: body.functionArgs as string | undefined,
+      ethValue: body.value as string | undefined,
+      gasLimitMultiplier: body.gasLimitMultiplier as string | undefined,
+      priorityFeeGwei: body.priorityFeeGwei as string | undefined,
+      _context: { organizationId },
+    })
+  );
 
   if (result.success) {
     await completeExecution(executionId, {
@@ -175,9 +190,13 @@ async function handleWriteCall(
     await failExecution(executionId, result.error);
   }
 
-  return NextResponse.json(
-    { executionId, status: result.success ? "completed" : "failed" },
-    { status: HttpStatus.ACCEPTED }
+  return recordIdempotentResponse(
+    idem,
+    NextResponse.json(
+      { executionId, status: result.success ? "completed" : "failed" },
+      { status: HttpStatus.ACCEPTED }
+    ),
+    result.success ? "success" : "failed"
   );
 }
 
@@ -284,12 +303,30 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
+  // Idempotency applies only to the state-changing write path.
+  const idem = await beginIdempotentFromRequest({
+    request,
+    organizationId: apiKeyCtx.organizationId,
+    scope: "execute:contract-call",
+    requestBody: body,
+  });
+  if (idem) {
+    const early = idempotencyEarlyResponse(idem);
+    if (early) {
+      return applyRateLimitHeaders(
+        NextResponse.json(early.body, { status: early.status }),
+        rateLimit
+      );
+    }
+  }
+
   return applyRateLimitHeaders(
     await handleWriteCall(
       body,
       resolvedAbi,
       apiKeyCtx.organizationId,
-      apiKeyCtx.apiKeyId
+      apiKeyCtx.apiKeyId,
+      idem
     ),
     rateLimit
   );

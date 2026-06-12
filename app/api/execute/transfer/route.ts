@@ -8,6 +8,12 @@ import {
   simulateNativeTransfer,
   simulateTokenTransfer,
 } from "@/lib/execute/simulate";
+import {
+  beginIdempotentFromRequest,
+  idempotencyEarlyResponse,
+  recordIdempotentResponse,
+  withIdempotencyHeartbeat,
+} from "@/lib/idempotency";
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { requireScope } from "@/lib/middleware/require-scope";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
@@ -148,6 +154,25 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
   }
 
+  // 5.6 Idempotency: an Idempotency-Key lets clients retry a broadcast safely.
+  // Reserve the key (per-org, across direct-execution endpoints) before doing
+  // any state-changing work; a replay/conflict/in-progress short-circuits here.
+  const idem = await beginIdempotentFromRequest({
+    request,
+    organizationId: apiKeyCtx.organizationId,
+    scope: "execute:transfer",
+    requestBody: body,
+  });
+  if (idem) {
+    const early = idempotencyEarlyResponse(idem);
+    if (early) {
+      return applyRateLimitHeaders(
+        NextResponse.json(early.body, { status: early.status }),
+        rateLimit
+      );
+    }
+  }
+
   // 6. Spending cap + create execution atomically
   const redactedInput = redactInput(body);
   const reserve = await checkAndReserveExecution({
@@ -158,9 +183,17 @@ export async function POST(request: Request): Promise<NextResponse> {
     input: redactedInput,
   });
   if (!reserve.allowed) {
-    return NextResponse.json(
-      { error: reserve.reason },
-      { status: HttpStatus.FORBIDDEN }
+    // Pre-broadcast gating failure: release so the same key can be retried.
+    return applyRateLimitHeaders(
+      await recordIdempotentResponse(
+        idem,
+        NextResponse.json(
+          { error: reserve.reason },
+          { status: HttpStatus.FORBIDDEN }
+        ),
+        "release"
+      ),
+      rateLimit
     );
   }
   const { executionId } = reserve;
@@ -168,26 +201,28 @@ export async function POST(request: Request): Promise<NextResponse> {
   // 7. Mark running
   await markRunning(executionId);
 
-  // 8. Execute
+  // 8. Execute (heartbeat the idempotency lock across the on-chain wait).
   const context = { organizationId: apiKeyCtx.organizationId };
 
-  const result = isTokenTransfer
-    ? await transferTokenCore({
-        network,
-        tokenConfig: (body.tokenConfig ?? "") as
-          | string
-          | Record<string, unknown>,
-        tokenAddress: body.tokenAddress as string | undefined,
-        recipientAddress,
-        amount,
-        _context: context,
-      })
-    : await transferFundsCore({
-        network,
-        recipientAddress,
-        amount,
-        _context: context,
-      });
+  const result = await withIdempotencyHeartbeat(idem, () =>
+    isTokenTransfer
+      ? transferTokenCore({
+          network,
+          tokenConfig: (body.tokenConfig ?? "") as
+            | string
+            | Record<string, unknown>,
+          tokenAddress: body.tokenAddress as string | undefined,
+          recipientAddress,
+          amount,
+          _context: context,
+        })
+      : transferFundsCore({
+          network,
+          recipientAddress,
+          amount,
+          _context: context,
+        })
+  );
 
   // 9. Handle result
   if (result.success) {
@@ -202,11 +237,16 @@ export async function POST(request: Request): Promise<NextResponse> {
     await failExecution(executionId, result.error);
   }
 
-  // 10. Return
+  // 10. Return. A failed broadcast is finalized (not released) so a retry
+  // replays the failure instead of re-sending the tx.
   return applyRateLimitHeaders(
-    NextResponse.json(
-      { executionId, status: result.success ? "completed" : "failed" },
-      { status: HttpStatus.ACCEPTED }
+    await recordIdempotentResponse(
+      idem,
+      NextResponse.json(
+        { executionId, status: result.success ? "completed" : "failed" },
+        { status: HttpStatus.ACCEPTED }
+      ),
+      result.success ? "success" : "failed"
     ),
     rateLimit
   );
