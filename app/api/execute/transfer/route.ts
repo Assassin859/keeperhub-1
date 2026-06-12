@@ -11,6 +11,7 @@ import {
   beginIdempotentFromRequest,
   idempotencyEarlyResponse,
   recordIdempotentResponse,
+  withIdempotencyHeartbeat,
 } from "@/lib/idempotency";
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { requireScope } from "@/lib/middleware/require-scope";
@@ -144,7 +145,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const idem = await beginIdempotentFromRequest({
     request,
     organizationId: apiKeyCtx.organizationId,
-    scope: "execute",
+    scope: "execute:transfer",
     requestBody: body,
   });
   if (idem) {
@@ -164,9 +165,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     input: redactedInput,
   });
   if (!reserve.allowed) {
+    // Pre-broadcast gating failure: release so the same key can be retried.
     return recordIdempotentResponse(
       idem,
-      NextResponse.json({ error: reserve.reason }, { status: 403 })
+      NextResponse.json({ error: reserve.reason }, { status: 403 }),
+      "release"
     );
   }
   const { executionId } = reserve;
@@ -174,26 +177,28 @@ export async function POST(request: Request): Promise<NextResponse> {
   // 7. Mark running
   await markRunning(executionId);
 
-  // 8. Execute
+  // 8. Execute (heartbeat the idempotency lock across the on-chain wait).
   const context = { organizationId: apiKeyCtx.organizationId };
 
-  const result = isTokenTransfer
-    ? await transferTokenCore({
-        network,
-        tokenConfig: (body.tokenConfig ?? "") as
-          | string
-          | Record<string, unknown>,
-        tokenAddress: body.tokenAddress as string | undefined,
-        recipientAddress,
-        amount,
-        _context: context,
-      })
-    : await transferFundsCore({
-        network,
-        recipientAddress,
-        amount,
-        _context: context,
-      });
+  const result = await withIdempotencyHeartbeat(idem, () =>
+    isTokenTransfer
+      ? transferTokenCore({
+          network,
+          tokenConfig: (body.tokenConfig ?? "") as
+            | string
+            | Record<string, unknown>,
+          tokenAddress: body.tokenAddress as string | undefined,
+          recipientAddress,
+          amount,
+          _context: context,
+        })
+      : transferFundsCore({
+          network,
+          recipientAddress,
+          amount,
+          _context: context,
+        })
+  );
 
   // 9. Handle result
   if (result.success) {
@@ -208,12 +213,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     await failExecution(executionId, result.error);
   }
 
-  // 10. Return
+  // 10. Return. A failed broadcast is finalized (not released) so a retry
+  // replays the failure instead of re-sending the tx.
   return recordIdempotentResponse(
     idem,
     NextResponse.json(
       { executionId, status: result.success ? "completed" : "failed" },
       { status: 202 }
-    )
+    ),
+    result.success ? "success" : "failed"
   );
 }

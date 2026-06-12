@@ -667,7 +667,10 @@ export const idempotencyRecords = pgTable(
     scope: text("scope").notNull(),
     idempotencyKey: text("idempotency_key").notNull(),
     requestHash: text("request_hash").notNull(),
-    status: text("status").notNull().default("processing"), // processing | completed
+    status: text("status").notNull().default("processing"), // processing | completed | failed
+    // Fencing token bumped on every reserve/reclaim so a stale holder whose lock
+    // was taken over cannot finalize/release/heartbeat the new holder's row.
+    lockVersion: integer("lock_version").notNull().default(0),
     responseStatus: integer("response_status"),
     // biome-ignore lint/suspicious/noExplicitAny: JSONB - stored response body, shape varies by endpoint
     responseBody: jsonb("response_body").$type<any>(),

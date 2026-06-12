@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS idempotency_records (
   idempotency_key TEXT NOT NULL,
   request_hash TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'processing',
+  lock_version INTEGER NOT NULL DEFAULT 0,
   response_status INTEGER,
   response_body JSONB,
   resource_id TEXT,

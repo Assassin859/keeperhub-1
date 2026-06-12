@@ -8,8 +8,10 @@ import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import { simulateContractCall } from "@/lib/execute/simulate";
 import {
   beginIdempotentFromRequest,
+  type IdempotencyOutcome,
   idempotencyEarlyResponse,
   recordIdempotentResponse,
+  withIdempotencyHeartbeat,
 } from "@/lib/idempotency";
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { requireScope } from "@/lib/middleware/require-scope";
@@ -123,11 +125,13 @@ async function handleWriteCall(
   body: Record<string, unknown>,
   resolvedAbi: string,
   organizationId: string,
-  apiKeyId: string
+  apiKeyId: string,
+  idem: IdempotencyOutcome | null
 ): Promise<NextResponse> {
   const walletError = await requireWallet(organizationId);
   if (walletError) {
-    return walletError;
+    // Pre-broadcast gating failure: release for a clean retry.
+    return recordIdempotentResponse(idem, walletError, "release");
   }
 
   const redactedInput = redactInput(body);
@@ -139,23 +143,29 @@ async function handleWriteCall(
     input: redactedInput,
   });
   if (!reserve.allowed) {
-    return NextResponse.json({ error: reserve.reason }, { status: 403 });
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json({ error: reserve.reason }, { status: 403 }),
+      "release"
+    );
   }
   const { executionId } = reserve;
 
   await markRunning(executionId);
 
-  const result = await writeContractCore({
-    contractAddress: body.contractAddress as string,
-    network: body.network as string,
-    abi: resolvedAbi,
-    abiFunction: body.functionName as string,
-    functionArgs: body.functionArgs as string | undefined,
-    ethValue: body.value as string | undefined,
-    gasLimitMultiplier: body.gasLimitMultiplier as string | undefined,
-    priorityFeeGwei: body.priorityFeeGwei as string | undefined,
-    _context: { organizationId },
-  });
+  const result = await withIdempotencyHeartbeat(idem, () =>
+    writeContractCore({
+      contractAddress: body.contractAddress as string,
+      network: body.network as string,
+      abi: resolvedAbi,
+      abiFunction: body.functionName as string,
+      functionArgs: body.functionArgs as string | undefined,
+      ethValue: body.value as string | undefined,
+      gasLimitMultiplier: body.gasLimitMultiplier as string | undefined,
+      priorityFeeGwei: body.priorityFeeGwei as string | undefined,
+      _context: { organizationId },
+    })
+  );
 
   if (result.success) {
     await completeExecution(executionId, {
@@ -169,9 +179,13 @@ async function handleWriteCall(
     await failExecution(executionId, result.error);
   }
 
-  return NextResponse.json(
-    { executionId, status: result.success ? "completed" : "failed" },
-    { status: 202 }
+  return recordIdempotentResponse(
+    idem,
+    NextResponse.json(
+      { executionId, status: result.success ? "completed" : "failed" },
+      { status: 202 }
+    ),
+    result.success ? "success" : "failed"
   );
 }
 
@@ -265,7 +279,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const idem = await beginIdempotentFromRequest({
     request,
     organizationId: apiKeyCtx.organizationId,
-    scope: "execute",
+    scope: "execute:contract-call",
     requestBody: body,
   });
   if (idem) {
@@ -275,13 +289,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
   }
 
-  return recordIdempotentResponse(
-    idem,
-    await handleWriteCall(
-      body,
-      resolvedAbi,
-      apiKeyCtx.organizationId,
-      apiKeyCtx.apiKeyId
-    )
+  return handleWriteCall(
+    body,
+    resolvedAbi,
+    apiKeyCtx.organizationId,
+    apiKeyCtx.apiKeyId,
+    idem
   );
 }

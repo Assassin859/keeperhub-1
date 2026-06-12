@@ -6,8 +6,10 @@ import { resolveAbi } from "@/lib/abi/cache";
 import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import {
   beginIdempotentFromRequest,
+  type IdempotencyDisposition,
   idempotencyEarlyResponse,
   recordIdempotentResponse,
+  withIdempotencyHeartbeat,
 } from "@/lib/idempotency";
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { requireScope } from "@/lib/middleware/require-scope";
@@ -187,6 +189,26 @@ async function executeProtocolAction(
   return NextResponse.json(result);
 }
 
+// Disposition for a protocol-action response. Reads and successful writes are a
+// replayable success. A write returning success:false (revert) reached the
+// broadcast path, so it is finalized as failed (never released) to keep a retry
+// from re-broadcasting.
+function protocolActionDisposition(
+  response: NextResponse
+): Promise<IdempotencyDisposition> {
+  return response
+    .clone()
+    .json()
+    .then((b: unknown): IdempotencyDisposition => {
+      const record = (b ?? {}) as Record<string, unknown>;
+      return record.success === false ? "failed" : "success";
+    })
+    .catch(
+      (): IdempotencyDisposition =>
+        response.status >= 200 && response.status < 300 ? "success" : "failed"
+    );
+}
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ slug: string[] }> }
@@ -240,7 +262,7 @@ export async function POST(
   const idem = await beginIdempotentFromRequest({
     request,
     organizationId: apiKeyCtx.organizationId,
-    scope: "execute",
+    scope: `execute:${actionType}`,
     requestBody: body,
   });
   if (idem) {
@@ -254,13 +276,18 @@ export async function POST(
     // Try protocol action first (covers all protocol read/write tools)
     const meta = resolveProtocolMeta({ _actionType: actionType });
     if (meta) {
+      const response = await withIdempotencyHeartbeat(idem, () =>
+        executeProtocolAction(actionType, body, apiKeyCtx.organizationId)
+      );
       return await recordIdempotentResponse(
         idem,
-        await executeProtocolAction(actionType, body, apiKeyCtx.organizationId)
+        response,
+        await protocolActionDisposition(response)
       );
     }
 
-    // Non-protocol actions are not yet supported via direct execution
+    // Non-protocol actions are not yet supported via direct execution. This
+    // never broadcasts, so release the lock for a clean retry.
     return await recordIdempotentResponse(
       idem,
       NextResponse.json(
@@ -269,13 +296,17 @@ export async function POST(
           hint: "Create a workflow with this action and execute it via workflow_execute.",
         },
         { status: 501 }
-      )
+      ),
+      "release"
     );
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
+    // A thrown error may have left a tx mid-broadcast: finalize as failed so a
+    // retry replays the failure instead of re-broadcasting.
     return await recordIdempotentResponse(
       idem,
-      NextResponse.json({ success: false, error: message }, { status: 500 })
+      NextResponse.json({ success: false, error: message }, { status: 500 }),
+      "failed"
     );
   }
 }

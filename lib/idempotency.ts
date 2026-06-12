@@ -7,16 +7,26 @@ import { idempotencyRecords } from "@/lib/db/schema-extensions";
 import { generateId } from "@/lib/utils/id";
 
 // A reserved record holds a short "lock" so a crashed request can't block a
-// retry for long; once the work finishes the record is extended to the full
-// replay window.
-const PROCESSING_TTL_MS = 10 * 60 * 1000; // 10 minutes
+// retry for long; the in-flight request heartbeats the lock so long fund-moving
+// work (tx.wait beyond the base TTL) keeps it alive, and once the work finishes
+// the record is extended to the full replay window.
+// Exported so callers can bound a single request's worst-case runtime below the
+// reservation TTL (a request must not outlive its own processing lock).
+export const PROCESSING_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const COMPLETED_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+// Re-extend the processing lock well before it lapses so a retry never reclaims
+// a slot whose original request is still broadcasting on chain.
+const HEARTBEAT_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 const MAX_RACE_RETRIES = 3;
 
 export type IdempotencyFinalizeArgs = {
   responseStatus: number;
   responseBody: unknown;
   resourceId?: string | null;
+  // Whether the underlying execution actually succeeded. A completed record is
+  // replayable; a failed one is kept (not deleted) so a retry sees the prior
+  // outcome instead of re-broadcasting a tx that may already be on chain.
+  succeeded: boolean;
 };
 
 export type IdempotencyOutcome =
@@ -24,6 +34,7 @@ export type IdempotencyOutcome =
       kind: "proceed";
       finalize: (args: IdempotencyFinalizeArgs) => Promise<void>;
       release: () => Promise<void>;
+      heartbeat: () => Promise<boolean>;
     }
   | { kind: "replay"; responseStatus: number; responseBody: unknown }
   | { kind: "conflict"; originalResourceId: string | null }
@@ -51,26 +62,46 @@ export function hashRequest(body: unknown): string {
   return createHash("sha256").update(stableStringify(body)).digest("hex");
 }
 
-function buildProceed(recordId: string): IdempotencyOutcome {
+// finalize/release/heartbeat all fence on (id, lockVersion) so a stale holder
+// whose lock was reclaimed cannot clobber the new holder's row.
+function buildProceed(
+  recordId: string,
+  lockVersion: number
+): IdempotencyOutcome {
+  const fence = and(
+    eq(idempotencyRecords.id, recordId),
+    eq(idempotencyRecords.lockVersion, lockVersion)
+  );
   return {
     kind: "proceed",
-    finalize: async ({ responseStatus, responseBody, resourceId }) => {
+    finalize: async ({
+      responseStatus,
+      responseBody,
+      resourceId,
+      succeeded,
+    }) => {
       await db
         .update(idempotencyRecords)
         .set({
-          status: "completed",
+          status: succeeded ? "completed" : "failed",
           responseStatus,
           // biome-ignore lint/suspicious/noExplicitAny: jsonb column stores arbitrary response bodies
           responseBody: responseBody as any,
           resourceId: resourceId ?? null,
           expiresAt: new Date(Date.now() + COMPLETED_TTL_MS),
         })
-        .where(eq(idempotencyRecords.id, recordId));
+        .where(fence);
     },
     release: async () => {
-      await db
-        .delete(idempotencyRecords)
-        .where(eq(idempotencyRecords.id, recordId));
+      await db.delete(idempotencyRecords).where(fence);
+    },
+    heartbeat: async () => {
+      const extended = await db
+        .update(idempotencyRecords)
+        .set({ expiresAt: new Date(Date.now() + PROCESSING_TTL_MS) })
+        .where(fence)
+        .returning({ id: idempotencyRecords.id });
+      return extended.length > 0;
     },
   };
 }
@@ -101,13 +132,14 @@ export async function beginIdempotent(
       idempotencyKey: args.key,
       requestHash,
       status: "processing",
+      lockVersion: 0,
       expiresAt: new Date(now + PROCESSING_TTL_MS),
     })
     .onConflictDoNothing()
     .returning({ id: idempotencyRecords.id });
 
   if (inserted.length > 0) {
-    return buildProceed(id);
+    return buildProceed(id, 0);
   }
 
   const [existing] = await db
@@ -130,15 +162,18 @@ export async function beginIdempotent(
     return beginIdempotent(args, attempt + 1);
   }
 
-  // A stale processing lock (crashed request) or an expired completed record:
-  // reclaim the slot for this fresh request, guarding against a concurrent
-  // reclaim with a conditional update on expires_at.
+  // A stale processing lock (crashed request) or an expired completed/failed
+  // record: reclaim the slot for this fresh request, bumping lockVersion so the
+  // prior holder can no longer write. The conditional update on expires_at
+  // guards against a concurrent reclaim AND against a still-heartbeating holder.
   if (existing.expiresAt.getTime() <= now) {
+    const nextVersion = existing.lockVersion + 1;
     const reclaimed = await db
       .update(idempotencyRecords)
       .set({
         requestHash,
         status: "processing",
+        lockVersion: nextVersion,
         responseStatus: null,
         responseBody: null,
         resourceId: null,
@@ -148,12 +183,13 @@ export async function beginIdempotent(
       .where(
         and(
           eq(idempotencyRecords.id, existing.id),
+          eq(idempotencyRecords.lockVersion, existing.lockVersion),
           lt(idempotencyRecords.expiresAt, new Date(now))
         )
       )
       .returning({ id: idempotencyRecords.id });
     if (reclaimed.length > 0) {
-      return buildProceed(existing.id);
+      return buildProceed(existing.id, nextVersion);
     }
     if (attempt >= MAX_RACE_RETRIES) {
       return { kind: "in_progress" };
@@ -165,7 +201,9 @@ export async function beginIdempotent(
     return { kind: "conflict", originalResourceId: existing.resourceId };
   }
 
-  if (existing.status === "completed") {
+  // A completed OR failed record both replay: a failed record means the prior
+  // attempt reached the broadcast path, so re-running could double-spend.
+  if (existing.status === "completed" || existing.status === "failed") {
     return {
       kind: "replay",
       responseStatus: existing.responseStatus ?? 200,
@@ -180,39 +218,104 @@ function pickString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
-// Records the work's response against a reserved idempotency record. A 2xx is
-// stored for replay (keyed to its resource id); any other status releases the
-// lock so the client can fix the request and retry with the same key. Reads the
-// response via clone() so the original is still returned untouched. No-op when
-// there is no reserved record (no key, or a replay/conflict outcome).
+// How a reserved record should be settled once the work returns.
+//   "success"      -> store a replayable completed record (2xx happy path).
+//   "failed"       -> reached the broadcast/execution path but the work failed
+//                     (tx revert as 202/200 success:false, /node 422, thrown
+//                     mid-broadcast). Keep the row so a retry replays the
+//                     failure instead of re-broadcasting.
+//   "release"      -> provably pre-broadcast gating failure (reservation denied,
+//                     requireWallet, validation 4xx): drop the row so the same
+//                     key can be retried after the caller fixes the request.
+export type IdempotencyDisposition = "success" | "failed" | "release";
+
+// Derives the disposition from a response when the caller has no richer signal:
+// 2xx is a success, anything else is a pre-broadcast gating failure. Routes that
+// reach a broadcast path pass an explicit disposition instead.
+function defaultDisposition(status: number): IdempotencyDisposition {
+  return status >= 200 && status < 300 ? "success" : "release";
+}
+
+// Records the work's response against a reserved idempotency record. The
+// finalize-vs-release decision is driven by the explicit disposition (the
+// actual execution outcome), NOT the HTTP status envelope, so a fund-moving
+// call that reached the broadcast path is never released and a retry can never
+// re-broadcast it. Reads the response via clone() so the original is returned
+// untouched. No-op when there is no reserved record (no key, or a
+// replay/conflict outcome).
 export async function recordIdempotentResponse<T extends Response>(
   outcome: IdempotencyOutcome | null,
-  response: T
+  response: T,
+  disposition?: IdempotencyDisposition
 ): Promise<T> {
   if (outcome?.kind !== "proceed") {
     return response;
   }
-  if (response.status >= 200 && response.status < 300) {
-    let body: unknown = null;
-    try {
-      body = await response.clone().json();
-    } catch {
-      body = null;
-    }
-    const record = (body ?? {}) as Record<string, unknown>;
-    const resourceId =
-      pickString(record.executionId) ??
-      pickString(record.id) ??
-      pickString(record.workflowId);
+
+  const settle = disposition ?? defaultDisposition(response.status);
+
+  if (settle === "release") {
+    await outcome.release();
+    return response;
+  }
+
+  let body: unknown = null;
+  try {
+    body = await response.clone().json();
+  } catch {
+    body = null;
+  }
+
+  if (settle === "failed") {
     await outcome.finalize({
       responseStatus: response.status,
       responseBody: body,
-      resourceId,
+      resourceId: null,
+      succeeded: false,
     });
-  } else {
-    await outcome.release();
+    return response;
   }
+
+  const record = (body ?? {}) as Record<string, unknown>;
+  const resourceId =
+    pickString(record.executionId) ??
+    pickString(record.id) ??
+    pickString(record.workflowId);
+  await outcome.finalize({
+    responseStatus: response.status,
+    responseBody: body,
+    resourceId,
+    succeeded: true,
+  });
   return response;
+}
+
+// Runs `work` while heartbeating the reserved lock so a long-running, fund-
+// moving execution keeps its slot reserved past the base TTL. The interval is
+// cleared once the work settles; if a heartbeat finds the lock was reclaimed
+// (fence miss) it stops quietly -- finalize/release are no-ops in that case.
+export async function withIdempotencyHeartbeat<T>(
+  outcome: IdempotencyOutcome | null,
+  work: () => Promise<T>
+): Promise<T> {
+  if (outcome?.kind !== "proceed") {
+    return await work();
+  }
+  const timer = setInterval(() => {
+    // Fire-and-forget: a fence-miss or DB hiccup must not crash the request.
+    outcome.heartbeat().catch(() => {
+      // ignore -- the lock either lapses or is reclaimed safely.
+    });
+  }, HEARTBEAT_INTERVAL_MS);
+  // Let the process exit even if a timer is pending in a worker context.
+  if (typeof timer.unref === "function") {
+    timer.unref();
+  }
+  try {
+    return await work();
+  } finally {
+    clearInterval(timer);
+  }
 }
 
 // Convenience: reads the `Idempotency-Key` header and reserves a slot, or

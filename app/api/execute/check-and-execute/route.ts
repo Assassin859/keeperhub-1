@@ -7,8 +7,10 @@ import { enterApiExecuteErrorContext } from "@/lib/db/org-helpers";
 import { simulateContractCall } from "@/lib/execute/simulate";
 import {
   beginIdempotentFromRequest,
+  type IdempotencyOutcome,
   idempotencyEarlyResponse,
   recordIdempotentResponse,
+  withIdempotencyHeartbeat,
 } from "@/lib/idempotency";
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { requireScope } from "@/lib/middleware/require-scope";
@@ -118,11 +120,13 @@ async function executeConditionalWrite(
   organizationId: string,
   apiKeyId: string,
   fullBody: Record<string, unknown>,
-  conditionResult: ConditionResult
+  conditionResult: ConditionResult,
+  idem: IdempotencyOutcome | null
 ): Promise<NextResponse> {
   const walletError = await requireWallet(organizationId);
   if (walletError) {
-    return walletError;
+    // Pre-broadcast gating failure: release for a clean retry.
+    return recordIdempotentResponse(idem, walletError, "release");
   }
 
   const redactedInput = redactInput(fullBody);
@@ -134,21 +138,27 @@ async function executeConditionalWrite(
     input: redactedInput,
   });
   if (!reserve.allowed) {
-    return NextResponse.json({ error: reserve.reason }, { status: 403 });
+    return recordIdempotentResponse(
+      idem,
+      NextResponse.json({ error: reserve.reason }, { status: 403 }),
+      "release"
+    );
   }
   const { executionId } = reserve;
 
   await markRunning(executionId);
 
-  const result = await writeContractCore({
-    contractAddress: action.contractAddress,
-    network,
-    abi: resolvedWriteAbi,
-    abiFunction: action.functionName,
-    functionArgs: action.functionArgs,
-    gasLimitMultiplier: action.gasLimitMultiplier,
-    _context: { organizationId },
-  });
+  const result = await withIdempotencyHeartbeat(idem, () =>
+    writeContractCore({
+      contractAddress: action.contractAddress,
+      network,
+      abi: resolvedWriteAbi,
+      abiFunction: action.functionName,
+      functionArgs: action.functionArgs,
+      gasLimitMultiplier: action.gasLimitMultiplier,
+      _context: { organizationId },
+    })
+  );
 
   if (result.success) {
     await completeExecution(executionId, {
@@ -162,14 +172,18 @@ async function executeConditionalWrite(
     await failExecution(executionId, result.error);
   }
 
-  return NextResponse.json(
-    {
-      executionId,
-      status: result.success ? "completed" : "failed",
-      executed: true,
-      conditionResult,
-    },
-    { status: 202 }
+  return recordIdempotentResponse(
+    idem,
+    NextResponse.json(
+      {
+        executionId,
+        status: result.success ? "completed" : "failed",
+        executed: true,
+        conditionResult,
+      },
+      { status: 202 }
+    ),
+    result.success ? "success" : "failed"
   );
 }
 
@@ -317,7 +331,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const idem = await beginIdempotentFromRequest({
     request,
     organizationId: apiKeyCtx.organizationId,
-    scope: "execute",
+    scope: "execute:check-and-execute",
     requestBody: body,
   });
   if (idem) {
@@ -327,16 +341,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
   }
 
-  return recordIdempotentResponse(
-    idem,
-    await executeConditionalWrite(
-      action,
-      network,
-      writeAbiResult.abi,
-      apiKeyCtx.organizationId,
-      apiKeyCtx.apiKeyId,
-      body,
-      conditionResult
-    )
+  return executeConditionalWrite(
+    action,
+    network,
+    writeAbiResult.abi,
+    apiKeyCtx.organizationId,
+    apiKeyCtx.apiKeyId,
+    body,
+    conditionResult,
+    idem
   );
 }
