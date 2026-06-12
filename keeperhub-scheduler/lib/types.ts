@@ -45,6 +45,9 @@ export type ChainConfig = {
 };
 
 export type BlockMessage = {
+  // Pre-created phantom execution id. The executor upgrades that row to
+  // 'pending'; optional for messages enqueued before phantom pre-creation.
+  executionId?: string;
   workflowId: string;
   userId: string;
   triggerType: "block";
