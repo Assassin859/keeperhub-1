@@ -230,4 +230,175 @@ describe("signTypedDataCore (KEEP-473)", () => {
     }
     expect(mockSign).not.toHaveBeenCalled();
   });
+
+  // A-06: a malicious marketplace template can embed a hardcoded
+  // fund-moving EIP-712 authorization; deploy + run would otherwise sign it
+  // with the victim's creator EOA and drain their tokens. The web3 step
+  // must refuse these primaryTypes BEFORE touching the Turnkey signer.
+  it("rejects an EIP-2612 Permit typedData (fund-moving denylist)", async () => {
+    mockGetOrgWallet.mockResolvedValue(WALLET);
+
+    const permit = {
+      ...VALID_TYPED_DATA,
+      primaryType: "Permit",
+      message: {
+        owner: "0x0000000000000000000000000000000000000001",
+        spender: "0x0000000000000000000000000000000000000002",
+        value: "1000000000",
+        nonce: 0,
+        deadline: "9999999999",
+      },
+    };
+
+    const result = await signTypedDataCore({
+      typedData: permit,
+      _context: { organizationId: "org-1" },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.code).toBe("VALIDATION");
+    }
+    expect(mockSign).not.toHaveBeenCalled();
+  });
+
+  it("rejects an EIP-3009 TransferWithAuthorization typedData", async () => {
+    mockGetOrgWallet.mockResolvedValue(WALLET);
+
+    const transferAuth = {
+      ...VALID_TYPED_DATA,
+      primaryType: "TransferWithAuthorization",
+    };
+
+    const result = await signTypedDataCore({
+      typedData: transferAuth,
+      _context: { organizationId: "org-1" },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.code).toBe("VALIDATION");
+    }
+    expect(mockSign).not.toHaveBeenCalled();
+  });
+
+  it("rejects a custom primaryType containing 'permit' via the substring backstop", async () => {
+    mockGetOrgWallet.mockResolvedValue(WALLET);
+
+    const sneaky = { ...VALID_TYPED_DATA, primaryType: "MyPermitThing" };
+
+    const result = await signTypedDataCore({
+      typedData: sneaky,
+      _context: { organizationId: "org-1" },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.code).toBe("VALIDATION");
+    }
+    expect(mockSign).not.toHaveBeenCalled();
+  });
+
+  it("rejects a typedData whose domain.chainId is unsupported", async () => {
+    mockGetOrgWallet.mockResolvedValue(WALLET);
+
+    const unsupportedChain = {
+      ...VALID_TYPED_DATA,
+      domain: { ...VALID_TYPED_DATA.domain, chainId: 999_999 },
+    };
+
+    const result = await signTypedDataCore({
+      typedData: unsupportedChain,
+      _context: { organizationId: "org-1" },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.code).toBe("VALIDATION");
+    }
+    expect(mockSign).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unsupported domain.chainId supplied as a hex string", async () => {
+    mockGetOrgWallet.mockResolvedValue(WALLET);
+
+    const unsupportedHex = {
+      ...VALID_TYPED_DATA,
+      domain: { ...VALID_TYPED_DATA.domain, chainId: "0xf423f" },
+    };
+
+    const result = await signTypedDataCore({
+      typedData: unsupportedHex,
+      _context: { organizationId: "org-1" },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.code).toBe("VALIDATION");
+    }
+    expect(mockSign).not.toHaveBeenCalled();
+  });
+
+  it("signs a benign primaryType (Mail) on a supported chain", async () => {
+    mockGetOrgWallet.mockResolvedValue(WALLET);
+    mockSign.mockResolvedValue(`0x${"ab".repeat(65)}`);
+
+    const mail = {
+      domain: { name: "Ether Mail", version: "1", chainId: 1 },
+      types: {
+        EIP712Domain: [
+          { name: "name", type: "string" },
+          { name: "version", type: "string" },
+          { name: "chainId", type: "uint256" },
+        ],
+        Mail: [{ name: "contents", type: "string" }],
+      },
+      primaryType: "Mail",
+      message: { contents: "hello" },
+    };
+
+    const result = await signTypedDataCore({
+      typedData: mail,
+      _context: { organizationId: "org-1" },
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.signature).toMatch(SIGNATURE_HEX_RE);
+    }
+    expect(mockSign).toHaveBeenCalledWith(
+      WALLET.turnkeySubOrgId,
+      WALLET.walletAddress,
+      mail
+    );
+  });
+
+  it("signs a benign typedData that omits domain.chainId entirely", async () => {
+    mockGetOrgWallet.mockResolvedValue(WALLET);
+    mockSign.mockResolvedValue(`0x${"ab".repeat(65)}`);
+
+    const noChainId = {
+      domain: { name: "Order Book", version: "1" },
+      types: {
+        EIP712Domain: [
+          { name: "name", type: "string" },
+          { name: "version", type: "string" },
+        ],
+        Order: [{ name: "id", type: "uint256" }],
+      },
+      primaryType: "Order",
+      message: { id: 7 },
+    };
+
+    const result = await signTypedDataCore({
+      typedData: noChainId,
+      _context: { organizationId: "org-1" },
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.signature).toMatch(SIGNATURE_HEX_RE);
+    }
+    expect(mockSign).toHaveBeenCalled();
+  });
 });
