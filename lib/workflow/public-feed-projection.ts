@@ -12,10 +12,44 @@
 
 type UnknownRecord = Record<string, unknown>;
 
+/**
+ * The exact node shape the anonymous feed emits. Deliberately narrow: `config`
+ * holds only the two render hints, so a consumer that reaches for node config
+ * (e.g. `node.data.config.contractAddress`) is a compile error rather than a
+ * silent `undefined`, and the route cannot accidentally serialize full nodes.
+ */
+export type PublicFeedNode = {
+  id: string | undefined;
+  type: string | undefined;
+  position: { x: number; y: number };
+  data: {
+    type: string | undefined;
+    config: {
+      actionType: string | undefined;
+      triggerType: string | undefined;
+    };
+  };
+};
+
+/** The exact edge shape the anonymous feed emits: connectivity only. */
+export type PublicFeedEdge = {
+  id: string | undefined;
+  source: string | undefined;
+  target: string | undefined;
+};
+
 function asRecord(value: unknown): UnknownRecord | null {
   return typeof value === "object" && value !== null
     ? (value as UnknownRecord)
     : null;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function asNumber(value: unknown): number {
+  return typeof value === "number" ? value : 0;
 }
 
 /**
@@ -41,37 +75,39 @@ function readNodeConfigField(
  * in-flight nodes may still carry the colon form, and the icon lookup
  * (WorkflowNodeIcons) splits on "/" to resolve the brand.
  */
-function normalizeActionType(value: unknown): unknown {
-  return typeof value === "string" ? value.replace(":", "/") : value;
+function normalizeActionType(value: unknown): string | undefined {
+  return typeof value === "string" ? value.replace(":", "/") : undefined;
 }
 
 /**
  * Keep only the node fields the feed renders: id, type, position, and the
  * node/action/trigger type used to pick an icon. All other config is dropped.
  */
-export function projectNodesForPublicFeed(nodes: unknown): UnknownRecord[] {
+export function projectNodesForPublicFeed(nodes: unknown): PublicFeedNode[] {
   if (!Array.isArray(nodes)) {
     return [];
   }
-  return nodes.map((raw) => {
+  return nodes.map((raw): PublicFeedNode => {
     const node = asRecord(raw) ?? {};
     const data = asRecord(node.data);
     const config = data ? asRecord(data.config) : null;
     const position = asRecord(node.position);
     return {
-      id: node.id,
-      type: node.type,
+      id: asString(node.id),
+      type: asString(node.type),
       position: {
-        x: position?.x ?? 0,
-        y: position?.y ?? 0,
+        x: asNumber(position?.x),
+        y: asNumber(position?.y),
       },
       data: {
-        type: data?.type,
+        type: asString(data?.type),
         config: {
           actionType: normalizeActionType(
             readNodeConfigField(data, config, "actionType")
           ),
-          triggerType: readNodeConfigField(data, config, "triggerType"),
+          triggerType: asString(
+            readNodeConfigField(data, config, "triggerType")
+          ),
         },
       },
     };
@@ -82,16 +118,16 @@ export function projectNodesForPublicFeed(nodes: unknown): UnknownRecord[] {
  * Keep only graph connectivity (id, source, target). Edge handles and any
  * other metadata are dropped.
  */
-export function projectEdgesForPublicFeed(edges: unknown): UnknownRecord[] {
+export function projectEdgesForPublicFeed(edges: unknown): PublicFeedEdge[] {
   if (!Array.isArray(edges)) {
     return [];
   }
-  return edges.map((raw) => {
+  return edges.map((raw): PublicFeedEdge => {
     const edge = asRecord(raw) ?? {};
     return {
-      id: edge.id,
-      source: edge.source,
-      target: edge.target,
+      id: asString(edge.id),
+      source: asString(edge.source),
+      target: asString(edge.target),
     };
   });
 }
