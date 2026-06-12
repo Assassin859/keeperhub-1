@@ -1,17 +1,25 @@
 "use client";
 
-import { FolderOpen, Plus, Tag as TagIcon, Trash2 } from "lucide-react";
+import {
+  FolderOpen,
+  History,
+  Plus,
+  Tag as TagIcon,
+  Trash2,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { ConfirmOverlay } from "@/components/overlays/confirm-overlay";
 import { Overlay } from "@/components/overlays/overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
+import { ResourceActivityOverlay } from "@/components/overlays/resource-activity-overlay";
 import { ProjectFormDialog } from "@/components/projects/project-form-dialog";
 import { TagFormDialog } from "@/components/tags/tag-form-dialog";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, type Project, type Tag as TagType } from "@/lib/api-client";
+import { useActiveMember } from "@/lib/hooks/use-organization";
 
 type ProjectsAndTagsOverlayProps = {
   overlayId: string;
@@ -22,7 +30,8 @@ export function ProjectsAndTagsOverlay({
   overlayId,
   initialTab = "projects",
 }: ProjectsAndTagsOverlayProps): React.ReactElement {
-  const { open: openOverlay } = useOverlay();
+  const { open: openOverlay, push } = useOverlay();
+  const { isAdmin } = useActiveMember();
   const [projects, setProjects] = useState<Project[]>([]);
   const [tags, setTags] = useState<TagType[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(true);
@@ -171,6 +180,30 @@ export function ProjectsAndTagsOverlay({
                           ? "workflow"
                           : "workflows"}
                       </span>
+                      {isAdmin && (
+                        <Button
+                          className="text-muted-foreground"
+                          onClick={() =>
+                            push(ResourceActivityOverlay, {
+                              title: `Activity: ${project.name}`,
+                              resourceType: "project",
+                              resourceId: project.id,
+                              createdAction: "project.created",
+                              createdAt: project.createdAt,
+                              creator: {
+                                name: project.createdByName ?? null,
+                                email: project.createdByEmail ?? null,
+                                role: project.createdByRole ?? null,
+                              },
+                            })
+                          }
+                          size="icon"
+                          title="View activity"
+                          variant="ghost"
+                        >
+                          <History className="size-4" />
+                        </Button>
+                      )}
                       {project.workflowCount === 0 && (
                         <Button
                           className="text-muted-foreground hover:text-destructive"
@@ -229,6 +262,30 @@ export function ProjectsAndTagsOverlay({
                         {tag.workflowCount}{" "}
                         {tag.workflowCount === 1 ? "workflow" : "workflows"}
                       </span>
+                      {isAdmin && (
+                        <Button
+                          className="text-muted-foreground"
+                          onClick={() =>
+                            push(ResourceActivityOverlay, {
+                              title: `Activity: ${tag.name}`,
+                              resourceType: "tag",
+                              resourceId: tag.id,
+                              createdAction: "tag.created",
+                              createdAt: tag.createdAt,
+                              creator: {
+                                name: tag.createdByName ?? null,
+                                email: tag.createdByEmail ?? null,
+                                role: tag.createdByRole ?? null,
+                              },
+                            })
+                          }
+                          size="icon"
+                          title="View activity"
+                          variant="ghost"
+                        >
+                          <History className="size-4" />
+                        </Button>
+                      )}
                       {tag.workflowCount === 0 && (
                         <Button
                           className="text-muted-foreground hover:text-destructive"

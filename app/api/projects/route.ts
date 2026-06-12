@@ -8,6 +8,8 @@ import {
   resolveOrganizationId,
 } from "@/lib/middleware/auth-helpers";
 import { COLOR_PALETTE } from "@/lib/palette";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
+import { loadCreators } from "@/lib/security/creator-lookup";
 
 export async function GET(request: Request) {
   try {
@@ -27,6 +29,7 @@ export async function GET(request: Request) {
         description: projects.description,
         color: projects.color,
         organizationId: projects.organizationId,
+        userId: projects.userId,
         createdAt: projects.createdAt,
         updatedAt: projects.updatedAt,
         workflowCount: count(workflows.id),
@@ -43,11 +46,22 @@ export async function GET(request: Request) {
       .groupBy(projects.id)
       .orderBy(projects.name);
 
-    const response = orgProjects.map((p) => ({
-      ...p,
-      createdAt: p.createdAt.toISOString(),
-      updatedAt: p.updatedAt.toISOString(),
-    }));
+    const creatorMap = await loadCreators(
+      orgProjects.map((p) => p.userId),
+      organizationId
+    );
+
+    const response = orgProjects.map((p) => {
+      const creator = creatorMap.get(p.userId);
+      return {
+        ...p,
+        createdAt: p.createdAt.toISOString(),
+        updatedAt: p.updatedAt.toISOString(),
+        createdByName: creator?.name ?? null,
+        createdByEmail: creator?.email ?? null,
+        createdByRole: creator?.role ?? null,
+      };
+    });
 
     return NextResponse.json(response);
   } catch (error) {
@@ -103,6 +117,20 @@ export async function POST(request: Request) {
         userId: creatorUserId,
       })
       .returning();
+
+    await recordAuditEvent({
+      actor: {
+        userId: creatorUserId,
+        organizationId,
+        authMethod: resolved.authMethod,
+        apiKeyId: resolved.apiKeyId,
+      },
+      action: "project.created",
+      resourceType: "project",
+      resourceId: newProject.id,
+      after: { name: newProject.name },
+      metadata: buildAuditMetadata(request),
+    });
 
     return NextResponse.json(
       {

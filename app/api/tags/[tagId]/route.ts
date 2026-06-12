@@ -3,7 +3,8 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { tags } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
+import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 export async function PATCH(
   request: Request,
@@ -12,7 +13,7 @@ export async function PATCH(
   try {
     const { tagId } = await context.params;
 
-    const authResult = await resolveOrganizationId(request);
+    const authResult = await getDualAuthContext(request);
     if ("error" in authResult) {
       return NextResponse.json(
         { error: authResult.error },
@@ -20,7 +21,13 @@ export async function PATCH(
       );
     }
 
-    const { organizationId } = authResult;
+    const { organizationId, userId, authMethod, apiKeyId } = authResult;
+    if (!organizationId) {
+      return NextResponse.json(
+        { error: "No active organization" },
+        { status: 400 }
+      );
+    }
 
     const body = await request.json().catch(() => ({}));
 
@@ -49,6 +56,12 @@ export async function PATCH(
       updateData.color = body.color;
     }
 
+    const [existing] = await db
+      .select({ name: tags.name })
+      .from(tags)
+      .where(and(eq(tags.id, tagId), eq(tags.organizationId, organizationId)))
+      .limit(1);
+
     const [updated] = await db
       .update(tags)
       .set(updateData)
@@ -58,6 +71,16 @@ export async function PATCH(
     if (!updated) {
       return NextResponse.json({ error: "Tag not found" }, { status: 404 });
     }
+
+    await recordAuditEvent({
+      actor: { userId, organizationId, authMethod, apiKeyId },
+      action: "tag.updated",
+      resourceType: "tag",
+      resourceId: updated.id,
+      before: { name: existing?.name },
+      after: { name: updated.name },
+      metadata: buildAuditMetadata(request),
+    });
 
     return NextResponse.json({
       ...updated,
@@ -85,7 +108,7 @@ export async function DELETE(
   try {
     const { tagId } = await context.params;
 
-    const authResult = await resolveOrganizationId(request);
+    const authResult = await getDualAuthContext(request);
     if ("error" in authResult) {
       return NextResponse.json(
         { error: authResult.error },
@@ -93,16 +116,31 @@ export async function DELETE(
       );
     }
 
-    const { organizationId } = authResult;
+    const { organizationId, userId, authMethod, apiKeyId } = authResult;
+    if (!organizationId) {
+      return NextResponse.json(
+        { error: "No active organization" },
+        { status: 400 }
+      );
+    }
 
-    const result = await db
+    const [deleted] = await db
       .delete(tags)
       .where(and(eq(tags.id, tagId), eq(tags.organizationId, organizationId)))
-      .returning({ id: tags.id });
+      .returning({ id: tags.id, name: tags.name });
 
-    if (result.length === 0) {
+    if (!deleted) {
       return NextResponse.json({ error: "Tag not found" }, { status: 404 });
     }
+
+    await recordAuditEvent({
+      actor: { userId, organizationId, authMethod, apiKeyId },
+      action: "tag.deleted",
+      resourceType: "tag",
+      resourceId: deleted.id,
+      before: { name: deleted.name },
+      metadata: buildAuditMetadata(request),
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {

@@ -846,6 +846,9 @@ export type Tag = {
   userId: string;
   createdAt: string;
   updatedAt: string;
+  createdByName?: string | null;
+  createdByEmail?: string | null;
+  createdByRole?: string | null;
 };
 
 export const tagApi = {
@@ -878,6 +881,9 @@ export type Project = {
   organizationId: string;
   createdAt: string;
   updatedAt: string;
+  createdByName?: string | null;
+  createdByEmail?: string | null;
+  createdByRole?: string | null;
 };
 
 export const publicTagApi = {
