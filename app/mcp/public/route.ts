@@ -204,6 +204,9 @@ export async function POST(request: Request): Promise<Response> {
       rateLimitHeaders(listGate)
     );
   }
+  // The call bucket is the binding limit for a tools/call, so its state is what
+  // success-path headers must advertise; the list bucket binds everything else.
+  let effectiveGate = listGate;
   if (isToolCallBody(body)) {
     const callGate = checkIpRateLimit(
       `mcp-public-call:${ip}`,
@@ -218,6 +221,7 @@ export async function POST(request: Request): Promise<Response> {
         rateLimitHeaders(callGate)
       );
     }
+    effectiveGate = callGate;
   }
 
   const sessionId = request.headers.get("mcp-session-id");
@@ -233,7 +237,7 @@ export async function POST(request: Request): Promise<Response> {
       await resolved.transport.handleRequest(ensureMcpAcceptHeader(request), {
         parsedBody: body,
       }),
-      listGate
+      effectiveGate
     );
   }
 
@@ -256,7 +260,7 @@ export async function POST(request: Request): Promise<Response> {
     await transport.handleRequest(ensureMcpAcceptHeader(request), {
       parsedBody: body,
     }),
-    listGate
+    effectiveGate
   );
 }
 

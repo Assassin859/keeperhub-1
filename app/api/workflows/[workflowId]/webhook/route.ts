@@ -297,11 +297,24 @@ export async function POST(
         error: EXECUTION_LIMIT_ERROR,
         organizationId: workflow.organizationId,
       });
-      const body = await executionGuard.response.json();
-      return NextResponse.json(body, {
-        status: HttpStatus.TOO_MANY_REQUESTS,
-        headers: corsHeaders,
-      });
+      const body = (await executionGuard.response.json()) as {
+        limit?: number;
+      };
+      // Monthly billing quota with no clean sliding-window reset, so advertise a
+      // fixed Retry-After matching the concurrency block plus the guard's limit.
+      const retryAfter = 30;
+      return applyRateLimitHeaders(
+        NextResponse.json(body, {
+          status: HttpStatus.TOO_MANY_REQUESTS,
+          headers: corsHeaders,
+        }),
+        {
+          limit: typeof body.limit === "number" ? body.limit : 0,
+          remaining: 0,
+          reset: Math.ceil(Date.now() / 1000) + retryAfter,
+          retryAfter,
+        }
+      );
     }
 
     const concurrencyCheck = await checkConcurrencyLimit();

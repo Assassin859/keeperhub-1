@@ -61,9 +61,13 @@ export async function GET(
   const execution = executions[0];
 
   if (!execution) {
-    return NextResponse.json(
-      { error: "Execution not found" },
-      { status: HttpStatus.NOT_FOUND }
+    // The request already consumed a rate-limit slot, so advertise its state.
+    return applyRateLimitHeaders(
+      NextResponse.json(
+        { error: "Execution not found" },
+        { status: HttpStatus.NOT_FOUND }
+      ),
+      rateLimit
     );
   }
 

@@ -746,6 +746,8 @@ describe("Direct Execution API", () => {
       expect(response.status).toBe(404);
       const data = await response.json();
       expect(data.error).toBe("Execution not found");
+      // The request already consumed a rate-limit slot, so the 404 carries headers.
+      expect(response.headers.get("X-RateLimit-Limit")).not.toBeNull();
     });
 
     it("returns 200 with full execution details", async () => {

@@ -37,25 +37,29 @@ export async function incrementAndCheck(
   // Atomic UPSERT-and-increment in one statement. The unique key is
   // (key, bucket_start) so concurrent calls for the same IP within the
   // same hour bucket serialize on the row lock.
-  const rows = await db.execute<{ request_count: number }>(sql`
+  // Derive the bucket boundary in the same Postgres session timezone that buckets
+  // the row, so a non-UTC Node process can't compute a reset that diverges from
+  // the actual hour boundary.
+  const rows = await db.execute<{
+    request_count: number;
+    next_bucket_epoch: number;
+  }>(sql`
     INSERT INTO ${agenticWalletRateLimits} (key, bucket_start, request_count)
     VALUES (${key}, date_trunc('hour', now()), 1)
     ON CONFLICT (key, bucket_start)
     DO UPDATE SET request_count = ${agenticWalletRateLimits.requestCount} + 1
-    RETURNING request_count
+    RETURNING
+      request_count,
+      extract(epoch FROM date_trunc('hour', now()) + interval '1 hour')::bigint AS next_bucket_epoch
   `);
   const count = rows[0]?.request_count ?? 1;
 
-  // Time until the bucket rolls over to the next hour. A single `new Date()`
-  // guards against the sub-second race where minutes and seconds cross an hour
-  // boundary between two separate reads. `reset` is the Unix-epoch second when
-  // the current hour bucket rolls over and the counter resets.
-  const now = new Date();
-  const secondsPastHour = now.getMinutes() * 60 + now.getSeconds();
-  // `Math.max(1, ...)` guards the edge case where the request lands at
-  // XX:59:59.999 and the arithmetic would otherwise return 0.
-  const secondsToNextHour = Math.max(1, 3600 - secondsPastHour);
-  const reset = Math.ceil(now.getTime() / 1000) + secondsToNextHour;
+  // `reset` is the Unix-epoch second when the current hour bucket rolls over and
+  // the counter resets. `Math.max(1, ...)` guards the edge case where the request
+  // lands microseconds before the boundary and the delta would round to 0.
+  const reset = Number(rows[0]?.next_bucket_epoch ?? 0);
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const secondsToNextHour = Math.max(1, reset - nowSeconds);
   const remaining = Math.max(0, limit - count);
 
   if (count > limit) {
