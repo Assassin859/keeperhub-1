@@ -55,6 +55,7 @@ let mockWorkflow: {
   organizationId: string | null;
   deletedAt: Date | null;
   nodes: unknown[];
+  userId: string;
 } | null;
 let mockExistingExecution: { id: string; status: string } | null;
 let insertedValues: Record<string, unknown> | null;
@@ -125,7 +126,12 @@ describe("POST /api/internal/executions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAuthResult.authenticated = true;
-    mockWorkflow = { organizationId: "org_1", deletedAt: null, nodes: [] };
+    mockWorkflow = {
+      organizationId: "org_1",
+      deletedAt: null,
+      nodes: [],
+      userId: "wf_owner",
+    };
     insertedValues = null;
     enforceExecutionLimit.mockResolvedValue({ blocked: false });
     enforceWorkflowFeatures.mockResolvedValue({ blocked: false });
@@ -181,9 +187,16 @@ describe("POST /api/internal/executions", () => {
     expect(buildAttribution).toHaveBeenCalledWith(sourceArg("internal"));
   });
 
-  it("returns 400 when workflowId or userId is missing", async () => {
-    const response = await POST(postRequest({ workflowId: "wf_1" }));
+  it("returns 400 when workflowId is missing", async () => {
+    const response = await POST(postRequest({ userId: "user_1" }));
     expect(response.status).toBe(400);
+  });
+
+  it("derives userId from the workflow when omitted (cron path)", async () => {
+    const response = await POST(postRequest({ workflowId: "wf_1" }));
+
+    expect(response.status).toBe(201);
+    expect(insertedValues?.userId).toBe("wf_owner");
   });
 
   it("returns 404 for a soft-deleted workflow", async () => {
@@ -191,6 +204,7 @@ describe("POST /api/internal/executions", () => {
       organizationId: "org_1",
       deletedAt: new Date(),
       nodes: [],
+      userId: "wf_owner",
     };
     const response = await POST(
       postRequest({ workflowId: "wf_1", userId: "user_1" })

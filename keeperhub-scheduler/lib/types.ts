@@ -18,6 +18,9 @@ export type Schedule = {
 };
 
 export type ScheduleMessage = {
+  // Pre-created phantom execution id. The executor upgrades that row to
+  // 'pending'; optional for messages enqueued before phantom pre-creation.
+  executionId?: string;
   workflowId: string;
   scheduleId: string;
   triggerTime: string;

@@ -59,9 +59,9 @@ export async function POST(request: Request): Promise<NextResponse> {
   // creating a row already marked running.
   const isPhantom = status === "phantom";
 
-  if (!(workflowId && userId)) {
+  if (!workflowId) {
     return NextResponse.json(
-      { error: "workflowId and userId are required" },
+      { error: "workflowId is required" },
       { status: 400 }
     );
   }
@@ -72,6 +72,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       organizationId: true,
       deletedAt: true,
       nodes: true,
+      userId: true,
     },
   });
 
@@ -79,6 +80,11 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!workflow || workflow.deletedAt) {
     return NextResponse.json({ error: "Workflow not found" }, { status: 404 });
   }
+
+  // KEEP-693: the cron scheduler does not know the workflow owner, so userId is
+  // optional in the request and falls back to the workflow's owner. The
+  // workflow's userId FK is non-null, so ownerId is always resolved here.
+  const ownerId: string = userId ?? workflow.userId;
 
   const featureGuard = await enforceWorkflowFeatures(
     extractActionTypeNodes(workflow.nodes as unknown[]),
@@ -102,13 +108,13 @@ export async function POST(request: Request): Promise<NextResponse> {
   const attribution = buildAttribution({ request, source });
 
   const [execution] = await withBackstopCapture(
-    { workflowId, userId, source },
+    { workflowId, userId: ownerId, source },
     () =>
       db
         .insert(workflowExecutions)
         .values({
           workflowId,
-          userId,
+          userId: ownerId,
           status: isPhantom ? "phantom" : "running",
           input: input || {},
           ...attribution,

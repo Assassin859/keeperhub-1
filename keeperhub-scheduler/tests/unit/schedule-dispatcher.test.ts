@@ -22,6 +22,17 @@ vi.mock("../../lib/sqs-client.js", () => ({
   },
 }));
 
+// KEEP-693: stub the phantom helpers so dispatch tests assert the wiring (id
+// carried on the message, failure marked) without real internal-API calls.
+const { createPhantomExecution, failPhantomExecution } = vi.hoisted(() => ({
+  createPhantomExecution: vi.fn(),
+  failPhantomExecution: vi.fn(),
+}));
+vi.mock("../../lib/phantom.js", () => ({
+  createPhantomExecution,
+  failPhantomExecution,
+}));
+
 import { sqs } from "../../lib/sqs-client.js";
 import {
   dispatch,
@@ -424,6 +435,8 @@ describe("dispatch", () => {
     vi.useFakeTimers();
     // 9:00:01 UTC -- inside the matching minute for "0 9 * * *".
     vi.setSystemTime(new Date("2024-01-15T09:00:01Z"));
+    createPhantomExecution.mockReset();
+    failPhantomExecution.mockReset();
   });
 
   afterEach(() => {
@@ -705,5 +718,71 @@ describe("dispatch", () => {
       expect(result).toEqual({ evaluated: 1, triggered: 0, errors: 0 });
       expect(mockedSqsSend).not.toHaveBeenCalled();
     });
+  });
+
+  // KEEP-693: phantom pre-creation wiring.
+  it("pre-creates a phantom row and carries its id on the message", async () => {
+    createPhantomExecution.mockResolvedValue("exec_ph");
+    stubFetch([
+      {
+        id: "sched-1",
+        workflowId: "wf-1",
+        cronExpression: "0 9 * * *",
+        timezone: "UTC",
+      },
+    ]);
+    mockedSqsSend.mockResolvedValue(sqsOkResponse);
+
+    await dispatch();
+
+    expect(createPhantomExecution).toHaveBeenCalledWith("wf-1", "schedule");
+    const command = mockedSqsSend.mock.calls[0][0] as SendMessageCommand;
+    expect(JSON.parse(command.input.MessageBody ?? "")).toMatchObject({
+      executionId: "exec_ph",
+    });
+  });
+
+  it("marks the phantom failed with CS-0001 when the enqueue fails", async () => {
+    createPhantomExecution.mockResolvedValue("exec_ph");
+    stubFetch([
+      {
+        id: "sched-1",
+        workflowId: "wf-1",
+        cronExpression: "0 9 * * *",
+        timezone: "UTC",
+      },
+    ]);
+    mockedSqsSend.mockRejectedValue(new Error("SQS down"));
+
+    const result = await dispatch();
+
+    expect(result).toEqual({ evaluated: 1, triggered: 0, errors: 1 });
+    expect(failPhantomExecution).toHaveBeenCalledWith(
+      "exec_ph",
+      "CS-0001",
+      expect.stringContaining("SQS down"),
+    );
+  });
+
+  it("still enqueues (id-less) when phantom creation fails", async () => {
+    createPhantomExecution.mockResolvedValue(undefined);
+    stubFetch([
+      {
+        id: "sched-1",
+        workflowId: "wf-1",
+        cronExpression: "0 9 * * *",
+        timezone: "UTC",
+      },
+    ]);
+    mockedSqsSend.mockResolvedValue(sqsOkResponse);
+
+    const result = await dispatch();
+
+    expect(result).toEqual({ evaluated: 1, triggered: 1, errors: 0 });
+    const command = mockedSqsSend.mock.calls[0][0] as SendMessageCommand;
+    expect(JSON.parse(command.input.MessageBody ?? "")).not.toHaveProperty(
+      "executionId",
+    );
+    expect(failPhantomExecution).not.toHaveBeenCalled();
   });
 });
