@@ -259,6 +259,153 @@ export function decodeSandboxResult(text: string): unknown {
   return decodeSandboxNode(JSON.parse(text));
 }
 
+function encodeSandboxNumber(value: number): unknown {
+  if (Number.isFinite(value) && !Object.is(value, -0)) {
+    return value;
+  }
+  let token = "-0";
+  if (Number.isNaN(value)) {
+    token = "NaN";
+  } else if (value === Number.POSITIVE_INFINITY) {
+    token = "Inf";
+  } else if (value === Number.NEGATIVE_INFINITY) {
+    token = "-Inf";
+  }
+  return { [SANDBOX_RESULT_TAG]: "num", v: token };
+}
+
+function encodeSandboxMap(
+  value: Map<unknown, unknown>,
+  seen: Set<unknown>
+): unknown {
+  const entries: [unknown, unknown][] = [];
+  for (const [k, v] of value) {
+    entries.push([encodeSandboxNode(k, seen), encodeSandboxNode(v, seen)]);
+  }
+  return { [SANDBOX_RESULT_TAG]: "map", v: entries };
+}
+
+function encodeSandboxSet(value: Set<unknown>, seen: Set<unknown>): unknown {
+  const items: unknown[] = [];
+  for (const item of value) {
+    items.push(encodeSandboxNode(item, seen));
+  }
+  return { [SANDBOX_RESULT_TAG]: "set", v: items };
+}
+
+function encodeSandboxView(value: ArrayBufferView): unknown {
+  // Mirror the inline encodeResult's falsy check: a missing or empty
+  // constructor name falls back to Uint8Array.
+  const ctorName = value.constructor?.name;
+  const kind =
+    ctorName === undefined || ctorName === "" ? "Uint8Array" : ctorName;
+  return {
+    [SANDBOX_RESULT_TAG]: "bytes",
+    k: kind,
+    v: Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString(
+      "base64"
+    ),
+  };
+}
+
+function encodeSandboxPlainObject(
+  value: Record<string, unknown>,
+  seen: Set<unknown>
+): unknown {
+  const out: Record<string, unknown> = {};
+  let hasTagKey = false;
+  for (const key of Object.keys(value)) {
+    if (key === SANDBOX_RESULT_TAG) {
+      hasTagKey = true;
+    }
+    out[key] = encodeSandboxNode(value[key], seen);
+  }
+  // Escape a plain object that literally carries a "$" key so the parent does
+  // not mistake it for a type tag.
+  return hasTagKey ? { [SANDBOX_RESULT_TAG]: "obj", v: out } : out;
+}
+
+function encodeSandboxComposite(value: object, seen: Set<unknown>): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => encodeSandboxNode(item, seen));
+  }
+  if (value instanceof Date) {
+    return { [SANDBOX_RESULT_TAG]: "date", v: value.getTime() };
+  }
+  if (value instanceof RegExp) {
+    return {
+      [SANDBOX_RESULT_TAG]: "regexp",
+      src: value.source,
+      flags: value.flags,
+    };
+  }
+  if (value instanceof Map) {
+    return encodeSandboxMap(value, seen);
+  }
+  if (value instanceof Set) {
+    return encodeSandboxSet(value, seen);
+  }
+  if (value instanceof ArrayBuffer) {
+    return {
+      [SANDBOX_RESULT_TAG]: "bytes",
+      k: "ArrayBuffer",
+      v: Buffer.from(value).toString("base64"),
+    };
+  }
+  if (ArrayBuffer.isView(value)) {
+    return encodeSandboxView(value);
+  }
+  return encodeSandboxPlainObject(value as Record<string, unknown>, seen);
+}
+
+function encodeSandboxNode(value: unknown, seen: Set<unknown>): unknown {
+  if (value === null) {
+    return null;
+  }
+  if (value === undefined) {
+    return { [SANDBOX_RESULT_TAG]: "undef" };
+  }
+  if (typeof value === "boolean" || typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return encodeSandboxNumber(value);
+  }
+  if (typeof value === "bigint") {
+    return { [SANDBOX_RESULT_TAG]: "bigint", v: value.toString() };
+  }
+  if (typeof value === "function" || typeof value === "symbol") {
+    // Bare reason; the caller (writeRunResult / writeResult) adds the
+    // "Result is not serializable: " prefix so the message is not doubled.
+    throw new Error(typeof value);
+  }
+  if (seen.has(value)) {
+    throw new Error("circular reference");
+  }
+  seen.add(value);
+  try {
+    return encodeSandboxComposite(value, seen);
+  } finally {
+    seen.delete(value);
+  }
+}
+
+/**
+ * Encode an arbitrary value as the tagged-JSON wire form `decodeSandboxResult`
+ * reads back; the exact inverse of `decodeSandboxNode`. Used by the standalone
+ * sandbox server to put a result on the HTTP response (the in-pod grandchild
+ * uses the inline `encodeResult` instead, since it cannot import this module).
+ *
+ * keep in lockstep with decodeSandboxNode and the inline encodeResult in
+ * SANDBOX_CHILD_SOURCE: the three share one tag scheme ("$"-keyed envelopes for
+ * undefined, non-finite/-0 numbers, bigint, Date, RegExp, Map, Set, byte views,
+ * and "$"-collision escaping). Throws on a value with no safe representation
+ * (function, symbol, or a circular reference), mirroring the inline encodeResult.
+ */
+export function encodeSandboxResult(value: unknown): string {
+  return JSON.stringify(encodeSandboxNode(value, new Set<unknown>()));
+}
+
 /**
  * JavaScript source string for the sandbox grandchild. Passed verbatim to
  * `node -e`, so it must be standalone (no imports, no TypeScript syntax).

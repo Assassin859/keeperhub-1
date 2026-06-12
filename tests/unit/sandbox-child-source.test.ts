@@ -10,6 +10,7 @@ vi.mock("server-only", () => ({}));
 import {
   createSandboxResultReader,
   decodeSandboxResult,
+  encodeSandboxResult,
   SANDBOX_CHILD_SOURCE,
   SANDBOX_RESULT_FD,
   SANDBOX_RESULT_MAX_BYTES,
@@ -743,5 +744,77 @@ describe("decodeSandboxResult is safe on untrusted input", () => {
 
   it("throws on malformed JSON (callers map this to an error outcome)", () => {
     expect(() => decodeSandboxResult("not json")).toThrow();
+  });
+});
+
+// encodeSandboxResult is the module-scope inverse of decodeSandboxResult used
+// by the standalone sandbox server to put a result on the HTTP response. It
+// must be a faithful inverse for every type the tag codec supports.
+describe("encodeSandboxResult <-> decodeSandboxResult round-trip", () => {
+  function roundTrip(value: unknown): unknown {
+    return decodeSandboxResult(encodeSandboxResult(value));
+  }
+
+  it("round-trips undefined", () => {
+    expect(roundTrip(undefined)).toBeUndefined();
+  });
+
+  it("round-trips BigInt", () => {
+    expect(roundTrip(BigInt("1000000000000000000"))).toBe(
+      BigInt("1000000000000000000")
+    );
+  });
+
+  it("round-trips Date", () => {
+    const r = roundTrip(new Date(1_700_000_000_000)) as Date;
+    expect(r).toBeInstanceOf(Date);
+    expect(r.getTime()).toBe(1_700_000_000_000);
+  });
+
+  it("round-trips RegExp", () => {
+    const r = roundTrip(/ab+c/gi) as RegExp;
+    expect(r).toBeInstanceOf(RegExp);
+    expect(r.source).toBe("ab+c");
+    expect(r.flags).toBe("gi");
+  });
+
+  it("round-trips Map", () => {
+    const r = roundTrip(
+      new Map<string, number>([
+        ["a", 1],
+        ["b", 2],
+      ])
+    ) as Map<string, number>;
+    expect(r).toBeInstanceOf(Map);
+    expect(r.get("a")).toBe(1);
+    expect(r.get("b")).toBe(2);
+  });
+
+  it("round-trips Set", () => {
+    const r = roundTrip(new Set([1, 2, 3])) as Set<number>;
+    expect(r).toBeInstanceOf(Set);
+    expect([...r]).toEqual([1, 2, 3]);
+  });
+
+  it("round-trips a typed array", () => {
+    const r = roundTrip(new Uint8Array([1, 2, 255])) as Uint8Array;
+    expect(r).toBeInstanceOf(Uint8Array);
+    expect([...r]).toEqual([1, 2, 255]);
+  });
+
+  it("round-trips nested objects and arrays", () => {
+    const value = { a: [1, { b: BigInt(2) }], c: { d: new Set([9]) } };
+    const r = roundTrip(value) as typeof value;
+    expect(r.a[0]).toBe(1);
+    expect((r.a[1] as { b: bigint }).b).toBe(BigInt(2));
+    expect([...(r.c.d as Set<number>)]).toEqual([9]);
+  });
+
+  it('round-trips an object literally containing a "$" key', () => {
+    expect(roundTrip({ $: "bigint", v: "5" })).toEqual({ $: "bigint", v: "5" });
+  });
+
+  it("throws on a function (not serializable)", () => {
+    expect(() => encodeSandboxResult(() => 1)).toThrow();
   });
 });

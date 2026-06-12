@@ -1,10 +1,7 @@
 import "server-only";
 
 import { Agent, request as httpRequest } from "node:http";
-import {
-  deserialize as v8Deserialize,
-  serialize as v8Serialize,
-} from "node:v8";
+import { decodeSandboxResult } from "@/lib/sandbox/child-source";
 
 const SANDBOX_URL = process.env.SANDBOX_URL;
 const RESULT_SENTINEL = "\u0001RESULT\u0002";
@@ -178,7 +175,7 @@ function postOnce(
         path: url.pathname,
         method: "POST",
         headers: {
-          "Content-Type": "application/octet-stream",
+          "Content-Type": "application/json",
           "Content-Length": body.length.toString(),
         },
       },
@@ -232,6 +229,24 @@ function postOnce(
   });
 }
 
+/**
+ * Shape guard for the decoded response. The sandbox is untrusted, so the
+ * tagged-JSON payload is validated to be a ChildOutcome envelope before use.
+ */
+function isChildOutcome(value: unknown): value is ChildOutcome {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const v = value as { ok?: unknown; logs?: unknown; errorMessage?: unknown };
+  if (typeof v.ok !== "boolean" || !Array.isArray(v.logs)) {
+    return false;
+  }
+  // ok:false must carry a string errorMessage; ok:true's `result` is unknown
+  // by design. Reject anything else so a forged or buggy sandbox response
+  // cannot surface as an undefined error/log on this untrusted boundary.
+  return v.ok === true || typeof v.errorMessage === "string";
+}
+
 function parseResponse(buf: Buffer): ChildOutcome {
   const text = buf.toString("utf8");
   const idx = text.lastIndexOf(RESULT_SENTINEL);
@@ -239,8 +254,13 @@ function parseResponse(buf: Buffer): ChildOutcome {
     throw new Error("sandbox response missing sentinel");
   }
   const payload = text.slice(idx + RESULT_SENTINEL.length).trim();
-  const decoded = Buffer.from(payload, "base64");
-  return v8Deserialize(decoded) as ChildOutcome;
+  // Safe by construction: JSON.parse + tag rebuild (prototype-pollution-safe),
+  // never v8.deserialize on sandbox-produced bytes (F-010).
+  const decoded = decodeSandboxResult(payload);
+  if (!isChildOutcome(decoded)) {
+    throw new Error("sandbox response: malformed result");
+  }
+  return decoded;
 }
 
 function toRunCodeResult(outcome: ChildOutcome): RunCodeResult {
@@ -267,10 +287,8 @@ export async function runRemote(input: {
   try {
     const timeoutSeconds = Math.ceil(input.timeoutMs / 1000);
     const body = Buffer.from(
-      v8Serialize({ code: input.code, timeout: timeoutSeconds }).toString(
-        "base64"
-      ),
-      "ascii"
+      JSON.stringify({ code: input.code, timeout: timeoutSeconds }),
+      "utf8"
     );
 
     let lastError: unknown;

@@ -3,10 +3,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import {
-  deserialize as v8Deserialize,
-  serialize as v8Serialize,
-} from "node:v8";
+import { encodeSandboxResult } from "../../lib/sandbox/child-source.js";
 import { runCode } from "./run-code.js";
 
 /**
@@ -17,8 +14,9 @@ import { runCode } from "./run-code.js";
 const RESULT_SENTINEL = "\u0001RESULT\u0002";
 
 /** Default maximum request body size (256 KiB). Envelope is small because
- * the body carries only user-written JS plus a v8-serialized envelope; any
- * reasonable Code node fits in a small fraction of this. Env-overridable. */
+ * the body carries only user-written JS plus a small JSON envelope
+ * ({ code, timeout }); any reasonable Code node fits in a small fraction of
+ * this. Env-overridable. */
 const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
 
 /** Default maximum concurrent /run calls per Pod. With 500m CPU + ~80 ms
@@ -96,19 +94,14 @@ async function readBody(
 }
 
 function writeRunResult(res: ServerResponse, outcome: unknown): void {
-  const payload = v8Serialize(outcome).toString("base64");
-  res.writeHead(200, { "Content-Type": "application/octet-stream" });
+  const payload = encodeSandboxResult(outcome);
+  res.writeHead(200, { "Content-Type": "application/json" });
   res.end(`${RESULT_SENTINEL}${payload}\n`);
 }
 
 function decodeRunRequest(raw: Buffer): RunRequest | null {
   try {
-    const bodyBase64 = raw.toString("ascii").trim();
-    const decoded = Buffer.from(bodyBase64, "base64");
-    if (decoded.length === 0) {
-      return null;
-    }
-    const deserialized = v8Deserialize(decoded);
+    const deserialized: unknown = JSON.parse(raw.toString("utf8"));
     if (
       typeof deserialized !== "object" ||
       deserialized === null ||
