@@ -199,6 +199,27 @@ describe("POST /api/execute/node reserved-field gating", () => {
     ).toBe("org_a");
   });
 
+  it("strips a caller-supplied web3Connection so it cannot weaken the signer mode", async () => {
+    const response = await nodePOST(
+      postRequest({
+        actionType: "web3/write-contract",
+        config: {
+          network: "1",
+          contractAddress: "0xabc",
+          // Attempt to force the org Turnkey EOA and bypass the Safe's
+          // Zodiac Roles policy on an org-custodied write.
+          web3Connection: "eoa",
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    // The step must never see web3Connection: with it absent,
+    // resolveSignerForNode falls back to the org-policy (Safe + Role) path.
+    expect(mocks.capturedInput).toBeDefined();
+    expect("web3Connection" in (mocks.capturedInput ?? {})).toBe(false);
+  });
+
   it("passes an owned top-level integrationId through to the step", async () => {
     mocks.ownershipResult = [{ id: "int_mine" }];
 

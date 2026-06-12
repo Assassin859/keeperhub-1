@@ -282,11 +282,20 @@ async function executeNode(
   const integrationId = resolvedRefs?.integrationId;
 
   // Drop caller-supplied gating keys so the step only sees the values the
-  // route resolved and gated on. web3Connection is intentionally preserved;
-  // it stays org-ownership-verified downstream in lib/safe/signer-resolver.ts.
+  // route resolved and gated on.
+  //
+  // web3Connection is stripped on purpose: it selects the signer mode in
+  // resolveSignerForNode (lib/safe/signer-resolver.ts). A direct-execution
+  // caller must NOT be able to set web3Connection='eoa' to short-circuit to
+  // the org's Turnkey EOA and bypass the org Safe's Zodiac Roles policy on
+  // org-custodied writes. With the field absent, resolveSignerForNode falls
+  // back to the "default" branch (resolveSignerMode org-policy path), which
+  // honours the Safe + active Role. The sibling execute routes never forward
+  // web3Connection either, so this keeps /api/execute/node no weaker.
   const {
     network: _ignoredNetwork,
     integrationId: _ignoredIntegrationId,
+    web3Connection: _ignoredWeb3Connection,
     _context: _ignoredContext,
     ...safeConfig
   } = config;
@@ -470,9 +479,20 @@ export async function POST(request: Request): Promise<NextResponse> {
       return walletError;
     }
 
+    // Strip the same reserved keys executeNode removes so the persisted audit
+    // input matches what the step actually received. web3Connection in
+    // particular must not be recorded as if it influenced this org-custodied
+    // write (it is stripped before reaching the signer).
+    const {
+      network: _auditNetwork,
+      integrationId: _auditIntegrationId,
+      web3Connection: _auditWeb3Connection,
+      _context: _auditContext,
+      ...auditConfig
+    } = validation.data.config;
     const redactedInput = redactInput({
       actionType: validation.data.actionType,
-      ...validation.data.config,
+      ...auditConfig,
     });
     const reserve = await checkAndReserveExecution({
       organizationId: apiKeyCtx.organizationId,
