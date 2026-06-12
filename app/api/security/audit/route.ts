@@ -92,14 +92,29 @@ export async function GET(request: Request) {
       .limit(req.pageSize)
       .offset(req.offset);
 
-    // Enrich actor ids -> name/email so the UI can show "who did it".
+    // Enrich actor ids -> name/email/role so the UI can identify "who did it"
+    // unambiguously (the org role disambiguates same-named users). Role is the
+    // actor's membership role in the caller's org (null if they are no longer a
+    // member).
     const actorIds = [
       ...new Set(rows.map((r) => r.actorUserId).filter(Boolean)),
     ] as string[];
     const actors = actorIds.length
       ? await db
-          .select({ id: users.id, name: users.name, email: users.email })
+          .select({
+            id: users.id,
+            name: users.name,
+            email: users.email,
+            role: member.role,
+          })
           .from(users)
+          .leftJoin(
+            member,
+            and(
+              eq(member.userId, users.id),
+              eq(member.organizationId, organizationId)
+            )
+          )
           .where(inArray(users.id, actorIds))
       : [];
     const actorMap = new Map(actors.map((a) => [a.id, a]));

@@ -919,7 +919,12 @@ export type SecurityAuditEvent = {
   // biome-ignore lint/suspicious/noExplicitAny: stored deep-diff, shape varies by action
   diff: any;
   metadata: Record<string, unknown> | null;
-  actor: { id: string; name?: string | null; email?: string | null } | null;
+  actor: {
+    id: string;
+    name?: string | null;
+    email?: string | null;
+    role?: string | null;
+  } | null;
 };
 
 export const securityApi = {

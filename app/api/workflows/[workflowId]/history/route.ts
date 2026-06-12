@@ -61,6 +61,30 @@ export async function GET(
       .from(workflowHistory)
       .where(where);
 
+    // Workflows created before versioning have no rows. Synthesize the current
+    // state as version 1 so the timeline isn't empty -- the live workflow IS
+    // that version, so it reads as the current/initial entry.
+    if (total === 0) {
+      const [creator] = workflow.userId
+        ? await db
+            .select({ id: users.id, name: users.name, email: users.email })
+            .from(users)
+            .where(eq(users.id, workflow.userId))
+            .limit(1)
+        : [];
+      const synthetic = {
+        version: 1,
+        source: "create" as const,
+        contentHash: "",
+        previousVersion: null,
+        change: null,
+        createdAt: workflow.createdAt.toISOString(),
+        changedBy:
+          creator ?? (workflow.userId ? { id: workflow.userId } : null),
+      };
+      return NextResponse.json(buildPage([synthetic], 1, req, url));
+    }
+
     const rows = await db
       .select({
         version: workflowHistory.version,
