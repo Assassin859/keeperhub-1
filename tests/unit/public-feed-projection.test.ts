@@ -50,6 +50,46 @@ describe("projectNodesForPublicFeed", () => {
     expect(serialized).not.toContain("integrationId");
   });
 
+  it("reads the legacy top-level data.actionType and normalizes the colon form", () => {
+    const [projected] = projectNodesForPublicFeed([
+      {
+        id: "legacy-1",
+        type: "action",
+        position: { x: 1, y: 2 },
+        data: {
+          type: "action",
+          // Legacy / in-flight shape: actionType at the top of data (colon
+          // form), with config holding only sensitive params.
+          actionType: "code:run-code",
+          config: { contractAddress: "0xSECRETLEGACYADDRESS" },
+        },
+      },
+    ]);
+    expect(projected.data).toEqual({
+      type: "action",
+      config: { actionType: "code/run-code", triggerType: undefined },
+    });
+    expect(JSON.stringify(projected)).not.toContain("0xSECRETLEGACYADDRESS");
+  });
+
+  it("prefers data.config.actionType over the legacy top-level field", () => {
+    const [projected] = projectNodesForPublicFeed([
+      {
+        id: "both-1",
+        type: "action",
+        position: { x: 0, y: 0 },
+        data: {
+          type: "action",
+          actionType: "legacy/value",
+          config: { actionType: "web3/transfer" },
+        },
+      },
+    ]);
+    expect(
+      (projected.data as { config: { actionType: unknown } }).config.actionType
+    ).toBe("web3/transfer");
+  });
+
   it("preserves trigger type for the trigger icon", () => {
     const [projected] = projectNodesForPublicFeed([
       {
