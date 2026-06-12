@@ -35,7 +35,10 @@ import type {
  * direct_executions uses: pending | running | completed | failed
  * We normalize to: pending | running | success | error
  */
-function normalizeStatus(status: string, source: RunSource): NormalizedStatus {
+export function normalizeStatus(
+  status: string,
+  source: RunSource
+): NormalizedStatus {
   if (source === "direct") {
     if (status === "completed") {
       return "success";
@@ -46,6 +49,11 @@ function normalizeStatus(status: string, source: RunSource): NormalizedStatus {
   }
   if (status === "cancelled") {
     return "cancelled";
+  }
+  // Phantom rows are runs that were enqueued but never picked up; they have no
+  // user-facing status of their own and surface as pending everywhere in the UI.
+  if (status === "phantom") {
+    return "pending";
   }
   return status as NormalizedStatus;
 }
@@ -59,6 +67,18 @@ function directDbStatuses(status: NormalizedStatus): string[] {
   }
   if (status === "error") {
     return ["failed"];
+  }
+  return [status];
+}
+
+/**
+ * Map a normalized status to the workflow_executions DB status values.
+ * Phantom maps to pending for display, so the pending filter must also match
+ * phantom rows to keep the badge and filter consistent.
+ */
+export function workflowDbStatuses(status: NormalizedStatus): string[] {
+  if (status === "pending") {
+    return ["pending", "phantom"];
   }
   return [status];
 }
@@ -817,7 +837,7 @@ async function fetchWorkflowRuns(
   ];
 
   if (status) {
-    const dbStatuses = [status];
+    const dbStatuses = workflowDbStatuses(status);
     conditions.push(
       sql`${workflowExecutions.status} IN (${sql.join(
         dbStatuses.map((s) => sql`${s}`),
@@ -1020,7 +1040,7 @@ async function getWorkflowRunsTotal(
     conditions.push(eq(workflows.projectId, projectId));
   }
   if (status) {
-    const dbStatuses = [status];
+    const dbStatuses = workflowDbStatuses(status);
     conditions.push(
       sql`${workflowExecutions.status} IN (${sql.join(
         dbStatuses.map((s) => sql`${s}`),
