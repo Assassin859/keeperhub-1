@@ -63,6 +63,13 @@ function isOAuthTokenPayload(value: unknown): value is OAuthTokenPayload {
   return (
     typeof p.sub === "string" &&
     typeof p.org === "string" &&
+    // Load-bearing for REST scope enforcement (A-03): rejecting a token whose
+    // `scope` claim is absent or non-string guarantees an authenticated OAuth
+    // caller ALWAYS carries a string scope. The requireScope() guards at every
+    // /api mutation sink treat scope=undefined as full access (api-key/session
+    // callers); if a scope-less OAuth token were accepted here, ctx.scope would
+    // be undefined at those sinks and silently regain write access. Do not relax
+    // without also re-deriving the REST scope model (see oauth-auth-scope-required.test.ts).
     typeof p.scope === "string" &&
     typeof p.iat === "number" &&
     typeof p.exp === "number"

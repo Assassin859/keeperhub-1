@@ -3,7 +3,9 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { projects } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
+import { requireScope } from "@/lib/middleware/require-scope";
 
 export async function PATCH(
   request: Request,
@@ -18,6 +20,11 @@ export async function PATCH(
         { error: authResult.error },
         { status: authResult.status }
       );
+    }
+
+    const scopeError = requireScope(authResult.scope, SCOPE_MCP_WRITE);
+    if (scopeError) {
+      return scopeError;
     }
 
     const { organizationId } = authResult;
@@ -97,6 +104,11 @@ export async function DELETE(
         { error: authResult.error },
         { status: authResult.status }
       );
+    }
+
+    const scopeError = requireScope(authResult.scope, SCOPE_MCP_WRITE);
+    if (scopeError) {
+      return scopeError;
     }
 
     const { organizationId } = authResult;
