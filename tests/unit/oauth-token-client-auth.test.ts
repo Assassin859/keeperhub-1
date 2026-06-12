@@ -195,6 +195,39 @@ describe("token endpoint -- confidential client authentication", () => {
     expect(res.status).toBe(200);
   });
 
+  it("accepts authorization_code exchange from a public PKCE client with no secret", async () => {
+    const verifier = "pkce-verifier-value";
+    const challenge = createHash("sha256")
+      .update(verifier)
+      .digest("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=/g, "");
+    mockGetOAuthClient.mockResolvedValue(client("none"));
+    mockGetAuthCode.mockResolvedValue({
+      code: "code-1",
+      clientId: "client-1",
+      redirectUri: "https://example.com/cb",
+      scope: "mcp:read",
+      userId: "user-1",
+      organizationId: "org-1",
+      codeChallenge: challenge,
+      codeChallengeMethod: "S256",
+      expiresAt: Date.now() + 100_000,
+    });
+    const res = await POST(
+      refreshRequest({
+        grant_type: "authorization_code",
+        code: "code-1",
+        client_id: "client-1",
+        redirect_uri: "https://example.com/cb",
+        code_verifier: verifier,
+      })
+    );
+    expect(res.status).toBe(200);
+    expect(mockGetAuthCode).toHaveBeenCalled();
+  });
+
   it("rejects authorization_code exchange when a confidential client omits client_secret", async () => {
     mockGetOAuthClient.mockResolvedValue(client("client_secret_post"));
     const res = await POST(

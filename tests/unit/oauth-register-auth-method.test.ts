@@ -58,6 +58,24 @@ describe("POST /api/oauth/register -- token_endpoint_auth_method", () => {
     expect(body.client_secret).toBeUndefined();
   });
 
+  it("defaults a missing auth method to 'none' and returns no client_secret", async () => {
+    const response = await POST(
+      buildRequest({
+        client_name: "Default Client",
+        redirect_uris: ["https://example.com/cb"],
+      })
+    );
+    expect(response.status).toBe(201);
+
+    const persisted = (
+      mockStoreOAuthClient.mock.calls[0] as unknown as [PersistedClient]
+    )?.[0];
+    expect(persisted?.tokenEndpointAuthMethod).toBe("none");
+
+    const body = (await response.json()) as RegisterResponse;
+    expect(body.client_secret).toBeUndefined();
+  });
+
   it("persists the confidential method and returns a client_secret", async () => {
     const response = await POST(
       buildRequest({

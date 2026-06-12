@@ -42,6 +42,11 @@ function isStringArray(value: unknown): value is string[] {
   );
 }
 
+// A client is confidential only when it explicitly registers
+// client_secret_post or client_secret_basic. A missing method defaults to
+// "none" (public PKCE), matching the column default and OAuth 2.1 / MCP
+// public-client expectations. Secret enforcement on the token endpoint
+// applies only to clients registered after this change.
 function resolveAuthMethod(value: unknown): TokenEndpointAuthMethod {
   if (typeof value === "string") {
     const match = SUPPORTED_AUTH_METHODS.find((m) => m === value);
@@ -49,7 +54,7 @@ function resolveAuthMethod(value: unknown): TokenEndpointAuthMethod {
       return match;
     }
   }
-  return "client_secret_post";
+  return "none";
 }
 
 export async function POST(request: Request): Promise<Response> {
