@@ -219,11 +219,12 @@ function ActivityRow({
   );
 }
 
-// Synthesized baseline entries (e.g. a resource's creation when no audit event
-// was ever recorded) only stand in when there is NO recorded history at all.
-// Once real events exist they ARE the history, and appending a synthetic row
-// would push a page past its size and put the "creation" in the wrong place
-// (it belongs on the last/oldest page, not page 1).
+// Synthesized baseline entries stand in for a resource's creation when no
+// audit event was ever recorded (it pre-dates auditing). A creation is the
+// OLDEST event for its resource, so it belongs on the last/oldest page -- never
+// page 1, where appending it would overflow the page size and show the
+// "creation" out of order. On the last page we drop any fallback whose resource
+// already has a real ".created" event there, then merge the rest in date order.
 function mergeFallback(
   events: SecurityAuditEvent[],
   fallback: SecurityAuditEvent[] | undefined,
@@ -232,10 +233,24 @@ function mergeFallback(
   if (!fallback?.length) {
     return events;
   }
-  if (!meta || meta.total > 0) {
+  const onLastPage = !meta || meta.page >= meta.totalPages;
+  if (!onLastPage) {
     return events;
   }
-  return fallback;
+  const covered = new Set(
+    events
+      .filter((e) => e.action.endsWith(".created") && e.resourceId)
+      .map((e) => e.resourceId)
+  );
+  const extra = fallback.filter(
+    (f) => !(f.resourceId && covered.has(f.resourceId))
+  );
+  if (extra.length === 0) {
+    return events;
+  }
+  return [...events, ...extra].sort((a, b) =>
+    a.createdAt < b.createdAt ? 1 : -1
+  );
 }
 
 // Stable keys for the placeholder rows so the skeleton list doesn't key on
