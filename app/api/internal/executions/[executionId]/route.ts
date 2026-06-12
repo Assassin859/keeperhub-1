@@ -2,7 +2,9 @@ import { and, eq, ne } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { workflowExecutions } from "@/lib/db/schema";
+import { type ErrorCode, getErrorCodeEntry } from "@/lib/errors/error-codes";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
+import type { ErrorCategory } from "@/lib/logging";
 
 export async function PATCH(
   request: Request,
@@ -19,7 +21,7 @@ export async function PATCH(
 
   const { executionId } = await context.params;
   const body = JSON.parse(rawBody);
-  const { status, error, duration } = body;
+  const { status, error, duration, errorCode } = body;
 
   type ExecutionStatus = "running" | "success" | "error";
   const validStatuses: ExecutionStatus[] = ["running", "success", "error"];
@@ -30,6 +32,17 @@ export async function PATCH(
       { error: "status must be 'running', 'success', or 'error'" },
       { status: 400 }
     );
+  }
+
+  // Optional system error code (PREFIX-NNNN). When present it must be a known
+  // registry code; the matching category/type are derived from it so the row
+  // stays consistent with classifier-written error rows.
+  let codeEntry: ReturnType<typeof getErrorCodeEntry> = null;
+  if (errorCode !== undefined && errorCode !== null) {
+    codeEntry = getErrorCodeEntry(errorCode);
+    if (!codeEntry) {
+      return NextResponse.json({ error: "Invalid errorCode" }, { status: 400 });
+    }
   }
 
   const typedStatus = status as ExecutionStatus;
@@ -54,6 +67,9 @@ export async function PATCH(
   const updateData: {
     status: ExecutionStatus;
     error?: string | null;
+    errorCode?: ErrorCode;
+    errorType?: "system";
+    errorCategory?: ErrorCategory;
     completedAt?: Date;
     duration?: string;
     currentNodeId?: null;
@@ -63,6 +79,11 @@ export async function PATCH(
   if (status === "error") {
     updateData.error = error || "Unknown error";
     updateData.completedAt = new Date();
+    if (codeEntry) {
+      updateData.errorCode = codeEntry.code;
+      updateData.errorType = "system";
+      updateData.errorCategory = codeEntry.category;
+    }
   } else if (status === "success") {
     updateData.completedAt = new Date();
   }

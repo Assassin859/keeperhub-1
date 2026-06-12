@@ -11,12 +11,14 @@ import {
   ExternalLink,
   Loader2,
   Play,
+  TriangleAlert,
   X,
 } from "lucide-react";
 import Image from "next/image";
 import type { JSX } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toChecksumAddress } from "@/lib/address-utils";
+import { getCustomerRunErrorMessage } from "@/lib/errors/customer-message";
 import {
   FOR_EACH_GROUP_TYPE,
   buildChildLogsLookup,
@@ -37,6 +39,7 @@ import {
   runsRefreshTriggerAtom,
   selectedExecutionIdAtom,
 } from "@/lib/workflow/store";
+import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 
@@ -59,11 +62,14 @@ type ExecutionLog = {
 type WorkflowExecution = {
   id: string;
   workflowId: string;
-  status: "pending" | "running" | "success" | "error" | "cancelled";
+  status: "pending" | "running" | "success" | "error" | "cancelled" | "phantom";
   startedAt: Date;
   completedAt: Date | null;
   duration: string | null;
   error: string | null;
+  errorType: "user" | "system" | null;
+  errorCategory: string | null;
+  errorCode: string | null;
   // Progress tracking fields
   totalSteps: number | null;
   completedSteps: number | null;
@@ -1186,6 +1192,7 @@ export function WorkflowRuns({
             new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime()
           );
         });
+        const runErrorMessage = getCustomerRunErrorMessage(execution);
 
         return (
           <div
@@ -1265,10 +1272,20 @@ export function WorkflowRuns({
 
             {isExpanded && (
               <div className="border-t bg-muted/20">
-                {executionLogs.length === 0 ? (
-                  <div className="py-8 text-center text-muted-foreground text-xs">
-                    No steps recorded
+                {runErrorMessage && (
+                  <div className="p-4 pb-0">
+                    <Alert>
+                      <TriangleAlert />
+                      <AlertDescription>{runErrorMessage}</AlertDescription>
+                    </Alert>
                   </div>
+                )}
+                {executionLogs.length === 0 ? (
+                  runErrorMessage ? null : (
+                    <div className="py-8 text-center text-muted-foreground text-xs">
+                      No steps recorded
+                    </div>
+                  )
                 ) : (
                   <div className="p-4">
                     {(() => {

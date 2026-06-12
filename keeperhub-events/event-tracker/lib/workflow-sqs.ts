@@ -11,6 +11,9 @@ import { type SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
  */
 
 export interface WorkflowEventTrigger {
+  // Pre-created phantom execution id. The executor upgrades that row to
+  // 'pending'; optional for messages enqueued before phantom pre-creation.
+  executionId?: string;
   workflowId: string;
   userId: string;
   triggerData: unknown;
@@ -22,6 +25,8 @@ export async function enqueueWorkflowEventTrigger(
   trigger: WorkflowEventTrigger,
 ): Promise<void> {
   const body = {
+    // undefined is dropped by JSON.stringify, so legacy messages stay identical.
+    executionId: trigger.executionId,
     workflowId: trigger.workflowId,
     userId: trigger.userId,
     triggerType: "event" as const,

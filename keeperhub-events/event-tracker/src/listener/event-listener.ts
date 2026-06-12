@@ -1,5 +1,9 @@
 import type { SQSClient } from "@aws-sdk/client-sqs";
 import type { ethers } from "ethers";
+import {
+  createPhantomExecution,
+  failPhantomExecution,
+} from "../../lib/phantom";
 import { logger } from "../../lib/utils/logger";
 import { enqueueWorkflowEventTrigger } from "../../lib/workflow-sqs";
 import {
@@ -176,11 +180,32 @@ export class EventListener {
   }
 
   private async sendToSqs(payload: unknown): Promise<void> {
-    await enqueueWorkflowEventTrigger(this.opts.sqs, this.opts.sqsQueueUrl, {
-      workflowId: this.opts.workflowId,
-      userId: this.opts.userId,
-      triggerData: payload,
-    });
+    // KEEP-693: pre-create a phantom row (best-effort) so the run is visible
+    // even if it never reaches the executor, and carry its id so the executor
+    // upgrades that row instead of inserting.
+    const executionId = await createPhantomExecution(
+      this.opts.workflowId,
+      this.opts.userId,
+    );
+
+    try {
+      await enqueueWorkflowEventTrigger(this.opts.sqs, this.opts.sqsQueueUrl, {
+        executionId,
+        workflowId: this.opts.workflowId,
+        userId: this.opts.userId,
+        triggerData: payload,
+      });
+    } catch (err) {
+      if (executionId) {
+        await failPhantomExecution(
+          executionId,
+          "ES-0001",
+          `Event trigger failed to dispatch: ${formatError(err)}`,
+        );
+      }
+      throw err;
+    }
+
     logger.log(`[EventListener:${this.opts.workflowId}] enqueued to SQS`);
   }
 }

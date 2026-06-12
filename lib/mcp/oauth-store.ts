@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { eq, lt } from "drizzle-orm";
+import { and, eq, lt } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   mcpOauthAuthCodes,
@@ -199,6 +199,25 @@ export async function deleteRefreshToken(token: string): Promise<void> {
   await db
     .delete(mcpOauthRefreshTokens)
     .where(eq(mcpOauthRefreshTokens.tokenHash, tokenHash));
+}
+
+/**
+ * Revoke every MCP OAuth refresh token a user holds for a given organization.
+ * Used when a user leaves or is removed from an org so their renewable 30-day
+ * credential cannot be cycled into fresh org-scoped access once membership ends.
+ */
+export async function revokeRefreshTokensForUserOrg(
+  userId: string,
+  organizationId: string
+): Promise<void> {
+  await db
+    .delete(mcpOauthRefreshTokens)
+    .where(
+      and(
+        eq(mcpOauthRefreshTokens.userId, userId),
+        eq(mcpOauthRefreshTokens.organizationId, organizationId)
+      )
+    );
 }
 
 export { AUTH_CODE_TTL_MS, REFRESH_TOKEN_TTL_MS };
