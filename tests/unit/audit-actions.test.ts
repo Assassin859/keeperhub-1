@@ -22,6 +22,38 @@ describe("describeAuditAction", () => {
     expect(describeAuditAction("integration.deleted").kind).toBe("remove");
   });
 
+  it("maps member lifecycle actions", () => {
+    expect(describeAuditAction("member.invited").kind).toBe("add");
+    expect(describeAuditAction("member.joined").kind).toBe("add");
+    expect(describeAuditAction("member.left").kind).toBe("remove");
+    expect(describeAuditAction("member.removed").kind).toBe("remove");
+    expect(describeAuditAction("member.role_changed").kind).toBe("change");
+  });
+
+  it("maps org, project, and tag actions", () => {
+    expect(describeAuditAction("org.updated").kind).toBe("change");
+    expect(describeAuditAction("org.digest_settings_changed").kind).toBe(
+      "change"
+    );
+    expect(describeAuditAction("account.reactivated").kind).toBe("add");
+    expect(describeAuditAction("project.created").kind).toBe("add");
+    expect(describeAuditAction("project.deleted").kind).toBe("remove");
+    expect(describeAuditAction("tag.updated").kind).toBe("change");
+    expect(describeAuditAction("public_tag.created").kind).toBe("add");
+  });
+
+  it("maps wallet actions", () => {
+    expect(describeAuditAction("agentic_wallet.approval_granted").kind).toBe(
+      "add"
+    );
+    expect(describeAuditAction("agentic_wallet.approval_denied").kind).toBe(
+      "remove"
+    );
+    expect(describeAuditAction("wallet.private_key_exported").kind).toBe(
+      "change"
+    );
+  });
+
   it("humanizes an unknown action as a change", () => {
     expect(describeAuditAction("widget.frobnicated")).toEqual({
       phrase: "widget frobnicated",

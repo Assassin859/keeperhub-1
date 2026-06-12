@@ -58,6 +58,47 @@ const ACTION_MAP: Record<string, AuditActionDescription> = {
     phrase: "rotated a wallet signing key",
     kind: "change",
   },
+  "agentic_wallet.approval_granted": {
+    phrase: "approved a wallet action",
+    kind: "add",
+  },
+  "agentic_wallet.approval_denied": {
+    phrase: "rejected a wallet action",
+    kind: "remove",
+  },
+  "wallet.private_key_exported": {
+    phrase: "exported a wallet private key",
+    kind: "change",
+  },
+  "org.updated": { phrase: "updated the organization", kind: "change" },
+  "org.deactivated": {
+    phrase: "deactivated the organization",
+    kind: "remove",
+  },
+  "org.reactivated": {
+    phrase: "reactivated the organization",
+    kind: "add",
+  },
+  "org.digest_settings_changed": {
+    phrase: "changed execution-digest settings",
+    kind: "change",
+  },
+  "account.reactivated": { phrase: "reactivated the account", kind: "add" },
+  "member.invited": { phrase: "invited a member", kind: "add" },
+  "member.joined": { phrase: "joined the organization", kind: "add" },
+  "member.left": { phrase: "left the organization", kind: "remove" },
+  "member.removed": { phrase: "removed a member", kind: "remove" },
+  "member.role_changed": {
+    phrase: "changed a member's role",
+    kind: "change",
+  },
+  "project.created": { phrase: "created a project", kind: "add" },
+  "project.updated": { phrase: "updated a project", kind: "change" },
+  "project.deleted": { phrase: "deleted a project", kind: "remove" },
+  "tag.created": { phrase: "created a tag", kind: "add" },
+  "tag.updated": { phrase: "updated a tag", kind: "change" },
+  "tag.deleted": { phrase: "deleted a tag", kind: "remove" },
+  "public_tag.created": { phrase: "created a public tag", kind: "add" },
 };
 
 const DELIMITERS = /[._]/g;
