@@ -22,6 +22,7 @@ import { isFreshSignup } from "@/lib/auth-notification-guard";
 import { sendInvitationEmail, sendVerificationOTP } from "@/lib/email";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { revokeRefreshTokensForUserOrg } from "@/lib/mcp/oauth-store";
+import { recordAuditEvent } from "@/lib/security/audit-log";
 import {
   assessCountryTrust,
   assessLoginRisk,
@@ -367,8 +368,52 @@ const plugins = [
         await Promise.resolve();
       },
 
-      async afterAcceptInvitation() {
-        await Promise.resolve();
+      async afterCreateInvitation(data) {
+        await recordAuditEvent({
+          actor: {
+            userId: data.inviter.id,
+            organizationId: data.organization.id,
+            authMethod: "session",
+          },
+          action: "member.invited",
+          resourceType: "invitation",
+          resourceId: data.invitation.id,
+          after: { email: data.invitation.email, role: data.invitation.role },
+        });
+      },
+
+      async afterAcceptInvitation(data) {
+        await recordAuditEvent({
+          actor: {
+            userId: data.user.id,
+            organizationId: data.organization.id,
+            authMethod: "session",
+          },
+          action: "member.joined",
+          resourceType: "member",
+          resourceId: data.member.id,
+          after: { role: data.member.role },
+        });
+      },
+
+      // better-auth's updateMemberRole runs no custom route; the acting admin's
+      // identity is not in the hook payload, so the actor is the org context
+      // rather than a user. The affected member and the role transition are
+      // still recorded.
+      async afterUpdateMemberRole(data) {
+        await recordAuditEvent({
+          actor: {
+            userId: null,
+            organizationId: data.organization.id,
+            authMethod: "session",
+            actorLabel: "Organization admin",
+          },
+          action: "member.role_changed",
+          resourceType: "member",
+          resourceId: data.member.id,
+          before: { role: data.previousRole },
+          after: { role: data.member.role },
+        });
       },
 
       // A-04: admin-initiated removal goes through better-auth's removeMember
@@ -377,6 +422,22 @@ const plugins = [
       // time by the membership re-check; this clears the dormant 30-day
       // credential so it cannot linger. Mirrors the leave-route cascade.
       async afterRemoveMember(data) {
+        // The removing admin's identity is not in the hook payload, so the
+        // actor is the org context rather than a user; the removed member is
+        // captured as the resource.
+        await recordAuditEvent({
+          actor: {
+            userId: null,
+            organizationId: data.organization.id,
+            authMethod: "session",
+            actorLabel: "Organization admin",
+          },
+          action: "member.removed",
+          resourceType: "member",
+          resourceId: data.user.id,
+          before: { role: data.member.role },
+        });
+
         // Best-effort: better-auth calls this after the member row is already
         // deleted and outside any transaction, and access is already refused
         // at use time by the membership re-check. A failure to clear the

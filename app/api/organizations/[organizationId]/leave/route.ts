@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { mcpOauthRefreshTokens, member, sessions } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import { getActiveOrgId } from "@/lib/middleware/org-context";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 type LeaveRequestBody = {
   /**
@@ -21,7 +22,9 @@ type LeaveError =
   | "NEW_OWNER_NOT_ACCEPTED_MEMBER"
   | "NEW_OWNER_SAME_AS_CURRENT";
 
-type LeaveResult = { success: true } | { success: false; error: LeaveError };
+type LeaveResult =
+  | { success: true; ownershipTransferredTo?: string }
+  | { success: false; error: LeaveError };
 
 /**
  * POST /api/organizations/:organizationId/leave
@@ -149,7 +152,7 @@ export async function POST(
             .where(eq(sessions.token, hashSessionToken(sessionToken)));
         }
 
-        return { success: true };
+        return { success: true, ownershipTransferredTo: newOwnerMemberId };
       }
 
       await tx.delete(member).where(eq(member.id, currentMember.id));
@@ -203,6 +206,33 @@ export async function POST(
 
       const { message, status } = errorMessages[result.error];
       return NextResponse.json({ error: message }, { status });
+    }
+
+    await recordAuditEvent({
+      actor: {
+        userId: session.user.id,
+        organizationId,
+        authMethod: "session",
+      },
+      action: "member.left",
+      resourceType: "member",
+      resourceId: session.user.id,
+      metadata: buildAuditMetadata(request),
+    });
+
+    if (result.ownershipTransferredTo) {
+      await recordAuditEvent({
+        actor: {
+          userId: session.user.id,
+          organizationId,
+          authMethod: "session",
+        },
+        action: "member.role_changed",
+        resourceType: "member",
+        resourceId: result.ownershipTransferredTo,
+        after: { role: "owner" },
+        metadata: buildAuditMetadata(request),
+      });
     }
 
     return NextResponse.json({ success: true }, { status: 200 });

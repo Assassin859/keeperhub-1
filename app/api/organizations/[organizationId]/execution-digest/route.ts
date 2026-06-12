@@ -18,10 +18,16 @@ import {
   DIGEST_CADENCES,
   SUBSCRIBABLE_ROLES,
 } from "@/lib/notifications/execution-digest";
+import { buildAuditMetadata, recordAuditEvent } from "@/lib/security/audit-log";
 
 const FEATURE_ID = "notifications.execution-digest" as const;
 
-type ManagerOk = { ok: true; userId: string };
+type ManagerOk = {
+  ok: true;
+  userId: string;
+  authMethod: string;
+  apiKeyId: string | null;
+};
 type ManagerErr = { ok: false; status: number; error: string };
 
 // Owners and admins may view/manage the digest settings (matches who manages
@@ -58,7 +64,7 @@ async function requireOrgManager(
   ) {
     return { ok: false, status: 403, error: "Forbidden" };
   }
-  return { ok: true, userId };
+  return { ok: true, userId, authMethod, apiKeyId: authContext.apiKeyId };
 }
 
 async function loadSettings(organizationId: string) {
@@ -240,6 +246,24 @@ export async function PUT(
           updatedAt: now,
         },
       });
+
+    await recordAuditEvent({
+      actor: {
+        userId: manager.userId,
+        organizationId,
+        authMethod: manager.authMethod,
+        apiKeyId: manager.apiKeyId,
+      },
+      action: "org.digest_settings_changed",
+      resourceType: "organization",
+      resourceId: organizationId,
+      after: {
+        enabled,
+        cadences: persistedCadences,
+        subscriberUserIds,
+      },
+      metadata: buildAuditMetadata(request),
+    });
 
     return NextResponse.json({
       enabled,
