@@ -46,7 +46,11 @@ export function IntegrationActivityOverlay({
     >
       <ActivityFeed
         fallback={fallback}
-        params={{ resourceType: "integration", resourceId: integration.id }}
+        params={{
+          resourceType: "integration",
+          resourceId: integration.id,
+          limit: 5,
+        }}
       />
     </Overlay>
   );

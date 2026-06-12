@@ -75,7 +75,7 @@ export function KeyActivityOverlay({
       overlayId={overlayId}
       title={title}
     >
-      <ActivityFeed fallback={fallback} params={{ resourceType }} />
+      <ActivityFeed fallback={fallback} params={{ resourceType, limit: 5 }} />
     </Overlay>
   );
 }

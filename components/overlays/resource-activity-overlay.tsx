@@ -60,7 +60,10 @@ export function ResourceActivityOverlay({
       overlayId={overlayId}
       title={title}
     >
-      <ActivityFeed fallback={fallback} params={{ resourceType, resourceId }} />
+      <ActivityFeed
+        fallback={fallback}
+        params={{ resourceType, resourceId, limit: 5 }}
+      />
     </Overlay>
   );
 }
