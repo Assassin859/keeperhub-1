@@ -11,6 +11,7 @@ const {
   mockDeleteRefreshToken,
   mockStoreRefreshToken,
   mockCreateAccessToken,
+  mockIsMember,
 } = vi.hoisted(() => ({
   mockUsersFindFirst: vi.fn(),
   mockGetAuthCode: vi.fn(),
@@ -20,6 +21,7 @@ const {
   mockDeleteRefreshToken: vi.fn(),
   mockStoreRefreshToken: vi.fn(),
   mockCreateAccessToken: vi.fn(),
+  mockIsMember: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -30,6 +32,10 @@ vi.mock("@/lib/db/schema", () => ({ users: { id: "id" } }));
 
 vi.mock("@/lib/mcp/oauth-auth", () => ({
   createAccessToken: mockCreateAccessToken,
+}));
+
+vi.mock("@/lib/workflow/access", () => ({
+  isUserMemberOfOrganization: mockIsMember,
 }));
 
 vi.mock("@/lib/mcp/oauth-store", () => ({
@@ -80,6 +86,9 @@ function stubActiveOAuthClient(): void {
 beforeEach(() => {
   vi.clearAllMocks();
   mockCreateAccessToken.mockResolvedValue("access-token-stub");
+  // Default to a current member so deactivation-focused cases are unaffected;
+  // membership-focused cases override this explicitly.
+  mockIsMember.mockResolvedValue(true);
 });
 
 describe("POST /api/oauth/token -- authorization_code grant", () => {
@@ -154,6 +163,7 @@ describe("POST /api/oauth/token -- refresh_token grant", () => {
       scope: "read",
     });
     mockUsersFindFirst.mockResolvedValue({ deactivatedAt: null });
+    mockIsMember.mockResolvedValue(true);
 
     const response = await postForm({
       grant_type: "refresh_token",
@@ -165,6 +175,35 @@ describe("POST /api/oauth/token -- refresh_token grant", () => {
     expect(mockDeleteRefreshToken).toHaveBeenCalledWith("refresh-1");
     expect(mockStoreRefreshToken).toHaveBeenCalledTimes(1);
     expect(mockCreateAccessToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects refresh_token exchange when no longer an org member", async () => {
+    // The user was removed from (or left) the org after the refresh token was
+    // issued. The presented token is still rotated out, but no fresh
+    // org-scoped credential is minted in its place.
+    stubActiveOAuthClient();
+    mockGetRefreshToken.mockResolvedValue({
+      userId: TEST_USER_ID,
+      organizationId: TEST_ORG_ID,
+      clientId: TEST_CLIENT_ID,
+      scope: "read",
+    });
+    mockUsersFindFirst.mockResolvedValue({ deactivatedAt: null });
+    mockIsMember.mockResolvedValue(false);
+
+    const response = await postForm({
+      grant_type: "refresh_token",
+      refresh_token: "refresh-1",
+      client_id: TEST_CLIENT_ID,
+    });
+
+    expect(response.status).toBe(401);
+    const body = (await response.json()) as { error?: string };
+    expect(body.error).toBe("User is no longer a member of this organization");
+    expect(mockIsMember).toHaveBeenCalledWith(TEST_USER_ID, TEST_ORG_ID);
+    expect(mockDeleteRefreshToken).toHaveBeenCalledWith("refresh-1");
+    expect(mockStoreRefreshToken).not.toHaveBeenCalled();
+    expect(mockCreateAccessToken).not.toHaveBeenCalled();
   });
 
   it("rejects refresh_token exchange for a deactivated user", async () => {
