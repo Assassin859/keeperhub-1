@@ -50,6 +50,10 @@ vi.mock("@/lib/auth-deactivation-guard", () => ({
   isUserDeactivated: vi.fn(async () => false),
 }));
 
+vi.mock("@/lib/workflow/access", () => ({
+  isUserMemberOfOrganization: vi.fn(async () => true),
+}));
+
 import { POST } from "@/app/api/oauth/token/route";
 
 const SECRET = "super-secret-value";
