@@ -5,6 +5,8 @@ import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   type DbSchema,
+  discardPhantomRow,
+  resolvePhantomToError,
   upgradePhantomToPending,
 } from "../../../keeperhub-executor/lib/db-helpers";
 import {
@@ -168,5 +170,55 @@ describe.skipIf(SKIP)("upgradePhantomToPending", () => {
     expect(row.status).toBe("pending");
     // The losing duplicate must not overwrite the input the winner stamped.
     expect(row.input).toEqual({ n: 1 });
+  });
+
+  it("discardPhantomRow deletes a phantom row (intentional skip)", async () => {
+    const id = `${PREFIX}discard`;
+    await seedExecution(id, "phantom");
+
+    await discardPhantomRow(execDb, id);
+
+    expect(await readExecution(id)).toBeUndefined();
+  });
+
+  it("discardPhantomRow leaves a non-phantom row intact", async () => {
+    const id = `${PREFIX}discard_running`;
+    await seedExecution(id, "running");
+
+    await discardPhantomRow(execDb, id);
+
+    expect((await readExecution(id))?.status).toBe("running");
+  });
+
+  it("resolvePhantomToError marks a phantom as a billing/user error", async () => {
+    const id = `${PREFIX}resolve`;
+    await seedExecution(id, "phantom");
+
+    await resolvePhantomToError(execDb, id, {
+      error: "over quota",
+      errorCategory: "billing",
+      errorType: "user",
+    });
+
+    const row = await readExecution(id);
+    expect(row.status).toBe("error");
+    expect(row.error).toBe("over quota");
+    expect(row.errorCategory).toBe("billing");
+    expect(row.errorType).toBe("user");
+    // User-actionable errors carry no system code.
+    expect(row.errorCode).toBeNull();
+  });
+
+  it("resolvePhantomToError leaves a non-phantom row intact", async () => {
+    const id = `${PREFIX}resolve_running`;
+    await seedExecution(id, "running");
+
+    await resolvePhantomToError(execDb, id, {
+      error: "x",
+      errorCategory: "billing",
+      errorType: "user",
+    });
+
+    expect((await readExecution(id))?.status).toBe("running");
   });
 });

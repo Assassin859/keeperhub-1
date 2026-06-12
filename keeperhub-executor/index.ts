@@ -52,7 +52,11 @@ import { resolveDispatchTarget } from "./execution-mode";
 import { checkWorkflowFeaturesForExecutor } from "./feature-guard";
 import { executeInProcess } from "./in-process";
 import { createWorkflowJob } from "./k8s-job";
-import { upgradePhantomToPending } from "./lib/db-helpers";
+import {
+  discardPhantomRow,
+  resolvePhantomToError,
+  upgradePhantomToPending,
+} from "./lib/db-helpers";
 import { applyCounterDeltas, isIngestPayload } from "./lib/metrics-shipping";
 import { toJsonSafe } from "./lib/serialize";
 import {
@@ -240,6 +244,7 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
 
   if (!workflow) {
     console.error(`[Executor] Workflow not found: ${workflowId}`);
+    await discardPhantomRow(db, message.executionId);
     return;
   }
 
@@ -258,6 +263,7 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     console.log(
       `[Executor] Workflow not executable (${executability.reason}), skipping: ${workflowId}`
     );
+    await discardPhantomRow(db, message.executionId);
     return;
   }
 
@@ -266,6 +272,7 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
       (message as ScheduleMessage).scheduleId
     );
     if (!valid) {
+      await discardPhantomRow(db, message.executionId);
       return;
     }
   }
@@ -278,6 +285,15 @@ async function processExecutorMessage(message: ExecutorMessage): Promise<void> {
     console.warn(
       `[Executor] Billing guard blocked ${triggerType} trigger for workflow ${workflowId}: org=${workflow.organizationId} plan=${billingResult.plan} used=${billingResult.used} limit=${billingResult.limit} effectiveLimit=${billingResult.effectiveLimit} debt=${billingResult.debtExecutions} reason=${billingResult.reason}`
     );
+    // KEEP-693: resolve a pre-created phantom to a user-actionable billing
+    // error so it surfaces correctly instead of being aged to a system P-code.
+    // No phantom -> keep the prior silent-skip behaviour.
+    await resolvePhantomToError(db, message.executionId, {
+      error:
+        "Execution skipped: your plan's monthly execution limit has been reached.",
+      errorCategory: "billing",
+      errorType: "user",
+    });
     return;
   }
 
@@ -639,7 +655,9 @@ async function listen(): Promise<void> {
   process.on("SIGTERM", shutdown);
   process.on("SIGHUP", shutdown);
   process.on("SIGUSR1", () => {
-    console.warn("[Security] SIGUSR1 received; inspector activation suppressed");
+    console.warn(
+      "[Security] SIGUSR1 received; inspector activation suppressed"
+    );
   });
 
   // SQS polling loop
