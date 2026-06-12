@@ -2,8 +2,21 @@ import { and, eq, isNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { organizationApiKeys, sessions, users } from "@/lib/db/schema";
+import { sendAccountDeactivatedEmail } from "@/lib/email";
 import { authenticateKhAdmin } from "@/lib/kh-admin-auth";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+
+// The body is optional; callers (raita-bot auto-block, on-call tooling) may
+// POST nothing at all. notifyUser defaults to true so a deactivated user is
+// told their account was disabled and how to reach us.
+async function parseNotifyUser(request: Request): Promise<boolean> {
+  try {
+    const body = (await request.json()) as { notifyUser?: unknown };
+    return body?.notifyUser !== false;
+  } catch {
+    return true;
+  }
+}
 
 export async function POST(
   request: Request,
@@ -15,13 +28,19 @@ export async function POST(
   }
 
   const { userId } = await context.params;
+  const notifyUser = await parseNotifyUser(request);
 
   try {
     const now = new Date();
 
     const result = await db.transaction(async (tx) => {
       const [existing] = await tx
-        .select({ id: users.id, deactivatedAt: users.deactivatedAt })
+        .select({
+          id: users.id,
+          name: users.name,
+          email: users.email,
+          deactivatedAt: users.deactivatedAt,
+        })
         .from(users)
         .where(eq(users.id, userId))
         .limit(1);
@@ -57,7 +76,12 @@ export async function POST(
       //   cascade_org_deactivation_on_owner (0099): deactivates orgs where user
       //     was the sole active owner
 
-      return { userId, deactivatedAt: now };
+      return {
+        userId,
+        name: existing.name,
+        email: existing.email,
+        deactivatedAt: now,
+      };
     });
 
     if ("conflict" in result) {
@@ -67,7 +91,28 @@ export async function POST(
       return NextResponse.json({ error: "User is already deactivated" }, { status: 409 });
     }
 
-    return NextResponse.json(result);
+    // Best-effort notification, fired after the transaction commits. A failed
+    // send must not fail the deactivation -- the account is already disabled.
+    if (notifyUser && result.email) {
+      try {
+        await sendAccountDeactivatedEmail({
+          email: result.email,
+          name: result.name,
+        });
+      } catch (emailError) {
+        logSystemError(
+          ErrorCategory.EXTERNAL_SERVICE,
+          "[Admin] Failed to send deactivation email",
+          emailError,
+          { userId }
+        );
+      }
+    }
+
+    return NextResponse.json({
+      userId: result.userId,
+      deactivatedAt: result.deactivatedAt,
+    });
   } catch (error) {
     logSystemError(ErrorCategory.DATABASE, "[Admin] Failed to deactivate user", error, {
       userId,

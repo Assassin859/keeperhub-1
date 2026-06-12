@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { jwtVerify, SignJWT } from "jose";
 import { db } from "@/lib/db";
 import { users } from "@/lib/db/schema";
+import { isUserMemberOfOrganization } from "@/lib/workflow/access";
 
 export type OAuthTokenPayload = {
   sub: string;
@@ -133,49 +134,77 @@ export async function authenticateOAuthToken(
     };
   }
 
+  // Both downstream checks key off the subject, so reject a subject-less token
+  // up front; this lets the deactivation and membership lookups treat
+  // payload.sub as a present value rather than re-guarding it.
+  if (!payload.sub) {
+    return {
+      authenticated: false,
+      error: "OAuth token missing subject claim",
+      statusCode: 401,
+    };
+  }
+
   // Reject tokens issued to a now-deactivated user. JWTs are valid for 1
   // hour after creation; without this check, a user deactivated within that
   // window could keep authenticating against MCP endpoints until the token
   // organically expired. This mirrors the deactivation guard in
   // authenticateApiKey -- both auth paths must close the same gap.
-  if (payload.sub) {
-    const user = await db.query.users.findFirst({
-      where: eq(users.id, payload.sub),
-      columns: { deactivatedAt: true },
-    });
-    if (user?.deactivatedAt) {
-      // KEEP-612: fourth deactivated-login surface (alongside better-auth
-      // session/account hooks and api-key auth). A deactivated user with a
-      // still-valid MCP OAuth JWT hitting MCP endpoints is exactly the
-      // anomaly the detection layer wants surfaced. Best-effort; never
-      // blocks the 401.
-      try {
-        captureMessage("security.deactivated_login_attempt", {
-          level: "warning",
-          tags: {
-            security: "deactivated_login_attempt",
-            surface: "mcp_oauth",
-          },
-          user: { id: payload.sub },
-          extra: { organizationId: payload.org },
-        });
-      } catch {
-        // swallow; observability must not affect the auth response
-      }
-      console.warn(
-        JSON.stringify({
-          event: "security.deactivated_login_attempt",
+  const user = await db.query.users.findFirst({
+    where: eq(users.id, payload.sub),
+    columns: { deactivatedAt: true },
+  });
+  if (user?.deactivatedAt) {
+    // KEEP-612: fourth deactivated-login surface (alongside better-auth
+    // session/account hooks and api-key auth). A deactivated user with a
+    // still-valid MCP OAuth JWT hitting MCP endpoints is exactly the
+    // anomaly the detection layer wants surfaced. Best-effort; never
+    // blocks the 401.
+    try {
+      captureMessage("security.deactivated_login_attempt", {
+        level: "warning",
+        tags: {
+          security: "deactivated_login_attempt",
           surface: "mcp_oauth",
-          userId: payload.sub,
-          organizationId: payload.org,
-        })
-      );
-      return {
-        authenticated: false,
-        error: "User account is deactivated",
-        statusCode: 401,
-      };
+        },
+        user: { id: payload.sub },
+        extra: { organizationId: payload.org },
+      });
+    } catch {
+      // swallow; observability must not affect the auth response
     }
+    console.warn(
+      JSON.stringify({
+        event: "security.deactivated_login_attempt",
+        surface: "mcp_oauth",
+        userId: payload.sub,
+        organizationId: payload.org,
+      })
+    );
+    return {
+      authenticated: false,
+      error: "User account is deactivated",
+      statusCode: 401,
+    };
+  }
+
+  // A long-lived access token only proves who the user was when it was
+  // minted, not that they still belong to the org it is scoped to. Re-check
+  // current membership on every use so a token keeps no authority after the
+  // user is removed from (or leaves) the organization.
+  //
+  // Note: isUserMemberOfOrganization joins on users.deactivatedAt IS NULL, so
+  // this check also rejects a deactivated user. The explicit deactivation
+  // guard above is therefore retained for its security telemetry (the Sentry
+  // captureMessage / console.warn), not for access control - it surfaces the
+  // anomaly that this membership check would otherwise reject silently.
+  const isMember = await isUserMemberOfOrganization(payload.sub, payload.org);
+  if (!isMember) {
+    return {
+      authenticated: false,
+      error: "User is no longer a member of this organization",
+      statusCode: 401,
+    };
   }
 
   return {

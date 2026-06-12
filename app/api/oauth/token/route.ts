@@ -13,6 +13,7 @@ import {
 } from "@/lib/mcp/oauth-store";
 import { checkIpRateLimit, getClientIp } from "@/lib/mcp/rate-limit";
 import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
+import { isUserMemberOfOrganization } from "@/lib/workflow/access";
 
 export const dynamic = "force-dynamic";
 
@@ -144,6 +145,14 @@ async function handleRefreshToken(params: URLSearchParams): Promise<Response> {
   // survive deactivation by repeatedly cycling itself.
   if (await isUserDeactivated(entry.userId)) {
     return jsonError("User account is deactivated", HttpStatus.UNAUTHORIZED);
+  }
+
+  // Re-check org membership before re-issuing. A refresh token outlives any
+  // single access token, so without this a user removed from (or who left)
+  // the org could keep cycling the refresh token into fresh org-scoped
+  // access tokens indefinitely.
+  if (!(await isUserMemberOfOrganization(entry.userId, entry.organizationId))) {
+    return jsonError("User is no longer a member of this organization", 401);
   }
 
   const newRefreshToken = randomBytes(32).toString("hex");

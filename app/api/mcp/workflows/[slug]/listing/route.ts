@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { HttpStatus } from "@/lib/http-status";
 import {
-  getWorkflowListing,
+  getWorkflowListingPublic,
   type ListingErrorDetails,
   type ListWorkflowMetadata,
   listWorkflow,
@@ -111,7 +111,9 @@ export async function GET(
     }
 
     const { slug } = await params;
-    const result = await getWorkflowListing(slug);
+    // Public, unauthenticated read: project the nodes-free listing so workflow
+    // internals (contract addresses, webhook URLs, calldata) never leak.
+    const result = await getWorkflowListingPublic(slug);
 
     if (!result.ok) {
       return NextResponse.json(

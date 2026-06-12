@@ -905,3 +905,121 @@ ${socialText}
     attachments: getDigestSocialAttachments(),
   });
 }
+
+type AccountDeactivatedData = {
+  email: string;
+  // The user's display name (the single `name` column). May be null/empty for
+  // OAuth-only or anonymous accounts, in which case we fall back to a neutral
+  // greeting.
+  name?: string | null;
+};
+
+/**
+ * Notify a user that their account was suspended for security review after
+ * automated systems flagged activity. Intentionally vague about what was
+ * detected -- we do not want to hand an attacker a description of our
+ * detection. The social channels in the shared footer (Discord, Telegram,
+ * etc.) are how a wrongly-suspended user can reach us.
+ */
+export async function sendAccountDeactivatedEmail(
+  data: AccountDeactivatedData
+): Promise<boolean> {
+  const { email, name } = data;
+
+  const logoUrl =
+    "https://raw.githubusercontent.com/KeeperHub/keeperhub/staging/public/keeperhub_logo_email.png";
+
+  const subject = "Your KeeperHub account access has been suspended";
+
+  const trimmedName = name?.trim();
+  const greetingText = trimmedName ? `Hi ${trimmedName},` : "Hi,";
+  const greetingHtml = trimmedName ? `Hi ${escapeHtml(trimmedName)},` : "Hi,";
+
+  // Shared social footer (same set the execution-digest email uses); contact
+  // channels live here rather than in the body.
+  const socialText = DIGEST_SOCIAL_LINKS.map((s) => `${s.name}: ${s.url}`).join(
+    "\n"
+  );
+
+  const text = `
+${greetingText}
+
+Our automated security systems have temporarily suspended access to your KeeperHub account after detecting activity that requires additional review. Our team is already conducting a review. During this time, you will not be able to sign in or run workflows.
+
+This review helps us maintain the security and integrity of the KeeperHub platform and protect our users. Your data remains safe, secure, and unchanged throughout this process. All workflows, configurations, and account data are preserved and will remain available once access is restored.
+
+If you believe this action was taken in error or would like additional information, please contact our support team via the channels listed below (Discord or Telegram). We will review your case and assist you as quickly as possible.
+
+Thank you for your understanding and cooperation.
+
+Kind regards,
+KeeperHub Team
+
+---
+KeeperHub - Blockchain Workflow Automation
+${socialText}
+`.trim();
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
+    <img src="${logoUrl}" alt="KeeperHub" style="max-width: 200px; height: auto;" />
+  </div>
+
+  <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e5e5; border-top: none; border-radius: 0 0 12px 12px;">
+    <h2 style="color: #1a1a2e; margin-top: 0;">Your account access has been suspended</h2>
+
+    <p>${greetingHtml}</p>
+
+    <p>Our automated security systems have temporarily suspended access to your KeeperHub account after detecting activity that requires additional review. Our team is already conducting a review. During this time, you will not be able to sign in or run workflows.</p>
+
+    <p>This review helps us maintain the security and integrity of the KeeperHub platform and protect our users. Your data remains safe, secure, and unchanged throughout this process. All workflows, configurations, and account data are preserved and will remain available once access is restored.</p>
+
+    <div style="background: #f5f5f5; border-left: 4px solid #3b82f6; border-radius: 8px; padding: 16px 20px; margin: 20px 0;">
+      <p style="margin: 0;">If you believe this action was taken in error or would like additional information, please contact our support team via the channels below (Discord or Telegram). We will review your case and assist you as quickly as possible.</p>
+    </div>
+
+    <p style="margin-bottom: 0;">Thank you for your understanding and cooperation.</p>
+    <p style="margin-top: 8px;">Kind regards,<br>KeeperHub Team</p>
+  </div>
+
+  <div style="text-align: center; padding: 24px 20px; color: #999; font-size: 12px;">
+    <table role="presentation" align="center" style="margin:0 auto 12px;"><tr>${DIGEST_SOCIAL_LINKS.map(
+      (s) =>
+        `<td style="padding:0 8px;"><a href="${s.url}" target="_blank" rel="noopener"><img src="cid:${s.icon}" alt="${s.name}" width="20" height="20" style="display:block;" /></a></td>`
+    ).join("")}</tr></table>
+    <p style="margin: 0;">KeeperHub - Blockchain Workflow Automation</p>
+  </div>
+</body>
+</html>
+`.trim();
+
+  const success = await sendEmail({
+    to: email,
+    subject,
+    text,
+    html,
+    attachments: getDigestSocialAttachments(),
+  });
+
+  if (success) {
+    console.log(`[Email] Account suspension notice sent to ${email}`);
+  } else if (!isTestEnv) {
+    logUserError(
+      ErrorCategory.EXTERNAL_SERVICE,
+      `[Email] Failed to send suspension notice to ${email}`,
+      new Error("Failed to send account suspension email"),
+      {
+        service: "sendgrid",
+      }
+    );
+  }
+
+  return success;
+}

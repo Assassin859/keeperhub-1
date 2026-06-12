@@ -15,6 +15,10 @@ import { SendMessageCommand } from "@aws-sdk/client-sqs";
 import { CronExpressionParser } from "cron-parser";
 import { SQS_QUEUE_URL } from "../lib/config.js";
 import { apiRequest } from "../lib/http-client.js";
+import {
+  createPhantomExecution,
+  failPhantomExecution,
+} from "../lib/phantom.js";
 import { sqs } from "../lib/sqs-client.js";
 import type { Schedule, ScheduleMessage } from "../lib/types.js";
 
@@ -203,12 +207,37 @@ export async function dispatch(): Promise<DispatchResult> {
             `(${description}, tz: ${schedule.timezone})`,
         );
 
-        await sendToQueue({
-          workflowId: schedule.workflowId,
-          scheduleId: schedule.id,
-          triggerTime: now.toISOString(),
-          triggerType: "schedule",
-        });
+        // KEEP-693: pre-create a phantom row (best-effort) so the run is
+        // visible even if it never reaches the executor, and carry its id on
+        // the message so the executor upgrades that row instead of inserting.
+        const executionId = await createPhantomExecution(
+          schedule.workflowId,
+          "schedule",
+        );
+
+        try {
+          await sendToQueue({
+            workflowId: schedule.workflowId,
+            scheduleId: schedule.id,
+            triggerTime: now.toISOString(),
+            triggerType: "schedule",
+            executionId,
+          });
+        } catch (sendError) {
+          // The enqueue failed after the phantom was created -- resolve it to a
+          // coded failure so it surfaces in the run logs, then re-throw so the
+          // outer handler counts the error.
+          if (executionId) {
+            const reason =
+              sendError instanceof Error ? sendError.message : "send failed";
+            await failPhantomExecution(
+              executionId,
+              "CS-0001",
+              `Scheduled trigger failed to dispatch: ${reason}`,
+            );
+          }
+          throw sendError;
+        }
 
         triggered += 1;
       }

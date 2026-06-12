@@ -1,8 +1,8 @@
-import { eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { accounts } from "@/lib/db/schema";
+import { accounts, sessions } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
   dualFactorErrorResponse,
@@ -112,12 +112,31 @@ export async function POST(request: Request): Promise<NextResponse> {
       return dualFactorErrorResponse(dual);
     }
 
-    // Hash and update new password
+    // Rotate the password and invalidate every other session in a single
+    // transaction so a mid-write failure cannot leave the new password set
+    // while a previously phished or stolen cookie outlives the change. The
+    // session the caller just re-authenticated from is preserved (the ne()
+    // guard) so they stay signed in on the device they made the change from;
+    // if its id is unavailable we fail secure and drop every session.
     const hashedPassword = await hashPassword(newPassword);
-    await db
-      .update(accounts)
-      .set({ password: hashedPassword, updatedAt: new Date() })
-      .where(eq(accounts.id, credentialAccount.id));
+    const currentSessionId = (session.session as { id?: string } | undefined)
+      ?.id;
+    await db.transaction(async (tx) => {
+      await tx
+        .update(accounts)
+        .set({ password: hashedPassword, updatedAt: new Date() })
+        .where(eq(accounts.id, credentialAccount.id));
+      await tx
+        .delete(sessions)
+        .where(
+          currentSessionId
+            ? and(
+                eq(sessions.userId, session.user.id),
+                ne(sessions.id, currentSessionId)
+              )
+            : eq(sessions.userId, session.user.id)
+        );
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {

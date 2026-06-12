@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { workflowExecutionLogs, workflowExecutions } from "@/lib/db/schema";
 import { walletLocks } from "@/lib/db/schema-extensions";
 import { classifyExecutionError } from "@/lib/errors/classify";
+import type { ErrorCode } from "@/lib/errors/error-codes";
 import { recordExecutionErrorFinalized } from "@/lib/errors/finalize-error";
 import { authenticateInternalService } from "@/lib/internal-service-auth";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
@@ -61,16 +62,20 @@ export async function GET(request: Request): Promise<NextResponse> {
 
     // Bulk update all stale executions in a single query.
     //
-    // Two independent stuck-state predicates combined with OR:
+    // Three independent stuck-state predicates combined with OR. The per-row
+    // error_code below is a CASE on the pre-update status:
     //   - status='running' rows that haven't recorded recent step activity
     //     within the running threshold (default 30 min). The runtime claimed
-    //     the execution but stopped progressing.
+    //     the execution but stopped progressing -> E-0001.
     //   - status='pending' rows older than the pending threshold (5 min) with
-    //     no step logs at all. The SQS executor inserted the row but the
-    //     runtime never started (dispatch failed, pod crash before first
-    //     step, etc). Guarded by NOT EXISTS rather than a NOT IN list because
-    //     every successful execution has step logs and a NOT IN would load
-    //     that entire set into the predicate.
+    //     no step logs at all. The SQS executor inserted the row but the runtime
+    //     never started (dispatch failed, pod crash before first step) -> P-0001.
+    //     Guarded by NOT EXISTS rather than a NOT IN list because every
+    //     successful execution has step logs and a NOT IN would load that entire
+    //     set into the predicate.
+    //   - status='phantom' rows older than the pending threshold. KEEP-693: the
+    //     scheduler/event-tracker pre-created the row but the executor never
+    //     dequeued it (dispatcher down, SQS lost) -> P-0005.
     const staleConditions = or(
       and(
         eq(workflowExecutions.status, "running"),
@@ -86,6 +91,10 @@ export async function GET(request: Request): Promise<NextResponse> {
           SELECT 1 FROM ${workflowExecutionLogs}
           WHERE ${workflowExecutionLogs.executionId} = ${workflowExecutions.id}
         )`
+      ),
+      and(
+        eq(workflowExecutions.status, "phantom"),
+        lt(workflowExecutions.startedAt, pendingCutoff)
       )
     );
 
@@ -102,6 +111,14 @@ export async function GET(request: Request): Promise<NextResponse> {
         error: reaperErrorMessage,
         errorCategory: reaperClassification.errorCategory,
         errorType: reaperClassification.errorType,
+        // KEEP-693: attribute the code to the pre-update status -- running ->
+        // timed out (E-0001), pending -> never started (P-0001), phantom ->
+        // never picked up (P-0005). All three are workflow_engine/system, so the
+        // category/type columns above stay constant for every reaped row.
+        errorCode: sql<ErrorCode>`CASE
+          WHEN ${workflowExecutions.status} = 'pending' THEN 'P-0001'
+          WHEN ${workflowExecutions.status} = 'phantom' THEN 'P-0005'
+          ELSE 'E-0001' END`,
         completedAt: new Date(),
         duration: sql`ROUND(EXTRACT(EPOCH FROM (NOW() - ${workflowExecutions.startedAt})) * 1000)`,
       })
