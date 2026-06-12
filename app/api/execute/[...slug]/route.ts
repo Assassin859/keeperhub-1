@@ -1,3 +1,4 @@
+import { HttpStatus } from "@/lib/http-status";
 import "server-only";
 import "@/protocols";
 
@@ -14,6 +15,7 @@ import {
 import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { requireScope } from "@/lib/middleware/require-scope";
 import { getProtocol } from "@/lib/protocol-registry";
+import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import { PLUGIN_STEP_IMPORTERS } from "@/lib/step-registry";
 import { resolveProtocolMeta } from "@/plugins/protocol/steps/resolve-protocol-meta";
@@ -67,7 +69,7 @@ async function executeProtocolAction(
         success: false,
         error: `Could not resolve protocol metadata for: ${actionType}`,
       },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -75,7 +77,7 @@ async function executeProtocolAction(
   if (!protocol) {
     return NextResponse.json(
       { success: false, error: `Unknown protocol: ${meta.protocolSlug}` },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -86,7 +88,7 @@ async function executeProtocolAction(
         success: false,
         error: `Unknown contract key "${meta.contractKey}" in protocol "${meta.protocolSlug}"`,
       },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -103,7 +105,7 @@ async function executeProtocolAction(
         error:
           "Missing required field: chainId (or network, which is a deprecated alias)",
       },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -116,7 +118,7 @@ async function executeProtocolAction(
         success: false,
         error: err instanceof Error ? err.message : String(err),
       },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
   const network = String(resolvedChainId);
@@ -133,7 +135,7 @@ async function executeProtocolAction(
           ? `Missing contract address for "${meta.contractKey}"`
           : `Protocol "${meta.protocolSlug}" contract "${meta.contractKey}" is not deployed on chain ${network} (input: "${rawNetwork}")`,
       },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -151,7 +153,7 @@ async function executeProtocolAction(
         success: false,
         error: `Failed to resolve ABI: ${err instanceof Error ? err.message : String(err)}`,
       },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -219,7 +221,7 @@ export async function POST(
   if (slug.length < 2) {
     return NextResponse.json(
       { error: `Invalid action type: ${actionType}` },
-      { status: 400 }
+      { status: HttpStatus.BAD_REQUEST }
     );
   }
 
@@ -227,13 +229,16 @@ export async function POST(
   if (!PLUGIN_STEP_IMPORTERS[actionType]) {
     return NextResponse.json(
       { error: `Unknown action: ${actionType}` },
-      { status: 404 }
+      { status: HttpStatus.NOT_FOUND }
     );
   }
 
   const apiKeyCtx = await validateApiKey(request);
   if (!apiKeyCtx) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: HttpStatus.UNAUTHORIZED }
+    );
   }
 
   const scopeError = requireScope(apiKeyCtx.scope, SCOPE_MCP_WRITE);
@@ -246,9 +251,12 @@ export async function POST(
 
   const rateLimit = checkRateLimit(apiKeyCtx.apiKeyId);
   if (!rateLimit.allowed) {
-    return NextResponse.json(
-      { error: "Rate limit exceeded" },
-      { status: 429, headers: { "Retry-After": String(rateLimit.retryAfter) } }
+    return applyRateLimitHeaders(
+      NextResponse.json(
+        { error: "Rate limit exceeded" },
+        { status: HttpStatus.TOO_MANY_REQUESTS }
+      ),
+      rateLimit
     );
   }
 
@@ -256,7 +264,10 @@ export async function POST(
   try {
     body = (await request.json()) as Record<string, unknown>;
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid JSON body" },
+      { status: HttpStatus.BAD_REQUEST }
+    );
   }
 
   const idem = await beginIdempotentFromRequest({
@@ -268,7 +279,10 @@ export async function POST(
   if (idem) {
     const early = idempotencyEarlyResponse(idem);
     if (early) {
-      return NextResponse.json(early.body, { status: early.status });
+      return applyRateLimitHeaders(
+        NextResponse.json(early.body, { status: early.status }),
+        rateLimit
+      );
     }
   }
 
@@ -279,34 +293,46 @@ export async function POST(
       const response = await withIdempotencyHeartbeat(idem, () =>
         executeProtocolAction(actionType, body, apiKeyCtx.organizationId)
       );
-      return await recordIdempotentResponse(
-        idem,
-        response,
-        await protocolActionDisposition(response)
+      return applyRateLimitHeaders(
+        await recordIdempotentResponse(
+          idem,
+          response,
+          await protocolActionDisposition(response)
+        ),
+        rateLimit
       );
     }
 
     // Non-protocol actions are not yet supported via direct execution. This
     // never broadcasts, so release the lock for a clean retry.
-    return await recordIdempotentResponse(
-      idem,
-      NextResponse.json(
-        {
-          error: `Direct execution not supported for "${actionType}". Use workflow execution instead.`,
-          hint: "Create a workflow with this action and execute it via workflow_execute.",
-        },
-        { status: 501 }
+    return applyRateLimitHeaders(
+      await recordIdempotentResponse(
+        idem,
+        NextResponse.json(
+          {
+            error: `Direct execution not supported for "${actionType}". Use workflow execution instead.`,
+            hint: "Create a workflow with this action and execute it via workflow_execute.",
+          },
+          { status: HttpStatus.NOT_IMPLEMENTED }
+        ),
+        "release"
       ),
-      "release"
+      rateLimit
     );
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
     // A thrown error may have left a tx mid-broadcast: finalize as failed so a
     // retry replays the failure instead of re-broadcasting.
-    return await recordIdempotentResponse(
-      idem,
-      NextResponse.json({ success: false, error: message }, { status: 500 }),
-      "failed"
+    return applyRateLimitHeaders(
+      await recordIdempotentResponse(
+        idem,
+        NextResponse.json(
+          { success: false, error: message },
+          { status: HttpStatus.INTERNAL_SERVER_ERROR }
+        ),
+        "failed"
+      ),
+      rateLimit
     );
   }
 }

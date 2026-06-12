@@ -25,10 +25,13 @@
  *   hmacSecret in logSystemError metadata, and NEVER forward error.message
  *   to the client.
  */
+
 import { TurnkeyActivityError, TurnkeyRequestError } from "@turnkey/sdk-server";
 import { provisionAgenticWallet } from "@/lib/agentic-wallet/provision";
 import { incrementAndCheck } from "@/lib/agentic-wallet/rate-limit";
+import { HttpStatus } from "@/lib/http-status";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { applyRateLimitHeaders } from "@/lib/rate-limit-headers";
 import { resolveTrustedClientIp } from "@/lib/security/trusted-proxies";
 
 export const dynamic = "force-dynamic";
@@ -49,18 +52,21 @@ export async function POST(request: Request): Promise<Response> {
     RATE_LIMIT_MAX
   );
   if (!rate.allowed) {
-    return Response.json(
-      { error: "Rate limit exceeded", retryAfter: rate.retryAfter },
-      {
-        status: 429,
-        headers: { "Retry-After": String(rate.retryAfter) },
-      }
+    return applyRateLimitHeaders(
+      Response.json(
+        { error: "Rate limit exceeded", retryAfter: rate.retryAfter },
+        { status: HttpStatus.TOO_MANY_REQUESTS }
+      ),
+      rate
     );
   }
 
   try {
     const result = await provisionAgenticWallet();
-    return Response.json(result, { status: 200 });
+    return applyRateLimitHeaders(
+      Response.json(result, { status: HttpStatus.OK }),
+      rate
+    );
   } catch (error) {
     // REVIEW HI-03: use typed error detection (instanceof) instead of regex
     // on error.message. Turnkey SDK throws TurnkeyRequestError (API-layer HTTP
@@ -92,7 +98,11 @@ export async function POST(request: Request): Promise<Response> {
         error: isTurnkey ? "Upstream signer error" : "Provision failed",
         code: isTurnkey ? "TURNKEY_UPSTREAM" : "INTERNAL",
       },
-      { status: isTurnkey ? 502 : 500 }
+      {
+        status: isTurnkey
+          ? HttpStatus.BAD_GATEWAY
+          : HttpStatus.INTERNAL_SERVER_ERROR,
+      }
     );
   }
 }

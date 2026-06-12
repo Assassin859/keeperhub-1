@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { hashSessionToken } from "@/lib/auth-session-token-hash";
 import { db } from "@/lib/db";
 import { sessions, users } from "@/lib/db/schema";
+import { HttpStatus } from "@/lib/http-status";
 import { ErrorCategory, logSystemError, logSystemWarn } from "@/lib/logging";
 import {
   buildPendingOauthMfaSetCookie,
@@ -17,6 +18,33 @@ import {
 import { sanitizeNextPath } from "@/lib/sanitize-next-path";
 
 const handlers = toNextJsHandler(auth);
+
+// Better Auth's built-in rate limiter answers 429s with its own non-standard
+// `X-Retry-After` header and no standard `Retry-After`. Replace it with the
+// conventional `Retry-After` (RFC 9110) that HTTP clients understand, and drop
+// the non-standard header so the response carries exactly one retry signal.
+// These are anti-abuse limits, so we deliberately expose no remaining-budget.
+function normalizeRateLimitRetryAfter(res: Response): Response {
+  if (res.status !== 429) {
+    return res;
+  }
+  const retryAfter = res.headers.get("X-Retry-After");
+  if (!retryAfter) {
+    return res;
+  }
+  const apply = (target: Response): Response => {
+    if (!target.headers.get("Retry-After")) {
+      target.headers.set("Retry-After", retryAfter);
+    }
+    target.headers.delete("X-Retry-After");
+    return target;
+  };
+  try {
+    return apply(res);
+  } catch {
+    return apply(new Response(res.body, res));
+  }
+}
 
 const SESSION_COOKIE_NAMES = [
   "better-auth.session_token",
@@ -310,7 +338,7 @@ async function blockEmailOtpForTotpUsers(
           "This account requires the strict dual-factor sign-in flow. Sign in via the app's sign-in dialog.",
         code: "use_strict_signin",
       },
-      { status: 403 }
+      { status: HttpStatus.FORBIDDEN }
     );
   }
   return null;
@@ -319,7 +347,7 @@ async function blockEmailOtpForTotpUsers(
 export async function GET(req: Request) {
   try {
     const res = await handlers.GET(req);
-    return await interceptOauthCallback(req, res);
+    return normalizeRateLimitRetryAfter(await interceptOauthCallback(req, res));
   } catch (error) {
     logSystemError(ErrorCategory.AUTH, "[Auth GET] Handler error:", error, {
       endpoint: "/api/auth",
@@ -335,7 +363,7 @@ export async function POST(req: Request) {
     if (blocked) {
       return blocked;
     }
-    return await handlers.POST(req);
+    return normalizeRateLimitRetryAfter(await handlers.POST(req));
   } catch (error) {
     logSystemError(ErrorCategory.AUTH, "[Auth POST] Handler error:", error, {
       endpoint: "/api/auth",

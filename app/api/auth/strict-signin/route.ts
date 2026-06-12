@@ -16,6 +16,7 @@ import {
   users,
   verifications,
 } from "@/lib/db/schema";
+import { HttpStatus } from "@/lib/http-status";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
 import {
   checkDualFactorRateLimit,
@@ -103,11 +104,14 @@ type Body = {
 };
 
 function badRequest(error: string, code: string): NextResponse {
-  return NextResponse.json({ error, code }, { status: 400 });
+  return NextResponse.json({ error, code }, { status: HttpStatus.BAD_REQUEST });
 }
 
 function unauthorized(error: string, code: string): NextResponse {
-  return NextResponse.json({ error, code }, { status: 401 });
+  return NextResponse.json(
+    { error, code },
+    { status: HttpStatus.UNAUTHORIZED }
+  );
 }
 
 async function validateEmailOtp(
@@ -186,7 +190,10 @@ export async function POST(request: Request): Promise<NextResponse> {
         code: "rate_limited",
         retryAfter: rateLimit.retryAfter,
       },
-      { status: 429 }
+      {
+        status: HttpStatus.TOO_MANY_REQUESTS,
+        headers: { "Retry-After": String(rateLimit.retryAfter) },
+      }
     );
   }
 
@@ -200,7 +207,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
     return NextResponse.json(
       { error: "Server misconfigured", code: "server_misconfigured" },
-      { status: 500 }
+      { status: HttpStatus.INTERNAL_SERVER_ERROR }
     );
   }
 
@@ -328,13 +335,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
     return NextResponse.json(
       { error: "Sign-in failed at session step", code: "session_failed" },
-      { status: 500 }
+      { status: HttpStatus.INTERNAL_SERVER_ERROR }
     );
   }
   if (twoFactorSetCookies.length === 0) {
     return NextResponse.json(
       { error: "Sign-in failed at session step", code: "session_failed" },
-      { status: 500 }
+      { status: HttpStatus.INTERNAL_SERVER_ERROR }
     );
   }
 
@@ -364,13 +371,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
     return NextResponse.json(
       { error: "Sign-in failed at session step", code: "session_failed" },
-      { status: 500 }
+      { status: HttpStatus.INTERNAL_SERVER_ERROR }
     );
   }
   if (sessionSetCookies.length === 0) {
     return NextResponse.json(
       { error: "Sign-in failed at session step", code: "session_failed" },
-      { status: 500 }
+      { status: HttpStatus.INTERNAL_SERVER_ERROR }
     );
   }
 
