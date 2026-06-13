@@ -1193,6 +1193,13 @@ export function WorkflowRuns({
           );
         });
         const runErrorMessage = getCustomerRunErrorMessage(execution);
+        // When a step already failed, its own error is shown on that step, so
+        // the run-level banner would just duplicate it. Only surface the
+        // run-level error when no step carries it (phantom / infra failures).
+        const hasFailedStep = executionLogs.some(
+          (log) => log.status === "error"
+        );
+        const showRunError = Boolean(runErrorMessage) && !hasFailedStep;
 
         return (
           <div
@@ -1272,16 +1279,18 @@ export function WorkflowRuns({
 
             {isExpanded && (
               <div className="border-t bg-muted/20">
-                {runErrorMessage && (
+                {showRunError && (
                   <div className="p-4 pb-0">
-                    <Alert>
+                    <Alert className="border-destructive bg-destructive text-white">
                       <TriangleAlert />
-                      <AlertDescription>{runErrorMessage}</AlertDescription>
+                      <AlertDescription className="text-white">
+                        {runErrorMessage}
+                      </AlertDescription>
                     </Alert>
                   </div>
                 )}
                 {executionLogs.length === 0 ? (
-                  runErrorMessage ? null : (
+                  showRunError ? null : (
                     <div className="py-8 text-center text-muted-foreground text-xs">
                       No steps recorded
                     </div>
