@@ -976,6 +976,12 @@ export const explorerConfigs = pgTable(
     explorerApiUrl: text("explorer_api_url"), // Base URL for API calls (ABI, balance, etc.)
     backupExplorerApiType: text("backup_explorer_api_type"), // fallback API type if primary fails
     backupExplorerApiUrl: text("backup_explorer_api_url"), // fallback API URL if primary fails
+    backupExplorerApiKeyNeeded: boolean("backup_explorer_api_key_needed").notNull().default(false),
+    backupExplorerApiKey: text("backup_explorer_api_key"), // API key for backup provider (required when backupExplorerApiKeyNeeded is true)
+    backupExplorerUrl: text("backup_explorer_url"), // display URL for backup provider (e.g. "https://blockscout.com")
+    backupExplorerTxPath: text("backup_explorer_tx_path"), // tx link path template for backup provider
+    backupExplorerAddressPath: text("backup_explorer_address_path"), // address link path template for backup provider
+    backupExplorerContractPath: text("backup_explorer_contract_path"), // contract link path template for backup provider
     explorerTxPath: text("explorer_tx_path").default("/tx/{hash}"),
     explorerAddressPath: text("explorer_address_path").default(
       "/address/{address}"
