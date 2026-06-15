@@ -3,6 +3,7 @@
 import { ActivityFeed } from "@/components/activity/activity-feed";
 import { Overlay } from "@/components/overlays/overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
+import { createdFallback } from "@/lib/activity/created-fallback";
 import type { SecurityAuditEvent } from "@/lib/api-client";
 
 export type ResourceActivityCreator = {
@@ -36,23 +37,13 @@ export function ResourceActivityOverlay({
 }): React.ReactElement {
   const { pop } = useOverlay();
   const fallback: SecurityAuditEvent[] = [
-    {
-      id: `fallback-${resourceId}`,
-      action: createdAction,
+    createdFallback({
       resourceType,
       resourceId,
       createdAt,
-      diff: null,
-      metadata: null,
-      actor: creator.name
-        ? {
-            id: "",
-            name: creator.name,
-            email: creator.email,
-            role: creator.role,
-          }
-        : null,
-    },
+      action: createdAction,
+      creator,
+    }),
   ];
   return (
     <Overlay

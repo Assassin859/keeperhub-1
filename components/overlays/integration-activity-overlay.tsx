@@ -3,6 +3,7 @@
 import { ActivityFeed } from "@/components/activity/activity-feed";
 import { Overlay } from "@/components/overlays/overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
+import { createdFallback } from "@/lib/activity/created-fallback";
 import type { Integration, SecurityAuditEvent } from "@/lib/api-client";
 
 /**
@@ -20,23 +21,16 @@ export function IntegrationActivityOverlay({
 }): React.ReactElement {
   const { pop } = useOverlay();
   const fallback: SecurityAuditEvent[] = [
-    {
-      id: `fallback-${integration.id}`,
-      action: "integration.created",
+    createdFallback({
       resourceType: "integration",
       resourceId: integration.id,
       createdAt: integration.createdAt,
-      diff: null,
-      metadata: null,
-      actor: integration.createdByName
-        ? {
-            id: "",
-            name: integration.createdByName,
-            email: integration.createdByEmail ?? null,
-            role: integration.createdByRole ?? null,
-          }
-        : null,
-    },
+      creator: {
+        name: integration.createdByName,
+        email: integration.createdByEmail,
+        role: integration.createdByRole,
+      },
+    }),
   ];
   return (
     <Overlay

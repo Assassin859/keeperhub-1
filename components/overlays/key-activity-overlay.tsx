@@ -3,6 +3,7 @@
 import { ActivityFeed } from "@/components/activity/activity-feed";
 import { Overlay } from "@/components/overlays/overlay";
 import { useOverlay } from "@/components/overlays/overlay-provider";
+import { createdFallback } from "@/lib/activity/created-fallback";
 import type { SecurityAuditEvent } from "@/lib/api-client";
 
 type ActorInfo = {
@@ -51,23 +52,12 @@ export function KeyActivityOverlay({
     const source: ActorInfo | null = k.createdByName
       ? { name: k.createdByName, email: k.createdByEmail, role: k.createdByRole }
       : (defaultActor ?? null);
-    return {
-      id: `fallback-${k.id}`,
-      action: `${resourceType}.created`,
+    return createdFallback({
       resourceType,
       resourceId: k.id,
       createdAt: k.createdAt,
-      diff: null,
-      metadata: null,
-      actor: source
-        ? {
-            id: "",
-            name: source.name ?? null,
-            email: source.email ?? null,
-            role: source.role ?? null,
-          }
-        : null,
-    };
+      creator: source,
+    });
   });
   return (
     <Overlay
