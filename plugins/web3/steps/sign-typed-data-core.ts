@@ -4,12 +4,17 @@
  *
  * IMPORTANT: This file must NOT contain "use step" or be a step file.
  *
- * KEEP-473: workflows previously had no way to produce signed EIP-712
- * typed-data destined for HTTP bodies (x402 EIP-3009
- * transferWithAuthorization, MPP, EIP-2612 permits, custom protocol
- * intents). Buyers had to deploy AWS Lambda + KMS to sign outside KH.
- * This primitive routes the request through the org's Turnkey-backed
- * wallet so the signature is produced inside KH's trust boundary.
+ * Workflows use this primitive to produce signed EIP-712 typed-data for
+ * off-chain signed intents (HTTP bodies, contract arguments), routed
+ * through the org's Turnkey-backed wallet so the signature is produced
+ * inside KH's trust boundary.
+ *
+ * NOTE: fund-moving authorizations (EIP-2612 / Permit2 / DAI permits,
+ * EIP-3009 transfer/receive authorizations, governance delegations) are
+ * REFUSED here - see checkSignableTypedData / FUND_MOVING_PRIMARY_TYPES.
+ * Those payloads are signed only via the separate, protected
+ * agentic-wallet entrypoint (lib/agentic-wallet/sign.ts), not from
+ * workflow steps.
  */
 import "server-only";
 
