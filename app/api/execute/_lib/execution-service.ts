@@ -110,3 +110,29 @@ export function redactInput(
 
   return redacted;
 }
+
+/**
+ * Records a signer override the caller supplied but the route did not honor.
+ *
+ * Org-custodied direct executions always resolve the signer via org policy, so
+ * a caller-supplied `web3Connection` (the per-node signer-mode selector) never
+ * influences the write. We still want it in the audit log -- a smuggled
+ * `web3Connection: "eoa"` is a bypass attempt worth seeing -- but it must not
+ * sit at the top level where a reader could mistake it for a value that took
+ * effect. This moves any top-level `web3Connection` out of `auditBase` and
+ * records it under `_rejectedConfig` instead, keying off the caller's original
+ * request so it works whether or not `auditBase` has already been stripped.
+ */
+export function withRejectedSignerOverride(
+  auditBase: Record<string, unknown>,
+  callerConfig: Record<string, unknown>
+): Record<string, unknown> {
+  if (!("web3Connection" in callerConfig)) {
+    return auditBase;
+  }
+  const { web3Connection: _omit, ...base } = auditBase;
+  return {
+    ...base,
+    _rejectedConfig: { web3Connection: callerConfig.web3Connection },
+  };
+}

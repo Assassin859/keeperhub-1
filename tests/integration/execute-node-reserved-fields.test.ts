@@ -49,14 +49,23 @@ vi.mock("@/app/api/execute/_lib/wallet-check", () => ({
   requireWallet: mocks.requireWallet,
 }));
 
-vi.mock("@/app/api/execute/_lib/execution-service", () => ({
-  createExecution: mocks.createExecution,
-  markRunning: mocks.markRunning,
-  completeExecution: mocks.completeExecution,
-  failExecution: mocks.failExecution,
-  setRetryCount: mocks.setRetryCount,
-  redactInput: mocks.redactInput,
-}));
+vi.mock("@/app/api/execute/_lib/execution-service", async (importActual) => {
+  // Keep the real (pure) helpers like withRejectedSignerOverride; only the
+  // DB-touching functions are replaced with mocks.
+  const actual =
+    await importActual<
+      typeof import("@/app/api/execute/_lib/execution-service")
+    >();
+  return {
+    ...actual,
+    createExecution: mocks.createExecution,
+    markRunning: mocks.markRunning,
+    completeExecution: mocks.completeExecution,
+    failExecution: mocks.failExecution,
+    setRetryCount: mocks.setRetryCount,
+    redactInput: mocks.redactInput,
+  };
+});
 
 vi.mock("@/app/api/execute/_lib/action-resolver", () => ({
   resolveAction: mocks.resolveAction,
@@ -197,6 +206,74 @@ describe("POST /api/execute/node reserved-field gating", () => {
       (mocks.capturedInput?._context as { organizationId: string })
         .organizationId
     ).toBe("org_a");
+  });
+
+  it("strips a caller-supplied web3Connection so it cannot weaken the signer mode", async () => {
+    const response = await nodePOST(
+      postRequest({
+        actionType: "web3/write-contract",
+        config: {
+          network: "1",
+          contractAddress: "0xabc",
+          // Attempt to force the org Turnkey EOA and bypass the Safe's
+          // Zodiac Roles policy on an org-custodied write.
+          web3Connection: "eoa",
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    // The step must never see web3Connection: with it absent,
+    // resolveSignerForNode falls back to the org-policy (Safe + Role) path.
+    // The _rejectedConfig marker is audit-only and must not leak to the step.
+    expect(mocks.capturedInput).toBeDefined();
+    expect("web3Connection" in (mocks.capturedInput ?? {})).toBe(false);
+    expect("_rejectedConfig" in (mocks.capturedInput ?? {})).toBe(false);
+  });
+
+  it("records a non-honored web3Connection under _rejectedConfig in the audit input", async () => {
+    const response = await nodePOST(
+      postRequest({
+        actionType: "web3/write-contract",
+        config: {
+          network: "1",
+          contractAddress: "0xabc",
+          web3Connection: "eoa",
+          _context: { spoofed: true },
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    // The execution-audit record is the `input` reserved through the spending
+    // cap. web3Connection must not appear at the top level (it did not
+    // influence this org-custodied write) but is preserved under
+    // _rejectedConfig so the audit log still shows the bypass attempt.
+    expect(mocks.checkAndReserveExecution).toHaveBeenCalledTimes(1);
+    const auditInput = mocks.checkAndReserveExecution.mock.calls[0]?.[0]
+      ?.input as Record<string, unknown>;
+    expect(auditInput).toBeDefined();
+    expect("web3Connection" in auditInput).toBe(false);
+    expect("network" in auditInput).toBe(false);
+    expect("integrationId" in auditInput).toBe(false);
+    expect("_context" in auditInput).toBe(false);
+    expect(auditInput.contractAddress).toBe("0xabc");
+    expect(auditInput._rejectedConfig).toEqual({ web3Connection: "eoa" });
+  });
+
+  it("omits _rejectedConfig from the audit input when no override was sent", async () => {
+    const response = await nodePOST(
+      postRequest({
+        actionType: "web3/write-contract",
+        config: { network: "1", contractAddress: "0xabc" },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    const auditInput = mocks.checkAndReserveExecution.mock.calls[0]?.[0]
+      ?.input as Record<string, unknown>;
+    expect(auditInput).toBeDefined();
+    expect("_rejectedConfig" in auditInput).toBe(false);
   });
 
   it("passes an owned top-level integrationId through to the step", async () => {
