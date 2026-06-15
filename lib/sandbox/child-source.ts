@@ -362,15 +362,21 @@ function encodeSandboxPlainObject(
     if (key === SANDBOX_RESULT_TAG) {
       hasTagKey = true;
     }
-    // defineProperty so an own "__proto__" key lands as a data property; a
-    // plain `out[key] =` invokes the prototype setter and silently drops it,
-    // which decodeSandboxObject (which preserves it) would not round-trip.
-    Object.defineProperty(out, key, {
-      value: encodeSandboxNode(value[key], seen),
-      enumerable: true,
-      writable: true,
-      configurable: true,
-    });
+    const encoded = encodeSandboxNode(value[key], seen);
+    if (key === "__proto__") {
+      // Only "__proto__" needs defineProperty: a plain `out[key] =` invokes the
+      // prototype setter and silently drops it (decodeSandboxObject preserves it
+      // as a data property, so dropping would break the round-trip). Every other
+      // key uses cheap assignment.
+      Object.defineProperty(out, key, {
+        value: encoded,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+    } else {
+      out[key] = encoded;
+    }
   }
   // Escape a plain object that literally carries a "$" key so the parent does
   // not mistake it for a type tag.
@@ -1055,15 +1061,19 @@ function encodeResult(value, seen) {
       if (key === "$") {
         hasTagKey = true;
       }
-      // defineProperty so an own "__proto__" key lands as a data property
-      // instead of invoking the prototype setter (which drops it); mirrors
-      // decodeSandboxObject so the round-trip is faithful.
-      Object.defineProperty(out, key, {
-        value: encodeResult(value[key], seen),
-        enumerable: true,
-        writable: true,
-        configurable: true,
-      });
+      const encoded = encodeResult(value[key], seen);
+      if (key === "__proto__") {
+        // Only "__proto__" needs defineProperty (a plain assignment invokes the
+        // prototype setter and drops it); every other key uses cheap assignment.
+        Object.defineProperty(out, key, {
+          value: encoded,
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      } else {
+        out[key] = encoded;
+      }
     }
     // Escape a user object that literally carries a "$" key so the parent does
     // not mistake it for a type tag.
