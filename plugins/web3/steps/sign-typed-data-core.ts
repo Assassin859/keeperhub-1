@@ -148,6 +148,27 @@ type SignTypedDataValidationFailure = {
   error: string;
 };
 
+const MAX_ERROR_FIELD_LEN = 80;
+
+// primaryType / chainId are attacker/template-controlled and get echoed back
+// in VALIDATION errors that flow to execution outputs and logs. Strip control
+// characters (newlines, ANSI escapes) to prevent log injection/spoofing, and
+// cap the length so an oversized value cannot bloat the message. Using String()
+// (not JSON.stringify) also avoids throwing on a bigint chainId.
+function sanitizeForError(value: unknown): string {
+  let cleaned = "";
+  for (const ch of String(value)) {
+    const code = ch.codePointAt(0) ?? 0;
+    // Drop C0 (0x00-0x1F) and C1 (0x7F-0x9F) control chars.
+    if (code >= 0x20 && !(code >= 0x7f && code <= 0x9f)) {
+      cleaned += ch;
+    }
+  }
+  return cleaned.length > MAX_ERROR_FIELD_LEN
+    ? `${cleaned.slice(0, MAX_ERROR_FIELD_LEN)}...`
+    : cleaned;
+}
+
 // A-06 control surface: reject fund-moving primaryTypes and unsupported
 // (present-but-unknown) domain.chainIds. Returns a VALIDATION failure to
 // short-circuit signing, or null when the payload is safe to sign. Absent
@@ -164,7 +185,7 @@ function checkSignableTypedData(
     return {
       success: false,
       code: "VALIDATION",
-      error: `Refusing to sign fund-moving authorization "${typedData.primaryType}". EIP-712 permit / transfer-authorization / delegation signing is blocked on this step to prevent template-injected token drains.`,
+      error: `Refusing to sign fund-moving authorization "${sanitizeForError(typedData.primaryType)}". EIP-712 permit / transfer-authorization / delegation signing is blocked on this step to prevent template-injected token drains.`,
     };
   }
 
@@ -180,7 +201,7 @@ function checkSignableTypedData(
     return {
       success: false,
       code: "VALIDATION",
-      error: `typedData.domain.chainId ${JSON.stringify(domainChainId)} is not a supported chain`,
+      error: `typedData.domain.chainId ${sanitizeForError(domainChainId)} is not a supported chain`,
     };
   }
   return null;
