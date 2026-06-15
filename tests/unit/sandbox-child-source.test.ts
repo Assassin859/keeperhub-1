@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { deserialize, serialize } from "node:v8";
+import { gzipSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -10,6 +11,7 @@ vi.mock("server-only", () => ({}));
 import {
   createSandboxResultReader,
   decodeSandboxResult,
+  encodeSandboxResult,
   SANDBOX_CHILD_SOURCE,
   SANDBOX_RESULT_FD,
   SANDBOX_RESULT_MAX_BYTES,
@@ -448,6 +450,276 @@ describe("sandbox grandchild redirect following", () => {
   });
 }, 30_000);
 
+// F-024: the wrapped fetch resolves + validates the hostname EXACTLY ONCE
+// (resolveValidatedAddresses) and pins that validated address set. The grandchild
+// has no undici connect hook (zero-dep sandbox image), so the dial goes through
+// node:http / node:https with a custom `lookup` that returns the pre-validated
+// addresses verbatim - no second DNS lookup. net.connect dials exactly those, so
+// the address that was validated is the address that is dialed, closing the
+// DNS-rebinding TOCTOU: there is no second resolution to race.
+//
+// We prove this behaviourally by injecting a deterministic DNS stub into the
+// grandchild source (string-replacing the `node:dns` require with a stub baked
+// into the source - still zero-dep, plain JS). The stub lets a test control what
+// a name resolves to without real network IO, which is what makes the
+// single-resolve pin testable: a fake `.invalid` name (guaranteed unresolvable
+// by real DNS, RFC 6761) that the stub maps to 127.0.0.1 can only reach a local
+// server if the dial used the validated stub result rather than re-resolving.
+type DnsRecord = { address: string; family: number };
+function withStubbedDns(
+  source: string,
+  mapping: Record<string, DnsRecord[]>
+): string {
+  const stub = `const __DNS_STUB = ${JSON.stringify(mapping)};
+const __realDns = require("node:dns").promises;
+const dnsPromises = {
+  lookup: async function(host, opts) {
+    const key = String(host).toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(__DNS_STUB, key)) {
+      const recs = __DNS_STUB[key];
+      if (opts && opts.all) { return recs; }
+      return { address: recs[0].address, family: recs[0].family };
+    }
+    return __realDns.lookup(host, opts);
+  },
+};`;
+  // Function replacement avoids `$` being treated as a replacement pattern.
+  return source.replace(
+    'const dnsPromises = require("node:dns").promises;',
+    () => stub
+  );
+}
+
+describe("sandbox grandchild pins the resolved address at dial time (F-024)", () => {
+  let server: Server;
+  let port: number;
+
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://127.0.0.1");
+      if (url.pathname === "/r/rebind") {
+        // Redirect into a name the DNS stub maps to a private (IMDS) address,
+        // exercising the per-hop re-resolve+validate+pin on the redirect path.
+        res.writeHead(302, { Location: "http://evil-redirect.invalid/" });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, path: req.url }));
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    port = (server.address() as AddressInfo).port;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+  });
+
+  it("wires the single-resolve pin: http/https dial, manual redirects, no global fetch in the loop", () => {
+    expect(SANDBOX_CHILD_SOURCE).toContain('require("node:http")');
+    expect(SANDBOX_CHILD_SOURCE).toContain('require("node:https")');
+    expect(SANDBOX_CHILD_SOURCE).toContain("function resolveValidatedAddresses");
+    expect(SANDBOX_CHILD_SOURCE).toContain('redirect: "manual"');
+    // The loop dials through the pinning fetch, never the global fetch that
+    // would re-resolve DNS at connect time (the rebinding window).
+    expect(SANDBOX_CHILD_SOURCE).toContain("await pinnedFetch(");
+    expect(SANDBOX_CHILD_SOURCE).not.toContain("await fetch(currentResource");
+  });
+
+  it("dials the validated resolution, not a re-resolved hostname (pin proof)", async () => {
+    // `pinned.invalid` cannot be resolved by real DNS (RFC 6761). The stub maps
+    // it to 127.0.0.1, which is allowed because REDIRECT_TEST_SOURCE lifts the
+    // loopback block. Reaching the local server therefore proves the dial used
+    // the validated, pinned address from the single resolution - a re-resolving
+    // dial would NXDOMAIN.
+    const source = withStubbedDns(REDIRECT_TEST_SOURCE, {
+      "pinned.invalid": [{ address: "127.0.0.1", family: 4 }],
+    });
+    const code = `const r = await fetch("http://pinned.invalid:${port}/ping"); return { status: r.status, body: await r.json() };`;
+    const outcome = await runSandboxed(code, 3000, source);
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      const r = outcome.result as { status: number; body: { path: string } };
+      expect(r.status).toBe(200);
+      expect(r.body.path).toBe("/ping");
+    }
+  }, 10_000);
+
+  it("rejects when ANY resolved record is private (split-horizon)", async () => {
+    // One private address in the validated set is enough to reject the whole
+    // name, even when a public record is also present.
+    const source = withStubbedDns(SANDBOX_CHILD_SOURCE, {
+      "split.invalid": [
+        { address: "93.184.216.34", family: 4 },
+        { address: "10.0.0.1", family: 4 },
+      ],
+    });
+    const outcome = await runSandboxed(
+      'return await fetch("http://split.invalid/");',
+      3000,
+      source
+    );
+    expectBlocked(outcome);
+    if (!outcome.ok) {
+      expect(outcome.errorMessage).toContain("10.0.0.1");
+    }
+  }, 10_000);
+
+  it("re-resolves and blocks a redirect hop that rebinds to a private address", async () => {
+    // The redirect target is a name the stub maps to IMDS link-local; the
+    // per-hop resolveValidatedAddresses must catch it before pinning/dialing.
+    const source = withStubbedDns(REDIRECT_TEST_SOURCE, {
+      "evil-redirect.invalid": [
+        { address: "169.254.169.254", family: 4 },
+      ],
+    });
+    const code = `return await fetch("http://127.0.0.1:${port}/r/rebind");`;
+    const outcome = await runSandboxed(code, 3000, source);
+    expectBlocked(outcome);
+    if (!outcome.ok) {
+      expect(outcome.errorMessage).toContain("169.254.169.254");
+    }
+  }, 10_000);
+}, 30_000);
+
+// Behavioural coverage that the node:http/https pin path is a faithful drop-in
+// for global fetch: a real Response (status + headers + decoded JSON body) must
+// survive the rewrite, including transparent content-encoding decompression.
+// Uses REDIRECT_TEST_SOURCE so the loopback block is lifted and a local server
+// on 127.0.0.1 is a reachable (validated) dial target.
+describe("sandbox grandchild pinned fetch preserves the Response contract", () => {
+  let server: Server;
+  let base: string;
+
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      res.writeHead(200, {
+        "content-type": "application/json",
+        "content-encoding": "gzip",
+        "x-pinned": "yes",
+      });
+      res.end(gzipSync(Buffer.from(JSON.stringify({ ok: true, path: req.url }))));
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const { port } = server.address() as AddressInfo;
+    base = `http://127.0.0.1:${port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+  });
+
+  it("returns status, headers, and a gzip-decoded JSON body through the pin", async () => {
+    const code = `const r = await fetch(${JSON.stringify(`${base}/ping`)}); const j = await r.json(); return { status: r.status, header: r.headers.get("x-pinned"), body: j };`;
+    const outcome = await runSandboxed(code, 3000, REDIRECT_TEST_SOURCE);
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      const r = outcome.result as {
+        status: number;
+        header: string;
+        body: { ok: boolean; path: string };
+      };
+      expect(r.status).toBe(200);
+      expect(r.header).toBe("yes");
+      expect(r.body.ok).toBe(true);
+      expect(r.body.path).toBe("/ping");
+    }
+  }, 10_000);
+}, 30_000);
+
+// The node:http/https pin path replaces global fetch, so it must faithfully
+// forward the request (method, body, content-length) and handle response
+// content-encoding the way the old wrapped fetch did. Uses REDIRECT_TEST_SOURCE
+// so a local 127.0.0.1 server is a reachable (validated) dial target.
+describe("sandbox grandchild pinned fetch forwards requests and bounds decoding", () => {
+  let server: Server;
+  let base: string;
+
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://127.0.0.1");
+      if (url.pathname === "/br") {
+        // Advertise an encoding the pin does not decode; the body bytes are
+        // irrelevant because classification rejects before reading.
+        res.writeHead(200, { "content-encoding": "br" });
+        res.end(Buffer.from([0x00, 0x01, 0x02]));
+        return;
+      }
+      if (url.pathname === "/gzip-bomb") {
+        res.writeHead(200, { "content-encoding": "gzip" });
+        // Highly compressible payload that decodes far past the (test-lowered)
+        // GZIP_MAX_OUTPUT_BYTES cap.
+        res.end(gzipSync(Buffer.alloc(64 * 1024, 0x61)));
+        return;
+      }
+      // Echo method + declared content-length + body for the POST test.
+      const chunks: Buffer[] = [];
+      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      req.on("end", () => {
+        const body = Buffer.concat(chunks).toString();
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end(
+          `method=${req.method} len=${req.headers["content-length"]} body=${body}`
+        );
+      });
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+  });
+
+  it("forwards POST method, body, and a correct content-length through the pin", async () => {
+    const code = `const r = await fetch(${JSON.stringify(`${base}/echo`)}, { method: "POST", body: "hello-pin" }); return { status: r.status, body: await r.text() };`;
+    const outcome = await runSandboxed(code, 3000, REDIRECT_TEST_SOURCE);
+    const result = resultOf(outcome);
+    expect(result.status).toBe(200);
+    expect(result.body).toContain("method=POST");
+    expect(result.body).toContain("len=9");
+    expect(result.body).toContain("body=hello-pin");
+  }, 10_000);
+
+  it("fails loudly on a response content-encoding it cannot decode", async () => {
+    const code = `const r = await fetch(${JSON.stringify(`${base}/br`)}); return await r.text();`;
+    const outcome = await runSandboxed(code, 3000, REDIRECT_TEST_SOURCE);
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.errorMessage).toContain("unsupported content-encoding");
+      expect(outcome.errorMessage).toContain("br");
+    }
+  }, 10_000);
+
+  it("errors instead of OOMing when a gzip body exceeds the output cap", async () => {
+    // Lower the decoded-output cap so a modest body trips it deterministically,
+    // mirroring the loopback-lift technique. A bomb must error, not return.
+    const source = REDIRECT_TEST_SOURCE.replace(
+      `const GZIP_MAX_OUTPUT_BYTES = ${SANDBOX_RESULT_MAX_BYTES};`,
+      "const GZIP_MAX_OUTPUT_BYTES = 1024;"
+    );
+    expect(source).not.toBe(REDIRECT_TEST_SOURCE);
+    const code = `const r = await fetch(${JSON.stringify(`${base}/gzip-bomb`)}); return await r.text();`;
+    const outcome = await runSandboxed(code, 3000, source);
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.errorMessage).not.toContain("SSRF blocked");
+    }
+  }, 10_000);
+}, 30_000);
+
 // Helper: a forged result frame an escaped child could write to fd 3 — a
 // 4-byte big-endian length prefix followed by a v8-serialized success outcome
 // carrying an attacker-chosen result. Used by the forgery tests below to prove
@@ -743,5 +1015,239 @@ describe("decodeSandboxResult is safe on untrusted input", () => {
 
   it("throws on malformed JSON (callers map this to an error outcome)", () => {
     expect(() => decodeSandboxResult("not json")).toThrow();
+  });
+});
+
+// encodeSandboxResult is the module-scope inverse of decodeSandboxResult used
+// by the standalone sandbox server to put a result on the HTTP response. It
+// must be a faithful inverse for every type the tag codec supports.
+describe("encodeSandboxResult <-> decodeSandboxResult round-trip", () => {
+  function roundTrip(value: unknown): unknown {
+    return decodeSandboxResult(encodeSandboxResult(value));
+  }
+
+  it("round-trips undefined", () => {
+    expect(roundTrip(undefined)).toBeUndefined();
+  });
+
+  it("round-trips BigInt", () => {
+    expect(roundTrip(BigInt("1000000000000000000"))).toBe(
+      BigInt("1000000000000000000")
+    );
+  });
+
+  it("round-trips Date", () => {
+    const r = roundTrip(new Date(1_700_000_000_000)) as Date;
+    expect(r).toBeInstanceOf(Date);
+    expect(r.getTime()).toBe(1_700_000_000_000);
+  });
+
+  it("round-trips RegExp", () => {
+    const r = roundTrip(/ab+c/gi) as RegExp;
+    expect(r).toBeInstanceOf(RegExp);
+    expect(r.source).toBe("ab+c");
+    expect(r.flags).toBe("gi");
+  });
+
+  it("round-trips Map", () => {
+    const r = roundTrip(
+      new Map<string, number>([
+        ["a", 1],
+        ["b", 2],
+      ])
+    ) as Map<string, number>;
+    expect(r).toBeInstanceOf(Map);
+    expect(r.get("a")).toBe(1);
+    expect(r.get("b")).toBe(2);
+  });
+
+  it("round-trips Set", () => {
+    const r = roundTrip(new Set([1, 2, 3])) as Set<number>;
+    expect(r).toBeInstanceOf(Set);
+    expect([...r]).toEqual([1, 2, 3]);
+  });
+
+  it("round-trips a typed array", () => {
+    const r = roundTrip(new Uint8Array([1, 2, 255])) as Uint8Array;
+    expect(r).toBeInstanceOf(Uint8Array);
+    expect([...r]).toEqual([1, 2, 255]);
+  });
+
+  it("round-trips nested objects and arrays", () => {
+    const value = { a: [1, { b: BigInt(2) }], c: { d: new Set([9]) } };
+    const r = roundTrip(value) as typeof value;
+    expect(r.a[0]).toBe(1);
+    expect((r.a[1] as { b: bigint }).b).toBe(BigInt(2));
+    expect([...(r.c.d as Set<number>)]).toEqual([9]);
+  });
+
+  it('round-trips an object literally containing a "$" key', () => {
+    expect(roundTrip({ $: "bigint", v: "5" })).toEqual({ $: "bigint", v: "5" });
+  });
+
+  it("throws on a function (not serializable)", () => {
+    expect(() => encodeSandboxResult(() => 1)).toThrow();
+  });
+});
+
+// The "bytes" tag carries an attacker-controllable `k` (constructor kind) on an
+// UNTRUSTED boundary. The decoder must only ever instantiate real view
+// constructors from a fixed allowlist, never resolve an arbitrary global by
+// name, and must never throw on a malformed frame.
+describe("decodeSandboxResult bytes tag is safe on a forged kind", () => {
+  const b64 = (bytes: number[]): string =>
+    Buffer.from(bytes).toString("base64");
+
+  it("returns inert Uint8Array bytes for a non-view global kind (e.g. fetch)", () => {
+    const r = decodeSandboxResult(
+      `{"$":"bytes","k":"fetch","v":"${b64([1, 2, 3])}"}`
+    );
+    expect(r).toBeInstanceOf(Uint8Array);
+    expect([...(r as Uint8Array)]).toEqual([1, 2, 3]);
+    expect(typeof r).not.toBe("function");
+  });
+
+  it("returns inert Uint8Array bytes for the Function constructor kind", () => {
+    const r = decodeSandboxResult(
+      `{"$":"bytes","k":"Function","v":"${b64([65])}"}`
+    );
+    expect(r).toBeInstanceOf(Uint8Array);
+    expect(typeof r).not.toBe("function");
+  });
+
+  it("does not throw and falls back to raw bytes for a size-mismatched known kind", () => {
+    // 5 bytes is not a multiple of Uint32Array's 4-byte element size.
+    let decoded: unknown;
+    expect(() => {
+      decoded = decodeSandboxResult(
+        `{"$":"bytes","k":"Uint32Array","v":"${b64([1, 2, 3, 4, 5])}"}`
+      );
+    }).not.toThrow();
+    expect(decoded).toBeInstanceOf(Uint8Array);
+    expect([...(decoded as Uint8Array)]).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("still reconstructs an allowlisted view kind with a valid byte length", () => {
+    const r = decodeSandboxResult(
+      `{"$":"bytes","k":"Uint16Array","v":"${b64([1, 0, 2, 0])}"}`
+    );
+    expect(r).toBeInstanceOf(Uint16Array);
+    expect([...(r as Uint16Array)]).toEqual([1, 2]);
+  });
+});
+
+// Fidelity fixes: the encoder must be a faithful inverse of the decoder for an
+// Invalid Date, an own "__proto__" key, and sparse-array holes.
+describe("encodeSandboxResult fidelity round-trips", () => {
+  function roundTrip(value: unknown): unknown {
+    return decodeSandboxResult(encodeSandboxResult(value));
+  }
+
+  it("round-trips an Invalid Date as an Invalid Date (not the epoch)", () => {
+    const r = roundTrip(new Date("not-a-date")) as Date;
+    expect(r).toBeInstanceOf(Date);
+    expect(Number.isNaN(r.getTime())).toBe(true);
+  });
+
+  it("decodes a date frame whose v is null as an Invalid Date", () => {
+    const r = decodeSandboxResult('{"$":"date","v":null}') as Date;
+    expect(r).toBeInstanceOf(Date);
+    expect(Number.isNaN(r.getTime())).toBe(true);
+  });
+
+  it("preserves an own __proto__ data key without polluting Object.prototype", () => {
+    const input = JSON.parse('{"a":1,"__proto__":{"polluted":true}}');
+    const r = roundTrip(input) as Record<string, unknown>;
+    expect(Object.hasOwn(r, "__proto__")).toBe(true);
+    expect((r as { a: number }).a).toBe(1);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it("round-trips a sparse array with holes as undefined (not null)", () => {
+    const sparse = [1];
+    sparse[3] = 4; // holes at indices 1, 2
+    const r = roundTrip(sparse) as unknown[];
+    expect(r.length).toBe(4);
+    expect(r[0]).toBe(1);
+    expect(r[1]).toBeUndefined();
+    expect(r[2]).toBeUndefined();
+    expect(r[3]).toBe(4);
+  });
+});
+
+// Drift guard for finding F-010's two hand-maintained encoders: the module
+// encodeSandboxResult and the inline encodeResult template share one wire
+// format but are separate code. Spawn the real grandchild over a rich corpus,
+// then assert the module encoder reproduces the inline encoder's output exactly
+// (compared after one decode, so we never reconstruct the corpus by hand).
+describe("encodeSandboxResult parity with the inline grandchild encoder", () => {
+  function rawFrame(userCode: string, timeoutMs = 3000): Promise<Buffer> {
+    return new Promise<Buffer>((resolve, reject) => {
+      const child = spawn(process.execPath, ["-e", SANDBOX_CHILD_SOURCE], {
+        stdio: ["pipe", "pipe", "pipe", "pipe"],
+      });
+      const reader = createSandboxResultReader();
+      const killTimer = setTimeout(() => {
+        child.kill("SIGKILL");
+        reject(new Error("harness timeout"));
+      }, timeoutMs + 3000);
+      child.stdout.resume();
+      child.stderr.resume();
+      const stream = child.stdio[SANDBOX_RESULT_FD];
+      if (stream && "on" in stream) {
+        stream.on("data", (chunk: Buffer) => {
+          reader.push(chunk);
+          if (reader.done && reader.frame) {
+            clearTimeout(killTimer);
+            child.kill("SIGKILL");
+            resolve(reader.frame);
+          }
+        });
+      }
+      child.on("error", (err: Error) => {
+        clearTimeout(killTimer);
+        reject(err);
+      });
+      child.stdin.write(JSON.stringify({ code: userCode, timeoutMs }));
+      child.stdin.end();
+    });
+  }
+
+  it("agrees with the inline encoder over a rich corpus", async () => {
+    const code = [
+      "const sparse = [1]; sparse[3] = 4;",
+      'const proto = JSON.parse(\'{"a":1,"__proto__":{"p":1}}\');',
+      "return {",
+      "  negZero: -0, nan: NaN, inf: Infinity, ninf: -Infinity,",
+      "  big: 10n, date: new Date(1700000000000), invalidDate: new Date('x'),",
+      "  re: /ab+c/gi, map: new Map([['a', 1], ['b', 2]]),",
+      "  set: new Set([1, 2, 3]), bytes: new Uint8Array([1, 2, 255]),",
+      "  nested: { a: [1, { b: 2n }] },",
+      "  dollar: { '$': 'bigint', v: '5' }, sparse, proto,",
+      "  undef: undefined, nul: null, str: 'x', bool: true,",
+      "};",
+    ].join("\n");
+    const text = (await rawFrame(code)).toString("utf8");
+    const inlineEncoded = (JSON.parse(text) as { result: unknown }).result;
+    const native = (decodeSandboxResult(text) as { result: unknown }).result;
+    const moduleEncoded = JSON.parse(encodeSandboxResult(native));
+    expect(moduleEncoded).toEqual(inlineEncoded);
+  });
+});
+
+// A forged frame can nest tags far deeper than any legitimate result; the
+// decoder must fail with a bounded error rather than recursing into a
+// RangeError (now in the main-app client, since the server relays unrevived).
+describe("decodeSandboxResult bounds recursion depth", () => {
+  it("throws a clear error on a too-deeply-nested frame", () => {
+    const depth = 1000; // > SANDBOX_MAX_DEPTH (256), well within JSON.parse
+    const json = "[".repeat(depth) + "]".repeat(depth);
+    expect(() => decodeSandboxResult(json)).toThrow(/too deep/);
+  });
+
+  it("still decodes a comfortably-nested frame", () => {
+    const depth = 50;
+    const json = "[".repeat(depth) + "]".repeat(depth);
+    expect(() => decodeSandboxResult(json)).not.toThrow();
   });
 });

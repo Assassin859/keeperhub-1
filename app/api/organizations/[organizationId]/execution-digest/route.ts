@@ -8,7 +8,9 @@ import {
 } from "@/lib/db/schema";
 import { isFeatureEnabledForOrg } from "@/lib/features/server";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import { getDualAuthContext } from "@/lib/middleware/auth-helpers";
+import { requireScope } from "@/lib/middleware/require-scope";
 import {
   DIGEST_REQUIRES_CADENCE_ERROR,
   DIGEST_REQUIRES_SUBSCRIBER_ERROR,
@@ -21,7 +23,7 @@ import {
 
 const FEATURE_ID = "notifications.execution-digest" as const;
 
-type ManagerOk = { ok: true; userId: string };
+type ManagerOk = { ok: true; userId: string; scope?: string };
 type ManagerErr = { ok: false; status: number; error: string };
 
 // Owners and admins may view/manage the digest settings (matches who manages
@@ -58,7 +60,7 @@ async function requireOrgManager(
   ) {
     return { ok: false, status: 403, error: "Forbidden" };
   }
-  return { ok: true, userId };
+  return { ok: true, userId, scope: authContext.scope };
 }
 
 async function loadSettings(organizationId: string) {
@@ -159,6 +161,11 @@ export async function PUT(
         { error: manager.error },
         { status: manager.status }
       );
+    }
+
+    const scopeError = requireScope(manager.scope, SCOPE_MCP_WRITE);
+    if (scopeError) {
+      return scopeError;
     }
 
     if (!(await isFeatureEnabledForOrg(FEATURE_ID, organizationId))) {

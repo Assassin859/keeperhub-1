@@ -2,7 +2,9 @@ import { ethers } from "ethers";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import ERC20_ABI from "@/lib/contracts/abis/erc20.json";
+import { SCOPE_MCP_READ } from "@/lib/mcp/oauth-scopes";
 import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
+import { requireScope } from "@/lib/middleware/require-scope";
 import { getRpcProvider } from "@/lib/rpc/provider-factory";
 import { getChainGasDefaults } from "@/lib/web3/gas-defaults";
 import { getOrganizationWalletAddress } from "@/lib/web3/wallet-helpers";
@@ -187,6 +189,12 @@ async function validateRequest(request: Request): Promise<
       { status: authCtx.status }
     );
   }
+
+  const scopeError = requireScope(authCtx.scope, SCOPE_MCP_READ);
+  if (scopeError) {
+    return scopeError;
+  }
+
   const activeOrgId = authCtx.organizationId;
 
   const body = (await request.json().catch(() => ({}))) as Partial<{

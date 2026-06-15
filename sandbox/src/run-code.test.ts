@@ -1,7 +1,33 @@
 import { serialize } from "node:v8";
 import { describe, expect, it } from "vitest";
-import { SANDBOX_RESULT_FD } from "../../lib/sandbox/child-source.js";
-import { runCode } from "./run-code.js";
+import {
+  decodeSandboxResult,
+  SANDBOX_RESULT_FD,
+} from "../../lib/sandbox/child-source.js";
+import {
+  type ChildOutcome,
+  isRelayableEnvelope,
+  runCode as runCodeRaw,
+  type SandboxRunResult,
+} from "./run-code.js";
+
+// runCode now returns a relayable tagged-JSON frame or a synthetic error
+// outcome. The tests assert on the native ChildOutcome, so decode a relayed
+// frame exactly as the main-app client does. This wrapper shadows `runCode` so
+// the existing call sites need no change.
+function toOutcome(result: SandboxRunResult): ChildOutcome {
+  return result.relay
+    ? (decodeSandboxResult(result.frame.toString("utf8")) as ChildOutcome)
+    : result.outcome;
+}
+
+async function runCode(input: {
+  code: string;
+  timeoutMs: number;
+  signal?: AbortSignal;
+}): Promise<ChildOutcome> {
+  return toOutcome(await runCodeRaw(input));
+}
 
 // A forged result frame an escaped child could write to fd 3: a 4-byte
 // big-endian length prefix followed by a v8-serialized success outcome with an
@@ -265,5 +291,53 @@ describe("runCode — sandbox child_process runner", () => {
     if (outcome.ok) {
       expect(outcome.result).toBe("REAL");
     }
+  });
+});
+
+// The frame the server relays is produced by the (untrusted) grandchild; a
+// vm-escaped child can forge it. The shallow relay guard confirms a plausible
+// envelope on the UN-REVIVED frame; the main-app client strictly validates the
+// revived form (e.g. errorStack type), so the relay guard does not inspect it.
+describe("isRelayableEnvelope shallow guard", () => {
+  it("accepts a valid ok:true envelope", () => {
+    expect(isRelayableEnvelope({ ok: true, result: 1, logs: [] })).toBe(true);
+  });
+
+  it("accepts a valid ok:false envelope, ignoring a tagged errorStack", () => {
+    expect(isRelayableEnvelope({ ok: false, errorMessage: "x", logs: [] })).toBe(
+      true
+    );
+    // On the un-revived frame errorStack:undefined arrives as { $: "undef" };
+    // the relay guard must accept it (the client validates the revived form).
+    expect(
+      isRelayableEnvelope({
+        ok: false,
+        errorMessage: "x",
+        errorStack: { $: "undef" },
+        logs: [{ level: "error", args: ["y"] }],
+      })
+    ).toBe(true);
+  });
+
+  it("rejects ok:false without a string errorMessage", () => {
+    expect(isRelayableEnvelope({ ok: false, logs: [] })).toBe(false);
+  });
+
+  it("rejects a malformed log entry", () => {
+    expect(isRelayableEnvelope({ ok: true, result: 1, logs: [null] })).toBe(
+      false
+    );
+  });
+
+  it("rejects missing or non-array logs", () => {
+    expect(isRelayableEnvelope({ ok: true, result: 1 })).toBe(false);
+    expect(isRelayableEnvelope({ ok: true, result: 1, logs: "nope" })).toBe(
+      false
+    );
+  });
+
+  it("rejects a non-object value", () => {
+    expect(isRelayableEnvelope(null)).toBe(false);
+    expect(isRelayableEnvelope("ok")).toBe(false);
   });
 });

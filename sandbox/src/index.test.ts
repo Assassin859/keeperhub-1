@@ -5,24 +5,25 @@ import {
   type ServerResponse,
 } from "node:http";
 import { type AddressInfo, createServer as createNetServer } from "node:net";
-import {
-  deserialize as v8Deserialize,
-  serialize as v8Serialize,
-} from "node:v8";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  decodeSandboxResult,
+  SANDBOX_WIRE_VERSION,
+} from "../../lib/sandbox/child-source.js";
 import { handleRequest } from "./index.js";
 
 const RESULT_SENTINEL = "\u0001RESULT\u0002";
 
 function makeRunBody(payload: unknown): string {
-  return v8Serialize(payload).toString("base64");
+  return JSON.stringify(payload);
 }
 
 async function request(
   port: number,
   method: string,
   path: string,
-  body?: string
+  body?: string,
+  headers?: Record<string, string | number>
 ): Promise<{ status: number; body: Buffer }> {
   const { request: httpRequest } = await import("node:http");
   return await new Promise((resolve, reject) => {
@@ -32,12 +33,15 @@ async function request(
         port,
         method,
         path,
-        headers: body
-          ? {
-              "Content-Type": "application/octet-stream",
-              "Content-Length": Buffer.byteLength(body),
-            }
-          : {},
+        headers:
+          headers ??
+          (body
+            ? {
+                "Content-Type": "application/json",
+                "Content-Length": Buffer.byteLength(body),
+                "X-KH-Sandbox-Wire": SANDBOX_WIRE_VERSION,
+              }
+            : {}),
       },
       (res) => {
         const chunks: Buffer[] = [];
@@ -59,13 +63,16 @@ async function request(
 }
 
 function parseRunResponse(body: Buffer): unknown {
-  const text = body.toString("binary");
+  const text = body.toString("utf8");
   const idx = text.lastIndexOf(RESULT_SENTINEL);
   if (idx < 0) {
     throw new Error(`no sentinel in response: ${text.slice(0, 80)}`);
   }
-  const base64 = text.slice(idx + RESULT_SENTINEL.length).replace(/\n$/, "");
-  return v8Deserialize(Buffer.from(base64.trim(), "base64"));
+  const payload = text
+    .slice(idx + RESULT_SENTINEL.length)
+    .replace(/\n$/, "")
+    .trim();
+  return decodeSandboxResult(payload);
 }
 
 describe("sandbox HTTP server", () => {
@@ -109,11 +116,11 @@ describe("sandbox HTTP server", () => {
     expect(res.status).toBe(404);
   });
 
-  it("POST /run with valid v8+base64 body returns 200 with sentinel-prefixed ChildOutcome", async () => {
+  it("POST /run with valid JSON body returns 200 with sentinel-prefixed ChildOutcome", async () => {
     const body = makeRunBody({ code: "return 1 + 1;", timeout: 5 });
     const res = await request(port, "POST", "/run", body);
     expect(res.status).toBe(200);
-    const text = res.body.toString("binary");
+    const text = res.body.toString("utf8");
     expect(text.includes(RESULT_SENTINEL)).toBe(true);
     const outcome = parseRunResponse(res.body) as {
       ok: boolean;
@@ -124,18 +131,54 @@ describe("sandbox HTTP server", () => {
   });
 
   it("POST /run with empty body returns 400", async () => {
-    const res = await request(port, "POST", "/run");
+    const res = await request(port, "POST", "/run", undefined, {
+      "X-KH-Sandbox-Wire": SANDBOX_WIRE_VERSION,
+    });
     expect(res.status).toBe(400);
   });
 
-  it("POST /run with non-base64 body returns 400", async () => {
+  it("POST /run without the wire-version header returns 415", async () => {
+    const body = makeRunBody({ code: "return 1;", timeout: 5 });
+    const res = await request(port, "POST", "/run", body, {
+      "Content-Type": "application/json",
+      "Content-Length": Buffer.byteLength(body),
+    });
+    expect(res.status).toBe(415);
+    expect(res.body.toString()).toContain("unsupported sandbox wire version");
+  });
+
+  it("POST /run with non-JSON garbage body returns 400 malformed body", async () => {
     const res = await request(
       port,
       "POST",
       "/run",
-      "this is not v8 base64 !!!"
+      "this is not json at all !!!"
     );
     expect(res.status).toBe(400);
+    expect(res.body.toString()).toBe("malformed body");
+  });
+
+  it("POST /run with valid JSON but no code field returns 400 malformed body", async () => {
+    const res = await request(port, "POST", "/run", JSON.stringify({ timeout: 5 }));
+    expect(res.status).toBe(400);
+    expect(res.body.toString()).toBe("malformed body");
+  });
+
+  it("POST /run round-trips a result containing BigInt and Map through encodeSandboxResult", async () => {
+    const body = makeRunBody({
+      code: "return { b: BigInt('1000000000000000000'), m: new Map([['a', 1]]) };",
+      timeout: 5,
+    });
+    const res = await request(port, "POST", "/run", body);
+    expect(res.status).toBe(200);
+    const outcome = parseRunResponse(res.body) as {
+      ok: boolean;
+      result?: { b: bigint; m: Map<string, number> };
+    };
+    expect(outcome.ok).toBe(true);
+    expect(outcome.result?.b).toBe(BigInt("1000000000000000000"));
+    expect(outcome.result?.m).toBeInstanceOf(Map);
+    expect(outcome.result?.m.get("a")).toBe(1);
   });
 
   it("POST /run where user code throws returns 200 with ok:false ChildOutcome", async () => {
@@ -190,8 +233,9 @@ describe("sandbox HTTP server", () => {
           method: "POST",
           path: "/run",
           headers: {
-            "Content-Type": "application/octet-stream",
+            "Content-Type": "application/json",
             "Content-Length": Buffer.byteLength(hangingCode),
+            "X-KH-Sandbox-Wire": SANDBOX_WIRE_VERSION,
           },
         },
         () => {

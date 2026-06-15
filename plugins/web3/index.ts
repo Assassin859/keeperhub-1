@@ -1228,7 +1228,7 @@ const web3Plugin: IntegrationPlugin = {
       slug: "sign-typed-data",
       label: "Sign Typed Data (EIP-712)",
       description:
-        "Produce an EIP-712 signature over a typed-data payload using the org's Turnkey-backed wallet. Suitable for x402 / EIP-3009 transferWithAuthorization, EIP-2612 permits, MPP proofs, and any other off-chain signed intent.",
+        "Produce an EIP-712 signature over a typed-data payload using the org's Turnkey-backed wallet, for off-chain signed intents. Fund-moving authorizations (permits, transfer authorizations, delegations) are refused on this step.",
       category: "Web3",
       requiresCredentials: true,
       stepFunction: "signTypedDataStep",

@@ -25,6 +25,7 @@ import {
   failExecution,
   markRunning,
   redactInput,
+  withRejectedSignerOverride,
 } from "../_lib/execution-service";
 import { checkRateLimit } from "../_lib/rate-limit";
 import { parseSimulateFlag } from "../_lib/simulate-flag";
@@ -174,7 +175,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   // 6. Spending cap + create execution atomically
-  const redactedInput = redactInput(body);
+  const redactedInput = redactInput(withRejectedSignerOverride(body, body));
   const reserve = await checkAndReserveExecution({
     organizationId: apiKeyCtx.organizationId,
     apiKeyId: apiKeyCtx.apiKeyId,

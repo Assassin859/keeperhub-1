@@ -8,8 +8,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
+// assertUrlIsPublic is the always-on SSRF pre-check perform.ts runs before
+// safeFetch; stub it to resolve so these timeout/soft-fail cases exercise the
+// fetch path. SsrfBlockedError must be a real class so the `instanceof` branch
+// in perform.ts's catch is callable.
 vi.mock("@/lib/safe-fetch", () => ({
   safeFetch: vi.fn(),
+  assertUrlIsPublic: vi.fn(() => Promise.resolve()),
+  SsrfBlockedError: class SsrfBlockedError extends Error {},
 }));
 
 import { safeFetch } from "@/lib/safe-fetch";

@@ -5,10 +5,12 @@ import { normalizeAddressForStorage } from "@/lib/address-utils";
 import { db } from "@/lib/db";
 import { addressBookEntry, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
+import { SCOPE_MCP_WRITE } from "@/lib/mcp/oauth-scopes";
 import {
   resolveCreatorContext,
   resolveOrganizationId,
 } from "@/lib/middleware/auth-helpers";
+import { requireScope } from "@/lib/middleware/require-scope";
 
 // GET - List all address book entries for the current organization
 export async function GET(request: Request) {
@@ -87,6 +89,10 @@ export async function POST(request: Request) {
         { error: authCtx.error },
         { status: authCtx.status }
       );
+    }
+    const scopeError = requireScope(authCtx.scope, SCOPE_MCP_WRITE);
+    if (scopeError) {
+      return scopeError;
     }
     const { organizationId: activeOrgId, userId } = authCtx;
 
