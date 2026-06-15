@@ -334,6 +334,11 @@ describe("sandbox grandchild redirect following", () => {
         status: 302,
         location: "http://169.254.169.254/latest/meta-data/",
       },
+      "/r/imds-hex": { status: 302, location: "http://0xa9fea9fe/" },
+      "/r/imds-mapped": {
+        status: 302,
+        location: "http://[::ffff:169.254.169.254]/",
+      },
       "/r/cluster": {
         status: 302,
         location: "http://probe.svc.cluster.local/",
@@ -393,6 +398,22 @@ describe("sandbox grandchild redirect following", () => {
       expect(outcome.errorMessage).toContain("169.254.169.254");
     }
   });
+
+  it.each([
+    ["/r/imds-hex", "hex-literal IMDS (0xa9fea9fe)"],
+    ["/r/imds-mapped", "IPv4-mapped IPv6 IMDS"],
+  ])(
+    "blocks a redirect into a non-canonical IMDS literal via %s (%s)",
+    async (path) => {
+      const outcome = await runSandboxed(
+        getCode(`${base}${path}`),
+        3000,
+        REDIRECT_TEST_SOURCE
+      );
+      expectBlocked(outcome);
+    },
+    10_000
+  );
 
   it("blocks a redirect into a cluster hostname", async () => {
     const outcome = await runSandboxed(
@@ -584,6 +605,126 @@ describe("sandbox grandchild pins the resolved address at dial time (F-024)", ()
       expect(outcome.errorMessage).toContain("169.254.169.254");
     }
   }, 10_000);
+}, 30_000);
+
+// F-024 follow-up: the SSRF guard must validate the SAME canonical URL the dial
+// connects to. The first F-024 fix validated extractUrl(resource) (which read
+// resource.url) while pinnedFetch dialed new Request(resource).url (which
+// coerces the resource via toString / Symbol.toPrimitive). A crafted resource
+// whose .url and toString disagree slipped an allowed host past the guard while
+// dialing a blocked IP literal -- and an IP literal skips the pinned lookup
+// entirely (net.connect dials it directly), so the validated address set was
+// never consulted and the app-layer guard was fully bypassed. The fix builds the
+// WHATWG Request once and validates + dials that single object, and pinnedFetch
+// additionally refuses to dial an IP literal that is not in the validated set.
+describe("sandbox grandchild validates the dialed URL, not a divergent resource view (F-024 follow-up)", () => {
+  let server: Server;
+  let base: string;
+
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://127.0.0.1");
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, path: url.pathname }));
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+  });
+
+  it("blocks a resource whose toString() returns an IP literal its .url hides (the confirmed bypass)", async () => {
+    // resource.url is a public literal (passed the old guard); toString() is the
+    // value new Request() actually dials -- IMDS link-local. The guard must see
+    // the dialed value and block it. Uses the real source: 1.1.1.1 is a literal
+    // (no DNS) and the IMDS literal is rejected before any socket is opened.
+    const code = `return await fetch({ url: "http://1.1.1.1/", toString() { return "http://169.254.169.254/latest/meta-data/iam/security-credentials/"; } });`;
+    const outcome = await runSandboxed(code);
+    expectBlocked(outcome);
+    if (!outcome.ok) {
+      // The error names the dialed IMDS literal, not the decoy resource.url.
+      expect(outcome.errorMessage).toContain("169.254.169.254");
+      expect(outcome.errorMessage).not.toContain("1.1.1.1");
+    }
+  }, 10_000);
+
+  it("blocks the same divergence expressed via Symbol.toPrimitive", async () => {
+    const code = `return await fetch({ url: "http://1.1.1.1/", [Symbol.toPrimitive]() { return "http://169.254.169.254/"; } });`;
+    const outcome = await runSandboxed(code);
+    expectBlocked(outcome);
+    if (!outcome.ok) {
+      expect(outcome.errorMessage).toContain("169.254.169.254");
+    }
+  }, 10_000);
+
+  // Non-canonical IPv4/IPv6 literal forms must also be blocked. WHATWG URL
+  // normalisation collapses them to canonical IPs inside the single request.url
+  // that is both validated and dialed, so isBlockedIp catches them - but only if
+  // validation and dial read the SAME normalised string, which is exactly the
+  // invariant this fix establishes. (The pre-existing tests only cover canonical
+  // dotted literals.)
+  it.each([
+    ['await fetch("http://0177.0.0.1/")', "octal IPv4 -> 127.0.0.1"],
+    ['await fetch("http://2130706433/")', "decimal IPv4 -> 127.0.0.1"],
+    ['await fetch("http://0xa9fea9fe/")', "hex IPv4 -> 169.254.169.254 (IMDS)"],
+    ['await fetch("http://127.1/")', "short IPv4 -> 127.0.0.1"],
+    [
+      'await fetch("http://[::ffff:169.254.169.254]/")',
+      "IPv4-mapped IPv6 -> IMDS",
+    ],
+  ])("blocks non-canonical literal %s (%s)", async (snippet) => {
+    const outcome = await runSandboxed(`return ${snippet};`);
+    expectBlocked(outcome);
+  }, 10_000);
+
+  it("still allows an object resource whose coerced URL is an allowed host (no over-block)", async () => {
+    // Negative control: object resources remain usable for legitimate targets.
+    const code = `const r = await fetch({ toString() { return ${JSON.stringify(`${base}/ok`)}; } }); return { status: r.status, body: await r.json() };`;
+    const outcome = await runSandboxed(code, 3000, REDIRECT_TEST_SOURCE);
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      const r = outcome.result as { status: number; body: { path: string } };
+      expect(r.status).toBe(200);
+      expect(r.body.path).toBe("/ok");
+    }
+  }, 10_000);
+
+  it("coerces the resource exactly once, so a mutating toString() cannot validate one URL and dial another", async () => {
+    // If the resource were coerced twice (once to validate, once to dial) this
+    // toString would pass the guard on call #1 (allowed host) and dial IMDS on
+    // call #2. Building the Request once invokes it a single time: the dial uses
+    // the validated value and n stays 1.
+    const code = `let n = 0; const r = await fetch({ toString() { n++; return n === 1 ? ${JSON.stringify(`${base}/ok`)} : "http://169.254.169.254/"; } }); return { status: r.status, n, body: await r.json() };`;
+    const outcome = await runSandboxed(code, 3000, REDIRECT_TEST_SOURCE);
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      const r = outcome.result as {
+        status: number;
+        n: number;
+        body: { path: string };
+      };
+      expect(r.status).toBe(200);
+      expect(r.n).toBe(1);
+      expect(r.body.path).toBe("/ok");
+    }
+  }, 10_000);
+
+  it("refuses to dial an IP literal absent from the validated pinned set (defense-in-depth backstop)", () => {
+    // The literal-dial backstop in pinnedFetch is load-bearing: net.connect
+    // dials an IP literal directly, skipping the pinned lookup, so the literal
+    // must be re-checked against the validated set before connecting.
+    expect(SANDBOX_CHILD_SOURCE).toContain("unvalidated dial target");
+  });
+
+  it("no longer derives the validated URL from a divergent resource.url helper", () => {
+    expect(SANDBOX_CHILD_SOURCE).not.toContain("function extractUrl");
+  });
 }, 30_000);
 
 // Behavioural coverage that the node:http/https pin path is a faithful drop-in
