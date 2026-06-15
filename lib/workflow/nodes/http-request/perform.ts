@@ -12,6 +12,7 @@
  */
 import "server-only";
 
+import { ErrorCategory, logUserError } from "@/lib/logging";
 import {
   assertUrlIsPublic,
   SsrfBlockedError,
@@ -211,6 +212,12 @@ export async function httpRequest(
     // fires for both the always-on assertUrlIsPublic pre-check and a safeFetch
     // block in enforce mode.
     if (error instanceof SsrfBlockedError) {
+      logUserError(
+        ErrorCategory.VALIDATION,
+        "[HTTP Request] Blocked SSRF target",
+        error.message,
+        { node_type: "http-request" }
+      );
       return {
         success: false,
         error: `HTTP request failed: URL is not allowed: ${error.message}`,

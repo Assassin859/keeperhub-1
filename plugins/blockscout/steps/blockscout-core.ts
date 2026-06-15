@@ -1,5 +1,6 @@
 import "server-only";
 
+import { ErrorCategory, logUserError } from "@/lib/logging";
 import { getChainIdFromNetwork } from "@/lib/rpc/network-utils";
 import {
   assertUrlIsPublic,
@@ -115,6 +116,12 @@ export async function blockscoutGet<T>(
     return { success: true, data };
   } catch (error) {
     if (error instanceof SsrfBlockedError) {
+      logUserError(
+        ErrorCategory.VALIDATION,
+        "[Blockscout] Blocked SSRF target",
+        error.message,
+        { plugin_name: "blockscout" }
+      );
       return {
         success: false,
         error: `Blockscout instance URL is not allowed: ${error.message}`,
