@@ -103,13 +103,20 @@ const SUPPORTED_CHAIN_ID_SET: ReadonlySet<number> = new Set<number>(
 );
 
 const HEX_CHAIN_ID_RE = /^0x[0-9a-f]+$/i;
+const DEC_CHAIN_ID_RE = /^[0-9]+$/;
 
 // `domain.chainId` may arrive as a number, a decimal string, a 0x-hex
-// string, or a bigint. Normalize to a positive integer, or null if it is
-// not a parseable positive chain id.
+// string, or a bigint. Normalize to a positive safe integer, or null if it
+// is not one. Parsing is STRICT: the whole string must be a clean hex or
+// decimal integer. We deliberately do not reuse lib/rpc/network-utils
+// getChainIdFromNetwork here - that helper resolves legacy network NAMES and
+// uses a lenient Number.parseInt that would accept "8453garbage" as 8453,
+// validating a value different from the one actually signed.
 function normalizeChainId(value: unknown): number | null {
   if (typeof value === "number") {
-    return Number.isInteger(value) && value > 0 ? value : null;
+    return Number.isInteger(value) && value > 0 && value <= Number.MAX_SAFE_INTEGER
+      ? value
+      : null;
   }
   if (typeof value === "bigint") {
     return value > BigInt(0) && value <= BigInt(Number.MAX_SAFE_INTEGER)
@@ -118,9 +125,15 @@ function normalizeChainId(value: unknown): number | null {
   }
   if (typeof value === "string") {
     const trimmed = value.trim();
-    const radix = HEX_CHAIN_ID_RE.test(trimmed) ? 16 : 10;
-    const parsed = Number.parseInt(trimmed, radix);
-    return Number.isNaN(parsed) || parsed <= 0 ? null : parsed;
+    let parsed: number;
+    if (HEX_CHAIN_ID_RE.test(trimmed)) {
+      parsed = Number.parseInt(trimmed, 16);
+    } else if (DEC_CHAIN_ID_RE.test(trimmed)) {
+      parsed = Number.parseInt(trimmed, 10);
+    } else {
+      return null;
+    }
+    return parsed > 0 && parsed <= Number.MAX_SAFE_INTEGER ? parsed : null;
   }
   return null;
 }
