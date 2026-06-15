@@ -1,21 +1,34 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { member, securityAuditLog, users } from "@/lib/db/schema";
 import { ErrorCategory, logSystemError } from "@/lib/logging";
-import { resolveOrganizationId } from "@/lib/middleware/auth-helpers";
+import {
+  dualFactorErrorResponse,
+  requireDualFactor,
+} from "@/lib/mfa/dual-factor";
+import { getActiveOrgId } from "@/lib/middleware/org-context";
+import { requireOwnerWithMfa } from "@/lib/middleware/owner-mfa-guard";
 import { redactAuditDiff } from "@/lib/security/audit-redaction";
 import { toCsvCell } from "@/lib/security/csv";
 
 /**
- * Compliance export of the org's security audit trail as CSV. Same gate as the
- * read endpoint (session, org-scoped, owner/admin only). The diff column is
- * redacted server-side and emitted as a JSON string; internal columns
- * (apiKeyId, correlationId, outcome, ...) are not exported. Capped to keep the
- * response bounded; the paginated JSON endpoint serves deeper history.
+ * Compliance export of the org's security audit trail as CSV.
+ *
+ * Sensitive: pulling the full forensic history is owner-only and gated behind
+ * dual-factor (authenticator TOTP + emailed OTP), the same guard the wallet
+ * withdraw uses. POST so the MFA codes ride in the body, never the URL. On a
+ * missing/invalid factor it returns the dual-factor challenge JSON; on success
+ * it streams the CSV. The diff column is redacted server-side; internal columns
+ * (apiKeyId, correlationId, outcome, ...) are not exported.
+ *
+ * Optional `days` (7/30/90) and `resourceTypes[]` narrow the export to match
+ * the activity view; they bound file size only and are NOT plan-gated.
  */
 
 const MAX_EXPORT_ROWS = 50_000;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const ALLOWED_RANGE_DAYS = new Set([7, 30, 90]);
 
 const COLUMNS = [
   "created_at",
@@ -30,46 +43,82 @@ const COLUMNS = [
   "diff",
 ] as const;
 
-export async function GET(request: Request): Promise<Response> {
+type ExportBody = {
+  days?: number | string;
+  resourceTypes?: unknown;
+  code?: string;
+  emailOtp?: string;
+};
+
+export async function POST(request: Request): Promise<Response> {
   try {
     const session = await auth.api.getSession({ headers: request.headers });
     if (!session?.user) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const orgCtx = await resolveOrganizationId(request);
-    if ("error" in orgCtx) {
-      return Response.json({ error: orgCtx.error }, { status: orgCtx.status });
-    }
-    const { organizationId } = orgCtx;
-
-    const [membership] = await db
-      .select({ role: member.role })
-      .from(member)
-      .where(
-        and(
-          eq(member.userId, session.user.id),
-          eq(member.organizationId, organizationId)
-        )
-      )
-      .limit(1);
-
-    if (
-      !membership ||
-      (membership.role !== "owner" && membership.role !== "admin")
-    ) {
+    const organizationId = getActiveOrgId(session);
+    if (!organizationId) {
       return Response.json(
-        {
-          error: "Only organization owners and admins can export the audit log",
-        },
-        { status: 403 }
+        { error: "No active organization" },
+        { status: 400 }
       );
+    }
+
+    const body = (await request.json().catch(() => ({}))) as ExportBody;
+
+    // Passive gate: owner role + MFA enrolled + session step-up cleared.
+    const sessionRow = session.session as { requiresMfa?: boolean | null };
+    const guard = await requireOwnerWithMfa(
+      session.user.id,
+      organizationId,
+      sessionRow.requiresMfa === true
+    );
+    if (!guard.ok) {
+      return Response.json(
+        { error: guard.error, code: guard.code },
+        { status: guard.status }
+      );
+    }
+
+    // Active gate: authenticator + emailed code at the moment of export.
+    const dual = await requireDualFactor({
+      userId: session.user.id,
+      email: session.user.email,
+      action: "audit_export",
+      code: body.code,
+      emailOtp: body.emailOtp,
+      headers: request.headers,
+    });
+    if (!dual.ok) {
+      return dualFactorErrorResponse(dual);
+    }
+
+    const rawDays = Number.parseInt(String(body.days ?? ""), 10);
+    const windowDays = ALLOWED_RANGE_DAYS.has(rawDays) ? rawDays : null;
+    const resourceTypes = Array.isArray(body.resourceTypes)
+      ? body.resourceTypes.filter((t): t is string => typeof t === "string")
+      : [];
+
+    const filters = [eq(securityAuditLog.organizationId, organizationId)];
+    if (windowDays) {
+      filters.push(
+        gte(
+          securityAuditLog.createdAt,
+          new Date(Date.now() - windowDays * MS_PER_DAY)
+        )
+      );
+    }
+    if (resourceTypes.length === 1) {
+      filters.push(eq(securityAuditLog.resourceType, resourceTypes[0]));
+    } else if (resourceTypes.length > 1) {
+      filters.push(inArray(securityAuditLog.resourceType, resourceTypes));
     }
 
     const rows = await db
       .select()
       .from(securityAuditLog)
-      .where(eq(securityAuditLog.organizationId, organizationId))
+      .where(and(...filters))
       .orderBy(desc(securityAuditLog.createdAt))
       .limit(MAX_EXPORT_ROWS);
 
@@ -117,11 +166,14 @@ export async function GET(request: Request): Promise<Response> {
       );
     }
 
+    const filename = windowDays
+      ? `audit-log-last-${windowDays}d.csv`
+      : "audit-log.csv";
     return new Response(lines.join("\n"), {
       status: 200,
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": 'attachment; filename="audit-log.csv"',
+        "Content-Disposition": `attachment; filename="${filename}"`,
         "Cache-Control": "no-store",
       },
     });
