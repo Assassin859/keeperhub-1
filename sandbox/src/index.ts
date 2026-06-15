@@ -4,7 +4,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import { encodeSandboxResult } from "../../lib/sandbox/child-source.js";
-import { runCode } from "./run-code.js";
+import { runCode, type SandboxRunResult } from "./run-code.js";
 
 /**
  * Sentinel bytes byte-identical to the child_process runner. Main-app
@@ -93,8 +93,12 @@ async function readBody(
   return Buffer.concat(chunks);
 }
 
-function writeRunResult(res: ServerResponse, outcome: unknown): void {
-  const payload = encodeSandboxResult(outcome);
+function writeRunResult(res: ServerResponse, result: SandboxRunResult): void {
+  // A relayed frame is the child's tagged-JSON forwarded verbatim; only a
+  // synthetic error outcome needs encoding here.
+  const payload = result.relay
+    ? result.frame.toString("utf8")
+    : encodeSandboxResult(result.outcome);
   res.writeHead(200, { "Content-Type": "application/json" });
   res.end(`${RESULT_SENTINEL}${payload}\n`);
 }
@@ -173,7 +177,7 @@ async function handlePostRun(
         ? request.timeout
         : DEFAULT_TIMEOUT_SECONDS;
     const timeoutMs = Math.max(1, Math.min(120, timeoutSeconds)) * 1000;
-    const outcome = await runCode({
+    const result = await runCode({
       code: request.code,
       timeoutMs,
       signal: abortController.signal,
@@ -183,7 +187,7 @@ async function handlePostRun(
     if (res.writableEnded || res.destroyed) {
       return;
     }
-    writeRunResult(res, outcome);
+    writeRunResult(res, result);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message === "body too large") {

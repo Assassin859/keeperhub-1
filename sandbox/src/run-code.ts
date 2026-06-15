@@ -2,7 +2,6 @@ import { spawn } from "node:child_process";
 import {
   SANDBOX_CHILD_SOURCE as CHILD_SOURCE,
   createSandboxResultReader,
-  decodeSandboxResult,
   SANDBOX_RESULT_FD,
   type SandboxResultReader,
 } from "../../lib/sandbox/child-source.js";
@@ -49,7 +48,7 @@ function buildChildEnv(): NodeJS.ProcessEnv {
   return out as NodeJS.ProcessEnv;
 }
 
-function isLogEntry(value: unknown): value is LogEntry {
+function isLogEntry(value: unknown): boolean {
   if (typeof value !== "object" || value === null) {
     return false;
   }
@@ -58,68 +57,68 @@ function isLogEntry(value: unknown): value is LogEntry {
 }
 
 /**
- * Exported for unit testing. The decoded frame crosses an untrusted boundary (a
- * vm-escaped child can forge it), so validate the whole envelope, not just `ok`
- * -- mirroring the main-app client guard so both sides fail malformed outcomes
- * closed instead of surfacing undefined error/log fields downstream.
+ * Exported for unit testing. A SHALLOW envelope check on the UN-REVIVED frame:
+ * the server only relays the frame to the main-app client, which revives it and
+ * strictly validates (e.g. errorStack type). The child is untrusted (a vm
+ * escape can forge a frame), so we confirm a plausible ChildOutcome envelope --
+ * the `ok` discriminant, well-shaped logs, and a string errorMessage on
+ * ok:false -- without inspecting tagged values like a `{ "$": "undef" }`
+ * errorStack, which only resolves after the client revives the frame.
  */
-export function isChildOutcome(value: unknown): value is ChildOutcome {
+export function isRelayableEnvelope(value: unknown): boolean {
   if (typeof value !== "object" || value === null) {
     return false;
   }
-  const v = value as {
-    ok?: unknown;
-    logs?: unknown;
-    errorMessage?: unknown;
-    errorStack?: unknown;
-  };
+  const v = value as { ok?: unknown; logs?: unknown; errorMessage?: unknown };
   if (typeof v.ok !== "boolean" || !Array.isArray(v.logs)) {
     return false;
   }
   if (!v.logs.every(isLogEntry)) {
     return false;
   }
-  if (v.ok === true) {
-    return true;
-  }
-  return (
-    typeof v.errorMessage === "string" &&
-    (v.errorStack === undefined || typeof v.errorStack === "string")
-  );
+  return v.ok === true || typeof v.errorMessage === "string";
 }
 
-function outcomeFromReader(reader: SandboxResultReader): ChildOutcome {
+/**
+ * A run result the server writes to the HTTP response. A valid child frame is
+ * RELAYED verbatim -- it is already the tagged-JSON the main-app client reads,
+ * so the server does not revive tagged values nor re-encode them. Synthetic
+ * errors (timeout, abort, malformed/no frame) carry a ChildOutcome to encode.
+ */
+export type SandboxRunResult =
+  | { relay: true; frame: Buffer }
+  | { relay: false; outcome: ChildOutcome };
+
+function syntheticError(errorMessage: string): SandboxRunResult {
+  return { relay: false, outcome: { ok: false, errorMessage, logs: [] } };
+}
+
+function resultFromReader(reader: SandboxResultReader): SandboxRunResult {
   if (reader.error) {
-    return { ok: false, errorMessage: reader.error, logs: [] };
+    return syntheticError(reader.error);
   }
   if (!reader.frame) {
-    return { ok: false, errorMessage: "Sandbox produced no result", logs: [] };
+    return syntheticError("Sandbox produced no result");
   }
+  // Validate the envelope WITHOUT reviving tagged values: the server only
+  // relays the frame to the main-app client, which revives it and strictly
+  // validates. A shallow JSON.parse + envelope check is enough here; the frame
+  // is then forwarded verbatim, avoiding a decode + re-encode (and the
+  // BigInt/Map/Buffer allocations + double base64) per request.
   try {
-    // Safe by construction: JSON.parse + tag rebuild, never v8.deserialize on
-    // child-produced bytes (F-010). Validate the envelope shape since the
-    // child is untrusted.
-    const decoded = decodeSandboxResult(reader.frame.toString("utf8"));
-    if (!isChildOutcome(decoded)) {
-      return {
-        ok: false,
-        errorMessage: "Sandbox produced malformed result",
-        logs: [],
-      };
+    const parsed: unknown = JSON.parse(reader.frame.toString("utf8"));
+    if (!isRelayableEnvelope(parsed)) {
+      return syntheticError("Sandbox produced malformed result");
     }
-    return decoded;
-  } catch (_err) {
-    return {
-      ok: false,
-      errorMessage: "Sandbox produced malformed result",
-      logs: [],
-    };
+    return { relay: true, frame: reader.frame };
+  } catch {
+    return syntheticError("Sandbox produced malformed result");
   }
 }
 
 /**
  * Spawn a child Node process with a scrubbed env, run the user code inside
- * it, and return the child's outcome. Kills the child on timeout or when
+ * it, and return the child's result. Kills the child on timeout or when
  * the caller's AbortSignal fires.
  */
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: single cohesive spawner with timeout + stream aggregation + graceful teardown + signal wiring
@@ -127,10 +126,10 @@ async function runInChild(
   code: string,
   timeoutMs: number,
   signal?: AbortSignal
-): Promise<ChildOutcome> {
-  return await new Promise<ChildOutcome>((resolve) => {
+): Promise<SandboxRunResult> {
+  return await new Promise<SandboxRunResult>((resolve) => {
     if (signal?.aborted) {
-      resolve({ ok: false, errorMessage: "ABORTED", logs: [] });
+      resolve(syntheticError("ABORTED"));
       return;
     }
 
@@ -146,11 +145,11 @@ async function runInChild(
     let settled = false;
 
     const onAbort = (): void => {
-      finish({ ok: false, errorMessage: "ABORTED", logs: [] });
+      finish(syntheticError("ABORTED"));
     };
     signal?.addEventListener("abort", onAbort, { once: true });
 
-    function finish(outcome: ChildOutcome): void {
+    function finish(result: SandboxRunResult): void {
       if (settled) {
         return;
       }
@@ -164,11 +163,11 @@ async function runInChild(
           // ignore; child may already have exited
         }
       }
-      resolve(outcome);
+      resolve(result);
     }
 
     const killTimer = setTimeout(() => {
-      finish({ ok: false, errorMessage: "WALL_CLOCK_TIMEOUT", logs: [] });
+      finish(syntheticError("WALL_CLOCK_TIMEOUT"));
     }, timeoutMs + 1000);
 
     // Drain stdout so a sandbox escape that writes there cannot fill the pipe
@@ -187,37 +186,45 @@ async function runInChild(
         if (resultReader.done) {
           // First complete frame wins; resolve now and reap the child even if
           // escaped code kept the event loop alive past the result.
-          finish(outcomeFromReader(resultReader));
+          finish(resultFromReader(resultReader));
         }
       });
       resultStream.on("error", () => {
-        // Pipe teardown races process exit; the close handler maps the outcome.
+        // Pipe teardown races process exit; the close handler maps the result.
       });
     }
 
     child.on("error", (err: Error) => {
       finish({
-        ok: false,
-        errorMessage: err.message || String(err),
-        errorStack: err.stack,
-        logs: [],
+        relay: false,
+        outcome: {
+          ok: false,
+          errorMessage: err.message || String(err),
+          errorStack: err.stack,
+          logs: [],
+        },
       });
     });
 
     child.on("close", (exitCode: number | null) => {
-      const parsed = outcomeFromReader(resultReader);
-      if (parsed.ok || exitCode === 0) {
-        finish(parsed);
+      const result = resultFromReader(resultReader);
+      // A valid frame is relayed as-is; so is anything on a clean exit. Only a
+      // synthetic "no result" on a non-zero exit gets the stderr/exit hint.
+      if (result.relay || exitCode === 0) {
+        finish(result);
         return;
       }
-      // Non-zero exit with no result frame; surface stderr as a hint.
+      const noResult =
+        result.outcome.errorMessage === "Sandbox produced no result";
       finish({
-        ok: false,
-        errorMessage:
-          parsed.errorMessage === "Sandbox produced no result"
+        relay: false,
+        outcome: {
+          ok: false,
+          errorMessage: noResult
             ? `Sandbox process exited with code ${String(exitCode)}${stderr ? `: ${stderr.trim().slice(0, 500)}` : ""}`
-            : parsed.errorMessage,
-        logs: [],
+            : result.outcome.errorMessage,
+          logs: [],
+        },
       });
     });
 
@@ -225,24 +232,25 @@ async function runInChild(
       child.stdin.write(JSON.stringify({ code, timeoutMs }));
       child.stdin.end();
     } catch (err) {
-      finish({
-        ok: false,
-        errorMessage: `Failed to send code to sandbox: ${err instanceof Error ? err.message : String(err)}`,
-        logs: [],
-      });
+      finish(
+        syntheticError(
+          `Failed to send code to sandbox: ${err instanceof Error ? err.message : String(err)}`
+        )
+      );
     }
   });
 }
 
 /**
  * Public API: run `code` in a fresh scrubbed child process with a wall-clock
- * timeout of `timeoutMs` milliseconds. Resolves with a ChildOutcome describing
- * either the user result (v8-deserialized) or a structured error.
+ * timeout of `timeoutMs` milliseconds. Resolves with a SandboxRunResult: either
+ * a relayable tagged-JSON frame (the user result, forwarded verbatim) or a
+ * synthetic ChildOutcome describing a structured error.
  */
 export async function runCode(input: {
   code: string;
   timeoutMs: number;
   signal?: AbortSignal;
-}): Promise<ChildOutcome> {
+}): Promise<SandboxRunResult> {
   return runInChild(input.code, input.timeoutMs, input.signal);
 }
