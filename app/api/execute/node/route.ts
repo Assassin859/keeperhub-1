@@ -20,6 +20,7 @@ import {
   markRunning,
   redactInput,
   setRetryCount,
+  withRejectedSignerOverride,
 } from "../_lib/execution-service";
 import { checkRateLimit } from "../_lib/rate-limit";
 import {
@@ -311,10 +312,12 @@ async function executeNode(
   if (preCreatedExecutionId) {
     executionId = preCreatedExecutionId;
   } else {
-    const redactedInput = redactInput({
-      actionType: data.actionType,
-      ...safeConfig,
-    });
+    const redactedInput = redactInput(
+      withRejectedSignerOverride(
+        { actionType: data.actionType, ...safeConfig },
+        config
+      )
+    );
     const created = await createExecution({
       organizationId: apiKeyCtx.organizationId,
       apiKeyId: apiKeyCtx.apiKeyId,
@@ -487,11 +490,18 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     // Strip the same reserved keys executeNode removes so the persisted audit
-    // input matches what the step actually received (see stripReservedConfig).
-    const redactedInput = redactInput({
-      actionType: validation.data.actionType,
-      ...stripReservedConfig(validation.data.config),
-    });
+    // input matches what the step actually received (see stripReservedConfig),
+    // but preserve a non-honored web3Connection under _rejectedConfig so the
+    // audit log still shows the attempt (see withRejectedSignerOverride).
+    const redactedInput = redactInput(
+      withRejectedSignerOverride(
+        {
+          actionType: validation.data.actionType,
+          ...stripReservedConfig(validation.data.config),
+        },
+        validation.data.config
+      )
+    );
     const reserve = await checkAndReserveExecution({
       organizationId: apiKeyCtx.organizationId,
       apiKeyId: apiKeyCtx.apiKeyId,

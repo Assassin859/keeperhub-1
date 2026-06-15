@@ -34,12 +34,19 @@ vi.mock("@/app/api/execute/_lib/spending-cap", () => ({
   checkAndReserveExecution: mocks.checkAndReserveExecution,
 }));
 
-vi.mock("@/app/api/execute/_lib/execution-service", () => ({
-  markRunning: mocks.markRunning,
-  completeExecution: mocks.completeExecution,
-  failExecution: mocks.failExecution,
-  redactInput: mocks.redactInput,
-}));
+vi.mock("@/app/api/execute/_lib/execution-service", async (importActual) => {
+  const actual =
+    await importActual<
+      typeof import("@/app/api/execute/_lib/execution-service")
+    >();
+  return {
+    ...actual,
+    markRunning: mocks.markRunning,
+    completeExecution: mocks.completeExecution,
+    failExecution: mocks.failExecution,
+    redactInput: mocks.redactInput,
+  };
+});
 
 vi.mock("@/plugins/web3/steps/transfer-funds-core", () => ({
   transferFundsCore: mocks.transferFundsCore,

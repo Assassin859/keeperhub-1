@@ -17,6 +17,7 @@ import {
   failExecution,
   markRunning,
   redactInput,
+  withRejectedSignerOverride,
 } from "../_lib/execution-service";
 import { checkRateLimit } from "../_lib/rate-limit";
 import { parseSimulateFlag } from "../_lib/simulate-flag";
@@ -125,7 +126,7 @@ async function handleWriteCall(
     return walletError;
   }
 
-  const redactedInput = redactInput(body);
+  const redactedInput = redactInput(withRejectedSignerOverride(body, body));
   const reserve = await checkAndReserveExecution({
     organizationId,
     apiKeyId,

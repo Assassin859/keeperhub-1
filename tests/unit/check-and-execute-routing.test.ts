@@ -37,12 +37,19 @@ const mockCompleteExecution = vi.fn();
 const mockFailExecution = vi.fn();
 const mockMarkRunning = vi.fn();
 const mockRedactInput = vi.fn();
-vi.mock("@/app/api/execute/_lib/execution-service", () => ({
-  completeExecution: (...args: unknown[]) => mockCompleteExecution(...args),
-  failExecution: (...args: unknown[]) => mockFailExecution(...args),
-  markRunning: (...args: unknown[]) => mockMarkRunning(...args),
-  redactInput: (...args: unknown[]) => mockRedactInput(...args),
-}));
+vi.mock("@/app/api/execute/_lib/execution-service", async (importActual) => {
+  const actual =
+    await importActual<
+      typeof import("@/app/api/execute/_lib/execution-service")
+    >();
+  return {
+    ...actual,
+    completeExecution: (...args: unknown[]) => mockCompleteExecution(...args),
+    failExecution: (...args: unknown[]) => mockFailExecution(...args),
+    markRunning: (...args: unknown[]) => mockMarkRunning(...args),
+    redactInput: (...args: unknown[]) => mockRedactInput(...args),
+  };
+});
 
 const mockCheckRateLimit = vi.fn();
 vi.mock("@/app/api/execute/_lib/rate-limit", () => ({
